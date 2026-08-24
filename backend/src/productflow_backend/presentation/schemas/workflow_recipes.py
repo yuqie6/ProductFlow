@@ -5,20 +5,33 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from productflow_backend.application.workflow_recipes.contracts import RECIPE_SCHEMA_VERSION, RecipePayload
+from productflow_backend.application.workflow_recipes.contracts import (
+    RECIPE_SCHEMA_VERSION,
+    RecipeGovernance,
+    RecipePayload,
+    parse_recipe_governance,
+)
 from productflow_backend.application.workflow_recipes.live_apply import RecipeApplyPreview
 from productflow_backend.application.workflow_recipes.service import (
     WorkflowRecipeApplicationResult,
     WorkflowRecipeArchiveResult,
     parse_recipe_payload_or_raise,
 )
-from productflow_backend.domain.enums import GraphNodeType, WorkflowRecipeKind
+from productflow_backend.domain.enums import (
+    GraphNodeType,
+    WorkflowRecipeCreationSource,
+    WorkflowRecipeKind,
+    WorkflowRecipeOrigin,
+)
 from productflow_backend.infrastructure.db.models import WorkflowRecipe, WorkflowRecipeVersion
 from productflow_backend.presentation.schemas.graphs import GraphProjectionResponse
 
 
 class StrictRecipeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+WorkflowRecipeOriginFilter = Literal["all", "official", "user"]
 
 
 class RecipeSourceRequest(StrictRecipeRequest):
@@ -56,6 +69,12 @@ class PreviewWorkflowRecipeRequest(StrictRecipeRequest):
 
 class ApplyWorkflowRecipeRequest(StrictRecipeRequest):
     expected_recipe_version: int = Field(ge=1)
+    expected_graph_revision: int = Field(ge=0)
+    preview_digest: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     idempotency_key: str = Field(min_length=1, max_length=120)
 
 
@@ -64,10 +83,13 @@ class WorkflowRecipeVersionResponse(BaseModel):
     recipe_id: str
     version: int
     schema_version: Literal[3]
+    catalog_version: int
+    creation_source: WorkflowRecipeCreationSource
     title: str
     description: str | None
     payload: RecipePayload
     payload_hash: str
+    governance: RecipeGovernance | None
     preferred_visual_system_version_id: str | None
     created_at: datetime
 
@@ -75,6 +97,8 @@ class WorkflowRecipeVersionResponse(BaseModel):
 class WorkflowRecipeSummaryResponse(BaseModel):
     id: str
     kind: WorkflowRecipeKind
+    origin: WorkflowRecipeOrigin
+    official_key: str | None
     current_version_id: str
     current_version: WorkflowRecipeVersionResponse
     archived_at: datetime | None
@@ -114,13 +138,24 @@ class RecipePreviewGroupResponse(BaseModel):
     member_keys: list[str]
 
 
+class RecipePreviewUpdatedNodeResponse(BaseModel):
+    id: str
+    node_type: GraphNodeType
+    title: str
+    changed_config_keys: list[str]
+
+
 class WorkflowRecipePreviewResponse(BaseModel):
     mode: Literal["create", "merge"]
     recipe_id: str
     recipe_version: int
+    base_graph_revision: int
+    preview_digest: str
     nodes: list[RecipePreviewNodeResponse]
     edges: list[RecipePreviewEdgeResponse]
     groups: list[RecipePreviewGroupResponse]
+    updated_nodes: list[RecipePreviewUpdatedNodeResponse]
+    required_bindings: list[str]
 
 
 class WorkflowRecipeApplicationResponse(BaseModel):
@@ -132,6 +167,10 @@ class WorkflowRecipeApplicationResponse(BaseModel):
     graph: GraphProjectionResponse
     added_node_ids: list[str]
     added_edge_ids: list[str]
+    updated_node_ids: list[str]
+    base_graph_revision: int | None
+    preview_digest: str | None
+    required_bindings: list[str]
 
 
 def serialize_workflow_recipe_version(
@@ -142,10 +181,13 @@ def serialize_workflow_recipe_version(
         recipe_id=version.recipe_id,
         version=version.version,
         schema_version=version.schema_version,
+        catalog_version=version.catalog_version,
+        creation_source=version.creation_source,
         title=version.title,
         description=version.description,
         payload=parse_recipe_payload_or_raise(version),
         payload_hash=version.payload_hash,
+        governance=parse_recipe_governance(version.governance_json),
         preferred_visual_system_version_id=version.preferred_visual_system_version_id,
         created_at=version.created_at,
     )
@@ -159,6 +201,8 @@ def serialize_workflow_recipe_summary(
     return WorkflowRecipeSummaryResponse(
         id=recipe.id,
         kind=recipe.kind,
+        origin=recipe.origin,
+        official_key=recipe.official_key,
         current_version_id=recipe.current_version_id,
         current_version=serialize_workflow_recipe_version(recipe.current_version),
         archived_at=recipe.archived_at,
@@ -197,6 +241,10 @@ def serialize_workflow_recipe_application(
         graph=graph,
         added_node_ids=list(result.added_node_ids),
         added_edge_ids=list(result.added_edge_ids),
+        updated_node_ids=list(result.updated_node_ids),
+        base_graph_revision=result.preview_graph_revision,
+        preview_digest=result.preview_digest,
+        required_bindings=list(result.required_bindings),
     )
 
 
@@ -205,6 +253,8 @@ def serialize_workflow_recipe_preview(preview: RecipeApplyPreview) -> WorkflowRe
         mode=preview.mode,
         recipe_id=preview.recipe_id,
         recipe_version=preview.recipe_version,
+        base_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
         nodes=[
             RecipePreviewNodeResponse(
                 key=node.key,
@@ -234,6 +284,16 @@ def serialize_workflow_recipe_preview(preview: RecipeApplyPreview) -> WorkflowRe
             )
             for group in preview.groups
         ],
+        updated_nodes=[
+            RecipePreviewUpdatedNodeResponse(
+                id=node.id,
+                node_type=node.node_type,
+                title=node.title,
+                changed_config_keys=list(node.changed_config_keys),
+            )
+            for node in preview.updated_nodes
+        ],
+        required_bindings=list(preview.required_bindings),
     )
 
 
@@ -243,6 +303,7 @@ __all__ = [
     "CreateWorkflowRecipeRequest",
     "PreviewWorkflowRecipeRequest",
     "RECIPE_SCHEMA_VERSION",
+    "WorkflowRecipeOriginFilter",
     "WorkflowRecipeArchiveResponse",
     "WorkflowRecipeApplicationResponse",
     "WorkflowRecipePreviewResponse",

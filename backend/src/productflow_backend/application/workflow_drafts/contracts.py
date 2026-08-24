@@ -11,6 +11,11 @@ from productflow_backend.domain.enums import (
     ProductFactStatus,
     WorkflowNodeType,
 )
+from productflow_backend.domain.image_specs import (
+    DELIVERY_SPEC_MAX_TOTAL_PIXELS,
+    DeliverySpec,
+    GenerationSpec,
+)
 from productflow_backend.domain.workflow_rules import canonical_workflow_edge_handles
 
 WORKFLOW_DRAFT_SCHEMA_VERSION = 1
@@ -19,7 +24,6 @@ WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE = 1
 WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE = 6
 WORKFLOW_DRAFT_MAX_TOTAL_IMAGES = 30
 WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS = 6
-DELIVERY_SPEC_MAX_TOTAL_PIXELS = 64 * 1024 * 1024
 
 
 def workflow_draft_agent_guidance() -> dict[str, Any]:
@@ -58,11 +62,26 @@ def workflow_draft_agent_guidance() -> dict[str, Any]:
                 "paths": ["prompt_plans[].image_type_key", "image_types[].prompt_plan_key"],
                 "rule": "每个图片类型必须且只能关联一个提示词计划，prompt_plan_key 必须相互一致。",
             },
+            {
+                "paths": [
+                    "intake.delivery_preset_key",
+                    "intake.delivery_spec",
+                    "image_types[].images[].delivery_spec",
+                ],
+                "rule": (
+                    "intake 有默认交付规格时，每张 PlannedImage 都必须显式复制完全相同的 delivery_spec；"
+                    "不能只放在图或节点的 side-state。"
+                ),
+            },
         ],
         "pre_submit_checks": [
             "读取当前商品、WorkflowDraft revision、intake 和已核验参考资产，使用最新事实构建完整 payload。",
             "不要把 recipe 或 legacy seed 原样提交；必须重新核对当前商品事实和参考资产。",
             "保持 intake 中已确认的图片类型和数量；要调整时先通过 ask_user 明确确认。",
+            (
+                "如果 intake 提供 delivery_preset_key 和 delivery_spec，逐张复制该 snapshot 到每个 "
+                "PlannedImage.delivery_spec；不要依赖 graph side-state。"
+            ),
             "清理不适用的互斥字段：contain 不带 crop_anchor，cover 不带 background_color。",
             "所有视觉例外 field 都要在 visual_system.payload.locked_fields 中出现。",
             "提交前检查 key、order、quantity、prompt plan 和 node/edge 的一对一关系。",
@@ -329,44 +348,6 @@ class VisualExceptionPlan(StrictArtifactModel):
     @model_validator(mode="after")
     def validate_unique_fields(self) -> VisualExceptionPlan:
         _require_unique_values([override.field for override in self.overrides], label="视觉例外 override field")
-        return self
-
-
-class GenerationSpec(StrictArtifactModel):
-    aspect_ratio: Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$")]
-    resolution_tier: Literal["standard", "high", "ultra"] = "high"
-    quality_intent: Literal["draft", "standard", "high"] = "high"
-    reference_fidelity: Literal["low", "medium", "high"] = "high"
-    background_intent: Literal["auto", "opaque", "transparent"] = "auto"
-    text_policy: Literal["none", "allow", "required"] = "none"
-    text_language: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)] | None = None
-
-    @model_validator(mode="after")
-    def validate_text_language(self) -> GenerationSpec:
-        if self.text_policy == "required" and self.text_language is None:
-            raise ValueError("要求图片文字时必须指定 text_language")
-        if self.text_policy == "none" and self.text_language is not None:
-            raise ValueError("禁止图片文字时不能指定 text_language")
-        return self
-
-
-class DeliverySpec(StrictArtifactModel):
-    width: int = Field(ge=1, le=16384)
-    height: int = Field(ge=1, le=16384)
-    format: Literal["png", "jpeg", "webp"]
-    max_byte_size: int | None = Field(default=None, ge=1)
-    fit: Literal["contain", "cover"]
-    background_color: HexColor | None = None
-    crop_anchor: Literal["center", "top", "bottom", "left", "right"] | None = None
-
-    @model_validator(mode="after")
-    def validate_fit_options(self) -> DeliverySpec:
-        if self.width * self.height > DELIVERY_SPEC_MAX_TOTAL_PIXELS:
-            raise ValueError(f"交付规格总像素不能超过 {DELIVERY_SPEC_MAX_TOTAL_PIXELS}")
-        if self.fit == "contain" and self.crop_anchor is not None:
-            raise ValueError("contain 交付规格不能指定 crop_anchor")
-        if self.fit == "cover" and self.background_color is not None:
-            raise ValueError("cover 交付规格不能指定 background_color")
         return self
 
 

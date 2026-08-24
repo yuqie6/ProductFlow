@@ -14,6 +14,7 @@ from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.infrastructure.db.models import (
     ImageSessionAsset,
+    LocalImageEditTask,
     MediaLibraryAsset,
     MediaObject,
     ProductImageAsset,
@@ -101,6 +102,7 @@ def media_object_has_references(session: Session, media_object_id: str) -> bool:
             (ProductImageAsset, ProductImageAsset.media_object_id),
             (ImageSessionAsset, ImageSessionAsset.media_object_id),
             (MediaLibraryAsset, MediaLibraryAsset.media_object_id),
+            (LocalImageEditTask, LocalImageEditTask.mask_media_object_id),
         )
     )
 

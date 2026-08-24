@@ -14,6 +14,7 @@ from productflow_backend.application.legacy_archives import (
     legacy_archive_export_bytes,
     list_legacy_archives,
 )
+from productflow_backend.application.product_workflow.graph_commands import create_empty_workflow_graph
 from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
 from productflow_backend.config import get_settings
@@ -390,6 +391,56 @@ def test_archive_seeded_version_zero_draft_accepts_first_agent_revision(
     persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
     assert persisted_archive is not None
     assert persisted_archive.payload_json == archived_payload
+
+    confirmed = client.post(
+        f"/api/v2/products/{product.id}/workflow-drafts/{draft.id}/confirm",
+        json={"expected_draft_version": 1},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["status"] == "confirmed"
+
+    persisted = client.post(
+        f"/api/v3/products/{product.id}/workflow-drafts/{draft.id}/graphs",
+        json={"expected_draft_version": 1},
+    )
+    assert persisted.status_code == 200, persisted.text
+    assert persisted.json()["created"] is True
+    assert persisted.json()["graph"]["schema_version"] == 3
+    assert persisted.json()["graph"]["source_draft_revision_id"] == draft.current_revision.id
+
+    replay = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json={"target_product_id": product.id, "idempotency_key": "archive-first-revision"},
+    )
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["created"] is False
+    assert replay.json()["draft"]["id"] == draft.id
+
+    persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
+    assert persisted_archive is not None
+    assert persisted_archive.payload_json == archived_payload
+
+
+def test_archive_rebuild_conflicts_before_writing_when_target_has_live_v3_graph(
+    configured_env,
+    db_session,
+) -> None:
+    product, _, workflow, _, _ = _seed_archives(db_session)
+    create_empty_workflow_graph(db_session, product_id=product.id)
+    client = TestClient(create_app())
+    _login(client)
+
+    response = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json={"target_product_id": product.id, "idempotency_key": "archive-live-graph-conflict"},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "active schema-v3" in response.json()["detail"]
+    db_session.expire_all()
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
+    assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftLegacyArchiveSeed)) == 0
 
 
 def test_agent_archive_tools_are_product_scoped_sectioned_and_metadata_only(

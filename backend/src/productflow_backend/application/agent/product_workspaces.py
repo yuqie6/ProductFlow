@@ -21,6 +21,8 @@ from productflow_backend.application.agent.product_intake import (
     agent_workbench_attach_request_hash,
     normalize_agent_product_idempotency_key,
     parse_workflow_intake,
+    workflow_intake_from_selection,
+    workflow_intake_payload,
 )
 from productflow_backend.application.agent.sessions import get_agent_session_or_raise, new_agent_session
 from productflow_backend.application.agent.tasks import (
@@ -261,9 +263,8 @@ def create_agent_product_workspace(
                 storage_writes=storage_writes,
             )
             _stage_product_identity_facts(session, canonical.product)
-            intake = WorkflowIntakeV1(
-                schema_version=WORKFLOW_INTAKE_SCHEMA_VERSION,
-                image_types=selection.image_types,
+            intake = workflow_intake_from_selection(
+                selection,
                 reference_asset_ids=[asset.id for asset in canonical.created_assets],
             )
             _stage_workspace_records(
@@ -480,7 +481,7 @@ def _write_intake_and_commit(
     request_hash: str,
 ) -> AgentProductWorkspaceCreation:
     draft.intake_schema_version = WORKFLOW_INTAKE_SCHEMA_VERSION
-    draft.intake_json = intake.model_dump(mode="json")
+    draft.intake_json = workflow_intake_payload(intake)
     draft.updated_at = now_utc()
     conversation.intake_idempotency_key = normalized_key
     conversation.intake_request_hash = request_hash
@@ -547,11 +548,7 @@ def finalize_agent_product_workspace_intake(
             storage=storage,
             storage_writes=storage_writes,
         )
-        intake = WorkflowIntakeV1(
-            schema_version=WORKFLOW_INTAKE_SCHEMA_VERSION,
-            image_types=selection.image_types,
-            reference_asset_ids=[asset.id for asset in assets],
-        )
+        intake = workflow_intake_from_selection(selection, reference_asset_ids=[asset.id for asset in assets])
         return _write_intake_and_commit(
             session,
             conversation_id=conversation_id,
@@ -596,11 +593,7 @@ def finalize_agent_product_workspace_intake_from_assets(
     )
     if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
         raise BusinessValidationError("参考图必须通过核验")
-    intake = WorkflowIntakeV1(
-        schema_version=WORKFLOW_INTAKE_SCHEMA_VERSION,
-        image_types=selection.image_types,
-        reference_asset_ids=list(reference_asset_ids),
-    )
+    intake = workflow_intake_from_selection(selection, reference_asset_ids=list(reference_asset_ids))
     return _write_intake_and_commit(
         session,
         conversation_id=conversation_id,
@@ -670,7 +663,7 @@ def _stage_workspace_records(
         product_id=product.id,
         status=WorkflowDraftStatus.COLLECTING,
         intake_schema_version=(WORKFLOW_INTAKE_SCHEMA_VERSION if intake is not None else None),
-        intake_json=(intake.model_dump(mode="json") if intake is not None else None),
+        intake_json=(workflow_intake_payload(intake) if intake is not None else None),
     )
     session.add(draft)
     session.flush()

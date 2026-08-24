@@ -11,6 +11,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.agent.product_intake import parse_workflow_intake
 from productflow_backend.application.agent.sessions import auto_name_agent_session, new_agent_session
 from productflow_backend.application.agent.tasks import (
     create_page_context_snapshot,
@@ -718,10 +719,15 @@ def attach_agent_workflow_draft_artifact(
     expected_version = draft.current_revision.version if draft.current_revision is not None else 0
     draft_id = draft.id
     artifact = parse_workflow_draft_payload_or_raise(artifact_value)
+    intake = parse_workflow_intake(
+        schema_version=draft.intake_schema_version,
+        payload=draft.intake_json,
+    )
     validate_workflow_draft_for_confirmation(
         session,
         product_id=product_id,
         artifact=artifact,
+        required_delivery_spec=intake.delivery_spec if intake is not None else None,
     )
     append_workflow_draft_revision(
         session,

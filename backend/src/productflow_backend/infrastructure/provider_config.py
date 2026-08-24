@@ -26,11 +26,13 @@ CAPABILITY_TEXT_RESPONSES = "text_responses"
 CAPABILITY_IMAGE_RESPONSES = "image_responses"
 CAPABILITY_IMAGE_IMAGES = "image_images"
 CAPABILITY_IMAGE_GOOGLE_GEMINI = "image_google_gemini"
+CAPABILITY_IMAGE_MASK_EDIT = "image_mask_edit"
 PROVIDER_CAPABILITIES = {
     CAPABILITY_TEXT_RESPONSES,
     CAPABILITY_IMAGE_RESPONSES,
     CAPABILITY_IMAGE_IMAGES,
     CAPABILITY_IMAGE_GOOGLE_GEMINI,
+    CAPABILITY_IMAGE_MASK_EDIT,
 }
 UNSET_PROVIDER_FIELD = object()
 
@@ -55,6 +57,11 @@ class ResolvedImageProviderConfig:
     responses_background_enabled: bool = False
     gemini_api_version: str = "v1beta"
     gemini_output_mime_type: str | None = None
+    image_mask_edit_enabled: bool = False
+
+    @property
+    def masked_local_edit_available(self) -> bool:
+        return self.provider_kind == "openai_images" and self.image_mask_edit_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,6 +417,11 @@ def resolve_image_provider_config(session: Session | None = None) -> ResolvedIma
                 _optional_str(binding.config_json.get("gemini_output_mime_type"))
                 if kind == "google_gemini_image"
                 else None
+            ),
+            image_mask_edit_enabled=(
+                CAPABILITY_IMAGE_MASK_EDIT in set(profile.capabilities_json or [])
+                if kind == "openai_images"
+                else False
             ),
         )
     finally:

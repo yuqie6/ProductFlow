@@ -288,6 +288,7 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
         selection: Type.Object(
           {
             schema_version: Type.Literal(1),
+            delivery_preset_key: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
             image_types: Type.Array(
               Type.Object(
                 {
@@ -309,7 +310,11 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
     execute: async (
       toolCallID: string,
       params: {
-        selection: { schema_version: 1; image_types: Array<{ key: string; quantity: number; order: number }> };
+        selection: {
+          schema_version: 1;
+          delivery_preset_key?: string;
+          image_types: Array<{ key: string; quantity: number; order: number }>;
+        };
         reference_asset_ids: string[];
       },
     ): Promise<Result> => {

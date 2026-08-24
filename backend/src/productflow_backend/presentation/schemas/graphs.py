@@ -443,6 +443,10 @@ class GraphRunInputTraceEntry(BaseModel):
     source_title: str | None = None
     role: str
     order: int = 0
+    artifact_id: str | None = None
+    artifact_type: GraphArtifactType | None = None
+    asset_id: str | None = None
+    version_id: str | None = None
 
 
 class GraphNodeRunResponse(BaseModel):

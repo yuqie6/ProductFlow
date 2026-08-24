@@ -14,14 +14,23 @@ from typing import Any
 
 from openai import OpenAI
 
+from productflow_backend.domain.local_image_edits import LocalImageEditOperation
 from productflow_backend.infrastructure.image.base import (
+    LOCAL_EDIT_MODE,
     ImageProvider,
+    LocalEditCapability,
+    LocalEditImage,
+    LocalEditRequest,
+    LocalEditResult,
+    UnsupportedLocalEditError,
     WorkflowGeneratedImage,
     WorkflowImageReference,
     WorkflowImageRequest,
     WorkflowImageResult,
     decode_b64_image,
+    infer_extension,
     map_generation_spec_to_openai_size,
+    map_pixel_size_to_openai_size,
 )
 from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
@@ -212,6 +221,7 @@ class OpenAIImagesClient:
         prompt: str,
         size: str,
         mask: bytes | None = None,
+        mask_mime_type: str = "image/png",
         model: str | None = None,
         quality: str | None = None,
         n: int = 1,
@@ -234,7 +244,7 @@ class OpenAIImagesClient:
             request_params["quality"] = req_quality
         if mask is not None:
             mask_file = BytesIO(mask)
-            mask_file.name = "mask.png"
+            mask_file.name = f"mask{infer_extension(mask_mime_type)}"
             request_params["mask"] = mask_file
 
         log_params = self._sanitize_edit_request_params(
@@ -336,6 +346,25 @@ class OpenAIImagesImageProvider(ImageProvider):
     def __init__(self, provider_config: ResolvedImageProviderConfig | None = None) -> None:
         self.provider_config = provider_config or resolve_image_provider_config()
 
+    @property
+    def local_edit_capability(self) -> LocalEditCapability:
+        if not self.provider_config.masked_local_edit_available:
+            return LocalEditCapability.unsupported(
+                self.provider_name,
+                reason="openai_images 未显式声明 image_mask_edit 能力",
+            )
+        return LocalEditCapability(
+            provider_name=self.provider_name,
+            supported=True,
+            mode=LOCAL_EDIT_MODE,
+            operations=(
+                LocalImageEditOperation.REMOVE,
+                LocalImageEditOperation.REPLACE_TEXT,
+                LocalImageEditOperation.INPAINT,
+            ),
+            requires_mask=True,
+        )
+
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         size = map_generation_spec_to_openai_size(request.generation_spec)
         quality = {
@@ -398,12 +427,112 @@ class OpenAIImagesImageProvider(ImageProvider):
             provider_output_json=result.provider_output_json,
         )
 
+    def edit_local(self, request: LocalEditRequest) -> LocalEditResult:
+        capability = self.local_edit_capability
+        if not capability.supported:
+            raise UnsupportedLocalEditError(capability.reason or "OpenAI Images 不支持 masked local edit")
+
+        image_inputs = [
+            _local_edit_reference(request.source_image),
+            *(_local_edit_reference(reference) for reference in request.reference_images),
+        ]
+        effective_size = map_pixel_size_to_openai_size(request.size)
+        results = OpenAIImagesClient(self.provider_config).edit(
+            image=image_inputs,
+            prompt=request.instruction,
+            size=effective_size,
+            mask=request.mask.bytes_data,
+            mask_mime_type=request.mask.mime_type,
+            n=1,
+        )
+        if len(results) != 1:
+            raise RuntimeError("局部编辑要求 Images API 恰好返回一张图片")
+        result = results[0]
+        provider_output_json = _with_local_edit_metadata(
+            result.provider_output_json,
+            operation=request.operation,
+            requested_size=request.size,
+            effective_size=effective_size,
+        )
+        effective_parameters = _local_edit_effective_parameters(
+            result,
+            operation=request.operation,
+            requested_reference_count=len(request.reference_images),
+            requested_size=request.size,
+        )
+        return LocalEditResult(
+            images=(WorkflowGeneratedImage(bytes_data=result.bytes_data, mime_type=result.mime_type),),
+            model=result.model_name,
+            provider_status="completed",
+            effective_mode=LOCAL_EDIT_MODE,
+            effective_parameters=effective_parameters,
+            provider_request_json=result.provider_request_json,
+            provider_output_json=provider_output_json,
+        )
+
+
 def _images_reference(reference: WorkflowImageReference) -> ImagesReferenceImage:
     return ImagesReferenceImage(
         bytes_data=reference.bytes_data,
         mime_type=reference.mime_type,
         filename=reference.filename,
     )
+
+
+def _local_edit_reference(image: LocalEditImage) -> ImagesReferenceImage:
+    return ImagesReferenceImage(
+        bytes_data=image.bytes_data,
+        mime_type=image.mime_type,
+        filename=image.filename,
+    )
+
+
+def _with_local_edit_metadata(
+    provider_output_json: dict[str, Any],
+    *,
+    operation: LocalImageEditOperation,
+    requested_size: str,
+    effective_size: str,
+) -> dict[str, Any]:
+    output = dict(provider_output_json)
+    metadata = dict(output.get("_productflow") or {})
+    metadata.update(
+        {
+            "effective_mode": LOCAL_EDIT_MODE,
+            "operation": operation,
+            "requested_size": requested_size,
+            "effective_size": effective_size,
+        }
+    )
+    output["_productflow"] = metadata
+    return output
+
+
+def _local_edit_effective_parameters(
+    result: ImagesAPIResult,
+    *,
+    operation: LocalImageEditOperation,
+    requested_reference_count: int,
+    requested_size: str,
+) -> dict[str, Any]:
+    output_metadata = result.provider_output_json.get("_productflow")
+    effective_image_count = output_metadata.get("effective_image_count") if isinstance(output_metadata, dict) else None
+    effective_reference_count = requested_reference_count
+    if isinstance(effective_image_count, int):
+        effective_reference_count = max(0, effective_image_count - 1)
+    effective = {
+        key: value
+        for key, value in result.provider_request_json.items()
+        if key in {"model", "size", "n", "quality", "image_count", "has_mask"}
+    }
+    return {
+        "adapter": "openai_images",
+        "mode": LOCAL_EDIT_MODE,
+        "operation": operation,
+        "requested_size": requested_size,
+        "reference_image_count": effective_reference_count,
+        **effective,
+    }
 
 
 def _images_effective_parameters(

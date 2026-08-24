@@ -548,6 +548,65 @@ def graph_snapshot_input_trace(snapshot: dict[str, Any], node_id: str | None) ->
     return entries
 
 
+def graph_runtime_input_trace(
+    graph: AppliedGraph,
+    node_id: str,
+    sources: dict[str, GraphSourceRecord],
+    artifacts: GraphRuntimeArtifacts | None = None,
+) -> list[dict[str, Any]]:
+    """Project the immutable identities actually consumed by one node execution."""
+
+    entries: list[dict[str, Any]] = []
+    for edge in incoming_edges(graph, node_id):
+        source = graph.node(edge.source_node_id)
+        record = sources.get(source.id, GraphSourceRecord())
+        artifact_id = (
+            artifacts.artifact_ids.get(source.id)
+            if artifacts is not None
+            else None
+        ) or record.current_artifact_id
+        artifact_type = record.current_artifact_type.value if record.current_artifact_type else None
+        if artifact_id is not None and artifact_type is None:
+            artifact_type = {
+                GraphNodeType.CREATIVE_BRIEF: GraphArtifactType.CREATIVE_BRIEF.value,
+                GraphNodeType.VISUAL_SYSTEM: GraphArtifactType.VISUAL_SYSTEM.value,
+                GraphNodeType.PROMPT_GENERATION: GraphArtifactType.PROMPT.value,
+                GraphNodeType.IMAGE_GENERATION: GraphArtifactType.IMAGE.value,
+            }.get(source.node_type)
+
+        asset_id: str | None = None
+        if source.node_type == GraphNodeType.IMAGE_ASSET:
+            asset_id = record.bound_asset_id or source.bound_asset_id
+        elif source.node_type == GraphNodeType.IMAGE_GENERATION:
+            asset_id = (
+                artifacts.output_asset_ids.get(source.id)
+                if artifacts is not None
+                else None
+            ) or record.current_output_asset_id
+
+        version_id: str | None = None
+        if source.node_type == GraphNodeType.PRODUCT_SOURCE and record.product_source is not None:
+            version_id = record.product_source.fact_set_version_id
+        elif source.node_type == GraphNodeType.VISUAL_SYSTEM:
+            version_id = record.visual_system_version_id
+
+        entries.append(
+            {
+                "edge_id": edge.id,
+                "source_node_id": source.id,
+                "source_title": source.title,
+                "role": edge.role.value,
+                "order": edge.order,
+                "artifact_id": artifact_id,
+                "artifact_type": artifact_type,
+                "asset_id": asset_id,
+                "version_id": version_id,
+            }
+        )
+    entries.sort(key=lambda item: (item["order"], item["edge_id"]))
+    return entries
+
+
 def applied_graph_from_snapshot(payload: dict[str, Any]) -> AppliedGraph:
     from productflow_backend.domain.enums import GraphEdgeDataType, GraphEdgeRole
 

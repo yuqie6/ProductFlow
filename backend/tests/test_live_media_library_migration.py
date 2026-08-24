@@ -99,6 +99,152 @@ def _reset_database_state() -> None:
         get_settings.cache_clear()
 
 
+def _insert_workflow_media_link_migration_fixture(connection: sa.Connection) -> None:
+    metadata = sa.MetaData()
+    metadata.reflect(
+        connection,
+        only=[
+            "media_library_assets",
+            "media_objects",
+            "product_workflows",
+            "products",
+            "workflow_media_library_assets",
+        ],
+    )
+    now = datetime.now(UTC)
+    connection.execute(
+        metadata.tables["products"].insert().values(
+            id="product-media-link",
+            name="PostgreSQL migration product",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    connection.execute(
+        metadata.tables["product_workflows"].insert().values(
+            id="workflow-media-link",
+            product_id="product-media-link",
+            title="Legacy workflow",
+            active=True,
+            schema_version=2,
+            revision=1,
+            edit_version=0,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    connection.execute(
+        metadata.tables["media_objects"].insert().values(
+            id="media-media-link",
+            storage_path="migration/media-link.png",
+            mime_type="image/png",
+            verification_status="legacy_pending",
+            created_at=now,
+        )
+    )
+    connection.execute(
+        metadata.tables["media_library_assets"].insert().values(
+            id="library-media-link",
+            media_object_id="media-media-link",
+            source_type="direct_upload",
+            source_id="source-media-link",
+            provenance_json={},
+            provenance_hash="a" * 64,
+            revision=1,
+            display_name="Migration asset",
+            original_filename="media-link.png",
+            is_archived=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    connection.execute(
+        metadata.tables["workflow_media_library_assets"].insert().values(
+            workflow_id="workflow-media-link",
+            media_library_asset_id="library-media-link",
+            created_at=now,
+        )
+    )
+
+
+def _insert_target_workflow_graph(connection: sa.Connection) -> None:
+    metadata = sa.MetaData()
+    metadata.reflect(connection, only=["workflow_graphs"])
+    now = datetime.now(UTC)
+    connection.execute(
+        metadata.tables["workflow_graphs"].insert().values(
+            id="graph-media-link",
+            product_id="product-media-link",
+            title="Schema v3 graph",
+            active=True,
+            schema_version=3,
+            revision=1,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def test_live_workflow_media_links_block_then_retarget_on_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_database_url = os.getenv("DATABASE_URL", "").strip()
+    if not base_database_url:
+        pytest.fail("DATABASE_URL must be provided by the development environment", pytrace=False)
+
+    with _temporary_postgres_database(base_database_url) as database_url:
+        with monkeypatch.context() as environment:
+            environment.setenv("DATABASE_URL", database_url.render_as_string(hide_password=False))
+            environment.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
+            environment.setenv("ADMIN_ACCESS_KEY", "live-media-library-admin-key")
+            environment.setenv("SESSION_SECRET", "live-media-library-session-secret")
+            _reset_database_state()
+
+            backend_dir = Path(__file__).resolve().parents[1]
+            config = Config(str(backend_dir / "alembic.ini"))
+            config.set_main_option("script_location", str(backend_dir / "alembic"))
+            command.upgrade(config, "20260821_0078")
+
+            engine = sa.create_engine(database_url, future=True)
+            try:
+                with engine.begin() as connection:
+                    _insert_workflow_media_link_migration_fixture(connection)
+
+                with pytest.raises(RuntimeError, match="不会删除原关联"):
+                    command.upgrade(config, "20260821_0079")
+
+                with engine.connect() as connection:
+                    assert connection.execute(
+                        sa.text(
+                            "SELECT workflow_id, media_library_asset_id "
+                            "FROM workflow_media_library_assets"
+                        )
+                    ).one() == ("workflow-media-link", "library-media-link")
+                    assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
+
+                with engine.begin() as connection:
+                    _insert_target_workflow_graph(connection)
+                command.upgrade(config, "20260821_0079")
+
+                workflow_fk = next(
+                    foreign_key
+                    for foreign_key in sa.inspect(engine).get_foreign_keys("workflow_media_library_assets")
+                    if foreign_key["name"] == "fk_workflow_media_library_assets_workflow_id"
+                )
+                assert workflow_fk["referred_table"] == "workflow_graphs"
+                with engine.connect() as connection:
+                    assert connection.execute(
+                        sa.text(
+                            "SELECT workflow_id, media_library_asset_id "
+                            "FROM workflow_media_library_assets"
+                        )
+                    ).one() == ("graph-media-link", "library-media-link")
+            finally:
+                engine.dispose()
+                _reset_database_state()
+
+
 def test_live_media_library_backfill_on_postgresql(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

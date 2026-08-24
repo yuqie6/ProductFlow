@@ -22,6 +22,7 @@ from productflow_backend.application.legacy_archives import (
     list_legacy_archives,
     list_legacy_workflow_archive_assets,
 )
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.workflow_drafts.service import get_workflow_draft_or_raise
 from productflow_backend.domain.enums import AgentConversationStatus, WorkflowDraftStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -154,6 +155,8 @@ def create_legacy_archive_rebuild(
         )
         if detail.item.product_id is not None and detail.item.product_id != normalized_product_id:
             raise BusinessValidationError("旧工作流或旧 Agent 对话只能重建到原商品")
+        if get_active_workflow_graph(session, product_id=normalized_product_id) is not None:
+            raise ConflictError("商品已有 active schema-v3 工作流，不能从旧归档创建 WorkflowDraft")
 
         draft = WorkflowDraft(
             product_id=normalized_product_id,

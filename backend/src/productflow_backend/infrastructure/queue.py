@@ -10,6 +10,7 @@ from productflow_backend.config import get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    LOCAL_IMAGE_EDIT_TASK_CONTRACT,
 )
 
 DEFAULT_DRAMATIQ_QUEUE_NAME = "default"
@@ -67,6 +68,10 @@ def enqueue_agent_turn_sync_later(projection_id: str, *, delay_ms: int) -> None:
 
 def enqueue_delivery_rendition_job(job_id: str) -> None:
     _enqueue_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, job_id)
+
+
+def enqueue_local_image_edit_task(task_id: str) -> None:
+    _enqueue_actor(LOCAL_IMAGE_EDIT_TASK_CONTRACT.actor_name, task_id)
 
 
 ASYNC_DISPATCH_ACTOR_NAME = "run_async_dispatch"

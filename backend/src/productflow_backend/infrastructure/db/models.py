@@ -45,11 +45,15 @@ from productflow_backend.domain.enums import (
     ImageSessionAssetKind,
     JobStatus,
     LibraryOrganizationDraftStatus,
+    LocalImageEditTaskStatus,
     MediaVerificationStatus,
+    ProductImageFidelityOutcome,
     ProductImageOriginType,
     WorkflowDraftStatus,
     WorkflowNodeStatus,
+    WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
+    WorkflowRecipeOrigin,
     WorkflowRunStatus,
 )
 
@@ -259,6 +263,16 @@ class Product(Base, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="LegacyCanvasAgentArchive.product_id",
     )
+    local_image_edit_tasks: Mapped[list[LocalImageEditTask]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="LocalImageEditTask.product_id",
+    )
+    fidelity_checks: Mapped[list[ProductImageFidelityCheck]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="ProductImageFidelityCheck.product_id",
+    )
 
 
 class ProductAssetFolder(Base, TimestampMixin):
@@ -413,6 +427,99 @@ class ProductImageAsset(Base, TimestampMixin):
         foreign_keys="LegacyWorkflowArchiveAsset.product_image_asset_id",
         passive_deletes=True,
     )
+    fidelity_checks: Mapped[list[ProductImageFidelityCheck]] = relationship(
+        back_populates="asset",
+        foreign_keys="ProductImageFidelityCheck.asset_id",
+        passive_deletes=True,
+    )
+
+
+class ProductImageFidelityCheck(Base):
+    """商品图片的不可变、版本化人工保真检查记录。"""
+
+    __tablename__ = "product_image_fidelity_checks"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id",
+            "version",
+            name="uq_product_image_fidelity_checks_asset_version",
+        ),
+        UniqueConstraint(
+            "asset_id",
+            "idempotency_key",
+            name="uq_product_image_fidelity_checks_asset_idempotency",
+        ),
+        CheckConstraint("version >= 1", name="ck_product_image_fidelity_checks_positive_version"),
+        CheckConstraint(
+            "shape_fidelity IN ('pass', 'fail', 'not_applicable')",
+            name="ck_product_image_fidelity_checks_shape_outcome",
+        ),
+        CheckConstraint(
+            "color_material_fidelity IN ('pass', 'fail', 'not_applicable')",
+            name="ck_product_image_fidelity_checks_color_outcome",
+        ),
+        CheckConstraint(
+            "logo_text_legibility IN ('pass', 'fail', 'not_applicable')",
+            name="ck_product_image_fidelity_checks_logo_outcome",
+        ),
+        CheckConstraint(
+            "text_policy_compliance IN ('pass', 'fail', 'not_applicable')",
+            name="ck_product_image_fidelity_checks_text_policy_outcome",
+        ),
+        CheckConstraint(
+            "notes IS NULL OR length(notes) <= 4000",
+            name="ck_product_image_fidelity_checks_notes_length",
+        ),
+        CheckConstraint(
+            "checked_by = 'administrator'",
+            name="ck_product_image_fidelity_checks_checked_by_authority",
+        ),
+        CheckConstraint(
+            "length(idempotency_key) > 0",
+            name="ck_product_image_fidelity_checks_idempotency_nonempty",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_product_image_fidelity_checks_request_hash",
+        ),
+        Index(
+            "ix_product_image_fidelity_checks_asset_created",
+            "asset_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_product_image_fidelity_checks_product_id",
+        ),
+    )
+    asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_product_image_fidelity_checks_asset_id",
+        ),
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    shape_fidelity: Mapped[ProductImageFidelityOutcome] = mapped_column(String(20))
+    color_material_fidelity: Mapped[ProductImageFidelityOutcome] = mapped_column(String(20))
+    logo_text_legibility: Mapped[ProductImageFidelityOutcome] = mapped_column(String(20))
+    text_policy_compliance: Mapped[ProductImageFidelityOutcome] = mapped_column(String(20))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    checked_by: Mapped[str] = mapped_column(String(80), default="administrator")
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    product: Mapped[Product] = relationship(back_populates="fidelity_checks", foreign_keys=[product_id])
+    asset: Mapped[ProductImageAsset] = relationship(back_populates="fidelity_checks", foreign_keys=[asset_id])
 
 
 class LegacyWorkflowArchive(Base):
@@ -1750,13 +1857,24 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
 
 
 class WorkflowRecipe(Base, TimestampMixin):
-    """用户保存配方的稳定身份。"""
+    """用户或平台官方配方的稳定身份。"""
 
     __tablename__ = "workflow_recipes"
-    __table_args__ = (Index("ix_workflow_recipes_archived_at", "archived_at"),)
+    __table_args__ = (
+        Index("ix_workflow_recipes_archived_at", "archived_at"),
+        Index("ix_workflow_recipes_origin", "origin"),
+        UniqueConstraint("official_key", name="uq_workflow_recipes_official_key"),
+        CheckConstraint(
+            "(origin = 'official' AND official_key IS NOT NULL) OR "
+            "(origin = 'user' AND official_key IS NULL)",
+            name="ck_workflow_recipes_origin_key",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     kind: Mapped[WorkflowRecipeKind] = mapped_column(enum_value_column(WorkflowRecipeKind))
+    origin: Mapped[WorkflowRecipeOrigin] = mapped_column(enum_value_column(WorkflowRecipeOrigin))
+    official_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     current_version_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1789,6 +1907,7 @@ class WorkflowRecipeVersion(Base):
         UniqueConstraint("recipe_id", "version", name="uq_workflow_recipe_versions_recipe_version"),
         CheckConstraint("version > 0", name="ck_workflow_recipe_versions_positive_version"),
         CheckConstraint("schema_version = 3", name="ck_workflow_recipe_versions_schema_version"),
+        CheckConstraint("catalog_version > 0", name="ck_workflow_recipe_versions_catalog_version"),
         CheckConstraint("length(payload_hash) = 64", name="ck_workflow_recipe_versions_payload_hash"),
     )
 
@@ -1803,10 +1922,15 @@ class WorkflowRecipeVersion(Base):
     )
     version: Mapped[int] = mapped_column(Integer)
     schema_version: Mapped[int] = mapped_column(Integer, default=3)
+    catalog_version: Mapped[int] = mapped_column(Integer)
+    creation_source: Mapped[WorkflowRecipeCreationSource] = mapped_column(
+        enum_value_column(WorkflowRecipeCreationSource)
+    )
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     payload_hash: Mapped[str] = mapped_column(String(64))
+    governance_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     preferred_visual_system_version_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1910,7 +2034,22 @@ class WorkflowRecipeApplication(Base):
             "idempotency_key",
             name="uq_workflow_recipe_applications_product_key",
         ),
-        CheckConstraint("schema_version = 1", name="ck_workflow_recipe_applications_schema_version"),
+        CheckConstraint(
+            "schema_version IN (1, 2)",
+            name="ck_workflow_recipe_applications_schema_version",
+        ),
+        CheckConstraint(
+            "(schema_version = 1) OR ("
+            "schema_version = 2 "
+            "AND preview_graph_revision IS NOT NULL "
+            "AND preview_graph_revision >= 0 "
+            "AND preview_digest IS NOT NULL "
+            "AND length(preview_digest) = 64 "
+            "AND updated_node_ids_json IS NOT NULL "
+            "AND required_bindings_json IS NOT NULL"
+            ")",
+            name="ck_workflow_recipe_applications_preview_v2",
+        ),
         CheckConstraint("length(request_hash) = 64", name="ck_workflow_recipe_applications_request_hash"),
         CheckConstraint("mode IN ('create', 'merge')", name="ck_workflow_recipe_applications_mode"),
         Index(
@@ -1947,11 +2086,15 @@ class WorkflowRecipeApplication(Base):
         ),
     )
     mode: Mapped[str] = mapped_column(String(16))
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, default=2)
     idempotency_key: Mapped[str] = mapped_column(String(120))
     request_hash: Mapped[str] = mapped_column(String(64))
     added_node_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     added_edge_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    preview_graph_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    preview_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_node_ids_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    required_bindings_json: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     product: Mapped[Product] = relationship(
@@ -2588,6 +2731,402 @@ class WorkflowGraphArtifact(Base):
         foreign_keys=[node_run_id],
     )
     product_image_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[product_image_asset_id])
+
+
+class LocalImageEditTask(Base, TimestampMixin):
+    """持久化局部编辑意图、provider effect 边界和结果 lineage。"""
+
+    __tablename__ = "local_image_edit_tasks"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "idempotency_key",
+            name="uq_local_image_edit_tasks_product_idempotency",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown')",
+            name="ck_local_image_edit_tasks_status",
+        ),
+        CheckConstraint("revision >= 1", name="ck_local_image_edit_tasks_revision"),
+        CheckConstraint("attempts >= 0", name="ck_local_image_edit_tasks_attempts"),
+        CheckConstraint(
+            "length(source_media_sha256) = 64",
+            name="ck_local_image_edit_tasks_source_media_hash",
+        ),
+        CheckConstraint(
+            "request_hash IS NULL OR length(request_hash) = 64",
+            name="ck_local_image_edit_tasks_request_hash",
+        ),
+        CheckConstraint(
+            "request_hash IS NULL OR "
+            "(requested_provider_name IS NOT NULL AND requested_local_edit_mode IS NOT NULL)",
+            name="ck_local_image_edit_tasks_provider_intent",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND finished_at IS NULL) OR "
+            "(status != 'running' AND active_attempt_id IS NULL)",
+            name="ck_local_image_edit_tasks_active_attempt",
+        ),
+        CheckConstraint(
+            "(status = 'succeeded' AND result_asset_id IS NOT NULL AND finished_at IS NOT NULL) OR "
+            "(status IN ('draft', 'queued', 'running', 'failed', 'cancelled', 'unknown') "
+            "AND result_asset_id IS NULL)",
+            name="ck_local_image_edit_tasks_result_state",
+        ),
+        Index(
+            "ix_local_image_edit_tasks_product_status_created",
+            "product_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_local_image_edit_tasks_source_asset",
+            "source_asset_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_local_image_edit_tasks_target_node_status",
+            "target_node_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_local_image_edit_tasks_product_id"),
+    )
+    source_asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_tasks_source_asset_id",
+        ),
+    )
+    source_media_sha256: Mapped[str] = mapped_column(String(64))
+    mask_media_object_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "media_objects.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_tasks_mask_media_object_id",
+        ),
+    )
+    target_graph_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graphs.id",
+            ondelete="SET NULL",
+            name="fk_local_image_edit_tasks_target_graph_id",
+        ),
+        nullable=True,
+    )
+    target_node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_nodes.id",
+            ondelete="SET NULL",
+            name="fk_local_image_edit_tasks_target_node_id",
+        ),
+        nullable=True,
+    )
+    target_graph_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_artifact_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_artifacts.id",
+            ondelete="SET NULL",
+            name="fk_local_image_edit_tasks_source_artifact_id",
+        ),
+        nullable=True,
+    )
+    source_artifact_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_tasks_source_artifact_asset_id",
+        ),
+        nullable=True,
+    )
+    source_artifact_input_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    operation: Mapped[str] = mapped_column(String(32))
+    instruction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    replacement_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mask_geometry_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    requested_provider_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    requested_local_edit_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[LocalImageEditTaskStatus] = mapped_column(
+        enum_value_column(LocalImageEditTaskStatus),
+        default=LocalImageEditTaskStatus.DRAFT,
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    progress_phase: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    result_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_tasks_result_asset_id",
+        ),
+        nullable=True,
+    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    product: Mapped[Product] = relationship(
+        back_populates="local_image_edit_tasks",
+        foreign_keys=[product_id],
+    )
+    source_asset: Mapped[ProductImageAsset] = relationship(foreign_keys=[source_asset_id])
+    source_artifact_asset: Mapped[ProductImageAsset | None] = relationship(
+        foreign_keys=[source_artifact_asset_id]
+    )
+    mask_media_object: Mapped[MediaObject] = relationship(foreign_keys=[mask_media_object_id])
+    target_graph: Mapped[WorkflowGraph | None] = relationship(foreign_keys=[target_graph_id])
+    target_node: Mapped[WorkflowGraphNode | None] = relationship(foreign_keys=[target_node_id])
+    source_artifact: Mapped[WorkflowGraphArtifact | None] = relationship(foreign_keys=[source_artifact_id])
+    result_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[result_asset_id])
+    references: Mapped[list[LocalImageEditTaskReference]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="LocalImageEditTaskReference.sort_order",
+    )
+    provider_attempts: Mapped[list[LocalImageEditProviderAttempt]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+        order_by="LocalImageEditProviderAttempt.attempt_number",
+    )
+    adoption_events: Mapped[list[LocalImageEditAdoptionEvent]] = relationship(
+        back_populates="task",
+        foreign_keys="LocalImageEditAdoptionEvent.task_id",
+        order_by="LocalImageEditAdoptionEvent.created_at, LocalImageEditAdoptionEvent.id",
+    )
+
+
+class LocalImageEditTaskReference(Base):
+    """有序、受限的局部编辑参考资产 junction。"""
+
+    __tablename__ = "local_image_edit_task_references"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "asset_id",
+            name="uq_local_image_edit_task_references_task_asset",
+        ),
+        UniqueConstraint(
+            "task_id",
+            "sort_order",
+            name="uq_local_image_edit_task_references_task_order",
+        ),
+        CheckConstraint(
+            "sort_order >= 0 AND sort_order < 6",
+            name="ck_local_image_edit_task_references_bounded_order",
+        ),
+        Index("ix_local_image_edit_task_references_asset", "asset_id"),
+    )
+
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "local_image_edit_tasks.id",
+            ondelete="CASCADE",
+            name="fk_local_image_edit_task_references_task_id",
+        ),
+        primary_key=True,
+    )
+    asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_task_references_asset_id",
+        ),
+        primary_key=True,
+    )
+    sort_order: Mapped[int] = mapped_column(Integer)
+
+    task: Mapped[LocalImageEditTask] = relationship(back_populates="references")
+    asset: Mapped[ProductImageAsset] = relationship(foreign_keys=[asset_id])
+
+
+class LocalImageEditProviderAttempt(Base, TimestampMixin):
+    """局部编辑 provider attempt/effect 审计；不存图片、mask bytes 或 secret。"""
+
+    __tablename__ = "local_image_edit_provider_attempts"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "attempt_number",
+            name="uq_local_image_edit_provider_attempts_task_number",
+        ),
+        UniqueConstraint(
+            "task_id",
+            "attempt_id",
+            name="uq_local_image_edit_provider_attempts_task_attempt",
+        ),
+        CheckConstraint("attempt_number >= 1", name="ck_local_image_edit_provider_attempts_positive_number"),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_local_image_edit_provider_attempts_request_hash",
+        ),
+        CheckConstraint(
+            "phase IN ('claimed', 'provider_pending', 'provider_call', 'provider_result_received', "
+            "'succeeded', 'failed', 'unknown')",
+            name="ck_local_image_edit_provider_attempts_phase",
+        ),
+        CheckConstraint(
+            "effect_result IN ('pending', 'applied', 'failed', 'unknown', 'unsupported')",
+            name="ck_local_image_edit_provider_attempts_effect_result",
+        ),
+        Index(
+            "ix_local_image_edit_provider_attempts_task_created",
+            "task_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "local_image_edit_tasks.id",
+            ondelete="CASCADE",
+            name="fk_local_image_edit_provider_attempts_task_id",
+        ),
+    )
+    attempt_id: Mapped[str] = mapped_column(String(36))
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    operation_key: Mapped[str] = mapped_column(String(255))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    phase: Mapped[str] = mapped_column(String(40), default="claimed")
+    effect_result: Mapped[str] = mapped_column(String(20), default="pending")
+    provider_name: Mapped[str] = mapped_column(String(80))
+    provider_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    effective_parameters_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    late_result_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_provider_attempts_late_result_asset_id",
+        ),
+        nullable=True,
+    )
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    task: Mapped[LocalImageEditTask] = relationship(back_populates="provider_attempts")
+    late_result_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[late_result_asset_id])
+
+
+class LocalImageEditAdoptionEvent(Base):
+    """局部编辑结果的显式 adopt/revert 事件；不另存 current state。"""
+
+    __tablename__ = "local_image_edit_adoption_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('adopt', 'revert')",
+            name="ck_local_image_edit_adoption_events_type",
+        ),
+        CheckConstraint(
+            "from_artifact_id IS NOT NULL AND to_artifact_id IS NOT NULL",
+            name="ck_local_image_edit_adoption_events_artifacts",
+        ),
+        Index(
+            "ix_local_image_edit_adoption_events_node_created",
+            "node_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_local_image_edit_adoption_events_product_id",
+        ),
+    )
+    task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "local_image_edit_tasks.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_adoption_events_task_id",
+        ),
+    )
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graphs.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_adoption_events_graph_id",
+        ),
+    )
+    node_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_nodes.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_adoption_events_node_id",
+        ),
+    )
+    event_type: Mapped[str] = mapped_column(String(16))
+    from_artifact_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_artifacts.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_adoption_events_from_artifact_id",
+        ),
+    )
+    to_artifact_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_artifacts.id",
+            ondelete="RESTRICT",
+            name="fk_local_image_edit_adoption_events_to_artifact_id",
+        ),
+    )
+    related_event_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "local_image_edit_adoption_events.id",
+            ondelete="SET NULL",
+            name="fk_local_image_edit_adoption_events_related_event_id",
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    task: Mapped[LocalImageEditTask] = relationship(
+        back_populates="adoption_events",
+        foreign_keys=[task_id],
+    )
 class DeliveryRenditionJob(Base, TimestampMixin):
     """从成功的工作流生成原图确定性派生交付图片的 durable 任务。"""
 

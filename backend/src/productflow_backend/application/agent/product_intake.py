@@ -7,14 +7,16 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, model_validator
 
+from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
     WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
     WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
+    DeliverySpec,
 )
-from productflow_backend.domain.errors import BusinessValidationError, ConflictError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 
 AGENT_PRODUCT_SELECTION_SCHEMA_VERSION = 1
 WORKFLOW_INTAKE_SCHEMA_VERSION = 1
@@ -44,6 +46,7 @@ AgentProductImageTypeKey = Literal[
     "shipping",
 ]
 ReferenceAssetId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+DeliveryPresetKey = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +176,7 @@ class AgentProductSelectionV1(StrictIntakeModel):
         min_length=WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
         max_length=len(AGENT_PRODUCT_IMAGE_TYPE_CATALOG),
     )
+    delivery_preset_key: DeliveryPresetKey | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_image_types(self) -> AgentProductSelectionV1:
@@ -183,6 +187,8 @@ class AgentProductSelectionV1(StrictIntakeModel):
             raise ValueError("图片类型 order 必须按数组顺序从 0 连续递增")
         if sum(item.quantity for item in self.image_types) > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
             raise ValueError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
+        if self.delivery_preset_key is not None:
+            _delivery_preset_spec_or_value_error(self.delivery_preset_key)
         return self
 
 
@@ -196,6 +202,8 @@ class WorkflowIntakeV1(StrictIntakeModel):
         min_length=1,
         max_length=WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
     )
+    delivery_preset_key: DeliveryPresetKey | None = Field(default=None, exclude_if=lambda value: value is None)
+    delivery_spec: DeliverySpec | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_intake(self) -> WorkflowIntakeV1:
@@ -205,7 +213,48 @@ class WorkflowIntakeV1(StrictIntakeModel):
         )
         if len(self.reference_asset_ids) != len(set(self.reference_asset_ids)):
             raise ValueError("参考图资产不能重复")
+        if (self.delivery_preset_key is None) != (self.delivery_spec is None):
+            raise ValueError("delivery_preset_key 与 delivery_spec 必须同时存在或同时省略")
         return self
+
+
+def _delivery_preset_spec_or_value_error(key: str) -> DeliverySpec:
+    try:
+        return get_delivery_preset(key).spec
+    except NotFoundError as exc:
+        raise ValueError(f"未知 DeliverySpec 预设: {key}") from exc
+
+
+def delivery_preset_spec_for_key(key: str | None) -> DeliverySpec | None:
+    """Resolve a current platform preset for a new intake or direct-create command."""
+    if key is None:
+        return None
+    try:
+        return get_delivery_preset(key).spec
+    except NotFoundError as exc:
+        raise BusinessValidationError(f"未知 DeliverySpec 预设: {key}") from exc
+
+
+def workflow_intake_from_selection(
+    selection: AgentProductSelectionV1,
+    *,
+    reference_asset_ids: list[str],
+) -> WorkflowIntakeV1:
+    return WorkflowIntakeV1(
+        schema_version=WORKFLOW_INTAKE_SCHEMA_VERSION,
+        image_types=selection.image_types,
+        reference_asset_ids=list(reference_asset_ids),
+        delivery_preset_key=selection.delivery_preset_key,
+        delivery_spec=delivery_preset_spec_for_key(selection.delivery_preset_key),
+    )
+
+
+def workflow_intake_payload(intake: WorkflowIntakeV1) -> dict[str, object]:
+    """Serialize intake compatibly while retaining null-valued fields inside a selected spec snapshot."""
+    payload = intake.model_dump(mode="json", exclude_none=True)
+    if intake.delivery_spec is not None:
+        payload["delivery_spec"] = intake.delivery_spec.model_dump(mode="json")
+    return payload
 
 
 def parse_agent_product_selection(raw_json: str) -> AgentProductSelectionV1:
@@ -250,7 +299,7 @@ def agent_product_workspace_request_hash(
 ) -> str:
     payload = {
         "product_name": normalized_product_name,
-        "selection": selection.model_dump(mode="json"),
+        "selection": selection.model_dump(mode="json", exclude_none=True),
         "images": [
             {
                 "order": order,
@@ -304,7 +353,7 @@ def agent_product_intake_request_hash(
 ) -> str:
     payload = {
         "request_kind": "agent_product_intake_finalization_v1",
-        "selection": selection.model_dump(mode="json"),
+        "selection": selection.model_dump(mode="json", exclude_none=True),
         "images": [
             {
                 "order": order,
@@ -326,7 +375,7 @@ def agent_product_intake_from_assets_request_hash(
 ) -> str:
     payload = {
         "request_kind": "agent_product_intake_from_assets_v1",
-        "selection": selection.model_dump(mode="json"),
+        "selection": selection.model_dump(mode="json", exclude_none=True),
         "reference_asset_ids": list(reference_asset_ids),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -354,6 +403,7 @@ __all__ = [
     "AgentProductImageTypeOption",
     "AgentProductImageTypeSelection",
     "AgentProductSelectionV1",
+    "DeliveryPresetKey",
     "WORKFLOW_INTAKE_SCHEMA_VERSION",
     "WorkflowIntakeV1",
     "IMAGE_TYPE_GENERATION_JOBS",
@@ -369,7 +419,10 @@ __all__ = [
     "agent_product_intake_request_hash",
     "agent_product_workspace_request_hash",
     "agent_workbench_attach_request_hash",
+    "delivery_preset_spec_for_key",
     "normalize_agent_product_idempotency_key",
     "parse_agent_product_selection",
     "parse_workflow_intake",
+    "workflow_intake_from_selection",
+    "workflow_intake_payload",
 ]

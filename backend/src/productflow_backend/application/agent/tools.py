@@ -22,6 +22,7 @@ from productflow_backend.application.agent.product_intake import (
     AgentProductSelectionV1,
     agent_product_image_type_catalog_json,
     parse_workflow_intake,
+    workflow_intake_payload,
 )
 from productflow_backend.application.agent.product_workspaces import (
     finalize_agent_product_workspace_intake_from_assets,
@@ -129,6 +130,8 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 - 视觉例外的 override.field 必须在 visual_system.payload.locked_fields 中；覆盖 spacing 时必须包含 spacing。
 - quantity 必须等于逐图 images 数量；提示词计划、图片类型和 image plan 的 key 必须一一对应。
 - workflow_draft.intake 是用户初始提交的不可变需求。调整图片类型或数量前必须明确询问并获得用户确认，不能静默改写。
+- 如果 intake 提供 delivery_preset_key 和 delivery_spec，每个 PlannedImage 都必须显式复制完全相同的
+  delivery_spec；不能只把默认规格放在 graph 或其他 side-state。
 - recipe 只提供可复用结构，legacy_archive_seed 只读；不得把 recipe payload 直接作为 WorkflowDraft，
   两者都不能原样作为当前商品的 WorkflowDraft 提交。
 - Logo、认证、工厂或其他专有素材只能来自用户真实资产，缺失时询问、降低要求或移除相关图片类型。
@@ -354,6 +357,10 @@ def validate_agent_workflow_draft(
         raise ConflictError("当前 Agent conversation 不是商品工作流作用域")
     if get_active_workflow_graph(session, product_id=product_id) is not None:
         raise ConflictError(LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT)
+    intake = parse_workflow_intake(
+        schema_version=conversation.workflow_draft.intake_schema_version,
+        payload=conversation.workflow_draft.intake_json,
+    )
     try:
         artifact = parse_workflow_draft_payload(value)
     except ValidationError as exc:
@@ -372,6 +379,7 @@ def validate_agent_workflow_draft(
             session,
             product_id=conversation.product_id,
             artifact=artifact,
+            required_delivery_spec=intake.delivery_spec if intake is not None else None,
         )
     except StructuredBusinessValidationError:
         raise
@@ -627,7 +635,7 @@ def _load_workflow_intake_context(
         raise ConflictError("WorkflowDraft intake 引用了其他商品的图片资产")
     if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
         raise ConflictError("WorkflowDraft intake 引用了未通过核验的图片资产")
-    return intake.model_dump(mode="json")
+    return workflow_intake_payload(intake)
 
 
 def _load_recipe_seed_context(

@@ -76,6 +76,7 @@ async def create_product_with_direct_graph_endpoint(
     price: str | None = Form(default=None),
     source_note: str | None = Form(default=None),
     generation_spec: str | None = Form(default=None),
+    delivery_preset_key: str | None = Form(default=None, max_length=80),
     session: Session = Depends(get_session),
 ) -> DirectCreateProductResponse:
     validate_reference_image_count(len(images))
@@ -92,6 +93,7 @@ async def create_product_with_direct_graph_endpoint(
         image_uploads=image_payloads,
         image_types=_parse_image_types(image_types),
         generation_spec=_parse_generation_spec(generation_spec),
+        delivery_preset_key=delivery_preset_key,
     )
     return serialize_direct_create(
         product=result.product,

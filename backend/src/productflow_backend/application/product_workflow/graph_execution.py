@@ -42,6 +42,7 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     compile_context_runtime,
     compile_image_runtime,
     compile_prompt_runtime,
+    graph_runtime_input_trace,
     sources_from_snapshot,
     strip_v3_prompt_payload,
 )
@@ -75,6 +76,7 @@ from productflow_backend.domain.durable_generation_tasks import (
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphNodeType,
+    GraphRunScope,
     JobStatus,
     ProductImageOriginType,
     WorkflowNodeStatus,
@@ -250,16 +252,24 @@ def _execute_node_run(
     applied_node = graph.node(node_run.node_id)
     if applied_node.node_type == GraphNodeType.CREATIVE_BRIEF:
         runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        runtime_trace = _runtime_trace_with_inputs(
+            graph=graph,
+            node_id=node_run.node_id,
+            sources=sources,
+            artifacts=artifacts,
+            trace=_context_trace(runtime),
+        )
         skipped = _complete_skipped_node_run(
             session,
+            run=run,
             node_run=node_run,
             sources=sources,
             input_digest=runtime.input_digest,
-            trace=_context_trace(runtime),
+            trace=runtime_trace,
         )
         if skipped:
             return artifacts
-        _merge_compiled_context(node_run, _context_trace(runtime))
+        _merge_compiled_context(node_run, runtime_trace)
         prompt_provider = dependencies.prompt_generation_provider()
         result, may_promote = _call_node_provider(
             session,
@@ -320,16 +330,24 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
     elif applied_node.node_type == GraphNodeType.VISUAL_SYSTEM:
         runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        runtime_trace = _runtime_trace_with_inputs(
+            graph=graph,
+            node_id=node_run.node_id,
+            sources=sources,
+            artifacts=artifacts,
+            trace=_context_trace(runtime),
+        )
         skipped = _complete_skipped_node_run(
             session,
+            run=run,
             node_run=node_run,
             sources=sources,
             input_digest=runtime.input_digest,
-            trace=_context_trace(runtime),
+            trace=runtime_trace,
         )
         if skipped:
             return artifacts
-        _merge_compiled_context(node_run, _context_trace(runtime))
+        _merge_compiled_context(node_run, runtime_trace)
         prompt_provider = dependencies.prompt_generation_provider()
         result, may_promote = _call_node_provider(
             session,
@@ -391,16 +409,24 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=overlay)
     elif applied_node.node_type == GraphNodeType.PROMPT_GENERATION:
         runtime = compile_prompt_runtime(graph, node_run.node_id, sources, artifacts)
+        runtime_trace = _runtime_trace_with_inputs(
+            graph=graph,
+            node_id=node_run.node_id,
+            sources=sources,
+            artifacts=artifacts,
+            trace=_prompt_context_trace(runtime),
+        )
         skipped = _complete_skipped_node_run(
             session,
+            run=run,
             node_run=node_run,
             sources=sources,
             input_digest=runtime.input_digest,
-            trace=_prompt_context_trace(runtime),
+            trace=runtime_trace,
         )
         if skipped:
             return artifacts
-        _merge_compiled_context(node_run, _prompt_context_trace(runtime))
+        _merge_compiled_context(node_run, runtime_trace)
         prompt_provider = dependencies.prompt_generation_provider()
         result, may_promote = _call_node_provider(
             session,
@@ -458,16 +484,24 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
     elif applied_node.node_type == GraphNodeType.IMAGE_GENERATION:
         runtime = compile_image_runtime(graph, node_run.node_id, sources, artifacts)
+        runtime_trace = _runtime_trace_with_inputs(
+            graph=graph,
+            node_id=node_run.node_id,
+            sources=sources,
+            artifacts=artifacts,
+            trace=_image_context_trace(runtime),
+        )
         skipped = _complete_skipped_node_run(
             session,
+            run=run,
             node_run=node_run,
             sources=sources,
             input_digest=runtime.input_digest,
-            trace=_image_context_trace(runtime),
+            trace=runtime_trace,
         )
         if skipped:
             return artifacts
-        _merge_compiled_context(node_run, _image_context_trace(runtime))
+        _merge_compiled_context(node_run, runtime_trace)
         image_provider = dependencies.image_provider()
         spec = GenerationSpec.model_validate(runtime.generation_spec)
         image_result, may_promote = _call_node_provider(
@@ -1303,6 +1337,20 @@ def _image_context_trace(runtime: ImageRuntimeInput) -> dict[str, Any]:
     }
 
 
+def _runtime_trace_with_inputs(
+    *,
+    graph: Any,
+    node_id: str,
+    sources: dict[str, GraphSourceRecord],
+    artifacts: GraphRuntimeArtifacts,
+    trace: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **trace,
+        "input_trace": graph_runtime_input_trace(graph, node_id, sources, artifacts),
+    }
+
+
 def _acquire_graph_run_execution_lock(run_id: str) -> threading.Lock | None:
     with _graph_run_execution_locks_guard:
         lock = _graph_run_execution_locks.get(run_id)
@@ -1470,7 +1518,7 @@ def _merge_compiled_context(node_run: WorkflowGraphNodeRun, runtime_trace: dict[
     merged = dict(runtime_trace)
     if existing.get("node_title"):
         merged["node_title"] = existing["node_title"]
-    if existing.get("input_trace"):
+    if "input_trace" not in merged and existing.get("input_trace"):
         merged["input_trace"] = existing["input_trace"]
     node_run.compiled_context_json = merged
     flag_modified(node_run, "compiled_context_json")
@@ -1662,11 +1710,14 @@ def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> 
 def _complete_skipped_node_run(
     session: Session,
     *,
+    run: WorkflowGraphRun,
     node_run: WorkflowGraphNodeRun,
     sources: dict[str, GraphSourceRecord],
     input_digest: str,
     trace: dict[str, Any],
 ) -> bool:
+    if run.run_scope != GraphRunScope.GRAPH:
+        return False
     if node_run.node_id is None:
         return False
     record = sources.get(node_run.node_id)

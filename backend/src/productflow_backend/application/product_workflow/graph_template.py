@@ -84,6 +84,7 @@ def build_direct_create_template(
     fact_set_version_id: str | None = None,
     source_note: str | None = None,
     generation_spec: dict[str, Any] | None = None,
+    delivery_spec: dict[str, Any] | None = None,
 ) -> WorkflowChangeSet:
     if not image_types:
         raise BusinessValidationError("至少选择一种图片类型")
@@ -191,6 +192,12 @@ def build_direct_create_template(
         for image_index in range(image_type.quantity):
             image_ref = f"image-{image_type.key}-{image_index + 1}"
             processing_refs.append(image_ref)
+            image_config: dict[str, Any] = {
+                "image_type_key": image_type.key,
+                "generation_spec": dict(type_generation_spec),
+            }
+            if delivery_spec is not None:
+                image_config["delivery_spec"] = dict(delivery_spec)
             operations.append(
                 CreateNodeOp(
                     client_ref=image_ref,
@@ -199,10 +206,7 @@ def build_direct_create_template(
                     position_x=760,
                     position_y=group_y + image_index * 90,
                     group_ref=group_ref,
-                    config={
-                        "image_type_key": image_type.key,
-                        "generation_spec": dict(type_generation_spec),
-                    },
+                    config=image_config,
                 )
             )
             operations.append(

@@ -16,6 +16,7 @@ from productflow_backend.application.agent.global_draft_contracts import (
     GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
     GlobalAgentDraftPayloadV1,
 )
+from productflow_backend.application.agent.product_intake import parse_workflow_intake
 from productflow_backend.application.agent.tasks import update_agent_task_from_turn
 from productflow_backend.application.agent.tools import get_agent_global_workflow_target
 from productflow_backend.application.media_library.drafts import (
@@ -104,10 +105,15 @@ def validate_global_agent_draft(
         raise ConflictError("目标 WorkflowDraft version 已变化，请重新读取目标上下文")
     if artifact.workflow_payload is None:
         raise BusinessValidationError("工作流 Draft 缺少 workflow_payload")
+    intake = parse_workflow_intake(
+        schema_version=draft.intake_schema_version,
+        payload=draft.intake_json,
+    )
     validate_workflow_draft_for_confirmation(
         session,
         product_id=artifact.product_id or "",
         artifact=artifact.workflow_payload,
+        required_delivery_spec=intake.delivery_spec if intake is not None else None,
     )
     return artifact
 
@@ -189,10 +195,15 @@ def attach_agent_global_draft_artifact(
     current_version = draft.current_revision.version if draft.current_revision is not None else 0
     if current_version != artifact.expected_draft_version:
         raise ConflictError("目标 WorkflowDraft version 已变化，请重新读取目标上下文")
+    intake = parse_workflow_intake(
+        schema_version=draft.intake_schema_version,
+        payload=draft.intake_json,
+    )
     validate_workflow_draft_for_confirmation(
         session,
         product_id=artifact.product_id,
         artifact=artifact.workflow_payload,
+        required_delivery_spec=intake.delivery_spec if intake is not None else None,
     )
     append_workflow_draft_revision(
         session,

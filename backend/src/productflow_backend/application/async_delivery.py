@@ -37,6 +37,12 @@ def delivery_key_for_actor(actor_name: str, aggregate_id: str) -> str:
     return f"{actor_name}:{aggregate_id}"
 
 
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
 def _validate_existing_dispatch_identity(
     existing: AsyncDispatch,
     *,
@@ -75,10 +81,14 @@ def stage_async_dispatch(
         )
         if payload is not None and existing.payload_json is None:
             existing.payload_json = payload
+        now = now_utc()
         if existing.status == AsyncDispatchStatus.CONSUMED:
-            now = now_utc()
             existing.status = AsyncDispatchStatus.PENDING
-            existing.available_at = available_at or now
+            # A pollable target may have scheduled its next delivery before
+            # the worker marked this delivery consumed. Resident recovery can
+            # observe the consumed row before the next broker publish, so do
+            # not replace that durable future timestamp with ``now``.
+            existing.available_at = available_at or existing.available_at or now
             existing.lease_token = None
             existing.lease_expires_at = None
             existing.attempts = 0
@@ -87,6 +97,18 @@ def stage_async_dispatch(
             existing.consumed_at = None
             existing.updated_at = now
             session.flush()
+        elif (
+            existing.status == AsyncDispatchStatus.SENT
+            and available_at is not None
+            and existing.lease_token is not None
+        ):
+            lease_expires_at = existing.lease_expires_at
+            if lease_expires_at is None or _as_aware_utc(lease_expires_at) > now:
+                # The consumer still owns the current SENT delivery. Keep
+                # that lease intact while recording the next poll durably.
+                existing.available_at = available_at
+                existing.updated_at = now
+                session.flush()
         return existing
     dispatch = AsyncDispatch(
         delivery_key=delivery_key,
@@ -174,6 +196,82 @@ def stage_async_dispatch_for_actor(
         aggregate_id=aggregate_id,
         available_at=available_at,
     )
+
+
+def recover_async_dispatch_for_actor(
+    session: Session,
+    actor_name: str,
+    aggregate_id: str,
+    *,
+    delay_ms: int | None = None,
+) -> AsyncDispatch:
+    """Stage an actor delivery and recover one stale-publish dead-letter row.
+
+    Normal staging deliberately does not revive ``DEAD`` dispatches: a dead
+    delivery is an explicit retry boundary. Agent Turn recovery may revive
+    only the first default-bound dead row with no recorded error, which proves
+    stale SENT reconciliation rather than target failure and preserves its
+    attempt count.
+    """
+    available_at = now_utc() + timedelta(milliseconds=delay_ms) if delay_ms is not None else None
+    dispatch = stage_async_dispatch(
+        session,
+        delivery_key=delivery_key_for_actor(actor_name, aggregate_id),
+        actor_name=actor_name,
+        aggregate_id=aggregate_id,
+        available_at=available_at,
+    )
+    if (
+        dispatch.status != AsyncDispatchStatus.DEAD
+        or dispatch.attempts != DEFAULT_DISPATCH_MAX_ATTEMPTS
+        or dispatch.last_error is not None
+    ):
+        return dispatch
+    return _recover_stale_dead_dispatch(
+        session,
+        dispatch_id=dispatch.id,
+        available_at=available_at,
+    )
+
+
+def _recover_stale_dead_dispatch(
+    session: Session,
+    *,
+    dispatch_id: str,
+    available_at: datetime | None = None,
+) -> AsyncDispatch:
+    """Conditionally reopen one stale-publish dead row without resetting attempts."""
+    # A SENT row can become DEAD during stale-publish reconciliation without
+    # an execution error. Recover exactly that first dead-letter boundary, but
+    # retain the delivery count so the next claim is attempt N+1. Target
+    # failures and later dead rows remain dead until an explicit operator
+    # requeue; otherwise the resident scanner would erase the retry bound.
+    now = now_utc()
+    session.execute(
+        update(AsyncDispatch)
+        .where(
+            AsyncDispatch.id == dispatch_id,
+            AsyncDispatch.status == AsyncDispatchStatus.DEAD,
+            AsyncDispatch.attempts == DEFAULT_DISPATCH_MAX_ATTEMPTS,
+            AsyncDispatch.last_error.is_(None),
+        )
+        .values(
+            status=AsyncDispatchStatus.PENDING,
+            available_at=available_at or now,
+            lease_token=None,
+            lease_expires_at=None,
+            sent_at=None,
+            consumed_at=None,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    dispatch = session.get(AsyncDispatch, dispatch_id)
+    if dispatch is None:
+        raise RuntimeError(f"async dispatch disappeared during dead recovery: {dispatch_id}")
+    session.expire(dispatch)
+    session.refresh(dispatch)
+    return dispatch
 
 
 def enqueue_async_dispatch_for_actor(
@@ -323,7 +421,13 @@ def _reconcile_stale_sent(
             dispatch.status = AsyncDispatchStatus.DEAD
         else:
             dispatch.status = AsyncDispatchStatus.PENDING
-            dispatch.available_at = now
+            # A target can persist its next poll timestamp while the current
+            # SENT row still has an active consumer lease. If that consumer
+            # dies before marking the row consumed, reconciliation must retain
+            # the scheduled delay instead of turning recovery into an
+            # immediate redelivery.
+            if _as_aware_utc(dispatch.available_at) <= now:
+                dispatch.available_at = now
         reconciled += 1
     return reconciled
 

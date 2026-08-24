@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
@@ -15,6 +15,13 @@ from productflow_backend.presentation.schemas.products import (
 
 class CreateDeliveryRenditionRequest(DeliverySpec):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class DeliveryExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rendition_job_ids: list[str] = Field(min_length=1, max_length=100)
+    allow_partial: bool = False
 
 
 class DeliveryRenditionJobResponse(BaseModel):

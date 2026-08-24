@@ -25,6 +25,27 @@ class ProductImageOriginType(StrEnum):
     WORKFLOW_GENERATION = "workflow_generation"
     IMAGE_SESSION_ATTACH = "image_session_attach"
     LEGACY_IMPORT = "legacy_import"
+    LOCAL_EDIT = "local_edit"
+
+
+class ProductImageFidelityOutcome(StrEnum):
+    """人工保真检查的单项结论；四项检查必须独立记录。"""
+
+    PASS = "pass"
+    FAIL = "fail"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class LocalImageEditTaskStatus(StrEnum):
+    """局部编辑任务的 durable 状态；unknown 表示 provider effect 无法证明。"""
+
+    DRAFT = "draft"
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
 
 
 class JobStatus(StrEnum):
@@ -184,6 +205,20 @@ class WorkflowRecipeKind(StrEnum):
 
     WORKFLOW_RECIPE = "workflow_recipe"
     RECIPE_FRAGMENT = "recipe_fragment"
+
+
+class WorkflowRecipeOrigin(StrEnum):
+    """配方来源：用户从 live graph 保存，或平台提供的官方 seed。"""
+
+    OFFICIAL = "official"
+    USER = "user"
+
+
+class WorkflowRecipeCreationSource(StrEnum):
+    """配方版本的创建方式，属于版本治理而不是结构 kind。"""
+
+    USER_EXTRACT = "user_extract"
+    OFFICIAL_SEED = "official_seed"
 
 
 class AgentConversationStatus(StrEnum):

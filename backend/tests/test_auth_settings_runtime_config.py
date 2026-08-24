@@ -243,6 +243,81 @@ def test_current_provider_bindings_resolve_prompt_agent_and_image(configured_env
     )
 
 
+def test_masked_local_edit_requires_profile_capability_and_openai_images_binding(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        _login(client)
+        _unlock_settings(client)
+        profile = client.post(
+            "/api/settings/provider-profiles",
+            json={
+                "name": "OpenAI Images local edit",
+                "provider_type": "openai_compatible",
+                "base_url": "https://api.example.test/v1",
+                "api_key": "provider-secret",
+                "capabilities": ["image_images", "image_responses"],
+                "default_models": {},
+                "config": {},
+                "enabled": True,
+            },
+        )
+        assert profile.status_code == 200, profile.text
+        profile_id = profile.json()["id"]
+
+        image_binding = client.patch(
+            "/api/settings/provider-bindings/image",
+            json={
+                "provider_kind": "openai_images",
+                "provider_profile_id": profile_id,
+                "model_settings": {"model": "gpt-image-1"},
+                "config": {"images_quality": "high"},
+            },
+        )
+        assert image_binding.status_code == 200, image_binding.text
+
+        without_capability = resolve_image_provider_config()
+        assert without_capability.image_mask_edit_enabled is False
+        assert without_capability.masked_local_edit_available is False
+
+        profile_update = client.patch(
+            f"/api/settings/provider-profiles/{profile_id}",
+            json={"capabilities": ["image_images", "image_responses", "image_mask_edit"]},
+        )
+        assert profile_update.status_code == 200, profile_update.text
+
+        responses_binding = client.patch(
+            "/api/settings/provider-bindings/image",
+            json={
+                "provider_kind": "openai_responses",
+                "provider_profile_id": profile_id,
+                "model_settings": {"model": "gpt-image-2"},
+                "config": {"responses_background_enabled": False},
+            },
+        )
+        assert responses_binding.status_code == 200, responses_binding.text
+        non_images_binding = resolve_image_provider_config()
+        assert non_images_binding.image_mask_edit_enabled is False
+        assert non_images_binding.masked_local_edit_available is False
+
+        image_binding = client.patch(
+            "/api/settings/provider-bindings/image",
+            json={
+                "provider_kind": "openai_images",
+                "provider_profile_id": profile_id,
+                "model_settings": {"model": "gpt-image-1"},
+                "config": {"images_quality": "high"},
+            },
+        )
+        assert image_binding.status_code == 200, image_binding.text
+
+    with_capability = resolve_image_provider_config()
+    assert with_capability.provider_kind == "openai_images"
+    assert with_capability.image_mask_edit_enabled is True
+    assert with_capability.masked_local_edit_available is True
+
+
 def test_settings_export_import_uses_only_v3_current_bindings(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

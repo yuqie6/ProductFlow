@@ -18,52 +18,34 @@ depends_on = None
 
 
 def upgrade() -> None:
-    _purge_incompatible_recipe_versions(keep_schema_version=3)
+    _assert_no_incompatible_recipe_versions(keep_schema_version=3)
     _replace_schema_version_check(equals=3)
 
 
 def downgrade() -> None:
-    _purge_incompatible_recipe_versions(keep_schema_version=1)
+    _assert_no_incompatible_recipe_versions(keep_schema_version=1)
     _replace_schema_version_check(equals=1)
 
 
-def _purge_incompatible_recipe_versions(*, keep_schema_version: int) -> None:
+def _assert_no_incompatible_recipe_versions(*, keep_schema_version: int) -> None:
     bind = op.get_bind()
-    bind.execute(
+    incompatible = bind.execute(
         sa.text(
             """
-            DELETE FROM workflow_draft_recipe_seeds
-            WHERE recipe_version_id IN (
-                SELECT id FROM workflow_recipe_versions WHERE schema_version <> :keep
-            )
+            SELECT id
+            FROM workflow_recipe_versions
+            WHERE schema_version <> :keep
+            ORDER BY id
+            LIMIT 1
             """
         ),
         {"keep": keep_schema_version},
-    )
-    bind.execute(
-        sa.text(
-            """
-            UPDATE workflow_recipes
-            SET current_version_id = NULL
-            WHERE current_version_id IN (
-                SELECT id FROM workflow_recipe_versions WHERE schema_version <> :keep
-            )
-            """
-        ),
-        {"keep": keep_schema_version},
-    )
-    bind.execute(
-        sa.text("DELETE FROM workflow_recipe_versions WHERE schema_version <> :keep"),
-        {"keep": keep_schema_version},
-    )
-    bind.execute(
-        sa.text(
-            """
-            DELETE FROM workflow_recipes
-            WHERE id NOT IN (SELECT recipe_id FROM workflow_recipe_versions)
-            """
+    ).first()
+    if incompatible is not None:
+        raise RuntimeError(
+            f"存在 schema_version != {keep_schema_version} 的用户配方；"
+            "升级或降级已停止且不会删除配方、版本或 Draft seed"
         )
-    )
 
 
 def _replace_schema_version_check(*, equals: int) -> None:

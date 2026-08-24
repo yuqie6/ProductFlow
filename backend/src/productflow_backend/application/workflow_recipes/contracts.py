@@ -45,6 +45,7 @@ RecipeKey = Annotated[
     ),
 ]
 RecipeText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+RecipeReference = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class StrictRecipeModel(BaseModel):
@@ -128,6 +129,33 @@ class RecipePayload(StrictRecipeModel):
         return self
 
 
+class RecipeGovernance(StrictRecipeModel):
+    """Recipe version metadata kept separate from the reusable graph payload."""
+
+    applicable_image_types: tuple[RecipeKey, ...] = Field(min_length=1, max_length=32)
+    required_inputs: tuple[RecipeKey, ...] = Field(default_factory=tuple, max_length=32)
+    default_result: RecipeText
+    thumbnail: RecipeReference | None = None
+    provider_sample: RecipeReference | None = None
+
+    @model_validator(mode="after")
+    def validate_unique_values(self) -> RecipeGovernance:
+        _require_unique(list(self.applicable_image_types), label="适用图片类型")
+        _require_unique(list(self.required_inputs), label="配方所需输入")
+        return self
+
+
+def parse_recipe_governance(value: RecipeGovernance | dict[str, Any] | None) -> RecipeGovernance | None:
+    if value is None or isinstance(value, RecipeGovernance):
+        return value
+    return RecipeGovernance.model_validate(value)
+
+
+def recipe_governance_dict(value: RecipeGovernance | dict[str, Any] | None) -> dict[str, Any] | None:
+    parsed = parse_recipe_governance(value)
+    return parsed.model_dump(mode="json") if parsed is not None else None
+
+
 def recipe_payload_dict(payload: RecipePayload | dict[str, Any]) -> dict[str, Any]:
     parsed = payload if isinstance(payload, RecipePayload) else RecipePayload.model_validate(payload)
     return parsed.model_dump(mode="json")
@@ -166,7 +194,10 @@ __all__ = [
     "RecipeGraphEdge",
     "RecipeGraphGroup",
     "RecipeGraphNode",
+    "RecipeGovernance",
     "RecipePayload",
+    "parse_recipe_governance",
+    "recipe_governance_dict",
     "recipe_payload_dict",
     "recipe_payload_hash",
     "recipe_payload_json",

@@ -59,6 +59,7 @@ from productflow_backend.infrastructure.prompt.base import (
     PromptGenerationRequest,
     PromptGenerationResult,
 )
+from productflow_backend.presentation.schemas.graphs import serialize_graph_run
 
 
 class InventingTextPromptProvider(PromptGenerationProvider):
@@ -153,6 +154,11 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
         "prompt",
         "image",
     }
+    node_id_by_run_id = {item.id: item.node_id for item in submission.run.node_runs}
+    artifact_by_node_id = {
+        node_id_by_run_id[artifact.node_run_id]: artifact
+        for artifact in artifacts
+    }
     prompt_artifact = next(artifact for artifact in artifacts if artifact.artifact_type == "prompt")
     assert "images" not in prompt_artifact.payload_json
     assert "fact_keys" not in prompt_artifact.payload_json
@@ -184,6 +190,34 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     assert "contract_version" in image_provider.requests[0].compiled_prompt
     assert "image_plan_key" not in image_provider.requests[0].compiled_prompt
     assert image_provider.requests[0].references
+    image_node = next(
+        node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    )
+    image_run = next(item for item in submission.run.node_runs if item.node_id == image_node.id)
+    image_trace = image_run.compiled_context_json["input_trace"]
+    prompt_input = next(item for item in image_trace if item["role"] == GraphEdgeRole.PROMPT.value)
+    assert prompt_input["source_node_id"] == prompt_node.id
+    assert prompt_input["artifact_id"] == prompt_artifact.id
+    assert prompt_input["artifact_type"] == "prompt"
+    prompt_run = next(item for item in submission.run.node_runs if item.node_id == prompt_node.id)
+    prompt_trace = prompt_run.compiled_context_json["input_trace"]
+    assert {
+        item["artifact_type"]
+        for item in prompt_trace
+        if item["role"] in {GraphEdgeRole.BRIEF.value, GraphEdgeRole.VISUAL_GUIDANCE.value}
+    } == {"creative_brief", "visual_system"}
+    for item in prompt_trace:
+        source_artifact = artifact_by_node_id.get(item["source_node_id"])
+        if source_artifact is not None:
+            assert item["artifact_id"] == source_artifact.id
+
+    serialized = serialize_graph_run(submission.run)
+    serialized_image_run = next(item for item in serialized.node_runs if item.node_id == image_node.id)
+    serialized_prompt_input = next(
+        item for item in serialized_image_run.input_trace if item.role == GraphEdgeRole.PROMPT.value
+    )
+    assert serialized_prompt_input.artifact_id == prompt_artifact.id
+    assert serialized_prompt_input.artifact_type == "prompt"
     projection = project_workflow_graph(db_session, created.graph)
     image_node = next(node for node in projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
     image_artifact = next(artifact for artifact in artifacts if artifact.artifact_type == "image")
@@ -195,6 +229,10 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     assert asset_node.preview_asset_id == asset_node.bound_asset_id
     assert asset_node.unused is False
     assert asset_node.config.get("role") == "product_identity"
+    reference_input = next(item for item in image_trace if item["role"] == GraphEdgeRole.REFERENCE.value)
+    assert reference_input["source_node_id"] == asset_node.id
+    assert reference_input["asset_id"] == asset_node.bound_asset_id
+    assert reference_input["artifact_id"] is None
     assert prompt_provider.requests[0].reference_images[0].role == "product_identity"
     assert image_provider.requests[0].references[0].role == "product_identity"
 
@@ -1089,6 +1127,55 @@ def test_matching_digest_skips_provider_and_stale_only_after_input_edit(db_sessi
     prompt_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
     assert visual_after.config_status == GraphConfigStatus.STALE
     assert prompt_after.config_status == GraphConfigStatus.STALE
+
+
+def test_matching_digest_does_not_skip_explicit_node_run(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="单镜头重跑不跳过",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    first_prompt = RecordingPromptProvider()
+    first_image = RecordingImageProvider(image_bytes)
+    first = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: first_prompt,
+                image_provider_resolver=lambda: first_image,
+            ),
+        ),
+    )
+    assert first.run.status == WorkflowRunStatus.SUCCEEDED
+    image_node = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    second_prompt = RecordingPromptProvider()
+    second_image = RecordingImageProvider(image_bytes)
+    second = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.NODE,
+        target_node_id=image_node.id,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: second_prompt,
+                image_provider_resolver=lambda: second_image,
+            ),
+        ),
+    )
+    assert second.run.status == WorkflowRunStatus.SUCCEEDED
+    assert second_image.requests
+    assert not any(item.output_json and item.output_json.get("skipped") for item in second.run.node_runs)
 
 
 def _direct_graph_with_recording(db_session, *, name: str):

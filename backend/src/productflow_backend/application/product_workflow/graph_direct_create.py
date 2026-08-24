@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent.product_intake import delivery_preset_spec_for_key
 from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
 from productflow_backend.application.product_workflow.graph_commands import stage_new_workflow_graph
@@ -37,9 +38,12 @@ def create_product_with_direct_graph(
     image_types: list[DirectCreateImageType],
     storage: LocalStorage | None = None,
     generation_spec: dict | None = None,
+    delivery_preset_key: str | None = None,
 ) -> DirectCreateResult:
     """Create a product, its reference assets, and the preset v3 graph in one transaction."""
 
+    delivery_spec = delivery_preset_spec_for_key(delivery_preset_key)
+    delivery_spec_json = delivery_spec.model_dump(mode="json") if delivery_spec is not None else None
     storage = storage or LocalStorage()
     with compensate_storage_writes(session) as storage_writes:
         creation = stage_canonical_product_with_assets(
@@ -66,6 +70,7 @@ def create_product_with_direct_graph(
             fact_set_version_id=fact_set.id,
             source_note=source_note,
             generation_spec=generation_spec,
+            delivery_spec=delivery_spec_json,
         )
         command = stage_new_workflow_graph(
             session,

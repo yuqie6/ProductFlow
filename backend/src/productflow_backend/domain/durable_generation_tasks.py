@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
+from productflow_backend.domain.enums import (
+    JobStatus,
+    LocalImageEditTaskStatus,
+    WorkflowNodeStatus,
+    WorkflowRunStatus,
+)
 
 QUEUE_UNAVAILABLE_DETAIL = "任务队列暂不可用，请稍后重试"
 WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES = frozenset({"claimed", "prepared"})
@@ -122,6 +127,25 @@ DELIVERY_RENDITION_TASK_CONTRACT = DurableGenerationTaskContract(
     execution_running_statuses=(JobStatus.RUNNING,),
     status_snapshot_source="DeliveryRenditionJob",
     recovery_entrypoint="recover_unfinished_delivery_rendition_jobs",
+)
+
+LOCAL_IMAGE_EDIT_TASK_CONTRACT = DurableGenerationTaskContract(
+    name="local_image_edit_task",
+    durable_model_name="LocalImageEditTask",
+    actor_name="run_local_image_edit_task",
+    active_statuses=(LocalImageEditTaskStatus.QUEUED, LocalImageEditTaskStatus.RUNNING),
+    queued_statuses=(LocalImageEditTaskStatus.QUEUED,),
+    running_statuses=(LocalImageEditTaskStatus.RUNNING,),
+    terminal_statuses=(
+        LocalImageEditTaskStatus.SUCCEEDED,
+        LocalImageEditTaskStatus.FAILED,
+        LocalImageEditTaskStatus.CANCELLED,
+        LocalImageEditTaskStatus.UNKNOWN,
+    ),
+    execution_queued_statuses=(LocalImageEditTaskStatus.QUEUED,),
+    execution_running_statuses=(LocalImageEditTaskStatus.RUNNING,),
+    status_snapshot_source="LocalImageEditTask",
+    recovery_entrypoint="execute_local_image_edit_task",
 )
 
 

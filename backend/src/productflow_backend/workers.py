@@ -20,6 +20,7 @@ from productflow_backend.application.async_delivery import (
 )
 from productflow_backend.application.delivery_renditions import execute_delivery_rendition_job
 from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
+from productflow_backend.application.local_image_edits.service import execute_local_image_edit_task
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
@@ -27,12 +28,14 @@ from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    LOCAL_IMAGE_EDIT_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
 )
 from productflow_backend.domain.enums import AsyncDispatchStatus
 from productflow_backend.infrastructure.db.models import AsyncDispatch
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.chat_service import ImageChatService
+from productflow_backend.infrastructure.image.factory import get_image_provider
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
     configure_logging,
@@ -45,6 +48,7 @@ from productflow_backend.infrastructure.queue import (
     GRAPH_RUN_ACTOR_NAME,
     get_broker,
 )
+from productflow_backend.infrastructure.storage import LocalStorage
 
 configure_logging()
 get_broker()
@@ -80,6 +84,13 @@ def _execute_async_dispatch_target(actor_name: str, aggregate_id: str) -> None:
         )
     elif actor_name == DELIVERY_RENDITION_TASK_CONTRACT.actor_name:
         execute_delivery_rendition_job(aggregate_id)
+    elif actor_name == LOCAL_IMAGE_EDIT_TASK_CONTRACT.actor_name:
+        execute_local_image_edit_task(
+            session_factory=get_session_factory(),
+            task_id=aggregate_id,
+            provider=get_image_provider(),
+            storage=LocalStorage(),
+        )
     else:
         raise RuntimeError(f"unknown async dispatch actor: {actor_name}")
 
@@ -223,6 +234,16 @@ def run_delivery_rendition_job(job_id: str) -> None:
 
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_local_image_edit_task(task_id: str) -> None:
+    execute_local_image_edit_task(
+        session_factory=get_session_factory(),
+        task_id=task_id,
+        provider=get_image_provider(),
+        storage=LocalStorage(),
+    )
+
+
+@dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
     execute_async_dispatch(dispatch_id, aggregate_id)
 
@@ -235,6 +256,10 @@ assert_actor_uses_durable_generation_contract(
 assert_actor_uses_durable_generation_contract(
     DELIVERY_RENDITION_TASK_CONTRACT,
     run_delivery_rendition_job,
+)
+assert_actor_uses_durable_generation_contract(
+    LOCAL_IMAGE_EDIT_TASK_CONTRACT,
+    run_local_image_edit_task,
 )
 
 

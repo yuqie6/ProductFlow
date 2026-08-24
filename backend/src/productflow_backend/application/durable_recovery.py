@@ -8,6 +8,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.local_image_edits.service import (
+    LOCAL_EDIT_STALE_CLAIM_AFTER,
+    recover_local_image_edit_task,
+)
 from productflow_backend.application.product_workflow.graph_provider_effects import (
     load_node_run_effect,
     mark_graph_run_provider_unknown,
@@ -21,6 +25,7 @@ from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    LOCAL_IMAGE_EDIT_TASK_CONTRACT,
     WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
@@ -30,6 +35,7 @@ from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
     ImageSessionProviderEffect,
+    LocalImageEditTask,
     WorkflowGraphRun,
     utcnow,
 )
@@ -80,6 +86,14 @@ class DeliveryRenditionJobRecoverySummary:
     queued_jobs: int = 0
     stale_running_jobs: int = 0
     enqueued_jobs: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class LocalImageEditTaskRecoverySummary:
+    queued_tasks: int = 0
+    stale_running_tasks: int = 0
+    enqueued_tasks: int = 0
+    unknown_tasks: int = 0
 
 
 def recover_unfinished_workflow_runs(
@@ -503,4 +517,69 @@ def recover_unfinished_delivery_rendition_jobs(
         queued_jobs=queued_jobs,
         stale_running_jobs=stale_running_jobs,
         enqueued_jobs=enqueued_jobs,
+    )
+
+
+def recover_unfinished_local_image_edit_tasks(
+    *,
+    enqueue: Callable[[str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], None] | None = None,
+    reset_stale_running: bool = False,
+    stale_running_after: timedelta = LOCAL_EDIT_STALE_CLAIM_AFTER,
+) -> LocalImageEditTaskRecoverySummary:
+    """Recover local-edit delivery through the service-owned fencing state machine."""
+
+    session = get_session_factory()()
+    task_ids_to_enqueue: list[str] = []
+    queued_tasks = 0
+    stale_running_tasks = 0
+    unknown_tasks = 0
+    try:
+        task_ids = list(
+            session.scalars(
+                select(LocalImageEditTask.id).where(
+                    LocalImageEditTask.status.in_(LOCAL_IMAGE_EDIT_TASK_CONTRACT.active_statuses)
+                )
+            ).all()
+        )
+        for task_id in task_ids:
+            result = recover_local_image_edit_task(
+                session,
+                task_id=task_id,
+                reset_stale_running=reset_stale_running,
+                stale_after=stale_running_after,
+            )
+            if result.outcome == "queued":
+                queued_tasks += 1
+                task_ids_to_enqueue.append(task_id)
+            elif result.outcome == "requeued":
+                stale_running_tasks += 1
+                task_ids_to_enqueue.append(task_id)
+            elif result.outcome == "unknown":
+                unknown_tasks += 1
+            if stage_dispatch is not None and result.outcome in {"queued", "requeued"}:
+                stage_dispatch(session, task_id)
+                session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("恢复滞留局部编辑任务时读取数据库失败")
+        raise
+    finally:
+        session.close()
+
+    enqueued_tasks = len(task_ids_to_enqueue) if stage_dispatch is not None else 0
+    if stage_dispatch is None:
+        if enqueue is None:
+            raise ValueError("enqueue or stage_dispatch is required")
+        for task_id in task_ids_to_enqueue:
+            try:
+                enqueue(task_id)
+                enqueued_tasks += 1
+            except Exception:
+                logger.exception("恢复滞留局部编辑任务入队失败: task_id=%s", task_id)
+    return LocalImageEditTaskRecoverySummary(
+        queued_tasks=queued_tasks,
+        stale_running_tasks=stale_running_tasks,
+        enqueued_tasks=enqueued_tasks,
+        unknown_tasks=unknown_tasks,
     )

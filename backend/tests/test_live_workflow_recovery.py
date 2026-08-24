@@ -358,6 +358,96 @@ def test_recover_queued_agent_turn_sync_through_postgres_and_redis(
         assert persisted.status.value == "sent"
 
 
+def test_agent_poll_delay_survives_consumer_handoff_before_redis_redelivery(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+    aggregate_id = "live-agent-poll-delay-handoff"
+
+    with session_factory() as session:
+        dispatch = stage_async_dispatch_for_actor(session, "run_agent_turn_sync", aggregate_id)
+        session.commit()
+        dispatch_id = dispatch.id
+
+    first_dispatch = run_async_dispatcher_once(enqueue=enqueue_async_dispatch, limit=10)
+    assert first_dispatch.sent == 1
+
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    try:
+        message = next(consumer)
+        assert message is not None
+        assert message.actor_name == "run_async_dispatch"
+        assert message.args == (dispatch_id, aggregate_id)
+
+        with session_factory() as session:
+            lease_token = claim_async_dispatch_for_consumption(
+                session,
+                dispatch_id=dispatch_id,
+                aggregate_id=aggregate_id,
+            )
+        assert lease_token is not None
+
+        scheduled_after = datetime.now(UTC)
+        with session_factory() as session:
+            scheduled = stage_async_dispatch_for_actor(
+                session,
+                "run_agent_turn_sync",
+                aggregate_id,
+                delay_ms=5_000,
+            )
+            session.commit()
+            assert scheduled.status == AsyncDispatchStatus.SENT
+            assert scheduled.lease_token == lease_token
+            assert scheduled.available_at > scheduled_after
+
+        with session_factory() as session:
+            assert mark_async_dispatch_consumed(
+                session,
+                dispatch_id=dispatch_id,
+                aggregate_id=aggregate_id,
+                lease_token=lease_token,
+            )
+            session.commit()
+
+        # The resident business-state scan stages the same pollable projection
+        # every cycle. It must reopen CONSUMED without replacing the target's
+        # durable future timestamp with the scan time.
+        with session_factory() as session:
+            restaged = stage_async_dispatch_for_actor(
+                session,
+                "run_agent_turn_sync",
+                aggregate_id,
+            )
+            session.commit()
+            assert restaged.status == AsyncDispatchStatus.PENDING
+            next_poll_at = restaged.available_at
+
+        early = run_async_dispatcher_once(
+            enqueue=enqueue_async_dispatch,
+            now=next_poll_at - timedelta(milliseconds=1),
+            limit=10,
+        )
+        assert early.sent == 0
+
+        due = run_async_dispatcher_once(
+            enqueue=enqueue_async_dispatch,
+            now=next_poll_at,
+            limit=10,
+        )
+        assert due.sent == 1
+
+        consumer.ack(message)
+        next_message = next(consumer)
+        assert next_message is not None
+        assert next_message.actor_name == "run_async_dispatch"
+        assert next_message.args == (dispatch_id, aggregate_id)
+        consumer.ack(next_message)
+        broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+    finally:
+        consumer.close()
+
+
 def test_redis_publish_failure_reconciles_from_postgres_before_resend(
     live_recovery_dependencies: tuple[RedisBroker, ModuleType],
 ) -> None:

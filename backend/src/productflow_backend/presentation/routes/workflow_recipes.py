@@ -13,6 +13,7 @@ from productflow_backend.application.workflow_recipes.service import (
     list_workflow_recipes,
     preview_workflow_recipe,
 )
+from productflow_backend.domain.enums import WorkflowRecipeOrigin
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.graphs import serialize_graph_projection
 from productflow_backend.presentation.schemas.workflow_recipes import (
@@ -22,6 +23,7 @@ from productflow_backend.presentation.schemas.workflow_recipes import (
     PreviewWorkflowRecipeRequest,
     WorkflowRecipeApplicationResponse,
     WorkflowRecipeArchiveResponse,
+    WorkflowRecipeOriginFilter,
     WorkflowRecipePreviewResponse,
     WorkflowRecipeResponse,
     WorkflowRecipeSummaryResponse,
@@ -37,17 +39,24 @@ v3_router = APIRouter(prefix="/api/v3", tags=["workflow-recipes"], dependencies=
 
 
 @router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
+@v3_router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
 def list_workflow_recipes_endpoint(
     include_archived: bool = Query(default=False),
+    origin: WorkflowRecipeOriginFilter = Query(default="all"),
     session: Session = Depends(get_session),
 ) -> list[WorkflowRecipeSummaryResponse]:
     return [
         serialize_workflow_recipe_summary(recipe)
-        for recipe in list_workflow_recipes(session, include_archived=include_archived)
+        for recipe in list_workflow_recipes(
+            session,
+            include_archived=include_archived,
+            origin=None if origin == "all" else WorkflowRecipeOrigin(origin),
+        )
     ]
 
 
 @router.get("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeResponse)
+@v3_router.get("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeResponse)
 def get_workflow_recipe_endpoint(
     recipe_id: str,
     session: Session = Depends(get_session),
@@ -199,6 +208,8 @@ def apply_workflow_recipe_endpoint(
         product_id=product_id,
         recipe_id=recipe_id,
         expected_recipe_version=payload.expected_recipe_version,
+        expected_graph_revision=payload.expected_graph_revision,
+        preview_digest=payload.preview_digest,
         idempotency_key=payload.idempotency_key,
     )
     projection = get_graph_projection(
@@ -213,6 +224,7 @@ def apply_workflow_recipe_endpoint(
 
 
 @router.delete("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeArchiveResponse)
+@v3_router.delete("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeArchiveResponse)
 def archive_workflow_recipe_endpoint(
     recipe_id: str,
     expected_recipe_version: int = Query(ge=1),

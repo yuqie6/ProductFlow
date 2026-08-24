@@ -67,9 +67,11 @@ describe("ProductFlow Pi tools", () => {
 
   it("persists product intake from conversation asset IDs", async () => {
     const calls: string[] = [];
+    let forwardedSelection: Record<string, unknown> | undefined;
     const client = {
-      finalizeProductIntake: async () => {
+      finalizeProductIntake: async (_conversationID: string, args: { selection: Record<string, unknown> }) => {
         calls.push("finalize");
+        forwardedSelection = args.selection;
         return { accepted: true, intake_finalized: true, product_id: "product-1" };
       },
     } as unknown as ProductFlowClient;
@@ -83,6 +85,7 @@ describe("ProductFlow Pi tools", () => {
       {
         selection: {
           schema_version: 1,
+          delivery_preset_key: "jd_hero",
           image_types: [{ key: "hero", quantity: 2, order: 0 }],
         },
         reference_asset_ids: ["asset-1"],
@@ -93,6 +96,11 @@ describe("ProductFlow Pi tools", () => {
     );
 
     expect(calls).toEqual(["finalize"]);
+    expect(forwardedSelection).toEqual({
+      schema_version: 1,
+      delivery_preset_key: "jd_hero",
+      image_types: [{ key: "hero", quantity: 2, order: 0 }],
+    });
     expect(result.content[0]).toMatchObject({ type: "text" });
     expect(String((result.content[0] as { text: string }).text)).toContain("intake_finalized");
   });

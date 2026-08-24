@@ -18,7 +18,9 @@ from productflow_backend.domain.enums import (
     MediaVerificationStatus,
     ProductImageOriginType,
     WorkflowDraftStatus,
+    WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
+    WorkflowRecipeOrigin,
 )
 from productflow_backend.infrastructure.db.models import (
     AgentSession,
@@ -35,6 +37,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNodeRun,
     WorkflowGraphRun,
     WorkflowRecipe,
+    WorkflowRecipeVersion,
 )
 
 LEGACY_SOURCE_TABLES = {
@@ -75,6 +78,64 @@ def _configure_sqlite_alembic(
     return database_path, config
 
 
+def _insert_workflow_media_link_fixture(
+    connection: sa.Connection,
+    *,
+    include_target_graph: bool,
+) -> None:
+    now = datetime.now(UTC)
+    connection.execute(
+        sa.text(
+            "INSERT INTO products (id, name, created_at, updated_at) "
+            "VALUES ('product-media-link', '子图库迁移商品', :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO product_workflows "
+            "(id, product_id, title, active, schema_version, revision, edit_version, created_at, updated_at) "
+            "VALUES ('workflow-media-link', 'product-media-link', '旧工作流', 1, 2, 1, 0, :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO media_objects "
+            "(id, storage_path, mime_type, verification_status, created_at) "
+            "VALUES ('media-media-link', 'migration/media-link.png', 'image/png', 'legacy_pending', :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO media_library_assets "
+            "(id, media_object_id, source_type, source_id, provenance_json, provenance_hash, revision, "
+            "display_name, original_filename, is_archived, created_at, updated_at) "
+            "VALUES ('library-media-link', 'media-media-link', 'direct_upload', 'source-media-link', "
+            ":provenance, :payload_hash, 1, '迁移素材', 'media-link.png', 0, :now, :now)"
+        ),
+        {"provenance": "{}", "payload_hash": "a" * 64, "now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_media_library_assets "
+            "(workflow_id, media_library_asset_id, created_at) "
+            "VALUES ('workflow-media-link', 'library-media-link', :now)"
+        ),
+        {"now": now},
+    )
+    if include_target_graph:
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_graphs "
+                "(id, product_id, title, active, schema_version, revision, created_at, updated_at) "
+                "VALUES ('graph-media-link', 'product-media-link', 'V3 工作流', 1, 3, 1, :now, :now)"
+            ),
+            {"now": now},
+        )
+
+
 def test_current_enum_columns_use_database_values() -> None:
     enum_contracts = [
         (AgentSession.__table__.c.status, AgentSessionStatus),
@@ -84,6 +145,8 @@ def test_current_enum_columns_use_database_values() -> None:
         (ImageSessionAsset.__table__.c.kind, ImageSessionAssetKind),
         (WorkflowDraft.__table__.c.status, WorkflowDraftStatus),
         (WorkflowRecipe.__table__.c.kind, WorkflowRecipeKind),
+        (WorkflowRecipe.__table__.c.origin, WorkflowRecipeOrigin),
+        (WorkflowRecipeVersion.__table__.c.creation_source, WorkflowRecipeCreationSource),
         (DeliveryRenditionJob.__table__.c.status, JobStatus),
     ]
     for column, enum_cls in enum_contracts:
@@ -105,6 +168,7 @@ def test_current_enum_columns_use_database_values() -> None:
         "workflow_generation",
         "image_session_attach",
         "legacy_import",
+        "local_edit",
     ]
 
 
@@ -338,12 +402,12 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert artifact_node_id["nullable"] is True
         assert node_run_node_id["nullable"] is True
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0085"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0090"
     finally:
         engine.dispose()
 
 
-def test_recipe_schema_v3_migration_drops_unreadable_v1_payloads(
+def test_recipe_schema_v3_migration_blocks_unreadable_v1_payloads_without_deleting(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -377,14 +441,84 @@ def test_recipe_schema_v3_migration_drops_unreadable_v1_payloads(
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    with pytest.raises(RuntimeError, match="不会删除配方"):
+        command.upgrade(config, "head")
 
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipe_versions")) == 0
-            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipes")) == 0
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0085"
+            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipe_versions")) == 1
+            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipes")) == 1
+            assert connection.scalar(
+                sa.text("SELECT current_version_id FROM workflow_recipes WHERE id = 'recipe-v1'")
+            ) == "recipe-v1-version"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0081"
+    finally:
+        engine.dispose()
+
+
+def test_workflow_media_link_migration_blocks_unmapped_rows_without_deleting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="media-link-block.db")
+    command.upgrade(config, "20260821_0078")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.begin() as connection:
+            _insert_workflow_media_link_fixture(connection, include_target_graph=False)
+    finally:
+        engine.dispose()
+
+    with pytest.raises(RuntimeError, match="不会删除原关联"):
+        command.upgrade(config, "20260821_0079")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(
+                sa.text(
+                    "SELECT workflow_id, media_library_asset_id "
+                    "FROM workflow_media_library_assets"
+                )
+            ).one() == ("workflow-media-link", "library-media-link")
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
+    finally:
+        engine.dispose()
+
+
+def test_workflow_media_link_migration_retargets_deterministic_active_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="media-link-retarget.db")
+    command.upgrade(config, "20260821_0078")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.begin() as connection:
+            _insert_workflow_media_link_fixture(connection, include_target_graph=True)
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "20260821_0079")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        inspector = sa.inspect(engine)
+        workflow_fk = next(
+            foreign_key
+            for foreign_key in inspector.get_foreign_keys("workflow_media_library_assets")
+            if foreign_key["name"] == "fk_workflow_media_library_assets_workflow_id"
+        )
+        assert workflow_fk["referred_table"] == "workflow_graphs"
+        with engine.connect() as connection:
+            assert connection.execute(
+                sa.text(
+                    "SELECT workflow_id, media_library_asset_id "
+                    "FROM workflow_media_library_assets"
+                )
+            ).one() == ("graph-media-link", "library-media-link")
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0079"
     finally:
         engine.dispose()
 
@@ -644,7 +778,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0085"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0090"
     finally:
         engine.dispose()
 
@@ -879,6 +1013,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         assert "source_run_id" not in source_run_columns
         assert "graph_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0085"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0090"
     finally:
         engine.dispose()

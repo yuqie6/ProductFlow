@@ -17,12 +17,20 @@ from productflow_backend.application.agent.conversations import (
 )
 from productflow_backend.application.agent.sessions import new_agent_session
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
-from productflow_backend.application.product_workflow.graph_contracts import CreateGroupOp, WorkflowChangeSet
+from productflow_backend.application.product_workflow.graph_contracts import (
+    ConnectNodesOp,
+    CreateGroupOp,
+    CreateNodeOp,
+    DeleteNodeOp,
+    MoveNodesOp,
+    WorkflowChangeSet,
+)
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
 from productflow_backend.application.workflow_recipes.extract import extract_recipe_payload
+from productflow_backend.application.workflow_recipes.official import official_recipe_seed
 from productflow_backend.application.workflow_recipes.service import (
     append_workflow_recipe_version,
     apply_workflow_recipe,
@@ -37,7 +45,9 @@ from productflow_backend.domain.enums import (
     GraphActorType,
     GraphNodeType,
     WorkflowDraftStatus,
+    WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
+    WorkflowRecipeOrigin,
 )
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
@@ -48,6 +58,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRecipe,
     WorkflowRecipeVersion,
 )
+from productflow_backend.infrastructure.db.session import get_session_factory
 
 
 def _recipe_payload() -> RecipePayload:
@@ -112,16 +123,52 @@ def _seed_recipe(
     title: str = "结构配方",
 ) -> WorkflowRecipe:
     payload = _recipe_payload()
-    recipe = WorkflowRecipe(kind=kind)
+    recipe = WorkflowRecipe(kind=kind, origin=WorkflowRecipeOrigin.USER, official_key=None)
     db_session.add(recipe)
     db_session.flush()
     version = WorkflowRecipeVersion(
         recipe_id=recipe.id,
         version=1,
         schema_version=3,
+        catalog_version=5,
+        creation_source=WorkflowRecipeCreationSource.USER_EXTRACT,
         title=title,
         payload_json=payload.model_dump(mode="json"),
         payload_hash=recipe_payload_hash(payload),
+        governance_json=None,
+    )
+    db_session.add(version)
+    db_session.flush()
+    recipe.current_version_id = version.id
+    db_session.commit()
+    db_session.expire_all()
+    seeded = db_session.get(WorkflowRecipe, recipe.id)
+    assert seeded is not None
+    return seeded
+
+
+def _seed_official_recipe(db_session, *, official_key: str = "hero") -> WorkflowRecipe:
+    seed = official_recipe_seed(official_key)
+    recipe = WorkflowRecipe(
+        id=seed.recipe_id,
+        kind=WorkflowRecipeKind.RECIPE_FRAGMENT,
+        origin=WorkflowRecipeOrigin.OFFICIAL,
+        official_key=seed.official_key,
+    )
+    db_session.add(recipe)
+    db_session.flush()
+    version = WorkflowRecipeVersion(
+        id=seed.version_id,
+        recipe_id=recipe.id,
+        version=1,
+        schema_version=3,
+        catalog_version=5,
+        creation_source=WorkflowRecipeCreationSource.OFFICIAL_SEED,
+        title=seed.title,
+        description=seed.description,
+        payload_json=seed.payload.model_dump(mode="json"),
+        payload_hash=seed.payload_hash,
+        governance_json=seed.governance.model_dump(mode="json"),
     )
     db_session.add(version)
     db_session.flush()
@@ -240,8 +287,13 @@ def test_create_and_append_recipe_from_live_graph(db_session) -> None:
         description="从当前图画保存",
     )
     assert recipe.kind == WorkflowRecipeKind.WORKFLOW_RECIPE
+    assert recipe.origin is WorkflowRecipeOrigin.USER
+    assert recipe.official_key is None
     assert recipe.current_version is not None
     assert recipe.current_version.schema_version == 3
+    assert recipe.current_version.catalog_version == 5
+    assert recipe.current_version.creation_source is WorkflowRecipeCreationSource.USER_EXTRACT
+    assert recipe.current_version.governance_json is None
     payload = recipe.current_version.payload_json
     assert payload["schema_version"] == 3
     assert "image_types" not in payload
@@ -305,6 +357,441 @@ def test_seeded_recipe_archive_hides_active_recipe(db_session) -> None:
     assert replay.changed is False
 
 
+def test_official_recipe_has_governance_and_user_mutations_are_blocked(db_session) -> None:
+    recipe = _seed_official_recipe(db_session)
+
+    official = list_workflow_recipes(db_session, origin=WorkflowRecipeOrigin.OFFICIAL)
+    assert [item.id for item in official] == [recipe.id]
+    assert list_workflow_recipes(db_session, origin=WorkflowRecipeOrigin.USER) == []
+    assert recipe.official_key == "hero"
+    assert recipe.current_version is not None
+    assert recipe.current_version.catalog_version == 5
+    assert recipe.current_version.creation_source is WorkflowRecipeCreationSource.OFFICIAL_SEED
+    assert recipe.current_version.governance_json == {
+        "applicable_image_types": ["hero"],
+        "required_inputs": ["product_identity"],
+        "default_result": "image_generation",
+        "thumbnail": None,
+        "provider_sample": None,
+    }
+    assert {node["node_type"] for node in recipe.current_version.payload_json["nodes"]} == {
+        "prompt_generation",
+        "image_generation",
+    }
+    assert "product_source" not in json.dumps(recipe.current_version.payload_json)
+
+    with pytest.raises(ConflictError, match="版本化 migration"):
+        append_workflow_recipe_version(
+            db_session,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+            product_id="unused-product",
+            workflow_id="unused-workflow",
+            source_type="selection",
+            group_id=None,
+            node_ids=["unused-node"],
+            expected_graph_revision=0,
+            title="不应追加",
+            description=None,
+        )
+    with pytest.raises(ConflictError, match="版本化 migration"):
+        archive_workflow_recipe(
+            db_session,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+
+
+def test_official_recipe_fragment_requires_existing_graph(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = _create_product(db_session, name="官方空图目标")
+
+    with pytest.raises(ConflictError, match="片段配方需要已有 schema-v3 工作流"):
+        preview_workflow_recipe(
+            db_session,
+            product_id=target.id,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+
+
+def test_official_recipe_zero_match_on_existing_graph_adds_fragment(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = create_product_with_direct_graph(
+        db_session,
+        name="官方缺失镜头目标",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "detail.png", "image/png")],
+        image_types=[DirectCreateImageType(key="detail", quantity=1, order=0)],
+    )
+    before = load_applied_graph(db_session, target.graph)
+
+    preview = preview_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+    )
+    assert preview.mode == "merge"
+    assert preview.updated_nodes == ()
+    assert preview.nodes
+    assert preview.groups
+
+    applied = apply_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
+        idempotency_key="official-missing-hero",
+    )
+    assert applied.created is True
+    assert applied.added_node_ids
+    assert applied.updated_node_ids == ()
+
+    after = load_applied_graph(db_session, applied.graph)
+    assert len(after.nodes) == len(before.nodes) + len(preview.nodes)
+    assert len(after.edges) == len(before.edges) + len(preview.edges)
+    assert len(after.groups) == len(before.groups) + len(preview.groups)
+    identity = next(
+        node
+        for node in after.nodes
+        if node.node_type is GraphNodeType.IMAGE_ASSET and node.config.get("role") == "product_identity"
+    )
+    hero_image = next(
+        node
+        for node in after.nodes
+        if node.node_type is GraphNodeType.IMAGE_GENERATION and node.config.get("image_type_key") == "hero"
+    )
+    hero_prompt = next(
+        node
+        for node in after.nodes
+        if node.node_type is GraphNodeType.PROMPT_GENERATION and node.config.get("image_type_key") == "hero"
+    )
+    assert any(edge.source_node_id == identity.id and edge.target_node_id == hero_image.id for edge in after.edges)
+    assert any(edge.source_node_id == identity.id and edge.target_node_id == hero_prompt.id for edge in after.edges)
+    product_source = next(node for node in after.nodes if node.node_type is GraphNodeType.PRODUCT_SOURCE)
+    visual = next(node for node in after.nodes if node.node_type is GraphNodeType.VISUAL_SYSTEM)
+    assert any(
+        edge.source_node_id == product_source.id and edge.target_node_id == hero_prompt.id
+        for edge in after.edges
+    )
+    assert any(edge.source_node_id == visual.id and edge.target_node_id == hero_image.id for edge in after.edges)
+
+
+def test_official_recipe_add_without_identity_conflicts(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = create_product_with_direct_graph(
+        db_session,
+        name="官方无身份镜头目标",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "detail.png", "image/png")],
+        image_types=[DirectCreateImageType(key="detail", quantity=1, order=0)],
+    )
+    before = load_applied_graph(db_session, target.graph)
+    identity_ids = [
+        node.id
+        for node in before.nodes
+        if node.node_type is GraphNodeType.IMAGE_ASSET and node.config.get("role") == "product_identity"
+    ]
+    apply_graph_change_set(
+        db_session,
+        product_id=target.product.id,
+        graph_id=target.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=before.revision,
+            summary="去掉身份参考图",
+            actor_type=GraphActorType.USER,
+            operations=[DeleteNodeOp(node_ref=node_id) for node_id in identity_ids],
+        ),
+    )
+
+    with pytest.raises(ConflictError, match="配方需要商品身份参考图"):
+        preview_workflow_recipe(
+            db_session,
+            product_id=target.product.id,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+
+
+def test_official_recipe_exact_match_updates_all_images_without_copying_topology(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = create_product_with_direct_graph(
+        db_session,
+        name="官方已有镜头目标",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "hero.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=2, order=0)],
+    )
+    before = load_applied_graph(db_session, target.graph)
+    preview = preview_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+    )
+    repeated = preview_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+    )
+    assert preview.mode == "merge"
+    assert preview.preview_digest == repeated.preview_digest
+    assert preview.nodes == ()
+    assert preview.edges == ()
+    assert preview.groups == ()
+    assert len(preview.updated_nodes) == 3
+    assert {node.node_type for node in preview.updated_nodes} == {
+        GraphNodeType.PROMPT_GENERATION,
+        GraphNodeType.IMAGE_GENERATION,
+    }
+    assert all(node.changed_config_keys for node in preview.updated_nodes)
+
+    applied = apply_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
+        idempotency_key="official-exact-match",
+    )
+    assert applied.created is True
+    assert applied.added_node_ids == ()
+    assert len(applied.updated_node_ids) == 3
+    after = load_applied_graph(db_session, applied.graph)
+    assert len(after.nodes) == len(before.nodes)
+    assert len(after.edges) == len(before.edges)
+    assert len(after.groups) == len(before.groups)
+    assert {node.id for node in after.nodes} == {node.id for node in before.nodes}
+    assert all(
+        node.config.get("image_type_key") == "hero"
+        for node in after.nodes
+        if node.node_type in {GraphNodeType.PROMPT_GENERATION, GraphNodeType.IMAGE_GENERATION}
+    )
+
+    replay = apply_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
+        idempotency_key="official-exact-match",
+    )
+    assert replay.created is False
+    assert replay.updated_node_ids == applied.updated_node_ids
+
+
+def test_official_recipe_multiple_matching_groups_conflict_without_revision_change(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = _direct_graph(db_session, name="官方多组冲突目标")
+    before = load_applied_graph(db_session, target.graph)
+    original_group = next(group for group in before.groups if group.title)
+    duplicate_change_set = WorkflowChangeSet(
+        base_graph_revision=before.revision,
+        summary="制造重复 hero 镜头",
+        actor_type=GraphActorType.USER,
+        operations=[
+            CreateGroupOp(client_ref="duplicate-hero-group", title="重复 hero"),
+            CreateNodeOp(
+                client_ref="duplicate-hero-prompt",
+                node_type=GraphNodeType.PROMPT_GENERATION,
+                title="重复 hero 提示词",
+                group_ref="duplicate-hero-group",
+                config={"image_type_key": "hero", "prompt": {"design_goal": "重复"}},
+            ),
+            CreateNodeOp(
+                client_ref="duplicate-hero-image",
+                node_type=GraphNodeType.IMAGE_GENERATION,
+                title="重复 hero 图片",
+                group_ref="duplicate-hero-group",
+                config={
+                    "image_type_key": "hero",
+                    "generation_spec": {
+                        "aspect_ratio": "1:1",
+                        "resolution_tier": "high",
+                        "quality_intent": "high",
+                        "reference_fidelity": "high",
+                        "background_intent": "opaque",
+                        "text_policy": "none",
+                    },
+                },
+            ),
+            ConnectNodesOp(
+                client_ref="duplicate-hero-edge",
+                source_ref="duplicate-hero-prompt",
+                target_ref="duplicate-hero-image",
+            ),
+        ],
+    )
+    apply_graph_change_set(
+        db_session,
+        product_id=target.product.id,
+        graph_id=target.graph.id,
+        change_set=duplicate_change_set,
+    )
+    graph_after_setup = db_session.get(WorkflowGraph, target.graph.id)
+    assert graph_after_setup is not None
+    revision_before_preview = graph_after_setup.revision
+
+    with pytest.raises(ConflictError, match="多个同图种镜头"):
+        preview_workflow_recipe(
+            db_session,
+            product_id=target.product.id,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+    db_session.expire_all()
+    unchanged = db_session.get(WorkflowGraph, target.graph.id)
+    assert unchanged is not None
+    assert unchanged.revision == revision_before_preview
+    assert original_group.id in {group.id for group in before.groups}
+
+
+def test_official_recipe_ambiguous_group_shape_conflicts_without_write(db_session) -> None:
+    recipe = _seed_official_recipe(db_session, official_key="hero")
+    target = _direct_graph(db_session, name="官方形状冲突目标")
+    before = load_applied_graph(db_session, target.graph)
+    hero_group = next(
+        group
+        for group in before.groups
+        if any(
+            node.group_id == group.id
+            and node.node_type == GraphNodeType.PROMPT_GENERATION
+            and node.config.get("image_type_key") == "hero"
+            for node in before.nodes
+        )
+    )
+    apply_graph_change_set(
+        db_session,
+        product_id=target.product.id,
+        graph_id=target.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=before.revision,
+            summary="制造重复 prompt",
+            actor_type=GraphActorType.USER,
+            operations=[
+                CreateNodeOp(
+                    client_ref="ambiguous-hero-prompt",
+                    node_type=GraphNodeType.PROMPT_GENERATION,
+                    title="重复提示词",
+                    group_ref=hero_group.id,
+                    config={"image_type_key": "hero", "prompt": {"design_goal": "歧义"}},
+                )
+            ],
+        ),
+    )
+    graph_after_setup = db_session.get(WorkflowGraph, target.graph.id)
+    assert graph_after_setup is not None
+    revision_before_preview = graph_after_setup.revision
+
+    with pytest.raises(ConflictError, match="结构不明确"):
+        preview_workflow_recipe(
+            db_session,
+            product_id=target.product.id,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+    db_session.expire_all()
+    unchanged = db_session.get(WorkflowGraph, target.graph.id)
+    assert unchanged is not None
+    assert unchanged.revision == revision_before_preview
+
+
+def test_recipe_apply_rejects_wrong_digest_stale_revision_and_recipe_drift(db_session) -> None:
+    official = _seed_official_recipe(db_session, official_key="hero")
+    target = _direct_graph(db_session, name="配方预览绑定目标")
+    preview = preview_workflow_recipe(
+        db_session,
+        product_id=target.product.id,
+        recipe_id=official.id,
+        expected_recipe_version=1,
+    )
+    with pytest.raises(ConflictError, match="预览已变化"):
+        apply_workflow_recipe(
+            db_session,
+            product_id=target.product.id,
+            recipe_id=official.id,
+            expected_recipe_version=1,
+            expected_graph_revision=preview.base_graph_revision,
+            preview_digest="0" * 64,
+            idempotency_key="wrong-preview-digest",
+        )
+    current = db_session.get(WorkflowGraph, target.graph.id)
+    assert current is not None
+    assert current.revision == preview.base_graph_revision
+
+    before = load_applied_graph(db_session, target.graph)
+    node = before.nodes[0]
+    apply_graph_change_set(
+        db_session,
+        product_id=target.product.id,
+        graph_id=target.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=before.revision,
+            summary="预览后移动节点",
+            actor_type=GraphActorType.USER,
+            operations=[MoveNodesOp(nodes=[(node.id, node.position_x + 10, node.position_y)])],
+        ),
+    )
+    with pytest.raises(ConflictError, match="工作流已变化"):
+        apply_workflow_recipe(
+            db_session,
+            product_id=target.product.id,
+            recipe_id=official.id,
+            expected_recipe_version=1,
+            expected_graph_revision=preview.base_graph_revision,
+            preview_digest=preview.preview_digest,
+            idempotency_key="stale-preview-revision",
+        )
+
+    user_recipe = _seed_recipe(
+        db_session,
+        kind=WorkflowRecipeKind.RECIPE_FRAGMENT,
+        title="版本漂移片段",
+    )
+    user_target = _direct_graph(db_session, name="版本漂移目标")
+    user_preview = preview_workflow_recipe(
+        db_session,
+        product_id=user_target.product.id,
+        recipe_id=user_recipe.id,
+        expected_recipe_version=1,
+    )
+    append_workflow_recipe_version(
+        db_session,
+        recipe_id=user_recipe.id,
+        expected_recipe_version=1,
+        product_id=user_target.product.id,
+        workflow_id=user_target.graph.id,
+        source_type="workflow",
+        group_id=None,
+        node_ids=[],
+        expected_graph_revision=user_target.graph.revision,
+        title="版本漂移片段 v2",
+        description=None,
+    )
+    with pytest.raises(ConflictError, match="版本已变化"):
+        apply_workflow_recipe(
+            db_session,
+            product_id=user_target.product.id,
+            recipe_id=user_recipe.id,
+            expected_recipe_version=1,
+            expected_graph_revision=user_preview.base_graph_revision,
+            preview_digest=user_preview.preview_digest,
+            idempotency_key="recipe-version-drift",
+        )
+
+
 def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
     recipe = _seed_recipe(db_session)
     target = _create_product(db_session, name="目标商品")
@@ -331,6 +818,8 @@ def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
         product_id=target.id,
         recipe_id=recipe.id,
         expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
         idempotency_key="target-apply-1",
     )
     assert applied.created is True
@@ -356,6 +845,8 @@ def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
         product_id=target.id,
         recipe_id=recipe.id,
         expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
         idempotency_key="target-apply-1",
     )
     assert replay.created is False
@@ -368,6 +859,8 @@ def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
             product_id=target.id,
             recipe_id=recipe.id,
             expected_recipe_version=2,
+            expected_graph_revision=preview.base_graph_revision,
+            preview_digest=preview.preview_digest,
             idempotency_key="target-apply-1",
         )
 
@@ -382,6 +875,8 @@ def test_fragment_apply_merges_into_existing_v3_graph(db_session) -> None:
             product_id=target.id,
             recipe_id=fragment.id,
             expected_recipe_version=1,
+            expected_graph_revision=0,
+            preview_digest="a" * 64,
             idempotency_key="fragment-v3-conflict",
         )
 
@@ -408,6 +903,8 @@ def test_fragment_apply_merges_into_existing_v3_graph(db_session) -> None:
         product_id=v3.product.id,
         recipe_id=fragment.id,
         expected_recipe_version=1,
+        expected_graph_revision=preview.base_graph_revision,
+        preview_digest=preview.preview_digest,
         idempotency_key="fragment-v3-existing-graph",
     )
     assert applied.created is True
@@ -441,6 +938,8 @@ def test_full_recipe_conflicts_on_existing_v3_graph(db_session) -> None:
             product_id=v3.product.id,
             recipe_id=recipe.id,
             expected_recipe_version=1,
+            expected_graph_revision=v3.graph.revision,
+            preview_digest="a" * 64,
             idempotency_key="full-recipe-existing-graph",
         )
 
@@ -618,7 +1117,12 @@ def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
     assert preview.json()["nodes"]
     applied = client.post(
         f"/api/v3/products/{other_id}/workflow-recipes/{fragment.json()['id']}/apply",
-        json={"expected_recipe_version": 1, "idempotency_key": "api-apply-1"},
+        json={
+            "expected_recipe_version": 1,
+            "expected_graph_revision": preview.json()["base_graph_revision"],
+            "preview_digest": preview.json()["preview_digest"],
+            "idempotency_key": "api-apply-1",
+        },
     )
     assert applied.status_code == 201, applied.text
     applied_body = applied.json()
@@ -626,3 +1130,39 @@ def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
     assert "draft" not in applied_body
     assert applied_body["graph"]["id"] == other.json()["graph"]["id"]
     assert applied_body["added_node_ids"]
+
+
+def test_recipe_api_origin_filter_and_v3_read_routes_protect_official_seed(configured_env) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    factory = get_session_factory()
+    session = factory()
+    try:
+        official = _seed_official_recipe(session)
+    finally:
+        session.close()
+
+    client = TestClient(create_app())
+    _login(client)
+    official_list = client.get("/api/v3/workflow-recipes", params={"origin": "official"})
+    assert official_list.status_code == 200, official_list.text
+    assert [item["official_key"] for item in official_list.json()] == ["hero"]
+    assert official_list.json()[0]["origin"] == "official"
+    assert official_list.json()[0]["current_version"]["creation_source"] == "official_seed"
+    assert official_list.json()[0]["current_version"]["governance"]["provider_sample"] is None
+
+    user_list = client.get("/api/v2/workflow-recipes", params={"origin": "user"})
+    assert user_list.status_code == 200, user_list.text
+    assert user_list.json() == []
+
+    detail = client.get(f"/api/v3/workflow-recipes/{official.id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["origin"] == "official"
+    assert detail.json()["versions"][0]["catalog_version"] == 5
+
+    archived = client.delete(
+        f"/api/v3/workflow-recipes/{official.id}",
+        params={"expected_recipe_version": 1},
+    )
+    assert archived.status_code == 409, archived.text
+    assert "版本化 migration" in archived.text

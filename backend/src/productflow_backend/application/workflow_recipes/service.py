@@ -15,7 +15,10 @@ from productflow_backend.application.product_workflow.graph_commands import load
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_recipes.contracts import (
     RECIPE_SCHEMA_VERSION,
+    RecipeGovernance,
     RecipePayload,
+    parse_recipe_governance,
+    recipe_governance_dict,
     recipe_payload_dict,
     recipe_payload_hash,
 )
@@ -23,12 +26,17 @@ from productflow_backend.application.workflow_recipes.extract import RecipeSourc
 from productflow_backend.application.workflow_recipes.live_apply import (
     RecipeApplyMode,
     RecipeApplyPreview,
-    apply_recipe_payload,
-    preview_recipe_payload,
+    apply_recipe_plan,
+    plan_recipe_payload,
     recipe_application_summary,
 )
-from productflow_backend.domain.enums import WorkflowRecipeKind
+from productflow_backend.domain.enums import (
+    WorkflowRecipeCreationSource,
+    WorkflowRecipeKind,
+    WorkflowRecipeOrigin,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.domain.graph_catalog import GRAPH_CATALOG_VERSION
 from productflow_backend.infrastructure.db.models import (
     Product,
     VisualSystemVersion,
@@ -55,6 +63,10 @@ class WorkflowRecipeApplicationResult:
     created: bool
     added_node_ids: tuple[str, ...]
     added_edge_ids: tuple[str, ...]
+    updated_node_ids: tuple[str, ...]
+    preview_graph_revision: int | None
+    preview_digest: str | None
+    required_bindings: tuple[str, ...]
 
 
 def _workflow_recipe_summary_query():
@@ -71,10 +83,13 @@ def list_workflow_recipes(
     session: Session,
     *,
     include_archived: bool = False,
+    origin: WorkflowRecipeOrigin | None = None,
 ) -> list[WorkflowRecipe]:
     query = _workflow_recipe_summary_query()
     if not include_archived:
         query = query.where(WorkflowRecipe.archived_at.is_(None))
+    if origin is not None:
+        query = query.where(WorkflowRecipe.origin == origin)
     return list(
         session.scalars(
             query.order_by(WorkflowRecipe.updated_at.desc(), WorkflowRecipe.id)
@@ -118,7 +133,11 @@ def create_workflow_recipe(
             session,
             preferred_visual_system_version_id=preferred_visual_system_version_id,
         )
-        recipe = WorkflowRecipe(kind=_recipe_kind(source_type))
+        recipe = WorkflowRecipe(
+            kind=_recipe_kind(source_type),
+            origin=WorkflowRecipeOrigin.USER,
+            official_key=None,
+        )
         session.add(recipe)
         session.flush()
         version = _new_recipe_version(
@@ -128,6 +147,9 @@ def create_workflow_recipe(
             description=description,
             payload=payload,
             preferred_visual_system_version_id=preferred,
+            catalog_version=GRAPH_CATALOG_VERSION,
+            creation_source=WorkflowRecipeCreationSource.USER_EXTRACT,
+            governance=None,
         )
         session.add(version)
         session.flush()
@@ -165,6 +187,8 @@ def append_workflow_recipe_version(
         )
         if recipe is None:
             raise NotFoundError("工作流配方不存在")
+        if recipe.origin is WorkflowRecipeOrigin.OFFICIAL:
+            raise ConflictError("官方配方只能通过版本化 migration 更新")
         if recipe.archived_at is not None:
             raise ConflictError("已归档工作流配方不能追加版本")
         current_version = recipe.current_version
@@ -190,6 +214,9 @@ def append_workflow_recipe_version(
             description=description,
             payload=payload,
             preferred_visual_system_version_id=preferred,
+            catalog_version=GRAPH_CATALOG_VERSION,
+            creation_source=WorkflowRecipeCreationSource.USER_EXTRACT,
+            governance=None,
         )
         session.add(version)
         session.flush()
@@ -240,6 +267,9 @@ def _new_recipe_version(
     description: str | None,
     payload: RecipePayload,
     preferred_visual_system_version_id: str | None,
+    catalog_version: int,
+    creation_source: WorkflowRecipeCreationSource,
+    governance: RecipeGovernance | None,
 ) -> WorkflowRecipeVersion:
     normalized_title = title.strip()
     if not normalized_title:
@@ -249,10 +279,13 @@ def _new_recipe_version(
         recipe_id=recipe_id,
         version=version,
         schema_version=RECIPE_SCHEMA_VERSION,
+        catalog_version=catalog_version,
+        creation_source=creation_source,
         title=normalized_title,
         description=normalized_description or None,
         payload_json=recipe_payload_dict(payload),
         payload_hash=recipe_payload_hash(payload),
+        governance_json=recipe_governance_dict(governance),
         preferred_visual_system_version_id=preferred_visual_system_version_id,
     )
 
@@ -289,6 +322,8 @@ def archive_workflow_recipe(
         )
         if recipe is None:
             raise NotFoundError("工作流配方不存在")
+        if recipe.origin is WorkflowRecipeOrigin.OFFICIAL:
+            raise ConflictError("官方配方只能通过版本化 migration 下线")
         current_version = recipe.current_version
         if current_version is None or current_version.version != expected_recipe_version:
             raise ConflictError("工作流配方版本已变化，请刷新后重试")
@@ -324,7 +359,8 @@ def preview_workflow_recipe(
     if recipe_version is None or recipe_version.version != expected_recipe_version:
         raise ConflictError("工作流配方版本已变化，请刷新后重试")
     payload = parse_recipe_payload_or_raise(recipe_version)
-    return preview_recipe_payload(
+    required_bindings = _recipe_required_bindings(recipe_version)
+    return plan_recipe_payload(
         session,
         product_id=product_id,
         recipe_id=recipe.id,
@@ -332,7 +368,11 @@ def preview_workflow_recipe(
         recipe_kind=recipe.kind,
         recipe_version=recipe_version.version,
         summary=recipe_application_summary(recipe_version.title),
-    )
+        payload_hash=recipe_version.payload_hash,
+        recipe_origin=recipe.origin,
+        official_key=recipe.official_key,
+        required_bindings=required_bindings,
+    ).preview()
 
 
 def apply_workflow_recipe(
@@ -341,13 +381,18 @@ def apply_workflow_recipe(
     product_id: str,
     recipe_id: str,
     expected_recipe_version: int,
+    expected_graph_revision: int,
+    preview_digest: str,
     idempotency_key: str,
 ) -> WorkflowRecipeApplicationResult:
     normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_digest = _normalize_preview_digest(preview_digest)
     request_hash = _recipe_application_request_hash(
         product_id=product_id,
         recipe_id=recipe_id,
         expected_recipe_version=expected_recipe_version,
+        expected_graph_revision=expected_graph_revision,
+        preview_digest=normalized_digest,
     )
     try:
         product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
@@ -378,12 +423,28 @@ def apply_workflow_recipe(
         if recipe_version is None or recipe_version.version != expected_recipe_version:
             raise ConflictError("工作流配方版本已变化，请刷新后重试")
         payload = parse_recipe_payload_or_raise(recipe_version)
-        command, mode, added_nodes, added_edges = apply_recipe_payload(
+        required_bindings = _recipe_required_bindings(recipe_version)
+        _lock_active_workflow_graph(session, product_id=product_id)
+        plan = plan_recipe_payload(
             session,
             product_id=product_id,
-            recipe_kind=recipe.kind,
+            recipe_id=recipe.id,
             payload=payload,
+            recipe_kind=recipe.kind,
+            recipe_version=recipe_version.version,
             summary=recipe_application_summary(recipe_version.title),
+            payload_hash=recipe_version.payload_hash,
+            recipe_origin=recipe.origin,
+            official_key=recipe.official_key,
+            required_bindings=required_bindings,
+            expected_graph_revision=expected_graph_revision,
+        )
+        if plan.preview_digest != normalized_digest:
+            raise ConflictError("配方预览已变化，请重新预览后重试")
+        command, mode, added_nodes, added_edges, updated_nodes = apply_recipe_plan(
+            session,
+            product_id=product_id,
+            plan=plan,
             commit=False,
         )
         application = WorkflowRecipeApplication(
@@ -396,6 +457,11 @@ def apply_workflow_recipe(
             request_hash=request_hash,
             added_node_ids_json=list(added_nodes),
             added_edge_ids_json=list(added_edges),
+            schema_version=2,
+            preview_graph_revision=plan.base_graph_revision,
+            preview_digest=plan.preview_digest,
+            updated_node_ids_json=list(updated_nodes),
+            required_bindings_json=list(required_bindings),
         )
         session.add(application)
         session.commit()
@@ -426,6 +492,22 @@ def parse_recipe_payload_or_raise(version: WorkflowRecipeVersion) -> RecipePaylo
     if recipe_payload_hash(payload) != version.payload_hash:
         raise ConflictError("工作流配方 payload hash 不一致")
     return payload
+
+
+def _recipe_required_bindings(version: WorkflowRecipeVersion) -> tuple[str, ...]:
+    try:
+        governance = parse_recipe_governance(version.governance_json)
+    except ValidationError as exc:
+        raise ConflictError("工作流配方治理元数据无效") from exc
+    return tuple(governance.required_inputs) if governance is not None else ()
+
+
+def _lock_active_workflow_graph(session: Session, *, product_id: str) -> WorkflowGraph | None:
+    return session.scalar(
+        select(WorkflowGraph)
+        .where(WorkflowGraph.product_id == product_id, WorkflowGraph.active.is_(True))
+        .with_for_update()
+    )
 
 
 def _recipe_application_by_idempotency_key(
@@ -472,6 +554,10 @@ def _load_recipe_graph_application(
         created=created,
         added_node_ids=tuple(application.added_node_ids_json or ()),
         added_edge_ids=tuple(application.added_edge_ids_json or ()),
+        updated_node_ids=tuple(application.updated_node_ids_json or ()),
+        preview_graph_revision=application.preview_graph_revision,
+        preview_digest=application.preview_digest,
+        required_bindings=tuple(application.required_bindings_json or ()),
     )
 
 
@@ -484,17 +570,28 @@ def _normalize_idempotency_key(value: str) -> str:
     return normalized
 
 
+def _normalize_preview_digest(value: str) -> str:
+    normalized = value.strip().lower()
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        raise BusinessValidationError("preview digest 必须是 64 位十六进制字符串")
+    return normalized
+
+
 def _recipe_application_request_hash(
     *,
     product_id: str,
     recipe_id: str,
     expected_recipe_version: int,
+    expected_graph_revision: int,
+    preview_digest: str,
 ) -> str:
     return _json_hash(
         {
             "product_id": product_id,
             "recipe_id": recipe_id,
             "expected_recipe_version": expected_recipe_version,
+            "expected_graph_revision": expected_graph_revision,
+            "preview_digest": preview_digest,
         }
     )
 

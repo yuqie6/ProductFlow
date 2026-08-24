@@ -12,6 +12,7 @@ from productflow_backend.application.agent.product_intake import parse_workflow_
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
+    DeliverySpec,
     VisualSystemDraftPayload,
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
@@ -137,13 +138,21 @@ def append_workflow_draft_revision(
             return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
 
         current_revision = draft.current_revision
+        intake = parse_workflow_intake(
+            schema_version=draft.intake_schema_version,
+            payload=draft.intake_json,
+        )
         if current_revision is None:
             if expected_draft_version != 0:
                 raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
-            intake = parse_workflow_intake(
-                schema_version=draft.intake_schema_version,
-                payload=draft.intake_json,
+        elif current_revision.version != expected_draft_version:
+            raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
+        if intake is not None:
+            _validate_delivery_spec_snapshot(
+                artifact,
+                required_delivery_spec=intake.delivery_spec,
             )
+        if current_revision is None:
             if draft.status != WorkflowDraftStatus.COLLECTING or (
                 draft.recipe_seed is None and draft.legacy_archive_seed is None and intake is None
             ):
@@ -153,8 +162,6 @@ def append_workflow_draft_revision(
                 )
             next_version = 1
         else:
-            if current_revision.version != expected_draft_version:
-                raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
             next_version = current_revision.version + 1
         if draft.status in {WorkflowDraftStatus.CANCELLED, WorkflowDraftStatus.MATERIALIZING}:
             raise ConflictError("当前 WorkflowDraft 状态不允许追加 revision")
@@ -216,7 +223,16 @@ def confirm_workflow_draft_revision(
         artifact = parse_workflow_draft_payload_or_raise(revision.payload_json)
         if workflow_draft_payload_hash(artifact) != revision.payload_hash:
             raise ConflictError("WorkflowDraft revision payload hash 不一致")
-        validate_workflow_draft_for_confirmation(session, product_id=product_id, artifact=artifact)
+        intake = parse_workflow_intake(
+            schema_version=draft.intake_schema_version,
+            payload=draft.intake_json,
+        )
+        validate_workflow_draft_for_confirmation(
+            session,
+            product_id=product_id,
+            artifact=artifact,
+            required_delivery_spec=intake.delivery_spec if intake is not None else None,
+        )
         visual_system_version = _resolve_visual_system_version(
             session,
             revision=revision,
@@ -311,12 +327,30 @@ def validate_workflow_draft_for_confirmation(
     *,
     product_id: str,
     artifact: WorkflowDraftPayloadV1,
+    required_delivery_spec: DeliverySpec | None = None,
 ) -> None:
     if artifact.missing_fact_keys:
         raise BusinessValidationError("WorkflowDraft 仍有缺失的必要商品事实")
     if any(fact.status == ProductFactStatus.CONFLICTED for fact in artifact.facts):
         raise BusinessValidationError("WorkflowDraft 仍有未解决的商品事实冲突")
+    _validate_delivery_spec_snapshot(artifact, required_delivery_spec=required_delivery_spec)
     validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
+
+
+def _validate_delivery_spec_snapshot(
+    artifact: WorkflowDraftPayloadV1,
+    *,
+    required_delivery_spec: DeliverySpec | None,
+) -> None:
+    if required_delivery_spec is None:
+        return
+    for image_type_index, image_type in enumerate(artifact.image_types):
+        for image_index, image in enumerate(image_type.images):
+            if image.delivery_spec != required_delivery_spec:
+                raise BusinessValidationError(
+                    "WorkflowDraft 的每张 PlannedImage 必须显式复制 intake.delivery_spec "
+                    f"(image_types[{image_type_index}].images[{image_index}].delivery_spec)"
+                )
 
 
 def _resolve_visual_system_version(

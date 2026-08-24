@@ -14,6 +14,7 @@ from productflow_backend.application.agent.product_intake import (
     AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
     AgentProductSelectionV1,
     WorkflowIntakeV1,
+    parse_agent_product_selection,
 )
 from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace,
@@ -26,7 +27,12 @@ from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.sessions import create_agent_session
-from productflow_backend.application.agent.tools import finalize_agent_product_intake, get_agent_contract
+from productflow_backend.application.agent.tools import (
+    finalize_agent_product_intake,
+    get_agent_contract,
+    get_agent_product_context,
+)
+from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.products import add_canonical_product_images
 from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
@@ -131,6 +137,78 @@ def test_agent_product_image_type_catalog_and_selection_contract_are_strict() ->
     for payload in invalid_payloads:
         with pytest.raises(ValidationError):
             AgentProductSelectionV1.model_validate(payload)
+
+    legacy_selection = {
+        "schema_version": 1,
+        "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+    }
+    legacy_intake = {
+        **legacy_selection,
+        "reference_asset_ids": ["asset-1"],
+    }
+    assert AgentProductSelectionV1.model_validate(legacy_selection).model_dump(mode="json") == legacy_selection
+    assert WorkflowIntakeV1.model_validate(legacy_intake).model_dump(mode="json") == legacy_intake
+    with pytest.raises(BusinessValidationError, match="图片类型选择"):
+        parse_agent_product_selection(
+            json.dumps({**legacy_selection, "delivery_preset_key": "not-a-real-preset"})
+        )
+
+
+def test_agent_intake_persists_delivery_preset_snapshot_and_changes_idempotency_hash(
+    configured_env: Path,
+    db_session,
+) -> None:
+    preset = get_delivery_preset("jd_hero")
+    selected = AgentProductSelectionV1.model_validate(
+        {
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+            "delivery_preset_key": preset.key,
+        }
+    )
+    draft_workspace = create_agent_product_draft_workspace(
+        db_session,
+        name="带平台默认交付规格商品",
+        idempotency_key="preset-draft-key",
+    )
+    creation = finalize_agent_product_workspace_intake(
+        db_session,
+        conversation_id=draft_workspace.conversation.id,
+        selection=selected,
+        image_uploads=_workspace_uploads(),
+        idempotency_key="preset-intake-key",
+    )
+
+    expected_spec = preset.spec.model_dump(mode="json")
+    assert creation.workflow_draft.intake_json == {
+        "schema_version": 1,
+        "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+        "reference_asset_ids": [asset.id for asset in creation.created_assets],
+        "delivery_preset_key": "jd_hero",
+        "delivery_spec": expected_spec,
+    }
+    context = get_agent_product_context(db_session, creation.conversation.id)
+    assert context["workflow_draft"]["intake"] == creation.workflow_draft.intake_json
+    assert "每张 PlannedImage 都必须显式复制" in context["draft_guidance"]["cross_field_rules"][5]["rule"]
+    assert any("逐张复制该 snapshot" in item for item in context["draft_guidance"]["pre_submit_checks"])
+    system_prompt = get_agent_contract(db_session, creation.conversation.id)["system_prompt"]
+    assert "必须显式复制完全相同的" in system_prompt
+    assert "delivery_spec" in system_prompt
+
+    with pytest.raises(ConflictError, match="已经确认"):
+        finalize_agent_product_workspace_intake(
+            db_session,
+            conversation_id=draft_workspace.conversation.id,
+            selection=AgentProductSelectionV1.model_validate(
+                {
+                    "schema_version": 1,
+                    "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+                    "delivery_preset_key": "taobao_tmall_hero",
+                }
+            ),
+            image_uploads=_workspace_uploads(),
+            idempotency_key="preset-intake-key",
+        )
 
 
 def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(

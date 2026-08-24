@@ -11,18 +11,21 @@ from typing import Any
 
 from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.async_delivery import (
+    recover_async_dispatch_for_actor,
     run_async_dispatcher_once,
     stage_async_dispatch_for_actor,
 )
 from productflow_backend.application.durable_recovery import (
     recover_unfinished_delivery_rendition_jobs,
     recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_local_image_edit_tasks,
     recover_unfinished_workflow_runs,
 )
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    LOCAL_IMAGE_EDIT_TASK_CONTRACT,
 )
 from productflow_backend.infrastructure.queue import enqueue_async_dispatch
 
@@ -64,7 +67,7 @@ def _recover_business_state() -> dict[str, int]:
         reset_stale_running=True,
     )
     agent = recover_unfinished_agent_turn_syncs(
-        stage_dispatch=lambda session, projection_id: stage_async_dispatch_for_actor(
+        stage_dispatch=lambda session, projection_id: recover_async_dispatch_for_actor(
             session,
             "run_agent_turn_sync",
             projection_id,
@@ -78,6 +81,14 @@ def _recover_business_state() -> dict[str, int]:
         ),
         reset_stale_running=True,
     )
+    local_image_edit = recover_unfinished_local_image_edit_tasks(
+        stage_dispatch=lambda session, task_id: stage_async_dispatch_for_actor(
+            session,
+            LOCAL_IMAGE_EDIT_TASK_CONTRACT.actor_name,
+            task_id,
+        ),
+        reset_stale_running=True,
+    )
     return {
         "workflow": workflow.enqueued_runs,
         "workflow_unknown": workflow.unknown_runs,
@@ -85,6 +96,8 @@ def _recover_business_state() -> dict[str, int]:
         "image_session_unknown": image_session.unknown_tasks,
         "agent": agent.enqueued_turns,
         "rendition": rendition.enqueued_jobs,
+        "local_image_edit": local_image_edit.enqueued_tasks,
+        "local_image_edit_unknown": local_image_edit.unknown_tasks,
     }
 
 

@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from test_graph_execution import RecordingImageProvider, RecordingPromptProvider
 
 from productflow_backend.application.agent.product_intake import LISTING_LOOK_RULE
+from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
@@ -202,6 +203,76 @@ def test_direct_create_api_writes_brief_and_generation_spec(configured_env) -> N
     assert detail["config"]["generation_spec"]["aspect_ratio"] == "1:1"
     assert hero["config"]["generation_spec"]["text_policy"] == "required"
     assert detail["config"]["generation_spec"]["text_language"] == "zh-CN"
+
+
+def test_direct_create_api_copies_delivery_preset_without_changing_generation_spec(configured_env) -> None:
+    client = TestClient(create_app())
+    _login(client)
+    created = client.post(
+        "/api/v3/products",
+        data={
+            "name": "带平台默认交付商品",
+            "image_types": json.dumps(
+                [
+                    {"key": "hero", "quantity": 1, "aspect_ratio": "3:4"},
+                    {"key": "detail", "quantity": 1, "aspect_ratio": "1:1"},
+                ]
+            ),
+            "generation_spec": json.dumps(
+                {
+                    "aspect_ratio": "1:1",
+                    "text_policy": "required",
+                    "text_language": "zh-CN",
+                }
+            ),
+            "delivery_preset_key": "jd_hero",
+        },
+        files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert created.status_code == 201, created.text
+    nodes = [node for node in created.json()["graph"]["nodes"] if node["node_type"] == "image_generation"]
+    assert len(nodes) == 2
+    expected_delivery_spec = get_delivery_preset("jd_hero").spec.model_dump(mode="json")
+    assert all(node["config"]["delivery_spec"] == expected_delivery_spec for node in nodes)
+    assert {
+        node["config"]["image_type_key"]: node["config"]["generation_spec"]
+        for node in nodes
+    } == {
+        "hero": {
+            "aspect_ratio": "3:4",
+            "resolution_tier": "high",
+            "quality_intent": "high",
+            "reference_fidelity": "high",
+            "background_intent": "auto",
+            "text_policy": "required",
+            "text_language": "zh-CN",
+        },
+        "detail": {
+            "aspect_ratio": "1:1",
+            "resolution_tier": "high",
+            "quality_intent": "high",
+            "reference_fidelity": "high",
+            "background_intent": "auto",
+            "text_policy": "required",
+            "text_language": "zh-CN",
+        },
+    }
+
+
+def test_direct_create_api_rejects_unknown_delivery_preset(configured_env) -> None:
+    client = TestClient(create_app())
+    _login(client)
+    response = client.post(
+        "/api/v3/products",
+        data={
+            "name": "未知交付预设商品",
+            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+            "delivery_preset_key": "unknown-preset",
+        },
+        files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"] == "未知 DeliverySpec 预设: unknown-preset"
 
 
 def test_direct_create_api_rejects_invalid_generation_spec(configured_env) -> None:

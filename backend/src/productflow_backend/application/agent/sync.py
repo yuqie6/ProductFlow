@@ -21,6 +21,7 @@ from productflow_backend.domain.enums import (
     AgentExecutionPhase,
     AgentTaskStatus,
     AgentTurnStatus,
+    AsyncDispatchStatus,
 )
 from productflow_backend.domain.errors import BusinessError
 from productflow_backend.infrastructure.agent_service import (
@@ -33,6 +34,7 @@ from productflow_backend.infrastructure.db.models import (
     AgentTask,
     AgentTurnExecution,
     AgentTurnProjection,
+    AsyncDispatch,
     WorkflowDraft,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -180,9 +182,10 @@ def execute_agent_turn_sync(
 def recover_unfinished_agent_turn_syncs(
     *,
     enqueue: Callable[[str], None] | None = None,
-    stage_dispatch: Callable[[Session, str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], AsyncDispatch | None] | None = None,
 ) -> AgentTurnRecoverySummary:
     session = get_session_factory()()
+    staged_projection_ids: list[str] = []
     try:
         recover_expired_agent_turn_executions(session)
         projection_ids = list(
@@ -204,8 +207,23 @@ def recover_unfinished_agent_turn_syncs(
         recovered_task_projection_ids, recovered_task_turns = _recover_queued_task_turns(session)
         projection_ids.extend(recovered_task_projection_ids)
         if stage_dispatch is not None:
+            active_dispatch_projection_ids = set(
+                session.scalars(
+                    select(AsyncDispatch.aggregate_id).where(
+                        AsyncDispatch.actor_name == "run_agent_turn_sync",
+                        AsyncDispatch.aggregate_id.in_(projection_ids),
+                        AsyncDispatch.status.in_(
+                            (AsyncDispatchStatus.PENDING, AsyncDispatchStatus.SENT)
+                        ),
+                    )
+                ).all()
+            ) if projection_ids else set()
             for projection_id in projection_ids:
-                stage_dispatch(session, projection_id)
+                if projection_id in active_dispatch_projection_ids:
+                    continue
+                dispatch = stage_dispatch(session, projection_id)
+                if dispatch is None or dispatch.status != AsyncDispatchStatus.DEAD:
+                    staged_projection_ids.append(projection_id)
             session.commit()
     except Exception:
         session.rollback()
@@ -214,7 +232,7 @@ def recover_unfinished_agent_turn_syncs(
     finally:
         session.close()
 
-    enqueued = len(projection_ids) if stage_dispatch is not None else 0
+    enqueued = len(staged_projection_ids) if stage_dispatch is not None else 0
     if stage_dispatch is None:
         if enqueue is None:
             raise ValueError("enqueue or stage_dispatch is required")

@@ -18,8 +18,12 @@ from productflow_backend.domain.errors import BusinessValidationError, ConflictE
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     LegacyWorkflowArchiveAsset,
+    LocalImageEditProviderAttempt,
+    LocalImageEditTask,
+    LocalImageEditTaskReference,
     Product,
     ProductImageAsset,
+    ProductImageFidelityCheck,
     VisualSystemVersionReference,
     WorkflowGraphArtifact,
     WorkflowGraphNode,
@@ -284,3 +288,31 @@ def ensure_product_image_asset_not_referenced(
         .limit(1)
     ):
         raise ConflictError("商品图片仍被交付派生任务引用，不能删除")
+    if session.scalar(
+        select(LocalImageEditTask.id)
+        .where(
+            (LocalImageEditTask.source_asset_id == asset_id)
+            | (LocalImageEditTask.source_artifact_asset_id == asset_id)
+            | (LocalImageEditTask.result_asset_id == asset_id)
+        )
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被局部编辑任务的源图或结果引用，不能删除")
+    if session.scalar(
+        select(LocalImageEditTaskReference.task_id)
+        .where(LocalImageEditTaskReference.asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被局部编辑任务作为参考图引用，不能删除")
+    if session.scalar(
+        select(LocalImageEditProviderAttempt.id)
+        .where(LocalImageEditProviderAttempt.late_result_asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被局部编辑迟到结果审计引用，不能删除")
+    if session.scalar(
+        select(ProductImageFidelityCheck.id)
+        .where(ProductImageFidelityCheck.asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍有人工保真检查历史，不能删除")

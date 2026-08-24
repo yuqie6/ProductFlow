@@ -7,18 +7,29 @@ from types import SimpleNamespace
 import pytest
 from helpers import _make_demo_image_bytes, _make_demo_image_data_url
 from PIL import Image
+from pydantic import ValidationError
 
+from productflow_backend.infrastructure.image.base import (
+    LocalEditImage,
+    LocalEditMask,
+    LocalEditRequest,
+    UnsupportedLocalEditError,
+)
 from productflow_backend.infrastructure.image.gemini_provider import (
     GoogleGeminiImageClient,
+    GoogleGeminiImageProvider,
     GoogleGeminiReferenceImage,
     map_productflow_size_to_gemini_image_config,
 )
 from productflow_backend.infrastructure.image.images_provider import (
     ImagesReferenceImage,
     OpenAIImagesClient,
+    OpenAIImagesImageProvider,
 )
+from productflow_backend.infrastructure.image.mock_provider import MockImageProvider
 from productflow_backend.infrastructure.image.responses_provider import (
     OpenAIResponsesImageClient,
+    OpenAIResponsesImageProvider,
     ResponsesReferenceImage,
 )
 from productflow_backend.infrastructure.provider_config import ResolvedImageProviderConfig
@@ -35,7 +46,7 @@ def _responses_config(*, background: bool = False) -> ResolvedImageProviderConfi
     )
 
 
-def _images_config() -> ResolvedImageProviderConfig:
+def _images_config(*, masked_local_edit: bool = False) -> ResolvedImageProviderConfig:
     return ResolvedImageProviderConfig(
         provider_kind="openai_images",
         model="gpt-image-1",
@@ -43,6 +54,7 @@ def _images_config() -> ResolvedImageProviderConfig:
         base_url="https://example.test/v1",
         images_quality="high",
         images_style="vivid",
+        image_mask_edit_enabled=masked_local_edit,
     )
 
 
@@ -356,6 +368,134 @@ def test_openai_images_client_generates_and_falls_back_for_multi_image_edit(
     assert edited.provider_output_json["_productflow"]["requested_image_count"] == 2
     assert edited.provider_output_json["_productflow"]["effective_image_count"] == 1
     assert generated.mime_type == "image/png"
+
+
+def test_masked_local_edit_sends_mask_and_only_sanitized_audit_metadata(
+    configured_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+    edit_calls: list[dict] = []
+
+    class DummyImages:
+        def edit(self, **kwargs):
+            edit_calls.append(kwargs)
+            return DummyImagesAPIResponse(encoded_result)
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+    mask_bytes = b"mask-bytes-that-must-not-enter-audit-json"
+    request = LocalEditRequest(
+        source_image=LocalEditImage(
+            bytes_data=_make_demo_image_bytes(),
+            mime_type="image/png",
+            filename="source.png",
+        ),
+        instruction="移除包装上的文字",
+        operation="remove",
+        mask=LocalEditMask(bytes_data=mask_bytes, mime_type="image/png"),
+        reference_images=(
+            LocalEditImage(
+                bytes_data=_make_demo_image_bytes(),
+                mime_type="image/png",
+                filename="reference.png",
+            ),
+        ),
+        size="1200x800",
+    )
+
+    result = OpenAIImagesImageProvider(_images_config(masked_local_edit=True)).edit_local(request)
+
+    assert edit_calls[0]["mask"].read() == mask_bytes
+    assert edit_calls[0]["mask"].name == "mask.png"
+    assert edit_calls[0]["size"] == "1536x1024"
+    assert isinstance(edit_calls[0]["image"], list)
+    assert result.effective_mode == "masked_edit"
+    assert result.effective_parameters["mode"] == "masked_edit"
+    assert result.effective_parameters["operation"] == "remove"
+    assert result.provider_request_json is not None
+    assert result.provider_request_json["has_mask"] is True
+    assert "mask" not in result.provider_request_json
+    assert mask_bytes not in str(result.provider_request_json).encode()
+    assert mask_bytes not in str(result.provider_output_json).encode()
+    assert result.provider_output_json == {
+        "_productflow": {
+            "requested_image_count": 2,
+            "effective_image_count": 2,
+            "effective_mode": "masked_edit",
+            "operation": "remove",
+            "requested_size": "1200x800",
+            "effective_size": "1536x1024",
+        }
+    }
+    assert result.effective_parameters["requested_size"] == "1200x800"
+    assert result.effective_parameters["size"] == "1536x1024"
+
+
+def test_local_edit_requires_explicit_capability_and_masked_operations() -> None:
+    source = LocalEditImage(bytes_data=b"source", mime_type="image/png")
+    mask = LocalEditMask(bytes_data=b"mask", mime_type="image/png")
+    request = LocalEditRequest(
+        source_image=source,
+        instruction="填充选区",
+        operation="inpaint",
+        mask=mask,
+        size="1024x1024",
+    )
+
+    provider = OpenAIImagesImageProvider(_images_config())
+    assert provider.local_edit_capability.supported is False
+    with pytest.raises(UnsupportedLocalEditError):
+        provider.edit_local(request)
+
+    enabled_capability = OpenAIImagesImageProvider(_images_config(masked_local_edit=True)).local_edit_capability
+    assert enabled_capability.supported is True
+    assert enabled_capability.mode == "masked_edit"
+    assert enabled_capability.operations == ("remove", "replace_text", "inpaint")
+
+    with pytest.raises(ValidationError):
+        LocalEditRequest(
+            source_image=source,
+            instruction="",
+            operation="remove",
+            mask=mask,
+            size="1024x1024",
+        )
+    with pytest.raises(ValidationError):
+        LocalEditRequest(
+            source_image=source,
+            instruction="不支持的裁切",
+            operation="crop",  # type: ignore[arg-type]
+            mask=mask,
+            size="1024x1024",
+        )
+    with pytest.raises(ValidationError):
+        LocalEditRequest(
+            source_image=source,
+            instruction="缺少 mask",
+            operation="remove",
+            size="1024x1024",
+        )
+    with pytest.raises(ValidationError):
+        LocalEditMask(bytes_data=b"", mime_type="image/png")
+
+
+def test_responses_gemini_and_mock_do_not_claim_local_edit_support(configured_env) -> None:
+    responses = OpenAIResponsesImageProvider(_responses_config())
+    gemini = GoogleGeminiImageProvider(
+        ResolvedImageProviderConfig(
+            provider_kind="google_gemini_image",
+            model="gemini-image",
+            api_key="demo-api-key",
+        )
+    )
+
+    assert responses.local_edit_capability.supported is False
+    assert gemini.local_edit_capability.supported is False
+    assert MockImageProvider().local_edit_capability.supported is False
 
 
 def test_google_gemini_client_maps_size_and_omits_raw_image_bytes(

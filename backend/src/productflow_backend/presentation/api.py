@@ -28,13 +28,21 @@ from productflow_backend.presentation.routes.agent_tasks import router as agent_
 from productflow_backend.presentation.routes.agent_tasks_internal import router as agent_tasks_internal_router
 from productflow_backend.presentation.routes.agent_workbenches import router as agent_workbenches_router
 from productflow_backend.presentation.routes.auth import router as auth_router
-from productflow_backend.presentation.routes.delivery_renditions import router as delivery_renditions_router
+from productflow_backend.presentation.routes.delivery_presets import router as delivery_presets_router
+from productflow_backend.presentation.routes.delivery_renditions import (
+    router as delivery_renditions_router,
+)
+from productflow_backend.presentation.routes.delivery_renditions import (
+    v3_router as delivery_renditions_v3_router,
+)
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
 from productflow_backend.presentation.routes.global_agent_conversations import (
     router as global_agent_conversations_router,
 )
+from productflow_backend.presentation.routes.image_fidelity_checks import router as image_fidelity_checks_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
 from productflow_backend.presentation.routes.legacy_archives import router as legacy_archives_router
+from productflow_backend.presentation.routes.local_image_edits import router as local_image_edits_router
 from productflow_backend.presentation.routes.media_library import router as media_library_router
 from productflow_backend.presentation.routes.products import router as products_router
 from productflow_backend.presentation.routes.settings import router as settings_router
@@ -92,12 +100,16 @@ def create_app() -> FastAPI:
     app.include_router(generation_queue_router)
     app.include_router(media_library_router)
     app.include_router(products_router)
+    app.include_router(delivery_presets_router)
     app.include_router(delivery_renditions_router)
+    app.include_router(delivery_renditions_v3_router)
+    app.include_router(image_fidelity_checks_router)
     app.include_router(workflow_drafts_router)
     app.include_router(workflow_graphs_router)
     app.include_router(workflow_recipes_router)
     app.include_router(workflow_recipes_v3_router)
     app.include_router(image_sessions_router)
+    app.include_router(local_image_edits_router)
     app.include_router(legacy_archives_router)
     app.include_router(settings_router)
     return app

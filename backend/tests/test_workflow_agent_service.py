@@ -48,6 +48,11 @@ from productflow_backend.application.agent.tools import (
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
 )
+from productflow_backend.application.async_delivery import (
+    recover_async_dispatch_for_actor,
+    stage_async_dispatch_for_actor,
+)
+from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.product_images.mutations import rename_gallery_asset
 from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import (
@@ -61,6 +66,7 @@ from productflow_backend.domain.enums import (
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
+    AsyncDispatchStatus,
     MediaVerificationStatus,
     WorkflowDraftStatus,
 )
@@ -84,6 +90,7 @@ from productflow_backend.infrastructure.db.models import (
     AgentTurnEvent,
     AgentTurnExecution,
     AgentTurnProjection,
+    AsyncDispatch,
     ProviderBinding,
     ProviderProfile,
     WorkflowDraft,
@@ -137,6 +144,74 @@ def _create_agent_first_workspace(db_session):
         image_uploads=[(_make_demo_image_bytes(), "agent-first.png", "image/png")],
         idempotency_key="agent-first-workspace",
     )
+
+
+def test_agent_workflow_draft_requires_explicit_intake_delivery_snapshot(db_session) -> None:
+    preset = get_delivery_preset("jd_hero")
+    selection = AgentProductSelectionV1.model_validate(
+        {
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+            "delivery_preset_key": preset.key,
+        }
+    )
+    workspace = create_agent_product_workspace(
+        db_session,
+        name="Draft 交付规格约束商品",
+        selection=selection,
+        image_uploads=[(_make_demo_image_bytes(), "draft-reference.png", "image/png")],
+        idempotency_key="draft-delivery-spec-constraint",
+    )
+    payload = make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id)
+    expected_spec = preset.spec.model_dump(mode="json")
+    for image in payload["image_types"][0]["images"]:
+        image["delivery_spec"] = expected_spec
+    accepted = append_workflow_draft_revision(
+        db_session,
+        product_id=workspace.product.id,
+        draft_id=workspace.workflow_draft.id,
+        expected_draft_version=0,
+        payload=payload,
+        ready_for_confirmation=True,
+    )
+    assert accepted.current_revision is not None
+    assert accepted.current_revision.version == 1
+    invalid_followup = make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id)
+    invalid_followup["image_types"][0]["images"][0]["delivery_spec"] = expected_spec
+    with pytest.raises(BusinessValidationError, match="每张 PlannedImage"):
+        append_workflow_draft_revision(
+            db_session,
+            product_id=workspace.product.id,
+            draft_id=workspace.workflow_draft.id,
+            expected_draft_version=1,
+            payload=invalid_followup,
+            ready_for_confirmation=True,
+        )
+
+    missing_snapshot_workspace = create_agent_product_workspace(
+        db_session,
+        name="缺少逐图交付规格商品",
+        selection=AgentProductSelectionV1.model_validate(
+            {
+                "schema_version": 1,
+                "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+                "delivery_preset_key": preset.key,
+            }
+        ),
+        image_uploads=[(_make_demo_image_bytes(), "missing-reference.png", "image/png")],
+        idempotency_key="draft-delivery-spec-missing",
+    )
+    invalid_payload = make_workflow_draft_payload(reference_asset_id=missing_snapshot_workspace.created_assets[0].id)
+    invalid_payload["image_types"][0]["images"][0]["delivery_spec"] = expected_spec
+    with pytest.raises(BusinessValidationError, match="每张 PlannedImage"):
+        append_workflow_draft_revision(
+            db_session,
+            product_id=missing_snapshot_workspace.product.id,
+            draft_id=missing_snapshot_workspace.workflow_draft.id,
+            expected_draft_version=0,
+            payload=invalid_payload,
+            ready_for_confirmation=True,
+        )
 
 
 def _agent_service_state_payload(**overrides) -> dict:
@@ -2033,6 +2108,144 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     assert followup.created is True
     assert followup.projection.conversation.status == AgentConversationStatus.COLLECTING
     assert followup.projection.conversation.harness_run_id == conversation.harness_run_id
+
+
+def test_agent_recovery_requeues_first_stale_publish_dead_dispatch_for_pollable_projection(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="恢复 DEAD dispatch 对应的排队 Turn",
+        input_asset_ids=[asset.id],
+        idempotency_key="dead-dispatch-recovery",
+    ).projection
+    dispatch = stage_async_dispatch_for_actor(
+        db_session,
+        "run_agent_turn_sync",
+        projection.id,
+    )
+    dispatch.status = AsyncDispatchStatus.DEAD
+    dispatch.attempts = 10
+    db_session.commit()
+
+    # Generic staging reports the dead row without reviving it; recovery must
+    # choose the explicit dead-letter transition before claiming enqueue.
+    observed_dead = recover_unfinished_agent_turn_syncs(
+        stage_dispatch=lambda session, projection_id: stage_async_dispatch_for_actor(
+            session,
+            "run_agent_turn_sync",
+            projection_id,
+        )
+    )
+    assert observed_dead.pending_turns == 1
+    assert observed_dead.enqueued_turns == 0
+
+    summary = recover_unfinished_agent_turn_syncs(
+        stage_dispatch=lambda session, projection_id: recover_async_dispatch_for_actor(
+            session,
+            "run_agent_turn_sync",
+            projection_id,
+        )
+    )
+
+    assert summary.pending_turns == 1
+    assert summary.enqueued_turns == 1
+    db_session.expire_all()
+    persisted = db_session.get(AsyncDispatch, dispatch.id)
+    assert persisted is not None
+    assert persisted.status == AsyncDispatchStatus.PENDING
+    assert persisted.attempts == 10
+    assert persisted.available_at.replace(tzinfo=UTC) <= datetime.now(UTC)
+
+
+@pytest.mark.parametrize("dispatch_status", [AsyncDispatchStatus.PENDING, AsyncDispatchStatus.SENT])
+def test_agent_recovery_skips_projection_with_active_dispatch(
+    db_session,
+    dispatch_status: AsyncDispatchStatus,
+) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="已有投递时不重复 staging",
+        input_asset_ids=[asset.id],
+        idempotency_key=f"active-dispatch-{dispatch_status.value}",
+    ).projection
+    dispatch = stage_async_dispatch_for_actor(
+        db_session,
+        "run_agent_turn_sync",
+        projection.id,
+    )
+    dispatch.status = dispatch_status
+    db_session.commit()
+
+    staged: list[str] = []
+    summary = recover_unfinished_agent_turn_syncs(
+        stage_dispatch=lambda _session, projection_id: staged.append(projection_id)
+    )
+
+    assert summary.pending_turns == 1
+    assert summary.enqueued_turns == 0
+    assert staged == []
+    db_session.expire_all()
+    persisted = db_session.get(AsyncDispatch, dispatch.id)
+    assert persisted is not None
+    assert persisted.status == dispatch_status
+
+
+def test_agent_recovery_restages_consumed_pollable_projection_without_losing_schedule(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="已消费投递仍需继续轮询",
+        input_asset_ids=[asset.id],
+        idempotency_key="consumed-dispatch-recovery",
+    ).projection
+    next_poll_at = datetime.now(UTC) + timedelta(minutes=5)
+    dispatch = stage_async_dispatch_for_actor(
+        db_session,
+        "run_agent_turn_sync",
+        projection.id,
+    )
+    dispatch.status = AsyncDispatchStatus.CONSUMED
+    dispatch.available_at = next_poll_at
+    dispatch.consumed_at = datetime.now(UTC)
+    db_session.commit()
+
+    summary = recover_unfinished_agent_turn_syncs(
+        stage_dispatch=lambda session, projection_id: stage_async_dispatch_for_actor(
+            session,
+            "run_agent_turn_sync",
+            projection_id,
+        )
+    )
+
+    assert summary.pending_turns == 1
+    assert summary.enqueued_turns == 1
+    db_session.expire_all()
+    persisted = db_session.get(AsyncDispatch, dispatch.id)
+    assert persisted is not None
+    assert persisted.status == AsyncDispatchStatus.PENDING
+    assert persisted.available_at.replace(tzinfo=UTC) == next_poll_at
 
 
 def test_workflow_draft_confirmation_rolls_back_if_agent_completion_fails(
