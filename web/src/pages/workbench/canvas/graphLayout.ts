@@ -1,3 +1,10 @@
+/**
+ * schema-v3 节点和一层分组的画布几何。
+ *
+ * 分组只是视觉文件夹：没有执行状态、端口、嵌套或运行/取消/重试。
+ * `client_ref` 只活到 Graph Command 赋持久 id。
+ */
+
 import type { TranslationKey } from "../../../lib/i18n";
 import type { GraphChangeSet, GraphEdge, GraphGroup, GraphNode, GraphProjection } from "../../../lib/types";
 import type { WorkflowCanvasViewport } from "./canvasState";
@@ -49,6 +56,7 @@ export function createdGraphNodeIds(before: GraphProjection, after: GraphProject
   return after.nodes.filter((node) => !known.has(node.id)).map((node) => node.id);
 }
 
+/** Graph Command 赋持久 id 之前的临时操作身份。 */
 export function graphChangeSetClientRef(prefix: string): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${prefix}-${id}`.slice(0, 80);

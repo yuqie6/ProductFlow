@@ -1,3 +1,9 @@
+/**
+ * 按 live 图选择决定配方抽取范围。
+ *
+ * 配方只存结构和配置，不存商品身份、绑定资产、生成结果或媒体 bytes。
+ */
+
 import type { GraphProjection } from "../../../lib/types";
 
 export type RecipeSaveKind = "workflow" | "group" | "selection";

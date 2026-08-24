@@ -1,3 +1,5 @@
+"""WorkflowDraft / 配方 payload 的 DB-free DAG 规则，不是 schema-v3 Catalog。"""
+
 from __future__ import annotations
 
 from collections import defaultdict, deque

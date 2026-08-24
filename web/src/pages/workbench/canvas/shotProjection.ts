@@ -1,3 +1,9 @@
+/**
+ * 一组图片节点就是一个计划镜头。
+ *
+ * 重跑更新当前资产；历史结果留在图库和运行记录。分组本身没有执行状态。
+ */
+
 import type {
   GraphNodeRun,
   GraphProjection,

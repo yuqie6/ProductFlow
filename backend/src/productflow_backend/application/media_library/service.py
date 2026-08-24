@@ -1,3 +1,9 @@
+"""全局素材的保存、收录、归档与直接上传。
+
+保存和收录共享 MediaObject，不复制 bytes。归档改变可见性，不删除文件。
+上传走 StorageWriteCompensation：DB 失败只收回本次写入。
+"""
+
 from __future__ import annotations
 
 import json
@@ -121,6 +127,8 @@ def save_media_library_asset_from_session(
     *,
     image_session_asset_id: str,
 ) -> MediaLibrarySaveResult:
+    """把会话生成图登记为全局素材，复用同一 MediaObject。"""
+
     asset = session.scalar(
         select(ImageSessionAsset)
         .where(ImageSessionAsset.id == image_session_asset_id)
@@ -177,6 +185,8 @@ def save_media_library_asset_from_product(
     *,
     product_image_asset_id: str,
 ) -> MediaLibrarySaveResult:
+    """把商品图片登记为全局素材，复用同一 MediaObject。"""
+
     asset = session.scalar(
         select(ProductImageAsset)
         .where(ProductImageAsset.id == product_image_asset_id)
@@ -263,20 +273,22 @@ def _assert_library_asset_coherent(
 
 
 def validate_media_library_asset_integrity(library_asset: MediaLibraryAsset) -> MediaObject:
-    """Validate immutable media and provenance without applying archive-state policy."""
+    """核验不可变媒体与 provenance；不解释归档策略。"""
     media = _verified_media(library_asset.media_object)
     _assert_library_asset_coherent(library_asset, media=media)
     return media
 
 
 def validate_media_library_asset_for_use(library_asset: MediaLibraryAsset) -> MediaObject:
-    """Validate the immutable media and provenance before another feature uses an asset."""
+    """使用前核验媒体与 provenance；归档素材不能收录到商品。"""
     if library_asset.is_archived:
         raise ConflictError("归档素材不能收录到商品")
     return validate_media_library_asset_integrity(library_asset)
 
 
 def _origin_type_for_library_asset(library_asset: MediaLibraryAsset) -> ProductImageOriginType:
+    """映射进入商品命名空间的来源；不是自动 reject/draft。"""
+
     if library_asset.source_type == "image_session_generated":
         return ProductImageOriginType.IMAGE_SESSION_ATTACH
     if library_asset.source_type == "product_asset":
@@ -299,11 +311,11 @@ def collect_media_library_assets_to_product(
     idempotency_key: str | None = None,
     commit: bool = True,
 ) -> list[MediaLibraryCollectionResult]:
-    """Batch-collect up to 100 unique active library assets into one product.
+    """把最多 100 个未归档全局素材收录进一个商品。
 
-    Locks Product then MediaLibraryAsset rows in stable id order. All product assets
-    are created in one transaction; unique-race conflicts are re-queried idempotently.
-    Set commit=False when the caller owns a larger atomic transaction.
+    创建共享 MediaObject 的 ProductImageAsset，不复制 bytes。
+    按稳定 id 顺序先锁 Product 再锁 MediaLibraryAsset。唯一键冲突按幂等回查。
+    调用方拥有更大事务时传 commit=False。
     """
     if len(library_asset_ids) > MAX_COLLECTION_ASSETS:
         raise BusinessValidationError(f"一次最多收录 {MAX_COLLECTION_ASSETS} 个素材")
@@ -395,6 +407,7 @@ def collect_media_library_assets_to_product(
         if existing is not None:
             existing_by_library_id[library_asset.id] = existing
             continue
+        # 商品侧新身份指向同一 MediaObject；工作流绑定用 ProductImageAsset id。
         product_asset = ProductImageAsset(
             product_id=product.id,
             media_object_id=media.id,
@@ -529,6 +542,8 @@ def archive_media_library_asset(
     asset_id: str,
     expected_revision: int | None = None,
 ) -> MediaLibraryAsset:
+    """归档只改可见性；仍被工作流关联时拒绝。"""
+
     return _set_media_library_archive_state(
         session,
         asset_id=asset_id,
@@ -543,6 +558,8 @@ def restore_media_library_asset(
     asset_id: str,
     expected_revision: int | None = None,
 ) -> MediaLibraryAsset:
+    """恢复可见性；不新建 MediaObject。"""
+
     return _set_media_library_archive_state(
         session,
         asset_id=asset_id,

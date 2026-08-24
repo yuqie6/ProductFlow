@@ -1,3 +1,5 @@
+"""schema-v3 图运行：内容节点调 prompt 并回写 config，图片节点调 image provider；无法证明的 effect 标 unknown。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -125,6 +127,8 @@ def execute_graph_run(
     dependencies: WorkflowExecutionDependencies | None = None,
     storage: LocalStorage | None = None,
 ) -> None:
+    """Worker 入口：自建 Session 并在节点边界 commit。调用方不要再包一层业务事务。"""
+
     execution_lock = _acquire_graph_run_execution_lock(run_id)
     if execution_lock is None:
         logger.info("schema-v3 graph run already executing: run_id=%s", run_id)
@@ -247,6 +251,8 @@ def _execute_node_run(
     storage: LocalStorage,
     product_id: str,
 ) -> GraphRuntimeArtifacts:
+    """执行一个已 claim 的处理节点。内容节点回写 config；图片节点更新当前资产，旧结果留在图库。"""
+
     if node_run.node_id is None:
         raise BusinessValidationError("运行节点已从当前图中删除")
     applied_node = graph.node(node_run.node_id)
@@ -602,6 +608,8 @@ def _queue_delivery_rendition_after_image_success(
     node_id: str,
     source_asset_id: str,
 ) -> None:
+    """按节点 DeliverySpec 排队确定性派生；排队失败不影响已成功的生成资产。"""
+
     live_node = session.get(WorkflowGraphNode, node_id)
     if live_node is None:
         return
@@ -646,6 +654,8 @@ def _persist_artifact(
     product_image_asset_id: str | None = None,
     promote_current: bool = True,
 ) -> WorkflowGraphArtifact:
+    """同一 node_run 只保留一个 artifact；提升 current 不删除历史产物。"""
+
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     payload_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     artifact = session.scalar(
@@ -672,6 +682,7 @@ def _persist_artifact(
                 session.flush()
             artifact = candidate
         except IntegrityError:
+            # 同一 node_run 的 artifact 唯一；冲突时复用已有行，不另开产物。
             artifact = session.scalar(
                 select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id == node_run.id)
             )
@@ -688,6 +699,7 @@ def _persist_artifact(
     artifact.provider_model = provider_model
     flag_modified(artifact, "payload_json")
     session.flush()
+    # 仅当 live revision 未变才提升 current；重跑更新当前资产，旧 artifact 保留。
     if promote_current:
         live_graph = session.get(WorkflowGraph, run.graph_id)
         if live_graph is not None and live_graph.revision == run.graph_revision:
@@ -794,6 +806,8 @@ def _write_generated_config(
     node_id: str,
     updater: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> None:
+    """仅当 live 图 revision 仍等于本次运行时才回写 config。"""
+
     live_graph = session.get(WorkflowGraph, graph_id)
     if live_graph is None or live_graph.revision != graph_revision:
         return
@@ -1500,6 +1514,8 @@ def _hydrate_runtime_from_succeeded_node_runs(
 
 
 def _commit_storage_bound(session: Session, storage_writes: StorageWriteCompensation) -> None:
+    """存储写入与 DB commit 同事务边界；commit 失败由 compensation 回收本次新文件。"""
+
     hook = _storage_bound_commit_hook
     if hook is not None:
         hook(session, storage_writes)
@@ -1616,6 +1632,8 @@ def _call_node_provider(
     request_json: dict[str, Any],
     invoke: Callable[[], Any],
 ) -> tuple[Any, bool]:
+    """先持久化 intent 再调 provider；异常无法证明结果时标 unknown，不猜 failed。"""
+
     attempt_id = node_run.active_attempt_id
     if not attempt_id:
         raise BusinessValidationError("节点运行缺少 attempt token")
@@ -1637,6 +1655,7 @@ def _call_node_provider(
         request_json=request_json,
     ):
         return None, False
+    # intent 必须在 provider 调用前成为 durable 事实。
     session.commit()
     if not _advance_node_effect_phase(
         session,
@@ -1651,6 +1670,7 @@ def _call_node_provider(
     except GraphRunEffectCrash:
         raise
     except Exception:
+        # provider 调用已发出但结果无法证明：标 unknown，禁止猜 failed。
         mark_graph_run_provider_unknown(
             session,
             run_id=run.id,
@@ -1683,6 +1703,8 @@ def _call_node_provider(
 
 
 def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> bool:
+    """原子 claim 后立即 commit，后续 provider 调用不占用同一业务事务。"""
+
     now = now_utc()
     attempt_id = str(uuid.uuid4())
     result = session.execute(
@@ -1716,6 +1738,8 @@ def _complete_skipped_node_run(
     input_digest: str,
     trace: dict[str, Any],
 ) -> bool:
+    """GRAPH 范围下 digest 未变则复用当前 artifact；未入队的下游节点仍不会跑。"""
+
     if run.run_scope != GraphRunScope.GRAPH:
         return False
     if node_run.node_id is None:
@@ -1741,6 +1765,7 @@ def _fail_claimed_node(session: Session, *, run_id: str, node_run_id: str, reaso
     if node_run is None:
         _fail_run(session, run_id=run_id, reason=reason)
         return
+    # 已经进入 provider_call / result 的失败不可证明，必须 unknown。
     if node_run.progress_phase in {WORKFLOW_PROVIDER_EFFECT_CALL_PHASE, WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE}:
         mark_graph_run_provider_unknown(
             session,

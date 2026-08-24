@@ -1,3 +1,9 @@
+"""连续生图会话：参考图、生成结果与附加到商品。
+
+上传和生成结果使用 MediaObject。附加到商品创建 ProductImageAsset 并共享 bytes。
+provider 副作用无法证明时记 unknown，不能当成 failed 重放。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -598,6 +604,8 @@ def delete_image_session(
     image_session_id: str,
     storage: LocalStorage | None = None,
 ) -> None:
+    """删除会话资产行；已附加到商品的 MediaObject 因仍被引用而保留。"""
+
     image_session = _get_image_session_or_raise(session, image_session_id)
     session.expire(image_session, ["assets", "rounds", "generation_tasks"])
     image_session_assets = list(image_session.assets)
@@ -614,6 +622,7 @@ def delete_image_session(
     session.flush()
     deleted_media = prune_unreferenced_media_objects(session, media_ids)
     session.commit()
+    # 业务行已提交；仅清理已无引用的文件。
     for media_id, storage_path in deleted_media:
         best_effort_storage_delete(
             lambda path=storage_path: storage.delete_image_with_variants(path),
@@ -632,6 +641,8 @@ def add_image_session_reference_images(
     reference_image_uploads: list[tuple[bytes, str, str]],
     storage: LocalStorage | None = None,
 ) -> ImageSession:
+    """参考图进入 canonical MediaObject；DB 失败只收回本次写入。"""
+
     image_session = _get_image_session_or_raise(session, image_session_id)
     storage = storage or LocalStorage()
     with compensate_storage_writes(session) as storage_writes:
@@ -918,6 +929,7 @@ def _execute_image_session_round_generation(
                 storage=storage,
                 storage_writes=storage_writes,
             )
+            # 生成结果进入会话资产并共享 MediaObject；附加到商品时不再复制 bytes。
             asset = ImageSessionAsset(
                 session_id=image_session.id,
                 kind=ImageSessionAssetKind.GENERATED_IMAGE,
@@ -998,7 +1010,7 @@ def _execute_image_session_round_generation(
                     session.commit()
             else:
                 session.commit()
-            storage_writes.release()
+            storage_writes.release()  # 行已提交；后续候选失败不得删掉本张已入账文件。
             completed_candidates += 1
         except BaseException as exc:  # noqa: BLE001
             session.rollback()
@@ -1038,6 +1050,7 @@ def _execute_image_session_round_generation(
                         detail=safe_reason,
                     )
                 else:
+                    # 请求可能已发出，无法证明 provider 副作用，不能记 failed。
                     mark_image_session_provider_effect_unknown(
                         session,
                         task_id=generation_task_id,
@@ -1814,7 +1827,8 @@ def attach_image_session_asset_to_product_canonical(
     asset_id: str,
     product_id: str,
 ) -> ProductImageAsset:
-    """把 ImageChat 结果作为商品逻辑资产附加，不复制媒体 bytes。"""
+    """把会话生成图附加为商品图片身份，共享 MediaObject，不复制 bytes。"""
+
     image_session = _get_image_session_or_raise(session, image_session_id)
     asset = session.scalar(
         select(ImageSessionAsset)

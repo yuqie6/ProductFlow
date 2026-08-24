@@ -1,3 +1,9 @@
+/**
+ * 商品工作台路由：Agent 采集、Agent 画布，或 live 图。
+ *
+ * live 图是编辑权威。无图 bootstrap 会把查询缓存预置为 null，避免 Agent 面闪 404 重试。
+ */
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -135,6 +141,7 @@ export function ProductWorkbenchPage() {
   );
 }
 
+/** 直接创建的商品没有 Agent 工作台（409）；此时只读图查询。 */
 export function shouldReadCurrentWorkflowGraph(productId: string, agentError: unknown): boolean {
   return Boolean(productId) && isAgentWorkbenchMissing(agentError);
 }

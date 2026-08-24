@@ -1,3 +1,5 @@
+"""视觉 overlay 合并：字段集合由 Catalog 裁剪。"""
+
 from __future__ import annotations
 
 from typing import Any

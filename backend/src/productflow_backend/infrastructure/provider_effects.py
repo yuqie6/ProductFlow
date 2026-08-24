@@ -6,7 +6,10 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class ProviderEffectQueryResult:
-    """A read-only provider verdict for an effect whose original response was lost."""
+    """对丢失原始响应的副作用做只读查询结论。
+
+    unsupported 仍是 unknown：不能据此证明失败或重放请求。
+    """
 
     effect_result: str
     reconciliation_state: str

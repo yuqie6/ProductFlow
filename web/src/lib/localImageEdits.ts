@@ -1,3 +1,7 @@
+/**
+ * 局部编辑任务解析。unknown 表示无法证明供应商副作用，不是 failed 的别名。
+ */
+
 import type {
   LocalImageEditAdoptionEvent,
   LocalImageEditCapability,

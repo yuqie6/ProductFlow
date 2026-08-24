@@ -1,3 +1,9 @@
+/**
+ * Agent 优先的商品工作台：对话，加上可选的 live 图。
+ *
+ * persist 之后图才是编辑器。Agent 可以请求运行，但不能再提交一份 Draft 覆盖这张图。
+ */
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, CircleAlert, CircleDot, Eye, Images, Plus, X } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -591,6 +597,9 @@ export function AgentProductWorkbenchPage({
   );
 }
 
+/**
+ * 已确认的 revision 若还没有被 persist 成 live 图，仍需审阅（确认和 persist 是两步）。
+ */
 export function selectReviewableWorkflowRevision(
   draft: WorkflowDraft,
   graph: { source_draft_revision_id: string | null } | null,
@@ -651,6 +660,7 @@ export async function startEmptyCanvasAdd(input: {
   return input.hasGraph ? "opened" : "created";
 }
 
+/** 按商品幂等创建：409 表示 live 图已经存在。 */
 export async function createOrLoadEmptyWorkflowGraph(input: {
   create: () => Promise<GraphProjection>;
   loadCurrent: () => Promise<GraphProjection>;

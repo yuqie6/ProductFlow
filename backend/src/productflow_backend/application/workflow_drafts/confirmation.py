@@ -1,3 +1,5 @@
+"""商品 WorkflowDraft 确认：revision 与 Agent conversation 在同一事务内确认。"""
+
 from __future__ import annotations
 
 from sqlalchemy.orm import Session

@@ -1,3 +1,9 @@
+"""工作流子图库：WorkflowMediaLibraryAsset 使用关联。
+
+关联不拥有另一份媒体副本。工作流节点、封面、参考绑定和交付 lineage 使用
+ProductImageAsset id；必要时先把全局素材收录为商品图片。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,6 +30,8 @@ MAX_WORKFLOW_LIBRARY_ASSETS = 100
 
 @dataclass(frozen=True, slots=True)
 class WorkflowMediaLibraryAssetRecord:
+    """全局素材加上可选的商品侧图片身份。"""
+
     asset: MediaLibraryAsset
     product_image_asset_id: str | None
     linked_at: datetime
@@ -87,6 +95,8 @@ def list_workflow_media_library_assets(
     workflow_id: str,
     limit: int = MAX_WORKFLOW_LIBRARY_ASSETS,
 ) -> list[WorkflowMediaLibraryAssetRecord]:
+    """列出工作流关联的全局素材，并投影到商品侧 ProductImageAsset id。"""
+
     _require_workflow(session, product_id=product_id, workflow_id=workflow_id)
     bounded_limit = min(max(limit, 1), MAX_WORKFLOW_LIBRARY_ASSETS)
     rows = session.execute(
@@ -110,6 +120,8 @@ def sync_workflow_media_library_assets(
     media_library_asset_ids: list[str],
     commit: bool = True,
 ) -> list[WorkflowMediaLibraryAssetRecord]:
+    """写入使用关联；缺商品图片时先收录，仍不复制 bytes。"""
+
     if not media_library_asset_ids:
         raise BusinessValidationError("至少选择一个素材")
     if len(media_library_asset_ids) > MAX_WORKFLOW_LIBRARY_ASSETS:
@@ -144,8 +156,7 @@ def sync_workflow_media_library_assets(
     }
     ids_to_collect = [asset_id for asset_id in normalized_ids if asset_id not in same_product_source_ids]
     if ids_to_collect:
-        # ProductImageAsset remains the workflow-facing identity. This call is
-        # idempotent and preserves the source_library_asset_id lineage.
+        # 工作流面对的身份仍是 ProductImageAsset；收录幂等且保留 source_library_asset_id。
         collect_media_library_assets_to_product(
             session,
             product_id=product_id,
@@ -190,6 +201,7 @@ def remove_workflow_media_library_asset(
     workflow_id: str,
     media_library_asset_id: str,
 ) -> None:
+    """只删除工作流关联，不删全局素材、商品图片或 MediaObject。"""
     _require_workflow(session, product_id=product_id, workflow_id=workflow_id)
     link = session.scalar(
         select(WorkflowMediaLibraryAsset).where(

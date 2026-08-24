@@ -1,3 +1,5 @@
+"""product_source 绑定解析：缺 key 走历史回退，显式 null 表示未绑定。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

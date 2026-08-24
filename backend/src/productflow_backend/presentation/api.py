@@ -1,3 +1,5 @@
+"""FastAPI 组装层。业务规则在 application/domain，路由只做鉴权、校验和投影。"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

@@ -1,3 +1,9 @@
+"""商品图库 Explorer 查询。
+
+系统目录（全部/最近生成/上传/生成/类型/来源/未整理）是查询投影。
+用户文件夹是一层组织，不替代系统分类。列表按 ProductImageAsset id 连接生成与交付 lineage。
+"""
+
 from __future__ import annotations
 
 import base64
@@ -38,6 +44,8 @@ _GENERATED_ORIGINS = (
 
 
 class GalleryDirectoryKind(StrEnum):
+    """系统目录种类；USER_FOLDER 才对应持久化的一层用户组织。"""
+
     ALL = "all"
     RECENT_GENERATED = "recent_generated"
     UPLOADS = "uploads"
@@ -87,6 +95,8 @@ class GalleryAssetPage:
 
 
 def _gallery_asset_statement():
+    """按 ProductImageAsset id 连接生成产物与交付任务，不用路径或数组下标。"""
+
     direct_generation = aliased(WorkflowGraphArtifact)
     source_generation = aliased(WorkflowGraphArtifact)
     rendition_source = aliased(ProductImageAsset)
@@ -203,6 +213,8 @@ def list_gallery_assets(
     limit: int = GALLERY_DEFAULT_LIMIT,
     current_time: datetime | None = None,
 ) -> GalleryAssetPage:
+    """分页列出商品库图片，含当前与历史结果。"""
+
     _require_product(session, product_id)
     normalized_key = _validate_directory_key(
         session,
@@ -302,6 +314,8 @@ def get_gallery_bootstrap(
     product_id: str,
     current_time: datetime | None = None,
 ) -> GalleryBootstrap:
+    """系统目录计数与用户文件夹列表；cover_image_asset_id 只是展示元数据。"""
+
     product = _require_product(session, product_id)
     as_of = _normalize_utc(current_time or now_utc())
     base_filter = ProductImageAsset.product_id == product_id

@@ -1,3 +1,5 @@
+"""AgentSession 是长期会话容器。Turn runtime 仍走 conversation 投影，不把 Session 当 transcript 权威。"""
+
 from __future__ import annotations
 
 import re
@@ -103,6 +105,7 @@ def create_agent_session(
     *,
     title: str | None = None,
 ) -> AgentSession:
+    """创建长期 Session，并提交一个 GLOBAL conversation。Turn runtime 仍走 conversation 投影。本函数 commit。"""
     agent_session = new_agent_session(title=title)
     session.add(agent_session)
     session.flush()

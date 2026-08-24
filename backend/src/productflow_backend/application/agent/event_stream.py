@@ -1,3 +1,5 @@
+"""Turn 事件 SSE：只重放 PostgreSQL event store，不读 Node.js session files。"""
+
 from __future__ import annotations
 
 import asyncio

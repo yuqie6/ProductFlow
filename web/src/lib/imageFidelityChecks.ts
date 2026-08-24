@@ -1,3 +1,7 @@
+/**
+ * 保真检查线上辅助。四项结论独立记录；一项 pass 不代表其余项也通过。
+ */
+
 import type {
   CreateProductImageFidelityCheckInput,
   ProductImageFidelityCheck,

@@ -1,3 +1,5 @@
+"""AsyncDispatch 投递账本。PostgreSQL 是权威；SENT 表示已交给 broker，不等于 CONSUMED。"""
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +52,7 @@ def _validate_existing_dispatch_identity(
     aggregate_id: str,
     payload: dict[str, Any] | None,
 ) -> None:
+    """同一 delivery_key 不能改绑 actor、aggregate 或 payload。"""
     if existing.actor_name != actor_name or existing.aggregate_id != aggregate_id:
         raise ConflictError("同一 delivery key 不能复用到不同的异步目标")
     if payload is not None and existing.payload_json not in (None, payload):
@@ -188,6 +191,7 @@ def stage_async_dispatch_for_actor(
     *,
     delay_ms: int | None = None,
 ) -> AsyncDispatch:
+    """按 actor+aggregate 暂存 PENDING 行，不 commit。调用方持有事务。"""
     available_at = now_utc() + timedelta(milliseconds=delay_ms) if delay_ms is not None else None
     return stage_async_dispatch(
         session,
@@ -307,6 +311,7 @@ def _claim_pending_dispatches(
     limit: int,
     lease_seconds: int,
 ) -> list[AsyncDispatch]:
+    """领取到期 PENDING。只 flush lease，由调用方决定何时标 SENT。"""
     statement = (
         select(AsyncDispatch)
         .where(
@@ -440,7 +445,7 @@ def claim_async_dispatch_for_consumption(
     now: datetime | None = None,
     lease_seconds: int = DEFAULT_DISPATCH_CONSUMER_LEASE_SECONDS,
 ) -> str | None:
-    """Atomically claim a sent dispatch for one worker before running its target."""
+    """从 SENT 抢消费 lease。抢不到说明另一 worker 正在跑或行已不是 SENT。本函数 commit。"""
     resolved_now = now or now_utc()
     token = new_id()
     result = session.execute(
@@ -474,6 +479,7 @@ def run_async_dispatcher_once(
     max_attempts: int = DEFAULT_DISPATCH_MAX_ATTEMPTS,
     backoff_seconds: int = DEFAULT_DISPATCH_BACKOFF_SECONDS,
 ) -> AsyncDispatchSummary:
+    """调度一轮：对账过期 lease / 陈旧 SENT，再 claim PENDING 并先标 SENT 再 enqueue。"""
     resolved_now = now or now_utc()
     session = get_session_factory()()
     summary = AsyncDispatchSummary()
@@ -572,7 +578,7 @@ def mark_async_dispatch_consumed(
     lease_token: str | None = None,
     now: datetime | None = None,
 ) -> bool:
-    """Atomically mark a sent dispatch consumed by its owning worker."""
+    """把 SENT 标 CONSUMED。SENT 只表示已交给 broker，消费完成才是 CONSUMED。"""
     resolved_now = now or now_utc()
     lease_predicate = (
         AsyncDispatch.lease_token == lease_token

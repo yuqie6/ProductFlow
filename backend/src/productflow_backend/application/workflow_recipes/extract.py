@@ -1,3 +1,5 @@
+"""从 live schema-v3 图抽出可复用配方：去掉商品身份、绑定资产和生成结果。"""
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -24,6 +26,8 @@ def extract_recipe_payload(
     group_id: str | None = None,
     node_ids: list[str] | None = None,
 ) -> RecipePayload:
+    """只保留选区内的结构与可复用 config；不写入目标商品 live 图。"""
+
     selected_ids = _selected_node_ids(graph, source_type=source_type, group_id=group_id, node_ids=node_ids or [])
     nodes = [node for node in graph.nodes if node.id in selected_ids]
     if not nodes:
@@ -118,6 +122,7 @@ def _reusable_node_config(node: AppliedGraphNode) -> dict[str, Any]:
 
 
 def _sanitize_config_value(value: Any) -> Any:
+    # 配方不得保存商品身份、绑定资产或退休 plan key。
     if isinstance(value, dict):
         cleaned: dict[str, Any] = {}
         for key, item in value.items():

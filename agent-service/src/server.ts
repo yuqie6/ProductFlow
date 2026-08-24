@@ -1,3 +1,10 @@
+/**
+ * ProductFlow 与本 Pi 进程之间的内部 HTTP 适配。
+ *
+ * 写操作需要共享内部 token。只有 `/healthz` 不鉴权。
+ * conversation 与 task 路径共用同一套 Turn 运行时；查找依据是 ProductFlow contract，不是本地文件身份。
+ */
+
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { byteLength, PageContext, StartTurnInput, TurnAnswer, validatePageContext } from "./contracts.js";
@@ -74,6 +81,7 @@ async function handleRequest(
   writeJSON(response, 405, { error: { code: "method_not_allowed", message: "method not allowed" } });
 }
 
+/** `/internal/v1/{conversations|tasks}/:id/...`，按 ProductFlow scope 查找。 */
 function parseRoute(pathname: string): Route | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length < 5 || segments[0] !== "internal" || segments[1] !== "v1") return null;
@@ -106,6 +114,7 @@ interface Route {
   action: RouteAction;
 }
 
+/** SSE：心跳注释维持代理连接；空唤醒不是事件。 */
 async function streamEvents(
   manager: PiRuntimeManager,
   request: IncomingMessage,

@@ -1,3 +1,10 @@
+/**
+ * live schema-v3 图的画布命令面。
+ *
+ * 变更是 Graph Command change set。撤销/重做是服务端 operation group，不是本地历史。
+ * `onBeforeRun` 会 flush inspector 草稿。
+ */
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Play, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -212,6 +219,7 @@ export function GraphCanvasPanel({
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
   }, []);
 
+  // Graph Command 是写入者。409 表示 revision 已变，应重载 live 图，而不是重试过期操作。
   const applyMutation = useMutation({
     mutationFn: (changeSet: GraphChangeSet) => api.applyWorkflowChangeSet(productId, graph.id, changeSet),
     onSuccess: (next) => {

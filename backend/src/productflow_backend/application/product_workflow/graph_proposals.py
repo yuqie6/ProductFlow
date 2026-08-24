@@ -1,3 +1,5 @@
+"""Agent 图提案：提案不是 live 图；确认后才经 Graph Command 写入。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -74,6 +76,8 @@ def apply_agent_graph_change_set(
     change_set: WorkflowChangeSet,
     commit: bool = True,
 ) -> WorkflowGraph:
+    """立即写入只接受一条可逆命令；真正写库仍走 Graph Command。"""
+
     if len(change_set.operations) != 1:
         raise BusinessValidationError("立即写入只接受一条可逆改图命令；多步改图请提交提案")
     graph = _live_graph_for_conversation(session, conversation_id)
@@ -100,6 +104,8 @@ def propose_graph_change_set(
     change_set: WorkflowChangeSet,
     commit: bool = True,
 ) -> WorkflowGraphProposal:
+    """校验后只存 PENDING 提案，不改 live 图。"""
+
     graph = session.scalar(
         select(WorkflowGraph)
         .where(
@@ -152,6 +158,8 @@ def confirm_graph_proposal(
     graph_id: str,
     proposal_id: str,
 ) -> WorkflowGraph:
+    """确认提案时 Graph Command commit=False，本函数一次性 commit 提案状态和 live 图。"""
+
     graph = session.scalar(
         select(WorkflowGraph)
         .where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
@@ -249,6 +257,8 @@ def confirm_graph_proposal_for_conversation(
 
 
 def pending_proposal_view(session: Session, graph: WorkflowGraph, applied: AppliedGraph) -> GraphProposalView | None:
+    """把提案投影到当前图上作预览；stale 或非法时不写入。"""
+
     proposal = _pending_proposal(session, graph.id)
     if proposal is None:
         return None

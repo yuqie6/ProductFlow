@@ -1,3 +1,5 @@
+"""商品创建 intake 合同与幂等 request hash。intake 一旦写入即不可变。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -297,6 +299,7 @@ def agent_product_workspace_request_hash(
     image_uploads: list[tuple[bytes, str, str]],
     agent_session_id: str | None = None,
 ) -> str:
+    """一次性创建商品工作区的 request hash；与 idempotency key 共同定义身份。"""
     payload = {
         "product_name": normalized_product_name,
         "selection": selection.model_dump(mode="json", exclude_none=True),
@@ -321,6 +324,7 @@ def agent_product_draft_workspace_request_hash(
     normalized_product_name: str,
     agent_session_id: str | None = None,
 ) -> str:
+    """草稿工作区 hash。key 复用但 hash 不同必须 conflict。"""
     payload = {
         "request_kind": "agent_product_draft_workspace_v1",
         "product_name": normalized_product_name,
@@ -336,6 +340,7 @@ def agent_workbench_attach_request_hash(
     product_id: str,
     agent_session_id: str | None = None,
 ) -> str:
+    """给已有 live graph 商品挂工作区的 hash。"""
     payload: dict[str, object] = {
         "request_kind": "ensure_agent_workbench_v1",
         "product_id": product_id,
@@ -351,6 +356,7 @@ def agent_product_intake_request_hash(
     selection: AgentProductSelectionV1,
     image_uploads: list[tuple[bytes, str, str]],
 ) -> str:
+    """finalize intake 的 hash。intake 写入后不可变。"""
     payload = {
         "request_kind": "agent_product_intake_finalization_v1",
         "selection": selection.model_dump(mode="json", exclude_none=True),
@@ -373,6 +379,7 @@ def agent_product_intake_from_assets_request_hash(
     selection: AgentProductSelectionV1,
     reference_asset_ids: list[str],
 ) -> str:
+    """用已有资产 finalize intake 的 hash。"""
     payload = {
         "request_kind": "agent_product_intake_from_assets_v1",
         "selection": selection.model_dump(mode="json", exclude_none=True),

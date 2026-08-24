@@ -1,3 +1,5 @@
+"""Turn 投影同步。PostgreSQL 是权威状态；Redis/Dramatiq 只投递 poll 与 recovery attempt。"""
+
 from __future__ import annotations
 
 import logging
@@ -61,6 +63,7 @@ def execute_agent_turn_sync(
     gateway: AgentServiceClient | None = None,
     enqueue_later: Callable[[Session, str, int], None],
 ) -> None:
+    """同步一个 Turn 投影。resume_required 时跳过；网络/5xx 保留投影并重投递，不把 ambiguous 标 failed。本函数自管 session。"""
     session = get_session_factory()()
     try:
         projection = session.scalar(
@@ -73,6 +76,7 @@ def execute_agent_turn_sync(
             .where(AgentTurnProjection.id == projection_id)
         )
         if projection is None or projection.resume_required:
+            # 等人确认/回答时停止 poll；恢复扫描仍以 PostgreSQL 状态为准。
             return
         client = gateway or get_agent_service_client()
         conversation = projection.conversation
@@ -124,6 +128,7 @@ def execute_agent_turn_sync(
                     and execution.owner_id is None
                     and execution.phase == AgentExecutionPhase.CLAIMED
                 ):
+                    # 已绑定但尚未被 worker drain 的 queued Turn，由本实例 resume 而不是另开 harness Turn。
                     state = client.resume_turn(
                         conversation_id=conversation.id,
                         turn_id=projection.harness_turn_id,
@@ -157,6 +162,7 @@ def execute_agent_turn_sync(
                 ),
             )
             if exc.status_code is None or exc.status_code >= 500:
+                # 无法证明 adapter 失败，只补 delivery attempt。
                 enqueue_later(session, projection.id, _poll_delay_ms())
                 session.commit()
     except BusinessError as exc:
@@ -184,6 +190,7 @@ def recover_unfinished_agent_turn_syncs(
     enqueue: Callable[[str], None] | None = None,
     stage_dispatch: Callable[[Session, str], AsyncDispatch | None] | None = None,
 ) -> AgentTurnRecoverySummary:
+    """扫描未终态投影并补 stage dispatch。Redis 不是业务权威；已有 PENDING/SENT 不重复绑定。"""
     session = get_session_factory()()
     staged_projection_ids: list[str] = []
     try:
@@ -196,6 +203,7 @@ def recover_unfinished_agent_turn_syncs(
                     or_(
                         AgentTurnProjection.status.in_(_POLLABLE_AGENT_TURN_STATUSES),
                         (
+                            # 待确认但尚未挂上 Draft revision，同步仍可能补 artifact。
                             (AgentTurnProjection.status == AgentTurnStatus.AWAITING_CONFIRMATION)
                             & AgentTurnProjection.workflow_draft_revision_id.is_(None)
                         ),
@@ -250,6 +258,7 @@ def recover_unfinished_agent_turn_syncs(
 
 
 def _recover_queued_task_turns(session: Session) -> tuple[list[str], int]:
+    """用与 UI 相同的首轮 idempotency key 补预留，避免恢复路径再造一条 first Turn。"""
     tasks = list(
         session.scalars(
             select(AgentTask)

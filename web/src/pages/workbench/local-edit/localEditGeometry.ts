@@ -1,3 +1,9 @@
+/**
+ * 局部编辑的蒙版几何。
+ *
+ * 坐标是源图像素，不是画布 CSS 像素；交付尺寸不能当编辑身份。
+ */
+
 import type { LocalImageEditOperation } from "../../../lib/types";
 
 export type LocalEditOperation = LocalImageEditOperation;

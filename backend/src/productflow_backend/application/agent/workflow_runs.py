@@ -1,3 +1,5 @@
+"""Agent 有界读取 graph run 元数据。运行权威在 workflow_graph_runs，不是 Agent transcript。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +31,7 @@ def list_agent_workflow_runs(
     conversation_id: str,
     limit: int = 20,
 ) -> AgentWorkflowRunPage:
+    """列出当前商品 live graph 的运行。没有 live graph 则空页，不回退 Draft。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     graph = get_active_workflow_graph(session, product_id=conversation.product_id)
     if graph is None:

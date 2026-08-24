@@ -1,3 +1,5 @@
+"""全局 Agent 唯一可选 artifact 合同。workflow 分支必须带目标商品作用域。"""
+
 from __future__ import annotations
 
 from typing import Literal

@@ -1,3 +1,8 @@
+"""交付图本地渲染。
+
+只变换已有源图 bytes；不调用图像模型，也不改源 ProductImageAsset。
+"""
+
 from __future__ import annotations
 
 import warnings
@@ -28,6 +33,8 @@ def render_delivery_rendition(
     source_bytes: bytes,
     delivery_spec: DeliverySpec | dict[str, object],
 ) -> RenderedDeliveryRendition:
+    """按 DeliverySpec 做确定性缩放/裁切/编码。"""
+
     normalized = normalize_delivery_spec(delivery_spec)
     spec = normalized.spec
     image = _decode_source_image(source_bytes)

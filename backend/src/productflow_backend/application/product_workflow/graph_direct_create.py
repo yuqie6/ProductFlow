@@ -1,3 +1,5 @@
+"""跳过 Draft，一次事务创建商品、参考图和完整 schema-v3 图。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -81,6 +83,7 @@ def create_product_with_direct_graph(
         product_id = creation.product.id
         asset_ids = [asset.id for asset in creation.created_assets]
         graph_id = command.graph.id
+        # Graph Command 只 flush；本函数一次 commit 商品、参考图和完整 v3 图。
         session.commit()
     session.expire_all()
     product = get_product_detail(session, product_id)

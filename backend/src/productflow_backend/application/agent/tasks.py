@@ -1,3 +1,5 @@
+"""AgentTask 在 Session 下保存一条业务目标与一次 task-specific run。兼容列仍叫 harness_run_id；page context 不改写 goal。"""
+
 from __future__ import annotations
 
 import base64
@@ -105,7 +107,7 @@ def new_agent_task(
         conversation_id=conversation.id if conversation is not None else None,
         product_id=conversation.product_id if conversation is not None else None,
         workflow_draft_id=conversation.workflow_draft_id if conversation is not None else None,
-        harness_run_id=task_id,
+        harness_run_id=task_id,  # 兼容列：这条 Task 自己的 run，不是 Session transcript。
         title=normalized_title,
         goal=normalized_goal,
         summary=normalized_goal[:AGENT_TASK_SUMMARY_MAX_LENGTH],
@@ -121,6 +123,7 @@ def create_agent_task(
     goal: str,
     conversation_id: str | None = None,
 ) -> AgentTask:
+    """在 Session 下创建一条业务目标。本函数 commit。"""
     agent_session = get_agent_session_or_raise(session, session_id)
     conversation = _conversation_for_task(session, conversation_id)
     _validate_task_session(agent_session, conversation)
@@ -151,6 +154,7 @@ def get_agent_task_or_raise(session: Session, task_id: str) -> AgentTask:
     if task is None:
         raise NotFoundError("Agent Task 不存在")
     if _synchronize_task_workflow_run(task):
+        # 已确认运行后 Task 跟随 graph run；读取路径也会提交这次投影。
         refresh_agent_session_summary(session, task.session_id)
         session.commit()
         return get_agent_task_or_raise(session, task_id)
@@ -233,6 +237,7 @@ def rename_agent_task(session: Session, *, task_id: str, title: str) -> AgentTas
 
 
 def cancel_agent_task(session: Session, *, task_id: str) -> AgentTask:
+    """本地取消 Task 与当前投影。不把 Node.js transcript 当作权威。本函数 commit。"""
     task = _get_task_for_update(session, task_id)
     if task.status not in _TERMINAL_TASK_STATUSES:
         now = now_utc()
@@ -256,6 +261,7 @@ def cancel_agent_task(session: Session, *, task_id: str) -> AgentTask:
 
 
 def pause_agent_task(session: Session, *, task_id: str) -> AgentTask:
+    """只暂停等待用户/确认的 Task。运行中的 harness Turn 不能中断后保持暂停。"""
     task = _get_task_for_update(session, task_id)
     if task.status in _TERMINAL_TASK_STATUSES:
         return get_agent_task_or_raise(session, task.id)
@@ -285,6 +291,7 @@ def pause_agent_task(session: Session, *, task_id: str) -> AgentTask:
 
 
 def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResult:
+    """恢复暂停 Task。无当前 Turn 时复用首轮 idempotency key，避免与恢复扫描双写。"""
     task = _get_task_for_update(session, task_id)
     if task.status != AgentTaskStatus.PAUSED:
         return AgentTaskResumeResult(task=get_agent_task_or_raise(session, task.id))
@@ -343,6 +350,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
 
 
 def task_contract(session: Session, task_id: str) -> tuple[AgentTask, AgentConversation]:
+    """Task 可执行合同：必须已绑定 conversation，且未取消。"""
     task = session.scalar(
         select(AgentTask)
         .options(
@@ -365,6 +373,7 @@ def ensure_task_for_turn(
     conversation: AgentConversation,
     task_id: str | None,
 ) -> AgentTask | None:
+    """Turn 必须挂同一 Session/conversation 的未取消 Task，且不能叠未结束 Turn。"""
     if conversation.session_id is None:
         raise ConflictError("Agent conversation 尚未绑定 Session")
     agent_session = get_agent_session_or_raise(session, conversation.session_id)
@@ -392,6 +401,7 @@ def create_page_context_snapshot(
     turn_id: str,
     page_context: dict[str, Any] | None,
 ) -> AgentPageContextSnapshot | None:
+    """记录本轮页面氛围。route 变化只影响后续 Turn 上下文，不改写 Task goal。"""
     if page_context is None:
         return None
     normalized = normalize_page_context(page_context)
@@ -465,6 +475,7 @@ def update_agent_task_from_turn(
     error_text: str | None,
     finished_at: datetime | None,
 ) -> AgentTask | None:
+    """用 Turn 投影推进 Task。unknown 原样保留，不降成 failed。"""
     if projection.task_id is None:
         return None
     task = session.get(AgentTask, projection.task_id, with_for_update=True)
@@ -511,6 +522,7 @@ def update_agent_task_from_turn(
         task.canceled_at = finished_at or now
         task.finished_at = finished_at or now
     elif status == AgentTurnStatus.UNKNOWN:
+        # provider/tool 结果无法证明时保持 unknown。
         task.status = AgentTaskStatus.UNKNOWN
         task.waiting_reason = None
         task.failure_reason = error_text
@@ -521,6 +533,7 @@ def update_agent_task_from_turn(
 
 
 def _synchronize_task_workflow_run(task: AgentTask) -> bool:
+    """已确认运行请求后，Task 状态跟随 workflow_graph_runs，不跟随 Agent transcript。"""
     request = task.workflow_run_requests[0] if task.workflow_run_requests else None
     if request is None:
         return False

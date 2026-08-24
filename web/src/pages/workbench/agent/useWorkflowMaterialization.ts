@@ -1,3 +1,9 @@
+/**
+ * 确认 WorkflowDraft revision，再 persist 成 live schema-v3 图。
+ *
+ * 确认和 persist 是两次 ProductFlow 调用；persist 之后图才是工作台权威。浏览器不拼装节点。
+ */
+
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 
@@ -45,10 +51,15 @@ export class WorkflowMaterializationProtocolError extends Error {
   }
 }
 
+/** 每个 Draft revision 一个 persist 身份，重试不能再建第二张图。 */
 export function workflowMaterializationIdempotencyKey(draftId: string, version: number): string {
   return `agent-workspace:${draftId}:v${version}`;
 }
 
+/**
+ * 先确认正在审阅的 revision，再把它 persist 成 live 图。
+ * `expectedWorkflowRevision` 留给调用方合同；persist 本身按 Draft 版本幂等。
+ */
 export async function confirmAndMaterializeWorkflow(
   {
     productId,

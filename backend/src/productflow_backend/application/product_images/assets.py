@@ -1,3 +1,9 @@
+"""商品图片身份的创建、封面展示绑定与删除守卫。
+
+上传、工作流结果、会话附加和交付派生都进入 ProductImageAsset；成功图不自动标 reject/draft。
+封面只改展示元数据。删除前必须确认节点、封面、lineage、交付和保真检查不再引用该 id。
+"""
+
 from __future__ import annotations
 
 from sqlalchemy import select, update
@@ -45,6 +51,8 @@ def stage_product_image_asset(
     parent_asset_id: str | None = None,
     image_type_key: str | None = None,
 ) -> ProductImageAsset:
+    """核验写入 MediaObject，并在商品命名空间创建一张逻辑图片。"""
+
     if parent_asset_id is not None:
         parent_asset = session.get(ProductImageAsset, parent_asset_id)
         if parent_asset is None or parent_asset.product_id != product.id:
@@ -84,6 +92,8 @@ def create_product_image_asset(
     parent_asset_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> ProductImageAsset:
+    """提交一张商品图片；DB 失败时补偿本次存储写入。"""
+
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -118,6 +128,8 @@ def create_generated_product_image_asset(
     parent_asset_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> ProductImageAsset:
+    """工作流生成结果进入商品库；不自动标 reject/draft。"""
+
     return create_product_image_asset(
         session,
         product_id=product_id,
@@ -136,6 +148,8 @@ def _product_image_asset_query():
 
 
 def get_product_image_asset(session: Session, asset_id: str) -> ProductImageAsset:
+    """按商品图片身份读取；路径不作为查找键。"""
+
     asset = session.scalar(_product_image_asset_query().where(ProductImageAsset.id == asset_id))
     if asset is None:
         raise NotFoundError("商品图片不存在")
@@ -143,6 +157,8 @@ def get_product_image_asset(session: Session, asset_id: str) -> ProductImageAsse
 
 
 def list_product_image_assets(session: Session, product_id: str) -> list[ProductImageAsset]:
+    """列出该商品当前与历史图片，不含自动 reject/draft 过滤。"""
+
     if session.get(Product, product_id) is None:
         raise NotFoundError("商品不存在")
     return list(
@@ -177,6 +193,8 @@ def get_product_image_assets_by_ids(
 
 
 def set_product_cover(session: Session, *, product_id: str, asset_id: str) -> Product:
+    """把封面指向一张商品图片；不改商品事实或工作流参考绑定。"""
+
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -193,6 +211,8 @@ def set_product_cover(session: Session, *, product_id: str, asset_id: str) -> Pr
 
 
 def set_product_cover_if_empty(session: Session, *, product_id: str, asset_id: str) -> bool:
+    """仅在尚无封面时写入展示图，仍不改事实或参考绑定。"""
+
     product_exists = session.scalar(select(Product.id).where(Product.id == product_id).with_for_update())
     if product_exists is None:
         raise NotFoundError("商品不存在")
@@ -211,6 +231,8 @@ def set_product_cover_if_empty(session: Session, *, product_id: str, asset_id: s
 
 
 def clear_product_cover(session: Session, *, product_id: str) -> Product:
+    """清除展示封面，不删除图片资产或工作流绑定。"""
+
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -227,6 +249,8 @@ def delete_product_image_asset(
     asset_id: str,
     storage: LocalStorage | None = None,
 ) -> str:
+    """删除商品图片身份；commit 后才清理已无引用的 MediaObject 文件。"""
+
     asset = get_product_image_asset(session, asset_id)
     ensure_product_image_asset_not_referenced(session, asset_id=asset_id)
 
@@ -239,6 +263,7 @@ def delete_product_image_asset(
     if product is not None:
         product.updated_at = now_utc()
     session.commit()
+    # 业务行已提交；共享媒体不作为通用回滚删除。
     if deleted_media:
         storage = storage or LocalStorage()
         best_effort_storage_delete(
@@ -253,6 +278,11 @@ def ensure_product_image_asset_not_referenced(
     *,
     asset_id: str,
 ) -> None:
+    """封面、节点绑定、生成历史、交付和保真检查仍持有该 id 时拒绝删除。
+
+    用户文件夹不是引用：删文件夹只清空 user_folder_id。
+    """
+
     if session.scalar(select(Product.id).where(Product.cover_image_asset_id == asset_id).limit(1)) is not None:
         raise ConflictError("商品图片仍被设为封面，不能删除")
     if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):

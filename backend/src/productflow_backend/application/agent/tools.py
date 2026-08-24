@@ -1,3 +1,5 @@
+"""Agent 工具面：有界只读上下文，以及账本+request hash 的 prepare/apply/reconcile。有 live graph 后禁止再提交覆盖现图的 WorkflowDraft。"""
+
 from __future__ import annotations
 
 import base64
@@ -251,11 +253,13 @@ AgentAssetRenameReconcileResult = AgentToolReconcileResult
 
 
 def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]:
+    """发给 adapter 的工具合同。live graph 存在时改用协作 prompt，禁止再提交覆盖现图的 WorkflowDraft。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     return _agent_contract_for_conversation(session, conversation)
 
 
 def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
+    """Task 合同把 goal 和 task-specific harness_run_id 绑到这一条 Task；page context 不改写 goal。"""
     task, conversation = task_contract(session, task_id)
     contract = _agent_contract_for_conversation(session, conversation)
     contract["task_id"] = task.id
@@ -334,6 +338,7 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
         "harness_run_id": conversation.harness_run_id,
         "current_draft_version": current_revision.version if current_revision is not None else 0,
         "system_prompt": (
+            # 有 live schema-v3 graph 后只解释/改点/请求运行，不能再 propose_workflow_draft 覆盖现图。
             WORKFLOW_AGENT_LIVE_GRAPH_PROMPT if live_graph is not None else WORKFLOW_AGENT_SYSTEM_PROMPT
         ),
         "draft_kind": "workflow",
@@ -350,6 +355,7 @@ def validate_agent_workflow_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> WorkflowDraftPayloadV1:
+    """校验 WorkflowDraft payload。商品已有 live graph 时拒绝覆盖。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     product_id = conversation.product_id
@@ -401,6 +407,7 @@ def finalize_agent_product_intake(
     idempotency_key: str,
     task_id: str | None = None,
 ) -> dict[str, Any]:
+    """把本轮参考图与图片类型写入不可变 intake。不创建第二份商品，也不启动运行。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     try:
@@ -456,6 +463,7 @@ def validate_agent_global_draft(
 
 
 def get_agent_product_context(session: Session, conversation_id: str) -> dict[str, Any]:
+    """有界业务事实投影。live_graph 不含完整配置正文，也不重建模型 transcript。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     product = session.scalar(
@@ -1008,6 +1016,7 @@ def prepare_agent_asset_rename(
     asset_id: str,
     target_display_name: str,
 ) -> AgentAssetRenamePrepared:
+    """prepare：只读计算目标，不写账本。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     normalized_target = normalize_gallery_display_name(target_display_name)
     asset = _get_scoped_asset(session, product_id=conversation.product_id, asset_id=asset_id)
@@ -1027,6 +1036,7 @@ def apply_agent_asset_rename(
     expected_display_name: str,
     target_display_name: str,
 ) -> dict[str, Any]:
+    """apply：key+request hash 命中 applied 账本则回放。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_rename_prepared(
         asset_id=asset_id,
@@ -1087,6 +1097,7 @@ def reconcile_agent_asset_rename(
     expected_display_name: str,
     target_display_name: str,
 ) -> AgentToolReconcileResult:
+    """reconcile：不重放 mutation。账本缺失且对象仍是 before 则为 not_applied。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_rename_prepared(
         asset_id=asset_id,
@@ -1128,6 +1139,7 @@ def prepare_agent_folder_create(
     conversation_id: str,
     name: str,
 ) -> AgentFolderCreatePrepared:
+    """prepare：预分配稳定 folder_id，供 apply 幂等使用。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     normalized_name = normalize_gallery_folder_name(name)
     existing = session.scalar(
@@ -1149,6 +1161,7 @@ def apply_agent_folder_create(
     folder_id: str,
     name: str,
 ) -> dict[str, Any]:
+    """apply：先回放账本，再创建文件夹。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_folder_create_prepared(folder_id=folder_id, name=name)
     conversation = _get_conversation_for_update(session, conversation_id)
@@ -1200,6 +1213,7 @@ def reconcile_agent_folder_create(
     folder_id: str,
     name: str,
 ) -> AgentToolReconcileResult:
+    """reconcile：不重放创建命令。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_folder_create_prepared(folder_id=folder_id, name=name)
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
@@ -1237,6 +1251,7 @@ def prepare_agent_folder_rename(
     folder_id: str,
     target_name: str,
 ) -> AgentFolderRenamePrepared:
+    """prepare：只读计算文件夹改名目标。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     folder = _get_scoped_folder(session, product_id=conversation.product_id, folder_id=folder_id)
     return AgentFolderRenamePrepared(
@@ -1255,6 +1270,7 @@ def apply_agent_folder_rename(
     expected_name: str,
     target_name: str,
 ) -> dict[str, Any]:
+    """apply：账本命中则回放。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_folder_rename_prepared(
         folder_id=folder_id,
@@ -1311,6 +1327,7 @@ def reconcile_agent_folder_rename(
     expected_name: str,
     target_name: str,
 ) -> AgentToolReconcileResult:
+    """reconcile：不重放改名。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_folder_rename_prepared(
         folder_id=folder_id,
@@ -1351,6 +1368,7 @@ def prepare_agent_asset_move(
     asset_ids: list[str],
     target_folder_id: str | None,
 ) -> AgentAssetMovePrepared:
+    """prepare：捕获移动前 folder_id，作为 apply 的 expected 状态。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     normalized_ids = _normalize_move_asset_ids(asset_ids)
     normalized_target = _normalize_optional_id(target_folder_id, field_name="目标文件夹 ID")
@@ -1383,6 +1401,7 @@ def apply_agent_asset_move(
     moves: list[GalleryAssetMove],
     target_folder_id: str | None,
 ) -> dict[str, Any]:
+    """apply：账本命中则回放。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_asset_move_prepared(moves=moves, target_folder_id=target_folder_id)
     conversation = _get_conversation_for_update(session, conversation_id)
@@ -1440,6 +1459,7 @@ def reconcile_agent_asset_move(
     moves: list[GalleryAssetMove],
     target_folder_id: str | None,
 ) -> AgentToolReconcileResult:
+    """reconcile：不重放移动。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_asset_move_prepared(moves=moves, target_folder_id=target_folder_id)
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
@@ -1792,6 +1812,7 @@ def _replay_existing_mutation(
     idempotency_key: str,
     request_hash: str,
 ) -> dict[str, Any] | None:
+    """同一 key 必须绑定同一 request hash，否则冲突而不是覆盖。"""
     mutation = _get_tool_mutation(
         session,
         conversation_id=conversation_id,
@@ -1815,6 +1836,7 @@ def _reconcile_from_ledger(
     idempotency_key: str,
     request_hash: str,
 ) -> AgentToolReconcileResult | None:
+    """账本 UNKNOWN 或未终态时保持 unknown，不能降成 failed。"""
     mutation = _get_tool_mutation(
         session,
         conversation_id=conversation_id,
@@ -1833,6 +1855,7 @@ def _reconcile_from_ledger(
         )
     if mutation.status == AgentToolMutationStatus.UNKNOWN:
         return AgentToolReconcileResult(state="unknown", detail="副作用结果仍不明确")
+    # 账本存在但未 applied，仍无法证明业务对象状态。
     return AgentToolReconcileResult(state="unknown", detail="副作用账本尚未形成终态")
 
 
@@ -1849,6 +1872,7 @@ def _commit_tool_mutation(
     expected_display_name: str | None = None,
     target_display_name: str | None = None,
 ) -> dict[str, Any]:
+    """写入 applied 账本并 commit。并发冲突时只回放已 applied 的同一 hash。"""
     session.add(
         AgentToolMutation(
             conversation_id=conversation_id,
@@ -1891,6 +1915,7 @@ def apply_agent_graph_change_set_tool(
     change_set: dict[str, Any],
     idempotency_key: str,
 ) -> dict[str, Any]:
+    """立即应用单次可逆改图。账本命中则回放。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     conversation = _get_conversation_for_update(session, conversation_id)
     _require_product_conversation(conversation)
@@ -1943,6 +1968,7 @@ def propose_agent_graph_change_set_tool(
     change_set: dict[str, Any],
     idempotency_key: str,
 ) -> dict[str, Any]:
+    """只留下未应用幽灵预览，不改 live graph。本函数 commit。"""
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     conversation = _get_conversation_for_update(session, conversation_id)
     _require_product_conversation(conversation)
@@ -1998,6 +2024,7 @@ def reconcile_agent_graph_change_set_tool(
     idempotency_key: str,
     tool_name: str,
 ) -> AgentToolReconcileResult:
+    """图变更对账：不重放 apply/propose。"""
     if tool_name not in {APPLY_GRAPH_TOOL_NAME, PROPOSE_GRAPH_TOOL_NAME}:
         raise BusinessValidationError("不支持的图变更对账工具")
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)

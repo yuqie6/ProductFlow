@@ -1,3 +1,8 @@
+"""连续生图 provider 副作用账本。
+
+intent 必须在发请求前落库。pending 不得重放。unknown 表示无法证明副作用，不能当成 failed。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -129,7 +134,7 @@ def ensure_image_session_provider_effect_intent(
     if effect.effect_result in {"applied", "unknown"}:
         return False
     if effect.effect_result == "pending":
-        # A pending row means another worker may have submitted the request. Never replay it.
+        # pending 表示请求可能已发出；重放会重复扣费或重复生成。
         return False
 
     effect.attempt_id = attempt_id
@@ -208,6 +213,8 @@ def mark_image_session_provider_effect_failed(
     candidate_start_index: int,
     detail: str,
 ) -> bool:
+    """仅在能证明未生效时记 failed；unknown/applied 不得覆盖。"""
+
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
@@ -227,6 +234,8 @@ def mark_image_session_provider_effect_unknown(
     candidate_start_index: int,
     detail: str,
 ) -> bool:
+    """无法证明 provider 是否生效时保留 unknown，禁止当失败重试。"""
+
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
@@ -246,7 +255,7 @@ def reconcile_image_session_provider_effect(
     image_session_id: str | None = None,
     chat_service_factory: ImageSessionChatServiceFactory | None = None,
 ) -> ImageSessionProviderEffectReconciliationResult:
-    """Query a provider for an unknown effect without submitting a new request."""
+    """查询已有 unknown 副作用，不提交新请求。查不到仍保持 unknown。"""
 
     task_query = select(ImageSessionGenerationTask).where(ImageSessionGenerationTask.id == task_id)
     if image_session_id is not None:

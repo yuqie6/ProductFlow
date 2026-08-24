@@ -1,3 +1,8 @@
+"""交付导出 ZIP。
+
+条目 lineage 使用 ProductImageAsset id 与任务 id，不用存储路径。
+"""
+
 from __future__ import annotations
 
 import json
@@ -247,6 +252,8 @@ def _verified_result_byte_size(asset: ProductImageAsset) -> int:
 
 
 def _source_lineage(session: Session, source_asset_id: str, *, product_id: str) -> dict[str, Any]:
+    """从源 ProductImageAsset id 追溯工作流产物，不用路径。"""
+
     artifact = session.scalar(
         select(WorkflowGraphArtifact)
         .join(WorkflowGraphArtifact.graph)

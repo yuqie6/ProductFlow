@@ -1,3 +1,5 @@
+"""Durable 入队。broker 失败必须留下可观察的 failed 业务状态，再抛 QueueUnavailableError。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -13,7 +15,7 @@ def enqueue_or_mark_failed(
     enqueue: Callable[[str], None],
     mark_failed: Callable[[str, str], None],
 ) -> None:
-    """Send the durable queue message, marking persisted task state failed if delivery fails."""
+    """投递 durable 消息。broker 失败先把已持久化任务标 failed，再抛 QueueUnavailableError。"""
 
     try:
         enqueue(task_id)

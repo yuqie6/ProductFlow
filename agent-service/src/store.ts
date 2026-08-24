@@ -1,3 +1,10 @@
+/**
+ * 本 Agent-service 实例的文件型 Turn 存储。
+ *
+ * session/event 文件是交互式运行时状态。业务权威仍是 ProductFlow PostgreSQL：
+ * 重启不得把已经 claim 的 Turn 再入队；无法证明的进行中 Turn 记 unknown，不是 failed。
+ */
+
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -69,6 +76,7 @@ export type DurableEventPublisher = (scope: Scope, event: TurnEvent) => Promise<
 
 const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached a provable terminal state";
 
+/** 本进程的 Turn 文件。不是第二份业务 transcript。 */
 export class TurnStore {
   private readonly locks = new Map<string, Promise<void>>();
   private readonly eventWaiters = new Map<string, Set<EventWaiter>>();
@@ -123,6 +131,7 @@ export class TurnStore {
     return result;
   }
 
+  /** 扫描本地 Turn，分别标成重新入队、等待、还原终态或 unknown。 */
   async recoverAfterRestart(): Promise<TurnRecoverySummary> {
     const queued: TurnRecoveryCandidate[] = [];
     let deferred = 0;
@@ -153,6 +162,9 @@ export class TurnStore {
     return { queued, deferred, waitingInput, restoredTerminal, unknown };
   }
 
+  /**
+   * 把幂等键绑到一个 Turn。输入相同则回放；键被不同输入占用则冲突。
+   */
   async createTurn(
     scope: Scope,
     input: StartTurnInput,
@@ -217,6 +229,10 @@ export class TurnStore {
     }
   }
 
+  /**
+   * 终态事件优先于快照。本地仍是 queued 但已被 claim 的快照交给 ProductFlow；
+   * 进行中的工具步骤改成 unknown。
+   */
   private async recoverTurnAfterRestart(
     scope: Scope,
     state: TurnState,
@@ -245,9 +261,8 @@ export class TurnStore {
         current.status === "queued" &&
         (current.execution_attempt !== undefined || current.execution_fencing_token !== undefined)
       ) {
-        // ProductFlow owns the execution phase after a claim. A local queued
-        // snapshot may be older than the durable phase, so only an untouched
-        // queued Turn is safe for Agent-local requeue.
+        // claim 之后执行阶段归 ProductFlow。本地 queued 快照可能落后于 durable 阶段，
+        // 只有从未被碰过的 queued Turn 才可以在 Agent 本地重新入队。
         return "deferred";
       }
       if (
@@ -365,6 +380,7 @@ export class TurnStore {
     });
   }
 
+  /** 在同一个 Turn 锁里追加终态事件并更新快照。 */
   async terminal(
     runID: string,
     turnID: string,
@@ -421,6 +437,7 @@ export class TurnStore {
     return JSON.parse(await readFile(path, "utf8")) as T;
   }
 
+  /** 原子替换，避免崩溃留下写到一半的 Turn 文件。 */
   private async writeJSON(path: string, value: unknown): Promise<void> {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
@@ -479,6 +496,7 @@ export class TurnStore {
     return `${runID}:${turnID}`;
   }
 
+  /** 按 run/Turn 串行写入，保证事件序号单调。 */
   private async serial<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -539,6 +557,7 @@ function stringPayload(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/** 进程重启后，进行中的工具步骤无法证明成败。 */
 function unknownRunningToolSteps(steps: ToolStep[] | undefined): ToolStep[] | undefined {
   return steps?.map((step) => (step.status === "running" ? { ...step, status: "unknown" } : step));
 }

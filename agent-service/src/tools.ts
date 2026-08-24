@@ -1,3 +1,11 @@
+/**
+ * 暴露给 Pi 的 ProductFlow 工具。
+ *
+ * 业务变更走 ProductFlow HTTP，并写 intent/result checkpoint。
+ * 无法对账的 5xx 记 unknown，不能猜成 failed。
+ * `load_productflow_skill` 只读打包好的说明，不碰业务数据。
+ */
+
 import {
   defineTool,
   type AgentToolResult,
@@ -48,6 +56,7 @@ const pagination = (maximum: number) =>
     { additionalProperties: false },
   );
 
+/** 工具层用来写 checkpoint、等待用户、以及标记无法证明副作用的回调。 */
 export interface ToolRuntime {
   readonly client: ProductFlowClient;
   readonly scope: Scope;
@@ -64,6 +73,7 @@ export interface ToolRuntime {
 
 type Result = AgentToolResult<JsonObject>;
 
+/** 为当前 Turn 组装 Pi 工具列表；工具只能看见本 runtime 的 scope。 */
 export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     defineTool({
@@ -346,6 +356,7 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
         });
         return textResult(result);
       } catch (error) {
+        // 客户端 4xx 是已证明的失败。5xx 可能已经生效，必须先对账再决定 failed 还是 unknown。
         if (!(error instanceof ProductFlowError) || error.status < 500) {
           await runtime.checkpoint("tool_effect_result", {
             tool_name: "finalize_product_intake_v1",
@@ -1169,6 +1180,7 @@ function isReconcileState(value: string): value is "applied" | "not_applied" | "
   return value === "applied" || value === "not_applied" || value === "conflict" || value === "unknown";
 }
 
+/** 先写 unknown checkpoint 再中止；checkpoint 写失败也仍然中止。 */
 async function recordUnknownEffect(
   runtime: ToolRuntime,
   toolCallID: string,
@@ -1178,7 +1190,7 @@ async function recordUnknownEffect(
   try {
     await runtime.checkpoint("tool_effect_result", payload);
   } catch {
-    // The unknown marker remains authoritative when checkpoint persistence is unavailable.
+    // checkpoint 写不进去时，unknown 标记本身仍是权威。
   } finally {
     runtime.markEffectUnknown(toolCallID, reason);
   }

@@ -1,3 +1,5 @@
+"""schema-v3 图的只读投影：config 状态、预览资产和 undo/redo，不写 live 图。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -255,6 +257,7 @@ def _project_node(
 
 
 def _preview_asset_ids(session: Session, graph_id: str) -> dict[str, str]:
+    # image_asset 预览用绑定 id；生成节点预览用当前 artifact 的资产，不是路径。
     rows = session.scalars(select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == graph_id)).all()
     artifact_ids = [row.current_artifact_id for row in rows if row.current_artifact_id]
     artifacts = {
@@ -311,6 +314,8 @@ def _config_status_with_stale(
     artifact_input_digest: str | None,
     sources: dict[str, GraphSourceRecord] | None,
 ) -> GraphConfigStatus:
+    """READY 且当前 artifact digest 与 incoming 编译结果不一致时标 STALE。"""
+
     status = applied.config_status(node.id)
     if (
         status != GraphConfigStatus.READY

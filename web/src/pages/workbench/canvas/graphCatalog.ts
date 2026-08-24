@@ -1,3 +1,9 @@
+/**
+ * schema-v3 Node Catalog 的客户端投影。
+ *
+ * 连线规则和可编辑配置键来自 API 返回的 Catalog。运行时输入仍归编译器；这里只判断画布连线/拖放是否合法。
+ */
+
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GraphCatalogConfigField,
@@ -44,6 +50,7 @@ export function graphNodeTypeOrder(catalog: GraphNodeCatalog | null | undefined)
   return ordered.length ? ordered : GRAPH_NODE_TYPE_ORDER;
 }
 
+/** Catalog 按源节点输出类型接受连线，不看标题或资产路径。 */
 export function graphConnectionContract(
   catalog: GraphNodeCatalog | null | undefined,
   sourceType: GraphNodeType,
@@ -67,6 +74,7 @@ export function graphNodePresentationKind(nodeType: GraphNodeType): WorkflowNode
   return nodeType;
 }
 
+/** 允许不完整 DAG；只拒绝自环、类型不兼容、基数冲突和环。 */
 export function graphConnectionInvalidReason(
   graph: GraphProjection,
   sourceNodeId: string,
@@ -103,6 +111,7 @@ export function isGraphConnectionValid(
   return graphConnectionInvalidReason(graph, sourceNodeId, targetNodeId, catalog) === null;
 }
 
+/** 能否运行只看 incoming 边；断开边就失去该输入。 */
 export function missingRequiredRunRoles(
   node: GraphNode,
   catalog: GraphNodeCatalog | null | undefined,

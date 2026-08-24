@@ -1,3 +1,5 @@
+"""把 WorkflowDraft payload 编成初始 v3 ChangeSet；写库仍由 Graph Command 完成。"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -37,6 +39,8 @@ def build_draft_initial_graph_change_set(
     source_product_id: str | None = None,
     fact_set_version_id: str | None = None,
 ) -> WorkflowChangeSet:
+    """Draft 确认用的完整建图 ChangeSet。参考图走 bound_asset_id，facts 不连到 image 节点。"""
+
     operations: list[GraphOperation] = []
     references = {item.key: item for item in payload.reference_bindings}
     prompts = {item.key: item for item in payload.prompt_plans}
@@ -125,6 +129,7 @@ def build_draft_initial_graph_change_set(
         target = nodes_by_key[edge.target_node_key]
         source_type = _V2_TO_V3_NODE_TYPE[source.node_type]
         target_type = _V2_TO_V3_NODE_TYPE[target.node_type]
+        # v3 image_generation 不接受 facts 边；商品资料只经 prompt/brief 进入。
         if (
             source.node_type == WorkflowNodeType.PRODUCT_CONTEXT
             and target.node_type == WorkflowNodeType.IMAGE_GENERATION
@@ -219,6 +224,7 @@ def _node_config(
             "fact_set_version_id": fact_set_version_id,
         }, None
     if isinstance(node, ReferenceImageNodePlan):
+        # 绑定写在 image_asset 节点上，不是靠下游 reference 边表达身份。
         binding = references[node.reference_key]
         return {"label": binding.label, "role": binding.role}, binding.asset_id
     if isinstance(node, PromptGenerationNodePlan):

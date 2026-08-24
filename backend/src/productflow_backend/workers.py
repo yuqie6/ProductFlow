@@ -1,3 +1,5 @@
+"""Dramatiq 组合根：只 claim/投递并调用 application。time_limit 是进程 kill switch，不是业务超时。"""
+
 from __future__ import annotations
 
 import logging
@@ -56,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_image_session_worker_failsafe_time_limit_ms() -> int:
+    """Dramatiq 进程 kill switch，不是业务超时或 provider timeout。"""
     return int(get_runtime_settings().image_session_worker_failsafe_time_limit_minutes) * 60 * 1000
 
 
@@ -132,6 +135,7 @@ def _renew_async_dispatch_lease(
 
 
 def execute_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    """消费 SENT dispatch：claim 后跑 target，成功才 CONSUMED。SENT 本身不表示业务完成。"""
     session = get_session_factory()()
     lease_token: str | None = None
     try:
@@ -149,6 +153,7 @@ def execute_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
             aggregate_id=aggregate_id,
         )
         if lease_token is None:
+            # 另一 worker 已持有 SENT 消费 lease，或行已不是 SENT。
             return
         stop_heartbeat = Event()
         heartbeat = Thread(
@@ -198,6 +203,7 @@ def execute_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_workflow_graph_run(graph_run_id: str) -> None:
+    """schema-v3 graph worker。time_limit 是进程 kill switch；业务超时在 PostgreSQL 行上。"""
     token = set_workflow_run_id(graph_run_id)
     try:
         execute_graph_run(graph_run_id)
@@ -217,6 +223,7 @@ def run_image_session_generation_task(task_id: str) -> None:
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_agent_turn_sync(projection_id: str) -> None:
+    """Turn 投影同步 worker。max_retries=0；未完成状态靠 PostgreSQL 恢复扫描补投递。"""
     execute_agent_turn_sync(
         projection_id,
         enqueue_later=lambda worker_session, target_id, delay_ms: stage_async_dispatch_for_actor(
@@ -245,6 +252,7 @@ def run_local_image_edit_task(task_id: str) -> None:
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    """统一投递入口。broker 消息只是 attempt，claim 失败则安静退出。"""
     execute_async_dispatch(dispatch_id, aggregate_id)
 
 

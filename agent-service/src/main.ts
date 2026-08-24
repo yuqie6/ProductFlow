@@ -1,3 +1,10 @@
+/**
+ * 进程入口：先恢复本地 Turn 文件，再开始监听。
+ *
+ * 恢复必须在 bind 之前，避免重启后对着未恢复的存储接下新 Turn。
+ * 本地恢复仍不能证明 ProductFlow 侧的工具副作用。
+ */
+
 import { loadConfig } from "./config.js";
 import { PiRuntimeManager } from "./pi-runtime.js";
 import { ProductFlowClient } from "./productflow.js";
@@ -13,6 +20,7 @@ async function main(): Promise<void> {
   const productFlow = new ProductFlowClient(config.productFlowBaseURL, config.internalToken, config.requestTimeoutMS);
   const manager = new PiRuntimeManager(config, store, productFlow, skills);
   store.setEventPublisher((scope, event) => manager.publishDurableEvent(scope, event));
+  // 先恢复本地文件再接流量，避免 queued Turn 丢失。
   const recovery = await manager.recoverAfterRestart();
   if (
     recovery.queued_turns > 0 ||

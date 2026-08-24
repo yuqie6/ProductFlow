@@ -1,3 +1,5 @@
+"""Node.js/Pi adapter HTTP 客户端。对方 session/event files 只服务交互执行，不是 durable 业务权威。"""
+
 from __future__ import annotations
 
 import json
@@ -172,6 +174,8 @@ class AgentServiceRequestError(RuntimeError):
 
 
 class AgentServiceClient:
+    """交互式 Turn HTTP 面。网络失败是 unavailable，不能据此把业务标 failed。"""
+
     def __init__(
         self,
         *,
@@ -332,6 +336,7 @@ class AgentServiceClient:
                     json=json_body,
                 )
         except (httpx.HTTPError, OSError) as exc:
+            # 连接层失败无法证明 Turn 结果，留给同步/恢复标 unknown 或重试。
             raise AgentServiceRequestError(
                 status_code=None,
                 code="unavailable",
@@ -360,6 +365,7 @@ class AgentServiceClient:
 
     @classmethod
     def _execution_path(cls, conversation_id: str, task_id: str | None) -> str:
+        # Task 走独立 run；否则退回 conversation 投影。
         if task_id:
             return f"/internal/v1/tasks/{quote(task_id, safe='')}"
         return cls._conversation_path(conversation_id)

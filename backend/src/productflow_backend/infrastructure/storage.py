@@ -30,7 +30,7 @@ _IMAGE_FORMAT_EXTENSIONS = {
 
 
 class LocalStorage:
-    """本地文件存储，按类型组织目录结构，自动派生缩略图。"""
+    """本地文件存储。逻辑身份在 MediaObject/ProductImageAsset；目录布局只是文件位置。"""
 
     def __init__(self, root: Path | None = None) -> None:
         settings = get_settings()
@@ -68,7 +68,7 @@ class LocalStorage:
         return self._save_with_variants(relative, content)
 
     def save_media_image(self, media_id: str, filename: str, content: bytes) -> str:
-        """按真实图片格式写入独立 media 命名空间。"""
+        """按 MediaObject id 与真实格式写入 media 命名空间。路径不是绑定身份。"""
         del filename  # 原始文件名属于逻辑资产，物理路径只由 media identity 和真实格式决定。
         try:
             normalized_media_id = str(UUID(media_id))
@@ -137,6 +137,8 @@ class LocalStorage:
         return variant_path, self._guess_media_type(variant_path, fallback=fallback_media_type)
 
     def delete_image_with_variants(self, relative_path: str) -> None:
+        """删除一个相对路径及其派生图；调用方必须先确认 MediaObject 已无逻辑引用。"""
+
         original = self.resolve(relative_path)
         for variant in ("preview", "thumbnail"):
             variant_path = self._variant_path(original, variant)

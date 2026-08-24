@@ -1,3 +1,10 @@
+/**
+ * 把图库拖放映射成 Graph Command 操作。
+ *
+ * 拖到 `image_asset` 是改该节点的 ProductImageAsset id。
+ * 拖到处理节点会创建或复用 `image_asset` 并加 reference 边；绑定不等于那条边。
+ */
+
 import type { GraphChangeSet, GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import { graphNodeHasInput, isGraphConnectionValid } from "./graphCatalog";
 import { GRAPH_DUPLICATE_OFFSET, graphChangeSetClientRef, snapGraphCoordinate } from "./graphLayout";
@@ -25,6 +32,7 @@ export function boundImageAssetNodes(graph: GraphProjection, assetId: string): G
   return graph.nodes.filter((node) => node.node_type === "image_asset" && node.bound_asset_id === assetId);
 }
 
+/** 绑定与连线：落到 `image_asset` 是改绑定身份；落到处理节点是加 reference 边。 */
 export function resolveGraphAssetDrop(
   graph: GraphProjection,
   input: GraphAssetDropInput,

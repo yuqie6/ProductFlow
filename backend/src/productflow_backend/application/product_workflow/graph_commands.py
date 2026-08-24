@@ -1,3 +1,5 @@
+"""Graph Command 是 live schema-v3 图的唯一写入入口。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -113,6 +115,8 @@ def stage_new_workflow_graph(
     title: str = DEFAULT_GRAPH_TITLE,
     source_draft_revision_id: str | None = None,
 ) -> GraphCommandResult:
+    """在调用方事务内 flush 出完整 v3 图；本函数不 commit。"""
+
     if change_set.base_graph_revision != 0:
         raise ConflictError("新建图的 base_graph_revision 必须为 0")
     _lock_product(session, product_id)
@@ -195,6 +199,8 @@ def apply_graph_change_set(
     commit: bool = True,
     history_kind: GraphHistoryKind = GraphHistoryKind.EDIT,
 ) -> GraphCommandResult:
+    """把 ChangeSet 应用到 live 图。默认 commit；内部 stage 路径可延迟提交。"""
+
     try:
         graph = session.scalar(
             select(WorkflowGraph)
@@ -234,6 +240,7 @@ def apply_graph_change_set(
             assert operation_group is not None
         return GraphCommandResult(graph=graph, applied=after, operation_group=operation_group)
     except Exception:
+        # 失败即 rollback 整段 Session，即使调用方传了 commit=False。
         session.rollback()
         raise
 
@@ -254,6 +261,8 @@ def undo_last_graph_change_set(
     graph_id: str,
     commit: bool = True,
 ) -> GraphCommandResult:
+    """对最近 EDIT/REDO 的 inverse 再走 Graph Command；UNDO 本身不可再 undo。"""
+
     graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
     last = last_operation_group(session, graph)
     if last is None or GraphHistoryKind(last.history_kind) == GraphHistoryKind.UNDO:
@@ -284,6 +293,8 @@ def redo_last_graph_change_set(
     graph_id: str,
     commit: bool = True,
 ) -> GraphCommandResult:
+    """仅当栈顶是 UNDO 时，把它的 inverse 作为 REDO 再应用。"""
+
     graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
     last = last_operation_group(session, graph)
     if last is None or GraphHistoryKind(last.history_kind) != GraphHistoryKind.UNDO:
@@ -315,6 +326,8 @@ def _source_history_summary(summary: str) -> str:
 
 
 def assign_persistent_ids(before: AppliedGraph, after: AppliedGraph) -> AppliedGraph:
+    """新建对象把 client_ref 换成持久 id；已有 id 保持不变以便撤销对得上。"""
+
     id_map = {node.id: node.id for node in before.nodes}
     id_map.update({edge.id: edge.id for edge in before.edges})
     id_map.update({group.id: group.id for group in before.groups})
@@ -355,6 +368,8 @@ def _lock_product(session: Session, product_id: str) -> Product:
 
 
 def _validate_bound_assets(session: Session, *, product_id: str, graph: AppliedGraph) -> None:
+    """绑定必须是本商品 ProductImageAsset id，不能存路径或数组下标。"""
+
     asset_ids = {node.bound_asset_id for node in graph.nodes if node.bound_asset_id}
     if not asset_ids:
         return
@@ -393,6 +408,7 @@ def _replace_graph_contents(session: Session, graph: WorkflowGraph, applied: App
     session.flush()
 
     removed_nodes = [node for node_id, node in existing_nodes.items() if node_id not in next_node_ids]
+    # 先断开 current_artifact_id 再删节点，避免历史 artifact 外键把 live 图卡住。
     for node in removed_nodes:
         node.current_artifact_id = None
     session.flush()

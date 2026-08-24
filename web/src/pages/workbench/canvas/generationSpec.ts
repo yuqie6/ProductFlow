@@ -1,3 +1,9 @@
+/**
+ * 从节点配置解析 GenerationSpec。
+ *
+ * GenerationSpec 是模型生成意图。DeliverySpec 是另一套确定性派生；改它不等于重跑模型。
+ */
+
 import type { WorkflowGenerationSpec } from "../../../lib/types";
 import { parseAspectRatio } from "../../../components/ImageRatioFrame";
 

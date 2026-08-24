@@ -1,3 +1,5 @@
+"""商品工作区：Session 下的 product conversation 与 WorkflowDraft。创建幂等靠 key+request hash。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -459,6 +461,7 @@ def _lock_intake_finalization(
     if draft.recipe_seed is not None:
         raise ConflictError("带重建种子的 WorkflowDraft 不能确认商品创建输入")
     if get_active_workflow_graph(session, product_id=product.id) is not None:
+        # live graph 存在后不能再写创建 intake 去覆盖现图。
         raise ConflictError("商品已有可运行的工作流，不能再提交创建输入")
     return _IntakeFinalizationLock(
         conversation=conversation,
@@ -614,6 +617,7 @@ def reconcile_agent_product_intake_from_assets(
     reference_asset_ids: list[str],
     idempotency_key: str,
 ) -> AgentProductWorkspaceReconcileResult:
+    """对账 intake，不重放 finalize。记录在但聚合读不齐则 unknown。"""
     conversation = session.scalar(
         select(AgentConversation).where(AgentConversation.id == conversation_id)
     )
@@ -659,6 +663,7 @@ def _stage_workspace_records(
     agent_session_id: str | None,
     create_onboarding_task: bool,
 ) -> tuple[WorkflowDraft, AgentConversation]:
+    """只 flush 工作区行。调用方持有事务；Session 是容器，product conversation 才是 Turn 投影。"""
     draft = WorkflowDraft(
         product_id=product.id,
         status=WorkflowDraftStatus.COLLECTING,

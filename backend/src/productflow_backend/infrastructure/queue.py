@@ -1,3 +1,5 @@
+"""Redis/Dramatiq 投递适配。enqueue 只是 delivery attempt，不改变 PostgreSQL 业务状态。"""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -59,6 +61,7 @@ def enqueue_image_session_generation_task_later(task_id: str, *, delay_ms: int) 
 
 
 def enqueue_agent_turn_sync(projection_id: str) -> None:
+    """投递 Turn 同步 attempt。投影状态以 PostgreSQL 为准。"""
     _enqueue_actor(AGENT_TURN_SYNC_ACTOR_NAME, projection_id)
 
 
@@ -78,4 +81,5 @@ ASYNC_DISPATCH_ACTOR_NAME = "run_async_dispatch"
 
 
 def enqueue_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    """投递已 SENT 的 dispatch。失败不改 PostgreSQL 行，由 stale SENT 对账决定是否重试。"""
     _enqueue_actor_args(ASYNC_DISPATCH_ACTOR_NAME, (dispatch_id, aggregate_id))

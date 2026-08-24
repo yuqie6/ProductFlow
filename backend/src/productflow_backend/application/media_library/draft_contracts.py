@@ -1,3 +1,8 @@
+"""全局素材整理 Draft schema。
+
+rename/move/tags/archive 只改组织与可见性。link_workflow 写使用关联，不复制 bytes。
+"""
+
 from __future__ import annotations
 
 import json
@@ -122,6 +127,8 @@ class LibraryRenameOperationV1(_LibraryOrganizationOperationBase):
 
 
 class LibraryMoveOperationV1(_LibraryOrganizationOperationBase):
+    """改一层文件夹组织，不删素材。"""
+
     operation: Literal["move"]
     target: LibraryMoveTargetV1
 
@@ -132,6 +139,8 @@ class LibrarySetTagsOperationV1(_LibraryOrganizationOperationBase):
 
 
 class LibraryArchiveOperationV1(_LibraryOrganizationOperationBase):
+    """归档可见性；不是删除资产或媒体文件。"""
+
     operation: Literal["archive"]
     target: LibraryArchiveTargetV1
 
@@ -153,6 +162,8 @@ class LibraryWorkflowLinkTargetV1(BaseModel):
 
 
 class LibraryLinkWorkflowOperationV1(_LibraryOrganizationOperationBase):
+    """工作流使用关联；节点绑定仍走 ProductImageAsset id。"""
+
     operation: Literal["link_workflow"]
     target: LibraryWorkflowLinkTargetV1
 

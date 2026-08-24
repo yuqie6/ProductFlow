@@ -1,3 +1,9 @@
+/**
+ * DeliverySpec 与市场预设解析。
+ *
+ * 交付是确定性派生。预设不能代替 GenerationSpec，也不会触发新的图像模型调用。
+ */
+
 import type { DeliveryPreset, DeliveryPresetCatalog, WorkflowDeliverySpec } from "./types";
 
 const MAX_TOTAL_PIXELS = 64 * 1024 * 1024;

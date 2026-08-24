@@ -1,3 +1,11 @@
+/**
+ * 单个 Agent-service 进程的交互式 Pi Turn 运行时。
+ *
+ * 业务权威仍是 PostgreSQL。这里的 session/event 文件只服务当前 Turn，
+ * 不能证明后台恢复、副作用对账或多实例 claim。无法证明的副作用记 unknown，
+ * 不能猜成 failed。
+ */
+
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -76,8 +84,7 @@ export interface RuntimeLookup {
 export interface StartRequest {
   lookup: RuntimeLookup;
   input: StartTurnInput;
-  // ProductFlow may provide the previous harness Turn ID when handing a
-  // pre-model queued Turn to another Agent service instance.
+  // ProductFlow 把尚未进模型的 queued Turn 交给另一实例时，可能带上原 harness Turn ID。
   turnID?: string;
 }
 
@@ -96,6 +103,7 @@ export class PiRuntimeManager {
     readonly skills: SkillCatalog,
   ) {}
 
+  /** 只把本地能证明尚未被 claim 的 Turn 重新入队。 */
   async recoverAfterRestart(): Promise<RuntimeRecoverySummary> {
     this.assertOpen();
     const recovered = await this.store.recoverAfterRestart();
@@ -112,6 +120,7 @@ export class PiRuntimeManager {
     };
   }
 
+  /** 按幂等键创建或回放 Turn；仍是 queued 才入队。 */
   async start(request: StartRequest): Promise<TurnState> {
     this.assertOpen();
     const scope = await this.loadScope(request.lookup);
@@ -136,6 +145,10 @@ export class PiRuntimeManager {
     return this.store.getState(runtime.scope.run_id, turnID);
   }
 
+  /**
+   * 取消进行中的 Turn。没有进程内等待者的问题在本地取消；
+   * 没有等待者的 queued Turn 先 claim 再取消，让 ProductFlow 落到终态 checkpoint。
+   */
   async cancel(request: RuntimeLookup, turnID: string): Promise<TurnState> {
     const runtime = await this.runtimeForLookup(request);
     const state = await this.store.getState(runtime.scope.run_id, turnID);
@@ -153,6 +166,7 @@ export class PiRuntimeManager {
     return this.store.getState(runtime.scope.run_id, turnID);
   }
 
+  /** 只有 queued Turn，或进程内仍挂着问题等待者时才能 resume。 */
   async resume(request: RuntimeLookup, turnID: string): Promise<TurnState> {
     const runtime = await this.runtimeForLookup(request);
     const state = await this.store.getState(runtime.scope.run_id, turnID);
@@ -213,6 +227,7 @@ export class PiRuntimeManager {
     }
   }
 
+  /** `background_durable_tasks` 固定为 false：本进程只做交互式 Turn。 */
   health(): RuntimeStatus & { active_turns: number; queued_turns: number } {
     return {
       runtime: RUNTIME_NAME,
@@ -261,6 +276,7 @@ export class PiRuntimeManager {
     }
   }
 
+  /** 每个 ProductFlow run 同时只跑一个 Turn，其余留在 pending。 */
   private enqueue(runtime: RunRuntime, turnID: string): void {
     const key = `${runtime.scope.run_id}:${turnID}`;
     if (this.closed || this.scheduled.has(key)) return;
@@ -303,6 +319,7 @@ export class PiRuntimeManager {
     }
   }
 
+  /** Scope 只来自 ProductFlow contract，不来自本地文件。 */
   private async loadScope(lookup: RuntimeLookup): Promise<Scope> {
     const contract = lookup.taskID
       ? await this.productFlow.taskContract(lookup.taskID)
@@ -398,6 +415,10 @@ class RunRuntime implements ToolRuntime {
     if (this.activeTurnID === turnID) this.activeTurnID = undefined;
   }
 
+  /**
+   * 模型运行前先 claim ProductFlow 执行租约。商品工作流 Turn 若既没有 Draft
+   * 产物也没有工作流运行请求，则失败关闭；无法证明的工具副作用记 unknown。
+   */
   async execute(turnID: string): Promise<void> {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
     if (initial.status !== "queued" && initial.status !== "cancel_requested") return;
@@ -453,6 +474,7 @@ class RunRuntime implements ToolRuntime {
         const status = this.scope.scope_type === "global" ? "succeeded" : "awaiting_confirmation";
         await this.finishTurn(turnID, status, { output: this.output, artifact: this.artifact });
       } else if (
+        // 商品创建 Turn 必须留下可审阅 Draft，除非已经对 live 图请求了运行。
         this.scope.scope_type === "product_workflow" &&
         this.scope.task_id === null &&
         !this.workflowRunRequested
@@ -552,6 +574,7 @@ class RunRuntime implements ToolRuntime {
     }
   }
 
+  /** 租约归 ProductFlow。只有尚未证明 claim 的 5xx 才能重试。 */
   private async claimExecution(idempotencyKey: string, turnID: string): Promise<AgentExecutionLease> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -596,6 +619,7 @@ class RunRuntime implements ToolRuntime {
     if (this.persistenceError) throw this.persistenceError;
   }
 
+  /** 写入 ProductFlow checkpoint；追加失败即丢失租约并中止。 */
   async checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
     const lease = this.executionLease;
     if (!lease || this.executionLeaseError || this.executionStopping) {
@@ -624,6 +648,10 @@ class RunRuntime implements ToolRuntime {
     }
   }
 
+  /**
+   * 先写本地终态快照，再写 ProductFlow checkpoint。
+   * checkpoint 或事件发布失败时，快照升级为 unknown。
+   */
   private async finishTurn(
     turnID: string,
     status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
@@ -715,7 +743,7 @@ class RunRuntime implements ToolRuntime {
         phase: this.executionPhase,
       });
     } catch {
-      // An expired lease is recovered by ProductFlow's durable scanner.
+      // 过期租约由 ProductFlow 的 durable 扫描恢复。
     }
   }
 
@@ -733,6 +761,7 @@ class RunRuntime implements ToolRuntime {
     void this.session?.abort();
   }
 
+  /** 只有没有活着的 Pi 等待者时，才能取消停住的问题。 */
   async cancelWaitingInputTurn(turnID: string): Promise<TurnState> {
     const state = await this.manager.store.getState(this.scope.run_id, turnID);
     if (state.status !== "requires_input" || this.hasQuestionWaiter(turnID)) {
@@ -829,6 +858,7 @@ class RunRuntime implements ToolRuntime {
     void this.updateExecutionPhase("external_job").catch(() => undefined);
   }
 
+  /** ProductFlow 副作用无法证明时，把 Turn 中止为 unknown。 */
   markEffectUnknown(toolCallID: string, reason = "ProductFlow side effect result is unknown"): void {
     this.effectUnknownError = reason;
     this.unknownToolStepIDs.add(toolCallID);
@@ -842,10 +872,8 @@ class RunRuntime implements ToolRuntime {
 
   async publishDurableEvent(event: TurnEvent): Promise<void> {
     const lease = this.executionLease;
-    // A run may have a different queued Turn while this runtime owns the
-    // lease for the active Turn. That queued event is replayed after its own
-    // claim; publishing it with the active Turn's lease would fence the
-    // active execution on ProductFlow's side.
+    // 本 runtime 持有活动 Turn 租约时，run 上可能还有另一个 queued Turn。
+    // 那个 queued 事件等自己 claim 后再回放；用当前租约发布会把活动执行 fence 掉。
     if (lease && lease.harness_turn_id !== event.turn_id) return;
     if (!lease) {
       if (event.kind === "turn.queued" || event.kind === "turn.resume_requested" || event.kind === "turn.cancel_requested") {
@@ -876,6 +904,7 @@ class RunRuntime implements ToolRuntime {
     }
   }
 
+  /** 与 ProductFlow prepare/apply/reconcile 共用的单次工具调用幂等键。 */
   idempotencyKey(toolCallID: string): string {
     return `pi:${this.scope.run_id}:${this.currentTurnID()}:${toolCallID}`.slice(0, 200);
   }

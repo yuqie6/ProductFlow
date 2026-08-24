@@ -1,3 +1,8 @@
+"""交付派生任务：按 DeliverySpec 从成功生成原图做确定性本地变换。
+
+不调用图像模型，也不替换源 ProductImageAsset。结果仍进入商品图片库，parent 指向源资产。
+"""
+
 from __future__ import annotations
 
 import logging
@@ -83,6 +88,8 @@ def create_delivery_rendition_job(
     source_asset_id: str,
     delivery_spec: DeliverySpec | dict[str, object],
 ) -> DeliveryRenditionJobCreation:
+    """按源 ProductImageAsset id 与 spec_hash 幂等创建任务。"""
+
     normalized = normalize_delivery_spec(delivery_spec)
     source_asset = session.scalar(
         select(ProductImageAsset)
@@ -324,6 +331,8 @@ def execute_delivery_rendition_job(
     *,
     storage: LocalStorage | None = None,
 ) -> None:
+    """本地渲染已有原图；失败不改源资产。"""
+
     session = get_session_factory()()
     resolved_storage = storage or LocalStorage()
     attempt_id = new_id()
@@ -384,6 +393,8 @@ def _persist_delivery_rendition_result(
     expected_mime_type: str,
     storage: LocalStorage,
 ) -> bool:
+    """把渲染结果写成新的 ProductImageAsset；DB 失败只收回本次文件。"""
+
     storage_writes = StorageWriteCompensation()
     try:
         job = session.scalar(
@@ -412,6 +423,7 @@ def _persist_delivery_rendition_result(
             f"{source.display_name} {claim.delivery_spec.width}x{claim.delivery_spec.height} "
             f"{claim.delivery_spec.format.upper()}"
         )
+        # 交付结果是新的商品图片；源图身份保持不变。
         result_asset = stage_product_image_asset(
             session,
             product=product,
@@ -439,6 +451,7 @@ def _persist_delivery_rendition_result(
         return True
     except BaseException:
         session.rollback()
+        # DB 未提交：只收回本次写入，不删共享源图。
         storage_writes.cleanup()
         raise
 
@@ -473,6 +486,8 @@ def _fail_delivery_rendition_job(
 
 
 def _validate_source_asset(session: Session, source_asset: ProductImageAsset) -> None:
+    """只接受无 parent 的工作流生成原图身份。"""
+
     if source_asset.parent_asset_id is not None:
         raise BusinessValidationError("交付派生不能以已有派生图作为原图")
     if source_asset.media_object.verification_status != MediaVerificationStatus.VERIFIED:

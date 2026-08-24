@@ -1,3 +1,5 @@
+"""unknown Turn 的副作用对账。不能证明 applied/failed 时保持 unknown，禁止重放 mutation。"""
+
 from __future__ import annotations
 
 import json
@@ -133,6 +135,7 @@ def reconcile_agent_turn_effect(
         tool_call_id=normalized_tool_call_id,
         idempotency_key=idempotency_key,
     )
+    # not_applied/conflict 证明没落地；其余保持 unknown，不能猜 failed。
     effect_result = "applied" if state == "applied" else "failed" if state in {"not_applied", "conflict"} else "unknown"
     return _save_reconciliation(
         session,
@@ -342,6 +345,7 @@ def _known_checkpoint_verdict(payload: Any) -> tuple[str, str] | None:
     if result == "failed":
         state = payload.get("reconciliation_state")
         return "failed", state if state in _RECONCILIATION_STATES else "not_applied"
+    # unknown 或缺失仍要读业务对象，不能把 checkpoint 当失败。
     return None
 
 

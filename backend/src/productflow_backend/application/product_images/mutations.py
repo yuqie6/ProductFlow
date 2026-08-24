@@ -1,3 +1,8 @@
+"""商品图库用户文件夹与显示名变更。
+
+用户文件夹一层深，不替代系统分类。删除文件夹只把资产移出组织，不删资产或断开引用。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -49,6 +54,8 @@ def create_gallery_folder(
     name: str,
     folder_id: str | None = None,
 ) -> ProductAssetFolder:
+    """创建一层用户文件夹；不替代系统分类，也不移动资产身份。"""
+
     folder = stage_create_gallery_folder(
         session,
         product_id=product_id,
@@ -145,6 +152,8 @@ def delete_gallery_folder(
     folder_id: str,
     expected_name: str,
 ) -> int:
+    """删除用户文件夹并清空其组织关系；资产与节点/封面/lineage 引用保持不变。"""
+
     _get_product_for_update(session, product_id)
     normalized_expected = normalize_gallery_folder_name(expected_name)
     folder = _get_folder_for_update(session, product_id=product_id, folder_id=folder_id)
@@ -163,6 +172,7 @@ def delete_gallery_folder(
     )
     changed_at = now_utc()
     for asset in assets:
+        # 只解除组织；不删 ProductImageAsset 或 MediaObject。
         asset.user_folder_id = None
         asset.updated_at = changed_at
     session.delete(folder)
@@ -217,6 +227,8 @@ def move_gallery_assets(
     moves: list[GalleryAssetMove],
     folder_id: str | None,
 ) -> list[ProductImageAsset]:
+    """只改 user_folder_id；不改商品图片身份或工作流绑定。"""
+
     assets = stage_move_gallery_assets(
         session,
         product_id=product_id,

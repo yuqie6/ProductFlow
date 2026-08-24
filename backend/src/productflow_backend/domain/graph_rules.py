@@ -42,6 +42,8 @@ class GraphRuleEdge:
 
 
 def topological_graph_node_ids(nodes: Iterable[GraphRuleNode], edges: Iterable[GraphRuleEdge]) -> list[str]:
+    """允许不完整 DAG；缺边节点仍可排序，只拒绝环和悬空引用。"""
+
     nodes_by_id = {node.id: node for node in nodes}
     incoming_count = {node_id: 0 for node_id in nodes_by_id}
     outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes_by_id}
@@ -71,6 +73,8 @@ def validate_graph_edge(
     target: GraphRuleNode,
     existing_target_edges: Iterable[GraphRuleEdge],
 ) -> GraphInputContract:
+    """连线类型与基数上限归 Catalog；此处只应用合同。"""
+
     if source.id == target.id:
         raise BusinessValidationError("节点不能连接自身")
     contract = require_graph_connection(source.node_type, target.node_type)
@@ -93,6 +97,8 @@ def typed_edge_from_nodes(
 
 
 def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -> GraphConfigStatus:
+    """就绪性只看自身配置和传入的 incoming 边，不扫描图上其他节点。"""
+
     incoming_list = list(incoming)
     if node_config_error(node) is not None:
         return GraphConfigStatus.INCOMPLETE
@@ -107,6 +113,7 @@ def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -
             fact_set_id = config.get("fact_set_version_id")
             if fact_set_id is not None and (not isinstance(fact_set_id, str) or not fact_set_id.strip()):
                 return GraphConfigStatus.INCOMPLETE
+    # 绑定是 image_asset 的资产身份，不等于下游 reference 边。
     if node.node_type == GraphNodeType.IMAGE_ASSET and not node.bound_asset_id:
         return GraphConfigStatus.INCOMPLETE
     if node.node_type == GraphNodeType.VISUAL_SYSTEM and not _has_visual_system_config(node.config):
@@ -130,6 +137,8 @@ def missing_required_inputs(
     node: GraphRuleNode,
     incoming: Iterable[GraphRuleEdge],
 ) -> tuple[GraphInputContract, ...]:
+    """运行必需边只对照传入的 incoming；断开边即失去该输入。"""
+
     incoming_list = list(incoming)
     return tuple(
         contract

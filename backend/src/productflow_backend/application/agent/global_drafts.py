@@ -1,3 +1,5 @@
+"""全局 Agent Draft：可审阅 artifact。确认走目标商品 WorkflowDraft，不在全局会话物化 live graph。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -72,6 +74,7 @@ def validate_global_agent_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> GlobalAgentDraftPayloadV1:
+    """校验全局 artifact。workflow 分支必须命中目标商品 Draft version，不能用当前页顶替。"""
     conversation = get_agent_conversation_or_raise(
         session,
         product_id=None,
@@ -129,6 +132,7 @@ def attach_agent_global_draft_artifact(
     artifact_value: dict[str, Any],
     commit: bool = True,
 ) -> AgentTurnProjection:
+    """把全局 artifact 写成目标 Draft revision。commit=False 时由调用方持有事务。"""
     if artifact_name != GLOBAL_AGENT_DRAFT_ARTIFACT_NAME:
         raise BusinessValidationError("Agent 返回了不受支持的全局 Draft artifact")
     normalized_step_id = artifact_step_id.strip()
@@ -305,6 +309,7 @@ def confirm_global_workflow_draft_review(
     revision_id: str,
     expected_draft_version: int,
 ) -> GlobalWorkflowDraftReview:
+    """确认目标商品 Draft。不在全局会话物化 live graph。本函数 commit。"""
     review = get_global_workflow_draft_review(
         session,
         conversation_id=conversation_id,

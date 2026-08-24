@@ -1,3 +1,5 @@
+"""Pi 进程拉取模型 provider 配置。密钥来自 ProductFlow，不来自 Agent-service 本地文件。"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status

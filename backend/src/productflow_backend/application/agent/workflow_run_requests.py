@@ -1,3 +1,5 @@
+"""Agent 只创建待确认运行请求。确认后走同一套 graph submit/retry，不另起执行模型。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -87,6 +89,7 @@ def prepare_agent_workflow_run_request(
     task_id: str | None = None,
     source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestPreparation:
+    """prepare：只读当前 active graph，不创建运行。"""
     conversation = _get_product_conversation(session, conversation_id)
     resolved = _prepare_current_workflow(
         session,
@@ -122,6 +125,7 @@ def prepare_agent_global_workflow_run_request(
     task_id: str | None = None,
     source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestPreparation:
+    """全局 prepare：必须显式 product/workflow，不能用当前页氛围顶替目标。"""
     conversation = _get_global_conversation(session, conversation_id)
     normalized_product_id = _normalize_required_id(product_id, "product_id")
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
@@ -235,6 +239,7 @@ def _create_agent_workflow_run_request(
     load_conversation: Callable[[bool], AgentConversation],
     prepare: Callable[[], AgentWorkflowRunRequestPreparation],
 ) -> AgentWorkflowRunRequest:
+    """apply：写入待确认请求。同一 key 必须绑定同一 request hash。本函数 commit。"""
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
@@ -271,6 +276,7 @@ def _create_agent_workflow_run_request(
     if existing is not None:
         if existing.request_hash != request_hash:
             raise ConflictError("同一 idempotency key 不能提交不同的工作流执行请求")
+        # 同 key 同 hash 回放已有请求，不另建运行。
         session.commit()
         return _load_request(session, existing.id)
 
@@ -378,6 +384,7 @@ def _reconcile_agent_workflow_run_request(
     source_run_id: str | None,
     load_conversation: Callable[[], AgentConversation],
 ) -> AgentWorkflowRunRequestReconcileResult:
+    """reconcile：不重放 create。hash 冲突为 conflict，缺失为 not_applied。"""
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
@@ -485,6 +492,7 @@ def attach_agent_workflow_run_request(
     request_id: str,
     commit: bool = True,
 ) -> AgentTurnProjection:
+    """把待确认运行请求挂到 Turn 投影。commit=False 时由调用方持有事务。"""
     conversation_scope = (
         AgentConversation.scope_type == AgentConversationScope.GLOBAL
         if product_id is None
@@ -531,6 +539,7 @@ def confirm_agent_workflow_run_request(
     conversation_id: str,
     request_id: str,
 ) -> AgentWorkflowRunRequest:
+    """用户确认后走同一套 graph submit/retry。已有 graph_run_id 则幂等回放。本函数 commit。"""
     request = _load_request_for_update(
         session,
         product_id=product_id,

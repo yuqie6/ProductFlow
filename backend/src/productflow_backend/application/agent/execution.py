@@ -1,3 +1,5 @@
+"""Agent Turn 可恢复执行。PostgreSQL 持有 lease、event 与 checkpoint；Node.js session/event files 不是业务权威。"""
+
 from __future__ import annotations
 
 import json
@@ -121,6 +123,7 @@ def append_agent_turn_event(
     payload: dict[str, Any],
     created_at: datetime,
 ) -> AgentTurnEventReceipt:
+    """按 sequence 追加投影事件。相同 sequence 必须内容一致。本函数 commit。"""
     normalized_run_id = run_id.strip()
     normalized_turn_id = turn_id.strip()
     normalized_kind = kind.strip()
@@ -183,6 +186,7 @@ def append_agent_turn_event(
             or existing.payload_json != payload
         ):
             raise ConflictError("Agent event sequence 已绑定不同内容")
+        # 相同 sequence 的幂等回放也由本函数提交，避免调用方误以为未落库。
         session.commit()
         return _event_receipt(existing)
 
@@ -263,6 +267,7 @@ def claim_agent_turn_execution(
     owner_id: str,
     lease_seconds: int = DEFAULT_AGENT_EXECUTION_LEASE_SECONDS,
 ) -> AgentExecutionLease:
+    """多实例 claim：同一 owner 未过期则续用；过期且已离开 CLAIMED 必须先对账，不能直接重试。本函数 commit。"""
     normalized_key = idempotency_key.strip()
     normalized_turn_id = harness_turn_id.strip()
     normalized_owner_id = owner_id.strip()
@@ -330,6 +335,7 @@ def claim_agent_turn_execution(
         and active_until is not None
         and active_until > now
     ):
+        # 心跳窗口内重复 claim 必须回放同一 fencing，不能另开 attempt。
         return _lease_from_execution(execution, normalized_owner_id)
     if (
         execution.owner_id is not None
@@ -346,6 +352,7 @@ def claim_agent_turn_execution(
         and active_until <= now
         and execution.phase != AgentExecutionPhase.CLAIMED
     ):
+        # 已进入工具/模型阶段的过期 lease 可能有未证明副作用，禁止直接抢走。
         raise ConflictError("Agent Turn execution 已过期，必须先完成副作用对账")
     if (
         execution.owner_id is None
@@ -383,6 +390,7 @@ def append_agent_turn_checkpoint(
     kind: AgentCheckpointKind,
     payload: dict[str, Any],
 ) -> AgentCheckpointReceipt:
+    """按 attempt 连续追加 checkpoint。TOOL_EFFECT_RESULT 只允许 applied/failed/unknown。本函数 commit。"""
     if not 1 <= sequence <= MAX_AGENT_CHECKPOINT_SEQUENCE:
         raise BusinessValidationError("Agent checkpoint sequence 无效")
     try:
@@ -465,6 +473,7 @@ def heartbeat_agent_turn_execution(
     phase: AgentExecutionPhase,
     lease_seconds: int = DEFAULT_AGENT_EXECUTION_LEASE_SECONDS,
 ) -> AgentExecutionLease:
+    """持有人续租并推进 phase。过期或 fencing 失效则冲突。本函数 commit。"""
     normalized_owner_id = owner_id.strip()
     normalized_token = lease_token.strip()
     if not normalized_owner_id or not normalized_token:
@@ -501,6 +510,7 @@ def release_agent_turn_execution(
     lease_token: str,
     phase: AgentExecutionPhase = AgentExecutionPhase.TERMINAL,
 ) -> bool:
+    """持有人释放。TERMINAL 清空 owner；其它 phase 只把 lease 立刻过期，交给恢复扫描。本函数 commit。"""
     execution = session.scalar(
         select(AgentTurnExecution)
         .join(AgentTurnProjection)
@@ -524,6 +534,7 @@ def release_agent_turn_execution(
         execution.lease_token = None
         execution.lease_expires_at = None
     else:
+        # 非终态释放仍保留 phase，只让 lease 立刻过期，恢复扫描才能接手。
         execution.lease_expires_at = now
     session.commit()
     return True
@@ -534,6 +545,7 @@ def recover_expired_agent_turn_executions(
     *,
     now: datetime | None = None,
 ) -> AgentExecutionRecoverySummary:
+    """过期 lease 恢复：无 checkpoint 的 CLAIMED queued 可重入队；WAITING_INPUT 可还原问题；无法证明终态则标 unknown。"""
     resolved_now = now or now_utc()
     executions = list(
         session.scalars(
@@ -571,6 +583,7 @@ def recover_expired_agent_turn_executions(
             and execution.last_checkpoint_sequence == 0
             and latest_checkpoint is None
         ):
+            # 尚未产生副作用证据，重入队是安全的。
             _clear_expired_lease(execution, resolved_now)
             requeued += 1
             continue
@@ -606,6 +619,7 @@ def recover_expired_agent_turn_executions(
             _clear_expired_lease(execution, resolved_now, terminal=True)
             requires_input += 1
             continue
+        # 过期时无法证明模型/工具结果，不能标 failed。
         tool_steps = _unknown_running_tool_steps(projection.tool_steps_json)
         project_agent_turn_state(
             session,
@@ -724,6 +738,7 @@ def _clear_expired_lease(
 
 
 def _unknown_running_tool_steps(value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把仍显示 running 的步骤改成 unknown：lease 过期不能证明该 effect 成败。"""
     result: list[dict[str, Any]] = []
     for step in value or []:
         copied = dict(step)
@@ -740,6 +755,7 @@ def _recoverable_waiting_question(
     execution: AgentTurnExecution,
     latest_checkpoint: AgentTurnCheckpoint | None,
 ) -> dict[str, Any] | None:
+    # 只有 WAITING_INPUT + QUESTION_REQUIRED checkpoint、且无终态 event 才能还原为 requires_input。
     if execution.phase != AgentExecutionPhase.WAITING_INPUT:
         return None
     if latest_checkpoint is None or latest_checkpoint.kind != AgentCheckpointKind.QUESTION_REQUIRED:

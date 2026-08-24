@@ -1,3 +1,9 @@
+/**
+ * 把未确认的 Agent 图提案叠到 live 投影上。
+ *
+ * 过期提案忽略。新增节点在确认前只是预览，保持未绑定且 unused，live 图仍是编辑权威。
+ */
+
 import type { GraphEdge, GraphNode, GraphProjection, GraphProposalOverlay } from "../../../lib/types";
 
 export type GraphProposalState = "added" | "deleted" | "changed";
@@ -19,6 +25,7 @@ export function graphProposalEdgeStates(proposal: GraphProposalOverlay | null | 
   return states;
 }
 
+/** 预览新增节点/边，不写 Graph Command，也不绑定资产。 */
 export function overlayGraphProposal(graph: GraphProjection): GraphProjection {
   const proposal = graph.pending_proposal;
   if (!proposal || proposal.stale) return graph;

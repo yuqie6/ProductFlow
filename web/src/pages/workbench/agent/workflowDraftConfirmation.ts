@@ -1,3 +1,9 @@
+/**
+ * 把 Draft 载荷相对不可变 intake 做确认卡 diff。
+ *
+ * Agent 可以提议改计划；已确认的用户 intake（图种和参考资产 id）是基线，不能悄悄覆盖。
+ */
+
 import type {
   AgentProductImageTypeKey,
   WorkflowDraftNodePlan,

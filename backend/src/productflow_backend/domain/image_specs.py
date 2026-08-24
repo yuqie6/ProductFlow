@@ -1,3 +1,5 @@
+"""GenerationSpec 是模型出图意图；DeliverySpec 是确定性交付派生，互不替代。"""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
@@ -14,6 +16,8 @@ class _StrictImageSpec(BaseModel):
 
 
 class GenerationSpec(_StrictImageSpec):
+    """模型生成意图；改这些字段才会调用图片模型。"""
+
     aspect_ratio: Annotated[str, StringConstraints(pattern=r"^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$")]
     resolution_tier: Literal["standard", "high", "ultra"] = "high"
     quality_intent: Literal["draft", "standard", "high"] = "high"
@@ -32,6 +36,8 @@ class GenerationSpec(_StrictImageSpec):
 
 
 class DeliverySpec(_StrictImageSpec):
+    """确定性 rendition；改宽高或格式不得调用图片模型或替换生成源。"""
+
     width: int = Field(ge=1, le=16384)
     height: int = Field(ge=1, le=16384)
     format: Literal["png", "jpeg", "webp"]

@@ -165,6 +165,7 @@ def create_canonical_product_with_assets(
             storage=storage,
             storage_writes=storage_writes,
         )
+        # 封面是展示元数据；取首张参考图不改商品事实或工作流绑定。
         creation.product.cover_image_asset_id = creation.created_assets[0].id
         product_id = creation.product.id
         asset_ids = [asset.id for asset in creation.created_assets]
@@ -267,6 +268,8 @@ def add_canonical_product_images(
     image_uploads: list[tuple[bytes, str, str]],
     storage: LocalStorage | None = None,
 ) -> list[ProductImageAsset]:
+    """追加上传进入商品图片身份；DB 失败时补偿本次存储写入。"""
+
     if not image_uploads:
         raise BusinessValidationError("至少上传一张商品图片")
     if len(image_uploads) > 6:
@@ -290,6 +293,7 @@ def add_canonical_product_images(
         ]
         session.flush()
         if product.cover_image_asset_id is None:
+            # 空封面时写入展示图，不改事实或参考绑定。
             product.cover_image_asset_id = assets[0].id
         product.updated_at = now_utc()
         asset_ids = [asset.id for asset in assets]
@@ -365,6 +369,7 @@ def delete_product(
     _delete_owned_visual_system_versions(session, removable_visual_versions)
     deleted_media = prune_unreferenced_media_objects(session, media_ids)
     session.commit()
+    # 业务行已提交；仅清理已无引用的文件，不把共享媒体当通用回滚删除。
     cleanup_paths = {storage_path for _, storage_path in deleted_media}
     for storage_path in sorted(cleanup_paths):
         best_effort_storage_delete(

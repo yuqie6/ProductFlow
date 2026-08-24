@@ -1,3 +1,5 @@
+"""启动恢复：PostgreSQL 业务行为是权威，Redis/Dramatiq 只补发 delivery attempt。"""
+
 from __future__ import annotations
 
 import logging
@@ -195,6 +197,7 @@ def recover_unfinished_workflow_runs(
                     reset_graph_node_run_for_safe_requeue(session, stale_node_run)
                     safe_requeued = True
                     continue
+                # provider effect 无法证明时标 unknown，不能当失败重试。
                 mark_graph_run_provider_unknown(
                     session,
                     run_id=locked_run.id,
@@ -318,6 +321,7 @@ def recover_unfinished_image_session_generation_tasks(
                 )
                 values: dict[str, object]
                 if provider_effect_unknown:
+                    # 进行中或未物化的 provider effect 不能安全重入队。
                     metadata = dict(task.progress_metadata) if isinstance(task.progress_metadata, dict) else {}
                     metadata["unknown_provider_effect"] = {
                         "attempt_id": observed_attempt_id,

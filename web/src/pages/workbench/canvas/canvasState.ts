@@ -1,3 +1,9 @@
+/**
+ * 工作流或一层分组的持久化画布视口。
+ *
+ * 布局跨过桌面断点或宽度差太大时丢弃已存视图；分组没有嵌套视口。
+ */
+
 export interface WorkflowCanvasViewport {
   x: number;
   y: number;
@@ -6,6 +12,7 @@ export interface WorkflowCanvasViewport {
   surface_height: number;
 }
 
+/** 桌面/移动布局或画布宽度变化大会错位时，丢弃已存视口。 */
 export function isWorkflowCanvasViewportCompatible(
   viewport: WorkflowCanvasViewport | null,
   surfaceWidth: number,

@@ -1,3 +1,10 @@
+/**
+ * 按 Catalog 字段物化 inspector 草稿。
+ *
+ * 未登记和已退休的 plan key（`prompt_plan_key` 等）会被去掉。
+ * hidden 字段留在 config 里，但不能在 inspector 编辑。
+ */
+
 import type { TranslationKey } from "../../../lib/i18n";
 import { zhCN } from "../../../lib/i18n";
 import type { GraphCatalogConfigField, GraphCatalogVisibleWhen, GraphNode } from "../../../lib/types";

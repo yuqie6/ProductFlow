@@ -1,3 +1,8 @@
+"""全局图库列表与 bootstrap。
+
+按 MediaLibraryAsset 身份分页；文件夹/标签/未整理是组织投影，provenance 不进入列表载荷。
+"""
+
 from __future__ import annotations
 
 import base64
@@ -49,6 +54,8 @@ class MediaLibraryBootstrap:
 
 
 def get_media_library_asset(session: Session, *, asset_id: str) -> MediaLibraryAsset:
+    """按全局素材 id 读取一条资产及其 MediaObject。"""
+
     asset = session.scalar(_asset_query().where(MediaLibraryAsset.id == asset_id))
     if asset is None:
         raise NotFoundError("素材库资产不存在")
@@ -154,6 +161,8 @@ def _filtered_asset_statement(
 
 
 def get_media_library_bootstrap(session: Session) -> MediaLibraryBootstrap:
+    """活跃/归档/未整理与一层文件夹计数，都是查询投影。"""
+
     total_count = session.scalar(select(func.count(MediaLibraryAsset.id))) or 0
     active_count = (
         session.scalar(
@@ -209,6 +218,8 @@ def list_media_library_assets(
     folder_id: str | None = None,
     tag: str | None = None,
 ) -> MediaLibraryAssetPage:
+    """按全局素材身份分页；文件夹/标签只是筛选投影。"""
+
     bounded_limit = min(max(limit, 1), 100)
     normalized_search = _normalize_search(search)
     normalized_tag = tag.casefold().strip() if tag else None

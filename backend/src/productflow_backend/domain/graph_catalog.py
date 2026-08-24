@@ -42,8 +42,10 @@ GraphConfigVisibleWhenOp = Literal["in"]
 
 GRAPH_CATALOG_VERSION = 5
 
+# product_identity 是创建时上传的绑定角色，会原样传给 prompt / image provider。
 IMAGE_ASSET_ROLES = ("product_identity", "environment", "style", "evidence")
 
+# ChangeSet config 不能引入未登记键或已退休的 Draft plan key。
 FORBIDDEN_GRAPH_CONFIG_KEYS = frozenset(
     {
         "prompt_plan_key",
@@ -53,6 +55,7 @@ FORBIDDEN_GRAPH_CONFIG_KEYS = frozenset(
     }
 )
 
+# 模型出图意图；改这些字段才会调用图片模型。
 _DEFAULT_GENERATION_SPEC: dict[str, object] = {
     "aspect_ratio": "1:1",
     "resolution_tier": "high",
@@ -63,6 +66,7 @@ _DEFAULT_GENERATION_SPEC: dict[str, object] = {
     "text_language": None,
 }
 
+# 确定性交付派生；改宽高或格式不得调用图片模型。
 _DEFAULT_DELIVERY_SPEC: dict[str, object] = {
     "width": 1200,
     "height": 1200,
@@ -170,6 +174,7 @@ _OUTPUT_TYPE: dict[GraphNodeType, GraphEdgeDataType] = {
     GraphNodeType.IMAGE_GENERATION: GraphEdgeDataType.IMAGE_ASSET,
 }
 
+# Catalog 拥有连线合同：输出类型配对、角色、基数、是否运行必需。
 _ACCEPTANCE: dict[tuple[GraphEdgeDataType, GraphNodeType], GraphInputContract] = {
     (GraphEdgeDataType.PRODUCT_FACTS, GraphNodeType.CREATIVE_BRIEF): GraphInputContract(
         GraphEdgeDataType.PRODUCT_FACTS, GraphEdgeRole.FACTS, 1, False
@@ -560,6 +565,8 @@ def validate_node_config(node_type: GraphNodeType, config: dict[str, object] | N
 
 
 def normalize_node_config(node_type: GraphNodeType, config: dict[str, object] | None) -> dict[str, object]:
+    """Catalog 是可编辑 config 的唯一登记处：拒绝未登记键和已退休 plan key。"""
+
     payload: dict[str, object] = deepcopy(config) if config is not None else {}
     illegal = FORBIDDEN_GRAPH_CONFIG_KEYS.intersection(payload)
     if illegal:
@@ -615,6 +622,8 @@ def accepted_inputs(node_type: GraphNodeType) -> tuple[GraphInputContract, ...]:
 
 
 def run_required_inputs(node_type: GraphNodeType) -> tuple[GraphInputContract, ...]:
+    """运行必需输入由 Catalog 声明；缺边的 DAG 仍可保存，但不能跑该节点。"""
+
     return tuple(contract for contract in accepted_inputs(node_type) if contract.required_to_run)
 
 

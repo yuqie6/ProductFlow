@@ -1,3 +1,5 @@
+"""schema-v3 运行时编译：只收集目标节点 incoming 边上的 facts/references/briefs/visual，不扫全图。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -45,6 +47,7 @@ from productflow_backend.domain.graph_rules import (
     node_config_error,
 )
 
+# 运行快照合同版本，不是 workflow_graphs.schema_version。
 GRAPH_SNAPSHOT_SCHEMA_VERSION = 1
 V3_PROMPT_STRIPPED_KEYS = frozenset(
     {
@@ -239,6 +242,8 @@ def compile_prompt_runtime(
     sources: dict[str, GraphSourceRecord],
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> PromptRuntimeInput:
+    """只编译 prompt 节点 incoming 边上的 facts/brief/reference/visual；断开边即失去该输入。"""
+
     node = graph.node(node_id)
     if node.node_type != GraphNodeType.PROMPT_GENERATION:
         raise BusinessValidationError("只有提示词生成节点可以编译为 PromptRuntimeInput")
@@ -328,6 +333,8 @@ def compile_context_runtime(
     sources: dict[str, GraphSourceRecord],
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> ContextRuntimeInput:
+    """只编译 brief / visual_system 节点 incoming 边上的 facts 与 reference。"""
+
     node = graph.node(node_id)
     if node.node_type not in {GraphNodeType.CREATIVE_BRIEF, GraphNodeType.VISUAL_SYSTEM}:
         raise BusinessValidationError("只有视觉规范或创作要求节点可以编译为 ContextRuntimeInput")
@@ -383,6 +390,8 @@ def compile_image_runtime(
     sources: dict[str, GraphSourceRecord],
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> ImageRuntimeInput:
+    """只编译 image 节点 incoming 边上的 prompt/reference/visual；不扫图上其他节点。"""
+
     node = graph.node(node_id)
     if node.node_type != GraphNodeType.IMAGE_GENERATION:
         raise BusinessValidationError("只有图片生成节点可以编译为 ImageRuntimeInput")
@@ -445,7 +454,10 @@ def select_run_node_ids(
     target_node_id: str | None,
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> tuple[str, ...]:
+    """GRAPH 入队可运行处理节点；NODE 只跑目标节点，不顺带下游 image 节点。"""
+
     processing_ids = [node.id for node in graph.nodes if node.node_type in PROCESSING_NODE_TYPES]
+    # 选节点不看已有 artifact；GRAPH 范围的 skip 在执行层按 digest 决定。
     del artifacts
     if scope == GraphRunScope.GRAPH:
         selected = [node_id for node_id in processing_ids if _has_required_edges(graph, node_id)]
@@ -464,6 +476,7 @@ def select_run_node_ids(
             selected = [node_id for node_id in ancestors if _has_required_edges(graph, node_id)]
             selected.append(target_node_id)
         else:
+            # NODE 范围只入队目标节点：跑内容节点不会顺带跑下游 image_generation。
             selected = [target_node_id]
     ordered = _topo_order(graph, selected)
     if not ordered:
@@ -687,6 +700,8 @@ def _compile_reference(
     sources: dict[str, GraphSourceRecord],
     artifacts: GraphRuntimeArtifacts | None,
 ) -> CompiledReference:
+    """reference 边消费上游当前资产 id；image_asset 的 bound_asset_id 不是这条边本身。"""
+
     source = graph.node(edge.source_node_id)
     record = sources.get(source.id, GraphSourceRecord())
     asset_id = None
@@ -839,6 +854,8 @@ _SELF_OUTPUT_CONFIG_KEYS: dict[GraphNodeType, frozenset[str]] = {
 
 
 def _request_config_for_digest(node_type: GraphNodeType, config: dict[str, Any]) -> dict[str, Any]:
+    """digest 排除本节点会回写的输出字段，避免刚生成就把自己标成 STALE。"""
+
     excluded = _SELF_OUTPUT_CONFIG_KEYS.get(node_type, frozenset())
     return {key: value for key, value in config.items() if key not in excluded}
 

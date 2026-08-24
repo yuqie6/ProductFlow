@@ -1,3 +1,8 @@
+"""按 ProductImageAsset id 打包已核验原图。
+
+ZIP 条目名来自显示名；文件内容按 MediaObject.storage_path 读取，身份仍是资产 id。
+"""
+
 from __future__ import annotations
 
 import re
@@ -38,6 +43,8 @@ def build_gallery_archive(
     asset_ids: list[str],
     storage: LocalStorage | None = None,
 ) -> GalleryArchive:
+    """按资产 id 读取 MediaObject 文件；路径只用于打开字节。"""
+
     normalized_ids = _normalize_archive_ids(asset_ids)
     product = session.get(Product, product_id)
     if product is None:

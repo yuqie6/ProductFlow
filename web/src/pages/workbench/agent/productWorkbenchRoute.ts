@@ -1,3 +1,10 @@
+/**
+ * 根据 Agent bootstrap 与 live 图选择商品工作台表面。
+ *
+ * 缺图是 404（当作 null），缺 Agent 工作台是 409。直接创建可以先有图没有对话；
+ * Agent 优先创建可以先有对话没有图。
+ */
+
 import type { AgentWorkbenchBootstrap, GraphProjection } from "../../../lib/types";
 
 export type ProductWorkbenchRouteInput = {
@@ -33,6 +40,7 @@ export function isAgentWorkbenchMissing(error: unknown): boolean {
   return isHttpErrorStatus(error, 409);
 }
 
+/** 带 task 时只读取；否则 ensure 会挂上或创建工作台。 */
 export function loadProductWorkbenchAgent(
   loaders: {
     getAgentWorkbench: (
@@ -55,6 +63,7 @@ export function loadProductWorkbenchAgent(
   return loaders.ensureAgentWorkbench(productId, agentSessionId);
 }
 
+/** 缺少 live 图当作 null，让 Agent 优先创建仍能打开。 */
 export async function readWorkflowGraphOrNull(
   load: () => Promise<GraphProjection>,
 ): Promise<GraphProjection | null> {
@@ -66,6 +75,7 @@ export async function readWorkflowGraphOrNull(
   }
 }
 
+/** 图 404 表示还没有图，不是致命错误。Agent 409 表示对话不在了。 */
 export function resolveProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput>(input: {
   graph?: GraphProjection;
   graphPending: boolean;

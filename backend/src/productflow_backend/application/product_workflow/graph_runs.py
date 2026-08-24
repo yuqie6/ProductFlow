@@ -1,3 +1,5 @@
+"""schema-v3 运行提交：快照当前图、入队处理节点，并持久化 durable dispatch。"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -49,6 +51,8 @@ from productflow_backend.infrastructure.db.models import (
 
 
 def stage_graph_run_dispatch(session: Session, run_id: str):
+    """只 flush dispatch 行，不 commit；调用方拥有事务。"""
+
     return stage_async_dispatch(
         session,
         delivery_key=delivery_key_for_actor(GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id),
@@ -66,6 +70,8 @@ class GraphRunSubmission:
 
 
 def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedGraph) -> dict[str, GraphSourceRecord]:
+    """为编译准备节点源事实。image_asset 用绑定 id，不把绑定当成 reference 边。"""
+
     product = session.get(Product, graph.product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -147,6 +153,8 @@ def submit_graph_run(
     enqueue: Callable[[str], None] | None = None,
     commit: bool = True,
 ) -> GraphRunSubmission:
+    """提交一次图运行。默认 commit；commit=False 时禁止直接 enqueue。"""
+
     graph = session.scalar(
         select(WorkflowGraph)
         .where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
@@ -189,6 +197,7 @@ def submit_graph_run(
         )
     )
     if active is not None:
+        # 相同 scope / 目标 / revision 的 RUNNING 视为幂等提交，不另开 run。
         if (
             GraphRunScope(active.run_scope) == scope
             and active.requested_node_id == target_node_id
@@ -290,6 +299,8 @@ def cancel_graph_run(
     graph_id: str,
     run_id: str,
 ) -> WorkflowGraphRun:
+    """取消 RUNNING 运行并 commit。UNKNOWN 等终态不能取消。"""
+
     get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
     run = session.scalar(
         select(WorkflowGraphRun)
@@ -328,6 +339,8 @@ def retry_graph_run(
     enqueue: Callable[[str], None] | None = None,
     commit: bool = True,
 ) -> GraphRunSubmission:
+    """只重试 FAILED 且 is_retryable 的运行；UNKNOWN 不可重试。"""
+
     source = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)
     if source.status != WorkflowRunStatus.FAILED:
         raise BusinessValidationError("只有失败的工作流运行可以重试")

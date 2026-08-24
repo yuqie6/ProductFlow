@@ -1,3 +1,8 @@
+"""全局素材 provenance 与收录/上传请求身份。
+
+provenance 冻结 MediaObject 核验指纹；request hash 标识命令，不嵌入媒体 bytes。
+"""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +21,8 @@ MediaLibrarySourceType = Literal["legacy_gallery", "image_session_generated", "p
 
 
 class MediaLibraryProvenanceV1(BaseModel):
+    """一条全局素材的不可变来源与内容指纹。"""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = MEDIA_LIBRARY_PROVENANCE_SCHEMA_VERSION
@@ -32,6 +39,8 @@ class MediaLibraryProvenanceV1(BaseModel):
 
 
 def canonical_provenance_hash(payload: dict[str, Any]) -> str:
+    """对冻结 provenance JSON 取指纹；超限拒绝，避免把 bytes 塞进 provenance。"""
+
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     if len(encoded.encode("utf-8")) > MAX_PROVENANCE_BYTES:
         raise ValueError("media library provenance payload exceeds maximum size")

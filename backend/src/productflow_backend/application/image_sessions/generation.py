@@ -1,3 +1,8 @@
+"""连续生图请求规范化与实测输出。
+
+requested size 是生成意图；actual_image_size 是测得输出，两者分开记录。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -71,6 +76,8 @@ def provider_output_with_actual_image_size(
     requested_size: str,
     image_bytes: bytes,
 ) -> dict[str, Any]:
+    """把测得像素尺寸写入输出元数据，不回写请求尺寸。"""
+
     output = dict(provider_output_json or {})
     dimensions = image_dimensions_from_bytes(image_bytes)
     if dimensions is None:

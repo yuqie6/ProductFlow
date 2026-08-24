@@ -1,3 +1,8 @@
+"""全局图库一层文件夹与标签。
+
+删除文件夹只解除组织关系，不删素材或媒体文件。标签是分类元数据，不拥有 bytes。
+"""
+
 from __future__ import annotations
 
 import json
@@ -98,7 +103,10 @@ def rename_media_library_folder(
 
 
 def delete_media_library_folder(session: Session, *, folder_id: str) -> int:
+    """删除文件夹并把素材 folder_id 置空；不删 MediaLibraryAsset。"""
+
     folder = _get_folder_for_update(session, folder_id)
+    # 只解除组织；节点/封面/lineage 引用走商品图片身份，不受本删除影响。
     moved_count = session.query(MediaLibraryAsset).filter(MediaLibraryAsset.folder_id == folder.id).count()
     session.query(MediaLibraryAsset).filter(MediaLibraryAsset.folder_id == folder.id).update(
         {MediaLibraryAsset.folder_id: None, MediaLibraryAsset.updated_at: now_utc()},
@@ -146,6 +154,8 @@ def rename_media_library_tag(
 
 
 def delete_media_library_tag(session: Session, *, tag_id: str) -> int:
+    """删除标签 assignment，不删素材。"""
+
     tag = _get_tag_for_update(session, tag_id)
     count = session.scalar(select(MediaLibraryAssetTag.asset_id).where(MediaLibraryAssetTag.tag_id == tag.id).limit(1))
     deleted_count = session.query(MediaLibraryAssetTag).filter(MediaLibraryAssetTag.tag_id == tag.id).delete(
@@ -159,6 +169,8 @@ def delete_media_library_tag(session: Session, *, tag_id: str) -> int:
 def move_media_library_assets(
     session: Session, *, asset_ids: list[str], folder_id: str | None, expected_revision: dict[str, int]
 ) -> list[MediaLibraryAsset]:
+    """只改文件夹组织；不改素材身份或媒体 bytes。"""
+
     normalized_ids = _validate_asset_ids(session, asset_ids)
     if set(expected_revision) != set(normalized_ids):
         raise BusinessValidationError("expected_revision 必须覆盖全部素材")

@@ -1,3 +1,5 @@
+"""工作台 bootstrap 返回 Graph 投影。有 live schema-v3 graph 后 Agent 只解释或请求运行，不覆盖现图。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,6 +39,7 @@ def get_agent_workbench_bootstrap(
     agent_session_id: str | None = None,
     agent_task_id: str | None = None,
 ) -> AgentWorkbenchBootstrap:
+    """返回商品工作台投影。graph 存在时这就是 live schema-v3，不是第二份 Draft。"""
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -94,6 +97,7 @@ def ensure_agent_workbench_bootstrap(
     agent_session_id: str | None = None,
     agent_task_id: str | None = None,
 ) -> AgentWorkbenchBootstrap:
+    """没有 product conversation 时幂等挂工作区；已有 Task 则只读取，不另建。"""
     if agent_task_id is not None:
         return get_agent_workbench_bootstrap(
             session,

@@ -1,3 +1,10 @@
+/**
+ * 为一个可生成图种构造 Graph Command 操作。
+ *
+ * 证据类在别处是未绑定的 `image_asset` 占位。可生成类是一组、一个提示词节点和 N 个图节点。
+ * 第一张图用 `to_node` 跑，让上游内容节点只执行一次。
+ */
+
 import { defaultAspectRatioForType, imageTypeFamily, isGeneratingImageType } from "../../../lib/imageTypeFamilies";
 import type { AgentProductImageTypeKey, GraphChangeSet, GraphNode, GraphProjection, GraphRunScope } from "../../../lib/types";
 import { defaultGraphNodeConfig, graphChangeSetClientRef, snapGraphCoordinate } from "./graphLayout";
@@ -24,6 +31,7 @@ export function shotGenerationSpec(imageTypeKey: AgentProductImageTypeKey): Reco
   };
 }
 
+/** 一个可生成图种：分组 + 提示词 + 第一张图节点，接到共享的 source/brief/visual。 */
 export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSet["operations"] {
   if (!isGeneratingImageType(input.imageTypeKey)) return [];
   const x = snapGraphCoordinate(input.position.x);
@@ -89,6 +97,7 @@ export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSe
   return operations;
 }
 
+/** 组内第一张图用 `to_node` 跑，让上游提示词/brief 只执行一次。 */
 export function shotRunRequests(
   graph: GraphProjection,
   groupId: string,

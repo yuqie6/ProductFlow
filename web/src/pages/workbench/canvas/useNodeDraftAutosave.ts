@@ -1,3 +1,9 @@
+/**
+ * 按 `edit_version` 做 inspector 乐观自动保存。
+ *
+ * 409 表示 live 图已变，草稿不会强行合并。运行前 flush，让 Graph Command 看到最新配置。
+ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { SaveStatus } from "../chrome/SaveStatusBadge";

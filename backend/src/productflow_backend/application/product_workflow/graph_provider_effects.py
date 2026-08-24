@@ -1,3 +1,5 @@
+"""图运行 provider effect 账本：调用前记 intent；无法证明结果时标 unknown。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -58,6 +60,8 @@ def node_run_effect_is_safe_to_requeue(
     node_run: WorkflowGraphNodeRun,
     effect: WorkflowGraphProviderEffect | None,
 ) -> bool:
+    """仅 claimed/prepared 且尚未真正调用 provider 才可安全重入队。"""
+
     phase = node_run.progress_phase
     if phase in WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES:
         if effect is None:
@@ -146,6 +150,8 @@ def record_graph_provider_effect_result(
     provider_status: str | None,
     result_json: dict[str, Any] | None = None,
 ) -> bool:
+    """已 unknown 的 effect 不能改成 applied；failed 保持原判。"""
+
     if result_json is not None:
         _validate_json_payload(result_json, "图运行 provider effect result")
     effect = _locked_effect(session, node_run_id=node_run_id)
@@ -194,6 +200,8 @@ def mark_graph_run_provider_unknown(
     attempt_id: str | None,
     detail: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
 ) -> bool:
+    """把 run/node 标 UNKNOWN 且不可重试；不要把未证明的 provider 调用写成 FAILED。"""
+
     now = now_utc()
     run = session.scalar(
         select(WorkflowGraphRun).where(WorkflowGraphRun.id == run_id).with_for_update()
@@ -240,6 +248,8 @@ def reset_graph_node_run_for_safe_requeue(
     session: Session,
     node_run: WorkflowGraphNodeRun,
 ) -> None:
+    """丢掉未提交的 pending intent，让节点回到 queued；已 unknown/applied 不得走这条。"""
+
     now = now_utc()
     effect = session.scalar(
         select(WorkflowGraphProviderEffect).where(
@@ -270,6 +280,7 @@ def _fail_sibling_active_nodes(
     reason: str,
     now,
 ) -> None:
+    # 未证明的节点保持 unknown；尚未完成的兄弟节点没有 provider 结果，可以标 failed。
     for item in node_runs:
         if item.id == skip_id:
             continue

@@ -1,3 +1,9 @@
+"""全局素材整理 Draft：确认后应用组织变更与工作流关联。
+
+确认不复制媒体 bytes。link_workflow 写入关联并确保商品侧 ProductImageAsset 存在。
+归档仍只改可见性。
+"""
+
 from __future__ import annotations
 
 import json
@@ -173,6 +179,8 @@ def confirm_library_organization_draft_revision(
     expected_draft_version: int,
     idempotency_key: str,
 ) -> LibraryOrganizationDraft:
+    """确认当前 revision：组织变更与工作流关联，不复制媒体。"""
+
     normalized_key = _normalize_confirmation_idempotency_key(idempotency_key)
     request_hash = _confirmation_request_hash(draft_id, expected_draft_version)
     try:
@@ -512,6 +520,7 @@ def _apply_operations(
         asset = assets[operation.asset_id]
         changed = False
         if isinstance(operation, LibraryLinkWorkflowOperationV1):
+            # 关联全局素材；工作流绑定身份仍是随后收录的 ProductImageAsset。
             workflow = workflows[operation.target.workflow_id]
             sync_workflow_media_library_assets(
                 session,
@@ -552,6 +561,7 @@ def _apply_operations(
                     MediaLibraryAssetTag(tag=tags[tag_name.casefold()]) for tag_name in target_tag_names
                 )
         elif isinstance(operation, LibraryArchiveOperationV1):
+            # 归档可见性；不删 MediaLibraryAsset 或 MediaObject。
             changed = not asset.is_archived
             asset.is_archived = True
             asset.archived_at = now_utc()

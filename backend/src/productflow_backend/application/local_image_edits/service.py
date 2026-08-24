@@ -1,3 +1,9 @@
+"""局部编辑：源/结果是 ProductImageAsset，mask 是 MediaObject。
+
+provider 边界之后若无法证明副作用，记 unknown 而不是 failed。
+Adoption 只改节点 current artifact 指向的商品图片 id，不替换源图身份。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -420,6 +426,7 @@ def recover_local_image_edit_task(
         session.commit()
         return LocalImageEditRecoveryResult(task.id, "requeued", task.status)
     if task.progress_phase in {"provider_pending", "provider_call", "provider_result_received"}:
+        # 已进入 provider 边界：无法证明副作用，不能当 failed 自动重投。
         _mark_task_unknown_locked(
             session,
             task,
@@ -458,6 +465,7 @@ def claim_local_image_edit_task(
         if task.progress_phase == "claimed":
             _mark_stale_claimed_attempt(session, task, now=now)
         elif task.progress_phase in {"provider_pending", "provider_call", "provider_result_received"}:
+            # unknown：无法证明副作用，禁止当 failed claim 重试。
             _mark_task_unknown_locked(
                 session,
                 task,
@@ -618,6 +626,7 @@ def execute_local_image_edit_task(
             return _execution_result(session, task_id=task_id, attempt_id=claim.attempt_id)
         except Exception as exc:  # noqa: BLE001
             try:
+                # 请求已发出但无法证明结果，不能记 failed。
                 _finish_fenced_attempt(
                     session,
                     task_id=task_id,
@@ -721,6 +730,7 @@ def adopt_local_image_edit_result(
         to_artifact_id=artifact.id,
     )
     session.add(event)
+    # 节点 current 指向新的商品图片 id；源图与历史产物仍保留。
     node.current_artifact_id = artifact.id
     session.commit()
     return LocalImageEditAdoptionResult(task_id=task.id, event=event, artifact=artifact)
@@ -1457,6 +1467,7 @@ def _persist_provider_result(
             source_asset = _lock_source_asset(session, product_id=product.id, asset_id=task.source_asset_id)
             if source_asset.media_object.sha256 != task.source_media_sha256:
                 raise BusinessValidationError("provider 返回前源图版本已变化")
+            # 结果进入商品库并 parent 到源图；不替换源 ProductImageAsset。
             asset = stage_product_image_asset(
                 session,
                 product=product,
@@ -1519,6 +1530,8 @@ def _mark_unknown_after_save_failure(
     attempt_id: str,
     detail: str,
 ) -> None:
+    """provider 已返回但资产保存无法确认：unknown，不是 failed。"""
+
     try:
         task, attempt = _lock_fenced_attempt(session, task_id=task_id, attempt_id=attempt_id)
     except ConflictError:

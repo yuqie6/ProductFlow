@@ -1,3 +1,9 @@
+/**
+ * 打包的 ProductFlow Skill 目录。
+ *
+ * 加载 Skill 只读 `.pi/skills` 下的静态文件，不能访问业务数据、存储、供应商，也不能执行脚本。
+ */
+
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";

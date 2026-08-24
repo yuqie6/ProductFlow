@@ -1,3 +1,5 @@
+"""Draft 确认后一次事务物化完整 schema-v3 图。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -42,6 +44,8 @@ def persist_confirmed_draft_graph(
     draft_id: str,
     expected_draft_version: int,
 ) -> DraftGraphPersistResult:
+    """按 source_draft_revision_id 幂等物化；已有图直接返回，不改 live 图。"""
+
     product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
     if product is None:
         raise NotFoundError("商品不存在")
@@ -98,6 +102,7 @@ def persist_confirmed_draft_graph(
         )
         draft.status = WorkflowDraftStatus.READY
         draft.updated_at = now_utc()
+        # Graph Command 只 flush；本函数拥有整笔物化事务。
         session.commit()
     except Exception:
         session.rollback()

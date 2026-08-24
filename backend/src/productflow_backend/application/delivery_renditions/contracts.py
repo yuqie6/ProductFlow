@@ -1,3 +1,8 @@
+"""DeliverySpec 规范化。
+
+尺寸/格式变更是确定性派生合同，不构成新的图像模型调用。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,6 +18,7 @@ from productflow_backend.domain.enums import JobStatus
 from productflow_backend.domain.errors import BusinessValidationError
 
 DELIVERY_RENDITION_SPEC_SCHEMA_VERSION = 1
+# 本地有损编码阶梯，不是图像模型质量参数。
 DELIVERY_RENDITION_QUALITY_LEVELS = (95, 90, 85, 80, 75, 70, 60, 50, 40, 30, 20, 10, 5, 1)
 
 DELIVERY_FORMAT_MIME_TYPES = {
@@ -48,6 +54,8 @@ class RenderedDeliveryRendition:
 
 
 def normalize_delivery_spec(value: DeliverySpec | dict[str, Any]) -> NormalizedDeliverySpec:
+    """冻结 DeliverySpec 与 spec_hash；与 GenerationSpec 分离。"""
+
     try:
         spec = value if isinstance(value, DeliverySpec) else DeliverySpec.model_validate(value)
     except ValidationError as exc:

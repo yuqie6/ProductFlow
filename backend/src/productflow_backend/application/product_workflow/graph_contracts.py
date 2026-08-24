@@ -1,3 +1,5 @@
+"""schema-v3 Graph Command 的 ChangeSet 合同；config 不得带未登记或退休拓扑键。"""
+
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
@@ -25,7 +27,7 @@ class CreateNodeOp(StrictGraphModel):
     position_x: int = 0
     position_y: int = 0
     config: dict[str, Any] = Field(default_factory=dict)
-    bound_asset_id: str | None = None
+    bound_asset_id: str | None = None  # image_asset 绑定身份；连线另走 connect_nodes
     group_ref: GraphRef | None = None
 
     @model_validator(mode="after")
@@ -76,6 +78,8 @@ class MoveNodesOp(StrictGraphModel):
 
 
 class CreateGroupOp(StrictGraphModel):
+    """画布一层视觉分组，无执行状态、端口或运行行为。"""
+
     op: Literal["create_group"] = "create_group"
     client_ref: GraphRef
     title: GraphTitle
@@ -116,6 +120,8 @@ GraphOperation = Annotated[
 
 
 class WorkflowChangeSet(StrictGraphModel):
+    """对某一 revision 的原子图变更；应用后才成为 live 图。"""
+
     base_graph_revision: int = Field(ge=0)
     summary: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
     actor_type: GraphActorType = GraphActorType.USER

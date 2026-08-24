@@ -1,3 +1,5 @@
+"""直接创建用的预设 v3 ChangeSet：身份参考图、一层分组、每图种一 prompt + N 张图。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -86,6 +88,8 @@ def build_direct_create_template(
     generation_spec: dict[str, Any] | None = None,
     delivery_spec: dict[str, Any] | None = None,
 ) -> WorkflowChangeSet:
+    """生成完整建图 ChangeSet。创建时上传绑定为 product_identity；证据图种是未绑定 image_asset。"""
+
     if not image_types:
         raise BusinessValidationError("至少选择一种图片类型")
     if not reference_asset_ids:
@@ -147,6 +151,7 @@ def build_direct_create_template(
                 title=f"参考图 {index + 1}",
                 position_x=80 + index * 220,
                 position_y=560,
+                # 创建时上传绑定为 product_identity，该字符串会传给 prompt / image provider。
                 config={"role": "product_identity"},
                 bound_asset_id=asset_id,
             )
@@ -227,6 +232,7 @@ def build_direct_create_template(
                     )
                 )
 
+    # 证据图种落成未绑定 image_asset 占位，不是可运行 image_generation。
     for evidence_index, image_type in enumerate(sorted(evidence_types, key=lambda item: (item.order, item.key))):
         type_title = image_type.title or _IMAGE_TYPE_TITLES.get(image_type.key, image_type.key)
         operations.append(

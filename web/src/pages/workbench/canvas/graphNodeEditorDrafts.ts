@@ -33,6 +33,7 @@ export interface ProductFactsDraft {
 
 export type ProductFactsDraftError = "empty_key" | "empty_value" | "duplicate_key";
 
+/** 已退休的 V1 plan key 和编译器拥有的输入，不能经 inspector 回写。 */
 export const GRAPH_PROMPT_STRIPPED_KEYS = [
   "images",
   "fact_keys",
@@ -47,6 +48,7 @@ export function graphTitleDraft(node: GraphNode): GraphTitleDraft {
   return { title: node.title };
 }
 
+/** 缺少 `source_product_id` 只给旧数据读；新节点必须显式写绑定。 */
 export function graphProductSourceDraft(node: GraphNode): GraphProductSourceDraft {
   return {
     title: node.title,

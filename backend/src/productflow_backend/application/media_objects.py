@@ -1,3 +1,9 @@
+"""MediaObject 原语：核验并写入不可变媒体 bytes。
+
+逻辑资产引用本行 id；storage_path 只是文件位置。新写入必须纳入 StorageWriteCompensation，
+事务失败只删除本次创建的文件。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,6 +37,8 @@ _IMAGE_FORMAT_MIME_TYPES = {
 
 @dataclass(frozen=True, slots=True)
 class VerifiedImageMetadata:
+    """解码后的内容指纹与尺寸；不是存储路径。"""
+
     mime_type: str
     byte_size: int
     width: int
@@ -39,6 +47,8 @@ class VerifiedImageMetadata:
 
 
 def inspect_image_bytes(content: bytes, *, expected_mime_type: str | None = None) -> VerifiedImageMetadata:
+    """核验可解码 PNG/JPEG/WEBP，并计算 sha256 与像素尺寸。"""
+
     if not content:
         raise BusinessValidationError("图片内容不能为空")
     try:
@@ -74,8 +84,11 @@ def stage_verified_media_object(
     storage: LocalStorage,
     storage_writes: StorageWriteCompensation,
 ) -> MediaObject:
+    """先写文件再暂存 MediaObject；调用方事务失败时由 compensation 收回本次文件。"""
+
     metadata = inspect_image_bytes(content, expected_mime_type=expected_mime_type)
     media_id = new_id()
+    # 先写文件再登记补偿；逻辑身份是即将插入的 MediaObject.id。
     storage_path = storage_writes.track(
         storage,
         storage.save_media_image(media_id, filename, content),
@@ -96,6 +109,8 @@ def stage_verified_media_object(
 
 
 def media_object_has_references(session: Session, media_object_id: str) -> bool:
+    """是否仍被商品图、会话图、全局素材或局部编辑 mask 引用。"""
+
     return any(
         session.scalar(select(model.id).where(column == media_object_id).limit(1)) is not None
         for model, column in (
@@ -111,7 +126,10 @@ def prune_unreferenced_media_objects(
     session: Session,
     media_object_ids: set[str],
 ) -> list[tuple[str, str]]:
-    """在调用方事务内删除已无逻辑引用的媒体行，并返回待清理文件。"""
+    """在调用方事务内删除已无逻辑引用的媒体行，并返回待提交后清理的文件。
+
+    不删除仍被共享的 MediaObject。文件删除发生在 commit 之后。
+    """
     if not media_object_ids:
         return []
     session.flush()

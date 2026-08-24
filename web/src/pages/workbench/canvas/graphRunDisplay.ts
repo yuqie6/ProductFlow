@@ -1,3 +1,9 @@
+/**
+ * 把 WorkflowGraphRun 投影到画布节点状态。
+ *
+ * 进行中的 queued/running 覆盖历史节点运行。unknown 是无法证明的供应商副作用，不是 UI 加载标记。
+ */
+
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GraphNodeRun,
@@ -22,6 +28,7 @@ export function graphRunsAreLive(runs: readonly GraphRun[] | undefined): boolean
   return Boolean(runs?.some((run) => LIVE_RUN_STATUSES.has(run.status)));
 }
 
+/** 历史运行补缺口；进行中的运行覆盖它仍拥有的每个节点。 */
 export function graphNodeRunPresentations(
   runs: readonly GraphRun[],
 ): Record<string, GraphNodeRunPresentation> {

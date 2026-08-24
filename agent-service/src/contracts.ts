@@ -1,3 +1,11 @@
+/**
+ * Pi 运行时与 ProductFlow Agent 适配器共用的线上合同。
+ *
+ * unknown 是终态：运行时无法证明成功或失败。
+ * `harness_run_id` 是 AgentSession/task run id 的兼容列名。
+ * 页面上下文只是环境快照，不得改写任务目标。
+ */
+
 import { createHash } from "node:crypto";
 
 export const API_VERSION = "v1alpha1" as const;
@@ -6,10 +14,11 @@ export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
 export const TOOL_CONTRACT_VERSION = 12 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
-/** Must stay aligned with backend AGENT_CONTEXT_MAX_BYTES. */
+/** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
 export const MAX_DYNAMIC_CONTEXT_BYTES = 64 << 10;
 
+/** unknown 是终态：运行时无法证明成功或失败。 */
 export const TURN_STATUSES = [
   "queued",
   "running",
@@ -26,6 +35,7 @@ export type TurnStatus = (typeof TURN_STATUSES)[number];
 export const EXECUTION_PHASES = ["claimed", "model", "tool", "waiting_input", "external_job", "terminal"] as const;
 export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
 
+/** ProductFlow 签发的租约。fencing_token 让丢失所有权的写入失效。 */
 export interface AgentExecutionLease {
   execution_id: string;
   projection_id: string;
@@ -136,6 +146,7 @@ export interface ProductFlowContract {
   task_goal: string | null;
   product_id: string | null;
   workflow_draft_id: string | null;
+  /** AgentSession/task run id 的兼容持久化列名。 */
   harness_run_id: string;
   current_draft_version: number;
   system_prompt: string;
@@ -197,7 +208,7 @@ export interface ToolStepValidationIssue {
   message: string;
 }
 
-/** Safe, bounded metadata for a tool row. Never include raw tool arguments or draft payloads here. */
+/** 工具行的有界安全元数据。不要写入原始工具参数或 Draft 载荷。 */
 export interface ToolStepDetails {
   phase?: ToolStepDetailPhase;
   skill_name?: string;
@@ -277,6 +288,7 @@ export interface RuntimeStatus {
   context_schema_version: typeof CONTEXT_SCHEMA_VERSION;
   skill_catalog_hash: string;
   os_tools: string[];
+  /** main 上固定为 false：后台 durable Task 仍是实验方向。 */
   background_durable_tasks: false;
 }
 
@@ -292,6 +304,7 @@ export function byteLength(value: string): number {
   return Buffer.byteLength(value, "utf8");
 }
 
+/** 给后续 Turn 用的环境页面快照，不改写任务目标。 */
 export function validatePageContext(value: PageContext | null): void {
   if (value === null) return;
   if (!value.snapshot_id.trim() || byteLength(value.snapshot_id) > 64) {
@@ -331,7 +344,7 @@ export function validateScope(scope: Scope): void {
   }
 }
 
-/** Current draft version is refreshed by ProductFlow and does not identify a runtime scope. */
+/** 当前 Draft 版本由 ProductFlow 刷新，不构成 runtime scope 身份。 */
 export function sameRuntimeScope(left: Scope, right: Scope): boolean {
   return (
     JSON.stringify({ ...left, current_draft_version: 0 }) ===
@@ -359,6 +372,7 @@ export class ProductFlowError extends Error {
   }
 }
 
+/** 对本交互运行时，unknown 和 awaiting_confirmation 都是终态。 */
 export function isTerminalStatus(status: TurnStatus): boolean {
   return ["succeeded", "failed", "canceled", "unknown", "awaiting_confirmation"].includes(status);
 }

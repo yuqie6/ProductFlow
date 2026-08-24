@@ -1,3 +1,9 @@
+/**
+ * 工作台外壳：画布、Agent 面板和 inspector 轨道。
+ *
+ * 窄屏一次只让一个区域可交互。inspector 宽度与画布几何共用，避免 live 图被轨道挡住。
+ */
+
 import { Bot } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";

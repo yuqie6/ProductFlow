@@ -1,3 +1,8 @@
+/**
+ * 来自环境变量的 Agent-service 配置。这里的供应商密钥只给 Pi 模型运行时用；
+ * 商品、图和任务的业务权威仍是 ProductFlow。
+ */
+
 import { resolve } from "node:path";
 
 export interface Config {

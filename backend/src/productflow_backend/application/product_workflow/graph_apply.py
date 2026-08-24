@@ -1,3 +1,5 @@
+"""纯内存应用 ChangeSet：Catalog 校验 config，graph_rules 拒绝环/悬空/基数冲突。"""
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -55,6 +57,8 @@ class AppliedGraphEdge:
 
 @dataclass(frozen=True, slots=True)
 class AppliedGraphGroup:
+    """画布一层视觉分组，无执行状态或端口。"""
+
     id: str
     title: str
 
@@ -96,6 +100,8 @@ EMPTY_GRAPH = AppliedGraph(revision=0, nodes=(), edges=(), groups=())
 
 
 def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet) -> AppliedGraph:
+    """顺序应用操作并校验完整结果。不写库；持久化由 Graph Command 负责。"""
+
     if change_set.base_graph_revision != graph.revision:
         raise ConflictError("图 revision 已变化，请刷新后重试")
 
@@ -199,6 +205,7 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
         if isinstance(operation, UpdateNodeConfigOp):
             node_id = resolve(operation.node_ref)
             node = nodes[node_id]
+            # Catalog 规范化 config；未登记键和退休 plan key 在这里被拒绝。
             config = normalize_node_config(node.node_type, operation.config)
             bound = (
                 operation.bound_asset_id
@@ -235,6 +242,7 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
     image_generation_count = sum(node.node_type == GraphNodeType.IMAGE_GENERATION for node in nodes.values())
     if image_generation_count > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
         raise BusinessValidationError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
+    # 绑定只属于 image_asset；下游 reference 边是另一条关系。
     for node in nodes.values():
         if node.bound_asset_id and node.node_type != GraphNodeType.IMAGE_ASSET:
             raise BusinessValidationError("只有图片素材节点可以绑定商品图片")

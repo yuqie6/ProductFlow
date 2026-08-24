@@ -1,3 +1,9 @@
+/**
+ * 图片节点上的 DeliverySpec 写入。
+ *
+ * 改交付尺寸或格式不会调用图像模型，也不会替换生成源资产。
+ */
+
 import type { WorkflowDeliverySpec } from "../../../lib/types";
 
 export { parseDeliveryPresetCatalog, parseWorkflowDeliverySpec } from "../../../lib/deliveryPresets";

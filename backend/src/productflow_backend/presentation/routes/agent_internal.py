@@ -1,3 +1,5 @@
+"""Agent-service 内部 HTTP：contract、lease、checkpoint、tool prepare/apply/reconcile。"""
+
 from __future__ import annotations
 
 from urllib.parse import quote
@@ -198,6 +200,7 @@ def get_agent_contract_endpoint(
     conversation_id: str,
     session: Session = Depends(get_session),
 ) -> AgentContractResponse:
+    """Pi 的 Scope 来自这份 ProductFlow contract，不来自本地 session 文件。"""
     return AgentContractResponse.model_validate(get_agent_contract(session, conversation_id))
 
 

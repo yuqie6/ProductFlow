@@ -1,3 +1,10 @@
+/**
+ * ProductFlow 内部 Agent API 的 HTTP 客户端。
+ *
+ * 工具副作用、租约和 checkpoint 都在 ProductFlow 上 claim。
+ * 缺少证明不能当失败；调用方必须对账或标 unknown。
+ */
+
 import {
   ProductFlowError,
   type AgentEventReceipt,
@@ -30,6 +37,7 @@ export interface PreparedWorkflowRunRequest {
   source_run_id?: string | null;
 }
 
+/** ProductFlow 对一次变更的证明。unknown 表示副作用无法证明。 */
 export interface ReconcileResult {
   state: "applied" | "not_applied" | "conflict" | "unknown" | string;
   result?: unknown;
@@ -59,6 +67,7 @@ export class ProductFlowClient {
     return this.json<RuntimeContext>(this.conversationPath(conversationID) + "/runtime-context" + query, { signal });
   }
 
+  /** 模型或取消路径开始前，先在 ProductFlow 上独占执行。 */
   async claimTurnExecution(
     conversationID: string,
     args: { task_id: string | null; idempotency_key: string; harness_turn_id: string; owner_id: string },

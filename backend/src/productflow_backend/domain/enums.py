@@ -163,7 +163,7 @@ class GraphProposalStatus(StrEnum):
 
 
 class GraphRunScope(StrEnum):
-    """v3 运行范围。"""
+    """v3 运行范围。NODE 只跑该节点；TO_NODE 含上游 processing；跑 content 不会自动跑下游 image。"""
 
     NODE = "node"
     TO_NODE = "to_node"

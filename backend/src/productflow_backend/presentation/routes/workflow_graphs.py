@@ -1,3 +1,5 @@
+"""schema-v3 图 HTTP 入口。写路径只走 Graph Command；浏览器不拼装图。"""
+
 from __future__ import annotations
 
 import json
@@ -64,6 +66,7 @@ router = APIRouter(prefix="/api/v3", tags=["workflow-graphs"], dependencies=[Dep
 
 @router.get("/node-catalog", response_model=GraphCatalogResponse)
 def get_node_catalog_endpoint() -> GraphCatalogResponse:
+    """Catalog 拥有连线规则和可编辑配置键；compiler 仍只读 incoming edges。"""
     return serialize_graph_catalog(graph_catalog_document())
 
 
@@ -79,6 +82,7 @@ async def create_product_with_direct_graph_endpoint(
     delivery_preset_key: str | None = Form(default=None, max_length=80),
     session: Session = Depends(get_session),
 ) -> DirectCreateProductResponse:
+    # Direct create 在同一事务里持久化商品、参考图和完整 v3 图，不经过 Draft。
     validate_reference_image_count(len(images))
     image_payloads: list[tuple[bytes, str, str]] = []
     for image in images:
@@ -142,6 +146,7 @@ def persist_confirmed_draft_graph_endpoint(
     payload: PersistDraftGraphRequest,
     session: Session = Depends(get_session),
 ) -> DraftGraphPersistResponse:
+    """把已确认 Draft revision 一次写成完整 v3 图；工作台只读这次 persist 的结果。"""
     result = persist_confirmed_draft_graph(
         session,
         product_id=product_id,
@@ -164,6 +169,7 @@ def apply_workflow_change_set_endpoint(
     payload: WorkflowChangeSet,
     session: Session = Depends(get_session),
 ) -> GraphProjectionResponse:
+    """Graph Command 是 live v3 图的唯一写入者。"""
     change_set = WorkflowChangeSet(
         base_graph_revision=payload.base_graph_revision,
         summary=payload.summary,

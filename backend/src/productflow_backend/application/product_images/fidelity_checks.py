@@ -1,3 +1,8 @@
+"""商品图片人工保真检查。
+
+外形、颜色材质、Logo/文字可读性、文本合规四项必须各自独立记录。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -43,10 +48,13 @@ def create_product_image_fidelity_check(
     text_policy_compliance: ProductImageFidelityOutcome | str,
     notes: str | None,
 ) -> ProductImageFidelityCheck:
+    """追加一版四项独立结论；相同 idempotency key 不能写入不同内容。"""
+
     if expected_latest_version < 0:
         raise BusinessValidationError("expected_latest_version 不能小于 0")
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_notes = _normalize_notes(notes)
+    # 四项各自独立，不合成单一 pass/fail。
     outcomes = {
         "shape_fidelity": _normalize_outcome(shape_fidelity),
         "color_material_fidelity": _normalize_outcome(color_material_fidelity),

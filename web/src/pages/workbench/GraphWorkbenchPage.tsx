@@ -1,3 +1,9 @@
+/**
+ * 商品 Agent 旁边的 live schema-v3 图编辑器。
+ *
+ * 画布变更走 Graph Command。运行前先 flush inspector，编译器看到的是已持久化配置。
+ */
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Boxes, CircleDot, Eye, Images, Plus, RotateCw } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
@@ -65,6 +71,7 @@ export function GraphWorkbenchPage({
   const registerInspectorFlush = useCallback((flush: () => Promise<void>) => {
     flushInspectorRef.current = flush;
   }, []);
+  // Graph Command 是写入者；运行使用最近一次 flush 持久化的配置。
   const beforeRun = useCallback(() => flushInspectorRef.current(), []);
   const requestSidebarTool = useCallback(async (nextTool: string): Promise<boolean> => {
     try {

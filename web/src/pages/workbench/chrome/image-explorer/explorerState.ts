@@ -1,3 +1,9 @@
+/**
+ * 商品图片浏览器的选择与拖拽载荷。
+ *
+ * 拖拽数据带 ProductImageAsset id，不用存储路径。系统目录是查询投影；用户文件夹只有一层。
+ */
+
 import type { GalleryAsset, GalleryAssetPage, GalleryAssetSort, GalleryDirectorySelection } from "../../../../lib/types";
 
 export type ImageExplorerView = "grid" | "list";

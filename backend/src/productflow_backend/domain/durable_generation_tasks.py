@@ -1,3 +1,5 @@
+"""Durable generation 任务合同：队列身份、可安全重入阶段，以及 unknown 与 failed 的分界。"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -96,6 +98,7 @@ IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     recovery_entrypoint="recover_unfinished_image_session_generation_tasks",
 )
 
+# 图运行把 UNKNOWN 列为终态；无法证明的 provider effect 不得改成 FAILED。
 GRAPH_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     name="workflow_graph_run",
     durable_model_name="WorkflowGraphRun",
@@ -115,6 +118,7 @@ GRAPH_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     recovery_entrypoint="execute_graph_run",
 )
 
+# DeliverySpec 派生是确定性工作，没有 provider 未知态。
 DELIVERY_RENDITION_TASK_CONTRACT = DurableGenerationTaskContract(
     name="delivery_rendition_job",
     durable_model_name="DeliveryRenditionJob",
@@ -153,6 +157,8 @@ def classify_workflow_run_delivery(
     run_status: WorkflowRunStatus | str,
     node_run_statuses: Sequence[WorkflowNodeStatus | str],
 ) -> WorkflowRunDeliveryState:
+    """投递层视图。节点全终态但 run 仍 RUNNING 时仍视为 queued，不能据此猜 failed。"""
+
     if not GRAPH_RUN_GENERATION_TASK_CONTRACT.is_active(run_status):
         return WorkflowRunDeliveryState.NONE
 
