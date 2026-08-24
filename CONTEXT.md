@@ -59,7 +59,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 - 工作流子图库是全局图库的工作流作用域关联和使用集合。`WorkflowMediaLibraryAsset` 只保存关联；工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份，不复制媒体 bytes。
 - 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是当前全局入口；旧 `/gallery` 只负责兼容重定向，在线 `/api/gallery` 已退休。当前 schema 的旧 `ImageGalleryEntry` 物理表仍由迁移 reader 有界读取，直到部署级回填、引用审计、观察窗和独立素材库清理闸门完成；旧 `legacy_canvas_agent_20260518_0032` source 通过 Gallery-only manifest bridge 迁移到新图库，Agent archive 不属于该 bridge。清理只允许删除旧 Gallery 行和表，不得删除全局素材、共享媒体或工作流引用。
 - 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
-- 工作流生成后仍然是用户可以直接编辑和执行的生产工具。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
+- 工作流生成后仍然是用户可以直接编辑和执行的生产工具。关闭或从未打开 Agent 对话时，添加节点、连线、检查器、绑定、运行、取消、重试、撤销和配方必须保持可用。Turn 的 running / unknown / failed 不得锁整张画布。Agent 写入与人写入走同一套 Graph Command；人可以立刻继续改刚被 Agent 改过的节点。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
 - Agent Session、Agent Task、WorkflowGraphRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
 - Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。

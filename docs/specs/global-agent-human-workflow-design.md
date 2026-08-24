@@ -104,8 +104,9 @@ Agent 可以监控和解释 WorkflowRun，不能复制工作流执行器，也�
 - 统一的副作用前 Fresh Observation runtime 抽象。
 - Pi runtime 的交互式 Turn 兼容、后台 Task 恢复和效果对账。
 - 更完整的受影响对象跳转和 Agent 请求重试体验。
+- 画布会话归属商品、全局会话不进画布线程、创建不再插 onboarding Task：见 `docs/adr/0009-agent-canvas-sandbox.md` 与 `docs/specs/agent-canvas-sandbox.md`。落地前本文「Session 不绑定某个页面或商品」「同一个 AgentSession 可以包含多个 Conversation」仍描述当前代码。
 
-这些事项的实现顺序和验收标准不写在本文，分别由路线图和 Pi runtime 规范负责。
+这些事项的实现顺序和验收标准不写在本文，分别由路线图、0009 和 Pi runtime 规范负责。
 
 ## 7. 验收条件
 

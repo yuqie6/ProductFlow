@@ -82,6 +82,8 @@ On the create page, enter a product brief plus on-image copy and language, then 
 
 ### 3.2 Canvas Operations
 
+Closing the Agent conversation leaves the same canvas as never opening it: add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn does not lock the canvas. Nodes the Agent just changed can be edited and undone immediately.
+
 - The add panel can add a shot: one group, one prompt, and one image node, connected to existing product facts, visual system, and creative brief. Selected identity references are connected too.
 - Running a shot uses run-to-node on the first image in the group, then run-node on the remaining images.
 - Adding a single node from the add panel places it near the current viewport center and selects it.

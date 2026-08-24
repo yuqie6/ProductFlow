@@ -35,7 +35,8 @@
 | `specs/workbench.md` | Draft | 工作台作为生产面必须达到的完成度；浏览器证明之前不宣称完成 |
 | `specs/productflow-studio-requirements.md` | Draft | 镜头默认主区、局部修、交付预设 |
 | `specs/shot-scene-assembly.md` | Approved | Shot/scene 的 group 与默认边 |
-| `specs/global-agent-human-workflow-design.md` | Approved | Session、Task、人工接管与 WorkflowRun 边界 |
+| `specs/agent-canvas-sandbox.md` | Draft | 创建即现图、画布/全局会话归属、Turn run 身份；落地前不写入 CONTEXT / PRD |
+| `specs/global-agent-human-workflow-design.md` | Approved | Session、Task、人工接管与 WorkflowRun 边界；画布会话归属以 0009 / agent-canvas-sandbox 为准 |
 | `specs/pi-agent-runtime-integration.md` | Approved | Pi runtime、Skill、Context、Tool |
 | `specs/go-backend-rewrite-prd.md` | Draft, deferred | 业务后端迁 Go 的产品合同；工作台证明完成前不开工 |
 | `specs/go-backend-rewrite-design.md` | Draft, deferred | 上述迁移的实现设计 |
@@ -63,6 +64,7 @@
 | `adr/0006-media-library-authority.md` | Accepted, amended | 全局图库、子图库、来源生命周期 |
 | `adr/0007-pi-agent-runtime-boundary.md` | Accepted, rollout pending | Pi adapter、Skill、Tool |
 | `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | schema-v3 图、ChangeSet、GraphProposal、配方 |
+| `adr/0009-agent-canvas-sandbox.md` | Accepted, implementation pending | 人是画布主控、Pi 沙箱 WebUI、会话归属、可选 Goal |
 
 ## 协作元数据
 

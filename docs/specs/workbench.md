@@ -3,6 +3,7 @@
 - 文档状态：Draft
 - 批准意图：工作台是成品生产面，不是从 V1/V2 修葺回来的工程清单。
 - 图合同：[`docs/adr/0008-free-canvas-agent-graph-authority.md`](../adr/0008-free-canvas-agent-graph-authority.md)
+- 人离开 Agent 仍能操作整张图：[`docs/adr/0009-agent-canvas-sandbox.md`](../adr/0009-agent-canvas-sandbox.md) §1
 - 当前操作说明：[`docs/USER_GUIDE.md`](../USER_GUIDE.md)
 - 未在浏览器证明之前：[`docs/ROADMAP.md`](../ROADMAP.md)
 
@@ -16,7 +17,7 @@
 
 1. 图合同只许 v3。写入只走 `WorkflowChangeSet` + Node Catalog。
 2. 壳只许复用 `workbench/chrome/`。不为手感新写画布壳或节点卡，不为复用 UI 带回 V1/V2 API。
-3. 人是主控。对话、Draft、GraphProposal 都不是进画布、改配置或运行的闸门。
+3. 人是主控。对话、Draft、GraphProposal、Turn 状态都不是进画布、改配置或运行的闸门。关闭对话后面板就是画布；Agent 刚写入的节点人可以立刻改、立刻撤销。画布手感不得因为 Agent 工作而降级。
 4. 绑定 ≠ 连边 ≠ 子图库。换绑不改边。未使用必须可见。
 5. 不完整 DAG 合法。必要输入只决定能否运行。任何 edge 可删。
 6. 分组是一层视觉组织。可进入、可分记视口；没有端口、运行、取消、重试、嵌套。

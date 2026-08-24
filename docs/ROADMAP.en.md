@@ -6,18 +6,30 @@ Directions that are not yet product fact, or that still lack real validation. Cu
 
 ### Workbench proof
 
-Workbench code already follows [`USER_GUIDE.en.md`](USER_GUIDE.en.md) and [`specs/workbench.md`](specs/workbench.md). Still missing: continuous-action evidence on 1440 / 1024 / 390 with a real provider and PostgreSQL / Redis / worker — copy/paste, illegal-connect reasons, failures on the object, recipe preview confirm, bottom drawer leaving canvas visible, no console/network errors.
+Leaving the Agent must still leave a complete canvas. Interaction follows [`specs/workbench.md`](specs/workbench.md): commands on the object, failures on the object, results immediately operable. This bar is not deferred for Agent-sandbox slices.
+
+Workbench code already follows [`USER_GUIDE.en.md`](USER_GUIDE.en.md) and that spec. Still missing: continuous-action evidence on 1440 / 1024 / 390 with a real provider and PostgreSQL / Redis / worker — copy/paste, illegal-connect reasons, failures on the object, recipe preview confirm, bottom drawer leaving canvas visible, no console/network errors.
 
 After that proof, delete `specs/workbench.md` and keep user-facing sentences in the user guide.
 
-### Agent creation quality
+### Agent canvas sandbox
 
-- `just web-e2e-live-graph` covers skip-Agent direct create only. Conversation create and quality samples are missing.
-- Evaluate question count, fact accuracy, visual-system consistency, and per-image prompt quality.
-- Confirmation density, conflict handling, and edit feedback.
-- Turn reconnect, restart, answering, and Draft-confirm graph persist recovery.
+Target contract: [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md). Slices, code anchors, and acceptance: [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md). Do not rewrite CONTEXT / PRD / ARCHITECTURE / USER_GUIDE until this lands.
 
-See [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) and [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md). Background durable Tasks and multi-instance reconciliation expand only after a dedicated gate. The old Go Agent on `exp` is not an implicit fallback on main.
+Today “Start conversation” still writes a collecting Draft, an onboarding Task, and an automatic opening Turn. Task-bound Turns ingest events against the Conversation `harness_run_id` while the contract uses the Task run, so product-create chats become `unknown` before the model runs.
+
+Order:
+
+1. Turn run identity: event ingest, recovery-written events, Turn projection, and SSE all use `_expected_harness_run_id`.
+2. Create as live graph: name-only births a `product_source`; drop the onboarding Task and automatic Turn; first Turn uses ChangeSet.
+3. Session ownership: canvas sessions belong to that product; the global Dock cannot switch into them.
+4. One reversible patch per Turn, and `sameRuntimeScope` no longer treats `system_prompt` / `has_live_graph` as run identity.
+
+The Goal loop (run graph → inspect → edit canvas → run again) starts after 1–4. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above; Agent slices must not make “open conversation” a gate into the canvas.
+
+Question-count and visual-quality samples wait until create-via-chat births a live graph. `just web-e2e-live-graph` still covers skip-Agent direct create until the conversation path has its own browser regression.
+
+Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) and [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md). Background durable Tasks and multi-instance reconciliation expand only after a dedicated gate. The old Go Agent on `exp` is not an implicit fallback on main.
 
 ### Studio increment
 

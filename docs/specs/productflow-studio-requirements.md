@@ -16,7 +16,8 @@
 > - 本文是工作室竞争力第一版的产品与开发总基线：复述已交付规则，并给出必须补齐的能力、验收和明确不做。
 > - 标注「待交付」的条目在落地前不得写进 `PRD.md` / `CONTEXT.md` / `ARCHITECTURE.md` 的当前事实段。
 > - 画布与侧栏未完成交互以 `v3-canvas-restoration.md`、`v3-sidebar-restoration.md` 为质量上限。
-> - 工程切片、ADR、路由所有权以 `ARCHITECTURE.md` 和 `adr/0008` 为准。本文不取代那些文件。
+> - 工程切片、ADR、路由所有权以 `ARCHITECTURE.md`、`adr/0008` 和 `adr/0009` 为准。本文不取代那些文件。
+- 创建路径改为现图出生、去掉 onboarding Task 和自动 Turn：以 `adr/0009` 与 `specs/agent-canvas-sandbox.md` 为准。本文 §4.2「live graph 出现之前只产出 WorkflowDraft」描述当前代码，不是创建入口的目标合同。
 
 > **修订记录**
 >
@@ -100,7 +101,7 @@ ProductFlow 是给一个商家用的商品视觉生产工作台。
 
 ### 4.2 确认边界
 
-- Agent 在 live graph 出现之前只产出 `WorkflowDraft` revision，不能直接写正式图。
+- Agent 在 live graph 出现之前只产出 `WorkflowDraft` revision，不能直接写正式图。创建入口的目标是商品出生即 live 图（`adr/0009`）；该条在沙箱规格落地前仍描述当前 collecting Draft 路径。
 - 用户确认针对一个明确 revision。确认与落图在同一事务。
 - live graph 出现之后，Agent 可以解释、检查、请求运行、提交单次 Graph Command 或未应用 GraphProposal。
 - live graph 出现之后，Agent 不能再提交一份会覆盖现图的 WorkflowDraft。

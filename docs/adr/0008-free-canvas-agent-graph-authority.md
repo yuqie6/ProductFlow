@@ -4,7 +4,7 @@
 
 Accepted。当前在线图是 schema-v3 `workflow_graphs`。Graph Command、live-graph GraphProposal 与配方 ChangeSet 是本 ADR 的已接受合同。
 
-下文背景记录从 schema-v2 出发的理由，不是当前实现。尚未交付的后续：工作台浏览器证明见 [`docs/ROADMAP.md`](../ROADMAP.md)；Draft 拓扑收敛为 WorkflowIntent + ChangeSet、以及 v1 archive 重建，仍属后续决策。
+下文背景记录从 schema-v2 出发的理由，不是当前实现。尚未交付的后续：工作台浏览器证明见 [`docs/ROADMAP.md`](../ROADMAP.md)；创建入口改为现图出生、会话归属与可选 Goal 见 [`0009-agent-canvas-sandbox.md`](0009-agent-canvas-sandbox.md)；Draft 拓扑收敛为 WorkflowIntent + ChangeSet、以及 v1 archive 重建，仍属后续决策。
 
 ## 背景
 

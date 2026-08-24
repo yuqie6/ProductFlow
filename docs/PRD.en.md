@@ -32,7 +32,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - Visual system and creative brief nodes generate their content when run and do not trigger image generation.
 - Reference nodes bind one image from the product library.
 - Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy; running them renders images and does not fill empty upstream content nodes.
-- Users run a whole DAG or one node, inspect runs, cancel, and retry.
+- Users run a whole DAG or one node, inspect runs, cancel, and retry. None of this requires the Agent conversation to be open; closing it matches never having opened it.
 - A whole workflow, folder, or selected node group can be saved as a user recipe.
 - Canvas folders are one-level visual organization only; they do not support nesting, independent run, cancel, or retry behavior.
 
@@ -105,6 +105,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - The visual system is a workflow-level shared constraint. Per-image prompts may record explicit exceptions.
 - GenerationSpec, provider-effective parameters, and measured output remain separate. DeliverySpec creates deterministic renditions without regenerating or replacing the source image.
 - Every generated result enters the product library. There is no rejected-draft or delivery-manifest state.
+- The Agent conversation can be closed at any time. With it closed or never opened, canvas add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn must not lock the canvas.
 - Workflow reuse comes only from user-saved recipes.
 - Provider purposes are `prompt`, `agent`, and `image`.
 - V1 history is read-only for browse, download, export, and Agent rebuild. Rebuild creates a reviewable V2 Draft and never restores a V1 editor or executor.
