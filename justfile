@@ -117,7 +117,11 @@ web-dev:
 [private]
 dev-services: backend-run backend-worker backend-async-dispatcher agent-service-run web-dev
 
+dev-stop:
+    bash scripts/stop_dev_app_processes.sh
+
 dev:
+    bash scripts/stop_dev_app_processes.sh
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
     bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
     just dev-services

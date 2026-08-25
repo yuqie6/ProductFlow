@@ -202,7 +202,7 @@ just agent-service-run
 just web-dev
 ```
 
-`backend-run`, `backend-worker`, `agent-service-run`, and `web-dev` all load `.env.dev`. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
+`backend-run`, `backend-worker`, `backend-async-dispatcher`, `agent-service-run`, and `web-dev` all load `.env.dev`. `just dev` stops leftover API / worker / dispatcher / Agent / Web processes before migrating and starting; `just dev-stop` only runs that cleanup. Ctrl+C ends those app processes. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
 
 ```bash
 docker compose down

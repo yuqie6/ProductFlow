@@ -58,7 +58,8 @@ Use the root `justfile` whenever possible:
 - `just agent-service-install` — install the Node.js/Pi Agent dependencies from the lockfile.
 - `just agent-service-run` — run the Node.js/Pi workflow Agent service.
 - `just agent-service-test` — run Agent service tests.
-- `just dev` — start local PostgreSQL/Redis, apply migrations, then run backend, worker, Pi Agent, and Web in parallel.
+- `just dev` — stop leftover API/worker/dispatcher/Agent/Web processes, start local PostgreSQL/Redis, apply migrations, then run backend, worker, dispatcher, Pi Agent, and Web in parallel.
+- `just dev-stop` — stop leftover API/worker/dispatcher/Agent/Web processes from a previous `just dev`.
 - `just backend-test` — run backend pytest tests.
 - `just docs-check` — verify documented routes, code-owner paths, and local Markdown links.
 - `just web-install` — install frontend dependencies with pnpm.

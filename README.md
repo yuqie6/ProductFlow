@@ -202,7 +202,7 @@ just agent-service-run
 just web-dev
 ```
 
-`backend-run`、`backend-worker`、`backend-async-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。`backend-async-dispatcher` 持续扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递，收到停止信号后退出。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
+`backend-run`、`backend-worker`、`backend-async-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。`backend-async-dispatcher` 持续扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递，收到停止信号后退出。`just dev` 会先停掉上次残留的 API / worker / dispatcher / Agent / Web 进程，再迁移并启动；`just dev-stop` 只做这一步清理。Ctrl+C 会结束这些应用进程。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
 
 ```bash
 docker compose down
