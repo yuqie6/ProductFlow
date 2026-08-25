@@ -164,6 +164,7 @@ export interface Scope {
   task_id: string | null;
   task_goal: string | null;
   product_id: string | null;
+  /** 历史商品 Draft 身份。现图商品对话为 null，不参与启动校验。 */
   workflow_draft_id: string | null;
   run_id: string;
   system_prompt: string;
@@ -332,7 +333,7 @@ export function validateScope(scope: Scope): void {
     throw new Error("ProductFlow returned an invalid Agent contract");
   }
   if (scope.scope_type === "product_workflow") {
-    if (!scope.product_id || !scope.workflow_draft_id) {
+    if (!scope.product_id) {
       throw new Error("ProductFlow returned an incomplete product Agent contract");
     }
   } else if (scope.scope_type === "global") {

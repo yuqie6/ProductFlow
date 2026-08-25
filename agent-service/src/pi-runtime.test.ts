@@ -2,9 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ProductFlowError, TOOL_CONTRACT_VERSION, type Scope } from "./contracts.js";
+import {
+  isTerminalStatus,
+  ProductFlowError,
+  TOOL_CONTRACT_VERSION,
+  type Scope,
+  type TurnState,
+} from "./contracts.js";
 import { PiRuntimeManager, toolStepDetailsForResult } from "./pi-runtime.js";
-import { TurnStore } from "./store.js";
+import { RuntimeError, TurnStore } from "./store.js";
 
 const scope: Scope = {
   schema_version: 1,
@@ -45,7 +51,122 @@ const config = {
   providerServiceTier: null,
 };
 
+async function waitForTerminalTurn(store: TurnStore, runID: string, turnID: string): Promise<TurnState> {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    const state = await store.getState(runID, turnID);
+    if (isTerminalStatus(state.status)) return state;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  const last = await store.getState(runID, turnID);
+  throw new Error(`Turn stayed non-terminal: ${last.status}`);
+}
+
 describe("PiRuntimeManager turn state", () => {
+  it("starts a live-graph product Turn without a WorkflowDraft identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-no-draft-"));
+    const managerHolder: { manager?: PiRuntimeManager } = {};
+    try {
+      const productFlow = {
+        conversationContract: async () => ({
+          schema_version: 1,
+          scope_type: "product_workflow",
+          conversation_id: scope.conversation_id,
+          task_id: null,
+          task_goal: null,
+          product_id: scope.product_id,
+          workflow_draft_id: null,
+          harness_run_id: scope.run_id,
+          current_draft_version: 0,
+          system_prompt: "ProductFlow",
+          draft_kind: "workflow",
+          draft_schema: {},
+          workflow_draft_schema: {},
+          tool_contract_version: TOOL_CONTRACT_VERSION,
+          has_live_graph: true,
+        }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root },
+        store,
+        productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      managerHolder.manager = manager;
+      const started = await manager.start({
+        lookup: { conversationID: scope.conversation_id },
+        input: {
+          input_text: "你好",
+          asset_ids: [],
+          idempotency_key: "live-graph-no-draft",
+          page_context: null,
+        },
+      });
+      expect(started.status).toBe("queued");
+      expect(started.run_id).toBe(scope.run_id);
+    } finally {
+      await managerHolder.manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("maps a product contract missing product identity to a contract mismatch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-no-product-"));
+    const managerHolder: { manager?: PiRuntimeManager } = {};
+    try {
+      const productFlow = {
+        conversationContract: async () => ({
+          schema_version: 1,
+          scope_type: "product_workflow",
+          conversation_id: scope.conversation_id,
+          task_id: null,
+          task_goal: null,
+          product_id: null,
+          workflow_draft_id: null,
+          harness_run_id: scope.run_id,
+          current_draft_version: 0,
+          system_prompt: "ProductFlow",
+          draft_kind: "workflow",
+          draft_schema: {},
+          workflow_draft_schema: {},
+          tool_contract_version: TOOL_CONTRACT_VERSION,
+          has_live_graph: true,
+        }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root },
+        store,
+        productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      managerHolder.manager = manager;
+      await expect(
+        manager.start({
+          lookup: { conversationID: scope.conversation_id },
+          input: {
+            input_text: "你好",
+            asset_ids: [],
+            idempotency_key: "missing-product-identity",
+            page_context: null,
+          },
+        }),
+      ).rejects.toEqual(
+        expect.objectContaining({
+          name: RuntimeError.name,
+          status: 502,
+          code: "contract_mismatch",
+          message: "ProductFlow returned an incomplete product Agent contract",
+        }),
+      );
+    } finally {
+      await managerHolder.manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not guess whether an unclassified tool failure is retryable", () => {
     expect(toolStepDetailsForResult("get_product_workflow_context_v1", {}, true)).toEqual({
       phase: "tool_result",
@@ -213,6 +334,7 @@ describe("PiRuntimeManager turn state", () => {
 
   it("fails a Turn when ProductFlow rejects the pre-lease claim", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-claim-rejected-"));
+    const managerHolder: { manager?: PiRuntimeManager } = {};
     try {
       const productFlow = {
         conversationContract: async () => ({
@@ -243,6 +365,7 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
+      managerHolder.manager = manager;
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -253,17 +376,14 @@ describe("PiRuntimeManager turn state", () => {
           page_context: null,
         },
       });
-      let state = started;
-      for (let attempt = 0; attempt < 50 && state.status === "queued"; attempt += 1) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5));
-        state = await store.getState(scope.run_id, started.turn_id);
-      }
+      const state = await waitForTerminalTurn(store, scope.run_id, started.turn_id);
 
       expect(state).toMatchObject({
         status: "failed",
         error: "Agent Turn projection does not exist",
       });
     } finally {
+      await managerHolder.manager?.close();
       await rm(root, { recursive: true, force: true });
     }
   });

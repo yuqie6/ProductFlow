@@ -379,6 +379,7 @@ def reserve_agent_turn(
     idempotency_key: str,
     task_id: str | None = None,
     page_context: dict[str, Any] | None = None,
+    ignore_turn_id: str | None = None,
 ) -> AgentTurnReservation:
     normalized_text = _normalize_input_text(input_text)
     normalized_asset_ids = _normalize_input_asset_ids(input_asset_ids)
@@ -435,6 +436,7 @@ def reserve_agent_turn(
         session,
         conversation=conversation,
         task_id=task_id,
+        ignore_turn_id=ignore_turn_id,
     )
 
     if conversation.scope_type == PRODUCT_WORKFLOW_SCOPE:
@@ -884,9 +886,10 @@ def _apply_conversation_status(
                 else AgentConversationStatus.COMPLETED
             )
         else:
+            draft = conversation.workflow_draft
             conversation.status = (
                 AgentConversationStatus.AWAITING_CONFIRMATION
-                if conversation.workflow_draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+                if draft is not None and draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
                 else AgentConversationStatus.COMPLETED
             )
     elif turn_status == AgentTurnStatus.FAILED:

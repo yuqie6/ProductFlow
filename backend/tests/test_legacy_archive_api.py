@@ -9,6 +9,7 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
+from productflow_backend.application.agent.product_workspaces import attach_agent_workspace_to_product
 from productflow_backend.application.legacy_archives import (
     get_legacy_archive_detail,
     legacy_archive_export_bytes,
@@ -16,7 +17,6 @@ from productflow_backend.application.legacy_archives import (
 )
 from productflow_backend.application.product_workflow.graph_commands import create_empty_workflow_graph
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.agent.product_workspaces import attach_agent_workspace_to_product
 from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.config import get_settings
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -445,8 +445,9 @@ def test_agent_archive_tools_are_product_scoped_sectioned_and_metadata_only(
 
     context = client.get(f"{base}/product-context", headers=headers)
     assert context.status_code == 200, context.text
-    assert context.json()["legacy_archive_seed"] is None
-    assert context.json()["workflow_draft"] is None
+    payload = context.json()
+    assert "legacy_archive_seed" not in payload
+    assert "workflow_draft" not in payload
 
     listed = client.get(
         f"{base}/legacy-archives",

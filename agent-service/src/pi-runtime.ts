@@ -101,7 +101,7 @@ export class PiRuntimeManager {
     readonly store: TurnStore,
     readonly productFlow: ProductFlowClient,
     readonly skills: SkillCatalog,
-  ) {}
+  ) { }
 
   /** 只把本地能证明尚未被 claim 的 Turn 重新入队。 */
   async recoverAfterRestart(): Promise<RuntimeRecoverySummary> {
@@ -389,7 +389,7 @@ class RunRuntime implements ToolRuntime {
   constructor(
     private readonly manager: PiRuntimeManager,
     readonly scope: Scope,
-  ) {}
+  ) { }
 
   get client(): ProductFlowClient {
     return this.manager.productFlow;
@@ -421,8 +421,8 @@ class RunRuntime implements ToolRuntime {
   }
 
   /**
-   * 模型运行前先 claim ProductFlow 执行租约。商品工作流 Turn 若既没有 Draft
-   * 产物也没有工作流运行请求，则失败关闭；无法证明的工具副作用记 unknown。
+   * 模型运行前先 claim ProductFlow 执行租约。无法证明的工具副作用记 unknown。
+   * 商品路径不再要求 WorkflowDraft；待确认只来自跑图请求或全局素材整理。
    */
   async execute(turnID: string): Promise<void> {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
@@ -475,19 +475,8 @@ class RunRuntime implements ToolRuntime {
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
       if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
-      } else if (this.artifact) {
-        const status = this.scope.scope_type === "global" ? "succeeded" : "awaiting_confirmation";
-        await this.finishTurn(turnID, status, { output: this.output, artifact: this.artifact });
-      } else if (
-        // 商品创建 Turn 必须留下可审阅 Draft，除非已经对 live 图请求了运行。
-        this.scope.scope_type === "product_workflow" &&
-        this.scope.task_id === null &&
-        !this.workflowRunRequested
-      ) {
-        await this.finishTurn(turnID, "failed", {
-          output: this.output,
-          error: "ProductFlow required a validated workflow draft proposal, but Pi completed without one",
-        });
+      } else if (this.artifact && this.scope.scope_type === "global") {
+        await this.finishTurn(turnID, "succeeded", { output: this.output, artifact: this.artifact });
       } else {
         await this.finishTurn(turnID, "succeeded", { output: this.output });
       }
@@ -1303,7 +1292,16 @@ function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup)
     current_draft_version: contract.current_draft_version,
     has_live_graph: Boolean(contract.has_live_graph),
   };
-  validateScope(scope);
+  try {
+    validateScope(scope);
+  } catch (error) {
+    if (error instanceof RuntimeError) throw error;
+    throw new RuntimeError(
+      502,
+      "contract_mismatch",
+      error instanceof Error ? error.message : "ProductFlow returned an invalid Agent contract",
+    );
+  }
   return scope;
 }
 
@@ -1496,10 +1494,10 @@ function toolStepDetailsForStart(name: string, args: unknown): ToolStepDetails {
     case "ask_question": {
       const options = Array.isArray(argumentsObject.options)
         ? argumentsObject.options.flatMap((option) => {
-            if (!isRecord(option)) return [];
-            const label = safeDetailString(option.label, 80);
-            return label ? [label] : [];
-          })
+          if (!isRecord(option)) return [];
+          const label = safeDetailString(option.label, 80);
+          return label ? [label] : [];
+        })
         : [];
       return {
         phase: "question",
@@ -1573,14 +1571,14 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
         phase: "tool_result",
         ...(includesNodeCatalog
           ? {
-              context_sections: [
-                "product_facts",
-                "intake",
-                "live_graph",
-                "verified_reference_assets",
-                "node_catalog",
-              ],
-            }
+            context_sections: [
+              "product_facts",
+              "intake",
+              "live_graph",
+              "verified_reference_assets",
+              "node_catalog",
+            ],
+          }
           : {}),
         output_summary: includesNodeCatalog
           ? "已读取当前商品事实、intake、live graph、参考资产和 Node Catalog config_fields；Inspector 与节点配置写入以此为唯一来源。"

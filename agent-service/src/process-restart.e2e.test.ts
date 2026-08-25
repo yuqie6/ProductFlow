@@ -20,11 +20,9 @@ describe("ProductFlow Pi Agent process recovery", () => {
     let second: AgentProcess | undefined;
 
     try {
-      const firstPort = await freePort();
-      first = spawnAgentProcess(dataRoot, productFlow.baseURL, provider.baseURL, firstPort);
-      await first.ready;
+      first = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
       const start = await fetch(
-        `http://127.0.0.1:${firstPort}/internal/v1/conversations/${conversationID}/turns`,
+        `http://127.0.0.1:${first.port}/internal/v1/conversations/${conversationID}/turns`,
         {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -46,11 +44,9 @@ describe("ProductFlow Pi Agent process recovery", () => {
       await waitForExit(first.child);
       first = undefined;
 
-      const secondPort = await freePort();
-      second = spawnAgentProcess(dataRoot, productFlow.baseURL, provider.baseURL, secondPort);
-      await second.ready;
+      second = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
       const recovered = await waitForJSON<{ status: string; error: string }>(
-        `http://127.0.0.1:${secondPort}/internal/v1/conversations/${conversationID}/turns/${started.turn_id}`,
+        `http://127.0.0.1:${second.port}/internal/v1/conversations/${conversationID}/turns/${started.turn_id}`,
         { headers: { Authorization: `Bearer ${token}` } },
         (value) => value.status === "unknown",
       );
@@ -58,7 +54,7 @@ describe("ProductFlow Pi Agent process recovery", () => {
       expect(recovered).toMatchObject({ status: "unknown" });
       expect(recovered.error).toContain("restarted");
       expect(provider.requestCount).toBe(1);
-      const health = await fetch(`http://127.0.0.1:${secondPort}/healthz`);
+      const health = await fetch(`http://127.0.0.1:${second.port}/healthz`);
       expect(await health.json()).toMatchObject({ active_turns: 0, queued_turns: 0 });
       expect(productFlow.checkpoints.map((checkpoint) => checkpoint.kind)).toContain("before_model_request");
     } finally {
@@ -79,7 +75,33 @@ describe("ProductFlow Pi Agent process recovery", () => {
 
 interface AgentProcess {
   child: ChildProcess;
+  port: number;
   ready: Promise<void>;
+}
+
+async function spawnAgentOnFreePort(
+  dataRoot: string,
+  productFlowBaseURL: string,
+  providerBaseURL: string,
+): Promise<AgentProcess> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const port = await freePort();
+    const started = spawnAgentProcess(dataRoot, productFlowBaseURL, providerBaseURL, port);
+    try {
+      await started.ready;
+      return started;
+    } catch (error) {
+      lastError = error;
+      if (started.child.exitCode == null && started.child.signalCode == null) {
+        started.child.kill("SIGKILL");
+        await waitForExit(started.child).catch(() => undefined);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("EADDRINUSE")) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Agent process did not bind a free port");
 }
 
 function spawnAgentProcess(
@@ -129,7 +151,7 @@ function spawnAgentProcess(
       reject(new Error(`Agent process exited before startup: code=${code} signal=${signal} output=${output.join("")}`));
     });
   });
-  return { child, ready };
+  return { child, port, ready };
 }
 
 async function createHangingProviderServer(): Promise<{
