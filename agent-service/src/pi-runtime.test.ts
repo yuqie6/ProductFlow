@@ -58,12 +58,9 @@ describe("PiRuntimeManager turn state", () => {
       phase: "tool_result",
       context_sections: [
         "product_facts",
-        "workflow_draft",
         "intake",
+        "live_graph",
         "verified_reference_assets",
-        "recipe_seed",
-        "legacy_seed",
-        "draft_guidance",
         "node_catalog",
       ],
       output_summary: expect.stringContaining("Node Catalog config_fields"),

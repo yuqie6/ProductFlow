@@ -12,7 +12,6 @@ describe("ProductFlow Skill catalog", () => {
       "media-library-organization",
       "product-intake",
       "productflow-core",
-      "workflow-draft",
       "workflow-run-request",
     ]);
     expect(catalog.prompt).toContain("<name>productflow-core</name>");

@@ -1,4 +1,4 @@
-"""全局 Agent Draft：可审阅 artifact。确认走目标商品 WorkflowDraft，不在全局会话物化 live graph。"""
+"""全局 Agent Draft：可审阅 artifact。当前只接受素材整理；商品工作流 Draft 已退休。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent.conversations import (
     get_agent_conversation_or_raise,
@@ -18,7 +18,6 @@ from productflow_backend.application.agent.global_draft_contracts import (
     GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
     GlobalAgentDraftPayloadV1,
 )
-from productflow_backend.application.agent.product_intake import parse_workflow_intake
 from productflow_backend.application.agent.tasks import update_agent_task_from_turn
 from productflow_backend.application.agent.tools import get_agent_global_workflow_target
 from productflow_backend.application.media_library.drafts import (
@@ -26,16 +25,13 @@ from productflow_backend.application.media_library.drafts import (
 )
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import (
-    append_workflow_draft_revision,
     confirm_workflow_draft_revision,
     get_workflow_draft_or_raise,
-    validate_workflow_draft_for_confirmation,
 )
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
     AgentTurnStatus,
-    WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -74,12 +70,16 @@ def validate_global_agent_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> GlobalAgentDraftPayloadV1:
-    """校验全局 artifact。workflow 分支必须命中目标商品 Draft version，不能用当前页顶替。"""
+    """校验全局 artifact。商品工作流 Draft 已退休，只接受素材整理。"""
     conversation = get_agent_conversation_or_raise(
         session,
         product_id=None,
         conversation_id=conversation_id,
     )
+    if isinstance(value, dict) and value.get("draft_kind") not in {None, "library_organization"}:
+        from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+        raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
     artifact = parse_global_agent_draft_payload_or_raise(value)
     if artifact.draft_kind == "library_organization":
         if artifact.library_payload is None:
@@ -113,7 +113,7 @@ def attach_agent_global_draft_artifact(
     normalized_step_id = artifact_step_id.strip()
     if not normalized_step_id or len(normalized_step_id) > 120:
         raise BusinessValidationError("Agent artifact step ID 无效")
-    conversation = get_agent_conversation_or_raise(
+    get_agent_conversation_or_raise(
         session,
         product_id=None,
         conversation_id=conversation_id,
@@ -163,71 +163,9 @@ def attach_agent_global_draft_artifact(
             session.refresh(projection)
         return projection
 
-    if artifact.product_id is None or artifact.workflow_draft_id is None or artifact.workflow_payload is None:
-        raise BusinessValidationError("工作流 Draft 缺少目标作用域或 payload")
-    draft = _get_target_draft(
-        session,
-        product_id=artifact.product_id,
-        workflow_draft_id=artifact.workflow_draft_id,
-        for_update=True,
-    )
-    current_version = draft.current_revision.version if draft.current_revision is not None else 0
-    if current_version != artifact.expected_draft_version:
-        raise ConflictError("目标 WorkflowDraft version 已变化，请重新读取目标上下文")
-    intake = parse_workflow_intake(
-        schema_version=draft.intake_schema_version,
-        payload=draft.intake_json,
-    )
-    validate_workflow_draft_for_confirmation(
-        session,
-        product_id=artifact.product_id,
-        artifact=artifact.workflow_payload,
-        required_delivery_spec=intake.delivery_spec if intake is not None else None,
-    )
-    append_workflow_draft_revision(
-        session,
-        product_id=artifact.product_id,
-        draft_id=artifact.workflow_draft_id,
-        expected_draft_version=artifact.expected_draft_version,
-        payload=artifact.workflow_payload,
-        ready_for_confirmation=True,
-        source_turn_id=harness_turn_id,
-        source_artifact_step_id=normalized_step_id,
-        commit=False,
-    )
-    session.flush()
-    session.expire(draft)
-    revision = session.scalar(
-        select(WorkflowDraftRevision).where(
-            WorkflowDraftRevision.draft_id == artifact.workflow_draft_id,
-            WorkflowDraftRevision.source_turn_id == harness_turn_id,
-            WorkflowDraftRevision.source_artifact_step_id == normalized_step_id,
-        )
-    )
-    if revision is None:
-        raise ConflictError("全局 Agent artifact 未能同步为 WorkflowDraft revision")
-    projection = lock_agent_turn_or_raise(
-        session,
-        product_id=None,
-        conversation_id=conversation_id,
-        projection_id=projection_id,
-    )
-    if projection.workflow_draft_revision_id not in {None, revision.id}:
-        raise ConflictError("Agent turn projection 已关联其他 WorkflowDraft revision")
-    if projection.library_organization_draft_revision_id is not None:
-        raise ConflictError("全局 Agent Turn 不能同时绑定素材整理 Draft")
-    projection.harness_turn_id = harness_turn_id
-    projection.artifact_name = GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
-    projection.artifact_step_id = normalized_step_id
-    projection.workflow_draft_revision_id = revision.id
-    projection.sync_error = None
-    projection.updated_at = now_utc()
-    conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
-    conversation.updated_at = projection.updated_at
-    if commit:
-        session.commit()
-        session.refresh(projection)
-    return projection
+    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def get_global_workflow_draft_review(
@@ -337,30 +275,6 @@ def confirm_global_workflow_draft_review(
         conversation_id=conversation_id,
         revision_id=revision_id,
     )
-
-
-def _get_target_draft(
-    session: Session,
-    *,
-    product_id: str,
-    workflow_draft_id: str,
-    for_update: bool = False,
-) -> WorkflowDraft:
-    statement = (
-        select(WorkflowDraft)
-        .options(selectinload(WorkflowDraft.current_revision))
-        .where(
-            WorkflowDraft.id == workflow_draft_id,
-            WorkflowDraft.product_id == product_id,
-            WorkflowDraft.status != WorkflowDraftStatus.CANCELLED,
-        )
-    )
-    if for_update:
-        statement = statement.with_for_update()
-    draft = session.scalar(statement)
-    if draft is None:
-        raise NotFoundError("目标 WorkflowDraft 不存在")
-    return draft
 
 
 __all__ = [

@@ -56,7 +56,7 @@ def test_live_graph_hides_covering_draft_and_exposes_graph_tools(db_session) -> 
     assert "propose_graph_change_set_v1" in contract["system_prompt"]
     assert "确认和取消只在画布上" in contract["system_prompt"]
     assert "discard_graph_proposal_v1" not in contract["system_prompt"]
-    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+    assert "不得提交第二份完整拓扑" in contract["system_prompt"]
     with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
         validate_agent_workflow_draft(
             db_session,

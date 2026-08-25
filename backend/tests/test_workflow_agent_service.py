@@ -662,11 +662,11 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
     assert contract["current_draft_version"] == 0
     assert contract["has_live_graph"] is True
     assert contract["workflow_draft_id"] is None
-    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+    assert "不得提交第二份完整拓扑" in contract["system_prompt"]
     assert "node_catalog" in contract["system_prompt"]
     assert "config_fields" in contract["system_prompt"]
     context = get_agent_product_context(db_session, conversation.id)
-    assert context["workflow_draft"] is None
+    assert "workflow_draft" not in context
     assert context["intake"] == {
         "schema_version": 1,
         "image_types": [
@@ -823,11 +823,11 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert contract["workflow_draft_id"] == draft.id
     assert contract["current_draft_version"] == 0
     assert contract["workflow_draft_schema"] == {}
-    assert contract["tool_contract_version"] == 12
+    assert contract["tool_contract_version"] == 13
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
-    assert context["workflow_draft"] is None
+    assert "workflow_draft" not in context
     assert context["intake"] is None
     assert "storage_path" not in str(context)
 
@@ -1145,7 +1145,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 12
+    assert contract.json()["tool_contract_version"] == 13
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})

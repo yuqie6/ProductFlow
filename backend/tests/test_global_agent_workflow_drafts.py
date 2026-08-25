@@ -127,7 +127,7 @@ def test_global_workflow_context_is_explicit_and_bounded(db_session) -> None:
         "product_conversation_id": workspace.conversation.id,
         "workflow_draft_id": None,
     }
-    assert context["workflow_draft"] is None
+    assert "workflow_draft" not in context
     assert context["intake"] is not None
     assert context["product"]["id"] == workspace.product.id
 
@@ -322,10 +322,6 @@ def test_global_workflow_artifact_contract_requires_one_branch() -> None:
             {
                 "schema_version": 1,
                 "draft_kind": "library_organization",
-                "product_id": None,
-                "workflow_draft_id": None,
-                "expected_draft_version": None,
-                "workflow_payload": None,
                 "library_payload": None,
             }
         )
@@ -353,3 +349,6 @@ def test_global_agent_draft_schema_is_strict_for_tool_contract() -> None:
     assert_strict(schema)
     assert schema["additionalProperties"] is False
     assert set(schema["required"]) == set(schema["properties"])
+    draft_kind = schema["properties"]["draft_kind"]
+    assert draft_kind.get("const") == "library_organization" or draft_kind.get("enum") == ["library_organization"]
+    assert "workflow_payload" not in schema["properties"]

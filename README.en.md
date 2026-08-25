@@ -21,7 +21,7 @@ The public instance is a personal live demo with one administrator and one merch
 - `/products/new` is the canonical creation route. A product name is enough to open the Agent conversation; send reference photos and image requirements there.
 - The create form still accepts image types and one to six PNG, JPEG, or WebP references for direct canvas create.
 - The Agent can ask for price, generation style, image text language, copy requirements, and visual-system decisions.
-- After the user confirms the WorkflowDraft, the system persists a schema-v3 graph and opens the product workbench while continuing the same Agent conversation in the sidebar.
+- Starting a conversation persists a live schema-v3 graph and opens the product workbench. The Agent edits that graph with ChangeSets; multi-node changes are confirmed on the canvas.
 
 ### Workflow Canvas
 

@@ -59,7 +59,6 @@ from productflow_backend.application.product_workflow.graph_queries import proje
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
 )
-from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentToolMutationStatus,
@@ -78,13 +77,12 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductAssetFolder,
     ProductImageAsset,
-    WorkflowDraftRecipeSeed,
     WorkflowGraph,
     new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 12
+AGENT_TOOL_CONTRACT_VERSION = 13
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -98,48 +96,12 @@ MOVE_ASSETS_TOOL_NAME = "move_product_image_assets_v1"
 APPLY_GRAPH_TOOL_NAME = "apply_graph_change_set_v1"
 PROPOSE_GRAPH_TOOL_NAME = "propose_graph_change_set_v1"
 
-WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Agent。
-你的作用域固定为当前 conversation、商品和 WorkflowDraft。
-你的输出目标是一个完整、可审核、可回放的 WorkflowDraft proposal。
-
-执行顺序：
-1. 调用 load_productflow_skill 加载 productflow-core；任务涉及 WorkflowDraft 时继续加载 workflow-draft。
-2. 调用 get_product_workflow_context_v1，核对当前商品事实、最新 revision、intake、live_graph、已核验参考资产、
-   recipe/legacy seed、draft_guidance 和 node_catalog。node_catalog 是上下文内容，包含当前 schema-v3 节点及其
-   config_fields；Inspector 和节点配置写入的唯一来源是该 Catalog。
-   若 intake 为空且 live_graph 为空：用户会在本对话里上传参考图并说明要做的图片。读取本轮
-   选中的资产 ID，必要时 inspect。根据用户文字确定图片类型和数量；看不懂再用 ask_user。
-   然后调用 finalize_product_intake_v1 写入 intake。继续对话并动手，不要让用户去创建页或任何其他表单。
-3. 只有缺少会改变成图或文案结果的事实时才使用 ask_user；问题要集中、提供有描述的选择，
-   并等待回答后重新读取当前 ProductFlow 事实。
-4. 商品外观必须以用户提供的已核验参考图为依据。图库列表只提供元数据；确有需要时 inspect 明确选中的图片，单次最多 6 张。
-5. 形成完整 WorkflowDraft 后，先按上下文中的 pre_submit_checks 检查跨字段规则，再调用 propose_workflow_draft。
-6. 校验失败时，读取结构化 issues 的 path 和 message，修复完整 payload 后再提交；不要重复发送相同 payload，
-   也不要把错误当作用户补充信息。
-
-不可违反的 WorkflowDraft 约束：
-- fit=contain 时 crop_anchor 必须为 null 或省略；fit=cover 时 background_color 必须为 null 或省略。
-- 视觉例外的 override.field 必须在 visual_system.payload.locked_fields 中；覆盖 spacing 时必须包含 spacing。
-- quantity 必须等于逐图 images 数量；提示词计划、图片类型和 image plan 的 key 必须一一对应。
-- workflow_draft.intake 是用户初始提交的不可变需求。调整图片类型或数量前必须明确询问并获得用户确认，不能静默改写。
-- 如果 intake 提供 delivery_preset_key 和 delivery_spec，每个 PlannedImage 都必须显式复制完全相同的
-  delivery_spec；不能只把默认规格放在 graph 或其他 side-state。
-- recipe 只提供可复用结构，legacy_archive_seed 只读；不得把 recipe payload 直接作为 WorkflowDraft，
-  两者都不能原样作为当前商品的 WorkflowDraft 提交。
-- Logo、认证、工厂或其他专有素材只能来自用户真实资产，缺失时询问、降低要求或移除相关图片类型。
-- 不得删除素材或文件夹、修改封面、原始文件名、图片类型、生成血缘；不能臆造任何资产或商品事实，
-  不能逐节点写入画布，不能输出 base64、data URL、存储路径和内部 URL。
-
-成功条件：propose_workflow_draft 返回 accepted=true、pending_confirmation=true。
-此结果表示草案进入审核，不表示已经确认或已运行工作流。
-"""
-
 WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协作 Agent。
-当前商品已经有一份可运行的 schema-v3 工作流图。用户是画布的主编辑者；你不能再提交 WorkflowDraft 去覆盖或重写这张图。
+当前商品已经有一份 live schema-v3 工作流图。用户是画布的主编辑者。
 
 执行顺序：
-1. 调用 load_productflow_skill 加载 productflow-core。
-2. 调用 get_product_workflow_context_v1，核对商品事实、参考图、node_catalog 和 live_graph。
+1. 调用 load_productflow_skill 加载 productflow-core。缺 intake 时再加载 product-intake。
+2. 调用 get_product_workflow_context_v1，核对商品事实、intake、参考图、node_catalog 和 live_graph。
    node_catalog 的 config_fields 是 Inspector 与节点配置写入的唯一来源。
    live_graph 给出当前节点、连线角色和配置状态，不含完整配置正文。
 3. 只有缺少会改变运行或解释结果的事实时才使用 ask_user。
@@ -148,12 +110,12 @@ WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协�
 5. 用户明确要求的、可逆的单次改图（改一个节点配置、连一条边、断一条边、改名）：
    调用 apply_graph_change_set_v1，且 operations 只能有一条。一次撤销能收回。
 6. 多节点重构、批量删除、覆盖预设：调用 propose_graph_change_set_v1，在画布上留下未应用幽灵预览。
-   不要声称已经改图。确认和取消只在画布上，不要调用确认或取消提案的工具。
+   不要声称已经改图。确认和取消只在画布上。
 7. 用户要求运行时，使用 request_workflow_run_v1 创建待确认运行请求；不要声称已经开始运行。
 8. 解释节点、检查配置缺口、对照 Catalog 可以直接做。
 
 不可违反：
-- 不得调用 propose_workflow_draft，也不得把一份新 Draft 当成现图替换方案。
+- 不得提交第二份完整拓扑去覆盖现图。
 - 不得删除素材、臆造资产或商品事实，不得输出 base64、data URL、存储路径和内部 URL。
 - 提案层不能运行。确认和取消提案只在画布完成。
 
@@ -161,29 +123,22 @@ WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协�
 """
 
 GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
-你的作用域是整个 ProductFlow 应用，不绑定某一个商品、工作流或当前页面。
+你的作用域是整个 ProductFlow 应用，不绑定某一个商品或当前页面。
 
 工作原则：
-1. 用户可以在任意页面询问全局素材；当前页面只帮助你理解“这些图片”和用户当下的工作位置。
+1. 当前页面只帮助理解“这些图片”和用户当下的工作位置。
 2. 查询素材时优先使用全局素材库的列表和明确图片的 inspect；不要凭文件名猜测图片内容。
-3. 你当前可以读取全局素材库、商品、目标商品的 WorkflowDraft 和当前工作流的有界元数据；
-   用户明确要求查看图片时，单次最多 inspect 6 张。
-4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准；
-   列表结果不代表完整业务事实。需要比较运行状态时，先取得明确的 workflow ID，
-   再使用有界运行检查。
-5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
-   纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
-6. 如果用户要求设计或修改某个商品的工作流，先用 inspect_global_workflow_context_v1 读取明确的 product_id，核对返回的
-   product_id、workflow_draft_id、当前版本和 node_catalog。node_catalog 的 config_fields 是 Inspector 与节点配置写入的
-   唯一来源。再调用 propose_global_draft，draft_kind 必须为 workflow，
-   完整填写 product_id、workflow_draft_id、expected_draft_version 和 workflow_payload。
-   不要把全局会话当成当前商品会话，不能省略目标作用域。
-7. propose_global_draft 只生成待审核 Draft，不会确认、物化或执行工作流；
-   用户确认后仍可进入商品工作区检查、编辑并由人点击执行。
+3. 你可以读取全局素材库、商品和目标商品 live graph 的有界元数据；用户明确要求查看图片时，单次最多 inspect 6 张。
+4. 列表结果不代表完整业务事实。比较运行状态时，先取得明确的 product / workflow ID，再使用有界运行检查。
+5. 整理、归档、改名、文件夹等素材副作用，必须先 propose_global_draft
+   （draft_kind=library_organization），等待用户确认。纯查询不要调用整理工具。
+6. 不能在全局会话上改某个商品的 live graph。用户要设计或修改某个商品工作流时，
+   先 inspect_global_workflow_context_v1 核对 product_id 和 live_graph，
+   然后请用户进入该商品工作台对话，或调用 create_product_workspace_v1 开一条新的画布会话。
+7. 用户明确要求创建商品时，调用 create_product_workspace_v1。
+   该工具创建 Product、live 图和归属该商品的新画布会话，不上传参考图、不写 intake、不启动运行。
+   成功后请用户进入商品工作台对话上传参考图并说明需求。
 8. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
-9. 用户明确要求创建商品时，可以调用商品创建工作区工具。该工具只建立当前 Session 下的空商品草稿、商品 Conversation
-   和 WorkflowDraft，不上传参考图、不提交图片需求、不生成正式 Workflow，也不启动运行。
-   工具成功后，应明确告诉用户进入商品工作台对话：在对话框里上传参考图并直接说明需求，不要去创建表单。
 """
 
 
@@ -441,9 +396,6 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
             else None
         ),
         "intake": intake,
-        "workflow_draft": None,
-        "workflow_recipe_seed": None,
-        "legacy_archive_seed": None,
         "node_catalog": graph_catalog_json(),
         "image_type_catalog": agent_product_image_type_catalog_json(),
         "live_graph": _live_graph_agent_summary(session, product_id=product.id),
@@ -543,7 +495,7 @@ def get_agent_global_workflow_context(
     }
     encoded = json.dumps(context, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
-        raise ConflictError("全局目标商品 WorkflowDraft 上下文超过 Agent 工具输出上限")
+        raise ConflictError("全局目标商品上下文超过 Agent 工具输出上限")
     return context
 
 
@@ -573,27 +525,6 @@ def _load_product_intake_context(
     if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
         raise ConflictError("商品 intake 引用了未通过核验的图片资产")
     return workflow_intake_payload(intake)
-
-
-def _load_recipe_seed_context(
-    session: Session,
-    seed: WorkflowDraftRecipeSeed | None,
-) -> dict[str, Any] | None:
-    if seed is None:
-        return None
-    recipe_version = seed.recipe_version
-    recipe_payload = parse_recipe_payload_or_raise(recipe_version)
-    return {
-        "schema_version": seed.schema_version,
-        "recipe_id": recipe_version.recipe_id,
-        "recipe_version_id": recipe_version.id,
-        "recipe_version": recipe_version.version,
-        "recipe_kind": recipe_version.recipe.kind.value,
-        "title": recipe_version.title,
-        "description": recipe_version.description,
-        "preferred_visual_system_version_id": recipe_version.preferred_visual_system_version_id,
-        "payload": recipe_payload.model_dump(mode="json"),
-    }
 
 
 def list_agent_product_assets(

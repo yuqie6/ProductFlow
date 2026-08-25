@@ -156,7 +156,7 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
       name: "get_product_workflow_context_v1",
       label: "Read product context",
       description:
-        "Read current bounded product facts, WorkflowDraft summary, missing information, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
+        "Read current bounded product facts, intake, live graph summary, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
       promptSnippet: "Read current product, workflow facts, and node catalog",
       parameters: EMPTY_OBJECT,
       execute: async (): Promise<Result> =>
@@ -277,7 +277,7 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     createImageInspectionTool(runtime, true),
     createGlobalWorkspaceTool(runtime),
     createWorkflowRunRequestTool(runtime, true),
-    createDraftTool(runtime, "propose_global_draft", "Propose global draft", runtime.scope.draft_schema, true),
+    createDraftTool(runtime, "propose_global_draft", "Propose global draft", runtime.scope.draft_schema),
     tools.find((tool) => tool.name === PRODUCTFLOW_SKILL_TOOL_NAME)!,
     tools.find((tool) => tool.name === "ask_user")!,
   ];
@@ -288,7 +288,7 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
     name: "finalize_product_intake_v1",
     label: "Save product intake",
     description:
-      "Persist image types and already-uploaded reference asset IDs as this product's immutable intake. Use after the user sent photos and requirements in this conversation. This does not propose a WorkflowDraft or start a run.",
+      "Persist image types and already-uploaded reference asset IDs as this product's immutable intake. Use after the user sent photos and requirements in this conversation. This does not start a run.",
     parameters: Type.Object(
       {
         selection: Type.Object(
@@ -460,7 +460,7 @@ function createGlobalWorkflowContextTool(runtime: ToolRuntime): ToolDefinition {
     name: "inspect_global_workflow_context_v1",
     label: "Inspect product workflow",
     description:
-      "Read the bounded editable WorkflowDraft context for one explicit product, including the current revision, reference assets, and Node Catalog config_fields. Inspector forms and node config writes use this same catalog. This is read-only.",
+      "Read the bounded live-graph context for one explicit product, including intake, reference assets, and Node Catalog config_fields. Inspector forms and node config writes use this same catalog. This is read-only.",
     parameters: Type.Object(
       { product_id: Type.String({ minLength: 1, maxLength: 64 }) },
       { additionalProperties: false },
@@ -730,7 +730,7 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
     name: "create_product_workspace_v1",
     label: "Create product workspace",
     description:
-      "Create one blank ProductFlow product onboarding workspace. This does not upload images, submit intake, materialize a workflow, or start a run. After success, send the user to the product workbench conversation to upload references and state requirements there.",
+      "Create one ProductFlow product with a live canvas session. This does not upload images, write intake, or start a run. After success, send the user to that product workbench conversation to upload references and state requirements there.",
     parameters: Type.Object(
       { name: Type.String({ minLength: 1, maxLength: 255 }) },
       { additionalProperties: false },
@@ -1024,22 +1024,19 @@ async function executeGraphMutationTool(
 
 function createDraftTool(
   runtime: ToolRuntime,
-  name: "propose_workflow_draft" | "propose_global_draft",
+  name: "propose_global_draft",
   label: string,
   schema: JsonObject,
-  global: boolean,
 ): ToolDefinition {
   return defineTool({
     name,
     label,
-    description: global
-      ? "Submit one complete schema-valid global ProductFlow draft for review. The backend validates it and the user must confirm it."
-      : "Submit one complete schema-valid ProductFlow WorkflowDraft for review. The backend validates it and the user must confirm it.",
+    description:
+      "Submit one complete schema-valid library-organization draft for review. The backend validates it and the user must confirm it. Product workflow topology is not accepted.",
     parameters: schema as TSchema,
     execute: async (toolCallID: string, params: JsonObject): Promise<Result> => {
       try {
-        if (global) await runtime.client.validateGlobalDraft(runtime.scope.conversation_id, params, runtime.signal);
-        else await runtime.client.validateWorkflowDraft(runtime.scope.conversation_id, params, runtime.signal);
+        await runtime.client.validateGlobalDraft(runtime.scope.conversation_id, params, runtime.signal);
       } catch (error) {
         runtime.recordToolFailure(toolCallID, toolFailureDetails(error));
         throw error;

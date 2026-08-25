@@ -12,7 +12,7 @@ export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 12 as const;
+export const TOOL_CONTRACT_VERSION = 13 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;

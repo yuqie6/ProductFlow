@@ -1568,18 +1568,15 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
           ? {
               context_sections: [
                 "product_facts",
-                "workflow_draft",
                 "intake",
+                "live_graph",
                 "verified_reference_assets",
-                "recipe_seed",
-                "legacy_seed",
-                "draft_guidance",
                 "node_catalog",
               ],
             }
           : {}),
         output_summary: includesNodeCatalog
-          ? "已读取当前商品事实、WorkflowDraft、参考资产、提交前校验指导和 Node Catalog config_fields；Inspector 与节点配置写入以此为唯一来源。"
+          ? "已读取当前商品事实、intake、live graph、参考资产和 Node Catalog config_fields；Inspector 与节点配置写入以此为唯一来源。"
           : "已读取有界 ProductFlow 上下文。",
       };
     }

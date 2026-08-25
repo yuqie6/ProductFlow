@@ -133,11 +133,11 @@ describe("ProductFlow Pi tools", () => {
     const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "load_productflow_skill");
     if (!tool) throw new Error("Skill tool was not registered");
 
-    const result = await tool.execute("skill-evidence", { skill_name: "workflow-draft" }, undefined, undefined, {} as never);
+    const result = await tool.execute("skill-evidence", { skill_name: "productflow-core" }, undefined, undefined, {} as never);
     const excerpt = (result.details as { instruction_excerpt?: string } | undefined)?.instruction_excerpt;
     expect(typeof excerpt).toBe("string");
     expect(Buffer.byteLength(excerpt ?? "", "utf8")).toBeLessThanOrEqual(12 << 10);
-    expect(result.details).toMatchObject({ skill_name: "workflow-draft", instruction_truncated: true });
+    expect(result.details).toMatchObject({ skill_name: "productflow-core", instruction_truncated: true });
     expect(result.content[0]).toMatchObject({ type: "text" });
     expect((result.content[0] as { text: string }).text).toContain(instruction.slice(0, 64));
   });
@@ -167,16 +167,8 @@ describe("ProductFlow Pi tools", () => {
         source_note: "x".repeat(100_000),
       },
       confirmed_fact_set: null,
-      workflow_draft: {
-        id: baseScope.workflow_draft_id,
-        status: "collecting",
-        version: 1,
-        payload: null,
-        intake: null,
-      },
-      workflow_recipe_seed: null,
-      legacy_archive_seed: null,
-      draft_guidance: { schema_version: 1, cross_field_rules: [] },
+      intake: null,
+      live_graph: { revision: 1, nodes: [], edges: [], groups: [] },
       node_catalog: nodeCatalog,
     };
     const client = {

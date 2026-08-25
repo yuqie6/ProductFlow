@@ -96,9 +96,8 @@ Skill 先按用户任务组织，不按后端模块拆分：
 
 | Skill | 负责的用户目标 | 允许使用的能力 |
 |---|---|---|
-| `productflow-core` | 统一理解 ProductFlow 对象、事实来源和安全边界 | 有界读取、追问、Draft 规则 |
-| `product-intake` | 收集商品事实、真实参考图和图片需求 | 商品上下文读取、选中图片 inspect、问题 |
-| `workflow-draft` | 设计或修改待确认的 WorkflowDraft | Draft 读取、事实读取、Draft proposal |
+| `productflow-core` | 统一理解 ProductFlow 对象、事实来源和安全边界 | 有界读取、追问、live graph 写入规则 |
+| `product-intake` | 收集商品事实、真实参考图和图片需求 | 商品上下文读取、选中图片 inspect、intake、ChangeSet |
 | `media-library-organization` | 整理全局素材、文件夹、标签和归档状态 | 素材列表、选中素材 inspect、整理 Draft |
 | `workflow-run-request` | 针对明确工作流请求一次待确认执行 | Workflow/Run 读取、revision 校验、Run request |
 
@@ -142,7 +141,6 @@ agent-service/
   .pi/skills/
     productflow-core/SKILL.md
     product-intake/SKILL.md
-    workflow-draft/SKILL.md
     media-library-organization/SKILL.md
     workflow-run-request/SKILL.md
   src/skills.ts

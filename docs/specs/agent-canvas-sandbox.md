@@ -14,37 +14,17 @@
 
 用户目标（Agent 侧）：在一问一答里让 Agent 一点一点往画布上补节点、边和配置，直到满意。画布是生产物；Pi 是沙箱里的聊天。Agent 加速同一条 Graph Command，不挡住画布。
 
-当前代码与目标的差：
+第 1～4 刀已落地，当前合同写在 CONTEXT / PRD / ARCHITECTURE。本文只留 Goal 托管环相对当前产品多出来的东西。
 
-| 当前 | 目标 |
-|---|---|
-| 「开始对话」写 collecting Draft + onboarding Task，并自动发开场 Turn | Product + live 图 + 画布会话；无 Task；用户第一句才 Turn |
-| 直接创建无会话；工作台 `attach_agent_workspace_to_product` 要求已有 live 图 | 直接创建仍无会话；打开侧栏再新建画布会话 |
-| 同一 Session 挂全局 Conversation 和商品 Conversation | 画布会话归属商品；全局 Dock 不能切画布会话，反之亦然 |
-| 现图出现后合同才切到协作 prompt | 创建即现图，第一轮就是 `apply` / `propose` |
-| 事件入库用 Conversation `harness_run_id` | 一律 `_expected_harness_run_id` |
-
-本文不管：工作室镜头主区、官方配方、SaaS、把社区 Pi goal 插件装进 `agent-service`。
+本文不管：工作室镜头主区、官方配方、SaaS、把社区 Pi goal 插件装进 `agent-service`、对话壳视觉。
 
 ## 3. 当前实现锚点
 
-创建：
+创建：`application/agent/product_workspaces.py` 写入 Product、live schema-v3 图、商品 Session/Conversation。不插入 `WorkflowDraft`、onboarding Task 或自动 Turn。intake 在 Product 上。有 live 图后挂会话：`attach_agent_workspace_to_product`。
 
-- `application/agent/product_workspaces.py` `_stage_workspace_records`：collecting `WorkflowDraft`、product Conversation、可选 onboarding Task、必要时新建 Session，并给该 Session 补一条全局 Conversation。
-- 前端 `web/src/pages/workbench/agent/useAgentConversation.ts` `INITIAL_AGENT_TURN_TEXT`：进入工作台即 `start_turn`，并带 `task_id`。
-- 空图已存在：`create_empty_workflow_graph`（`graph_commands.py`，`test_graph_empty_create.py`）。有 live 图后挂会话：`attach_agent_workspace_to_product`（不建 onboarding Task）。
+Turn 身份：`control.py` `_expected_harness_run_id`（有 Task 用 Task run，否则 Conversation run）。事件入库与 SSE 使用同一 run。`sameRuntimeScope` 比较 conversation / task / run / scope_type / 商品与 draft id，忽略 `system_prompt` 与 `has_live_graph`。
 
-Turn 身份（已复现缺陷）：
-
-- Task 合同覆盖 `harness_run_id`：`application/agent/tools.py` `get_agent_task_contract`。
-- 状态同步认 Task run：`control.py` `_expected_harness_run_id`。
-- 事件入库认 Conversation run：`execution.py` `append_agent_turn_event` 约 169 行；恢复自写事件约 832、896 行。
-- 商品对话 SSE 用 `conversation.harness_run_id`：`AgentConversationPanel.tsx`。
-- 绑 Task 的 Turn 在 claim 成功后、调模型前 409「Agent event run ID 与 conversation 不匹配」→ Agent-service `persistenceError` → `finishTurn("unknown")`。`started_at` 为空。UI 文案变成「Agent 执行状态不明确，请稍后重试」。无 Task 的单测绿（例如 `task_id=None` 的事件幂等测试）。
-
-合同翻转：
-
-- live graph persist 后 `has_live_graph` 与 system prompt 变化。Agent-service `sameRuntimeScope` 几乎整份 Scope JSON 相等（只排除 `current_draft_version`）。创建即现图后创建链路上会轻很多；确认改图后的长会话仍会打到。
+商品路径 Agent 合同：`WORKFLOW_AGENT_LIVE_GRAPH_PROMPT`；工具为 `apply_graph_change_set_v1` / `propose_graph_change_set_v1`。Skill 目录不再包含 `workflow-draft`。
 
 ## 4. 目标用户路径
 

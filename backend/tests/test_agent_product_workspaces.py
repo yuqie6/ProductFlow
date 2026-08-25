@@ -194,9 +194,9 @@ def test_agent_intake_persists_delivery_preset_snapshot_and_changes_idempotency_
     }
     context = get_agent_product_context(db_session, creation.conversation.id)
     assert context["intake"] == creation.product.intake_json
-    assert context["workflow_draft"] is None
+    assert "workflow_draft" not in context
     system_prompt = get_agent_contract(db_session, creation.conversation.id)["system_prompt"]
-    assert "不得调用 propose_workflow_draft" in system_prompt
+    assert "不得提交第二份完整拓扑" in system_prompt
     assert get_agent_contract(db_session, creation.conversation.id)["has_live_graph"] is True
     assert db_session.scalar(
         select(func.count()).select_from(WorkflowDraft).where(WorkflowDraft.product_id == creation.product.id)
@@ -338,7 +338,7 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     ) == 0
     contract = get_agent_contract(db_session, first.conversation.id)
     assert contract["has_live_graph"] is True
-    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+    assert "不得提交第二份完整拓扑" in contract["system_prompt"]
 
 
 def test_direct_create_has_live_graph_without_conversation(configured_env: Path, db_session) -> None:
@@ -684,7 +684,7 @@ def test_empty_agent_product_draft_allows_turn_and_asks_for_intake(
     assert reservation.created is True
     contract = get_agent_contract(db_session, workspace.conversation.id)
     assert contract["has_live_graph"] is True
-    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+    assert "不得提交第二份完整拓扑" in contract["system_prompt"]
 
     finalized = finalize_agent_product_workspace_intake(
         db_session,
