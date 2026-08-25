@@ -118,6 +118,23 @@ interface AgentWorkspaceTarget {
   conversationId: string;
 }
 
+/** 画布 Session 不进全局 Dock 列表。商品 Task 必须用自身 product_id 打开，不能只靠会话映射。 */
+export function agentTaskWorkspaceTarget(
+  task: Pick<AgentTask, "conversation_id" | "product_id">,
+  workspaceByConversationId: Map<string, { productId: string; conversationId: string }>,
+): AgentWorkspaceTarget | null {
+  if (task.conversation_id) {
+    const mapped = workspaceByConversationId.get(task.conversation_id);
+    if (mapped) {
+      return { productId: mapped.productId, conversationId: mapped.conversationId };
+    }
+  }
+  if (task.product_id) {
+    return { productId: task.product_id, conversationId: task.conversation_id ?? "" };
+  }
+  return null;
+}
+
 interface AgentConversationTarget {
   conversationId: string;
   sessionId: string;
@@ -646,6 +663,14 @@ export function GlobalAgentDock() {
     navigate(`/products/${encodeURIComponent(target.productId)}?${params}`);
     setOpen(false);
   };
+  const openTask = (task: AgentTask, workspace: AgentWorkspaceTarget | null) => {
+    const target = workspace ?? agentTaskWorkspaceTarget(task, workspaceByConversationId);
+    if (target) {
+      openWorkspace(target, task.session_id, task.id);
+      return;
+    }
+    openGlobalConversation(task.session_id, task.id);
+  };
   const openGlobalConversation = (sessionId: string, taskId: string | null = null) => {
     setSelectedSessionId(sessionId);
     setSelectedTaskId(taskId);
@@ -1049,13 +1074,7 @@ export function GlobalAgentDock() {
                           tasks={visibleTasks}
                           workspaceByConversationId={workspaceByConversationId}
                           conversationById={conversationById}
-                          onOpen={(task, workspace) => {
-                            if (workspace) {
-                              openWorkspace(workspace, task.session_id, task.id);
-                            } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
-                              openGlobalConversation(task.session_id, task.id);
-                            }
-                          }}
+                          onOpen={openTask}
                           onCancel={(task) => cancelTaskMutation.mutate(task.id)}
                           onPause={(task) => pauseTaskMutation.mutate(task.id)}
                           onResume={(task) => resumeTaskMutation.mutate(task.id)}
@@ -1077,13 +1096,7 @@ export function GlobalAgentDock() {
                           tasks={visibleTasks}
                           workspaceByConversationId={workspaceByConversationId}
                           conversationById={conversationById}
-                          onOpen={(task, workspace) => {
-                            if (workspace) {
-                              openWorkspace(workspace, task.session_id, task.id);
-                            } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
-                              openGlobalConversation(task.session_id, task.id);
-                            }
-                          }}
+                          onOpen={openTask}
                           onCancel={(task) => cancelTaskMutation.mutate(task.id)}
                           onPause={(task) => pauseTaskMutation.mutate(task.id)}
                           onResume={(task) => resumeTaskMutation.mutate(task.id)}
@@ -1290,10 +1303,8 @@ export function TaskList({
       {tasks.map((task) => {
         const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
         const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
-        const target = workspace
-          ? { productId: workspace.productId, conversationId: workspace.conversationId }
-          : null;
-        const openable = Boolean(target || conversation?.scopeType === "global");
+        const target = agentTaskWorkspaceTarget(task, workspaceByConversationId);
+        const openable = Boolean(target || conversation?.scopeType === "global" || task.session_id);
         const cancelable = CANCELABLE_TASK_STATUSES.has(task.status);
         const pausable = PAUSABLE_TASK_STATUSES.has(task.status);
         const resumable = task.status === "paused";
@@ -1381,8 +1392,13 @@ export function TaskList({
                   {task.summary}
                 </span>
               ) : null}
+              {task.status === "awaiting_confirmation" ? (
+                <span className="mt-1 block text-[11px] leading-4 text-state-warning">
+                  {target ? t("globalAgent.taskConfirm.workbench") : t("globalAgent.taskConfirm.chat")}
+                </span>
+              ) : null}
               <span className="mt-1 block truncate text-[11px] text-text-muted">
-                {conversation?.productName ?? workspace?.productName ?? t("globalAgent.noWorkspace")}
+                {conversation?.productName ?? workspace?.productName ?? (task.product_id ? t("globalAgent.taskProductWorkspace") : t("globalAgent.noWorkspace"))}
               </span>
             </span>
             {openable ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
@@ -1561,10 +1577,8 @@ export function TaskBoard({
               column.tasks.map((task) => {
                 const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
                 const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
-                const target = workspace
-                  ? { productId: workspace.productId, conversationId: workspace.conversationId }
-                  : null;
-                const openable = Boolean(target || conversation?.scopeType === "global");
+                const target = agentTaskWorkspaceTarget(task, workspaceByConversationId);
+                const openable = Boolean(target || conversation?.scopeType === "global" || task.session_id);
                 const cancelable = CANCELABLE_TASK_STATUSES.has(task.status);
                 const pausable = PAUSABLE_TASK_STATUSES.has(task.status);
                 const resumable = task.status === "paused";
@@ -1648,10 +1662,15 @@ export function TaskBoard({
                       <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary" title={task.goal}>
                         {task.goal}
                       </p>
+                      {task.status === "awaiting_confirmation" ? (
+                        <p className="mt-1 text-[11px] leading-4 text-state-warning">
+                          {target ? t("globalAgent.taskConfirm.workbench") : t("globalAgent.taskConfirm.chat")}
+                        </p>
+                      ) : null}
 
                       <div className="mt-2 flex items-center gap-1 text-[10px] text-text-muted">
                         <span className="truncate rounded bg-surface px-1.5 py-0.5 font-medium">
-                          {conversation?.productName ?? workspace?.productName ?? t("globalAgent.noWorkspace")}
+                          {conversation?.productName ?? workspace?.productName ?? (task.product_id ? t("globalAgent.taskProductWorkspace") : t("globalAgent.noWorkspace"))}
                         </span>
                       </div>
                     </div>

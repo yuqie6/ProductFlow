@@ -372,8 +372,13 @@ def ensure_task_for_turn(
     *,
     conversation: AgentConversation,
     task_id: str | None,
+    ignore_turn_id: str | None = None,
 ) -> AgentTask | None:
-    """Turn 必须挂同一 Session/conversation 的未取消 Task，且不能叠未结束 Turn。"""
+    """Turn 必须挂同一 Session/conversation 的未取消 Task，且不能叠未结束 Turn。
+
+    `ignore_turn_id` 用于提问续跑：正在回答的 REQUIRES_INPUT Turn 仍挂在 Task 上，
+    但不能挡住它自己的 continuation。
+    """
     if conversation.session_id is None:
         raise ConflictError("Agent conversation 尚未绑定 Session")
     agent_session = get_agent_session_or_raise(session, conversation.session_id)
@@ -387,7 +392,7 @@ def ensure_task_for_turn(
         raise ConflictError("已取消的 Agent Task 不能继续提交 Turn")
     if task.status == AgentTaskStatus.PAUSED:
         raise ConflictError("已暂停的 Agent Task 需要恢复后才能提交 Turn")
-    if task.current_turn_id is not None:
+    if task.current_turn_id is not None and task.current_turn_id != ignore_turn_id:
         current_turn = session.get(AgentTurnProjection, task.current_turn_id)
         if current_turn is not None and current_turn.status in _ACTIVE_TURN_STATUSES:
             raise ConflictError("当前 Agent Task 仍有未结束的 Turn")

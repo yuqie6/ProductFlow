@@ -171,7 +171,7 @@ export function AgentConversationPanel({
         input_text: normalized,
         asset_ids: composerAssets.map((asset) => asset.id),
         idempotency_key: composerKeyRef.current,
-        task_id: taskId ?? agent.latestTurn?.task_id ?? null,
+        task_id: agentConversationSubmitTaskId(taskId),
         page_context: pageContext
           ? {
               ...pageContext,
@@ -438,6 +438,11 @@ export function AgentConversationPanel({
             Boolean(events.state.terminal_kind)
           }
           error={composerError}
+          placeholder={
+            agent.turns.length === 0 && graphHasCreateTemplate(graph)
+              ? t("agentWorkbench.composerPlaceholder.intakeLanded")
+              : undefined
+          }
           onChange={setComposerText}
           onOpenAssets={() => setAssetSelectorOpen(true)}
           onRemoveAsset={(assetId) => {
@@ -454,6 +459,14 @@ export function AgentConversationPanel({
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>
+  );
+}
+
+function graphHasCreateTemplate(graph: GraphProjection | null | undefined): boolean {
+  return Boolean(
+    graph?.nodes.some(
+      (node) => node.node_type === "image_generation" || node.node_type === "prompt_generation",
+    ),
   );
 }
 
@@ -497,6 +510,10 @@ export function canSubmitAgentConversationMessage(input: {
   activeTurn: AgentTurn | null | undefined;
 }): boolean {
   return input.activeTurn == null;
+}
+
+export function agentConversationSubmitTaskId(routeTaskId: string | null | undefined): string | null {
+  return routeTaskId ?? null;
 }
 
 function PanelError({

@@ -337,6 +337,7 @@ def answer_agent_question(
             input_asset_ids=list(projection.input_asset_ids_json),
             idempotency_key=continuation_key,
             task_id=projection.task_id,
+            ignore_turn_id=projection.id,
         )
         continuation = reservation.projection
         created_continuation = reservation.created

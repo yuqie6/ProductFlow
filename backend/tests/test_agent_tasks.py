@@ -10,6 +10,7 @@ from test_agent_sessions import _create_workspace
 
 from productflow_backend.application.agent import control as agent_control
 from productflow_backend.application.agent.conversations import (
+    bind_harness_turn,
     expected_harness_run_id,
     project_agent_turn_state,
     reserve_agent_turn,
@@ -22,8 +23,8 @@ from productflow_backend.application.agent.execution import (
     recover_expired_agent_turn_executions,
     release_agent_turn_execution,
 )
-from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.agent.tasks import (
     create_agent_task,
     list_agent_tasks,
@@ -916,6 +917,151 @@ def test_one_task_rejects_a_second_active_turn(db_session) -> None:
         assert str(exc) == "当前 Agent Task 仍有未结束的 Turn"
     else:
         raise AssertionError("expected one active Turn per Agent Task")
+
+
+def test_answering_a_task_bound_question_creates_a_continuation(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-question-continue")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="等待补充卖点",
+        goal="在缺少参数时继续初始化工作流",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="请初始化工作流",
+        input_asset_ids=[],
+        idempotency_key="task-question-turn",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="task-question-harness-turn",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+    )
+    question = {
+        "id": "question-task-continue-1",
+        "header": "缺少关键信息",
+        "question": "初始化工作流时，这些图要怎么处理？",
+        "options": [
+            {"label": "我补充真实卖点和物流文案"},
+            {"label": "先做无具体参数的视觉图"},
+        ],
+    }
+    project_agent_turn_state(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+        output_text="",
+        error_text=None,
+        question_json=question,
+        finished_at=None,
+    )
+
+    result = agent_control.answer_agent_question(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=bound.id,
+        question_id="question-task-continue-1",
+        answer={"text": "你来生成卖点、参数和文案"},
+        gateway=None,
+        enqueue_sync=lambda _session, _projection_id: None,
+    )
+
+    assert result.continuation_turn.status == AgentTurnStatus.QUEUED
+    assert result.continuation_turn.task_id == task.id
+    assert result.continuation_turn.id != bound.id
+    assert result.answered_turn.question_answer_json == {"text": "你来生成卖点、参数和文案"}
+    refreshed_task = db_session.get(AgentTask, task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.current_turn_id == result.continuation_turn.id
+
+    try:
+        reserve_agent_turn(
+            db_session,
+            product_id=workspace.product.id,
+            conversation_id=workspace.conversation.id,
+            task_id=task.id,
+            input_text="叠一个新的 Task Turn",
+            input_asset_ids=[],
+            idempotency_key="task-question-overlap",
+        )
+    except ConflictError as exc:
+        assert str(exc) == "当前 Agent Task 仍有未结束的 Turn"
+    else:
+        raise AssertionError("expected the continuation Turn to keep the Task serial")
+
+
+def test_conversation_turn_without_task_is_allowed_while_task_waits_for_input(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-wait-chat-ok")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="等待用户",
+        goal="提问期间对话仍可独立发送",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="需要补充信息",
+        input_asset_ids=[],
+        idempotency_key="task-wait-input-turn",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="task-wait-input-harness",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+    )
+    project_agent_turn_state(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+        output_text="",
+        error_text=None,
+        question_json={
+            "id": "question-wait-chat-1",
+            "header": "确认",
+            "question": "继续吗？",
+            "options": [{"label": "继续"}],
+        },
+        finished_at=None,
+    )
+
+    chat = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="先问一下画布状态",
+        input_asset_ids=[],
+        idempotency_key="task-wait-chat-turn",
+    )
+    assert chat.created is True
+    assert chat.projection.task_id is None
+    waiting = db_session.get(AgentTurnProjection, bound.id)
+    assert waiting is not None
+    assert waiting.status == AgentTurnStatus.REQUIRES_INPUT
+    refreshed_task = db_session.get(AgentTask, task.id)
+    assert refreshed_task is not None
+    assert refreshed_task.current_turn_id == bound.id
 
 
 def test_agent_task_api_lists_creates_and_renames(configured_env) -> None:

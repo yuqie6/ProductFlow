@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTask } from "../lib/types";
 import {
+  agentTaskWorkspaceTarget,
   isGlobalAgentDockModalTarget,
   isProductWorkbenchPath,
   openGlobalAgent,
@@ -36,6 +37,40 @@ function sampleTask(id: string, title: string, status: AgentTask["status"]): Age
 }
 
 describe("GlobalAgentDock Task Views", () => {
+  it("opens a product Task from its product_id when the canvas session is not in the Dock list", () => {
+    const task = sampleTask("task-canvas", "确认跑图", "awaiting_confirmation");
+    expect(agentTaskWorkspaceTarget(task, new Map())).toEqual({
+      productId: "prod-1",
+      conversationId: "conv-1",
+    });
+
+    const onOpen = vi.fn();
+    const markup = renderToStaticMarkup(
+      createElement(TaskList, {
+        loading: false,
+        tasks: [task],
+        workspaceByConversationId: new Map(),
+        conversationById: new Map(),
+        onOpen,
+        onCancel: vi.fn(),
+        onPause: vi.fn(),
+        onResume: vi.fn(),
+        onRename: vi.fn(),
+        renamingTaskId: null,
+        renameError: null,
+        cancelingTaskId: null,
+        pausingTaskId: null,
+        resumingTaskId: null,
+        emptyLabel: "暂无任务",
+        statusLabel: () => "等你确认",
+      }),
+    );
+
+    expect(markup).not.toContain("disabled=\"\"");
+    expect(markup).toContain("确认跑图");
+    expect(markup).toContain("等你确认");
+  });
+
   const dummyWorkspaceMap = new Map([
     ["conv-1", { productId: "prod-1", conversationId: "conv-1", productName: "春季卫衣", sessionId: "session-1" }],
   ]);

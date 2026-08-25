@@ -6,6 +6,7 @@ import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraf
 import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentComposer, classifyImageFiles } from "./AgentComposer";
 import {
+  agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
   hasUnsyncedWorkflowDraftRevision,
 } from "./AgentConversationPanel";
@@ -109,7 +110,13 @@ describe("Agent conversation components", () => {
     expect(canSubmitAgentConversationMessage({ activeTurn: null })).toBe(true);
     expect(canSubmitAgentConversationMessage({ activeTurn: undefined })).toBe(true);
     expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "running" }) })).toBe(false);
-    expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "awaiting_input" }) })).toBe(false);
+    expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "requires_input" }) })).toBe(false);
+  });
+
+  it("binds a chat Turn to a Task only when the workbench route has one", () => {
+    expect(agentConversationSubmitTaskId(null)).toBeNull();
+    expect(agentConversationSubmitTaskId(undefined)).toBeNull();
+    expect(agentConversationSubmitTaskId("task-1")).toBe("task-1");
   });
 
   it("renders composer attachments as equal removable thumbnails and keeps the draft", () => {

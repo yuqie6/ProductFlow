@@ -9,12 +9,19 @@ import {
   clearAgentWorkflowRecipeIdempotencyKey,
   createOrLoadEmptyWorkflowGraph,
   focusVisibleAgentComposer,
+  initialAgentWorkbenchSidebarTool,
   requestAgentWorkbenchOpen,
   resolveAgentWorkbenchSidebarTool,
   startEmptyCanvasAdd,
 } from "./AgentProductWorkbenchPage";
 
 describe("Agent workbench sidebar tool", () => {
+  it("opens the conversation when arriving with a Task that needs confirmation", () => {
+    expect(initialAgentWorkbenchSidebarTool({ hasGraph: true, hasTask: true })).toBe("agent");
+    expect(initialAgentWorkbenchSidebarTool({ hasGraph: true, hasTask: false })).toBe("details");
+    expect(initialAgentWorkbenchSidebarTool({ hasGraph: false, hasTask: false })).toBe("agent");
+  });
+
   it("keeps Agent visible until a workflow exists, but recipes stay available", () => {
     expect(resolveAgentWorkbenchSidebarTool("details", false)).toBe("agent");
     expect(resolveAgentWorkbenchSidebarTool("library", false)).toBe("agent");

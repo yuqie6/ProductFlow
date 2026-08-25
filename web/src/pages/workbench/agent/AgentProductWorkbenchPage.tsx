@@ -71,7 +71,10 @@ export function AgentProductWorkbenchPage({
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>(
-    () => (bootstrap.graph ? "details" : "agent"),
+    () => initialAgentWorkbenchSidebarTool({
+      hasGraph: Boolean(bootstrap.graph),
+      hasTask: Boolean(agentTaskId),
+    }),
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
@@ -528,6 +531,14 @@ export function AgentProductWorkbenchPage({
       {localEdit.dialog}
     </div>
   );
+}
+
+export function initialAgentWorkbenchSidebarTool(input: {
+  hasGraph: boolean;
+  hasTask: boolean;
+}): AgentSidebarToolId {
+  if (input.hasTask) return "agent";
+  return input.hasGraph ? "details" : "agent";
 }
 
 export function resolveAgentWorkbenchSidebarTool(

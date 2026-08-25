@@ -344,11 +344,15 @@ export function GraphCanvasPanel({
   useEffect(() => {
     if (mainViewGraphIdRef.current !== graph.id) {
       mainViewGraphIdRef.current = graph.id;
-      setMainView(hasShotGroups ? "shots" : "canvas");
+      setMainView(hasShotGroups && !graph.pending_proposal ? "shots" : "canvas");
+      return;
+    }
+    if (graph.pending_proposal) {
+      setMainView("canvas");
       return;
     }
     if (!hasShotGroups) setMainView("canvas");
-  }, [graph.id, hasShotGroups]);
+  }, [graph.id, graph.pending_proposal, hasShotGroups]);
 
   const applyAsync = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
     if (!operations.length) return null;
@@ -915,7 +919,7 @@ export function GraphCanvasPanel({
           {runControlsBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
         </button>
       </div> : null}
-      {mainView === "canvas" && graph.pending_proposal ? (
+      {graph.pending_proposal ? (
         <div
           data-graph-proposal-banner
           className={`absolute z-20 ${compact ? "left-3 right-3 top-[8.25rem]" : "left-4 top-16 max-w-md"}`}
