@@ -160,8 +160,9 @@ agent-service/
 
 - ProductFlow 是单管理员、单商家 workspace。
 - 真实商品参考图优先于 Agent 猜测。
-- Agent 只能提出待确认 Draft，不能假装已经物化。
-- WorkflowRun、媒体 bytes、Draft revision 和确认状态由 ProductFlow 持有。
+- Agent 用 ChangeSet 改 live graph，或提出待确认的素材整理 Draft / 跑图请求，不能假装已经物化或已经开跑。
+- WorkflowRun、媒体 bytes、图 revision 和确认状态由 ProductFlow 持有。
+- 系统 prompt 只保留身份和禁令。操作顺序写在 Skill 里。归档 list/inspect 工具只在 `/history` 注册。
 
 #### 每轮动态 Context
 

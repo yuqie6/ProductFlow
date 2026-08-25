@@ -1,7 +1,7 @@
 /**
  * Agent 优先的商品工作台：对话，加上可选的 live 图。
  *
- * persist 之后图才是编辑器。Agent 可以请求运行，但不能再提交一份 Draft 覆盖这张图。
+ * live graph 就是编辑器。Agent 用 ChangeSet 协作，不能再提交一份 Draft 覆盖这张图。
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,9 +20,6 @@ import { useI18n } from "../../../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
   AgentWorkbenchBootstrap,
-  GraphProjection,
-  WorkflowDraft,
-  WorkflowDraftRevision,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
   WorkflowRecipePreview,
@@ -42,8 +39,6 @@ import {
   type AgentWorkbenchSidebarTool,
 } from "./AgentWorkbenchShell";
 import { isHttpErrorStatus, readWorkflowGraphOrNull } from "./productWorkbenchRoute";
-import { useWorkflowMaterialization } from "./useWorkflowMaterialization";
-import { WorkflowDraftConfirmation } from "./WorkflowDraftConfirmation";
 import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
 
 export type AgentWorkbenchPageBootstrap = AgentWorkbenchBootstrap;
@@ -75,9 +70,6 @@ export function AgentProductWorkbenchPage({
   const location = useLocation();
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const [materialization, setMaterialization] = useState<GraphProjection | null>(null);
-  const [dismissedRevisionId, setDismissedRevisionId] = useState<string | null>(null);
-  const [conflictDetected, setConflictDetected] = useState(false);
   const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>(
     () => (bootstrap.graph ? "details" : "agent"),
   );
@@ -113,7 +105,7 @@ export function AgentProductWorkbenchPage({
     initialData: bootstrap.graph ?? undefined,
     retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
-  const liveGraph = graphQuery.data ?? materialization ?? bootstrap.graph;
+  const liveGraph = graphQuery.data ?? bootstrap.graph;
   const localEdit = useLocalImageEditController({
     productId: bootstrap.product.id,
     graphId: liveGraph?.id ?? null,
@@ -150,37 +142,6 @@ export function AgentProductWorkbenchPage({
     queryFn: () => api.listWorkflowRecipes(false),
     enabled: activeSidebarTool === "recipes",
   });
-  const reviewableRevision = selectReviewableWorkflowRevision(bootstrap.workflow_draft, liveGraph);
-  const confirmationOpen = Boolean(
-    reviewableRevision && dismissedRevisionId !== reviewableRevision.id,
-  );
-
-  const updateBootstrapDraft = useCallback((draft: WorkflowDraft) => {
-    queryClient.setQueriesData<AgentWorkbenchBootstrap>(
-      { queryKey: ["agent-workbench", bootstrap.product.id] },
-      (current) => current?.mode === "agent"
-        ? { ...current, workflow_draft: draft }
-        : current,
-    );
-  }, [bootstrap.product.id, queryClient]);
-
-  const materializationMutation = useWorkflowMaterialization({
-    productId: bootstrap.product.id,
-    draftId: bootstrap.workflow_draft?.id ?? "",
-    conversationId: bootstrap.conversation.id,
-    onDraftConfirmed: updateBootstrapDraft,
-    onConflict: async () => {
-      await onRefetchBootstrap();
-      setConflictDetected(true);
-      setDismissedRevisionId(null);
-    },
-    onMaterialized: (result) => {
-      setMaterialization(result);
-      setConflictDetected(false);
-      setDismissedRevisionId(result.source_draft_revision_id);
-    },
-  });
-
   const createEmptyGraphMutation = useMutation({
     mutationFn: () => createOrLoadEmptyWorkflowGraph({
       create: () => api.createEmptyWorkflowGraph(bootstrap.product.id),
@@ -286,17 +247,7 @@ export function AgentProductWorkbenchPage({
     }
   }, [liveGraph, requestSidebarTool]);
 
-  const confirmRevision = (revision: WorkflowDraftRevision) => {
-    if (materializationMutation.isPending) return;
-    setConflictDetected(false);
-    materializationMutation.mutate({
-      revision,
-      expectedWorkflowRevision: liveGraph?.revision ?? 0,
-    });
-  };
-  const materializationError = materializationMutation.error
-    ? errorDetail(materializationMutation.error, t("agentWorkbench.materializationFailed"))
-    : null;
+
 
   const graphTools: AgentWorkbenchSidebarTool[] = liveGraph ? [
     {
@@ -527,15 +478,9 @@ export function AgentProductWorkbenchPage({
             productId={bootstrap.product.id}
             productName={bootstrap.product.name}
             conversation={bootstrap.conversation}
-            workflowDraft={bootstrap.workflow_draft}
             graph={liveGraph}
             taskId={agentTaskId}
             pageContext={pageContext}
-            reviewDraftAvailable={Boolean(reviewableRevision)}
-            onReviewDraft={() => {
-              setConflictDetected(false);
-              setDismissedRevisionId(null);
-            }}
             onOpenRuns={() => {
               void requestSidebarTool("runs");
             }}
@@ -545,20 +490,6 @@ export function AgentProductWorkbenchPage({
             className="h-full"
           />
         )}
-        confirmationContent={confirmationOpen ? (
-          <WorkflowDraftConfirmation
-            draft={bootstrap.workflow_draft}
-            busy={materializationMutation.isPending}
-            error={materializationError}
-            conflictDetected={conflictDetected}
-            onConfirm={confirmRevision}
-            onClose={() => {
-              if (reviewableRevision) {
-                setDismissedRevisionId(reviewableRevision.id);
-              }
-            }}
-          />
-        ) : null}
       />
 
       <ConfirmDialog
@@ -597,29 +528,6 @@ export function AgentProductWorkbenchPage({
       {localEdit.dialog}
     </div>
   );
-}
-
-/**
- * 已确认的 revision 若还没有被 persist 成 live 图，仍需审阅（确认和 persist 是两步）。
- */
-export function selectReviewableWorkflowRevision(
-  draft: WorkflowDraft | null | undefined,
-  graph: { source_draft_revision_id: string | null } | null,
-): WorkflowDraftRevision | null {
-  const revision = draft?.current_revision;
-  if (!draft || !revision) {
-    return null;
-  }
-  if (draft.status === "awaiting_confirmation") {
-    return revision;
-  }
-  if (
-    draft.status === "confirmed" &&
-    graph?.source_draft_revision_id !== revision.id
-  ) {
-    return revision;
-  }
-  return null;
 }
 
 export function resolveAgentWorkbenchSidebarTool(

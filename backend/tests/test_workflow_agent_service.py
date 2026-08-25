@@ -663,8 +663,7 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
     assert contract["has_live_graph"] is True
     assert contract["workflow_draft_id"] is None
     assert "不得提交第二份完整拓扑" in contract["system_prompt"]
-    assert "node_catalog" in contract["system_prompt"]
-    assert "config_fields" in contract["system_prompt"]
+    assert "request_workflow_run_v1" not in contract["system_prompt"]
     context = get_agent_product_context(db_session, conversation.id)
     assert "workflow_draft" not in context
     assert context["intake"] == {

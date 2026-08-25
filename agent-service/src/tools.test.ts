@@ -13,6 +13,7 @@ function runtime(
   return {
     client,
     scope,
+    pageType: scope.scope_type === "product_workflow" ? "product_workbench" : "app",
     signal: new AbortController().signal,
     loadSkill: async (name, resourcePath) => `loaded:${name}:${resourcePath ?? "body"}`,
     recordToolFailure: () => undefined,
@@ -53,6 +54,8 @@ describe("ProductFlow Pi tools", () => {
     expect(names).not.toContain("rename_product_image_asset_v1");
     expect(names).not.toContain("move_product_image_assets_v1");
     expect(names).not.toContain("propose_global_draft");
+    expect(names).not.toContain("list_legacy_archives_v1");
+    expect(names).not.toContain("inspect_legacy_archive_v1");
   });
 
   it("exposes live-graph command tools and hides covering drafts", () => {
@@ -63,6 +66,7 @@ describe("ProductFlow Pi tools", () => {
     expect(names).not.toContain("discard_graph_proposal_v1");
     expect(names).toContain("request_workflow_run_v1");
     expect(names).not.toContain("propose_workflow_draft");
+    expect(names).not.toContain("list_legacy_archives_v1");
   });
 
   it("persists product intake from conversation asset IDs", async () => {
@@ -122,6 +126,18 @@ describe("ProductFlow Pi tools", () => {
     expect(names).not.toContain("get_product_workflow_context_v1");
     expect(names).not.toContain("propose_workflow_draft");
     expect(names).not.toContain("finalize_product_intake_v1");
+    expect(names).not.toContain("list_legacy_archives_v1");
+  });
+
+  it("registers legacy archive tools only on the history page", () => {
+    const historyRuntime: ToolRuntime = {
+      ...runtime({ ...baseScope, scope_type: "global", product_id: null, workflow_draft_id: null }),
+      pageType: "history",
+    };
+    const historyNames = createProductFlowTools(historyRuntime).map((tool) => tool.name);
+    expect(historyNames).toContain("list_legacy_archives_v1");
+    expect(historyNames).toContain("inspect_legacy_archive_v1");
+    expect(historyNames).toContain("propose_global_draft");
   });
 
   it("returns bounded Skill evidence while keeping the full instruction for the model", async () => {

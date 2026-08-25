@@ -21,7 +21,6 @@ import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
-import { GlobalWorkflowDraftCard } from "./GlobalWorkflowDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
@@ -169,8 +168,6 @@ export function GlobalAgentConversationPanel({
       agent.cancelTurnMutation.error ??
       agent.resumeTurnMutation.error ??
       agent.answerQuestionMutation.error ??
-      agent.workflowDraftReviewQuery.error ??
-      agent.confirmWorkflowDraftReviewMutation.error ??
       agent.workflowRunRequestQuery.error ??
       agent.confirmWorkflowRunRequestMutation.error ??
       agent.cancelWorkflowRunRequestMutation.error ??
@@ -196,17 +193,6 @@ export function GlobalAgentConversationPanel({
     agent.confirmLibraryOrganizationDraftMutation.mutate({
       expectedDraftVersion: revision.version,
       idempotencyKey: key,
-    });
-  };
-  const confirmWorkflowDraft = () => {
-    const review = agent.workflowDraftReviewQuery.data;
-    const revision = review?.draft.current_revision;
-    if (!review || !revision || review.draft.status !== "awaiting_confirmation") {
-      return;
-    }
-    agent.confirmWorkflowDraftReviewMutation.mutate({
-      revisionId: revision.id,
-      expectedDraftVersion: revision.version,
     });
   };
   const confirmWorkflowRunRequest = () => {
@@ -236,26 +222,6 @@ export function GlobalAgentConversationPanel({
           )}
           busy={agent.confirmLibraryOrganizationDraftMutation.isPending}
           onConfirm={confirmDraft}
-        />
-      ) : null}
-      {turn.workflow_draft_revision_id &&
-      turn.workflow_draft_revision_id === agent.workflowDraftRevisionId ? (
-        <GlobalWorkflowDraftCard
-          review={agent.workflowDraftReviewQuery.data ?? null}
-          loading={agent.workflowDraftReviewQuery.isLoading}
-          error={errorDetail(
-            agent.workflowDraftReviewQuery.error ??
-              agent.confirmWorkflowDraftReviewMutation.error,
-            t("globalAgent.workflowDraft.loadFailed"),
-          )}
-          busy={agent.confirmWorkflowDraftReviewMutation.isPending}
-          onConfirm={confirmWorkflowDraft}
-          onOpenProduct={() => {
-            const review = agent.workflowDraftReviewQuery.data;
-            if (review) {
-              navigate(`/products/${encodeURIComponent(review.product_id)}`);
-            }
-          }}
         />
       ) : null}
     </>

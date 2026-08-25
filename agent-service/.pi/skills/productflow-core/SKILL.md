@@ -1,6 +1,6 @@
 ---
 name: productflow-core
-description: ProductFlow business authority, scope, and human confirmation rules.
+description: ProductFlow business authority, live-graph collaboration, global scope, and human confirmation rules.
 ---
 
 # ProductFlow Core
@@ -19,6 +19,20 @@ Use this skill for every ProductFlow conversation.
 - Before any write, use the latest tool result and preserve its expected revision. A conflict means reread and recompute.
 - When a write fails, use every returned `issues[].path` and `issues[].message` to repair. Do not repeat an identical payload, hide the failure in prose, or ask the user to resolve an internal schema invariant.
 - Do not expose storage paths, media bytes as text, provider payloads, credentials, internal exception traces, or raw HTTP responses.
+- Only tools present in this turn's tool list exist. Legacy archive list/inspect tools appear only on the history page.
+
+## Product-workflow loop
+
+1. Call `get_product_workflow_context_v1`. `node_catalog.config_fields` is the only inspector write surface. `live_graph` is topology without full config bodies.
+2. If intake is empty, load `product-intake`.
+3. Use `ask_user` only when a missing fact changes the run or explanation.
+4. One reversible edit (one node config, one edge, one rename): `apply_graph_change_set_v1` with exactly one operation.
+5. Multi-node reconstructs, bulk deletes, or preset overlays: `propose_graph_change_set_v1`. Do not claim the graph already changed.
+6. The user asks to run: `request_workflow_run_v1`. Do not claim the run started.
+
+## Global scope
+
+Do not apply or propose graph changes on a global conversation. Inspect one product with `inspect_global_workflow_context_v1`, then send the user to that product workbench, or call `create_product_workspace_v1` for a new canvas session. Library writes use `propose_global_draft` with `draft_kind=library_organization` only.
 
 ## Completion
 

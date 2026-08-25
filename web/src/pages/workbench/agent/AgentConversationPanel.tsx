@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, ListChecks, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
+import { Bot, CircleAlert, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -35,13 +35,10 @@ interface AgentConversationPanelProps {
   productId: string;
   productName: string;
   conversation: AgentConversation;
-  workflowDraft?: WorkflowDraft | null;
   graph?: GraphProjection | null;
   taskId?: string | null;
   pageContext?: AgentPageContextSnapshotInput | null;
   className?: string;
-  reviewDraftAvailable?: boolean;
-  onReviewDraft?: () => void;
   onOpenRuns?: () => void;
   onExpandGlobalAgent?: () => void;
 }
@@ -50,13 +47,10 @@ export function AgentConversationPanel({
   productId,
   productName,
   conversation,
-  workflowDraft,
   graph = null,
   taskId = null,
   pageContext = null,
   className = "",
-  reviewDraftAvailable = false,
-  onReviewDraft,
   onOpenRuns,
   onExpandGlobalAgent,
 }: AgentConversationPanelProps) {
@@ -134,15 +128,6 @@ export function AgentConversationPanel({
       : agent.activeTurn?.question ?? null;
 
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
-  useEffect(() => {
-    if (!hasUnsyncedWorkflowDraftRevision(workflowDraft, agent.latestTurn)) {
-      return;
-    }
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
-      queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, workflowDraft?.id] }),
-    ]);
-  }, [agent.latestTurn?.workflow_draft_revision_id, productId, queryClient, workflowDraft]);
   useEffect(() => {
     if (!assetSelectorOpen && !preview) {
       return;
@@ -268,14 +253,6 @@ export function AgentConversationPanel({
   const workflowRunRequestError = errorDetailOrNull(workflowRunRequestQuery.error)
     ?? errorDetailOrNull(confirmWorkflowRunRequestMutation.error)
     ?? errorDetailOrNull(cancelWorkflowRunRequestMutation.error);
-  const reviewDraftRevisionId = reviewDraftAvailable
-    ? workflowDraft.current_revision?.id ?? null
-    : null;
-  const reviewDraftTurnAvailable = Boolean(
-    reviewDraftRevisionId && agent.turns.some(
-      (turn) => turn.workflow_draft_revision_id === reviewDraftRevisionId,
-    ),
-  );
   const connectionLabel = events.state.terminal_kind
     ? t("agentWorkbench.connection.syncing")
     : events.connectionState === "open"
@@ -356,17 +333,6 @@ export function AgentConversationPanel({
           <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
           <p className="truncate text-xs text-text-secondary">{productName}</p>
         </div>
-        {reviewDraftAvailable && !reviewDraftTurnAvailable && onReviewDraft ? (
-          <button
-            type="button"
-            onClick={onReviewDraft}
-            aria-label={t("agentWorkbench.reviewDraft")}
-            title={t("agentWorkbench.reviewDraft")}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400 hover:bg-blue-100 dark:border-cyan-400/25 dark:bg-cyan-400/10 dark:text-cyan-200 dark:hover:border-cyan-400/50"
-          >
-            <ListChecks size={16} />
-          </button>
-        ) : null}
         {onExpandGlobalAgent ? (
           <button
             type="button"
@@ -417,10 +383,8 @@ export function AgentConversationPanel({
         initialTurnPending={agent.turnsQuery.isLoading}
         hasOlder={Boolean(agent.turnsQuery.hasNextPage)}
         loadingOlder={agent.turnsQuery.isFetchingNextPage}
-        reviewDraftRevisionId={reviewDraftRevisionId}
         onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
-        onReviewDraft={onReviewDraft}
       />
 
       <AgentWorkflowRunRequestCard

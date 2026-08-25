@@ -177,7 +177,7 @@ def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session)
     assert reservation.created is True
     contract = get_agent_contract(db_session, bootstrap.conversation.id)
     assert "不得提交第二份完整拓扑" in contract["system_prompt"]
-    assert "request_workflow_run_v1" in contract["system_prompt"]
+    assert "request_workflow_run_v1" not in contract["system_prompt"]
     context = get_agent_product_context(db_session, bootstrap.conversation.id)
     assert context["live_graph"] is not None
     assert context["live_graph"]["id"] == created.graph.id

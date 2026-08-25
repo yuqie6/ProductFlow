@@ -379,6 +379,7 @@ class RunRuntime implements ToolRuntime {
   private checkpointSequence = 0;
   private modelRequestSequence = 0;
   private currentModelRequestID?: string;
+  private currentPageType: string | null = null;
   private providerRequestOptions: ProviderRequestOptions = {
     reasoningSummary: null,
     textVerbosity: null,
@@ -400,6 +401,10 @@ class RunRuntime implements ToolRuntime {
 
   get signal(): AbortSignal {
     return this.abortController?.signal ?? AbortSignal.timeout(this.manager.config.requestTimeoutMS);
+  }
+
+  get pageType(): string | null {
+    return this.currentPageType;
   }
 
   canStartTurn(): boolean {
@@ -989,6 +994,7 @@ class RunRuntime implements ToolRuntime {
       });
       await resourceLoader.reload();
       const sessionManager = SessionManager.continueRecent(workspace, this.manager.store.sessionDir(this.scope.run_id));
+      this.currentPageType = pageContext?.page_type?.trim() || null;
       const tools = createProductFlowTools(this);
       const result = await createAgentSession({
         cwd: workspace,
@@ -1240,6 +1246,7 @@ class RunRuntime implements ToolRuntime {
       this.executionHeartbeat = undefined;
     }
     this.workflowRunRequested = false;
+    this.currentPageType = null;
     this.attemptID = randomUUID();
     this.toolCount = 0;
     this.persistenceError = undefined;

@@ -2019,6 +2019,8 @@ function buildPageContext(pathname: string, search: string): AgentPageContextSna
   let pageType = "app";
   if (pathname.startsWith("/media-library") || pathname.startsWith("/gallery")) {
     pageType = "media_library";
+  } else if (pathname.startsWith("/history")) {
+    pageType = "history";
   } else if (workflowId) {
     pageType = "workflow";
   } else if (productId) {
