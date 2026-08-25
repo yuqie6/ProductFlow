@@ -7,13 +7,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../../lib/api";
 import { useI18n } from "../../lib/preferences";
 import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
-  agentProductIntakeResumePath,
   isAgentWorkbenchMissing,
   isHttpErrorStatus,
   loadProductWorkbenchAgent,
@@ -93,18 +92,6 @@ export function ProductWorkbenchPage() {
           if (shouldReadCurrentWorkflowGraph(productId, agentQuery.error)) void graphQuery.refetch();
           void agentQuery.refetch();
         }}
-      />
-    );
-  }
-  if (surface.kind === "intake") {
-    return (
-      <Navigate
-        to={agentProductIntakeResumePath(
-          surface.bootstrap.conversation.id,
-          surface.bootstrap.conversation.session_id,
-          agentTaskId,
-        )}
-        replace
       />
     );
   }

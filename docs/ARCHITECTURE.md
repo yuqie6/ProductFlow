@@ -21,7 +21,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 `backend/src/productflow_backend/` 保持四层边界：
 
 - `presentation/`：FastAPI 路由、请求/响应 schema、认证、上传读取和 HTTP 错误映射。
-- `application/`：商品、Agent 会话、WorkflowDraft、schema-v3 图、图片库、图片会话、配置和异步任务用例。
+- `application/`：商品、Agent 会话、schema-v3 图、图片库、图片会话、配置和异步任务用例。
 - `domain/`：枚举、业务异常和不依赖数据库的 DAG 规则。
 - `infrastructure/`：SQLAlchemy、provider client、Redis/Dramatiq、storage、日志和 Agent service client。
 
@@ -110,18 +110,11 @@ ProductFlow 拥有商品、Draft、确认、WorkflowGraphRun 和 Web projection�
 
 实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；商品 Draft `workflow_drafts/service.py` 与 `product_workflow/graph_draft_persist.py`；全局素材 Draft `media_library/drafts.py`。
 
-## 5. WorkflowDraft
+## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
-WorkflowDraft 是 Agent 和用户确认之间的持久化边界。revision payload 包含：
+商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不再插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 返回冲突。表可以暂时空着，Turn 上的历史 `workflow_draft_revision_id` 仍可指向旧行。
 
-- 商品事实及其来源、状态和冲突。
-- 用户选择的图片类型和每类数量。
-- 工作流级视觉体系。
-- 每张图片的提示词、参考图绑定和生成规格。
-- 文件夹、节点和连线计划。
-- 可选的用户配方 seed。
-
-Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materializing、ready，以及 failed/cancelled 终态。每次 Agent artifact 都追加 revision；确认针对明确 revision，避免并发覆盖。
+全局库整理仍使用 `LibraryOrganizationDraft`。多节点改图确认走 `WorkflowGraphProposal`。
 
 ## 6. 在线 schema-v3 图
 

@@ -3,13 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentTurn, AgentTurnPage } from "../../../lib/types";
 import {
-  INITIAL_AGENT_TURN_TEXT,
   flattenAgentTurnPages,
-  initialAgentTurnInput,
-  initialTurnReferenceAssetIds,
   selectNewestAgentTurnProjection,
   upsertAgentTurnPageData,
 } from "./useAgentConversation";
+import * as conversationModule from "./useAgentConversation";
 
 function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn {
   return {
@@ -42,43 +40,10 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
 }
 
 describe("Agent conversation model", () => {
-  it("keeps a retry template for the first Turn without auto-submitting it", () => {
-    const first = initialAgentTurnInput("conversation-1", ["asset-1", "asset-2"]);
-    const second = initialAgentTurnInput("conversation-1", ["asset-1", "asset-2"]);
-
-    expect(first).toEqual(second);
-    expect(first).toEqual({
-      input_text: INITIAL_AGENT_TURN_TEXT,
-      asset_ids: ["asset-1", "asset-2"],
-      idempotency_key: "initial:conversation-1",
-    });
-  });
-
-  it("scopes the first-Turn idempotency key to an explicit parallel Task", () => {
-    const firstTask = initialAgentTurnInput("conversation-1", [], "task-1");
-    const secondTask = initialAgentTurnInput("conversation-1", [], "task-2");
-
-    expect(firstTask.idempotency_key).toBe("initial:conversation-1:task-1");
-    expect(secondTask.idempotency_key).toBe("initial:conversation-1:task-2");
-    expect(firstTask.idempotency_key).not.toBe(secondTask.idempotency_key);
-  });
-
-  it("attaches unique graph-bound photos when intake has no reference ids", () => {
-    expect(
-      initialTurnReferenceAssetIds(undefined, {
-        nodes: [
-          { bound_asset_id: "asset-a" },
-          { bound_asset_id: "asset-a" },
-          { bound_asset_id: "asset-b" },
-          { bound_asset_id: null },
-        ],
-      }),
-    ).toEqual(["asset-a", "asset-b"]);
-    expect(
-      initialTurnReferenceAssetIds(["intake-1"], {
-        nodes: [{ bound_asset_id: "asset-a" }],
-      }),
-    ).toEqual(["intake-1"]);
+  it("does not auto-submit an initial Turn helper on the workbench load path", () => {
+    expect(conversationModule).not.toHaveProperty("INITIAL_AGENT_TURN_TEXT");
+    expect(conversationModule).not.toHaveProperty("initialAgentTurnInput");
+    expect(conversationModule).not.toHaveProperty("retryInitialTurn");
   });
 
   it("prepends reverse-keyset pages into one chronological transcript and removes overlap", () => {

@@ -27,7 +27,7 @@ class AgentWorkbenchBootstrapResponse(BaseModel):
     mode: Literal["agent"]
     product: CanonicalProductDetailResponse
     conversation: AgentConversationResponse
-    workflow_draft: WorkflowDraftResponse
+    workflow_draft: WorkflowDraftResponse | None = None
     graph: GraphProjectionResponse | None
     latest_workflow_revision: int
 
@@ -39,7 +39,11 @@ def serialize_agent_workbench_bootstrap(
         mode="agent",
         product=serialize_canonical_product_detail(bootstrap.product),
         conversation=serialize_agent_conversation(bootstrap.conversation),
-        workflow_draft=serialize_workflow_draft(bootstrap.workflow_draft),
+        workflow_draft=(
+            serialize_workflow_draft(bootstrap.workflow_draft)
+            if bootstrap.workflow_draft is not None
+            else None
+        ),
         graph=serialize_graph_projection(bootstrap.graph) if bootstrap.graph is not None else None,
         latest_workflow_revision=bootstrap.latest_workflow_revision,
     )

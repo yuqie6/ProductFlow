@@ -264,10 +264,6 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
   if (runtime.scope.scope_type === "product_workflow") {
     if (runtime.scope.has_live_graph) {
       tools.push(createApplyGraphChangeSetTool(runtime), createProposeGraphChangeSetTool(runtime));
-    } else if (runtime.scope.task_id === null) {
-      tools.push(
-        createDraftTool(runtime, "propose_workflow_draft", "Propose workflow draft", runtime.scope.workflow_draft_schema, false),
-      );
     }
     return tools.filter((tool) => !tool.name.startsWith("global_"));
   }

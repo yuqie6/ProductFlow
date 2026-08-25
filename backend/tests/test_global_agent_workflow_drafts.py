@@ -33,7 +33,7 @@ from productflow_backend.application.agent.tools import (
 )
 from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
 from productflow_backend.domain.enums import AgentConversationStatus, AgentTaskStatus, AgentTurnStatus
-from productflow_backend.domain.errors import ConflictError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceRequestError,
@@ -78,7 +78,8 @@ def _global_workflow_artifact(workspace, *, expected_version: int) -> dict[str, 
         "schema_version": 1,
         "draft_kind": "workflow",
         "product_id": workspace.product.id,
-        "workflow_draft_id": workspace.workflow_draft.id,
+        "workflow_draft_id": workspace.conversation.workflow_draft_id
+        or "00000000-0000-4000-8000-000000000001",
         "expected_draft_version": expected_version,
         "workflow_payload": make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id),
         "library_payload": None,
@@ -124,9 +125,10 @@ def test_global_workflow_context_is_explicit_and_bounded(db_session) -> None:
     assert context["target"] == {
         "product_id": workspace.product.id,
         "product_conversation_id": workspace.conversation.id,
-        "workflow_draft_id": workspace.workflow_draft.id,
+        "workflow_draft_id": None,
     }
-    assert context["workflow_draft"]["version"] == 0
+    assert context["workflow_draft"] is None
+    assert context["intake"] is not None
     assert context["product"]["id"] == workspace.product.id
 
     with pytest.raises(NotFoundError, match="商品不存在"):
@@ -176,60 +178,14 @@ def test_global_workflow_artifact_attaches_to_target_draft_without_materializing
         updated_at=datetime.now(UTC),
         finished_at=datetime.now(UTC),
     )
-    synced = synchronize_agent_turn_state(
-        db_session,
-        product_id=None,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        state=state,
-    )
-
-    assert synced.status == AgentTurnStatus.AWAITING_CONFIRMATION
-    assert synced.workflow_draft_revision_id is not None
-    assert synced.library_organization_draft_revision_id is None
-    assert workspace.workflow_draft.current_revision is not None
-    assert workspace.workflow_draft.current_revision.version == 1
-    db_session.refresh(task)
-    assert task.status == AgentTaskStatus.AWAITING_CONFIRMATION
-    assert conversation.status == AgentConversationStatus.AWAITING_CONFIRMATION
-
-    review = get_global_workflow_draft_review(
-        db_session,
-        conversation_id=conversation.id,
-        revision_id=synced.workflow_draft_revision_id,
-    )
-    assert review.product_id == workspace.product.id
-    assert review.product_conversation_id == workspace.conversation.id
-    assert review.draft.current_revision is not None
-    assert review.draft.current_revision.version == 1
-
-    confirmed = confirm_global_workflow_draft_review(
-        db_session,
-        conversation_id=conversation.id,
-        revision_id=synced.workflow_draft_revision_id,
-        expected_draft_version=1,
-    )
-
-    assert confirmed.draft.status.value == "confirmed"
-    assert confirmed.draft.current_revision is not None
-    assert confirmed.draft.current_revision.confirmed_at is not None
-    db_session.refresh(task)
-    assert task.status == AgentTaskStatus.SUCCEEDED
-    db_session.refresh(workspace.conversation)
-    assert workspace.conversation.status.value == "completed"
-
-    stale_projection = synchronize_agent_turn_state(
-        db_session,
-        product_id=None,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        state=state,
-    )
-    assert stale_projection.status == AgentTurnStatus.SUCCEEDED
-    db_session.refresh(task)
-    assert task.status == AgentTaskStatus.SUCCEEDED
-    db_session.refresh(conversation)
-    assert conversation.status == AgentConversationStatus.COMPLETED
+    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
+        synchronize_agent_turn_state(
+            db_session,
+            product_id=None,
+            conversation_id=conversation.id,
+            projection_id=projection.id,
+            state=state,
+        )
 
 
 def test_global_agent_turn_get_recovers_after_transient_sync_error(
@@ -298,20 +254,7 @@ def test_global_workflow_artifact_rejects_stale_target_version(db_session) -> No
     workspace = _workspace(db_session, key="global-stale")
     conversation = _global_conversation(db_session, workspace)
     payload = _global_workflow_artifact(workspace, expected_version=0)
-    validate_global_agent_draft(db_session, conversation_id=conversation.id, value=payload)
-
-    append_workflow_draft_revision(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=0,
-        payload=make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id),
-        ready_for_confirmation=False,
-        source_turn_id="stale-target-turn",
-        source_artifact_step_id="stale-target-step",
-    )
-
-    with pytest.raises(ConflictError, match="version 已变化"):
+    with pytest.raises((ConflictError, BusinessValidationError), match="不再使用 WorkflowDraft|必须包含"):
         validate_global_agent_draft(db_session, conversation_id=conversation.id, value=payload)
 
 
@@ -349,47 +292,28 @@ def test_global_workflow_draft_api_exposes_review_and_confirmation(configured_en
             harness_turn_id="global-api-harness-turn",
             status=AgentTurnStatus.RUNNING,
         )
-        synced = synchronize_agent_turn_state(
-            session,
-            product_id=None,
-            conversation_id=conversation.id,
-            projection_id=projection.id,
-            state=AgentServiceTurnState(
-                api_version="v1alpha1",
-                run_id=task.harness_run_id,
-                turn_id="global-api-harness-turn",
-                status=AgentTurnStatus.SUCCEEDED,
-                output="工作流草案已准备",
-                artifact=AgentServiceArtifact(
-                    name=GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
-                    value=_global_workflow_artifact(workspace, expected_version=0),
-                    step_id="global-api-step",
+        with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
+            synchronize_agent_turn_state(
+                session,
+                product_id=None,
+                conversation_id=conversation.id,
+                projection_id=projection.id,
+                state=AgentServiceTurnState(
+                    api_version="v1alpha1",
+                    run_id=task.harness_run_id,
+                    turn_id="global-api-harness-turn",
+                    status=AgentTurnStatus.SUCCEEDED,
+                    output="工作流草案已准备",
+                    artifact=AgentServiceArtifact(
+                        name=GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
+                        value=_global_workflow_artifact(workspace, expected_version=0),
+                        step_id="global-api-step",
+                    ),
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
                 ),
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-                finished_at=datetime.now(UTC),
-            ),
-        )
-        assert synced.workflow_draft_revision_id is not None
-        conversation_id = conversation.id
-        revision_id = synced.workflow_draft_revision_id
-
-    client = TestClient(create_app())
-    _login(client)
-
-    review = client.get(
-        f"/api/v2/agent-conversations/{conversation_id}/workflow-draft-reviews/{revision_id}"
-    )
-    assert review.status_code == 200, review.text
-    assert review.json()["product_id"] == workspace.product.id
-    assert review.json()["draft"]["current_revision"]["version"] == 1
-
-    confirmed = client.post(
-        f"/api/v2/agent-conversations/{conversation_id}/workflow-draft-reviews/{revision_id}/confirm",
-        json={"expected_draft_version": 1},
-    )
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["draft"]["status"] == "confirmed"
+            )
 
 
 def test_global_workflow_artifact_contract_requires_one_branch() -> None:

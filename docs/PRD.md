@@ -70,7 +70,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 - `ProductImageAsset`：商品命名空间中的图片身份、来源、目录和派生关系。
 - `MediaLibraryAsset`：全局素材库中的逻辑图片身份、来源快照、组织和归档状态。
 - `WorkflowMediaLibraryAsset`：全局素材到某个工作流子图库的使用关联。
-- `WorkflowDraft` / `WorkflowDraftRevision`：Agent 产出的可确认工作流草案。
+- Product intake：图种、数量和参考图 ID，存在 Product 上。商品路径不再新建 `WorkflowDraft`。
 - `WorkflowGraph`：当前 schema-v3 DAG。
 - `WorkflowGraphNode` / `WorkflowGraphEdge` / `WorkflowGraphGroup`：画布结构。
 - `WorkflowGraphRun` / `WorkflowGraphNodeRun` / `WorkflowGraphArtifact`：运行状态和产物。

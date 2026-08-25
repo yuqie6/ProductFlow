@@ -16,21 +16,15 @@ import type {
   AgentTurnPage,
   GraphProjection,
   SubmitAgentTurnInput,
-  WorkflowDraft,
 } from "../../../lib/types";
 import { isAgentTurnTerminal } from "./agentEventReducer";
 
-export const INITIAL_AGENT_TURN_TEXT =
-  "请读取当前商品的事实、参考图和已有工作流。缺会影响结果的信息就问我；已经有可运行画布时解释现状并协助检查或运行，不要另写一份 Draft 覆盖现图。";
-
 const AGENT_TURN_PAGE_SIZE = 20;
 const AGENT_TURN_PROJECTION_POLL_MS = 1_500;
-const AGENT_MAX_INITIAL_REFERENCE_ASSETS = 6;
 
 interface UseAgentConversationInput {
   productId: string;
   conversation: AgentConversation;
-  workflowDraft: WorkflowDraft;
   graph?: GraphProjection | null;
   taskId?: string | null;
   pageContext?: AgentPageContextSnapshotInput | null;
@@ -54,48 +48,6 @@ export function agentTurnsQueryKey(productId: string, conversationId: string, ta
 
 export function agentTurnQueryKey(productId: string, conversationId: string, projectionId: string) {
   return ["agent-turn", productId, conversationId, projectionId] as const;
-}
-
-export function initialTurnReferenceAssetIds(
-  intakeIds: readonly string[] | undefined,
-  graph?: { nodes: readonly { bound_asset_id: string | null }[] } | null,
-): string[] {
-  if (intakeIds && intakeIds.length > 0) {
-    return [...intakeIds];
-  }
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const node of graph?.nodes ?? []) {
-    const assetId = node.bound_asset_id;
-    if (!assetId || seen.has(assetId)) continue;
-    seen.add(assetId);
-    ids.push(assetId);
-    if (ids.length >= AGENT_MAX_INITIAL_REFERENCE_ASSETS) break;
-  }
-  return ids;
-}
-
-export function initialAgentTurnInput(
-  conversationId: string,
-  referenceAssetIds: readonly string[],
-  taskId?: string | null,
-  pageContext?: AgentPageContextSnapshotInput | null,
-): SubmitAgentTurnInput {
-  const initialIdempotencyKey = taskId
-    ? `initial:${conversationId}:${taskId}`
-    : `initial:${conversationId}`;
-  const input: SubmitAgentTurnInput = {
-    input_text: INITIAL_AGENT_TURN_TEXT,
-    asset_ids: [...referenceAssetIds],
-    idempotency_key: initialIdempotencyKey,
-  };
-  if (taskId) {
-    input.task_id = taskId;
-  }
-  if (pageContext) {
-    input.page_context = pageContext;
-  }
-  return input;
 }
 
 export function flattenAgentTurnPages(pages: readonly AgentTurnPage[] | undefined): AgentTurn[] {
@@ -166,12 +118,12 @@ export function selectNewestAgentTurnProjection(
 export function useAgentConversation({
   productId,
   conversation,
-  workflowDraft,
   graph = null,
   taskId = null,
   pageContext = null,
   enabled = true,
 }: UseAgentConversationInput) {
+  void graph;
   const queryClient = useQueryClient();
   const turnsKey = useMemo(
     () => agentTurnsQueryKey(productId, conversation.id, taskId),
@@ -237,26 +189,6 @@ export function useAgentConversation({
     }
   }, [cacheTurn, latestProjectionQuery.data]);
 
-  const initialInput = useMemo(
-    () =>
-      initialAgentTurnInput(
-        conversation.id,
-        initialTurnReferenceAssetIds(workflowDraft.intake?.reference_asset_ids, graph),
-        taskId,
-        pageContext,
-      ),
-    [conversation.id, graph, pageContext, taskId, workflowDraft.intake?.reference_asset_ids],
-  );
-
-  const initialTurnMutation = useMutation({
-    mutationFn: () => api.submitAgentTurn(productId, conversation.id, initialInput),
-    onSuccess: (response) => cacheTurn(response.turn),
-    onSettled: () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: turnsKey }),
-      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
-    ]),
-  });
-
   const submitTurnMutation = useMutation({
     mutationFn: (input: SubmitAgentTurnInput) =>
       api.submitAgentTurn(productId, conversation.id, {
@@ -311,12 +243,6 @@ export function useAgentConversation({
     activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
     turnsQuery,
     latestProjectionQuery,
-    initialTurnMutation,
-    retryInitialTurn: () => {
-      if (!initialTurnMutation.isPending) {
-        initialTurnMutation.mutate();
-      }
-    },
     submitTurnMutation,
     cancelTurnMutation,
     resumeTurnMutation,

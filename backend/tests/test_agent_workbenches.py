@@ -6,14 +6,12 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
-from workflow_draft_helpers import make_workflow_draft_payload
-
 from productflow_backend.application.agent.conversations import (
-    create_agent_conversation,
     reserve_agent_turn,
 )
 from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
+    attach_agent_workspace_to_product,
     create_agent_product_workspace,
     finalize_agent_product_workspace_intake_from_assets,
 )
@@ -30,9 +28,6 @@ from productflow_backend.application.agent.workbenches import (
 from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
-from productflow_backend.application.workflow_drafts.service import (
-    create_workflow_draft,
-)
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -84,7 +79,8 @@ def test_agent_workbench_bootstrap_uses_persisted_conversation_and_is_read_only(
 
     assert isinstance(bootstrap, AgentWorkbenchBootstrap)
     assert bootstrap.conversation.id == workspace.conversation.id
-    assert bootstrap.workflow_draft.id == workspace.workflow_draft.id
+    assert bootstrap.workflow_draft is None
+    assert bootstrap.conversation.workflow_draft_id is None
     assert bootstrap.graph is not None
     assert bootstrap.latest_workflow_revision >= 1
     assert flushes == 0
@@ -94,28 +90,22 @@ def test_agent_workbench_bootstrap_uses_persisted_conversation_and_is_read_only(
 
 def test_agent_workbench_bootstrap_selects_latest_conversation_by_created_at_and_id(db_session) -> None:
     workspace = _create_agent_workspace(db_session, key="latest-conversation")
-    payload = make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id)
-    second_draft = create_workflow_draft(
+    second = attach_agent_workspace_to_product(
         db_session,
         product_id=workspace.product.id,
-        payload=payload,
-        ready_for_confirmation=False,
-    )
-    second_conversation = create_agent_conversation(
-        db_session,
-        product_id=workspace.product.id,
-        workflow_draft_id=second_draft.id,
+        idempotency_key="latest-conversation-second",
+        force_new=True,
     )
     tied_at = datetime(2026, 8, 14, 9, 0, tzinfo=UTC)
     workspace.conversation.created_at = tied_at
-    second_conversation.created_at = tied_at
+    second.conversation.created_at = tied_at
     db_session.commit()
 
     bootstrap = get_agent_workbench_bootstrap(db_session, product_id=workspace.product.id)
     assert isinstance(bootstrap, AgentWorkbenchBootstrap)
-    expected = max((workspace.conversation, second_conversation), key=lambda item: item.id)
+    expected = max((workspace.conversation, second.conversation), key=lambda item: item.id)
     assert bootstrap.conversation.id == expected.id
-    assert bootstrap.workflow_draft.id == expected.workflow_draft_id
+    assert bootstrap.workflow_draft is None
 
 
 def test_agent_workbench_bootstrap_rejects_product_without_agent_workspace(db_session) -> None:
@@ -155,7 +145,8 @@ def test_ensure_agent_workbench_attaches_conversation_to_direct_created_graph(db
     assert first.conversation.id == second.conversation.id == loaded.conversation.id
     assert first.graph is not None
     assert first.graph.id == created.graph.id
-    assert loaded.workflow_draft.product_id == created.product.id
+    assert loaded.conversation.product_id == created.product.id
+    assert loaded.workflow_draft is None
 
 
 def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session) -> None:
@@ -191,8 +182,9 @@ def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session)
     assert context["live_graph"] is not None
     assert context["live_graph"]["id"] == created.graph.id
     assert any(node["node_type"] == "image_generation" for node in context["live_graph"]["nodes"])
-    assert context["workflow_draft"]["intake"] is None
-    with pytest.raises(ConflictError, match="已有可运行的工作流"):
+    assert context["workflow_draft"] is None
+    assert context["intake"] is None
+    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
         validate_agent_workflow_draft(
             db_session,
             conversation_id=bootstrap.conversation.id,
@@ -228,7 +220,7 @@ def test_live_graph_blocks_conversation_intake(db_session) -> None:
         reference_asset_ids=[created.created_assets[0].id],
         idempotency_key="live-graph-intake",
     )
-    assert finalized.workflow_draft.intake_json is not None
+    assert finalized.product.intake_json is not None
     assert get_active_workflow_graph(db_session, product_id=created.product.id).id == graph_id
 
 
@@ -279,7 +271,8 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
 
     assert agent_response.status_code == 200, agent_response.text
     assert agent_response.json()["mode"] == "agent"
-    assert agent_response.json()["workflow_draft"]["intake"]["schema_version"] == 1
+    assert agent_response.json()["workflow_draft"] is None
+    assert agent_response.json()["product"]["intake"]["schema_version"] == 1
     assert agent_response.json()["graph"] is not None
     assert "active_workflow" not in agent_response.json()
     assert missing_response.status_code == 409

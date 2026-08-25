@@ -35,37 +35,25 @@ def test_confirmed_draft_persists_v3_graph_and_conflicts_when_graph_exists(confi
             "ready_for_confirmation": True,
         },
     )
-    assert created.status_code == 201, created.text
-    draft_id = created.json()["id"]
+    assert created.status_code == 409, created.text
+    assert "不再使用 WorkflowDraft" in created.json()["detail"]
     confirmed = client.post(
-        f"/api/v2/products/{product_id}/workflow-drafts/{draft_id}/confirm",
+        f"/api/v2/products/{product_id}/workflow-drafts/missing/confirm",
         json={"expected_draft_version": 1},
     )
-    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.status_code == 409, confirmed.text
+    assert "不再使用 WorkflowDraft" in confirmed.json()["detail"]
     persisted = client.post(
-        f"/api/v3/products/{product_id}/workflow-drafts/{draft_id}/graphs",
+        f"/api/v3/products/{product_id}/workflow-drafts/missing/graphs",
         json={"expected_draft_version": 1},
     )
-    assert persisted.status_code == 200, persisted.text
-    graph = persisted.json()["graph"]
-    assert persisted.json()["created"] is True
-    assert graph["schema_version"] == 3
-    assert graph["revision"] == 1
-    assert any(node["node_type"] == "image_asset" for node in graph["nodes"])
-    assert any(node["node_type"] == "product_source" for node in graph["nodes"])
-    assert all("prompt_plan_key" not in (node.get("config") or {}) for node in graph["nodes"])
-    replay = client.post(
-        f"/api/v3/products/{product_id}/workflow-drafts/{draft_id}/graphs",
-        json={"expected_draft_version": 1},
-    )
-    assert replay.status_code == 200, replay.text
-    assert replay.json()["created"] is False
-    assert replay.json()["graph"]["id"] == graph["id"]
+    assert persisted.status_code == 409, persisted.text
+    assert "不再使用 WorkflowDraft" in persisted.json()["detail"]
     factory = get_session_factory()
     session = factory()
     try:
-        assert session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
-        assert session.scalar(select(WorkflowDraft.status).where(WorkflowDraft.id == draft_id)) == "ready"
+        assert session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
+        assert session.scalar(select(func.count()).select_from(WorkflowGraph)) == 0
     finally:
         session.close()
 
@@ -87,17 +75,14 @@ def test_confirmed_draft_persists_v3_graph_and_conflicts_when_graph_exists(confi
             "ready_for_confirmation": True,
         },
     )
-    assert blocked_draft.status_code == 201, blocked_draft.text
-    blocked_confirm = client.post(
-        f"/api/v2/products/{blocked_product}/workflow-drafts/{blocked_draft.json()['id']}/confirm",
-        json={"expected_draft_version": 1},
-    )
-    assert blocked_confirm.status_code == 200, blocked_confirm.text
+    assert blocked_draft.status_code == 409, blocked_draft.text
+    assert "不再使用 WorkflowDraft" in blocked_draft.json()["detail"]
     conflict = client.post(
-        f"/api/v3/products/{blocked_product}/workflow-drafts/{blocked_draft.json()['id']}/graphs",
+        f"/api/v3/products/{blocked_product}/workflow-drafts/missing/graphs",
         json={"expected_draft_version": 1},
     )
     assert conflict.status_code == 409
+    assert "不再使用 WorkflowDraft" in conflict.json()["detail"]
 
 
 def test_draft_adapter_maps_declared_reference_edges_only() -> None:

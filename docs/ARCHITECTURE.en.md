@@ -21,7 +21,7 @@ This document describes the current implementation only. Module ownership comes 
 `backend/src/productflow_backend/` keeps four boundaries:
 
 - `presentation/`: FastAPI routes, request/response schemas, authentication, upload reads, and HTTP error mapping.
-- `application/`: product, Agent conversation, WorkflowDraft, schema-v3 graph, image library, image session, settings, and asynchronous use cases.
+- `application/`: product, Agent conversation, schema-v3 graph, image library, image session, settings, and asynchronous use cases.
 - `domain/`: enums, business errors, and database-free DAG rules.
 - `infrastructure/`: SQLAlchemy, provider clients, Redis/Dramatiq, storage, logging, and the Agent service client.
 
@@ -110,18 +110,11 @@ Main promises interactive Turns, cancel, question answers, SSE reconnect, and cr
 
 Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` and `product_workflow/graph_draft_persist.py`; global media Drafts `media_library/drafts.py`.
 
-## 5. WorkflowDraft
+## 5. Product intake and retired WorkflowDraft topology
 
-WorkflowDraft is the persistent boundary between Agent output and user confirmation. A revision contains:
+Image types, quantities, and reference asset ids live on Product intake. Create no longer inserts `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist return conflict. The table may remain empty; historical Turn `workflow_draft_revision_id` rows can still point at old revisions.
 
-- Product facts with source, state, and conflicts.
-- Selected image types and per-type quantities.
-- Workflow-level visual system.
-- Per-image prompts, reference bindings, and generation specifications.
-- Folder, node, and edge plans.
-- Optional user-recipe seed.
-
-Draft states cover collecting, awaiting_confirmation, confirmed, materializing, ready, and the failed/cancelled terminals. Every Agent artifact appends a revision. Confirmation targets an explicit revision to prevent concurrent overwrite.
+Global library organize still uses `LibraryOrganizationDraft`. Multi-node graph confirmation uses `WorkflowGraphProposal`.
 
 ## 6. Online schema-v3 Graph
 

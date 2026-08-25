@@ -166,7 +166,7 @@ export function AgentProductWorkbenchPage({
 
   const materializationMutation = useWorkflowMaterialization({
     productId: bootstrap.product.id,
-    draftId: bootstrap.workflow_draft.id,
+    draftId: bootstrap.workflow_draft?.id ?? "",
     conversationId: bootstrap.conversation.id,
     onDraftConfirmed: updateBootstrapDraft,
     onConflict: async () => {
@@ -603,11 +603,11 @@ export function AgentProductWorkbenchPage({
  * 已确认的 revision 若还没有被 persist 成 live 图，仍需审阅（确认和 persist 是两步）。
  */
 export function selectReviewableWorkflowRevision(
-  draft: WorkflowDraft,
+  draft: WorkflowDraft | null | undefined,
   graph: { source_draft_revision_id: string | null } | null,
 ): WorkflowDraftRevision | null {
-  const revision = draft.current_revision;
-  if (!revision) {
+  const revision = draft?.current_revision;
+  if (!draft || !revision) {
     return null;
   }
   if (draft.status === "awaiting_confirmation") {

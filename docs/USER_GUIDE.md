@@ -55,17 +55,7 @@ Agent 常见追问包括：
 
 多节点改图会在画布上预览，确认后写入现图。关掉对话不影响添加、连线、运行和撤销。
 
-若仍有可确认的 WorkflowDraft revision，确认面板会汇总：
-
-- 商品事实和冲突。
-- 图片类型与数量。
-- 统一视觉体系。
-- 每类或每张图片的目标和提示词。
-- 参考图绑定。
-- 比例、分辨率、质量、文字策略和交付规格。
-- 计划创建的文件夹、节点和连线。
-
-确认后系统把该 revision 写入工作流图（若商品还没有 live 图）。已有 live 图时，改图走画布提案，不再用 Draft 覆盖现图。
+改图确认只走画布提案。商品路径不再确认 WorkflowDraft。
 
 ### 2.5 直接创建画布
 
@@ -278,7 +268,7 @@ Agent 可以提出素材整理 Draft。确认前不会改名称、文件夹、�
 
 `/history` 只提供已退役 V1 workflow、用户模板和 Canvas Agent 记录的查看、筛选、下载与导出。历史图片只有在 canonical 媒体核验完成后才能预览或下载；缺失和待核验媒体仍保留元数据说明。
 
-“用 Agent 重建”会为原商品或用户选择的目标商品创建一个带历史 seed 的 WorkflowDraft 和 AgentConversation。用户仍需检查 Agent 追问与结构化 Draft 并明确确认；该操作不会恢复旧画布、旧模板应用或旧执行器。
+“用 Agent 重建”不再插入 WorkflowDraft。已有 live 图时不能从旧归档覆盖现图。
 
 ## 12. 常见问题
 
@@ -288,7 +278,7 @@ Agent 可以提出素材整理 Draft。确认前不会改名称、文件夹、�
 
 ### Agent 有回复但没有工作流
 
-查看 Turn 是否处于 requires_input 或 awaiting_confirmation。回答问题并确认最新 WorkflowDraft revision 后才会物化。
+查看 Turn 是否处于 requires_input。回答问题后继续对话。改图走画布 ChangeSet / 提案，不确认 WorkflowDraft。
 
 ### 参考图节点为空
 

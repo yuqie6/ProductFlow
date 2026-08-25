@@ -274,11 +274,23 @@ def parse_workflow_intake(
     if schema_version is None and payload is None:
         return None
     if schema_version != WORKFLOW_INTAKE_SCHEMA_VERSION or payload is None:
-        raise ConflictError("WorkflowDraft intake 缺失或版本不受支持")
+        raise ConflictError("商品 intake 缺失或版本不受支持")
     try:
         return WorkflowIntakeV1.model_validate(payload)
     except ValidationError as exc:
-        raise ConflictError("WorkflowDraft intake 不符合 schema version 1") from exc
+        raise ConflictError("商品 intake 不符合 schema version 1") from exc
+
+
+def parse_product_intake(product) -> WorkflowIntakeV1 | None:
+    return parse_workflow_intake(
+        schema_version=product.intake_schema_version,
+        payload=product.intake_json,
+    )
+
+
+def write_product_intake(product, intake: WorkflowIntakeV1) -> None:
+    product.intake_schema_version = WORKFLOW_INTAKE_SCHEMA_VERSION
+    product.intake_json = workflow_intake_payload(intake)
 
 
 def normalize_agent_product_idempotency_key(value: str) -> str:
@@ -429,7 +441,9 @@ __all__ = [
     "delivery_preset_spec_for_key",
     "normalize_agent_product_idempotency_key",
     "parse_agent_product_selection",
+    "parse_product_intake",
     "parse_workflow_intake",
     "workflow_intake_from_selection",
     "workflow_intake_payload",
+    "write_product_intake",
 ]

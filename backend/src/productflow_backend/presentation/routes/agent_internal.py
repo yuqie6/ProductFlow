@@ -169,18 +169,14 @@ def _serialize_agent_product_workspace_launch(
     creation,
 ) -> AgentProductWorkspaceLaunchResponse:
     session_id = creation.conversation.session_id
-    workflow_draft_id = creation.conversation.workflow_draft_id
-    task_id = creation.onboarding_task_id
-    if session_id is None or workflow_draft_id is None:
-        raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
+    if session_id is None:
+        raise ConflictError("Agent 商品工作区缺少 Session")
     navigation_path = (
         "/products/"
         + quote(creation.product.id, safe="")
         + "?agent_session_id="
         + quote(session_id, safe="")
     )
-    if task_id is not None:
-        navigation_path += "&agent_task_id=" + quote(task_id, safe="")
     return AgentProductWorkspaceLaunchResponse(
         created=creation.created,
         session_id=session_id,
@@ -188,9 +184,9 @@ def _serialize_agent_product_workspace_launch(
         product_conversation_id=creation.conversation.id,
         product_id=creation.product.id,
         product_name=creation.product.name,
-        workflow_draft_id=workflow_draft_id,
-        task_id=task_id,
-        intake_finalized=creation.workflow_draft.intake_json is not None,
+        workflow_draft_id=creation.conversation.workflow_draft_id,
+        task_id=None,
+        intake_finalized=creation.intake_finalized,
         navigation_path=navigation_path,
     )
 
@@ -387,11 +383,11 @@ def reconcile_agent_product_intake_endpoint(
     if reconciled.creation is not None:
         result = AgentFinalizeProductIntakeResponse(
             accepted=True,
-            intake_finalized=reconciled.creation.workflow_draft.intake_json is not None,
+            intake_finalized=reconciled.creation.intake_finalized,
             product_id=reconciled.creation.product.id,
-            workflow_draft_id=reconciled.creation.workflow_draft.id,
+            workflow_draft_id=reconciled.creation.conversation.workflow_draft_id,
             reference_asset_ids=[asset.id for asset in reconciled.creation.created_assets],
-            intake=reconciled.creation.workflow_draft.intake_json,
+            intake=reconciled.creation.product.intake_json,
         )
     if reconciled.state not in {"applied", "not_applied", "conflict", "unknown"}:
         raise ConflictError("商品输入对账状态无效")

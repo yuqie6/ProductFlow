@@ -35,7 +35,7 @@ interface AgentConversationPanelProps {
   productId: string;
   productName: string;
   conversation: AgentConversation;
-  workflowDraft: WorkflowDraft;
+  workflowDraft?: WorkflowDraft | null;
   graph?: GraphProjection | null;
   taskId?: string | null;
   pageContext?: AgentPageContextSnapshotInput | null;
@@ -62,7 +62,7 @@ export function AgentConversationPanel({
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const agent = useAgentConversation({ productId, conversation, workflowDraft, graph, taskId, pageContext });
+  const agent = useAgentConversation({ productId, conversation, graph, taskId, pageContext });
   const workflowRunRequestQueryKey = [
     "agent-workflow-run-request",
     productId,
@@ -140,7 +140,7 @@ export function AgentConversationPanel({
     }
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
-      queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, workflowDraft.id] }),
+      queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, workflowDraft?.id] }),
     ]);
   }, [agent.latestTurn?.workflow_draft_revision_id, productId, queryClient, workflowDraft]);
   useEffect(() => {
@@ -258,9 +258,6 @@ export function AgentConversationPanel({
   const questionError = errorDetailOrNull(agent.answerQuestionMutation.error);
   const composerError =
     errorDetailOrNull(agent.submitTurnMutation.error) ?? errorDetailOrNull(uploadAssetsMutation.error);
-  const initialError = !agent.turns.length
-    ? errorDetailOrNull(agent.initialTurnMutation.error)
-    : null;
   const listError = errorDetailOrNull(agent.turnsQuery.error);
   const controlError =
     errorDetailOrNull(agent.cancelTurnMutation.error) ??
@@ -411,20 +408,13 @@ export function AgentConversationPanel({
           onAction={() => void agent.turnsQuery.refetch()}
         />
       ) : null}
-      {initialError ? (
-        <PanelError
-          message={initialError}
-          action={t("agentWorkbench.retryStart")}
-          onAction={agent.retryInitialTurn}
-        />
-      ) : null}
       {controlError ? <PanelError message={controlError} /> : null}
 
       <AgentMessageList
         turns={agent.turns}
         activeTurnId={agent.activeTurn?.id ?? null}
         eventState={events.state}
-        initialTurnPending={agent.initialTurnMutation.isPending || agent.turnsQuery.isLoading}
+        initialTurnPending={agent.turnsQuery.isLoading}
         hasOlder={Boolean(agent.turnsQuery.hasNextPage)}
         loadingOlder={agent.turnsQuery.isFetchingNextPage}
         reviewDraftRevisionId={reviewDraftRevisionId}
@@ -530,12 +520,12 @@ function mergeUploadedComposerAssets(
 }
 
 export function hasUnsyncedWorkflowDraftRevision(
-  workflowDraft: WorkflowDraft,
+  workflowDraft: WorkflowDraft | null | undefined,
   latestTurn: AgentTurn | null,
 ): boolean {
   const projectedRevisionId = latestTurn?.workflow_draft_revision_id;
   return Boolean(
-    projectedRevisionId && workflowDraft.current_revision?.id !== projectedRevisionId,
+    projectedRevisionId && workflowDraft?.current_revision?.id !== projectedRevisionId,
   );
 }
 

@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import (
-    attach_agent_workflow_draft_artifact,
     bind_harness_turn,
     cancel_unbound_agent_turn,
     expected_harness_run_id,
@@ -554,19 +553,9 @@ def synchronize_agent_turn_state(
                     commit=commit,
                 )
         elif state.artifact is not None:
-            if conversation.workflow_draft_id is None or product_id is None:
-                raise ConflictError("商品工作流 Agent Turn 缺少 WorkflowDraft artifact 作用域")
-            projection = attach_agent_workflow_draft_artifact(
-                session,
-                product_id=product_id,
-                conversation_id=conversation_id,
-                projection_id=projection.id,
-                harness_turn_id=state.turn_id,
-                artifact_name=state.artifact.name,
-                artifact_step_id=state.artifact.step_id,
-                artifact_value=state.artifact.value,
-                commit=commit,
-            )
+            from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+            raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
         if pending_workflow_run_request is not None:
             projection = attach_agent_workflow_run_request(
                 session,

@@ -436,7 +436,7 @@ const HELP_DOCS = {
             {
               type: "callout",
               title: "不会恢复旧编辑器",
-              text: "重建会创建带历史 seed 的 WorkflowDraft，用户仍需确认。该操作不恢复旧画布、旧模板应用或旧执行器。",
+              text: "重建不再插入 WorkflowDraft。已有 live 图时不能从旧归档覆盖现图。该操作不恢复旧画布、旧模板应用或旧执行器。",
             },
           ],
         },
@@ -552,7 +552,7 @@ const HELP_DOCS = {
       icon: History,
       sections: [
         { id: "read-only", title: "Read-only browse", blocks: [{ type: "paragraph", text: "Filter, download, and export retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification." }] },
-        { id: "rebuild", title: "Rebuild with Agent", blocks: [{ type: "callout", title: "The old editor is not restored", text: "Rebuild creates a history-seeded WorkflowDraft that still requires confirmation. It does not restore the old canvas, template application, or executor." }] },
+        { id: "rebuild", title: "Rebuild with Agent", blocks: [{ type: "callout", title: "The old editor is not restored", text: "Rebuild no longer inserts a WorkflowDraft. A live graph cannot be overwritten from a legacy archive. It does not restore the old canvas, template application, or executor." }] },
       ],
     },
   ],
@@ -665,7 +665,7 @@ const HELP_DOCS = {
       icon: History,
       sections: [
         { id: "read-only", title: "読み取り専用", blocks: [{ type: "paragraph", text: "退役した V1 ワークフロー、ユーザーテンプレート、Canvas Agent 記録を絞り込み、ダウンロード、エクスポートできます。履歴画像は canonical メディア検証後にのみプレビューまたはダウンロードできます。" }] },
-        { id: "rebuild", title: "Agent で再構築", blocks: [{ type: "callout", title: "旧エディタは復元されません", text: "再構築は履歴 seed 付き WorkflowDraft を作り、ユーザー確認が必要です。旧キャンバス、旧テンプレート適用、旧実行器は戻りません。" }] },
+        { id: "rebuild", title: "Agent で再構築", blocks: [{ type: "callout", title: "旧エディタは復元されません", text: "再構築は WorkflowDraft を作りません。既存の live graph は旧アーカイブで上書きできません。旧キャンバス、旧テンプレート適用、旧実行器は戻りません。" }] },
       ],
     },
   ],
@@ -778,7 +778,7 @@ const HELP_DOCS = {
       icon: History,
       sections: [
         { id: "read-only", title: "Chỉ đọc", blocks: [{ type: "paragraph", text: "Có thể lọc, tải xuống và xuất workflow V1 đã ngừng, mẫu người dùng và bản ghi Canvas Agent. Ảnh lịch sử chỉ xem hoặc tải sau khi media canonical được xác minh." }] },
-        { id: "rebuild", title: "Dựng lại bằng Agent", blocks: [{ type: "callout", title: "Không khôi phục trình chỉnh sửa cũ", text: "Thao tác này tạo WorkflowDraft có seed lịch sử và vẫn cần xác nhận. Nó không khôi phục canvas cũ, áp dụng mẫu cũ hay bộ thực thi cũ." }] },
+        { id: "rebuild", title: "Dựng lại bằng Agent", blocks: [{ type: "callout", title: "Không khôi phục trình chỉnh sửa cũ", text: "Thao tác này không còn tạo WorkflowDraft. Có live graph thì không ghi đè từ archive cũ. Nó không khôi phục canvas cũ, áp dụng mẫu cũ hay bộ thực thi cũ." }] },
       ],
     },
   ],

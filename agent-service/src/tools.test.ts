@@ -45,7 +45,7 @@ describe("ProductFlow Pi tools", () => {
   it("keeps product scope tools bounded and confirmation-oriented", () => {
     const names = createProductFlowTools(runtime(baseScope)).map((tool) => tool.name).sort();
     expect(names).toContain("load_productflow_skill");
-    expect(names).toContain("propose_workflow_draft");
+    expect(names).not.toContain("propose_workflow_draft");
     expect(names).toContain("request_workflow_run_v1");
     expect(names).toContain("finalize_product_intake_v1");
     expect(names).not.toContain("apply_graph_change_set_v1");
@@ -258,63 +258,11 @@ describe("ProductFlow Pi tools", () => {
     expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(96 << 10);
   });
 
-  it("bounds structured draft failure details before they cross the Agent contract", async () => {
-    const recordedFailures: unknown[] = [];
-    const client = {
-      validateWorkflowDraft: async () => {
-        throw new ProductFlowError(
-          400,
-          "workflow_draft_validation_failed",
-          "错误详情".repeat(800),
-          {
-            issues: [{ path: "draft\nfield", message: "校验问题".repeat(200) }],
-          },
-        );
-      },
-    } as unknown as ProductFlowClient;
-    const testRuntime = {
-      ...runtime(baseScope, client),
-      recordToolFailure: (_toolCallID: string, details: unknown) => recordedFailures.push(details),
-    };
-    const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "propose_workflow_draft");
-    if (!tool) throw new Error("Workflow draft tool was not registered");
-
-    await expect(tool.execute("draft-failure", {}, undefined, undefined, {} as never)).rejects.toMatchObject({
-      code: "workflow_draft_validation_failed",
-    });
-    const details = recordedFailures[0] as {
-      error_code: string;
-      error_message: string;
-      validation_issues: Array<{ path: string; message: string }>;
-    };
-    expect(details.error_code).toHaveLength("workflow_draft_validation_failed".length);
-    expect(details.error_message.length).toBeLessThanOrEqual(1000);
-    expect(details.validation_issues[0].path).not.toContain("\n");
-    expect(details.validation_issues[0].message.length).toBeLessThanOrEqual(500);
-    expect((recordedFailures[0] as { retryable?: boolean }).retryable).toBe(true);
-  });
-
-  it("does not label an unknown draft failure as retryable", async () => {
-    const recordedFailures: unknown[] = [];
-    const client = {
-      validateWorkflowDraft: async () => {
-        throw new Error("unexpected adapter failure");
-      },
-    } as unknown as ProductFlowClient;
-    const testRuntime = {
-      ...runtime(baseScope, client),
-      recordToolFailure: (_toolCallID: string, details: unknown) => recordedFailures.push(details),
-    };
-    const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "propose_workflow_draft");
-    if (!tool) throw new Error("Workflow draft tool was not registered");
-
-    await expect(tool.execute("draft-unknown-failure", {}, undefined, undefined, {} as never)).rejects.toThrow(
-      "unexpected adapter failure",
-    );
-    expect(recordedFailures[0]).toEqual({
-      phase: "tool_result",
-      error_message: "工具调用失败，详见当前 Turn 错误。",
-    });
+  it("does not register propose_workflow_draft on product-workflow conversations", () => {
+    const withoutGraph = createProductFlowTools(runtime(baseScope)).map((tool) => tool.name);
+    const withGraph = createProductFlowTools(runtime({ ...baseScope, has_live_graph: true })).map((tool) => tool.name);
+    expect(withoutGraph).not.toContain("propose_workflow_draft");
+    expect(withGraph).not.toContain("propose_workflow_draft");
   });
 
   it("reconciles a timed-out workspace create before declaring the effect unknown", async () => {

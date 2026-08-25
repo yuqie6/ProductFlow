@@ -169,12 +169,21 @@ class MediaObject(Base):
 
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
+    __table_args__ = (
+        CheckConstraint(
+            "(intake_schema_version IS NULL AND intake_json IS NULL) OR "
+            "(intake_schema_version = 1 AND intake_json IS NOT NULL)",
+            name="ck_products_intake_pair",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(255))
     category: Mapped[str | None] = mapped_column(String(120), nullable=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    intake_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    intake_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     cover_image_asset_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1295,7 +1304,7 @@ class AgentConversation(Base, TimestampMixin):
             name="ck_agent_conversations_intake_idempotency_pair",
         ),
         CheckConstraint(
-            "(scope_type = 'product_workflow' AND product_id IS NOT NULL AND workflow_draft_id IS NOT NULL) OR "
+            "(scope_type = 'product_workflow' AND product_id IS NOT NULL) OR "
             "(scope_type = 'global' AND product_id IS NULL AND workflow_draft_id IS NULL)",
             name="ck_agent_conversations_scope_fields",
         ),

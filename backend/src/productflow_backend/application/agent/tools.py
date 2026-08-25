@@ -1,4 +1,4 @@
-"""Agent 工具面：有界只读上下文，以及账本+request hash 的 prepare/apply/reconcile。有 live graph 后禁止再提交覆盖现图的 WorkflowDraft。"""
+"""Agent 工具面：有界只读上下文，以及账本+request hash 的 prepare/apply/reconcile。"""
 
 from __future__ import annotations
 
@@ -16,14 +16,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import (
     AGENT_MAX_INPUT_ASSETS,
-    LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT,
     get_agent_conversation_by_id_or_raise,
 )
 from productflow_backend.application.agent.global_draft_contracts import global_agent_draft_schema
 from productflow_backend.application.agent.product_intake import (
     AgentProductSelectionV1,
     agent_product_image_type_catalog_json,
-    parse_workflow_intake,
     workflow_intake_payload,
 )
 from productflow_backend.application.agent.product_workspaces import (
@@ -31,7 +29,6 @@ from productflow_backend.application.agent.product_workspaces import (
 )
 from productflow_backend.application.agent.sessions import get_agent_session_or_raise
 from productflow_backend.application.agent.tasks import task_contract
-from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 from productflow_backend.application.media_library.drafts import validate_library_organization_draft
 from productflow_backend.application.media_library.queries import get_media_library_asset, list_media_library_assets
 from productflow_backend.application.media_library.service import validate_media_library_asset_for_use
@@ -61,23 +58,17 @@ from productflow_backend.application.product_workflow.graph_proposals import (
 from productflow_backend.application.product_workflow.graph_queries import project_workflow_graph
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
-    parse_workflow_draft_payload,
-    workflow_draft_agent_guidance,
-    workflow_draft_tool_schema,
 )
-from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_for_confirmation
 from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentToolMutationStatus,
     MediaVerificationStatus,
-    WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import (
     BusinessValidationError,
     ConflictError,
     NotFoundError,
-    StructuredBusinessValidationError,
 )
 from productflow_backend.domain.graph_catalog import graph_catalog_json
 from productflow_backend.infrastructure.db.models import (
@@ -87,7 +78,6 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductAssetFolder,
     ProductImageAsset,
-    WorkflowDraft,
     WorkflowDraftRecipeSeed,
     WorkflowGraph,
     new_id,
@@ -322,10 +312,8 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
             "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
             "has_live_graph": False,
         }
-    draft = conversation.workflow_draft
-    if conversation.product_id is None or draft is None:
-        raise ConflictError("商品工作流 Agent conversation 缺少商品或 WorkflowDraft")
-    current_revision = draft.current_revision
+    if conversation.product_id is None:
+        raise ConflictError("商品工作流 Agent conversation 缺少商品")
     live_graph = get_active_workflow_graph(session, product_id=conversation.product_id)
     return {
         "schema_version": 1,
@@ -336,14 +324,11 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
         "product_id": conversation.product_id,
         "workflow_draft_id": conversation.workflow_draft_id,
         "harness_run_id": conversation.harness_run_id,
-        "current_draft_version": current_revision.version if current_revision is not None else 0,
-        "system_prompt": (
-            # 有 live schema-v3 graph 后只解释/改点/请求运行，不能再 propose_workflow_draft 覆盖现图。
-            WORKFLOW_AGENT_LIVE_GRAPH_PROMPT if live_graph is not None else WORKFLOW_AGENT_SYSTEM_PROMPT
-        ),
+        "current_draft_version": 0,
+        "system_prompt": WORKFLOW_AGENT_LIVE_GRAPH_PROMPT,
         "draft_kind": "workflow",
-        "draft_schema": workflow_draft_tool_schema(),
-        "workflow_draft_schema": workflow_draft_tool_schema(),
+        "draft_schema": {},
+        "workflow_draft_schema": {},
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
         "has_live_graph": live_graph is not None,
     }
@@ -355,47 +340,11 @@ def validate_agent_workflow_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> WorkflowDraftPayloadV1:
-    """校验 WorkflowDraft payload。商品已有 live graph 时拒绝覆盖。"""
-    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
-    _require_product_conversation(conversation)
-    product_id = conversation.product_id
-    if product_id is None:
-        raise ConflictError("当前 Agent conversation 不是商品工作流作用域")
-    if get_active_workflow_graph(session, product_id=product_id) is not None:
-        raise ConflictError(LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT)
-    intake = parse_workflow_intake(
-        schema_version=conversation.workflow_draft.intake_schema_version,
-        payload=conversation.workflow_draft.intake_json,
-    )
-    try:
-        artifact = parse_workflow_draft_payload(value)
-    except ValidationError as exc:
-        issues: list[dict[str, str]] = []
-        for error in exc.errors(include_url=False, include_context=False, include_input=False)[:8]:
-            path = ".".join(str(part) for part in error["loc"]) or "$"
-            issues.append({"path": path, "message": error["msg"]})
-        formatted_issues = "; ".join(f"{issue['path']}: {issue['message']}" for issue in issues)
-        raise StructuredBusinessValidationError(
-            f"WorkflowDraft 无效: {formatted_issues}",
-            code="workflow_draft_validation_failed",
-            issues=issues,
-        ) from exc
-    try:
-        validate_workflow_draft_for_confirmation(
-            session,
-            product_id=conversation.product_id,
-            artifact=artifact,
-            required_delivery_spec=intake.delivery_spec if intake is not None else None,
-        )
-    except StructuredBusinessValidationError:
-        raise
-    except BusinessValidationError as exc:
-        raise StructuredBusinessValidationError(
-            str(exc),
-            code="workflow_draft_validation_failed",
-            issues=[{"path": "$", "message": str(exc)}],
-        ) from exc
-    return artifact
+    """商品路径不再接受 WorkflowDraft。"""
+    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+    del session, conversation_id, value
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def finalize_agent_product_intake(
@@ -428,9 +377,9 @@ def finalize_agent_product_intake(
         "accepted": True,
         "intake_finalized": True,
         "product_id": creation.product.id,
-        "workflow_draft_id": creation.workflow_draft.id,
+        "workflow_draft_id": creation.conversation.workflow_draft_id,
         "reference_asset_ids": [asset.id for asset in creation.created_assets],
-        "intake": creation.workflow_draft.intake_json,
+        "intake": creation.product.intake_json,
     }
 
 
@@ -473,17 +422,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     )
     if product is None:
         raise NotFoundError("商品不存在")
-    draft = conversation.workflow_draft
-    revision = draft.current_revision
-    recipe_seed = _load_recipe_seed_context(session, draft.recipe_seed)
-    archive_seed = (
-        legacy_archive_seed_summary(draft.legacy_archive_seed)
-        if draft.legacy_archive_seed is not None
-        else None
-    )
-    if recipe_seed is not None and archive_seed is not None:
-        raise ConflictError("WorkflowDraft 不能同时使用 recipe seed 和旧归档重建 seed")
-    intake = _load_workflow_intake_context(session, product_id=product.id, draft=draft)
+    intake = _load_product_intake_context(session, product=product)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "product": {
@@ -501,23 +440,17 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
             if product.current_fact_set_version is not None
             else None
         ),
-        "workflow_draft": {
-            "id": draft.id,
-            "status": draft.status.value,
-            "version": revision.version if revision is not None else 0,
-            "payload": revision.payload_json if revision is not None else None,
-            "intake": intake,
-        },
-        "workflow_recipe_seed": recipe_seed,
-        "legacy_archive_seed": archive_seed,
-        "draft_guidance": workflow_draft_agent_guidance(),
+        "intake": intake,
+        "workflow_draft": None,
+        "workflow_recipe_seed": None,
+        "legacy_archive_seed": None,
         "node_catalog": graph_catalog_json(),
         "image_type_catalog": agent_product_image_type_catalog_json(),
         "live_graph": _live_graph_agent_summary(session, product_id=product.id),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
-        raise ConflictError("商品与 WorkflowDraft 上下文超过 Agent 工具输出上限")
+        raise ConflictError("商品上下文超过 Agent 工具输出上限")
     return payload
 
 
@@ -573,25 +506,23 @@ def get_agent_global_workflow_target(
     product_id: str,
     workflow_draft_id: str | None = None,
 ) -> AgentConversation:
-    """Resolve one explicit product to its latest editable WorkflowDraft conversation."""
+    """Resolve one explicit product to its latest product conversation."""
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
     statement = (
         select(AgentConversation)
-        .join(WorkflowDraft, WorkflowDraft.id == AgentConversation.workflow_draft_id)
         .where(
             AgentConversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW,
             AgentConversation.product_id == product_id,
-            WorkflowDraft.status != WorkflowDraftStatus.CANCELLED,
         )
         .order_by(AgentConversation.updated_at.desc(), AgentConversation.id.desc())
     )
     if workflow_draft_id is not None:
-        statement = statement.where(WorkflowDraft.id == workflow_draft_id)
+        statement = statement.where(AgentConversation.workflow_draft_id == workflow_draft_id)
     conversation = session.scalar(statement.limit(1))
     if conversation is None:
-        raise NotFoundError("商品没有可编辑的 WorkflowDraft")
+        raise NotFoundError("商品没有 Agent 工作区")
     return conversation
 
 
@@ -616,16 +547,14 @@ def get_agent_global_workflow_context(
     return context
 
 
-def _load_workflow_intake_context(
+def _load_product_intake_context(
     session: Session,
     *,
-    product_id: str,
-    draft: WorkflowDraft,
+    product: Product,
 ) -> dict[str, Any] | None:
-    intake = parse_workflow_intake(
-        schema_version=draft.intake_schema_version,
-        payload=draft.intake_json,
-    )
+    from productflow_backend.application.agent.product_intake import parse_product_intake
+
+    intake = parse_product_intake(product)
     if intake is None:
         return None
     asset_ids = list(intake.reference_asset_ids)
@@ -638,11 +567,11 @@ def _load_workflow_intake_context(
     )
     assets_by_id = {asset.id: asset for asset in assets}
     if set(assets_by_id) != set(asset_ids):
-        raise ConflictError("WorkflowDraft intake 引用了不存在的商品图片资产")
-    if any(asset.product_id != product_id for asset in assets):
-        raise ConflictError("WorkflowDraft intake 引用了其他商品的图片资产")
+        raise ConflictError("商品 intake 引用了不存在的商品图片资产")
+    if any(asset.product_id != product.id for asset in assets):
+        raise ConflictError("商品 intake 引用了其他商品的图片资产")
     if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
-        raise ConflictError("WorkflowDraft intake 引用了未通过核验的图片资产")
+        raise ConflictError("商品 intake 引用了未通过核验的图片资产")
     return workflow_intake_payload(intake)
 
 
@@ -1560,7 +1489,6 @@ def _require_product_conversation(conversation: AgentConversation) -> None:
     if (
         conversation.scope_type != AgentConversationScope.PRODUCT_WORKFLOW
         or conversation.product_id is None
-        or conversation.workflow_draft_id is None
     ):
         raise ConflictError("当前 Agent conversation 不是商品工作流作用域")
 

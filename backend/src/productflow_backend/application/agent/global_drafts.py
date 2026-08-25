@@ -91,34 +91,9 @@ def validate_global_agent_draft(
         )
         return artifact
 
-    target = get_agent_global_workflow_target(
-        session,
-        product_id=artifact.product_id or "",
-        workflow_draft_id=artifact.workflow_draft_id,
-    )
-    if target.scope_type != AgentConversationScope.PRODUCT_WORKFLOW:
-        raise ConflictError("全局 WorkflowDraft 目标必须属于商品工作区")
-    draft = _get_target_draft(
-        session,
-        product_id=artifact.product_id or "",
-        workflow_draft_id=artifact.workflow_draft_id or "",
-    )
-    current_version = draft.current_revision.version if draft.current_revision is not None else 0
-    if current_version != artifact.expected_draft_version:
-        raise ConflictError("目标 WorkflowDraft version 已变化，请重新读取目标上下文")
-    if artifact.workflow_payload is None:
-        raise BusinessValidationError("工作流 Draft 缺少 workflow_payload")
-    intake = parse_workflow_intake(
-        schema_version=draft.intake_schema_version,
-        payload=draft.intake_json,
-    )
-    validate_workflow_draft_for_confirmation(
-        session,
-        product_id=artifact.product_id or "",
-        artifact=artifact.workflow_payload,
-        required_delivery_spec=intake.delivery_spec if intake is not None else None,
-    )
-    return artifact
+    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def attach_agent_global_draft_artifact(

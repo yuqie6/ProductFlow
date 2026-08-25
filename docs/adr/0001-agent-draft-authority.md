@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Accepted。商品拓扑由 ADR 0008 / 0009 取代：创建写 live graph，Agent 用 ChangeSet，不再产出商品 WorkflowDraft。本 ADR 仍约束全局库整理 Draft、unknown 语义和业务权威在 PostgreSQL。
 
 ## 背景
 

@@ -67,7 +67,7 @@ def test_fidelity_checks_migration_upgrades_fresh_sqlite_and_enforces_outcomes(
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
-        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0092"
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0093"
         _insert_asset_fixture(connection)
         _insert_check(connection)
         with pytest.raises(sa.exc.IntegrityError):

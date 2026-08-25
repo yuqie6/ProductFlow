@@ -261,7 +261,7 @@ class AgentFinalizeProductIntakeResponse(BaseModel):
     accepted: bool
     intake_finalized: bool
     product_id: str
-    workflow_draft_id: str
+    workflow_draft_id: str | None = None
     reference_asset_ids: list[str]
     intake: dict[str, Any] | None = None
 
@@ -280,7 +280,7 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     product_conversation_id: str
     product_id: str
     product_name: str
-    workflow_draft_id: str
+    workflow_draft_id: str | None = None
     task_id: str | None
     intake_finalized: bool
     navigation_path: str

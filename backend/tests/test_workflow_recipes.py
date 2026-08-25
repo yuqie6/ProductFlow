@@ -16,6 +16,7 @@ from productflow_backend.application.agent.conversations import (
     reserve_agent_turn,
 )
 from productflow_backend.application.agent.sessions import new_agent_session
+from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
 from productflow_backend.application.product_workflow.graph_contracts import (
     CreateGroupOp,
@@ -680,36 +681,22 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
         finished_at=datetime.now(UTC),
     )
     payload = make_workflow_draft_payload(reference_asset_id=target.image_assets[0].id)
-    synced = attach_agent_workflow_draft_artifact(
-        db_session,
-        product_id=target.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-recipe-turn",
-        artifact_name="propose_workflow_draft",
-        artifact_step_id="recipe-artifact-step",
-        artifact_value=payload,
-    )
-    assert synced.workflow_draft_revision_id is not None
+    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
+        attach_agent_workflow_draft_artifact(
+            db_session,
+            product_id=target.id,
+            conversation_id=conversation.id,
+            projection_id=projection.id,
+            harness_turn_id="harness-recipe-turn",
+            artifact_name="propose_workflow_draft",
+            artifact_step_id="recipe-artifact-step",
+            artifact_value=payload,
+        )
     refreshed = db_session.get(WorkflowDraft, draft.id)
     assert refreshed is not None
     db_session.refresh(refreshed)
-    assert refreshed.current_revision is not None
-    assert refreshed.current_revision.version == 1
-    assert len(refreshed.revisions) == 1
-
-    repeated = attach_agent_workflow_draft_artifact(
-        db_session,
-        product_id=target.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-recipe-turn",
-        artifact_name="propose_workflow_draft",
-        artifact_step_id="recipe-artifact-step",
-        artifact_value=payload,
-    )
-    assert repeated.workflow_draft_revision_id == synced.workflow_draft_revision_id
-    assert len(refreshed.revisions) == 1
+    assert refreshed.current_revision is None
+    assert refreshed.revisions == []
 
 
 def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:

@@ -16,9 +16,10 @@ from productflow_backend.application.legacy_archives import (
 )
 from productflow_backend.application.product_workflow.graph_commands import create_empty_workflow_graph
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
+from productflow_backend.application.agent.product_workspaces import attach_agent_workspace_to_product
+from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.config import get_settings
-from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     LegacyCanvasAgentArchive,
@@ -281,88 +282,55 @@ def test_archive_agent_rebuild_creates_an_empty_idempotent_draft_without_touchin
         f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
         json=request,
     )
-    assert created.status_code == 201, created.text
-    body = created.json()
-    assert body["created"] is True
-    assert body["archive_kind"] == "workflow"
-    assert body["archive_id"] == workflow.id
-    assert body["target_product_id"] == product.id
-    assert body["draft"]["status"] == "collecting"
-    assert body["draft"]["current_version"] == 0
-    assert body["draft"]["current_revision"] is None
-    assert body["draft"]["revisions"] == []
-    assert body["draft"]["recipe_seed"] is None
-    assert body["draft"]["legacy_archive_seed"] == {
-        "id": body["draft"]["legacy_archive_seed"]["id"],
-        "workflow_draft_id": body["draft"]["id"],
-        "product_id": product.id,
-        "archive_kind": "workflow",
-        "archive_id": workflow.id,
-        "archive_title": workflow.source_title,
-        "archive_status": None,
-        "source_product_id": product.id,
-        "source_profile": workflow.source_profile,
-        "archive_schema_version": 1,
-        "payload_sha256": original_payload_hash,
-        "counts": {"nodes": 1, "edges": 0, "runs": 2, "node_runs": 3, "assets": 1},
-        "schema_version": 1,
-        "created_at": body["draft"]["legacy_archive_seed"]["created_at"],
-    }
-    assert body["conversation"]["workflow_draft_id"] == body["draft"]["id"]
-    assert body["conversation"]["status"] == "collecting"
+    assert created.status_code == 409, created.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in created.json()["detail"]
 
     db_session.expire_all()
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 1
-    assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 1
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftLegacyArchiveSeed)) == 1
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
+    assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftLegacyArchiveSeed)) == 0
     persisted_workflow = db_session.get(LegacyWorkflowArchive, workflow.id)
     assert persisted_workflow is not None
     assert persisted_workflow.payload_json == original_payload
     assert persisted_workflow.payload_sha256 == original_payload_hash
 
-    workbench = client.get(f"/api/v2/products/{product.id}/agent-workbench")
-    assert workbench.status_code == 200, workbench.text
-    assert workbench.json()["mode"] == "agent"
-    assert workbench.json()["conversation"]["id"] == body["conversation"]["id"]
-    assert workbench.json()["workflow_draft"]["id"] == body["draft"]["id"]
-    assert workbench.json()["graph"] is None
-
     repeated = client.post(
         f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
         json=request,
     )
-    assert repeated.status_code == 201, repeated.text
-    assert repeated.json()["created"] is False
-    assert repeated.json()["draft"]["id"] == body["draft"]["id"]
-    assert repeated.json()["conversation"]["id"] == body["conversation"]["id"]
+    assert repeated.status_code == 409, repeated.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in repeated.json()["detail"]
 
     conflicting = client.post(
         f"/api/v2/legacy-archives/canvas_agent_thread/{canvas.id}/agent-rebuilds",
         json=request,
     )
     assert conflicting.status_code == 409
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in conflicting.json()["detail"]
 
     foreign_product = client.post(
         f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
         json={"target_product_id": other_product.id, "idempotency_key": "foreign-product"},
     )
-    assert foreign_product.status_code == 400
-    assert "只能重建到原商品" in foreign_product.json()["detail"]
+    assert foreign_product.status_code == 409
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in foreign_product.json()["detail"]
 
     template_rebuild = client.post(
         f"/api/v2/legacy-archives/user_template/{template.id}/agent-rebuilds",
         json={"target_product_id": other_product.id, "idempotency_key": "template-on-other-product"},
     )
-    assert template_rebuild.status_code == 201, template_rebuild.text
-    assert template_rebuild.json()["archive_kind"] == "user_template"
-    assert template_rebuild.json()["target_product_id"] == other_product.id
+    assert template_rebuild.status_code == 409, template_rebuild.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in template_rebuild.json()["detail"]
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
 
 
 def test_archive_seeded_version_zero_draft_accepts_first_agent_revision(
     configured_env,
     db_session,
 ) -> None:
+    from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
+
     product, _, workflow, _, _ = _seed_archives(db_session)
     archived_payload = deepcopy(workflow.payload_json)
     client = TestClient(create_app())
@@ -371,54 +339,39 @@ def test_archive_seeded_version_zero_draft_accepts_first_agent_revision(
         f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
         json={"target_product_id": product.id, "idempotency_key": "archive-first-revision"},
     )
-    assert rebuilt.status_code == 201, rebuilt.text
+    assert rebuilt.status_code == 409, rebuilt.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in rebuilt.json()["detail"]
 
-    db_session.expire_all()
-    draft = append_workflow_draft_revision(
-        db_session,
-        product_id=product.id,
-        draft_id=rebuilt.json()["draft"]["id"],
-        expected_draft_version=0,
-        payload=make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id),
-        ready_for_confirmation=True,
-        source_turn_id="archive-agent-turn",
-        source_artifact_step_id="archive-agent-artifact",
-    )
-
-    assert draft.status.value == "awaiting_confirmation"
-    assert draft.current_revision is not None
-    assert draft.current_revision.version == 1
-    persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
-    assert persisted_archive is not None
-    assert persisted_archive.payload_json == archived_payload
+    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
+        append_workflow_draft_revision(
+            db_session,
+            product_id=product.id,
+            draft_id="missing",
+            expected_draft_version=0,
+            payload=make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id),
+            ready_for_confirmation=True,
+            source_turn_id="archive-agent-turn",
+            source_artifact_step_id="archive-agent-artifact",
+        )
 
     confirmed = client.post(
-        f"/api/v2/products/{product.id}/workflow-drafts/{draft.id}/confirm",
+        f"/api/v2/products/{product.id}/workflow-drafts/missing/confirm",
         json={"expected_draft_version": 1},
     )
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["status"] == "confirmed"
+    assert confirmed.status_code == 409, confirmed.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in confirmed.json()["detail"]
 
     persisted = client.post(
-        f"/api/v3/products/{product.id}/workflow-drafts/{draft.id}/graphs",
+        f"/api/v3/products/{product.id}/workflow-drafts/missing/graphs",
         json={"expected_draft_version": 1},
     )
-    assert persisted.status_code == 200, persisted.text
-    assert persisted.json()["created"] is True
-    assert persisted.json()["graph"]["schema_version"] == 3
-    assert persisted.json()["graph"]["source_draft_revision_id"] == draft.current_revision.id
-
-    replay = client.post(
-        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
-        json={"target_product_id": product.id, "idempotency_key": "archive-first-revision"},
-    )
-    assert replay.status_code == 201, replay.text
-    assert replay.json()["created"] is False
-    assert replay.json()["draft"]["id"] == draft.id
+    assert persisted.status_code == 409, persisted.text
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in persisted.json()["detail"]
 
     persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
     assert persisted_archive is not None
     assert persisted_archive.payload_json == archived_payload
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
 
 
 def test_archive_rebuild_conflicts_before_writing_when_target_has_live_v3_graph(
@@ -436,7 +389,7 @@ def test_archive_rebuild_conflicts_before_writing_when_target_has_live_v3_graph(
     )
 
     assert response.status_code == 409, response.text
-    assert "active schema-v3" in response.json()["detail"]
+    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in response.json()["detail"]
     db_session.expire_all()
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
@@ -474,14 +427,15 @@ def test_agent_archive_tools_are_product_scoped_sectioned_and_metadata_only(
     db_session.add(huge_archive)
     db_session.commit()
 
+    create_empty_workflow_graph(db_session, product_id=product.id)
+    workspace = attach_agent_workspace_to_product(
+        db_session,
+        product_id=product.id,
+        idempotency_key="agent-tool-scope",
+    )
+    conversation_id = workspace.conversation.id
     client = TestClient(create_app())
     _login(client)
-    rebuilt = client.post(
-        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
-        json={"target_product_id": product.id, "idempotency_key": "agent-tool-scope"},
-    )
-    assert rebuilt.status_code == 201, rebuilt.text
-    conversation_id = rebuilt.json()["conversation"]["id"]
 
     internal_token = "agent-internal-token-with-at-least-32-characters"
     monkeypatch.setenv("AGENT_SERVICE_INTERNAL_TOKEN", internal_token)
@@ -491,8 +445,8 @@ def test_agent_archive_tools_are_product_scoped_sectioned_and_metadata_only(
 
     context = client.get(f"{base}/product-context", headers=headers)
     assert context.status_code == 200, context.text
-    assert context.json()["legacy_archive_seed"]["archive_id"] == workflow.id
-    assert "payload" not in context.json()["legacy_archive_seed"]
+    assert context.json()["legacy_archive_seed"] is None
+    assert context.json()["workflow_draft"] is None
 
     listed = client.get(
         f"{base}/legacy-archives",

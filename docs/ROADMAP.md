@@ -14,7 +14,7 @@
 
 ### Agent 画布沙箱
 
-已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新。当前合同见 CONTEXT / PRD / ARCHITECTURE。剩余见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) 与 [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md) 的 Goal 托管环。
+已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新、商品路径不再写入 WorkflowDraft（intake 在 Product 上）。当前合同见 CONTEXT / PRD / ARCHITECTURE。剩余见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) 与 [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md) 的 Goal 托管环。
 
 Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）未做。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收。
 

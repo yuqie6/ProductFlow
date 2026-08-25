@@ -373,8 +373,8 @@ def _workspace_summary(creation: Any, global_conversation_id: str) -> dict[str, 
         "product_id": creation.product.id,
         "product_name": creation.product.name,
         "workflow_draft_id": creation.conversation.workflow_draft_id,
-        "task_id": creation.onboarding_task_id,
-        "intake_finalized": creation.workflow_draft.intake_json is not None,
+        "task_id": None,
+        "intake_finalized": creation.intake_finalized,
     }
 
 

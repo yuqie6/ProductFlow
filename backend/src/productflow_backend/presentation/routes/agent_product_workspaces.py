@@ -25,7 +25,6 @@ from productflow_backend.presentation.schemas.products import (
     serialize_canonical_product_detail,
     serialize_product_image_asset,
 )
-from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_draft
 from productflow_backend.presentation.upload_validation import (
     read_validated_image_upload,
     validate_reference_image_count,
@@ -115,10 +114,10 @@ async def create_agent_product_workspace_endpoint(
         agent_session_id=agent_session_id,
     )
     return AgentProductWorkspaceCreateResponse(
-        task_id=creation.onboarding_task_id,
+        task_id=None,
         product=serialize_canonical_product_detail(creation.product),
         created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
-        workflow_draft=serialize_workflow_draft(creation.workflow_draft),
+        workflow_draft=None,
         conversation=serialize_agent_conversation(creation.conversation),
     )
 
@@ -143,12 +142,12 @@ def _serialize_workspace_snapshot(
     creation: AgentProductWorkspaceCreation,
 ) -> AgentProductWorkspaceSnapshotResponse:
     return AgentProductWorkspaceSnapshotResponse(
-        task_id=creation.onboarding_task_id,
+        task_id=None,
         created=creation.created,
-        intake_finalized=creation.workflow_draft.intake_json is not None,
+        intake_finalized=creation.intake_finalized,
         product=serialize_canonical_product_detail(creation.product),
         created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
-        workflow_draft=serialize_workflow_draft(creation.workflow_draft),
+        workflow_draft=None,
         conversation=serialize_agent_conversation(creation.conversation),
     )
 

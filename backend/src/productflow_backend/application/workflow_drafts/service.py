@@ -5,11 +5,9 @@ import json
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.product_intake import parse_workflow_intake
-from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
     DeliverySpec,
@@ -18,11 +16,10 @@ from productflow_backend.application.workflow_drafts.contracts import (
     parse_workflow_draft_payload,
     workflow_draft_payload_hash,
 )
-from productflow_backend.domain.enums import MediaVerificationStatus, ProductFactStatus, WorkflowDraftStatus
+from productflow_backend.domain.enums import MediaVerificationStatus, ProductFactStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     Product,
-    ProductFactSetVersion,
     ProductImageAsset,
     VisualSystem,
     VisualSystemVersion,
@@ -32,6 +29,8 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
 )
+
+PRODUCT_WORKFLOW_DRAFT_RETIRED = "商品路径不再使用 WorkflowDraft"
 
 
 def workflow_draft_query():
@@ -69,38 +68,8 @@ def create_workflow_draft(
     source_turn_id: str | None = None,
     source_artifact_step_id: str | None = None,
 ) -> WorkflowDraft:
-    artifact = parse_workflow_draft_payload_or_raise(payload)
-    _validate_artifact_origin(source_turn_id, source_artifact_step_id)
-    try:
-        _get_product_or_raise(session, product_id, for_update=True)
-        draft = WorkflowDraft(
-            product_id=product_id,
-            status=(
-                WorkflowDraftStatus.AWAITING_CONFIRMATION
-                if ready_for_confirmation
-                else WorkflowDraftStatus.COLLECTING
-            ),
-        )
-        session.add(draft)
-        session.flush()
-        revision = WorkflowDraftRevision(
-            draft_id=draft.id,
-            version=1,
-            schema_version=artifact.schema_version,
-            payload_json=artifact.model_dump(mode="json"),
-            payload_hash=workflow_draft_payload_hash(artifact),
-            source_turn_id=_normalize_optional_origin(source_turn_id),
-            source_artifact_step_id=_normalize_optional_origin(source_artifact_step_id),
-        )
-        session.add(revision)
-        session.flush()
-        draft.current_revision_id = revision.id
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    session.expire_all()
-    return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft.id)
+    del session, product_id, payload, ready_for_confirmation, source_turn_id, source_artifact_step_id
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def append_workflow_draft_revision(
@@ -115,84 +84,9 @@ def append_workflow_draft_revision(
     source_artifact_step_id: str | None = None,
     commit: bool = True,
 ) -> WorkflowDraft:
-    artifact = parse_workflow_draft_payload_or_raise(payload)
-    payload_json = artifact.model_dump(mode="json")
-    payload_hash = workflow_draft_payload_hash(artifact)
-    _validate_artifact_origin(source_turn_id, source_artifact_step_id)
-    normalized_turn_id = _normalize_optional_origin(source_turn_id)
-    normalized_step_id = _normalize_optional_origin(source_artifact_step_id)
-    try:
-        _get_product_or_raise(session, product_id, for_update=True)
-        draft = _get_draft_for_update(session, product_id=product_id, draft_id=draft_id)
-        existing_origin = _revision_for_artifact_origin(
-            session,
-            draft_id=draft.id,
-            source_turn_id=normalized_turn_id,
-            source_artifact_step_id=normalized_step_id,
-        )
-        if existing_origin is not None:
-            if existing_origin.payload_hash != payload_hash:
-                raise ConflictError("同一 Agent artifact 来源不能写入不同 WorkflowDraft 内容")
-            if commit:
-                session.commit()
-            return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
-
-        current_revision = draft.current_revision
-        intake = parse_workflow_intake(
-            schema_version=draft.intake_schema_version,
-            payload=draft.intake_json,
-        )
-        if current_revision is None:
-            if expected_draft_version != 0:
-                raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
-        elif current_revision.version != expected_draft_version:
-            raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
-        if intake is not None:
-            _validate_delivery_spec_snapshot(
-                artifact,
-                required_delivery_spec=intake.delivery_spec,
-            )
-        if current_revision is None:
-            if draft.status != WorkflowDraftStatus.COLLECTING or (
-                draft.recipe_seed is None and draft.legacy_archive_seed is None and intake is None
-            ):
-                raise ConflictError(
-                    "只有 collecting recipe seed、legacy archive seed 或 intake Draft "
-                    "可以从 version 0 追加首次 revision"
-                )
-            next_version = 1
-        else:
-            next_version = current_revision.version + 1
-        if draft.status in {WorkflowDraftStatus.CANCELLED, WorkflowDraftStatus.MATERIALIZING}:
-            raise ConflictError("当前 WorkflowDraft 状态不允许追加 revision")
-
-        revision = WorkflowDraftRevision(
-            draft_id=draft.id,
-            version=next_version,
-            schema_version=artifact.schema_version,
-            payload_json=payload_json,
-            payload_hash=payload_hash,
-            source_turn_id=normalized_turn_id,
-            source_artifact_step_id=normalized_step_id,
-        )
-        session.add(revision)
-        session.flush()
-        draft.current_revision_id = revision.id
-        draft.status = (
-            WorkflowDraftStatus.AWAITING_CONFIRMATION
-            if ready_for_confirmation
-            else WorkflowDraftStatus.COLLECTING
-        )
-        draft.updated_at = now_utc()
-        if commit:
-            session.commit()
-    except Exception:
-        if commit:
-            session.rollback()
-        raise
-    if commit:
-        session.expire_all()
-    return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
+    del session, product_id, draft_id, expected_draft_version, payload
+    del ready_for_confirmation, source_turn_id, source_artifact_step_id, commit
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def confirm_workflow_draft_revision(
@@ -203,84 +97,8 @@ def confirm_workflow_draft_revision(
     expected_draft_version: int,
     commit: bool = True,
 ) -> WorkflowDraft:
-    try:
-        product = _get_product_or_raise(session, product_id, for_update=True)
-        draft = _get_draft_for_update(session, product_id=product_id, draft_id=draft_id)
-        revision = _current_revision_or_raise(draft)
-        if revision.version != expected_draft_version:
-            raise ConflictError("WorkflowDraft version 已变化，请确认最新 revision")
-        if revision.confirmed_at is not None:
-            if revision.fact_set_version is None:
-                raise ConflictError("已确认 WorkflowDraft 缺少商品事实版本")
-            if revision.visual_system_version is None:
-                raise ConflictError("已确认 WorkflowDraft 缺少视觉体系版本")
-            if commit:
-                session.commit()
-            return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
-        if draft.status != WorkflowDraftStatus.AWAITING_CONFIRMATION:
-            raise ConflictError("WorkflowDraft 尚未进入待确认状态")
-
-        artifact = parse_workflow_draft_payload_or_raise(revision.payload_json)
-        if workflow_draft_payload_hash(artifact) != revision.payload_hash:
-            raise ConflictError("WorkflowDraft revision payload hash 不一致")
-        intake = parse_workflow_intake(
-            schema_version=draft.intake_schema_version,
-            payload=draft.intake_json,
-        )
-        validate_workflow_draft_for_confirmation(
-            session,
-            product_id=product_id,
-            artifact=artifact,
-            required_delivery_spec=intake.delivery_spec if intake is not None else None,
-        )
-        visual_system_version = _resolve_visual_system_version(
-            session,
-            revision=revision,
-            artifact=artifact,
-        )
-
-        next_fact_version = (
-            session.scalar(
-                select(func.max(ProductFactSetVersion.version)).where(
-                    ProductFactSetVersion.product_id == product_id
-                )
-            )
-            or 0
-        ) + 1
-        fact_payload = {
-            "schema_version": 1,
-            "source_draft_revision_id": revision.id,
-            "facts": [
-                {
-                    **fact.model_dump(mode="json"),
-                    "status": ProductFactStatus.CONFIRMED.value,
-                }
-                for fact in artifact.facts
-            ],
-        }
-        fact_set = ProductFactSetVersion(
-            product_id=product_id,
-            version=next_fact_version,
-            payload_json=fact_payload,
-            payload_hash=_json_hash(fact_payload),
-            source_draft_revision_id=revision.id,
-        )
-        session.add(fact_set)
-        session.flush()
-        revision.visual_system_version_id = visual_system_version.id
-        revision.confirmed_at = now_utc()
-        draft.status = WorkflowDraftStatus.CONFIRMED
-        draft.updated_at = now_utc()
-        product.current_fact_set_version_id = fact_set.id
-        if commit:
-            session.commit()
-    except Exception:
-        if commit:
-            session.rollback()
-        raise
-    if commit:
-        session.expire_all()
-    return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
+    del session, product_id, draft_id, expected_draft_version, commit
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def parse_workflow_draft_payload_or_raise(
@@ -519,6 +337,7 @@ def _json_hash(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "PRODUCT_WORKFLOW_DRAFT_RETIRED",
     "append_workflow_draft_revision",
     "confirm_workflow_draft_revision",
     "create_workflow_draft",

@@ -5,7 +5,7 @@
 - 文档状态：Draft
 - 目标合同：[`docs/adr/0009-agent-canvas-sandbox.md`](../adr/0009-agent-canvas-sandbox.md)
 - 已接受图权威：[`docs/adr/0008-free-canvas-agent-graph-authority.md`](../adr/0008-free-canvas-agent-graph-authority.md)
-- 第 1～4 刀已落地；当前事实写在 `CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/USER_GUIDE.md`。本文保留 Goal 托管环与未做的对话壳。
+- 第 1～4 刀已落地；商品路径不再写入 WorkflowDraft。当前事实写在 `CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/USER_GUIDE.md`。本文保留 Goal 托管环与未做的对话壳。
 - Agent 对话壳（回访侧栏收起、手机对话 sheet、chip 裁切、首屏 spinner）不在本文。画布手感以 [`docs/specs/workbench.md`](workbench.md) 为准，不可往后推。
 
 ## 2. 相对当前产品多出来的东西

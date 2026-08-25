@@ -14,7 +14,6 @@ from productflow_backend.application.agent.conversations import (
     get_agent_conversation_by_id_or_raise,
     get_agent_conversation_or_raise,
 )
-from productflow_backend.application.agent.sessions import new_agent_session
 from productflow_backend.application.legacy_archives import (
     LegacyArchiveKind,
     LegacyArchiveListItem,
@@ -22,9 +21,10 @@ from productflow_backend.application.legacy_archives import (
     list_legacy_archives,
     list_legacy_workflow_archive_assets,
 )
-from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
-from productflow_backend.application.workflow_drafts.service import get_workflow_draft_or_raise
-from productflow_backend.domain.enums import AgentConversationStatus, WorkflowDraftStatus
+from productflow_backend.application.workflow_drafts.service import (
+    PRODUCT_WORKFLOW_DRAFT_RETIRED,
+    get_workflow_draft_or_raise,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -34,7 +34,6 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     WorkflowDraft,
     WorkflowDraftLegacyArchiveSeed,
-    new_id,
 )
 
 AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT = 20
@@ -123,11 +122,11 @@ def create_legacy_archive_rebuild(
     target_product_id: str,
     idempotency_key: str,
 ) -> LegacyArchiveRebuildResult:
-    normalized_key = _normalize_idempotency_key(idempotency_key)
+    _normalize_idempotency_key(idempotency_key)
     normalized_product_id = target_product_id.strip()
     if not normalized_product_id:
         raise BusinessValidationError("目标商品不能为空")
-    request_hash = _request_hash(
+    _request_hash(
         kind=kind,
         archive_id=archive_id,
         target_product_id=normalized_product_id,
@@ -136,74 +135,13 @@ def create_legacy_archive_rebuild(
         product = session.scalar(select(Product).where(Product.id == normalized_product_id).with_for_update())
         if product is None:
             raise NotFoundError("目标商品不存在")
-        existing = _seed_by_idempotency_key(
-            session,
-            product_id=normalized_product_id,
-            idempotency_key=normalized_key,
-        )
-        if existing is not None:
-            if existing.request_hash != request_hash:
-                raise ConflictError("相同 idempotency key 不能重建不同的旧归档")
-            session.commit()
-            return _load_rebuild_result(session, existing.id, created=False)
-
-        detail = get_legacy_archive_detail(
-            session,
-            kind=kind,
-            archive_id=archive_id,
-            include_assets=False,
-        )
-        if detail.item.product_id is not None and detail.item.product_id != normalized_product_id:
-            raise BusinessValidationError("旧工作流或旧 Agent 对话只能重建到原商品")
-        if get_active_workflow_graph(session, product_id=normalized_product_id) is not None:
-            raise ConflictError("商品已有 active schema-v3 工作流，不能从旧归档创建 WorkflowDraft")
-
-        draft = WorkflowDraft(
-            product_id=normalized_product_id,
-            status=WorkflowDraftStatus.COLLECTING,
-        )
-        session.add(draft)
-        session.flush()
-        seed = WorkflowDraftLegacyArchiveSeed(
-            workflow_draft_id=draft.id,
-            product_id=normalized_product_id,
-            workflow_archive_id=archive_id if kind == "workflow" else None,
-            canvas_agent_archive_id=archive_id if kind == "canvas_agent_thread" else None,
-            user_template_archive_id=archive_id if kind == "user_template" else None,
-            schema_version=1,
-            idempotency_key=normalized_key,
-            request_hash=request_hash,
-        )
-        conversation_id = new_id()
-        agent_session = new_agent_session(title=detail.item.title)
-        session.add(agent_session)
-        session.flush()
-        conversation = AgentConversation(
-            id=conversation_id,
-            session_id=agent_session.id,
-            product_id=normalized_product_id,
-            workflow_draft_id=draft.id,
-            harness_run_id=conversation_id,
-            status=AgentConversationStatus.COLLECTING,
-        )
-        session.add_all([seed, conversation])
-        session.commit()
+        raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
     except IntegrityError:
         session.rollback()
-        existing = _seed_by_idempotency_key(
-            session,
-            product_id=normalized_product_id,
-            idempotency_key=normalized_key,
-        )
-        if existing is not None:
-            if existing.request_hash != request_hash:
-                raise ConflictError("相同 idempotency key 不能重建不同的旧归档") from None
-            return _load_rebuild_result(session, existing.id, created=False)
         raise
     except Exception:
         session.rollback()
         raise
-    return _load_rebuild_result(session, seed.id, created=True)
 
 
 def legacy_archive_seed_summary(seed: WorkflowDraftLegacyArchiveSeed) -> dict[str, Any]:

@@ -8,20 +8,14 @@
 import type { AgentWorkbenchBootstrap, GraphProjection } from "../../../lib/types";
 
 export type ProductWorkbenchRouteInput = {
-  workflow_draft: {
-    intake: AgentWorkbenchBootstrap["workflow_draft"]["intake"];
-    current_revision: { id: string } | null;
-    recipe_seed: AgentWorkbenchBootstrap["workflow_draft"]["recipe_seed"];
-    legacy_archive_seed: AgentWorkbenchBootstrap["workflow_draft"]["legacy_archive_seed"];
-  };
+  conversation?: { id: string };
 };
 
-export type ProductWorkbenchRouteTarget = "agent" | "agent_intake";
+export type ProductWorkbenchRouteTarget = "agent";
 
 export type ProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput = AgentWorkbenchBootstrap> =
   | { kind: "loading" }
   | { kind: "error"; error: unknown }
-  | { kind: "intake"; bootstrap: TAgent }
   | { kind: "agent"; bootstrap: TAgent }
   | { kind: "graph"; graph: GraphProjection };
 
@@ -92,9 +86,6 @@ export function resolveProductWorkbenchSurface<TAgent extends ProductWorkbenchRo
     return { kind: "error", error: input.agentError };
   }
   if (input.agent) {
-    if (productWorkbenchRouteTarget(input.agent) === "agent_intake" && !input.graph) {
-      return { kind: "intake", bootstrap: input.agent };
-    }
     return { kind: "agent", bootstrap: input.agent };
   }
   if (input.graph) {

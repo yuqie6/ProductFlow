@@ -15,13 +15,11 @@ from productflow_backend.application.legacy_retirement.freeze import (
     get_legacy_v1_write_freeze_state,
     set_legacy_v1_write_freeze_state,
 )
-from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import (
-    confirm_workflow_draft_revision,
-    create_workflow_draft,
-)
+from productflow_backend.application.workflow_drafts.service import create_workflow_draft
 from productflow_backend.commands.manage_legacy_v1_freeze import main as freeze_command_main
 from productflow_backend.domain.enums import GraphRunScope
 from productflow_backend.domain.errors import ConflictError
@@ -66,36 +64,34 @@ def test_draft_graph_persist_and_run_remain_available_during_legacy_freeze(db_se
         source_note=None,
         image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
     )
-    draft = create_workflow_draft(
+    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
+        create_workflow_draft(
+            db_session,
+            product_id=product.id,
+            payload=make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id),
+            ready_for_confirmation=True,
+        )
+    created = create_product_with_direct_graph(
         db_session,
-        product_id=product.id,
-        payload=make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id),
-        ready_for_confirmation=True,
-    )
-    confirm_workflow_draft_revision(
-        db_session,
-        product_id=product.id,
-        draft_id=draft.id,
-        expected_draft_version=1,
-    )
-    persisted = persist_confirmed_draft_graph(
-        db_session,
-        product_id=product.id,
-        draft_id=draft.id,
-        expected_draft_version=1,
+        name="冻结期间直接建图",
+        category="工具",
+        price="199",
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
     )
     queue = Mock()
 
     submission = submit_graph_run(
         db_session,
-        product_id=product.id,
-        graph_id=persisted.graph.id,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
         scope=GraphRunScope.GRAPH,
         enqueue=queue,
     )
 
     assert submission.created is True
-    assert persisted.graph.schema_version == 3
+    assert created.graph.schema_version == 3
     queue.assert_called_once_with(submission.run.id)
 
 

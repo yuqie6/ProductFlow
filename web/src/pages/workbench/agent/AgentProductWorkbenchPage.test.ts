@@ -170,6 +170,7 @@ describe("Agent workbench draft review", () => {
       draft("ready", currentRevision),
       { source_draft_revision_id: currentRevision.id },
     )).toBeNull();
+    expect(selectReviewableWorkflowRevision(null, null)).toBeNull();
   });
 });
 

@@ -342,6 +342,7 @@ export interface CanonicalProductDetail {
   price: string | null;
   source_note: string | null;
   cover_image_asset_id: string | null;
+  intake?: WorkflowIntakeV1 | null;
   created_at: string;
   updated_at: string;
 }
@@ -1431,7 +1432,7 @@ export interface AgentProductWorkspaceCreateResponse {
   task_id: string | null;
   product: CanonicalProductDetail;
   created_assets: ProductImageAsset[];
-  workflow_draft: WorkflowDraft;
+  workflow_draft: WorkflowDraft | null;
   conversation: AgentConversation;
 }
 
@@ -1444,7 +1445,7 @@ export interface AgentWorkbenchBootstrap {
   mode: "agent";
   product: CanonicalProductDetail;
   conversation: AgentConversation;
-  workflow_draft: WorkflowDraft;
+  workflow_draft: WorkflowDraft | null;
   graph: GraphProjection | null;
   latest_workflow_revision: number;
 }

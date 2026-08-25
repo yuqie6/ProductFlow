@@ -55,17 +55,7 @@ Common follow-up questions cover:
 
 Multi-node edits preview on the canvas and write into the live graph on confirm. Closing the conversation does not block add, connect, run, or undo.
 
-If a WorkflowDraft revision is still reviewable, the confirmation view summarizes:
-
-- Product facts and conflicts.
-- Image types and quantities.
-- Shared visual system.
-- Per-type or per-image goals and prompts.
-- Reference bindings.
-- Aspect ratio, resolution, quality, text policy, and delivery specifications.
-- Planned folders, nodes, and edges.
-
-Confirmation writes that revision into the workflow graph if the product has no live graph yet. When a live graph already exists, graph edits go through canvas proposals; a WorkflowDraft cannot replace it.
+Graph confirmation uses canvas proposals. The product path no longer confirms a WorkflowDraft.
 
 ### 2.5 Create the Canvas Directly
 
@@ -278,7 +268,7 @@ The Agent may propose a library-organization Draft. Names, folders, tags, and ar
 
 `/history` provides read-only browse, filter, download, and export for retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification; missing and pending media remain visible as metadata.
 
-“Rebuild with Agent” creates a WorkflowDraft and AgentConversation seeded from history for the original or selected target product. The user still reviews Agent questions and the structured Draft and confirms it explicitly. The action does not restore the old canvas, template application, or executor.
+“Rebuild with Agent” no longer inserts a WorkflowDraft. A product with a live graph cannot be overwritten from a legacy archive.
 
 ## 12. Troubleshooting
 
@@ -288,7 +278,7 @@ Check that a product name was entered. Upload references in the workbench compos
 
 ### The Agent Replied but No Workflow Appeared
 
-Check whether the Turn requires input or awaits confirmation. Answer the question and confirm the latest WorkflowDraft revision so the workbench can persist the graph.
+Check whether the Turn requires input. Answer the question and continue. Graph edits use canvas ChangeSets / proposals, not WorkflowDraft confirmation.
 
 ### A Reference Node Is Empty
 

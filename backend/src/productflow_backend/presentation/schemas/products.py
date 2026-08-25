@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from productflow_backend.application.agent.product_intake import WorkflowIntakeV1, parse_product_intake
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.product_images.queries import (
     GalleryAssetRecord,
@@ -192,6 +193,7 @@ class CanonicalProductDetailResponse(BaseModel):
     price: Decimal | None = None
     source_note: str | None = None
     cover_image_asset_id: str | None = None
+    intake: WorkflowIntakeV1 | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -370,6 +372,7 @@ def serialize_canonical_product_detail(product: Product) -> CanonicalProductDeta
         price=product.price,
         source_note=product.source_note,
         cover_image_asset_id=product.cover_image_asset_id,
+        intake=parse_product_intake(product),
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

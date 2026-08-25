@@ -27,7 +27,7 @@ class AgentWorkbenchBootstrap:
     mode: Literal["agent"]
     product: Product
     conversation: AgentConversation
-    workflow_draft: WorkflowDraft
+    workflow_draft: WorkflowDraft | None
     graph: GraphProjection | None
     latest_workflow_revision: int
 
@@ -69,14 +69,14 @@ def get_agent_workbench_bootstrap(
             raise ConflictError("当前 Agent Session 没有这个商品的工作区")
         raise ConflictError("商品还没有 Agent 工作区")
 
-    draft = session.scalar(
-        workflow_draft_query().where(
-            WorkflowDraft.id == conversation.workflow_draft_id,
-            WorkflowDraft.product_id == product_id,
+    draft = None
+    if conversation.workflow_draft_id is not None:
+        draft = session.scalar(
+            workflow_draft_query().where(
+                WorkflowDraft.id == conversation.workflow_draft_id,
+                WorkflowDraft.product_id == product_id,
+            )
         )
-    )
-    if draft is None:
-        raise ConflictError("Agent conversation 关联的 WorkflowDraft 不可用")
     graph_row = get_active_workflow_graph(session, product_id=product_id)
     graph = project_workflow_graph(session, graph_row) if graph_row is not None else None
     return AgentWorkbenchBootstrap(

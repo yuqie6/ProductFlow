@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted；实现未完成。落地切片见 [`docs/specs/agent-canvas-sandbox.md`](../specs/agent-canvas-sandbox.md) 与 [`docs/ROADMAP.md`](../ROADMAP.md)。当前创建路径、onboarding Task 和自动开场 Turn 仍以代码为准。
+Accepted；第 1～4 刀与商品路径 WorkflowDraft 退休已落地。当前事实见 `CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`。剩余 Goal 托管环见 [`docs/specs/agent-canvas-sandbox.md`](../specs/agent-canvas-sandbox.md) 与 [`docs/ROADMAP.md`](../ROADMAP.md)。
 
 Decision owner：ProductFlow repository owner。
 

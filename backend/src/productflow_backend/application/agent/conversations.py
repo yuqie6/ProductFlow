@@ -11,7 +11,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.product_intake import parse_workflow_intake
 from productflow_backend.application.agent.sessions import auto_name_agent_session, new_agent_session
 from productflow_backend.application.agent.tasks import (
     create_page_context_snapshot,
@@ -19,14 +18,7 @@ from productflow_backend.application.agent.tasks import (
     normalize_page_context,
     update_agent_task_from_turn,
 )
-from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.service import (
-    append_workflow_draft_revision,
-    parse_workflow_draft_payload_or_raise,
-    validate_workflow_draft_for_confirmation,
-    workflow_draft_query,
-)
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
@@ -46,7 +38,6 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowDraft,
     WorkflowDraftLegacyArchiveSeed,
     WorkflowDraftRecipeSeed,
-    WorkflowDraftRevision,
     new_id,
 )
 
@@ -447,11 +438,6 @@ def reserve_agent_turn(
     )
 
     if conversation.scope_type == PRODUCT_WORKFLOW_SCOPE:
-        draft = session.scalar(
-            workflow_draft_query().where(WorkflowDraft.id == conversation.workflow_draft_id)
-        )
-        if draft is None:
-            raise ConflictError("Agent conversation 绑定的 WorkflowDraft 不存在")
         if product_id is None:
             raise ConflictError("商品工作流 Agent conversation 缺少商品作用域")
         _validate_product_assets(
@@ -710,81 +696,11 @@ def attach_agent_workflow_draft_artifact(
     artifact_value: dict[str, Any],
     commit: bool = True,
 ) -> AgentTurnProjection:
-    if artifact_name != WORKFLOW_DRAFT_ARTIFACT_NAME:
-        raise BusinessValidationError("Agent 返回了不受支持的 required artifact")
-    normalized_step_id = artifact_step_id.strip()
-    if not normalized_step_id or len(normalized_step_id) > 120:
-        raise BusinessValidationError("Agent artifact step ID 无效")
-    projection = _get_agent_turn_for_update(
-        session,
-        product_id=product_id,
-        conversation_id=conversation_id,
-        projection_id=projection_id,
-    )
-    normalized_turn_id = _validate_harness_turn_binding(projection, harness_turn_id)
-    if projection.status != AgentTurnStatus.AWAITING_CONFIRMATION:
-        raise ConflictError("Agent Turn 尚未进入待确认状态")
-    if projection.artifact_step_id is not None and projection.artifact_step_id != normalized_step_id:
-        raise ConflictError("Agent turn projection 已绑定其他 artifact step")
-    conversation = projection.conversation
-    if conversation.product_id is not None and get_active_workflow_graph(
-        session, product_id=conversation.product_id
-    ) is not None:
-        raise ConflictError(LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT)
-    draft = conversation.workflow_draft
-    expected_version = draft.current_revision.version if draft.current_revision is not None else 0
-    draft_id = draft.id
-    artifact = parse_workflow_draft_payload_or_raise(artifact_value)
-    intake = parse_workflow_intake(
-        schema_version=draft.intake_schema_version,
-        payload=draft.intake_json,
-    )
-    validate_workflow_draft_for_confirmation(
-        session,
-        product_id=product_id,
-        artifact=artifact,
-        required_delivery_spec=intake.delivery_spec if intake is not None else None,
-    )
-    append_workflow_draft_revision(
-        session,
-        product_id=product_id,
-        draft_id=draft_id,
-        expected_draft_version=expected_version,
-        payload=artifact,
-        ready_for_confirmation=True,
-        source_turn_id=normalized_turn_id,
-        source_artifact_step_id=normalized_step_id,
-        commit=commit,
-    )
+    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 
-    revision = session.scalar(
-        select(WorkflowDraftRevision).where(
-            WorkflowDraftRevision.draft_id == draft_id,
-            WorkflowDraftRevision.source_turn_id == normalized_turn_id,
-            WorkflowDraftRevision.source_artifact_step_id == normalized_step_id,
-        )
-    )
-    if revision is None:
-        raise ConflictError("Agent artifact 未能同步为 WorkflowDraft revision")
-    projection = _get_agent_turn_for_update(
-        session,
-        product_id=product_id,
-        conversation_id=conversation_id,
-        projection_id=projection_id,
-    )
-    if projection.workflow_draft_revision_id not in {None, revision.id}:
-        raise ConflictError("Agent turn projection 已关联其他 WorkflowDraft revision")
-    projection.artifact_name = artifact_name
-    projection.artifact_step_id = normalized_step_id
-    projection.workflow_draft_revision_id = revision.id
-    projection.sync_error = None
-    projection.updated_at = now_utc()
-    projection.conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
-    projection.conversation.updated_at = now_utc()
-    if commit:
-        session.commit()
-        session.refresh(projection)
-    return projection
+    del session, product_id, conversation_id, projection_id, harness_turn_id
+    del artifact_name, artifact_step_id, artifact_value, commit
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 def mark_agent_conversation_completed_for_draft(

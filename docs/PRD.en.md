@@ -70,7 +70,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - `ProductImageAsset`: product-scoped image identity, origin, directory, and derivation.
 - `MediaLibraryAsset`: global-library image identity, provenance snapshot, organization, and archive state.
 - `WorkflowMediaLibraryAsset`: a usage association from a global asset to one workflow sub-library.
-- `WorkflowDraft` / `WorkflowDraftRevision`: confirmable Agent workflow proposal.
+- Product intake: image types, quantities, and reference asset ids on the Product. The product path no longer inserts `WorkflowDraft`.
 - `WorkflowGraph`: the current schema-v3 DAG.
 - `WorkflowGraphNode` / `WorkflowGraphEdge` / `WorkflowGraphGroup`: canvas structure.
 - `WorkflowGraphRun` / `WorkflowGraphNodeRun` / `WorkflowGraphArtifact`: execution state and artifacts.

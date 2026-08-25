@@ -14,7 +14,7 @@ After that proof, delete `specs/workbench.md` and keep user-facing sentences in 
 
 ### Agent canvas sandbox
 
-Landed: Turn run identity, create as live graph, canvas vs global session ownership, and `sameRuntimeScope` ignoring prompt / live-graph refreshes. Current contract: CONTEXT / PRD / ARCHITECTURE. Remaining: the Goal loop in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) and [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md).
+Landed: Turn run identity, create as live graph, canvas vs global session ownership, `sameRuntimeScope` ignoring prompt / live-graph refreshes, and no product-path WorkflowDraft writes (intake lives on Product). Current contract: CONTEXT / PRD / ARCHITECTURE. Remaining: the Goal loop in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) and [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md).
 
 The Goal loop (run graph → inspect → edit canvas → run again) is unbuilt. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above.
 
