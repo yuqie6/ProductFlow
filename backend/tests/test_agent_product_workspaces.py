@@ -28,29 +28,36 @@ from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.sessions import create_agent_session, list_agent_sessions
-from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
-from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
-from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.agent.tools import (
     finalize_agent_product_intake,
     get_agent_contract,
     get_agent_product_context,
 )
 from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
+from productflow_backend.application.product_workflow.graph_commands import (
+    apply_graph_change_set,
+    get_active_workflow_graph,
+    load_applied_graph,
+)
+from productflow_backend.application.product_workflow.graph_contracts import CreateNodeOp, WorkflowChangeSet
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import add_canonical_product_images
-from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, GraphNodeType
+from productflow_backend.domain.enums import (
+    AgentConversationScope,
+    GraphActorType,
+    GraphNodeType,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentSession,
-    AgentTask,
     AgentTurnProjection,
     MediaObject,
     Product,
     ProductImageAsset,
     WorkflowDraft,
     WorkflowDraftRevision,
-    WorkflowGraphEdge,
     WorkflowGraphNode,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -573,6 +580,13 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
         name="待确认商品",
         idempotency_key="draft-before-intake",
     )
+    birth_graph = get_active_workflow_graph(db_session, product_id=draft_creation.product.id)
+    assert birth_graph is not None
+    birth_nodes = list(
+        db_session.scalars(select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == birth_graph.id))
+    )
+    assert [node.node_type for node in birth_nodes] == [GraphNodeType.PRODUCT_SOURCE]
+    birth_source_id = birth_nodes[0].id
     selection = _selection(("hero", 2), ("scene", 3))
     uploads = _workspace_uploads()
 
@@ -597,6 +611,22 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
     assert finalized.conversation.workflow_draft_id is None
     assert finalized.conversation.intake_idempotency_key == "intake-finalize-1"
     assert len(finalized.conversation.intake_request_hash or "") == 64
+    live_graph = get_active_workflow_graph(db_session, product_id=finalized.product.id)
+    assert live_graph is not None
+    graph_nodes = list(
+        db_session.scalars(select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == live_graph.id))
+    )
+    node_types = {node.node_type for node in graph_nodes}
+    assert GraphNodeType.PRODUCT_SOURCE in node_types
+    assert GraphNodeType.VISUAL_SYSTEM in node_types
+    assert GraphNodeType.IMAGE_ASSET in node_types
+    assert GraphNodeType.CREATIVE_BRIEF in node_types
+    assert GraphNodeType.PROMPT_GENERATION in node_types
+    assert GraphNodeType.IMAGE_GENERATION in node_types
+    sources = [node for node in graph_nodes if node.node_type == GraphNodeType.PRODUCT_SOURCE]
+    assert len(sources) == 1
+    assert sources[0].id == birth_source_id
+    birth_node_count = len(graph_nodes)
     agent_session = db_session.get(AgentSession, finalized.conversation.session_id)
     assert agent_session is not None
     assert agent_session.summary == "暂无 Agent Task"
@@ -614,6 +644,12 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
     assert [asset.id for asset in replay.created_assets] == [asset.id for asset in finalized.created_assets]
     assert sorted(path.relative_to(configured_env) for path in _media_files(configured_env)) == first_files
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
+    assert (
+        db_session.scalar(
+            select(func.count()).select_from(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == live_graph.id)
+        )
+        == birth_node_count
+    )
 
     with pytest.raises(ConflictError, match="已经确认"):
         finalize_agent_product_workspace_intake(
@@ -623,6 +659,55 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
             image_uploads=uploads,
             idempotency_key="intake-finalize-1",
         )
+
+
+def test_intake_skips_template_when_graph_already_has_other_nodes(
+    configured_env: Path,
+    db_session,
+) -> None:
+    draft_creation = create_agent_product_draft_workspace(
+        db_session,
+        name="已改过的出生图",
+        idempotency_key="draft-before-skip-expand",
+    )
+    graph = get_active_workflow_graph(db_session, product_id=draft_creation.product.id)
+    assert graph is not None
+    applied = load_applied_graph(db_session, graph)
+    apply_graph_change_set(
+        db_session,
+        product_id=draft_creation.product.id,
+        graph_id=graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=applied.revision,
+            summary="手动加素材",
+            actor_type=GraphActorType.USER,
+            operations=[
+                CreateNodeOp(
+                    client_ref="manual-asset",
+                    node_type=GraphNodeType.IMAGE_ASSET,
+                    title="已有素材",
+                    config={"role": "product_identity"},
+                )
+            ],
+        ),
+    )
+    before_ids = set(
+        db_session.scalars(select(WorkflowGraphNode.id).where(WorkflowGraphNode.graph_id == graph.id))
+    )
+
+    finalize_agent_product_workspace_intake(
+        db_session,
+        conversation_id=draft_creation.conversation.id,
+        selection=_selection(("hero", 1)),
+        image_uploads=_workspace_uploads()[:1],
+        idempotency_key="intake-skip-expand",
+    )
+
+    after_nodes = list(
+        db_session.scalars(select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == graph.id))
+    )
+    assert {node.id for node in after_nodes} == before_ids
+    assert GraphNodeType.PROMPT_GENERATION not in {node.node_type for node in after_nodes}
 
 
 def test_agent_product_workspace_intake_failure_preserves_empty_draft_and_cleans_storage(
@@ -1107,6 +1192,8 @@ def test_agent_product_workspace_api_rejects_invalid_selection(configured_env: P
 
 
 def test_product_path_refuses_workflow_draft_writers(db_session) -> None:
+    from workflow_draft_helpers import make_workflow_draft_payload
+
     from productflow_backend.application.legacy_archive_rebuilds import create_legacy_archive_rebuild
     from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
     from productflow_backend.application.workflow_drafts.service import (
@@ -1114,7 +1201,6 @@ def test_product_path_refuses_workflow_draft_writers(db_session) -> None:
         confirm_workflow_draft_revision,
         create_workflow_draft,
     )
-    from workflow_draft_helpers import make_workflow_draft_payload
 
     workspace = create_agent_product_draft_workspace(
         db_session,

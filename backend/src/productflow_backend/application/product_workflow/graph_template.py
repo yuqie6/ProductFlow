@@ -341,6 +341,47 @@ def build_direct_create_template(
     )
 
 
+def template_for_existing_product_source(
+    *,
+    product_source_node_id: str,
+    base_graph_revision: int,
+    image_types: list[DirectCreateImageType],
+    reference_asset_ids: list[str],
+    product_title: str = "商品资料",
+    source_product_id: str | None = None,
+    fact_set_version_id: str | None = None,
+    source_note: str | None = None,
+    generation_spec: dict[str, Any] | None = None,
+    delivery_spec: dict[str, Any] | None = None,
+) -> WorkflowChangeSet:
+    """把名称-only 出生图扩成与直接创建相同的模板，复用已有商品资料节点。"""
+
+    change_set = build_direct_create_template(
+        image_types=image_types,
+        reference_asset_ids=reference_asset_ids,
+        product_title=product_title,
+        source_product_id=source_product_id,
+        fact_set_version_id=fact_set_version_id,
+        source_note=source_note,
+        generation_spec=generation_spec,
+        delivery_spec=delivery_spec,
+    )
+    operations: list[GraphOperation] = []
+    for operation in change_set.operations:
+        if isinstance(operation, CreateNodeOp) and operation.client_ref == "product-source":
+            continue
+        if isinstance(operation, ConnectNodesOp) and operation.source_ref == "product-source":
+            operations.append(operation.model_copy(update={"source_ref": product_source_node_id}))
+            continue
+        operations.append(operation)
+    return WorkflowChangeSet(
+        base_graph_revision=base_graph_revision,
+        summary="按商品输入补全画布",
+        actor_type=GraphActorType.USER,
+        operations=operations,
+    )
+
+
 def _generation_spec_for_shot(
     image_type: DirectCreateImageType,
     generation_spec: dict[str, Any] | None,

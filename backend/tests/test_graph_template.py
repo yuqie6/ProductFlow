@@ -4,10 +4,12 @@ import pytest
 
 from productflow_backend.application.agent.product_intake import LISTING_LOOK_RULE, image_type_prompt_goal
 from productflow_backend.application.product_workflow.graph_apply import EMPTY_GRAPH, apply_workflow_change_set
-from productflow_backend.application.product_workflow.graph_contracts import FORBIDDEN_GRAPH_TOPOLOGY_KEYS
+from productflow_backend.application.product_workflow.graph_contracts import FORBIDDEN_GRAPH_TOPOLOGY_KEYS, CreateNodeOp
 from productflow_backend.application.product_workflow.graph_template import (
     DirectCreateImageType,
     build_direct_create_template,
+    build_product_source_create_graph,
+    template_for_existing_product_source,
 )
 from productflow_backend.domain.enums import GraphConfigStatus, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError
@@ -155,3 +157,37 @@ def test_direct_create_template_rejects_required_text_without_language() -> None
             reference_asset_ids=["asset-a"],
             generation_spec={"text_policy": "required"},
         )
+
+
+def test_template_for_existing_product_source_reuses_birth_node() -> None:
+    birth = apply_workflow_change_set(
+        EMPTY_GRAPH,
+        build_product_source_create_graph(product_title="待确认商品", source_product_id="prod-1"),
+    )
+    change_set = template_for_existing_product_source(
+        product_source_node_id="product-source",
+        base_graph_revision=birth.revision,
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0, title="首屏海报图")],
+        reference_asset_ids=["asset-a"],
+        product_title="待确认商品",
+        source_product_id="prod-1",
+    )
+
+    assert not any(
+        isinstance(operation, CreateNodeOp) and operation.client_ref == "product-source"
+        for operation in change_set.operations
+    )
+    assert change_set.base_graph_revision == birth.revision
+
+    expanded = apply_workflow_change_set(birth, change_set)
+    assert expanded.node("product-source").node_type == GraphNodeType.PRODUCT_SOURCE
+    types = {node.node_type for node in expanded.nodes}
+    assert GraphNodeType.VISUAL_SYSTEM in types
+    assert GraphNodeType.CREATIVE_BRIEF in types
+    assert GraphNodeType.IMAGE_ASSET in types
+    assert GraphNodeType.PROMPT_GENERATION in types
+    assert GraphNodeType.IMAGE_GENERATION in types
+    assert any(
+        edge.source_node_id == "product-source" and edge.target_node_id == "visual-system"
+        for edge in expanded.edges
+    )

@@ -78,6 +78,7 @@ async def finalize_agent_product_workspace_intake_endpoint(
     selection: str = Form(...),
     images: list[UploadFile] = File(...),
     task_id: str | None = Form(default=None, max_length=64),
+    source_note: str | None = Form(default=None, max_length=4000),
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> AgentProductWorkspaceSnapshotResponse:
@@ -89,6 +90,7 @@ async def finalize_agent_product_workspace_intake_endpoint(
         image_uploads=image_payloads,
         idempotency_key=idempotency_key,
         task_id=task_id,
+        source_note=source_note,
     )
     return _serialize_workspace_snapshot(creation)
 

@@ -338,6 +338,9 @@ export const api = {
     if (input.task_id) {
       formData.set("task_id", input.task_id);
     }
+    if (input.source_note?.trim()) {
+      formData.set("source_note", input.source_note.trim());
+    }
     return request(
       `/api/v2/agent-product-workspaces/${encodeURIComponent(input.conversation_id)}/intake`,
       {

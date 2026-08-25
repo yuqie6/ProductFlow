@@ -282,6 +282,7 @@ export function AgentProductCreatePage() {
       images: referenceFiles,
       idempotency_key: idempotencyState.idempotencyKey,
       task_id: agentTaskId,
+      source_note: brief.trim() || null,
     });
   };
 

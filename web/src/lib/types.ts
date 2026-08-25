@@ -446,6 +446,7 @@ export interface FinalizeAgentProductWorkspaceIntakeInput {
   images: File[];
   idempotency_key: string;
   task_id?: string | null;
+  source_note?: string | null;
 }
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };

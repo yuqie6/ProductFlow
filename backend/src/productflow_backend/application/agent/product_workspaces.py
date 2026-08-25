@@ -30,13 +30,16 @@ from productflow_backend.application.agent.tasks import refresh_agent_session_su
 from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
 from productflow_backend.application.product_workflow.graph_commands import (
+    apply_graph_change_set,
     get_active_workflow_graph,
+    load_applied_graph,
     stage_new_workflow_graph,
 )
 from productflow_backend.application.product_workflow.graph_template import (
     DirectCreateImageType,
     build_direct_create_template,
     build_product_source_create_graph,
+    template_for_existing_product_source,
 )
 from productflow_backend.application.products import (
     normalize_product_name,
@@ -49,6 +52,7 @@ from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentSessionStatus,
+    GraphNodeType,
     MediaVerificationStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -473,6 +477,7 @@ def _write_intake_and_commit(
     conversation.status = AgentConversationStatus.COLLECTING
     conversation.updated_at = now_utc()
     refresh_agent_session_summary(session, conversation.session_id)
+    _expand_birth_graph_from_intake(session, product=product, intake=intake)
     try:
         session.commit()
     except IntegrityError:
@@ -505,6 +510,7 @@ def finalize_agent_product_workspace_intake(
     image_uploads: list[tuple[bytes, str, str]],
     idempotency_key: str,
     task_id: str | None = None,
+    source_note: str | None = None,
     storage: LocalStorage | None = None,
 ) -> AgentProductWorkspaceCreation:
     """Atomically bind newly uploaded references and immutable intake to a version-zero draft."""
@@ -533,6 +539,8 @@ def finalize_agent_product_workspace_intake(
             storage_writes=storage_writes,
         )
         intake = workflow_intake_from_selection(selection, reference_asset_ids=[asset.id for asset in assets])
+        if source_note is not None:
+            locked.product.source_note = source_note.strip() or None
         return _write_intake_and_commit(
             session,
             conversation_id=conversation_id,
@@ -632,6 +640,62 @@ def reconcile_agent_product_intake_from_assets(
     return AgentProductWorkspaceReconcileResult(state="applied", creation=creation)
 
 
+def _intake_direct_create_types(intake: WorkflowIntakeV1) -> list[DirectCreateImageType]:
+    return [
+        DirectCreateImageType(key=item.key, quantity=item.quantity, order=item.order)
+        for item in intake.image_types
+    ]
+
+
+def _intake_delivery_spec_json(intake: WorkflowIntakeV1) -> dict[str, object] | None:
+    if intake.delivery_spec is None:
+        return None
+    return intake.delivery_spec.model_dump(mode="json")
+
+
+def _expand_birth_graph_from_intake(
+    session: Session,
+    *,
+    product: Product,
+    intake: WorkflowIntakeV1,
+) -> None:
+    """名称-only 出生图在 intake 落定后扩成与直接创建相同的模板。已有其它节点则不动。"""
+
+    if not intake.image_types or not intake.reference_asset_ids:
+        return
+    graph = get_active_workflow_graph(session, product_id=product.id)
+    if graph is None:
+        _stage_live_graph_for_workspace(
+            session,
+            product=product,
+            intake=intake,
+            created_assets=[],
+        )
+        return
+    applied = load_applied_graph(session, graph)
+    product_sources = [node for node in applied.nodes if node.node_type == GraphNodeType.PRODUCT_SOURCE]
+    if len(product_sources) != 1 or any(node.node_type != GraphNodeType.PRODUCT_SOURCE for node in applied.nodes):
+        return
+    change_set = template_for_existing_product_source(
+        product_source_node_id=product_sources[0].id,
+        base_graph_revision=applied.revision,
+        image_types=_intake_direct_create_types(intake),
+        reference_asset_ids=list(intake.reference_asset_ids),
+        product_title=product.name,
+        source_product_id=product.id,
+        fact_set_version_id=product.current_fact_set_version_id,
+        source_note=product.source_note,
+        delivery_spec=_intake_delivery_spec_json(intake),
+    )
+    apply_graph_change_set(
+        session,
+        product_id=product.id,
+        graph_id=graph.id,
+        change_set=change_set,
+        commit=False,
+    )
+
+
 def _stage_live_graph_for_workspace(
     session: Session,
     *,
@@ -645,14 +709,13 @@ def _stage_live_graph_for_workspace(
     fact_set_version_id = product.current_fact_set_version_id
     if intake is not None and intake.image_types and intake.reference_asset_ids:
         change_set = build_direct_create_template(
-            image_types=[
-                DirectCreateImageType(key=item.key, quantity=item.quantity, order=item.order)
-                for item in intake.image_types
-            ],
+            image_types=_intake_direct_create_types(intake),
             reference_asset_ids=list(intake.reference_asset_ids),
             product_title=product.name,
             source_product_id=product.id,
             fact_set_version_id=fact_set_version_id,
+            source_note=product.source_note,
+            delivery_spec=_intake_delivery_spec_json(intake),
         )
     else:
         change_set = build_product_source_create_graph(
