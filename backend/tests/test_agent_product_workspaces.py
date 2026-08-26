@@ -1195,11 +1195,11 @@ def test_product_path_refuses_workflow_draft_writers(db_session) -> None:
     from workflow_draft_helpers import make_workflow_draft_payload
 
     from productflow_backend.application.legacy_archive_rebuilds import create_legacy_archive_rebuild
-    from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
     from productflow_backend.application.workflow_drafts.service import (
         append_workflow_draft_revision,
         confirm_workflow_draft_revision,
         create_workflow_draft,
+        persist_confirmed_draft_graph,
     )
 
     workspace = create_agent_product_draft_workspace(

@@ -15,9 +15,9 @@ from productflow_backend.application.delivery_renditions import (
     submit_delivery_rendition_job,
 )
 from productflow_backend.domain.enums import JobStatus
+from productflow_backend.domain.image_specs import DeliverySpec
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.delivery_renditions import (
-    CreateDeliveryRenditionRequest,
     DeliveryExportRequest,
     DeliveryRenditionJobListResponse,
     DeliveryRenditionJobResponse,
@@ -43,7 +43,7 @@ v3_router = APIRouter(
 )
 def create_delivery_rendition_endpoint(
     source_asset_id: str,
-    payload: CreateDeliveryRenditionRequest,
+    payload: DeliverySpec,
     response: Response,
     session: Session = Depends(get_session),
 ) -> DeliveryRenditionJobResponse:

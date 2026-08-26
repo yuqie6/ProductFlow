@@ -9,12 +9,12 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_workflow.graph_apply import apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_commands import (
     AppliedGraph,
     apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
-    preview_applied_graph_change_set,
     stage_apply_graph_change_set,
 )
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
@@ -131,7 +131,7 @@ def propose_graph_change_set(
         raise ConflictError("已有未应用的图提案，请先确认或取消")
     before = load_applied_graph(session, graph)
     try:
-        preview_applied_graph_change_set(before, parsed)
+        apply_workflow_change_set(before, parsed)
     except BusinessValidationError as exc:
         raise ConflictError(f"图提案无法应用到当前工作流: {exc}") from exc
     proposal = WorkflowGraphProposal(
@@ -227,36 +227,6 @@ def discard_graph_proposal(
     session.commit()
 
 
-def discard_graph_proposal_for_conversation(
-    session: Session,
-    *,
-    conversation_id: str,
-    proposal_id: str,
-) -> None:
-    graph = _live_graph_for_conversation(session, conversation_id)
-    discard_graph_proposal(
-        session,
-        product_id=graph.product_id,
-        graph_id=graph.id,
-        proposal_id=proposal_id,
-    )
-
-
-def confirm_graph_proposal_for_conversation(
-    session: Session,
-    *,
-    conversation_id: str,
-    proposal_id: str,
-) -> WorkflowGraph:
-    graph = _live_graph_for_conversation(session, conversation_id)
-    return confirm_graph_proposal(
-        session,
-        product_id=graph.product_id,
-        graph_id=graph.id,
-        proposal_id=proposal_id,
-    )
-
-
 def pending_proposal_view(session: Session, graph: WorkflowGraph, applied: AppliedGraph) -> GraphProposalView | None:
     """把提案投影到当前图上作预览；stale 或非法时不写入。"""
 
@@ -272,7 +242,7 @@ def pending_proposal_view(session: Session, graph: WorkflowGraph, applied: Appli
     if not stale:
         try:
             change_set = TypeAdapter(WorkflowChangeSet).validate_python(proposal.change_set_json)
-            after = preview_applied_graph_change_set(applied, change_set)
+            after = apply_workflow_change_set(applied, change_set)
         except (ValidationError, BusinessValidationError, ConflictError):
             stale = True
         else:
@@ -363,9 +333,7 @@ __all__ = [
     "GraphProposalView",
     "apply_agent_graph_change_set",
     "confirm_graph_proposal",
-    "confirm_graph_proposal_for_conversation",
     "discard_graph_proposal",
-    "discard_graph_proposal_for_conversation",
     "parse_agent_change_set",
     "pending_proposal_view",
     "propose_graph_change_set",

@@ -19,7 +19,7 @@ from productflow_backend.application.media_objects import (
 )
 from productflow_backend.application.product_images.assets import (
     clear_product_cover,
-    create_generated_product_image_asset,
+    create_product_image_asset,
     delete_product_image_asset,
     set_product_cover,
     set_product_cover_if_empty,
@@ -149,13 +149,14 @@ def test_generated_asset_has_one_media_object_and_three_files(configured_env: Pa
     db_session.add(product)
     db_session.commit()
 
-    asset = create_generated_product_image_asset(
+    asset = create_product_image_asset(
         db_session,
         product_id=product.id,
         content=_make_demo_image_bytes(),
         filename="generated.png",
         expected_mime_type="image/png",
         display_name="首屏海报候选",
+        origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
     )
 
     assert asset.origin_type == ProductImageOriginType.WORKFLOW_GENERATION

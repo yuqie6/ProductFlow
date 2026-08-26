@@ -68,6 +68,15 @@ from productflow_backend.infrastructure.image.base import (
     infer_extension,
 )
 from productflow_backend.infrastructure.image.factory import get_image_provider
+from productflow_backend.infrastructure.provider_effects import (
+    PROVIDER_EFFECT_RESULT_APPLIED,
+    PROVIDER_EFFECT_RESULT_FAILED,
+    PROVIDER_EFFECT_RESULT_PENDING,
+    PROVIDER_EFFECT_RESULT_UNKNOWN,
+    PROVIDER_EFFECT_RESULTS,
+    canonical_provider_effect_json_hash,
+    transition_provider_effect_result,
+)
 from productflow_backend.infrastructure.storage import LocalStorage
 
 from .contracts import LocalEditMaskGeometry, LocalImageEditDraft, validate_and_normalize_local_edit_mask
@@ -533,7 +542,7 @@ def claim_local_image_edit_task(
         operation_key=f"local-image-edit:{task.id}",
         request_hash=task.request_hash,
         phase="claimed",
-        effect_result="pending",
+        effect_result=PROVIDER_EFFECT_RESULT_PENDING,
         provider_name="pending",
     )
     session.add(attempt)
@@ -580,7 +589,7 @@ def execute_local_image_edit_task(
                     attempt_id=claim.attempt_id,
                     status=LocalImageEditTaskStatus.FAILED,
                     phase="failed",
-                    effect_result="failed",
+                    effect_result=PROVIDER_EFFECT_RESULT_FAILED,
                     detail=(str(exc) if isinstance(exc, BusinessValidationError) else "局部编辑媒体读取失败"),
                     retryable=False,
                 )
@@ -670,7 +679,7 @@ def execute_local_image_edit_task(
                     attempt_id=claim.attempt_id,
                     status=LocalImageEditTaskStatus.UNKNOWN,
                     phase="unknown",
-                    effect_result="unknown",
+                    effect_result=PROVIDER_EFFECT_RESULT_UNKNOWN,
                     detail="图片 provider 请求结果未知",
                     retryable=False,
                     provider_status=type(exc).__name__[:80],
@@ -803,8 +812,14 @@ def cancel_local_image_edit_task(
             .with_for_update()
         )
         if attempt is not None:
-            attempt.phase = "unknown" if task.progress_phase != "claimed" else "failed"
-            attempt.effect_result = "unknown" if task.progress_phase != "claimed" else "failed"
+            attempt_phase = "unknown" if task.progress_phase != "claimed" else "failed"
+            attempt_result = (
+                PROVIDER_EFFECT_RESULT_UNKNOWN
+                if attempt_phase == "unknown"
+                else PROVIDER_EFFECT_RESULT_FAILED
+            )
+            transition_provider_effect_result(attempt, attempt_result)
+            attempt.phase = attempt_phase
             attempt.detail = "局部编辑任务已取消；provider boundary 之后的结果只能作为审计"
     task.status = LocalImageEditTaskStatus.CANCELLED
     task.active_attempt_id = None
@@ -1126,7 +1141,7 @@ def _local_edit_request_hash(
     local_edit_mode = requested_local_edit_mode or task.requested_local_edit_mode
     if not provider_name or not local_edit_mode:
         raise ConflictError("局部编辑任务缺少提交时的 provider 能力快照")
-    return _json_hash(
+    return canonical_provider_effect_json_hash(
         {
             "task_revision": task.revision,
             "source_asset_id": task.source_asset_id,
@@ -1150,7 +1165,8 @@ def _local_edit_request_hash(
                 "source_artifact_asset_id": task.source_artifact_asset_id,
                 "source_artifact_input_digest": task.source_artifact_input_digest,
             },
-        }
+        },
+        "局部编辑 provider effect request",
     )
 
 
@@ -1216,8 +1232,9 @@ def _mark_stale_claimed_attempt(session: Session, task: LocalImageEditTask, *, n
             .with_for_update()
         )
         if attempt is not None:
+            if not transition_provider_effect_result(attempt, PROVIDER_EFFECT_RESULT_FAILED):
+                raise ConflictError("局部编辑 provider effect 已知晓，不能安全重入队")
             attempt.phase = "failed"
-            attempt.effect_result = "failed"
             attempt.detail = "worker claim 已过期，provider boundary 尚未开始"
     task.active_attempt_id = None
     task.progress_phase = None
@@ -1243,8 +1260,8 @@ def _mark_task_unknown_locked(
             .with_for_update()
         )
         if attempt is not None:
+            transition_provider_effect_result(attempt, PROVIDER_EFFECT_RESULT_UNKNOWN)
             attempt.phase = "unknown"
-            attempt.effect_result = "unknown"
             attempt.detail = detail
     task.status = LocalImageEditTaskStatus.UNKNOWN
     task.active_attempt_id = None
@@ -1448,6 +1465,10 @@ def _finish_fenced_attempt(
 ) -> None:
     task, attempt = _lock_fenced_attempt(session, task_id=task_id, attempt_id=attempt_id)
     now = now_utc()
+    if effect_result in PROVIDER_EFFECT_RESULTS and not transition_provider_effect_result(
+        attempt, effect_result
+    ):
+        raise ConflictError("局部编辑 provider effect 状态不能被当前结果覆盖")
     task.status = status
     task.active_attempt_id = None
     task.progress_phase = phase
@@ -1457,7 +1478,8 @@ def _finish_fenced_attempt(
     task.provider_status = provider_status
     task.provider_response_id = provider_response_id
     attempt.phase = phase
-    attempt.effect_result = effect_result
+    if effect_result not in PROVIDER_EFFECT_RESULTS:
+        attempt.effect_result = effect_result
     attempt.detail = detail
     attempt.provider_status = provider_status
     attempt.provider_response_id = provider_response_id
@@ -1481,7 +1503,7 @@ def _persist_provider_result(
                 attempt_id=attempt_id,
                 status=LocalImageEditTaskStatus.UNKNOWN,
                 phase="unknown",
-                effect_result="unknown",
+                effect_result=PROVIDER_EFFECT_RESULT_UNKNOWN,
                 detail="图片 provider 返回的局部编辑结果数量无法确认",
                 retryable=False,
                 provider_status=result.provider_status,
@@ -1519,6 +1541,10 @@ def _persist_provider_result(
                 image_type_key=source_asset.image_type_key,
             )
             session.flush()
+            if not transition_provider_effect_result(attempt, PROVIDER_EFFECT_RESULT_APPLIED):
+                raise ConflictError("局部编辑 provider effect 已未知，不能采用结果")
+            if attempt.effect_result != PROVIDER_EFFECT_RESULT_APPLIED:
+                raise ConflictError("局部编辑 provider effect 未处于可采用状态")
             task.status = LocalImageEditTaskStatus.SUCCEEDED
             task.active_attempt_id = None
             task.progress_phase = "provider_result_received"
@@ -1531,7 +1557,6 @@ def _persist_provider_result(
             task.provider_response_id = result.provider_response_id
             task.provider_status = result.provider_status
             attempt.phase = "succeeded"
-            attempt.effect_result = "applied"
             attempt.provider_name = task.provider_name or attempt.provider_name
             attempt.provider_model = result.model
             attempt.provider_response_id = result.provider_response_id
@@ -1580,8 +1605,8 @@ def _mark_unknown_after_save_failure(
     task.failure_reason = detail
     task.is_retryable = False
     task.finished_at = now
+    transition_provider_effect_result(attempt, PROVIDER_EFFECT_RESULT_UNKNOWN)
     attempt.phase = "unknown"
-    attempt.effect_result = "unknown"
     attempt.detail = detail
     session.commit()
 
@@ -1620,7 +1645,11 @@ def _record_late_provider_result(
         late_audit["late_image_mime_type"] = output.mime_type
     try:
         attempt.phase = "provider_result_received"
-        attempt.effect_result = "unknown"
+        transition_provider_effect_result(
+            attempt,
+            PROVIDER_EFFECT_RESULT_UNKNOWN,
+            force_unknown=True,
+        )
         attempt.provider_model = result.model
         attempt.provider_response_id = result.provider_response_id
         attempt.provider_status = result.provider_status
@@ -1642,7 +1671,11 @@ def _record_late_provider_result(
         if attempt is None:
             return
         attempt.phase = "provider_result_received"
-        attempt.effect_result = "unknown"
+        transition_provider_effect_result(
+            attempt,
+            PROVIDER_EFFECT_RESULT_UNKNOWN,
+            force_unknown=True,
+        )
         attempt.provider_model = result.model
         attempt.provider_response_id = result.provider_response_id
         attempt.provider_status = result.provider_status
@@ -1709,12 +1742,6 @@ def _sanitize_audit_json(value: Any) -> Any:
     if isinstance(value, str) and value.startswith("data:"):
         return "<redacted-data-url>"
     return value
-
-
-def _json_hash(value: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def _graph_payload_hash(value: dict[str, Any]) -> str:

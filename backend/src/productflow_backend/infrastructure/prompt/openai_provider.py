@@ -7,7 +7,7 @@ from typing import Any
 from openai import OpenAI
 from pydantic import ValidationError
 
-from productflow_backend.domain.artifact_contracts import ImagePromptPayloadV1
+from productflow_backend.domain.artifact_contracts import ImagePromptPayloadV1, ListingPromptPayload
 from productflow_backend.domain.image_type_catalog import LISTING_LOOK_CONTEXT, LISTING_LOOK_RULE
 from productflow_backend.infrastructure.prompt.base import (
     ContextGenerationRequest,
@@ -25,7 +25,7 @@ from productflow_backend.infrastructure.provider_config import (
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 PROMPT_GENERATION_INSTRUCTIONS = (
-    "You write one ImagePromptPayloadV1 for a clickable commercial listing image. "
+    "You write one ListingPromptPayload for a clickable commercial listing image. "
     "Attached photos lock product identity only: shape, materials, color, structure, visible parts. "
     "The photo's crop, empty background, camera distance, and layout are not the finished frame. "
     "Follow listing_look: product is the hero, hierarchy is clear, benefits are readable. "
@@ -50,7 +50,7 @@ PROMPT_GENERATION_INSTRUCTIONS = (
     "Obey text_policy. none means no on-image letters, digits, prices, logos, or watermarks; keep text.headline, "
     "subtitle, and body null and copy_regions empty. "
     "required means short benefit copy in text_language, not a spec sheet. "
-    "Keep exactly the supplied image_plan_keys."
+    "Do not emit images, image_plan_key, fact_keys, or evidence_asset_ids."
 )
 
 CREATIVE_BRIEF_INSTRUCTIONS = (
@@ -100,12 +100,16 @@ class OpenAIPromptGenerationProvider(PromptGenerationProvider):
 
     def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         parsed, response_id = self._parse_structured(
-            text_format=ImagePromptPayloadV1,
+            text_format=ListingPromptPayload,
             instructions=PROMPT_GENERATION_INSTRUCTIONS,
             request=request,
-            expected_type=ImagePromptPayloadV1,
+            expected_type=ListingPromptPayload,
         )
-        return PromptGenerationResult(payload=parsed, model=self.model, response_id=response_id)
+        return PromptGenerationResult(
+            payload=ImagePromptPayloadV1.model_validate(parsed.model_dump(mode="json")),
+            model=self.model,
+            response_id=response_id,
+        )
 
     def generate_creative_brief(self, request: ContextGenerationRequest) -> CreativeBriefGenerationResult:
         parsed, response_id = self._parse_structured(
@@ -258,13 +262,15 @@ def _request_content(request: PromptGenerationRequest | ContextGenerationRequest
             "image_type_description": request.image_type_description,
             "image_type_family": request.image_type_family,
             "image_type_job": request.image_type_job,
-            "image_plan_keys": list(request.image_plan_keys),
             "confirmed_facts": list(request.facts),
             "visual_system": (
                 request.visual_system.model_dump(mode="json") if request.visual_system is not None else None
             ),
             "visual_exceptions": list(request.visual_exceptions),
-            "current_prompt": request.current_prompt.model_dump(mode="json"),
+            "current_prompt": request.current_prompt.model_dump(
+                mode="json",
+                exclude={"images", "fact_keys", "evidence_asset_ids"},
+            ),
             "text_policy": request.text_policy,
             "text_languages": list(request.text_languages),
             "reference_images": reference_metadata,

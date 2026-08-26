@@ -119,8 +119,6 @@ logger = logging.getLogger(__name__)
 SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _effect_phase_hook: Callable[[str, WorkflowGraphNodeRun], None] | None = None
 _storage_bound_commit_hook: Callable[[Session, StorageWriteCompensation], None] | None = None
-# ImagePromptPayloadV1 仍要求 images[].image_plan_key；已存储的 v3 产物会去掉它。
-V3_PROMPT_PROVIDER_PLAN_KEY = "output"
 GRAPH_RUN_ADVISORY_LOCK_NAMESPACE = 847261
 _graph_run_execution_locks_guard = threading.Lock()
 _graph_run_execution_locks: dict[str, threading.Lock] = {}
@@ -749,7 +747,7 @@ def _to_prompt_request(
     image_type_key = runtime.image_type_key or "unspecified"
     return PromptGenerationRequest(
         image_type_key=image_type_key,
-        image_plan_keys=(V3_PROMPT_PROVIDER_PLAN_KEY,),
+        image_plan_keys=(),
         facts=runtime.product_facts,
         visual_system=visual,
         visual_exceptions=visual_exceptions,
@@ -1225,12 +1223,6 @@ def _prompt_from_runtime(
                 "keywords": [derived] if seed else ["清晰"],
                 "lighting": derived if seed else "均匀照明",
             },
-            "images": [
-                {
-                    "image_plan_key": V3_PROMPT_PROVIDER_PLAN_KEY,
-                    "instruction": design_goal if isinstance(design_goal, str) else f"生成{title}",
-                }
-            ],
         }
     )
 

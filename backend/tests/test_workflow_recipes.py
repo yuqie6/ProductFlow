@@ -9,9 +9,7 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent.conversations import (
-    attach_agent_workflow_draft_artifact,
-)
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
 from productflow_backend.application.agent.sessions import new_agent_session
 from productflow_backend.application.agent.turn_projection import (
     bind_harness_turn,
@@ -51,6 +49,7 @@ from productflow_backend.domain.enums import (
     WorkflowRecipeOrigin,
 )
 from productflow_backend.domain.errors import ConflictError, NotFoundError
+from productflow_backend.infrastructure.agent_service import AgentServiceArtifact, AgentServiceTurnState
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     Base,
@@ -684,15 +683,26 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     )
     payload = make_workflow_draft_payload(reference_asset_id=target.image_assets[0].id)
     with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
-        attach_agent_workflow_draft_artifact(
+        synchronize_agent_turn_state(
             db_session,
             product_id=target.id,
             conversation_id=conversation.id,
             projection_id=projection.id,
-            harness_turn_id="harness-recipe-turn",
-            artifact_name="propose_workflow_draft",
-            artifact_step_id="recipe-artifact-step",
-            artifact_value=payload,
+            state=AgentServiceTurnState(
+                api_version="v1alpha1",
+                run_id=conversation.harness_run_id,
+                turn_id="harness-recipe-turn",
+                status=AgentTurnStatus.AWAITING_CONFIRMATION,
+                artifact=AgentServiceArtifact(
+                    name="propose_workflow_draft",
+                    value=payload,
+                    step_id="recipe-artifact-step",
+                ),
+                output="已重建目标商品草案。",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            ),
         )
     refreshed = db_session.get(WorkflowDraft, draft.id)
     assert refreshed is not None

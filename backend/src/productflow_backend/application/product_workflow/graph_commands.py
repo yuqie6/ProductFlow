@@ -107,12 +107,6 @@ def load_applied_graph(session: Session, graph: WorkflowGraph) -> AppliedGraph:
     )
 
 
-def preview_applied_graph_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet) -> AppliedGraph:
-    """无 DB 的 Graph Command 预览。持久化仍走 apply/stage 命令。"""
-
-    return apply_workflow_change_set(graph, change_set)
-
-
 def stage_new_workflow_graph(
     session: Session,
     *,

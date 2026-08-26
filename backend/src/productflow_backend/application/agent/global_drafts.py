@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -12,25 +12,22 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent.agent_context import get_agent_global_workflow_target
 from productflow_backend.application.agent.conversations import (
     get_agent_conversation_or_raise,
-    mark_agent_conversation_completed_for_draft,
 )
 from productflow_backend.application.agent.global_draft_contracts import (
     GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
     GlobalAgentDraftPayloadV1,
 )
-from productflow_backend.application.agent.tasks import update_agent_task_from_turn
 from productflow_backend.application.agent.turn_projection import lock_agent_turn_or_raise
 from productflow_backend.application.media_library.drafts import (
     validate_library_organization_draft,
 )
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import (
-    confirm_workflow_draft_revision,
+    PRODUCT_WORKFLOW_DRAFT_RETIRED,
     get_workflow_draft_or_raise,
 )
 from productflow_backend.domain.enums import (
     AgentConversationScope,
-    AgentConversationStatus,
     AgentTurnStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -77,8 +74,6 @@ def validate_global_agent_draft(
         conversation_id=conversation_id,
     )
     if isinstance(value, dict) and value.get("draft_kind") not in {None, "library_organization"}:
-        from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
-
         raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
     artifact = parse_global_agent_draft_payload_or_raise(value)
     if artifact.draft_kind == "library_organization":
@@ -90,8 +85,6 @@ def validate_global_agent_draft(
             value=artifact.library_payload.model_dump(mode="json"),
         )
         return artifact
-
-    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 
     raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
@@ -162,8 +155,6 @@ def attach_agent_global_draft_artifact(
             session.refresh(projection)
         return projection
 
-    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
-
     raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
@@ -220,60 +211,9 @@ def confirm_global_workflow_draft_review(
     conversation_id: str,
     revision_id: str,
     expected_draft_version: int,
-) -> GlobalWorkflowDraftReview:
-    """确认目标商品 Draft。不在全局会话物化 live graph。本函数 commit。"""
-    review = get_global_workflow_draft_review(
-        session,
-        conversation_id=conversation_id,
-        revision_id=revision_id,
-    )
-    try:
-        draft = confirm_workflow_draft_revision(
-            session,
-            product_id=review.product_id,
-            draft_id=review.workflow_draft_id,
-            expected_draft_version=expected_draft_version,
-            commit=False,
-        )
-        mark_agent_conversation_completed_for_draft(
-            session,
-            product_id=review.product_id,
-            workflow_draft_id=draft.id,
-            commit=False,
-        )
-        projection = session.scalar(
-            select(AgentTurnProjection)
-            .where(AgentTurnProjection.workflow_draft_revision_id == revision_id)
-            .with_for_update()
-        )
-        if projection is not None:
-            finished_at = now_utc()
-            projection.status = AgentTurnStatus.SUCCEEDED
-            projection.finished_at = finished_at
-            projection.updated_at = finished_at
-            update_agent_task_from_turn(
-                session,
-                projection=projection,
-                status=AgentTurnStatus.SUCCEEDED,
-                error_text=None,
-                finished_at=finished_at,
-            )
-        global_conversation = session.scalar(
-            select(AgentConversation).where(AgentConversation.id == conversation_id).with_for_update()
-        )
-        if global_conversation is not None:
-            global_conversation.status = AgentConversationStatus.COMPLETED
-            global_conversation.updated_at = now_utc()
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    session.expire_all()
-    return get_global_workflow_draft_review(
-        session,
-        conversation_id=conversation_id,
-        revision_id=revision_id,
-    )
+) -> NoReturn:
+    del session, conversation_id, revision_id, expected_draft_version
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 __all__ = [

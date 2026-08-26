@@ -1,15 +1,13 @@
-"""商品 WorkflowDraft 确认：revision 与 Agent conversation 在同一事务内确认。"""
+"""商品 WorkflowDraft 确认入口。在线写入已退休。"""
 
 from __future__ import annotations
 
+from typing import NoReturn
+
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.conversations import mark_agent_conversation_completed_for_draft
-from productflow_backend.application.workflow_drafts.service import (
-    confirm_workflow_draft_revision,
-    get_workflow_draft_or_raise,
-)
-from productflow_backend.infrastructure.db.models import WorkflowDraft
+from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+from productflow_backend.domain.errors import ConflictError
 
 
 def confirm_product_workflow_draft(
@@ -18,28 +16,10 @@ def confirm_product_workflow_draft(
     product_id: str,
     draft_id: str,
     expected_draft_version: int,
-) -> WorkflowDraft:
-    """在一次应用事务内确认商品草稿及其 Agent 会话。"""
-    try:
-        confirm_workflow_draft_revision(
-            session,
-            product_id=product_id,
-            draft_id=draft_id,
-            expected_draft_version=expected_draft_version,
-            commit=False,
-        )
-        mark_agent_conversation_completed_for_draft(
-            session,
-            product_id=product_id,
-            workflow_draft_id=draft_id,
-            commit=False,
-        )
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    session.expire_all()
-    return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
+) -> NoReturn:
+    """商品路径不再确认 WorkflowDraft。"""
+    del session, product_id, draft_id, expected_draft_version
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 __all__ = ["confirm_product_workflow_draft"]

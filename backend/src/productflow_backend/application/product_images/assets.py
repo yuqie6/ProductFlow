@@ -158,32 +158,6 @@ def create_product_image_asset(
     return get_product_image_asset(session, asset.id)
 
 
-def create_generated_product_image_asset(
-    session: Session,
-    *,
-    product_id: str,
-    content: bytes,
-    filename: str,
-    expected_mime_type: str,
-    display_name: str,
-    parent_asset_id: str | None = None,
-    storage: LocalStorage | None = None,
-) -> ProductImageAsset:
-    """工作流生成结果进入商品库；不自动标 reject/draft。"""
-
-    return create_product_image_asset(
-        session,
-        product_id=product_id,
-        content=content,
-        filename=filename,
-        expected_mime_type=expected_mime_type,
-        display_name=display_name,
-        origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
-        parent_asset_id=parent_asset_id,
-        storage=storage,
-    )
-
-
 def _product_image_asset_query():
     return select(ProductImageAsset).options(selectinload(ProductImageAsset.media_object))
 
@@ -195,20 +169,6 @@ def get_product_image_asset(session: Session, asset_id: str) -> ProductImageAsse
     if asset is None:
         raise NotFoundError("商品图片不存在")
     return asset
-
-
-def list_product_image_assets(session: Session, product_id: str) -> list[ProductImageAsset]:
-    """列出该商品当前与历史图片，不含自动 reject/draft 过滤。"""
-
-    if session.get(Product, product_id) is None:
-        raise NotFoundError("商品不存在")
-    return list(
-        session.scalars(
-            _product_image_asset_query()
-            .where(ProductImageAsset.product_id == product_id)
-            .order_by(ProductImageAsset.created_at.asc(), ProductImageAsset.id.asc())
-        ).all()
-    )
 
 
 def get_product_image_assets_by_ids(

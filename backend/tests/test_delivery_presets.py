@@ -181,16 +181,3 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
             },
         ],
     }
-
-
-def test_delivery_preset_get_api_is_read_only_and_unknown_is_404() -> None:
-    client = TestClient(_catalog_app())
-
-    response = client.get("/api/v3/delivery-presets/scene_landscape")
-    assert response.status_code == 200
-    assert response.json()["key"] == "scene_landscape"
-    assert response.json()["delivery_spec"]["width"] == 1600
-
-    unknown = client.get("/api/v3/delivery-presets/not-a-preset")
-    assert unknown.status_code == 404
-    assert unknown.json() == {"detail": "未知 DeliverySpec 预设: not-a-preset"}

@@ -17,7 +17,7 @@ from productflow_backend.application.agent.turn_projection import (
     project_agent_turn_state,
 )
 from productflow_backend.application.agent.turn_status import (
-    EXECUTION_RECOVERABLE_TURN_STATUSES,
+    ACTIVE_TURN_STATUSES,
     TERMINAL_TURN_STATUSES,
 )
 from productflow_backend.application.time import now_utc
@@ -572,7 +572,7 @@ def recover_expired_agent_turn_executions(
         projection = execution.turn_projection
         # 恢复后的 worker 不能再用过期 lease 的 fencing token 发布终态 snapshot。
         execution.fencing_token += 1
-        if projection.status not in EXECUTION_RECOVERABLE_TURN_STATUSES:
+        if projection.status not in ACTIVE_TURN_STATUSES:
             _clear_expired_lease(execution, resolved_now, terminal=True)
             continue
         latest_checkpoint = session.scalar(

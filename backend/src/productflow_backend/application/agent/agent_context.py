@@ -141,19 +141,6 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
     }
 
 
-def validate_agent_workflow_draft(
-    session: Session,
-    *,
-    conversation_id: str,
-    value: dict[str, Any],
-) -> None:
-    """商品 WorkflowDraft artifact 路径已退休。"""
-    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
-
-    del session, conversation_id, value
-    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
-
-
 def validate_agent_library_organization_draft(
     session: Session,
     *,
@@ -368,5 +355,4 @@ __all__ = [
     "get_agent_task_contract",
     "validate_agent_global_draft",
     "validate_agent_library_organization_draft",
-    "validate_agent_workflow_draft",
 ]

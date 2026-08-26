@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.product_intake import WorkflowIntakeV1, parse_workflow_intake
 from productflow_backend.application.workflow_drafts.contracts import (
@@ -31,16 +31,10 @@ class WorkflowDraftLimitsResponse(BaseModel):
 
 
 class CreateWorkflowDraftRequest(StrictRequestModel):
-    payload: WorkflowDraftPayloadV1
+    payload: dict[str, Any] | None = None
     ready_for_confirmation: bool = False
     source_turn_id: str | None = Field(default=None, min_length=1, max_length=120)
     source_artifact_step_id: str | None = Field(default=None, min_length=1, max_length=120)
-
-    @model_validator(mode="after")
-    def validate_origin_pair(self) -> CreateWorkflowDraftRequest:
-        if (self.source_turn_id is None) != (self.source_artifact_step_id is None):
-            raise ValueError("source_turn_id 和 source_artifact_step_id 必须同时提供")
-        return self
 
 
 class AppendWorkflowDraftRevisionRequest(CreateWorkflowDraftRequest):

@@ -42,6 +42,12 @@ class StrictAgentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AgentReconcileResponse[T](BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: T | None = None
+    detail: str | None = None
+
+
 class AgentContractResponse(BaseModel):
     schema_version: Literal[1]
     scope_type: AgentConversationScope
@@ -176,10 +182,7 @@ class AgentGraphChangeSetRequest(StrictAgentRequest):
     change_set: dict[str, Any]
 
 
-class AgentGraphChangeSetReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: dict[str, Any] | None = None
-    detail: str | None = None
+AgentGraphChangeSetReconcileResponse = AgentReconcileResponse[dict[str, Any]]
 
 
 class AgentWorkflowDraftValidationResponse(BaseModel):
@@ -265,10 +268,7 @@ class AgentFinalizeProductIntakeResponse(BaseModel):
     intake: dict[str, Any] | None = None
 
 
-class AgentFinalizeProductIntakeReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentFinalizeProductIntakeResponse | None = None
-    detail: str | None = None
+AgentFinalizeProductIntakeReconcileResponse = AgentReconcileResponse[AgentFinalizeProductIntakeResponse]
 
 
 class AgentProductWorkspaceLaunchResponse(BaseModel):
@@ -285,10 +285,7 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     navigation_path: str
 
 
-class AgentProductWorkspaceReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentProductWorkspaceLaunchResponse | None = None
-    detail: str | None = None
+AgentProductWorkspaceReconcileResponse = AgentReconcileResponse[AgentProductWorkspaceLaunchResponse]
 
 
 class InspectAgentProductsRequest(StrictAgentRequest):
@@ -384,10 +381,7 @@ class AgentAssetRenameResultResponse(BaseModel):
     applied: bool
 
 
-class AgentAssetRenameReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentAssetRenameResultResponse | None = None
-    detail: str | None = None
+AgentAssetRenameReconcileResponse = AgentReconcileResponse[AgentAssetRenameResultResponse]
 
 
 class PrepareAgentFolderCreateRequest(StrictAgentRequest):
@@ -406,10 +400,7 @@ class AgentFolderCreateResultResponse(BaseModel):
     applied: bool
 
 
-class AgentFolderCreateReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentFolderCreateResultResponse | None = None
-    detail: str | None = None
+AgentFolderCreateReconcileResponse = AgentReconcileResponse[AgentFolderCreateResultResponse]
 
 
 class PrepareAgentFolderRenameRequest(StrictAgentRequest):
@@ -429,10 +420,7 @@ class AgentFolderRenameResultResponse(BaseModel):
     applied: bool
 
 
-class AgentFolderRenameReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentFolderRenameResultResponse | None = None
-    detail: str | None = None
+AgentFolderRenameReconcileResponse = AgentReconcileResponse[AgentFolderRenameResultResponse]
 
 
 class PrepareAgentAssetMoveRequest(StrictAgentRequest):
@@ -456,10 +444,7 @@ class AgentAssetMoveResultResponse(BaseModel):
     applied: bool
 
 
-class AgentAssetMoveReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentAssetMoveResultResponse | None = None
-    detail: str | None = None
+AgentAssetMoveReconcileResponse = AgentReconcileResponse[AgentAssetMoveResultResponse]
 
 
 class CreateAgentConversationRequest(StrictAgentRequest):
@@ -641,10 +626,7 @@ class AgentWorkflowRunRequestResponse(BaseModel):
     updated_at: datetime
 
 
-class AgentWorkflowRunRequestReconcileResponse(BaseModel):
-    state: Literal["applied", "not_applied", "conflict", "unknown"]
-    result: AgentWorkflowRunRequestResponse | None = None
-    detail: str | None = None
+AgentWorkflowRunRequestReconcileResponse = AgentReconcileResponse[AgentWorkflowRunRequestResponse]
 
 
 class SubmitAgentTurnResponse(BaseModel):

@@ -4,43 +4,37 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.control import (
-    answer_agent_question,
-    control_agent_turn,
-    refresh_agent_turn,
-    submit_agent_turn,
-)
-from productflow_backend.application.agent.effect_reconciliation import reconcile_agent_turn_effect
-from productflow_backend.application.agent.event_stream import stream_agent_turn_events
 from productflow_backend.application.agent.global_drafts import (
     confirm_global_workflow_draft_review,
     get_global_workflow_draft_review,
-)
-from productflow_backend.application.agent.turn_projection import (
-    AGENT_TURN_DEFAULT_PAGE_SIZE,
-    AGENT_TURN_MAX_PAGE_SIZE,
-    get_agent_turn_or_raise,
-    list_agent_turn_page,
 )
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
     get_agent_workflow_run_request,
 )
-from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
 from productflow_backend.application.media_library.drafts import (
     confirm_library_organization_draft_revision,
     get_library_organization_draft_or_raise,
 )
-from productflow_backend.domain.enums import AgentTurnStatus
-from productflow_backend.domain.errors import AgentServiceUnavailableError
-from productflow_backend.infrastructure.agent_service import (
-    AgentServiceClient,
-    AgentServiceRequestError,
-    get_agent_service_client,
-)
 from productflow_backend.presentation.deps import get_session, require_admin
-from productflow_backend.presentation.routes.agent_conversations import _parse_event_cursor
+from productflow_backend.presentation.routes.agent_turn_http import (
+    AGENT_TURN_DEFAULT_PAGE_SIZE,
+    AGENT_TURN_MAX_PAGE_SIZE,
+    _agent_gateway_or_none,
+    _agent_gateway_or_raise,
+    _parse_event_cursor,
+    answer_agent_question_http,
+    control_agent_turn_http,
+    get_agent_turn_http,
+    list_agent_turns_http,
+    reconcile_agent_turn_effect_http,
+    stream_agent_turn_events_http,
+    submit_agent_turn_http,
+)
+from productflow_backend.presentation.routes.agent_turn_http import (
+    enqueue_agent_turn_sync as _enqueue_agent_turn_sync,
+)
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalWorkflowDraftReviewConfirmRequest,
     AgentGlobalWorkflowDraftReviewResponse,
@@ -53,8 +47,6 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentWorkflowRunRequestResponse,
     StartAgentTurnRequest,
     SubmitAgentTurnResponse,
-    serialize_agent_turn,
-    serialize_agent_turn_effect_reconciliation,
     serialize_agent_workflow_run_request,
 )
 from productflow_backend.presentation.schemas.library_organization_drafts import (
@@ -71,8 +63,7 @@ router = APIRouter(
 )
 
 
-def enqueue_global_agent_turn_sync(session: Session, projection_id: str) -> None:
-    stage_async_dispatch_for_actor(session, "run_agent_turn_sync", projection_id)
+enqueue_global_agent_turn_sync = _enqueue_agent_turn_sync
 
 
 @router.get(
@@ -208,13 +199,6 @@ def cancel_global_workflow_run_request_endpoint(
     )
 
 
-_REFRESHABLE_AGENT_TURN_STATUSES = {
-    AgentTurnStatus.QUEUED,
-    AgentTurnStatus.RUNNING,
-    AgentTurnStatus.CANCEL_REQUESTED,
-}
-
-
 @router.get("/{conversation_id}/turns", response_model=AgentTurnPageResponse)
 def list_global_agent_turns_endpoint(
     conversation_id: str,
@@ -223,17 +207,13 @@ def list_global_agent_turns_endpoint(
     limit: int = Query(default=AGENT_TURN_DEFAULT_PAGE_SIZE, ge=1, le=AGENT_TURN_MAX_PAGE_SIZE),
     session: Session = Depends(get_session),
 ) -> AgentTurnPageResponse:
-    page = list_agent_turn_page(
+    return list_agent_turns_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         task_id=task_id,
         after=after,
         limit=limit,
-    )
-    return AgentTurnPageResponse(
-        items=[serialize_agent_turn(turn) for turn in page.items],
-        next_cursor=page.next_cursor,
     )
 
 
@@ -243,20 +223,14 @@ def submit_global_agent_turn_endpoint(
     payload: StartAgentTurnRequest,
     session: Session = Depends(get_session),
 ) -> SubmitAgentTurnResponse:
-    submission = submit_agent_turn(
+    return submit_agent_turn_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
-        input_text=payload.input_text,
-        input_asset_ids=payload.asset_ids,
-        idempotency_key=payload.idempotency_key,
-        task_id=payload.task_id,
-        page_context=payload.page_context.model_dump(mode="json") if payload.page_context is not None else None,
+        payload=payload,
         gateway=_agent_gateway_or_raise(),
         enqueue_sync=enqueue_global_agent_turn_sync,
-        defer_if_unavailable=True,
     )
-    return SubmitAgentTurnResponse(created=submission.created, turn=serialize_agent_turn(submission.projection))
 
 
 @router.get("/{conversation_id}/turns/{projection_id}", response_model=AgentTurnResponse)
@@ -265,28 +239,14 @@ def get_global_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
-    projection = get_agent_turn_or_raise(
+    return get_agent_turn_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         projection_id=projection_id,
+        gateway_or_none=_agent_gateway_or_none,
+        require_library_revision_clear=True,
     )
-    if projection.status in _REFRESHABLE_AGENT_TURN_STATUSES or (
-        projection.status == AgentTurnStatus.AWAITING_CONFIRMATION
-        and projection.workflow_draft_revision_id is None
-        and projection.library_organization_draft_revision_id is None
-    ):
-        gateway = _agent_gateway_or_none()
-        if gateway is not None:
-            projection = refresh_agent_turn(
-                session,
-                product_id=None,
-                conversation_id=conversation_id,
-                projection_id=projection_id,
-                gateway=gateway,
-                tolerate_transient_unavailable=True,
-            )
-    return serialize_agent_turn(projection)
 
 
 @router.post("/{conversation_id}/turns/{projection_id}/cancel", response_model=AgentTurnResponse)
@@ -295,22 +255,14 @@ def cancel_global_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
-    projection = get_agent_turn_or_raise(
+    return control_agent_turn_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         projection_id=projection_id,
-    )
-    return serialize_agent_turn(
-        control_agent_turn(
-            session,
-            product_id=None,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            command="cancel",
-            gateway=None if projection.harness_turn_id is None else _agent_gateway_or_raise(),
-            enqueue_sync=enqueue_global_agent_turn_sync,
-        )
+        command="cancel",
+        gateway_or_raise=_agent_gateway_or_raise,
+        enqueue_sync=enqueue_global_agent_turn_sync,
     )
 
 
@@ -320,22 +272,14 @@ def resume_global_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
-    projection = get_agent_turn_or_raise(
+    return control_agent_turn_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         projection_id=projection_id,
-    )
-    return serialize_agent_turn(
-        control_agent_turn(
-            session,
-            product_id=None,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            command="resume",
-            gateway=None if projection.harness_turn_id is None else _agent_gateway_or_raise(),
-            enqueue_sync=enqueue_global_agent_turn_sync,
-        )
+        command="resume",
+        gateway_or_raise=_agent_gateway_or_raise,
+        enqueue_sync=enqueue_global_agent_turn_sync,
     )
 
 
@@ -350,21 +294,15 @@ def answer_global_agent_question_endpoint(
     payload: AgentQuestionAnswerRequest,
     session: Session = Depends(get_session),
 ) -> AgentQuestionAnswerResponse:
-    result = answer_agent_question(
+    return answer_agent_question_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         projection_id=projection_id,
         question_id=question_id,
-        answer=payload.to_gateway_payload(),
-        gateway=_agent_gateway_or_none(),
+        payload=payload,
+        gateway_or_none=_agent_gateway_or_none,
         enqueue_sync=enqueue_global_agent_turn_sync,
-    )
-    answered_turn = serialize_agent_turn(result.answered_turn)
-    return AgentQuestionAnswerResponse(
-        **answered_turn.model_dump(),
-        answered_turn=answered_turn,
-        continuation_turn=serialize_agent_turn(result.continuation_turn),
     )
 
 
@@ -378,14 +316,12 @@ def reconcile_global_agent_turn_effect_endpoint(
     payload: AgentTurnEffectReconciliationRequest,
     session: Session = Depends(get_session),
 ) -> AgentTurnEffectReconciliationResponse:
-    return serialize_agent_turn_effect_reconciliation(
-        reconcile_agent_turn_effect(
-            session,
-            product_id=None,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            tool_call_id=payload.tool_call_id,
-        )
+    return reconcile_agent_turn_effect_http(
+        session,
+        product_id=None,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+        payload=payload,
     )
 
 
@@ -397,36 +333,15 @@ async def stream_global_agent_turn_events_endpoint(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     session: Session = Depends(get_session),
 ) -> StreamingResponse:
-    projection = get_agent_turn_or_raise(
+    return stream_agent_turn_events_http(
         session,
         product_id=None,
         conversation_id=conversation_id,
         projection_id=projection_id,
+        after=after,
+        last_event_id=last_event_id,
+        parse_event_cursor=_parse_event_cursor,
     )
-    cursor = max(after, _parse_event_cursor(last_event_id))
-    return StreamingResponse(
-        stream_agent_turn_events(projection_id=projection.id, after=cursor),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-def _agent_gateway_or_raise() -> AgentServiceClient:
-    try:
-        return get_agent_service_client()
-    except AgentServiceRequestError as exc:
-        raise AgentServiceUnavailableError("Agent 服务尚未配置或暂时不可用") from exc
-
-
-def _agent_gateway_or_none() -> AgentServiceClient | None:
-    try:
-        return get_agent_service_client()
-    except AgentServiceRequestError:
-        return None
 
 
 def _serialize_global_workflow_draft_review(review) -> AgentGlobalWorkflowDraftReviewResponse:

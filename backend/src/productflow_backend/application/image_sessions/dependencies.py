@@ -6,9 +6,6 @@ from productflow_backend.infrastructure.image.base import ImageChatProvider
 from productflow_backend.infrastructure.image.factory import get_image_chat_provider
 
 ImageChatProviderFactory = Callable[[], ImageChatProvider]
-# 保留现有应用层参数类型，供注入调用方使用。
-ImageSessionChatService = ImageChatProvider
-ImageSessionChatServiceFactory = ImageChatProviderFactory
 
 
 def default_image_session_chat_service_factory() -> ImageChatProvider:
@@ -20,7 +17,5 @@ def default_image_session_chat_service_factory() -> ImageChatProvider:
 __all__ = [
     "ImageChatProvider",
     "ImageChatProviderFactory",
-    "ImageSessionChatService",
-    "ImageSessionChatServiceFactory",
     "default_image_session_chat_service_factory",
 ]

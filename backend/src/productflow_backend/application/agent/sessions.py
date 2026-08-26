@@ -129,34 +129,6 @@ def create_agent_session(
     return get_agent_session_or_raise(session, agent_session.id)
 
 
-def ensure_global_agent_conversation(
-    session: Session,
-    *,
-    session_id: str,
-) -> AgentConversation:
-    """旧 Session 首次进入全局 Dock 时补建 GLOBAL conversation。本函数 commit。"""
-    agent_session = get_agent_session_or_raise(session, session_id)
-    existing = session.scalar(
-        select(AgentConversation).where(
-            AgentConversation.session_id == agent_session.id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
-    )
-    if existing is not None:
-        return existing
-    if agent_session.status == AgentSessionStatus.ARCHIVED:
-        raise ConflictError("已归档的 Agent Session 不能创建全局 conversation")
-    conversation = AgentConversation(
-        id=new_id(),
-        scope_type=AgentConversationScope.GLOBAL,
-        session_id=agent_session.id,
-        harness_run_id=new_id(),
-    )
-    session.add(conversation)
-    session.commit()
-    return session.get(AgentConversation, conversation.id) or conversation
-
-
 def ensure_global_agent_conversations(session: Session) -> None:
     """给 global scope 出现前创建的全局 Session 惰性补 GLOBAL conversation。有写入时 commit。"""
     sessions = list(session.scalars(select(AgentSession).where(AgentSession.product_id.is_(None))).all())
@@ -219,7 +191,6 @@ __all__ = [
     "auto_name_agent_session",
     "create_agent_session",
     "derive_agent_session_title",
-    "ensure_global_agent_conversation",
     "ensure_global_agent_conversations",
     "get_agent_session_or_raise",
     "list_agent_sessions",

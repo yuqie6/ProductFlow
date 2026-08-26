@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
-from sqlalchemy import select
-from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.infrastructure.db.models import AsyncDispatch
-from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
 
 
@@ -26,19 +22,19 @@ def test_workflow_draft_api_confirms_persists_v3_graph_and_submits_run(configure
     _login(client)
     product = _create_canonical_product(client)
     product_id = product["id"]
-    reference_asset_id = product["created_assets"][0]["id"]
 
     created = client.post(
         f"/api/v2/products/{product_id}/workflow-drafts",
-        json={
-            "payload": make_workflow_draft_payload(reference_asset_id=reference_asset_id),
-            "ready_for_confirmation": True,
-            "source_turn_id": "turn-api-v3",
-            "source_artifact_step_id": "artifact-api-v3",
-        },
+        json={"ready_for_confirmation": True},
     )
     assert created.status_code == 409, created.text
     assert "不再使用 WorkflowDraft" in created.json()["detail"]
+    persisted = client.post(
+        f"/api/v3/products/{product_id}/workflow-drafts/missing/graphs",
+        json={"expected_draft_version": 1},
+    )
+    assert persisted.status_code == 409, persisted.text
+    assert "不再使用 WorkflowDraft" in persisted.json()["detail"]
     empty = client.post(f"/api/v3/products/{product_id}/workflows")
     assert empty.status_code == 201, empty.text
     graph = empty.json()
@@ -52,7 +48,7 @@ def test_workflow_draft_api_rejects_unknown_fields(configured_env) -> None:
     invalid = client.post(
         f"/api/v2/products/{product['id']}/workflow-drafts",
         json={
-            "payload": make_workflow_draft_payload(reference_asset_id=product["created_assets"][0]["id"]),
+            "payload": {},
             "ready_for_confirmation": True,
             "unknown": True,
         },

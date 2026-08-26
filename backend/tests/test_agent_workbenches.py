@@ -10,7 +10,6 @@ from sqlalchemy import event, func, select
 from productflow_backend.application.agent.agent_context import (
     get_agent_contract,
     get_agent_product_context,
-    validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent.product_workspaces import (
     attach_agent_workspace_to_product,
@@ -183,12 +182,6 @@ def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session)
     assert any(node["node_type"] == "image_generation" for node in context["live_graph"]["nodes"])
     assert "workflow_draft" not in context
     assert context["intake"] is None
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        validate_agent_workflow_draft(
-            db_session,
-            conversation_id=bootstrap.conversation.id,
-            value={},
-        )
 
 
 def test_live_graph_blocks_conversation_intake(db_session) -> None:

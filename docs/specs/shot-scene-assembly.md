@@ -5,7 +5,7 @@
 - 文档状态：Approved
 - 批准依据：仓库目标「完成 Shot/scene assembly plan」。
 - 目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
-- 当前实现：`backend/src/productflow_backend/application/product_workflow/graph_draft_persist.py`、`web/src/pages/workbench/canvas/shotChangeSet.ts`
+- 当前实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`
 
 ## 2. 用户对象
 
@@ -41,7 +41,7 @@ Draft 适配器只映射 Draft `edges[]`。会生图的 `image_generation` 缺�
 ## 6. 代码锚点
 
 - 模版：`backend/src/productflow_backend/application/product_workflow/graph_template.py`
-- Draft 适配器：`.../draft_graph_adapter.py`
+- Draft 适配器已删除；商品路径不再从 WorkflowDraft 编译 v3 图。
 - Compiler：`.../graph_compiler.py`
 - 执行角色：`.../graph_execution.py`
 - 家族：`.../domain/image_type_catalog.py`、`web/src/lib/imageTypeFamilies.ts`

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Iterable
 from typing import Any
 
@@ -22,8 +20,19 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphProviderEffect,
     WorkflowGraphRun,
 )
+from productflow_backend.infrastructure.provider_effects import (
+    PROVIDER_EFFECT_RESULT_APPLIED,
+    PROVIDER_EFFECT_RESULT_FAILED,
+    PROVIDER_EFFECT_RESULT_PENDING,
+    PROVIDER_EFFECT_RESULT_UNKNOWN,
+    canonical_provider_effect_json_hash,
+    provider_effect_can_replay,
+    provider_effect_is_pending,
+    provider_effect_is_terminal,
+    transition_provider_effect_result,
+    validate_provider_effect_json,
+)
 
-MAX_GRAPH_PROVIDER_EFFECT_JSON_BYTES = 64 * 1024
 GRAPH_PROVIDER_EFFECT_KIND = "workflow_graph_generation"
 
 
@@ -45,15 +54,7 @@ def graph_provider_effect_operation_key(node_run_id: str) -> str:
 
 
 def graph_provider_effect_request_hash(request_json: dict[str, Any]) -> str:
-    _validate_json_payload(request_json, "图运行 provider effect request")
-    encoded = json.dumps(
-        request_json,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_provider_effect_json_hash(request_json, "图运行 provider effect request")
 
 
 def node_run_effect_is_safe_to_requeue(
@@ -66,7 +67,7 @@ def node_run_effect_is_safe_to_requeue(
     if phase in WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES:
         if effect is None:
             return True
-        return effect.effect_result == "pending" and effect.reconciliation_state == "not_requested"
+        return provider_effect_is_pending(effect.effect_result) and effect.reconciliation_state == "not_requested"
     return False
 
 
@@ -81,7 +82,7 @@ def ensure_graph_provider_effect_intent(
 ) -> bool:
     """在提交 graph-run 请求之前持久化 provider-call intent。"""
 
-    _validate_json_payload(request_json, "图运行 provider effect intent")
+    validate_provider_effect_json(request_json, "图运行 provider effect intent")
     node_run = session.scalar(
         select(WorkflowGraphNodeRun)
         .where(WorkflowGraphNodeRun.id == node_run_id)
@@ -110,7 +111,7 @@ def ensure_graph_provider_effect_intent(
                 request_hash=request_hash,
                 provider_name=provider_name,
                 attempt_id=attempt_id,
-                effect_result="pending",
+                effect_result=PROVIDER_EFFECT_RESULT_PENDING,
                 reconciliation_state="not_requested",
                 request_json=request_json,
             )
@@ -124,14 +125,12 @@ def ensure_graph_provider_effect_intent(
         or effect.provider_name != provider_name
     ):
         raise ValueError("图运行 provider effect operation identity 与请求不一致")
-    if effect.effect_result in {"applied", "unknown"}:
-        return False
-    if effect.effect_result == "pending":
+    if not provider_effect_can_replay(effect.effect_result):
         return False
 
     effect.attempt_id = attempt_id
-    effect.effect_result = "pending"
-    effect.reconciliation_state = "not_requested"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_PENDING):
+        return False
     effect.provider_response_id = None
     effect.provider_status = None
     effect.request_json = request_json
@@ -153,16 +152,14 @@ def record_graph_provider_effect_result(
     """已 unknown 的 effect 不能改成 applied；failed 保持原判。"""
 
     if result_json is not None:
-        _validate_json_payload(result_json, "图运行 provider effect result")
+        validate_provider_effect_json(result_json, "图运行 provider effect result")
     effect = _locked_effect(session, node_run_id=node_run_id)
     if effect is None or effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result == "unknown":
-        return False
-    if effect.effect_result == "failed":
+    if effect.effect_result == PROVIDER_EFFECT_RESULT_FAILED:
         return True
-    effect.effect_result = "applied"
-    effect.reconciliation_state = "applied"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_APPLIED):
+        return False
     effect.provider_response_id = provider_response_id
     effect.provider_status = provider_status
     effect.result_json = result_json
@@ -183,10 +180,10 @@ def mark_graph_provider_effect_unknown(
         return False
     if effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result in {"applied", "failed"}:
+    if provider_effect_is_terminal(effect.effect_result):
         return True
-    effect.effect_result = "unknown"
-    effect.reconciliation_state = "unknown"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_UNKNOWN):
+        return False
     effect.detail = detail[:1000]
     session.flush()
     return True
@@ -256,7 +253,7 @@ def reset_graph_node_run_for_safe_requeue(
             WorkflowGraphProviderEffect.node_run_id == node_run.id
         )
     )
-    if effect is not None and effect.effect_result == "pending":
+    if effect is not None and provider_effect_is_pending(effect.effect_result):
         session.delete(effect)
     node_run.status = WorkflowNodeStatus.QUEUED
     node_run.active_attempt_id = None
@@ -298,18 +295,6 @@ def _locked_effect(session: Session, *, node_run_id: str) -> WorkflowGraphProvid
         .where(WorkflowGraphProviderEffect.node_run_id == node_run_id)
         .with_for_update()
     )
-
-
-def _validate_json_payload(payload: dict[str, Any], label: str) -> None:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    if len(encoded) > MAX_GRAPH_PROVIDER_EFFECT_JSON_BYTES:
-        raise ValueError(f"{label} 超过 {MAX_GRAPH_PROVIDER_EFFECT_JSON_BYTES} bytes")
 
 
 __all__ = [

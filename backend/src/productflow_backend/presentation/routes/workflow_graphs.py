@@ -16,7 +16,7 @@ from productflow_backend.application.product_workflow.graph_commands import (
 )
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
-from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
+from productflow_backend.application.workflow_drafts.service import persist_confirmed_draft_graph
 from productflow_backend.application.product_workflow.graph_proposals import (
     confirm_graph_proposal,
     discard_graph_proposal,
@@ -146,16 +146,12 @@ def persist_confirmed_draft_graph_endpoint(
     payload: PersistDraftGraphRequest,
     session: Session = Depends(get_session),
 ) -> DraftGraphPersistResponse:
-    """把已确认 Draft revision 一次写成完整 v3 图；工作台只读这次 persist 的结果。"""
-    result = persist_confirmed_draft_graph(
+    """商品路径不再把 WorkflowDraft 物化为图。"""
+    persist_confirmed_draft_graph(
         session,
         product_id=product_id,
         draft_id=draft_id,
         expected_draft_version=payload.expected_draft_version,
-    )
-    return DraftGraphPersistResponse(
-        created=result.created,
-        graph=serialize_graph_projection(result.projection),
     )
 
 

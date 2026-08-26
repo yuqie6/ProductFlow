@@ -10,7 +10,6 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
     WorkflowDraftPayloadV1,
     workflow_draft_payload_hash,
-    workflow_draft_tool_schema,
 )
 from productflow_backend.domain.image_specs import DELIVERY_SPEC_MAX_TOTAL_PIXELS, DeliverySpec
 
@@ -81,42 +80,7 @@ def test_delivery_spec_enforces_total_pixel_budget() -> None:
         )
 
 
-def test_workflow_draft_tool_schema_matches_provider_strict_subset() -> None:
-    schema = workflow_draft_tool_schema()
-    forbidden_keys = {"default", "deprecated", "discriminator", "oneOf"}
-
-    def assert_strict(value: object, *, path: str = "$") -> None:
-        if isinstance(value, list):
-            for index, item in enumerate(value):
-                assert_strict(item, path=f"{path}[{index}]")
-            return
-        if not isinstance(value, dict):
-            return
-
-        assert not (forbidden_keys & value.keys()), path
-        if value.get("type") == "object" or "properties" in value:
-            properties = value.get("properties")
-            assert isinstance(properties, dict), path
-            assert value.get("additionalProperties") is False, path
-            assert value.get("required") == list(properties), path
-        for key, item in value.items():
-            assert_strict(item, path=f"{path}.{key}")
-
-    assert schema["type"] == "object"
-    assert_strict(schema)
-    assert schema["$defs"]["JsonValue"] == {
-        "anyOf": [
-            {"type": "string"},
-            {"type": "number"},
-            {"type": "boolean"},
-            {"type": "array", "items": {"$ref": "#/$defs/JsonValue"}},
-            {"type": "null"},
-        ]
-    }
-    assert "anyOf" in schema["properties"]["nodes"]["items"]
-
-
-def test_workflow_draft_tool_schema_does_not_change_domain_defaults() -> None:
+def test_delivery_spec_keeps_optional_domain_defaults() -> None:
     delivery = DeliverySpec.model_validate(
         {
             "width": 1200,

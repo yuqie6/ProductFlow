@@ -17,7 +17,7 @@ from productflow_backend.application.agent.control import (
 from productflow_backend.application.agent.execution import recover_expired_agent_turn_executions
 from productflow_backend.application.agent.tasks import initial_agent_task_turn_idempotency_key
 from productflow_backend.application.agent.turn_projection import record_agent_turn_start_error, reserve_agent_turn
-from productflow_backend.application.agent.turn_status import POLLABLE_TURN_STATUSES
+from productflow_backend.application.agent.turn_status import IN_FLIGHT_TURN_STATUSES
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationScope,
@@ -136,7 +136,7 @@ def execute_agent_turn_sync(
                 state=state,
                 commit=False,
             )
-        if projection.status in POLLABLE_TURN_STATUSES and not projection.resume_required:
+        if projection.status in IN_FLIGHT_TURN_STATUSES and not projection.resume_required:
             enqueue_later(session, projection.id, _poll_delay_ms())
         session.commit()
     except AgentServiceRequestError as exc:
@@ -195,7 +195,7 @@ def recover_unfinished_agent_turn_syncs(
                 .where(
                     AgentTurnProjection.resume_required.is_(False),
                     or_(
-                        AgentTurnProjection.status.in_(POLLABLE_TURN_STATUSES),
+                        AgentTurnProjection.status.in_(IN_FLIGHT_TURN_STATUSES),
                         (
                             # 待确认但尚未挂上 Draft revision，同步仍可能补 artifact。
                             (AgentTurnProjection.status == AgentTurnStatus.AWAITING_CONFIRMATION)

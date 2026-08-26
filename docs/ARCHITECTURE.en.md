@@ -37,7 +37,7 @@ Current code ownership:
 | Agent tools and context | `agent/tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, `agent_context.py` | `routes/agent_internal.py` | `test_workflow_agent_service.py`, `test_graph_proposals.py`, `test_media_library_drafts.py` |
 | Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft and graph persist | `workflow_drafts/contracts.py` (topology), `domain/artifact_contracts.py` (live types), `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py` (retired writes, 409) | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
+| Draft and graph persist | `workflow_drafts/contracts.py` (historical GET), `domain/artifact_contracts.py` (live types), `service.py` (GET plus 409 write stubs) | `routes/workflow_drafts.py` (retired writes, 409) | `test_workflow_draft_contracts.py`, `test_workflow_draft_api.py` |
 | schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py`, `graph_run_durability.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
 | Recipes | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
@@ -109,7 +109,7 @@ Product creation writes Product, a live schema-v3 graph, the product Conversatio
 
 Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `application/agent/`, `agent-service/src/pi-runtime.ts`, and `test_workflow_agent_service.py`, `test_agent_product_workspaces.py`, and `test_media_library_drafts.py`.
 
-Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` and `product_workflow/graph_draft_persist.py`; global media Drafts `media_library/drafts.py`.
+Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` (GET plus 409 writes); global media Drafts `media_library/drafts.py`.
 
 ## 5. Product intake and retired WorkflowDraft topology
 
@@ -140,7 +140,7 @@ WorkflowRecipe stores user-created full workflows or fragments. The recipe libra
 
 A product with no live graph can `POST /api/v3/products/{product_id}/workflows` to persist an empty schema-v3 graph (revision 1, no nodes or edges). A second create is a conflict. Empty birth is not an empty ChangeSet (`operations` has min length 1). Later node/edge writes still use `apply_graph_change_set`.
 
-Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure writes and previews use `graph_commands.py` (`apply_graph_change_set` / `stage_apply_graph_change_set` / `preview_applied_graph_change_set`); the in-memory apply engine remains `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py` / `graph_run_durability.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
+Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure writes use `graph_commands.py` (`apply_graph_change_set` / `stage_apply_graph_change_set`); the in-memory apply engine is `apply_workflow_change_set` in `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py` / `graph_run_durability.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
 
 ## 7. Image Model
 

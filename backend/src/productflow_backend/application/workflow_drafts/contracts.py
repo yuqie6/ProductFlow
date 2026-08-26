@@ -36,74 +36,6 @@ WORKFLOW_DRAFT_MAX_TOTAL_IMAGES = PRODUCT_INTAKE_MAX_TOTAL_IMAGES
 WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS = PRODUCT_INTAKE_MAX_REFERENCE_ASSETS
 
 
-def workflow_draft_agent_guidance() -> dict[str, Any]:
-    """返回草稿 schema 自身无法表达的跨字段规则。"""
-
-    return {
-        "schema_version": 1,
-        "purpose": "提交 WorkflowDraft 前的有界校验提示；后端校验仍是最终权威。",
-        "cross_field_rules": [
-            {
-                "paths": [
-                    "image_types[].images[].delivery_spec.fit",
-                    "image_types[].images[].delivery_spec.crop_anchor",
-                ],
-                "rule": "fit=contain 时 crop_anchor 必须为 null 或省略。",
-            },
-            {
-                "paths": [
-                    "image_types[].images[].delivery_spec.fit",
-                    "image_types[].images[].delivery_spec.background_color",
-                ],
-                "rule": "fit=cover 时 background_color 必须为 null 或省略。",
-            },
-            {
-                "paths": ["visual_exceptions[].overrides[].field", "visual_system.payload.locked_fields"],
-                "rule": (
-                    "视觉例外 override 的 field 必须出现在 visual_system.payload.locked_fields；"
-                    "例如覆盖 spacing 时必须锁定 spacing。"
-                ),
-            },
-            {
-                "paths": ["image_types[].quantity", "image_types[].images"],
-                "rule": "每个图片类型的 quantity 必须等于其逐图 images 数量。",
-            },
-            {
-                "paths": ["prompt_plans[].image_type_key", "image_types[].prompt_plan_key"],
-                "rule": "每个图片类型必须且只能关联一个提示词计划，prompt_plan_key 必须相互一致。",
-            },
-            {
-                "paths": [
-                    "intake.delivery_preset_key",
-                    "intake.delivery_spec",
-                    "image_types[].images[].delivery_spec",
-                ],
-                "rule": (
-                    "intake 有默认交付规格时，每张 PlannedImage 都必须显式复制完全相同的 delivery_spec；"
-                    "不能只放在图或节点的 side-state。"
-                ),
-            },
-        ],
-        "pre_submit_checks": [
-            "读取当前商品、WorkflowDraft revision、intake 和已核验参考资产，使用最新事实构建完整 payload。",
-            "不要把 recipe 或 legacy seed 原样提交；必须重新核对当前商品事实和参考资产。",
-            "保持 intake 中已确认的图片类型和数量；要调整时先通过 ask_user 明确确认。",
-            (
-                "如果 intake 提供 delivery_preset_key 和 delivery_spec，逐张复制该 snapshot 到每个 "
-                "PlannedImage.delivery_spec；不要依赖 graph side-state。"
-            ),
-            "清理不适用的互斥字段：contain 不带 crop_anchor，cover 不带 background_color。",
-            "所有视觉例外 field 都要在 visual_system.payload.locked_fields 中出现。",
-            "提交前检查 key、order、quantity、prompt plan 和 node/edge 的一对一关系。",
-            "一次提交完整 WorkflowDraft；校验失败时按返回的 path 修复完整 payload，不要盲目重复相同请求。",
-        ],
-        "validation_error_contract": {
-            "error_code": "workflow_draft_validation_failed",
-            "issues": "最多 8 条，包含 path 和 message；先修复所有列出的字段再重提。",
-        },
-    }
-
-
 class ReferenceBindingPlan(StrictArtifactModel):
     key: BusinessKey
     asset_id: EntityId
@@ -419,21 +351,6 @@ def parse_workflow_draft_payload(payload: WorkflowDraftPayloadV1 | dict[str, Any
     if isinstance(payload, WorkflowDraftPayloadV1):
         return payload
     return WorkflowDraftPayloadV1.model_validate(payload)
-
-
-def workflow_draft_tool_schema() -> dict[str, Any]:
-    schema = WorkflowDraftPayloadV1.model_json_schema()
-    schema["$defs"]["JsonValue"] = {
-        "anyOf": [
-            {"type": "string"},
-            {"type": "number"},
-            {"type": "boolean"},
-            {"type": "array", "items": {"$ref": "#/$defs/JsonValue"}},
-            {"type": "null"},
-        ]
-    }
-    normalize_tool_schema(schema)
-    return schema
 
 
 def normalize_tool_schema(schema: dict[str, Any]) -> None:

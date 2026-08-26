@@ -15,7 +15,6 @@ from productflow_backend.application.agent.agent_context import (
     get_agent_runtime_context,
     validate_agent_global_draft,
     validate_agent_library_organization_draft,
-    validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
@@ -215,12 +214,10 @@ def validate_agent_workflow_draft_endpoint(
     payload: AgentWorkflowDraftValidationRequest,
     session: Session = Depends(get_session),
 ) -> AgentWorkflowDraftValidationResponse:
-    validate_agent_workflow_draft(
-        session,
-        conversation_id=conversation_id,
-        value=payload.value,
-    )
-    return AgentWorkflowDraftValidationResponse()
+    del conversation_id, payload, session
+    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
+
+    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 @router.post("/{conversation_id}/graph/apply-change-set")
@@ -255,11 +252,7 @@ def reconcile_agent_graph_apply_endpoint(
         idempotency_key=idempotency_key,
         tool_name=APPLY_GRAPH_TOOL_NAME,
     )
-    return AgentGraphChangeSetReconcileResponse(
-        state=result.state,
-        result=result.result,
-        detail=result.detail,
-    )
+    return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
 
 
 @router.post("/{conversation_id}/graph/proposals")
@@ -294,11 +287,7 @@ def reconcile_agent_graph_propose_endpoint(
         idempotency_key=idempotency_key,
         tool_name=PROPOSE_GRAPH_TOOL_NAME,
     )
-    return AgentGraphChangeSetReconcileResponse(
-        state=result.state,
-        result=result.result,
-        detail=result.detail,
-    )
+    return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
 
 
 @router.post(
@@ -397,10 +386,12 @@ def reconcile_agent_product_intake_endpoint(
         )
     if reconciled.state not in {"applied", "not_applied", "conflict", "unknown"}:
         raise ConflictError("商品输入对账状态无效")
-    return AgentFinalizeProductIntakeReconcileResponse(
-        state=reconciled.state,
-        result=result,
-        detail=reconciled.detail,
+    return AgentFinalizeProductIntakeReconcileResponse.model_validate(
+        {
+            "state": reconciled.state,
+            "result": result,
+            "detail": reconciled.detail,
+        }
     )
 
 
@@ -719,10 +710,12 @@ def reconcile_agent_workflow_run_request_endpoint(
         task_id=payload.task_id,
         source_run_id=payload.source_run_id,
     )
-    return AgentWorkflowRunRequestReconcileResponse(
-        state=result.state,
-        result=serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
-        detail=result.detail,
+    return AgentWorkflowRunRequestReconcileResponse.model_validate(
+        {
+            "state": result.state,
+            "result": serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
+            "detail": result.detail,
+        }
     )
 
 
@@ -747,10 +740,12 @@ def reconcile_agent_global_workflow_run_request_endpoint(
         task_id=payload.task_id,
         source_run_id=payload.source_run_id,
     )
-    return AgentWorkflowRunRequestReconcileResponse(
-        state=result.state,
-        result=serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
-        detail=result.detail,
+    return AgentWorkflowRunRequestReconcileResponse.model_validate(
+        {
+            "state": result.state,
+            "result": serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
+            "detail": result.detail,
+        }
     )
 
 
@@ -912,17 +907,19 @@ def reconcile_agent_product_workspace_from_global_conversation_endpoint(
         name=payload.name,
         idempotency_key=idempotency_key,
     )
-    return AgentProductWorkspaceReconcileResponse(
-        state=reconciled.state,
-        result=(
-            _serialize_agent_product_workspace_launch(
-                global_conversation_id=conversation_id,
-                creation=reconciled.creation,
-            )
-            if reconciled.creation is not None
-            else None
-        ),
-        detail=reconciled.detail,
+    return AgentProductWorkspaceReconcileResponse.model_validate(
+        {
+            "state": reconciled.state,
+            "result": (
+                _serialize_agent_product_workspace_launch(
+                    global_conversation_id=conversation_id,
+                    creation=reconciled.creation,
+                )
+                if reconciled.creation is not None
+                else None
+            ),
+            "detail": reconciled.detail,
+        }
     )
 
 
@@ -1096,15 +1093,7 @@ def reconcile_agent_asset_rename_endpoint(
         expected_display_name=payload.expected_display_name,
         target_display_name=payload.target_display_name,
     )
-    return AgentAssetRenameReconcileResponse(
-        state=result.state,
-        result=(
-            AgentAssetRenameResultResponse.model_validate(result.result)
-            if result.result is not None
-            else None
-        ),
-        detail=result.detail,
-    )
+    return AgentAssetRenameReconcileResponse.model_validate(result, from_attributes=True)
 
 
 @router.post(
@@ -1159,15 +1148,7 @@ def reconcile_agent_folder_create_endpoint(
         folder_id=payload.folder_id,
         name=payload.name,
     )
-    return AgentFolderCreateReconcileResponse(
-        state=reconciled.state,
-        result=(
-            AgentFolderCreateResultResponse.model_validate(reconciled.result)
-            if reconciled.result is not None
-            else None
-        ),
-        detail=reconciled.detail,
-    )
+    return AgentFolderCreateReconcileResponse.model_validate(reconciled, from_attributes=True)
 
 
 @router.post(
@@ -1229,15 +1210,7 @@ def reconcile_agent_folder_rename_endpoint(
         expected_name=payload.expected_name,
         target_name=payload.target_name,
     )
-    return AgentFolderRenameReconcileResponse(
-        state=reconciled.state,
-        result=(
-            AgentFolderRenameResultResponse.model_validate(reconciled.result)
-            if reconciled.result is not None
-            else None
-        ),
-        detail=reconciled.detail,
-    )
+    return AgentFolderRenameReconcileResponse.model_validate(reconciled, from_attributes=True)
 
 
 @router.post(
@@ -1311,12 +1284,4 @@ def reconcile_agent_asset_move_endpoint(
         ],
         target_folder_id=payload.target_folder_id,
     )
-    return AgentAssetMoveReconcileResponse(
-        state=reconciled.state,
-        result=(
-            AgentAssetMoveResultResponse.model_validate(reconciled.result)
-            if reconciled.result is not None
-            else None
-        ),
-        detail=reconciled.detail,
-    )
+    return AgentAssetMoveReconcileResponse.model_validate(reconciled, from_attributes=True)

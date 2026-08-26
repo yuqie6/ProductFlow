@@ -37,7 +37,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | Agent 工具与上下文 | `agent/tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, `agent_context.py` | `routes/agent_internal.py` | `test_workflow_agent_service.py`, `test_graph_proposals.py`, `test_media_library_drafts.py` |
 | 全局素材库 | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft 与 graph persist | `workflow_drafts/contracts.py`（拓扑）、`domain/artifact_contracts.py`（活类型）、`service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py`（退休写入，409） | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
+| Draft 与 graph persist | `workflow_drafts/contracts.py`（历史 GET）、`domain/artifact_contracts.py`（活类型）、`service.py`（GET 与 409 写入桩） | `routes/workflow_drafts.py`（退休写入，409） | `test_workflow_draft_contracts.py`, `test_workflow_draft_api.py` |
 | schema-v3 图与执行 | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py`, `graph_run_durability.py` | `routes/workflow_graphs.py`, `workers.py` | `test_graph_proposals.py`, graph compiler/run 测试 |
 | 配方 | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | 交付图 | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
@@ -109,7 +109,7 @@ ProductFlow 拥有商品、Draft、确认、WorkflowGraphRun 和 Web projection�
 
 主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、continuation Turn、`tool_steps` 白名单和 effect reconciliation 以 `application/agent/`、`agent-service/src/pi-runtime.ts` 与 `test_workflow_agent_service.py`、`test_agent_product_workspaces.py`、`test_media_library_drafts.py` 为准。
 
-实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；商品 Draft `workflow_drafts/service.py` 与 `product_workflow/graph_draft_persist.py`；全局素材 Draft `media_library/drafts.py`。
+实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；商品 Draft `workflow_drafts/service.py`（GET 与 409 写入）；全局素材 Draft `media_library/drafts.py`。
 
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
@@ -138,7 +138,7 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 
 无 live graph 时，`POST /api/v3/products/{product_id}/workflows` 写入一张空的 schema-v3 图（revision 1，无节点/边）；已有 active graph 时返回冲突。空图出生不是空 ChangeSet（operations 至少一条）。节点、边、分组写入仍走 `apply_graph_change_set`。
 
-图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构写入与预览走 `graph_commands.py`（`apply_graph_change_set` / `stage_apply_graph_change_set` / `preview_applied_graph_change_set`）；内存 apply 引擎仍是 `graph_apply.py`。运行走 `graph_runs.py` / `graph_execution.py` / `graph_run_durability.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
+图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构写入走 `graph_commands.py`（`apply_graph_change_set` / `stage_apply_graph_change_set`）；内存 apply 引擎是 `graph_apply.py` 的 `apply_workflow_change_set`。运行走 `graph_runs.py` / `graph_execution.py` / `graph_run_durability.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 
 ## 7. 图片模型
 

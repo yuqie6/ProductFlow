@@ -15,8 +15,6 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.graph_catalog import (
     GraphInputContract,
-    graph_input_contract,
-    graph_node_output_type,
     normalize_node_config,
     require_graph_connection,
     run_required_inputs,
@@ -84,16 +82,6 @@ def validate_graph_edge(
     if contract.max_count is not None and same_role_count >= contract.max_count:
         raise BusinessValidationError("目标节点该类输入已达到上限")
     return contract
-
-
-def typed_edge_from_nodes(
-    source: GraphRuleNode,
-    target: GraphRuleNode,
-) -> tuple[GraphEdgeDataType, GraphEdgeRole]:
-    contract = graph_input_contract(source.node_type, target.node_type)
-    if contract is None:
-        raise BusinessValidationError("节点类型不兼容，不能创建连线")
-    return graph_node_output_type(source.node_type), contract.role
 
 
 def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -> GraphConfigStatus:

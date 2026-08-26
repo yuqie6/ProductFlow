@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
@@ -25,7 +26,10 @@ class AgentToolReconcileResult:
     detail: str | None = None
 
 
-AgentAssetRenameReconcileResult = AgentToolReconcileResult
+@dataclass(frozen=True, slots=True)
+class AgentToolMutationStage:
+    result: dict[str, Any]
+    commit_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 def _prepared_document(
@@ -51,13 +55,23 @@ def _tool_request_hash(*, tool_name: str, prepared_json: dict[str, Any]) -> str:
     return canonical_json_request_hash({"tool_name": tool_name, "prepared": prepared_json})
 
 
-def _get_conversation_for_update(session: Session, conversation_id: str) -> AgentConversation:
-    conversation = session.scalar(
-        select(AgentConversation).where(AgentConversation.id == conversation_id).with_for_update()
-    )
+def _get_conversation(
+    session: Session,
+    conversation_id: str,
+    *,
+    for_update: bool = False,
+) -> AgentConversation:
+    statement = select(AgentConversation).where(AgentConversation.id == conversation_id)
+    if for_update:
+        statement = statement.with_for_update()
+    conversation = session.scalar(statement)
     if conversation is None:
         raise NotFoundError("Agent conversation 不存在")
     return conversation
+
+
+def _get_conversation_for_update(session: Session, conversation_id: str) -> AgentConversation:
+    return _get_conversation(session, conversation_id, for_update=True)
 
 
 def _get_tool_mutation(
@@ -180,9 +194,95 @@ def _commit_tool_mutation(
     return result
 
 
+def apply_tool_mutation(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    tool_name: str,
+    operation: str,
+    before: dict[str, Any],
+    target: dict[str, Any],
+    stage: Callable[[Session, AgentConversation], AgentToolMutationStage],
+    validate_conversation: Callable[[AgentConversation], None] | None = None,
+) -> dict[str, Any]:
+    """统一执行带幂等账本的工具 mutation。"""
+    normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
+    conversation = _get_conversation_for_update(session, conversation_id)
+    if validate_conversation is not None:
+        validate_conversation(conversation)
+    prepared_json = _prepared_document(
+        conversation,
+        operation=operation,
+        before=before,
+        target=target,
+    )
+    request_hash = _tool_request_hash(tool_name=tool_name, prepared_json=prepared_json)
+    replay = _replay_existing_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=tool_name,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
+        session.commit()
+        return replay
+
+    staged = stage(session, conversation)
+    return _commit_tool_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=tool_name,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+        prepared_json=prepared_json,
+        result=staged.result,
+        **staged.commit_kwargs,
+    )
+
+
+def reconcile_tool_mutation(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    tool_name: str,
+    operation: str,
+    before: dict[str, Any],
+    target: dict[str, Any],
+    fallback: Callable[[Session, AgentConversation], AgentToolReconcileResult],
+    validate_conversation: Callable[[AgentConversation], None] | None = None,
+) -> AgentToolReconcileResult:
+    """统一读取工具 mutation 账本；账本缺失时只调用只读对账回退。"""
+    normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
+    conversation = _get_conversation(session, conversation_id)
+    if validate_conversation is not None:
+        validate_conversation(conversation)
+    prepared_json = _prepared_document(
+        conversation,
+        operation=operation,
+        before=before,
+        target=target,
+    )
+    request_hash = _tool_request_hash(tool_name=tool_name, prepared_json=prepared_json)
+    ledger_result = _reconcile_from_ledger(
+        session,
+        conversation_id=conversation.id,
+        tool_name=tool_name,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if ledger_result is not None:
+        return ledger_result
+    return fallback(session, conversation)
+
+
 __all__ = [
-    "AgentAssetRenameReconcileResult",
+    "AgentToolMutationStage",
     "AgentToolReconcileResult",
+    "apply_tool_mutation",
+    "reconcile_tool_mutation",
     "_commit_tool_mutation",
     "_get_conversation_for_update",
     "_prepared_document",

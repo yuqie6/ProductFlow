@@ -13,10 +13,6 @@ from productflow_backend.presentation.schemas.products import (
 )
 
 
-class CreateDeliveryRenditionRequest(DeliverySpec):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
 class DeliveryExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

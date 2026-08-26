@@ -290,7 +290,9 @@ class PerImagePromptPlan(StrictArtifactModel):
     lighting: str | None = None
 
 
-class ImagePromptPayloadV1(StrictArtifactModel):
+class ListingPromptPayload(StrictArtifactModel):
+    """v3 运行时与 provider 写入的提示词形状；不含 Draft 拓扑字段。"""
+
     schema_version: Literal[1] = 1
     shared_rules: list[NonEmptyText] = Field(min_length=1)
     design_goal: NonEmptyText
@@ -301,9 +303,12 @@ class ImagePromptPayloadV1(StrictArtifactModel):
     text: PromptTextContent
     atmosphere: PromptAtmosphere
     visual_variant_key: BusinessKey | None = None
+
+
+class ImagePromptPayloadV1(ListingPromptPayload):
     fact_keys: list[BusinessKey] = Field(default_factory=list)
     evidence_asset_ids: list[EntityId] = Field(default_factory=list)
-    images: list[PerImagePromptPlan] = Field(min_length=1)
+    images: list[PerImagePromptPlan] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_unique_values(self) -> ImagePromptPayloadV1:
@@ -337,6 +342,7 @@ __all__ = [
     "FactConflictCandidate",
     "HexColor",
     "ImagePromptPayloadV1",
+    "ListingPromptPayload",
     "NonEmptyText",
     "PerImagePromptPlan",
     "ProductFactDraft",

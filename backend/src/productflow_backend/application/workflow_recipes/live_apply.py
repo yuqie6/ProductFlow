@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_workflow.graph_apply import apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_commands import (
     EMPTY_GRAPH,
     AppliedGraph,
@@ -17,7 +18,6 @@ from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
-    preview_applied_graph_change_set,
     stage_apply_graph_change_set,
     stage_new_workflow_graph,
 )
@@ -174,31 +174,6 @@ def build_recipe_change_set(
     )
 
 
-def preview_recipe_payload(
-    session: Session,
-    *,
-    product_id: str,
-    recipe_id: str,
-    payload: RecipePayload,
-    recipe_kind: WorkflowRecipeKind,
-    recipe_version: int,
-    summary: str,
-    payload_hash: str | None = None,
-    required_bindings: tuple[str, ...] = (),
-) -> RecipeApplyPreview:
-    return plan_recipe_payload(
-        session,
-        product_id=product_id,
-        recipe_id=recipe_id,
-        payload=payload,
-        recipe_kind=recipe_kind,
-        recipe_version=recipe_version,
-        summary=summary,
-        payload_hash=payload_hash,
-        required_bindings=required_bindings,
-    ).preview()
-
-
 def plan_recipe_payload(
     session: Session,
     *,
@@ -248,7 +223,7 @@ def plan_recipe_payload(
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc
     try:
-        after = preview_applied_graph_change_set(existing, change_set)
+        after = apply_workflow_change_set(existing, change_set)
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc
     existing_node_ids = {node.id for node in existing.nodes}
@@ -293,27 +268,6 @@ def plan_recipe_payload(
         updated_nodes=tuple(updated_nodes),
         required_bindings=tuple(required_bindings),
     )
-
-
-def apply_recipe_payload(
-    session: Session,
-    *,
-    product_id: str,
-    recipe_kind: WorkflowRecipeKind,
-    payload: RecipePayload,
-    summary: str,
-    commit: bool = False,
-) -> tuple[GraphCommandResult, RecipeApplyMode, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    plan = plan_recipe_payload(
-        session,
-        product_id=product_id,
-        recipe_id="recipe",
-        payload=payload,
-        recipe_kind=recipe_kind,
-        recipe_version=1,
-        summary=summary,
-    )
-    return apply_recipe_plan(session, product_id=product_id, plan=plan, commit=commit)
 
 
 def apply_recipe_plan(
@@ -640,10 +594,8 @@ __all__ = [
     "RecipePreviewGroup",
     "RecipePreviewNode",
     "RecipePreviewUpdatedNode",
-    "apply_recipe_payload",
     "apply_recipe_plan",
     "build_recipe_change_set",
     "plan_recipe_payload",
-    "preview_recipe_payload",
     "recipe_application_summary",
 ]

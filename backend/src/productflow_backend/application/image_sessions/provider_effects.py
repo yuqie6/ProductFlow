@@ -5,8 +5,6 @@ intent 必须在发请求前落库。pending 不得重放。unknown 表示无法
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,10 +18,20 @@ from productflow_backend.application.image_sessions.dependencies import (
 from productflow_backend.domain.enums import JobStatus
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, ImageSessionProviderEffect
-from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
+from productflow_backend.infrastructure.provider_effects import (
+    PROVIDER_EFFECT_RESULT_APPLIED,
+    PROVIDER_EFFECT_RESULT_FAILED,
+    PROVIDER_EFFECT_RESULT_PENDING,
+    PROVIDER_EFFECT_RESULT_UNKNOWN,
+    PROVIDER_EFFECT_RESULTS,
+    ProviderEffectQueryResult,
+    canonical_provider_effect_json_hash,
+    provider_effect_can_replay,
+    provider_effect_is_terminal,
+    transition_provider_effect_result,
+    validate_provider_effect_json,
+)
 
-MAX_IMAGE_SESSION_PROVIDER_EFFECT_JSON_BYTES = 64 * 1024
-IMAGE_SESSION_PROVIDER_EFFECT_RESULTS = {"pending", "applied", "failed", "unknown"}
 IMAGE_SESSION_PROVIDER_RECONCILIATION_STATES = {
     "not_requested",
     "applied",
@@ -63,15 +71,7 @@ def image_session_provider_effect_operation_key(
 
 
 def image_session_provider_effect_request_hash(request_json: dict[str, Any]) -> str:
-    _validate_json_payload(request_json, "连续生图 provider effect request")
-    encoded = json.dumps(
-        request_json,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_provider_effect_json_hash(request_json, "连续生图 provider effect request")
 
 
 def ensure_image_session_provider_effect_intent(
@@ -88,7 +88,7 @@ def ensure_image_session_provider_effect_intent(
 ) -> bool:
     """在提交图片请求之前持久化 provider-call intent。"""
 
-    _validate_json_payload(request_json, "连续生图 provider effect intent")
+    validate_provider_effect_json(request_json, "连续生图 provider effect intent")
     task = session.scalar(
         select(ImageSessionGenerationTask)
         .where(ImageSessionGenerationTask.id == task_id)
@@ -116,7 +116,7 @@ def ensure_image_session_provider_effect_intent(
             request_hash=request_hash,
             provider_name=provider_name,
             attempt_id=attempt_id,
-            effect_result="pending",
+            effect_result=PROVIDER_EFFECT_RESULT_PENDING,
             reconciliation_state="not_requested",
             request_json=request_json,
         )
@@ -131,15 +131,12 @@ def ensure_image_session_provider_effect_intent(
         or effect.provider_name != provider_name
     ):
         raise ValueError("连续生图 provider effect operation identity 与请求不一致")
-    if effect.effect_result in {"applied", "unknown"}:
-        return False
-    if effect.effect_result == "pending":
-        # pending 表示请求可能已发出；重放会重复扣费或重复生成。
+    if not provider_effect_can_replay(effect.effect_result):
         return False
 
     effect.attempt_id = attempt_id
-    effect.effect_result = "pending"
-    effect.reconciliation_state = "not_requested"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_PENDING):
+        return False
     effect.provider_response_id = None
     effect.provider_status = None
     effect.request_json = request_json
@@ -161,16 +158,14 @@ def record_image_session_provider_effect_result(
     """在本地资产落地之前持久化 provider 结果证据。"""
 
     if result_json is not None:
-        _validate_json_payload(result_json, "连续生图 provider effect result")
+        validate_provider_effect_json(result_json, "连续生图 provider effect result")
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result == "unknown":
-        return False
-    if effect.effect_result == "failed":
+    if effect.effect_result == PROVIDER_EFFECT_RESULT_FAILED:
         return True
-    effect.effect_result = "applied"
-    effect.reconciliation_state = "applied"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_APPLIED):
+        return False
     effect.provider_response_id = provider_response_id
     effect.provider_status = provider_status
     effect.result_json = result_json
@@ -192,7 +187,7 @@ def record_image_session_provider_effect_progress(
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result in {"applied", "failed"}:
+    if provider_effect_is_terminal(effect.effect_result):
         return True
     if provider_response_id is not None:
         effect.provider_response_id = provider_response_id
@@ -218,10 +213,10 @@ def mark_image_session_provider_effect_failed(
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result in {"applied", "unknown"}:
-        return effect.effect_result == "applied"
-    effect.effect_result = "failed"
-    effect.reconciliation_state = "not_applied"
+    if effect.effect_result == PROVIDER_EFFECT_RESULT_APPLIED:
+        return True
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_FAILED):
+        return False
     effect.detail = detail[:1000]
     return True
 
@@ -239,10 +234,10 @@ def mark_image_session_provider_effect_unknown(
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:
         return False
-    if effect.effect_result in {"applied", "failed"}:
+    if provider_effect_is_terminal(effect.effect_result):
         return True
-    effect.effect_result = "unknown"
-    effect.reconciliation_state = "unknown"
+    if not transition_provider_effect_result(effect, PROVIDER_EFFECT_RESULT_UNKNOWN):
+        return False
     effect.detail = detail[:1000]
     return True
 
@@ -266,9 +261,9 @@ def reconcile_image_session_provider_effect(
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None:
         raise ConflictError("找不到连续生图 provider effect ledger")
-    if task.status != JobStatus.UNKNOWN and effect.effect_result != "unknown":
+    if task.status != JobStatus.UNKNOWN and effect.effect_result != PROVIDER_EFFECT_RESULT_UNKNOWN:
         raise ConflictError("只有 unknown 连续生图任务可以执行 provider effect 对账")
-    if effect.effect_result in {"applied", "failed"}:
+    if provider_effect_is_terminal(effect.effect_result):
         return _result(effect)
 
     snapshot = {
@@ -295,7 +290,7 @@ def reconcile_image_session_provider_effect(
                 )
     except Exception as exc:  # noqa: BLE001
         verdict = ProviderEffectQueryResult(
-            effect_result="unknown",
+            effect_result=PROVIDER_EFFECT_RESULT_UNKNOWN,
             reconciliation_state="unknown",
             provider_response_id=snapshot["provider_response_id"],
             detail=f"初始化或查询图片会话 provider 失败: {type(exc).__name__}",
@@ -312,9 +307,14 @@ def reconcile_image_session_provider_effect(
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None:
         raise ConflictError("连续生图 provider effect ledger 在对账期间被删除")
-    if effect.effect_result in {"applied", "failed"}:
+    if provider_effect_is_terminal(effect.effect_result):
         return _result(effect)
-    effect.effect_result = verdict.effect_result
+    if not transition_provider_effect_result(
+        effect,
+        verdict.effect_result,
+        allow_unknown_resolution=True,
+    ):
+        raise ConflictError("连续生图 provider reconciliation 无法迁移 effect 状态")
     effect.reconciliation_state = verdict.reconciliation_state
     effect.provider_response_id = verdict.provider_response_id or effect.provider_response_id
     effect.provider_status = verdict.provider_status
@@ -342,27 +342,12 @@ def _locked_effect(
 
 
 def _validate_verdict(verdict: ProviderEffectQueryResult) -> None:
-    if verdict.effect_result not in {"applied", "failed", "unknown"}:
+    if verdict.effect_result not in PROVIDER_EFFECT_RESULTS - {PROVIDER_EFFECT_RESULT_PENDING}:
         raise ConflictError("图片会话 provider reconciliation 返回了未知 effect_result")
     if verdict.reconciliation_state not in IMAGE_SESSION_PROVIDER_RECONCILIATION_STATES - {"not_requested"}:
         raise ConflictError("图片会话 provider reconciliation 返回了未知 reconciliation_state")
     if verdict.result_json is not None:
-        _validate_json_payload(verdict.result_json, "连续生图 provider reconciliation result")
-
-
-def _validate_json_payload(payload: dict[str, Any], label: str) -> None:
-    try:
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} 不是有效 JSON") from exc
-    if len(encoded) > MAX_IMAGE_SESSION_PROVIDER_EFFECT_JSON_BYTES:
-        raise ValueError(f"{label} 超过大小限制")
+        validate_provider_effect_json(verdict.result_json, "连续生图 provider reconciliation result")
 
 
 def _result(effect: ImageSessionProviderEffect) -> ImageSessionProviderEffectReconciliationResult:

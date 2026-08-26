@@ -167,7 +167,8 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     assert prompt_row is not None
     assert prompt_row.current_artifact_id == prompt_artifact.id
     assert (prompt_row.config_json or {}).get("prompt", {}).get("design_goal") == "由 v3 运行写出的提示词"
-    assert prompt_provider.requests[0].image_plan_keys == ("output",)
+    assert prompt_provider.requests[0].image_plan_keys == ()
+    assert prompt_provider.requests[0].current_prompt.images == []
     assert prompt_provider.requests[0].visual_system is None
     assert prompt_provider.requests[0].generate_from_context is True
     assert prompt_provider.requests[0].text_policy == "none"
@@ -783,7 +784,8 @@ def test_prompt_run_uses_stored_prompt_and_brief_fields(db_session) -> None:
     assert request.current_prompt.text.headline is None
     assert request.text_policy == "none"
     assert request.visual_system is None
-    assert request.image_plan_keys == ("output",)
+    assert request.image_plan_keys == ()
+    assert request.current_prompt.images == []
 
     projection = project_workflow_graph(db_session, created.graph)
     prompt_view = next(node for node in projection.nodes if node.id == prompt_node.id)
