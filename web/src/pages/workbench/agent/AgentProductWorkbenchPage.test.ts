@@ -20,6 +20,11 @@ describe("Agent workbench sidebar tool", () => {
     expect(initialAgentWorkbenchSidebarTool({ hasGraph: true, hasTask: true })).toBe("agent");
     expect(initialAgentWorkbenchSidebarTool({ hasGraph: true, hasTask: false })).toBe("details");
     expect(initialAgentWorkbenchSidebarTool({ hasGraph: false, hasTask: false })).toBe("agent");
+    expect(initialAgentWorkbenchSidebarTool({
+      hasGraph: true,
+      hasTask: false,
+      preferConversation: true,
+    })).toBe("agent");
   });
 
   it("keeps Agent visible until a workflow exists, but recipes stay available", () => {

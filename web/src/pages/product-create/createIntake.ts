@@ -1,5 +1,9 @@
-import type { WorkflowGenerationSpec } from "../../lib/types";
+import type { AgentProductWorkspaceLimits, WorkflowGenerationSpec } from "../../lib/types";
 import { parseWorkflowGenerationSpec } from "../workbench/canvas/generationSpec";
+import {
+  validateAgentProductWorkspaceInput,
+  type AgentImageTypeSelectionDraft,
+} from "./imageTypeSelection";
 
 export const CREATE_DEFAULT_TEXT_POLICY = "required" as const;
 export const CREATE_DEFAULT_TEXT_LANGUAGE = "zh-CN";
@@ -57,4 +61,43 @@ export function isCreateBriefReady(brief: string): boolean {
 
 export function isCreateOutputReady(draft: CreateOutputDraft): boolean {
   return buildCreateGenerationSpec(draft) !== null;
+}
+
+export type CreateSubmitAction = "full-canvas" | "conversation" | "blocked";
+
+export function isCreateCanvasReady(input: {
+  name: string;
+  brief: string;
+  selections: readonly AgentImageTypeSelectionDraft[];
+  referenceImageCount: number;
+  limits: AgentProductWorkspaceLimits | null;
+  outputDraft: CreateOutputDraft;
+}): boolean {
+  if (!isCreateBriefReady(input.brief) || !isCreateOutputReady(input.outputDraft)) return false;
+  return validateAgentProductWorkspaceInput({
+    name: input.name,
+    selections: input.selections,
+    referenceImageCount: input.referenceImageCount,
+    limits: input.limits,
+  }) === null;
+}
+
+export function hasCreateImagePlan(input: {
+  selections: readonly AgentImageTypeSelectionDraft[];
+  referenceImageCount: number;
+}): boolean {
+  return input.selections.length > 0 || input.referenceImageCount > 0;
+}
+
+export function resolveCreateSubmitAction(input: {
+  name: string;
+  brief: string;
+  selections: readonly AgentImageTypeSelectionDraft[];
+  referenceImageCount: number;
+  limits: AgentProductWorkspaceLimits | null;
+  outputDraft: CreateOutputDraft;
+}): CreateSubmitAction {
+  if (isCreateCanvasReady(input)) return "full-canvas";
+  if (hasCreateImagePlan(input)) return "blocked";
+  return "conversation";
 }

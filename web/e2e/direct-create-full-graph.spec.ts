@@ -36,7 +36,7 @@ test.describe("live browser graph", () => {
     await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
       REFERENCE_PRODUCT_IMAGE,
     );
-    await page.getByRole("button", { name: "直接创建进入工作台" }).click();
+    await page.getByRole("button", { name: "只建画布" }).click();
     await page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 });
     await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
 

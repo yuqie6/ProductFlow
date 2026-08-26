@@ -58,12 +58,14 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
 interface AgentProductWorkbenchPageProps {
   bootstrap: AgentWorkbenchPageBootstrap;
   agentTaskId?: string | null;
+  preferConversation?: boolean;
   onRefetchBootstrap: () => Promise<unknown>;
 }
 
 export function AgentProductWorkbenchPage({
   bootstrap,
   agentTaskId = null,
+  preferConversation = false,
   onRefetchBootstrap,
 }: AgentProductWorkbenchPageProps) {
   const navigate = useNavigate();
@@ -74,6 +76,7 @@ export function AgentProductWorkbenchPage({
     () => initialAgentWorkbenchSidebarTool({
       hasGraph: Boolean(bootstrap.graph),
       hasTask: Boolean(agentTaskId),
+      preferConversation,
     }),
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
@@ -86,7 +89,7 @@ export function AgentProductWorkbenchPage({
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(false);
   const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
-  const [agentOpenRequest, setAgentOpenRequest] = useState(0);
+  const [agentOpenRequest, setAgentOpenRequest] = useState(preferConversation ? 1 : 0);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
   const emptyGraphInFlightRef = useRef(false);
   const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
@@ -536,8 +539,9 @@ export function AgentProductWorkbenchPage({
 export function initialAgentWorkbenchSidebarTool(input: {
   hasGraph: boolean;
   hasTask: boolean;
+  preferConversation?: boolean;
 }): AgentSidebarToolId {
-  if (input.hasTask) return "agent";
+  if (input.hasTask || input.preferConversation) return "agent";
   return input.hasGraph ? "details" : "agent";
 }
 

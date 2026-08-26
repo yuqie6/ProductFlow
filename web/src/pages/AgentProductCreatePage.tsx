@@ -36,6 +36,7 @@ import {
   defaultCreateOutputDraft,
   isCreateBriefReady,
   isCreateOutputReady,
+  resolveCreateSubmitAction,
   type CreateOutputDraft,
 } from "./product-create/createIntake";
 
@@ -544,17 +545,42 @@ export function AgentProductCreatePage() {
       startAgentMutation.mutate();
       return;
     }
-    const intakeIssue = validateAgentProductWorkspaceInput({
+    const submitAction = resolveCreateSubmitAction({
       name: trimmedName,
+      brief,
       selections,
       referenceImageCount: referenceFiles.length,
       limits: options.limits,
+      outputDraft,
     });
-    setError("");
-    if (intakeIssue === null) {
+    if (submitAction === "full-canvas") {
+      setError("");
       submitMutation.mutate();
       return;
     }
+    if (submitAction === "blocked") {
+      const intakeIssue = validateAgentProductWorkspaceInput({
+        name: trimmedName,
+        selections,
+        referenceImageCount: referenceFiles.length,
+        limits: options.limits,
+      });
+      if (intakeIssue) {
+        setError(validationMessage(t, intakeIssue));
+        return;
+      }
+      if (!isCreateBriefReady(brief)) {
+        setError(t("agentCreate.error.briefRequired"));
+        return;
+      }
+      if (!isCreateOutputReady(outputDraft)) {
+        setError(t("agentCreate.error.outputInvalid"));
+        return;
+      }
+      setError(t("agentCreate.submitDirectNeedPlan"));
+      return;
+    }
+    setError("");
     startAgentMutation.mutate();
   };
 

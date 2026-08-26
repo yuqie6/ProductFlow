@@ -120,7 +120,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
     REFERENCE_PRODUCT_IMAGE,
   );
-  const submit = page.getByRole("button", { name: "直接创建进入工作台" });
+  const submit = page.getByRole("button", { name: "只建画布" });
   await expect(submit).toBeEnabled();
   await submit.scrollIntoViewIfNeeded();
   await Promise.all([

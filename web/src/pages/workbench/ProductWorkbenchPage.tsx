@@ -126,6 +126,7 @@ export function ProductWorkbenchPage() {
       key={surface.bootstrap.product.id}
       bootstrap={surface.bootstrap}
       agentTaskId={agentTaskId}
+      preferConversation={Boolean(agentSessionId)}
       onRefetchBootstrap={() => agentQuery.refetch()}
     />
   );

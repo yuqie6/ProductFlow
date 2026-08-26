@@ -50,7 +50,9 @@ import {
   CREATE_TEXT_LANGUAGE_OPTIONS,
   CREATE_TEXT_POLICIES,
   createOutputSummary,
+  hasCreateImagePlan,
   isCreateBriefReady,
+  isCreateCanvasReady,
   isCreateOutputReady,
   type CreateOutputDraft,
 } from "./createIntake";
@@ -233,6 +235,24 @@ export function AgentProductCreateForm({
   const planReady = selections.length > 0;
   const referenceReady = referenceFiles.length >= minReferences;
   const outputReady = isCreateOutputReady(outputDraft);
+  const canvasReady = isCreateCanvasReady({
+    name: productName,
+    brief,
+    selections,
+    referenceImageCount: referenceFiles.length,
+    limits: options?.limits ?? null,
+    outputDraft,
+  });
+  const createOutcome = canvasReady
+    ? "full-canvas"
+    : hasCreateImagePlan({ selections, referenceImageCount: referenceFiles.length })
+      ? "need-plan"
+      : "conversation";
+  const outcomeCopyKey = createOutcome === "full-canvas"
+    ? "agentCreate.outcome.canvas"
+    : createOutcome === "need-plan"
+      ? "agentCreate.outcome.needPlan"
+      : "agentCreate.outcome.conversation";
   const outputSummary = createOutputSummary(outputDraft);
   const selectedRatios = [...new Set(selections.map((item) => aspectRatioForSelection(item)))];
   const languageLabel =
@@ -702,6 +722,14 @@ export function AgentProductCreateForm({
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-slate-700 dark:bg-[#0b1424] dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
         <div className="mx-auto flex w-full max-w-[920px] flex-col-reverse gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-text-secondary">
+            <span data-create-outcome={createOutcome} className="w-full text-text-primary">
+              <strong className="font-semibold">{t(outcomeCopyKey)}</strong>
+            </span>
+            {createOutcome === "full-canvas" ? (
+              <span className="w-full text-text-primary">
+                <strong className="font-semibold">{t("agentCreate.outcome.canvasOnly")}</strong>
+              </span>
+            ) : null}
             <span>
               {t("agentCreate.selectedTypes")}:{" "}
               <strong className="font-semibold tabular-nums text-text-primary">{selections.length}</strong>
@@ -735,9 +763,13 @@ export function AgentProductCreateForm({
             {onDirectCreate ? (
               <button
                 type="button"
-                disabled={isSubmitting || isDirectCreating}
+                disabled={isSubmitting || isDirectCreating || !canvasReady}
+                title={canvasReady ? t("agentCreate.submitDirect") : t("agentCreate.submitDirectNeedPlan")}
+                aria-label={t("agentCreate.submitDirect")}
+                data-create-direct
+                data-create-direct-ready={canvasReady ? "true" : "false"}
                 onClick={onDirectCreate}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-indigo-200 px-6 text-sm font-semibold text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-indigo-200 px-6 text-sm font-semibold text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isDirectCreating ? <Loader2 size={16} className="animate-spin" /> : null}
                 {t("agentCreate.submitDirect")}

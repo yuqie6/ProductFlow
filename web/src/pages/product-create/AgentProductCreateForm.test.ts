@@ -84,6 +84,8 @@ function renderForm(
     deliveryPresetCatalog?: DeliveryPresetCatalog | null;
     isDeliveryPresetLoading?: boolean;
     isDeliveryPresetError?: boolean;
+    referenceFiles?: File[];
+    onDirectCreate?: () => void;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -92,7 +94,7 @@ function renderForm(
       isProductNameReadOnly: input.isProductNameReadOnly ?? false,
       options,
       selections,
-      referenceFiles: [],
+      referenceFiles: input.referenceFiles ?? [],
       deliveryPresetCatalog: input.deliveryPresetCatalog ?? null,
       deliveryPresetKey: input.deliveryPresetKey ?? null,
       isDeliveryPresetLoading: input.isDeliveryPresetLoading ?? false,
@@ -118,6 +120,7 @@ function renderForm(
       onRetryOptions: () => undefined,
       onApplyRecommendedSet: () => undefined,
       onSubmit: () => undefined,
+      onDirectCreate: input.onDirectCreate ?? (() => undefined),
     }),
   );
 }
@@ -142,6 +145,9 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("上传商品参考图");
     expect(markup).toContain('type="submit"');
     expect(markup).toContain("开始对话");
+    expect(markup).toContain("只建画布");
+    expect(markup).toContain("开始对话：只带商品资料，镜头在对话里补");
+    expect(markup).toContain('data-create-outcome="conversation"');
     expect(markup).not.toContain("checked=\"\"");
     expect(markup).not.toContain("商品主图");
     expect(markup).not.toContain("选择模板");
@@ -243,6 +249,29 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("2026-08-24");
     expect(markup).toContain("official catalog");
     expect(markup).toContain("Default only");
+  });
+
+  it("warns when image types are selected without a reference", () => {
+    const markup = renderForm([{ key: "hero", quantity: 1 }]);
+    expect(markup).toContain('data-create-outcome="need-plan"');
+    expect(markup).toContain("图种或参考图还没齐，补齐后才会带上完整画布");
+  });
+
+  it("keeps canvas-only disabled until image types and a reference are present", () => {
+    const incomplete = renderForm();
+    const complete = renderForm([{ key: "hero", quantity: 1 }], {
+      referenceFiles: [new File(["x"], "ref.png", { type: "image/png" })],
+    });
+    const incompleteDirect = incomplete.match(/<button[^>]+data-create-direct[^>]*>/)?.[0] ?? "";
+    const completeDirect = complete.match(/<button[^>]+data-create-direct[^>]*>/)?.[0] ?? "";
+
+    expect(incomplete).toContain('data-create-outcome="conversation"');
+    expect(incompleteDirect).toContain('disabled=""');
+    expect(incompleteDirect).toContain("先选图种并上传参考图");
+    expect(complete).toContain('data-create-outcome="full-canvas"');
+    expect(complete).toContain("开始对话：带完整画布，并打开对话");
+    expect(complete).toContain("只建画布：带完整画布，不打开对话");
+    expect(completeDirect).not.toMatch(/\sdisabled(?:=|\s|>)/);
   });
 
   it("keeps submit available when the optional platform catalog fails", () => {
