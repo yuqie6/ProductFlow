@@ -20,6 +20,7 @@ import { AgentMediaLibraryPicker } from "./AgentMediaLibraryPicker";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
+import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
@@ -52,6 +53,8 @@ export function GlobalAgentConversationPanel({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
+  const retryKeysRef = useRef(new Map<string, string>());
+  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
   const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
   const agent = useGlobalAgentConversation({
     conversationId: conversationId ?? "",
@@ -80,7 +83,9 @@ export function GlobalAgentConversationPanel({
     setPreview(null);
     setPreviewError(null);
     setAnsweredQuestionId(null);
+    setRetryingTurnId(null);
     composerKeyRef.current = globalThis.crypto.randomUUID();
+    retryKeysRef.current = new Map();
     confirmationKeyRef.current = null;
   }, [conversationId, taskId]);
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
@@ -162,17 +167,51 @@ export function GlobalAgentConversationPanel({
       // mutation 界面仍可通过同一答案与续跑键重试
     }
   };
+  const retryTurn = async (turn: AgentTurn) => {
+    if (
+      !conversationId ||
+      !canRetryAgentTurn({ turn }) ||
+      Boolean(agent.activeTurn) ||
+      agent.submitTurnMutation.isPending
+    ) {
+      return;
+    }
+    let key = retryKeysRef.current.get(turn.id);
+    if (!key) {
+      key = retryIdempotencyKey(turn.id);
+      retryKeysRef.current.set(turn.id, key);
+    }
+    setRetryingTurnId(turn.id);
+    try {
+      await agent.submitTurnMutation.mutateAsync(
+        agentTurnRetrySubmitInput(turn, {
+          idempotencyKey: key,
+          taskId: turn.task_id ?? taskId,
+          pageContext: {
+            ...pageContext,
+            selected_asset_ids: turn.input_asset_ids,
+            captured_at: new Date().toISOString(),
+          },
+        }),
+      );
+      retryKeysRef.current.delete(turn.id);
+    } catch {
+      // 失败请求沿用同一续跑键
+    } finally {
+      setRetryingTurnId(null);
+    }
+  };
   const error = errorDetail(
     agent.turnsQuery.error ??
-      agent.submitTurnMutation.error ??
-      agent.cancelTurnMutation.error ??
-      agent.resumeTurnMutation.error ??
-      agent.answerQuestionMutation.error ??
-      agent.workflowRunRequestQuery.error ??
-      agent.confirmWorkflowRunRequestMutation.error ??
-      agent.cancelWorkflowRunRequestMutation.error ??
-      events.streamError ??
-      previewError,
+    agent.submitTurnMutation.error ??
+    agent.cancelTurnMutation.error ??
+    agent.resumeTurnMutation.error ??
+    agent.answerQuestionMutation.error ??
+    agent.workflowRunRequestQuery.error ??
+    agent.confirmWorkflowRunRequestMutation.error ??
+    agent.cancelWorkflowRunRequestMutation.error ??
+    events.streamError ??
+    previewError,
     t("globalAgent.requestFailed"),
   );
   const questionAnswered = Boolean(
@@ -210,14 +249,14 @@ export function GlobalAgentConversationPanel({
   const renderTurnExtras = (turn: AgentTurn) => (
     <>
       {turn.library_organization_draft_revision_id &&
-      turn.library_organization_draft_revision_id ===
+        turn.library_organization_draft_revision_id ===
         agent.libraryOrganizationDraftQuery.data?.current_revision?.id ? (
         <GlobalLibraryOrganizationDraftCard
           draft={agent.libraryOrganizationDraftQuery.data ?? null}
           loading={agent.libraryOrganizationDraftQuery.isLoading}
           error={errorDetail(
             agent.libraryOrganizationDraftQuery.error ??
-              agent.confirmLibraryOrganizationDraftMutation.error,
+            agent.confirmLibraryOrganizationDraftMutation.error,
             t("globalAgent.draft.loadFailed"),
           )}
           busy={agent.confirmLibraryOrganizationDraftMutation.isPending}
@@ -302,6 +341,8 @@ export function GlobalAgentConversationPanel({
         initialTurnPending={agent.turnsQuery.isLoading}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
         getAssetThumbnailUrl={(assetId) => api.getMediaLibraryAssetMediaUrl(assetId, "thumbnail")}
+        onRetryTurn={(turn) => void retryTurn(turn)}
+        retryingTurnId={retryingTurnId}
         renderTurnExtras={renderTurnExtras}
         emptyLabel={t("globalAgent.emptyChat")}
       />
@@ -315,8 +356,8 @@ export function GlobalAgentConversationPanel({
         }
         error={errorDetail(
           agent.workflowRunRequestQuery.error ??
-            agent.confirmWorkflowRunRequestMutation.error ??
-            agent.cancelWorkflowRunRequestMutation.error,
+          agent.confirmWorkflowRunRequestMutation.error ??
+          agent.cancelWorkflowRunRequestMutation.error,
           t("globalAgent.requestFailed"),
         )}
         targetLabel={

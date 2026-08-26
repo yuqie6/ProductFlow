@@ -659,7 +659,7 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("上一轮步骤");
   });
 
-  it("adds copy actions to settled user and assistant messages", () => {
+  it("adds copy and retry actions to settled user and assistant messages", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentMessageList, {
         turns: [turn({ status: "succeeded", output_text: "已整理完成" })],
@@ -669,11 +669,16 @@ describe("Agent conversation components", () => {
         hasOlder: false,
         loadingOlder: false,
         onLoadOlder: async () => undefined,
+        onRetryTurn: () => undefined,
       }),
     );
 
     expect(markup.match(/aria-label="复制消息"/g)).toHaveLength(2);
     expect(markup).toContain("agent-markdown");
+    expect(markup).toContain("data-agent-message-actions");
+    expect(markup).toContain("data-agent-turn-retry");
+    expect(markup).toContain("aria-label=\"重试\"");
+    expect(markup).not.toContain("sm:opacity-0");
   });
 
   it("renders turn status, failures, and the matching Draft action in the turn tail", () => {
@@ -717,6 +722,80 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("草案同步失败");
     expect(markup).toContain("审阅工作流方案");
     expect(staleRevisionMarkup).not.toContain("审阅工作流方案");
+    expect(markup).not.toContain("data-agent-turn-retry");
+  });
+
+  it("keeps retry on settled Turns and only disables it while another Turn is running", () => {
+    const failed = turn({
+      status: "failed",
+      error_text: "Agent 生成失败，请重试；持续失败请检查 Agent 供应商配置",
+    });
+    const retryableMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [failed],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onRetryTurn: () => undefined,
+      }),
+    );
+    const blockedMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [failed, turn({ id: "projection-2", status: "running" })],
+        activeTurnId: "projection-2",
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onRetryTurn: () => undefined,
+      }),
+    );
+
+    expect(retryableMarkup).toContain("data-agent-turn-retry");
+    expect(retryableMarkup).toContain("data-agent-message-actions");
+    expect(retryableMarkup).toContain("aria-label=\"重试\"");
+    expect(retryableMarkup).not.toMatch(/role="alert"[^]*data-agent-turn-retry/);
+    expect(blockedMarkup).toContain("data-agent-turn-retry");
+    expect(blockedMarkup).toMatch(/data-agent-turn-retry[^>]*disabled/);
+  });
+
+  it("keeps one user bubble when a failed Turn is retried", () => {
+    const failed = turn({
+      id: "projection-1",
+      status: "failed",
+      error_text: "Agent 生成失败，请重试；持续失败请检查 Agent 供应商配置",
+      idempotency_key: "orig-key",
+    });
+    const retry = turn({
+      id: "projection-2",
+      status: "running",
+      input_text: failed.input_text,
+      output_text: null,
+      error_text: null,
+      idempotency_key: "retry:projection-1:attempt-2",
+    });
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [failed, retry],
+        activeTurnId: "projection-2",
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onRetryTurn: () => undefined,
+      }),
+    );
+
+    expect(markup.split(failed.input_text).length - 1).toBe(1);
+    expect(markup).not.toContain("Agent 生成失败");
+    expect(markup).toContain("Agent 正在处理");
+    expect(markup).toContain("data-agent-turn-retry");
+    expect(markup).toMatch(/data-agent-turn-retry[^>]*disabled/);
   });
 
   it("renders a sync diagnostic as a warning while the Turn remains active", () => {

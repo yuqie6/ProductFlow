@@ -23,6 +23,7 @@ import {
   ProductImageExplorer,
   type ImageExplorerSelectionTarget,
 } from "../chrome/image-explorer/ProductImageExplorer";
+import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
 import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -79,6 +80,8 @@ export function AgentConversationPanel({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
+  const retryKeysRef = useRef(new Map<string, string>());
+  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
 
   const cacheWorkflowRunRequest = (request: AgentWorkflowRunRequest) => {
     queryClient.setQueryData(workflowRunRequestQueryKey, request);
@@ -174,10 +177,10 @@ export function AgentConversationPanel({
         task_id: agentConversationSubmitTaskId(taskId),
         page_context: pageContext
           ? {
-              ...pageContext,
-              selected_asset_ids: composerAssets.map((asset) => asset.id),
-              captured_at: new Date().toISOString(),
-            }
+            ...pageContext,
+            selected_asset_ids: composerAssets.map((asset) => asset.id),
+            captured_at: new Date().toISOString(),
+          }
           : null,
       });
       setComposerText("");
@@ -200,6 +203,41 @@ export function AgentConversationPanel({
       setAnsweredQuestionId(activeQuestion.id);
     } catch {
       // 已持久化的答案和续跑仍可通过同一 question key 重试
+    }
+  };
+  const retryTurn = async (turn: AgentTurn) => {
+    if (
+      !canRetryAgentTurn({ turn }) ||
+      Boolean(agent.activeTurn) ||
+      agent.submitTurnMutation.isPending
+    ) {
+      return;
+    }
+    let key = retryKeysRef.current.get(turn.id);
+    if (!key) {
+      key = retryIdempotencyKey(turn.id);
+      retryKeysRef.current.set(turn.id, key);
+    }
+    setRetryingTurnId(turn.id);
+    try {
+      await agent.submitTurnMutation.mutateAsync(
+        agentTurnRetrySubmitInput(turn, {
+          idempotencyKey: key,
+          taskId: turn.task_id ?? agentConversationSubmitTaskId(taskId),
+          pageContext: pageContext
+            ? {
+              ...pageContext,
+              selected_asset_ids: turn.input_asset_ids,
+              captured_at: new Date().toISOString(),
+            }
+            : null,
+        }),
+      );
+      retryKeysRef.current.delete(turn.id);
+    } catch {
+      // 失败请求沿用同一续跑键
+    } finally {
+      setRetryingTurnId(null);
     }
   };
   const previewSelectedAsset = (asset: AgentAttachment) => {
@@ -236,9 +274,9 @@ export function AgentConversationPanel({
   };
   const questionAnswered = Boolean(
     activeQuestion &&
-      (answeredQuestionId === activeQuestion.id ||
-        events.state.question_answered ||
-        agent.activeTurn?.resume_required),
+    (answeredQuestionId === activeQuestion.id ||
+      events.state.question_answered ||
+      agent.activeTurn?.resume_required),
   );
   const questionError = errorDetailOrNull(agent.answerQuestionMutation.error);
   const composerError =
@@ -350,15 +388,14 @@ export function AgentConversationPanel({
               role="status"
               aria-label={connectionLabel}
               title={connectionLabel}
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-                events.state.terminal_kind
-                  ? "animate-pulse bg-blue-600 dark:bg-cyan-400"
-                  : events.connectionState === "open"
-                    ? "bg-emerald-500"
-                    : events.connectionState === "reconnecting"
-                      ? "animate-pulse bg-amber-500"
-                      : "animate-pulse bg-zinc-400 dark:bg-slate-500"
-              }`}
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${events.state.terminal_kind
+                ? "animate-pulse bg-blue-600 dark:bg-cyan-400"
+                : events.connectionState === "open"
+                  ? "bg-emerald-500"
+                  : events.connectionState === "reconnecting"
+                    ? "animate-pulse bg-amber-500"
+                    : "animate-pulse bg-zinc-400 dark:bg-slate-500"
+                }`}
             />
 
           </>
@@ -385,6 +422,8 @@ export function AgentConversationPanel({
         loadingOlder={agent.turnsQuery.isFetchingNextPage}
         onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
+        onRetryTurn={(turn) => void retryTurn(turn)}
+        retryingTurnId={retryingTurnId}
       />
 
       <AgentWorkflowRunRequestCard

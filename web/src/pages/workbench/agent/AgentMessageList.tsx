@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronUp, Copy, Loader2, MessagesSquare } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Copy, Loader2, MessagesSquare, RotateCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { api } from "../../../lib/api";
@@ -13,6 +13,7 @@ import {
 import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { AgentTurnTail } from "./AgentTurnTail";
+import { canRetryAgentTurn, groupAgentTurnAttempts } from "./agentTurnRetry";
 import { toolStepSignature } from "./toolStepSignature";
 
 interface AgentMessageListProps {
@@ -27,6 +28,8 @@ interface AgentMessageListProps {
   onPreviewAsset?: (assetId: string) => void;
   getAssetThumbnailUrl?: (assetId: string) => string;
   onReviewDraft?: () => void;
+  onRetryTurn?: (turn: AgentTurn) => void;
+  retryingTurnId?: string | null;
   renderTurnExtras?: (turn: AgentTurn) => ReactNode;
   emptyLabel?: string;
 }
@@ -43,6 +46,8 @@ export function AgentMessageList({
   onPreviewAsset,
   getAssetThumbnailUrl = (assetId) => api.getProductImageAssetMediaUrl(assetId, "thumbnail"),
   onReviewDraft,
+  onRetryTurn,
+  retryingTurnId = null,
   renderTurnExtras,
   emptyLabel,
 }: AgentMessageListProps) {
@@ -50,6 +55,7 @@ export function AgentMessageList({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
   const [atLatest, setAtLatest] = useState(true);
+  const groups = useMemo(() => groupAgentTurnAttempts(turns), [turns]);
   const latestLiveSignature = useMemo(() => {
     const eventTurnId = activeTurnId ?? eventState?.turn_key ?? null;
     const eventTurn = turns.find((turn) => turn.id === eventTurnId);
@@ -66,7 +72,7 @@ export function AgentMessageList({
     if (element && nearBottomRef.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [latestLiveSignature, turns.length]);
+  }, [latestLiveSignature, groups.length]);
 
   const loadOlder = async () => {
     if (!onLoadOlder) {
@@ -100,7 +106,7 @@ export function AgentMessageList({
         const element = event.currentTarget;
         const nextAtLatest = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
         nearBottomRef.current = nextAtLatest;
-        setAtLatest((current) => current === nextAtLatest ? current : nextAtLatest);
+        setAtLatest((current) => (current === nextAtLatest ? current : nextAtLatest));
       }}
       className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-base px-4 py-7 sm:px-6 sm:py-9"
     >
@@ -117,25 +123,32 @@ export function AgentMessageList({
           </button>
         ) : null}
 
-        {turns.map((turn) => {
-          const active = turn.id === activeTurnId;
-          const matchingEventState = eventState?.turn_key === turn.id ? eventState : null;
-          const assistantText = selectAgentAssistantText(turn, matchingEventState);
-          const toolSteps = selectAgentToolSteps(turn, matchingEventState);
+        {groups.map((group) => {
+          const { root, attempts, latest } = group;
+          const active = latest.id === activeTurnId;
+          const retryPending = Boolean(retryingTurnId) && attempts.some((turn) => turn.id === retryingTurnId);
+          const hideFailedTail = retryPending && !active;
+          const matchingEventState = eventState?.turn_key === latest.id ? eventState : null;
+          const assistantText = hideFailedTail ? "" : selectAgentAssistantText(latest, matchingEventState);
+          const toolSteps = hideFailedTail ? [] : selectAgentToolSteps(latest, matchingEventState);
           const waitingForAssistant =
-            active && turn.status !== "requires_input" && turn.status !== "awaiting_confirmation";
+            (active && latest.status !== "requires_input" && latest.status !== "awaiting_confirmation") ||
+            hideFailedTail;
           const reviewDraft = Boolean(
-            reviewDraftRevisionId && turn.workflow_draft_revision_id === reviewDraftRevisionId,
+            reviewDraftRevisionId && latest.workflow_draft_revision_id === reviewDraftRevisionId,
           );
           const canPreviewAssets = Boolean(onPreviewAsset);
+          const canRetry = Boolean(onRetryTurn && canRetryAgentTurn({ turn: latest }));
+          const retryBusy = Boolean(activeTurnId) || retryPending;
+          const showAssistantActions = canRetry || Boolean(assistantText);
 
           return (
-            <article key={turn.id} data-agent-turn-id={turn.id} className="group/turn space-y-5">
+            <article key={root.id} data-agent-turn-id={latest.id} className="group/turn space-y-5">
               <div className="flex justify-end">
                 <div className="min-w-0 max-w-[88%] sm:max-w-[34rem]">
-                  {turn.input_asset_ids.length && canPreviewAssets ? (
+                  {root.input_asset_ids.length && canPreviewAssets ? (
                     <div className="mb-2.5 flex flex-wrap justify-end gap-2">
-                      {turn.input_asset_ids.map((assetId) => (
+                      {root.input_asset_ids.map((assetId) => (
                         <button
                           key={assetId}
                           type="button"
@@ -153,18 +166,18 @@ export function AgentMessageList({
                     </div>
                   ) : null}
                   <div className="rounded-[20px] border border-blue-200/80 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-slate-100">
-                    <div className="whitespace-pre-wrap break-words">{turn.input_text}</div>
+                    <div className="whitespace-pre-wrap break-words">{root.input_text}</div>
                   </div>
-                  <div className="mt-1.5 flex min-h-6 items-center justify-end gap-2 text-[11px] text-text-muted opacity-100 transition-opacity sm:opacity-0 sm:group-hover/turn:opacity-100 sm:group-focus-within/turn:opacity-100">
-                    <time dateTime={turn.created_at}>{formatDateTime(turn.created_at, t.locale)}</time>
-                    <CopyAction text={turn.input_text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
+                  <div className="mt-1.5 flex min-h-7 items-center justify-end gap-1 text-[11px] text-text-muted">
+                    <time dateTime={root.created_at}>{formatDateTime(root.created_at, t.locale)}</time>
+                    <CopyAction text={root.input_text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
                   </div>
                 </div>
               </div>
 
               <div className="min-w-0">
                 {assistantText || waitingForAssistant ? (
-                  <div aria-live={active ? "polite" : undefined} className="min-w-0 text-[15px] leading-7 text-text-primary">
+                  <div aria-live={active || hideFailedTail ? "polite" : undefined} className="min-w-0 text-[15px] leading-7 text-text-primary">
                     {assistantText ? (
                       <AgentAssistantMarkdown text={assistantText} streaming={active} />
                     ) : (
@@ -178,18 +191,39 @@ export function AgentMessageList({
                   </div>
                 ) : null}
                 <AgentToolStepList steps={toolSteps} live={active} />
-                {!active && assistantText ? (
-                  <div className="mt-2 flex min-h-7 items-center gap-2 text-[11px] text-text-muted opacity-100 transition-opacity sm:opacity-0 sm:group-hover/turn:opacity-100 sm:group-focus-within/turn:opacity-100">
-                    <CopyAction text={assistantText} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
+                {showAssistantActions ? (
+                  <div data-agent-message-actions className="mt-2 flex min-h-7 items-center gap-1 text-text-muted">
+                    {assistantText ? (
+                      <CopyAction text={assistantText} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
+                    ) : null}
+                    {canRetry ? (
+                      <button
+                        type="button"
+                        data-agent-turn-retry
+                        onClick={() => onRetryTurn?.(latest)}
+                        disabled={retryBusy}
+                        aria-label={t("agentWorkbench.retryStart")}
+                        title={t("agentWorkbench.retryStart")}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+                      >
+                        {retryPending ? (
+                          <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />
+                        ) : (
+                          <RotateCw size={14} />
+                        )}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
-                <AgentTurnTail
-                  turn={turn}
-                  active={active}
-                  reviewDraft={reviewDraft}
-                  onReviewDraft={onReviewDraft}
-                />
-                {renderTurnExtras?.(turn)}
+                {hideFailedTail ? null : (
+                  <AgentTurnTail
+                    turn={latest}
+                    active={active}
+                    reviewDraft={reviewDraft}
+                    onReviewDraft={onReviewDraft}
+                  />
+                )}
+                {hideFailedTail ? null : renderTurnExtras?.(latest)}
               </div>
             </article>
           );
@@ -281,9 +315,9 @@ function CopyAction({
       onClick={() => void copy()}
       aria-label={copied ? copiedLabel : label}
       title={copied ? copiedLabel : label}
-      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
+      {copied ? <Check size={14} /> : <Copy size={14} />}
     </button>
   );
 }
