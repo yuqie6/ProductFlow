@@ -1,4 +1,4 @@
-"""Global media-library and product-directory Agent tools."""
+"""全局素材库与商品目录的 Agent 工具。"""
 
 from __future__ import annotations
 

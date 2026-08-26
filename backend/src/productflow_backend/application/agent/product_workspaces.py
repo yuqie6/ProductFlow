@@ -95,7 +95,7 @@ def create_agent_product_draft_workspace(
     idempotency_key: str,
     agent_session_id: str | None = None,
 ) -> AgentProductWorkspaceCreation:
-    """Create the durable workspace identity before collecting bounded intake."""
+    """创建可落库的工作区身份；有界 intake 尚未写入。本函数 commit。"""
     normalized_name = normalize_product_name(name)
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
     normalized_session_id = _normalize_agent_session_id(agent_session_id)
@@ -166,7 +166,7 @@ def create_agent_product_draft_workspace_from_global_conversation(
     name: str,
     idempotency_key: str,
 ) -> AgentProductWorkspaceCreation:
-    """Start a product-owned canvas session from a global conversation without merging run histories."""
+    """从全局 conversation 开商品画布 Session，不合并两边的 run 历史。"""
     get_agent_conversation_or_raise(
         session,
         product_id=None,
@@ -187,7 +187,7 @@ def reconcile_agent_product_draft_workspace_from_global_conversation(
     name: str,
     idempotency_key: str,
 ) -> AgentProductWorkspaceReconcileResult:
-    """Read the durable workspace fact without issuing another create command."""
+    """只读已落库的工作区事实，不重放 create。记录在但聚合读不齐则 unknown。"""
     global_conversation = get_agent_conversation_or_raise(
         session,
         product_id=None,
@@ -234,7 +234,7 @@ def create_agent_product_workspace(
     agent_session_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> AgentProductWorkspaceCreation:
-    """Keep the original one-request creation contract for existing callers."""
+    """保留现有调用方的一次性创建合同。本函数 commit。"""
     normalized_name = normalize_product_name(name)
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
     normalized_session_id = _normalize_agent_session_id(agent_session_id)
@@ -314,7 +314,7 @@ def attach_agent_workspace_to_product(
     agent_session_id: str | None = None,
     force_new: bool = False,
 ) -> AgentProductWorkspaceCreation:
-    """Create a product-scoped Agent conversation for an existing v3 graph product."""
+    """为已有 v3 graph 商品创建 product-scoped Agent conversation。本函数 commit。"""
     product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
     if product is None:
         raise NotFoundError("商品不存在")
@@ -441,6 +441,7 @@ def _lock_intake_finalization(
             raise ConflictError("Agent 商品输入已经确认，不能提交不同请求")
         if product.intake_json is None:
             raise ConflictError("Agent 商品输入幂等记录与商品 intake 不一致")
+        # 幂等回放在此 commit，调用方不得再写 intake。
         session.commit()
         return _IntakeFinalizationLock(
             conversation=conversation,
@@ -513,7 +514,7 @@ def finalize_agent_product_workspace_intake(
     source_note: str | None = None,
     storage: LocalStorage | None = None,
 ) -> AgentProductWorkspaceCreation:
-    """Atomically bind newly uploaded references and immutable intake to a version-zero draft."""
+    """原子绑定新上传参考图与不可变 intake。本函数 commit。"""
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
     request_hash = agent_product_intake_request_hash(
         selection=selection,
@@ -561,7 +562,7 @@ def finalize_agent_product_workspace_intake_from_assets(
     idempotency_key: str,
     task_id: str | None = None,
 ) -> AgentProductWorkspaceCreation:
-    """Bind already-uploaded product images as immutable intake from the Agent conversation."""
+    """把已上传商品图绑定为不可变 intake。本函数 commit。"""
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
     request_hash = agent_product_intake_from_assets_request_hash(
         selection=selection,

@@ -103,8 +103,7 @@ def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -
     if node_config_error(node) is not None:
         return GraphConfigStatus.INCOMPLETE
     if node.node_type == GraphNodeType.PRODUCT_SOURCE:
-        # New nodes must make the binding decision explicit.  A missing key is
-        # retained for legacy reads and resolved by the graph runtime owner.
+        # 新节点必须显式做出绑定决策。缺失的键留给遗留读取，由图运行时所有者解析。
         config = node.config or {}
         if "source_product_id" in config:
             source_id = config.get("source_product_id")

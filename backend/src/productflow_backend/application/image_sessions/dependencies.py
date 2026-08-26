@@ -6,13 +6,13 @@ from productflow_backend.infrastructure.image.base import ImageChatProvider
 from productflow_backend.infrastructure.image.factory import get_image_chat_provider
 
 ImageChatProviderFactory = Callable[[], ImageChatProvider]
-# Keep the existing application parameter type available for injected callers.
+# 保留现有应用层参数类型，供注入调用方使用。
 ImageSessionChatService = ImageChatProvider
 ImageSessionChatServiceFactory = ImageChatProviderFactory
 
 
 def default_image_session_chat_service_factory() -> ImageChatProvider:
-    """Build the production image-session adapter."""
+    """构建生产环境的 image-session 适配器。"""
 
     return get_image_chat_provider()
 

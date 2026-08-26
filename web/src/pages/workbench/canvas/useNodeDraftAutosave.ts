@@ -70,7 +70,7 @@ export function useNodeDraftAutosave<T>({
   onStateChangeRef.current = onStateChange;
 
   useEffect(() => {
-    // React StrictMode replays effects in development, so every setup must restore the mounted state.
+    // 开发环境下 React StrictMode 会重放 effect，每次 setup 都要恢复 mounted 状态
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;

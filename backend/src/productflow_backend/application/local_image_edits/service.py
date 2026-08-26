@@ -132,7 +132,7 @@ def create_local_image_edit_task(
     target_node_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> LocalImageEditTask:
-    """Validate and persist a draft with an immutable source and mask snapshot."""
+    """校验并持久化草稿，附带不可变的源图与蒙版快照。"""
 
     storage = storage or LocalStorage()
     product = _lock_product(session, product_id)
@@ -207,7 +207,7 @@ def update_local_image_edit_task(
     mask_png_bytes: bytes | None = None,
     storage: LocalStorage | None = None,
 ) -> LocalImageEditTask:
-    """Update draft intent/mask/references with optimistic revision fencing."""
+    """用乐观 revision fencing 更新草稿的 intent/mask/references。"""
 
     storage = storage or LocalStorage()
     task = _lock_task(session, task_id)
@@ -271,7 +271,7 @@ def submit_local_image_edit_task(
     requested_provider_name: str,
     requested_local_edit_mode: str,
 ) -> LocalImageEditSubmitResult:
-    """Atomically transition a draft to queued and create its durable dispatch."""
+    """原子把草稿迁到 queued，并创建耐久 dispatch。"""
 
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_provider_name = _normalize_provider_intent_value(requested_provider_name, "provider name")
@@ -365,7 +365,7 @@ def get_local_image_edit_task(
     product_id: str,
     task_id: str,
 ) -> LocalImageEditTask:
-    """Return one product-scoped task with the safe projection relationships loaded."""
+    """返回一条商品范围内的任务，并加载安全投影关系。"""
 
     task = session.scalar(
         _task_projection_query().where(
@@ -385,7 +385,7 @@ def list_local_image_edit_tasks(
     product_id: str,
     limit: int = LOCAL_EDIT_LIST_LIMIT,
 ) -> list[LocalImageEditTask]:
-    """List product-scoped local edit tasks in newest-first order."""
+    """按最新优先列出商品范围内的局部编辑任务。"""
 
     if session.get(Product, product_id) is None:
         raise NotFoundError("商品不存在")
@@ -407,7 +407,7 @@ def retry_local_image_edit_task(
     task_id: str,
     expected_revision: int | None = None,
 ) -> LocalImageEditSubmitResult:
-    """Requeue only an explicitly retryable failed task without changing its request."""
+    """只把明确可重试的失败任务重新入队，不改其请求。"""
 
     task = _lock_task(session, task_id)
     if expected_revision is not None and task.revision != expected_revision:
@@ -443,7 +443,7 @@ def recover_local_image_edit_task(
     stale_after: timedelta = LOCAL_EDIT_STALE_CLAIM_AFTER,
     now: datetime | None = None,
 ) -> LocalImageEditRecoveryResult:
-    """Own the local-edit recovery state machine used by the resident scanner."""
+    """持有常驻扫描器使用的 local-edit 恢复状态机。"""
 
     observed_at = now or now_utc()
     task = _lock_task(session, task_id)
@@ -489,7 +489,7 @@ def claim_local_image_edit_task(
     now: datetime | None = None,
     stale_after: timedelta = LOCAL_EDIT_STALE_CLAIM_AFTER,
 ) -> LocalImageEditClaim:
-    """Claim queued work or safely replace a stale pre-provider claim."""
+    """claim 已排队工作，或安全替换过期的 pre-provider claim。"""
 
     now = now or now_utc()
     task = _lock_task(session, task_id)
@@ -548,7 +548,7 @@ def execute_local_image_edit_task(
     provider: ImageProvider,
     storage: LocalStorage,
 ) -> LocalImageEditExecutionResult:
-    """Execute one claimed local edit with injectable transport dependencies."""
+    """执行一条已 claim 的局部编辑；传输依赖可注入。"""
 
     session = session_factory()
     try:
@@ -697,7 +697,7 @@ def adopt_local_image_edit_result(
     task_id: str,
     expected_current_artifact_id: str,
 ) -> LocalImageEditAdoptionResult:
-    """Explicitly bind a successful local-edit result as the node current artifact."""
+    """把成功的 local-edit 结果显式绑成节点当前产物。"""
 
     task = _lock_task(session, task_id)
     if task.status != LocalImageEditTaskStatus.SUCCEEDED or task.result_asset_id is None:
@@ -779,7 +779,7 @@ def cancel_local_image_edit_task(
     task_id: str,
     expected_revision: int | None = None,
 ) -> LocalImageEditTask:
-    """Cancel work without allowing a late provider response to become a result."""
+    """取消工作，且不允许迟到的 provider 响应变成结果。"""
 
     task = _lock_task(session, task_id)
     if expected_revision is not None and task.revision != expected_revision:
@@ -823,7 +823,7 @@ def revert_local_image_edit_adoption(
     expected_current_artifact_id: str,
     task_id: str | None = None,
 ) -> LocalImageEditRevertResult:
-    """Append a revert event only while the adopted artifact remains current."""
+    """仅在已采纳产物仍为当前时追加 revert 事件。"""
 
     event = session.scalar(
         select(LocalImageEditAdoptionEvent)
@@ -1593,7 +1593,7 @@ def _record_late_provider_result(
     attempt_id: str,
     result: LocalEditResult,
 ) -> None:
-    """Record hashes after fencing changed without inserting a library asset."""
+    """fencing 变更后记录哈希，不插入素材库资产。"""
 
     attempt = session.scalar(
         select(LocalImageEditProviderAttempt)

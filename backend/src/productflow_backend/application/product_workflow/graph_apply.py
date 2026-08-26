@@ -262,7 +262,7 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
 
 
 def invert_applied_graph(before: AppliedGraph, after: AppliedGraph) -> list[GraphOperation]:
-    """Return operations that take `after` back to `before` topology (revision is not restored)."""
+    """返回把 `after` 拓扑还原到 `before` 的操作（不恢复 revision）。"""
 
     operations: list[GraphOperation] = []
     before_node_ids = {node.id for node in before.nodes}

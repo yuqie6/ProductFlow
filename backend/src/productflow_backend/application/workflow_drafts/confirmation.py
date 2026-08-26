@@ -19,7 +19,7 @@ def confirm_product_workflow_draft(
     draft_id: str,
     expected_draft_version: int,
 ) -> WorkflowDraft:
-    """Confirm a product draft and its Agent conversation in one application transaction."""
+    """在一次应用事务内确认商品草稿及其 Agent 会话。"""
     try:
         confirm_workflow_draft_revision(
             session,

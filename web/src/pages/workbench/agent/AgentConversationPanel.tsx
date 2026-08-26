@@ -184,7 +184,7 @@ export function AgentConversationPanel({
       setComposerAssets([]);
       rotateComposerKey();
     } catch {
-      // Mutation state renders the error while preserving the exact draft and key.
+      // 失败时 mutation 状态会渲染错误，草稿和幂等键保持不变
     }
   };
   const answerQuestion = async (answer: AgentQuestionAnswer) => {
@@ -199,7 +199,7 @@ export function AgentConversationPanel({
       });
       setAnsweredQuestionId(activeQuestion.id);
     } catch {
-      // The persisted answer and continuation remain retryable through the same question key.
+      // 已持久化的答案和续跑仍可通过同一 question key 重试
     }
   };
   const previewSelectedAsset = (asset: AgentAttachment) => {

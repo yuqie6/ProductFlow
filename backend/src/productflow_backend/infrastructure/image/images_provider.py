@@ -1,6 +1,6 @@
-"""OpenAI Images API provider (/v1/images/generations, /v1/images/edits).
+"""OpenAI Images API provider（/v1/images/generations、/v1/images/edits）。
 
-Supports any OpenAI-compatible image generation endpoint (DALL-E, SD WebUI, ComfyUI wrappers, etc.).
+支持任何 OpenAI 兼容的图片生成端点（DALL-E、SD WebUI、ComfyUI 封装等）。
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def _mime_type_from_image_bytes(data: bytes) -> str:
 
 
 class OpenAIImagesClient:
-    """Thin wrapper around the OpenAI Images API (generations + edits)."""
+    """OpenAI Images API（generations + edits）的薄封装。"""
 
     provider_name = "openai-images"
 
@@ -338,7 +338,7 @@ class OpenAIImagesClient:
 
 
 class OpenAIImagesImageProvider(ImageProvider):
-    """ImageProvider implementation backed by the standard OpenAI Images API."""
+    """基于标准 OpenAI Images API 的 ImageProvider 实现。"""
 
     provider_name = "openai-images"
     prompt_version = "images-api-v1"

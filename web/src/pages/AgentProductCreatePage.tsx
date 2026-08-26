@@ -68,7 +68,7 @@ function writeSessionValue(key: string, value: string): void {
   try {
     window.sessionStorage.setItem(key, value);
   } catch {
-    // Idempotency still holds for the current mounted page when storage is unavailable.
+    // sessionStorage 不可用时，当前挂载页内的幂等键仍然有效
   }
 }
 
@@ -77,7 +77,7 @@ function removeSessionValue(key: string): void {
   try {
     window.sessionStorage.removeItem(key);
   } catch {
-    // Nothing else can be done when browser storage is unavailable.
+    // 浏览器存储不可用时无法再做额外处理
   }
 }
 

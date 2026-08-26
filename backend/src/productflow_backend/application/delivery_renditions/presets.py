@@ -1,4 +1,4 @@
-"""Deterministic DeliverySpec presets exposed by the delivery catalog."""
+"""交付目录对外暴露的确定性 DeliverySpec 预设。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _reduced_aspect_ratio(width: int, height: int) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DeliveryPreset:
-    """One immutable, provider-independent DeliverySpec template."""
+    """一份不可变、与 provider 无关的 DeliverySpec 模板。"""
 
     key: str
     title: str
@@ -49,7 +49,7 @@ def _make_preset(
     width: int,
     height: int,
 ) -> DeliveryPreset:
-    # normalize_delivery_spec is the same validation boundary used by rendition jobs.
+    # normalize_delivery_spec 与 rendition job 共用同一校验边界。
     normalized = normalize_delivery_spec(
         DeliverySpec(
             width=width,
@@ -73,7 +73,7 @@ def _make_preset(
     )
 
 
-# Tuple order is part of the read-only API contract.
+# 元组顺序属于只读 API 合同。
 DELIVERY_PRESETS: tuple[DeliveryPreset, ...] = (
     _make_preset(
         key="taobao_tmall_hero",
@@ -119,7 +119,7 @@ DELIVERY_PRESETS: tuple[DeliveryPreset, ...] = (
 
 
 def list_delivery_presets() -> tuple[DeliveryPreset, ...]:
-    """Return the catalog in its stable wire order."""
+    """按稳定的 wire 顺序返回目录。"""
 
     return DELIVERY_PRESETS
 

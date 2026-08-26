@@ -309,7 +309,7 @@ class OpenAIResponsesImageClient:
         )
 
     def reconcile_response(self, provider_response_id: str) -> ProviderEffectQueryResult:
-        """Read a Responses record without creating another image request."""
+        """读取一条 Responses 记录，不再创建另一次图片请求。"""
 
         if not self.api_key:
             return ProviderEffectQueryResult(

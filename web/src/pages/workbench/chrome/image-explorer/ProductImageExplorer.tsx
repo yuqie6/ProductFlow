@@ -270,7 +270,7 @@ export function ProductImageExplorer({
       anchor.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      // The mutation error is rendered beside the current directory.
+      // mutation 错误展示在当前目录旁
     }
   };
   const deliveryExportEligibility = useMemo(
@@ -295,7 +295,7 @@ export function ProductImageExplorer({
         window.URL.revokeObjectURL(url);
       }
     } catch {
-      // The mutation error remains visible in the existing operation alert.
+      // mutation 错误仍显示在现有操作提示里
     }
   };
   const selectionCanDownload =

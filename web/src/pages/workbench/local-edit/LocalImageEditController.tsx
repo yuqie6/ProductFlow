@@ -150,7 +150,7 @@ export function useLocalImageEditController({
             setTask(selectLatestActiveLocalImageEditTask(list.items, request));
           }
         } catch {
-          // A failed recovery list must not hide the explicit edit surface.
+          // 恢复列表失败时不能把明确打开的编辑面藏起来
         }
       })
       .catch((error: unknown) => {

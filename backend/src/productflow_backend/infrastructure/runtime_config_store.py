@@ -10,7 +10,7 @@ from productflow_backend.infrastructure.db.session import get_session_factory
 
 
 def load_runtime_overrides(session: Session | None = None) -> dict[str, str]:
-    """Read database-backed runtime settings, falling back when the table is unavailable."""
+    """读取数据库中的运行时设置；表不可用时回退。"""
 
     if session is not None:
         return _load_runtime_overrides(session)

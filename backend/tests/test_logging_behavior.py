@@ -51,9 +51,8 @@ def _restore_logging_state() -> Iterator[None]:
         logger.name: (list(logger.handlers), logger.level, logger.propagate, logger.disabled)
         for logger in loggers
     }
-    # Alembic env.py calls logging.config.fileConfig, which can disable existing
-    # uvicorn loggers in the same pytest process. These tests intentionally
-    # exercise uvicorn mirroring, so start from an enabled baseline.
+    # Alembic env.py 会调用 logging.config.fileConfig，可能在同一 pytest 进程里
+    # 关掉已有的 uvicorn logger。这些测试要验证 uvicorn 镜像，所以从启用基线开始。
     for logger in loggers:
         logger.disabled = False
     try:

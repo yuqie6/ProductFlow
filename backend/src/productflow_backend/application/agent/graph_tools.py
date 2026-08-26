@@ -1,4 +1,4 @@
-"""Agent graph ChangeSet tools with durable mutation-ledger idempotency."""
+"""Agent graph ChangeSet 工具。mutation ledger 保证幂等。"""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def apply_agent_graph_change_set_tool(
     change_set: dict[str, Any],
     idempotency_key: str,
 ) -> dict[str, Any]:
-    """Apply one reversible graph ChangeSet, replaying an applied ledger row."""
+    """应用一条可逆 graph ChangeSet。已有 applied ledger 行则回放。"""
     normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
     conversation = _get_conversation_for_update(session, conversation_id)
     _require_product_conversation(conversation)
@@ -89,7 +89,7 @@ def propose_agent_graph_change_set_tool(
     change_set: dict[str, Any],
     idempotency_key: str,
 ) -> dict[str, Any]:
-    """Persist an unapplied graph preview behind the mutation ledger."""
+    """把未应用的 graph 预览写入 mutation ledger。"""
     normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
     conversation = _get_conversation_for_update(session, conversation_id)
     _require_product_conversation(conversation)
@@ -145,7 +145,7 @@ def reconcile_agent_graph_change_set_tool(
     idempotency_key: str,
     tool_name: str,
 ) -> AgentToolReconcileResult:
-    """Reconcile graph apply/propose without replaying either command."""
+    """对账 graph apply/propose，不重放任一命令。"""
     if tool_name not in {APPLY_GRAPH_TOOL_NAME, PROPOSE_GRAPH_TOOL_NAME}:
         raise BusinessValidationError("不支持的图变更对账工具")
     normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")

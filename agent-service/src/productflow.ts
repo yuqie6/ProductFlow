@@ -459,7 +459,7 @@ export class ProductFlowClient {
           else if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) message = parsed.error.message;
           details = isJsonObject(parsed.error?.details) ? parsed.error.details : undefined;
         } catch {
-          // Keep a bounded generic error when the backend did not return JSON.
+          // 后端没返回 JSON 时使用有界的通用错误
         }
         throw new ProductFlowError(response.status, code, message.slice(0, 1000), details);
       }

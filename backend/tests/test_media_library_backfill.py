@@ -283,7 +283,7 @@ def test_snapshot_file_includes_durable_blocker_report(
 
 
 def test_verify_recomputes_and_checks_storage_fingerprint(db_session, configured_env: Path, tmp_path: Path) -> None:
-    """--verify re-derives the storage fingerprint and fails closed on drift."""
+    """--verify 会重新计算存储指纹；发生漂移时拒绝通过。"""
     _create_gallery_entry(db_session, configured_env)
     storage = LocalStorage(root=configured_env)
     snapshot_path = tmp_path / "gallery-fingerprint.json"
@@ -299,8 +299,7 @@ def test_verify_recomputes_and_checks_storage_fingerprint(db_session, configured
     assert summary.created == 1
     assert verify_gallery_backfill(db_session, storage=storage, snapshot=snapshot) == 1
 
-    # Backfill never relocates originals, so the fingerprint is stable; changing
-    # the on-disk bytes must make verification fail closed.
+    # Backfill 不会搬移原文件，指纹因此稳定；改磁盘字节必须让校验拒绝通过。
     (configured_env / "media" / "backfill.png").write_bytes(b"fake-png-tampered")
     with pytest.raises(RuntimeError, match="storage fingerprint changed"):
         verify_gallery_backfill(db_session, storage=storage, snapshot=snapshot)

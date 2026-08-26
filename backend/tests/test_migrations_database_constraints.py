@@ -967,7 +967,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """0061 upload-keys table round-trips and 0060's SQLite downgrade drops source_run_id."""
+    """0061 的 upload-keys 表可来回升级；0060 的 SQLite 降级会丢掉 source_run_id。"""
     database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="upload-keys.db")
     command.upgrade(config, "20260821_0079")
 
@@ -979,7 +979,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     finally:
         engine.dispose()
 
-    # one-step downgrade to 0060 removes the upload-keys table
+    # 一步降到 0060 会删掉 upload-keys 表
     command.downgrade(config, "20260819_0060")
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
@@ -989,7 +989,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     finally:
         engine.dispose()
 
-    # further down to 0058 runs the 0060 and 0059 downgrades and drops source_run_id
+    # 再降到 0058 会跑 0060 和 0059 的降级，并丢掉 source_run_id
     command.downgrade(config, "20260818_0058")
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
@@ -1002,7 +1002,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     finally:
         engine.dispose()
 
-    # full re-upgrade restores everything (round-trip)
+    # 再完整升级应全部恢复（round-trip）
     command.upgrade(config, "head")
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:

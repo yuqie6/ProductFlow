@@ -1,4 +1,4 @@
-"""Durable Agent tool mutation ledger and request-hash helpers."""
+"""持久化 Agent 工具 mutation ledger 与 request hash 辅助。"""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def _replay_existing_mutation(
     idempotency_key: str,
     request_hash: str,
 ) -> dict[str, Any] | None:
-    """Replay an applied ledger row or reject an idempotency mismatch."""
+    """回放 applied ledger 行；key 相同但 hash 不同则冲突。"""
     mutation = _get_tool_mutation(
         session,
         conversation_id=conversation_id,
@@ -108,7 +108,7 @@ def _reconcile_from_ledger(
     idempotency_key: str,
     request_hash: str,
 ) -> AgentToolReconcileResult | None:
-    """Keep UNKNOWN or incomplete ledger rows unknown during reconciliation."""
+    """对账时 UNKNOWN 或不完整 ledger 行保持 unknown。"""
     mutation = _get_tool_mutation(
         session,
         conversation_id=conversation_id,
@@ -143,7 +143,7 @@ def _commit_tool_mutation(
     expected_display_name: str | None = None,
     target_display_name: str | None = None,
 ) -> dict[str, Any]:
-    """Write an applied mutation and commit, replaying a concurrent winner."""
+    """写入 applied mutation 并 commit。并发赢家则回放其结果。"""
     normalized_key = normalize_idempotency_key(idempotency_key)
     session.add(
         AgentToolMutation(

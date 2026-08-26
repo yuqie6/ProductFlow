@@ -1,4 +1,4 @@
-"""Agent Turn projection lookup, reservation, binding, and state transitions."""
+"""Agent Turn 投影的查找、预留、绑定与状态转换。"""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ class _AgentTurnCursor:
 
 
 def expected_harness_run_id(conversation: AgentConversation, projection: AgentTurnProjection) -> str:
-    """Use the Task run for Task Turns and the Conversation run otherwise."""
+    """Task Turn 用 Task 的 harness_run_id；否则用 Conversation 的 run。"""
     task = projection.task
     if task is not None:
         return task.harness_run_id
@@ -265,6 +265,7 @@ def reserve_agent_turn(
     page_context: dict[str, Any] | None = None,
     ignore_turn_id: str | None = None,
 ) -> AgentTurnReservation:
+    """预留 Turn。同 key 同 hash 回放已有行。本函数 commit。"""
     normalized_text = _normalize_input_text(input_text)
     normalized_asset_ids = _normalize_input_asset_ids(input_asset_ids)
     normalized_key = normalize_idempotency_key(
@@ -313,6 +314,7 @@ def reserve_agent_turn(
     if existing is not None:
         if existing.request_hash != request_hash:
             raise ConflictError("同一 idempotency key 不能提交不同的 Agent Turn 请求")
+        # 同 key 同 hash 回放也 commit，避免调用方误以为未落库。
         session.commit()
         return AgentTurnReservation(projection=existing, created=False)
 
@@ -431,7 +433,7 @@ def cancel_unbound_agent_turn(
     projection_id: str,
     commit: bool = True,
 ) -> AgentTurnProjection:
-    """Cancel a reserved Turn before the Agent runtime has accepted it."""
+    """在 Agent runtime 接受前取消已预留、尚未绑定的 Turn。commit=False 时由调用方持有事务。"""
     projection = _get_agent_turn_for_update(
         session,
         product_id=product_id,
@@ -510,6 +512,7 @@ def project_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_harness_turn_binding(projection, harness_turn_id)
+    # Draft 已确认后，迟到的 awaiting_confirmation 不能盖住 SUCCEEDED。
     stale_confirmed_workflow_turn = (
         status == AgentTurnStatus.AWAITING_CONFIRMATION
         and is_confirmed_workflow_draft_turn(projection)

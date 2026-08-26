@@ -347,7 +347,7 @@ export interface CanonicalProductDetail {
   updated_at: string;
 }
 
-/** The product projection attached to a schema-v3 product source node. */
+/** schema-v3 商品源节点上挂的商品投影。 */
 export interface GraphSourceProduct {
   id: string;
   name: string;

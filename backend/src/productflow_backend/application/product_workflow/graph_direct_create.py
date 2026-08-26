@@ -42,7 +42,7 @@ def create_product_with_direct_graph(
     generation_spec: dict | None = None,
     delivery_preset_key: str | None = None,
 ) -> DirectCreateResult:
-    """Create a product, its reference assets, and the preset v3 graph in one transaction."""
+    """在同一事务内创建商品、参考资产和预设 v3 图。"""
 
     delivery_spec = delivery_preset_spec_for_key(delivery_preset_key)
     delivery_spec_json = delivery_spec.model_dump(mode="json") if delivery_spec is not None else None

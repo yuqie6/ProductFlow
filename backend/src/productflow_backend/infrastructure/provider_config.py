@@ -78,7 +78,7 @@ class ResolvedAgentProviderConfig:
 
 
 def ensure_provider_bindings_initialized(session: Session | None = None, *, commit: bool = True) -> None:
-    """Create the three current-purpose mock bindings for a new database."""
+    """为新数据库创建三个当前用途的 mock 绑定。"""
 
     if session is None:
         owned_session = get_session_factory()()

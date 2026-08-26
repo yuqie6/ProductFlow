@@ -1,1 +1,1 @@
-"""Operational command entrypoints."""
+"""运维命令入口。"""

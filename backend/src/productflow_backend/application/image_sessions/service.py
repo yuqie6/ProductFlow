@@ -100,8 +100,8 @@ from productflow_backend.infrastructure.image.failures import (
     classify_image_generation_failure,
 )
 from productflow_backend.infrastructure.queue import (
-    enqueue_image_session_generation_task,  # noqa: F401  # kept for test monkeypatch compatibility
-    enqueue_image_session_generation_task_later,  # noqa: F401  # kept for test monkeypatch compatibility
+    enqueue_image_session_generation_task,  # noqa: F401  # 保留以兼容测试 monkeypatch
+    enqueue_image_session_generation_task_later,  # noqa: F401  # 保留以兼容测试 monkeypatch
 )
 from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -117,7 +117,7 @@ class ImageSessionAssetDownload:
 
 
 def get_image_session_asset_download(session: Session, *, asset_id: str) -> ImageSessionAssetDownload:
-    """Resolve the canonical media file metadata needed to serve a session asset download."""
+    """解析会话资源下载所需的规范媒体文件元数据。"""
     asset = session.get(ImageSessionAsset, asset_id)
     if asset is None:
         raise NotFoundError("会话图片不存在")
@@ -188,11 +188,11 @@ class ImageSessionGenerationExecutionError(Exception):
 
 
 class ImageSessionGenerationCancelledError(Exception):
-    """Raised inside worker execution when durable cancellation is observed."""
+    """worker 执行中观察到耐久取消时抛出。"""
 
 
 class ImageSessionGenerationStaleAttemptError(Exception):
-    """Raised when a worker no longer owns the durable generation attempt."""
+    """worker 已不再持有这次耐久生成 attempt 时抛出。"""
 
 
 def _image_session_provider_effect_request_json(
@@ -1317,7 +1317,7 @@ def _touch_image_session_if_present(
     now: datetime,
     title: str | None = None,
 ) -> None:
-    """Update the parent session timestamp without attaching a possibly stale ImageSession ORM row."""
+    """更新父会话时间戳，不挂载可能过期的 ImageSession ORM 行。"""
 
     values: dict[str, Any] = {"updated_at": now}
     if title is not None:
@@ -1752,7 +1752,7 @@ def execute_image_session_generation_task(
     *,
     chat_service_factory: ImageChatProviderFactory | None = None,
 ) -> None:
-    """Worker entry: queued -> running -> succeeded/failed; duplicate terminal messages no-op."""
+    """Worker 入口：queued -> running -> succeeded/failed；重复的终态消息 no-op。"""
     session_factory = get_session_factory()
     session = session_factory()
     try:

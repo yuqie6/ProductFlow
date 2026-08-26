@@ -35,7 +35,7 @@ class AsyncDispatchSummary:
 
 
 def delivery_key_for_actor(actor_name: str, aggregate_id: str) -> str:
-    """Return the stable idempotency key shared by submission and recovery paths."""
+    """提交和恢复共用的稳定幂等键。"""
     return f"{actor_name}:{aggregate_id}"
 
 
@@ -68,9 +68,9 @@ def stage_async_dispatch(
     payload: dict[str, Any] | None = None,
     available_at: datetime | None = None,
 ) -> AsyncDispatch:
-    """Create or return the durable dispatch row without committing.
+    """创建或返回耐久投递行，不 commit。
 
-    Caller owns the transaction; this helper only flushes so the dispatch id is available.
+    调用方拥有事务；本 helper 只 flush，好让调用方拿到 dispatch id。
     """
     existing = session.scalar(
         select(AsyncDispatch).where(AsyncDispatch.delivery_key == delivery_key)
@@ -87,10 +87,8 @@ def stage_async_dispatch(
         now = now_utc()
         if existing.status == AsyncDispatchStatus.CONSUMED:
             existing.status = AsyncDispatchStatus.PENDING
-            # A pollable target may have scheduled its next delivery before
-            # the worker marked this delivery consumed. Resident recovery can
-            # observe the consumed row before the next broker publish, so do
-            # not replace that durable future timestamp with ``now``.
+            # 可轮询目标可能在 worker 把本行标成 CONSUMED 之前就写下一次投递时间。
+            # 常驻恢复可能先看到 CONSUMED 行、broker 还没发出下一封，不能用 now 盖掉那个未来时间。
             existing.available_at = available_at or existing.available_at or now
             existing.lease_token = None
             existing.lease_expires_at = None
@@ -107,8 +105,7 @@ def stage_async_dispatch(
         ):
             lease_expires_at = existing.lease_expires_at
             if lease_expires_at is None or _as_aware_utc(lease_expires_at) > now:
-                # The consumer still owns the current SENT delivery. Keep
-                # that lease intact while recording the next poll durably.
+                # 当前 SENT 仍被消费者持有。保留这条 lease，只把下一次轮询时间写进账本。
                 existing.available_at = available_at
                 existing.updated_at = now
                 session.flush()
@@ -137,7 +134,7 @@ def requeue_async_dispatch(
     available_at: datetime | None = None,
     allow_active_lease: bool = False,
 ) -> AsyncDispatch:
-    """Create or reset a dispatch row to pending for recovery/retry paths."""
+    """为恢复或重试创建投递行，或把已有行重置为 pending。"""
     existing = session.scalar(
         select(AsyncDispatch).where(AsyncDispatch.delivery_key == delivery_key)
     )
@@ -209,13 +206,11 @@ def recover_async_dispatch_for_actor(
     *,
     delay_ms: int | None = None,
 ) -> AsyncDispatch:
-    """Stage an actor delivery and recover one stale-publish dead-letter row.
+    """为 actor 暂存一次投递，并尝试恢复一条过期发布造成的死信。
 
-    Normal staging deliberately does not revive ``DEAD`` dispatches: a dead
-    delivery is an explicit retry boundary. Agent Turn recovery may revive
-    only the first default-bound dead row with no recorded error, which proves
-    stale SENT reconciliation rather than target failure and preserves its
-    attempt count.
+    普通 stage 不会复活 DEAD：死信是明确的重试边界。Agent Turn 恢复只允许
+    复活第一条默认绑定、且没有记录错误的死信——这证明是过期 SENT 对账，
+    不是目标失败——并保留已有 attempts。
     """
     available_at = now_utc() + timedelta(milliseconds=delay_ms) if delay_ms is not None else None
     dispatch = stage_async_dispatch(
@@ -244,12 +239,10 @@ def _recover_stale_dead_dispatch(
     dispatch_id: str,
     available_at: datetime | None = None,
 ) -> AsyncDispatch:
-    """Conditionally reopen one stale-publish dead row without resetting attempts."""
-    # A SENT row can become DEAD during stale-publish reconciliation without
-    # an execution error. Recover exactly that first dead-letter boundary, but
-    # retain the delivery count so the next claim is attempt N+1. Target
-    # failures and later dead rows remain dead until an explicit operator
-    # requeue; otherwise the resident scanner would erase the retry bound.
+    """有条件地重开一条过期发布死信，不重置 attempts。"""
+    # SENT 可能在过期发布对账时变成 DEAD，当时并没有执行错误。只恢复这第一条死信边界，
+    # 保留投递次数，让下一次 claim 是 attempt N+1。目标失败和更晚的死信保持 DEAD，
+    # 直到运维显式再投；否则常驻扫描会抹掉重试上限。
     now = now_utc()
     session.execute(
         update(AsyncDispatch)
@@ -285,7 +278,7 @@ def enqueue_async_dispatch_for_actor(
     delay_ms: int | None = None,
     allow_active_lease: bool = False,
 ) -> None:
-    """Open a session and create/requeue a dispatch row for recovery callbacks."""
+    """打开 Session，为恢复回调创建或再排队一条投递行。"""
     session = get_session_factory()()
     try:
         available_at = (
@@ -344,8 +337,8 @@ def _send_claimed_dispatch(
     enqueue: Callable[[str, str], None],
     now: datetime,
 ) -> bool:
-    # Publish SENT before touching the broker so a fast worker can claim the message.
-    # If the process dies before enqueue, stale reconciliation returns this row to pending.
+    # 先把行写成 SENT 再碰 broker，这样跑得快的 worker 可以立刻 claim。
+    # 若进程在 enqueue 前死掉，过期对账会把这行退回 pending。
     dispatch.status = AsyncDispatchStatus.SENT
     dispatch.sent_at = now
     dispatch.lease_token = None
@@ -358,9 +351,8 @@ def _send_claimed_dispatch(
         enqueue(dispatch.id, dispatch.aggregate_id)
     except Exception as exc:  # noqa: BLE001
         logger.exception("异步投递入队失败: dispatch_id=%s aggregate_id=%s", dispatch.id, dispatch.aggregate_id)
-        # The broker may have accepted the message before the client observed an
-        # error. Keep SENT so stale reconciliation, rather than this exception,
-        # decides when an ambiguous publish can be retried.
+        # broker 可能已经收下消息，客户端却看到错误。保持 SENT，由过期对账而不是这个异常
+        # 决定模糊发布何时可以重试。
         session.execute(
             update(AsyncDispatch)
             .where(
@@ -426,11 +418,8 @@ def _reconcile_stale_sent(
             dispatch.status = AsyncDispatchStatus.DEAD
         else:
             dispatch.status = AsyncDispatchStatus.PENDING
-            # A target can persist its next poll timestamp while the current
-            # SENT row still has an active consumer lease. If that consumer
-            # dies before marking the row consumed, reconciliation must retain
-            # the scheduled delay instead of turning recovery into an
-            # immediate redelivery.
+            # 目标可能已经写下一次轮询时间，而当前 SENT 行仍有消费 lease。
+            # 消费者若在标 CONSUMED 前死掉，对账必须保留计划延迟，不能立刻再投。
             if _as_aware_utc(dispatch.available_at) <= now:
                 dispatch.available_at = now
         reconciled += 1
@@ -532,7 +521,7 @@ def mark_async_dispatch_failed(
     backoff_seconds: int = DEFAULT_DISPATCH_BACKOFF_SECONDS,
     now: datetime | None = None,
 ) -> bool:
-    """Release a consumer lease after target failure for bounded retry/dead-letter handling."""
+    """目标失败后释放消费 lease，走有界重试或死信。"""
     resolved_now = now or now_utc()
     attempts = session.scalar(
         select(AsyncDispatch.attempts).where(

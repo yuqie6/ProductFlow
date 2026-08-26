@@ -57,10 +57,9 @@ def approve_legacy_cutover_gate(
     backup_restore_verified_at: datetime,
     updated_at: datetime | None = None,
 ) -> LegacyCutoverGateState:
-    """Persist external migration evidence after rechecking legacy execution state.
+    """复查遗留执行状态后，持久化外部迁移证据。
 
-    The caller owns the transaction. This function only updates the singleton gate;
-    it does not call providers, inspect storage bytes, or delete legacy rows.
+    调用方拥有事务。本函数只更新单例 gate；不调用 provider、不检查存储字节、不删除遗留行。
     """
     _validate_evidence(
         source_profile=source_profile,
@@ -105,7 +104,7 @@ def approve_legacy_cutover_gate(
 
 
 def assert_legacy_cutover_cleanup_ready(connection: Connection) -> LegacyCutoverGateState:
-    """Guard any future destructive cleanup entrypoint with the persisted gate."""
+    """用已持久化的 gate 守卫未来任何破坏性清理入口。"""
     state = _state_from_row(_load_gate_row(connection, for_update=True))
     missing_evidence = [
         field_name
@@ -132,7 +131,7 @@ def mark_legacy_cutover_cleaned(
     *,
     updated_at: datetime | None = None,
 ) -> LegacyCutoverGateState:
-    """Record completion after a separately approved cleanup transaction."""
+    """在另行批准的清理事务完成后记录完成。"""
     assert_legacy_cutover_cleanup_ready(connection)
     connection.execute(
         sa.text(
@@ -148,7 +147,7 @@ def mark_legacy_cutover_cleaned(
 
 
 def count_legacy_active_runs(connection: Connection) -> int:
-    """Count active or unknown execution rows in retained V1 tables."""
+    """统计保留的 V1 表中仍为 active 或 unknown 的执行行。"""
     table_names = frozenset(sa.inspect(connection).get_table_names())
     count = 0
     if {"product_workflows", "workflow_runs"} <= table_names:

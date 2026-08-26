@@ -2240,7 +2240,7 @@ _GRAPH_NODE_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowN
 
 
 class WorkflowGraph(Base, TimestampMixin):
-    """schema-v3 canonical graph。"""
+    """schema-v3 规范图。"""
 
     __tablename__ = "workflow_graphs"
     __table_args__ = (
@@ -2637,7 +2637,7 @@ class WorkflowGraphNodeRun(Base):
 
 
 class WorkflowGraphProviderEffect(Base, TimestampMixin):
-    """One provider request made while executing a schema-v3 graph node run."""
+    """执行 schema-v3 图节点运行时发出的一次 provider 请求。"""
 
     __tablename__ = "workflow_graph_provider_effects"
     __table_args__ = (
@@ -3454,7 +3454,7 @@ class ImageSessionGenerationTask(Base):
 
 
 class ImageSessionProviderEffect(Base, TimestampMixin):
-    """One provider request made while materializing an image-session task."""
+    """落地 image-session 任务时发出的一次 provider 请求。"""
 
     __tablename__ = "image_session_provider_effects"
     __table_args__ = (

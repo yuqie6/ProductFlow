@@ -212,7 +212,7 @@ export function GraphNodeInspector({
       await flushInspector();
       retryMutation.mutate(runId);
     } catch {
-      // The editor keeps its validation or save error visible.
+      // 编辑器继续展示校验或保存错误
     }
   }, [flushInspector, presentation?.runId, retryMutation]);
 

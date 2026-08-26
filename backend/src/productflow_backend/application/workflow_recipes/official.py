@@ -1,7 +1,6 @@
-"""Historical official recipe seeds for migration 0086 and its drift tests.
+"""migration 0086 及其漂移测试用的历史官方配方种子。
 
-These fragments are not an online catalog. Migration 0091 archives them, and
-online recipe routes only serve user-saved recipes.
+这些片段不作为在线目录。Migration 0091 会归档它们，在线路由只提供用户保存的配方。
 """
 
 from __future__ import annotations
@@ -206,7 +205,7 @@ OFFICIAL_RECIPE_SEEDS = (
 
 
 def official_recipe_seeds() -> tuple[OfficialRecipeSeed, ...]:
-    """Return the immutable ordered set used by current code and tests."""
+    """返回当前代码和测试使用的不可变有序集合。"""
 
     return OFFICIAL_RECIPE_SEEDS
 

@@ -108,7 +108,7 @@ def load_applied_graph(session: Session, graph: WorkflowGraph) -> AppliedGraph:
 
 
 def preview_applied_graph_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet) -> AppliedGraph:
-    """DB-free Graph Command preview. Persistence stays on apply/stage commands."""
+    """无 DB 的 Graph Command 预览。持久化仍走 apply/stage 命令。"""
 
     return apply_workflow_change_set(graph, change_set)
 
@@ -164,10 +164,10 @@ def create_empty_workflow_graph(
     title: str = DEFAULT_GRAPH_TITLE,
     commit: bool = True,
 ) -> WorkflowGraph:
-    """Persist an empty active schema-v3 graph.
+    """持久化一张空的 active schema-v3 图。
 
-    `WorkflowChangeSet.operations` requires at least one op, so an empty canvas cannot
-    be born as a no-op ChangeSet. Later node/edge writes still go through `apply_graph_change_set`.
+    `WorkflowChangeSet.operations` 至少要有一条 op，空画布不能作为 no-op ChangeSet 出生。
+    之后的节点/边写入仍走 `apply_graph_change_set`。
     """
     if not commit:
         with session.begin_nested():

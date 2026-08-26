@@ -98,6 +98,6 @@ export function writeStoredWorkflowCanvasViewport(
       JSON.stringify(viewport),
     );
   } catch {
-    // Private mode and quota errors stay client-local; the live viewport still works.
+    // 隐私模式或配额错误只影响本地写入；当前视口仍可使用
   }
 }

@@ -66,7 +66,7 @@ def verify_legacy_media(
     apply: bool = False,
     generated_at: datetime | None = None,
 ) -> LegacyMediaVerificationReport:
-    """Measure recoverable legacy image files and optionally persist verified metadata."""
+    """测量可恢复的遗留图片文件，并可选择持久化已校验元数据。"""
 
     storage = LocalStorage(storage_root)
     media_objects = list(

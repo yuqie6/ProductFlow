@@ -55,11 +55,10 @@ def export_delivery_rendition_jobs(
     allow_partial: bool = False,
     storage: LocalStorage | None = None,
 ) -> DeliveryExportArchive:
-    """Build a deterministic ZIP from already-persisted rendition results.
+    """从已持久化的 rendition 结果构建确定性 ZIP。
 
-    This function intentionally has no provider or queue dependency. The rendition jobs are
-    the immutable input boundary; a successful job's result media is measured again before it
-    enters the archive so that the manifest describes the bytes actually delivered.
+    本函数不依赖 provider 或队列。rendition job 是不可变输入边界；成功 job 的结果媒体
+    在进入归档前会再测一次，使 manifest 描述实际交付的字节。
     """
 
     job_ids = list(rendition_job_ids)
@@ -344,7 +343,7 @@ def _write_deterministic_archive(
 
 
 def _read_exact_bounded_file(path: Path, *, expected_byte_size: int) -> bytes:
-    """Read at most the verified size plus one byte so file drift cannot bypass the memory bound."""
+    """最多读取已校验大小再加一字节，避免文件漂移绕过内存上限。"""
 
     with path.open("rb") as source:
         content = source.read(expected_byte_size + 1)

@@ -150,8 +150,8 @@ def test_postgres_server_restart_preserves_agent_execution_recovery(
                     session.commit()
                     projection_id = reservation.projection.id
 
-                # Return a live connection to the SQLAlchemy pool so the next session must
-                # prove that pool_pre_ping can discard the connection killed by the restart.
+                # 把活连接还回 SQLAlchemy 池，让下一次 session 必须证明
+                # pool_pre_ping 能丢掉被重启杀掉的连接。
                 with session_factory() as session:
                     assert session.scalar(sa.text("SELECT 1")) == 1
 

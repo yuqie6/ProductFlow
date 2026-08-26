@@ -1,4 +1,4 @@
-"""Database-free catalog and generation rules for product image types."""
+"""商品图片类型的无数据库目录与生成规则。"""
 
 from __future__ import annotations
 

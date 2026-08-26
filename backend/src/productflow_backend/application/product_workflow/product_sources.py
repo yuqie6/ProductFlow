@@ -31,11 +31,10 @@ class FactSetSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ProductSourceSnapshot:
-    """Resolved product_source input used by both projection and runtime.
+    """投影与运行时共用的已解析 product_source 输入。
 
-    ``source_product_id`` is the effective source.  For a legacy node whose
-    config predates the explicit binding fields, it is the graph owner.  An
-    explicit ``null`` remains unbound and therefore has no effective source.
+    ``source_product_id`` 是有效来源。配置早于显式绑定字段的遗留节点，有效来源是图所属商品。
+    显式 ``null`` 保持未绑定，因此没有有效来源。
     """
 
     source_product_id: str | None
@@ -52,11 +51,10 @@ def resolve_product_source(
     graph_product_id: str,
     config: dict[str, object] | None,
 ) -> ProductSourceSnapshot:
-    """Resolve one product_source config to the exact facts it provides.
+    """把一条 product_source 配置解析成它实际提供的 facts。
 
-    Missing ``source_product_id`` is intentionally treated as the historical
-    config={} shape.  An explicit null means an intentionally empty/manual
-    source and must not fall back to the graph owner.
+    缺少 ``source_product_id`` 按历史 config={} 形态处理。显式 null 表示故意留空/手工源，
+    不得回退到图所属商品。
     """
 
     payload = config or {}
@@ -118,7 +116,7 @@ def resolve_product_source(
 
 
 def validate_product_source_configs(session: Session, *, graph_product_id: str, graph) -> None:
-    """Validate product_source references before graph rows are persisted."""
+    """在持久化图行之前校验 product_source 引用。"""
 
     for node in graph.nodes:
         if getattr(node.node_type, "value", node.node_type) != "product_source":
@@ -169,7 +167,7 @@ def merge_runtime_facts(
     facts: tuple[dict[str, Any], ...],
     product_source: ProductSourceSnapshot | None,
 ) -> tuple[dict[str, Any], ...]:
-    """Keep stored facts, and fill identity keys from the bound product when missing."""
+    """保留已存 facts，缺失时从绑定商品补齐身份键。"""
 
     product = product_source.source_product if product_source is not None else None
     if product is None:

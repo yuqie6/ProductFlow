@@ -75,7 +75,7 @@ def recover_unfinished_workflow_runs(
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> WorkflowRunRecoverySummary:
-    """Delegate graph-run recovery to its durability owner."""
+    """把 graph-run 恢复交给其耐久状态所有者。"""
 
     return recover_unfinished_graph_runs(
         enqueue=enqueue,
@@ -364,7 +364,7 @@ def recover_unfinished_local_image_edit_tasks(
     reset_stale_running: bool = False,
     stale_running_after: timedelta = LOCAL_EDIT_STALE_CLAIM_AFTER,
 ) -> LocalImageEditTaskRecoverySummary:
-    """Recover local-edit delivery through the service-owned fencing state machine."""
+    """经 service 自有的 fencing 状态机恢复 local-edit 投递。"""
 
     session = get_session_factory()()
     task_ids_to_enqueue: list[str] = []

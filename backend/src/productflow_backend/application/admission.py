@@ -97,7 +97,7 @@ def _graph_run_queue_status_counts(session: Session) -> tuple[int, int]:
 
 
 def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
-    """Return the global durable generation queue snapshot."""
+    """返回全局耐久生成队列快照。"""
 
     graph_running_count, graph_queued_count = _graph_run_queue_status_counts(session)
     running_count = graph_running_count + _status_count(
@@ -194,7 +194,7 @@ def get_generation_task_queue_metadata(
 
 
 def active_generation_task_count(session: Session) -> int:
-    """Return globally active provider/worker work from durable DB rows."""
+    """从耐久 DB 行统计全局正在进行的 provider/worker 工作。"""
 
     return _active_async_task_count(session)
 
@@ -206,7 +206,7 @@ def _lock_generation_capacity(session: Session) -> None:
 
 
 def generation_running_capacity_available(session: Session) -> bool:
-    """Serialize worker claim checks and return whether one more task may enter provider execution."""
+    """串行化 worker claim 检查，判断是否还能再进一条任务到 provider 执行。"""
 
     _lock_generation_capacity(session)
     limit = get_runtime_settings(session).generation_max_concurrent_tasks
@@ -214,10 +214,10 @@ def generation_running_capacity_available(session: Session) -> bool:
 
 
 def ensure_generation_capacity(session: Session) -> None:
-    """Lock capacity bookkeeping without rejecting durable queued submissions.
+    """锁定容量账本，不拒绝已耐久入队的提交。
 
-    `generation_max_concurrent_tasks` limits worker entry into provider/running execution, not durable task admission.
-    Keeping this entrypoint as a no-op compatibility shim avoids callers turning queue depth into a submit-time 429.
+    `generation_max_concurrent_tasks` 限制 worker 进入 provider/running 执行；耐久任务入队不受此限制。
+    该入口保持 no-op 兼容垫片，避免调用方把队列深度变成提交时的 429。
     """
 
     _lock_generation_capacity(session)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replace this process after asking Linux to kill it if the parent exits."""
+"""在请求 Linux 于父进程退出时杀掉本进程之后，再 exec 替换当前进程。"""
 
 from __future__ import annotations
 
@@ -11,11 +11,10 @@ PR_SET_PDEATHSIG = 1
 
 
 def set_parent_death_signal(signum: int) -> None:
-    """Kill this process if its current parent exits.
+    """当前父进程退出时杀掉本进程。
 
-    `prctl(PR_SET_PDEATHSIG)` is Linux-only and is preserved across `exec` and
-    inherited by `fork` children. Just/uv exiting otherwise leaves Dramatiq
-    workers reparented to init, still holding PostgreSQL locks.
+    `prctl(PR_SET_PDEATHSIG)` 仅 Linux 可用，跨 `exec` 保留，并由 `fork` 子进程继承。
+    Just/uv 退出后 Dramatiq worker 否则会被 init 收养，仍占着 PostgreSQL 锁。
     """
 
     if sys.platform != "linux":

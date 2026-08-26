@@ -14,8 +14,8 @@ export interface DeliveryExportEligibility {
 }
 
 /**
- * A delivery archive may contain only persisted successful rendition results.
- * Keep the validation here so the UI never silently drops an invalid selection.
+ * 交付包只能包含已持久化且成功的 rendition 结果。
+ * 校验放在这里，避免 UI 静默丢掉非法选中项。
  */
 export function evaluateDeliveryExportSelection(
   assets: readonly Pick<GalleryAsset, "rendition">[],

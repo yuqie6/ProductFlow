@@ -81,7 +81,7 @@ describe("globalAgentDockState", () => {
   it("resizes north/west directions adjusting the anchor position", () => {
     const start = { size: { width: 600, height: 700 }, pos: { x: 200, y: 150 } };
     const result = resizeDockWindow(start.size, start.pos, "nw", 100, 80, 1280, 900);
-    // west drag right (+x) shrinks width, moving x right; north drag down (+y) shrinks height, moving y down
+    // 向西拖（+x）缩小宽度并把 x 右移；向北拖（+y）缩小高度并把 y 下移
     expect(result.size.width).toBe(500);
     expect(result.size.width).toBeLessThanOrEqual(start.size.width);
     expect(result.pos.x).toBeGreaterThanOrEqual(start.pos.x);

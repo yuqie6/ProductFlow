@@ -86,14 +86,11 @@ def capture_gallery_snapshot(
 
 
 def _database_snapshot_token(session: Session) -> str | None:
-    """Return a monotonic, comparable database anchor for the capture transaction.
+    """返回捕获事务的单调、可比较数据库锚点。
 
-    ``pg_current_wal_lsn`` is chosen over ``pg_current_snapshot`` because it is
-    monotonic: a later observation can prove the WAL is at or past the recorded
-    point, so the token can actually be compared across runs. A fresh
-    ``pg_current_snapshot`` id is a brand-new value in every transaction and can
-    never be matched again, which made it record-only evidence. SQLite has no
-    snapshot machinery, so it is honestly reported as single-connection.
+    选用 ``pg_current_wal_lsn``：它单调，后续观察可以证明 WAL 已到达或超过记录点，
+    token 才能跨次运行比较。每次事务的新 ``pg_current_snapshot`` id 都是全新值，
+    无法再次匹配，只能当记录证据。SQLite 没有快照机制，如实报告为 single-connection。
     """
 
     dialect = session.get_bind().dialect.name
@@ -134,11 +131,10 @@ def collect_gallery_backfill_blockers(
     storage: LocalStorage,
     snapshot: MediaLibraryMigrationAudit,
 ) -> tuple[tuple[str, str], ...]:
-    """Return a durable full-preflight blocker report for a frozen snapshot.
+    """返回冻结快照的耐久全量预检 blocker 报告。
 
-    This is independent from ``run_gallery_backfill`` page execution so the
-    snapshot JSON can carry the complete blocker evidence even when a later
-    apply step only processes a bounded page.
+    独立于 ``run_gallery_backfill`` 的分页执行，使快照 JSON 能带上完整 blocker 证据，
+    即使后续 apply 只处理有界的一页。
     """
 
     snapshot_ids = [row[0] for row in snapshot.source_rows]
@@ -335,11 +331,9 @@ def verify_gallery_backfill(
         or current.source_rows != snapshot.source_rows
     ):
         raise RuntimeError("media library backfill source changed during migration")
-    # Recompute the storage fingerprint over the original files and compare it
-    # against the recorded snapshot so an unverified storage change is caught
-    # here instead of being accepted on the strength of a recorded hash.  The
-    # recompute re-reads every media file; this runs only during the bounded
-    # maintenance-window reconcile, never in page execution.
+    # 对原始文件重算存储指纹并与快照记录比对；未校验的存储变更在这里拦住，
+    # 不能仅凭已记录哈希放行。重算会重读每个媒体文件，只在有界维护窗口对账时运行，
+    # 从不进入分页执行。
     if snapshot.storage_snapshot_id is not None:
         current_storage_id = _storage_snapshot_id(session, storage=storage)
         if current_storage_id != snapshot.storage_snapshot_id:
@@ -397,12 +391,10 @@ def gallery_reconciliation_hash(
     storage: LocalStorage,
     snapshot: MediaLibraryMigrationAudit,
 ) -> str:
-    """Return a stable hash for the verified old-to-new Gallery mapping.
+    """返回已校验的旧到新 Gallery 映射的稳定哈希。
 
-    The source snapshot alone cannot prove that the canonical mapping and
-    workflow-side references stayed unchanged.  Include those relationships
-    in the report hash so the retirement gate can recheck the same facts
-    immediately before dropping the legacy table.
+    仅有源快照不能证明规范映射和工作流侧引用未变。把这些关系纳入报告哈希，
+    让退役 gate 在 drop 遗留表之前立刻复查同一批事实。
     """
 
     verify_gallery_backfill(session, storage=storage, snapshot=snapshot)

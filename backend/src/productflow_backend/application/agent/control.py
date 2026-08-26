@@ -1,3 +1,5 @@
+"""Agent Turn 提交、同步与控制。PostgreSQL 投影是权威；Node.js adapter 只执行。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -90,6 +92,7 @@ def submit_agent_turn(
     enqueue_sync: Callable[[Session, str], None],
     defer_if_unavailable: bool = False,
 ) -> AgentTurnSubmission:
+    """提交 Turn。reserve 自己会 commit；绑定 harness 与 stage dispatch 后再 commit。"""
     reservation = reserve_agent_turn(
         session,
         product_id=product_id,
@@ -351,9 +354,8 @@ def answer_agent_question(
         projection.updated_at = now_utc()
         session.flush()
 
-        # Stop a live waiter when possible. If the Agent process is unavailable,
-        # the persisted continuation remains queued and the old wait is left for
-        # lease recovery to reconcile.
+        # 能停掉活着的 waiter 就停。Agent 进程不可用时，已落库的 continuation 保持 queued，
+        # 旧等待交给 lease 恢复对账。
         if projection.harness_turn_id is not None and gateway is not None:
             try:
                 state = gateway.cancel_turn(
@@ -378,9 +380,8 @@ def answer_agent_question(
                     else "原问题 Turn 已不可用，继续执行由 continuation Turn 接管"
                 )
             except ConflictError:
-                # A restarted Agent may return a snapshot fenced by the expired
-                # execution. The durable question and continuation remain the
-                # ProductFlow authority; stale cancellation state is advisory.
+                # 重启后的 Agent 可能带回过期 execution 的 fencing snapshot。
+                # 已落库的问题和 continuation 仍是 ProductFlow 权威；过期取消状态只作参考。
                 projection.sync_error = "问题答案已持久化；原等待 Turn 状态已过期，continuation Turn 接管"
         elif projection.harness_turn_id is not None:
             projection.sync_error = "问题答案已持久化；Agent 服务不可用，continuation Turn 等待恢复入队"
@@ -466,6 +467,7 @@ def synchronize_agent_turn_state(
     state: AgentServiceTurnState,
     commit: bool = True,
 ) -> AgentTurnProjection:
+    """校验 fencing 后再投影。过期 queued snapshot 不覆盖权威状态。commit=False 时由调用方持有事务。"""
     conversation = get_agent_conversation_or_raise(
         session,
         product_id=product_id,
@@ -538,8 +540,7 @@ def synchronize_agent_turn_state(
                     commit=commit,
                 )
             else:
-                # Keep already journaled turns from the pre-global-draft
-                # contract recoverable during the transition.
+                # 过渡期仍要对账旧合同里已经 journal 过的 Turn，避免无法恢复。
                 projection = attach_agent_library_organization_draft_artifact(
                     session,
                     conversation_id=conversation_id,
@@ -671,6 +672,7 @@ def retry_unbound_agent_turn_start(
     gateway: AgentServiceClient,
     commit: bool = True,
 ) -> AgentTurnProjection:
+    """未绑定 harness 的 queued Turn 再次 start_turn。commit=False 时由调用方持有事务。"""
     conversation = projection.conversation
     try:
         state = gateway.start_turn(
@@ -717,7 +719,7 @@ def adopt_queued_agent_turn_start(
     gateway: AgentServiceClient,
     commit: bool = True,
 ) -> AgentTurnProjection:
-    """Materialize a safe pre-model Turn on another Agent service instance."""
+    """在另一 Agent service 实例上物化仍处于模型前阶段、可安全接手的 Turn。"""
 
     conversation = projection.conversation
     if projection.status != AgentTurnStatus.QUEUED or projection.harness_turn_id is None:
@@ -821,7 +823,7 @@ def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:
 
 
 def cancel_agent_task_run(session: Session, *, task_id: str):
-    """Cancel a Task, including its current Turn or workflow-run request."""
+    """取消 Task，含当前 Turn 或待确认 workflow-run request。"""
 
     from productflow_backend.application.agent.tasks import cancel_agent_task, get_agent_task_or_raise
     from productflow_backend.application.agent.turn_status import TASK_BLOCKING_TURN_STATUSES

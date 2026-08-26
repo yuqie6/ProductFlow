@@ -8,9 +8,9 @@ _PROMPT_PLACEHOLDER_RE = re.compile(r"{([A-Za-z_][A-Za-z0-9_]*)}")
 
 
 def render_prompt_template(template: str, values: Mapping[str, Any]) -> str:
-    """Render an operator-editable prompt template.
+    """渲染运营可编辑的 prompt 模板。
 
-    Prompt values may contain user-authored product/copy text, so callers should not log the rendered result.
+    Prompt 值可能包含用户撰写的商品/文案，调用方不应记录渲染结果。
     """
 
     def replace(match: re.Match[str]) -> str:

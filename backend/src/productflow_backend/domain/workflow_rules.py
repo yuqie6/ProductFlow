@@ -12,7 +12,7 @@ from productflow_backend.domain.errors import BusinessValidationError
 
 @dataclass(frozen=True, slots=True)
 class WorkflowRuleNode:
-    """Small DB-free node shape used by workflow graph business rules."""
+    """工作流图业务规则使用的小型无 DB 节点形态。"""
 
     id: str
     node_type: WorkflowNodeType
@@ -22,7 +22,7 @@ class WorkflowRuleNode:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowRuleEdge:
-    """Small DB-free edge shape used by workflow graph business rules."""
+    """工作流图业务规则使用的小型无 DB 边形态。"""
 
     source_node_id: str
     target_node_id: str
@@ -46,7 +46,7 @@ def canonical_workflow_edge_handles(
 
 
 def topological_node_ids(nodes: Iterable[WorkflowRuleNode], edges: Iterable[WorkflowRuleEdge]) -> list[str]:
-    """Return graph node ids in executable order and reject broken/cyclic DAGs."""
+    """按可执行顺序返回图节点 id，并拒绝破损/成环的 DAG。"""
 
     nodes_by_id = {node.id: node for node in nodes}
     incoming_count = {node_id: 0 for node_id in nodes_by_id}
@@ -84,7 +84,7 @@ def ready_workflow_node_ids(
     queued_node_ids: Iterable[str],
     succeeded_node_ids: Iterable[str],
 ) -> list[str]:
-    """Return queued run nodes whose in-run dependencies have succeeded."""
+    """返回其运行内依赖均已成功的 queued 运行节点。"""
 
     nodes_by_id = {node.id: node for node in nodes}
     edge_list = list(edges)

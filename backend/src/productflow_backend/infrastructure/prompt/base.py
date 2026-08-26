@@ -106,7 +106,7 @@ class PromptGenerationProvider(ABC):
         request_hash: str,
         provider_response_id: str | None,
     ) -> ProviderEffectQueryResult:
-        """Query provider state without submitting another prompt generation request."""
+        """查询 provider 状态，不再提交一次 prompt 生成请求。"""
 
         return ProviderEffectQueryResult.unsupported(
             f"提示词 provider {self.provider_name} 没有提供可查询的生成记录接口"

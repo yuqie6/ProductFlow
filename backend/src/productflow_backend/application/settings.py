@@ -177,12 +177,12 @@ def get_provider_config_view(session: Session) -> ProviderConfigView:
 
 
 def get_agent_provider_runtime_config(session: Session) -> ResolvedAgentProviderConfig:
-    """Resolve the current workflow Agent provider binding for internal service consumers."""
+    """为内部服务消费者解析当前工作流 Agent 的 provider 绑定。"""
     return resolve_agent_provider_config(session)
 
 
 def initialize_provider_bindings_if_available() -> bool:
-    """Initialize current-purpose bindings when provider tables already exist."""
+    """provider 表已存在时，初始化当前用途绑定。"""
 
     if not provider_config_tables_available():
         return False

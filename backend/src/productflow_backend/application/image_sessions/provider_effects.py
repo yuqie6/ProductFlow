@@ -86,7 +86,7 @@ def ensure_image_session_provider_effect_intent(
     provider_name: str,
     request_json: dict[str, Any],
 ) -> bool:
-    """Persist a provider-call intent before submitting the image request."""
+    """在提交图片请求之前持久化 provider-call intent。"""
 
     _validate_json_payload(request_json, "连续生图 provider effect intent")
     task = session.scalar(
@@ -158,7 +158,7 @@ def record_image_session_provider_effect_result(
     provider_status: str | None,
     result_json: dict[str, Any] | None = None,
 ) -> bool:
-    """Persist provider result evidence before local asset materialization."""
+    """在本地资产落地之前持久化 provider 结果证据。"""
 
     if result_json is not None:
         _validate_json_payload(result_json, "连续生图 provider effect result")
@@ -187,7 +187,7 @@ def record_image_session_provider_effect_progress(
     provider_response_id: str | None,
     provider_status: str | None,
 ) -> bool:
-    """Persist provider polling identity while the effect is still unresolved."""
+    """在 effect 仍未解决时持久化 provider 轮询身份。"""
 
     effect = _locked_effect(session, task_id=task_id, candidate_start_index=candidate_start_index)
     if effect is None or effect.attempt_id != attempt_id:

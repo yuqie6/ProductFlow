@@ -67,7 +67,7 @@ def export_legacy_gallery_bridge_manifest(
     storage_root: Path,
     generated_at: datetime | None = None,
 ) -> LegacyGalleryBridgeManifest:
-    """Create a read-only, Gallery-only source manifest for the old Canvas schema."""
+    """为旧 Canvas schema 创建只读、仅 Gallery 的源清单。"""
 
     from productflow_backend.application.legacy_retirement.source import open_legacy_read_only_connection
 
@@ -341,7 +341,7 @@ def inspect_legacy_gallery_source_retirement(
     approval: LegacyGalleryBridgeApproval,
     storage_root: Path,
 ) -> LegacyGallerySourceRetirementReport:
-    """Recheck the source under a lock without dropping its table."""
+    """在锁下复查源表，不 drop 该表。"""
 
     _validate_source_retirement_inputs(manifest, approval)
     with engine.begin() as connection:

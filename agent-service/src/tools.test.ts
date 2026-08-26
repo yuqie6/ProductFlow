@@ -310,7 +310,7 @@ describe("ProductFlow Pi tools", () => {
     let reconcileIdempotencyKey = "";
     const server = createServer(async (request, response) => {
       for await (const _chunk of request) {
-        // Consume the request body before simulating a lost response.
+        // 先读完请求体，再模拟响应丢失
       }
       const idempotencyKey = request.headers["idempotency-key"];
       if (request.url?.endsWith("/product-workspaces")) {

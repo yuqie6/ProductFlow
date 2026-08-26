@@ -150,9 +150,8 @@ export function openGlobalAgent(options?: { tab?: GlobalAgentDockTab; sessionId?
 }
 
 /**
- * The product workbench owns an embedded Agent conversation. Keep this route
- * check local to the Dock so its launcher does not depend on an obsolete URL
- * segment that is no longer present in the router.
+ * 商品工作台自带嵌入式 Agent 对话。把这条路由判断留在 Dock 内部，
+ * 启动器就不会依赖路由里已经不存在的旧 URL 片段。
  */
 export function isProductWorkbenchPath(pathname: string): boolean {
   const segments = pathname.split("/").filter(Boolean);
@@ -763,7 +762,7 @@ export function GlobalAgentDock() {
           style={panelStyle}
           className={panelClass}
         >
-          {/* 桌面端 8 个方向自由缩放把手 (8-Directional Resizing Handles) */}
+          {/* 桌面端 8 个方向自由缩放把手 */}
           {dockMode !== "fullscreen" && !isMobile ? (
             <>
               {/* 上边框 N */}
@@ -799,7 +798,7 @@ export function GlobalAgentDock() {
                 <div className="h-10 w-1 rounded-full bg-border-l3/60 group-hover/e:bg-accent" />
               </div>
 
-              {/* 四个角 Corner Handles */}
+              {/* 四个角缩放把手 */}
               <div
                 onPointerDown={(e) => handleResizePointerDown("nw", e)}
                 className="absolute -left-1 -top-1 z-40 h-4 w-4 cursor-nwse-resize rounded-tl-lg transition-colors hover:bg-accent/30"

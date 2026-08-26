@@ -278,7 +278,7 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 2
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) > 0
-    assert len(_media_files(configured_env)) == 6  # two originals plus preview and thumbnail variants
+    assert len(_media_files(configured_env)) == 6  # 两张原图，各带 preview 和 thumbnail
 
 
 def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays(db_session) -> None:

@@ -134,7 +134,7 @@ def ensure_global_agent_conversation(
     *,
     session_id: str,
 ) -> AgentConversation:
-    """Create the global conversation for a legacy Session on first global-Dock access."""
+    """旧 Session 首次进入全局 Dock 时补建 GLOBAL conversation。本函数 commit。"""
     agent_session = get_agent_session_or_raise(session, session_id)
     existing = session.scalar(
         select(AgentConversation).where(
@@ -158,7 +158,7 @@ def ensure_global_agent_conversation(
 
 
 def ensure_global_agent_conversations(session: Session) -> None:
-    """Backfill the global conversation lazily for global sessions created before global scope existed."""
+    """给 global scope 出现前创建的全局 Session 惰性补 GLOBAL conversation。有写入时 commit。"""
     sessions = list(session.scalars(select(AgentSession).where(AgentSession.product_id.is_(None))).all())
     changed = False
     for agent_session in sessions:

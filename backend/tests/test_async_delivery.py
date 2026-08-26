@@ -627,8 +627,8 @@ def test_poll_schedule_survives_consume_and_resident_recovery(db_session) -> Non
     ) is True
     db_session.commit()
 
-    # A consumed pollable projection can be staged again by resident recovery;
-    # that transition must keep the durable next-poll timestamp.
+    # 常驻恢复可以把已消费的可轮询投影再次 stage；
+    # 这次转换必须保留持久化的下次轮询时间戳。
     db_session.expire_all()
     resident_scan = stage_async_dispatch_for_actor(
         db_session,

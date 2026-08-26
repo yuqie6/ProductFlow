@@ -130,7 +130,7 @@ class RecipePayload(StrictRecipeModel):
 
 
 class RecipeGovernance(StrictRecipeModel):
-    """Recipe version metadata kept separate from the reusable graph payload."""
+    """与可复用图载荷分开存放的配方版本元数据。"""
 
     applicable_image_types: tuple[RecipeKey, ...] = Field(min_length=1, max_length=32)
     required_inputs: tuple[RecipeKey, ...] = Field(default_factory=tuple, max_length=32)

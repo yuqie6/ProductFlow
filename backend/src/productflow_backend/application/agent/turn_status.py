@@ -1,10 +1,10 @@
-"""Named partitions for Agent Turn lifecycle status handling."""
+"""Agent Turn 生命周期状态的命名分区。"""
 
 from __future__ import annotations
 
 from productflow_backend.domain.enums import AgentTurnStatus
 
-# These statuses may still be advanced by a runtime or recovered execution.
+# 运行中或可被恢复执行继续推进的状态。
 IN_FLIGHT_TURN_STATUSES = frozenset(
     {
         AgentTurnStatus.QUEUED,
@@ -27,7 +27,7 @@ ACTIVE_TURN_STATUSES = frozenset(
     }
 )
 
-# A Task cannot accept another Turn while its current Turn awaits confirmation.
+# 当前 Turn 在等确认时，Task 不能再开另一条 Turn。
 TASK_BLOCKING_TURN_STATUSES = frozenset(
     {
         *ACTIVE_TURN_STATUSES,
@@ -35,9 +35,8 @@ TASK_BLOCKING_TURN_STATUSES = frozenset(
     }
 )
 
-# A confirmation wait is terminal for runtime/event-stream purposes. It is
-# intentionally excluded from ACTIVE_TURN_STATUSES so lease recovery does not
-# turn it into UNKNOWN.
+# 确认等待对 runtime / 事件流是终态。它故意不进 ACTIVE_TURN_STATUSES，
+# 避免租约恢复把它改成 UNKNOWN。
 TERMINAL_TURN_STATUSES = frozenset(
     {
         AgentTurnStatus.AWAITING_CONFIRMATION,
@@ -50,7 +49,7 @@ TERMINAL_TURN_STATUSES = frozenset(
 
 POLLABLE_TURN_STATUSES = IN_FLIGHT_TURN_STATUSES
 
-# Lease recovery may only classify these statuses after an expired execution.
+# 租约过期后，恢复扫描只允许给这些状态分类。
 EXECUTION_RECOVERABLE_TURN_STATUSES = ACTIVE_TURN_STATUSES
 
 

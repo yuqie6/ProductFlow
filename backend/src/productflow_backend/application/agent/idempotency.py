@@ -1,4 +1,4 @@
-"""Shared idempotency-key normalization and canonical request hashing."""
+"""共享的 idempotency key 规范化与规范 request hash。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def normalize_idempotency_key(
     max_bytes: int = DEFAULT_IDEMPOTENCY_KEY_MAX_BYTES,
     field_name: str = "idempotency key",
 ) -> str:
-    """Normalize one persisted idempotency key at the application boundary."""
+    """在应用边界规范化一条将要落库的 idempotency key。"""
     normalized = value.strip()
     if not normalized:
         raise BusinessValidationError(f"{field_name} 不能为空")
@@ -27,7 +27,7 @@ def normalize_idempotency_key(
 
 
 def canonical_json_request_hash(value: Any) -> str:
-    """Hash JSON using one stable encoding for all Agent request contracts."""
+    """用同一稳定编码给所有 Agent 请求合同做 JSON hash。"""
     try:
         encoded = json.dumps(
             value,

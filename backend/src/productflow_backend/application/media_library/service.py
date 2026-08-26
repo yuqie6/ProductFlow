@@ -573,11 +573,10 @@ MEDIA_LIBRARY_FILENAME_MAX_LENGTH = 255
 
 
 def _normalize_upload_names(filename: str, *, display_name: str | None = None) -> tuple[str, str]:
-    """Normalize and bound an uploaded filename so provenance and column agree.
+    """规范化并截断上传文件名，使 provenance 与列值一致。
 
-    Bounding happens before provenance/column construction (and therefore before
-    any storage work) so a >255-char name can never produce a provenance that
-    fails validation or drifts from the stored column value.
+    截断发生在构造 provenance/列（因此也在任何存储写入）之前，
+    避免超过 255 字符的名字生成无法通过校验、或与存库列值漂移的 provenance。
     """
 
     normalized = (filename or "").strip() or "upload.png"
@@ -597,18 +596,14 @@ def save_media_library_assets_from_upload(
     idempotency_key: str | None = None,
     storage: LocalStorage | None = None,
 ) -> list[MediaLibrarySaveResult]:
-    """Atomically persist a batch of direct-upload media library assets.
+    """原子持久化一批直传素材库资产。
 
-    All files are staged under a single transaction and a single
-    storage-compensation scope, then committed once. A failure anywhere rolls
-    the whole batch back and removes exactly the files created by this attempt
-    (AGENTS.md storage compensation rules), so the client never sees a half-committed
-    batch with an error response.
+    所有文件在同一事务、同一 storage-compensation 范围内暂存，然后一次性 commit。
+    任何失败都会整批回滚，并只删除本次尝试创建的文件（见 AGENTS.md 存储补偿规则），
+    客户端不会在错误响应里看到半提交批次。
 
-    When ``idempotency_key`` is supplied, reusing the key with the same upload
-    parameters returns the previously created assets instead of creating new ones
-    (mirroring ``collect_media_library_assets_to_product``); reusing it with
-    different parameters is a conflict.
+    提供 ``idempotency_key`` 时，用相同上传参数重用该键会返回先前创建的资产
+    （与 ``collect_media_library_assets_to_product`` 一致）；参数不同则冲突。
     """
 
     storage = storage or LocalStorage()

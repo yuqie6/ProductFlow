@@ -119,7 +119,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _effect_phase_hook: Callable[[str, WorkflowGraphNodeRun], None] | None = None
 _storage_bound_commit_hook: Callable[[Session, StorageWriteCompensation], None] | None = None
-# ImagePromptPayloadV1 still requires images[].image_plan_key; stored v3 artifacts strip it.
+# ImagePromptPayloadV1 仍要求 images[].image_plan_key；已存储的 v3 产物会去掉它。
 V3_PROMPT_PROVIDER_PLAN_KEY = "output"
 GRAPH_RUN_ADVISORY_LOCK_NAMESPACE = 847261
 _graph_run_execution_locks_guard = threading.Lock()

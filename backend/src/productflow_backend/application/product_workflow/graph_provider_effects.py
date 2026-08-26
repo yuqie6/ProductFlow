@@ -28,7 +28,7 @@ GRAPH_PROVIDER_EFFECT_KIND = "workflow_graph_generation"
 
 
 class GraphRunEffectCrash(RuntimeError):
-    """Process died after a durable effect phase was committed."""
+    """进程在耐久 effect 阶段已 commit 之后死亡。"""
 
     def __init__(self, phase: str, node_run_id: str | None = None) -> None:
         super().__init__(phase)
@@ -37,7 +37,7 @@ class GraphRunEffectCrash(RuntimeError):
 
 
 class GraphRunProviderUnknown(RuntimeError):
-    """Provider result cannot be proved; durable UNKNOWN state is already committed."""
+    """无法证明 provider 结果；耐久 UNKNOWN 状态已经 commit。"""
 
 
 def graph_provider_effect_operation_key(node_run_id: str) -> str:
@@ -79,7 +79,7 @@ def ensure_graph_provider_effect_intent(
     provider_name: str,
     request_json: dict[str, Any],
 ) -> bool:
-    """Persist a provider-call intent before submitting the graph-run request."""
+    """在提交 graph-run 请求之前持久化 provider-call intent。"""
 
     _validate_json_payload(request_json, "图运行 provider effect intent")
     node_run = session.scalar(

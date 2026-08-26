@@ -221,9 +221,8 @@ def test_official_recipe_migration_downgrade_refuses_adopted_draft_seed(
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.connect() as connection:
-            # 0087 can downgrade cleanly before 0086 rejects the referenced seed.
-            # SQLite/Alembic records that completed step even though the requested
-            # multi-step downgrade fails at the older migration boundary.
+            # 0087 可以干净降级；到 0086 才会拒绝被引用的 seed。
+            # 尽管多步降级在更旧的迁移边界失败，SQLite/Alembic 仍会记下已完成的那一步。
             assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0086"
             assert connection.scalar(
                 sa.text(

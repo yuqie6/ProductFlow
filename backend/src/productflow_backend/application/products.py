@@ -59,7 +59,7 @@ def _normalize_required_text(value: str, *, field_name: str, max_length: int) ->
 
 
 def normalize_product_name(value: str) -> str:
-    """Normalize a product name for canonical creation and idempotency hashing."""
+    """规范化商品名，供规范创建和幂等哈希使用。"""
     return _normalize_required_text(value, field_name="商品名", max_length=255)
 
 
@@ -192,7 +192,7 @@ def stage_canonical_product_with_assets(
     storage: LocalStorage,
     storage_writes: StorageWriteCompensation,
 ) -> CanonicalProductCreation:
-    """Stage one canonical Product and its verified uploads without committing."""
+    """暂存一个规范 Product 及其已校验上传，不 commit。"""
     product = stage_canonical_product(
         session,
         name=name,
@@ -218,7 +218,7 @@ def stage_canonical_product(
     price: str | None,
     source_note: str | None,
 ) -> Product:
-    """Stage canonical product identity without committing or creating media."""
+    """暂存规范商品身份，不 commit，也不创建媒体。"""
     product = Product(
         name=normalize_product_name(name),
         category=_normalize_optional_text(category, field_name="类目", max_length=120),
@@ -238,7 +238,7 @@ def stage_canonical_product_assets(
     storage: LocalStorage,
     storage_writes: StorageWriteCompensation,
 ) -> list[ProductImageAsset]:
-    """Stage one bounded set of equal-reference canonical assets without committing."""
+    """暂存一组有界、等权参考的规范资产，不 commit。"""
     if not image_uploads:
         raise BusinessValidationError("至少上传一张商品参考图")
     if len(image_uploads) > 6:

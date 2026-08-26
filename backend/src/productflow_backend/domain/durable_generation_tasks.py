@@ -36,10 +36,10 @@ class WorkflowRunDeliveryState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class DurableGenerationTaskContract:
-    """Shared executable contract for DB-durable generation work.
+    """DB 耐久生成工作的共享可执行合同。
 
-    The contract intentionally describes existing business models instead of replacing them. Product workflow runs keep
-    their run/node-run split, while continuous image-session tasks keep their task-level queued/running state.
+    合同描述现有业务模型，不替换它们。商品工作流运行保留 run/node-run 拆分，
+    连续 image-session 任务保留任务级 queued/running 状态。
     """
 
     name: str
@@ -182,7 +182,7 @@ def assert_actor_uses_durable_generation_contract(
     contract: DurableGenerationTaskContract,
     actor: Any,
 ) -> None:
-    """Fail fast when a generation worker actor bypasses the durable retry contract."""
+    """生成 worker actor 绕过耐久重试合同时立刻失败。"""
 
     max_retries = getattr(actor, "options", {}).get("max_retries")
     if max_retries != contract.actor_max_retries:

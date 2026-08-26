@@ -84,7 +84,7 @@ def stage_product_fact_set(
     product: Product,
     facts: list[dict[str, Any]],
 ) -> ProductFactSetVersion:
-    """Create and select one immutable fact version without owning the transaction."""
+    """创建并选中一个不可变 fact 版本，不拥有事务。"""
 
     normalized = [normalize_fact_payload(fact) for fact in facts]
     keys = [str(fact["key"]).casefold() for fact in normalized]

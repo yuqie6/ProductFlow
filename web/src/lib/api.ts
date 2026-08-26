@@ -892,7 +892,7 @@ export const api = {
         const payload = (await response.json()) as { detail?: string };
         detail = payload.detail ?? detail;
       } catch {
-        // Keep the status text when the server does not return JSON.
+        // 服务端没返回 JSON 时沿用 HTTP 状态文本
       }
       throw new ApiError(response.status, detail);
     }

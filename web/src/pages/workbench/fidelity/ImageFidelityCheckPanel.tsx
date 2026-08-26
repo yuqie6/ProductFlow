@@ -185,7 +185,7 @@ function invokeAction(action: () => void | Promise<void>): void {
   try {
     void Promise.resolve(action()).catch(() => undefined);
   } catch {
-    // The parent owns controlled error state; keep rejected UI commands out of the console.
+    // 错误由父组件受控；被拒绝的 UI 命令不要打到控制台
   }
 }
 

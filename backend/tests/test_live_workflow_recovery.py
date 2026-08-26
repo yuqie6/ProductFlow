@@ -410,9 +410,8 @@ def test_agent_poll_delay_survives_consumer_handoff_before_redis_redelivery(
             )
             session.commit()
 
-        # The resident business-state scan stages the same pollable projection
-        # every cycle. It must reopen CONSUMED without replacing the target's
-        # durable future timestamp with the scan time.
+        # 常驻业务状态扫描每轮都会 stage 同一份可轮询投影。
+        # 重新打开 CONSUMED 时，不能把目标上已持久化的未来时间戳改成扫描时刻。
         with session_factory() as session:
             restaged = stage_async_dispatch_for_actor(
                 session,

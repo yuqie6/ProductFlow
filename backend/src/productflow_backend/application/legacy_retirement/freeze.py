@@ -16,8 +16,8 @@ LEGACY_V1_WRITE_FREEZE_CONFLICT_DETAIL = (
 )
 LEGACY_V1_WRITE_FREEZE_INVALID_DETAIL = "旧工作流冻结状态无效，系统已按只读状态拒绝旧写入。"
 
-# Transaction-scoped PostgreSQL advisory locks close the race between a request
-# reading "unfrozen" and the maintenance command committing the freeze.
+# 事务级 PostgreSQL advisory lock 堵住请求读到 unfrozen
+# 与维护命令 commit 冻结之间的竞态。
 _LEGACY_V1_WRITE_LOCK_KEY = int.from_bytes(
     hashlib.sha256(b"productflow:legacy-v1-write-freeze:v1").digest()[:8],
     byteorder="big",

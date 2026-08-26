@@ -54,7 +54,7 @@ def audit_legacy_retirement(
     storage_root: Path,
     generated_at: datetime | None = None,
 ) -> LegacyRetirementAuditReport:
-    """Inspect a supported ProductFlow database without permitting database writes."""
+    """检查受支持的 ProductFlow 数据库，且不允许写入。"""
 
     timestamp = generated_at or datetime.now(UTC)
     with open_legacy_read_only_connection(engine) as connection:
@@ -71,7 +71,7 @@ def audit_legacy_retirement_connection(
     storage_root: Path,
     generated_at: datetime,
 ) -> LegacyRetirementAuditReport:
-    """Audit an already-enforced read-only source connection."""
+    """审计已经强制为只读的源连接。"""
 
     if connection.dialect.name == "postgresql":
         read_only_enforced = connection.exec_driver_sql("SHOW transaction_read_only").scalar_one() == "on"

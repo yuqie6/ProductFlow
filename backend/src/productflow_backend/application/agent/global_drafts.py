@@ -135,8 +135,7 @@ def attach_agent_global_draft_artifact(
     )
 
     if artifact.draft_kind == "library_organization":
-        # Keep the established library Draft implementation as the owner of
-        # media observations and confirmation side effects.
+        # 素材观察与确认副作用仍由既有 library Draft 实现负责。
         from productflow_backend.application.agent.control import (
             attach_agent_library_organization_draft_artifact,
         )

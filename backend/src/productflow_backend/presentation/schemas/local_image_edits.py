@@ -134,7 +134,7 @@ def parse_local_image_edit_draft(
     mask_geometry_json: str | None,
     reference_asset_ids_json: str | None,
 ) -> LocalImageEditDraft:
-    """Parse structured JSON form fields before the application contract runs."""
+    """在应用合同运行之前解析结构化 JSON 表单字段。"""
 
     if not mask_geometry_json:
         raise BusinessValidationError("局部编辑 mask_geometry JSON 不能为空")

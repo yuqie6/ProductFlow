@@ -37,7 +37,7 @@ WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS = PRODUCT_INTAKE_MAX_REFERENCE_ASSETS
 
 
 def workflow_draft_agent_guidance() -> dict[str, Any]:
-    """Return the cross-field rules that the draft schema cannot express by itself."""
+    """返回草稿 schema 自身无法表达的跨字段规则。"""
 
     return {
         "schema_version": 1,

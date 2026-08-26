@@ -1,4 +1,4 @@
-"""Legacy workflow retirement audit, snapshot, and archive contracts."""
+"""旧工作流退役：审计、快照与归档合同。"""
 
 from productflow_backend.application.legacy_retirement.audit import audit_legacy_retirement
 from productflow_backend.application.legacy_retirement.backfill import backfill_legacy_archive_page

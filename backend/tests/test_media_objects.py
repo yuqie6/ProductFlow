@@ -162,7 +162,7 @@ def test_generated_asset_has_one_media_object_and_three_files(configured_env: Pa
     assert db_session.query(MediaObject).count() == 1
     assert db_session.query(ProductImageAsset).count() == 1
     media_files = [path for path in configured_env.glob("media/**/*") if path.is_file()]
-    assert len(media_files) == 3  # original + preview + thumbnail
+    assert len(media_files) == 3  # 原图 + preview + thumbnail
 
 
 def test_cover_blocks_asset_delete_until_cleared(configured_env: Path, db_session) -> None:

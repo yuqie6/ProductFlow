@@ -1,4 +1,4 @@
-"""Provider-neutral image-session chat DTOs and normalized provider failures."""
+"""与 provider 无关的 image-session 聊天 DTO，以及规范化后的 provider 失败。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON = "图片供应商已完成请求，但
 
 @dataclass(slots=True)
 class ImageChatTurn:
-    """A single user or assistant turn used to build image-session context."""
+    """用于构建 image-session 上下文的一条 user 或 assistant turn。"""
 
     role: Literal["user", "assistant"]
     content: str
@@ -23,7 +23,7 @@ class ImageChatTurn:
 
 @dataclass(slots=True)
 class GeneratedChatImage:
-    """The provider-neutral image result consumed by the ImageSession use case."""
+    """ImageSession 用例消费的、与 provider 无关的图片结果。"""
 
     bytes_data: bytes
     mime_type: str
@@ -45,7 +45,7 @@ class GeneratedChatImage:
 
 
 class ImageSessionProviderFailure(RuntimeError):
-    """A provider output failure already normalized at the chat-service boundary."""
+    """已在 chat-service 边界规范化的 provider 输出失败。"""
 
     def __init__(
         self,

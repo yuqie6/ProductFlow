@@ -1,4 +1,4 @@
-"""Build effective runtime settings from environment and database overrides."""
+"""从环境变量和数据库覆盖组装生效的运行时设置。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from productflow_backend.infrastructure.runtime_config_store import load_runtime
 
 
 def get_runtime_settings(session: Session | None = None) -> Settings:
-    """Build the effective settings snapshot for an application operation."""
+    """为一次应用操作组装生效的设置快照。"""
 
     overrides = load_runtime_overrides(session)
     if not overrides:

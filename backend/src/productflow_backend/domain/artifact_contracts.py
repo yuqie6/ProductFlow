@@ -1,4 +1,4 @@
-"""Database-free artifact contracts shared by application and infrastructure."""
+"""应用层与基础设施层共用的无数据库产物合同。"""
 
 from __future__ import annotations
 

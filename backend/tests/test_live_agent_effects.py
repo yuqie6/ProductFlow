@@ -103,7 +103,7 @@ def _wait_for_http_health(url: str, *, timeout: float = 15) -> None:
             if response.status_code == 200:
                 return
             last_error = RuntimeError(f"health returned {response.status_code}: {response.text}")
-        except Exception as exc:  # pragma: no cover - only used while the live server starts
+        except Exception as exc:  # pragma: no cover - 仅在 live server 启动期间使用
             last_error = exc
         time.sleep(0.1)
     raise AssertionError(f"HTTP health did not become ready: {url}; last_error={last_error!r}")
@@ -147,8 +147,8 @@ def _post_and_drop_response_body(
         parts = status_line.split(" ", 2)
         if len(parts) < 2 or not parts[1].isdigit():
             raise AssertionError(f"ProductFlow returned an invalid HTTP status line: {status_line!r}")
-        # The application has already committed before FastAPI serializes this body. The client deliberately
-        # closes here and discards everything after the headers, reproducing a response-body loss.
+        # 应用层在 FastAPI 序列化响应体之前已经 commit。客户端在此故意断开，
+        # 丢掉 header 之后的内容，用来复现响应体丢失。
         return int(parts[1])
 
 

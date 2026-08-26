@@ -9,7 +9,7 @@ SESSION_TIMESTAMP_ROLLBACK_TOLERANCE_SECONDS = 5
 
 
 class MonotonicTimestampSigner(TimestampSigner):
-    """Keep session timestamp validation stable if wall-clock time briefly moves backward."""
+    """墙钟短暂回拨时，仍保持 session 时间戳校验稳定。"""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -27,7 +27,7 @@ class MonotonicTimestampSigner(TimestampSigner):
 
 
 class ClockStableSessionMiddleware(SessionMiddleware):
-    """Starlette session middleware with process-local monotonic timestamp signing."""
+    """带进程内单调时间戳签名的 Starlette session 中间件。"""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

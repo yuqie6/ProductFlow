@@ -203,11 +203,10 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Bootstrap settings loaded from env.
+    """从环境变量加载引导配置。
 
-    Infrastructure settings such as database URL, Redis URL, session secret and
-    admin key intentionally stay env-backed because the app needs them before it
-    can read any database-stored configuration.
+    基础设施配置（数据库 URL、Redis URL、session secret、admin key）必须继续只读环境变量：
+    应用在能读任何数据库配置之前就需要它们。
     """
 
     return Settings()

@@ -51,7 +51,7 @@ AGENT_CONTEXT_MAX_FILTERS = 20
 
 
 def initial_agent_task_turn_idempotency_key(*, conversation_id: str, task_id: str) -> str:
-    """Return the stable key shared by the UI and recovery path for a Task's first Turn."""
+    """UI 与恢复路径共用的 Task 首轮 Turn idempotency key。"""
     return f"initial:{conversation_id}:{task_id}"
 
 _ACTIVE_TASK_STATUSES = {
@@ -317,8 +317,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
     task.finished_at = None
     task.canceled_at = None
     task.updated_at = now_utc()
-    # Recovery and explicit resume share this key, so a retry cannot create a
-    # second first Turn if the worker already recovered the task concurrently.
+    # 恢复扫描与显式 resume 共用此 key，worker 已并发恢复时重试不能再造一条 first Turn。
     from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 
     conversation = session.get(AgentConversation, task.conversation_id)

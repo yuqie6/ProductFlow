@@ -1936,8 +1936,7 @@ def test_agent_recovery_requeues_first_stale_publish_dead_dispatch_for_pollable_
     dispatch.attempts = 10
     db_session.commit()
 
-    # Generic staging reports the dead row without reviving it; recovery must
-    # choose the explicit dead-letter transition before claiming enqueue.
+    # 通用 staging 只报告死行、不会复活；恢复路径必须先走明确的 dead-letter 转换，再 claim 入队。
     observed_dead = recover_unfinished_agent_turn_syncs(
         stage_dispatch=lambda session, projection_id: stage_async_dispatch_for_actor(
             session,

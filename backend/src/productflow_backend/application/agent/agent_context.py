@@ -1,4 +1,4 @@
-"""Bounded Agent contracts and product/global context projections."""
+"""有界 Agent 合同，以及商品/全局上下文投影。"""
 
 from __future__ import annotations
 
@@ -147,7 +147,7 @@ def validate_agent_workflow_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> None:
-    """The product WorkflowDraft artifact path is retired."""
+    """商品 WorkflowDraft artifact 路径已退休。"""
     from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 
     del session, conversation_id, value
@@ -273,7 +273,7 @@ def get_agent_global_workflow_target(
     product_id: str,
     workflow_draft_id: str | None = None,
 ) -> AgentConversation:
-    """Resolve one explicit product to its latest product conversation."""
+    """按显式 product 解析其最新 product conversation。"""
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")

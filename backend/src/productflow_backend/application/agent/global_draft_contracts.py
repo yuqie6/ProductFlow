@@ -22,7 +22,7 @@ class StrictGlobalAgentDraftModel(BaseModel):
 
 
 class GlobalAgentDraftPayloadV1(StrictGlobalAgentDraftModel):
-    """The single optional artifact exposed by a global Agent conversation."""
+    """全局 Agent conversation 暴露的唯一可选 artifact。"""
 
     schema_version: Literal[1] = GLOBAL_AGENT_DRAFT_SCHEMA_VERSION
     draft_kind: Literal["library_organization"]

@@ -84,7 +84,7 @@ def media_library_upload_request_hash(
     folder_id: str | None,
     files: Sequence[tuple[str, bytes, str | None]],
 ) -> str:
-    """files: (filename, content, mime_type). Content bytes are hashed, not embedded."""
+    """files: (filename, content, mime_type)。对内容字节做哈希，不嵌入正文。"""
 
     return canonical_provenance_hash(
         {

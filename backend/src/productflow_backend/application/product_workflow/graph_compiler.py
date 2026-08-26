@@ -567,7 +567,7 @@ def graph_runtime_input_trace(
     sources: dict[str, GraphSourceRecord],
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> list[dict[str, Any]]:
-    """Project the immutable identities actually consumed by one node execution."""
+    """投影一次节点执行实际消费的不可变身份。"""
 
     entries: list[dict[str, Any]] = []
     for edge in incoming_edges(graph, node_id):

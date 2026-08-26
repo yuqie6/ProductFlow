@@ -129,7 +129,7 @@ class ImageChatService(ImageChatProvider):
         request_hash: str,
         provider_response_id: str | None,
     ) -> ProviderEffectQueryResult:
-        """Read a prior provider response without submitting another image request."""
+        """读取先前的 provider 响应，不再提交一次图片请求。"""
 
         del operation_key, request_hash
         if self.provider_kind != "openai_responses":

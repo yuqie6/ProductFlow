@@ -570,8 +570,7 @@ def recover_expired_agent_turn_executions(
     unknown = 0
     for execution in executions:
         projection = execution.turn_projection
-        # A recovered worker must not be able to publish a terminal snapshot
-        # with the fencing token from the expired lease.
+        # 恢复后的 worker 不能再用过期 lease 的 fencing token 发布终态 snapshot。
         execution.fencing_token += 1
         if projection.status not in EXECUTION_RECOVERABLE_TURN_STATUSES:
             _clear_expired_lease(execution, resolved_now, terminal=True)
@@ -670,7 +669,7 @@ def validate_agent_execution_fence(
     projection: AgentTurnProjection,
     state: AgentServiceTurnState,
 ) -> None:
-    """Validate the execution attempt/fencing token before projecting state."""
+    """投影状态前校验 attempt / fencing token。token 过期则冲突。"""
     execution = session.scalar(
         select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
     )
@@ -697,7 +696,7 @@ def is_stale_queued_execution_snapshot(
     projection: AgentTurnProjection,
     state: AgentServiceTurnState,
 ) -> bool:
-    """Identify a queued snapshot superseded by a durable execution claim."""
+    """识别已被 durable execution claim 取代的 queued snapshot，避免过期 queued 覆盖权威状态。"""
     if state.status != AgentTurnStatus.QUEUED:
         return False
     if state.execution_attempt is not None or state.execution_fencing_token is not None:

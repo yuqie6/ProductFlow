@@ -1,4 +1,4 @@
-"""Application contracts for validated masked local image edits."""
+"""已校验蒙版局部编辑的应用层合同。"""
 
 from productflow_backend.domain.local_image_edits import LocalImageEditOperation
 

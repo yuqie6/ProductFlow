@@ -56,7 +56,7 @@ interface SearchResult {
   preview: string;
 }
 
-/** Canonical source: docs/USER_GUIDE.md. Update the user guide in the same change. */
+/** 权威来源：docs/USER_GUIDE.md。改帮助内容时同步更新用户指南。 */
 const HELP_DOCS = {
   "zh-CN": [
     {

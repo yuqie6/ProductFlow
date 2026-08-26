@@ -1,4 +1,4 @@
-"""Agent conversation lookup, creation, and conversation-level status transitions."""
+"""Agent conversation 的查找、创建与 conversation 级状态转换。"""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def create_agent_conversation(
     product_id: str,
     workflow_draft_id: str,
 ) -> AgentConversation:
-    """Retained history helper for Draft-bound conversations."""
+    """保留的历史入口：为绑定 WorkflowDraft 的 conversation 做幂等创建。本函数 commit。"""
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
@@ -159,7 +159,7 @@ def attach_agent_workflow_draft_artifact(
     artifact_value: dict,
     commit: bool = True,
 ) -> AgentTurnProjection:
-    """Retired Draft artifact entrypoint kept only for historical callers."""
+    """已退休的商品 WorkflowDraft artifact 入口，仅留给历史调用方。"""
     from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 
     del session, product_id, conversation_id, projection_id, harness_turn_id
@@ -174,6 +174,7 @@ def mark_agent_conversation_completed_for_draft(
     workflow_draft_id: str,
     commit: bool = True,
 ) -> AgentConversation | None:
+    """Draft 确认后把绑定 conversation 标完成。commit=False 时由调用方持有事务。"""
     conversation = session.scalar(
         select(AgentConversation)
         .options(

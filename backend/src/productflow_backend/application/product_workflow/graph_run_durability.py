@@ -1,8 +1,7 @@
-"""schema-v3 WorkflowGraphRun durable state, fencing, and recovery.
+"""schema-v3 WorkflowGraphRun 的耐久状态、fencing 与恢复。
 
-The graph provider-effect ledger remains the owner of provider-effect facts.
-This module owns the graph-run state machine that decides whether a node can
-be claimed, failed, marked unknown, or safely returned to the queue.
+图 provider-effect 账本仍是 provider 副作用事实的权威。
+本模块拥有图运行状态机：节点能否 claim、失败、标 unknown，或安全退回队列。
 """
 
 from __future__ import annotations
@@ -81,7 +80,7 @@ def enqueue_graph_run_after_commit(
     *,
     enqueue: Callable[[str], None],
 ) -> None:
-    """Enqueue an already-committed run and persist a broker failure."""
+    """已 commit 的 run 入队；broker 失败时把失败写进库。"""
 
     enqueue_or_mark_failed(
         run_id,
@@ -98,7 +97,7 @@ def is_graph_node_run_safe_to_requeue(
     node_run: WorkflowGraphNodeRun,
     effect,
 ) -> bool:
-    """Return whether a stale node can return to queued without replaying a provider call."""
+    """过期节点能否退回 queued，且不必重放 provider 调用。"""
 
     return (
         node_run.status == WorkflowNodeStatus.RUNNING
@@ -112,7 +111,7 @@ def requeue_graph_node_run(
     *,
     effect=None,
 ) -> bool:
-    """Safely return one stale pre-provider node to queued; only flushes."""
+    """把一个过期的、尚未打 provider 的节点安全退回 queued；只 flush。"""
 
     resolved_effect = effect if effect is not None else load_node_run_effect(session, node_run.id)
     if not is_graph_node_run_safe_to_requeue(node_run, resolved_effect):
@@ -127,7 +126,7 @@ def claim_queued_node_run(
     *,
     notify: Callable[[str, WorkflowGraphNodeRun], None] | None = None,
 ) -> bool:
-    """Atomically claim a queued node, then commit before provider work begins."""
+    """原子 claim 一个 queued 节点，并在打 provider 之前 commit。"""
 
     now = now_utc()
     attempt_id = str(uuid.uuid4())
@@ -162,7 +161,7 @@ def mark_graph_run_unknown(
     attempt_id: str | None,
     detail: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
 ) -> bool:
-    """Stage an unknown graph-run transition; the caller owns commit."""
+    """暂存 unknown 图运行转换；commit 由调用方持有。"""
 
     return _mark_graph_run_provider_unknown(
         session,
@@ -179,7 +178,7 @@ def mark_graph_run_failed(
     run_id: str,
     reason: str,
 ) -> bool:
-    """Mark a still-active run and its unfinished nodes failed, then commit."""
+    """把仍在 active 的 run 及其未完成节点标失败，然后 commit。"""
 
     run = _locked_graph_run(session, run_id)
     if run is None or run.status != WorkflowRunStatus.RUNNING:
@@ -191,7 +190,7 @@ def mark_graph_run_failed(
 
 
 def mark_graph_run_enqueue_failed(session: Session, *, run_id: str, reason: str) -> None:
-    """Persist a direct broker failure without overwriting a provider unknown."""
+    """记下直接的 broker 失败，不覆盖 provider unknown。"""
 
     run = _locked_graph_run(session, run_id)
     if run is None or run.status != WorkflowRunStatus.RUNNING:
@@ -218,7 +217,7 @@ def fail_claimed_node(
     node_run_id: str,
     reason: str,
 ) -> None:
-    """Fail a node/run unless its provider boundary makes the outcome unknown."""
+    """失败节点/run；若落在 provider 边界则标 unknown 而不是 failed。"""
 
     session.rollback()
     run = _locked_graph_run(session, run_id)
@@ -247,7 +246,7 @@ def fail_claimed_node(
 
 
 def fail_graph_run(session: Session, *, run_id: str, reason: str) -> None:
-    """Fail an active run while preserving unknown provider-effect semantics."""
+    """失败一条 active run，同时保留 provider-effect 的 unknown 语义。"""
 
     session.rollback()
     run = _locked_graph_run(session, run_id)
@@ -275,7 +274,7 @@ def recover_unfinished_graph_runs(
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> WorkflowRunRecoverySummary:
-    """Recover queued or stale schema-v3 graph runs through this state machine."""
+    """经本状态机恢复 queued 或过期的 schema-v3 图运行。"""
 
     if stage_dispatch is None and enqueue is None:
         raise ValueError("enqueue or stage_dispatch is required")

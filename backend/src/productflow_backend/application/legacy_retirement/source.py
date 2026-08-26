@@ -8,7 +8,7 @@ from sqlalchemy.engine import Connection, Engine
 
 @contextmanager
 def open_legacy_read_only_connection(engine: Engine) -> Iterator[Connection]:
-    """Open a source inspection connection that cannot modify PostgreSQL or SQLite."""
+    """打开不能修改 PostgreSQL 或 SQLite 的源检查连接。"""
 
     dialect = engine.dialect.name
     if dialect not in {"postgresql", "sqlite"}:

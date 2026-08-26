@@ -107,11 +107,8 @@ def execute_agent_turn_sync(
                     session,
                     projection=projection,
                     gateway=client,
-                    # The other Agent instance starts draining immediately
-                    # after start_turn returns. Commit its ProductFlow
-                    # projection before asking that instance for more state,
-                    # otherwise its first durable event can wait on this
-                    # transaction's projection lock.
+                    # 对端实例在 start_turn 返回后立刻 drain。必须先 commit 本侧 ProductFlow
+                    # 投影，再向该实例拉状态，否则它的第一条 durable event 会卡在本事务的投影锁上。
                     commit=True,
                 )
                 state = client.get_turn(

@@ -1,7 +1,7 @@
-"""Shared image-provider contracts and helpers.
+"""共享的图片 provider 合同与辅助函数。
 
-OpenAIResponsesImageClient, OpenAIImagesClient, and GoogleGeminiImageClient are
-internal HTTP lower-seam clients shared by ImageProvider and ImageChatProvider.
+OpenAIResponsesImageClient、OpenAIImagesClient 和 GoogleGeminiImageClient 是
+ImageProvider 与 ImageChatProvider 共用的内部 HTTP 下缝客户端。
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ MAX_LOCAL_EDIT_REFERENCE_IMAGES = 6
 
 
 class LocalEditImage(BaseModel):
-    """Image bytes crossing the provider boundary; no product or persistence identity."""
+    """越过 provider 边界的图片字节；不含商品或持久化身份。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -141,11 +141,11 @@ class LocalEditResult(BaseModel):
 
 
 class UnsupportedLocalEditError(RuntimeError):
-    """Raised when a provider does not explicitly advertise masked local edit."""
+    """provider 未显式声明支持蒙版局部编辑时抛出。"""
 
 
 class ImageProvider(ABC):
-    """Schema-v3 shared image generation adapter with explicit local-edit capability."""
+    """带显式局部编辑能力的 schema-v3 共享图片生成适配器。"""
 
     provider_name: str
     prompt_version: str = "v1"
@@ -174,7 +174,7 @@ class ImageProvider(ABC):
         request_hash: str,
         provider_response_id: str | None,
     ) -> ProviderEffectQueryResult:
-        """Query provider state without submitting another image generation request."""
+        """查询 provider 状态，不再提交一次图片生成请求。"""
 
         return ProviderEffectQueryResult.unsupported(
             f"图片 provider {self.provider_name} 没有提供可查询的生成记录接口"
@@ -182,7 +182,7 @@ class ImageProvider(ABC):
 
 
 class ImageChatProvider(ABC):
-    """Continuous image-session generation adapter with a provider-neutral contract."""
+    """合同与 provider 无关的连续 image-session 生成适配器。"""
 
     provider_kind: str
 

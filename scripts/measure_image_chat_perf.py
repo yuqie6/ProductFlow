@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""Measure ImageChatPage refresh and session switching performance.
+"""测量 ImageChatPage 刷新和会话切换的性能。
 
-This intentionally uses only stdlib + websocket-client, which is already
-available in the local Python environment, so the measurement loop does not add
-frontend dependencies.
+只使用标准库和本地 Python 环境已有的 websocket-client，避免给测量循环引入前端依赖。
 """
 
 from __future__ import annotations

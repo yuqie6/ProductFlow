@@ -106,7 +106,7 @@ def _delivery_preset_spec_or_value_error(key: str) -> DeliverySpec:
 
 
 def delivery_preset_spec_for_key(key: str | None) -> DeliverySpec | None:
-    """Resolve a current platform preset for a new intake or direct-create command."""
+    """为新的 intake 或 direct-create 命令解析当前平台预设。"""
     if key is None:
         return None
     try:
@@ -130,7 +130,7 @@ def workflow_intake_from_selection(
 
 
 def workflow_intake_payload(intake: WorkflowIntakeV1) -> dict[str, object]:
-    """Serialize intake compatibly while retaining null-valued fields inside a selected spec snapshot."""
+    """兼容序列化 intake，并在已选 spec 快照内保留值为 null 的字段。"""
     payload = intake.model_dump(mode="json", exclude_none=True)
     if intake.delivery_spec is not None:
         payload["delivery_spec"] = intake.delivery_spec.model_dump(mode="json")

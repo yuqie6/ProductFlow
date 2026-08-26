@@ -1,9 +1,8 @@
-"""Strict, DB-free contracts for masked local image edits.
+"""蒙版局部编辑的严格、无 DB 合同。
 
-The browser is expected to map its viewport selection into source-image pixel
-coordinates before calling :func:`validate_and_normalize_local_edit_mask`.
-This module records the viewport-to-source transform for auditability, but it
-does not guess or apply a second coordinate transform.
+浏览器应在调用 :func:`validate_and_normalize_local_edit_mask` 之前，
+把视口选区映射到源图像素坐标。本模块记录 viewport-to-source 变换供审计，
+不再猜测或二次变换坐标。
 """
 
 from __future__ import annotations
@@ -24,13 +23,12 @@ _AFFINE_DETERMINANT_EPSILON = 1e-12
 
 
 class LocalEditMaskGeometry(BaseModel):
-    """Auditable browser geometry for a source-pixel mask.
+    """源像素蒙版的可审计浏览器几何。
 
-    ``viewport_to_source`` is the affine tuple ``(a, b, c, d, e, f)`` with
-    ``source_x = a * viewport_x + c * viewport_y + e`` and
-    ``source_y = b * viewport_x + d * viewport_y + f``. The mask bytes passed
-    to the validator are already in source-pixel coordinates; this transform
-    is retained to explain how the browser produced those pixels.
+    ``viewport_to_source`` 是仿射元组 ``(a, b, c, d, e, f)``，其中
+    ``source_x = a * viewport_x + c * viewport_y + e``，
+    ``source_y = b * viewport_x + d * viewport_y + f``。
+    交给校验器的蒙版字节已是源像素坐标；保留该变换只为说明浏览器如何得到这些像素。
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -58,7 +56,7 @@ class LocalEditMaskGeometry(BaseModel):
 
 
 class LocalImageEditDraft(BaseModel):
-    """Application-side intent before source/mask bytes cross the provider boundary."""
+    """源图/蒙版字节越过 provider 边界之前的应用层意图。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -104,7 +102,7 @@ class LocalImageEditDraft(BaseModel):
 
     @property
     def provider_instruction(self) -> str:
-        """Return an explicit instruction safe to pass to a masked provider."""
+        """返回可安全传给蒙版 provider 的显式指令。"""
 
         if self.operation == LocalImageEditOperation.REPLACE_TEXT:
             context = f"；补充要求：{self.instruction}" if self.instruction else ""
@@ -116,7 +114,7 @@ class LocalImageEditDraft(BaseModel):
 
 
 class NormalizedLocalEditMask(BaseModel):
-    """Canonical source-pixel PNG and metadata accepted by the provider adapter."""
+    """provider 适配器接受的规范源像素 PNG 与元数据。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -131,7 +129,7 @@ class NormalizedLocalEditMask(BaseModel):
 
     @property
     def mask_bytes(self) -> bytes:
-        """Alias used by callers that name the normalized payload as a mask."""
+        """给把规范化载荷叫做 mask 的调用方用的别名。"""
 
         return self.bytes_data
 
@@ -143,12 +141,10 @@ def validate_and_normalize_local_edit_mask(
     mask_png_bytes: bytes,
     geometry: LocalEditMaskGeometry,
 ) -> NormalizedLocalEditMask:
-    """Validate a source-sized PNG mask and emit deterministic canonical PNG bytes.
+    """校验与源图同尺寸的 PNG 蒙版，并产出确定性规范 PNG 字节。
 
-    Mask semantics are fixed to ``alpha=0`` for fully editable pixels and
-    ``alpha=255`` for fully protected pixels. Partial alpha is preserved as
-    brush feathering. The function deliberately does not transform viewport
-    coordinates.
+    蒙版语义固定为 ``alpha=0`` 表示完全可编辑像素、``alpha=255`` 表示完全保护像素。
+    部分 alpha 作为笔刷羽化保留。本函数不变换视口坐标。
     """
 
     if source_width <= 0 or source_height <= 0:

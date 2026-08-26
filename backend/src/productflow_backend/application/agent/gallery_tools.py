@@ -1,4 +1,4 @@
-"""Product-gallery Agent tools: bounded reads and reversible organization mutations."""
+"""商品图库 Agent 工具：有界读取与可逆整理 mutation。"""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def finalize_agent_product_intake(
     idempotency_key: str,
     task_id: str | None = None,
 ) -> dict[str, Any]:
-    """Write this Turn's references and image types into immutable product intake."""
+    """把本轮参考图与图片类型写入不可变商品 intake。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     try:
@@ -234,7 +234,7 @@ def prepare_agent_asset_rename(
     asset_id: str,
     target_display_name: str,
 ) -> AgentAssetRenamePrepared:
-    """Prepare a rename without writing a ledger row."""
+    """预览重命名，不写 ledger 行。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     normalized_target = normalize_gallery_display_name(target_display_name)
@@ -255,7 +255,7 @@ def apply_agent_asset_rename(
     expected_display_name: str,
     target_display_name: str,
 ) -> dict[str, Any]:
-    """Apply a rename, replaying an applied ledger row when possible."""
+    """执行重命名。已有 applied ledger 行则回放，不重复 mutation。"""
     normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
     prepared = _normalize_rename_prepared(
         asset_id=asset_id,
@@ -317,7 +317,7 @@ def reconcile_agent_asset_rename(
     expected_display_name: str,
     target_display_name: str,
 ) -> AgentToolReconcileResult:
-    """Reconcile a rename without replaying the mutation."""
+    """对账重命名，不重放 mutation。"""
     normalized_key = normalize_idempotency_key(idempotency_key, field_name="工具 idempotency key")
     prepared = _normalize_rename_prepared(
         asset_id=asset_id,
@@ -361,7 +361,7 @@ def prepare_agent_folder_create(
     conversation_id: str,
     name: str,
 ) -> AgentFolderCreatePrepared:
-    """Prepare a stable folder id for an idempotent apply."""
+    """为幂等 apply 预分配稳定 folder id。"""
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
     normalized_name = normalize_gallery_folder_name(name)

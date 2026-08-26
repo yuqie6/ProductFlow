@@ -6,7 +6,7 @@ interface AgentAssistantMarkdownProps {
   streaming?: boolean;
 }
 
-/** Keep assistant output readable without turning model text into HTML. */
+/** 保持助手输出可读，不把模型文本转成 HTML。 */
 export function AgentAssistantMarkdown({ text, streaming = false }: AgentAssistantMarkdownProps) {
   if (!text) {
     return null;

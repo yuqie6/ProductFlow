@@ -136,8 +136,8 @@ def _run_watch(
         try:
             _print_summary(cycle())
         except Exception:  # noqa: BLE001
-            # A transient database or broker outage must not terminate the
-            # resident scanner; the next cycle will retry the durable rows.
+            # 短暂的数据库或 broker 中断不得终止常驻扫描器；
+            # 下一轮会重试耐久行。
             print(json.dumps({"error": "dispatcher cycle failed"}, ensure_ascii=False), flush=True)
         remaining = max(0.0, interval_seconds - (monotonic() - started))
         if wait_for_stop(remaining):

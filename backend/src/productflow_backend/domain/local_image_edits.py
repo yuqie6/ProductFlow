@@ -1,13 +1,12 @@
-"""Database-free authority for image local-edit operations."""
+"""图片局部编辑操作的无数据库权威定义。"""
 
 from enum import StrEnum
 
 
 class LocalImageEditOperation(StrEnum):
-    """Operations that can be delegated to a masked image provider.
+    """可委托给蒙版图片 provider 的操作。
 
-    Crop is intentionally absent: it is a deterministic application-side
-    transformation and must not be represented as a provider edit operation.
+    Crop 不在此枚举：它是应用侧的确定性变换，不得表示为 provider 编辑操作。
     """
 
     REMOVE = "remove"

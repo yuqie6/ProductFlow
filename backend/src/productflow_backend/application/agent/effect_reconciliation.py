@@ -62,7 +62,7 @@ def reconcile_agent_turn_effect(
     projection_id: str,
     tool_call_id: str,
 ) -> AgentTurnEffectReconciliationResult:
-    """Reconcile one unknown tool effect without replaying its mutation command."""
+    """对账一条 unknown 工具副作用，不重放 mutation 命令。本函数 commit。"""
     normalized_tool_call_id = _normalize_identifier(tool_call_id, "tool_call_id", 120)
     projection = get_agent_turn_or_raise(
         session,

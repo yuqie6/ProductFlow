@@ -144,7 +144,7 @@ export function GlobalAgentConversationPanel({
       setComposerAssets([]);
       rotateComposerKey();
     } catch {
-      // Keep the text and idempotency key so a failed request can be retried safely.
+      // 保留文本和幂等键，失败请求可以安全重试
     }
   };
   const answerQuestion = async (answer: AgentQuestionAnswer) => {
@@ -159,7 +159,7 @@ export function GlobalAgentConversationPanel({
       });
       setAnsweredQuestionId(activeQuestion.id);
     } catch {
-      // The mutation surface keeps the answer and continuation key retryable.
+      // mutation 界面仍可通过同一答案与续跑键重试
     }
   };
   const error = errorDetail(

@@ -15,7 +15,7 @@ from helpers import (
 
 @pytest.fixture(autouse=True)
 def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
+    """生产环境经 Dramatiq 投递；测试里内联执行，保证 API workflow 结果确定。"""
 
     _execute_workflow_queue_inline(monkeypatch)
 
@@ -144,7 +144,7 @@ def _jpeg_demo_image_bytes() -> bytes:
 
 
 def test_media_library_upload_normalizes_mime_aliases_and_octet_stream(configured_env: Path) -> None:
-    """MIME aliases (image/jpg, image/pjpeg, image/x-png) and octet-stream sniffing."""
+    """MIME 别名（image/jpg、image/pjpeg、image/x-png）以及 octet-stream 嗅探。"""
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())
@@ -174,7 +174,7 @@ def test_media_library_upload_normalizes_mime_aliases_and_octet_stream(configure
 
 
 def test_media_library_upload_bounds_long_filenames(configured_env: Path) -> None:
-    """A >255-char filename must be bounded consistently, not crash or mismatch provenance."""
+    """文件名超过 255 字符时必须一致截断，且不能崩溃或与 provenance 对不上。"""
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())
@@ -189,7 +189,7 @@ def test_media_library_upload_bounds_long_filenames(configured_env: Path) -> Non
     assert asset["display_name"] == "a" * 255
     assert len(asset["original_filename"]) == 255
 
-    # provenance must be parseable and consistent with the stored column
+    # provenance 必须可解析，并与落库列一致
     detail = client.get(f"/api/media-library/{asset['id']}")
     assert detail.status_code == 200
 
@@ -198,7 +198,7 @@ def test_media_library_upload_enforces_aggregate_batch_bytes(
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Batch total byte cap fires even when each individual file is under the single limit."""
+    """即使每个文件都低于单文件上限，批量总字节上限仍会触发。"""
     from productflow_backend.config import get_settings
     from productflow_backend.presentation.api import create_app
 
@@ -251,7 +251,7 @@ def test_media_library_batch_upload_rolls_back_all_and_compensates_storage(
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A mid-batch save failure must leave zero assets and remove every file it created."""
+    """批次中途保存失败时，不得留下任何资产，并删掉本次创建的全部文件。"""
     import sqlalchemy as sa
 
     from productflow_backend.application.media_library import service as media_service
@@ -302,7 +302,7 @@ def test_media_library_batch_upload_rolls_back_all_and_compensates_storage(
 
 
 def test_product_create_accepts_octet_stream_content_sniffed(configured_env: Path) -> None:
-    """Declared application/octet-stream is content-sniffed and accepted on the product path."""
+    """声明为 application/octet-stream 时按内容嗅探，商品路径应接受。"""
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())
@@ -319,7 +319,7 @@ def test_product_create_accepts_octet_stream_content_sniffed(configured_env: Pat
 
 
 def test_image_session_reference_upload_accepts_octet_stream(configured_env: Path) -> None:
-    """Declared application/octet-stream is content-sniffed and accepted on the image-session path."""
+    """声明为 application/octet-stream 时按内容嗅探，image-session 路径应接受。"""
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())

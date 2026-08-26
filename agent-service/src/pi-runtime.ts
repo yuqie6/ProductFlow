@@ -1027,7 +1027,7 @@ class RunRuntime implements ToolRuntime {
           },
         });
       } catch {
-        // Preserve the original session creation failure when the diagnostic step cannot persist.
+        // 诊断步骤写不进去时，保留最初的会话创建失败
       }
       throw error;
     }

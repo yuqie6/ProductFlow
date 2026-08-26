@@ -30,7 +30,7 @@ from productflow_backend.infrastructure.db.models import (
 
 @pytest.fixture(autouse=True)
 def _restore_logger_disabled_flags() -> Iterator[None]:
-    # Alembic's in-process fileConfig disables pre-existing non-Alembic loggers.
+    # Alembic 进程内 fileConfig 会关掉已有的非 Alembic logger。
     logger_states = {
         logger: logger.disabled
         for logger in logging.root.manager.loggerDict.values()

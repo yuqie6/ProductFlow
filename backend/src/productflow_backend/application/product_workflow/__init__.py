@@ -1,1 +1,1 @@
-"""schema-v3 graph application package."""
+"""schema-v3 图应用包。"""

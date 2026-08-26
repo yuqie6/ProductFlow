@@ -73,7 +73,7 @@ def _variant_paths(path: Path) -> list[Path]:
 
 @pytest.fixture(autouse=True)
 def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
+    """生产环境经 Dramatiq 投递；测试里内联执行，保证 API workflow 结果确定。"""
 
     _execute_workflow_queue_inline(monkeypatch)
     from productflow_backend.application.image_sessions.service import execute_image_session_generation_task

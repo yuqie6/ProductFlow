@@ -1,4 +1,4 @@
-"""Database-free provider failure classification for image generation adapters."""
+"""图片生成适配器的无数据库 provider 失败分类。"""
 
 from __future__ import annotations
 

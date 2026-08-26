@@ -72,18 +72,17 @@ def current_log_context() -> dict[str, str]:
 
 
 def get_log_file_path(settings: Settings | None = None) -> Path:
-    """Return the effective persistent ProductFlow log file path."""
+    """返回当前生效的 ProductFlow 持久化日志文件路径。"""
 
     settings = settings or get_settings()
     return settings.log_dir.expanduser() / "productflow.log"
 
 
 def configure_logging(settings: Settings | None = None) -> None:
-    """Configure stdout plus persistent rotating file logs for the current process.
+    """为当前进程配置 stdout 与持久化滚动文件日志。
 
-    Uvicorn installs its own non-root loggers for server lifecycle and access records. Those loggers do not reliably
-    propagate to the root logger, so ProductFlow mirrors them to the same rotating file handler while leaving their
-    existing console handlers untouched.
+    Uvicorn 为服务器生命周期和 access 记录安装了非 root logger。这些 logger 不能可靠地
+    向上传播到 root logger，因此 ProductFlow 把它们镜像到同一滚动文件 handler，同时保留其现有控制台 handler。
     """
 
     settings = settings or get_settings()
@@ -113,12 +112,12 @@ def configure_logging(settings: Settings | None = None) -> None:
     file_handler = _ensure_shared_file_handler(root_logger, log_file, settings, formatter, level)
     _mirror_uvicorn_logs_to_file(file_handler, level)
     logging.getLogger(__name__).info("持久化日志已启用: file=%s", log_file.resolve())
-    # Keep a strong reference in this frame until every target logger has been configured.
+    # 在本帧内保持强引用，直到所有目标 logger 都配置完成。
     file_handler.flush()
 
 
 def cleanup_old_logs(settings: Settings | None = None) -> int:
-    """Delete log files in the configured directory older than retention days."""
+    """删除配置目录中超过保留天数的日志文件。"""
 
     settings = settings or get_settings()
     retention_days = settings.log_retention_days
@@ -149,7 +148,7 @@ def cleanup_old_logs(settings: Settings | None = None) -> int:
 
 
 class _ProductFlowFormatter(logging.Formatter):
-    """Project formatter that preserves Uvicorn's human access status phrase in file logs."""
+    """投影用 formatter：在文件日志中保留 Uvicorn access 的人类可读状态短语。"""
 
     def format(self, record: logging.LogRecord) -> str:
         if record.name == "uvicorn.access":
@@ -174,7 +173,7 @@ def _ensure_shared_file_handler(
     formatter: logging.Formatter,
     level: int,
 ) -> RotatingFileHandler:
-    """Install one shared ProductFlow file handler for all persistent log mirrors."""
+    """为所有持久化日志镜像安装一个共享的 ProductFlow 文件 handler。"""
 
     resolved_log_file = log_file.resolve()
     matching_handler = _find_matching_file_handler(resolved_log_file)
@@ -205,7 +204,7 @@ def _mirror_uvicorn_logs_to_file(
     file_handler: RotatingFileHandler,
     level: int,
 ) -> None:
-    """Mirror Uvicorn lifecycle/access loggers when their records cannot reach the root file handler."""
+    """当 Uvicorn 生命周期/access logger 的记录到不了 root 文件 handler 时，镜像它们。"""
 
     for logger_name in _UVICORN_FILE_LOGGERS:
         logger = logging.getLogger(logger_name)
@@ -235,7 +234,7 @@ def _find_matching_file_handler(resolved_log_file: Path) -> RotatingFileHandler 
 
 
 def _with_uvicorn_status_phrase(record: logging.LogRecord) -> logging.LogRecord:
-    """Copy an Uvicorn access record and append the HTTP status phrase when Uvicorn supplies raw args."""
+    """复制一条 Uvicorn access 记录；当 Uvicorn 提供原始 args 时追加 HTTP 状态短语。"""
 
     if not isinstance(record.args, tuple) or len(record.args) < 5:
         return record
@@ -253,7 +252,7 @@ def _with_uvicorn_status_phrase(record: logging.LogRecord) -> logging.LogRecord:
 
 
 def _logger_records_reach_root(logger: logging.Logger) -> bool:
-    """Return whether records logged on logger would propagate to the root logger."""
+    """判断 logger 上的记录是否会传播到 root logger。"""
 
     current: logging.Logger = logger
     while current.name:

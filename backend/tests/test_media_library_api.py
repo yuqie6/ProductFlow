@@ -118,17 +118,17 @@ def test_upload_media_library_api_idempotency_key_dedups(db_session) -> None:
     assert first.status_code == 201
     first_ids = [asset["id"] for asset in first.json()]
 
-    # reusing the same key + same params returns the SAME assets (no duplicates)
+    # 同一 key + 同一参数再次上传，返回同一批资产（不产生重复）
     second = client.post("/api/media-library/upload", files=files, headers={"Idempotency-Key": "upload-dup-1"})
     assert second.status_code == 201
     assert [asset["id"] for asset in second.json()] == first_ids
 
-    # a different key with identical files still creates a NEW batch (key-scoped, not content-dedup)
+    # 不同 key、相同文件仍会新建一批（按 key 作用域，不做内容去重）
     third = client.post("/api/media-library/upload", files=files, headers={"Idempotency-Key": "upload-dup-2"})
     assert third.status_code == 201
     assert [asset["id"] for asset in third.json()] != first_ids
 
-    # same key with different params is a conflict (mirrors /collect)
+    # 同一 key 换参数是冲突（与 /collect 一致）
     other_bytes = _make_demo_image_bytes_with_size(64, 64)
     conflict = client.post(
         "/api/media-library/upload",
