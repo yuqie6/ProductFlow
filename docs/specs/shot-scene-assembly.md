@@ -44,5 +44,5 @@ Draft 适配器只映射 Draft `edges[]`。会生图的 `image_generation` 缺�
 - Draft 适配器：`.../draft_graph_adapter.py`
 - Compiler：`.../graph_compiler.py`
 - 执行角色：`.../graph_execution.py`
-- 家族：`.../agent/product_intake.py`、`web/src/lib/imageTypeFamilies.ts`
+- 家族：`.../domain/image_type_catalog.py`、`web/src/lib/imageTypeFamilies.ts`
 - 画布 ChangeSet：`web/src/pages/workbench/canvas/shotChangeSet.ts`

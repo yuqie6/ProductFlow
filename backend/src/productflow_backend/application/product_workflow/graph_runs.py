@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.product_workflow.graph_apply import AppliedGraph
 from productflow_backend.application.product_workflow.graph_commands import (
     get_workflow_graph,
@@ -22,12 +21,15 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     select_run_node_ids,
     snapshot_graph,
 )
+from productflow_backend.application.product_workflow.graph_run_durability import (
+    enqueue_graph_run_after_commit,
+    stage_graph_run_dispatch,
+)
 from productflow_backend.application.product_workflow.graph_visual import (
     merge_visual_override_items,
     visual_overlay_from_config,
 )
 from productflow_backend.application.product_workflow.product_sources import resolve_product_source
-from productflow_backend.application.queue_submission import raise_queue_unavailable
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import GRAPH_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
@@ -48,17 +50,6 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNodeRun,
     WorkflowGraphRun,
 )
-
-
-def stage_graph_run_dispatch(session: Session, run_id: str):
-    """只 flush dispatch 行，不 commit；调用方拥有事务。"""
-
-    return stage_async_dispatch(
-        session,
-        delivery_key=delivery_key_for_actor(GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id),
-        actor_name=GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name,
-        aggregate_id=run_id,
-    )
 
 GRAPH_CANCELLED_REASON = "已取消"
 
@@ -155,6 +146,9 @@ def submit_graph_run(
 ) -> GraphRunSubmission:
     """提交一次图运行。默认 commit；commit=False 时禁止直接 enqueue。"""
 
+    if enqueue is not None and not commit:
+        raise ValueError("不能在延迟提交的图运行中直接 enqueue")
+
     graph = session.scalar(
         select(WorkflowGraph)
         .where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
@@ -208,6 +202,9 @@ def submit_graph_run(
             if commit:
                 session.commit()
                 session.expire_all()
+                if enqueue is not None:
+                    enqueue_graph_run_after_commit(session, active.id, enqueue=enqueue)
+                    session.expire_all()
                 active = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=active.id)
             return GraphRunSubmission(run=active, created=False)
         raise ConflictError("工作流已有正在进行的运行")
@@ -244,13 +241,9 @@ def submit_graph_run(
         session.commit()
         session.expire_all()
         if enqueue is not None:
-            try:
-                enqueue(run_id)
-            except Exception as exc:  # noqa: BLE001
-                raise_queue_unavailable(exc)
+            enqueue_graph_run_after_commit(session, run_id, enqueue=enqueue)
+            session.expire_all()
         run = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)
-    elif enqueue is not None:
-        raise ValueError("不能在延迟提交的图运行中直接 enqueue")
     return GraphRunSubmission(run=run, created=True)
 
 

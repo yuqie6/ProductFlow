@@ -353,7 +353,15 @@ def test_submit_graph_run_explicit_enqueue_failure_is_queue_unavailable(db_sessi
         raise AssertionError("expected QueueUnavailableError")
     persisted = list(db_session.scalars(select(WorkflowGraphRun)))
     assert len(persisted) == 1
-    assert persisted[0].status == WorkflowRunStatus.RUNNING
+    assert persisted[0].status == WorkflowRunStatus.FAILED
+    assert persisted[0].failure_reason == QUEUE_UNAVAILABLE_DETAIL
+    node_runs = list(
+        db_session.scalars(
+            select(WorkflowGraphNodeRun).where(WorkflowGraphNodeRun.graph_run_id == persisted[0].id)
+        )
+    )
+    assert node_runs
+    assert {node_run.status for node_run in node_runs} == {WorkflowNodeStatus.FAILED}
 
 
 def test_default_submit_dispatcher_consumes_once_and_duplicate_delivery_skips_provider(

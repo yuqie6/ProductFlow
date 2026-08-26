@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,7 +9,6 @@ from productflow_backend.application.product_images.fidelity_checks import (
     ProductImageFidelityCheckList,
 )
 from productflow_backend.domain.enums import ProductImageFidelityOutcome
-from productflow_backend.infrastructure.db.models import ProductImageFidelityCheck
 
 
 class CreateProductImageFidelityCheckRequest(BaseModel):
@@ -51,7 +51,7 @@ class ProductImageFidelityCheckListResponse(BaseModel):
 
 
 def serialize_product_image_fidelity_check(
-    check: ProductImageFidelityCheck,
+    check: Any,
 ) -> ProductImageFidelityCheckResponse:
     return ProductImageFidelityCheckResponse(
         id=check.id,

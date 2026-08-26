@@ -7,13 +7,12 @@ from pydantic import ValidationError
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.workflow_drafts.contracts import (
-    DELIVERY_SPEC_MAX_TOTAL_PIXELS,
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
-    DeliverySpec,
     WorkflowDraftPayloadV1,
     workflow_draft_payload_hash,
     workflow_draft_tool_schema,
 )
+from productflow_backend.domain.image_specs import DELIVERY_SPEC_MAX_TOTAL_PIXELS, DeliverySpec
 
 
 def test_workflow_draft_payload_accepts_one_prompt_per_type_and_one_node_per_image() -> None:

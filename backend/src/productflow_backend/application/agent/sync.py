@@ -14,9 +14,10 @@ from productflow_backend.application.agent.control import (
     retry_unbound_agent_turn_start,
     synchronize_agent_turn_state,
 )
-from productflow_backend.application.agent.conversations import record_agent_turn_start_error, reserve_agent_turn
 from productflow_backend.application.agent.execution import recover_expired_agent_turn_executions
 from productflow_backend.application.agent.tasks import initial_agent_task_turn_idempotency_key
+from productflow_backend.application.agent.turn_projection import record_agent_turn_start_error, reserve_agent_turn
+from productflow_backend.application.agent.turn_status import POLLABLE_TURN_STATUSES
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationScope,
@@ -43,13 +44,6 @@ from productflow_backend.infrastructure.db.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
-_POLLABLE_AGENT_TURN_STATUSES = {
-    AgentTurnStatus.QUEUED,
-    AgentTurnStatus.RUNNING,
-    AgentTurnStatus.CANCEL_REQUESTED,
-}
-
-
 @dataclass(frozen=True, slots=True)
 class AgentTurnRecoverySummary:
     pending_turns: int = 0
@@ -63,7 +57,10 @@ def execute_agent_turn_sync(
     gateway: AgentServiceClient | None = None,
     enqueue_later: Callable[[Session, str, int], None],
 ) -> None:
-    """同步一个 Turn 投影。resume_required 时跳过；网络/5xx 保留投影并重投递，不把 ambiguous 标 failed。本函数自管 session。"""
+    """同步一个 Turn 投影。
+
+    resume_required 时跳过；网络/5xx 保留投影并重投递，不把 ambiguous 标 failed。
+    """
     session = get_session_factory()()
     try:
         projection = session.scalar(
@@ -142,7 +139,7 @@ def execute_agent_turn_sync(
                 state=state,
                 commit=False,
             )
-        if projection.status in _POLLABLE_AGENT_TURN_STATUSES and not projection.resume_required:
+        if projection.status in POLLABLE_TURN_STATUSES and not projection.resume_required:
             enqueue_later(session, projection.id, _poll_delay_ms())
         session.commit()
     except AgentServiceRequestError as exc:
@@ -201,7 +198,7 @@ def recover_unfinished_agent_turn_syncs(
                 .where(
                     AgentTurnProjection.resume_required.is_(False),
                     or_(
-                        AgentTurnProjection.status.in_(_POLLABLE_AGENT_TURN_STATUSES),
+                        AgentTurnProjection.status.in_(POLLABLE_TURN_STATUSES),
                         (
                             # 待确认但尚未挂上 Draft revision，同步仍可能补 artifact。
                             (AgentTurnProjection.status == AgentTurnStatus.AWAITING_CONFIRMATION)

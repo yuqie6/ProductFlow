@@ -1,4 +1,7 @@
-"""AgentTask 在 Session 下保存一条业务目标与一次 task-specific run。兼容列仍叫 harness_run_id；page context 不改写 goal。"""
+"""AgentTask 在 Session 下保存一条业务目标与一次 task-specific run。
+
+兼容列仍叫 harness_run_id；page context 不改写 goal。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +16,8 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.sessions import get_agent_session_or_raise
+from productflow_backend.application.agent.turn_status import TASK_BLOCKING_TURN_STATUSES
+from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     AgentConversationScope,
@@ -62,13 +67,7 @@ _TERMINAL_TASK_STATUSES = {
     AgentTaskStatus.CANCELED,
     AgentTaskStatus.UNKNOWN,
 }
-_ACTIVE_TURN_STATUSES = {
-    AgentTurnStatus.QUEUED,
-    AgentTurnStatus.RUNNING,
-    AgentTurnStatus.REQUIRES_INPUT,
-    AgentTurnStatus.AWAITING_CONFIRMATION,
-    AgentTurnStatus.CANCEL_REQUESTED,
-}
+_ACTIVE_TURN_STATUSES = TASK_BLOCKING_TURN_STATUSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,7 +319,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
     task.updated_at = now_utc()
     # Recovery and explicit resume share this key, so a retry cannot create a
     # second first Turn if the worker already recovered the task concurrently.
-    from productflow_backend.application.agent.conversations import reserve_agent_turn
+    from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 
     conversation = session.get(AgentConversation, task.conversation_id)
     if conversation is None:
@@ -342,6 +341,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
         task_id=task.id,
     )
     refresh_agent_session_summary(session, task.session_id)
+    stage_async_dispatch_for_actor(session, "run_agent_turn_sync", reservation.projection.id)
     session.commit()
     return AgentTaskResumeResult(
         task=get_agent_task_or_raise(session, task.id),

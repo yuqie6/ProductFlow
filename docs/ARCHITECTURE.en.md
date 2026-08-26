@@ -31,18 +31,19 @@ Current code ownership:
 
 | Capability | Application/Domain owner | HTTP/External owner | Primary regression tests |
 |---|---|---|---|
-| Agent product creation | `agent/product_workspaces.py`, `product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
+| Agent product creation | `agent/product_workspaces.py`, `application/product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
 | Agent Session and Task | `agent/sessions.py`, `tasks.py` | `routes/agent_sessions.py`, `routes/agent_tasks.py` | `test_agent_sessions.py`, `test_agent_tasks.py` |
-| Agent Turn and sync | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Agent Turn and sync | `agent/conversations.py`, `turn_projection.py`, `control.py`, `execution.py`, `sync.py`, `turn_status.py`, `idempotency.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Agent tools and context | `agent/tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, `agent_context.py` | `routes/agent_internal.py` | `test_workflow_agent_service.py`, `test_graph_proposals.py`, `test_media_library_drafts.py` |
 | Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft and graph persist | `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py`, `routes/workflow_graphs.py` | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
-| schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
-| Recipes | `workflow_recipes/` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
+| Draft and graph persist | `workflow_drafts/contracts.py` (topology), `domain/artifact_contracts.py` (live types), `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py` (retired writes, 409) | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
+| schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py`, `graph_run_durability.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
+| Recipes | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
 | Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
-| Iterative image generation | `image_sessions/` (`service.py`, `generation.py`) | `routes/image_sessions.py`, image adapters | image-session/provider tests |
-| Settings and providers | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
+| Iterative image generation | `image_sessions/` (`service.py`, `generation.py`), `infrastructure/image/chat_types.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
+| Settings and providers | `settings.py`, `infrastructure/runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | Async dispatch | `async_delivery.py`, `durable_recovery.py` | `commands/run_async_dispatcher.py`, Compose `productflow-async-dispatcher` | `test_async_delivery.py`, `test_async_dispatcher_command.py` |
 | V1 archive cutover | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | archive/cutover/migration tests |
 | Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
@@ -100,7 +101,7 @@ product name (+ optional types and 1..6 uploads)
   -> product workbench
 ```
 
-ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `_expected_harness_run_id`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
+ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `expected_harness_run_id` in `application/agent/turn_projection.py`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
 
 Product creation writes Product, a live schema-v3 graph, the product Conversation, and a product-owned AgentSession in one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`; a complete form uses the same template as direct create. Direct create writes no Session. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
@@ -139,7 +140,7 @@ WorkflowRecipe stores user-created full workflows or fragments. The recipe libra
 
 A product with no live graph can `POST /api/v3/products/{product_id}/workflows` to persist an empty schema-v3 graph (revision 1, no nodes or edges). A second create is a conflict. Empty birth is not an empty ChangeSet (`operations` has min length 1). Later node/edge writes still use `apply_graph_change_set`.
 
-Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure commands use `graph_commands.py` / `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
+Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure writes and previews use `graph_commands.py` (`apply_graph_change_set` / `stage_apply_graph_change_set` / `preview_applied_graph_change_set`); the in-memory apply engine remains `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py` / `graph_run_durability.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
 
 ## 7. Image Model
 

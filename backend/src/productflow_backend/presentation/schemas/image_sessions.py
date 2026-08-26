@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,13 +12,6 @@ from productflow_backend.application.image_sessions.provider_effects import (
 from productflow_backend.application.image_sessions.service import ImageSessionStatusSnapshot
 from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
-from productflow_backend.infrastructure.db.models import (
-    ImageSession,
-    ImageSessionAsset,
-    ImageSessionGenerationTask,
-    ImageSessionProviderEffect,
-    ImageSessionRound,
-)
 from productflow_backend.presentation.image_variants import build_image_urls
 from productflow_backend.presentation.schemas.validators import validate_image_generation_size
 
@@ -203,7 +196,7 @@ class AttachCanonicalImageSessionAssetRequest(BaseModel):
     product_id: str = Field(min_length=1)
 
 
-def serialize_image_session_asset(asset: ImageSessionAsset) -> ImageSessionAssetResponse:
+def serialize_image_session_asset(asset: Any) -> ImageSessionAssetResponse:
     urls = build_image_urls(f"/api/image-session-assets/{asset.id}/download")
     return ImageSessionAssetResponse(
         id=asset.id,
@@ -223,7 +216,7 @@ def extract_actual_image_size(provider_output_json: dict | None) -> str | None:
     return extract_image_generation_provider_metadata(provider_output_json).actual_image_size
 
 
-def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSessionRoundResponse:
+def serialize_image_session_round(round_item: Any) -> ImageSessionRoundResponse:
     return ImageSessionRoundResponse(
         id=round_item.id,
         prompt=round_item.prompt,
@@ -248,7 +241,7 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
 
 
 def serialize_image_session_provider_effect(
-    effect: ImageSessionProviderEffect,
+    effect: Any,
 ) -> ImageSessionProviderEffectResponse:
     return ImageSessionProviderEffectResponse(
         id=effect.id,
@@ -292,7 +285,7 @@ def serialize_image_session_provider_effect_reconciliation(
 
 
 def serialize_image_session_generation_task(
-    task: ImageSessionGenerationTask,
+    task: Any,
     *,
     provider_notes: list[str] | None = None,
 ) -> ImageSessionGenerationTaskResponse:
@@ -334,7 +327,7 @@ def serialize_image_session_generation_task(
     )
 
 
-def serialize_image_session_summary(image_session: ImageSession) -> ImageSessionSummaryResponse:
+def serialize_image_session_summary(image_session: Any) -> ImageSessionSummaryResponse:
     latest_round = max(image_session.rounds, key=lambda item: item.created_at, default=None)
     return ImageSessionSummaryResponse(
         id=image_session.id,
@@ -346,7 +339,7 @@ def serialize_image_session_summary(image_session: ImageSession) -> ImageSession
     )
 
 
-def serialize_image_session_detail(image_session: ImageSession) -> ImageSessionDetailResponse:
+def serialize_image_session_detail(image_session: Any) -> ImageSessionDetailResponse:
     rounds = sorted(image_session.rounds, key=lambda item: item.created_at)
     assets = sorted(image_session.assets, key=lambda item: item.created_at, reverse=True)
     generation_tasks = sorted(image_session.generation_tasks, key=lambda item: item.created_at, reverse=True)

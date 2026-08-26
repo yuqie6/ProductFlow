@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from productflow_backend.application.workflow_drafts.contracts import (
+from productflow_backend.domain.artifact_contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )

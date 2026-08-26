@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
-from productflow_backend.infrastructure.db.models import DeliveryRenditionJob
+from productflow_backend.domain.image_specs import DeliverySpec
 from productflow_backend.presentation.schemas.products import (
     ProductImageAssetResponse,
     serialize_product_image_asset,
@@ -44,7 +44,7 @@ class DeliveryRenditionJobListResponse(BaseModel):
     items: list[DeliveryRenditionJobResponse]
 
 
-def serialize_delivery_rendition_job(job: DeliveryRenditionJob) -> DeliveryRenditionJobResponse:
+def serialize_delivery_rendition_job(job: Any) -> DeliveryRenditionJobResponse:
     return DeliveryRenditionJobResponse(
         id=job.id,
         product_id=job.product_id,

@@ -18,13 +18,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from productflow_backend.application.agent.product_intake import (
-    LISTING_LOOK_RULE,
-    agent_product_image_type_option,
-    image_type_family,
-    image_type_generation_job,
-    image_type_prompt_goal,
-)
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.product_images.assets import stage_product_image_asset
@@ -53,8 +46,13 @@ from productflow_backend.application.product_workflow.graph_provider_effects imp
     GraphRunProviderUnknown,
     ensure_graph_provider_effect_intent,
     graph_provider_effect_request_hash,
-    mark_graph_run_provider_unknown,
     record_graph_provider_effect_result,
+)
+from productflow_backend.application.product_workflow.graph_run_durability import (
+    claim_queued_node_run,
+    fail_claimed_node,
+    fail_graph_run,
+    mark_graph_run_unknown,
 )
 from productflow_backend.application.product_workflow.graph_runs import load_graph_sources
 from productflow_backend.application.storage_compensation import (
@@ -62,8 +60,7 @@ from productflow_backend.application.storage_compensation import (
     compensate_storage_writes,
 )
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.contracts import (
-    GenerationSpec,
+from productflow_backend.domain.artifact_contracts import (
     ImagePromptPayloadV1,
     PromptTextContent,
     VisualExceptionPlan,
@@ -86,6 +83,14 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES, catalog_visual_overlay
+from productflow_backend.domain.image_specs import GenerationSpec
+from productflow_backend.domain.image_type_catalog import (
+    LISTING_LOOK_RULE,
+    agent_product_image_type_option,
+    image_type_family,
+    image_type_generation_job,
+    image_type_prompt_goal,
+)
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -148,7 +153,7 @@ def execute_graph_run(
     except Exception:
         session.rollback()
         logger.exception("schema-v3 graph run failed: run_id=%s", run_id)
-        _fail_run(session, run_id=run_id, reason="工作流运行失败")
+        fail_graph_run(session, run_id=run_id, reason="工作流运行失败")
     finally:
         if pg_locked:
             _release_graph_run_advisory_lock(session, run_id)
@@ -197,7 +202,7 @@ def _execute_graph_run(
             continue
         if not _upstream_processing_runs_succeeded(graph, node_runs, node_run):
             continue
-        if not _claim_queued_node_run(session, node_run):
+        if not claim_queued_node_run(session, node_run, notify=_notify_effect_phase):
             continue
         try:
             artifacts = _execute_node_run(
@@ -216,15 +221,15 @@ def _execute_graph_run(
         except GraphRunProviderUnknown:
             return
         except BusinessValidationError as exc:
-            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason=str(exc))
+            fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason=str(exc))
             return
         except IntegrityError:
             logger.exception("schema-v3 graph node persist conflict: run_id=%s node_run_id=%s", run.id, node_run.id)
-            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
+            fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
             return
         except Exception:
             logger.exception("schema-v3 graph node run failed: run_id=%s node_run_id=%s", run.id, node_run.id)
-            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
+            fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
             return
     session.refresh(run)
     if run.status != WorkflowRunStatus.RUNNING:
@@ -1671,7 +1676,7 @@ def _call_node_provider(
         raise
     except Exception:
         # provider 调用已发出但结果无法证明：标 unknown，禁止猜 failed。
-        mark_graph_run_provider_unknown(
+        mark_graph_run_unknown(
             session,
             run_id=run.id,
             node_run_id=node_run.id,
@@ -1702,33 +1707,6 @@ def _call_node_provider(
     return result, _attempt_may_promote(session, run=run, node_run=node_run, attempt_id=attempt_id)
 
 
-def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> bool:
-    """原子 claim 后立即 commit，后续 provider 调用不占用同一业务事务。"""
-
-    now = now_utc()
-    attempt_id = str(uuid.uuid4())
-    result = session.execute(
-        update(WorkflowGraphNodeRun)
-        .where(
-            WorkflowGraphNodeRun.id == node_run.id,
-            WorkflowGraphNodeRun.status == WorkflowNodeStatus.QUEUED,
-        )
-        .values(
-            status=WorkflowNodeStatus.RUNNING,
-            active_attempt_id=attempt_id,
-            progress_phase="claimed",
-            progress_updated_at=now,
-            started_at=now,
-            failure_reason=None,
-        )
-    )
-    session.commit()
-    session.refresh(node_run)
-    if result.rowcount == 1:
-        _notify_effect_phase("claimed", node_run)
-    return result.rowcount == 1
-
-
 def _complete_skipped_node_run(
     session: Session,
     *,
@@ -1756,45 +1734,3 @@ def _complete_skipped_node_run(
     return True
 
 
-def _fail_claimed_node(session: Session, *, run_id: str, node_run_id: str, reason: str) -> None:
-    session.rollback()
-    run = session.get(WorkflowGraphRun, run_id)
-    node_run = session.get(WorkflowGraphNodeRun, node_run_id)
-    if run is None:
-        return
-    if node_run is None:
-        _fail_run(session, run_id=run_id, reason=reason)
-        return
-    # 已经进入 provider_call / result 的失败不可证明，必须 unknown。
-    if node_run.progress_phase in {WORKFLOW_PROVIDER_EFFECT_CALL_PHASE, WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE}:
-        mark_graph_run_provider_unknown(
-            session,
-            run_id=run_id,
-            node_run_id=node_run_id,
-            attempt_id=node_run.active_attempt_id,
-            detail=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
-        )
-        session.commit()
-        return
-    _fail_node_and_run(session, run=run, node_run=node_run, reason=reason)
-
-
-def _fail_node_and_run(session: Session, *, run: WorkflowGraphRun, node_run: WorkflowGraphNodeRun, reason: str) -> None:
-    now = now_utc()
-    node_run.status = WorkflowNodeStatus.FAILED
-    node_run.failure_reason = reason
-    node_run.finished_at = now
-    run.status = WorkflowRunStatus.FAILED
-    run.failure_reason = reason
-    run.finished_at = now
-    session.commit()
-
-
-def _fail_run(session: Session, *, run_id: str, reason: str) -> None:
-    run = session.get(WorkflowGraphRun, run_id)
-    if run is None or run.status != WorkflowRunStatus.RUNNING:
-        return
-    run.status = WorkflowRunStatus.FAILED
-    run.failure_reason = reason
-    run.finished_at = now_utc()
-    session.commit()

@@ -8,31 +8,28 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent.control import synchronize_agent_turn_state
-from productflow_backend.application.agent.conversations import (
-    bind_harness_turn,
-    record_agent_turn_start_error,
-    reserve_agent_turn,
+from productflow_backend.application.agent.agent_context import (
+    get_agent_global_workflow_context,
+    get_agent_global_workflow_target,
 )
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
 from productflow_backend.application.agent.global_draft_contracts import (
     GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
     GlobalAgentDraftPayloadV1,
     global_agent_draft_schema,
 )
 from productflow_backend.application.agent.global_drafts import (
-    confirm_global_workflow_draft_review,
-    get_global_workflow_draft_review,
     validate_global_agent_draft,
 )
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent.tasks import create_agent_task
-from productflow_backend.application.agent.tools import (
-    get_agent_global_workflow_context,
-    get_agent_global_workflow_target,
+from productflow_backend.application.agent.turn_projection import (
+    bind_harness_turn,
+    record_agent_turn_start_error,
+    reserve_agent_turn,
 )
-from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
-from productflow_backend.domain.enums import AgentConversationStatus, AgentTaskStatus, AgentTurnStatus
+from productflow_backend.application.product_intake import AgentProductSelectionV1
+from productflow_backend.domain.enums import AgentTurnStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
@@ -259,10 +256,8 @@ def test_global_workflow_artifact_rejects_stale_target_version(db_session) -> No
 
 
 def test_global_workflow_draft_api_exposes_review_and_confirmation(configured_env) -> None:
-    from helpers import _login
 
     from productflow_backend.infrastructure.db.session import get_session_factory
-    from productflow_backend.presentation.api import create_app
 
     factory = get_session_factory()
     with factory() as session:

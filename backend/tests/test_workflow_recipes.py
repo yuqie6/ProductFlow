@@ -11,12 +11,13 @@ from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
+)
+from productflow_backend.application.agent.sessions import new_agent_session
+from productflow_backend.application.agent.turn_projection import (
     bind_harness_turn,
     project_agent_turn_state,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent.sessions import new_agent_session
-from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
 from productflow_backend.application.product_workflow.graph_contracts import (
     CreateGroupOp,
@@ -26,6 +27,7 @@ from productflow_backend.application.product_workflow.graph_contracts import (
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product
+from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
 from productflow_backend.application.workflow_recipes.extract import extract_recipe_payload
 from productflow_backend.application.workflow_recipes.official import official_recipe_seed

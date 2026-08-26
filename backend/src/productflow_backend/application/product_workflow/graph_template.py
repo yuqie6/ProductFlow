@@ -7,13 +7,6 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from productflow_backend.application.agent.product_intake import (
-    AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
-    LISTING_LOOK_RULE,
-    agent_product_image_type_option,
-    image_type_family,
-    image_type_prompt_goal,
-)
 from productflow_backend.application.product_workflow.graph_contracts import (
     ConnectNodesOp,
     CreateGroupOp,
@@ -21,15 +14,22 @@ from productflow_backend.application.product_workflow.graph_contracts import (
     GraphOperation,
     WorkflowChangeSet,
 )
-from productflow_backend.application.workflow_drafts.contracts import (
-    WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
-    WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
-    WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
-    WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
-    GenerationSpec,
+from productflow_backend.domain.artifact_contracts import (
+    PRODUCT_INTAKE_MAX_IMAGES_PER_TYPE,
+    PRODUCT_INTAKE_MAX_REFERENCE_ASSETS,
+    PRODUCT_INTAKE_MAX_TOTAL_IMAGES,
+    PRODUCT_INTAKE_MIN_IMAGES_PER_TYPE,
 )
 from productflow_backend.domain.enums import GraphActorType, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.image_specs import GenerationSpec
+from productflow_backend.domain.image_type_catalog import (
+    AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
+    LISTING_LOOK_RULE,
+    agent_product_image_type_option,
+    image_type_family,
+    image_type_prompt_goal,
+)
 
 DEFAULT_TEMPLATE_GENERATION_SPEC = {
     "aspect_ratio": "1:1",
@@ -123,8 +123,8 @@ def build_direct_create_template(
         raise BusinessValidationError("至少上传一张参考图")
     if len(reference_asset_ids) != len(set(reference_asset_ids)):
         raise BusinessValidationError("参考图资产不能重复")
-    if len(reference_asset_ids) > WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS:
-        raise BusinessValidationError(f"参考图不能超过 {WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS} 张")
+    if len(reference_asset_ids) > PRODUCT_INTAKE_MAX_REFERENCE_ASSETS:
+        raise BusinessValidationError(f"参考图不能超过 {PRODUCT_INTAKE_MAX_REFERENCE_ASSETS} 张")
     type_keys = [item.key for item in image_types]
     if len(type_keys) != len(set(type_keys)):
         raise BusinessValidationError("图片类型不能重复")
@@ -132,13 +132,13 @@ def build_direct_create_template(
     evidence_types = [item for item in image_types if image_type_family(item.key) == "evidence"]
     total_images = 0
     for item in generating_types:
-        if item.quantity < WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE or item.quantity > WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE:
+        if item.quantity < PRODUCT_INTAKE_MIN_IMAGES_PER_TYPE or item.quantity > PRODUCT_INTAKE_MAX_IMAGES_PER_TYPE:
             raise BusinessValidationError(
-                f"每种图片数量必须在 {WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE} 到 {WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE} 之间"
+                f"每种图片数量必须在 {PRODUCT_INTAKE_MIN_IMAGES_PER_TYPE} 到 {PRODUCT_INTAKE_MAX_IMAGES_PER_TYPE} 之间"
             )
         total_images += item.quantity
-    if total_images > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
-        raise BusinessValidationError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
+    if total_images > PRODUCT_INTAKE_MAX_TOTAL_IMAGES:
+        raise BusinessValidationError(f"图片生成总数不能超过 {PRODUCT_INTAKE_MAX_TOTAL_IMAGES}")
 
     operations: list[GraphOperation] = [
         CreateNodeOp(

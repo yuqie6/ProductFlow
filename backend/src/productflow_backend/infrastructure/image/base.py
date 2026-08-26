@@ -1,7 +1,14 @@
+"""Shared image-provider contracts and helpers.
+
+OpenAIResponsesImageClient, OpenAIImagesClient, and GoogleGeminiImageClient are
+internal HTTP lower-seam clients shared by ImageProvider and ImageChatProvider.
+"""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from base64 import b64decode
+from collections.abc import Callable
 from io import BytesIO
 from typing import Any, Literal
 
@@ -10,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from productflow_backend.domain.image_specs import GenerationSpec
 from productflow_backend.domain.local_image_edits import LocalImageEditOperation
+from productflow_backend.infrastructure.image.chat_types import GeneratedChatImage, ImageChatTurn
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
@@ -171,6 +179,48 @@ class ImageProvider(ABC):
         return ProviderEffectQueryResult.unsupported(
             f"图片 provider {self.provider_name} 没有提供可查询的生成记录接口"
         )
+
+
+class ImageChatProvider(ABC):
+    """Continuous image-session generation adapter with a provider-neutral contract."""
+
+    provider_kind: str
+
+    @abstractmethod
+    def generate(
+        self,
+        prompt: str,
+        size: str,
+        history: list[ImageChatTurn],
+        manual_reference_images: list[str],
+        previous_response_id: str | None = None,
+        tool_options: dict | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> GeneratedChatImage:
+        raise NotImplementedError
+
+    @abstractmethod
+    def generate_many(
+        self,
+        prompt: str,
+        size: str,
+        history: list[ImageChatTurn],
+        manual_reference_images: list[str],
+        *,
+        candidate_count: int,
+        tool_options: dict | None = None,
+    ) -> list[GeneratedChatImage]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def reconcile_generation_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        raise NotImplementedError
 
 
 def parse_size(size: str) -> tuple[int, int]:

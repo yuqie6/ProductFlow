@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from math import gcd
 
 from productflow_backend.application.delivery_renditions.contracts import normalize_delivery_spec
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.errors import NotFoundError
+from productflow_backend.domain.image_specs import DeliverySpec
 
 DELIVERY_PRESET_REVIEWED_AT = "2026-08-24"
 DELIVERY_PRESET_SOURCE = "docs/specs/productflow-studio-requirements.md §18"

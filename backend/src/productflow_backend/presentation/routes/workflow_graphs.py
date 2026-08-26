@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.product_intake import AGENT_PRODUCT_IMAGE_TYPE_KEYS
 from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
     create_empty_workflow_graph,
@@ -40,6 +39,7 @@ from productflow_backend.application.product_workflow.graph_template import (
 from productflow_backend.domain.enums import GraphActorType, GraphRunScope
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.graph_catalog import graph_catalog_document
+from productflow_backend.domain.image_type_catalog import AGENT_PRODUCT_IMAGE_TYPE_KEYS
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.graphs import (
     DirectCreateImageTypeRequest,

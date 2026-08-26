@@ -8,11 +8,6 @@ from dramatiq.middleware.time_limit import TimeLimitExceeded
 from PIL import Image
 from sqlalchemy import select
 
-from productflow_backend.application.image_sessions.dependencies import (
-    IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
-    GeneratedChatImage,
-    ImageSessionProviderFailure,
-)
 from productflow_backend.application.image_sessions.provider_effects import (
     reconcile_image_session_provider_effect,
 )
@@ -27,7 +22,14 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionProviderEffect,
     ImageSessionRound,
 )
+from productflow_backend.infrastructure.image.base import ImageChatProvider
 from productflow_backend.infrastructure.image.chat_service import ImageChatService
+from productflow_backend.infrastructure.image.chat_types import (
+    IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
+    GeneratedChatImage,
+    ImageSessionProviderFailure,
+)
+from productflow_backend.infrastructure.image.factory import get_image_chat_provider
 from productflow_backend.infrastructure.provider_config import ResolvedImageProviderConfig
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
@@ -52,7 +54,7 @@ def _generated_image(*, candidate: int) -> GeneratedChatImage:
     )
 
 
-class FakeChatService:
+class FakeChatService(ImageChatProvider):
     provider_kind = "fake"
 
     def __init__(self, outcomes: list[object], *, repeat_last: bool = False) -> None:
@@ -76,6 +78,22 @@ class FakeChatService:
 
     def generate_many(self, **kwargs) -> list[GeneratedChatImage]:
         raise AssertionError("fake seam tests should use the single-candidate path")
+
+    def reconcile_generation_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        del operation_key, request_hash, provider_response_id
+        raise AssertionError("fake seam tests should not reconcile provider effects")
+
+
+def test_image_chat_factory_returns_named_provider_seam(configured_env) -> None:
+    provider = get_image_chat_provider()
+
+    assert isinstance(provider, ImageChatProvider)
 
 
 def test_image_session_executor_accepts_fake_service_and_persists_result(

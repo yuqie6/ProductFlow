@@ -8,14 +8,13 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from productflow_backend.application.image_sessions.dependencies import (
+from productflow_backend.infrastructure.image.base import ImageChatProvider, parse_size
+from productflow_backend.infrastructure.image.chat_types import (
     IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
     GeneratedChatImage,
     ImageChatTurn,
     ImageSessionProviderFailure,
 )
-from productflow_backend.application.runtime_settings import get_runtime_settings
-from productflow_backend.infrastructure.image.base import parse_size
 from productflow_backend.infrastructure.image.gemini_provider import (
     GoogleGeminiImageClient,
     GoogleGeminiReferenceImage,
@@ -34,9 +33,10 @@ from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
 )
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 
-class ImageChatService:
+class ImageChatService(ImageChatProvider):
     provider_name = "image-session"
     prompt_version = "responses-image-session-v1"
 

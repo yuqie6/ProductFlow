@@ -59,6 +59,7 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.image.base import (
     LOCAL_EDIT_MODE,
     ImageProvider,
+    LocalEditCapability,
     LocalEditImage,
     LocalEditMask,
     LocalEditRequest,
@@ -66,6 +67,7 @@ from productflow_backend.infrastructure.image.base import (
     UnsupportedLocalEditError,
     infer_extension,
 )
+from productflow_backend.infrastructure.image.factory import get_image_provider
 from productflow_backend.infrastructure.storage import LocalStorage
 
 from .contracts import LocalEditMaskGeometry, LocalImageEditDraft, validate_and_normalize_local_edit_mask
@@ -320,6 +322,41 @@ def submit_local_image_edit_task(
     product.updated_at = now_utc()
     session.commit()
     return LocalImageEditSubmitResult(task=task, dispatch=dispatch, created=True)
+
+
+def get_local_image_edit_capability() -> LocalEditCapability:
+    return get_image_provider().local_edit_capability
+
+
+def _validate_local_edit_capability_for_task(task: LocalImageEditTask, capability: LocalEditCapability) -> None:
+    if not capability.supported or capability.mode is None:
+        raise BusinessValidationError(capability.reason or "当前图片 provider 不支持局部编辑")
+    supported_operations = {operation.value for operation in capability.operations}
+    if task.operation not in supported_operations:
+        raise BusinessValidationError("当前图片 provider 不支持该局部编辑操作")
+    if len(task.references) > capability.max_reference_images:
+        raise BusinessValidationError("局部编辑参考图数量超过当前图片 provider 能力")
+
+
+def submit_queued_local_image_edit(
+    session: Session,
+    *,
+    product_id: str,
+    task_id: str,
+    idempotency_key: str,
+) -> LocalImageEditSubmitResult:
+    task = get_local_image_edit_task(session, product_id=product_id, task_id=task_id)
+    capability = get_local_image_edit_capability()
+    _validate_local_edit_capability_for_task(task, capability)
+    if capability.mode is None:
+        raise BusinessValidationError(capability.reason or "当前图片 provider 不支持局部编辑")
+    return submit_local_image_edit_task(
+        session,
+        task_id=task_id,
+        idempotency_key=idempotency_key,
+        requested_provider_name=capability.provider_name,
+        requested_local_edit_mode=capability.mode,
+    )
 
 
 def get_local_image_edit_task(

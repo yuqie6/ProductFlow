@@ -5,13 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
-from productflow_backend.application.agent.conversations import (
+from productflow_backend.application.agent.media_library_tools import (
+    AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
+)
+from productflow_backend.application.agent.turn_projection import (
     AGENT_MAX_INPUT_ASSETS,
     AGENT_MAX_INPUT_TEXT_CHARS,
     expected_harness_run_id,
-)
-from productflow_backend.application.agent.tools import (
-    AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
 )
 from productflow_backend.application.agent.workflow_runs import (
     AGENT_GLOBAL_WORKFLOW_INSPECT_MAX,
@@ -34,7 +34,6 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceToolStepDetails
-from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
 from productflow_backend.presentation.schemas.graphs import GraphRunResponse
 from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse
 
@@ -653,7 +652,7 @@ class SubmitAgentTurnResponse(BaseModel):
     turn: AgentTurnResponse
 
 
-def serialize_agent_conversation(conversation: AgentConversation) -> AgentConversationResponse:
+def serialize_agent_conversation(conversation: Any) -> AgentConversationResponse:
     return AgentConversationResponse(
         id=conversation.id,
         scope_type=conversation.scope_type,
@@ -687,7 +686,7 @@ def _serialize_agent_tool_steps(stored_value: Any) -> list[AgentToolStepResponse
     return serialized
 
 
-def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
+def serialize_agent_turn(projection: Any) -> AgentTurnResponse:
     return AgentTurnResponse(
         id=projection.id,
         conversation_id=projection.conversation_id,

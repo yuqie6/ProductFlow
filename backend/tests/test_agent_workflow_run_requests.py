@@ -5,15 +5,12 @@ from datetime import UTC, datetime
 import pytest
 from helpers import _make_demo_image_bytes
 from sqlalchemy import func, select
-from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent.control import synchronize_agent_turn_state
-from productflow_backend.application.agent.conversations import bind_harness_turn, reserve_agent_turn
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent.sessions import create_agent_session
-from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.agent.tasks import create_agent_task, get_agent_task_or_raise
+from productflow_backend.application.agent.turn_projection import bind_harness_turn, reserve_agent_turn
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
@@ -27,6 +24,8 @@ from productflow_backend.application.agent.workflow_runs import (
     inspect_agent_global_workflow_runs,
     list_agent_workflow_runs,
 )
+from productflow_backend.application.product_intake import AgentProductSelectionV1
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
 from productflow_backend.domain.enums import (
     AgentConversationScope,

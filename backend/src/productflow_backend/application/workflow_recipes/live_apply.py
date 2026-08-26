@@ -7,19 +7,18 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.product_workflow.graph_apply import (
+from productflow_backend.application.product_workflow.graph_commands import (
     EMPTY_GRAPH,
     AppliedGraph,
     AppliedGraphEdge,
     AppliedGraphGroup,
     AppliedGraphNode,
-    apply_workflow_change_set,
-)
-from productflow_backend.application.product_workflow.graph_commands import (
     GraphCommandResult,
     apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
+    preview_applied_graph_change_set,
+    stage_apply_graph_change_set,
     stage_new_workflow_graph,
 )
 from productflow_backend.application.product_workflow.graph_contracts import (
@@ -249,7 +248,7 @@ def plan_recipe_payload(
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc
     try:
-        after = apply_workflow_change_set(existing, change_set)
+        after = preview_applied_graph_change_set(existing, change_set)
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc
     existing_node_ids = {node.id for node in existing.nodes}
@@ -340,12 +339,12 @@ def apply_recipe_plan(
                 raise ConflictError("商品没有可写入的 schema-v3 工作流")
             if plan.graph_id != live.id:
                 raise ConflictError("工作流已变化，请重新预览后重试")
-            command = apply_graph_change_set(
+            command_fn = apply_graph_change_set if commit else stage_apply_graph_change_set
+            command = command_fn(
                 session,
                 product_id=product_id,
                 graph_id=live.id,
                 change_set=plan.change_set,
-                commit=commit,
             )
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc

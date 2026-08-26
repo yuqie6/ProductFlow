@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.image_sessions.dependencies import (
-    ImageSessionChatServiceFactory,
+    ImageChatProviderFactory,
     default_image_session_chat_service_factory,
 )
 from productflow_backend.domain.enums import JobStatus
@@ -253,7 +253,7 @@ def reconcile_image_session_provider_effect(
     task_id: str,
     candidate_start_index: int,
     image_session_id: str | None = None,
-    chat_service_factory: ImageSessionChatServiceFactory | None = None,
+    chat_service_factory: ImageChatProviderFactory | None = None,
 ) -> ImageSessionProviderEffectReconciliationResult:
     """查询已有 unknown 副作用，不提交新请求。查不到仍保持 unknown。"""
 

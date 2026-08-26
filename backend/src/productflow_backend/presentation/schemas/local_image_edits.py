@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -12,11 +13,6 @@ from productflow_backend.application.local_image_edits.contracts import (
 from productflow_backend.domain.enums import LocalImageEditTaskStatus
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.local_image_edits import LocalImageEditOperation
-from productflow_backend.infrastructure.db.models import (
-    LocalImageEditAdoptionEvent,
-    LocalImageEditProviderAttempt,
-    LocalImageEditTask,
-)
 from productflow_backend.infrastructure.image.base import LocalEditCapability
 from productflow_backend.presentation.schemas.products import (
     ProductImageAssetResponse,
@@ -162,7 +158,7 @@ def parse_local_image_edit_draft(
 
 
 def serialize_local_image_edit_task(
-    task: LocalImageEditTask,
+    task: Any,
     *,
     include_audit: bool = True,
 ) -> LocalImageEditTaskResponse:
@@ -224,7 +220,7 @@ def serialize_local_image_edit_task(
 
 
 def serialize_local_image_edit_attempt(
-    attempt: LocalImageEditProviderAttempt,
+    attempt: Any,
 ) -> LocalImageEditProviderAttemptResponse:
     return LocalImageEditProviderAttemptResponse(
         id=attempt.id,
@@ -249,7 +245,7 @@ def serialize_local_image_edit_attempt(
 
 
 def serialize_local_image_edit_adoption_event(
-    event: LocalImageEditAdoptionEvent,
+    event: Any,
 ) -> LocalImageEditAdoptionEventResponse:
     return LocalImageEditAdoptionEventResponse(
         id=event.id,

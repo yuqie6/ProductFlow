@@ -9,33 +9,24 @@ from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent import control as agent_control
+from productflow_backend.application.agent.agent_context import (
+    get_agent_contract,
+    get_agent_product_context,
+)
 from productflow_backend.application.agent.control import refresh_agent_turn, synchronize_agent_turn_state
 from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
-    bind_harness_turn,
     create_agent_conversation,
-    list_agent_turn_page,
-    project_agent_turn_state,
-    record_agent_turn_start_error,
-    reserve_agent_turn,
 )
 from productflow_backend.application.agent.execution import (
     claim_agent_turn_execution,
     recover_expired_agent_turn_executions,
 )
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent.sync import (
-    execute_agent_turn_sync,
-    recover_unfinished_agent_turn_syncs,
-)
-from productflow_backend.application.agent.tools import (
+from productflow_backend.application.agent.gallery_tools import (
     apply_agent_asset_move,
     apply_agent_asset_rename,
     apply_agent_folder_create,
     apply_agent_folder_rename,
-    get_agent_contract,
-    get_agent_product_context,
     inspect_agent_product_assets,
     list_agent_product_assets,
     prepare_agent_asset_move,
@@ -48,12 +39,25 @@ from productflow_backend.application.agent.tools import (
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
 )
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.sync import (
+    execute_agent_turn_sync,
+    recover_unfinished_agent_turn_syncs,
+)
+from productflow_backend.application.agent.turn_projection import (
+    bind_harness_turn,
+    list_agent_turn_page,
+    project_agent_turn_state,
+    record_agent_turn_start_error,
+    reserve_agent_turn,
+)
 from productflow_backend.application.async_delivery import (
     recover_async_dispatch_for_actor,
     stage_async_dispatch_for_actor,
 )
 from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.product_images.mutations import rename_gallery_asset
+from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import (
     PRODUCT_WORKFLOW_DRAFT_RETIRED,
@@ -67,7 +71,6 @@ from productflow_backend.domain.enums import (
     AgentToolStepStatus,
     AgentTurnStatus,
     AsyncDispatchStatus,
-    MediaVerificationStatus,
     WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import (
@@ -85,7 +88,6 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
-    AgentConversation,
     AgentToolMutation,
     AgentTurnEvent,
     AgentTurnExecution,
@@ -94,7 +96,6 @@ from productflow_backend.infrastructure.db.models import (
     ProviderBinding,
     ProviderProfile,
     WorkflowDraft,
-    WorkflowDraftRevision,
     new_id,
 )
 

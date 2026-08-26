@@ -7,15 +7,15 @@ from productflow_backend.application.local_image_edits.service import (
     adopt_local_image_edit_result,
     cancel_local_image_edit_task,
     create_local_image_edit_task,
+    get_local_image_edit_capability,
     get_local_image_edit_task,
     list_local_image_edit_tasks,
     retry_local_image_edit_task,
     revert_local_image_edit_adoption,
-    submit_local_image_edit_task,
+    submit_queued_local_image_edit,
     update_local_image_edit_task,
 )
 from productflow_backend.domain.errors import BusinessValidationError
-from productflow_backend.infrastructure.image.factory import get_image_provider
 from productflow_backend.infrastructure.storage import LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.local_image_edits import (
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/v3", tags=["local-image-edits"], dependencies=[D
 
 @router.get("/local-image-edits/capability", response_model=LocalImageEditCapabilityResponse)
 def get_local_image_edit_capability_endpoint() -> LocalImageEditCapabilityResponse:
-    return serialize_local_image_edit_capability(get_image_provider().local_edit_capability)
+    return serialize_local_image_edit_capability(get_local_image_edit_capability())
 
 
 @router.get(
@@ -164,21 +164,11 @@ def submit_local_image_edit_task_endpoint(
     payload: SubmitLocalImageEditRequest,
     session: Session = Depends(get_session),
 ) -> LocalImageEditTaskResponse:
-    task = _require_product_task(session, product_id=product_id, task_id=task_id)
-    capability = get_image_provider().local_edit_capability
-    supported_operations = {operation.value for operation in capability.operations}
-    if not capability.supported or capability.mode is None:
-        raise BusinessValidationError(capability.reason or "当前图片 provider 不支持局部编辑")
-    if task.operation not in supported_operations:
-        raise BusinessValidationError("当前图片 provider 不支持该局部编辑操作")
-    if len(task.references) > capability.max_reference_images:
-        raise BusinessValidationError("局部编辑参考图数量超过当前图片 provider 能力")
-    result = submit_local_image_edit_task(
+    result = submit_queued_local_image_edit(
         session,
+        product_id=product_id,
         task_id=task_id,
         idempotency_key=payload.idempotency_key,
-        requested_provider_name=capability.provider_name,
-        requested_local_edit_mode=capability.mode,
     )
     return serialize_local_image_edit_task(
         get_local_image_edit_task(session, product_id=product_id, task_id=result.task.id)

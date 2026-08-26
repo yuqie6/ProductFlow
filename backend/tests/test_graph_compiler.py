@@ -4,7 +4,6 @@ from dataclasses import replace
 
 import pytest
 
-from productflow_backend.application.agent.product_intake import image_type_prompt_goal
 from productflow_backend.application.product_workflow.graph_apply import EMPTY_GRAPH, apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_compiler import (
     GraphRuntimeArtifacts,
@@ -30,6 +29,7 @@ from productflow_backend.application.product_workflow.product_sources import (
 )
 from productflow_backend.domain.enums import GraphActorType, GraphNodeType, GraphRunScope
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.image_type_catalog import image_type_prompt_goal
 
 
 def _template_graph():

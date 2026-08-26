@@ -6,10 +6,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.domain.enums import LibraryOrganizationDraftStatus
-from productflow_backend.infrastructure.db.models import (
-    LibraryOrganizationDraft,
-    LibraryOrganizationDraftRevision,
-)
 
 
 class ConfirmLibraryOrganizationDraftRequest(BaseModel):
@@ -44,7 +40,7 @@ class LibraryOrganizationDraftResponse(BaseModel):
 
 
 def serialize_library_organization_draft_revision(
-    revision: LibraryOrganizationDraftRevision | None,
+    revision: Any | None,
 ) -> LibraryOrganizationDraftRevisionResponse | None:
     if revision is None:
         return None
@@ -62,7 +58,7 @@ def serialize_library_organization_draft_revision(
 
 
 def serialize_library_organization_draft(
-    draft: LibraryOrganizationDraft,
+    draft: Any,
 ) -> LibraryOrganizationDraftResponse:
     return LibraryOrganizationDraftResponse(
         id=draft.id,

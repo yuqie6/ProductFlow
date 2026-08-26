@@ -28,7 +28,6 @@ from test_agent_sessions import _create_workspace
 
 from alembic import command
 from productflow_backend.application.agent.control import answer_agent_question
-from productflow_backend.application.agent.conversations import project_agent_turn_state, reserve_agent_turn
 from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
     append_agent_turn_event,
@@ -39,6 +38,7 @@ from productflow_backend.application.agent.execution import (
 )
 from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.application.agent.sync import execute_agent_turn_sync
+from productflow_backend.application.agent.turn_projection import project_agent_turn_state, reserve_agent_turn
 from productflow_backend.application.async_delivery import run_async_dispatcher_once, stage_async_dispatch_for_actor
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_settings

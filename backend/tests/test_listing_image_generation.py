@@ -5,7 +5,7 @@ from productflow_backend.application.product_workflow.graph_execution import (
     NO_CAPTION_ON_REFERENCE_RULE,
     _compile_image_model_prompt,
 )
-from productflow_backend.application.workflow_drafts.contracts import GenerationSpec
+from productflow_backend.domain.image_specs import GenerationSpec
 from productflow_backend.infrastructure.image.base import WorkflowImageReference, WorkflowImageRequest
 from productflow_backend.infrastructure.image.responses_provider import _workflow_responses_tool_options
 

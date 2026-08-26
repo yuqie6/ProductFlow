@@ -5,9 +5,9 @@ import secrets
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.session import get_db_session
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 
 def get_session(session: Session = Depends(get_db_session)) -> Session:

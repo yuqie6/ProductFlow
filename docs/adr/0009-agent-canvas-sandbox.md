@@ -94,7 +94,7 @@ Agent 只能调用仓库审查过的 ProductFlow tools。默认 filesystem/proce
 
 ### 7. Turn 的 runtime run
 
-有 Task 的 Turn 使用 Task 的 `harness_run_id`；否则使用 Conversation 的 `harness_run_id`。规则已经写在 `application/agent/control.py` 的 `_expected_harness_run_id`。事件入库、恢复自写事件、Turn 投影和前端 SSE 必须用同一条规则。不得把 Conversation 的 `harness_run_id` 改成等于 Task id：一个 Conversation 以后可以挂多条 Task。
+有 Task 的 Turn 使用 Task 的 `harness_run_id`；否则使用 Conversation 的 `harness_run_id`。规则已经写在 `application/agent/turn_projection.py` 的 `expected_harness_run_id`。事件入库、恢复自写事件、Turn 投影和前端 SSE 必须用同一条规则。不得把 Conversation 的 `harness_run_id` 改成等于 Task id：一个 Conversation 以后可以挂多条 Task。
 
 Pi `sameRuntimeScope` 的 run 身份只包括 conversation / task / run / scope_type 与商品、draft id。`system_prompt` 和 `has_live_graph` 是合同刷新，不是换 run。
 

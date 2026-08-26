@@ -3,13 +3,15 @@ from __future__ import annotations
 import pytest
 from helpers import _make_demo_image_bytes
 
-from productflow_backend.application.agent.tools import (
+from productflow_backend.application.agent.agent_context import (
+    get_agent_contract,
+    validate_agent_workflow_draft,
+)
+from productflow_backend.application.agent.graph_tools import (
     APPLY_GRAPH_TOOL_NAME,
     apply_agent_graph_change_set_tool,
-    get_agent_contract,
     propose_agent_graph_change_set_tool,
     reconcile_agent_graph_change_set_tool,
-    validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent.workbenches import ensure_agent_workbench_bootstrap
 from productflow_backend.application.product_workflow.graph_commands import (

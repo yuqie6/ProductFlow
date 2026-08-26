@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -23,7 +23,6 @@ from productflow_backend.domain.enums import (
     WorkflowRecipeKind,
     WorkflowRecipeOrigin,
 )
-from productflow_backend.infrastructure.db.models import WorkflowRecipe, WorkflowRecipeVersion
 from productflow_backend.presentation.schemas.graphs import GraphProjectionResponse
 
 
@@ -171,7 +170,7 @@ class WorkflowRecipeApplicationResponse(BaseModel):
 
 
 def serialize_workflow_recipe_version(
-    version: WorkflowRecipeVersion,
+    version: Any,
 ) -> WorkflowRecipeVersionResponse:
     return WorkflowRecipeVersionResponse(
         id=version.id,
@@ -191,10 +190,10 @@ def serialize_workflow_recipe_version(
 
 
 def serialize_workflow_recipe_summary(
-    recipe: WorkflowRecipe,
+    recipe: Any,
 ) -> WorkflowRecipeSummaryResponse:
     if recipe.current_version is None or recipe.current_version_id is None:
-        raise ValueError("WorkflowRecipe 缺少 current version")
+        raise ValueError("Any 缺少 current version")
     return WorkflowRecipeSummaryResponse(
         id=recipe.id,
         kind=recipe.kind,
@@ -208,7 +207,7 @@ def serialize_workflow_recipe_summary(
     )
 
 
-def serialize_workflow_recipe(recipe: WorkflowRecipe) -> WorkflowRecipeResponse:
+def serialize_workflow_recipe(recipe: Any) -> WorkflowRecipeResponse:
     summary = serialize_workflow_recipe_summary(recipe)
     return WorkflowRecipeResponse(
         **summary.model_dump(),

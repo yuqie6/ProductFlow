@@ -13,7 +13,6 @@ from helpers import _make_demo_image_bytes
 from sqlalchemy.engine import URL, make_url
 
 from alembic import command
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace,
     create_agent_product_workspace,
@@ -21,6 +20,7 @@ from productflow_backend.application.agent.product_workspaces import (
     get_agent_product_workspace,
 )
 from productflow_backend.application.agent.sessions import list_agent_sessions
+from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 

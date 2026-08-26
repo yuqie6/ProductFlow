@@ -3,12 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.control import control_agent_turn
-from productflow_backend.application.agent.conversations import get_agent_turn_or_raise
+from productflow_backend.application.agent.control import cancel_agent_task_run
 from productflow_backend.application.agent.tasks import (
     AGENT_TASK_LIST_DEFAULT_LIMIT,
     AGENT_TASK_LIST_MAX_LIMIT,
-    cancel_agent_task,
     create_agent_task,
     get_agent_task_or_raise,
     list_agent_tasks,
@@ -16,12 +14,6 @@ from productflow_backend.application.agent.tasks import (
     rename_agent_task,
     resume_agent_task,
 )
-from productflow_backend.application.agent.workflow_run_requests import (
-    cancel_agent_workflow_run_request,
-)
-from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
-from productflow_backend.domain.enums import AgentTaskStatus, AgentTurnStatus
-from productflow_backend.infrastructure.agent_service import get_agent_service_client
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_tasks import (
     AgentTaskListResponse,
@@ -36,10 +28,6 @@ router = APIRouter(
     tags=["agent-tasks"],
     dependencies=[Depends(require_admin)],
 )
-
-
-def enqueue_agent_turn_sync(session: Session, projection_id: str) -> None:
-    stage_async_dispatch_for_actor(session, "run_agent_turn_sync", projection_id)
 
 
 @router.get("", response_model=AgentTaskListResponse)
@@ -101,59 +89,7 @@ def cancel_agent_task_endpoint(
     task_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTaskResponse:
-    task = get_agent_task_or_raise(session, task_id)
-    if task.status in {
-        AgentTaskStatus.SUCCEEDED,
-        AgentTaskStatus.FAILED,
-        AgentTaskStatus.CANCELED,
-        AgentTaskStatus.UNKNOWN,
-    }:
-        return serialize_agent_task(task)
-    projection = None
-    if task.current_turn_id is not None and task.conversation_id is not None:
-        projection = get_agent_turn_or_raise(
-            session,
-            product_id=task.product_id,
-            conversation_id=task.conversation_id,
-            projection_id=task.current_turn_id,
-        )
-    if (
-        projection is not None
-        and projection.workflow_run_request_id is not None
-        and task.product_id is not None
-        and task.conversation_id is not None
-    ):
-        cancel_agent_workflow_run_request(
-            session,
-            product_id=task.product_id,
-            conversation_id=task.conversation_id,
-            request_id=projection.workflow_run_request_id,
-        )
-        return serialize_agent_task(get_agent_task_or_raise(session, task_id))
-    if (
-        projection is not None
-        and projection.harness_turn_id is not None
-        and projection.status in {
-            AgentTurnStatus.QUEUED,
-            AgentTurnStatus.RUNNING,
-            AgentTurnStatus.REQUIRES_INPUT,
-            AgentTurnStatus.AWAITING_CONFIRMATION,
-            AgentTurnStatus.CANCEL_REQUESTED,
-        }
-    ):
-        control_agent_turn(
-            session,
-            product_id=task.product_id,
-            conversation_id=task.conversation_id,
-            projection_id=projection.id,
-            command="cancel",
-            gateway=get_agent_service_client(),
-            enqueue_sync=enqueue_agent_turn_sync,
-        )
-        task = get_agent_task_or_raise(session, task_id)
-    else:
-        task = cancel_agent_task(session, task_id=task_id)
-    return serialize_agent_task(task)
+    return serialize_agent_task(cancel_agent_task_run(session, task_id=task_id))
 
 
 @router.post("/{task_id}/pause", response_model=AgentTaskResponse)
@@ -169,11 +105,7 @@ def resume_agent_task_endpoint(
     task_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTaskResponse:
-    result = resume_agent_task(session, task_id=task_id)
-    if result.projection_id is not None:
-        enqueue_agent_turn_sync(session, result.projection_id)
-        session.commit()
-    return serialize_agent_task(get_agent_task_or_raise(session, task_id))
+    return serialize_agent_task(resume_agent_task(session, task_id=task_id).task)
 
 
 __all__ = ["router"]

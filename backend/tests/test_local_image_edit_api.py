@@ -44,7 +44,7 @@ def test_local_image_edit_api_uses_structured_multipart_and_durable_submit(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.local_image_edits.get_image_provider",
+        "productflow_backend.application.local_image_edits.service.get_image_provider",
         lambda: SupportingImageProvider(),
     )
     context = _context(db_session)
@@ -140,7 +140,7 @@ def test_submit_replay_from_equivalent_draft_returns_authoritative_task(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.local_image_edits.get_image_provider",
+        "productflow_backend.application.local_image_edits.service.get_image_provider",
         lambda: SupportingImageProvider(),
     )
     context = _context(db_session)

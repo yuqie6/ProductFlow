@@ -1,3 +1,5 @@
+"""Build effective runtime settings from environment and database overrides."""
+
 from __future__ import annotations
 
 from sqlalchemy.orm import Session

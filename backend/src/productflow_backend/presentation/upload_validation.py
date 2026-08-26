@@ -6,7 +6,7 @@ from io import BytesIO
 from fastapi import HTTPException, UploadFile, status
 from PIL import Image, UnidentifiedImageError
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 
 @dataclass(frozen=True, slots=True)

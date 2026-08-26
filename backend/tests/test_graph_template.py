@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from productflow_backend.application.agent.product_intake import LISTING_LOOK_RULE, image_type_prompt_goal
 from productflow_backend.application.product_workflow.graph_apply import EMPTY_GRAPH, apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_contracts import FORBIDDEN_GRAPH_TOPOLOGY_KEYS, CreateNodeOp
 from productflow_backend.application.product_workflow.graph_template import (
@@ -13,6 +12,7 @@ from productflow_backend.application.product_workflow.graph_template import (
 )
 from productflow_backend.domain.enums import GraphConfigStatus, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.image_type_catalog import LISTING_LOOK_RULE, image_type_prompt_goal
 
 
 def test_direct_create_template_builds_incomplete_runnable_structure() -> None:

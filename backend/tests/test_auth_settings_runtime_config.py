@@ -6,7 +6,6 @@ import itsdangerous.timed
 from fastapi.testclient import TestClient
 from helpers import _login, _unlock_settings
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import CONFIG_DEFINITION_BY_KEY, RUNTIME_CONFIG_KEYS
 from productflow_backend.infrastructure.db.models import AppSetting, ProviderBinding
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -15,6 +14,7 @@ from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
     resolve_prompt_provider_config,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.presentation.session import MonotonicTimestampSigner
 
 

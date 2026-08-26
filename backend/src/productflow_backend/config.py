@@ -71,7 +71,7 @@ class ConfigDefinition:
 class Settings(BaseSettings):
     """基础环境配置：环境变量 + 默认值。
 
-    运行时 app_settings 覆盖由 application.runtime_settings 组装，
+    运行时 app_settings 覆盖由 infrastructure.runtime_settings 组装，
     基础设施配置（数据库 / Redis / Secret 等）仅从环境变量读取。
     供应商档案和用途绑定由数据库设置页管理。
     """

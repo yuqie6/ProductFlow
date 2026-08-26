@@ -7,13 +7,13 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import func, select
 from test_graph_execution import RecordingImageProvider, RecordingPromptProvider
 
-from productflow_backend.application.agent.product_intake import LISTING_LOOK_RULE
 from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.domain.enums import GraphNodeType
+from productflow_backend.domain.image_type_catalog import LISTING_LOOK_RULE
 from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
@@ -139,7 +139,7 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
         return dispatch
 
     monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.graph_runs.stage_async_dispatch",
+        "productflow_backend.application.product_workflow.graph_run_durability.stage_async_dispatch",
         stage_and_run,
     )
     image_node_id = next(

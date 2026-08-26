@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     filter_image_tool_options,
     normalize_image_generation_size,
@@ -21,6 +20,7 @@ from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
     resolve_prompt_provider_config,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 
 def test_settings_route_delegates_business_state_to_application_boundary() -> None:

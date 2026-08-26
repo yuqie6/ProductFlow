@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
-    DeliverySpec,
-    VisualSystemDraftPayload,
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
     workflow_draft_payload_hash,
 )
+from productflow_backend.domain.artifact_contracts import VisualSystemDraftPayload
 from productflow_backend.domain.enums import MediaVerificationStatus, ProductFactStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.domain.image_specs import DeliverySpec
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,

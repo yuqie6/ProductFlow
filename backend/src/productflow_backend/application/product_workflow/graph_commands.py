@@ -107,6 +107,12 @@ def load_applied_graph(session: Session, graph: WorkflowGraph) -> AppliedGraph:
     )
 
 
+def preview_applied_graph_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet) -> AppliedGraph:
+    """DB-free Graph Command preview. Persistence stays on apply/stage commands."""
+
+    return apply_workflow_change_set(graph, change_set)
+
+
 def stage_new_workflow_graph(
     session: Session,
     *,
@@ -163,31 +169,97 @@ def create_empty_workflow_graph(
     `WorkflowChangeSet.operations` requires at least one op, so an empty canvas cannot
     be born as a no-op ChangeSet. Later node/edge writes still go through `apply_graph_change_set`.
     """
+    if not commit:
+        with session.begin_nested():
+            return _stage_empty_workflow_graph(session, product_id=product_id, title=title)
     try:
-        _lock_product(session, product_id)
-        if get_active_workflow_graph(session, product_id=product_id) is not None:
-            raise ConflictError("商品已有 active schema-v3 工作流")
-        graph = WorkflowGraph(
-            product_id=product_id,
-            title=title,
-            active=True,
-            schema_version=GRAPH_SCHEMA_VERSION,
-            revision=1,
-            source_draft_revision_id=None,
-        )
-        session.add(graph)
-        session.flush()
-        graph.updated_at = now_utc()
-        session.flush()
+        graph = _stage_empty_workflow_graph(session, product_id=product_id, title=title)
         graph_id = graph.id
-        if commit:
-            session.commit()
-            session.expire_all()
-            graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
-        return graph
+        session.commit()
+        session.expire_all()
+        return get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
     except Exception:
         session.rollback()
         raise
+
+
+def _stage_empty_workflow_graph(session: Session, *, product_id: str, title: str) -> WorkflowGraph:
+    _lock_product(session, product_id)
+    if get_active_workflow_graph(session, product_id=product_id) is not None:
+        raise ConflictError("商品已有 active schema-v3 工作流")
+    graph = WorkflowGraph(
+        product_id=product_id,
+        title=title,
+        active=True,
+        schema_version=GRAPH_SCHEMA_VERSION,
+        revision=1,
+        source_draft_revision_id=None,
+    )
+    session.add(graph)
+    session.flush()
+    graph.updated_at = now_utc()
+    session.flush()
+    return graph
+
+
+def _mutate_graph_change_set(
+    session: Session,
+    *,
+    product_id: str,
+    graph_id: str,
+    change_set: WorkflowChangeSet,
+    history_kind: GraphHistoryKind,
+) -> GraphCommandResult:
+    graph = session.scalar(
+        select(WorkflowGraph)
+        .where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
+        .with_for_update()
+    )
+    if graph is None:
+        raise NotFoundError("商品工作流不存在")
+    if not graph.active:
+        raise ConflictError("只能修改 active schema-v3 工作流")
+    if graph.schema_version != GRAPH_SCHEMA_VERSION:
+        raise ConflictError("画布修改只支持 schema-v3 工作流")
+    before = load_applied_graph(session, graph)
+    proposed = apply_workflow_change_set(before, change_set)
+    after = assign_persistent_ids(before, proposed)
+    _validate_bound_assets(session, product_id=product_id, graph=after)
+    validate_product_source_configs(session, graph_product_id=product_id, graph=after)
+    graph.revision = after.revision
+    graph.updated_at = now_utc()
+    _replace_graph_contents(session, graph, after)
+    operation_group = _record_operation_group(
+        session,
+        graph=graph,
+        change_set=change_set,
+        inverse_operations=invert_applied_graph(before, after),
+        base_revision=before.revision,
+        result_revision=after.revision,
+        history_kind=history_kind,
+    )
+    session.flush()
+    return GraphCommandResult(graph=graph, applied=after, operation_group=operation_group)
+
+
+def stage_apply_graph_change_set(
+    session: Session,
+    *,
+    product_id: str,
+    graph_id: str,
+    change_set: WorkflowChangeSet,
+    history_kind: GraphHistoryKind = GraphHistoryKind.EDIT,
+) -> GraphCommandResult:
+    """在调用方事务内 flush ChangeSet；失败只回滚本命令的 savepoint。"""
+
+    with session.begin_nested():
+        return _mutate_graph_change_set(
+            session,
+            product_id=product_id,
+            graph_id=graph_id,
+            change_set=change_set,
+            history_kind=history_kind,
+        )
 
 
 def apply_graph_change_set(
@@ -199,48 +271,32 @@ def apply_graph_change_set(
     commit: bool = True,
     history_kind: GraphHistoryKind = GraphHistoryKind.EDIT,
 ) -> GraphCommandResult:
-    """把 ChangeSet 应用到 live 图。默认 commit；内部 stage 路径可延迟提交。"""
+    """把 ChangeSet 应用到 live 图并提交。调用方持有事务时用 stage_apply_graph_change_set。"""
 
-    try:
-        graph = session.scalar(
-            select(WorkflowGraph)
-            .where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
-            .with_for_update()
-        )
-        if graph is None:
-            raise NotFoundError("商品工作流不存在")
-        if not graph.active:
-            raise ConflictError("只能修改 active schema-v3 工作流")
-        if graph.schema_version != GRAPH_SCHEMA_VERSION:
-            raise ConflictError("画布修改只支持 schema-v3 工作流")
-        before = load_applied_graph(session, graph)
-        proposed = apply_workflow_change_set(before, change_set)
-        after = assign_persistent_ids(before, proposed)
-        _validate_bound_assets(session, product_id=product_id, graph=after)
-        validate_product_source_configs(session, graph_product_id=product_id, graph=after)
-        graph.revision = after.revision
-        graph.updated_at = now_utc()
-        _replace_graph_contents(session, graph, after)
-        operation_group = _record_operation_group(
+    if not commit:
+        return stage_apply_graph_change_set(
             session,
-            graph=graph,
+            product_id=product_id,
+            graph_id=graph_id,
             change_set=change_set,
-            inverse_operations=invert_applied_graph(before, after),
-            base_revision=before.revision,
-            result_revision=after.revision,
             history_kind=history_kind,
         )
-        session.flush()
-        if commit:
-            session.commit()
-            session.expire_all()
-            graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
-            after = load_applied_graph(session, graph)
-            operation_group = session.get(WorkflowOperationGroup, operation_group.id)
-            assert operation_group is not None
+    try:
+        result = _mutate_graph_change_set(
+            session,
+            product_id=product_id,
+            graph_id=graph_id,
+            change_set=change_set,
+            history_kind=history_kind,
+        )
+        session.commit()
+        session.expire_all()
+        graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
+        after = load_applied_graph(session, graph)
+        operation_group = session.get(WorkflowOperationGroup, result.operation_group.id)
+        assert operation_group is not None
         return GraphCommandResult(graph=graph, applied=after, operation_group=operation_group)
     except Exception:
-        # 失败即 rollback 整段 Session，即使调用方传了 commit=False。
         session.rollback()
         raise
 

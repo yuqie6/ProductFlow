@@ -32,15 +32,8 @@ from productflow_backend.application.async_delivery import (
     stage_async_dispatch,
 )
 from productflow_backend.application.image_sessions.dependencies import (
-    GeneratedChatImage,
-    ImageChatTurn,
-    ImageSessionChatServiceFactory,
-    ImageSessionProviderFailure,
+    ImageChatProviderFactory,
     default_image_session_chat_service_factory,
-)
-from productflow_backend.application.image_sessions.failures import (
-    ImageGenerationFailureDecision,
-    classify_image_generation_failure,
 )
 from productflow_backend.application.image_sessions.generation import (
     normalize_image_generation_tool_options,
@@ -62,9 +55,9 @@ from productflow_backend.application.media_objects import (
 )
 from productflow_backend.application.product_images.assets import (
     get_product_image_asset,
+    stage_product_image_identity,
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.storage_compensation import (
     StorageWriteCompensation,
     best_effort_storage_delete,
@@ -97,10 +90,20 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import infer_extension
+from productflow_backend.infrastructure.image.chat_types import (
+    GeneratedChatImage,
+    ImageChatTurn,
+    ImageSessionProviderFailure,
+)
+from productflow_backend.infrastructure.image.failures import (
+    ImageGenerationFailureDecision,
+    classify_image_generation_failure,
+)
 from productflow_backend.infrastructure.queue import (
     enqueue_image_session_generation_task,  # noqa: F401  # kept for test monkeypatch compatibility
     enqueue_image_session_generation_task_later,  # noqa: F401  # kept for test monkeypatch compatibility
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.storage import LocalStorage
 
 DEFAULT_SESSION_TITLE = "未命名会话"
@@ -720,7 +723,7 @@ def _execute_image_session_round_generation(
     storage: LocalStorage | None = None,
     generation_task_id: str | None = None,
     generation_attempt_id: str | None = None,
-    chat_service_factory: ImageSessionChatServiceFactory | None = None,
+    chat_service_factory: ImageChatProviderFactory | None = None,
 ) -> ImageSessionRoundGenerationResult:
     """执行一轮生图，调用 AI 并保存结果到会话。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
@@ -1087,7 +1090,7 @@ def generate_image_session_round(
     generation_count: int = 1,
     tool_options: dict[str, Any] | None = None,
     storage: LocalStorage | None = None,
-    chat_service_factory: ImageSessionChatServiceFactory | None = None,
+    chat_service_factory: ImageChatProviderFactory | None = None,
 ) -> ImageSession:
     """兼容同步调用的薄封装；HTTP route 不再使用。"""
     return _execute_image_session_round_generation(
@@ -1747,7 +1750,7 @@ def _handle_image_generation_task_failure_safely(
 def execute_image_session_generation_task(
     task_id: str,
     *,
-    chat_service_factory: ImageSessionChatServiceFactory | None = None,
+    chat_service_factory: ImageChatProviderFactory | None = None,
 ) -> None:
     """Worker entry: queued -> running -> succeeded/failed; duplicate terminal messages no-op."""
     session_factory = get_session_factory()
@@ -1855,15 +1858,15 @@ def attach_image_session_asset_to_product_canonical(
         )
     )
     if existing is None:
-        existing = ProductImageAsset(
-            product_id=product.id,
-            media_object_id=media.id,
+        existing = stage_product_image_identity(
+            session,
+            product=product,
+            media_object=media,
             origin_type=ProductImageOriginType.IMAGE_SESSION_ATTACH,
             display_name=asset.original_filename,
             original_filename=asset.original_filename,
             source_image_session_asset_id=asset.id,
         )
-        session.add(existing)
         product.updated_at = now_utc()
     session.commit()
     session.expire_all()

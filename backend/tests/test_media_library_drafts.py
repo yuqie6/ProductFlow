@@ -9,9 +9,9 @@ from sqlalchemy import select
 from test_media_library_organization import _asset
 
 from productflow_backend.application.agent.control import synchronize_agent_turn_state
-from productflow_backend.application.agent.conversations import bind_harness_turn, reserve_agent_turn
 from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.application.agent.tasks import create_agent_task
+from productflow_backend.application.agent.turn_projection import bind_harness_turn, reserve_agent_turn
 from productflow_backend.application.media_library.drafts import (
     append_library_organization_draft_revision,
     confirm_library_organization_draft_revision,

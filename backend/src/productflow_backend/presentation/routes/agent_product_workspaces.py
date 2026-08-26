@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.product_intake import parse_agent_product_selection
 from productflow_backend.application.agent.product_workspaces import (
     AgentProductWorkspaceCreation,
     create_agent_product_draft_workspace,
@@ -11,7 +10,8 @@ from productflow_backend.application.agent.product_workspaces import (
     finalize_agent_product_workspace_intake,
     get_agent_product_workspace,
 )
-from productflow_backend.application.workflow_drafts.contracts import WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS
+from productflow_backend.application.product_intake import parse_agent_product_selection
+from productflow_backend.domain.artifact_contracts import PRODUCT_INTAKE_MAX_REFERENCE_ASSETS
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_conversations import serialize_agent_conversation
 from productflow_backend.presentation.schemas.agent_product_workspaces import (
@@ -127,10 +127,10 @@ async def create_agent_product_workspace_endpoint(
 async def _read_workspace_images(images: list[UploadFile]) -> list[tuple[bytes, str, str]]:
     if not images:
         raise HTTPException(status_code=400, detail="至少上传一张商品参考图")
-    if len(images) > WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS:
+    if len(images) > PRODUCT_INTAKE_MAX_REFERENCE_ASSETS:
         raise HTTPException(
             status_code=400,
-            detail=f"商品参考图最多上传 {WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS} 张",
+            detail=f"商品参考图最多上传 {PRODUCT_INTAKE_MAX_REFERENCE_ASSETS} 张",
         )
     validate_reference_image_count(len(images))
     image_payloads: list[tuple[bytes, str, str]] = []

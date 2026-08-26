@@ -11,16 +11,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.conversations import get_agent_turn_or_raise
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_draft_workspace_from_global_conversation,
     reconcile_agent_product_intake_from_assets,
 )
+from productflow_backend.application.agent.turn_projection import get_agent_turn_or_raise
 from productflow_backend.application.agent.workflow_run_requests import (
     reconcile_agent_global_workflow_run_request,
     reconcile_agent_workflow_run_request,
 )
+from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.domain.enums import AgentCheckpointKind, AgentConversationScope, AgentTurnStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
@@ -233,16 +233,7 @@ def _reconcile_business_effect(
             reference_asset_ids=raw_ids,
             idempotency_key=idempotency_key,
         )
-        result_json = (
-            {
-                "kind": "product_intake",
-                "product_id": reconciled.creation.product.id,
-                "workflow_draft_id": reconciled.creation.workflow_draft.id,
-                "intake_finalized": reconciled.creation.workflow_draft.intake_json is not None,
-            }
-            if reconciled.creation is not None
-            else None
-        )
+        result_json = _intake_summary(reconciled.creation)
         return reconciled.state, result_json, reconciled.detail
 
     raise BusinessValidationError("不支持该 Agent 副作用工具的对账")
@@ -374,6 +365,17 @@ def _workspace_summary(creation: Any, global_conversation_id: str) -> dict[str, 
         "product_name": creation.product.name,
         "workflow_draft_id": creation.conversation.workflow_draft_id,
         "task_id": None,
+        "intake_finalized": creation.intake_finalized,
+    }
+
+
+def _intake_summary(creation: Any) -> dict[str, Any] | None:
+    if creation is None:
+        return None
+    return {
+        "kind": "product_intake",
+        "product_id": creation.product.id,
+        "workflow_draft_id": creation.conversation.workflow_draft_id,
         "intake_finalized": creation.intake_finalized,
     }
 

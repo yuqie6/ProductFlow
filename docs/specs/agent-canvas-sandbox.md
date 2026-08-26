@@ -22,7 +22,7 @@
 
 创建：`application/agent/product_workspaces.py` 写入 Product、live schema-v3 图、商品 Session/Conversation。不插入 `WorkflowDraft`、onboarding Task 或自动 Turn。intake 在 Product 上。有 live 图后挂会话：`attach_agent_workspace_to_product`。
 
-Turn 身份：`control.py` `_expected_harness_run_id`（有 Task 用 Task run，否则 Conversation run）。事件入库与 SSE 使用同一 run。`sameRuntimeScope` 比较 conversation / task / run / scope_type / 商品与 draft id，忽略 `system_prompt` 与 `has_live_graph`。
+Turn 身份：`turn_projection.py` `expected_harness_run_id`（有 Task 用 Task run，否则 Conversation run）。事件入库与 SSE 使用同一 run。`sameRuntimeScope` 比较 conversation / task / run / scope_type / 商品与 draft id，忽略 `system_prompt` 与 `has_live_graph`。
 
 商品路径 Agent 合同：`WORKFLOW_AGENT_LIVE_GRAPH_PROMPT`；工具为 `apply_graph_change_set_v1` / `propose_graph_change_set_v1`。Skill 目录不再包含 `workflow-draft`。
 
@@ -83,7 +83,7 @@ Turn runtime run：`projection.task.harness_run_id if task else conversation.har
 
 **改：**
 
-- `append_agent_turn_event` 与恢复自写 `AgentTurnEvent.run_id` 改用 `_expected_harness_run_id`。query 要能读到 `projection.task` 与 `conversation`。
+- `append_agent_turn_event` 与恢复自写 `AgentTurnEvent.run_id` 使用 `turn_projection.py` 的 `expected_harness_run_id`。query 要能读到 `projection.task` 与 `conversation`。
 - `AgentTurnResponse` 增加这条 Turn 的 runtime `harness_run_id`。
 - 商品对话 SSE 用 Turn 的 run，不用 `conversation.harness_run_id`。全局 Dock 用同一字段，去掉 `runId: null` 绕过。
 

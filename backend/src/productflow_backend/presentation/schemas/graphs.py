@@ -18,7 +18,7 @@ from productflow_backend.application.product_workflow.graph_queries import (
     GraphProjection,
 )
 from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
-from productflow_backend.application.workflow_drafts.contracts import ProductFactDraft
+from productflow_backend.domain.artifact_contracts import ProductFactDraft
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphConfigStatus,
@@ -36,12 +36,6 @@ from productflow_backend.domain.graph_catalog import (
     GraphConfigControl,
     GraphConfigValueKind,
     graph_catalog_json,
-)
-from productflow_backend.infrastructure.db.models import (
-    Product,
-    ProductImageAsset,
-    WorkflowGraphNodeRun,
-    WorkflowGraphRun,
 )
 from productflow_backend.presentation.schemas.products import (
     CanonicalProductDetailResponse,
@@ -308,8 +302,8 @@ def _serialize_proposal(proposal: GraphProposalView | None) -> GraphProposalResp
 
 def serialize_direct_create(
     *,
-    product: Product,
-    created_assets: list[ProductImageAsset],
+    product: Any,
+    created_assets: list[Any],
     projection: GraphProjection,
 ) -> DirectCreateProductResponse:
     return DirectCreateProductResponse(
@@ -487,7 +481,7 @@ class GraphRunListResponse(BaseModel):
     items: list[GraphRunResponse]
 
 
-def serialize_graph_run(run: WorkflowGraphRun) -> GraphRunResponse:
+def serialize_graph_run(run: Any) -> GraphRunResponse:
     node_runs = sorted(run.node_runs, key=lambda item: (item.sort_order, item.id))
     snapshot = run.snapshot_json if isinstance(run.snapshot_json, dict) else {}
     return GraphRunResponse(
@@ -505,7 +499,7 @@ def serialize_graph_run(run: WorkflowGraphRun) -> GraphRunResponse:
     )
 
 
-def _serialize_node_run(node_run: WorkflowGraphNodeRun, snapshot: dict) -> GraphNodeRunResponse:
+def _serialize_node_run(node_run: Any, snapshot: dict) -> GraphNodeRunResponse:
     compiled = node_run.compiled_context_json if isinstance(node_run.compiled_context_json, dict) else {}
     node_title = compiled.get("node_title")
     if not isinstance(node_title, str) or not node_title.strip():

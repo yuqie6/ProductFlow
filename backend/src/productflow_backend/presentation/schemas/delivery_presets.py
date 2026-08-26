@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from productflow_backend.application.delivery_renditions.presets import DeliveryPreset
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
+from productflow_backend.domain.image_specs import DeliverySpec
 
 
 class DeliveryPresetResponse(BaseModel):

@@ -31,7 +31,6 @@ from productflow_backend.application.product_images.assets import stage_product_
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed, raise_queue_unavailable
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
     GraphArtifactType,
@@ -45,6 +44,7 @@ from productflow_backend.domain.errors import (
     ConflictError,
     NotFoundError,
 )
+from productflow_backend.domain.image_specs import DeliverySpec
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     Product,

@@ -56,6 +56,17 @@ def _configure_openai_images_binding(db_session) -> None:
     db_session.commit()
 
 
+def _patch_image_chat_provider_generate(monkeypatch: pytest.MonkeyPatch, generate) -> None:
+    class FakeImageChatProvider:
+        provider_kind = "mock"
+
+    FakeImageChatProvider.generate = generate
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.dependencies.get_image_chat_provider",
+        FakeImageChatProvider,
+    )
+
+
 def _variant_paths(path: Path) -> list[Path]:
     return list((path.parent / ".variants").glob(f"{path.stem}.*"))
 
@@ -403,10 +414,7 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
             },
         )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_with_note,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_with_note)
     app = create_app()
     client = TestClient(app)
     _login(client)
@@ -486,10 +494,7 @@ def test_image_session_generation_exposes_actual_size_when_provider_downscales(
             provider_output_json={},
         )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_downscaled,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_downscaled)
     app = create_app()
     client = TestClient(app)
     _login(client)
@@ -742,10 +747,7 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
             self.saved_relative_path = relative_path
             return relative_path
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_success,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_success)
     original_stage_media = image_session_app.stage_verified_media_object
 
     def stage_media_then_lose_attempt(session, **kwargs):
@@ -1049,10 +1051,7 @@ def test_image_session_worker_auto_retry_caps_and_uses_generic_safe_reason(
         calls["count"] += 1
         raise RuntimeError("provider raw secret sk-test path=/tmp/provider-traceback")
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     app = create_app()
     client = TestClient(app)
     _login(client)
@@ -1098,10 +1097,7 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
     def fail_generate(*args, **kwargs) -> None:
         raise TimeoutError("read timeout from provider")
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     monkeypatch.setattr(
         "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
@@ -1151,10 +1147,7 @@ def test_image_session_worker_non_retryable_policy_failure_stops_without_auto_re
     def fail_generate(*args, **kwargs) -> None:
         raise RuntimeError("Request blocked by content policy")
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     image_session = create_image_session(db_session, title="策略拒绝")
     result = create_image_session_generation_task(
         db_session,
@@ -1205,10 +1198,7 @@ def test_image_session_worker_non_retryable_parameter_failure_stops_without_auto
     def fail_generate(*args, **kwargs) -> None:
         raise RuntimeError("unknown parameter: background")
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     monkeypatch.setattr(
         "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
@@ -1244,10 +1234,7 @@ def test_image_session_worker_exposes_safe_provider_failure_detail(
     def fail_generate(*args, **kwargs) -> None:
         raise RuntimeError("image2 不支持 64x64，最小尺寸为 512x512")
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     app = create_app()
     client = TestClient(app)
     _login(client)
@@ -1282,10 +1269,7 @@ def test_image_session_worker_categorizes_wrapped_connection_failure(
         wrapped = RuntimeError("图片供应商请求失败，请检查供应商配置后重试")
         raise wrapped from cause
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_generate,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, fail_generate)
     app = create_app()
     client = TestClient(app)
     _login(client)
@@ -1312,14 +1296,14 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions.dependencies import (
-        IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
-        ImageSessionProviderFailure,
-    )
     from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
+    )
+    from productflow_backend.infrastructure.image.chat_types import (
+        IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
+        ImageSessionProviderFailure,
     )
 
     class FakeTextOnlyChatService:
@@ -1390,10 +1374,7 @@ def test_image_session_worker_partial_provider_failure_stops_without_duplicate_g
             provider_output_json={},
         )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_then_timeout,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_then_timeout)
 
     image_session = create_image_session(db_session, title="部分成功超时")
     result = create_image_session_generation_task(
@@ -1484,8 +1465,8 @@ def test_image_session_worker_noops_when_parent_session_deleted(
         execute_image_session_generation_task,
     )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+    _patch_image_chat_provider_generate(
+        monkeypatch,
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("provider failed")),
     )
 
@@ -1606,10 +1587,7 @@ def test_image_session_stale_attempt_cannot_persist_provider_result(
             provider_output_json={},
         )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_after_reclaim,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_after_reclaim)
     execute_image_session_generation_task(result.task.id)
 
     db_session.expire_all()
@@ -1667,10 +1645,7 @@ def test_image_session_worker_persists_provider_progress_heartbeat(
             provider_output_json={"id": "resp_background", "status": "completed"},
         )
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        generate_with_progress,
-    )
+    _patch_image_chat_provider_generate(monkeypatch, generate_with_progress)
 
     image_session = create_image_session(db_session, title="provider progress")
     result = create_image_session_generation_task(
@@ -1750,8 +1725,8 @@ def test_image_session_worker_duplicate_message_noops_running_task(
     result.task.started_at = datetime.now(UTC)
     db_session.commit()
     calls: list[object] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+    _patch_image_chat_provider_generate(
+        monkeypatch,
         lambda *args, **kwargs: calls.append((args, kwargs)),
     )
 
@@ -1799,8 +1774,8 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     db_session.add(AppSetting(key="generation_max_concurrent_tasks", value="1"))
     db_session.commit()
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+    _patch_image_chat_provider_generate(
+        monkeypatch,
         lambda *args, **kwargs: pytest.fail("capacity-blocked task must not call provider"),
     )
 

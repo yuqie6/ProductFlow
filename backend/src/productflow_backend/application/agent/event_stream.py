@@ -1,4 +1,7 @@
-"""Turn 事件 SSE：只重放 PostgreSQL event store，不读 Node.js session files。"""
+"""Turn 事件 SSE：只重放 PostgreSQL event store，不读 Node.js session files。
+
+这是独立的事件投递面，不是 Graph 运行或 Agent 控制的透传层。
+"""
 
 from __future__ import annotations
 
@@ -7,17 +10,9 @@ import json
 from collections.abc import AsyncIterator
 
 from productflow_backend.application.agent.execution import list_agent_turn_events
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.application.agent.turn_status import TERMINAL_TURN_STATUSES
 from productflow_backend.infrastructure.db.models import AgentTurnProjection
 from productflow_backend.infrastructure.db.session import get_session_factory
-
-_TERMINAL_TURN_STATUSES = {
-    AgentTurnStatus.AWAITING_CONFIRMATION,
-    AgentTurnStatus.SUCCEEDED,
-    AgentTurnStatus.FAILED,
-    AgentTurnStatus.CANCELED,
-    AgentTurnStatus.UNKNOWN,
-}
 
 
 async def stream_agent_turn_events(
@@ -35,7 +30,7 @@ async def stream_agent_turn_events(
             if projection is None:
                 return
             events = list_agent_turn_events(session, projection_id=projection_id, after=cursor)
-            terminal = projection.status in _TERMINAL_TURN_STATUSES
+            terminal = projection.status in TERMINAL_TURN_STATUSES
             chunks: list[bytes] = []
             for event in events:
                 payload = {

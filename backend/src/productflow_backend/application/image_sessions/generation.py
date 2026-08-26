@@ -9,9 +9,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import filter_image_tool_options, parse_image_tool_allowed_fields
 from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 
 @dataclass(frozen=True, slots=True)

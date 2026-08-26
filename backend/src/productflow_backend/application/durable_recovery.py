@@ -5,32 +5,26 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from productflow_backend.application.local_image_edits.service import (
     LOCAL_EDIT_STALE_CLAIM_AFTER,
     recover_local_image_edit_task,
 )
-from productflow_backend.application.product_workflow.graph_provider_effects import (
-    load_node_run_effect,
-    mark_graph_run_provider_unknown,
-    node_run_effect_is_safe_to_requeue,
-    reset_graph_node_run_for_safe_requeue,
+from productflow_backend.application.product_workflow.graph_run_durability import (
+    DEFAULT_STALE_RUNNING_AFTER,
+    WorkflowRunRecoverySummary,
+    recover_unfinished_graph_runs,
 )
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
-    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
     LOCAL_IMAGE_EDIT_TASK_CONTRACT,
-    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
-    WorkflowRunDeliveryState,
-    classify_workflow_run_delivery,
 )
 from productflow_backend.domain.enums import JobStatus
 from productflow_backend.infrastructure.db.models import (
@@ -38,39 +32,15 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
     ImageSessionProviderEffect,
     LocalImageEditTask,
-    WorkflowGraphRun,
     utcnow,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=30)
-
-
 def get_image_session_stale_running_after() -> timedelta:
     return timedelta(minutes=int(get_runtime_settings().image_session_stale_running_after_minutes))
-
-
-def _as_aware_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
-
-
-def _graph_node_heartbeat(node_run) -> datetime:
-    stamp = node_run.progress_updated_at or node_run.started_at
-    return _as_aware_utc(stamp)
-
-
-@dataclass(frozen=True, slots=True)
-class WorkflowRunRecoverySummary:
-    """启动恢复结果：把数据库里仍处于 active 的工作流运行补回队列。"""
-
-    queued_runs: int = 0
-    stale_running_runs: int = 0
-    enqueued_runs: int = 0
-    unknown_runs: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,150 +75,13 @@ def recover_unfinished_workflow_runs(
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> WorkflowRunRecoverySummary:
-    """恢复重启期间滞留的 schema-v3 graph 运行。
+    """Delegate graph-run recovery to its durability owner."""
 
-    `workflow_graph_runs` 是 authoritative state，Redis/Dramatiq 只是 delivery attempt。
-    """
-
-    cutoff = utcnow() - stale_running_after
-    session = get_session_factory()()
-    runs_to_enqueue: list[str] = []
-    queued_runs = 0
-    stale_running_runs = 0
-    unknown_runs = 0
-
-    try:
-        runs = list(
-            session.scalars(
-                select(WorkflowGraphRun)
-                .options(selectinload(WorkflowGraphRun.node_runs))
-                .where(WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses))
-            ).all()
-        )
-        for run in runs:
-            run_id = run.id
-            delivery_state = classify_workflow_run_delivery(
-                run.status,
-                [node_run.status for node_run in run.node_runs],
-            )
-            if delivery_state == WorkflowRunDeliveryState.QUEUED:
-                if stage_dispatch is None:
-                    queued_runs += 1
-                    runs_to_enqueue.append(run_id)
-                    continue
-                locked_run = session.scalar(
-                    select(WorkflowGraphRun)
-                    .options(selectinload(WorkflowGraphRun.node_runs))
-                    .where(WorkflowGraphRun.id == run_id)
-                    .with_for_update()
-                )
-                if locked_run is None:
-                    session.rollback()
-                    continue
-                locked_delivery_state = classify_workflow_run_delivery(
-                    locked_run.status,
-                    [node_run.status for node_run in locked_run.node_runs],
-                )
-                if locked_delivery_state != WorkflowRunDeliveryState.QUEUED:
-                    session.rollback()
-                    continue
-                stage_dispatch(session, run_id)
-                session.commit()
-                queued_runs += 1
-                runs_to_enqueue.append(run_id)
-                continue
-            if delivery_state != WorkflowRunDeliveryState.RUNNING:
-                continue
-            running_node_runs = [
-                node_run
-                for node_run in run.node_runs
-                if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
-            ]
-            stale_node_runs = [
-                node_run
-                for node_run in running_node_runs
-                if _graph_node_heartbeat(node_run) <= cutoff
-            ]
-            if not reset_stale_running or not stale_node_runs:
-                continue
-            locked_run = session.scalar(
-                select(WorkflowGraphRun)
-                .options(selectinload(WorkflowGraphRun.node_runs))
-                .where(WorkflowGraphRun.id == run_id)
-                .with_for_update()
-            )
-            if locked_run is None or GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
-                session.rollback()
-                continue
-            locked_stale_node_runs = [
-                node_run
-                for node_run in locked_run.node_runs
-                if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
-                and _graph_node_heartbeat(node_run) <= cutoff
-            ]
-            if not locked_stale_node_runs:
-                session.rollback()
-                continue
-            marked_unknown = False
-            safe_requeued = False
-            for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id or "", item.id)):
-                effect = load_node_run_effect(session, stale_node_run.id)
-                if node_run_effect_is_safe_to_requeue(stale_node_run, effect):
-                    reset_graph_node_run_for_safe_requeue(session, stale_node_run)
-                    safe_requeued = True
-                    continue
-                # provider effect 无法证明时标 unknown，不能当失败重试。
-                mark_graph_run_provider_unknown(
-                    session,
-                    run_id=locked_run.id,
-                    node_run_id=stale_node_run.id,
-                    attempt_id=stale_node_run.active_attempt_id,
-                    detail=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
-                )
-                marked_unknown = True
-                break
-            if marked_unknown:
-                session.commit()
-                unknown_runs += 1
-                continue
-            locked_run.failure_reason = None
-            if stage_dispatch is not None:
-                stage_dispatch(session, run_id)
-            session.commit()
-            if safe_requeued:
-                stale_running_runs += 1
-                runs_to_enqueue.append(run_id)
-    except Exception:
-        session.rollback()
-        logger.exception("恢复滞留工作流运行时读取数据库失败")
-        raise
-    finally:
-        session.close()
-
-    enqueued_runs = len(runs_to_enqueue) if stage_dispatch is not None else 0
-    if stage_dispatch is None:
-        if enqueue is None:
-            raise ValueError("enqueue or stage_dispatch is required")
-        for run_id in runs_to_enqueue:
-            try:
-                enqueue(run_id)
-                enqueued_runs += 1
-            except Exception:
-                logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
-
-    if runs_to_enqueue or unknown_runs:
-        logger.info(
-            "已恢复滞留工作流运行: queued=%s stale_running=%s unknown=%s enqueued=%s",
-            queued_runs,
-            stale_running_runs,
-            unknown_runs,
-            enqueued_runs,
-        )
-    return WorkflowRunRecoverySummary(
-        queued_runs=queued_runs,
-        stale_running_runs=stale_running_runs,
-        enqueued_runs=enqueued_runs,
-        unknown_runs=unknown_runs,
+    return recover_unfinished_graph_runs(
+        enqueue=enqueue,
+        stage_dispatch=stage_dispatch,
+        reset_stale_running=reset_stale_running,
+        stale_running_after=stale_running_after,
     )
 
 

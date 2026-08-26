@@ -6,25 +6,24 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
-from productflow_backend.application.agent.conversations import (
-    reserve_agent_turn,
+
+from productflow_backend.application.agent.agent_context import (
+    get_agent_contract,
+    get_agent_product_context,
+    validate_agent_workflow_draft,
 )
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
     attach_agent_workspace_to_product,
     create_agent_product_workspace,
     finalize_agent_product_workspace_intake_from_assets,
 )
-from productflow_backend.application.agent.tools import (
-    get_agent_contract,
-    get_agent_product_context,
-    validate_agent_workflow_draft,
-)
+from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 from productflow_backend.application.agent.workbenches import (
     AgentWorkbenchBootstrap,
     ensure_agent_workbench_bootstrap,
     get_agent_workbench_bootstrap,
 )
+from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType

@@ -5,12 +5,12 @@ from helpers import _login
 from sqlalchemy import select
 
 from productflow_backend.application.agent import effect_reconciliation as agent_effect_reconciliation
-from productflow_backend.application.agent.conversations import reserve_agent_turn
 from productflow_backend.application.agent.product_workspaces import (
     AgentProductWorkspaceReconcileResult,
     create_agent_product_draft_workspace_from_global_conversation,
 )
 from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 from productflow_backend.domain.enums import AgentCheckpointKind, AgentExecutionPhase, AgentTurnStatus
 from productflow_backend.infrastructure.db.models import (
     AgentTurnCheckpoint,
@@ -196,3 +196,94 @@ def test_unknown_effect_reconciliation_http_contract_is_idempotent(db_session, m
     assert response.json()["effect_result"] == "unknown"
     assert response.json()["reconciliation_state"] == "unknown"
     assert response.json()["projection_id"] == projection.id
+
+
+def test_unknown_intake_effect_reconciles_without_workflow_draft(db_session) -> None:
+    from helpers import _make_demo_image_bytes
+
+    from productflow_backend.application.agent.product_workspaces import (
+        create_agent_product_draft_workspace,
+        finalize_agent_product_workspace_intake_from_assets,
+    )
+    from productflow_backend.application.product_intake import AgentProductSelectionV1
+    from productflow_backend.application.products import add_canonical_product_images
+    from productflow_backend.domain.enums import AgentConversationScope, AgentExecutionPhase, AgentTurnStatus
+
+    workspace = create_agent_product_draft_workspace(
+        db_session,
+        name="对账 intake 商品",
+        idempotency_key="intake-effect-workspace",
+    )
+    assets = add_canonical_product_images(
+        db_session,
+        product_id=workspace.product.id,
+        image_uploads=[(_make_demo_image_bytes(), "hero.png", "image/png")] * 2,
+    )
+    asset_ids = [asset.id for asset in assets]
+    selection = AgentProductSelectionV1.model_validate(
+        {
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+        }
+    )
+    finalize_agent_product_workspace_intake_from_assets(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        selection=selection,
+        reference_asset_ids=asset_ids,
+        idempotency_key="intake-effect-key",
+    )
+
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="对账 intake",
+        input_asset_ids=asset_ids,
+        idempotency_key="turn-intake-effect",
+    )
+    projection = reservation.projection
+    projection.status = AgentTurnStatus.UNKNOWN
+    execution = AgentTurnExecution(
+        turn_projection_id=projection.id,
+        harness_turn_id="unknown-intake-harness-turn",
+        attempt=1,
+        fencing_token=1,
+        phase=AgentExecutionPhase.TERMINAL,
+    )
+    db_session.add(execution)
+    db_session.flush()
+    db_session.add(
+        AgentTurnCheckpoint(
+            turn_projection_id=projection.id,
+            execution_id=execution.id,
+            attempt=1,
+            fencing_token=1,
+            sequence=1,
+            kind=AgentCheckpointKind.TOOL_EFFECT_INTENT,
+            payload_json={
+                "tool_name": "finalize_product_intake_v1",
+                "tool_call_id": "intake-tool-1",
+                "idempotency_key": "intake-effect-key",
+                "selection": selection.model_dump(mode="json"),
+                "reference_asset_ids": asset_ids,
+            },
+        )
+    )
+    db_session.commit()
+
+    result = agent_effect_reconciliation.reconcile_agent_turn_effect(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=projection.id,
+        tool_call_id="intake-tool-1",
+    )
+    assert result.effect_result == "applied"
+    assert result.reconciliation_state == "applied"
+    assert result.result_json is not None
+    assert result.result_json["kind"] == "product_intake"
+    assert result.result_json["product_id"] == workspace.product.id
+    assert result.result_json["workflow_draft_id"] is None
+    assert result.result_json["intake_finalized"] is True
+    assert workspace.conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW

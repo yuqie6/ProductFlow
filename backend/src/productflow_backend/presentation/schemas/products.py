@@ -2,26 +2,23 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
-from productflow_backend.application.agent.product_intake import WorkflowIntakeV1, parse_product_intake
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.product_images.queries import (
     GalleryAssetRecord,
     GalleryBootstrap,
 )
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
+from productflow_backend.application.product_intake import WorkflowIntakeV1, parse_product_intake
 from productflow_backend.domain.enums import (
     MediaVerificationStatus,
     ProductFactSourceType,
     ProductFactStatus,
     ProductImageOriginType,
 )
-from productflow_backend.infrastructure.db.models import (
-    Product,
-    ProductImageAsset,
-)
+from productflow_backend.domain.image_specs import DeliverySpec
 from productflow_backend.presentation.image_variants import build_image_urls
 
 
@@ -272,7 +269,7 @@ class SetProductCoverRequest(BaseModel):
     asset_id: str = Field(min_length=1)
 
 
-def serialize_product_image_asset(asset: ProductImageAsset) -> ProductImageAssetResponse:
+def serialize_product_image_asset(asset: Any) -> ProductImageAssetResponse:
     urls = build_image_urls(f"/api/v2/product-image-assets/{asset.id}/download")
     media = asset.media_object
     return ProductImageAssetResponse(
@@ -364,7 +361,7 @@ def serialize_gallery_bootstrap(bootstrap: GalleryBootstrap) -> GalleryBootstrap
     )
 
 
-def serialize_canonical_product_detail(product: Product) -> CanonicalProductDetailResponse:
+def serialize_canonical_product_detail(product: Any) -> CanonicalProductDetailResponse:
     return CanonicalProductDetailResponse(
         id=product.id,
         name=product.name,
@@ -378,7 +375,7 @@ def serialize_canonical_product_detail(product: Product) -> CanonicalProductDeta
     )
 
 
-def serialize_product_facts(product: Product) -> ProductFactsResponse:
+def serialize_product_facts(product: Any) -> ProductFactsResponse:
     current = product.current_fact_set_version
     facts = _fact_payloads(current)
     fact_set = (
@@ -420,7 +417,7 @@ def _fact_payloads(fact_set) -> list[dict]:
     return [dict(item) for item in facts if isinstance(item, dict)] if isinstance(facts, list) else []
 
 
-def serialize_product_summary(product: Product) -> ProductSummaryResponse:
+def serialize_product_summary(product: Any) -> ProductSummaryResponse:
     cover = product.cover_image_asset
     cover_urls = build_image_urls(f"/api/v2/product-image-assets/{cover.id}/download") if cover else {}
     return ProductSummaryResponse(

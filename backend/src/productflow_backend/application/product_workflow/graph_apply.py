@@ -20,7 +20,7 @@ from productflow_backend.application.product_workflow.graph_contracts import (
     UpdateNodeConfigOp,
     WorkflowChangeSet,
 )
-from productflow_backend.application.workflow_drafts.contracts import WORKFLOW_DRAFT_MAX_TOTAL_IMAGES
+from productflow_backend.domain.artifact_contracts import PRODUCT_INTAKE_MAX_TOTAL_IMAGES
 from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.domain.graph_catalog import graph_node_output_type, normalize_node_config
@@ -240,8 +240,8 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
         raise BusinessValidationError("不支持的 Graph 操作")
 
     image_generation_count = sum(node.node_type == GraphNodeType.IMAGE_GENERATION for node in nodes.values())
-    if image_generation_count > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
-        raise BusinessValidationError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
+    if image_generation_count > PRODUCT_INTAKE_MAX_TOTAL_IMAGES:
+        raise BusinessValidationError(f"图片生成总数不能超过 {PRODUCT_INTAKE_MAX_TOTAL_IMAGES}")
     # 绑定只属于 image_asset；下游 reference 边是另一条关系。
     for node in nodes.values():
         if node.bound_asset_id and node.node_type != GraphNodeType.IMAGE_ASSET:

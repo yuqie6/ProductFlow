@@ -1234,7 +1234,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 
 | 能力 | 主要所有权 |
 |---|---|
-| Agent 创建与 intake | `application/agent/product_workspaces.py`、`product_intake.py` |
+| Agent 创建与 intake | `application/agent/product_workspaces.py`、`application/product_intake.py` |
 | Draft 与落图 | `workflow_drafts/`、`product_workflow/graph_draft_persist.py` |
 | 图命令与执行 | `domain/graph_catalog.py`、`graph_rules.py`、`product_workflow/graph_*.py` |
 | 配方 | `workflow_recipes/` |

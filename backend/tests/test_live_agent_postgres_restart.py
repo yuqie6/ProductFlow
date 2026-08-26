@@ -14,12 +14,12 @@ from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 
 from alembic import command
-from productflow_backend.application.agent.conversations import reserve_agent_turn
 from productflow_backend.application.agent.execution import (
     claim_agent_turn_execution,
     recover_expired_agent_turn_executions,
 )
 from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import AgentExecutionPhase, AgentTurnStatus

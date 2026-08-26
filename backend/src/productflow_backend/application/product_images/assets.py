@@ -27,6 +27,7 @@ from productflow_backend.infrastructure.db.models import (
     LocalImageEditProviderAttempt,
     LocalImageEditTask,
     LocalImageEditTaskReference,
+    MediaObject,
     Product,
     ProductImageAsset,
     ProductImageFidelityCheck,
@@ -35,6 +36,52 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNode,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
+
+
+def _validate_product_image_parent(
+    session: Session,
+    *,
+    product: Product,
+    parent_asset_id: str | None,
+) -> None:
+    if parent_asset_id is None:
+        return
+    parent_asset = session.get(ProductImageAsset, parent_asset_id)
+    if parent_asset is None or parent_asset.product_id != product.id:
+        raise BusinessValidationError("父图片资产不属于当前商品")
+
+
+def stage_product_image_identity(
+    session: Session,
+    *,
+    product: Product,
+    media_object: MediaObject,
+    origin_type: ProductImageOriginType,
+    display_name: str | None,
+    original_filename: str,
+    parent_asset_id: str | None = None,
+    image_type_key: str | None = None,
+    source_library_asset_id: str | None = None,
+    source_image_session_asset_id: str | None = None,
+) -> ProductImageAsset:
+    """从已核验的 MediaObject 暂存商品图片身份，不写入媒体 bytes。"""
+
+    _validate_product_image_parent(session, product=product, parent_asset_id=parent_asset_id)
+    normalized_filename = original_filename.strip() or "image"
+    normalized_display_name = (display_name or normalized_filename).strip() or normalized_filename
+    asset = ProductImageAsset(
+        product_id=product.id,
+        media_object=media_object,
+        origin_type=origin_type,
+        display_name=normalized_display_name[:255],
+        original_filename=normalized_filename[:255],
+        parent_asset_id=parent_asset_id,
+        image_type_key=image_type_key,
+        source_library_asset_id=source_library_asset_id,
+        source_image_session_asset_id=source_image_session_asset_id,
+    )
+    session.add(asset)
+    return asset
 
 
 def stage_product_image_asset(
@@ -53,10 +100,7 @@ def stage_product_image_asset(
 ) -> ProductImageAsset:
     """核验写入 MediaObject，并在商品命名空间创建一张逻辑图片。"""
 
-    if parent_asset_id is not None:
-        parent_asset = session.get(ProductImageAsset, parent_asset_id)
-        if parent_asset is None or parent_asset.product_id != product.id:
-            raise BusinessValidationError("父图片资产不属于当前商品")
+    _validate_product_image_parent(session, product=product, parent_asset_id=parent_asset_id)
     media = stage_verified_media_object(
         session,
         content=content,
@@ -65,19 +109,16 @@ def stage_product_image_asset(
         storage=storage,
         storage_writes=storage_writes,
     )
-    normalized_filename = filename.strip() or "image"
-    normalized_display_name = (display_name or normalized_filename).strip() or normalized_filename
-    asset = ProductImageAsset(
-        product_id=product.id,
+    return stage_product_image_identity(
+        session,
+        product=product,
         media_object=media,
         origin_type=origin_type,
-        display_name=normalized_display_name[:255],
-        original_filename=normalized_filename[:255],
+        display_name=display_name,
+        original_filename=filename,
         parent_asset_id=parent_asset_id,
         image_type_key=image_type_key,
     )
-    session.add(asset)
-    return asset
 
 
 def create_product_image_asset(

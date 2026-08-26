@@ -13,9 +13,9 @@ from typing import Any, Literal
 from pydantic import ValidationError
 
 from productflow_backend.application.media_objects import VerifiedImageMetadata
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.enums import JobStatus
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.image_specs import DeliverySpec
 
 DELIVERY_RENDITION_SPEC_SCHEMA_VERSION = 1
 # 本地有损编码阶梯，不是图像模型质量参数。

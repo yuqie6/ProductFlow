@@ -24,7 +24,6 @@ from productflow_backend.application.delivery_renditions import execute_delivery
 from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
 from productflow_backend.application.local_image_edits.service import execute_local_image_edit_task
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
@@ -50,6 +49,7 @@ from productflow_backend.infrastructure.queue import (
     GRAPH_RUN_ACTOR_NAME,
     get_broker,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.storage import LocalStorage
 
 configure_logging()

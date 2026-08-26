@@ -12,7 +12,11 @@ from productflow_backend.application.agent.conversations import (
     agent_conversation_query,
     get_agent_conversation_or_raise,
 )
-from productflow_backend.application.agent.product_intake import (
+from productflow_backend.application.agent.sessions import get_agent_session_or_raise, new_agent_session
+from productflow_backend.application.agent.tasks import refresh_agent_session_summary
+from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
+from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
+from productflow_backend.application.product_intake import (
     AgentProductSelectionV1,
     WorkflowIntakeV1,
     agent_product_draft_workspace_request_hash,
@@ -25,14 +29,10 @@ from productflow_backend.application.agent.product_intake import (
     workflow_intake_from_selection,
     write_product_intake,
 )
-from productflow_backend.application.agent.sessions import get_agent_session_or_raise, new_agent_session
-from productflow_backend.application.agent.tasks import refresh_agent_session_summary
-from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
-from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
 from productflow_backend.application.product_workflow.graph_commands import (
-    apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
+    stage_apply_graph_change_set,
     stage_new_workflow_graph,
 )
 from productflow_backend.application.product_workflow.graph_template import (
@@ -687,12 +687,11 @@ def _expand_birth_graph_from_intake(
         source_note=product.source_note,
         delivery_spec=_intake_delivery_spec_json(intake),
     )
-    apply_graph_change_set(
+    stage_apply_graph_change_set(
         session,
         product_id=product.id,
         graph_id=graph.id,
         change_set=change_set,
-        commit=False,
     )
 
 

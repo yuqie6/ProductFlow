@@ -11,13 +11,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 from openai import OpenAI
 
-from productflow_backend.application.agent.product_intake import image_type_family
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     IMAGE_TOOL_FIELD_KEYS,
     filter_image_tool_options,
     parse_image_tool_allowed_fields,
 )
+from productflow_backend.domain.image_type_catalog import image_type_family
 from productflow_backend.infrastructure.image.base import (
     ImageProvider,
     WorkflowGeneratedImage,
@@ -32,6 +31,7 @@ from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
 )
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 IMAGE_TOOL_OPTIONAL_FIELD_KEYS = IMAGE_TOOL_FIELD_KEYS
 RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS = 2.0

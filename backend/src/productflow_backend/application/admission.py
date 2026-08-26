@@ -7,7 +7,6 @@ from enum import StrEnum
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
@@ -19,6 +18,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNodeRun,
     WorkflowGraphRun,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 GENERATION_CAPACITY_LOCK_KEY = 42630001
 

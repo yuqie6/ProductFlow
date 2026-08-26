@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.domain.enums import AgentConversationScope, AgentConversationStatus, AgentSessionStatus
-from productflow_backend.infrastructure.db.models import AgentSession
 
 
 class StrictAgentSessionRequest(BaseModel):
@@ -42,7 +42,7 @@ class AgentSessionListResponse(BaseModel):
     items: list[AgentSessionResponse]
 
 
-def serialize_agent_session(agent_session: AgentSession) -> AgentSessionResponse:
+def serialize_agent_session(agent_session: Any) -> AgentSessionResponse:
     conversations = [
         AgentSessionConversationResponse(
             conversation_id=conversation.id,

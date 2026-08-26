@@ -11,16 +11,18 @@ from productflow_backend.application.agent.control import (
     submit_agent_turn,
 )
 from productflow_backend.application.agent.conversations import (
-    AGENT_TURN_DEFAULT_PAGE_SIZE,
-    AGENT_TURN_MAX_PAGE_SIZE,
     create_agent_conversation,
     get_agent_conversation_or_raise,
-    get_agent_turn_or_raise,
-    list_agent_turn_page,
 )
 from productflow_backend.application.agent.effect_reconciliation import reconcile_agent_turn_effect
 from productflow_backend.application.agent.event_stream import stream_agent_turn_events
 from productflow_backend.application.agent.execution import MAX_AGENT_EVENT_SEQUENCE
+from productflow_backend.application.agent.turn_projection import (
+    AGENT_TURN_DEFAULT_PAGE_SIZE,
+    AGENT_TURN_MAX_PAGE_SIZE,
+    get_agent_turn_or_raise,
+    list_agent_turn_page,
+)
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request as cancel_agent_workflow_run_request_use_case,
 )

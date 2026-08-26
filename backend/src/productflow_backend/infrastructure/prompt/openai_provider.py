@@ -7,8 +7,8 @@ from typing import Any
 from openai import OpenAI
 from pydantic import ValidationError
 
-from productflow_backend.application.agent.product_intake import LISTING_LOOK_CONTEXT, LISTING_LOOK_RULE
-from productflow_backend.application.workflow_drafts.contracts import ImagePromptPayloadV1
+from productflow_backend.domain.artifact_contracts import ImagePromptPayloadV1
+from productflow_backend.domain.image_type_catalog import LISTING_LOOK_CONTEXT, LISTING_LOOK_RULE
 from productflow_backend.infrastructure.prompt.base import (
     ContextGenerationRequest,
     CreativeBriefGenerationResult,

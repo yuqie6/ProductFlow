@@ -7,11 +7,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from productflow_backend.application.agent.product_intake import (
-    agent_product_image_type_option,
-    image_type_family,
-    image_type_generation_job,
-)
 from productflow_backend.application.product_workflow.graph_apply import (
     AppliedGraph,
     AppliedGraphEdge,
@@ -45,6 +40,11 @@ from productflow_backend.domain.graph_rules import (
     GraphRuleNode,
     missing_required_inputs,
     node_config_error,
+)
+from productflow_backend.domain.image_type_catalog import (
+    agent_product_image_type_option,
+    image_type_family,
+    image_type_generation_job,
 )
 
 # 运行快照合同版本，不是 workflow_graphs.schema_version。

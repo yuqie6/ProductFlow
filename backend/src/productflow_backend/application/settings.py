@@ -9,7 +9,6 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import (
     RUNTIME_CONFIG_KEYS,
@@ -47,6 +46,7 @@ from productflow_backend.infrastructure.provider_config import (
 from productflow_backend.infrastructure.provider_config import (
     update_provider_profile as persist_updated_provider_profile,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 SETTINGS_EXPORT_SCHEMA_VERSION = 3
 SETTINGS_EXPORT_COMPATIBILITY = "productflow-settings-v3"

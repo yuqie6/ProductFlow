@@ -11,13 +11,19 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.conversations import (
+from productflow_backend.application.agent.idempotency import normalize_idempotency_key
+from productflow_backend.application.agent.turn_projection import (
     expected_harness_run_id,
     project_agent_turn_state,
+)
+from productflow_backend.application.agent.turn_status import (
+    EXECUTION_RECOVERABLE_TURN_STATUSES,
+    TERMINAL_TURN_STATUSES,
 )
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import AgentCheckpointKind, AgentExecutionPhase, AgentTurnStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.infrastructure.agent_service import AgentServiceTurnState
 from productflow_backend.infrastructure.db.models import (
     AgentTurnCheckpoint,
     AgentTurnEvent,
@@ -59,14 +65,6 @@ _TERMINAL_AGENT_EVENT_KINDS = {
     "turn.unknown",
     "turn.awaiting_confirmation",
 }
-
-_ACTIVE_TURN_STATUSES = {
-    AgentTurnStatus.QUEUED,
-    AgentTurnStatus.RUNNING,
-    AgentTurnStatus.REQUIRES_INPUT,
-    AgentTurnStatus.CANCEL_REQUESTED,
-}
-
 
 @dataclass(frozen=True, slots=True)
 class AgentExecutionLease:
@@ -275,7 +273,10 @@ def claim_agent_turn_execution(
     lease_seconds: int = DEFAULT_AGENT_EXECUTION_LEASE_SECONDS,
 ) -> AgentExecutionLease:
     """多实例 claim：同一 owner 未过期则续用；过期且已离开 CLAIMED 必须先对账，不能直接重试。本函数 commit。"""
-    normalized_key = idempotency_key.strip()
+    normalized_key = normalize_idempotency_key(
+        idempotency_key,
+        field_name="Agent execution idempotency key",
+    )
     normalized_turn_id = harness_turn_id.strip()
     normalized_owner_id = owner_id.strip()
     if not normalized_key or len(normalized_key) > 200:
@@ -305,13 +306,7 @@ def claim_agent_turn_execution(
         raise NotFoundError("Agent Turn projection 不存在")
     if projection.harness_turn_id not in {None, normalized_turn_id}:
         raise ConflictError("Agent Turn projection 已绑定其他 harness Turn")
-    if projection.status in {
-        AgentTurnStatus.AWAITING_CONFIRMATION,
-        AgentTurnStatus.SUCCEEDED,
-        AgentTurnStatus.FAILED,
-        AgentTurnStatus.CANCELED,
-        AgentTurnStatus.UNKNOWN,
-    }:
+    if projection.status in TERMINAL_TURN_STATUSES:
         raise ConflictError("Agent Turn 已进入终态，不能重新 claim")
 
     execution = session.scalar(
@@ -578,7 +573,7 @@ def recover_expired_agent_turn_executions(
         # A recovered worker must not be able to publish a terminal snapshot
         # with the fencing token from the expired lease.
         execution.fencing_token += 1
-        if projection.status not in _ACTIVE_TURN_STATUSES:
+        if projection.status not in EXECUTION_RECOVERABLE_TURN_STATUSES:
             _clear_expired_lease(execution, resolved_now, terminal=True)
             continue
         latest_checkpoint = session.scalar(
@@ -666,6 +661,53 @@ def recover_expired_agent_turn_executions(
         requeued=requeued,
         requires_input=requires_input,
         unknown=unknown,
+    )
+
+
+def validate_agent_execution_fence(
+    session: Session,
+    *,
+    projection: AgentTurnProjection,
+    state: AgentServiceTurnState,
+) -> None:
+    """Validate the execution attempt/fencing token before projecting state."""
+    execution = session.scalar(
+        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+    )
+    if execution is None:
+        if state.execution_attempt is not None or state.execution_fencing_token is not None:
+            raise ConflictError("Agent Turn 返回了不存在的 execution lease")
+        return
+    if execution.phase == AgentExecutionPhase.TERMINAL and state.status not in TERMINAL_TURN_STATUSES:
+        raise ConflictError("Agent execution 已进入终态，不能回写活动状态")
+    if state.execution_attempt is None or state.execution_fencing_token is None:
+        if state.status == AgentTurnStatus.QUEUED:
+            return
+        raise ConflictError("Agent Turn 缺少 execution fencing 信息")
+    if (
+        state.execution_attempt != execution.attempt
+        or state.execution_fencing_token != execution.fencing_token
+    ):
+        raise ConflictError("Agent Turn execution fencing token 已过期")
+
+
+def is_stale_queued_execution_snapshot(
+    session: Session,
+    *,
+    projection: AgentTurnProjection,
+    state: AgentServiceTurnState,
+) -> bool:
+    """Identify a queued snapshot superseded by a durable execution claim."""
+    if state.status != AgentTurnStatus.QUEUED:
+        return False
+    if state.execution_attempt is not None or state.execution_fencing_token is not None:
+        return False
+    execution = session.scalar(
+        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+    )
+    return execution is not None and (
+        projection.status != AgentTurnStatus.QUEUED
+        or execution.phase != AgentExecutionPhase.CLAIMED
     )
 
 
@@ -931,7 +973,9 @@ __all__ = [
     "append_agent_turn_event",
     "claim_agent_turn_execution",
     "heartbeat_agent_turn_execution",
+    "is_stale_queued_execution_snapshot",
     "list_agent_turn_events",
     "recover_expired_agent_turn_executions",
     "release_agent_turn_execution",
+    "validate_agent_execution_fence",
 ]

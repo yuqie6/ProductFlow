@@ -1,3 +1,5 @@
+"""Database-free provider failure classification for image generation adapters."""
+
 from __future__ import annotations
 
 import re
@@ -276,3 +278,12 @@ def classify_image_generation_failure(
 
 def safe_image_generation_failure_reason(exc: BaseException, *, generic_message: str) -> str:
     return classify_image_generation_failure(exc, generic_message=generic_message).reason
+
+
+__all__ = [
+    "ImageGenerationFailureCategory",
+    "ImageGenerationFailureDecision",
+    "ImageGenerationFailureRetryHint",
+    "classify_image_generation_failure",
+    "safe_image_generation_failure_reason",
+]

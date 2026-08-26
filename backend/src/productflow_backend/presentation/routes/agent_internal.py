@@ -8,6 +8,15 @@ from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent.agent_context import (
+    get_agent_contract,
+    get_agent_global_workflow_context,
+    get_agent_product_context,
+    get_agent_runtime_context,
+    validate_agent_global_draft,
+    validate_agent_library_organization_draft,
+    validate_agent_workflow_draft,
+)
 from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
     append_agent_turn_event,
@@ -15,49 +24,45 @@ from productflow_backend.application.agent.execution import (
     heartbeat_agent_turn_execution,
     release_agent_turn_execution,
 )
-from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent.product_workspaces import (
-    create_agent_product_draft_workspace_from_global_conversation,
-    reconcile_agent_product_draft_workspace_from_global_conversation,
-    reconcile_agent_product_intake_from_assets,
-)
-from productflow_backend.application.agent.tools import (
+from productflow_backend.application.agent.gallery_tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
-    AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
-    APPLY_GRAPH_TOOL_NAME,
-    PROPOSE_GRAPH_TOOL_NAME,
     apply_agent_asset_move,
     apply_agent_asset_rename,
     apply_agent_folder_create,
     apply_agent_folder_rename,
-    apply_agent_graph_change_set_tool,
     finalize_agent_product_intake,
-    get_agent_contract,
-    get_agent_global_workflow_context,
-    get_agent_product_context,
-    get_agent_runtime_context,
-    inspect_agent_global_media_assets,
-    inspect_agent_global_products,
     inspect_agent_product_assets,
-    list_agent_global_media_assets,
-    list_agent_global_products,
     list_agent_product_assets,
     prepare_agent_asset_move,
     prepare_agent_asset_rename,
     prepare_agent_folder_create,
     prepare_agent_folder_rename,
-    propose_agent_graph_change_set_tool,
-    read_agent_global_media_asset_content,
     read_agent_product_asset_content,
     reconcile_agent_asset_move,
     reconcile_agent_asset_rename,
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
+)
+from productflow_backend.application.agent.graph_tools import (
+    APPLY_GRAPH_TOOL_NAME,
+    PROPOSE_GRAPH_TOOL_NAME,
+    apply_agent_graph_change_set_tool,
+    propose_agent_graph_change_set_tool,
     reconcile_agent_graph_change_set_tool,
-    validate_agent_global_draft,
-    validate_agent_library_organization_draft,
-    validate_agent_workflow_draft,
+)
+from productflow_backend.application.agent.media_library_tools import (
+    AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
+    inspect_agent_global_media_assets,
+    inspect_agent_global_products,
+    list_agent_global_media_assets,
+    list_agent_global_products,
+    read_agent_global_media_asset_content,
+)
+from productflow_backend.application.agent.product_workspaces import (
+    create_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.workflow_run_requests import (
     create_agent_global_workflow_run_request as create_agent_global_workflow_run_request_use_case,
@@ -90,6 +95,7 @@ from productflow_backend.application.legacy_archive_rebuilds import (
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.application.product_images.mutations import GalleryAssetMove
 from productflow_backend.application.product_images.queries import GalleryAssetSort, GalleryDirectoryKind
+from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (

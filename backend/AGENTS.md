@@ -15,13 +15,13 @@ Use `docs/ARCHITECTURE.md` for the current code map and `CONTEXT.md` for domain 
 
 Current ownership:
 
-- Agent workspace and Turn projection: `agent/product_workspaces.py`, `conversations.py`, `control.py`, `sync.py`, `tools.py`.
+- Agent workspace, Turn projection, and tool boundaries: `agent/product_workspaces.py`, `conversations.py`, `turn_projection.py`, `control.py`, `execution.py`, `sync.py`, `tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, and `agent_context.py`.
 - Agent Session and Task: `agent/sessions.py`, `tasks.py`.
-- Draft validation and graph persist: `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py`.
-- Current online graph and run: `product_workflow/graph_*.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. Agent workbench bootstrap (`application/agent/workbenches.py`) returns a Graph projection.
+- Draft validation and graph persist: `workflow_drafts/contracts.py` (topology), `domain/artifact_contracts.py` (live types), `service.py`, `product_workflow/graph_draft_persist.py`. Product-path Draft HTTP writes remain 409 stubs.
+- Current online graph and run: `product_workflow/graph_*.py`, `graph_run_durability.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. Graph Command preview is `preview_applied_graph_change_set`; recipes and proposals do not import `apply_workflow_change_set`. Agent workbench bootstrap (`application/agent/workbenches.py`) returns a Graph projection; GET without a Conversation is an intentional 409.
 - Product images: `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`). `MediaObject` primitives live in `media_objects.py`.
 - Global media library: `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`, `drafts.py`).
-- Provider/runtime configuration: `settings.py`, `runtime_settings.py`, `infrastructure/provider_config.py`, and provider adapters under `infrastructure/prompt/` and `infrastructure/image/`.
+- Provider/runtime configuration: `settings.py`, `infrastructure/runtime_settings.py`, `infrastructure/provider_config.py`, and provider adapters under `infrastructure/prompt/` and `infrastructure/image/`.
 - Durable submission/recovery: `queue_submission.py`, `durable_recovery.py`, `agent/sync.py`, `workers.py`, and `commands/run_async_dispatcher.py`.
 
 ## Database And Transactions

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.domain.errors import NotFoundError
-from productflow_backend.infrastructure.db.models import MediaLibraryAsset
 from productflow_backend.presentation.image_variants import build_image_urls
 
 MediaLibraryAssetId = Annotated[str, Field(min_length=1, max_length=36)]
@@ -142,7 +141,7 @@ class WorkflowMediaLibrarySyncRequest(BaseModel):
     media_library_asset_ids: list[MediaLibraryAssetId] = Field(min_length=1, max_length=100)
 
 
-def serialize_media_library_asset(asset: MediaLibraryAsset) -> MediaLibraryAssetResponse:
+def serialize_media_library_asset(asset: Any) -> MediaLibraryAssetResponse:
     media = asset.media_object
     if media is None:
         raise NotFoundError("素材库媒体对象不存在")

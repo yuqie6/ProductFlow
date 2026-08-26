@@ -29,6 +29,7 @@ from productflow_backend.application.media_library.queries import (
     list_media_library_assets,
 )
 from productflow_backend.application.media_objects import stage_verified_media_object
+from productflow_backend.application.product_images.assets import stage_product_image_identity
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
@@ -408,15 +409,15 @@ def collect_media_library_assets_to_product(
             existing_by_library_id[library_asset.id] = existing
             continue
         # 商品侧新身份指向同一 MediaObject；工作流绑定用 ProductImageAsset id。
-        product_asset = ProductImageAsset(
-            product_id=product.id,
-            media_object_id=media.id,
+        product_asset = stage_product_image_identity(
+            session,
+            product=product,
+            media_object=media,
             origin_type=_origin_type_for_library_asset(library_asset),
             display_name=library_asset.display_name,
             original_filename=library_asset.original_filename,
             source_library_asset_id=library_asset.id,
         )
-        session.add(product_asset)
         new_by_library_id[library_asset.id] = product_asset
 
     if new_by_library_id:

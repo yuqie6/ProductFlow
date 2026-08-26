@@ -9,11 +9,17 @@ from typing import Any, Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.conversations import (
+from productflow_backend.application.agent.conversations import get_agent_conversation_or_raise
+from productflow_backend.application.agent.execution import (
+    is_stale_queued_execution_snapshot,
+    validate_agent_execution_fence,
+)
+from productflow_backend.application.agent.global_draft_contracts import GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
+from productflow_backend.application.agent.global_drafts import attach_agent_global_draft_artifact
+from productflow_backend.application.agent.turn_projection import (
     bind_harness_turn,
     cancel_unbound_agent_turn,
     expected_harness_run_id,
-    get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
     is_confirmed_workflow_draft_turn,
     lock_agent_turn_or_raise,
@@ -22,8 +28,7 @@ from productflow_backend.application.agent.conversations import (
     reserve_agent_turn,
     set_agent_turn_resume_required,
 )
-from productflow_backend.application.agent.global_draft_contracts import GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
-from productflow_backend.application.agent.global_drafts import attach_agent_global_draft_artifact
+from productflow_backend.application.agent.turn_status import TERMINAL_TURN_STATUSES
 from productflow_backend.application.agent.workflow_run_requests import (
     attach_agent_workflow_run_request,
     get_agent_workflow_run_request_by_source_step,
@@ -35,7 +40,6 @@ from productflow_backend.application.media_library.drafts import (
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     AgentConversationScope,
-    AgentExecutionPhase,
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
@@ -51,7 +55,6 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
-    AgentTurnExecution,
     AgentTurnProjection,
     LibraryOrganizationDraft,
     LibraryOrganizationDraftRevision,
@@ -451,13 +454,7 @@ def _question_continuation_input(question: dict[str, Any], answer: dict[str, Any
 
 
 def _is_terminal_turn(status: AgentTurnStatus) -> bool:
-    return status in {
-        AgentTurnStatus.AWAITING_CONFIRMATION,
-        AgentTurnStatus.SUCCEEDED,
-        AgentTurnStatus.FAILED,
-        AgentTurnStatus.CANCELED,
-        AgentTurnStatus.UNKNOWN,
-    }
+    return status in TERMINAL_TURN_STATUSES
 
 
 def synchronize_agent_turn_state(
@@ -481,8 +478,8 @@ def synchronize_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_agent_state_scope(expected_harness_run_id(conversation, projection), state)
-    _validate_agent_execution_fence(session, projection=projection, state=state)
-    if _is_stale_queued_execution_snapshot(session, projection=projection, state=state):
+    validate_agent_execution_fence(session, projection=projection, state=state)
+    if is_stale_queued_execution_snapshot(session, projection=projection, state=state):
         return projection
     pending_workflow_run_request = _find_pending_workflow_run_request(
         session,
@@ -758,57 +755,6 @@ def adopt_queued_agent_turn_start(
     )
 
 
-def _validate_agent_execution_fence(
-    session: Session,
-    *,
-    projection: AgentTurnProjection,
-    state: AgentServiceTurnState,
-) -> None:
-    execution = session.scalar(
-        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
-    )
-    if execution is None:
-        if state.execution_attempt is not None or state.execution_fencing_token is not None:
-            raise ConflictError("Agent Turn 返回了不存在的 execution lease")
-        return
-    if execution.phase == AgentExecutionPhase.TERMINAL and state.status not in {
-        AgentTurnStatus.SUCCEEDED,
-        AgentTurnStatus.FAILED,
-        AgentTurnStatus.CANCELED,
-        AgentTurnStatus.UNKNOWN,
-        AgentTurnStatus.AWAITING_CONFIRMATION,
-    }:
-        raise ConflictError("Agent execution 已进入终态，不能回写活动状态")
-    if state.execution_attempt is None or state.execution_fencing_token is None:
-        if state.status == AgentTurnStatus.QUEUED:
-            return
-        raise ConflictError("Agent Turn 缺少 execution fencing 信息")
-    if (
-        state.execution_attempt != execution.attempt
-        or state.execution_fencing_token != execution.fencing_token
-    ):
-        raise ConflictError("Agent Turn execution fencing token 已过期")
-
-
-def _is_stale_queued_execution_snapshot(
-    session: Session,
-    *,
-    projection: AgentTurnProjection,
-    state: AgentServiceTurnState,
-) -> bool:
-    if state.status != AgentTurnStatus.QUEUED:
-        return False
-    if state.execution_attempt is not None or state.execution_fencing_token is not None:
-        return False
-    execution = session.scalar(
-        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
-    )
-    return execution is not None and (
-        projection.status != AgentTurnStatus.QUEUED
-        or execution.phase != AgentExecutionPhase.CLAIMED
-    )
-
-
 def _validate_agent_state_scope(expected_run_id: str, state: AgentServiceTurnState) -> None:
     if state.run_id != expected_run_id or not state.turn_id:
         raise AgentServiceUnavailableError("Agent 服务返回了作用域不匹配的 Turn")
@@ -874,6 +820,63 @@ def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:
     raise AgentServiceUnavailableError("Agent 服务暂时不可用") from exc
 
 
+def cancel_agent_task_run(session: Session, *, task_id: str):
+    """Cancel a Task, including its current Turn or workflow-run request."""
+
+    from productflow_backend.application.agent.tasks import cancel_agent_task, get_agent_task_or_raise
+    from productflow_backend.application.agent.turn_status import TASK_BLOCKING_TURN_STATUSES
+    from productflow_backend.application.agent.workflow_run_requests import cancel_agent_workflow_run_request
+    from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
+    from productflow_backend.domain.enums import AgentTaskStatus
+    from productflow_backend.infrastructure.agent_service import get_agent_service_client
+
+    task = get_agent_task_or_raise(session, task_id)
+    if task.status in {
+        AgentTaskStatus.SUCCEEDED,
+        AgentTaskStatus.FAILED,
+        AgentTaskStatus.CANCELED,
+        AgentTaskStatus.UNKNOWN,
+    }:
+        return task
+    projection = None
+    if task.current_turn_id is not None and task.conversation_id is not None:
+        projection = get_agent_turn_or_raise(
+            session,
+            product_id=task.product_id,
+            conversation_id=task.conversation_id,
+            projection_id=task.current_turn_id,
+        )
+    if (
+        projection is not None
+        and projection.workflow_run_request_id is not None
+        and task.product_id is not None
+        and task.conversation_id is not None
+    ):
+        cancel_agent_workflow_run_request(
+            session,
+            product_id=task.product_id,
+            conversation_id=task.conversation_id,
+            request_id=projection.workflow_run_request_id,
+        )
+        return get_agent_task_or_raise(session, task_id)
+    if (
+        projection is not None
+        and projection.harness_turn_id is not None
+        and projection.status in TASK_BLOCKING_TURN_STATUSES
+    ):
+        control_agent_turn(
+            session,
+            product_id=task.product_id,
+            conversation_id=task.conversation_id,
+            projection_id=projection.id,
+            command="cancel",
+            gateway=get_agent_service_client(),
+            enqueue_sync=lambda sess, pid: stage_async_dispatch_for_actor(sess, "run_agent_turn_sync", pid),
+        )
+        return get_agent_task_or_raise(session, task_id)
+    return cancel_agent_task(session, task_id=task_id)
+
+
 __all__ = [
     "AgentQuestionAnswerResult",
     "AgentTurnSubmission",
@@ -881,6 +884,7 @@ __all__ = [
     "attach_agent_library_organization_draft_artifact",
     "answer_agent_question",
     "control_agent_turn",
+    "cancel_agent_task_run",
     "refresh_agent_turn",
     "retry_unbound_agent_turn_start",
     "submit_agent_turn",

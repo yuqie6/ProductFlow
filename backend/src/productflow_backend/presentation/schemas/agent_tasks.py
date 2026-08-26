@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +11,6 @@ from productflow_backend.application.agent.tasks import (
     AGENT_TASK_TITLE_MAX_LENGTH,
 )
 from productflow_backend.domain.enums import AgentTaskStatus
-from productflow_backend.infrastructure.db.models import AgentTask
 from productflow_backend.presentation.schemas.agent_conversations import StrictAgentRequest
 
 
@@ -51,7 +51,7 @@ class AgentTaskListResponse(BaseModel):
     next_cursor: str | None = None
 
 
-def serialize_agent_task(task: AgentTask) -> AgentTaskResponse:
+def serialize_agent_task(task: Any) -> AgentTaskResponse:
     return AgentTaskResponse(
         id=task.id,
         session_id=task.session_id,

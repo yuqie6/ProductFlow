@@ -1,4 +1,8 @@
-"""工作台 bootstrap 返回 Graph 投影。有 live schema-v3 graph 后 Agent 只解释或请求运行，不覆盖现图。"""
+"""Agent 工作台 bootstrap：加载商品 Conversation 与 live Graph 投影。
+
+没有 Conversation 时返回 ConflictError，HTTP 映射为 409。前端把该冲突当成
+「尚无 Agent 工作区」，并继续使用独立 Graph 画布；工作台不是 Graph 路由的透传层。
+"""
 
 from __future__ import annotations
 

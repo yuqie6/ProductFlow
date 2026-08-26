@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from productflow_backend.application.agent.product_intake import WorkflowIntakeV1, parse_workflow_intake
+from productflow_backend.application.product_intake import WorkflowIntakeV1, parse_workflow_intake
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
@@ -16,7 +16,6 @@ from productflow_backend.application.workflow_drafts.contracts import (
     parse_workflow_draft_payload,
 )
 from productflow_backend.domain.enums import WorkflowDraftStatus
-from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowDraftRevision
 
 
 class StrictRequestModel(BaseModel):
@@ -111,7 +110,7 @@ class WorkflowDraftLegacyArchiveSeedResponse(BaseModel):
     schema_version: Literal[1]
     created_at: datetime
 
-def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> WorkflowDraftRevisionResponse:
+def serialize_workflow_draft_revision(revision: Any) -> WorkflowDraftRevisionResponse:
     return WorkflowDraftRevisionResponse(
         id=revision.id,
         draft_id=revision.draft_id,
@@ -128,7 +127,7 @@ def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> Workfl
     )
 
 
-def serialize_workflow_draft(draft: WorkflowDraft) -> WorkflowDraftResponse:
+def serialize_workflow_draft(draft: Any) -> WorkflowDraftResponse:
     from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 
     current_revision = draft.current_revision

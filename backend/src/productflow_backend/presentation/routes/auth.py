@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import get_settings
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.presentation.deps import get_session
 from productflow_backend.presentation.schemas.auth import (
     SessionCreateRequest,

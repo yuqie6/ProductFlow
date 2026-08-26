@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from productflow_backend.application.image_sessions.failures import (
+from productflow_backend.infrastructure.image.failures import (
     classify_image_generation_failure,
     safe_image_generation_failure_reason,
 )

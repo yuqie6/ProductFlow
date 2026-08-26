@@ -17,8 +17,8 @@ from productflow_backend.application.delivery_renditions.contracts import (
     normalize_delivery_spec,
 )
 from productflow_backend.application.media_objects import inspect_image_bytes
-from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.image_specs import DeliverySpec
 
 _CROP_CENTERING = {
     "center": (0.5, 0.5),

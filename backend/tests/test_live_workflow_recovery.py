@@ -24,9 +24,9 @@ from dramatiq.worker import Worker
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import URL, make_url
 
-from productflow_backend.application.agent.conversations import reserve_agent_turn
 from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 from productflow_backend.application.async_delivery import (
     claim_async_dispatch_for_consumption,
     mark_async_dispatch_consumed,
@@ -34,7 +34,6 @@ from productflow_backend.application.async_delivery import (
     stage_async_dispatch_for_actor,
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
-from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
@@ -55,6 +54,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 from productflow_backend.infrastructure.queue import enqueue_async_dispatch, enqueue_graph_run, get_broker
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 
 LIVE_RECOVERY_SWITCH = "PRODUCTFLOW_RUN_LIVE_RECOVERY"
 LIVE_REDIS_RESTART_SWITCH = "PRODUCTFLOW_RUN_LIVE_AGENT_REDIS_RESTART"

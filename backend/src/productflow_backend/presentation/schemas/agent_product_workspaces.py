@@ -4,19 +4,19 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from productflow_backend.application.agent.product_intake import (
+from productflow_backend.application.product_intake import (
     AGENT_PRODUCT_ALLOWED_IMAGE_MIME_TYPES,
     AGENT_PRODUCT_DEFAULT_IMAGE_QUANTITY,
-    AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
     AGENT_PRODUCT_SELECTION_SCHEMA_VERSION,
 )
-from productflow_backend.application.workflow_drafts.contracts import (
-    WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
-    WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
-    WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
-    WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
-    WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
+from productflow_backend.domain.artifact_contracts import (
+    PRODUCT_INTAKE_MAX_IMAGES_PER_TYPE,
+    PRODUCT_INTAKE_MAX_REFERENCE_ASSETS,
+    PRODUCT_INTAKE_MAX_TOTAL_IMAGES,
+    PRODUCT_INTAKE_MIN_IMAGE_TYPES,
+    PRODUCT_INTAKE_MIN_IMAGES_PER_TYPE,
 )
+from productflow_backend.domain.image_type_catalog import AGENT_PRODUCT_IMAGE_TYPE_CATALOG
 from productflow_backend.presentation.schemas.agent_conversations import AgentConversationResponse
 from productflow_backend.presentation.schemas.products import (
     CanonicalProductDetailResponse,
@@ -33,13 +33,13 @@ class AgentProductImageTypeOptionResponse(BaseModel):
 
 
 class AgentProductWorkspaceLimitsResponse(BaseModel):
-    min_image_types: int = WORKFLOW_DRAFT_MIN_IMAGE_TYPES
+    min_image_types: int = PRODUCT_INTAKE_MIN_IMAGE_TYPES
     default_images_per_type: int = AGENT_PRODUCT_DEFAULT_IMAGE_QUANTITY
-    min_images_per_type: int = WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE
-    max_images_per_type: int = WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE
-    max_total_images: int = WORKFLOW_DRAFT_MAX_TOTAL_IMAGES
+    min_images_per_type: int = PRODUCT_INTAKE_MIN_IMAGES_PER_TYPE
+    max_images_per_type: int = PRODUCT_INTAKE_MAX_IMAGES_PER_TYPE
+    max_total_images: int = PRODUCT_INTAKE_MAX_TOTAL_IMAGES
     min_reference_images: int = 1
-    max_reference_images: int = WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS
+    max_reference_images: int = PRODUCT_INTAKE_MAX_REFERENCE_ASSETS
     allowed_image_mime_types: list[str] = list(AGENT_PRODUCT_ALLOWED_IMAGE_MIME_TYPES)
 
 

@@ -9,9 +9,9 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent.agent_context import get_agent_global_workflow_target
 from productflow_backend.application.agent.conversations import (
     get_agent_conversation_or_raise,
-    lock_agent_turn_or_raise,
     mark_agent_conversation_completed_for_draft,
 )
 from productflow_backend.application.agent.global_draft_contracts import (
@@ -19,7 +19,7 @@ from productflow_backend.application.agent.global_draft_contracts import (
     GlobalAgentDraftPayloadV1,
 )
 from productflow_backend.application.agent.tasks import update_agent_task_from_turn
-from productflow_backend.application.agent.tools import get_agent_global_workflow_target
+from productflow_backend.application.agent.turn_projection import lock_agent_turn_or_raise
 from productflow_backend.application.media_library.drafts import (
     validate_library_organization_draft,
 )

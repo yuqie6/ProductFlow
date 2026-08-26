@@ -9,11 +9,13 @@ from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.product_workflow.graph_apply import AppliedGraph, apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_commands import (
+    AppliedGraph,
     apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
+    preview_applied_graph_change_set,
+    stage_apply_graph_change_set,
 )
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
 from productflow_backend.application.time import now_utc
@@ -87,12 +89,12 @@ def apply_agent_graph_change_set(
         actor_type=GraphActorType.AGENT,
         operations=change_set.operations,
     )
-    result = apply_graph_change_set(
+    command = apply_graph_change_set if commit else stage_apply_graph_change_set
+    result = command(
         session,
         product_id=graph.product_id,
         graph_id=graph.id,
         change_set=parsed,
-        commit=commit,
     )
     return result.graph
 
@@ -129,7 +131,7 @@ def propose_graph_change_set(
         raise ConflictError("已有未应用的图提案，请先确认或取消")
     before = load_applied_graph(session, graph)
     try:
-        apply_workflow_change_set(before, parsed)
+        preview_applied_graph_change_set(before, parsed)
     except BusinessValidationError as exc:
         raise ConflictError(f"图提案无法应用到当前工作流: {exc}") from exc
     proposal = WorkflowGraphProposal(
@@ -158,7 +160,7 @@ def confirm_graph_proposal(
     graph_id: str,
     proposal_id: str,
 ) -> WorkflowGraph:
-    """确认提案时 Graph Command commit=False，本函数一次性 commit 提案状态和 live 图。"""
+    """确认提案时 Graph Command 只 stage，本函数一次性 commit 提案状态和 live 图。"""
 
     graph = session.scalar(
         select(WorkflowGraph)
@@ -185,12 +187,11 @@ def confirm_graph_proposal(
         actor_type=GraphActorType.AGENT,
         operations=parsed.operations,
     )
-    result = apply_graph_change_set(
+    result = stage_apply_graph_change_set(
         session,
         product_id=product_id,
         graph_id=graph.id,
         change_set=parsed,
-        commit=False,
     )
     proposal.status = GraphProposalStatus.CONFIRMED
     proposal.resolved_at = now_utc()
@@ -271,7 +272,7 @@ def pending_proposal_view(session: Session, graph: WorkflowGraph, applied: Appli
     if not stale:
         try:
             change_set = TypeAdapter(WorkflowChangeSet).validate_python(proposal.change_set_json)
-            after = apply_workflow_change_set(applied, change_set)
+            after = preview_applied_graph_change_set(applied, change_set)
         except (ValidationError, BusinessValidationError, ConflictError):
             stale = True
         else:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import get_agent_conversation_by_id_or_raise
+from productflow_backend.application.agent.idempotency import (
+    canonical_json_request_hash,
+    normalize_idempotency_key,
+)
 from productflow_backend.application.agent.tasks import get_agent_task_or_raise
 from productflow_backend.application.product_workflow.graph_commands import (
     get_active_workflow_graph,
@@ -46,7 +48,6 @@ from productflow_backend.infrastructure.db.models import (
     new_id,
 )
 
-AGENT_WORKFLOW_RUN_REQUEST_MAX_KEY_BYTES = 200
 AGENT_WORKFLOW_RUN_REQUEST_MAX_STEP_ID_LENGTH = 120
 
 
@@ -240,7 +241,10 @@ def _create_agent_workflow_run_request(
     prepare: Callable[[], AgentWorkflowRunRequestPreparation],
 ) -> AgentWorkflowRunRequest:
     """apply：写入待确认请求。同一 key 必须绑定同一 request hash。本函数 commit。"""
-    normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_key = normalize_idempotency_key(
+        idempotency_key,
+        field_name="工作流执行请求 idempotency key",
+    )
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
     normalized_source_run_id = (
@@ -385,7 +389,10 @@ def _reconcile_agent_workflow_run_request(
     load_conversation: Callable[[], AgentConversation],
 ) -> AgentWorkflowRunRequestReconcileResult:
     """reconcile：不重放 create。hash 冲突为 conflict，缺失为 not_applied。"""
-    normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_key = normalize_idempotency_key(
+        idempotency_key,
+        field_name="工作流执行请求 idempotency key",
+    )
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
     normalized_source_run_id = (
@@ -950,15 +957,6 @@ def _load_request_for_update(
     return request
 
 
-def _normalize_idempotency_key(value: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise BusinessValidationError("工作流执行请求 idempotency key 不能为空")
-    if len(normalized.encode("utf-8")) > AGENT_WORKFLOW_RUN_REQUEST_MAX_KEY_BYTES:
-        raise BusinessValidationError("工作流执行请求 idempotency key 过长")
-    return normalized
-
-
 def _normalize_source_step_id(value: str) -> str:
     normalized = value.strip()
     if not normalized or len(normalized) > AGENT_WORKFLOW_RUN_REQUEST_MAX_STEP_ID_LENGTH:
@@ -995,8 +993,7 @@ def _request_hash(
         payload["product_id"] = product_id
     if source_run_id is not None:
         payload["source_run_id"] = source_run_id
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_json_request_hash(payload)
 
 
 __all__ = [

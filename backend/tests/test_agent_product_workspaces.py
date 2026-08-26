@@ -9,13 +9,11 @@ from helpers import _login, _make_demo_image_bytes
 from pydantic import ValidationError
 from sqlalchemy import event, func, select
 
-from productflow_backend.application.agent.conversations import reserve_agent_turn
-from productflow_backend.application.agent.product_intake import (
-    AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
-    AgentProductSelectionV1,
-    WorkflowIntakeV1,
-    parse_agent_product_selection,
+from productflow_backend.application.agent.agent_context import (
+    get_agent_contract,
+    get_agent_product_context,
 )
+from productflow_backend.application.agent.gallery_tools import finalize_agent_product_intake
 from productflow_backend.application.agent.product_workspaces import (
     attach_agent_workspace_to_product,
     create_agent_product_draft_workspace,
@@ -28,12 +26,13 @@ from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.sessions import create_agent_session, list_agent_sessions
-from productflow_backend.application.agent.tools import (
-    finalize_agent_product_intake,
-    get_agent_contract,
-    get_agent_product_context,
-)
+from productflow_backend.application.agent.turn_projection import reserve_agent_turn
 from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
+from productflow_backend.application.product_intake import (
+    AgentProductSelectionV1,
+    WorkflowIntakeV1,
+    parse_agent_product_selection,
+)
 from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
     get_active_workflow_graph,
@@ -49,6 +48,7 @@ from productflow_backend.domain.enums import (
     GraphNodeType,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
+from productflow_backend.domain.image_type_catalog import AGENT_PRODUCT_IMAGE_TYPE_CATALOG
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentSession,

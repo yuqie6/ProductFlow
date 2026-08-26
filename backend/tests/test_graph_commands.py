@@ -10,6 +10,7 @@ from productflow_backend.application.product_workflow.graph_commands import (
     get_active_workflow_graph,
     load_applied_graph,
     redo_last_graph_change_set,
+    stage_apply_graph_change_set,
     stage_new_workflow_graph,
     undo_last_graph_change_set,
 )
@@ -334,3 +335,38 @@ def test_multiple_product_sources_resolve_their_own_products_and_fact_versions(d
                 ],
             ),
         )
+
+
+def test_stage_apply_graph_change_set_failure_keeps_outer_uncommitted_work(db_session) -> None:
+    creation = _create_product_with_assets(db_session, name="savepoint商品")
+    change_set = build_direct_create_template(
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+        reference_asset_ids=[creation.created_assets[0].id],
+    )
+    created = stage_new_workflow_graph(db_session, product_id=creation.product.id, change_set=change_set)
+    db_session.commit()
+    brief = next(node for node in created.applied.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    creation.product.name = "外层事务应保留"
+    db_session.flush()
+
+    with pytest.raises(ConflictError, match="revision"):
+        stage_apply_graph_change_set(
+            db_session,
+            product_id=creation.product.id,
+            graph_id=created.graph.id,
+            change_set=WorkflowChangeSet(
+                base_graph_revision=0,
+                summary="过期改名",
+                operations=[RenameNodeOp(node_ref=brief.id, title="不会写入")],
+            ),
+        )
+
+    assert creation.product.name == "外层事务应保留"
+    db_session.commit()
+    graph = get_active_workflow_graph(db_session, product_id=creation.product.id)
+    assert graph is not None
+    applied = load_applied_graph(db_session, graph)
+    assert applied.node(brief.id).title != "不会写入"
+    reloaded = db_session.get(type(creation.product), creation.product.id)
+    assert reloaded is not None
+    assert reloaded.name == "外层事务应保留"
