@@ -95,7 +95,7 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
                 "aspect_ratio": "3:4",
                 "applicable_image_type": "hero",
                 "reviewed_at": "2026-08-24",
-                "source": "docs/specs/productflow-studio-requirements.md §18",
+                "source": "docs/ARCHITECTURE.md §7",
                 "disclaimer": DELIVERY_PRESET_DISCLAIMER,
                 "delivery_spec": {
                     "width": 1200,
@@ -113,7 +113,7 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
                 "aspect_ratio": "1:1",
                 "applicable_image_type": "hero",
                 "reviewed_at": "2026-08-24",
-                "source": "docs/specs/productflow-studio-requirements.md §18",
+                "source": "docs/ARCHITECTURE.md §7",
                 "disclaimer": DELIVERY_PRESET_DISCLAIMER,
                 "delivery_spec": {
                     "width": 1200,
@@ -131,7 +131,7 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
                 "aspect_ratio": "1:1",
                 "applicable_image_type": "hero",
                 "reviewed_at": "2026-08-24",
-                "source": "docs/specs/productflow-studio-requirements.md §18",
+                "source": "docs/ARCHITECTURE.md §7",
                 "disclaimer": DELIVERY_PRESET_DISCLAIMER,
                 "delivery_spec": {
                     "width": 1200,
@@ -149,7 +149,7 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
                 "aspect_ratio": "3:4",
                 "applicable_image_type": "detail",
                 "reviewed_at": "2026-08-24",
-                "source": "docs/specs/productflow-studio-requirements.md §18",
+                "source": "docs/ARCHITECTURE.md §7",
                 "disclaimer": DELIVERY_PRESET_DISCLAIMER,
                 "delivery_spec": {
                     "width": 1200,
@@ -167,7 +167,7 @@ def test_delivery_preset_list_api_returns_exact_catalog_and_custom_support() -> 
                 "aspect_ratio": "4:3",
                 "applicable_image_type": "scene",
                 "reviewed_at": "2026-08-24",
-                "source": "docs/specs/productflow-studio-requirements.md §18",
+                "source": "docs/ARCHITECTURE.md §7",
                 "disclaimer": DELIVERY_PRESET_DISCLAIMER,
                 "delivery_spec": {
                     "width": 1600,

@@ -9,7 +9,7 @@ Use `docs/ARCHITECTURE.md` for the current code map and inspect the route, API m
 - Page and feature components live in `web/src/pages/`; reusable visual controls live in `web/src/components/`.
 - All HTTP calls use `web/src/lib/api.ts`; shared wire types use `web/src/lib/types.ts`.
 - TanStack Query owns server state. React state owns local form, selection, and canvas interaction state.
-- Do not restore a parallel product workbench, V1 editor, browser-generated default workflow, or fallback request to retired routes.
+- Do not restore a parallel product workbench, V1 editor, browser-generated default workflow, or fallback request to retired routes. Do not add compatibility redirects or dual DTOs for retired pages.
 
 Current feature owners:
 
@@ -20,7 +20,6 @@ Current feature owners:
 - Shared workbench controls and canonical image explorer: `pages/workbench/chrome/`.
 - Global media library: `MediaLibraryPage.tsx` and `workbench/canvas/WorkflowMediaLibraryPanel.tsx`.
 - Global Agent Dock: `components/GlobalAgentDock.tsx`.
-- Read-only legacy history: `LegacyHistoryPage.tsx` and `pages/legacy-history/`.
 
 ## API And Types
 

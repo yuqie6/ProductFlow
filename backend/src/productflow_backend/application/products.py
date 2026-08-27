@@ -29,8 +29,6 @@ from productflow_backend.infrastructure.db.models import (
     VisualSystem,
     VisualSystemVersion,
     VisualSystemVersionReference,
-    WorkflowDraft,
-    WorkflowDraftRevision,
     WorkflowGraph,
     WorkflowGraphArtifact,
     WorkflowGraphNode,
@@ -387,17 +385,35 @@ def _prepare_visual_system_cleanup_for_product(
     *,
     product_id: str,
 ) -> list[tuple[str, str]]:
-    source_versions = list(
-        session.scalars(
-            select(VisualSystemVersion)
-            .join(
-                WorkflowDraftRevision,
-                WorkflowDraftRevision.id == VisualSystemVersion.source_draft_revision_id,
-            )
-            .join(WorkflowDraft, WorkflowDraft.id == WorkflowDraftRevision.draft_id)
-            .options(selectinload(VisualSystemVersion.references))
-            .where(WorkflowDraft.product_id == product_id)
+    graph_version_ids = {
+        version_id
+        for version_id in session.scalars(
+            select(WorkflowGraphNode.config_json["visual_system_version_id"].as_string())
+            .join(WorkflowGraph, WorkflowGraph.id == WorkflowGraphNode.graph_id)
+            .where(WorkflowGraph.product_id == product_id)
         )
+        if version_id
+    }
+    artifact_version_ids = {
+        version_id
+        for version_id in session.scalars(
+            select(WorkflowGraphArtifact.payload_json["visual_system_version_id"].as_string())
+            .join(WorkflowGraph, WorkflowGraph.id == WorkflowGraphArtifact.graph_id)
+            .where(WorkflowGraph.product_id == product_id)
+        )
+        if version_id
+    }
+    owned_ids = graph_version_ids | artifact_version_ids
+    source_versions = (
+        list(
+            session.scalars(
+                select(VisualSystemVersion)
+                .options(selectinload(VisualSystemVersion.references))
+                .where(VisualSystemVersion.id.in_(owned_ids))
+            )
+        )
+        if owned_ids
+        else []
     )
     source_version_ids = {version.id for version in source_versions}
     referenced_version_ids = set(
@@ -420,15 +436,6 @@ def _prepare_visual_system_cleanup_for_product(
                     .where(
                         WorkflowGraphNode.config_json["visual_system_version_id"].as_string() == version.id,
                         WorkflowGraph.product_id != product_id,
-                    )
-                    .limit(1)
-                ),
-                session.scalar(
-                    select(WorkflowDraftRevision.id)
-                    .join(WorkflowDraft, WorkflowDraft.id == WorkflowDraftRevision.draft_id)
-                    .where(
-                        WorkflowDraftRevision.visual_system_version_id == version.id,
-                        WorkflowDraft.product_id != product_id,
                     )
                     .limit(1)
                 ),

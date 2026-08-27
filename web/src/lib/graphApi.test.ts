@@ -29,7 +29,6 @@ describe("v3 graph API helpers", () => {
     await api.submitGraphRun("product/1", "graph/1", { scope: "graph" });
     await api.undoWorkflowChangeSet("product/1", "graph/1");
     await api.redoWorkflowChangeSet("product/1", "graph/1");
-    await api.persistConfirmedDraftGraph("product/1", "draft/1", 3);
 
     expect(calls).toEqual([
       "GET /api/v3/node-catalog",
@@ -39,7 +38,6 @@ describe("v3 graph API helpers", () => {
       "POST /api/v3/products/product%2F1/workflows/graph%2F1/runs",
       "POST /api/v3/products/product%2F1/workflows/graph%2F1/undo",
       "POST /api/v3/products/product%2F1/workflows/graph%2F1/redo",
-      "POST /api/v3/products/product%2F1/workflow-drafts/draft%2F1/graphs",
     ]);
   });
 

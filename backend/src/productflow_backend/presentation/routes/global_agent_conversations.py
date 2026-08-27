@@ -4,10 +4,6 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.global_drafts import (
-    confirm_global_workflow_draft_review,
-    get_global_workflow_draft_review,
-)
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
@@ -36,8 +32,6 @@ from productflow_backend.presentation.routes.agent_turn_http import (
     enqueue_agent_turn_sync as _enqueue_agent_turn_sync,
 )
 from productflow_backend.presentation.schemas.agent_conversations import (
-    AgentGlobalWorkflowDraftReviewConfirmRequest,
-    AgentGlobalWorkflowDraftReviewResponse,
     AgentQuestionAnswerRequest,
     AgentQuestionAnswerResponse,
     AgentTurnEffectReconciliationRequest,
@@ -54,7 +48,6 @@ from productflow_backend.presentation.schemas.library_organization_drafts import
     LibraryOrganizationDraftResponse,
     serialize_library_organization_draft,
 )
-from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_draft
 
 router = APIRouter(
     prefix="/api/v2/agent-conversations",
@@ -101,44 +94,6 @@ def confirm_global_library_organization_draft_endpoint(
             draft_id=draft.id,
             expected_draft_version=payload.expected_draft_version,
             idempotency_key=payload.idempotency_key,
-        )
-    )
-
-
-@router.get(
-    "/{conversation_id}/workflow-draft-reviews/{revision_id}",
-    response_model=AgentGlobalWorkflowDraftReviewResponse,
-)
-def get_global_workflow_draft_review_endpoint(
-    conversation_id: str,
-    revision_id: str,
-    session: Session = Depends(get_session),
-) -> AgentGlobalWorkflowDraftReviewResponse:
-    return _serialize_global_workflow_draft_review(
-        get_global_workflow_draft_review(
-            session,
-            conversation_id=conversation_id,
-            revision_id=revision_id,
-        )
-    )
-
-
-@router.post(
-    "/{conversation_id}/workflow-draft-reviews/{revision_id}/confirm",
-    response_model=AgentGlobalWorkflowDraftReviewResponse,
-)
-def confirm_global_workflow_draft_review_endpoint(
-    conversation_id: str,
-    revision_id: str,
-    payload: AgentGlobalWorkflowDraftReviewConfirmRequest,
-    session: Session = Depends(get_session),
-) -> AgentGlobalWorkflowDraftReviewResponse:
-    return _serialize_global_workflow_draft_review(
-        confirm_global_workflow_draft_review(
-            session,
-            conversation_id=conversation_id,
-            revision_id=revision_id,
-            expected_draft_version=payload.expected_draft_version,
         )
     )
 
@@ -341,17 +296,6 @@ async def stream_global_agent_turn_events_endpoint(
         after=after,
         last_event_id=last_event_id,
         parse_event_cursor=_parse_event_cursor,
-    )
-
-
-def _serialize_global_workflow_draft_review(review) -> AgentGlobalWorkflowDraftReviewResponse:
-    return AgentGlobalWorkflowDraftReviewResponse(
-        conversation_id=review.conversation_id,
-        product_id=review.product_id,
-        product_name=review.product_name,
-        product_conversation_id=review.product_conversation_id,
-        workflow_draft_id=review.workflow_draft_id,
-        draft=serialize_workflow_draft(review.draft),
     )
 
 

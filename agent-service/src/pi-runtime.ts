@@ -422,7 +422,7 @@ class RunRuntime implements ToolRuntime {
 
   /**
    * 模型运行前先 claim ProductFlow 执行租约。无法证明的工具副作用记 unknown。
-   * 商品路径不再要求 WorkflowDraft；待确认只来自跑图请求或全局素材整理。
+   * 待确认只来自跑图请求或全局素材整理。
    */
   async execute(turnID: string): Promise<void> {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
@@ -1284,12 +1284,10 @@ function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup)
     task_id: taskID,
     task_goal: contract.task_goal,
     product_id: contract.product_id?.trim() || null,
-    workflow_draft_id: contract.workflow_draft_id?.trim() || null,
-    run_id: contract.harness_run_id.trim(),
+run_id: contract.harness_run_id.trim(),
     system_prompt: contract.system_prompt,
     draft_schema: contract.draft_schema,
-    workflow_draft_schema: contract.workflow_draft_schema,
-    current_draft_version: contract.current_draft_version,
+current_draft_version: contract.current_draft_version,
     has_live_graph: Boolean(contract.has_live_graph),
   };
   try {
@@ -1317,8 +1315,7 @@ function buildDynamicContext(
     contract: {
       scope_type: scope.scope_type,
       product_id: scope.product_id,
-      workflow_draft_id: scope.workflow_draft_id,
-      current_draft_version: scope.current_draft_version,
+current_draft_version: scope.current_draft_version,
       skill_catalog_hash: skillCatalogHash,
     },
     runtime_context: runtimeContext,
@@ -1412,14 +1409,13 @@ function thinkingLevel(value: string | null | undefined): "off" | "minimal" | "l
 function toolStepKind(name: string): ToolStepKind {
   if (name === PRODUCTFLOW_SKILL_TOOL_NAME) return "load_skill";
   if (name === "ask_user") return "ask_question";
-  if (name === "propose_workflow_draft" || name === "propose_global_draft") return "propose_draft";
+  if (name === "propose_global_draft") return "propose_draft";
   if (name === "apply_graph_change_set_v1") return "apply_graph";
   if (name === "propose_graph_change_set_v1" || name.includes("graph_proposal")) return "propose_graph";
   if (name === "request_workflow_run_v1") return "request_workflow_run";
   if (name === "create_product_workspace_v1") return "create_product";
   if (name === "finalize_product_intake_v1") return "inspect_context";
-  if (name.includes("legacy")) return "read_history";
-  if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
+if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
   if (name.includes("rename") || name.includes("folder") || name.includes("move")) return "organize_assets";
   return "inspect_context";
 }
@@ -1469,8 +1465,7 @@ function buildContextStepDetails(
     contract_fields: [
       "scope_type",
       "product_id",
-      "workflow_draft_id",
-      "current_draft_version",
+"current_draft_version",
       "skill_catalog_hash",
     ],
     ...(pageContext ? { page_route: pageContext.route, page_type: pageContext.page_type } : {}),

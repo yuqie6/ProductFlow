@@ -17,11 +17,6 @@ from productflow_backend.application.agent.workflow_runs import (
     AGENT_GLOBAL_WORKFLOW_INSPECT_MAX,
     AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX,
 )
-from productflow_backend.application.legacy_archive_rebuilds import (
-    AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS,
-    AgentLegacyArchiveSection,
-)
-from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.domain.enums import (
     AgentCheckpointKind,
     AgentConversationScope,
@@ -35,7 +30,6 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceToolStepDetails
 from productflow_backend.presentation.schemas.graphs import GraphRunResponse
-from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse
 
 
 class StrictAgentRequest(BaseModel):
@@ -55,11 +49,9 @@ class AgentContractResponse(BaseModel):
     task_id: str | None = None
     task_goal: str | None = None
     product_id: str | None
-    workflow_draft_id: str | None
     harness_run_id: str
     current_draft_version: int
     system_prompt: str
-    workflow_draft_schema: dict[str, Any]
     tool_contract_version: int
     draft_kind: Literal["workflow", "library_organization", "global"] | None = None
     draft_schema: dict[str, Any] = Field(default_factory=dict)
@@ -182,25 +174,28 @@ class AgentGraphChangeSetRequest(StrictAgentRequest):
     change_set: dict[str, Any]
 
 
+class AgentDiscardGraphProposalRequest(StrictAgentRequest):
+    proposal_id: str | None = Field(default=None, max_length=64)
+
+
+class AgentCanvasFocusRequest(StrictAgentRequest):
+    node_ids: list[str] = Field(default_factory=list)
+    edge_ids: list[str] = Field(default_factory=list)
+    group_ids: list[str] = Field(default_factory=list)
+
+
+class AgentCanvasFocusResponse(BaseModel):
+    request_id: str
+    node_ids: list[str]
+    edge_ids: list[str] = Field(default_factory=list)
+    group_ids: list[str] = Field(default_factory=list)
+
+
 AgentGraphChangeSetReconcileResponse = AgentReconcileResponse[dict[str, Any]]
 
 
 class AgentWorkflowDraftValidationResponse(BaseModel):
     accepted: Literal[True] = True
-
-
-class AgentGlobalWorkflowDraftReviewConfirmRequest(StrictAgentRequest):
-    expected_draft_version: int = Field(ge=1)
-
-
-class AgentGlobalWorkflowDraftReviewResponse(BaseModel):
-    schema_version: Literal[1] = 1
-    conversation_id: str
-    product_id: str
-    product_name: str
-    product_conversation_id: str
-    workflow_draft_id: str
-    draft: WorkflowDraftResponse
 
 
 class AgentAssetMetadataResponse(BaseModel):
@@ -263,7 +258,6 @@ class AgentFinalizeProductIntakeResponse(BaseModel):
     accepted: bool
     intake_finalized: bool
     product_id: str
-    workflow_draft_id: str | None = None
     reference_asset_ids: list[str]
     intake: dict[str, Any] | None = None
 
@@ -279,7 +273,6 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     product_conversation_id: str
     product_id: str
     product_name: str
-    workflow_draft_id: str | None = None
     task_id: str | None
     intake_finalized: bool
     navigation_path: str
@@ -330,32 +323,6 @@ class InspectAgentAssetsRequest(StrictAgentRequest):
 
 class InspectAgentAssetsResponse(BaseModel):
     items: list[AgentAssetMetadataResponse]
-
-
-class InspectAgentLegacyArchiveRequest(StrictAgentRequest):
-    kind: LegacyArchiveKind
-    archive_id: str = Field(min_length=1, max_length=64)
-    section: AgentLegacyArchiveSection
-    offset: int = Field(ge=0)
-    limit: int = Field(ge=1, le=AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS)
-
-
-class AgentLegacyArchiveListResponse(BaseModel):
-    schema_version: Literal[1]
-    items: list[dict[str, Any]]
-    next_cursor: str | None = None
-
-
-class AgentLegacyArchiveInspectResponse(BaseModel):
-    schema_version: Literal[1]
-    archive_kind: LegacyArchiveKind
-    archive_id: str
-    section: AgentLegacyArchiveSection
-    offset: int
-    limit: int
-    total: int
-    items: list[Any]
-    has_more: bool
 
 
 class PrepareAgentAssetRenameRequest(StrictAgentRequest):
@@ -447,10 +414,6 @@ class AgentAssetMoveResultResponse(BaseModel):
 AgentAssetMoveReconcileResponse = AgentReconcileResponse[AgentAssetMoveResultResponse]
 
 
-class CreateAgentConversationRequest(StrictAgentRequest):
-    workflow_draft_id: str = Field(min_length=1, max_length=64)
-
-
 class StartAgentTurnRequest(StrictAgentRequest):
     input_text: str = Field(min_length=1, max_length=AGENT_MAX_INPUT_TEXT_CHARS)
     asset_ids: list[str] = Field(default_factory=list, max_length=AGENT_MAX_INPUT_ASSETS)
@@ -485,7 +448,6 @@ class AgentConversationResponse(BaseModel):
     scope_type: AgentConversationScope
     session_id: str | None
     product_id: str | None
-    workflow_draft_id: str | None
     harness_run_id: str
     status: AgentConversationStatus
     created_at: datetime
@@ -524,11 +486,11 @@ class AgentTurnResponse(BaseModel):
     tool_steps: list[AgentToolStepResponse]
     artifact_name: str | None
     artifact_step_id: str | None
-    workflow_draft_revision_id: str | None
     library_organization_draft_revision_id: str | None
     workflow_run_request_id: str | None
     page_context_snapshot_id: str | None
     sync_error: str | None
+    canvas_focus: AgentCanvasFocusResponse | None = None
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -640,7 +602,6 @@ def serialize_agent_conversation(conversation: Any) -> AgentConversationResponse
         scope_type=conversation.scope_type,
         session_id=conversation.session_id,
         product_id=conversation.product_id,
-        workflow_draft_id=conversation.workflow_draft_id,
         harness_run_id=conversation.harness_run_id,
         status=conversation.status,
         created_at=conversation.created_at,
@@ -668,7 +629,11 @@ def _serialize_agent_tool_steps(stored_value: Any) -> list[AgentToolStepResponse
     return serialized
 
 
-def serialize_agent_turn(projection: Any) -> AgentTurnResponse:
+def serialize_agent_turn(
+    projection: Any,
+    *,
+    canvas_focus: dict[str, Any] | None = None,
+) -> AgentTurnResponse:
     return AgentTurnResponse(
         id=projection.id,
         conversation_id=projection.conversation_id,
@@ -692,11 +657,11 @@ def serialize_agent_turn(projection: Any) -> AgentTurnResponse:
         tool_steps=_serialize_agent_tool_steps(projection.tool_steps_json),
         artifact_name=projection.artifact_name,
         artifact_step_id=projection.artifact_step_id,
-        workflow_draft_revision_id=projection.workflow_draft_revision_id,
         library_organization_draft_revision_id=projection.library_organization_draft_revision_id,
         workflow_run_request_id=projection.workflow_run_request_id,
         page_context_snapshot_id=projection.page_context_snapshot_id,
         sync_error=projection.sync_error,
+        canvas_focus=AgentCanvasFocusResponse.model_validate(canvas_focus) if canvas_focus else None,
         finished_at=projection.finished_at,
         created_at=projection.created_at,
         updated_at=projection.updated_at,

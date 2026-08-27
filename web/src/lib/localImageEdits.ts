@@ -28,7 +28,6 @@ const ORIGINS = new Set<ProductImageAsset["origin_type"]>([
   "upload",
   "workflow_generation",
   "image_session_attach",
-  "legacy_import",
   "local_edit",
 ]);
 const VERIFICATION_STATUSES = new Set<ProductImageAsset["verification_status"]>([

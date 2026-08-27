@@ -14,7 +14,7 @@ ProductFlow is a single-administrator, single-merchant workspace with seven runt
 
 The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md` and durable rationale in `adr/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service.
 
 ## 2. Backend Layers
 
@@ -37,7 +37,7 @@ Current code ownership:
 | Agent tools and context | `agent/tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, `agent_context.py` | `routes/agent_internal.py` | `test_workflow_agent_service.py`, `test_graph_proposals.py`, `test_media_library_drafts.py` |
 | Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft and graph persist | `workflow_drafts/contracts.py` (historical GET), `domain/artifact_contracts.py` (live types), `service.py` (GET plus 409 write stubs) | `routes/workflow_drafts.py` (retired writes, 409) | `test_workflow_draft_contracts.py`, `test_workflow_draft_api.py` |
+| Graph artifact contracts | `domain/artifact_contracts.py` | `routes/workflow_graphs.py` | `test_workflow_draft_api.py` (retired URLs 404) |
 | schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py`, `graph_run_durability.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
 | Recipes | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
@@ -45,7 +45,6 @@ Current code ownership:
 | Iterative image generation | `image_sessions/` (`service.py`, `generation.py`), `infrastructure/image/chat_types.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | Settings and providers | `settings.py`, `infrastructure/runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | Async dispatch | `async_delivery.py`, `durable_recovery.py` | `commands/run_async_dispatcher.py`, Compose `productflow-async-dispatcher` | `test_async_delivery.py`, `test_async_dispatcher_command.py` |
-| V1 archive cutover | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | archive/cutover/migration tests |
 | Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
 
 ## 3. Frontend Structure
@@ -59,8 +58,6 @@ Current code ownership:
 - `/products/:productId`
 - `/image-chat`
 - `/media-library`
-- `/gallery`
-- `/history` and `/history/:archiveKind/:archiveId`
 - `/settings`
 - `/help`
 
@@ -68,7 +65,7 @@ Page code lives in `web/src/pages/`. Shared visual components live in `web/src/c
 
 The product workbench lives in `pages/workbench/` and is split by duty:
 
-- `workbench/agent/`: page orchestration, conversation, SSE events, questions, Draft confirmation, and graph persist.
+- `workbench/agent/`: page orchestration, conversation, SSE events, questions, graph-proposal confirmation, .
 - `workbench/canvas/`: current Graph canvas, inspector, runs, recipes, and delivery renditions.
 - `workbench/chrome/`: canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
 
@@ -81,13 +78,12 @@ Current frontend ownership:
 | Capability | Owner | Primary tests |
 |---|---|---|
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent conversation, SSE, Draft confirmation | `pages/workbench/agent/` | reducer, event, conversation, confirmation, reveal tests |
+| Agent conversation, SSE, graph proposal | `pages/workbench/agent/` | reducer, event, conversation and proposal tests |
 | Graph canvas and inspector | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs, and rendition tests |
 | Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
 | Shared workbench and image library | `pages/workbench/chrome/` | shortcuts, interaction, image-explorer tests |
 | HTTP and wire DTOs | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
-| Read-only history | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
 
 ## 4. Agent Creation Flow
 
@@ -101,7 +97,7 @@ product name (+ optional types and 1..6 uploads)
   -> product workbench
 ```
 
-ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `expected_harness_run_id` in `application/agent/turn_projection.py`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
+ProductFlow owns products, graph-proposal confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, `LibraryOrganizationDraft` revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `expected_harness_run_id` in `application/agent/turn_projection.py`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
 
 Product creation writes Product, a live schema-v3 graph, the product Conversation, and a product-owned AgentSession in one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`; a complete form uses the same template as direct create. Direct create writes no Session. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
@@ -109,17 +105,21 @@ Product creation writes Product, a live schema-v3 graph, the product Conversatio
 
 Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `application/agent/`, `agent-service/src/pi-runtime.ts`, and `test_workflow_agent_service.py`, `test_agent_product_workspaces.py`, and `test_media_library_drafts.py`.
 
-Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` (GET plus 409 writes); global media Drafts `media_library/drafts.py`.
+Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; global media Drafts `media_library/drafts.py`. Product `WorkflowDraft` HTTP is gone; those URLs return 404.
 
 ## 5. Product intake and retired WorkflowDraft topology
 
-Image types, quantities, and reference asset ids live on Product intake. Create no longer inserts `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist return conflict. The table may remain empty; historical Turn `workflow_draft_revision_id` rows can still point at old revisions.
+Image types, quantities, and reference asset ids live on Product intake. Create does not insert `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist do not exist; those URLs return 404. The `workflow_drafts` table is dropped.
 
 Global library organize still uses `LibraryOrganizationDraft`. Multi-node graph confirmation uses `WorkflowGraphProposal`.
 
 ## 6. Online schema-v3 Graph
 
-The online workflow lives on `workflow_graphs` with schema version 3. Node types are:
+The online workflow lives on `workflow_graphs` with schema version 3. The decision to keep one live graph instead of a second Draft topology is `adr/0008-free-canvas-agent-graph-authority.md`.
+
+The graph has three authority objects: Node (config and current output reference), Edge (type, role, order, dependency), and Artifact (immutable result of one run). Users, the Agent, and recipes all write through `apply_graph_change_set`. ChangeSet operations: `create_node`, `update_node_config`, `rename_node`, `delete_node`, `connect_nodes`, `disconnect_edge`, `move_nodes`, `create_group`, `move_nodes_to_group`, `rename_group`, `dissolve_group`. Incomplete DAGs may persist; run-time checks completeness separately. Processing nodes expose at most one aggregate input port. Runtime context reads only the target node's incoming edges. Owners: `domain/graph_catalog.py` and `domain/graph_rules.py`.
+
+Node types are:
 
 - `product_source`: product-facts entry.
 - `image_asset`: one-to-one ProductImageAsset binding.
@@ -134,7 +134,7 @@ Canvas groups are one-level visual folders. You can enter a group and remember i
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
 
-After a live graph exists, the Agent cannot submit a WorkflowDraft that would replace it. Single reversible edits go through `apply_graph_change_set`. Multi-node rewrites land as an unapplied `WorkflowGraphProposal`; ghost preview, confirm, and cancel happen on the canvas.
+After a live graph exists, the Agent cannot submit a product Draft artifact. Single reversible edits go through `apply_graph_change_set`. Multi-node rewrites land as an unapplied `WorkflowGraphProposal`; ghost preview, confirm, and cancel happen on the canvas.
 
 WorkflowRecipe stores user-created full workflows or fragments. The recipe library lists only recipes the user saved from a live graph; it does not ship preset canvas templates. Saving extracts a live schema-v3 graph fragment (nodes, edges, groups) without product identity, bound assets, generated results, or media bytes. A full recipe creates a live graph only when the target product has none; an existing graph returns a conflict. Fragment recipes merge into an existing schema-v3 graph or return an explicit conflict. They are not written as a Draft. Save HTTP is `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`; preview/apply are `POST /api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview` and `.../apply`.
 
@@ -152,15 +152,13 @@ Current origins:
 - `workflow_generation`
 - `image_session_attach`
 
-`legacy_import` identifies readable canonical migration assets only; it is not an online write origin.
-
 The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset.
 
-DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, resize, and format-specific delivery file. It does not replace the source image.
+DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, resize, and format-specific delivery file. It does not replace the source image. Built-in DeliverySpec templates live in `application/delivery_renditions/presets.py`. The read-only API order is Taobao/Tmall hero 3:4, JD hero 1:1, Amazon hero 1:1, detail portrait 3:4, and scene landscape 4:3. Templates are convenience defaults, not platform-compliance guarantees; users can override size, format, and byte limits. Source label: `docs/ARCHITECTURE.md §7`.
 
 GenerationSpec records model-generation intent. Provider-effective values and decoded actual output live in run/generation records. DeliverySpec is a separate deterministic contract and cannot invoke the image model.
 
-Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained current-schema table; `legacy_retirement/gallery_bridge.py` and the four `legacy_gallery_bridge` commands own the old Canvas revision's Gallery-only manifest, target import, reconciliation, and source retirement. The product workbench's `workbench/chrome/image-explorer/` continues to own product-scoped manual selection and binding.
+Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. The product workbench's `workbench/chrome/image-explorer/` continues to own product-scoped manual selection and binding.
 
 ## 8. Provider Architecture
 
@@ -197,11 +195,9 @@ Provider profiles, purpose bindings, and business runtime settings are stored th
 
 Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 
-## 11. Schema Evolution And V1 Retirement
+## 11. Schema Evolution
 
-SQLAlchemy metadata describes current online models and bounded archive/cutover models. Historical Alembic revisions remain so a fresh database can upgrade to head. Runtime code does not read V1 source shapes or keep parallel routes and executors.
-
-`20260816_0042` creates only the `legacy_cutover_gates` evidence boundary and retains V1 source/archive rows. Removing the online V1 code path does not prove that a deployment completed its data cutover. Production source/archive/canonical hashes, restore-rehearsal time, and zero active/unknown runs must be produced through the runbook. Any future destructive cleanup must pass the gate in the same transaction.
+SQLAlchemy metadata describes current online models. Historical Alembic revisions currently still support empty-database `upgrade head`. The main repository does not write old-data backfill, freeze, or cutover gates. Leftover archive/gallery tables and compatibility stubs are deleted under ADR 0010 rather than wrapped. Following mainline may recreate the database and storage.
 
 ## 12. Quality Gates
 
@@ -216,5 +212,4 @@ Code/document synchronization rules:
 - User-operation changes update `USER_GUIDE.en.md` and `web/src/pages/HelpPage.tsx` together.
 - Enum/DTO changes check `domain/enums.py`, Pydantic schemas, `lib/types.ts`, label maps, and parser tests.
 - Transaction/queue/recovery changes trace the application entrypoint, durable row, broker call, worker claim, and recovery tests.
-- Historical-value changes use a persisted fixture through migration, API serialization, and frontend rendering; a newly constructed current DTO alone does not prove compatibility.
 - Module moves update this ownership table and package `AGENTS.md`, and remove references to the old path.

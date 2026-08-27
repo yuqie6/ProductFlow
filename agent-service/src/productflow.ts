@@ -216,33 +216,11 @@ export class ProductFlowClient {
     });
   }
 
-  async listLegacyArchives(conversationID: string, args: { kind: string; query: string; after: string; limit: number }, signal?: AbortSignal): Promise<unknown> {
-    return this.json(
-      this.conversationPath(conversationID) +
-        "/legacy-archives?" +
-        new URLSearchParams({
-          kind: args.kind,
-          query: args.query,
-          after: args.after,
-          limit: String(args.limit),
-        }),
-      { signal },
-    );
-  }
-
-  async inspectLegacyArchive(conversationID: string, args: { kind: string; archive_id: string; section: string; offset: number; limit: number }, signal?: AbortSignal): Promise<unknown> {
-    return this.json(this.conversationPath(conversationID) + "/legacy-archives/inspect", { method: "POST", body: args, signal });
-  }
-
   async assetContent(conversationID: string, assetID: string, global: boolean, signal?: AbortSignal): Promise<AssetContent> {
     const path = global ? `${this.conversationPath(conversationID)}/media-library/${encodeURIComponent(assetID)}/content` : `${this.conversationPath(conversationID)}/assets/${encodeURIComponent(assetID)}/content`;
     const { response, body } = await this.request(path, { signal }, IMAGE_LIMIT);
     const data = body.toString("base64");
     return { data, mediaType: response.headers.get("content-type")?.split(";", 1)[0] || "application/octet-stream", sizeBytes: body.byteLength };
-  }
-
-  async validateWorkflowDraft(conversationID: string, value: unknown, signal?: AbortSignal): Promise<void> {
-    await this.json(this.conversationPath(conversationID) + "/workflow-draft/validate", { method: "POST", body: { value }, signal });
   }
 
   async applyGraphChangeSet(

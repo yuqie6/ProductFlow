@@ -28,7 +28,7 @@ from productflow_backend.application.product_workflow.graph_template import (
 from productflow_backend.application.products import create_canonical_product_with_assets
 from productflow_backend.domain.enums import GraphConfigStatus, GraphHistoryKind, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
-from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph, WorkflowOperationGroup
+from productflow_backend.infrastructure.db.models import WorkflowGraph, WorkflowOperationGroup
 
 
 def _create_product_with_assets(db_session, *, name: str = "直接创建商品"):
@@ -86,7 +86,6 @@ def test_stage_new_workflow_graph_persists_revision_and_operation_group(db_sessi
     assert projection.last_operation_group_id is not None
     operation_count = db_session.scalar(select(func.count()).select_from(WorkflowOperationGroup))
     assert operation_count == 1
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
 
 
 def test_apply_graph_change_set_conflicts_on_stale_revision(db_session) -> None:

@@ -58,7 +58,7 @@ describe("create intake generation spec", () => {
       max_total_images: 30,
       min_reference_images: 1,
       max_reference_images: 6,
-      allowed_image_mime_types: ["image/png"],
+      allowed_image_mime_types: ["image/png" as const],
     };
     const base = {
       name: "马克杯",
@@ -82,7 +82,7 @@ describe("create intake generation spec", () => {
       max_total_images: 30,
       min_reference_images: 1,
       max_reference_images: 6,
-      allowed_image_mime_types: ["image/png"],
+      allowed_image_mime_types: ["image/png" as const],
     };
     const outputDraft = defaultCreateOutputDraft();
     expect(resolveCreateSubmitAction({

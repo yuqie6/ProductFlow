@@ -260,17 +260,9 @@ Open `/media-library`.
 - Upload images, or save an iterative-image candidate into the library.
 - Associate a global asset with a workflow sub-library without copying media bytes.
 
-`/gallery` redirects to `/media-library`. The old collected-image gallery is no longer a product entry.
-
 The Agent may propose a library-organization Draft. Names, folders, tags, and archive state do not change before confirmation.
 
-## 11. History Archives
-
-`/history` provides read-only browse, filter, download, and export for retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification; missing and pending media remain visible as metadata.
-
-“Rebuild with Agent” no longer inserts a WorkflowDraft. A product with a live graph cannot be overwritten from a legacy archive.
-
-## 12. Troubleshooting
+## 11. Troubleshooting
 
 ### Agent Conversation Cannot Start
 
@@ -294,7 +286,7 @@ Use automatic layout, place one image type or local stage in a group, then enter
 
 ### A Newly Saved Image Is Missing From the Media Library
 
-Confirm the save finished, then check whether the current filters hide the source, folder, or archived items. `/gallery` is only a redirect and no longer shows a separate collection list.
+Confirm the save finished, then check whether the current filters hide the source, folder, or archived items.
 
 ### Settings Cannot Save
 

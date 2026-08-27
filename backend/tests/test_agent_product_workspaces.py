@@ -56,8 +56,6 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
-    WorkflowDraft,
-    WorkflowDraftRevision,
     WorkflowGraphNode,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -205,9 +203,6 @@ def test_agent_intake_persists_delivery_preset_snapshot_and_changes_idempotency_
     system_prompt = get_agent_contract(db_session, creation.conversation.id)["system_prompt"]
     assert "不得提交第二份完整拓扑" in system_prompt
     assert get_agent_contract(db_session, creation.conversation.id)["has_live_graph"] is True
-    assert db_session.scalar(
-        select(func.count()).select_from(WorkflowDraft).where(WorkflowDraft.product_id == creation.product.id)
-    ) == 0
 
     with pytest.raises(ConflictError, match="已经确认"):
         finalize_agent_product_workspace_intake(
@@ -248,7 +243,6 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
         for item in fact_set.payload_json.get("facts") or []
     )
     assert [asset.original_filename for asset in creation.created_assets] == ["front.png", "detail.png"]
-    assert creation.conversation.workflow_draft_id is None
     assert creation.product.intake_schema_version == 1
     intake = WorkflowIntakeV1.model_validate(creation.product.intake_json)
     assert [(item.key, item.quantity, item.order) for item in intake.image_types] == [
@@ -257,9 +251,6 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     ]
     assert intake.reference_asset_ids == [asset.id for asset in creation.created_assets]
     assert creation.conversation.harness_run_id == creation.conversation.id
-    assert db_session.scalar(
-        select(func.count()).select_from(WorkflowDraft).where(WorkflowDraft.product_id == creation.product.id)
-    ) == 0
     agent_session = db_session.get(AgentSession, creation.conversation.session_id)
     assert agent_session is not None
     assert agent_session.product_id == creation.product.id
@@ -276,7 +267,6 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert db_session.scalar(select(func.count()).select_from(Product)) == 1
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 2
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) > 0
     assert len(_media_files(configured_env)) == 6  # 两张原图，各带 preview 和 thumbnail
 
@@ -293,7 +283,6 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert first.product.cover_image_asset_id is None
     assert first.product.current_fact_set_version_id is not None
     assert first.created_assets == []
-    assert first.conversation.workflow_draft_id is None
     assert first.product.intake_schema_version is None
     assert first.product.intake_json is None
     assert first.conversation.creation_idempotency_key == "draft-workspace-1"
@@ -302,9 +291,6 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     agent_session = db_session.get(AgentSession, first.conversation.session_id)
     assert agent_session is not None
     assert agent_session.product_id == first.product.id
-    assert db_session.scalar(
-        select(func.count()).select_from(WorkflowDraft).where(WorkflowDraft.product_id == first.product.id)
-    ) == 0
     assert agent_session.summary == "暂无 Agent Task"
 
     replay = create_agent_product_draft_workspace(
@@ -324,7 +310,6 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert db_session.scalar(select(func.count()).select_from(Product)) == 1
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 0
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
 
     with pytest.raises(ConflictError, match="相同 Idempotency-Key"):
         create_agent_product_draft_workspace(
@@ -608,7 +593,6 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
         ("scene", 3, 1),
     ]
     assert intake.reference_asset_ids == [asset.id for asset in finalized.created_assets]
-    assert finalized.conversation.workflow_draft_id is None
     assert finalized.conversation.intake_idempotency_key == "intake-finalize-1"
     assert len(finalized.conversation.intake_request_hash or "") == 64
     live_graph = get_active_workflow_graph(db_session, product_id=finalized.product.id)
@@ -780,7 +764,6 @@ def test_empty_agent_product_draft_allows_turn_and_asks_for_intake(
     )
     assert finalized.created_assets
     assert finalized.product.intake_json is not None
-    assert finalized.conversation.workflow_draft_id is None
     reservation = reserve_agent_turn(
         db_session,
         product_id=workspace.product.id,
@@ -827,7 +810,6 @@ def test_agent_finalizes_intake_from_conversation_assets(
     assert first["intake_finalized"] is True
     assert first["reference_asset_ids"] == asset_ids
     assert first["intake"]["image_types"][0]["key"] == "hero"
-    assert first["workflow_draft_id"] is None
 
     replay = finalize_agent_product_workspace_intake_from_assets(
         db_session,
@@ -875,8 +857,6 @@ def test_agent_product_workspace_idempotency_replays_and_rejects_payload_drift(
     assert replay.created is False
     assert replay.product.id == first.product.id
     assert replay.conversation.id == first.conversation.id
-    assert replay.conversation.workflow_draft_id is None
-    assert replay.conversation.id == first.conversation.id
     assert [asset.id for asset in replay.created_assets] == [asset.id for asset in first.created_assets]
     assert sorted(path.relative_to(configured_env) for path in _media_files(configured_env)) == first_files
     assert db_session.scalar(select(func.count()).select_from(Product)) == 1
@@ -917,7 +897,6 @@ def test_agent_product_workspace_flush_failures_rollback_database_and_storage(
 
     assert db_session.scalar(select(func.count()).select_from(Product)) == 0
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
     assert _media_files(configured_env) == []
 
@@ -944,7 +923,6 @@ def test_agent_product_workspace_commit_failure_rolls_back_database_and_storage(
 
     assert db_session.scalar(select(func.count()).select_from(Product)) == 0
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 0
     assert _media_files(configured_env) == []
 
@@ -1035,14 +1013,13 @@ def test_agent_product_workspace_api_exposes_options_and_bounded_create(configur
     created_response = client.post("/api/v2/agent-product-workspaces", **request)
     assert created_response.status_code == 201, created_response.text
     created = created_response.json()
-    assert set(created) == {"task_id", "product", "created_assets", "workflow_draft", "conversation"}
+    assert set(created) == {"task_id", "product", "created_assets", "conversation"}
     assert created["task_id"] is None
     assert created["product"]["cover_image_asset_id"] is None
     assert [asset["original_filename"] for asset in created["created_assets"]] == [
         "front.png",
         "side.png",
     ]
-    assert created["workflow_draft"] is None
     assert created["product"]["intake"] == {
         "schema_version": 1,
         "image_types": [
@@ -1092,14 +1069,12 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
         "intake_finalized",
         "product",
         "created_assets",
-        "workflow_draft",
         "conversation",
     }
     assert draft["created"] is True
     assert draft["intake_finalized"] is False
     assert draft["created_assets"] == []
     assert draft["product"]["cover_image_asset_id"] is None
-    assert draft["workflow_draft"] is None
     assert draft["product"]["intake"] is None
     assert draft["conversation"]["session_id"] != agent_session.id
     assert draft["task_id"] is None
@@ -1142,7 +1117,6 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
         "detail.png",
     ]
     assert finalized["product"]["cover_image_asset_id"] is None
-    assert finalized["workflow_draft"] is None
     assert finalized["product"]["intake"]["reference_asset_ids"] == [
         asset["id"] for asset in finalized["created_assets"]
     ]
@@ -1190,62 +1164,3 @@ def test_agent_product_workspace_api_rejects_invalid_selection(configured_env: P
     assert response.status_code == 400
     assert response.json() == {"detail": "图片类型选择不符合 AgentProductSelectionV1"}
 
-
-def test_product_path_refuses_workflow_draft_writers(db_session) -> None:
-    from workflow_draft_helpers import make_workflow_draft_payload
-
-    from productflow_backend.application.legacy_archive_rebuilds import create_legacy_archive_rebuild
-    from productflow_backend.application.workflow_drafts.service import (
-        append_workflow_draft_revision,
-        confirm_workflow_draft_revision,
-        create_workflow_draft,
-        persist_confirmed_draft_graph,
-    )
-
-    workspace = create_agent_product_draft_workspace(
-        db_session,
-        name="拒绝 Draft 商品",
-        idempotency_key="retire-draft-writers",
-    )
-    payload = make_workflow_draft_payload(reference_asset_id=workspace.product.id)
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        create_workflow_draft(
-            db_session,
-            product_id=workspace.product.id,
-            payload=payload,
-            ready_for_confirmation=True,
-        )
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        append_workflow_draft_revision(
-            db_session,
-            product_id=workspace.product.id,
-            draft_id="missing",
-            expected_draft_version=0,
-            payload=payload,
-            ready_for_confirmation=True,
-        )
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        confirm_workflow_draft_revision(
-            db_session,
-            product_id=workspace.product.id,
-            draft_id="missing",
-            expected_draft_version=1,
-        )
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        persist_confirmed_draft_graph(
-            db_session,
-            product_id=workspace.product.id,
-            draft_id="missing",
-            expected_draft_version=1,
-        )
-    with pytest.raises(ConflictError, match="不再使用 WorkflowDraft"):
-        create_legacy_archive_rebuild(
-            db_session,
-            kind="workflow",
-            archive_id="missing",
-            target_product_id=workspace.product.id,
-            idempotency_key="rebuild-retired",
-        )
-    assert db_session.scalar(
-        select(func.count()).select_from(WorkflowDraft).where(WorkflowDraft.product_id == workspace.product.id)
-    ) == 0

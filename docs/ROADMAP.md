@@ -33,15 +33,9 @@ Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 
-### 图库部署清理
+### 主线清理
 
-当前在线入口见 PRD。还缺：
-
-- current-schema 旧 `ImageGalleryEntry` 表的部署级回填、引用审计、观察窗和物理清理资格。
-- 旧 `legacy_canvas_agent_20260518_0032` Gallery-only bridge 的部署演练、备份恢复证据和 approval。
-- 跨商品等更高范围的 Agent 写操作。
-
-证据与停止条件见 [`rollout/media-library-transition.md`](rollout/media-library-transition.md)。
+旧 V1 归档、Gallery 回填、WorkflowDraft 写入桩和兼容读取器按 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md) 删除。不补做部署级回填或 cutover 证据。
 
 ### Agent 耐久
 

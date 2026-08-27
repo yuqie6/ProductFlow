@@ -105,7 +105,6 @@ def new_agent_task(
         session_id=session_id,
         conversation_id=conversation.id if conversation is not None else None,
         product_id=conversation.product_id if conversation is not None else None,
-        workflow_draft_id=conversation.workflow_draft_id if conversation is not None else None,
         harness_run_id=task_id,  # 兼容列：这条 Task 自己的 run，不是 Session transcript。
         title=normalized_title,
         goal=normalized_goal,
@@ -353,7 +352,7 @@ def task_contract(session: Session, task_id: str) -> tuple[AgentTask, AgentConve
     task = session.scalar(
         select(AgentTask)
         .options(
-            selectinload(AgentTask.conversation).selectinload(AgentConversation.workflow_draft),
+            selectinload(AgentTask.conversation),
         )
         .where(AgentTask.id == task_id)
     )

@@ -28,7 +28,6 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
     continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
-    workflow_draft_revision_id: null,
     library_organization_draft_revision_id: null,
     workflow_run_request_id: null,
     page_context_snapshot_id: null,

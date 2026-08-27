@@ -33,9 +33,9 @@ Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 
-### Library cutover
+### Mainline cleanup
 
-Online entry is in the PRD. Still missing deployment-grade backfill of the old `ImageGalleryEntry` table, the Gallery-only bridge rehearsal and approval, and higher-scope Agent writes. See [`rollout/media-library-transition.md`](rollout/media-library-transition.md).
+Delete leftover V1 archives, Gallery backfill, WorkflowDraft write stubs, and compatibility readers under [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md). Do not add deployment-grade backfill or cutover evidence.
 
 ### Agent durability
 

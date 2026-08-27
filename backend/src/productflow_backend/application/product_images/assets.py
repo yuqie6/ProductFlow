@@ -23,7 +23,6 @@ from productflow_backend.domain.enums import MediaVerificationStatus, ProductIma
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
-    LegacyWorkflowArchiveAsset,
     LocalImageEditProviderAttempt,
     LocalImageEditTask,
     LocalImageEditTaskReference,
@@ -292,12 +291,6 @@ def ensure_product_image_asset_not_referenced(
         select(WorkflowGraphNode.id).where(WorkflowGraphNode.bound_image_asset_id == asset_id).limit(1)
     ):
         raise ConflictError("商品图片仍被工作流节点绑定，不能删除")
-    if session.scalar(
-        select(LegacyWorkflowArchiveAsset.id)
-        .where(LegacyWorkflowArchiveAsset.product_image_asset_id == asset_id)
-        .limit(1)
-    ):
-        raise ConflictError("商品图片仍被旧工作流归档引用，不能删除")
     if session.scalar(
         select(VisualSystemVersionReference.id)
         .where(VisualSystemVersionReference.asset_id == asset_id)

@@ -29,7 +29,6 @@ from productflow_backend.application.product_workflow.graph_template import Dire
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
-    WorkflowDraft,
     WorkflowGraphEdge,
     WorkflowGraphNode,
 )
@@ -77,8 +76,6 @@ def test_agent_workbench_bootstrap_uses_persisted_conversation_and_is_read_only(
 
     assert isinstance(bootstrap, AgentWorkbenchBootstrap)
     assert bootstrap.conversation.id == workspace.conversation.id
-    assert bootstrap.workflow_draft is None
-    assert bootstrap.conversation.workflow_draft_id is None
     assert bootstrap.graph is not None
     assert bootstrap.latest_workflow_revision >= 1
     assert flushes == 0
@@ -103,7 +100,6 @@ def test_agent_workbench_bootstrap_selects_latest_conversation_by_created_at_and
     assert isinstance(bootstrap, AgentWorkbenchBootstrap)
     expected = max((workspace.conversation, second.conversation), key=lambda item: item.id)
     assert bootstrap.conversation.id == expected.id
-    assert bootstrap.workflow_draft is None
 
 
 def test_agent_workbench_bootstrap_rejects_product_without_agent_workspace(db_session) -> None:
@@ -144,7 +140,6 @@ def test_ensure_agent_workbench_attaches_conversation_to_direct_created_graph(db
     assert first.graph is not None
     assert first.graph.id == created.graph.id
     assert loaded.conversation.product_id == created.product.id
-    assert loaded.workflow_draft is None
 
 
 def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session) -> None:
@@ -180,7 +175,6 @@ def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session)
     assert context["live_graph"] is not None
     assert context["live_graph"]["id"] == created.graph.id
     assert any(node["node_type"] == "image_generation" for node in context["live_graph"]["nodes"])
-    assert "workflow_draft" not in context
     assert context["intake"] is None
 
 
@@ -241,7 +235,7 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
         product_ids = (agent_workspace.product.id, missing_workspace.product.id)
         counts_before = {
             model.__tablename__: session.scalar(select(func.count()).select_from(model))
-            for model in (WorkflowDraft, AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
+            for model in (AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
         }
 
     client = TestClient(create_app())
@@ -263,7 +257,6 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
 
     assert agent_response.status_code == 200, agent_response.text
     assert agent_response.json()["mode"] == "agent"
-    assert agent_response.json()["workflow_draft"] is None
     assert agent_response.json()["product"]["intake"]["schema_version"] == 1
     assert agent_response.json()["graph"] is not None
     assert "active_workflow" not in agent_response.json()
@@ -274,7 +267,7 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
     with factory() as session:
         counts_after = {
             model.__tablename__: session.scalar(select(func.count()).select_from(model))
-            for model in (WorkflowDraft, AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
+            for model in (AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
         }
     assert counts_after == counts_before
 

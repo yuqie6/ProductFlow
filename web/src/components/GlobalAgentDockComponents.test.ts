@@ -20,7 +20,6 @@ function sampleTask(id: string, title: string, status: AgentTask["status"]): Age
     conversation_id: "conv-1",
     product_id: "prod-1",
     workflow_id: null,
-    workflow_draft_id: null,
     title,
     goal: "生成春季商品主图并调整参数",
     summary: "已完成 2 个步骤",

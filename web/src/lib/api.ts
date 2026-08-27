@@ -13,7 +13,6 @@ import type {
   AgentTurnPage,
   AgentWorkflowRunRequest,
   AgentWorkbenchBootstrap,
-  AppendWorkflowDraftRevisionInput,
   ConfigResponse,
   ConfigUpdateRequest,
   GalleryAsset,
@@ -33,7 +32,6 @@ import type {
   GenerationQueueOverview,
   CreateAgentProductWorkspaceInput,
   CreateAgentProductDraftWorkspaceInput,
-  CreateWorkflowDraftInput,
   DeliveryPresetCatalog,
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
@@ -42,17 +40,12 @@ import type {
   ImageSessionStatus,
   ImageToolOptions,
   FinalizeAgentProductWorkspaceIntakeInput,
-  LegacyArchiveAgentRebuildResult,
-  LegacyArchiveDetail,
-  LegacyArchiveKind,
-  LegacyArchivePage,
   LibraryOrganizationDraft,
   LocalImageEditCapability,
   LocalImageEditCreateInput,
   LocalImageEditUpdateInput,
   LocalImageEditTask,
   LocalImageEditTaskListResponse,
-  GlobalWorkflowDraftReview,
   ProductListSort,
   ProviderBinding,
   ProviderBindingUpdateRequest,
@@ -61,7 +54,6 @@ import type {
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
   DirectCreateProductResponse,
-  DraftGraphPersistResponse,
   GraphChangeSet,
   WorkflowGenerationSpec,
   GraphNodeCatalog,
@@ -86,7 +78,6 @@ import type {
   SubmitAgentTurnInput,
   SubmitAgentTurnResponse,
   UpdateProductFactsInput,
-  WorkflowDraft,
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
@@ -680,27 +671,6 @@ export const api = {
       },
     );
   },
-  getGlobalWorkflowDraftReview(
-    conversationId: string,
-    revisionId: string,
-  ): Promise<GlobalWorkflowDraftReview> {
-    return request(
-      `${globalAgentConversationPath(conversationId)}/workflow-draft-reviews/${encodeURIComponent(revisionId)}`,
-    );
-  },
-  confirmGlobalWorkflowDraftReview(
-    conversationId: string,
-    revisionId: string,
-    expectedDraftVersion: number,
-  ): Promise<GlobalWorkflowDraftReview> {
-    return request(
-      `${globalAgentConversationPath(conversationId)}/workflow-draft-reviews/${encodeURIComponent(revisionId)}/confirm`,
-      {
-        method: "POST",
-        body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
-      },
-    );
-  },
   getProductImageAssetMediaUrl(
     assetId: string,
     variant?: "thumbnail" | "preview",
@@ -753,54 +723,6 @@ export const api = {
     }
     const query = params.size ? `?${params}` : "";
     return toApiUrl(`/api/media-library/${encodeURIComponent(assetId)}/download${query}`);
-  },
-  listLegacyArchives(input?: {
-    kind?: LegacyArchiveKind;
-    product_id?: string;
-    q?: string;
-    after?: string | null;
-    limit?: number;
-  }): Promise<LegacyArchivePage> {
-    const params = new URLSearchParams({ limit: String(input?.limit ?? 30) });
-    if (input?.kind) {
-      params.set("kind", input.kind);
-    }
-    if (input?.product_id) {
-      params.set("product_id", input.product_id);
-    }
-    if (input?.q?.trim()) {
-      params.set("q", input.q.trim());
-    }
-    if (input?.after) {
-      params.set("after", input.after);
-    }
-    return request(`/api/v2/legacy-archives?${params.toString()}`);
-  },
-  getLegacyArchive(kind: LegacyArchiveKind, archiveId: string): Promise<LegacyArchiveDetail> {
-    return request(
-      `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}`,
-    );
-  },
-  async downloadLegacyArchive(kind: LegacyArchiveKind, archiveId: string): Promise<Blob> {
-    const path = `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}/export`;
-    const response = await fetch(toApiUrl(path), { credentials: "include" });
-    if (!response.ok) {
-      throw await responseApiError(response);
-    }
-    return response.blob();
-  },
-  createLegacyArchiveAgentRebuild(
-    kind: LegacyArchiveKind,
-    archiveId: string,
-    input: { target_product_id: string; idempotency_key: string },
-  ): Promise<LegacyArchiveAgentRebuildResult> {
-    return request(
-      `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}/agent-rebuilds`,
-      {
-        method: "POST",
-        body: JSON.stringify(input),
-      },
-    );
   },
   getProductImageLibrary(productId: string): Promise<GalleryBootstrap> {
     return request(`/api/v2/products/${productId}/image-library`);
@@ -1212,19 +1134,6 @@ export const api = {
       { method: "POST" },
     );
   },
-  persistConfirmedDraftGraph(
-    productId: string,
-    draftId: string,
-    expectedDraftVersion: number,
-  ): Promise<DraftGraphPersistResponse> {
-    return request(
-      `/api/v3/products/${encodeURIComponent(productId)}/workflow-drafts/${encodeURIComponent(draftId)}/graphs`,
-      {
-        method: "POST",
-        body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
-      },
-    );
-  },
   submitGraphRun(
     productId: string,
     workflowId: string,
@@ -1332,31 +1241,6 @@ export const api = {
       `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/proposals/${encodeURIComponent(proposalId)}/discard`,
       { method: "POST" },
     );
-  },
-  createWorkflowDraft(productId: string, input: CreateWorkflowDraftInput): Promise<WorkflowDraft> {
-    return request(`/api/v2/products/${productId}/workflow-drafts`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  getWorkflowDraft(productId: string, draftId: string): Promise<WorkflowDraft> {
-    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}`);
-  },
-  appendWorkflowDraftRevision(
-    productId: string,
-    draftId: string,
-    input: AppendWorkflowDraftRevisionInput,
-  ): Promise<WorkflowDraft> {
-    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/revisions`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  confirmWorkflowDraft(productId: string, draftId: string, expectedDraftVersion: number): Promise<WorkflowDraft> {
-    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/confirm`, {
-      method: "POST",
-      body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
-    });
   },
   createDeliveryRendition(
     sourceAssetId: string,

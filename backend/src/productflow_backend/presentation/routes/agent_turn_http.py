@@ -21,6 +21,7 @@ from productflow_backend.application.agent.control import (
 from productflow_backend.application.agent.effect_reconciliation import reconcile_agent_turn_effect
 from productflow_backend.application.agent.event_stream import stream_agent_turn_events
 from productflow_backend.application.agent.execution import MAX_AGENT_EVENT_SEQUENCE
+from productflow_backend.application.agent.graph_tools import canvas_focus_for_turn, canvas_focus_for_turns
 from productflow_backend.application.agent.turn_projection import (
     AGENT_TURN_DEFAULT_PAGE_SIZE,
     AGENT_TURN_MAX_PAGE_SIZE,
@@ -75,8 +76,12 @@ def list_agent_turns_http(
         after=after,
         limit=limit,
     )
+    focus_by_turn = canvas_focus_for_turns(session, list(page.items))
     return AgentTurnPageResponse(
-        items=[serialize_agent_turn(turn) for turn in page.items],
+        items=[
+            serialize_agent_turn(turn, canvas_focus=focus_by_turn.get(turn.id))
+            for turn in page.items
+        ],
         next_cursor=page.next_cursor,
     )
 
@@ -138,7 +143,10 @@ def get_agent_turn_http(
                 gateway=gateway,
                 tolerate_transient_unavailable=True,
             )
-    return serialize_agent_turn(projection)
+    return serialize_agent_turn(
+        projection,
+        canvas_focus=canvas_focus_for_turn(session, projection),
+    )
 
 
 def control_agent_turn_http(
@@ -254,8 +262,6 @@ def _agent_turn_needs_refresh(
     if projection.status in IN_FLIGHT_TURN_STATUSES:
         return True
     if projection.status != AgentTurnStatus.AWAITING_CONFIRMATION:
-        return False
-    if projection.workflow_draft_revision_id is not None:
         return False
     return not require_library_revision_clear or projection.library_organization_draft_revision_id is None
 

@@ -32,11 +32,9 @@ from productflow_backend.presentation.schemas.workflow_recipes import (
     serialize_workflow_recipe_summary,
 )
 
-router = APIRouter(prefix="/api/v2", tags=["workflow-recipes"], dependencies=[Depends(require_admin)])
 v3_router = APIRouter(prefix="/api/v3", tags=["workflow-recipes"], dependencies=[Depends(require_admin)])
 
 
-@router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
 @v3_router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
 def list_workflow_recipes_endpoint(
     include_archived: bool = Query(default=False),
@@ -51,7 +49,6 @@ def list_workflow_recipes_endpoint(
     ]
 
 
-@router.get("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeResponse)
 @v3_router.get("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeResponse)
 def get_workflow_recipe_endpoint(
     recipe_id: str,
@@ -109,11 +106,6 @@ def _append_recipe(
     )
 
 
-@router.post(
-    "/products/{product_id}/workflows/{workflow_id}/recipes",
-    response_model=WorkflowRecipeResponse,
-    status_code=status.HTTP_201_CREATED,
-)
 @v3_router.post(
     "/products/{product_id}/workflows/{workflow_id}/recipes",
     response_model=WorkflowRecipeResponse,
@@ -133,11 +125,6 @@ def create_workflow_recipe_endpoint(
     )
 
 
-@router.post(
-    "/products/{product_id}/workflows/{workflow_id}/recipes/{recipe_id}/versions",
-    response_model=WorkflowRecipeResponse,
-    status_code=status.HTTP_201_CREATED,
-)
 @v3_router.post(
     "/products/{product_id}/workflows/{workflow_id}/recipes/{recipe_id}/versions",
     response_model=WorkflowRecipeResponse,
@@ -159,10 +146,6 @@ def append_workflow_recipe_version_endpoint(
     )
 
 
-@router.post(
-    "/products/{product_id}/workflow-recipes/{recipe_id}/preview",
-    response_model=WorkflowRecipePreviewResponse,
-)
 @v3_router.post(
     "/products/{product_id}/workflow-recipes/{recipe_id}/preview",
     response_model=WorkflowRecipePreviewResponse,
@@ -183,11 +166,6 @@ def preview_workflow_recipe_endpoint(
     )
 
 
-@router.post(
-    "/products/{product_id}/workflow-recipes/{recipe_id}/apply",
-    response_model=WorkflowRecipeApplicationResponse,
-    status_code=status.HTTP_201_CREATED,
-)
 @v3_router.post(
     "/products/{product_id}/workflow-recipes/{recipe_id}/apply",
     response_model=WorkflowRecipeApplicationResponse,
@@ -219,7 +197,6 @@ def apply_workflow_recipe_endpoint(
     )
 
 
-@router.delete("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeArchiveResponse)
 @v3_router.delete("/workflow-recipes/{recipe_id}", response_model=WorkflowRecipeArchiveResponse)
 def archive_workflow_recipe_endpoint(
     recipe_id: str,
@@ -235,4 +212,4 @@ def archive_workflow_recipe_endpoint(
     )
 
 
-__all__ = ["router", "v3_router"]
+__all__ = ["v3_router"]

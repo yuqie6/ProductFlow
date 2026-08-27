@@ -121,13 +121,10 @@ def test_new_agent_session_has_one_global_conversation_and_contract(db_session) 
     assert conversation is not None
     assert conversation.scope_type == AgentConversationScope.GLOBAL
     assert conversation.product_id is None
-    assert conversation.workflow_draft_id is None
 
     contract = get_agent_contract(db_session, conversation.id)
     assert contract["scope_type"] == AgentConversationScope.GLOBAL
     assert contract["product_id"] is None
-    assert contract["workflow_draft_id"] is None
-    assert contract["workflow_draft_schema"] == {}
 
     task = create_agent_task(
         db_session,
@@ -137,7 +134,6 @@ def test_new_agent_session_has_one_global_conversation_and_contract(db_session) 
         goal="找出没有标签的图片",
     )
     assert task.product_id is None
-    assert task.workflow_draft_id is None
 
 
 def test_agent_session_name_is_derived_from_first_global_turn_without_overwriting_manual_name(db_session) -> None:

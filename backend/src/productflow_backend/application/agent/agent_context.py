@@ -30,7 +30,7 @@ from productflow_backend.infrastructure.db.models import (
     ProductImageAsset,
 )
 
-AGENT_TOOL_CONTRACT_VERSION = 13
+AGENT_TOOL_CONTRACT_VERSION = 15
 AGENT_CONTEXT_MAX_BYTES = 512 * 1024
 
 WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协作 Agent。
@@ -40,6 +40,14 @@ WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协�
 不得提交第二份完整拓扑。不得编造商品事实或资产。
 不得输出 base64、data URL、存储路径或内部 URL。
 提案、跑图和素材整理的确认只在 ProductFlow UI 完成。
+"""
+
+GOAL_LOOP_PROMPT = """
+当前是用户显式开始的 Goal，不是开聊入场券。
+循环使用已有工具：request_workflow_run → 等用户在画布确认 → inspect 结果 → apply 或 propose → 再请求跑图。
+不得自行宣布 Goal 完成。完成只能由用户点完成。
+一次 WorkflowGraphRun 结束不等于 Goal 结束，不要接管跑图状态机。
+默认仍须用户在画布确认跑图。
 """
 
 GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
@@ -63,6 +71,8 @@ def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
     contract["task_id"] = task.id
     contract["task_goal"] = task.goal
     contract["harness_run_id"] = task.harness_run_id
+    if conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW:
+        contract["system_prompt"] = f"{contract['system_prompt'].rstrip()}\n{GOAL_LOOP_PROMPT.strip()}\n"
     return contract
 
 
@@ -109,13 +119,11 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
             "task_id": None,
             "task_goal": None,
             "product_id": None,
-            "workflow_draft_id": None,
             "harness_run_id": conversation.harness_run_id,
             "current_draft_version": current_revision.version if current_revision is not None else 0,
             "system_prompt": GLOBAL_AGENT_SYSTEM_PROMPT,
             "draft_kind": "global",
             "draft_schema": global_agent_draft_schema(),
-            "workflow_draft_schema": {},
             "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
             "has_live_graph": False,
         }
@@ -129,13 +137,11 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
         "task_id": None,
         "task_goal": None,
         "product_id": conversation.product_id,
-        "workflow_draft_id": conversation.workflow_draft_id,
         "harness_run_id": conversation.harness_run_id,
         "current_draft_version": 0,
         "system_prompt": WORKFLOW_AGENT_LIVE_GRAPH_PROMPT,
         "draft_kind": "workflow",
         "draft_schema": {},
-        "workflow_draft_schema": {},
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
         "has_live_graph": live_graph is not None,
     }
@@ -258,7 +264,6 @@ def get_agent_global_workflow_target(
     session: Session,
     *,
     product_id: str,
-    workflow_draft_id: str | None = None,
 ) -> AgentConversation:
     """按显式 product 解析其最新 product conversation。"""
     product = session.get(Product, product_id)
@@ -272,8 +277,6 @@ def get_agent_global_workflow_target(
         )
         .order_by(AgentConversation.updated_at.desc(), AgentConversation.id.desc())
     )
-    if workflow_draft_id is not None:
-        statement = statement.where(AgentConversation.workflow_draft_id == workflow_draft_id)
     conversation = session.scalar(statement.limit(1))
     if conversation is None:
         raise NotFoundError("商品没有 Agent 工作区")
@@ -293,7 +296,6 @@ def get_agent_global_workflow_context(
     context["target"] = {
         "product_id": product_id,
         "product_conversation_id": target.id,
-        "workflow_draft_id": target.workflow_draft_id,
     }
     encoded = json.dumps(context, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
@@ -346,6 +348,7 @@ __all__ = [
     "AGENT_CONTEXT_MAX_BYTES",
     "AGENT_TOOL_CONTRACT_VERSION",
     "GLOBAL_AGENT_SYSTEM_PROMPT",
+    "GOAL_LOOP_PROMPT",
     "WORKFLOW_AGENT_LIVE_GRAPH_PROMPT",
     "get_agent_contract",
     "get_agent_global_workflow_context",

@@ -16,7 +16,6 @@ from productflow_backend.application.product_workflow.graph_commands import (
 )
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
-from productflow_backend.application.workflow_drafts.service import persist_confirmed_draft_graph
 from productflow_backend.application.product_workflow.graph_proposals import (
     confirm_graph_proposal,
     discard_graph_proposal,
@@ -44,13 +43,11 @@ from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.graphs import (
     DirectCreateImageTypeRequest,
     DirectCreateProductResponse,
-    DraftGraphPersistResponse,
     GraphCatalogResponse,
     GraphProjectionResponse,
     GraphRunListResponse,
     GraphRunRequest,
     GraphRunResponse,
-    PersistDraftGraphRequest,
     serialize_direct_create,
     serialize_graph_catalog,
     serialize_graph_projection,
@@ -134,25 +131,6 @@ def get_workflow_graph_endpoint(
     session: Session = Depends(get_session),
 ) -> GraphProjectionResponse:
     return serialize_graph_projection(get_graph_projection(session, product_id=product_id, graph_id=workflow_id))
-
-
-@router.post(
-    "/products/{product_id}/workflow-drafts/{draft_id}/graphs",
-    response_model=DraftGraphPersistResponse,
-)
-def persist_confirmed_draft_graph_endpoint(
-    product_id: str,
-    draft_id: str,
-    payload: PersistDraftGraphRequest,
-    session: Session = Depends(get_session),
-) -> DraftGraphPersistResponse:
-    """商品路径不再把 WorkflowDraft 物化为图。"""
-    persist_confirmed_draft_graph(
-        session,
-        product_id=product_id,
-        draft_id=draft_id,
-        expected_draft_version=payload.expected_draft_version,
-    )
 
 
 @router.post(

@@ -128,7 +128,6 @@ def finalize_agent_product_intake(
         "accepted": True,
         "intake_finalized": True,
         "product_id": creation.product.id,
-        "workflow_draft_id": creation.conversation.workflow_draft_id,
         "reference_asset_ids": [asset.id for asset in creation.created_assets],
         "intake": creation.product.intake_json,
     }

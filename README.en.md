@@ -12,7 +12,7 @@
 
 ProductFlow is an open-source product-visual workspace for a single merchant. A user uploads real product references, chooses the required image types and quantities, and works with a workflow Agent to clarify price, style, text language, copy requirements, and other missing information. The confirmed result becomes an editable, executable image-production workflow.
 
-The public instance is a personal live demo with one administrator and one merchant. Operators may reset public demo data under the demo policy, but deployed-instance upgrades do not depend on resetting the database or storage. Multi-tenancy, billing, team permissions, and formal SaaS compatibility policies belong to a later stage.
+The public instance is a personal live demo with one administrator and one merchant. The main repository is in rapid development and accepts breaking changes. Deployments that need a stable snapshot should fork. Following this repository may require recreating the database and storage. Multi-tenancy, billing, team permissions, and formal SaaS compatibility policies belong to a later stage.
 
 ## Current Capabilities
 
@@ -39,7 +39,6 @@ The public instance is a personal live demo with one administrator and one merch
 - Each image node binds one current image; the library retains every upload, workflow result, and image-session attachment for the product.
 - Product cover selection is automatic, with current cover APIs available for an explicit change.
 - `/image-chat` supports reference images, branch bases, multiple candidates, cancel, retry, download, and save-to-product.
-- `/gallery` only preserves a compatibility redirect for the retired collected-image bookmark; new long-lived media belongs in `/media-library`.
 
 ### Providers and Runtime
 
@@ -54,8 +53,8 @@ The public instance is a personal live demo with one administrator and one merch
 
 - Single administrator and single merchant.
 - No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
-- Public demo data may be reset during upgrades.
-- Historical Alembic revisions remain so a fresh database can reach the current schema. The only online workflow contract is schema-v3 `workflow_graphs`.
+- Public demo data and local development databases may be recreated during breaking updates.
+- Alembic evolves the current schema; empty-database `upgrade head` still works. The main repository does not backfill or keep compatibility layers for old data.
 
 ## Routes
 
@@ -66,8 +65,6 @@ The public instance is a personal live demo with one administrator and one merch
 | `/products/:productId` | Agent conversation, schema-v3 workflow, and image library |
 | `/image-chat` | Iterative text/image generation |
 | `/media-library` | Global media library |
-| `/gallery` | Compatibility redirect for the retired collected-image bookmark |
-| `/history` | V1 history archives and Agent rebuild |
 | `/settings` | Providers and runtime settings |
 | `/help` | In-product help |
 
@@ -260,8 +257,7 @@ just release
 - `/api/v2/products/{product_id}/agent-conversations`
 - `/api/v2/products/{product_id}/agent-workbench`
 - `/api/v2/products/{product_id}/workflow`
-- `/api/v2/workflow-drafts`
-- `/api/v2/workflow-recipes`
+- `/api/v3/workflow-recipes`
 - `/api/v2/product-image-assets`
 - `/api/image-sessions`
 - `/api/media-library`

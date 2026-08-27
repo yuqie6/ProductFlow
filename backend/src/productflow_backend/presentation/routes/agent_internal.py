@@ -85,13 +85,6 @@ from productflow_backend.application.agent.workflow_runs import (
     inspect_agent_global_workflow_runs,
     list_agent_workflow_runs,
 )
-from productflow_backend.application.legacy_archive_rebuilds import (
-    AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT,
-    AGENT_LEGACY_ARCHIVE_LIST_MAX_LIMIT,
-    inspect_agent_legacy_archive,
-    list_agent_legacy_archives,
-)
-from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.application.product_images.mutations import GalleryAssetMove
 from productflow_backend.application.product_images.queries import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.product_intake import AgentProductSelectionV1
@@ -122,8 +115,6 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalWorkflowRunRequestCreateRequest,
     AgentGraphChangeSetReconcileResponse,
     AgentGraphChangeSetRequest,
-    AgentLegacyArchiveInspectResponse,
-    AgentLegacyArchiveListResponse,
     AgentProductWorkspaceLaunchRequest,
     AgentProductWorkspaceLaunchResponse,
     AgentProductWorkspaceReconcileResponse,
@@ -137,8 +128,6 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentTurnExecutionLeaseResponse,
     AgentTurnExecutionReleaseRequest,
     AgentTurnExecutionReleaseResponse,
-    AgentWorkflowDraftValidationRequest,
-    AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
     AgentWorkflowRunRequestCreateRequest,
     AgentWorkflowRunRequestPreparedResponse,
@@ -146,7 +135,6 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentWorkflowRunRequestResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
-    InspectAgentLegacyArchiveRequest,
     InspectAgentProductsRequest,
     InspectAgentProductsResponse,
     InspectAgentWorkflowRunsRequest,
@@ -189,8 +177,7 @@ def _serialize_agent_product_workspace_launch(
         product_conversation_id=creation.conversation.id,
         product_id=creation.product.id,
         product_name=creation.product.name,
-        workflow_draft_id=creation.conversation.workflow_draft_id,
-        task_id=None,
+task_id=None,
         intake_finalized=creation.intake_finalized,
         navigation_path=navigation_path,
     )
@@ -209,10 +196,6 @@ def get_agent_contract_endpoint(
     "/{conversation_id}/workflow-draft/validate",
     response_model=AgentWorkflowDraftValidationResponse,
 )
-def validate_agent_workflow_draft_endpoint(
-    conversation_id: str,
-    payload: AgentWorkflowDraftValidationRequest,
-    session: Session = Depends(get_session),
 ) -> AgentWorkflowDraftValidationResponse:
     del conversation_id, payload, session
     from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
@@ -380,7 +363,6 @@ def reconcile_agent_product_intake_endpoint(
             accepted=True,
             intake_finalized=reconciled.creation.intake_finalized,
             product_id=reconciled.creation.product.id,
-            workflow_draft_id=reconciled.creation.conversation.workflow_draft_id,
             reference_asset_ids=[asset.id for asset in reconciled.creation.created_assets],
             intake=reconciled.creation.product.intake_json,
         )
@@ -945,17 +927,6 @@ def inspect_agent_global_workflow_runs_endpoint(
     "/{conversation_id}/legacy-archives",
     response_model=AgentLegacyArchiveListResponse,
 )
-def list_agent_legacy_archives_endpoint(
-    conversation_id: str,
-    kind: LegacyArchiveKind = Query(),
-    query: str = Query(default="", max_length=255),
-    after: str = Query(default="", max_length=4096),
-    limit: int = Query(
-        default=AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT,
-        ge=1,
-        le=AGENT_LEGACY_ARCHIVE_LIST_MAX_LIMIT,
-    ),
-    session: Session = Depends(get_session),
 ) -> AgentLegacyArchiveListResponse:
     return AgentLegacyArchiveListResponse.model_validate(
         list_agent_legacy_archives(
@@ -973,10 +944,6 @@ def list_agent_legacy_archives_endpoint(
     "/{conversation_id}/legacy-archives/inspect",
     response_model=AgentLegacyArchiveInspectResponse,
 )
-def inspect_agent_legacy_archive_endpoint(
-    conversation_id: str,
-    payload: InspectAgentLegacyArchiveRequest,
-    session: Session = Depends(get_session),
 ) -> AgentLegacyArchiveInspectResponse:
     return AgentLegacyArchiveInspectResponse.model_validate(
         inspect_agent_legacy_archive(

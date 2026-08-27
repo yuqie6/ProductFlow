@@ -37,8 +37,6 @@ const MAX_TOTAL_IMAGE_BYTES = 20 << 20;
 const MAX_TOOL_TEXT_BYTES = 96 << 10;
 const MAX_SKILL_INSTRUCTION_EXCERPT_BYTES = 12 << 10;
 const MAX_LISTED_ASSETS = 100;
-const MAX_LISTED_ARCHIVES = 50;
-const MAX_INSPECTED_ARCHIVE_ITEMS = 10;
 const MAX_LISTED_WORKFLOW_RUNS = 20;
 const MAX_GLOBAL_PRODUCTS = 100;
 const MAX_GLOBAL_PRODUCT_INSPECTION = 20;
@@ -222,10 +220,6 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     createWorkflowRunRequestTool(runtime, false),
     createProductIntakeTool(runtime),
   ];
-  if (legacyArchivesEnabled(runtime)) {
-    tools.push(...createLegacyArchiveTools(runtime));
-  }
-
   if (runtime.scope.scope_type === "product_workflow") {
     if (runtime.scope.has_live_graph) {
       tools.push(createApplyGraphChangeSetTool(runtime), createProposeGraphChangeSetTool(runtime));
@@ -246,58 +240,7 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     tools.find((tool) => tool.name === PRODUCTFLOW_SKILL_TOOL_NAME)!,
     tools.find((tool) => tool.name === "ask_user")!,
   ];
-  if (legacyArchivesEnabled(runtime)) {
-    globalTools.push(...createLegacyArchiveTools(runtime));
-  }
   return globalTools;
-}
-
-function legacyArchivesEnabled(runtime: ToolRuntime): boolean {
-  return runtime.pageType === "history";
-}
-
-function createLegacyArchiveTools(runtime: ToolRuntime): ToolDefinition[] {
-  return [
-    defineTool({
-      name: "list_legacy_archives_v1",
-      label: "List legacy history",
-      description:
-        "List one bounded page of legacy archive metadata. Payloads, image bytes, URLs, and run details are excluded. Available only on the history page.",
-      parameters: Type.Object(
-        {
-          kind: Type.Union([Type.Literal("workflow"), Type.Literal("canvas_agent_thread"), Type.Literal("user_template")]),
-          query: Type.String({ maxLength: 255 }),
-          after: Type.String({ maxLength: 4096 }),
-          limit: Type.Integer({ minimum: 1, maximum: MAX_LISTED_ARCHIVES }),
-        },
-        { additionalProperties: false },
-      ),
-      execute: async (
-        _toolCallID: string,
-        params: { kind: string; query: string; after: string; limit: number },
-      ): Promise<Result> => textResult(await runtime.client.listLegacyArchives(runtime.scope.conversation_id, params, runtime.signal)),
-    }),
-    defineTool({
-      name: "inspect_legacy_archive_v1",
-      label: "Inspect legacy history",
-      description:
-        "Inspect one explicit bounded section of one legacy archive. Request only the section needed for the current redesign. Available only on the history page.",
-      parameters: Type.Object(
-        {
-          kind: Type.Union([Type.Literal("workflow"), Type.Literal("canvas_agent_thread"), Type.Literal("user_template")]),
-          archive_id: Type.String({ minLength: 1, maxLength: 64 }),
-          section: Type.String({ minLength: 1, maxLength: 64 }),
-          offset: Type.Integer({ minimum: 0 }),
-          limit: Type.Integer({ minimum: 1, maximum: MAX_INSPECTED_ARCHIVE_ITEMS }),
-        },
-        { additionalProperties: false },
-      ),
-      execute: async (
-        _toolCallID: string,
-        params: { kind: string; archive_id: string; section: string; offset: number; limit: number },
-      ): Promise<Result> => textResult(await runtime.client.inspectLegacyArchive(runtime.scope.conversation_id, params, runtime.signal)),
-    }),
-  ];
 }
 
 function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {

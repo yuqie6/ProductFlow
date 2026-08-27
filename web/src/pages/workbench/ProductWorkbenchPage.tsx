@@ -7,13 +7,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../../lib/api";
 import { useI18n } from "../../lib/preferences";
 import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
-  isAgentWorkbenchMissing,
   isHttpErrorStatus,
   loadProductWorkbenchAgent,
   readWorkflowGraphOrNull,
@@ -73,7 +72,6 @@ export function ProductWorkbenchPage() {
   if (surface.kind === "loading" || missingGraphNeedsPrime || (surface.kind === "graph" && (productQuery.isLoading || !productQuery.data))) {
     return (
       <WorkbenchRouteState
-        productId={productId}
         error={surface.kind === "graph" ? productQuery.error : null}
         onRetry={() => {
           if (shouldReadCurrentWorkflowGraph(productId, agentQuery.error)) void graphQuery.refetch();
@@ -86,7 +84,6 @@ export function ProductWorkbenchPage() {
   if (surface.kind === "error") {
     return (
       <WorkbenchRouteState
-        productId={productId}
         error={surface.error}
         onRetry={() => {
           if (shouldReadCurrentWorkflowGraph(productId, agentQuery.error)) void graphQuery.refetch();
@@ -99,7 +96,6 @@ export function ProductWorkbenchPage() {
     if (!productQuery.data) {
       return (
         <WorkbenchRouteState
-          productId={productId}
           error={productQuery.error}
           onRetry={() => void productQuery.refetch()}
         />
@@ -139,50 +135,28 @@ export function shouldReadCurrentWorkflowGraph(productId: string, _agentError?: 
 }
 
 function WorkbenchRouteState({
-  productId,
   error,
   onRetry,
 }: {
-  productId: string;
   error: unknown;
   onRetry: () => void;
 }) {
   const { t } = useI18n();
-  const legacyMigrationRequired = error instanceof ApiError && error.status === 409;
   return (
     <div className="flex min-h-screen items-center justify-center bg-white p-6 text-zinc-500 dark:bg-[#060a12] dark:text-slate-400">
       {error ? (
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
-          {legacyMigrationRequired ? (
-            <>
-              <h1 className="text-base font-semibold text-zinc-900 dark:text-white">
-                {t("productWorkbench.migration.title")}
-              </h1>
-              <p role="alert" className="text-sm text-zinc-600 dark:text-slate-300">
-                {t("productWorkbench.migration.description")}
-              </p>
-              <Link
-                to={`/history?product_id=${encodeURIComponent(productId)}`}
-                className="inline-flex h-10 items-center rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700"
-              >
-                {t("productWorkbench.migration.history")}
-              </Link>
-            </>
-          ) : (
-            <>
-              <p role="alert" className="text-sm text-red-700 dark:text-red-200">
-                {errorDetail(error, t("productWorkbench.loadFailed"))}
-              </p>
-              <button
-                type="button"
-                onClick={onRetry}
-                className="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:border-zinc-500 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500"
-              >
-                <RotateCw size={15} />
-                {t("productWorkbench.retry")}
-              </button>
-            </>
-          )}
+          <p role="alert" className="text-sm text-red-700 dark:text-red-200">
+            {errorDetail(error, t("productWorkbench.loadFailed"))}
+          </p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:border-zinc-500 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500"
+          >
+            <RotateCw size={15} />
+            {t("productWorkbench.retry")}
+          </button>
         </div>
       ) : (
         <>

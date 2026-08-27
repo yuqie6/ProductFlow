@@ -12,11 +12,9 @@ const scope: Scope = {
   task_id: null,
   task_goal: null,
   product_id: "22222222-2222-4222-8222-222222222222",
-  workflow_draft_id: "33333333-3333-4333-8333-333333333333",
   run_id: "44444444-4444-4444-8444-444444444444",
   system_prompt: "ProductFlow",
   draft_schema: { type: "object" },
-  workflow_draft_schema: { type: "object" },
   current_draft_version: 1,
   has_live_graph: false,
 };
@@ -171,7 +169,7 @@ describe("TurnStore", () => {
         output: "recovered",
         error: "",
         artifact: {
-          name: "propose_workflow_draft",
+          name: "propose_global_draft",
           value: { schema_version: 2 },
           step_id: "step-1",
         },
@@ -184,7 +182,7 @@ describe("TurnStore", () => {
       expect(state.status).toBe("awaiting_confirmation");
       expect(state.output).toBe("recovered");
       expect(state.artifact).toEqual({
-        name: "propose_workflow_draft",
+        name: "propose_global_draft",
         value: { schema_version: 2 },
         step_id: "step-1",
       });

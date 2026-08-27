@@ -228,13 +228,11 @@ async function handleFakeProductFlowRequest(
       task_id: null,
       task_goal: null,
       product_id: null,
-      workflow_draft_id: null,
       harness_run_id: runID,
       current_draft_version: 1,
       system_prompt: "ProductFlow test contract",
       draft_kind: "global",
       draft_schema: { type: "object" },
-      workflow_draft_schema: { type: "object" },
       tool_contract_version: TOOL_CONTRACT_VERSION,
     });
     return;

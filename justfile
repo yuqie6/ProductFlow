@@ -80,10 +80,6 @@ backend-test-live-async-delivery:
 backend-run-async-dispatcher:
     bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.run_async_dispatcher
 
-backend-test-live-media-library-migration:
-    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres
-    PRODUCTFLOW_RUN_LIVE_MEDIA_LIBRARY_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_media_library_migration.py
-
 backend-test-live-agent-product-intake:
     PRODUCTFLOW_RUN_LIVE_AGENT_PRODUCT_INTAKE=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_agent_product_intake.py
 

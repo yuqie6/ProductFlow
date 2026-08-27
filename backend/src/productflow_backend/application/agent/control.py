@@ -23,7 +23,6 @@ from productflow_backend.application.agent.turn_projection import (
     cancel_unbound_agent_turn,
     expected_harness_run_id,
     get_agent_turn_or_raise,
-    is_confirmed_workflow_draft_turn,
     lock_agent_turn_or_raise,
     project_agent_turn_state,
     record_agent_turn_start_error,
@@ -498,10 +497,6 @@ def synchronize_agent_turn_state(
         effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
     elif pending_workflow_run_request is not None and state.status == AgentTurnStatus.SUCCEEDED:
         effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
-    stale_confirmed_workflow_turn = (
-        effective_status == AgentTurnStatus.AWAITING_CONFIRMATION
-        and is_confirmed_workflow_draft_turn(projection)
-    )
     projection = project_agent_turn_state(
         session,
         product_id=product_id,
@@ -520,8 +515,6 @@ def synchronize_agent_turn_state(
         finished_at=state.finished_at,
         commit=commit,
     )
-    if stale_confirmed_workflow_turn:
-        effective_status = projection.status
     if effective_status == AgentTurnStatus.AWAITING_CONFIRMATION:
         if state.artifact is None and pending_workflow_run_request is None:
             raise ConflictError("Agent Turn 待确认状态缺少 required artifact")
@@ -539,8 +532,7 @@ def synchronize_agent_turn_state(
                     artifact_value=state.artifact.value,
                     commit=commit,
                 )
-            else:
-                # 过渡期仍要对账旧合同里已经 journal 过的 Turn，避免无法恢复。
+            elif state.artifact.name == LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME:
                 projection = attach_agent_library_organization_draft_artifact(
                     session,
                     conversation_id=conversation_id,
@@ -551,10 +543,10 @@ def synchronize_agent_turn_state(
                     artifact_value=state.artifact.value,
                     commit=commit,
                 )
+            else:
+                raise ConflictError("全局 Agent Turn 只接受 propose_global_draft 或 propose_library_organization_draft")
         elif state.artifact is not None:
-            from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
-
-            raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
+            raise ConflictError("商品工作流 Agent Turn 不能提交 Draft artifact")
         if pending_workflow_run_request is not None:
             projection = attach_agent_workflow_run_request(
                 session,
@@ -564,7 +556,7 @@ def synchronize_agent_turn_state(
                 request_id=pending_workflow_run_request.id,
                 commit=commit,
             )
-    elif state.artifact is not None and not stale_confirmed_workflow_turn:
+    elif state.artifact is not None:
         raise ConflictError("Agent Turn 在非待确认状态返回了 artifact")
     return projection
 
@@ -623,8 +615,6 @@ def attach_agent_library_organization_draft_artifact(
         raise ConflictError("Agent Turn 尚未进入待确认状态")
     if projection.harness_turn_id not in {None, harness_turn_id}:
         raise ConflictError("Agent turn projection 已绑定其他 harness Turn")
-    if projection.workflow_draft_revision_id is not None:
-        raise ConflictError("全局 Agent Turn 不能同时绑定 WorkflowDraft revision")
 
     draft = session.scalar(
         select(LibraryOrganizationDraft)

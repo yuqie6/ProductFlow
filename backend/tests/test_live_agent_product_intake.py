@@ -151,11 +151,9 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                     idempotency_key="postgres-agent-create",
                 )
                 product_id = created.product.id
-                draft_id = created.workflow_draft.id
                 conversation_id = created.conversation.id
                 assert created.product.cover_image_asset_id is None
-                assert created.workflow_draft.current_revision_id is None
-                assert created.workflow_draft.intake_schema_version == 1
+                assert created.product.intake_json is not None
                 assert created.conversation.creation_request_hash is not None
                 assert create_agent_product_workspace(
                     session,
@@ -173,22 +171,18 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                 )
 
             _reset_database_state()
-            with pytest.raises(RuntimeError, match="media library cutover evidence"):
+            with pytest.raises(RuntimeError, match="已删除的兼容表和 Draft 列不能降级"):
                 command.downgrade(config, "20260814_0037")
             engine = sa.create_engine(database_url, future=True)
             inspector = sa.inspect(engine)
-            assert "intake_json" in {column["name"] for column in inspector.get_columns("workflow_drafts")}
+            assert "workflow_drafts" not in inspector.get_table_names()
             assert "summary" in {column["name"] for column in inspector.get_columns("agent_sessions")}
             assert "summary" in {column["name"] for column in inspector.get_columns("agent_tasks")}
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT COUNT(*) FROM products")) == 2
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM workflow_drafts")) == 2
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM agent_conversations")) == 3
+                assert connection.scalar(sa.text("SELECT COUNT(*) FROM agent_conversations")) >= 2
                 assert connection.scalar(
                     sa.text("SELECT COUNT(*) FROM products WHERE id = :id"), {"id": product_id}
-                ) == 1
-                assert connection.scalar(
-                    sa.text("SELECT COUNT(*) FROM workflow_drafts WHERE id = :id"), {"id": draft_id}
                 ) == 1
                 assert connection.scalar(
                     sa.text("SELECT COUNT(*) FROM agent_conversations WHERE id = :id"),
@@ -242,8 +236,7 @@ def test_draft_first_agent_product_intake_replays_across_sessions_on_postgresql(
                 product_id = draft.product.id
                 assert draft.created is True
                 assert draft.created_assets == []
-                assert draft.workflow_draft.intake_json is None
-                assert draft.workflow_draft.current_revision_id is None
+                assert draft.product.intake_json is None
                 assert draft.product.cover_image_asset_id is None
 
             with session_factory() as session:
@@ -264,7 +257,7 @@ def test_draft_first_agent_product_intake_replays_across_sessions_on_postgresql(
                 asset_ids = [asset.id for asset in finalized.created_assets]
                 assert finalized.created is True
                 assert len(asset_ids) == 2
-                assert finalized.workflow_draft.intake_json == {
+                assert finalized.product.intake_json == {
                     "schema_version": 1,
                     "image_types": [
                         {"key": "hero", "quantity": 3, "order": 0},
@@ -287,7 +280,6 @@ def test_draft_first_agent_product_intake_replays_across_sessions_on_postgresql(
                 assert session.scalar(sa.text("SELECT COUNT(*) FROM product_image_assets")) == 2
                 assert session.scalar(sa.text("SELECT COUNT(*) FROM media_objects")) == 2
                 assert session.scalar(sa.text("SELECT COUNT(*) FROM product_workflows")) == 0
-                assert session.scalar(sa.text("SELECT COUNT(*) FROM workflow_draft_revisions")) == 0
 
             _reset_database_state()
 

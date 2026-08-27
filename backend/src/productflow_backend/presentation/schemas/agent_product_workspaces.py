@@ -22,7 +22,6 @@ from productflow_backend.presentation.schemas.products import (
     CanonicalProductDetailResponse,
     ProductImageAssetResponse,
 )
-from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse
 
 
 class AgentProductImageTypeOptionResponse(BaseModel):
@@ -53,7 +52,6 @@ class AgentProductWorkspaceCreateResponse(BaseModel):
     task_id: str | None = None
     product: CanonicalProductDetailResponse
     created_assets: list[ProductImageAssetResponse]
-    workflow_draft: WorkflowDraftResponse | None = None
     conversation: AgentConversationResponse
 
 
@@ -70,7 +68,6 @@ class AgentProductWorkspaceSnapshotResponse(BaseModel):
     intake_finalized: bool
     product: CanonicalProductDetailResponse
     created_assets: list[ProductImageAssetResponse]
-    workflow_draft: WorkflowDraftResponse | None = None
     conversation: AgentConversationResponse
 
 

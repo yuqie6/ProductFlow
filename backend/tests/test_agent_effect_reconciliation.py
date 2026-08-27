@@ -284,6 +284,5 @@ def test_unknown_intake_effect_reconciles_without_workflow_draft(db_session) -> 
     assert result.result_json is not None
     assert result.result_json["kind"] == "product_intake"
     assert result.result_json["product_id"] == workspace.product.id
-    assert result.result_json["workflow_draft_id"] is None
     assert result.result_json["intake_finalized"] is True
     assert workspace.conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW

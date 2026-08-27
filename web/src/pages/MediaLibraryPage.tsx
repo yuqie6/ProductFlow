@@ -235,12 +235,12 @@ export function MediaLibraryPage() {
         setUploadProgress((prev) =>
           prev
             ? {
-                ...prev,
-                completed: successCount + failedCount,
-                success: successCount,
-                failed: failedCount,
-                errors,
-              }
+              ...prev,
+              completed: successCount + failedCount,
+              success: successCount,
+              failed: failedCount,
+              errors,
+            }
             : null,
         );
       }
@@ -672,7 +672,6 @@ export function MediaLibraryPage() {
                 <option value="direct_upload">{t("mediaLibrary.source.upload")}</option>
                 <option value="product_asset">{t("mediaLibrary.source.product")}</option>
                 <option value="image_session_generated">{t("mediaLibrary.source.session")}</option>
-                <option value="legacy_gallery">{t("mediaLibrary.source.legacy")}</option>
               </select>
               <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">
                 <input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} className="h-3.5 w-3.5 accent-indigo-600" />
@@ -798,8 +797,8 @@ export function MediaLibraryPage() {
           dialog?.kind === "delete-folder"
             ? t("mediaLibrary.deleteFolderConfirm", { name: dialog.folder.name })
             : dialog?.kind === "delete-tag"
-            ? t("mediaLibrary.deleteTagConfirm", { name: dialog.tag.name })
-            : ""
+              ? t("mediaLibrary.deleteTagConfirm", { name: dialog.tag.name })
+              : ""
         }
         confirmLabel={dialog?.kind === "delete-folder" ? t("mediaLibrary.deleteFolder") : t("mediaLibrary.deleteTag")}
         cancelLabel={t("common.cancel")}
@@ -894,11 +893,10 @@ function FilterButton({ active, label, count, onClick }: { active: boolean; labe
     <button
       type="button"
       onClick={onClick}
-      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium transition-colors ${
-        active
+      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium transition-colors ${active
           ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200"
           : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/70"
-      }`}
+        }`}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <span className="shrink-0 text-[10px] tabular-nums text-slate-400">{count}</span>
@@ -924,11 +922,10 @@ function SidebarItem({
   return (
     <div
       onClick={onClick}
-      className={`group flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors select-none ${
-        active
+      className={`group flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors select-none ${active
           ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200"
           : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/70"
-      }`}
+        }`}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
       <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -968,11 +965,10 @@ function ViewButton({ active, label, onClick, children }: { active: boolean; lab
       aria-label={label}
       title={label}
       aria-pressed={active}
-      className={`inline-flex h-full w-9 items-center justify-center transition-colors ${
-        active
+      className={`inline-flex h-full w-9 items-center justify-center transition-colors ${active
           ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/20 dark:text-violet-100"
           : "text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-white"
-      }`}
+        }`}
     >
       {children}
     </button>
@@ -998,20 +994,18 @@ function MediaLibraryCard({
   return (
     <article
       onClick={(e) => onToggle(e)}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition-all select-none hover:shadow-md dark:bg-[#0d131e] ${
-        selected
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition-all select-none hover:shadow-md dark:bg-[#0d131e] ${selected
           ? "border-indigo-500 ring-2 ring-indigo-500/20 dark:border-violet-400 dark:ring-violet-500/25"
           : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
-      }`}
+        }`}
     >
       <div className="relative aspect-square overflow-hidden bg-slate-100 dark:bg-slate-900">
         <img
           src={api.toApiUrl(asset.thumbnail_url)}
           alt={asset.display_name}
           loading="lazy"
-          className={`h-full w-full object-cover transition duration-200 group-hover:scale-[1.02] ${
-            asset.is_archived ? "opacity-55 grayscale" : ""
-          }`}
+          className={`h-full w-full object-cover transition duration-200 group-hover:scale-[1.02] ${asset.is_archived ? "opacity-55 grayscale" : ""
+            }`}
         />
 
         {/* 复选框 - 高对比度毛玻璃，hover 时显现，选中时高亮常驻 */}
@@ -1023,11 +1017,10 @@ function MediaLibraryCard({
           }}
           aria-pressed={selected}
           aria-label={asset.display_name}
-          className={`absolute left-2.5 top-2.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-md backdrop-blur-md transition-all ${
-            selected
+          className={`absolute left-2.5 top-2.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-md backdrop-blur-md transition-all ${selected
               ? "border-indigo-600 bg-indigo-600 text-white opacity-100 dark:border-violet-500 dark:bg-violet-500"
               : "border-white/40 bg-slate-950/40 text-transparent opacity-75 group-hover:opacity-100 hover:border-white hover:bg-slate-950/70 hover:text-white/80 dark:border-white/30 dark:bg-slate-900/60"
-          }`}
+            }`}
         >
           <Check size={13} strokeWidth={selected ? 2.5 : 2} />
         </button>
@@ -1101,9 +1094,8 @@ function MediaLibraryRow({
   return (
     <div
       onClick={(e) => onToggle(e)}
-      className={`group flex min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${
-        selected ? "bg-indigo-50/70 dark:bg-violet-500/10" : "hover:bg-slate-50/70 dark:hover:bg-slate-900/50"
-      }`}
+      className={`group flex min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${selected ? "bg-indigo-50/70 dark:bg-violet-500/10" : "hover:bg-slate-50/70 dark:hover:bg-slate-900/50"
+        }`}
     >
       <button
         type="button"
@@ -1113,11 +1105,10 @@ function MediaLibraryRow({
         }}
         aria-pressed={selected}
         aria-label={asset.display_name}
-        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-all ${
-          selected
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-all ${selected
             ? "border-indigo-600 bg-indigo-600 text-white dark:border-violet-400 dark:bg-violet-500"
             : "border-slate-300 bg-white text-transparent group-hover:border-slate-400 dark:border-slate-600 dark:bg-slate-950"
-        }`}
+          }`}
       >
         <Check size={13} strokeWidth={selected ? 2.5 : 2} />
       </button>
@@ -1134,9 +1125,8 @@ function MediaLibraryRow({
           src={api.toApiUrl(asset.thumbnail_url)}
           alt=""
           loading="lazy"
-          className={`h-full w-full object-cover transition-transform duration-150 group-hover/img:scale-105 ${
-            asset.is_archived ? "opacity-55 grayscale" : ""
-          }`}
+          className={`h-full w-full object-cover transition-transform duration-150 group-hover/img:scale-105 ${asset.is_archived ? "opacity-55 grayscale" : ""
+            }`}
         />
         <span className="absolute inset-0 flex items-center justify-center bg-slate-950/40 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
           <Maximize2 size={13} />
@@ -1178,7 +1168,7 @@ function sourceLabel(source: MediaLibrarySourceType, t: ReturnType<typeof useI18
   if (source === "direct_upload") return t("mediaLibrary.source.upload");
   if (source === "product_asset") return t("mediaLibrary.source.product");
   if (source === "image_session_generated") return t("mediaLibrary.source.session");
-  return t("mediaLibrary.source.legacy");
+  return t("mediaLibrary.source.upload");
 }
 
 function LibraryState({ icon, text, action, onAction }: { icon?: React.ReactNode; text: string; action?: string; onAction?: () => void }) {

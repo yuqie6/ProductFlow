@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from test_migrations_database_constraints import _configure_sqlite_alembic
 
 from alembic import command
@@ -66,8 +67,9 @@ def test_fidelity_checks_migration_upgrades_fresh_sqlite_and_enforces_outcomes(
     command.upgrade(config, "head")
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
+    expected_head = ScriptDirectory.from_config(config).get_current_head()
     with engine.begin() as connection:
-        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0093"
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == expected_head
         _insert_asset_fixture(connection)
         _insert_check(connection)
         with pytest.raises(sa.exc.IntegrityError):
@@ -80,7 +82,7 @@ def test_fidelity_checks_downgrade_fails_closed_when_history_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     database_path, config = _config(tmp_path, monkeypatch, filename="fidelity-downgrade.db")
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260825_0093")
     engine = sa.create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         _insert_asset_fixture(connection)

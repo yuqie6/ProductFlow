@@ -135,7 +135,7 @@ export function AgentMessageList({
             (active && latest.status !== "requires_input" && latest.status !== "awaiting_confirmation") ||
             hideFailedTail;
           const reviewDraft = Boolean(
-            reviewDraftRevisionId && latest.workflow_draft_revision_id === reviewDraftRevisionId,
+            reviewDraftRevisionId && latest.library_organization_draft_revision_id === reviewDraftRevisionId,
           );
           const canPreviewAssets = Boolean(onPreviewAsset);
           const canRetry = Boolean(onRetryTurn && canRetryAgentTurn({ turn: latest }));

@@ -1,15 +1,12 @@
-"""全局 Agent Draft：可审阅 artifact。当前只接受素材整理；商品工作流 Draft 已退休。"""
+"""全局 Agent Draft：可审阅 artifact。当前只接受素材整理。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, NoReturn
+from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent.agent_context import get_agent_global_workflow_target
 from productflow_backend.application.agent.conversations import (
     get_agent_conversation_or_raise,
 )
@@ -22,32 +19,9 @@ from productflow_backend.application.media_library.drafts import (
     validate_library_organization_draft,
 )
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.service import (
-    PRODUCT_WORKFLOW_DRAFT_RETIRED,
-    get_workflow_draft_or_raise,
-)
-from productflow_backend.domain.enums import (
-    AgentConversationScope,
-    AgentTurnStatus,
-)
-from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
-from productflow_backend.infrastructure.db.models import (
-    AgentConversation,
-    AgentTurnProjection,
-    Product,
-    WorkflowDraft,
-    WorkflowDraftRevision,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class GlobalWorkflowDraftReview:
-    conversation_id: str
-    product_id: str
-    product_name: str
-    product_conversation_id: str
-    workflow_draft_id: str
-    draft: WorkflowDraft
+from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError
+from productflow_backend.infrastructure.db.models import AgentTurnProjection
 
 
 def parse_global_agent_draft_payload_or_raise(value: dict[str, Any]) -> GlobalAgentDraftPayloadV1:
@@ -67,26 +41,23 @@ def validate_global_agent_draft(
     conversation_id: str,
     value: dict[str, Any],
 ) -> GlobalAgentDraftPayloadV1:
-    """校验全局 artifact。商品工作流 Draft 已退休，只接受素材整理。"""
+    """校验全局 artifact。只接受素材整理。"""
     conversation = get_agent_conversation_or_raise(
         session,
         product_id=None,
         conversation_id=conversation_id,
     )
     if isinstance(value, dict) and value.get("draft_kind") not in {None, "library_organization"}:
-        raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
+        raise BusinessValidationError("全局 Agent 只接受素材整理 Draft")
     artifact = parse_global_agent_draft_payload_or_raise(value)
-    if artifact.draft_kind == "library_organization":
-        if artifact.library_payload is None:
-            raise BusinessValidationError("素材整理 Draft 缺少 library_payload")
-        validate_library_organization_draft(
-            session,
-            conversation_id=conversation.id,
-            value=artifact.library_payload.model_dump(mode="json"),
-        )
-        return artifact
-
-    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
+    if artifact.library_payload is None:
+        raise BusinessValidationError("素材整理 Draft 缺少 library_payload")
+    validate_library_organization_draft(
+        session,
+        conversation_id=conversation.id,
+        value=artifact.library_payload.model_dump(mode="json"),
+    )
+    return artifact
 
 
 def attach_agent_global_draft_artifact(
@@ -100,7 +71,7 @@ def attach_agent_global_draft_artifact(
     artifact_value: dict[str, Any],
     commit: bool = True,
 ) -> AgentTurnProjection:
-    """把全局 artifact 写成目标 Draft revision。commit=False 时由调用方持有事务。"""
+    """把全局 artifact 写成素材整理 Draft revision。commit=False 时由调用方持有事务。"""
     if artifact_name != GLOBAL_AGENT_DRAFT_ARTIFACT_NAME:
         raise BusinessValidationError("Agent 返回了不受支持的全局 Draft artifact")
     normalized_step_id = artifact_step_id.strip()
@@ -127,101 +98,36 @@ def attach_agent_global_draft_artifact(
         value=artifact_value,
     )
 
-    if artifact.draft_kind == "library_organization":
-        # 素材观察与确认副作用仍由既有 library Draft 实现负责。
-        from productflow_backend.application.agent.control import (
-            attach_agent_library_organization_draft_artifact,
-        )
-        from productflow_backend.application.media_library.drafts import (
-            LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
-        )
-
-        if artifact.library_payload is None:
-            raise BusinessValidationError("素材整理 Draft 缺少 library_payload")
-        projection = attach_agent_library_organization_draft_artifact(
-            session,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            harness_turn_id=harness_turn_id,
-            artifact_name=LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
-            artifact_step_id=normalized_step_id,
-            artifact_value=artifact.library_payload.model_dump(mode="json"),
-            commit=False,
-        )
-        projection.artifact_name = GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
-        projection.updated_at = now_utc()
-        if commit:
-            session.commit()
-            session.refresh(projection)
-        return projection
-
-    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
-
-
-def get_global_workflow_draft_review(
-    session: Session,
-    *,
-    conversation_id: str,
-    revision_id: str,
-) -> GlobalWorkflowDraftReview:
-    projection = session.scalar(
-        select(AgentTurnProjection)
-        .join(AgentConversation, AgentConversation.id == AgentTurnProjection.conversation_id)
-        .where(
-            AgentTurnProjection.workflow_draft_revision_id == revision_id,
-            AgentTurnProjection.conversation_id == conversation_id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
+    from productflow_backend.application.agent.control import (
+        attach_agent_library_organization_draft_artifact,
     )
-    if projection is None:
-        get_agent_conversation_or_raise(session, product_id=None, conversation_id=conversation_id)
-        raise NotFoundError("全局会话没有关联这个 WorkflowDraft revision")
-    revision = session.scalar(select(WorkflowDraftRevision).where(WorkflowDraftRevision.id == revision_id))
-    if revision is None:
-        raise NotFoundError("WorkflowDraft revision 不存在")
-    draft = get_workflow_draft_or_raise(
+    from productflow_backend.application.media_library.drafts import (
+        LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
+    )
+
+    if artifact.library_payload is None:
+        raise BusinessValidationError("素材整理 Draft 缺少 library_payload")
+    projection = attach_agent_library_organization_draft_artifact(
         session,
-        product_id=revision.draft.product_id,
-        draft_id=revision.draft_id,
-    )
-    session.expire(draft, ["current_revision_id", "current_revision"])
-    if draft.current_revision_id != revision.id:
-        raise ConflictError("WorkflowDraft 已产生更新版本，请重新读取后审核")
-    target = get_agent_global_workflow_target(
-        session,
-        product_id=draft.product_id,
-        workflow_draft_id=draft.id,
-    )
-    product = session.get(Product, draft.product_id)
-    if product is None:
-        raise NotFoundError("商品不存在")
-    return GlobalWorkflowDraftReview(
         conversation_id=conversation_id,
-        product_id=product.id,
-        product_name=product.name,
-        product_conversation_id=target.id,
-        workflow_draft_id=draft.id,
-        draft=draft,
+        projection_id=projection_id,
+        harness_turn_id=harness_turn_id,
+        artifact_name=LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
+        artifact_step_id=normalized_step_id,
+        artifact_value=artifact.library_payload.model_dump(mode="json"),
+        commit=False,
     )
-
-
-def confirm_global_workflow_draft_review(
-    session: Session,
-    *,
-    conversation_id: str,
-    revision_id: str,
-    expected_draft_version: int,
-) -> NoReturn:
-    del session, conversation_id, revision_id, expected_draft_version
-    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
+    projection.artifact_name = GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
+    projection.updated_at = now_utc()
+    if commit:
+        session.commit()
+        session.refresh(projection)
+    return projection
 
 
 __all__ = [
     "GLOBAL_AGENT_DRAFT_ARTIFACT_NAME",
-    "GlobalWorkflowDraftReview",
     "attach_agent_global_draft_artifact",
-    "confirm_global_workflow_draft_review",
-    "get_global_workflow_draft_review",
     "parse_global_agent_draft_payload_or_raise",
     "validate_global_agent_draft",
 ]

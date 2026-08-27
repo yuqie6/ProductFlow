@@ -11,13 +11,13 @@ Use `docs/ARCHITECTURE.md` for the current code map and `CONTEXT.md` for domain 
 - `domain/` contains enums, business errors, and database-free rules.
 - `infrastructure/` adapts SQLAlchemy, storage, Redis/Dramatiq, providers, and the Agent service.
 - `workers.py` is a composition root: it creates dependencies and invokes application execution without duplicating business rules.
-- Online code understands schema-v3 graphs only. Legacy source shapes are restricted to `application/legacy_retirement/`, immutable archive reads, and Alembic history.
+- Online code understands schema-v3 graphs only. Do not add readers for retired V1/v2 shapes, archive/cutover gates, or old-data backfill.
 
 Current ownership:
 
 - Agent workspace, Turn projection, and tool boundaries: `agent/product_workspaces.py`, `conversations.py`, `turn_projection.py`, `control.py`, `execution.py`, `sync.py`, `tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, and `agent_context.py`.
 - Agent Session and Task: `agent/sessions.py`, `tasks.py`.
-- Draft validation and graph persist: `workflow_drafts/contracts.py` (historical GET payload), `domain/artifact_contracts.py` (`ListingPromptPayload` live shape; `ImagePromptPayloadV1` keeps optional Draft topology fields for GET), `service.py` (GET plus 409 write stubs). Product-path Draft HTTP writes and Draft-bound conversation create remain 409 stubs and do not parse the v2 payload.
+- Draft validation and graph persist: `domain/artifact_contracts.py` (live types). Product WorkflowDraft writers and HTTP are gone; retired URLs return 404 (`test_workflow_draft_api.py`).
 - Current online graph and run: `product_workflow/graph_*.py`, `graph_run_durability.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. In-memory apply is `apply_workflow_change_set`; persist still goes through Graph Command. Agent workbench bootstrap (`application/agent/workbenches.py`) returns a Graph projection; GET without a Conversation is an intentional 409.
 - Product images: `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`). `MediaObject` primitives live in `media_objects.py`.
 - Global media library: `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`, `drafts.py`).
@@ -72,11 +72,11 @@ Current ownership:
 
 ## Migrations
 
-- Every schema change has an Alembic revision and a focused regression test.
+- Every schema change has an Alembic revision and a focused regression test for the current schema.
 - Fresh-database `upgrade head` must work. PostgreSQL-specific enum, lock, or transaction behavior requires live validation when affected.
 - Historical revisions are immutable unless explicitly repairing a demonstrated broken revision.
 - A migration must not call an Agent/provider or assume storage is mounted.
-- Any future V1 destructive cleanup must call `assert_legacy_cutover_cleanup_ready` in its owning transaction and follow `docs/operations/legacy-v1-cutover.md`.
+- Do not write data backfill, freeze, archive, or cutover-gate migrations. Following mainline may recreate the database and storage. See `docs/adr/0010-mainline-no-compatibility.md`.
 
 ## Verification
 
@@ -89,4 +89,4 @@ uv run --directory backend pytest
 
 Use the opt-in PostgreSQL/Redis/provider gates from the `justfile` when a change touches dialect-sensitive transactions, durable recovery, delivery rendering, Agent intake, or provider behavior.
 
-Add the closest regression first: route/schema, application transition/rollback, graph rule, provider wire payload, queue recovery, storage compensation, Agent reconciliation, or migration transform. Historical-value compatibility requires a stored fixture through API serialization and frontend rendering; a newly constructed current DTO is insufficient.
+Add the closest regression first: route/schema, application transition/rollback, graph rule, provider wire payload, queue recovery, storage compensation, or Agent reconciliation. Test the current contract. Do not add fixtures or readers for retired shapes.

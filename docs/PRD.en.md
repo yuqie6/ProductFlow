@@ -4,7 +4,7 @@
 
 ProductFlow is a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The current release serves a personal project and live demo, but upgrades for deployed instances cannot rely on resetting data. The migration window preserves bounded immutable history snapshots, canonical asset mappings, and Agent rebuild entry points; the online release maintains one schema-v3 graph, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
+The current release serves a personal project and live demo. The main repository is in rapid development and accepts breaking changes. Deployments that need a stable snapshot should fork. Following this repository may require recreating the database and storage. The online release maintains one schema-v3 graph, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
 
 ## 2. Target Users
 
@@ -54,7 +54,7 @@ The current release serves a personal project and live demo, but upgrades for de
 ### 3.5 Global Media Library
 
 - `/media-library` is the long-lived cross-product media entry with search, folders, tags, archive/restore, upload, and batch organization.
-- Iterative-image candidates can be saved into the global media library. The old `/gallery` route is a bookmark redirect only.
+- Iterative-image candidates can be saved into the global media library.
 - Workflow sub-libraries store usage associations to global assets. One media object can be used by multiple workflows without copying its bytes.
 - The Agent may publish a confirmable library-organization Draft. Rename, move, tag, and archive apply only after user confirmation.
 
@@ -76,7 +76,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - `WorkflowGraphRun` / `WorkflowGraphNodeRun` / `WorkflowGraphArtifact`: execution state and artifacts.
 - `WorkflowRecipe` / `WorkflowRecipeVersion`: user-saved full recipes and fragments.
 - `AgentSession`: long-lived conversation container, title, summary, and task index.
-- `AgentTask`: one business goal and one task-specific run.
+- `AgentTask`: one business goal and one task-specific run. On the product path this is an explicit Goal: a finished graph run is not complete.
 - `AgentConversation` / `AgentTurnProjection`: ProductFlow-side Agent conversation and Turn projection.
 - `ImageSession`: independent iterative image session.
 - `DeliveryRenditionJob`: asynchronous delivery-format rendering.
@@ -89,8 +89,6 @@ The current release serves a personal project and live demo, but upgrades for de
 - `/products/:productId`: Agent, workflow canvas, inspector, runs, recipes, and image library.
 - `/image-chat`: iterative text/image generation.
 - `/media-library`: global media library.
-- `/gallery`: compatibility redirect for the retired collected-image bookmark.
-- `/history`: read-only V1 workflow, user-template, and Canvas Agent archives with export and Agent rebuild.
 - `/settings`: provider and runtime settings.
 - `/help`: in-product help; a projection of `USER_GUIDE.en.md` page operations.
 
@@ -107,7 +105,6 @@ The current release serves a personal project and live demo, but upgrades for de
 - The Agent conversation can be closed at any time. With it closed or never opened, canvas add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn must not lock the canvas.
 - Workflow reuse comes only from user-saved recipes.
 - Provider purposes are `prompt`, `agent`, and `image`.
-- V1 history is read-only for browse, download, export, and Agent rebuild. Rebuild creates a reviewable V2 Draft and never restores a V1 editor or executor.
 
 ## 7. Non-Goals
 
@@ -115,7 +112,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - Automatic publishing to ecommerce or ad platforms.
 - Automatically classifying and deleting images the user dislikes.
 - Loading an entire product library into Agent context.
-- Long-term runtime readers for retired V1 database models; migration-window archive snapshots remain a bounded upgrade capability.
+- Long-term runtime readers for retired models, dual serializers, 409 compatibility stubs, or backfill/freeze/archive gates for deployed data.
 
 ## 8. Success Criteria
 
@@ -124,4 +121,4 @@ The current release serves a personal project and live demo, but upgrades for de
 - Uploads, workflow results, and image-session attachments are manageable in one product image library. Cross-product long-lived media lives in `/media-library`.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.
 - Current code and documentation describe one online workflow contract.
-- Deployed V1 instances require source/archive/canonical reconciliation and verified backup restoration; resetting data is not an upgrade procedure.
+- The main repository does not promise lossless upgrades for deployed instances. Deployments that need a stable snapshot should fork.

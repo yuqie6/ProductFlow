@@ -119,7 +119,6 @@ async def create_agent_product_workspace_endpoint(
         task_id=None,
         product=serialize_canonical_product_detail(creation.product),
         created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
-        workflow_draft=None,
         conversation=serialize_agent_conversation(creation.conversation),
     )
 
@@ -149,7 +148,6 @@ def _serialize_workspace_snapshot(
         intake_finalized=creation.intake_finalized,
         product=serialize_canonical_product_detail(creation.product),
         created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
-        workflow_draft=None,
         conversation=serialize_agent_conversation(creation.conversation),
     )
 

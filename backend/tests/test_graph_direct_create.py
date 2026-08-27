@@ -14,7 +14,7 @@ from productflow_backend.application.product_workflow.graph_execution import exe
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.domain.enums import GraphNodeType
 from productflow_backend.domain.image_type_catalog import LISTING_LOOK_RULE
-from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph
+from productflow_backend.infrastructure.db.models import WorkflowGraph
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
 
@@ -59,7 +59,6 @@ def test_direct_create_writes_v3_graph_without_draft_or_v2_workflow(db_session) 
     assert all(any(edge.role.value == "reference" for edge in node.incoming) for node in image_nodes)
     assert all(any(edge.role.value == "reference" for edge in node.incoming) for node in prompt_nodes)
     assert all(any(edge.role.value == "facts" for edge in node.incoming) for node in prompt_nodes)
-    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
 
 
@@ -155,7 +154,7 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
     factory = get_session_factory()
     session = factory()
     try:
-        assert session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
+        assert session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
     finally:
         session.close()
 

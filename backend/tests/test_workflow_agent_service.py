@@ -6,7 +6,6 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
-from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent import control as agent_control
 from productflow_backend.application.agent.agent_context import (
@@ -14,7 +13,6 @@ from productflow_backend.application.agent.agent_context import (
     get_agent_product_context,
 )
 from productflow_backend.application.agent.control import refresh_agent_turn, synchronize_agent_turn_state
-from productflow_backend.application.agent.conversations import create_agent_conversation
 from productflow_backend.application.agent.execution import (
     claim_agent_turn_execution,
     recover_expired_agent_turn_executions,
@@ -53,16 +51,12 @@ from productflow_backend.application.async_delivery import (
     recover_async_dispatch_for_actor,
     stage_async_dispatch_for_actor,
 )
-from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
+from productflow_backend.application.product_images.mutations import rename_gallery_asset
 from productflow_backend.application.product_images.mutations import rename_gallery_asset
 from productflow_backend.application.product_intake import AgentProductSelectionV1
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
-from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import (
-    PRODUCT_WORKFLOW_DRAFT_RETIRED,
-    append_workflow_draft_revision,
-)
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
@@ -71,7 +65,6 @@ from productflow_backend.domain.enums import (
     AgentToolStepStatus,
     AgentTurnStatus,
     AsyncDispatchStatus,
-    WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import (
     BusinessValidationError,
@@ -95,34 +88,8 @@ from productflow_backend.infrastructure.db.models import (
     AsyncDispatch,
     ProviderBinding,
     ProviderProfile,
-    WorkflowDraft,
     new_id,
 )
-
-
-def _create_product_and_draft(
-    db_session,
-    *,
-    name: str = "Agent 测试商品",
-    image_count: int = 1,
-):
-    product = create_canonical_product(
-        db_session,
-        name=name,
-        category="工业收纳",
-        price="299.00",
-        source_note="橙蓝色刀具收纳套装",
-        image_uploads=[
-            (_make_demo_image_bytes(), f"{name}-{index}.png", "image/png")
-            for index in range(image_count)
-        ],
-    )
-    asset = product.image_assets[0]
-    payload = make_workflow_draft_payload(reference_asset_id=asset.id)
-    draft = WorkflowDraft(product_id=product.id, status=WorkflowDraftStatus.COLLECTING)
-    db_session.add(draft)
-    db_session.commit()
-    return product, asset, draft, payload
 
 
 
@@ -170,36 +137,6 @@ def _create_agent_first_workspace(db_session):
         idempotency_key="agent-first-workspace",
     )
 
-
-def test_agent_workflow_draft_requires_explicit_intake_delivery_snapshot(db_session) -> None:
-    preset = get_delivery_preset("jd_hero")
-    selection = AgentProductSelectionV1.model_validate(
-        {
-            "schema_version": 1,
-            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
-            "delivery_preset_key": preset.key,
-        }
-    )
-    workspace = create_agent_product_workspace(
-        db_session,
-        name="Draft 交付规格约束商品",
-        selection=selection,
-        image_uploads=[(_make_demo_image_bytes(), "draft-reference.png", "image/png")],
-        idempotency_key="draft-delivery-spec-constraint",
-    )
-    payload = make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id)
-    expected_spec = preset.spec.model_dump(mode="json")
-    for image in payload["image_types"][0]["images"]:
-        image["delivery_spec"] = expected_spec
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
-        append_workflow_draft_revision(
-            db_session,
-            product_id=workspace.product.id,
-            draft_id="retired",
-            expected_draft_version=0,
-            payload=payload,
-            ready_for_confirmation=True,
-        )
 
 
 def _agent_service_state_payload(**overrides) -> dict:
@@ -304,12 +241,6 @@ def test_agent_service_tool_step_contract_is_strict_bounded_and_optional() -> No
 
 def test_conversation_and_turn_reservation_are_product_scoped_and_idempotent(db_session) -> None:
     product, asset, conversation = _create_product_conversation(db_session)
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
-        create_agent_conversation(
-            db_session,
-            product_id=product.id,
-            workflow_draft_id="retired-draft",
-        )
     assert conversation.harness_run_id == conversation.id
 
     reservation = reserve_agent_turn(
@@ -659,11 +590,9 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
     contract = get_agent_contract(db_session, conversation.id)
     assert contract["current_draft_version"] == 0
     assert contract["has_live_graph"] is True
-    assert contract["workflow_draft_id"] is None
     assert "不得提交第二份完整拓扑" in contract["system_prompt"]
     assert "request_workflow_run_v1" not in contract["system_prompt"]
     context = get_agent_product_context(db_session, conversation.id)
-    assert "workflow_draft" not in context
     assert context["intake"] == {
         "schema_version": 1,
         "image_types": [
@@ -705,8 +634,8 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
         question_json=None,
         finished_at=datetime.now(UTC),
     )
-    artifact = make_workflow_draft_payload(reference_asset_id=asset.id)
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
+    artifact = {}
+    with pytest.raises(ConflictError, match="商品工作流 Agent Turn 不能提交 Draft artifact"):
         synchronize_agent_turn_state(
             db_session,
             product_id=product.id,
@@ -732,7 +661,7 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
 
 def test_turn_projection_and_artifact_sync_converge_without_storing_artifact_body(db_session) -> None:
     product, asset, conversation = _create_product_conversation(db_session)
-    payload = make_workflow_draft_payload(reference_asset_id=asset.id)
+    payload = {}
     projection = reserve_agent_turn(
         db_session,
         product_id=product.id,
@@ -765,7 +694,7 @@ def test_turn_projection_and_artifact_sync_converge_without_storing_artifact_bod
     )
     assert projection.conversation.status == AgentConversationStatus.AWAITING_CONFIRMATION
 
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
+    with pytest.raises(ConflictError, match="商品工作流 Agent Turn 不能提交 Draft artifact"):
         synchronize_agent_turn_state(
             db_session,
             product_id=product.id,
@@ -821,7 +750,6 @@ def test_turn_projection_and_artifact_sync_converge_without_storing_artifact_bod
         ),
     )
     assert follow_up.output_text == "请审阅并确认当前草案。"
-    assert follow_up.workflow_draft_revision_id is None
 
 
 def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> None:
@@ -830,14 +758,11 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     contract = get_agent_contract(db_session, conversation.id)
     assert contract["conversation_id"] == conversation.id
     assert contract["product_id"] == product.id
-    assert contract["workflow_draft_id"] is None
     assert contract["current_draft_version"] == 0
-    assert contract["workflow_draft_schema"] == {}
-    assert contract["tool_contract_version"] == 13
+    assert contract["tool_contract_version"] == 15
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
-    assert "workflow_draft" not in context
     assert context["intake"] is None
     assert "storage_path" not in str(context)
 
@@ -1127,7 +1052,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     from productflow_backend.presentation.api import create_app
 
     product, asset, conversation = _create_product_conversation(db_session)
-    payload = make_workflow_draft_payload(reference_asset_id=asset.id)
+    payload = {}
     internal_token = "agent-internal-token-with-at-least-32-characters"
     monkeypatch.setenv("AGENT_SERVICE_INTERNAL_TOKEN", internal_token)
     get_settings.cache_clear()
@@ -1146,12 +1071,11 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 13
+    assert contract.json()["tool_contract_version"] == 15
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})
-    assert validated.status_code == 409, validated.text
-    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in validated.json()["detail"]
+    assert validated.status_code == 404, validated.text
 
     assets = client.get(
         f"/api/internal/v1/agent-conversations/{conversation.id}/assets?limit=10",
@@ -1413,12 +1337,11 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     client = TestClient(create_app())
     collection_path = f"/api/v2/products/{product.id}/agent-conversations"
 
-    unauthorized = client.post(collection_path, json={"workflow_draft_id": "retired-draft"})
-    assert unauthorized.status_code == 401
+    unauthorized = client.post(collection_path, json={})
+    assert unauthorized.status_code == 404
     _login(client)
-    created = client.post(collection_path, json={"workflow_draft_id": "retired-draft"})
-    assert created.status_code == 409, created.text
-    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in created.json()["detail"]
+    created = client.post(collection_path, json={})
+    assert created.status_code == 404, created.text
     gateway.run_id = conversation.harness_run_id
 
     turn_path = f"{collection_path}/{conversation.id}/turns"
@@ -1803,7 +1726,7 @@ def test_get_active_agent_turn_refreshes_and_attaches_artifact(
     from productflow_backend.presentation.routes import agent_conversations as agent_routes
 
     product, asset, conversation = _create_product_conversation(db_session)
-    payload = make_workflow_draft_payload(reference_asset_id=asset.id)
+    payload = {}
     projection = reserve_agent_turn(
         db_session,
         product_id=product.id,
@@ -1832,7 +1755,6 @@ def test_get_active_agent_turn_refreshes_and_attaches_artifact(
         question_json=None,
         finished_at=datetime.now(UTC),
     )
-    assert projection.workflow_draft_revision_id is None
     gateway = _ArtifactAgentGateway(payload)
     gateway.run_id = conversation.harness_run_id
     gateway.turn_id = projection.harness_turn_id or ""
@@ -1845,12 +1767,11 @@ def test_get_active_agent_turn_refreshes_and_attaches_artifact(
     )
 
     assert response.status_code == 409, response.text
-    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in response.json()["detail"]
+    assert "商品工作流 Agent Turn 不能提交 Draft artifact" in response.json()["detail"]
 
 
 def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db_session) -> None:
     product, asset, conversation = _create_product_conversation(db_session)
-    payload = make_workflow_draft_payload(reference_asset_id=asset.id)
     projection = reserve_agent_turn(
         db_session,
         product_id=product.id,
@@ -1859,7 +1780,7 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
         input_asset_ids=[asset.id],
         idempotency_key="worker-turn-1",
     ).projection
-    gateway = _ArtifactAgentGateway(payload)
+    gateway = _FakeAgentGateway()
     gateway.run_id = conversation.harness_run_id
     delayed: list[tuple[str, int]] = []
 
@@ -1872,12 +1793,11 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     execute_agent_turn_sync(
         projection.id,
         gateway=gateway,
-        enqueue_later=lambda target_id, delay_ms: delayed.append((target_id, delay_ms)),
+        enqueue_later=lambda session, target_id, delay_ms: delayed.append((target_id, delay_ms)),
     )
     db_session.expire_all()
     projection = db_session.get(AgentTurnProjection, projection.id)
     assert projection is not None
-    assert projection.workflow_draft_revision_id is None
 
 
 def test_agent_recovery_requeues_first_stale_publish_dead_dispatch_for_pollable_projection(db_session) -> None:
@@ -2001,29 +1921,6 @@ def test_agent_recovery_restages_consumed_pollable_projection_without_losing_sch
     assert persisted.status == AsyncDispatchStatus.PENDING
     assert persisted.available_at.replace(tzinfo=UTC) == next_poll_at
 
-
-def test_workflow_draft_confirmation_is_retired(db_session) -> None:
-    from productflow_backend.presentation.api import create_app
-
-    product, _, draft, payload = _create_product_and_draft(db_session)
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
-        append_workflow_draft_revision(
-            db_session,
-            product_id=product.id,
-            draft_id=draft.id,
-            expected_draft_version=0,
-            payload=payload,
-            ready_for_confirmation=True,
-        )
-
-    client = TestClient(create_app())
-    _login(client)
-    response = client.post(
-        f"/api/v2/products/{product.id}/workflow-drafts/{draft.id}/confirm",
-        json={"expected_draft_version": 1},
-    )
-    assert response.status_code == 409
-    assert PRODUCT_WORKFLOW_DRAFT_RETIRED in response.json()["detail"]
 
 
 def test_sync_worker_requeues_local_turn_after_expired_claim_recovery(db_session) -> None:
@@ -2306,8 +2203,8 @@ def test_public_question_answer_returns_queued_continuation_without_agent_gatewa
     _login(client)
 
     collection_path = f"/api/v2/products/{product.id}/agent-conversations"
-    conversation_response = client.post(collection_path, json={"workflow_draft_id": "retired-draft"})
-    assert conversation_response.status_code == 409, conversation_response.text
+    conversation_response = client.post(collection_path, json={})
+    assert conversation_response.status_code == 404, conversation_response.text
     gateway.run_id = conversation.harness_run_id
 
     turn_path = f"{collection_path}/{conversation.id}/turns"

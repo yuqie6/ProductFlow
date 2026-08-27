@@ -12,7 +12,7 @@ export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 13 as const;
+export const TOOL_CONTRACT_VERSION = 15 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
@@ -145,14 +145,12 @@ export interface ProductFlowContract {
   task_id: string | null;
   task_goal: string | null;
   product_id: string | null;
-  workflow_draft_id: string | null;
   /** AgentSession/task run id 的兼容持久化列名。 */
   harness_run_id: string;
   current_draft_version: number;
   system_prompt: string;
   draft_kind: string;
   draft_schema: JsonObject;
-  workflow_draft_schema: JsonObject;
   tool_contract_version: number;
   has_live_graph?: boolean;
 }
@@ -164,12 +162,9 @@ export interface Scope {
   task_id: string | null;
   task_goal: string | null;
   product_id: string | null;
-  /** 历史商品 Draft 身份。现图商品对话为 null，不参与启动校验。 */
-  workflow_draft_id: string | null;
   run_id: string;
   system_prompt: string;
   draft_schema: JsonObject;
-  workflow_draft_schema: JsonObject;
   current_draft_version: number;
   has_live_graph: boolean;
 }
@@ -337,7 +332,7 @@ export function validateScope(scope: Scope): void {
       throw new Error("ProductFlow returned an incomplete product Agent contract");
     }
   } else if (scope.scope_type === "global") {
-    if (scope.product_id !== null || scope.workflow_draft_id !== null) {
+    if (scope.product_id !== null) {
       throw new Error("ProductFlow global Agent contract must not include product scope IDs");
     }
   } else {
@@ -353,8 +348,7 @@ export function sameRuntimeScope(left: Scope, right: Scope): boolean {
     left.conversation_id === right.conversation_id &&
     left.task_id === right.task_id &&
     left.product_id === right.product_id &&
-    left.workflow_draft_id === right.workflow_draft_id &&
-    left.run_id === right.run_id
+left.run_id === right.run_id
   );
 }
 
@@ -391,8 +385,7 @@ export function toolKind(name: string): ToolStepKind {
   if (name.includes("draft")) return "propose_draft";
   if (name.includes("request_workflow_run")) return "request_workflow_run";
   if (name.includes("workspace")) return "create_product";
-  if (name.includes("archive")) return "read_history";
-  if (name.includes("asset") || name.includes("media")) return name.includes("inspect") ? "inspect_image" : "organize_assets";
+if (name.includes("asset") || name.includes("media")) return name.includes("inspect") ? "inspect_image" : "organize_assets";
   if (name.includes("context") || name.includes("product") || name.includes("workflow")) return "inspect_context";
   if (name.includes("run")) return "read_history";
   return "inspect_context";

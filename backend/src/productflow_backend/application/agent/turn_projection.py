@@ -35,7 +35,6 @@ from productflow_backend.domain.enums import (
     AgentTurnStatus,
     LibraryOrganizationDraftStatus,
     MediaVerificationStatus,
-    WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -43,7 +42,6 @@ from productflow_backend.infrastructure.db.models import (
     AgentTask,
     AgentTurnProjection,
     ProductImageAsset,
-    WorkflowDraft,
 )
 
 AGENT_MAX_INPUT_ASSETS = 6
@@ -512,13 +510,7 @@ def project_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_harness_turn_binding(projection, harness_turn_id)
-    # Draft 已确认后，迟到的 awaiting_confirmation 不能盖住 SUCCEEDED。
-    stale_confirmed_workflow_turn = (
-        status == AgentTurnStatus.AWAITING_CONFIRMATION
-        and is_confirmed_workflow_draft_turn(projection)
-    )
-    projected_status = AgentTurnStatus.SUCCEEDED if stale_confirmed_workflow_turn else status
-    projection.status = projected_status
+    projection.status = status
     projection.output_text = _bounded_optional_text(output_text, limit=100_000)
     projection.error_text = _bounded_optional_text(error_text, limit=4_000)
     projection.question_json = dict(question_json) if question_json is not None else None
@@ -527,20 +519,11 @@ def project_agent_turn_state(
     projection.sync_error = None
     projection.finished_at = finished_at
     projection.updated_at = now_utc()
-    preserve_newer_conversation_status = (
-        stale_confirmed_workflow_turn
-        and projection.conversation.status
-        not in {
-            AgentConversationStatus.AWAITING_CONFIRMATION,
-            AgentConversationStatus.COMPLETED,
-        }
-    )
-    if not preserve_newer_conversation_status:
-        _apply_conversation_status(projection.conversation, projected_status)
+    _apply_conversation_status(projection.conversation, status)
     update_agent_task_from_turn(
         session,
         projection=projection,
-        status=projected_status,
+        status=status,
         error_text=projection.error_text,
         finished_at=finished_at,
     )
@@ -584,9 +567,7 @@ def _get_agent_turn_for_update(
         select(AgentTurnProjection)
         .join(AgentConversation, AgentConversation.id == AgentTurnProjection.conversation_id)
         .options(
-            selectinload(AgentTurnProjection.conversation)
-            .selectinload(AgentConversation.workflow_draft)
-            .selectinload(WorkflowDraft.current_revision),
+            selectinload(AgentTurnProjection.conversation),
             selectinload(AgentTurnProjection.task),
         )
         .where(
@@ -690,12 +671,7 @@ def _apply_conversation_status(
                 else AgentConversationStatus.COMPLETED
             )
         else:
-            draft = conversation.workflow_draft
-            conversation.status = (
-                AgentConversationStatus.AWAITING_CONFIRMATION
-                if draft is not None and draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
-                else AgentConversationStatus.COMPLETED
-            )
+            conversation.status = AgentConversationStatus.COMPLETED
     elif turn_status == AgentTurnStatus.FAILED:
         conversation.status = AgentConversationStatus.FAILED
     elif turn_status == AgentTurnStatus.CANCELED:
@@ -705,20 +681,6 @@ def _apply_conversation_status(
     else:
         conversation.status = AgentConversationStatus.COLLECTING
     conversation.updated_at = now_utc()
-
-
-def is_confirmed_workflow_draft_turn(projection: AgentTurnProjection) -> bool:
-    revision = projection.workflow_draft_revision
-    draft = revision.draft if revision is not None else None
-    return (
-        draft is not None
-        and draft.status
-        in {
-            WorkflowDraftStatus.CONFIRMED,
-            WorkflowDraftStatus.MATERIALIZING,
-            WorkflowDraftStatus.READY,
-        }
-    )
 
 
 def _bounded_optional_text(value: str | None, *, limit: int) -> str | None:
@@ -739,7 +701,6 @@ __all__ = [
     "cancel_unbound_agent_turn",
     "expected_harness_run_id",
     "get_agent_turn_or_raise",
-    "is_confirmed_workflow_draft_turn",
     "list_agent_turn_page",
     "lock_agent_turn_or_raise",
     "project_agent_turn_state",

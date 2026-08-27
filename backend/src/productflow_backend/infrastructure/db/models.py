@@ -49,7 +49,6 @@ from productflow_backend.domain.enums import (
     MediaVerificationStatus,
     ProductImageFidelityOutcome,
     ProductImageOriginType,
-    WorkflowDraftStatus,
     WorkflowNodeStatus,
     WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
@@ -237,40 +236,15 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
     )
-    workflow_drafts: Mapped[list[WorkflowDraft]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraft.product_id",
-    )
-    workflow_draft_recipe_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraftRecipeSeed.product_id",
-    )
     workflow_recipe_applications: Mapped[list[WorkflowRecipeApplication]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="WorkflowRecipeApplication.product_id",
     )
-    workflow_draft_legacy_archive_seeds: Mapped[list[WorkflowDraftLegacyArchiveSeed]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraftLegacyArchiveSeed.product_id",
-    )
     agent_conversations: Mapped[list[AgentConversation]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="AgentConversation.product_id",
-    )
-    legacy_workflow_archives: Mapped[list[LegacyWorkflowArchive]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="LegacyWorkflowArchive.product_id",
-    )
-    legacy_canvas_agent_archives: Mapped[list[LegacyCanvasAgentArchive]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="LegacyCanvasAgentArchive.product_id",
     )
     local_image_edit_tasks: Mapped[list[LocalImageEditTask]] = relationship(
         back_populates="product",
@@ -431,11 +405,6 @@ class ProductImageAsset(Base, TimestampMixin):
     source_library_asset: Mapped[MediaLibraryAsset | None] = relationship(
         foreign_keys=[source_library_asset_id],
     )
-    legacy_archive_references: Mapped[list[LegacyWorkflowArchiveAsset]] = relationship(
-        back_populates="asset",
-        foreign_keys="LegacyWorkflowArchiveAsset.product_image_asset_id",
-        passive_deletes=True,
-    )
     fidelity_checks: Mapped[list[ProductImageFidelityCheck]] = relationship(
         back_populates="asset",
         foreign_keys="ProductImageFidelityCheck.asset_id",
@@ -531,239 +500,6 @@ class ProductImageFidelityCheck(Base):
     asset: Mapped[ProductImageAsset] = relationship(back_populates="fidelity_checks", foreign_keys=[asset_id])
 
 
-class LegacyWorkflowArchive(Base):
-    """不可变的 v1 workflow 历史快照，不具备执行语义。"""
-
-    __tablename__ = "legacy_workflow_archives"
-    __table_args__ = (
-        UniqueConstraint(
-            "source_profile",
-            "legacy_workflow_id",
-            name="uq_legacy_workflow_archives_source_id",
-        ),
-        CheckConstraint(
-            "archive_schema_version = 1",
-            name="ck_legacy_workflow_archives_schema_version",
-        ),
-        CheckConstraint(
-            "length(source_fingerprint_sha256) = 64",
-            name="ck_legacy_workflow_archives_source_hash",
-        ),
-        CheckConstraint(
-            "length(payload_sha256) = 64",
-            name="ck_legacy_workflow_archives_payload_hash",
-        ),
-        CheckConstraint(
-            "node_count >= 0 AND edge_count >= 0 AND run_count >= 0 AND node_run_count >= 0 AND asset_count >= 0",
-            name="ck_legacy_workflow_archives_counts",
-        ),
-        Index(
-            "ix_legacy_workflow_archives_product_created",
-            "product_id",
-            "created_at",
-            "id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    source_profile: Mapped[str] = mapped_column(String(80))
-    legacy_workflow_id: Mapped[str] = mapped_column(String(36))
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "products.id",
-            ondelete="CASCADE",
-            name="fk_legacy_workflow_archives_product_id",
-        ),
-    )
-    source_title: Mapped[str] = mapped_column(String(255))
-    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
-    payload_sha256: Mapped[str] = mapped_column(String(64))
-    node_count: Mapped[int] = mapped_column(Integer)
-    edge_count: Mapped[int] = mapped_column(Integer)
-    run_count: Mapped[int] = mapped_column(Integer)
-    node_run_count: Mapped[int] = mapped_column(Integer)
-    asset_count: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    product: Mapped[Product] = relationship(
-        back_populates="legacy_workflow_archives",
-        foreign_keys=[product_id],
-    )
-    assets: Mapped[list[LegacyWorkflowArchiveAsset]] = relationship(
-        back_populates="archive",
-        cascade="all, delete-orphan",
-        order_by="LegacyWorkflowArchiveAsset.id",
-    )
-
-
-class LegacyWorkflowArchiveAsset(Base):
-    """归档快照对 canonical 商品图片的显式保留关系。"""
-
-    __tablename__ = "legacy_workflow_archive_assets"
-    __table_args__ = (
-        UniqueConstraint(
-            "archive_id",
-            "product_image_asset_id",
-            "role",
-            "legacy_source_type",
-            "legacy_source_id",
-            name="uq_legacy_workflow_archive_assets_identity",
-        ),
-        Index(
-            "ix_legacy_workflow_archive_assets_asset_id",
-            "product_image_asset_id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    archive_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "legacy_workflow_archives.id",
-            ondelete="CASCADE",
-            name="fk_legacy_workflow_archive_assets_archive_id",
-        ),
-    )
-    product_image_asset_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_legacy_workflow_archive_assets_asset_id",
-        ),
-    )
-    role: Mapped[str] = mapped_column(String(80))
-    legacy_source_type: Mapped[str] = mapped_column(String(80))
-    legacy_source_id: Mapped[str] = mapped_column(String(80))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    archive: Mapped[LegacyWorkflowArchive] = relationship(back_populates="assets")
-    asset: Mapped[ProductImageAsset] = relationship(back_populates="legacy_archive_references")
-
-
-class LegacyUserTemplateArchive(Base):
-    """旧用户模板的不可应用只读快照或损坏记录。"""
-
-    __tablename__ = "legacy_user_template_archives"
-    __table_args__ = (
-        UniqueConstraint(
-            "source_profile",
-            "legacy_template_id",
-            name="uq_legacy_user_template_archives_source_id",
-        ),
-        CheckConstraint(
-            "archive_schema_version = 1",
-            name="ck_legacy_user_template_archives_schema_version",
-        ),
-        CheckConstraint(
-            "archive_status IN ('archived', 'damaged')",
-            name="ck_legacy_user_template_archives_status",
-        ),
-        CheckConstraint(
-            "length(source_fingerprint_sha256) = 64",
-            name="ck_legacy_user_template_archives_source_hash",
-        ),
-        CheckConstraint(
-            "length(payload_sha256) = 64",
-            name="ck_legacy_user_template_archives_payload_hash",
-        ),
-        Index("ix_legacy_user_template_archives_created", "created_at", "id"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    source_profile: Mapped[str] = mapped_column(String(80))
-    legacy_template_id: Mapped[str] = mapped_column(String(36))
-    legacy_key: Mapped[str] = mapped_column(String(80))
-    title: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    archive_status: Mapped[str] = mapped_column(String(40))
-    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    diagnostics_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
-    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
-    payload_sha256: Mapped[str] = mapped_column(String(64))
-    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class LegacyCanvasAgentArchive(Base):
-    """旧 Canvas Agent thread 的有界用户历史快照。"""
-
-    __tablename__ = "legacy_canvas_agent_archives"
-    __table_args__ = (
-        UniqueConstraint(
-            "source_profile",
-            "legacy_thread_id",
-            name="uq_legacy_canvas_agent_archives_source_id",
-        ),
-        CheckConstraint(
-            "archive_schema_version = 1",
-            name="ck_legacy_canvas_agent_archives_schema_version",
-        ),
-        CheckConstraint(
-            "length(source_fingerprint_sha256) = 64",
-            name="ck_legacy_canvas_agent_archives_source_hash",
-        ),
-        CheckConstraint(
-            "length(payload_sha256) = 64",
-            name="ck_legacy_canvas_agent_archives_payload_hash",
-        ),
-        CheckConstraint(
-            "message_count >= 0 AND run_count >= 0 AND tool_event_count >= 0 "
-            "AND plan_count >= 0 AND task_plan_count >= 0 AND timeline_event_count >= 0 "
-            "AND visible_event_count >= 0 AND technical_event_count >= 0",
-            name="ck_legacy_canvas_agent_archives_counts",
-        ),
-        CheckConstraint(
-            "visible_event_count + technical_event_count = timeline_event_count",
-            name="ck_legacy_canvas_agent_archives_event_total",
-        ),
-        Index(
-            "ix_legacy_canvas_agent_archives_product_created",
-            "product_id",
-            "created_at",
-            "id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    source_profile: Mapped[str] = mapped_column(String(80))
-    legacy_thread_id: Mapped[str] = mapped_column(String(36))
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "products.id",
-            ondelete="CASCADE",
-            name="fk_legacy_canvas_agent_archives_product_id",
-        ),
-    )
-    title: Mapped[str] = mapped_column(String(255))
-    source_status: Mapped[str] = mapped_column(String(40))
-    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
-    payload_sha256: Mapped[str] = mapped_column(String(64))
-    message_count: Mapped[int] = mapped_column(Integer)
-    run_count: Mapped[int] = mapped_column(Integer)
-    tool_event_count: Mapped[int] = mapped_column(Integer)
-    plan_count: Mapped[int] = mapped_column(Integer)
-    task_plan_count: Mapped[int] = mapped_column(Integer)
-    timeline_event_count: Mapped[int] = mapped_column(Integer)
-    visible_event_count: Mapped[int] = mapped_column(Integer)
-    technical_event_count: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    product: Mapped[Product] = relationship(
-        back_populates="legacy_canvas_agent_archives",
-        foreign_keys=[product_id],
-    )
-
-
 class VisualSystem(Base, TimestampMixin):
     """用户保存的视觉体系稳定身份。"""
 
@@ -787,10 +523,6 @@ class VisualSystemVersion(Base):
     __tablename__ = "visual_system_versions"
     __table_args__ = (
         UniqueConstraint("visual_system_id", "version", name="uq_visual_system_versions_system_version"),
-        UniqueConstraint(
-            "source_draft_revision_id",
-            name="uq_visual_system_versions_source_draft_revision_id",
-        ),
         CheckConstraint("version > 0", name="ck_visual_system_versions_positive_version"),
         CheckConstraint("schema_version = 1", name="ck_visual_system_versions_schema_version"),
         CheckConstraint("length(payload_hash) = 64", name="ck_visual_system_versions_payload_hash"),
@@ -806,16 +538,6 @@ class VisualSystemVersion(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     payload_hash: Mapped[str] = mapped_column(String(64))
     source_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_visual_system_versions_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     visual_system: Mapped[VisualSystem] = relationship(back_populates="versions")
@@ -876,10 +598,6 @@ class ProductFactSetVersion(Base):
     __tablename__ = "product_fact_set_versions"
     __table_args__ = (
         UniqueConstraint("product_id", "version", name="uq_product_fact_set_versions_product_version"),
-        UniqueConstraint(
-            "source_draft_revision_id",
-            name="uq_product_fact_set_versions_source_draft_revision_id",
-        ),
         CheckConstraint("version > 0", name="ck_product_fact_set_versions_positive_version"),
         CheckConstraint("length(payload_hash) = 64", name="ck_product_fact_set_versions_payload_hash"),
     )
@@ -892,143 +610,9 @@ class ProductFactSetVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     payload_hash: Mapped[str] = mapped_column(String(64))
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_product_fact_set_versions_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     product: Mapped[Product] = relationship(back_populates="fact_set_versions", foreign_keys=[product_id])
-    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
-        back_populates="fact_set_version",
-        foreign_keys=[source_draft_revision_id],
-    )
-
-
-class WorkflowDraft(Base, TimestampMixin):
-    """Agent 工作流草案的稳定身份和当前状态。"""
-
-    __tablename__ = "workflow_drafts"
-    __table_args__ = (
-        CheckConstraint(
-            "(intake_schema_version IS NULL AND intake_json IS NULL) OR "
-            "(intake_schema_version = 1 AND intake_json IS NOT NULL)",
-            name="ck_workflow_drafts_intake_pair",
-        ),
-        Index("ix_workflow_drafts_product_status", "product_id", "status"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_drafts_product_id"),
-    )
-    status: Mapped[WorkflowDraftStatus] = mapped_column(
-        enum_value_column(WorkflowDraftStatus),
-        default=WorkflowDraftStatus.COLLECTING,
-    )
-    current_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_workflow_drafts_current_revision_id",
-        ),
-        nullable=True,
-    )
-    intake_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    intake_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-
-    product: Mapped[Product] = relationship(back_populates="workflow_drafts", foreign_keys=[product_id])
-    revisions: Mapped[list[WorkflowDraftRevision]] = relationship(
-        back_populates="draft",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraftRevision.draft_id",
-        order_by="WorkflowDraftRevision.version",
-    )
-    current_revision: Mapped[WorkflowDraftRevision | None] = relationship(
-        foreign_keys=[current_revision_id],
-        post_update=True,
-    )
-    agent_conversation: Mapped[AgentConversation | None] = relationship(
-        back_populates="workflow_draft",
-        foreign_keys="AgentConversation.workflow_draft_id",
-        uselist=False,
-    )
-    recipe_seed: Mapped[WorkflowDraftRecipeSeed | None] = relationship(
-        back_populates="workflow_draft",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraftRecipeSeed.workflow_draft_id",
-        uselist=False,
-    )
-    legacy_archive_seed: Mapped[WorkflowDraftLegacyArchiveSeed | None] = relationship(
-        back_populates="workflow_draft",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowDraftLegacyArchiveSeed.workflow_draft_id",
-        uselist=False,
-    )
-
-
-class WorkflowDraftRevision(Base):
-    """WorkflowDraft 的 append-only 完整 artifact 快照。"""
-
-    __tablename__ = "workflow_draft_revisions"
-    __table_args__ = (
-        UniqueConstraint("draft_id", "version", name="uq_workflow_draft_revisions_draft_version"),
-        UniqueConstraint(
-            "draft_id",
-            "source_turn_id",
-            "source_artifact_step_id",
-            name="uq_workflow_draft_revisions_artifact_origin",
-        ),
-        CheckConstraint("version > 0", name="ck_workflow_draft_revisions_positive_version"),
-        CheckConstraint("schema_version = 1", name="ck_workflow_draft_revisions_schema_version"),
-        CheckConstraint("length(payload_hash) = 64", name="ck_workflow_draft_revisions_payload_hash"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    draft_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("workflow_drafts.id", ondelete="CASCADE", name="fk_workflow_draft_revisions_draft_id"),
-    )
-    version: Mapped[int] = mapped_column(Integer)
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    payload_hash: Mapped[str] = mapped_column(String(64))
-    source_turn_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    source_artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    visual_system_version_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "visual_system_versions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_workflow_draft_revisions_visual_system_version_id",
-        ),
-        nullable=True,
-    )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    draft: Mapped[WorkflowDraft] = relationship(back_populates="revisions", foreign_keys=[draft_id])
-    fact_set_version: Mapped[ProductFactSetVersion | None] = relationship(
-        back_populates="source_draft_revision",
-        foreign_keys="ProductFactSetVersion.source_draft_revision_id",
-        uselist=False,
-    )
-    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(foreign_keys=[visual_system_version_id])
-    agent_turn_projection: Mapped[AgentTurnProjection | None] = relationship(
-        back_populates="workflow_draft_revision",
-        foreign_keys="AgentTurnProjection.workflow_draft_revision_id",
-        uselist=False,
-    )
 
 
 class LibraryOrganizationDraft(Base, TimestampMixin):
@@ -1216,11 +800,6 @@ class AgentTask(Base, TimestampMixin):
         ForeignKey("products.id", ondelete="SET NULL", name="fk_agent_tasks_product_id"),
         nullable=True,
     )
-    workflow_draft_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("workflow_drafts.id", ondelete="SET NULL", name="fk_agent_tasks_workflow_draft_id"),
-        nullable=True,
-    )
     harness_run_id: Mapped[str] = mapped_column(String(120), nullable=False)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
@@ -1285,7 +864,6 @@ class AgentConversation(Base, TimestampMixin):
 
     __tablename__ = "agent_conversations"
     __table_args__ = (
-        UniqueConstraint("workflow_draft_id", name="uq_agent_conversations_workflow_draft_id"),
         UniqueConstraint("harness_run_id", name="uq_agent_conversations_harness_run_id"),
         UniqueConstraint(
             "creation_idempotency_key",
@@ -1305,7 +883,7 @@ class AgentConversation(Base, TimestampMixin):
         ),
         CheckConstraint(
             "(scope_type = 'product_workflow' AND product_id IS NOT NULL) OR "
-            "(scope_type = 'global' AND product_id IS NULL AND workflow_draft_id IS NULL)",
+            "(scope_type = 'global' AND product_id IS NULL)",
             name="ck_agent_conversations_scope_fields",
         ),
         CheckConstraint(
@@ -1340,15 +918,6 @@ class AgentConversation(Base, TimestampMixin):
         ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_conversations_product_id"),
         nullable=True,
     )
-    workflow_draft_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_drafts.id",
-            ondelete="CASCADE",
-            name="fk_agent_conversations_workflow_draft_id",
-        ),
-        nullable=True,
-    )
     harness_run_id: Mapped[str] = mapped_column(String(120))
     creation_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -1363,10 +932,6 @@ class AgentConversation(Base, TimestampMixin):
     product: Mapped[Product | None] = relationship(
         back_populates="agent_conversations",
         foreign_keys=[product_id],
-    )
-    workflow_draft: Mapped[WorkflowDraft | None] = relationship(
-        back_populates="agent_conversation",
-        foreign_keys=[workflow_draft_id],
     )
     library_organization_draft: Mapped[LibraryOrganizationDraft | None] = relationship(
         back_populates="conversation",
@@ -1402,10 +967,6 @@ class AgentTurnProjection(Base, TimestampMixin):
             name="uq_agent_turn_projections_conversation_key",
         ),
         UniqueConstraint("harness_turn_id", name="uq_agent_turn_projections_harness_turn_id"),
-        UniqueConstraint(
-            "workflow_draft_revision_id",
-            name="uq_agent_turn_projections_workflow_draft_revision_id",
-        ),
         UniqueConstraint(
             "library_organization_draft_revision_id",
             name="uq_agent_turn_proj_library_org_draft_rev_id",
@@ -1457,15 +1018,6 @@ class AgentTurnProjection(Base, TimestampMixin):
     tool_steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     artifact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    workflow_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            name="fk_agent_turn_projections_workflow_draft_revision_id",
-        ),
-        nullable=True,
-    )
     library_organization_draft_revision_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1500,10 +1052,6 @@ class AgentTurnProjection(Base, TimestampMixin):
     task: Mapped[AgentTask | None] = relationship(back_populates="turns", foreign_keys=[task_id])
     page_context_snapshot: Mapped[AgentPageContextSnapshot | None] = relationship(
         foreign_keys=[page_context_snapshot_id],
-    )
-    workflow_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
-        back_populates="agent_turn_projection",
-        foreign_keys=[workflow_draft_revision_id],
     )
     library_organization_draft_revision: Mapped[LibraryOrganizationDraftRevision | None] = relationship(
         back_populates="agent_turn_projection",
@@ -1881,8 +1429,7 @@ class WorkflowRecipe(Base, TimestampMixin):
         Index("ix_workflow_recipes_origin", "origin"),
         UniqueConstraint("official_key", name="uq_workflow_recipes_official_key"),
         CheckConstraint(
-            "(origin = 'official' AND official_key IS NOT NULL) OR "
-            "(origin = 'user' AND official_key IS NULL)",
+            "(origin = 'official' AND official_key IS NOT NULL) OR (origin = 'user' AND official_key IS NULL)",
             name="ck_workflow_recipes_origin_key",
         ),
     )
@@ -1965,78 +1512,9 @@ class WorkflowRecipeVersion(Base):
     preferred_visual_system_version: Mapped[VisualSystemVersion | None] = relationship(
         foreign_keys=[preferred_visual_system_version_id]
     )
-    draft_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
-        back_populates="recipe_version",
-        foreign_keys="WorkflowDraftRecipeSeed.recipe_version_id",
-    )
     graph_applications: Mapped[list[WorkflowRecipeApplication]] = relationship(
         back_populates="recipe_version",
         foreign_keys="WorkflowRecipeApplication.recipe_version_id",
-    )
-
-
-class WorkflowDraftRecipeSeed(Base):
-    """把配方应用到目标商品后供 Agent 重建 Draft 的不可变种子。"""
-
-    __tablename__ = "workflow_draft_recipe_seeds"
-    __table_args__ = (
-        UniqueConstraint("workflow_draft_id", name="uq_workflow_draft_recipe_seeds_draft_id"),
-        UniqueConstraint(
-            "product_id",
-            "idempotency_key",
-            name="uq_workflow_draft_recipe_seeds_product_key",
-        ),
-        CheckConstraint("schema_version = 1", name="ck_workflow_draft_recipe_seeds_schema_version"),
-        CheckConstraint("length(request_hash) = 64", name="ck_workflow_draft_recipe_seeds_request_hash"),
-        Index(
-            "ix_workflow_draft_recipe_seeds_product_created",
-            "product_id",
-            "created_at",
-            "id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_draft_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_drafts.id",
-            ondelete="CASCADE",
-            name="fk_workflow_draft_recipe_seeds_draft_id",
-        ),
-    )
-    recipe_version_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_recipe_versions.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_draft_recipe_seeds_recipe_version_id",
-        ),
-    )
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "products.id",
-            ondelete="CASCADE",
-            name="fk_workflow_draft_recipe_seeds_product_id",
-        ),
-    )
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    idempotency_key: Mapped[str] = mapped_column(String(120))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    workflow_draft: Mapped[WorkflowDraft] = relationship(
-        back_populates="recipe_seed",
-        foreign_keys=[workflow_draft_id],
-    )
-    recipe_version: Mapped[WorkflowRecipeVersion] = relationship(
-        back_populates="draft_seeds",
-        foreign_keys=[recipe_version_id],
-    )
-    product: Mapped[Product] = relationship(
-        back_populates="workflow_draft_recipe_seeds",
-        foreign_keys=[product_id],
     )
 
 
@@ -2125,107 +1603,6 @@ class WorkflowRecipeApplication(Base):
     operation_group: Mapped[WorkflowOperationGroup] = relationship(foreign_keys=[operation_group_id])
 
 
-class WorkflowDraftLegacyArchiveSeed(Base):
-    """把一个不可变旧归档绑定到新的 Agent WorkflowDraft。"""
-
-    __tablename__ = "workflow_draft_legacy_archive_seeds"
-    __table_args__ = (
-        UniqueConstraint(
-            "workflow_draft_id",
-            name="uq_workflow_draft_legacy_archive_seeds_draft_id",
-        ),
-        UniqueConstraint(
-            "product_id",
-            "idempotency_key",
-            name="uq_workflow_draft_legacy_archive_seeds_product_key",
-        ),
-        CheckConstraint(
-            "schema_version = 1",
-            name="ck_workflow_draft_legacy_archive_seeds_schema_version",
-        ),
-        CheckConstraint(
-            "length(request_hash) = 64",
-            name="ck_workflow_draft_legacy_archive_seeds_request_hash",
-        ),
-        CheckConstraint(
-            "(workflow_archive_id IS NOT NULL AND canvas_agent_archive_id IS NULL "
-            "AND user_template_archive_id IS NULL) OR "
-            "(workflow_archive_id IS NULL AND canvas_agent_archive_id IS NOT NULL "
-            "AND user_template_archive_id IS NULL) OR "
-            "(workflow_archive_id IS NULL AND canvas_agent_archive_id IS NULL "
-            "AND user_template_archive_id IS NOT NULL)",
-            name="ck_workflow_draft_legacy_archive_seeds_one_archive",
-        ),
-        Index(
-            "ix_workflow_draft_legacy_archive_seeds_product_created",
-            "product_id",
-            "created_at",
-            "id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_draft_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_drafts.id",
-            ondelete="CASCADE",
-            name="fk_workflow_draft_legacy_archive_seeds_draft_id",
-        ),
-    )
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "products.id",
-            ondelete="CASCADE",
-            name="fk_workflow_draft_legacy_archive_seeds_product_id",
-        ),
-    )
-    workflow_archive_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "legacy_workflow_archives.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_draft_legacy_archive_seeds_workflow_archive_id",
-        ),
-        nullable=True,
-    )
-    canvas_agent_archive_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "legacy_canvas_agent_archives.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_draft_legacy_archive_seeds_canvas_archive_id",
-        ),
-        nullable=True,
-    )
-    user_template_archive_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "legacy_user_template_archives.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_draft_legacy_archive_seeds_template_archive_id",
-        ),
-        nullable=True,
-    )
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    idempotency_key: Mapped[str] = mapped_column(String(120))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    workflow_draft: Mapped[WorkflowDraft] = relationship(
-        back_populates="legacy_archive_seed",
-        foreign_keys=[workflow_draft_id],
-    )
-    product: Mapped[Product] = relationship(
-        back_populates="workflow_draft_legacy_archive_seeds",
-        foreign_keys=[product_id],
-    )
-    workflow_archive: Mapped[LegacyWorkflowArchive | None] = relationship(foreign_keys=[workflow_archive_id])
-    canvas_agent_archive: Mapped[LegacyCanvasAgentArchive | None] = relationship(foreign_keys=[canvas_agent_archive_id])
-    user_template_archive: Mapped[LegacyUserTemplateArchive | None] = relationship(
-        foreign_keys=[user_template_archive_id]
-    )
 GRAPH_SCHEMA_VERSION = 3
 _GRAPH_NODE_TYPES = ", ".join(f"'{member.value}'" for member in GraphNodeType)
 _GRAPH_EDGE_DATA_TYPES = ", ".join(f"'{member.value}'" for member in GraphEdgeDataType)
@@ -2264,15 +1641,6 @@ class WorkflowGraph(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     schema_version: Mapped[int] = mapped_column(Integer, default=GRAPH_SCHEMA_VERSION)
     revision: Mapped[int] = mapped_column(Integer, default=1)
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            name="fk_workflow_graphs_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
 
     product: Mapped[Product] = relationship(back_populates="graphs")
     nodes: Mapped[list[WorkflowGraphNode]] = relationship(
@@ -2302,9 +1670,6 @@ class WorkflowGraph(Base, TimestampMixin):
         back_populates="graph",
         cascade="all, delete-orphan",
         foreign_keys="WorkflowGraphArtifact.graph_id",
-    )
-    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
-        foreign_keys=[source_draft_revision_id]
     )
     media_library_links: Mapped[list[WorkflowMediaLibraryAsset]] = relationship(
         back_populates="graph",
@@ -2340,9 +1705,7 @@ class WorkflowGraphNode(Base, TimestampMixin):
     """schema-v3 图节点。配置状态由当前 revision 推导，不另存权威列。"""
 
     __tablename__ = "workflow_graph_nodes"
-    __table_args__ = (
-        CheckConstraint(f"node_type IN ({_GRAPH_NODE_TYPES})", name="ck_workflow_graph_nodes_type"),
-    )
+    __table_args__ = (CheckConstraint(f"node_type IN ({_GRAPH_NODE_TYPES})", name="ck_workflow_graph_nodes_type"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     graph_id: Mapped[str] = mapped_column(
@@ -2774,8 +2137,7 @@ class LocalImageEditTask(Base, TimestampMixin):
             name="ck_local_image_edit_tasks_request_hash",
         ),
         CheckConstraint(
-            "request_hash IS NULL OR "
-            "(requested_provider_name IS NOT NULL AND requested_local_edit_mode IS NOT NULL)",
+            "request_hash IS NULL OR (requested_provider_name IS NOT NULL AND requested_local_edit_mode IS NOT NULL)",
             name="ck_local_image_edit_tasks_provider_intent",
         ),
         CheckConstraint(
@@ -2913,9 +2275,7 @@ class LocalImageEditTask(Base, TimestampMixin):
         foreign_keys=[product_id],
     )
     source_asset: Mapped[ProductImageAsset] = relationship(foreign_keys=[source_asset_id])
-    source_artifact_asset: Mapped[ProductImageAsset | None] = relationship(
-        foreign_keys=[source_artifact_asset_id]
-    )
+    source_artifact_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[source_artifact_asset_id])
     mask_media_object: Mapped[MediaObject] = relationship(foreign_keys=[mask_media_object_id])
     target_graph: Mapped[WorkflowGraph | None] = relationship(foreign_keys=[target_graph_id])
     target_node: Mapped[WorkflowGraphNode | None] = relationship(foreign_keys=[target_node_id])
@@ -3143,6 +2503,8 @@ class LocalImageEditAdoptionEvent(Base):
         back_populates="adoption_events",
         foreign_keys=[task_id],
     )
+
+
 class DeliveryRenditionJob(Base, TimestampMixin):
     """从成功的工作流生成原图确定性派生交付图片的 durable 任务。"""
 
@@ -3572,7 +2934,7 @@ class MediaLibraryAsset(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("source_type", "source_id", name="uq_media_library_assets_source"),
         CheckConstraint(
-            "source_type IN ('legacy_gallery', 'image_session_generated', 'product_asset', 'direct_upload')",
+            "source_type IN ('image_session_generated', 'product_asset', 'direct_upload')",
             name="ck_media_library_assets_source_type",
         ),
         CheckConstraint("revision >= 1", name="ck_media_library_assets_revision"),

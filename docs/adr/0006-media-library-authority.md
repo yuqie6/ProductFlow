@@ -2,11 +2,11 @@
 
 ## 状态
 
-Accepted; amended 2026-08-17. References to schema-v2 as the online workflow describe the decision-time graph and are superseded by ADR 0008; the media identity, library authority, and lifecycle decisions remain in force.
+Accepted; amended 2026-08-17; section 7 superseded by ADR 0010. References to schema-v2 as the online workflow describe the decision-time graph and are superseded by ADR 0008; the media identity, library authority, and lifecycle decisions remain in force. Old Gallery backfill, cutover gates, and source-bridge retirement are not mainline obligations.
 
 Decision owner：ProductFlow repository owner。2026-08-16 的基础媒体身份、归档和 Agent 整理决策继续有效；2026-08-17 用户确认全局图库是主图片 owner，并要求图片同步/关联到每个工作流子图库。
 
-在线入口和组织能力已交付。当前运行事实见 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`。尚未完成的迁移证据和剩余产品项见 `docs/rollout/media-library-transition.md` 与 `docs/ROADMAP.md`。
+在线入口和组织能力已交付。当前运行事实见 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`。旧 Gallery 迁移证据不再约束主仓库；残留 cutover 代码按 ADR 0010 删除，不补做部署回填。
 
 ## 2026-08-17 Amendment: 全局图库与工作流子图库
 

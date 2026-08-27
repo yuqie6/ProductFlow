@@ -375,7 +375,7 @@ def _serialize_fact(payload: dict[str, Any]) -> ProductFactDraft:
     normalized = {
         "key": payload.get("key") or "unknown",
         "value": payload.get("value"),
-        "source_type": payload.get("source_type") or ProductFactSourceType.LEGACY_PRODUCT.value,
+        "source_type": payload.get("source_type") or ProductFactSourceType.USER.value,
         "status": payload.get("status") or ProductFactStatus.CONFIRMED.value,
         "requires_confirmation": bool(payload.get("requires_confirmation", False)),
         "evidence_asset_ids": list(payload.get("evidence_asset_ids") or []),

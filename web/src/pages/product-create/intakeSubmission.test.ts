@@ -11,7 +11,6 @@ import {
 
 function workspace(conversationId: string, intakeFinalized = false): AgentProductWorkspaceSnapshot {
   const productId = `product-${conversationId}`;
-  const draftId = `draft-${conversationId}`;
   return {
     task_id: null,
     created: true,
@@ -27,33 +26,11 @@ function workspace(conversationId: string, intakeFinalized = false): AgentProduc
       updated_at: "2026-01-01T00:00:00Z",
     },
     created_assets: [],
-    workflow_draft: {
-      id: draftId,
-      product_id: productId,
-      status: "collecting",
-      current_revision_id: null,
-      current_revision: null,
-      current_version: 0,
-      revisions: [],
-      intake: null,
-      recipe_seed: null,
-      legacy_archive_seed: null,
-      limits: {
-        min_image_types: 1,
-        min_images_per_type: 1,
-        max_images_per_type: 6,
-        max_total_images: 30,
-        max_reference_assets: 6,
-      },
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    },
     conversation: {
       id: conversationId,
       scope_type: "product_workflow",
       session_id: null,
       product_id: productId,
-      workflow_draft_id: draftId,
       harness_run_id: `run-${conversationId}`,
       status: "collecting",
       created_at: "2026-01-01T00:00:00Z",

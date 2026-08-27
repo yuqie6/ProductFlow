@@ -121,7 +121,7 @@ def test_recipe_preview_migration_preserves_schema1_history_and_downgrades(
     finally:
         engine.dispose()
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260824_0087")
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.connect() as connection:
@@ -150,6 +150,10 @@ def test_recipe_preview_migration_preserves_schema1_history_and_downgrades(
     finally:
         engine.dispose()
 
+    command.upgrade(config, "head")
+    with pytest.raises(RuntimeError, match="已删除的兼容表和 Draft 列不能降级"):
+        command.downgrade(config, "20260824_0086")
+
 
 def test_recipe_preview_migration_downgrade_refuses_schema2_application(
     tmp_path,
@@ -160,7 +164,7 @@ def test_recipe_preview_migration_downgrade_refuses_schema2_application(
         monkeypatch,
         filename="recipe-preview-schema2.db",
     )
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260824_0087")
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.begin() as connection:

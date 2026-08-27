@@ -189,7 +189,6 @@ def test_global_turn_only_enters_confirmation_when_optional_draft_is_returned(db
     )
     assert synced.status == AgentTurnStatus.AWAITING_CONFIRMATION
     assert synced.library_organization_draft_revision_id is not None
-    assert synced.workflow_draft_revision_id is None
     assert conversation.status == AgentConversationStatus.AWAITING_CONFIRMATION
     db_session.refresh(task)
     assert task.status.value == "awaiting_confirmation"

@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
-from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent.control import synchronize_agent_turn_state
-from productflow_backend.application.agent.sessions import new_agent_session
-from productflow_backend.application.agent.turn_projection import (
-    bind_harness_turn,
-    project_agent_turn_state,
-    reserve_agent_turn,
-)
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
 from productflow_backend.application.product_workflow.graph_contracts import (
     CreateGroupOp,
@@ -25,7 +16,6 @@ from productflow_backend.application.product_workflow.graph_contracts import (
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
 from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
 from productflow_backend.application.workflow_recipes.extract import extract_recipe_payload
 from productflow_backend.application.workflow_recipes.official import official_recipe_seed
@@ -39,21 +29,15 @@ from productflow_backend.application.workflow_recipes.service import (
     preview_workflow_recipe,
 )
 from productflow_backend.domain.enums import (
-    AgentConversationStatus,
-    AgentTurnStatus,
     GraphActorType,
     GraphNodeType,
-    WorkflowDraftStatus,
     WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
     WorkflowRecipeOrigin,
 )
 from productflow_backend.domain.errors import ConflictError, NotFoundError
-from productflow_backend.infrastructure.agent_service import AgentServiceArtifact, AgentServiceTurnState
 from productflow_backend.infrastructure.db.models import (
-    AgentConversation,
     Base,
-    WorkflowDraft,
     WorkflowGraph,
     WorkflowRecipe,
     WorkflowRecipeVersion,
@@ -521,7 +505,6 @@ def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
     source = next(node for node in live.nodes if node.node_type == GraphNodeType.PRODUCT_SOURCE)
     assert source.config.get("source_product_id") == target.id
     assert all(node.bound_asset_id is None for node in live.nodes if node.node_type == GraphNodeType.IMAGE_ASSET)
-    assert db_session.scalar(select(WorkflowDraft).where(WorkflowDraft.product_id == target.id)) is None
 
     replay = apply_workflow_recipe(
         db_session,
@@ -627,96 +610,13 @@ def test_full_recipe_conflicts_on_existing_v3_graph(db_session) -> None:
         )
 
 
-def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db_session) -> None:
-    target = _create_product(db_session, name="Agent 配方目标")
-    draft = WorkflowDraft(
-        product_id=target.id,
-        status=WorkflowDraftStatus.COLLECTING,
-        intake_schema_version=1,
-        intake_json={
-            "schema_version": 1,
-            "image_types": [{"key": "hero", "quantity": 1, "order": 0}],
-            "reference_asset_ids": [target.image_assets[0].id],
-        },
-    )
-    db_session.add(draft)
-    db_session.flush()
-    agent_session = new_agent_session(title="Agent 配方目标")
-    db_session.add(agent_session)
-    db_session.flush()
-    conversation = AgentConversation(
-        session_id=agent_session.id,
-        product_id=target.id,
-        workflow_draft_id=draft.id,
-        harness_run_id=draft.id,
-        status=AgentConversationStatus.COLLECTING,
-    )
-    db_session.add(conversation)
-    db_session.commit()
-    projection = reserve_agent_turn(
-        db_session,
-        product_id=target.id,
-        conversation_id=conversation.id,
-        input_text="请按配方重建目标商品工作流",
-        input_asset_ids=[target.image_assets[0].id],
-        idempotency_key="agent-artifact-turn",
-    ).projection
-    projection = bind_harness_turn(
-        db_session,
-        product_id=target.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-recipe-turn",
-        status=AgentTurnStatus.RUNNING,
-    )
-    projection = project_agent_turn_state(
-        db_session,
-        product_id=target.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-recipe-turn",
-        status=AgentTurnStatus.AWAITING_CONFIRMATION,
-        output_text="已重建目标商品草案。",
-        error_text=None,
-        question_json=None,
-        finished_at=datetime.now(UTC),
-    )
-    payload = make_workflow_draft_payload(reference_asset_id=target.image_assets[0].id)
-    with pytest.raises(ConflictError, match=PRODUCT_WORKFLOW_DRAFT_RETIRED):
-        synchronize_agent_turn_state(
-            db_session,
-            product_id=target.id,
-            conversation_id=conversation.id,
-            projection_id=projection.id,
-            state=AgentServiceTurnState(
-                api_version="v1alpha1",
-                run_id=conversation.harness_run_id,
-                turn_id="harness-recipe-turn",
-                status=AgentTurnStatus.AWAITING_CONFIRMATION,
-                artifact=AgentServiceArtifact(
-                    name="propose_workflow_draft",
-                    value=payload,
-                    step_id="recipe-artifact-step",
-                ),
-                output="已重建目标商品草案。",
-                created_at=datetime.now(UTC),
-                updated_at=datetime.now(UTC),
-                finished_at=datetime.now(UTC),
-            ),
-        )
-    refreshed = db_session.get(WorkflowDraft, draft.id)
-    assert refreshed is not None
-    db_session.refresh(refreshed)
-    assert refreshed.current_revision is None
-    assert refreshed.revisions == []
-
 
 def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())
     _login(client)
-    listed = client.get("/api/v2/workflow-recipes")
+    listed = client.get("/api/v3/workflow-recipes")
     assert listed.status_code == 200
     assert listed.json() == []
 
@@ -753,7 +653,7 @@ def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
         "image_generation",
     }
     assert all("source_handle" not in edge for edge in payload["edges"])
-    listed_after = client.get("/api/v2/workflow-recipes")
+    listed_after = client.get("/api/v3/workflow-recipes")
     assert listed_after.status_code == 200
     assert len(listed_after.json()) == 1
     assert listed_after.json()[0]["current_version"]["payload"]["schema_version"] == 3
@@ -831,8 +731,7 @@ def test_recipe_api_hides_official_seeds_from_online_library(configured_env) -> 
     assert all(item["origin"] == "user" for item in listed.json())
 
     v2_listed = client.get("/api/v2/workflow-recipes")
-    assert v2_listed.status_code == 200, v2_listed.text
-    assert [item["id"] for item in v2_listed.json()] == [user_id]
+    assert v2_listed.status_code == 404, v2_listed.text
 
     detail = client.get(f"/api/v3/workflow-recipes/{official_id}")
     assert detail.status_code == 404, detail.text

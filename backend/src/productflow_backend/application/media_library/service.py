@@ -301,7 +301,7 @@ def _origin_type_for_library_asset(library_asset: MediaLibraryAsset) -> ProductI
                 return ProductImageOriginType(provenance_origin)
             except ValueError:
                 pass
-    return ProductImageOriginType.LEGACY_IMPORT
+    return ProductImageOriginType.UPLOAD
 
 
 def collect_media_library_assets_to_product(

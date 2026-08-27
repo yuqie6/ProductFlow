@@ -44,8 +44,6 @@ function originLabelKey(origin: ProductImageOriginType): TranslationKey {
       return "detail.library.source.workflow" as const;
     case "image_session_attach":
       return "detail.library.source.session";
-    case "legacy_import":
-      return "detail.library.source.legacy";
     case "local_edit":
       return "detail.library.source.localEdit";
   }
@@ -68,11 +66,11 @@ export function ImageDirectoryTree({
     label: string;
     icon: ReactNode;
   }> = [
-    { selection: { kind: "all", key: null }, label: t("detail.library.all"), icon: <ImageIcon size={14} /> },
-    { selection: { kind: "recent_generated", key: null }, label: t("detail.library.recent"), icon: <Clock3 size={14} /> },
-    { selection: { kind: "uploads", key: null }, label: t("detail.library.uploads"), icon: <Upload size={14} /> },
-    { selection: { kind: "generated", key: null }, label: t("detail.library.generated"), icon: <Sparkles size={14} /> },
-  ];
+      { selection: { kind: "all", key: null }, label: t("detail.library.all"), icon: <ImageIcon size={14} /> },
+      { selection: { kind: "recent_generated", key: null }, label: t("detail.library.recent"), icon: <Clock3 size={14} /> },
+      { selection: { kind: "uploads", key: null }, label: t("detail.library.uploads"), icon: <Upload size={14} /> },
+      { selection: { kind: "generated", key: null }, label: t("detail.library.generated"), icon: <Sparkles size={14} /> },
+    ];
 
   return (
     <nav aria-label={t("detail.library.openDirectories")} className="min-w-0 space-y-4">
@@ -214,11 +212,10 @@ function DirectoryButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${
-        active
+      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${active
           ? "bg-indigo-50 font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-100"
           : "text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-      }`}
+        }`}
       title={label}
     >
       <span className="shrink-0">{icon}</span>
@@ -276,13 +273,12 @@ function DropDirectoryButton({
         }
       }}
       onDrop={handleDrop}
-      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${
-        dragOver
+      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${dragOver
           ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-400 dark:bg-emerald-500/15 dark:text-emerald-200"
           : active
             ? "bg-indigo-50 font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-100"
             : "text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-      }`}
+        }`}
       title={label}
     >
       <span className="shrink-0">{icon}</span>

@@ -7,7 +7,6 @@ import {
   FolderTree,
   GalleryHorizontalEnd,
   GitBranch,
-  History,
   Image,
   Images,
   PanelRight,
@@ -231,7 +230,7 @@ const HELP_DOCS = {
                 "添加单个节点会落在当前视口中心并被选中。",
                 "复制粘贴后选中新节点；删除节点前会确认。",
                 "Ctrl/Cmd+Z 撤销最近一次图编辑，Shift 组合键重做。",
-                "卡片按类型着色，失败和运行必需缺口写在卡片和详情上；工具条可运行、运行到此、复制、聚焦、存为配方、删除。多选时工具条还可编组。",
+                "卡片按类型着色，失败和运行必需缺口写在卡片和详情上；工具条可运行、运行到此、复制、聚焦、存为配方、删除。有当前出图的生图节点可固定为图片素材。多选时工具条还可编组。",
                 "最大化会收起顶部导航。",
                 "分组可进入；组内和全图各自记住视口。",
                 "窄屏检查器是底抽屉，打开后画布仍露出节点；选中连线后删除保持可见。",
@@ -313,7 +312,7 @@ const HELP_DOCS = {
     {
       slug: "media-library",
       title: "全局素材库",
-      description: "`/media-library` 是跨商品长期保存的全局入口；`/gallery` 只做兼容重定向。",
+      description: "`/media-library` 是跨商品长期保存的全局入口。",
       category: "素材",
       icon: Images,
       sections: [
@@ -412,36 +411,6 @@ const HELP_DOCS = {
         },
       ],
     },
-    {
-      slug: "history",
-      title: "历史归档",
-      description: "`/history` 只提供已退役 V1 记录的查看、导出和 Agent 重建入口。",
-      category: "归档",
-      icon: History,
-      sections: [
-        {
-          id: "read-only",
-          title: "只读查看",
-          blocks: [
-            {
-              type: "paragraph",
-              text: "可以筛选、下载和导出已退役 V1 workflow、用户模板和 Canvas Agent 记录。历史图片只有在 canonical 媒体核验完成后才能预览或下载。",
-            },
-          ],
-        },
-        {
-          id: "rebuild",
-          title: "用 Agent 重建",
-          blocks: [
-            {
-              type: "callout",
-              title: "不会恢复旧编辑器",
-              text: "重建不再插入 WorkflowDraft。已有 live 图时不能从旧归档覆盖现图。该操作不恢复旧画布、旧模板应用或旧执行器。",
-            },
-          ],
-        },
-      ],
-    },
   ],
   "en-US": [
     {
@@ -486,7 +455,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product facts hold confirmed product facts.", "An image asset node binds exactly one product-library image.", "Creative brief runs against product facts and photos and writes goals, copy, and constraints into the inspector.", "Visual system runs against product facts and photos and writes style and background into the inspector.", "Prompt generation writes a prompt into the inspector from product facts, photos, visual system, and brief. Running this node does not render images.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state. Direct create defaults to required on-image copy with a language; a new image node added on the canvas defaults to no copy. Running this node only renders. Empty content nodes need their own runs, or use run-to-node on the image node. Direct create wires uploads to visual, brief, prompt, and image nodes."] }] },
-        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes have input and output ports. Legal drop targets turn green; illegal ones turn red. Groups can tidy a local flow without changing execution order. Double-click a group to see only its members; the breadcrumb returns to the full graph." }, { type: "list", items: ["New nodes land near the current viewport center and stay selected.", "Paste selects the clones; deleting nodes asks for confirmation.", "Undo the last edit; Redo restores it if nothing new was saved.", "Cards keep type color and show failures on the card and in Details; the toolbar can run, run up to here, duplicate, focus, save as recipe, and delete.", "Maximize hides the top navigation.", "Groups can be entered; in-group and full-graph viewports are remembered separately.", "Save the full graph, current group, or selected nodes as a preset. Applying it on another product previews the nodes and edges that will be created; partial presets cannot merge into an existing workflow yet."] }] },
+        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes have input and output ports. Legal drop targets turn green; illegal ones turn red. Groups can tidy a local flow without changing execution order. Double-click a group to see only its members; the breadcrumb returns to the full graph." }, { type: "list", items: ["New nodes land near the current viewport center and stay selected.", "Paste selects the clones; deleting nodes asks for confirmation.", "Undo the last edit; Redo restores it if nothing new was saved.", "Cards keep type color and show failures on the card and in Details; the toolbar can run, run up to here, duplicate, focus, save as recipe, and delete. An image generation node with a current output can pin that result as an image asset.", "Maximize hides the top navigation.", "Groups can be entered; in-group and full-graph viewports are remembered separately.", "Save the full graph, current group, or selected nodes as a preset. Applying it on another product previews the nodes and edges that will be created; partial presets cannot merge into an existing workflow yet."] }] },
       ],
     },
     {
@@ -514,7 +483,7 @@ const HELP_DOCS = {
     {
       slug: "media-library",
       title: "Global media library",
-      description: "`/media-library` is the long-lived cross-product entry. `/gallery` is a compatibility redirect only.",
+      description: "`/media-library` is the long-lived cross-product entry.",
       category: "Assets",
       icon: Images,
       sections: [
@@ -542,17 +511,6 @@ const HELP_DOCS = {
       sections: [
         { id: "providers", title: "Provider purposes", blocks: [{ type: "list", items: ["Prompt supplies the model used by visual system, creative brief, and prompt generation nodes.", "Workflow Agent clarifies requirements, organizes the library, and creates workflows.", "Image powers workflow and image-chat generation."] }] },
         { id: "runtime", title: "Runtime configuration", blocks: [{ type: "paragraph", text: "Settings also manages allowed image-tool fields, maximum generation dimensions, upload limits, queues, security controls, and import or export of the current configuration format. Confirm changes through the page-level save feedback." }] },
-      ],
-    },
-    {
-      slug: "history",
-      title: "History archives",
-      description: "`/history` provides read-only V1 records, export, and Agent rebuild.",
-      category: "Archives",
-      icon: History,
-      sections: [
-        { id: "read-only", title: "Read-only browse", blocks: [{ type: "paragraph", text: "Filter, download, and export retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification." }] },
-        { id: "rebuild", title: "Rebuild with Agent", blocks: [{ type: "callout", title: "The old editor is not restored", text: "Rebuild no longer inserts a WorkflowDraft. A live graph cannot be overwritten from a legacy archive. It does not restore the old canvas, template application, or executor." }] },
       ],
     },
   ],
@@ -599,7 +557,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "ノードの役割", blocks: [{ type: "list", items: ["商品情報ノードは確認済みの商品事実を提供します。", "参考画像ノードは商品ライブラリの具体的な 1 画像を保持します。", "創作要件ノードは実行時に商品情報と参考画像から目標と制限を書き、検査器で再編集できます。", "ビジュアルシステムノードは実行時にスタイルと背景を書き、検査器で再編集できます。", "プロンプト生成ノードは実行時にプロンプトを検査器へ書きます。この実行では画像を出しません。", "画像生成ノードは比率、品質、文字方針、背景、参考忠実度、実行状態を保持します。直接作成の初期値はコピー必須と言語指定です。キャンバスで追加した画像ノードの初期値はコピーなしです。このノードの実行は出図のみです。空の内容ノードは先に単独実行するか、画像ノードでここまで実行を使います。直接作成ではアップロード画像をビジュアル、創作要件、プロンプト、画像ノードに接続します。"] }] },
-        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには入力と出力の接続点があります。接続できる対象は緑、できない対象は赤になります。グループは配置を整理するだけで、実行順は変えません。ダブルクリックでグループ内だけを表示し、パンくずで全図に戻ります。" }, { type: "list", items: ["新しいノードは現在の表示中央付近に置かれ、選択されたままです。", "貼り付け後は複製が選択されます。ノード削除前に確認します。", "直前の編集を元に戻せます。その後に新しい編集がなければやり直せます。", "カードは種類色を保ち、失敗をカードと詳細に表示します。ツールバーで実行、ここまで実行、複製、フォーカス、レシピ保存、削除ができます。", "最大化すると上部ナビをしまいます。", "グループに入れます。グループ内と全図の表示位置は別々に覚えます。", "全図、現在のグループ、または選択ノードをプリセット保存できます。別の商品へ適用する前に作成されるノードと接続を確認できます。部分プリセットは既存ワークフローへまだ結合できません。"] }] },
+        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには入力と出力の接続点があります。接続できる対象は緑、できない対象は赤になります。グループは配置を整理するだけで、実行順は変えません。ダブルクリックでグループ内だけを表示し、パンくずで全図に戻ります。" }, { type: "list", items: ["新しいノードは現在の表示中央付近に置かれ、選択されたままです。", "貼り付け後は複製が選択されます。ノード削除前に確認します。", "直前の編集を元に戻せます。その後に新しい編集がなければやり直せます。", "カードは種類色を保ち、失敗をカードと詳細に表示します。ツールバーで実行、ここまで実行、複製、フォーカス、レシピ保存、削除ができます。現在の出図がある画像生成ノードは画像素材として固定できます。", "最大化すると上部ナビをしまいます。", "グループに入れます。グループ内と全図の表示位置は別々に覚えます。", "全図、現在のグループ、または選択ノードをプリセット保存できます。別の商品へ適用する前に作成されるノードと接続を確認できます。部分プリセットは既存ワークフローへまだ結合できません。"] }] },
       ],
     },
     {
@@ -627,7 +585,7 @@ const HELP_DOCS = {
     {
       slug: "media-library",
       title: "グローバル素材ライブラリ",
-      description: "`/media-library` は商品を横断する長期保存入口です。`/gallery` は互換リダイレクトのみです。",
+      description: "`/media-library` は商品を横断する長期保存入口です。",
       category: "素材",
       icon: Images,
       sections: [
@@ -655,17 +613,6 @@ const HELP_DOCS = {
       sections: [
         { id: "providers", title: "プロバイダ用途", blocks: [{ type: "list", items: ["プロンプト：ビジュアルシステム、創作要件、プロンプト生成ノードのモデル。", "ワークフロー Agent：要件確認、ライブラリ整理、ワークフロー作成。", "画像：ワークフローと画像チャットの画像生成。"] }] },
         { id: "runtime", title: "実行設定", blocks: [{ type: "paragraph", text: "画像ツールの許可項目、最大生成サイズ、アップロード制限、キュー、セキュリティ、現在形式の設定インポートとエクスポートも管理します。保存後はページの結果表示を確認してください。" }] },
-      ],
-    },
-    {
-      slug: "history",
-      title: "履歴アーカイブ",
-      description: "`/history` は退役した V1 記録の閲覧、エクスポート、Agent 再構築入口です。",
-      category: "アーカイブ",
-      icon: History,
-      sections: [
-        { id: "read-only", title: "読み取り専用", blocks: [{ type: "paragraph", text: "退役した V1 ワークフロー、ユーザーテンプレート、Canvas Agent 記録を絞り込み、ダウンロード、エクスポートできます。履歴画像は canonical メディア検証後にのみプレビューまたはダウンロードできます。" }] },
-        { id: "rebuild", title: "Agent で再構築", blocks: [{ type: "callout", title: "旧エディタは復元されません", text: "再構築は WorkflowDraft を作りません。既存の live graph は旧アーカイブで上書きできません。旧キャンバス、旧テンプレート適用、旧実行器は戻りません。" }] },
       ],
     },
   ],
@@ -712,7 +659,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "Vai trò của node", blocks: [{ type: "list", items: ["Node thông tin sản phẩm cung cấp dữ kiện đã xác nhận.", "Mỗi node ảnh tham chiếu giữ đúng một ảnh trong thư viện sản phẩm.", "Node brief sáng tạo khi chạy ghi mục tiêu và giới hạn vào inspector.", "Node hệ thống hình ảnh khi chạy ghi phong cách và nền vào inspector.", "Node tạo prompt khi chạy ghi prompt vào inspector và không xuất hình.", "Node tạo ảnh lưu tỷ lệ, chất lượng, chính sách chữ, nền, độ trung thành tham chiếu và trạng thái chạy. Tạo trực tiếp mặc định bắt buộc có nội dung và có ngôn ngữ; node ảnh thêm trên canvas mặc định không nội dung. Chạy node này chỉ xuất hình. Node nội dung trống cần chạy riêng, hoặc dùng chạy đến đây trên node ảnh. Tạo trực tiếp nối ảnh tải lên vào hệ thống hình ảnh, brief, prompt và node ảnh."] }] },
-        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra. Mục tiêu hợp lệ chuyển xanh, không hợp lệ chuyển đỏ. Nhóm chỉ gọn bố cục, không đổi thứ tự chạy. Nhấp đúp nhóm để chỉ xem node trong nhóm; đường dẫn quay lại toàn đồ." }, { type: "list", items: ["Node mới rơi gần tâm viewport hiện tại và được chọn.", "Dán sẽ chọn bản sao; xóa node có xác nhận.", "Hoàn tác lần chỉnh sửa gần nhất; làm lại được nếu chưa có chỉnh sửa mới.", "Thẻ giữ màu loại và hiện lỗi trên thẻ và trong Chi tiết; thanh công cụ có chạy, chạy đến đây, nhân bản, lấy nét, lưu công thức và xóa.", "Phóng to sẽ thu thanh điều hướng trên.", "Có thể vào nhóm; viewport trong nhóm và toàn đồ được nhớ riêng.", "Có thể lưu toàn đồ, nhóm hiện tại hoặc node đã chọn thành mẫu. Áp dụng sang sản phẩm khác sẽ xem trước node và đường nối sẽ tạo; mẫu đoạn chưa gộp được vào quy trình hiện có."] }] },
+        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra. Mục tiêu hợp lệ chuyển xanh, không hợp lệ chuyển đỏ. Nhóm chỉ gọn bố cục, không đổi thứ tự chạy. Nhấp đúp nhóm để chỉ xem node trong nhóm; đường dẫn quay lại toàn đồ." }, { type: "list", items: ["Node mới rơi gần tâm viewport hiện tại và được chọn.", "Dán sẽ chọn bản sao; xóa node có xác nhận.", "Hoàn tác lần chỉnh sửa gần nhất; làm lại được nếu chưa có chỉnh sửa mới.", "Thẻ giữ màu loại và hiện lỗi trên thẻ và trong Chi tiết; thanh công cụ có chạy, chạy đến đây, nhân bản, lấy nét, lưu công thức và xóa. Node tạo ảnh đang có kết quả có thể ghim thành tài sản ảnh.", "Phóng to sẽ thu thanh điều hướng trên.", "Có thể vào nhóm; viewport trong nhóm và toàn đồ được nhớ riêng.", "Có thể lưu toàn đồ, nhóm hiện tại hoặc node đã chọn thành mẫu. Áp dụng sang sản phẩm khác sẽ xem trước node và đường nối sẽ tạo; mẫu đoạn chưa gộp được vào quy trình hiện có."] }] },
       ],
     },
     {
@@ -740,7 +687,7 @@ const HELP_DOCS = {
     {
       slug: "media-library",
       title: "Thư viện tài nguyên toàn cục",
-      description: "`/media-library` là cửa vào lưu dài hạn xuyên sản phẩm. `/gallery` chỉ còn chuyển hướng tương thích.",
+      description: "`/media-library` là cửa vào lưu dài hạn xuyên sản phẩm.",
       category: "Tư liệu",
       icon: Images,
       sections: [
@@ -768,17 +715,6 @@ const HELP_DOCS = {
       sections: [
         { id: "providers", title: "Mục đích nhà cung cấp", blocks: [{ type: "list", items: ["Prompt cung cấp mô hình cho hệ thống hình ảnh, brief sáng tạo và node tạo prompt.", "Agent quy trình làm rõ yêu cầu, sắp xếp thư viện và tạo quy trình.", "Ảnh cung cấp khả năng tạo ảnh cho quy trình và phiên tạo ảnh."] }] },
         { id: "runtime", title: "Cấu hình chạy", blocks: [{ type: "paragraph", text: "Trang cài đặt cũng quản lý các trường công cụ ảnh được phép, kích thước tạo tối đa, giới hạn tải lên, hàng đợi, bảo mật và nhập hoặc xuất định dạng cấu hình hiện tại. Hãy xác nhận kết quả qua phản hồi lưu trên trang." }] },
-      ],
-    },
-    {
-      slug: "history",
-      title: "Lưu trữ lịch sử",
-      description: "`/history` chỉ xem, xuất và dựng lại bằng Agent các bản ghi V1 đã ngừng.",
-      category: "Lưu trữ",
-      icon: History,
-      sections: [
-        { id: "read-only", title: "Chỉ đọc", blocks: [{ type: "paragraph", text: "Có thể lọc, tải xuống và xuất workflow V1 đã ngừng, mẫu người dùng và bản ghi Canvas Agent. Ảnh lịch sử chỉ xem hoặc tải sau khi media canonical được xác minh." }] },
-        { id: "rebuild", title: "Dựng lại bằng Agent", blocks: [{ type: "callout", title: "Không khôi phục trình chỉnh sửa cũ", text: "Thao tác này không còn tạo WorkflowDraft. Có live graph thì không ghi đè từ archive cũ. Nó không khôi phục canvas cũ, áp dụng mẫu cũ hay bộ thực thi cũ." }] },
       ],
     },
   ],

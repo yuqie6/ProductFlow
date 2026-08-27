@@ -4,7 +4,7 @@
 
 ProductFlow is a single-administrator, single-merchant visual production workspace. A user uploads real product references, selects intended image types and quantities, and works on a live schema-v3 graph. Agent-first create writes that graph immediately; the Agent applies or proposes ChangeSets instead of submitting a WorkflowDraft.
 
-The current repository targets a personal live demo and self-hosted deployments. Multi-tenancy, billing, team roles, publication integrations, and long-term SaaS compatibility are outside the current contract. Existing deployed data is still migrated through explicit, auditable operations; upgrade procedures must not depend on resetting the database or storage.
+The current repository is a personal live demo and a rapid-development mainline. Breaking changes are expected. There is no compatibility window, dual runtime, or old-data migration contract. Deployments that need a stable snapshot should fork; following this repository may require recreating the database and storage. Multi-tenancy, billing, team roles, publication integrations, and long-term SaaS compatibility are outside the current contract.
 
 ## Online Flow
 
@@ -12,7 +12,13 @@ The current repository targets a personal live demo and self-hosted deployments.
 2. Image types start unselected. Selecting a type initializes its quantity to 2.
 3. Each selected type has a quantity from 1 to 6; the total planned images cannot exceed 30.
 4. The user uploads 1 to 6 verified references and is expected to include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
-5. Agent-first create can start from a product name. It persists the Product, a live schema-v3 graph (name-only: a `product_source` node; form-complete: the same template as direct create), one product-owned `AgentSession`, and one product-scoped `AgentConversation`. It does not create a `WorkflowDraft`, an onboarding `AgentTask`, or auto-submit a Turn. Product intake (image types, quantities, reference asset ids) lives on the Product. The user uploads 1 to 6 verified references in that conversation and names the image types in text; the Agent writes them as product intake and applies ChangeSets onto the live graph. The create form can still collect types and files first as a shortcut, and remains the required path for direct create. Direct create persists the product, references, and schema-v3 graph without a conversation. Opening the canvas Agent sidebar with none present attaches a product-owned session. Missing image types or references do not block Agent Turns. `AgentSession` is the longer-lived conversation container; canvas sessions belong to one product and global Dock sessions do not. The current Turn runtime still uses the conversation projection.
+5. Agent-first create can start from a product name.
+   - Persist the Product, a live schema-v3 graph, one product-owned `AgentSession`, and one product-scoped `AgentConversation`. Name-only graphs contain a `product_source` node; form-complete graphs use the same template as direct create.
+   - Do not create a `WorkflowDraft`, an onboarding `AgentTask`, or an automatic Turn. Product intake (image types, quantities, reference asset ids) lives on the Product.
+   - The user uploads 1 to 6 verified references in that conversation and names the image types in text. The Agent writes them as product intake and applies ChangeSets onto the live graph.
+   - The create form can still collect types and files first as a shortcut, and remains the required path for direct create. Direct create persists the product, references, and schema-v3 graph without a conversation.
+   - Opening the canvas Agent sidebar with none present attaches a product-owned session. Missing image types or references do not block Agent Turns.
+   - `AgentSession` is the longer-lived conversation container. Canvas sessions belong to one product; global Dock sessions do not. The current Turn runtime still uses the conversation projection.
 6. The Agent asks for missing facts and applies or proposes graph ChangeSets. It may suggest plan changes but cannot silently change confirmed user choices or facts. Product-workflow Agent cannot propose, confirm, or persist a WorkflowDraft.
 7. Direct create and Agent-first create both persist a live schema-v3 graph in the create transaction. The workbench reads that graph after persist; it does not assemble the graph incrementally in the browser.
 8. Closing or never opening the Agent conversation leaves add, connect, inspect, run, undo, and recipes available. Turn `running` / `unknown` / `failed` does not lock the canvas.
@@ -20,13 +26,13 @@ The current repository targets a personal live demo and self-hosted deployments.
 
 ## Authorities
 
-- PostgreSQL is authoritative for products, facts, assets, Draft revisions, workflows, recipes, provider configuration, and business job state.
+- PostgreSQL is authoritative for products, facts, assets, library-organization Draft revisions, workflows, recipes, provider configuration, and business job state.
 - ProductFlow PostgreSQL remains authoritative for business state. The main Node.js/Pi adapter owns its session and event files for interactive Agent Turn execution; those files are not a durable business authority and do not prove background recovery, effect reconciliation, or multi-instance claims.
 - ProductFlow stores a web projection of Agent state but does not reconstruct a second model transcript.
-- `AgentTask` stores one business goal and one task-specific run under an `AgentSession` (the persisted compatibility column is still named `harness_run_id`); `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
+- `AgentTask` stores one business goal and one task-specific run under an `AgentSession`. The persisted run-identity column is `harness_run_id`. `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
 - `MediaObject` identifies immutable media bytes. `MediaLibraryAsset` identifies one global library asset and its provenance. `ProductImageAsset` identifies one image inside a product namespace. `WorkflowMediaLibraryAsset` records a workflow usage association without owning another media copy.
 - Workflow nodes and covers reference `ProductImageAsset` ids, never storage paths or parallel-array positions.
-- Historical V1 source rows and immutable archives are migration evidence. They are not an online editor or executor.
+- Retired V1/v2 source rows, archives, and cutover gates are not product authorities. Do not add readers, rebuilds, or upgrade paths for them.
 
 ## Workflow Invariants
 
@@ -57,19 +63,16 @@ The current repository targets a personal live demo and self-hosted deployments.
 
 - 收藏画廊是连续生图结果的收藏视图。它保存一条图片结果引用，并展示该结果所属轮次的提示词、尺寸、模型、供应商和候选信息；它不是独立的提示词参数库。
 - 工作流子图库是全局图库的工作流作用域关联和使用集合。`WorkflowMediaLibraryAsset` 只保存关联；工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份，不复制媒体 bytes。
-- 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是当前全局入口；旧 `/gallery` 只负责兼容重定向，在线 `/api/gallery` 已退休。当前 schema 的旧 `ImageGalleryEntry` 物理表仍由迁移 reader 有界读取，直到部署级回填、引用审计、观察窗和独立素材库清理闸门完成；旧 `legacy_canvas_agent_20260518_0032` source 通过 Gallery-only manifest bridge 迁移到新图库，Agent archive 不属于该 bridge。清理只允许删除旧 Gallery 行和表，不得删除全局素材、共享媒体或工作流引用。
+- 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是全局入口。旧 `/gallery` 路由和 `ImageGalleryEntry` 不是当前产品；残留重定向、物理表和 bridge 按 ADR 0010 删除，不写回填。
 - 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。关闭或从未打开 Agent 对话时，添加节点、连线、检查器、绑定、运行、取消、重试、撤销和配方必须保持可用。Turn 的 running / unknown / failed 不得锁整张画布。Agent 写入与人写入走同一套 Graph Command；人可以立刻继续改刚被 Agent 改过的节点。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
 - Agent Session、Agent Task、WorkflowGraphRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
 - Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
-- 收藏画廊条目的旧生命周期跟随连续生图会话资产；删除来源会话的目标行为是移除旧收藏。SQLite 默认关闭外键时不能仅依赖数据库级联，应用删除路径必须显式处理这类旧条目。
 
-## Legacy Cutover State
+## Mainline Scope
 
-The online V1 editor, executor, mutation routes, template catalog, and default-DAG creation path have been removed. The repository retains additive archive/backfill tools, a read-only history UI, an Agent rebuild seed, V1 source tables needed for audit, and a durable cutover evidence gate.
-
-This code state does not prove that a production cutover occurred. Production-source audit, canonical mapping reconciliation, archive reconciliation, backup/storage restore rehearsal, active/unknown-run drain, and gate approval are operational evidence that must be produced for each deployment. See `docs/rollout/legacy-v1-retirement.md` and `docs/operations/legacy-v1-cutover.md`.
+The online product is schema-v3 graphs, Agent-first create, the workbench, media library, and current provider settings. Retired V1/v2 editors, executors, WorkflowDraft writes, archive/cutover gates, Gallery backfill, and old-JSON readers are not product requirements. Do not add compatibility shims, dual serializers, or migration commands. Delete leftover paths instead of wrapping them. See `docs/adr/0010-mainline-no-compatibility.md`.
 
 ## Documentation Map
 
@@ -78,8 +81,9 @@ This code state does not prove that a production cutover occurred. Production-so
 - `docs/USER_GUIDE.md`: page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
 - `docs/ARCHITECTURE.md`: current implementation structure and data flow.
 - `docs/ROADMAP.md`: directions that are not yet product fact.
-- `docs/adr/`: frozen decisions.
-- `docs/rollout/` and `docs/operations/`: deployment evidence and operator commands.
+- `docs/adr/`: frozen decisions still on the default reading path.
+- `docs/archive/`: superseded records, including ADR 0003.
+- `docs/rollout/` and `docs/operations/`: leftover operator notes; V1/Gallery cutover is not a mainline obligation.
 - `AGENTS.md`, `backend/AGENTS.md`, `web/AGENTS.md`: how to change this repository.
 
 Code, tests, migrations, and runtime behavior remain the final source of current implementation truth. Documentation must be corrected when they disagree.

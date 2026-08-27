@@ -781,7 +781,6 @@ def _stage_workspace_records(
         id=conversation_id,
         session_id=agent_session.id,
         product_id=product.id,
-        workflow_draft_id=None,
         harness_run_id=conversation_id,
         status=AgentConversationStatus.COLLECTING,
         creation_idempotency_key=creation_idempotency_key,

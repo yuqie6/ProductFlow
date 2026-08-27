@@ -2,13 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraft } from "../../../lib/types";
+import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset } from "../../../lib/types";
 import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentComposer, classifyImageFiles } from "./AgentComposer";
 import {
   agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
-  hasUnsyncedWorkflowDraftRevision,
 } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -35,7 +34,6 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
-    workflow_draft_revision_id: null,
     library_organization_draft_revision_id: null,
     workflow_run_request_id: null,
     page_context_snapshot_id: null,
@@ -85,25 +83,6 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("<strong>商品材质</strong>");
     expect(markup).toContain("<code>hero</code>");
     expect(markup).not.toContain("<script");
-  });
-
-  it("refreshes the draft only after ProductFlow projects the proposed revision ID", () => {
-    const staleDraft = {
-      id: "draft-1",
-      current_revision: null,
-    } as WorkflowDraft;
-    const synchronizedDraft = {
-      ...staleDraft,
-      current_revision: { id: "revision-1" },
-    } as WorkflowDraft;
-    const projected = turn({
-      status: "awaiting_confirmation",
-      workflow_draft_revision_id: "revision-1",
-    });
-
-    expect(hasUnsyncedWorkflowDraftRevision(staleDraft, projected)).toBe(true);
-    expect(hasUnsyncedWorkflowDraftRevision(synchronizedDraft, projected)).toBe(false);
-    expect(hasUnsyncedWorkflowDraftRevision(staleDraft, turn())).toBe(false);
   });
 
   it("lets an empty product conversation submit the first user message", () => {
@@ -402,8 +381,8 @@ describe("Agent conversation components", () => {
             tool_name: "load_productflow_skill",
             details: {
               phase: "skill_load",
-              skill_name: "workflow-draft",
-              instruction_excerpt: "# Workflow Draft\n\n保留已核验事实。",
+              skill_name: "library-organization",
+              instruction_excerpt: "# Library Organization\n\n保留已核验事实。",
               instruction_truncated: false,
               output_summary: "已加载版本化 Skill 指令；完整内容已提供给模型。",
             },
@@ -413,10 +392,10 @@ describe("Agent conversation components", () => {
             kind: "propose_draft",
             summary: "提交完整 ProductFlow 草案",
             status: "failed",
-            tool_name: "propose_workflow_draft",
+            tool_name: "propose_global_draft",
             details: {
               phase: "tool_result",
-              error_code: "workflow_draft_validation_failed",
+              error_code: "library_organization_draft_validation_failed",
               retryable: true,
               validation_issues: [
                 { path: "image_types.0.images.0.delivery_spec.crop_anchor", message: "contain 不能指定 crop_anchor" },
@@ -431,8 +410,8 @@ describe("Agent conversation components", () => {
             tool_name: "get_product_workflow_context_v1",
             details: {
               phase: "tool_result",
-              context_sections: ["product_facts", "workflow_draft", "intake", "draft_guidance"],
-              output_summary: "已读取当前商品事实、WorkflowDraft、参考资产和提交前校验指导。",
+              context_sections: ["product_facts", "intake", "draft_guidance"],
+              output_summary: "已读取当前商品事实、参考资产和提交前校验指导。",
             },
           },
         ],
@@ -440,10 +419,10 @@ describe("Agent conversation components", () => {
     );
 
     expect(markup).toContain("load_productflow_skill");
-    expect(markup).toContain("workflow-draft");
+    expect(markup).toContain("library-organization");
     expect(markup).toContain("data-agent-tool-step-instructions");
-    expect(markup).toContain("# Workflow Draft");
-    expect(markup).toContain("workflow_draft_validation_failed");
+    expect(markup).toContain("# Library Organization");
+    expect(markup).toContain("library_organization_draft_validation_failed");
     expect(markup).toContain("image_types.0.images.0.delivery_spec.crop_anchor");
     expect(markup).toContain("draft_guidance");
     expect(markup).toContain("data-agent-tool-step-details");
@@ -685,7 +664,7 @@ describe("Agent conversation components", () => {
     const failed = turn({
       status: "failed",
       error_text: "草案同步失败",
-      workflow_draft_revision_id: "revision-1",
+      library_organization_draft_revision_id: "revision-1",
     });
     const markup = renderToStaticMarkup(
       createElement(AgentMessageList, {
@@ -720,8 +699,8 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("data-agent-turn-status=\"failed\"");
     expect(markup).toContain("失败");
     expect(markup).toContain("草案同步失败");
-    expect(markup).toContain("审阅工作流方案");
-    expect(staleRevisionMarkup).not.toContain("审阅工作流方案");
+    expect(markup).toContain("审阅素材整理方案");
+    expect(staleRevisionMarkup).not.toContain("审阅素材整理方案");
     expect(markup).not.toContain("data-agent-turn-retry");
   });
 
@@ -834,4 +813,6 @@ describe("Agent conversation components", () => {
       expect(markup).not.toContain("Agent 正在处理");
     }
   });
+
+
 });

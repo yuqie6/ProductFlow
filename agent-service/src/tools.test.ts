@@ -33,11 +33,9 @@ const baseScope: Scope = {
   task_id: null,
   task_goal: null,
   product_id: "22222222-2222-4222-8222-222222222222",
-  workflow_draft_id: "33333333-3333-4333-8333-333333333333",
   run_id: "44444444-4444-4444-8444-444444444444",
   system_prompt: "ProductFlow",
   draft_schema: { type: "object" },
-  workflow_draft_schema: { type: "object" },
   current_draft_version: 1,
   has_live_graph: false,
 };
@@ -114,9 +112,7 @@ describe("ProductFlow Pi tools", () => {
       ...baseScope,
       scope_type: "global",
       product_id: null,
-      workflow_draft_id: null,
       draft_schema: { type: "object" },
-      workflow_draft_schema: {},
     };
     const names = createProductFlowTools(runtime(globalScope)).map((tool) => tool.name).sort();
     expect(names).toContain("load_productflow_skill");
@@ -129,15 +125,22 @@ describe("ProductFlow Pi tools", () => {
     expect(names).not.toContain("list_legacy_archives_v1");
   });
 
-  it("registers legacy archive tools only on the history page", () => {
-    const historyRuntime: ToolRuntime = {
-      ...runtime({ ...baseScope, scope_type: "global", product_id: null, workflow_draft_id: null }),
-      pageType: "history",
-    };
-    const historyNames = createProductFlowTools(historyRuntime).map((tool) => tool.name);
-    expect(historyNames).toContain("list_legacy_archives_v1");
-    expect(historyNames).toContain("inspect_legacy_archive_v1");
-    expect(historyNames).toContain("propose_global_draft");
+  it("does not register legacy archive tools on any page", () => {
+    const pages = ["history", "app", "product_workbench"] as const;
+    for (const pageType of pages) {
+      const globalNames = createProductFlowTools({
+        ...runtime({ ...baseScope, scope_type: "global", product_id: null }),
+        pageType,
+      }).map((tool) => tool.name);
+      const productNames = createProductFlowTools({
+        ...runtime(baseScope),
+        pageType,
+      }).map((tool) => tool.name);
+      expect(globalNames).not.toContain("list_legacy_archives_v1");
+      expect(globalNames).not.toContain("inspect_legacy_archive_v1");
+      expect(productNames).not.toContain("list_legacy_archives_v1");
+      expect(productNames).not.toContain("inspect_legacy_archive_v1");
+    }
   });
 
   it("returns bounded Skill evidence while keeping the full instruction for the model", async () => {
@@ -290,7 +293,6 @@ describe("ProductFlow Pi tools", () => {
       ...baseScope,
       scope_type: "global",
       product_id: null,
-      workflow_draft_id: null,
     };
     const tool = createProductFlowTools(runtime(globalScope, client, (_id, reason) => unknownReasons.push(reason ?? "")))
       .find((candidate) => candidate.name === "create_product_workspace_v1");
@@ -336,7 +338,7 @@ describe("ProductFlow Pi tools", () => {
 
     try {
       const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
-      const globalScope: Scope = { ...baseScope, scope_type: "global", product_id: null, workflow_draft_id: null };
+      const globalScope: Scope = { ...baseScope, scope_type: "global", product_id: null };
       const client = new ProductFlowClient(
         `http://127.0.0.1:${address.port}`,
         "0123456789abcdef0123456789abcdef",
@@ -382,7 +384,6 @@ describe("ProductFlow Pi tools", () => {
       ...baseScope,
       scope_type: "global",
       product_id: null,
-      workflow_draft_id: null,
     };
     const tool = createProductFlowTools(
       runtime(globalScope, client, undefined, async (kind, payload) => {
@@ -416,7 +417,6 @@ describe("ProductFlow Pi tools", () => {
       ...baseScope,
       scope_type: "global",
       product_id: null,
-      workflow_draft_id: null,
     };
     const tool = createProductFlowTools(
       runtime(
@@ -451,7 +451,6 @@ describe("ProductFlow Pi tools", () => {
       ...baseScope,
       scope_type: "global",
       product_id: null,
-      workflow_draft_id: null,
     };
     const tool = createProductFlowTools(
       runtime(

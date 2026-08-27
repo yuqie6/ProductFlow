@@ -24,7 +24,6 @@ class ProductImageOriginType(StrEnum):
     UPLOAD = "upload"
     WORKFLOW_GENERATION = "workflow_generation"
     IMAGE_SESSION_ATTACH = "image_session_attach"
-    LEGACY_IMPORT = "legacy_import"
     LOCAL_EDIT = "local_edit"
 
 
@@ -88,15 +87,6 @@ class AgentCheckpointKind(StrEnum):
     QUESTION_REQUIRED = "question_required"
     EXTERNAL_JOB_SUBMITTED = "external_job_submitted"
     TERMINAL = "terminal"
-
-
-class WorkflowNodeType(StrEnum):
-    """WorkflowDraft 与配方 payload 使用的节点类型。"""
-
-    PRODUCT_CONTEXT = "product_context"
-    REFERENCE_IMAGE = "reference_image"
-    PROMPT_GENERATION = "prompt_generation"
-    IMAGE_GENERATION = "image_generation"
 
 
 class GraphNodeType(StrEnum):
@@ -163,7 +153,7 @@ class GraphProposalStatus(StrEnum):
 
 
 class GraphRunScope(StrEnum):
-    """v3 运行范围。NODE 只跑该节点；TO_NODE 含上游 processing；跑 content 不会自动跑下游 image。"""
+    """v3 运行范围。NODE 跑目标及需要更新的祖先；TO_NODE 含全部必要祖先；不自动跑下游 image。"""
 
     NODE = "node"
     TO_NODE = "to_node"
@@ -177,18 +167,6 @@ class GraphArtifactType(StrEnum):
     VISUAL_SYSTEM = "visual_system"
     PROMPT = "prompt"
     IMAGE = "image"
-
-
-class WorkflowDraftStatus(StrEnum):
-    """Agent 工作流草案从收集到物化的持久化状态。"""
-
-    COLLECTING = "collecting"
-    AWAITING_CONFIRMATION = "awaiting_confirmation"
-    CONFIRMED = "confirmed"
-    MATERIALIZING = "materializing"
-    READY = "ready"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class LibraryOrganizationDraftStatus(StrEnum):
@@ -332,16 +310,6 @@ class ProductFactSourceType(StrEnum):
     USER = "user"
     IMAGE_OBSERVATION = "image_observation"
     AGENT_INFERENCE = "agent_inference"
-    LEGACY_PRODUCT = "legacy_product"
-
-
-class WorkflowRevealEventKind(StrEnum):
-    """已物化工作流在前端逐步揭示时使用的只读事件类型。"""
-
-    FOLDER = "folder"
-    NODE = "node"
-    EDGE = "edge"
-    COMPLETED = "completed"
 
 
 class WorkflowNodeStatus(StrEnum):

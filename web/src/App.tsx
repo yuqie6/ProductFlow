@@ -16,9 +16,6 @@ const HelpPage = lazy(() =>
 const LoginPage = lazy(() =>
   import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })),
 );
-const LegacyHistoryPage = lazy(() =>
-  import("./pages/LegacyHistoryPage").then((module) => ({ default: module.LegacyHistoryPage })),
-);
 const loadImageChatPage = () =>
   import("./pages/ImageChatPage").then((module) => ({ default: module.ImageChatPage }));
 const ImageChatPage = lazy(loadImageChatPage);
@@ -91,18 +88,6 @@ function AppRoutes() {
           <Route
             path="/media-library"
             element={authenticated ? <MediaLibraryPage /> : <Navigate to="/login" replace />}
-          />
-          <Route
-            path="/gallery"
-            element={<Navigate to="/media-library" replace />}
-          />
-          <Route
-            path="/history"
-            element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
-          />
-          <Route
-            path="/history/:archiveKind/:archiveId"
-            element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
           />
           <Route
             path="/help"

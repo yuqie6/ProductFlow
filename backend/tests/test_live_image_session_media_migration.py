@@ -25,7 +25,7 @@ pytestmark = [
         os.getenv(LIVE_IMAGE_SESSION_MEDIA_MIGRATION_SWITCH) != "1",
         reason=(
             f"set {LIVE_IMAGE_SESSION_MEDIA_MIGRATION_SWITCH}=1 "
-            "to run the PostgreSQL ImageSession media migration gate"
+            "to run the PostgreSQL ImageSession media authority gate"
         ),
     ),
 ]
@@ -35,7 +35,7 @@ pytestmark = [
 def _temporary_postgres_database(base_database_url: str) -> Iterator[URL]:
     base_url = make_url(base_database_url)
     if base_url.get_backend_name() != "postgresql":
-        pytest.fail("DATABASE_URL must point to PostgreSQL for the migration gate", pytrace=False)
+        pytest.fail("DATABASE_URL must point to PostgreSQL for the media authority gate", pytrace=False)
 
     database_name = f"productflow_live_session_media_{uuid4().hex}"
     maintenance_engine = sa.create_engine(
@@ -67,7 +67,7 @@ def _temporary_postgres_database(base_database_url: str) -> Iterator[URL]:
             maintenance_engine.dispose()
 
 
-def test_image_session_media_authority_migration_on_postgresql(
+def test_image_session_delete_preserves_product_owned_shared_media_on_postgresql(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -90,15 +90,26 @@ def test_image_session_media_authority_migration_on_postgresql(
             backend_dir = Path(__file__).resolve().parents[1]
             config = Config(str(backend_dir / "alembic.ini"))
             config.set_main_option("script_location", str(backend_dir / "alembic"))
-            command.upgrade(config, "20260816_0042")
+            command.upgrade(config, "head")
 
             engine = sa.create_engine(database_url, future=True)
             try:
+                inspector = sa.inspect(engine)
+                media_column = next(
+                    column
+                    for column in inspector.get_columns("image_session_assets")
+                    if column["name"] == "media_object_id"
+                )
+                assert media_column["nullable"] is False
+                assert {
+                    foreign_key["name"]
+                    for foreign_key in inspector.get_foreign_keys("image_session_assets")
+                } >= {"fk_image_session_assets_media_object_id"}
                 with engine.begin() as connection:
                     connection.execute(
                         sa.text(
                             "INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES "
-                            "('session-live-media', 'Live media migration', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                            "('session-live-media', 'Live media authority', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                         )
                     )
                     connection.execute(
@@ -115,7 +126,7 @@ def test_image_session_media_authority_migration_on_postgresql(
                             "(id, session_id, kind, original_filename, mime_type, storage_path, "
                             "media_object_id, created_at) VALUES "
                             "('asset-live-session', 'session-live-media', 'reference_upload', "
-                            "'reference.png', 'image/jpeg', 'media/stale-carrier.jpg', "
+                            "'reference.png', 'image/png', 'media/live-session.png', "
                             "'media-live-session', CURRENT_TIMESTAMP)"
                         )
                     )
@@ -135,61 +146,6 @@ def test_image_session_media_authority_migration_on_postgresql(
                             "'asset-live-session', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
                         )
                     )
-            finally:
-                engine.dispose()
-
-            with pytest.raises(RuntimeError, match="carrier drift"):
-                command.upgrade(config, "head")
-
-            engine = sa.create_engine(database_url, future=True)
-            try:
-                pre_repair_inspector = sa.inspect(engine)
-                pre_repair_column = next(
-                    column
-                    for column in pre_repair_inspector.get_columns("image_session_assets")
-                    if column["name"] == "media_object_id"
-                )
-                assert pre_repair_column["nullable"] is True
-                with engine.begin() as connection:
-                    assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0042"
-                    assert connection.execute(
-                        sa.text(
-                            "SELECT storage_path, mime_type FROM image_session_assets "
-                            "WHERE id = 'asset-live-session'"
-                        )
-                    ).one() == ("media/stale-carrier.jpg", "image/jpeg")
-                    connection.execute(
-                        sa.text(
-                            "UPDATE image_session_assets SET storage_path = 'media/live-session.png', "
-                            "mime_type = 'image/png' WHERE id = 'asset-live-session'"
-                        )
-                    )
-            finally:
-                engine.dispose()
-
-            command.upgrade(config, "head")
-
-            engine = sa.create_engine(database_url, future=True)
-            try:
-                inspector = sa.inspect(engine)
-                media_column = next(
-                    column
-                    for column in inspector.get_columns("image_session_assets")
-                    if column["name"] == "media_object_id"
-                )
-                assert media_column["nullable"] is False
-                assert {
-                    foreign_key["name"]
-                    for foreign_key in inspector.get_foreign_keys("image_session_assets")
-                } >= {"fk_image_session_assets_media_object_id"}
-                with engine.connect() as connection:
-                    assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0051"
-                    assert connection.scalar(
-                        sa.text(
-                            "SELECT media_object_id FROM image_session_assets "
-                            "WHERE id = 'asset-live-session'"
-                        )
-                    ) == "media-live-session"
 
                 with Session(engine) as session:
                     delete_image_session(

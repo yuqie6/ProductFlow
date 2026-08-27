@@ -402,7 +402,7 @@ def serialize_product_fact(payload: dict) -> ProductFactResponse:
     return ProductFactResponse(
         key=str(payload.get("key") or "unknown"),
         value=payload.get("value"),
-        source_type=payload.get("source_type") or ProductFactSourceType.LEGACY_PRODUCT,
+        source_type=payload.get("source_type") or ProductFactSourceType.USER,
         status=payload.get("status") or ProductFactStatus.CONFIRMED,
         requires_confirmation=bool(payload.get("requires_confirmation", False)),
         evidence_asset_ids=list(payload.get("evidence_asset_ids") or []),

@@ -17,7 +17,7 @@ MEDIA_LIBRARY_PROVENANCE_SCHEMA_VERSION = 1
 MAX_PROVENANCE_BYTES = 32 * 1024
 MEDIA_LIBRARY_COLLECTION_MAX_IDEMPOTENCY_KEY_BYTES = 200
 MEDIA_LIBRARY_UPLOAD_MAX_IDEMPOTENCY_KEY_BYTES = 200
-MediaLibrarySourceType = Literal["legacy_gallery", "image_session_generated", "product_asset", "direct_upload"]
+MediaLibrarySourceType = Literal["image_session_generated", "product_asset", "direct_upload"]
 
 
 class MediaLibraryProvenanceV1(BaseModel):

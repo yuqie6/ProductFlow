@@ -117,6 +117,7 @@ def stage_new_workflow_graph(
 ) -> GraphCommandResult:
     """在调用方事务内 flush 出完整 v3 图；本函数不 commit。"""
 
+    del source_draft_revision_id
     if change_set.base_graph_revision != 0:
         raise ConflictError("新建图的 base_graph_revision 必须为 0")
     _lock_product(session, product_id)
@@ -132,7 +133,6 @@ def stage_new_workflow_graph(
         active=True,
         schema_version=GRAPH_SCHEMA_VERSION,
         revision=applied.revision,
-        source_draft_revision_id=source_draft_revision_id,
     )
     session.add(graph)
     session.flush()
@@ -187,7 +187,6 @@ def _stage_empty_workflow_graph(session: Session, *, product_id: str, title: str
         active=True,
         schema_version=GRAPH_SCHEMA_VERSION,
         revision=1,
-        source_draft_revision_id=None,
     )
     session.add(graph)
     session.flush()

@@ -6,13 +6,13 @@ Read the live implementation, call chain, tests, and current diff before decidin
 
 Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. For broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
-Keep modifications at the real causal boundary. Reuse existing models, enums, exceptions, query helpers, fixtures, and UI components. Add guards or abstractions only for a demonstrated failure mode or invariant. Never revive retired V1 runtime behavior as a fallback.
+Keep modifications at the real causal boundary. Reuse existing models, enums, exceptions, query helpers, fixtures, and UI components. Add guards or abstractions only for a demonstrated failure mode or invariant. Never revive retired V1 runtime behavior as a fallback. Do not add compatibility shims, dual serializers, or old-data migration commands; delete leftover paths.
 
 Before a cross-layer change, trace `input -> wire schema -> application use case -> persistence/external effect -> response -> frontend projection`. Assign each validation rule to the narrowest layer that has enough information, and test at the boundary where drift would become observable. Search all readers and writers before changing an enum, persisted JSON shape, route, provider field, or shared UI projection.
 
-Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, docs, and historical-value readers for residue.
+Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`; deployment evidence belongs in `docs/rollout/` and `docs/operations/`.
+Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. V1/Gallery cutover notes in `docs/rollout/` and `docs/operations/` are leftover, not mainline obligations.
 
 ## Multi-Agent Delivery
 
@@ -42,7 +42,7 @@ Keep one writer per file or tightly coupled module at a time. Run independent sl
 
 Sub-agents do not commit, push, reset, revert unrelated changes or declare the overall task complete. They report changed files, behavior, tests, unresolved risks and assumptions. The primary agent reads the resulting diff, runs integration checks at the shared boundary and may return a focused correction task to the same agent.
 
-The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another Luna task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
+The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another implementation task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
 
 ## Project Structure & Module Organization
 ProductFlow is a single-administrator, single-merchant workspace. The backend lives in `backend/src/productflow_backend/` and uses `presentation/` for FastAPI routes and schemas, `application/` for use cases, `domain/` for enums and database-free rules, and `infrastructure/` for database, storage, queues, providers, and service clients. Alembic migrations are in `backend/alembic/versions/`; backend tests are in `backend/tests/`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `backend/AGENTS.md` or `web/AGENTS.md` before editing that package.

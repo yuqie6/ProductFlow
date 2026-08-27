@@ -33,12 +33,10 @@ from productflow_backend.infrastructure.agent_service import (
     get_agent_service_client,
 )
 from productflow_backend.infrastructure.db.models import (
-    AgentConversation,
     AgentTask,
     AgentTurnExecution,
     AgentTurnProjection,
     AsyncDispatch,
-    WorkflowDraft,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 
@@ -67,8 +65,6 @@ def execute_agent_turn_sync(
             select(AgentTurnProjection)
             .options(
                 selectinload(AgentTurnProjection.conversation)
-                .selectinload(AgentConversation.workflow_draft)
-                .selectinload(WorkflowDraft.current_revision)
             )
             .where(AgentTurnProjection.id == projection_id)
         )
@@ -197,9 +193,10 @@ def recover_unfinished_agent_turn_syncs(
                     or_(
                         AgentTurnProjection.status.in_(IN_FLIGHT_TURN_STATUSES),
                         (
-                            # 待确认但尚未挂上 Draft revision，同步仍可能补 artifact。
+                            # 待确认且尚未挂上 library Draft 或跑图请求时，同步仍可能补 artifact。
                             (AgentTurnProjection.status == AgentTurnStatus.AWAITING_CONFIRMATION)
-                            & AgentTurnProjection.workflow_draft_revision_id.is_(None)
+                            & AgentTurnProjection.library_organization_draft_revision_id.is_(None)
+                            & AgentTurnProjection.workflow_run_request_id.is_(None)
                         ),
                     ),
                 )

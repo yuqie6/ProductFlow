@@ -363,7 +363,6 @@ def _workspace_summary(creation: Any, global_conversation_id: str) -> dict[str, 
         "product_conversation_id": creation.conversation.id,
         "product_id": creation.product.id,
         "product_name": creation.product.name,
-        "workflow_draft_id": creation.conversation.workflow_draft_id,
         "task_id": None,
         "intake_finalized": creation.intake_finalized,
     }
@@ -375,7 +374,6 @@ def _intake_summary(creation: Any) -> dict[str, Any] | None:
     return {
         "kind": "product_intake",
         "product_id": creation.product.id,
-        "workflow_draft_id": creation.conversation.workflow_draft_id,
         "intake_finalized": creation.intake_finalized,
     }
 

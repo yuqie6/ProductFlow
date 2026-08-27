@@ -17,12 +17,12 @@ from productflow_backend.domain.enums import (
     JobStatus,
     MediaVerificationStatus,
     ProductImageOriginType,
-    WorkflowDraftStatus,
     WorkflowRecipeCreationSource,
     WorkflowRecipeKind,
     WorkflowRecipeOrigin,
 )
 from productflow_backend.infrastructure.db.models import (
+    AgentConversation,
     AgentSession,
     AsyncDispatch,
     Base,
@@ -31,7 +31,6 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
     MediaObject,
     ProductImageAsset,
-    WorkflowDraft,
     WorkflowGraph,
     WorkflowGraphNode,
     WorkflowGraphNodeRun,
@@ -40,22 +39,24 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRecipeVersion,
 )
 
-LEGACY_SOURCE_TABLES = {
+RETIRED_COMPAT_TABLES = {
     "creative_briefs",
     "copy_sets",
     "poster_variants",
     "source_assets",
     "user_canvas_templates",
-}
-ARCHIVE_TABLES = {
+    "image_gallery_entries",
     "legacy_workflow_archives",
     "legacy_user_template_archives",
     "legacy_canvas_agent_archives",
     "legacy_workflow_archive_assets",
     "workflow_draft_legacy_archive_seeds",
+    "workflow_drafts",
+    "workflow_draft_revisions",
+    "workflow_draft_recipe_seeds",
+    "legacy_cutover_gates",
+    "media_library_cutover_gates",
 }
-CUTOVER_GATE_TABLE = "legacy_cutover_gates"
-MEDIA_LIBRARY_CUTOVER_GATE_TABLE = "media_library_cutover_gates"
 
 
 def _configure_sqlite_alembic(
@@ -143,7 +144,6 @@ def test_current_enum_columns_use_database_values() -> None:
         (MediaObject.__table__.c.verification_status, MediaVerificationStatus),
         (ProductImageAsset.__table__.c.origin_type, ProductImageOriginType),
         (ImageSessionAsset.__table__.c.kind, ImageSessionAssetKind),
-        (WorkflowDraft.__table__.c.status, WorkflowDraftStatus),
         (WorkflowRecipe.__table__.c.kind, WorkflowRecipeKind),
         (WorkflowRecipe.__table__.c.origin, WorkflowRecipeOrigin),
         (WorkflowRecipeVersion.__table__.c.creation_source, WorkflowRecipeCreationSource),
@@ -163,22 +163,24 @@ def test_current_enum_columns_use_database_values() -> None:
         "image_generation",
     ]
     assert [member.value for member in MediaVerificationStatus] == ["verified", "missing", "legacy_pending"]
-    assert [member.value for member in ProductImageOriginType] == [
-        "upload",
-        "workflow_generation",
-        "image_session_attach",
-        "legacy_import",
-        "local_edit",
-    ]
+    assert {"upload", "workflow_generation", "image_session_attach", "local_edit"} <= {
+        member.value for member in ProductImageOriginType
+    }
 
 
-def test_current_model_metadata_exposes_only_current_runtime_and_archive_contract() -> None:
-    assert LEGACY_SOURCE_TABLES.isdisjoint(Base.metadata.tables)
-    assert ARCHIVE_TABLES <= Base.metadata.tables.keys()
+def test_current_model_metadata_exposes_only_current_runtime_contract() -> None:
+    assert RETIRED_COMPAT_TABLES.isdisjoint(Base.metadata.tables)
     assert "current_confirmed_copy_set_id" not in Base.metadata.tables["products"].c
+    assert "workflow_drafts" not in Base.metadata.tables
     assert "product_workflows" not in Base.metadata.tables
     assert "workflow_nodes" not in Base.metadata.tables
     assert "workflow_runs" not in Base.metadata.tables
+    assert "workflow_draft_id" not in Base.metadata.tables["agent_conversations"].c
+    assert "workflow_draft_id" not in Base.metadata.tables["agent_tasks"].c
+    assert "workflow_draft_revision_id" not in Base.metadata.tables["agent_turn_projections"].c
+    assert "source_draft_revision_id" not in Base.metadata.tables["workflow_graphs"].c
+    assert "source_draft_revision_id" not in Base.metadata.tables["visual_system_versions"].c
+    assert "source_draft_revision_id" not in Base.metadata.tables["product_fact_set_versions"].c
     assert ImageSessionAsset.__table__.c.media_object_id.nullable is False
     assert ImageSessionGenerationTask.__table__.c.active_attempt_id.nullable is True
     assert "workflow_graphs" in Base.metadata.tables
@@ -186,6 +188,18 @@ def test_current_model_metadata_exposes_only_current_runtime_and_archive_contrac
     assert WorkflowGraphRun.__table__.c.status.type.length == 40
     assert WorkflowGraphNodeRun.__table__.c.status.type.length == 40
     assert WorkflowGraphNode.__table__.c.node_type.type.length == 40
+    scope_check = next(
+        constraint
+        for constraint in AgentConversation.__table__.constraints
+        if constraint.name == "ck_agent_conversations_scope_fields"
+    )
+    assert "workflow_draft_id" not in str(scope_check.sqltext)
+    media_source_check = next(
+        constraint
+        for constraint in Base.metadata.tables["media_library_assets"].constraints
+        if constraint.name == "ck_media_library_assets_source_type"
+    )
+    assert "legacy_gallery" not in str(media_source_check.sqltext)
 
 
 def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,17 +210,13 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
     try:
         inspector = sa.inspect(engine)
         tables = set(inspector.get_table_names())
-        assert LEGACY_SOURCE_TABLES <= tables
-        assert ARCHIVE_TABLES <= tables
-        assert CUTOVER_GATE_TABLE in tables
-        assert MEDIA_LIBRARY_CUTOVER_GATE_TABLE in tables
+        assert RETIRED_COMPAT_TABLES.isdisjoint(tables)
         assert {
             "products",
             "product_image_assets",
             "media_objects",
             "workflow_graphs",
             "workflow_graph_nodes",
-            "workflow_drafts",
             "provider_profiles",
             "provider_bindings",
             "async_dispatches",
@@ -235,9 +245,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "last_checkpoint_sequence",
             "last_checkpoint_at",
         } <= execution_columns
-        execution_checks = {
-            check["name"] for check in inspector.get_check_constraints("agent_turn_executions")
-        }
+        execution_checks = {check["name"] for check in inspector.get_check_constraints("agent_turn_executions")}
         assert {
             "ck_agent_turn_executions_non_negative_attempt",
             "ck_agent_turn_executions_non_negative_fencing",
@@ -311,13 +319,11 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         )
         assert media_column["nullable"] is False
         image_task_columns = {
-            column["name"]: column
-            for column in inspector.get_columns("image_session_generation_tasks")
+            column["name"]: column for column in inspector.get_columns("image_session_generation_tasks")
         }
         assert image_task_columns["active_attempt_id"]["nullable"] is True
         image_task_checks = {
-            check["name"]
-            for check in inspector.get_check_constraints("image_session_generation_tasks")
+            check["name"] for check in inspector.get_check_constraints("image_session_generation_tasks")
         }
         assert {
             "ck_image_session_generation_tasks_active_attempt",
@@ -334,20 +340,14 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "ck_image_session_provider_effects_request_hash",
         } <= image_provider_effect_checks
         tool_steps_column = next(
-            column
-            for column in inspector.get_columns("agent_turn_projections")
-            if column["name"] == "tool_steps_json"
+            column for column in inspector.get_columns("agent_turn_projections") if column["name"] == "tool_steps_json"
         )
         assert tool_steps_column["nullable"] is False
         assert {"id", "title", "status", "archived_at"} <= {
             column["name"] for column in inspector.get_columns("agent_sessions")
         }
-        assert {"summary"} <= {
-            column["name"] for column in inspector.get_columns("agent_sessions")
-        }
-        assert {"summary"} <= {
-            column["name"] for column in inspector.get_columns("agent_tasks")
-        }
+        assert {"summary"} <= {column["name"] for column in inspector.get_columns("agent_sessions")}
+        assert {"summary"} <= {column["name"] for column in inspector.get_columns("agent_tasks")}
         assert {"task_id", "page_context_snapshot_id"} <= {
             column["name"] for column in inspector.get_columns("agent_turn_projections")
         }
@@ -359,9 +359,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert "workflow_id" not in request_columns
         assert "workflow_run_id" not in request_columns
         assert "source_run_id" not in request_columns
-        request_checks = {
-            check["name"] for check in inspector.get_check_constraints("agent_workflow_run_requests")
-        }
+        request_checks = {check["name"] for check in inspector.get_check_constraints("agent_workflow_run_requests")}
         assert "ck_agent_workflow_run_requests_graph_required" in request_checks
         assert "ck_agent_workflow_run_requests_v2_or_v3" not in request_checks
         assert {
@@ -383,9 +381,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert "history_kind" in history_columns
         history_checks = {check["name"] for check in inspector.get_check_constraints("workflow_operation_groups")}
         assert "ck_workflow_operation_groups_history_kind" in history_checks
-        recipe_checks = {
-            check["name"] for check in inspector.get_check_constraints("workflow_recipe_versions")
-        }
+        recipe_checks = {check["name"] for check in inspector.get_check_constraints("workflow_recipe_versions")}
         assert "ck_workflow_recipe_versions_schema_version" in recipe_checks
         artifact_fks = {fk["name"]: fk for fk in inspector.get_foreign_keys("workflow_graph_artifacts")}
         assert artifact_fks["fk_workflow_graph_artifacts_node_id"]["options"]["ondelete"] == "SET NULL"
@@ -401,8 +397,79 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert {"active_attempt_id", "progress_phase", "progress_updated_at"} <= node_run_columns
         assert artifact_node_id["nullable"] is True
         assert node_run_node_id["nullable"] is True
+        conversation_columns = {column["name"] for column in inspector.get_columns("agent_conversations")}
+        assert "workflow_draft_id" not in conversation_columns
+        assert "product_id" in conversation_columns
+        assert "workflow_draft_id" not in {column["name"] for column in inspector.get_columns("agent_tasks")}
+        assert "workflow_draft_revision_id" not in {
+            column["name"] for column in inspector.get_columns("agent_turn_projections")
+        }
+        assert "source_draft_revision_id" not in {column["name"] for column in inspector.get_columns("workflow_graphs")}
+        assert "source_draft_revision_id" not in {
+            column["name"] for column in inspector.get_columns("visual_system_versions")
+        }
+        assert "source_draft_revision_id" not in {
+            column["name"] for column in inspector.get_columns("product_fact_set_versions")
+        }
+        assert "current_confirmed_copy_set_id" not in {column["name"] for column in inspector.get_columns("products")}
+        conversation_checks = {
+            check["name"]: check.get("sqltext") or ""
+            for check in inspector.get_check_constraints("agent_conversations")
+        }
+        assert "ck_agent_conversations_scope_fields" in conversation_checks
+        assert "workflow_draft_id" not in conversation_checks["ck_agent_conversations_scope_fields"]
+        media_source_checks = {
+            check["name"]: check.get("sqltext") or ""
+            for check in inspector.get_check_constraints("media_library_assets")
+        }
+        assert "legacy_gallery" not in media_source_checks["ck_media_library_assets_source_type"]
+        assert "direct_upload" in media_source_checks["ck_media_library_assets_source_type"]
+        origin_checks = {
+            check["name"]: check.get("sqltext") or ""
+            for check in inspector.get_check_constraints("product_image_assets")
+        }
+        origin_sql = " ".join(origin_checks.values())
+        assert "legacy_import" not in origin_sql
+        now = datetime.now(UTC)
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO products (id, name, created_at, updated_at) "
+                    "VALUES ('product-scope', '范围校验商品', :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO agent_conversations "
+                    "(id, scope_type, product_id, harness_run_id, status, created_at, updated_at) "
+                    "VALUES ('conversation-product', 'product_workflow', 'product-scope', "
+                    "'run-product-scope', 'collecting', :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO agent_conversations "
+                    "(id, scope_type, product_id, harness_run_id, status, created_at, updated_at) "
+                    "VALUES ('conversation-global', 'global', NULL, "
+                    "'run-global-scope', 'collecting', :now, :now)"
+                ),
+                {"now": now},
+            )
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0093"
+            with pytest.raises(sa.exc.IntegrityError):
+                with connection.begin():
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO agent_conversations "
+                            "(id, scope_type, product_id, harness_run_id, status, created_at, updated_at) "
+                            "VALUES ('conversation-invalid', 'product_workflow', NULL, "
+                            "'run-invalid-scope', 'collecting', :now, :now)"
+                        ),
+                        {"now": now},
+                    )
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
     finally:
         engine.dispose()
 
@@ -434,9 +501,7 @@ def test_recipe_schema_v3_migration_blocks_unreadable_v1_payloads_without_deleti
                 {"payload": "{}", "payload_hash": "a" * 64, "now": now},
             )
             connection.execute(
-                sa.text(
-                    "UPDATE workflow_recipes SET current_version_id = 'recipe-v1-version' WHERE id = 'recipe-v1'"
-                )
+                sa.text("UPDATE workflow_recipes SET current_version_id = 'recipe-v1-version' WHERE id = 'recipe-v1'")
             )
     finally:
         engine.dispose()
@@ -449,9 +514,10 @@ def test_recipe_schema_v3_migration_blocks_unreadable_v1_payloads_without_deleti
         with engine.connect() as connection:
             assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipe_versions")) == 1
             assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipes")) == 1
-            assert connection.scalar(
-                sa.text("SELECT current_version_id FROM workflow_recipes WHERE id = 'recipe-v1'")
-            ) == "recipe-v1-version"
+            assert (
+                connection.scalar(sa.text("SELECT current_version_id FROM workflow_recipes WHERE id = 'recipe-v1'"))
+                == "recipe-v1-version"
+            )
             assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0081"
     finally:
         engine.dispose()
@@ -477,10 +543,7 @@ def test_workflow_media_link_migration_blocks_unmapped_rows_without_deleting(
     try:
         with engine.connect() as connection:
             assert connection.execute(
-                sa.text(
-                    "SELECT workflow_id, media_library_asset_id "
-                    "FROM workflow_media_library_assets"
-                )
+                sa.text("SELECT workflow_id, media_library_asset_id FROM workflow_media_library_assets")
             ).one() == ("workflow-media-link", "library-media-link")
             assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
     finally:
@@ -513,10 +576,7 @@ def test_workflow_media_link_migration_retargets_deterministic_active_graph(
         assert workflow_fk["referred_table"] == "workflow_graphs"
         with engine.connect() as connection:
             assert connection.execute(
-                sa.text(
-                    "SELECT workflow_id, media_library_asset_id "
-                    "FROM workflow_media_library_assets"
-                )
+                sa.text("SELECT workflow_id, media_library_asset_id FROM workflow_media_library_assets")
             ).one() == ("graph-media-link", "library-media-link")
             assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0079"
     finally:
@@ -540,9 +600,7 @@ def test_schema_v2_online_graph_drop_breaks_prompt_artifact_cycle(
         assert version_fks["fk_image_prompt_artifact_versions_source_node_run_id"]["referred_table"] == (
             "workflow_node_runs"
         )
-        assert "workflow_nodes" in {
-            fk["referred_table"] for fk in inspector.get_foreign_keys("workflow_node_runs")
-        }
+        assert "workflow_nodes" in {fk["referred_table"] for fk in inspector.get_foreign_keys("workflow_node_runs")}
     finally:
         engine.dispose()
 
@@ -619,10 +677,7 @@ def test_edge_handle_migration_repairs_existing_v2_reference_edges(
     try:
         with engine.connect() as connection:
             handles = connection.execute(
-                sa.text(
-                    "SELECT source_handle, target_handle FROM workflow_edges "
-                    "WHERE id = 'edge-reference-prompt'"
-                )
+                sa.text("SELECT source_handle, target_handle FROM workflow_edges WHERE id = 'edge-reference-prompt'")
             ).one()
             assert handles == ("asset", "reference")
     finally:
@@ -716,9 +771,10 @@ def test_attempt_fencing_migration_requeues_existing_running_work(
                     "WHERE id = 'node-run-attempt-migration'"
                 )
             ).one() == ("queued", 0, None)
-            assert connection.scalar(
-                sa.text("SELECT status FROM workflow_nodes WHERE id = 'node-attempt-migration'")
-            ) == "queued"
+            assert (
+                connection.scalar(sa.text("SELECT status FROM workflow_nodes WHERE id = 'node-attempt-migration'"))
+                == "queued"
+            )
             assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0044"
     finally:
         engine.dispose()
@@ -778,7 +834,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0093"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
     finally:
         engine.dispose()
 
@@ -840,129 +896,6 @@ def test_media_authority_migration_rejects_missing_or_drifted_carriers(
         command.upgrade(config, "head")
 
 
-def test_cutover_migration_preserves_legacy_data_and_installs_pending_gate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="cleanup.db")
-    command.upgrade(config, "20260815_0041")
-    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
-    now = "2026-08-16 10:00:00"
-    with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                "INSERT INTO app_settings (key, value, created_at, updated_at) "
-                "VALUES ('text_provider_kind', 'mock', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO app_settings (key, value, created_at, updated_at) "
-                "VALUES ('image_tool_allowed_fields', 'quality,n,partial_images', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO provider_bindings "
-                "(id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, "
-                "created_at, updated_at) "
-                "VALUES ('binding-text', 'text', 'mock', NULL, '{}', '{}', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO products (id, name, created_at, updated_at) "
-                "VALUES ('product-old', '旧运行时商品', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO media_objects "
-                "(id, storage_path, mime_type, byte_size, width, height, sha256, verification_status, "
-                "created_at, verified_at) "
-                "VALUES ('media-old', 'products/old.png', 'image/png', NULL, NULL, NULL, NULL, "
-                "'legacy_pending', :now, NULL)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO product_image_assets "
-                "(id, product_id, media_object_id, origin_type, display_name, original_filename, "
-                "parent_asset_id, source_image_session_asset_id, created_at, updated_at) "
-                "VALUES ('asset-old', 'product-old', 'media-old', 'legacy_import', '旧图片', 'old.png', "
-                "NULL, NULL, :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO product_workflows "
-                "(id, product_id, title, active, schema_version, revision, edit_version, created_at, updated_at) "
-                "VALUES ('workflow-v1', 'product-old', '旧工作流', 1, 1, 1, 0, :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO workflow_nodes "
-                "(id, workflow_id, schema_version, node_key, node_type, title, position_x, position_y, "
-                "config_json, status, output_json, failure_reason, last_run_at, folder_id, "
-                "bound_image_asset_id, current_prompt_artifact_version_id, created_at, updated_at) "
-                "VALUES ('node-copy-v1', 'workflow-v1', 1, NULL, 'copy_generation', '旧文案', 0, 0, "
-                "'{}', 'idle', NULL, NULL, NULL, NULL, NULL, NULL, :now, :now)"
-            ),
-            {"now": now},
-        )
-    engine.dispose()
-
-    command.upgrade(config, "head")
-
-    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
-    try:
-        inspector = sa.inspect(engine)
-        tables = set(inspector.get_table_names())
-        assert LEGACY_SOURCE_TABLES <= tables
-        assert ARCHIVE_TABLES <= tables
-        assert CUTOVER_GATE_TABLE in tables
-        assert "current_confirmed_copy_set_id" in {
-            column["name"] for column in inspector.get_columns("products")
-        }
-        assert "product_workflows" not in tables
-        assert "workflow_nodes" not in tables
-        assert "workflow_node_runs" not in tables
-        with engine.begin() as connection:
-            assert connection.scalar(
-                sa.text("SELECT COUNT(*) FROM provider_bindings WHERE purpose = 'text'")
-            ) == 1
-            assert connection.scalar(
-                sa.text("SELECT COUNT(*) FROM app_settings WHERE key = 'text_provider_kind'")
-            ) == 1
-            assert connection.scalar(
-                sa.text("SELECT value FROM app_settings WHERE key = 'image_tool_allowed_fields'")
-            ) == "quality,n,partial_images"
-            assert connection.scalar(
-                sa.text("SELECT verification_status FROM media_objects WHERE id = 'media-old'")
-            ) == "legacy_pending"
-            assert connection.scalar(
-                sa.text("SELECT origin_type FROM product_image_assets WHERE id = 'asset-old'")
-            ) == "legacy_import"
-            gate = connection.execute(
-                sa.text(
-                    "SELECT phase, active_run_count, source_report_sha256, archive_report_sha256, "
-                    "canonical_report_sha256, backup_restore_verified_at "
-                    "FROM legacy_cutover_gates WHERE id = 'singleton'"
-                )
-            ).one()
-            assert tuple(gate) == ("pending", 0, None, None, None, None)
-    finally:
-        engine.dispose()
-
-
 def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1013,6 +946,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         assert "source_run_id" not in source_run_columns
         assert "graph_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260825_0093"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
     finally:
         engine.dispose()

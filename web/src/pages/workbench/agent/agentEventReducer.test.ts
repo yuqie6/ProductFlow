@@ -45,7 +45,6 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
-    workflow_draft_revision_id: null,
     library_organization_draft_revision_id: null,
     workflow_run_request_id: null,
     page_context_snapshot_id: null,
@@ -174,10 +173,10 @@ describe("agentEventReducer", () => {
     const detailedPayload = {
       ...validPayload,
       kind: "propose_draft",
-      tool_name: "propose_workflow_draft",
+      tool_name: "propose_global_draft",
       details: {
         phase: "tool_result",
-        error_code: "workflow_draft_validation_failed",
+        error_code: "library_organization_draft_validation_failed",
         retryable: true,
         validation_issues: [{ path: "image_types.0.images.0.delivery_spec.crop_anchor", message: "contain 不能指定 crop_anchor" }],
       },
@@ -188,7 +187,7 @@ describe("agentEventReducer", () => {
       event: event(2, "tool.step", detailedPayload),
     });
     expect(detailedState.tool_steps["step-1"].step).toMatchObject({
-      tool_name: "propose_workflow_draft",
+      tool_name: "propose_global_draft",
       details: detailedPayload.details,
     });
     expect(() =>

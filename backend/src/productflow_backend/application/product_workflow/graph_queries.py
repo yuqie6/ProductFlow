@@ -160,7 +160,7 @@ def build_graph_projection(
         title=graph.title,
         schema_version=graph.schema_version,
         revision=applied.revision,
-        source_draft_revision_id=graph.source_draft_revision_id,
+        source_draft_revision_id=None,
         last_operation_group_id=last_operation_group_id,
         can_undo=can_undo,
         can_redo=can_redo,

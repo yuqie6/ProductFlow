@@ -12,7 +12,7 @@
 
 ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户上传真实商品参考图、选择所需图片类型和数量，工作流 Agent 通过对话补齐价格、风格、文字语种、文案要求等信息，再生成可编辑、可运行的图片生产工作流。
 
-当前公网实例是个人项目的 live demo。项目采用单管理员、单商家数据模型；运营方可以按演示政策重置公开体验数据，但已部署实例的升级流程不依赖重置数据库或 storage。多租户、计费、团队权限和正式 SaaS 兼容策略属于后续阶段。
+当前公网实例是个人项目的 live demo。项目采用单管理员、单商家数据模型。主仓库快速开发、可破坏性更新；需要稳定运行的部署自行 fork。跟上主仓库可以重建数据库和 storage。多租户、计费、团队权限和正式 SaaS 兼容策略属于后续阶段。
 
 ## 当前产品能力
 
@@ -39,7 +39,6 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 每个图片节点只绑定自己的当前承载图；图片库保存商品的全部上传图、工作流生成图和会话转入图。
 - 商品封面从图片资产自动选择，仍可通过当前封面 API 显式调整。
 - `/image-chat` 支持参考图、分支基图、多候选生成、取消、重试、下载和保存到商品图片库。
-- `/gallery` 只保留旧收藏画廊书签兼容重定向；新的长期素材统一进入 `/media-library`。
 
 ### Provider 与运行
 
@@ -54,8 +53,8 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 - 单管理员、单商家实例。
 - 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
-- 公网体验站数据可能在版本升级时重置。
-- Alembic 历史迁移保留用于从空库构建当前 schema；在线工作流只有 schema-v3 `workflow_graphs` 合同。
+- 公网体验站数据和本地开发库都可以在破坏性更新时重建。
+- Alembic 只演进当前 schema；空库 `upgrade head` 仍可用。主仓库不为旧数据写回填或兼容层。
 
 ## 页面入口
 
@@ -66,8 +65,6 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 | `/products/:productId` | Agent 对话 + schema-v3 工作流 + 图片库 |
 | `/image-chat` | 连续文/图生图 |
 | `/media-library` | 全局素材库 |
-| `/gallery` | 旧收藏画廊书签兼容重定向 |
-| `/history` | V1 历史归档与 Agent 重建 |
 | `/settings` | Provider 与运行时配置 |
 | `/help` | 产品内帮助 |
 
@@ -260,8 +257,7 @@ just release
 - `/api/v2/products/{product_id}/agent-conversations`
 - `/api/v2/products/{product_id}/agent-workbench`
 - `/api/v2/products/{product_id}/workflow`
-- `/api/v2/workflow-drafts`
-- `/api/v2/workflow-recipes`
+- `/api/v3/workflow-recipes`
 - `/api/v2/product-image-assets`
 - `/api/image-sessions`
 - `/api/media-library`

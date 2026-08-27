@@ -6,27 +6,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("workflow draft API contract", () => {
-  it("confirms the exact draft revision currently under review", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ id: "draft-1", current_version: 4 }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await api.confirmWorkflowDraft("product-1", "draft-1", 4);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v2/products/product-1/workflow-drafts/draft-1/confirm",
-      expect.objectContaining({
-        method: "POST",
-        credentials: "include",
-        body: JSON.stringify({ expected_draft_version: 4 }),
-      }),
-    );
-  });
-
+describe("workflow recipe and rendition API contract", () => {
   it("uses recipe v3 routes and sends the confirmed preview fence unchanged", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

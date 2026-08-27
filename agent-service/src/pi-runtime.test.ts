@@ -19,11 +19,9 @@ const scope: Scope = {
   task_id: null,
   task_goal: null,
   product_id: "22222222-2222-4222-8222-222222222222",
-  workflow_draft_id: "33333333-3333-4333-8333-333333333333",
   run_id: "44444444-4444-4444-8444-444444444444",
   system_prompt: "ProductFlow",
   draft_schema: { type: "object" },
-  workflow_draft_schema: { type: "object" },
   current_draft_version: 1,
   has_live_graph: false,
 };
@@ -62,7 +60,7 @@ async function waitForTerminalTurn(store: TurnStore, runID: string, turnID: stri
 }
 
 describe("PiRuntimeManager turn state", () => {
-  it("starts a live-graph product Turn without a WorkflowDraft identity", async () => {
+  it("starts a live-graph product Turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-no-draft-"));
     const managerHolder: { manager?: PiRuntimeManager } = {};
     try {
@@ -74,13 +72,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: scope.product_id,
-          workflow_draft_id: null,
           harness_run_id: scope.run_id,
           current_draft_version: 0,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: {},
-          workflow_draft_schema: {},
           tool_contract_version: TOOL_CONTRACT_VERSION,
           has_live_graph: true,
         }),
@@ -123,13 +119,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: null,
-          workflow_draft_id: null,
           harness_run_id: scope.run_id,
           current_draft_version: 0,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: {},
-          workflow_draft_schema: {},
           tool_contract_version: TOOL_CONTRACT_VERSION,
           has_live_graph: true,
         }),
@@ -233,13 +227,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: scope.product_id,
-          workflow_draft_id: scope.workflow_draft_id,
           harness_run_id: scope.run_id,
           current_draft_version: 1,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          workflow_draft_schema: { type: "object" },
           tool_contract_version: TOOL_CONTRACT_VERSION,
         }),
         claimTurnExecution: async (_conversationID: string, args: { harness_turn_id: string }) => ({
@@ -344,13 +336,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: scope.product_id,
-          workflow_draft_id: scope.workflow_draft_id,
           harness_run_id: scope.run_id,
           current_draft_version: 1,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          workflow_draft_schema: { type: "object" },
           tool_contract_version: TOOL_CONTRACT_VERSION,
         }),
         claimTurnExecution: async () => {
@@ -431,13 +421,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: scope.product_id,
-          workflow_draft_id: scope.workflow_draft_id,
           harness_run_id: scope.run_id,
           current_draft_version: 1,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          workflow_draft_schema: { type: "object" },
           tool_contract_version: TOOL_CONTRACT_VERSION,
         }),
         appendTurnEvent: async (_conversationID: string, _executionID: string, args: { turn_id: string }) => {
@@ -500,13 +488,11 @@ describe("PiRuntimeManager turn state", () => {
           task_id: null,
           task_goal: null,
           product_id: scope.product_id,
-          workflow_draft_id: scope.workflow_draft_id,
           harness_run_id: scope.run_id,
           current_draft_version: 1,
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          workflow_draft_schema: { type: "object" },
           tool_contract_version: TOOL_CONTRACT_VERSION,
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];

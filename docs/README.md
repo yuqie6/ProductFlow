@@ -43,34 +43,32 @@
 
 ## 某次部署的证据
 
-[`rollout/`](rollout/) 和 [`operations/`](operations/) 管迁移证据、停止条件和操作命令，不管产品愿景。
+[`rollout/`](rollout/) 和 [`operations/`](operations/) 管未完成的操作证据。V1 cutover 与旧 Gallery 回填不再是主线义务，见 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md)。
 
 | 文档 | 作用 |
 |---|---|
-| `rollout/legacy-v1-retirement.md` | V1 退役检查点和部署证据缺口 |
-| `rollout/media-library-transition.md` | 素材库回填、清理资格与停止条件 |
 | `rollout/pi-agent-durability.md` | Pi Agent 耐久证据与生产开关 |
-| `operations/legacy-v1-cutover.md` | V1 冻结、预检、回滚命令 |
 
 ## ADR
 
 | 文档 | 状态 | 何时读 |
 |---|---|---|
-| `adr/0001-agent-draft-authority.md` | Accepted | Agent、Draft 确认、业务写入边界 |
+| `adr/0001-agent-draft-authority.md` | Accepted | PostgreSQL 权威、unknown、全局库 Draft |
 | `adr/0002-canonical-product-images.md` | Accepted | 媒体身份、商品图片、封面、lineage |
-| `adr/0003-schema-v2-workflow.md` | Partially superseded by 0008 | GenerationSpec、DeliverySpec、一层分组；在线图读 0008 |
-| `adr/0004-legacy-v1-cutover.md` | Accepted | V1 归档、冻结、清理闸门 |
+| `adr/0003-schema-v2-workflow.md` | Historical copy; archived original | schema-v2 当时决策；当前形状读 ARCHITECTURE |
+| `adr/0004-legacy-v1-cutover.md` | Superseded by 0010 | 原 V1 归档/冻结/闸门；主线不再执行 |
 | `adr/0005-agent-workbench-ui.md` | Accepted | 工作台交互与工具步骤投影 |
-| `adr/0006-media-library-authority.md` | Accepted, amended | 全局图库、子图库、来源生命周期 |
+| `adr/0006-media-library-authority.md` | Accepted, amended; §7 superseded by 0010 | 全局图库、子图库、来源生命周期 |
 | `adr/0007-pi-agent-runtime-boundary.md` | Accepted, rollout pending | Pi adapter、Skill、Tool |
 | `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | schema-v3 图、ChangeSet、GraphProposal、配方 |
-| `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、Pi 沙箱 WebUI、会话归属、可选 Goal |
+| `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
+| `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库快速破坏性更新，不保兼容、不写旧数据迁移 |
 
 ## 协作元数据
 
 [`agents/`](agents/) 只管 issue tracker、triage、domain 阅读约定。
 
-[`archive/`](archive/) 只管仍有独立追溯价值的一次性记录。被当前文档吸收的草稿直接删除，历史用 Git。
+[`archive/`](archive/) 只管仍有独立追溯价值、已退出默认阅读路径的记录。被当前文档吸收的草稿直接删除，历史用 Git。schema-v2 当时决策见 [`archive/adr/0003-schema-v2-workflow.md`](archive/adr/0003-schema-v2-workflow.md)。
 
 ## 写作规则
 
@@ -79,5 +77,6 @@
 3. ADR 不更新成现状仪表盘。
 4. 用户操作变化必须同时改 USER_GUIDE 和 HelpPage。
 5. 实现敏感声明指向当前代码所有者或测试。
+6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除，不包裹。见 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md)。
 
 `just docs-check` 校验索引、前端路由、code owner 路径、规格状态标注和仓库内链接。它不检查「同一句话是否写了六遍」。

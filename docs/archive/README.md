@@ -6,7 +6,8 @@
 
 ## 当前归档
 
+- `adr/0003-schema-v2-workflow.md`：当时选择 schema-v2 的理由。在线图读 ADR 0008 与 `ARCHITECTURE.md`；GenerationSpec / DeliverySpec / 一层分组读 `CONTEXT.md`。
 - `audits/2026-08-16-engineering-knowledge-migration.md`：旧工程知识迁移的逐项处置证据。
 - `audits/2026-08-21-architecture-governance-preparation.md`：当日 Git、数据库和 v3 重启基线记录。
 
-两份记录都只描述对应日期的 checkout，不代表当前实现。
+审计记录只描述对应日期的 checkout，不代表当前实现。

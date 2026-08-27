@@ -5,7 +5,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent.conversations import (
-    create_agent_conversation,
     get_agent_conversation_or_raise,
 )
 from productflow_backend.application.agent.workflow_run_requests import (
@@ -42,7 +41,6 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentTurnPageResponse,
     AgentTurnResponse,
     AgentWorkflowRunRequestResponse,
-    CreateAgentConversationRequest,
     StartAgentTurnRequest,
     SubmitAgentTurnResponse,
     serialize_agent_conversation,
@@ -54,21 +52,6 @@ router = APIRouter(
     tags=["agent-conversations"],
     dependencies=[Depends(require_admin)],
 )
-
-
-@router.post("", response_model=AgentConversationResponse, status_code=status.HTTP_201_CREATED)
-def create_agent_conversation_endpoint(
-    product_id: str,
-    payload: CreateAgentConversationRequest,
-    session: Session = Depends(get_session),
-) -> AgentConversationResponse:
-    return serialize_agent_conversation(
-        create_agent_conversation(
-            session,
-            product_id=product_id,
-            workflow_draft_id=payload.workflow_draft_id,
-        )
-    )
 
 
 @router.get("/{conversation_id}", response_model=AgentConversationResponse)

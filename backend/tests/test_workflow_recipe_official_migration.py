@@ -170,7 +170,7 @@ def test_official_recipe_migration_backfills_existing_user_versions(
         engine.dispose()
 
 
-def test_official_recipe_migration_downgrade_refuses_adopted_draft_seed(
+def test_official_recipe_migration_downgrade_is_blocked_after_compat_table_drop(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -180,55 +180,15 @@ def test_official_recipe_migration_downgrade_refuses_adopted_draft_seed(
         filename="official-recipes-downgrade.db",
     )
     command.upgrade(config, "head")
-    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
-    now = datetime.now(UTC)
-    try:
-        with engine.begin() as connection:
-            connection.execute(
-                sa.text(
-                    "INSERT INTO products (id, name, created_at, updated_at) "
-                    "VALUES ('official-seed-product', '官方配方迁移商品', :now, :now)"
-                ),
-                {"now": now},
-            )
-            connection.execute(
-                sa.text(
-                    "INSERT INTO workflow_drafts "
-                    "(id, product_id, status, current_revision_id, intake_schema_version, "
-                    "intake_json, created_at, updated_at) "
-                    "VALUES ('official-seed-draft', 'official-seed-product', 'collecting', "
-                    "NULL, NULL, NULL, :now, :now)"
-                ),
-                {"now": now},
-            )
-            connection.execute(
-                sa.text(
-                    "INSERT INTO workflow_draft_recipe_seeds "
-                    "(id, workflow_draft_id, recipe_version_id, product_id, schema_version, "
-                    "idempotency_key, request_hash, created_at) "
-                    "VALUES ('official-seed-reference', 'official-seed-draft', "
-                    "'00000000-0000-4000-8000-000000000401', 'official-seed-product', 1, "
-                    "'official-seed-reference', :request_hash, :now)"
-                ),
-                {"request_hash": "a" * 64, "now": now},
-            )
-    finally:
-        engine.dispose()
-
-    with pytest.raises(RuntimeError, match="不能 downgrade 并破坏审计"):
+    with pytest.raises(RuntimeError, match="已删除的兼容表和 Draft 列不能降级"):
         command.downgrade(config, "20260822_0085")
 
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.connect() as connection:
-            # 0087 可以干净降级；到 0086 才会拒绝被引用的 seed。
-            # 尽管多步降级在更旧的迁移边界失败，SQLite/Alembic 仍会记下已完成的那一步。
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0086"
-            assert connection.scalar(
-                sa.text(
-                    "SELECT count(*) FROM workflow_draft_recipe_seeds "
-                    "WHERE recipe_version_id = '00000000-0000-4000-8000-000000000401'"
-                )
-            ) == 1
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
+        inspector = sa.inspect(engine)
+        assert "workflow_draft_recipe_seeds" not in inspector.get_table_names()
+        assert "workflow_drafts" not in inspector.get_table_names()
     finally:
         engine.dispose()

@@ -17,7 +17,6 @@ import type {
   GalleryAsset,
   GraphProjection,
   ProductImageAsset,
-  WorkflowDraft,
 } from "../../../lib/types";
 import {
   ProductImageExplorer,
@@ -533,16 +532,6 @@ function mergeUploadedComposerAssets(
     next.push(galleryAssetFromUpload(asset));
   }
   return next;
-}
-
-export function hasUnsyncedWorkflowDraftRevision(
-  workflowDraft: WorkflowDraft | null | undefined,
-  latestTurn: AgentTurn | null,
-): boolean {
-  const projectedRevisionId = latestTurn?.workflow_draft_revision_id;
-  return Boolean(
-    projectedRevisionId && workflowDraft?.current_revision?.id !== projectedRevisionId,
-  );
 }
 
 export function canSubmitAgentConversationMessage(input: {
