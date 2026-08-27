@@ -1,17 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
+import { Bot, CircleAlert, Flag, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
 
 import { GalleryImagePreviewDialog } from "../../../components/GalleryImagePreviewDialog";
 import { api, ApiError } from "../../../lib/api";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
+import type { TranslationKey } from "../../../lib/i18n";
 import type {
   AgentAttachment,
+  AgentCanvasFocus,
   AgentConversation,
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
+  AgentTaskStatus,
   AgentTurn,
   AgentWorkflowRunRequest,
   GalleryAsset,
@@ -28,6 +32,7 @@ import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
+import { agentProductWorkbenchPath } from "./productWorkbenchRoute";
 import { useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
@@ -41,6 +46,7 @@ interface AgentConversationPanelProps {
   className?: string;
   onOpenRuns?: () => void;
   onExpandGlobalAgent?: () => void;
+  onCanvasFocus?: (nodeIds: string[]) => void;
 }
 
 export function AgentConversationPanel({
@@ -53,6 +59,7 @@ export function AgentConversationPanel({
   className = "",
   onOpenRuns,
   onExpandGlobalAgent,
+  onCanvasFocus,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -81,6 +88,7 @@ export function AgentConversationPanel({
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
   const retryKeysRef = useRef(new Map<string, string>());
   const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
+  const appliedCanvasFocusRef = useRef<string | null>(null);
 
   const cacheWorkflowRunRequest = (request: AgentWorkflowRunRequest) => {
     queryClient.setQueryData(workflowRunRequestQueryKey, request);
@@ -130,6 +138,32 @@ export function AgentConversationPanel({
       : agent.activeTurn?.question ?? null;
 
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
+  useEffect(() => {
+    if (!onCanvasFocus) return;
+    const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
+    let selected: { created_at: string; focus: AgentCanvasFocus } | null = null;
+    for (const item of turns) {
+      const focus = item.canvas_focus;
+      if (!focus?.request_id) continue;
+      if (
+        !selected
+        || item.created_at > selected.created_at
+        || (item.created_at === selected.created_at && focus.request_id > selected.focus.request_id)
+      ) {
+        selected = { created_at: item.created_at, focus };
+      }
+    }
+    if (!selected || appliedCanvasFocusRef.current === selected.focus.request_id) return;
+    const nodeIds = resolveAgentCanvasFocusNodeIds(selected.focus, graph);
+    if (!nodeIds.length) {
+      const needsGraph = selected.focus.edge_ids.length > 0 || selected.focus.group_ids.length > 0;
+      if (needsGraph && !graph) return;
+      appliedCanvasFocusRef.current = selected.focus.request_id;
+      return;
+    }
+    appliedCanvasFocusRef.current = selected.focus.request_id;
+    onCanvasFocus(nodeIds);
+  }, [agent.latestTurn, agent.turns, graph, onCanvasFocus]);
   useEffect(() => {
     if (!assetSelectorOpen && !preview) {
       return;
@@ -402,6 +436,11 @@ export function AgentConversationPanel({
       </header>
 
       <AgentSessionSwitcher conversation={conversation} productName={productName} />
+      <AgentGoalLoopBar
+        productId={productId}
+        conversation={conversation}
+        taskId={taskId ?? null}
+      />
 
       {listError ? (
         <PanelError
@@ -534,6 +573,35 @@ function mergeUploadedComposerAssets(
   return next;
 }
 
+export function resolveAgentCanvasFocusNodeIds(
+  focus: Pick<AgentCanvasFocus, "node_ids" | "edge_ids" | "group_ids">,
+  graph: GraphProjection | null | undefined,
+): string[] {
+  const collected = [...focus.node_ids];
+  if (graph) {
+    for (const edge of graph.edges) {
+      if (focus.edge_ids.includes(edge.id)) {
+        collected.push(edge.source_node_id, edge.target_node_id);
+      }
+    }
+    for (const group of graph.groups) {
+      if (focus.group_ids.includes(group.id)) {
+        collected.push(...group.member_ids);
+      }
+    }
+  }
+  const known = graph ? new Set(graph.nodes.map((node) => node.id)) : null;
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const id of collected) {
+    if (seen.has(id) || (known && !known.has(id))) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  return unique;
+}
+
+
 export function canSubmitAgentConversationMessage(input: {
   activeTurn: AgentTurn | null | undefined;
 }): boolean {
@@ -542,6 +610,253 @@ export function canSubmitAgentConversationMessage(input: {
 
 export function agentConversationSubmitTaskId(routeTaskId: string | null | undefined): string | null {
   return routeTaskId ?? null;
+}
+
+const GOAL_LOOP_ACTIVE: ReadonlySet<AgentTaskStatus> = new Set([
+  "queued",
+  "running",
+  "waiting_user",
+  "awaiting_confirmation",
+]);
+const GOAL_LOOP_COMPLETABLE: ReadonlySet<AgentTaskStatus> = new Set([
+  "waiting_user",
+  "awaiting_confirmation",
+  "paused",
+]);
+const GOAL_LOOP_PAUSABLE: ReadonlySet<AgentTaskStatus> = new Set([
+  "queued",
+  "waiting_user",
+  "awaiting_confirmation",
+]);
+const GOAL_STATUS_LABEL: Record<AgentTaskStatus, TranslationKey> = {
+  queued: "globalAgent.taskStatus.queued",
+  running: "globalAgent.taskStatus.running",
+  waiting_user: "globalAgent.taskStatus.waitingUser",
+  awaiting_confirmation: "globalAgent.taskStatus.awaitingConfirmation",
+  succeeded: "globalAgent.taskStatus.succeeded",
+  failed: "globalAgent.taskStatus.failed",
+  canceled: "globalAgent.taskStatus.canceled",
+  paused: "globalAgent.taskStatus.paused",
+  unknown: "globalAgent.taskStatus.unknown",
+};
+
+function AgentGoalLoopBar({
+  productId,
+  conversation,
+  taskId,
+}: {
+  productId: string;
+  conversation: AgentConversation;
+  taskId: string | null;
+}) {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const sessionId = conversation.session_id;
+  const [formOpen, setFormOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [goal, setGoal] = useState("");
+  const taskQuery = useQuery({
+    queryKey: ["agent-task", taskId],
+    queryFn: () => api.getAgentTask(taskId as string),
+    enabled: Boolean(taskId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "running"
+        || status === "queued"
+        || status === "awaiting_confirmation"
+        || status === "waiting_user"
+        ? 1_500
+        : false;
+    },
+  });
+  const invalidateTasks = () => {
+    void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    void queryClient.invalidateQueries({ queryKey: ["agent-task", taskId] });
+  };
+  const createMutation = useMutation({
+    mutationFn: () => {
+      if (!sessionId) {
+        throw new Error(t("agentWorkbench.goal.sessionRequired"));
+      }
+      return api.createAgentTask({
+        session_id: sessionId,
+        conversation_id: conversation.id,
+        title: title.trim(),
+        goal: goal.trim(),
+      });
+    },
+    onSuccess: (task) => {
+      setFormOpen(false);
+      setTitle("");
+      setGoal("");
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      navigate(agentProductWorkbenchPath(productId, sessionId, task.id));
+    },
+  });
+  const leaveGoal = () => {
+    invalidateTasks();
+    if (sessionId) {
+      navigate(agentProductWorkbenchPath(productId, sessionId));
+    }
+  };
+  const completeMutation = useMutation({
+    mutationFn: (id: string) => api.completeAgentTask(id),
+    onSuccess: leaveGoal,
+  });
+  const pauseMutation = useMutation({
+    mutationFn: (id: string) => api.pauseAgentTask(id),
+    onSuccess: invalidateTasks,
+  });
+  const resumeMutation = useMutation({
+    mutationFn: (id: string) => api.resumeAgentTask(id),
+    onSuccess: invalidateTasks,
+  });
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => api.cancelAgentTask(id),
+    onSuccess: leaveGoal,
+  });
+  const task = taskQuery.data ?? null;
+  const busy =
+    createMutation.isPending ||
+    completeMutation.isPending ||
+    pauseMutation.isPending ||
+    resumeMutation.isPending ||
+    cancelMutation.isPending;
+  const error =
+    errorDetailOrNull(taskQuery.error) ??
+    errorDetailOrNull(createMutation.error) ??
+    errorDetailOrNull(completeMutation.error) ??
+    errorDetailOrNull(pauseMutation.error) ??
+    errorDetailOrNull(resumeMutation.error) ??
+    errorDetailOrNull(cancelMutation.error);
+  const canStart = Boolean(sessionId) && title.trim().length > 0 && goal.trim().length > 0;
+  const active = task != null && (GOAL_LOOP_ACTIVE.has(task.status) || task.status === "paused");
+  const showForm = formOpen && !active;
+
+  return (
+    <div className="shrink-0 border-b border-border-l1 bg-surface-raised px-4 py-2.5">
+      {showForm ? (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (canStart && !busy) createMutation.mutate();
+          }}
+        >
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
+            {t("agentWorkbench.goal.titleLabel")}
+            <input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder={t("agentWorkbench.goal.titlePlaceholder")}
+              className="h-8 rounded-md border border-border-l1 bg-surface-base px-2 text-xs text-text-primary"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
+            {t("agentWorkbench.goal.goalLabel")}
+            <textarea
+              value={goal}
+              onChange={(event) => setGoal(event.target.value)}
+              placeholder={t("agentWorkbench.goal.goalPlaceholder")}
+              rows={2}
+              className="rounded-md border border-border-l1 bg-surface-base px-2 py-1.5 text-xs text-text-primary"
+            />
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="submit"
+              disabled={!canStart || busy}
+              className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
+            >
+              {t("agentWorkbench.goal.start")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(false)}
+              className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary"
+            >
+              {t("agentWorkbench.goal.cancelForm")}
+            </button>
+          </div>
+        </form>
+      ) : task ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex min-w-0 items-start gap-2">
+            <Flag size={14} className="mt-0.5 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-text-primary">{task.title}</p>
+              <p className="truncate text-[11px] text-text-secondary">
+                {t(GOAL_STATUS_LABEL[task.status])}
+                {task.waiting_reason === "goal_loop" ? ` · ${t("agentWorkbench.goal.loopHint")}` : ""}
+              </p>
+            </div>
+          </div>
+          {active ? (
+            <div className="flex flex-wrap gap-1.5">
+              {GOAL_LOOP_COMPLETABLE.has(task.status) ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => completeMutation.mutate(task.id)}
+                  className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                >
+                  {t("agentWorkbench.goal.complete")}
+                </button>
+              ) : null}
+              {GOAL_LOOP_PAUSABLE.has(task.status) ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => pauseMutation.mutate(task.id)}
+                  className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
+                >
+                  {t("agentWorkbench.goal.pause")}
+                </button>
+              ) : null}
+              {task.status === "paused" ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => resumeMutation.mutate(task.id)}
+                  className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
+                >
+                  {t("agentWorkbench.goal.resume")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => cancelMutation.mutate(task.id)}
+                className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary disabled:opacity-50"
+              >
+                {t("agentWorkbench.goal.clear")}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="inline-flex h-8 w-fit items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary"
+            >
+              {t("agentWorkbench.goal.start")}
+            </button>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={!sessionId}
+          onClick={() => setFormOpen(true)}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
+        >
+          <Flag size={13} />
+          {sessionId ? t("agentWorkbench.goal.openForm") : t("agentWorkbench.goal.sessionRequired")}
+        </button>
+      )}
+      {error ? <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-300">{error}</p> : null}
+    </div>
+  );
 }
 
 function PanelError({

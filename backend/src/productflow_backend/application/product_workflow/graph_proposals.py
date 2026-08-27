@@ -207,7 +207,9 @@ def discard_graph_proposal(
     product_id: str,
     graph_id: str,
     proposal_id: str,
+    commit: bool = True,
 ) -> None:
+    """丢弃 PENDING 提案。commit=False 时由调用方持有事务。"""
     graph = session.scalar(
         select(WorkflowGraph).where(WorkflowGraph.id == graph_id, WorkflowGraph.product_id == product_id)
     )
@@ -224,7 +226,8 @@ def discard_graph_proposal(
         raise ConflictError("图提案已经结束")
     proposal.status = GraphProposalStatus.DISCARDED
     proposal.resolved_at = now_utc()
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def pending_proposal_view(session: Session, graph: WorkflowGraph, applied: AppliedGraph) -> GraphProposalView | None:

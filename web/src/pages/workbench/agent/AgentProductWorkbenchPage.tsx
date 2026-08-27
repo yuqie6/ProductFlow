@@ -20,6 +20,7 @@ import { useI18n } from "../../../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
   AgentWorkbenchBootstrap,
+  GraphProjection,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
   WorkflowRecipePreview,
@@ -53,6 +54,7 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   saveRecipe: () => undefined,
   appendRecipe: () => undefined,
   commitNode: async () => undefined,
+  pinCurrentOutput: () => undefined,
 };
 
 interface AgentProductWorkbenchPageProps {
@@ -306,6 +308,9 @@ export function AgentProductWorkbenchPage({
             setBindNodeId(selected.id);
             void requestSidebarTool("library");
           } : undefined}
+          onPinAsset={selected?.node_type === "image_generation" && selected.preview_asset_id
+            ? () => actions.pinCurrentOutput(selected.id)
+            : undefined}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
           onOpenLocalEdit={localEdit.openLocalImageEdit}
@@ -489,6 +494,9 @@ export function AgentProductWorkbenchPage({
             pageContext={pageContext}
             onOpenRuns={() => {
               void requestSidebarTool("runs");
+            }}
+            onCanvasFocus={(nodeIds) => {
+              void selectCanvasNodes(nodeIds);
             }}
             onExpandGlobalAgent={() => {
               openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });

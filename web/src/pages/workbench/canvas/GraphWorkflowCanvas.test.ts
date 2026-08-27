@@ -4,7 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
-import { GRAPH_PORT_MAX_VISUAL_SCALE, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
+import {
+  GRAPH_PORT_MAX_VISUAL_SCALE,
+  graphEdgeEmphasis,
+  graphPortVisualScale,
+} from "./graphCanvasVisual";
+import { graphNodeHasPinnableOutput } from "./graphLayout";
 import { GraphGroupCard, GraphNodeCard, rejectedGraphConnectionNotice } from "./GraphWorkflowCanvas";
 
 const catalog: GraphNodeCatalog = {
@@ -90,6 +95,7 @@ function renderNodeCard(
       onRun: () => undefined,
       onRunToNode: () => undefined,
       onBind: () => undefined,
+      onPin: () => undefined,
       onDuplicate: () => undefined,
       onSaveRecipe: () => undefined,
       onDelete: () => undefined,
@@ -151,6 +157,20 @@ describe("graph workflow node ports", () => {
     expect(image).toContain("cyan-");
     expect(source).toContain("purple-");
     expect(image).not.toBe(source);
+  });
+
+  it("offers pin-as-image-asset on an image_generation node with current output", () => {
+    expect(graphNodeHasPinnableOutput(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+      preview_asset_id: "asset-out",
+    }))).toBe(true);
+    expect(graphNodeHasPinnableOutput(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }))).toBe(false);
   });
 
   it("omits the input handle on source nodes that cannot accept edges", () => {

@@ -56,6 +56,9 @@ def test_live_graph_hides_covering_draft_and_exposes_graph_tools(db_session) -> 
     assert "不得提交第二份完整拓扑" in contract["system_prompt"]
     assert "apply_graph_change_set_v1" not in contract["system_prompt"]
     assert "discard_graph_proposal_v1" not in contract["system_prompt"]
+    assert "discard_workflow_proposal_v1" not in contract["system_prompt"]
+    assert "get_node_detail_v1" not in contract["system_prompt"]
+    assert "focus_canvas_items_v1" not in contract["system_prompt"]
     del created
 
 
@@ -109,6 +112,17 @@ def test_multi_node_proposal_is_unapplied_until_confirm_and_discard_leaves_zero(
     assert projection.pending_proposal is not None
     assert projection.pending_proposal.stale is False
     assert set(projection.pending_proposal.changed_node_ids) == {prompt.id, image.id}
+
+    discard_graph_proposal(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        proposal_id=proposed["proposal_id"],
+        commit=False,
+    )
+    db_session.rollback()
+    still_pending = project_workflow_graph(db_session, created.graph)
+    assert still_pending.pending_proposal is not None
 
     discard_graph_proposal(
         db_session,

@@ -450,6 +450,14 @@ export const api = {
       method: "POST",
     });
   },
+  getAgentTask(taskId: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}`);
+  },
+  completeAgentTask(taskId: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}/complete`, {
+      method: "POST",
+    });
+  },
   listAgentTurns(
     productId: string,
     conversationId: string,

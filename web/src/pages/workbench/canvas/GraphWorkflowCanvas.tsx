@@ -28,7 +28,7 @@ import type {
   ReactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
+import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Pin, Play, Trash2, Ungroup } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -83,6 +83,7 @@ import {
   GRAPH_SNAP,
   computeGraphGroupBounds,
   graphCanvasView,
+  graphNodeHasPinnableOutput,
 } from "./graphLayout";
 import { graphEdgeDeleteClassName, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
 
@@ -125,6 +126,7 @@ interface GraphNodeData extends Record<string, unknown> {
   onRunToNode: (node: GraphNode) => void;
   onRunShot?: (groupId: string) => void;
   onBind: (node: GraphNode) => void;
+  onPin?: (node: GraphNode) => void;
   onDuplicate: (node: GraphNode) => void;
   onSaveRecipe: (node: GraphNode) => void;
   onDelete: (node: GraphNode) => void;
@@ -313,6 +315,15 @@ export const GraphNodeCard = memo(function GraphNodeCard({
             onClick={() => data.onBind(node)}
           >
             <Link2 size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+        ) : null}
+        {graphNodeHasPinnableOutput(node) && data.onPin ? (
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.canvas.pinAsset")}
+            disabled={data.structureBusy}
+            onClick={() => data.onPin?.(node)}
+          >
+            <Pin size={16} aria-hidden="true" />
           </WorkflowCanvasNodeToolbarButton>
         ) : null}
         {isProcessingNode(node, data.catalog) && data.proposalState !== "added" ? (
@@ -656,6 +667,7 @@ export function GraphWorkflowCanvas({
   onRunToNode,
   onRunShot,
   onBindNode,
+  onPinNode,
   onDuplicateNode,
   onSaveRecipeNode,
   onGroupSelected,
@@ -693,6 +705,7 @@ export function GraphWorkflowCanvas({
   onRunToNode?: (nodeId: string) => void;
   onRunShot?: (groupId: string) => void;
   onBindNode: (nodeId: string) => void;
+  onPinNode?: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
   onSaveRecipeNode?: (nodeId: string) => void;
   onGroupSelected?: () => void;
@@ -813,6 +826,7 @@ export function GraphWorkflowCanvas({
         onRun: (item: GraphNode) => onRunNode(item.id),
         onRunToNode: (item: GraphNode) => onRunToNode?.(item.id),
         onBind: (item: GraphNode) => onBindNode(item.id),
+        onPin: onPinNode ? (item: GraphNode) => onPinNode(item.id) : undefined,
         onDuplicate: (item: GraphNode) => onDuplicateNode([item.id]),
         onSaveRecipe: (item: GraphNode) => onSaveRecipeNode?.(item.id),
         onDelete: (item: GraphNode) => onDeleteNode(item.id),
@@ -833,7 +847,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({

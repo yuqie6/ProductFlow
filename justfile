@@ -58,10 +58,6 @@ backend-test-live-agent-dispatcher-watch:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 PRODUCTFLOW_RUN_LIVE_AGENT_DISPATCHER_WATCH=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py -k resident_dispatcher
 
-backend-test-live-generation-attempt-fencing:
-    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres
-    PRODUCTFLOW_RUN_LIVE_GENERATION_ATTEMPT_FENCING=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_generation_attempt_fencing.py
-
 backend-test-live-image-session-media-migration:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres
     PRODUCTFLOW_RUN_LIVE_IMAGE_SESSION_MEDIA_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_image_session_media_migration.py

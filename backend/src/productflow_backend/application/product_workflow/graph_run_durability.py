@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.admission import generation_running_capacity_available
 from productflow_backend.application.async_delivery import (
     delivery_key_for_actor,
     stage_async_dispatch,
@@ -126,8 +127,15 @@ def claim_queued_node_run(
     *,
     notify: Callable[[str, WorkflowGraphNodeRun], None] | None = None,
 ) -> bool:
-    """原子 claim 一个 queued 节点，并在打 provider 之前 commit。"""
+    """原子 claim 一个 queued 节点，并在打 provider 之前 commit。
 
+    受 `generation_max_concurrent_tasks` 限制；没有名额时不 claim，事务回滚以免占住容量锁。
+    """
+
+    if not generation_running_capacity_available(session):
+        session.rollback()
+        session.refresh(node_run)
+        return False
     now = now_utc()
     attempt_id = str(uuid.uuid4())
     result = session.execute(
@@ -161,15 +169,20 @@ def mark_graph_run_unknown(
     attempt_id: str | None,
     detail: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
 ) -> bool:
-    """暂存 unknown 图运行转换；commit 由调用方持有。"""
+    """暂存 unknown 节点转换；run 终态由 complete_graph_run_if_nodes_terminal 决定。commit 由调用方持有。"""
 
-    return _mark_graph_run_provider_unknown(
+    marked = _mark_graph_run_provider_unknown(
         session,
         run_id=run_id,
         node_run_id=node_run_id,
         attempt_id=attempt_id,
         detail=detail,
     )
+    if marked:
+        run = session.get(WorkflowGraphRun, run_id)
+        if run is not None:
+            complete_graph_run_if_nodes_terminal(session, run)
+    return marked
 
 
 def mark_graph_run_failed(
@@ -217,11 +230,14 @@ def fail_claimed_node(
     node_run_id: str,
     reason: str,
 ) -> None:
-    """失败节点/run；若落在 provider 边界则标 unknown 而不是 failed。"""
+    """失败该节点；若落在 provider 边界则标 unknown。不中止同层独立节点。"""
 
     session.rollback()
     run = _locked_graph_run(session, run_id)
     if run is None:
+        session.rollback()
+        return
+    if GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
         session.rollback()
         return
     node_run = session.scalar(
@@ -241,7 +257,18 @@ def fail_claimed_node(
         )
         session.commit()
         return
-    _mark_graph_run_failed_locked(session, run, reason=reason)
+    if node_run is None or node_run.status not in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING}:
+        complete_graph_run_if_nodes_terminal(session, run)
+        session.commit()
+        return
+    now = now_utc()
+    normalized_reason = reason[:1000]
+    node_run.status = WorkflowNodeStatus.FAILED
+    node_run.failure_reason = normalized_reason
+    node_run.finished_at = now
+    node_run.active_attempt_id = None
+    node_run.progress_updated_at = now
+    complete_graph_run_if_nodes_terminal(session, run)
     session.commit()
 
 
@@ -364,19 +391,22 @@ def recover_unfinished_graph_runs(
                     attempt_id=stale_node_run.active_attempt_id,
                 )
                 marked_unknown = True
-                break
-            if marked_unknown:
+            session.refresh(locked_run)
+            if GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
                 session.commit()
-                unknown_runs += 1
+                if marked_unknown:
+                    unknown_runs += 1
                 continue
 
             locked_run.failure_reason = None
             if stage_dispatch is not None:
                 stage_dispatch(session, run_id)
             session.commit()
+            if marked_unknown:
+                unknown_runs += 1
             if safe_requeued:
                 stale_running_runs += 1
-                runs_to_enqueue.append(run_id)
+            runs_to_enqueue.append(run_id)
     except Exception:
         session.rollback()
         logger.exception("恢复滞留工作流运行时读取数据库失败")
@@ -412,6 +442,38 @@ def recover_unfinished_graph_runs(
         enqueued_runs=enqueued_runs,
         unknown_runs=unknown_runs,
     )
+
+
+def complete_graph_run_if_nodes_terminal(session: Session, run: WorkflowGraphRun) -> bool:
+    """节点都终态后给 run 收口。仍有 queued/running 时保持 RUNNING。"""
+
+    if run.status != WorkflowRunStatus.RUNNING:
+        return False
+    node_runs = session.scalars(
+        select(WorkflowGraphNodeRun).where(WorkflowGraphNodeRun.graph_run_id == run.id)
+    ).all()
+    if not node_runs:
+        return False
+    if any(item.status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING} for item in node_runs):
+        return False
+    now = now_utc()
+    unknown_node = next((item for item in node_runs if item.status == WorkflowNodeStatus.UNKNOWN), None)
+    failed_node = next((item for item in node_runs if item.status == WorkflowNodeStatus.FAILED), None)
+    if unknown_node is not None:
+        run.status = WorkflowRunStatus.UNKNOWN
+        run.failure_reason = (unknown_node.failure_reason or WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL)[:1000]
+        run.is_retryable = False
+    elif failed_node is not None:
+        run.status = WorkflowRunStatus.FAILED
+        run.failure_reason = (failed_node.failure_reason or "节点运行失败")[:1000]
+        run.is_retryable = True
+    else:
+        run.status = WorkflowRunStatus.SUCCEEDED
+        run.failure_reason = None
+        run.is_retryable = False
+    run.finished_at = now
+    session.flush()
+    return True
 
 
 def _locked_graph_run(session: Session, run_id: str) -> WorkflowGraphRun | None:
@@ -473,6 +535,7 @@ __all__ = [
     "DEFAULT_STALE_RUNNING_AFTER",
     "WorkflowRunRecoverySummary",
     "claim_queued_node_run",
+    "complete_graph_run_if_nodes_terminal",
     "enqueue_graph_run_after_commit",
     "fail_claimed_node",
     "fail_graph_run",

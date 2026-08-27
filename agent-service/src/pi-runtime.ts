@@ -1284,10 +1284,10 @@ function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup)
     task_id: taskID,
     task_goal: contract.task_goal,
     product_id: contract.product_id?.trim() || null,
-run_id: contract.harness_run_id.trim(),
+    run_id: contract.harness_run_id.trim(),
     system_prompt: contract.system_prompt,
     draft_schema: contract.draft_schema,
-current_draft_version: contract.current_draft_version,
+    current_draft_version: contract.current_draft_version,
     has_live_graph: Boolean(contract.has_live_graph),
   };
   try {
@@ -1315,7 +1315,7 @@ function buildDynamicContext(
     contract: {
       scope_type: scope.scope_type,
       product_id: scope.product_id,
-current_draft_version: scope.current_draft_version,
+      current_draft_version: scope.current_draft_version,
       skill_catalog_hash: skillCatalogHash,
     },
     runtime_context: runtimeContext,
@@ -1411,11 +1411,11 @@ function toolStepKind(name: string): ToolStepKind {
   if (name === "ask_user") return "ask_question";
   if (name === "propose_global_draft") return "propose_draft";
   if (name === "apply_graph_change_set_v1") return "apply_graph";
-  if (name === "propose_graph_change_set_v1" || name.includes("graph_proposal")) return "propose_graph";
-  if (name === "request_workflow_run_v1") return "request_workflow_run";
+  if (name === "propose_graph_change_set_v1" || name === "discard_workflow_proposal_v1" || name.includes("graph_proposal")) return "propose_graph";
+  if (name === "cancel_workflow_run_v1" || name === "request_workflow_run_v1") return "request_workflow_run";
   if (name === "create_product_workspace_v1") return "create_product";
   if (name === "finalize_product_intake_v1") return "inspect_context";
-if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
+  if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
   if (name.includes("rename") || name.includes("folder") || name.includes("move")) return "organize_assets";
   return "inspect_context";
 }
@@ -1465,7 +1465,7 @@ function buildContextStepDetails(
     contract_fields: [
       "scope_type",
       "product_id",
-"current_draft_version",
+      "current_draft_version",
       "skill_catalog_hash",
     ],
     ...(pageContext ? { page_route: pageContext.route, page_type: pageContext.page_type } : {}),

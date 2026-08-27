@@ -43,6 +43,8 @@ After entering a product name, the workbench opens with a live canvas (name-only
 
 Image types and references on the create page still feed direct create, and remain an optional shortcut before you click Start conversation. Direct create does not open a conversation; open the sidebar when you want one. After you are in chat, keep sending photos and text there.
 
+Once the graph can run, the conversation sidebar can start a Goal. The Agent uses existing tools to request a run, wait for your canvas confirmation, then inspect and edit. A finished WorkflowGraphRun is not Goal complete; you mark complete or clear it. Opening chat does not create a Goal.
+
 Common follow-up questions cover:
 
 - Price, category, specifications, and selling points.
@@ -136,7 +138,7 @@ Image nodes:
 
 - Run this node executes only the selected processing node: visual, brief, and prompt write content; image generation renders.
 - Run to this node runs upstream processing nodes, then the selected node.
-- Run the whole graph follows DAG order: visual system, creative brief, prompt generation, then image generation.
+- Run the whole graph follows DAG order: visual system, creative brief, prompt generation, then image generation. Independent nodes call providers at the same time, limited by the generation concurrency setting; one failed image does not stop sibling shots.
 - The Runs panel shows state, node results, and failure reasons. Compiler keys stay out of the first screen.
 - Active runs can be cancelled. Retry is available for retryable failures.
 

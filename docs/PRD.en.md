@@ -22,6 +22,7 @@ The current release serves a personal project and live demo. The main repository
 4. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
 5. The Agent applies one reversible ChangeSet or proposes a multi-node ChangeSet; the user confirms multi-node proposals on the canvas.
 6. Closing the conversation leaves add, connect, inspect, run, undo, and recipes available.
+7. After the graph can run, the conversation sidebar can start a Goal. The Agent requests runs, waits for canvas confirmation, then edits from the result. A finished WorkflowGraphRun is not Goal complete; the user marks complete or clears it. Opening chat does not create a Goal.
 
 ### 3.2 Edit and Run a Workflow
 
@@ -31,7 +32,7 @@ The current release serves a personal project and live demo. The main repository
 - Visual system and creative brief nodes generate their content when run and do not trigger image generation.
 - Reference nodes bind one image from the product library.
 - Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy; running them renders images and does not fill empty upstream content nodes.
-- Users run a whole DAG or one node, inspect runs, cancel, and retry. None of this requires the Agent conversation to be open; closing it matches never having opened it.
+- Users run a whole DAG or one node, inspect runs, cancel, and retry. Independent processing nodes call providers concurrently, limited by the generation concurrency setting; one failed image does not stop sibling shots. None of this requires the Agent conversation to be open; closing it matches never having opened it.
 - A whole workflow, folder, or selected node group can be saved as a user recipe.
 - Canvas folders are one-level visual organization only; they do not support nesting, independent run, cancel, or retry behavior.
 

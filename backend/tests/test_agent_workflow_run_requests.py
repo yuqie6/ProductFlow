@@ -9,7 +9,12 @@ from sqlalchemy import func, select
 from productflow_backend.application.agent.control import synchronize_agent_turn_state
 from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent.sessions import create_agent_session
-from productflow_backend.application.agent.tasks import create_agent_task, get_agent_task_or_raise
+from productflow_backend.application.agent.tasks import (
+    complete_agent_task,
+    create_agent_task,
+    get_agent_task_or_raise,
+    pause_agent_task,
+)
 from productflow_backend.application.agent.turn_projection import bind_harness_turn, reserve_agent_turn
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
@@ -170,12 +175,26 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
     db_session.commit()
 
     synchronized_task = get_agent_task_or_raise(db_session, task.id)
-    assert synchronized_task.status == AgentTaskStatus.SUCCEEDED
+    assert synchronized_task.status == AgentTaskStatus.WAITING_USER
+    assert synchronized_task.waiting_reason == "goal_loop"
+    assert synchronized_task.finished_at is None
     assert get_agent_workflow_run_request(
         db_session,
         product_id=workspace.product.id,
         conversation_id=workspace.conversation.id,
     ).status == AgentWorkflowRunRequestStatus.SUCCEEDED
+
+    paused = pause_agent_task(db_session, task_id=task.id)
+    assert paused.status == AgentTaskStatus.PAUSED
+    assert get_agent_task_or_raise(db_session, task.id).status == AgentTaskStatus.PAUSED
+
+    completed = complete_agent_task(db_session, task_id=task.id)
+    assert completed.status == AgentTaskStatus.SUCCEEDED
+    assert completed.waiting_reason is None
+    reread = get_agent_task_or_raise(db_session, task.id)
+    assert reread.status == AgentTaskStatus.SUCCEEDED
+    assert reread.waiting_reason is None
+    assert reread.finished_at is not None
 
     confirmed_replay = confirm_agent_workflow_run_request(
         db_session,

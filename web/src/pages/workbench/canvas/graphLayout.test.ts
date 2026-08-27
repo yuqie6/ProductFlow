@@ -4,6 +4,8 @@ import type { GraphNode, GraphProjection } from "../../../lib/types";
 import {
   buildDeleteNodeOperations,
   buildDuplicateGraphOperations,
+  buildPinImageAssetOperations,
+  graphNodeHasPinnableOutput,
   buildGraphAutoLayoutPositions,
   buildRenameGroupOperations,
   computeGraphGroupBounds,
@@ -69,6 +71,43 @@ describe("graph layout commands", () => {
     expect(connects).toHaveLength(1);
     expect(creates.every((item) => item.group_ref === "group-1")).toBe(true);
     expect(creates.every((item) => item.position_x === 10 + 24 || item.position_x === 10 + 24)).toBe(true);
+  });
+
+  it("pins an image_generation current output as a nearby image_asset without a reference edge", () => {
+    const source = node({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+      position_x: 48,
+      position_y: 96,
+      group_id: "group-1",
+      preview_asset_id: "asset-out",
+    });
+    expect(graphNodeHasPinnableOutput(source)).toBe(true);
+    const operations = buildPinImageAssetOperations(
+      { ...graph, nodes: [...graph.nodes.filter((item) => item.id !== "image"), source] },
+      "image",
+      "图片素材",
+    );
+    expect(operations).toEqual([
+      expect.objectContaining({
+        op: "create_node",
+        node_type: "image_asset",
+        title: "图片素材",
+        bound_asset_id: "asset-out",
+        group_ref: "group-1",
+        position_x: 96,
+        position_y: 144,
+        config: {},
+      }),
+    ]);
+    expect(operations.some((item) => item.op === "connect_nodes")).toBe(false);
+  });
+
+  it("does not pin when the generation node has no current output asset", () => {
+    expect(buildPinImageAssetOperations(graph, "image", "图片素材")).toEqual([]);
+    expect(buildPinImageAssetOperations(graph, "prompt", "图片素材")).toEqual([]);
+    expect(graphNodeHasPinnableOutput(graph.nodes.find((item) => item.id === "image")!)).toBe(false);
   });
 
   it("deletes a selection as one list of delete_node ops", () => {

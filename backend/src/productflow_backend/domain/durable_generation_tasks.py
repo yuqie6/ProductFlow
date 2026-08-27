@@ -170,7 +170,7 @@ def classify_workflow_run_delivery(
     if statuses and all(
         GRAPH_RUN_GENERATION_TASK_CONTRACT.has_status(
             status,
-            (WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED),
+            (WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED, WorkflowNodeStatus.UNKNOWN),
         )
         for status in statuses
     ):

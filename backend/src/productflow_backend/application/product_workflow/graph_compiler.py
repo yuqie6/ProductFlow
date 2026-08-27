@@ -34,17 +34,13 @@ from productflow_backend.domain.graph_catalog import (
     PROCESSING_NODE_TYPES,
     catalog_visual_overlay,
     normalize_node_config,
+    run_required_inputs,
 )
 from productflow_backend.domain.graph_rules import (
     GraphRuleEdge,
     GraphRuleNode,
     missing_required_inputs,
     node_config_error,
-)
-from productflow_backend.domain.image_type_catalog import (
-    agent_product_image_type_option,
-    image_type_family,
-    image_type_generation_job,
 )
 
 # 运行快照合同版本，不是 workflow_graphs.schema_version。
@@ -169,69 +165,6 @@ def incoming_edges(graph: AppliedGraph, node_id: str) -> tuple[AppliedGraphEdge,
     )
 
 
-def _downstream_text_intent(graph: AppliedGraph, prompt_node_id: str) -> tuple[str, str | None]:
-    intents: list[tuple[str, str | None]] = []
-    for edge in graph.edges:
-        if edge.source_node_id != prompt_node_id or edge.role != GraphEdgeRole.PROMPT:
-            continue
-        target = graph.node(edge.target_node_id)
-        if target.node_type != GraphNodeType.IMAGE_GENERATION:
-            continue
-        spec = target.config.get("generation_spec")
-        if not isinstance(spec, dict):
-            intents.append(("none", None))
-            continue
-        policy = spec.get("text_policy")
-        if policy not in {"none", "allow", "required"}:
-            policy = "none"
-        language = spec.get("text_language")
-        if not isinstance(language, str) or not language.strip() or policy == "none":
-            language = None
-        else:
-            language = language.strip()
-        intents.append((policy, language))
-    if not intents:
-        return "none", None
-    policies = {item[0] for item in intents}
-    if "required" in policies:
-        language = next((lang for policy, lang in intents if policy == "required" and lang), None)
-        return "required", language
-    if policies == {"none"}:
-        return "none", None
-    language = next((lang for policy, lang in intents if policy != "none" and lang), None)
-    return "allow", language
-
-
-def _graph_text_intent(graph: AppliedGraph) -> tuple[str, str | None]:
-    intents: list[tuple[str, str | None]] = []
-    for node in graph.nodes:
-        if node.node_type != GraphNodeType.IMAGE_GENERATION:
-            continue
-        spec = node.config.get("generation_spec")
-        if not isinstance(spec, dict):
-            intents.append(("none", None))
-            continue
-        policy = spec.get("text_policy")
-        if policy not in {"none", "allow", "required"}:
-            policy = "none"
-        language = spec.get("text_language")
-        if not isinstance(language, str) or not language.strip() or policy == "none":
-            language = None
-        else:
-            language = language.strip()
-        intents.append((policy, language))
-    if not intents:
-        return "none", None
-    policies = {item[0] for item in intents}
-    if "required" in policies:
-        language = next((lang for policy, lang in intents if policy == "required" and lang), None)
-        return "required", language
-    if policies == {"none"}:
-        return "none", None
-    language = next((lang for policy, lang in intents if policy != "none" and lang), None)
-    return "allow", language
-
-
 def strip_v3_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if key not in V3_PROMPT_STRIPPED_KEYS}
 
@@ -270,7 +203,6 @@ def compile_prompt_runtime(
     image_type_key = node.config.get("image_type_key")
     prompt_raw = node.config.get("prompt")
     prompt_config = dict(prompt_raw) if isinstance(prompt_raw, dict) else {}
-    text_policy, text_language = _downstream_text_intent(graph, node_id)
     incoming_ids = tuple(edge.id for edge in edges)
     digest = _input_digest(
         {
@@ -282,8 +214,6 @@ def compile_prompt_runtime(
             "visual_system": visual_payload,
             "visual_system_version_id": visual_version_id,
             "visual_overlay": visual_overlay,
-            "text_policy": text_policy,
-            "text_language": text_language,
             "incoming_edge_ids": incoming_ids,
         }
     )
@@ -299,32 +229,7 @@ def compile_prompt_runtime(
         visual_overlay=visual_overlay,
         incoming_edge_ids=incoming_ids,
         input_digest=digest,
-        text_policy=text_policy,
-        text_language=text_language,
     )
-
-
-def _planned_image_types(graph: AppliedGraph) -> tuple[dict[str, Any], ...]:
-    items: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for node in graph.nodes:
-        if node.node_type != GraphNodeType.IMAGE_GENERATION:
-            continue
-        key = node.config.get("image_type_key")
-        if not isinstance(key, str) or not key or key in seen:
-            continue
-        seen.add(key)
-        option = agent_product_image_type_option(key)
-        items.append(
-            {
-                "key": key,
-                "title": option.title if option else key,
-                "description": option.description if option else "",
-                "family": image_type_family(key),
-                "generation_job": image_type_generation_job(key),
-            }
-        )
-    return tuple(items)
 
 
 def compile_context_runtime(
@@ -348,7 +253,6 @@ def compile_context_runtime(
             facts.extend(merge_runtime_facts(record.facts, record.product_source))
         elif edge.role == GraphEdgeRole.REFERENCE:
             references.append(_compile_reference(graph, edge, sources, artifacts))
-    text_policy, text_language = _graph_text_intent(graph)
     incoming_ids = tuple(edge.id for edge in edges)
     current_config = dict(node.config)
     if node.node_type == GraphNodeType.VISUAL_SYSTEM:
@@ -356,7 +260,6 @@ def compile_context_runtime(
         overlay = catalog_visual_overlay(overlay_raw if isinstance(overlay_raw, dict) else None)
         if overlay:
             current_config = {**current_config, "visual_overlay": overlay}
-    image_types = _planned_image_types(graph)
     digest = _input_digest(
         {
             "node_id": node_id,
@@ -364,10 +267,7 @@ def compile_context_runtime(
             "config": _request_config_for_digest(node.node_type, node.config),
             "facts": facts,
             "references": [reference.asset_id for reference in references],
-            "text_policy": text_policy,
-            "text_language": text_language,
             "incoming_edge_ids": incoming_ids,
-            "image_types": list(image_types),
         }
     )
     return ContextRuntimeInput(
@@ -378,9 +278,6 @@ def compile_context_runtime(
         current_config=current_config,
         incoming_edge_ids=incoming_ids,
         input_digest=digest,
-        text_policy=text_policy,
-        text_language=text_language,
-        image_types=image_types,
     )
 
 
@@ -423,7 +320,7 @@ def compile_image_runtime(
     digest = _input_digest(
         {
             "node_id": node_id,
-            "config": normalized_config,
+            "config": _request_config_for_digest(node.node_type, normalized_config),
             "prompt_artifact_id": prompt_artifact_id,
             "references": [reference.asset_id for reference in references],
             "visual_system_version_id": visual_version_id,
@@ -452,13 +349,11 @@ def select_run_node_ids(
     *,
     scope: GraphRunScope,
     target_node_id: str | None,
-    artifacts: GraphRuntimeArtifacts | None = None,
+    sources: dict[str, GraphSourceRecord] | None = None,
 ) -> tuple[str, ...]:
-    """GRAPH 入队可运行处理节点；NODE 只跑目标节点，不顺带下游 image 节点。"""
+    """GRAPH 入队可运行处理节点。NODE 入队目标及需要更新的祖先，不顺带下游 image。"""
 
     processing_ids = [node.id for node in graph.nodes if node.node_type in PROCESSING_NODE_TYPES]
-    # 选节点不看已有 artifact；GRAPH 范围的 skip 在执行层按 digest 决定。
-    del artifacts
     if scope == GraphRunScope.GRAPH:
         selected = [node_id for node_id in processing_ids if _has_required_edges(graph, node_id)]
     else:
@@ -476,8 +371,19 @@ def select_run_node_ids(
             selected = [node_id for node_id in ancestors if _has_required_edges(graph, node_id)]
             selected.append(target_node_id)
         else:
-            # NODE 范围只入队目标节点：跑内容节点不会顺带跑下游 image_generation。
+            required_producers = _required_processing_producers(graph, target_node_id)
             selected = [target_node_id]
+            selected.extend(
+                node_id
+                for node_id in ancestors
+                if _has_required_edges(graph, node_id)
+                and _processing_node_needs_update(
+                    graph,
+                    node_id,
+                    sources,
+                    required_producer=node_id in required_producers,
+                )
+            )
     ordered = _topo_order(graph, selected)
     if not ordered:
         raise BusinessValidationError("没有可运行的处理节点")
@@ -803,6 +709,69 @@ def _has_required_edges(graph: AppliedGraph, node_id: str) -> bool:
     return True
 
 
+def _compile_input_digest(
+    graph: AppliedGraph,
+    node_id: str,
+    sources: dict[str, GraphSourceRecord],
+) -> str | None:
+    node = graph.node(node_id)
+    try:
+        if node.node_type == GraphNodeType.PROMPT_GENERATION:
+            return compile_prompt_runtime(graph, node_id, sources).input_digest
+        if node.node_type == GraphNodeType.IMAGE_GENERATION:
+            return compile_image_runtime(graph, node_id, sources).input_digest
+        if node.node_type in {GraphNodeType.CREATIVE_BRIEF, GraphNodeType.VISUAL_SYSTEM}:
+            return compile_context_runtime(graph, node_id, sources).input_digest
+    except BusinessValidationError:
+        return None
+    return None
+
+
+def _required_processing_producers(graph: AppliedGraph, target_node_id: str) -> set[str]:
+    """沿 required_to_run 边回溯处理节点；可选祖先不会被 NODE 拿去填空。"""
+
+    required: set[str] = set()
+    stack = [target_node_id]
+    seen: set[str] = set()
+    while stack:
+        current_id = stack.pop()
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        node = graph.node(current_id)
+        incoming = incoming_edges(graph, current_id)
+        for contract in run_required_inputs(node.node_type):
+            for edge in incoming:
+                if edge.data_type != contract.data_type or edge.role != contract.role:
+                    continue
+                source = graph.node(edge.source_node_id)
+                if source.node_type not in PROCESSING_NODE_TYPES:
+                    continue
+                required.add(source.id)
+                stack.append(source.id)
+    return required
+
+
+def _processing_node_needs_update(
+    graph: AppliedGraph,
+    node_id: str,
+    sources: dict[str, GraphSourceRecord] | None,
+    *,
+    required_producer: bool,
+) -> bool:
+    """必选上游缺产物或 digest 过期才入队；可选上游只在已有产物过期时重跑。"""
+
+    if sources is None:
+        return required_producer
+    record = sources.get(node_id, GraphSourceRecord())
+    digest = _compile_input_digest(graph, node_id, sources)
+    if record.current_artifact_id and record.current_input_digest:
+        if digest is None:
+            return required_producer
+        return digest != record.current_input_digest
+    return required_producer
+
+
 def _has_output(node_id: str, artifacts: GraphRuntimeArtifacts | None) -> bool:
     if artifacts is None:
         return False
@@ -851,12 +820,17 @@ _SELF_OUTPUT_CONFIG_KEYS: dict[GraphNodeType, frozenset[str]] = {
     GraphNodeType.CREATIVE_BRIEF: frozenset({"goal", "design_goals", "required_copy", "prohibitions"}),
     GraphNodeType.PROMPT_GENERATION: frozenset({"prompt"}),
 }
+_DIGEST_IGNORED_CONFIG_KEYS: dict[GraphNodeType, frozenset[str]] = {
+    GraphNodeType.IMAGE_GENERATION: frozenset({"delivery_spec"}),
+}
 
 
 def _request_config_for_digest(node_type: GraphNodeType, config: dict[str, Any]) -> dict[str, Any]:
-    """digest 排除本节点会回写的输出字段，避免刚生成就把自己标成 STALE。"""
+    """digest 排除回写字段和 DeliverySpec，改交付规格不得把节点标成 STALE。"""
 
-    excluded = _SELF_OUTPUT_CONFIG_KEYS.get(node_type, frozenset())
+    excluded = _SELF_OUTPUT_CONFIG_KEYS.get(node_type, frozenset()) | _DIGEST_IGNORED_CONFIG_KEYS.get(
+        node_type, frozenset()
+    )
     return {key: value for key, value in config.items() if key not in excluded}
 
 

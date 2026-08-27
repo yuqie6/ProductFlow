@@ -33,13 +33,14 @@
 | 文档 | 状态 | 相对当前产品多出来的东西 |
 |---|---|---|
 | `specs/workbench.md` | Draft | 工作台作为生产面必须达到的完成度；浏览器证明之前不宣称完成 |
-| `specs/productflow-studio-requirements.md` | Draft | 镜头默认主区、局部修、交付预设 |
+| `specs/studio-increments.md` | Draft | 镜头列表默认主区、生成套图文案、推荐套图、局部修、保真核对 |
 | `specs/shot-scene-assembly.md` | Approved | Shot/scene 的 group 与默认边 |
-| `specs/agent-canvas-sandbox.md` | Draft | 第 1～4 刀已写入 CONTEXT / PRD；本文只留 Goal 托管环 |
-| `specs/global-agent-human-workflow-design.md` | Approved | Session、Task、人工接管与 WorkflowRun 边界；画布会话归属以 0009 / agent-canvas-sandbox 为准 |
-| `specs/pi-agent-runtime-integration.md` | Approved | Pi runtime、Skill、Context、Tool |
+| `specs/agent-canvas-sandbox.md` | Draft | Goal 托管环 |
+| `specs/global-agent-human-workflow-design.md` | Approved | 全局 Agent 与人工工作流设计 |
+| `specs/pi-agent-runtime-integration.md` | Approved | Pi 未过的 durability / Fresh Observation gate |
 | `specs/go-backend-rewrite-prd.md` | Draft, deferred | 业务后端迁 Go 的产品合同；工作台证明完成前不开工 |
 | `specs/go-backend-rewrite-design.md` | Draft, deferred | 上述迁移的实现设计 |
+| `specs/productflow-studio-requirements.md` | Draft | Studio 需求清单 |
 
 ## 某次部署的证据
 
@@ -60,7 +61,7 @@
 | `adr/0005-agent-workbench-ui.md` | Accepted | 工作台交互与工具步骤投影 |
 | `adr/0006-media-library-authority.md` | Accepted, amended; §7 superseded by 0010 | 全局图库、子图库、来源生命周期 |
 | `adr/0007-pi-agent-runtime-boundary.md` | Accepted, rollout pending | Pi adapter、Skill、Tool |
-| `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | schema-v3 图、ChangeSet、GraphProposal、配方 |
+| `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | 为什么是 live graph 与 Graph Command；当前形状读 ARCHITECTURE |
 | `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
 | `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库快速破坏性更新，不保兼容、不写旧数据迁移 |
 

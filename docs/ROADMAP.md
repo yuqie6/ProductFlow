@@ -14,9 +14,9 @@
 
 ### Agent 画布沙箱
 
-已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新、商品路径不再写入 WorkflowDraft（intake 在 Product 上）。当前合同见 CONTEXT / PRD / ARCHITECTURE。剩余见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) 与 [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md) 的 Goal 托管环。
+已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新、商品路径不再写入 WorkflowDraft（intake 在 Product 上）、Goal 托管环接到显式 `AgentTask`（跑图结束不等于 Goal 完成）。当前合同见 CONTEXT / PRD / ARCHITECTURE。对话壳见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md)。
 
-Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）未做。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收。
+Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）已接到商品工作台对话侧栏。完成只能由用户点完成；图上可核对完成标准尚未自动化。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收。
 
 对话创建的追问质量和视觉样本还没有。`just web-e2e-live-graph` 继续只覆盖跳过 Agent 的直接创建，直到对话路径有独立浏览器回归。
 
@@ -24,7 +24,7 @@ Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 
 ### 工作室增量
 
-[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md)：镜头列表默认主区、生成套图文案、创建页推荐套图、出图后局部修、平台交付预设、结果保真核对清单。落地前不写进 CONTEXT / PRD / ARCHITECTURE。配方库不预置官方画布模板，只保留用户主动保存的配方。
+[`specs/studio-increments.md`](specs/studio-increments.md)：镜头列表默认主区、生成套图文案、创建页推荐套图、出图后局部修、结果保真核对清单。落地前不写进 CONTEXT / PRD / ARCHITECTURE。内置 DeliverySpec 模板已在 ARCHITECTURE §7。配方库不预置官方画布模板，只保留用户主动保存的配方。
 
 ### 图片生产质量
 
@@ -41,7 +41,7 @@ Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 
 真实 provider、真实库、SSE 断线恢复、后台 durable / reconciliation 的部署 gate 与能力声明。见 [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md)。
 
-产品边界见 [`specs/global-agent-human-workflow-design.md`](specs/global-agent-human-workflow-design.md)。业务级 Task 调度器、跨进程 durable admission、统一 Fresh Observation 仍未做。
+Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task 调度器、跨进程 durable admission、统一 Fresh Observation 仍未做。
 
 ## 中期
 

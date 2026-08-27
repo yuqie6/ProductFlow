@@ -67,6 +67,16 @@ _TERMINAL_TASK_STATUSES = {
     AgentTaskStatus.CANCELED,
     AgentTaskStatus.UNKNOWN,
 }
+_USER_OWNED_TASK_STATUSES = {
+    AgentTaskStatus.SUCCEEDED,
+    AgentTaskStatus.CANCELED,
+    AgentTaskStatus.PAUSED,
+}
+_BUSY_HARNESS_TURN_STATUSES = {
+    AgentTurnStatus.QUEUED,
+    AgentTurnStatus.RUNNING,
+    AgentTurnStatus.CANCEL_REQUESTED,
+}
 _ACTIVE_TURN_STATUSES = TASK_BLOCKING_TURN_STATUSES
 
 
@@ -105,7 +115,7 @@ def new_agent_task(
         session_id=session_id,
         conversation_id=conversation.id if conversation is not None else None,
         product_id=conversation.product_id if conversation is not None else None,
-        harness_run_id=task_id,  # 兼容列：这条 Task 自己的 run，不是 Session transcript。
+        harness_run_id=task_id,  # 这条 Task 自己的 run，不是 Session transcript。
         title=normalized_title,
         goal=normalized_goal,
         summary=normalized_goal[:AGENT_TASK_SUMMARY_MAX_LENGTH],
@@ -151,7 +161,7 @@ def get_agent_task_or_raise(session: Session, task_id: str) -> AgentTask:
     )
     if task is None:
         raise NotFoundError("Agent Task 不存在")
-    if _synchronize_task_workflow_run(task):
+    if _synchronize_task_workflow_run(task, session):
         # 已确认运行后 Task 跟随 graph run；读取路径也会提交这次投影。
         refresh_agent_session_summary(session, task.session_id)
         session.commit()
@@ -205,7 +215,7 @@ def list_agent_tasks(
     rows = rows[:limit]
     changed = False
     for task in rows:
-        synchronized = _synchronize_task_workflow_run(task)
+        synchronized = _synchronize_task_workflow_run(task, session)
         if synchronized:
             refresh_agent_session_summary(session, task.session_id)
         changed = synchronized or changed
@@ -258,6 +268,25 @@ def cancel_agent_task(session: Session, *, task_id: str) -> AgentTask:
     return get_agent_task_or_raise(session, task.id)
 
 
+def complete_agent_task(session: Session, *, task_id: str) -> AgentTask:
+    """用户标记 Goal 完成。Turn 或 WorkflowGraphRun 成功不能代替这一步。本函数 commit。"""
+    task = _get_task_for_update(session, task_id)
+    if task.status in _TERMINAL_TASK_STATUSES:
+        raise ConflictError("已结束的 Agent Task 不能再标记完成")
+    if _task_has_busy_harness_turn(session, task):
+        raise ConflictError("运行中的 Agent Task 需要先等待结束或取消，才能标记 Goal 完成")
+    now = now_utc()
+    task.status = AgentTaskStatus.SUCCEEDED
+    task.waiting_reason = None
+    task.failure_reason = None
+    task.finished_at = now
+    task.updated_at = now
+    task.summary = _bounded_summary(task.goal or "Goal 已完成")
+    refresh_agent_session_summary(session, task.session_id)
+    session.commit()
+    return get_agent_task_or_raise(session, task.id)
+
+
 def pause_agent_task(session: Session, *, task_id: str) -> AgentTask:
     """只暂停等待用户/确认的 Task。运行中的 harness Turn 不能中断后保持暂停。"""
     task = _get_task_for_update(session, task_id)
@@ -266,13 +295,7 @@ def pause_agent_task(session: Session, *, task_id: str) -> AgentTask:
     projection = session.get(AgentTurnProjection, task.current_turn_id) if task.current_turn_id else None
     if task.status == AgentTaskStatus.PAUSED:
         return get_agent_task_or_raise(session, task.id)
-    if task.status == AgentTaskStatus.RUNNING or (
-        projection is not None and projection.status in {
-            AgentTurnStatus.QUEUED,
-            AgentTurnStatus.RUNNING,
-            AgentTurnStatus.CANCEL_REQUESTED,
-        }
-    ):
+    if _task_has_busy_harness_turn(session, task, projection=projection):
         raise ConflictError("运行中的 Agent Task 需要先取消，当前 harness 不支持中断后保持任务暂停")
     if task.status not in {
         AgentTaskStatus.QUEUED,
@@ -386,8 +409,8 @@ def ensure_task_for_turn(
     task = _get_task_for_update(session, task_id)
     if task.session_id != agent_session.id or task.conversation_id != conversation.id:
         raise ConflictError("Agent Task 与当前 Agent conversation 不匹配")
-    if task.status == AgentTaskStatus.CANCELED:
-        raise ConflictError("已取消的 Agent Task 不能继续提交 Turn")
+    if task.status in _TERMINAL_TASK_STATUSES:
+        raise ConflictError("已结束的 Agent Task 不能继续提交 Turn")
     if task.status == AgentTaskStatus.PAUSED:
         raise ConflictError("已暂停的 Agent Task 需要恢复后才能提交 Turn")
     if task.current_turn_id is not None and task.current_turn_id != ignore_turn_id:
@@ -484,6 +507,8 @@ def update_agent_task_from_turn(
     task = session.get(AgentTask, projection.task_id, with_for_update=True)
     if task is None:
         raise ConflictError("Agent Turn 绑定的 Task 不存在")
+    if task.status in {AgentTaskStatus.SUCCEEDED, AgentTaskStatus.CANCELED}:
+        return task
     now = now_utc()
     task.current_turn_id = projection.id
     task.updated_at = now
@@ -510,110 +535,167 @@ def update_agent_task_from_turn(
         task.waiting_reason = "awaiting_confirmation"
         task.finished_at = None
     elif status == AgentTurnStatus.SUCCEEDED:
-        task.status = AgentTaskStatus.SUCCEEDED
-        task.waiting_reason = None
-        task.failure_reason = None
-        task.finished_at = finished_at or now
-    elif status == AgentTurnStatus.FAILED:
-        task.status = AgentTaskStatus.FAILED
-        task.waiting_reason = None
-        task.failure_reason = error_text
-        task.finished_at = finished_at or now
-    elif status == AgentTurnStatus.CANCELED:
-        task.status = AgentTaskStatus.CANCELED
-        task.waiting_reason = None
-        task.canceled_at = finished_at or now
-        task.finished_at = finished_at or now
-    elif status == AgentTurnStatus.UNKNOWN:
-        # provider/tool 结果无法证明时保持 unknown。
-        task.status = AgentTaskStatus.UNKNOWN
-        task.waiting_reason = None
-        task.failure_reason = error_text
-        task.finished_at = finished_at or now
+        if _task_is_product_goal(session, task):
+            task.status = AgentTaskStatus.WAITING_USER
+            task.waiting_reason = "goal_loop"
+            task.failure_reason = None
+            task.finished_at = None
+        else:
+            task.status = AgentTaskStatus.SUCCEEDED
+            task.waiting_reason = None
+            task.failure_reason = None
+            task.finished_at = finished_at or now
+    elif status in {AgentTurnStatus.FAILED, AgentTurnStatus.CANCELED, AgentTurnStatus.UNKNOWN}:
+        if _task_is_product_goal(session, task):
+            task.status = AgentTaskStatus.WAITING_USER
+            task.waiting_reason = "goal_loop"
+            task.failure_reason = None
+            task.finished_at = None
+        elif status == AgentTurnStatus.FAILED:
+            task.status = AgentTaskStatus.FAILED
+            task.waiting_reason = None
+            task.failure_reason = error_text
+            task.finished_at = finished_at or now
+        elif status == AgentTurnStatus.CANCELED:
+            task.status = AgentTaskStatus.CANCELED
+            task.waiting_reason = None
+            task.canceled_at = finished_at or now
+            task.finished_at = finished_at or now
+        else:
+            # provider/tool 结果无法证明时保持 unknown。
+            task.status = AgentTaskStatus.UNKNOWN
+            task.waiting_reason = None
+            task.failure_reason = error_text
+            task.finished_at = finished_at or now
     task.summary = _agent_task_turn_summary(projection, status=status, error_text=error_text)
     refresh_agent_session_summary(session, task.session_id)
     return task
 
 
-def _synchronize_task_workflow_run(task: AgentTask) -> bool:
-    """已确认运行请求后，Task 状态跟随 workflow_graph_runs，不跟随 Agent transcript。"""
+def _synchronize_task_workflow_run(task: AgentTask, session: Session | None = None) -> bool:
+    """已确认运行请求后，request 跟随 graph run。用户完成/取消/暂停不被跑图结果改写。"""
     request = task.workflow_run_requests[0] if task.workflow_run_requests else None
     if request is None:
         return False
     run = request.graph_run
-    metadata_changed = False
     if run is None:
-        return metadata_changed
+        return False
 
     finished_at = run.finished_at or now_utc()
+    request_changed = False
     if run.status == WorkflowRunStatus.RUNNING:
-        changed = metadata_changed or (
-            request.status != AgentWorkflowRunRequestStatus.CONFIRMED
-            or task.status != AgentTaskStatus.RUNNING
-            or task.waiting_reason != "workflow_run_running"
-        )
-        request.status = AgentWorkflowRunRequestStatus.CONFIRMED
-        task.status = AgentTaskStatus.RUNNING
-        task.waiting_reason = "workflow_run_running"
-        task.failure_reason = None
-        task.started_at = task.started_at or run.started_at
-        task.finished_at = None
-        task.canceled_at = None
-        task_summary = "工作流运行中"
+        if request.status != AgentWorkflowRunRequestStatus.CONFIRMED:
+            request.status = AgentWorkflowRunRequestStatus.CONFIRMED
+            request_changed = True
     elif run.status == WorkflowRunStatus.SUCCEEDED:
-        changed = metadata_changed or (
-            request.status != AgentWorkflowRunRequestStatus.SUCCEEDED
-            or task.status != AgentTaskStatus.SUCCEEDED
-            or task.finished_at != finished_at
-        )
-        request.status = AgentWorkflowRunRequestStatus.SUCCEEDED
-        request.failure_reason = None
-        request.finished_at = finished_at
-        task.status = AgentTaskStatus.SUCCEEDED
-        task.waiting_reason = None
-        task.failure_reason = None
-        task.finished_at = finished_at
-        task_summary = "工作流运行已完成"
+        if request.status != AgentWorkflowRunRequestStatus.SUCCEEDED:
+            request.status = AgentWorkflowRunRequestStatus.SUCCEEDED
+            request.failure_reason = None
+            request.finished_at = finished_at
+            request_changed = True
     elif run.status == WorkflowRunStatus.FAILED:
-        changed = metadata_changed or (
+        if (
             request.status != AgentWorkflowRunRequestStatus.FAILED
             or request.failure_reason != run.failure_reason
-            or task.status != AgentTaskStatus.FAILED
-        )
-        request.status = AgentWorkflowRunRequestStatus.FAILED
-        request.failure_reason = run.failure_reason
-        request.finished_at = finished_at
-        task.status = AgentTaskStatus.FAILED
-        task.waiting_reason = None
-        task.failure_reason = run.failure_reason
-        task.finished_at = finished_at
-        task_summary = _bounded_summary(f"工作流运行失败：{run.failure_reason or '未知原因'}")
+        ):
+            request.status = AgentWorkflowRunRequestStatus.FAILED
+            request.failure_reason = run.failure_reason
+            request.finished_at = finished_at
+            request_changed = True
     elif run.status == WorkflowRunStatus.CANCELLED:
         failure_reason = run.failure_reason or "工作流运行已取消"
-        changed = metadata_changed or (
+        if (
             request.status != AgentWorkflowRunRequestStatus.CANCELLED
             or request.failure_reason != failure_reason
-            or task.status != AgentTaskStatus.CANCELED
-        )
-        request.status = AgentWorkflowRunRequestStatus.CANCELLED
-        request.failure_reason = failure_reason
-        request.finished_at = finished_at
-        task.status = AgentTaskStatus.CANCELED
-        task.waiting_reason = None
-        task.failure_reason = failure_reason
-        task.finished_at = finished_at
-        task.canceled_at = finished_at
-        task_summary = "工作流运行已取消"
+        ):
+            request.status = AgentWorkflowRunRequestStatus.CANCELLED
+            request.failure_reason = failure_reason
+            request.finished_at = finished_at
+            request_changed = True
     else:
         return False
 
-    if task.summary != task_summary:
-        task.summary = task_summary
-        changed = True
+    task_changed = apply_graph_run_status_to_task(task, run, session)
+    changed = request_changed or task_changed
     if changed:
         now = now_utc()
         request.updated_at = now
-        task.updated_at = now
+        if task_changed:
+            task.updated_at = now
+    return changed
+
+
+def apply_graph_run_status_to_task(
+    task: AgentTask | None,
+    run: Any,
+    session: Session | None = None,
+) -> bool:
+    """把 graph run 投影到 Task。用户完成/取消/暂停和商品 Goal 循环不被跑图终态改写。"""
+    if task is None or task.status in _USER_OWNED_TASK_STATUSES:
+        return False
+    keep_goal = _task_is_product_goal(session, task)
+    finished_at = run.finished_at or now_utc()
+    if run.status == WorkflowRunStatus.RUNNING:
+        expected_status = AgentTaskStatus.RUNNING
+        expected_waiting = "workflow_run_running"
+        expected_failure = None
+        expected_finished = None
+        expected_summary = "工作流运行中"
+        clear_canceled_at = True
+        started_at = task.started_at or run.started_at
+    elif run.status == WorkflowRunStatus.SUCCEEDED:
+        expected_status = AgentTaskStatus.WAITING_USER if keep_goal else AgentTaskStatus.SUCCEEDED
+        expected_waiting = "goal_loop" if keep_goal else None
+        expected_failure = None
+        expected_finished = None if keep_goal else finished_at
+        expected_summary = "工作流运行已完成，Goal 未结束" if keep_goal else "工作流运行已完成"
+        clear_canceled_at = False
+        started_at = task.started_at
+    elif run.status == WorkflowRunStatus.FAILED:
+        expected_status = AgentTaskStatus.WAITING_USER if keep_goal else AgentTaskStatus.FAILED
+        expected_waiting = "goal_loop" if keep_goal else None
+        expected_failure = None if keep_goal else run.failure_reason
+        expected_finished = None if keep_goal else finished_at
+        expected_summary = _bounded_summary(
+            f"工作流运行失败：{run.failure_reason or '未知原因'}。Goal 未结束"
+            if keep_goal
+            else f"工作流运行失败：{run.failure_reason or '未知原因'}"
+        )
+        clear_canceled_at = False
+        started_at = task.started_at
+    elif run.status == WorkflowRunStatus.CANCELLED:
+        failure_reason = run.failure_reason or "工作流运行已取消"
+        expected_status = AgentTaskStatus.WAITING_USER if keep_goal else AgentTaskStatus.CANCELED
+        expected_waiting = "goal_loop" if keep_goal else None
+        expected_failure = None if keep_goal else failure_reason
+        expected_finished = None if keep_goal else finished_at
+        expected_summary = "工作流运行已取消，Goal 未结束" if keep_goal else "工作流运行已取消"
+        clear_canceled_at = False
+        started_at = task.started_at
+    else:
+        return False
+
+    changed = (
+        task.status != expected_status
+        or task.waiting_reason != expected_waiting
+        or task.failure_reason != expected_failure
+        or task.finished_at != expected_finished
+        or task.summary != expected_summary
+        or task.started_at != started_at
+    )
+    task.status = expected_status
+    task.waiting_reason = expected_waiting
+    task.failure_reason = expected_failure
+    task.finished_at = expected_finished
+    task.summary = expected_summary
+    task.started_at = started_at
+    if clear_canceled_at:
+        if task.canceled_at is not None:
+            changed = True
+        task.canceled_at = None
+    elif not keep_goal and run.status == WorkflowRunStatus.CANCELLED and task.canceled_at != finished_at:
+        task.canceled_at = finished_at
+        changed = True
     return changed
 
 
@@ -745,6 +827,30 @@ def _get_task_for_update(session: Session, task_id: str) -> AgentTask:
     return task
 
 
+def _task_is_product_goal(session: Session | None, task: AgentTask) -> bool:
+    conversation = task.conversation
+    if conversation is None and session is not None and task.conversation_id is not None:
+        conversation = session.get(AgentConversation, task.conversation_id)
+    return (
+        conversation is not None
+        and conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
+    )
+
+
+def _task_has_busy_harness_turn(
+    session: Session,
+    task: AgentTask,
+    *,
+    projection: AgentTurnProjection | None = None,
+) -> bool:
+    if task.status == AgentTaskStatus.RUNNING:
+        return True
+    current = projection
+    if current is None and task.current_turn_id is not None:
+        current = session.get(AgentTurnProjection, task.current_turn_id)
+    return current is not None and current.status in _BUSY_HARNESS_TURN_STATUSES
+
+
 def _conversation_for_task(session: Session, conversation_id: str | None) -> AgentConversation | None:
     if conversation_id is None:
         return None
@@ -836,9 +942,11 @@ __all__ = [
     "AGENT_TASK_TITLE_MAX_LENGTH",
     "AgentTaskPage",
     "AgentTaskResumeResult",
+    "apply_graph_run_status_to_task",
     "create_agent_task",
     "create_page_context_snapshot",
     "cancel_agent_task",
+    "complete_agent_task",
     "pause_agent_task",
     "resume_agent_task",
     "ensure_task_for_turn",

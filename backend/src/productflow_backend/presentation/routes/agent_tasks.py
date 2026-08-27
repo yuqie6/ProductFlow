@@ -7,6 +7,7 @@ from productflow_backend.application.agent.control import cancel_agent_task_run
 from productflow_backend.application.agent.tasks import (
     AGENT_TASK_LIST_DEFAULT_LIMIT,
     AGENT_TASK_LIST_MAX_LIMIT,
+    complete_agent_task,
     create_agent_task,
     get_agent_task_or_raise,
     list_agent_tasks,
@@ -98,6 +99,14 @@ def pause_agent_task_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentTaskResponse:
     return serialize_agent_task(pause_agent_task(session, task_id=task_id))
+
+
+@router.post("/{task_id}/complete", response_model=AgentTaskResponse)
+def complete_agent_task_endpoint(
+    task_id: str,
+    session: Session = Depends(get_session),
+) -> AgentTaskResponse:
+    return serialize_agent_task(complete_agent_task(session, task_id=task_id))
 
 
 @router.post("/{task_id}/resume", response_model=AgentTaskResponse)

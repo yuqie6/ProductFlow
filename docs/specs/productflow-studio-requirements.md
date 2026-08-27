@@ -17,7 +17,7 @@
 > - 标注「待交付」的条目在落地前不得写进 `PRD.md` / `CONTEXT.md` / `ARCHITECTURE.md` 的当前事实段。
 > - 画布与侧栏未完成交互以 `v3-canvas-restoration.md`、`v3-sidebar-restoration.md` 为质量上限。
 > - 工程切片、ADR、路由所有权以 `ARCHITECTURE.md`、`adr/0008` 和 `adr/0009` 为准。本文不取代那些文件。
-- 创建路径改为现图出生、去掉 onboarding Task 和自动 Turn：以 `adr/0009` 与 `specs/agent-canvas-sandbox.md` 为准。本文 §4.2「live graph 出现之前只产出 WorkflowDraft」描述当前代码，不是创建入口的目标合同。
+- 创建路径已是现图出生、不创建 onboarding Task 和自动 Turn：以 `adr/0009` 为准。商品路径不再使用 `WorkflowDraft`。
 
 > **修订记录**
 >
@@ -101,11 +101,11 @@ ProductFlow 是给一个商家用的商品视觉生产工作台。
 
 ### 4.2 确认边界
 
-- Agent 在 live graph 出现之前只产出 `WorkflowDraft` revision，不能直接写正式图。创建入口的目标是商品出生即 live 图（`adr/0009`）；该条在沙箱规格落地前仍描述当前 collecting Draft 路径。
-- 用户确认针对一个明确 revision。确认与落图在同一事务。
+- 商品创建即写入 live schema-v3 图。Agent 用 ChangeSet / GraphProposal，不提交 `WorkflowDraft`。
+- 用户确认针对一个明确 revision（图提案或全局素材整理 Draft）。确认与落图或应用组织变更在同一事务。
 - live graph 出现之后，Agent 可以解释、检查、请求运行、提交单次 Graph Command 或未应用 GraphProposal。
-- live graph 出现之后，Agent 不能再提交一份会覆盖现图的 WorkflowDraft。
-- 冲突事实不能通过最终 Draft 确认。
+- 商品路径 Agent Turn 不能提交 Draft artifact。
+- 冲突事实不能通过最终确认蒙混过去。
 - 事实优先级：用户确认的结构化事实 > 未确认输入 > Agent 图片观察。
 
 ### 4.3 图即生产工具
@@ -210,7 +210,7 @@ ProductFlow 是给一个商家用的商品视觉生产工作台。
 | 入场线 | 上传商品图后快速得到一套可用结果 | 推荐套图、镜头列表、生成套图、官方场景配方 |
 | 留存线 | 不满意时能只改一张、保留历史并继续生产 | 单镜头重跑、局部修、资产 lineage、当前结果切换 |
 | 复用线 | 下一件商品能复用结构和视觉方法 | recipe preview/apply、视觉体系节点、商品身份重新绑定 |
-| 信任线 | 用户知道 Agent 做了什么，正式图不会被静默覆盖 | WorkflowDraft revision、GraphProposal、确认、冲突和运行快照 |
+| 信任线 | 用户知道 Agent 做了什么，正式图不会被静默覆盖 | GraphProposal、素材整理 Draft、确认、冲突和运行快照 |
 | 控制线 | 简单用户不看 DAG，专业用户仍能看见并修改真实关系 | 镜头/画布同图、六类领域节点、typed edge、partial run |
 | 所有权线 | 模型、数据和部署由用户掌控 | 自托管、用户自备 provider、PostgreSQL 业务权威、稳定媒体身份 |
 
@@ -251,9 +251,8 @@ ProductFlow 是给一个商家用的商品视觉生产工作台。
 | `/image-chat` | 连续生图会话 |
 | `/media-library` | 全局素材库 |
 | `/help` | 用户指南投影 |
-| `/history` | V1 只读归档 |
 
-`/gallery` 只做兼容重定向。`/products/new/agent` 重定向到 `/products/new`。
+`/products/new/agent` 重定向到 `/products/new`。`/history` 与 `/gallery` 不是当前产品。
 
 ### 7.2 工作台主区（待交付：镜头列表为默认）
 
@@ -332,7 +331,7 @@ ProductFlow 是给一个商家用的商品视觉生产工作台。
 Agent 路径：
 
 1. 名称即可进入工作台对话。
-2. 系统写入 draft Product、collecting `WorkflowDraft`、商品 Conversation、AgentSession。
+2. 系统写入 Product、live schema-v3 图、商品 Conversation、AgentSession。
 3. 用户在对话里上传参考图并说明图种；Agent 写入不可变 intake。
 4. 创建页上的类型和文件可作为进对话前的快捷填写。
 5. 缺类型或参考不阻塞 Agent Turn，但确认落图前必须满足校验。
@@ -555,8 +554,7 @@ Agent 每轮按任务读取最小事实：
 |---|---|---|---|
 | 读取商品、图、运行摘要 | 是 | 否 | application query |
 | 提问、解释、给建议 | 是 | 否 | conversation projection |
-| 更新未确认 intake | 受合同限制 | 视字段而定 | WorkflowDraft/intake |
-| 创建/修订 WorkflowDraft | 是 | 是，确认 revision | workflow_drafts |
+| 更新未确认 intake | 受合同限制 | 视字段而定 | Product intake |
 | live graph 单一低风险命令 | 仅允许白名单单 operation | 依命令合同 | Graph Command |
 | 多节点 GraphProposal | 只能发布未应用提案 | 是 | Graph Command apply |
 | 请求运行 | 只能创建待确认请求 | 是 | WorkflowGraphRun use case |
@@ -1222,10 +1220,9 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 
 ### 23.4 数据迁移和兼容
 
-- schema 变化使用 Alembic revision 和 migration test，不使用 ORM AutoMigrate。
+- schema 变化使用 Alembic revision 和 migration test，不使用 ORM AutoMigrate。空库 `upgrade head` 到达当前 schema。已删除的兼容表不能降级。
 - persisted enum/JSON 变化前搜索所有 reader/writer、历史值和导出工具。
-- 不为新功能恢复在线 V1/V2 fallback。旧数据只通过有界 archive/backfill/retirement owner 读取。
-- additive migration 先落 reader/writer，再经部署证据清理旧列/表；清理需要独立批准。
+- 不为新功能恢复在线 V1/V2 fallback。主仓库按 ADR 0010 删除兼容路径，不为已部署数据写回填、冻结或 cutover gate。
 - API version 号与 workflow schema version 分开，`/api/v2/...` 不代表在线 V2 graph。
 
 ---
@@ -1235,7 +1232,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 | 能力 | 主要所有权 |
 |---|---|
 | Agent 创建与 intake | `application/agent/product_workspaces.py`、`application/product_intake.py` |
-| Draft 与落图 | `workflow_drafts/service.py`（GET 与 409 写入） |
+| 图 artifact 合同 | `domain/artifact_contracts.py` |
 | 图命令与执行 | `domain/graph_catalog.py`、`graph_rules.py`、`product_workflow/graph_*.py` |
 | 配方 | `workflow_recipes/` |
 | 交付图 | `delivery_renditions/` |
@@ -1263,8 +1260,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 | `ProductImageAsset` | 商品范围内的图片资产和角色 | 可归档；局部修、重跑、导出均产生新资产或 rendition | 指向 `MediaObject`；通过 lineage 关联父资产；原图不能被修后图覆盖 |
 | `MediaLibraryAsset` | 全局素材库中的可复用资产 | 独立于单商品存在；跨商品使用需显式绑定 | 不能因被某个 workflow 引用而转移所有权 |
 | `WorkflowMediaLibraryAsset` | workflow 对图库资产的有界绑定 | 随 workflow revision 读取；解除绑定不删除源媒体 | Graph Compiler 只能得到明确绑定且沿入边可达的参考 |
-| `WorkflowDraft` | Agent 提议与正式图之间的可确认容器 | draft、ready、confirmed、rejected/expired；确认后不可继续写原 revision | 未确认不能产生 live graph；确认需带明确 revision 和幂等身份 |
-| `WorkflowDraftRevision` | 某一时刻完整、可比较的草案 | 单调递增、内容不可变 | 确认的是 revision，不是「当前最新」这样的漂移指针 |
+| `LibraryOrganizationDraft` | 全局素材整理的可确认容器 | awaiting_confirmation / confirmed；确认后应用组织变更 | 只存在于全局 Conversation；确认需带明确 revision 和幂等身份 |
 | `WorkflowGraph` | 商品当前正式生产结构 | 一件商品至多一个在线权威图；结构变化形成 revision | 六类节点、边和 group 均受 catalog/rules 约束；不存在浏览器私有平行图 |
 | `Node` | 一个事实、参考、内容、视觉或生图职责 | 稳定 id；config 通过命令修改 | 执行所需语义在节点；不得把关键配置藏到侧栏本地状态 |
 | `Edge` | 节点间有方向、有 handle 的数据关系 | 连接/断开均通过 Graph Command | 只有 catalog 允许的端口和类型可连接；断边后事实不得继续泄漏到目标节点 |
@@ -1345,15 +1341,14 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 - 恢复：API/worker/Redis 重启后根据数据库事实识别 pending、running、unknown 和可重试 effect。
 - 禁止：创建另一种「镜头任务」执行模型；镜头运行仍是 group scope 的 WorkflowGraphRun。
 
-### WorkflowDraft
+### LibraryOrganizationDraft
 
-Agent 与正式图之间的确认边界。浏览器动画或 SSE 断开不得留下半张图。
+全局素材整理的确认边界。商品路径不再使用 `WorkflowDraft`。
 
-- 输入：商品事实、参考绑定、套图计划、用户补充约束和 Agent 结构化输出。
+- 输入：全局 Conversation 上的整理操作（重命名、移动、标签、归档、关联工作流）。
 - 输出：不可变 revision、验证结果、面向人的摘要与可确认 payload。
-- 确认：验证 revision、商品归属和幂等身份后一次落完整图；重复确认返回同一结果。
-- 失败：草案不完整停在可修正状态；确认事务失败时 live graph 不出现任何部分对象。
-- 禁止：Agent 在正式图已存在后重新走 draft-confirm 覆盖现图；后续修改必须走 GraphProposal/Command。
+- 确认：验证 revision 和幂等身份后一次应用组织变更；重复确认返回同一结果。
+- 禁止：把素材整理 Draft 当成商品图替换物；商品改图走 GraphProposal/Command。
 
 ### Recipe apply
 

@@ -65,7 +65,7 @@ Page code lives in `web/src/pages/`. Shared visual components live in `web/src/c
 
 The product workbench lives in `pages/workbench/` and is split by duty:
 
-- `workbench/agent/`: page orchestration, conversation, SSE events, questions, graph-proposal confirmation, .
+- `workbench/agent/`: page orchestration, conversation, SSE events, questions, graph-proposal confirmation, and the Goal loop.
 - `workbench/canvas/`: current Graph canvas, inspector, runs, recipes, and delivery renditions.
 - `workbench/chrome/`: canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
 
@@ -78,7 +78,7 @@ Current frontend ownership:
 | Capability | Owner | Primary tests |
 |---|---|---|
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent conversation, SSE, graph proposal | `pages/workbench/agent/` | reducer, event, conversation and proposal tests |
+| Agent conversation, SSE, Goal | `pages/workbench/agent/` | reducer, event, conversation, Goal, and proposal tests |
 | Graph canvas and inspector | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs, and rendition tests |
 | Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
@@ -105,7 +105,7 @@ Product creation writes Product, a live schema-v3 graph, the product Conversatio
 
 Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `application/agent/`, `agent-service/src/pi-runtime.ts`, and `test_workflow_agent_service.py`, `test_agent_product_workspaces.py`, and `test_media_library_drafts.py`.
 
-Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; global media Drafts `media_library/drafts.py`. Product `WorkflowDraft` HTTP is gone; those URLs return 404.
+Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; global media Drafts `media_library/drafts.py`. Product `WorkflowDraft` HTTP is gone; those URLs return 404. A product Goal is an explicit `AgentTask`: a finished Turn or `WorkflowGraphRun` does not complete the Goal; the user completes it with `POST /api/v2/agent-tasks/{id}/complete`.
 
 ## 5. Product intake and retired WorkflowDraft topology
 
@@ -130,7 +130,7 @@ Node types are:
 
 Canvas groups are one-level visual folders. You can enter a group and remember its viewport separately from the full graph. Groups do not change DAG execution, grow ports, or run/cancel/retry. Cross-group edges stay visible on the full graph. Edges use Node Catalog data types and roles. Node inspector forms render from the same `config_fields` document and save with `update_node_config`.
 
-`WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows.
+`WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows. One worker holds a run; independent processing nodes may call providers concurrently, limited by runtime `generation_max_concurrent_tasks`. A failed or unknown node does not stop independent siblings; downstream of a failed upstream is marked failed. Evidence: `graph_execution.py`, `test_graph_execution.py`.
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
 

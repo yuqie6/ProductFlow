@@ -40,6 +40,7 @@ import {
   buildDeleteNodeOperations,
   buildDuplicateGraphOperations,
   buildGraphAutoLayoutPositions,
+  buildPinImageAssetOperations,
   buildRenameGroupOperations,
   createdGraphNodeIds,
   defaultGraphNodeConfig,
@@ -79,6 +80,7 @@ export interface GraphCanvasActions {
     config?: Record<string, unknown>;
     boundAssetId?: string | null;
   }) => Promise<GraphProjection | void>;
+  pinCurrentOutput: (nodeId: string) => void;
 }
 
 export function graphHistoryShortcutAction(
@@ -613,6 +615,15 @@ export function GraphCanvasPanel({
     }
   }, [applyMutation]);
 
+  const pinCurrentOutput = useCallback((nodeId: string) => {
+    const before = graphRef.current;
+    const operations = buildPinImageAssetOperations(before, nodeId, t("graph.node.imageAsset"));
+    if (!operations.length) return;
+    void applyAsync("固定为图片素材", operations).then((next) => {
+      if (next) selectCreatedNodes(before, next);
+    });
+  }, [applyAsync, selectCreatedNodes, t]);
+
   const submitRun = useCallback(async (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) => {
     try {
       await onBeforeRun?.();
@@ -737,6 +748,7 @@ export function GraphCanvasPanel({
     saveRecipe: (kind) => openRecipeSave(kind),
     appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
+    pinCurrentOutput,
   });
   actionsRef.current = {
     createNode,
@@ -747,6 +759,7 @@ export function GraphCanvasPanel({
     saveRecipe: (kind) => openRecipeSave(kind),
     appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
+    pinCurrentOutput,
   };
   useEffect(() => {
     onRegisterActions?.({
@@ -758,6 +771,7 @@ export function GraphCanvasPanel({
       saveRecipe: (kind) => actionsRef.current.saveRecipe(kind),
       appendRecipe: (recipe) => actionsRef.current.appendRecipe(recipe),
       commitNode: (input) => actionsRef.current.commitNode(input),
+      pinCurrentOutput: (nodeId) => actionsRef.current.pinCurrentOutput(nodeId),
     });
   }, [onRegisterActions]);
 
@@ -1043,6 +1057,7 @@ export function GraphCanvasPanel({
             }}
             onRunShot={handleShotRun}
             onBindNode={(nodeId) => onBindNode?.(nodeId)}
+            onPinNode={pinCurrentOutput}
             onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
             onSaveRecipeNode={(nodeId) => openRecipeSave("selection", [nodeId])}
             onAssetDrop={handleAssetDrop}

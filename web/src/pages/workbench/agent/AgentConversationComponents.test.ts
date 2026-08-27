@@ -8,6 +8,7 @@ import { AgentComposer, classifyImageFiles } from "./AgentComposer";
 import {
   agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
+  resolveAgentCanvasFocusNodeIds,
 } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -814,5 +815,48 @@ describe("Agent conversation components", () => {
     }
   });
 
-
+  it("resolves canvas focus ids to existing graph nodes, including group members and edge ends", () => {
+    const graph = {
+      id: "g1",
+      product_id: "p1",
+      title: "夏季主图",
+      schema_version: 3,
+      revision: 1,
+      source_draft_revision_id: null,
+      last_operation_group_id: null,
+      can_undo: false,
+      can_redo: false,
+      nodes: [
+        { id: "prompt", node_type: "prompt_generation", title: "提示词", position_x: 0, position_y: 0, config: {}, bound_asset_id: null, group_id: "group-1", preview_asset_id: null, config_status: "ready", unused: false, incoming: [], outgoing: [] },
+        { id: "image", node_type: "image_generation", title: "生图", position_x: 0, position_y: 0, config: {}, bound_asset_id: null, group_id: "group-1", preview_asset_id: null, config_status: "ready", unused: false, incoming: [], outgoing: [] },
+      ],
+      edges: [{ id: "e1", source_node_id: "prompt", target_node_id: "image", data_type: "prompt", role: "prompt", order: 0 }],
+      groups: [{ id: "group-1", title: "主图", member_ids: ["prompt", "image"] }],
+    };
+    expect(resolveAgentCanvasFocusNodeIds({
+      node_ids: ["image", "missing"],
+      edge_ids: [],
+      group_ids: [],
+    }, graph as never)).toEqual(["image"]);
+    expect(resolveAgentCanvasFocusNodeIds({
+      node_ids: [],
+      edge_ids: ["e1"],
+      group_ids: [],
+    }, graph as never).sort()).toEqual(["image", "prompt"]);
+    expect(resolveAgentCanvasFocusNodeIds({
+      node_ids: [],
+      edge_ids: [],
+      group_ids: ["group-1"],
+    }, graph as never).sort()).toEqual(["image", "prompt"]);
+    expect(resolveAgentCanvasFocusNodeIds({
+      node_ids: ["image"],
+      edge_ids: ["e1"],
+      group_ids: [],
+    }, null)).toEqual(["image"]);
+    expect(resolveAgentCanvasFocusNodeIds({
+      node_ids: [],
+      edge_ids: ["e1"],
+      group_ids: ["group-1"],
+    }, null)).toEqual([]);
+  });
 });

@@ -14,9 +14,9 @@ After that proof, delete `specs/workbench.md` and keep user-facing sentences in 
 
 ### Agent canvas sandbox
 
-Landed: Turn run identity, create as live graph, canvas vs global session ownership, `sameRuntimeScope` ignoring prompt / live-graph refreshes, and no product-path WorkflowDraft writes (intake lives on Product). Current contract: CONTEXT / PRD / ARCHITECTURE. Remaining: the Goal loop in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) and [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md).
+Landed: Turn run identity, create as live graph, canvas vs global session ownership, `sameRuntimeScope` ignoring prompt / live-graph refreshes, no product-path WorkflowDraft writes (intake lives on Product), and the Goal loop on an explicit `AgentTask` (a finished graph run is not Goal complete). Current contract: CONTEXT / PRD / ARCHITECTURE. Conversation chrome remains in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md).
 
-The Goal loop (run graph → inspect → edit canvas → run again) is unbuilt. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above.
+The Goal loop (run graph → inspect → edit canvas → run again) is on the product conversation sidebar. Complete is user-only; graph-checkable criteria are not automated. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above.
 
 Question-count and visual-quality samples for conversation create are still missing. `just web-e2e-live-graph` still covers skip-Agent direct create until the conversation path has its own browser regression.
 
@@ -24,7 +24,7 @@ Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 
 ### Studio increment
 
-[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md): shot list as the default surface, generate-set copy, recommended types on create, post-generation local edits, platform delivery presets, and a human fidelity checklist. Do not write these into CONTEXT / PRD / ARCHITECTURE until they land. The recipe library does not ship official canvas templates; users save their own recipes.
+[`specs/studio-increments.md`](specs/studio-increments.md): shot list as the default surface, generate-set copy, recommended types on create, post-generation local edits, and a human fidelity checklist. Do not write these into CONTEXT / PRD / ARCHITECTURE until they land. Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe library does not ship official canvas templates; users save their own recipes.
 
 ### Image production quality
 
@@ -39,7 +39,7 @@ Delete leftover V1 archives, Gallery backfill, WorkflowDraft write stubs, and co
 
 ### Agent durability
 
-Real provider, real stores, SSE reconnect, and the production switch for background durable / reconciliation. See [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md). Product boundary: [`specs/global-agent-human-workflow-design.md`](specs/global-agent-human-workflow-design.md). A business Task scheduler, cross-process durable admission, and a unified Fresh Observation harness are still unbuilt.
+Real provider, real stores, SSE reconnect, and the production switch for background durable / reconciliation. See [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md). Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`). A business Task scheduler, cross-process durable admission, and a unified Fresh Observation harness are still unbuilt.
 
 ## Medium term
 

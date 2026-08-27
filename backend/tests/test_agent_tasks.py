@@ -24,7 +24,9 @@ from productflow_backend.application.agent.media_library_tools import (
 from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.agent.tasks import (
+    complete_agent_task,
     create_agent_task,
+    ensure_task_for_turn,
     list_agent_tasks,
     pause_agent_task,
     resume_agent_task,
@@ -1116,6 +1118,161 @@ def test_agent_task_api_lists_creates_and_renames(configured_env) -> None:
     assert cancel_response.json()["status"] == "canceled"
 
 
+def test_product_goal_turn_success_stays_in_goal_loop(db_session) -> None:
+    workspace = _create_workspace(db_session, key="goal-loop-turn")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="出齐主图",
+        goal="主图已生成且用户确认",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="检查画布并请求跑图",
+        input_asset_ids=[],
+        idempotency_key="goal-loop-turn",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="goal-loop-harness-turn",
+        status=AgentTurnStatus.RUNNING,
+    )
+    project_agent_turn_state(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.SUCCEEDED,
+        output_text="已请求跑图，等待画布确认",
+        error_text=None,
+        question_json=None,
+        finished_at=now_utc(),
+    )
+    refreshed = db_session.get(AgentTask, task.id)
+    assert refreshed is not None
+    assert refreshed.status == AgentTaskStatus.WAITING_USER
+    assert refreshed.waiting_reason == "goal_loop"
+    assert refreshed.finished_at is None
+
+
+def test_product_goal_complete_is_user_only(configured_env) -> None:
+    from productflow_backend.infrastructure.db.session import get_session_factory
+
+    factory = get_session_factory()
+    with factory() as session:
+        workspace = _create_workspace(session, key="goal-complete-api")
+        task = create_agent_task(
+            session,
+            session_id=workspace.conversation.session_id,
+            conversation_id=workspace.conversation.id,
+            title="出齐细节图",
+            goal="细节图已生成",
+        )
+        task_id = task.id
+
+    client = TestClient(create_app())
+    _login(client)
+    complete_response = client.post(f"/api/v2/agent-tasks/{task_id}/complete")
+    assert complete_response.status_code == 200, complete_response.text
+    assert complete_response.json()["status"] == "succeeded"
+    assert complete_response.json()["waiting_reason"] is None
+    replay = client.post(f"/api/v2/agent-tasks/{task_id}/complete")
+    assert replay.status_code == 409
+
+
+def test_product_goal_turn_failure_stays_in_goal_loop(db_session) -> None:
+    workspace = _create_workspace(db_session, key="goal-loop-turn-fail")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="出齐主图",
+        goal="主图已生成且用户确认",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="检查画布",
+        input_asset_ids=[],
+        idempotency_key="goal-loop-turn-fail",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="goal-loop-fail-harness",
+        status=AgentTurnStatus.RUNNING,
+    )
+    project_agent_turn_state(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.FAILED,
+        output_text=None,
+        error_text="工具调用失败",
+        question_json=None,
+        finished_at=now_utc(),
+    )
+    refreshed = db_session.get(AgentTask, task.id)
+    assert refreshed is not None
+    assert refreshed.status == AgentTaskStatus.WAITING_USER
+    assert refreshed.waiting_reason == "goal_loop"
+    assert refreshed.finished_at is None
+
+
+def test_product_goal_complete_rejects_busy_harness_turn(db_session) -> None:
+    workspace = _create_workspace(db_session, key="goal-complete-running")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="出齐主图",
+        goal="主图已生成且用户确认",
+    )
+    reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="开始",
+        input_asset_ids=[],
+        idempotency_key="goal-complete-running",
+    )
+    with pytest.raises(ConflictError, match="等待结束或取消"):
+        complete_agent_task(db_session, task_id=task.id)
+
+
+def test_completed_product_goal_cannot_accept_new_turns(db_session) -> None:
+    workspace = _create_workspace(db_session, key="goal-complete-blocks-turn")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="出齐主图",
+        goal="主图已生成且用户确认",
+    )
+    complete_agent_task(db_session, task_id=task.id)
+    with pytest.raises(ConflictError, match="已结束"):
+        ensure_task_for_turn(
+            db_session,
+            conversation=workspace.conversation,
+            task_id=task.id,
+        )
+
+
 def test_canceling_an_unbound_task_turn_updates_conversation_status(db_session) -> None:
     workspace = _create_workspace(db_session, key="task-cancel-unbound")
     task = create_agent_task(
@@ -1173,6 +1330,8 @@ def test_internal_agent_task_contract_uses_task_run(configured_env, monkeypatch)
     assert payload["conversation_id"] == task.conversation_id
     assert payload["harness_run_id"] == task.harness_run_id
     assert payload["harness_run_id"] != task.conversation_id
+    assert "不得自行宣布 Goal 完成" in payload["system_prompt"]
+    assert "一次 WorkflowGraphRun 结束不等于 Goal 结束" in payload["system_prompt"]
 
     runs_path = f"/api/internal/v1/agent-conversations/{task.conversation_id}/workflow-runs?limit=5"
     runs_response = client.get(runs_path, headers={"Authorization": f"Bearer {internal_token}"})

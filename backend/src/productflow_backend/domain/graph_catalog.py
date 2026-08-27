@@ -201,7 +201,7 @@ _ACCEPTANCE: dict[tuple[GraphEdgeDataType, GraphNodeType], GraphInputContract] =
         GraphEdgeDataType.VISUAL_SYSTEM, GraphEdgeRole.VISUAL_GUIDANCE, 1, False
     ),
     (GraphEdgeDataType.IMAGE_ASSET, GraphNodeType.IMAGE_GENERATION): GraphInputContract(
-        GraphEdgeDataType.IMAGE_ASSET, GraphEdgeRole.REFERENCE, None, True
+        GraphEdgeDataType.IMAGE_ASSET, GraphEdgeRole.REFERENCE, None, False
     ),
     (GraphEdgeDataType.VISUAL_SYSTEM, GraphNodeType.IMAGE_GENERATION): GraphInputContract(
         GraphEdgeDataType.VISUAL_SYSTEM, GraphEdgeRole.VISUAL_GUIDANCE, 1, False

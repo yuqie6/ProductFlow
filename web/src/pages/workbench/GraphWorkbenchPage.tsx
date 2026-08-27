@@ -42,6 +42,7 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   saveRecipe: () => undefined,
   appendRecipe: () => undefined,
   commitNode: async () => undefined,
+  pinCurrentOutput: () => undefined,
 };
 
 export function GraphWorkbenchPage({
@@ -265,6 +266,9 @@ export function GraphWorkbenchPage({
                   setBindNodeId(selected.id);
                   void requestSidebarTool("library");
                 } : undefined}
+                onPinAsset={selected?.node_type === "image_generation" && selected.preview_asset_id
+                  ? () => actions.pinCurrentOutput(selected.id)
+                  : undefined}
                 onJump={inspectNode}
                 onPreviewImage={setPreviewImage}
                 onOpenLocalEdit={localEdit.openLocalImageEdit}

@@ -234,4 +234,31 @@ describe("Agent conversation API", () => {
       JSON.stringify({ expected_draft_version: 3, idempotency_key: "confirm-1" }),
     );
   });
+
+  it("reads, completes, and controls Agent Tasks through encoded ids", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getAgentTask("task/1");
+    await api.completeAgentTask("task/1");
+    await api.pauseAgentTask("task/1");
+    await api.resumeAgentTask("task/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/agent-tasks/task%2F1",
+      "/api/v2/agent-tasks/task%2F1/complete",
+      "/api/v2/agent-tasks/task%2F1/pause",
+      "/api/v2/agent-tasks/task%2F1/resume",
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method ?? "GET")).toEqual([
+      "GET",
+      "POST",
+      "POST",
+      "POST",
+    ]);
+  });
 });

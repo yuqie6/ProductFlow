@@ -14,7 +14,6 @@ from productflow_backend.application.product_workflow.graph_commands import (
     load_applied_graph,
 )
 from productflow_backend.application.product_workflow.graph_compiler import (
-    GraphRuntimeArtifacts,
     GraphSourceRecord,
     graph_snapshot_input_trace,
     graph_snapshot_node_title,
@@ -164,25 +163,7 @@ def submit_graph_run(
         applied,
         scope=scope,
         target_node_id=target_node_id,
-        artifacts=GraphRuntimeArtifacts(
-            payloads={
-                node_id: dict(record.current_artifact_payload)
-                for node_id, record in sources.items()
-                if record.current_artifact_payload is not None
-            },
-            artifact_ids={
-                node_id: record.current_artifact_id
-                for node_id, record in sources.items()
-                if record.current_artifact_id is not None
-            },
-            output_asset_ids={
-                node_id: record.current_output_asset_id
-                for node_id, record in sources.items()
-                if record.current_output_asset_id is not None
-            },
-        )
-        if scope == GraphRunScope.NODE
-        else None,
+        sources=sources if scope == GraphRunScope.NODE else None,
     )
     active = session.scalar(
         select(WorkflowGraphRun).where(
@@ -291,8 +272,9 @@ def cancel_graph_run(
     product_id: str,
     graph_id: str,
     run_id: str,
+    commit: bool = True,
 ) -> WorkflowGraphRun:
-    """取消 RUNNING 运行并 commit。UNKNOWN 等终态不能取消。"""
+    """取消 RUNNING 运行。UNKNOWN 等终态不能取消。commit=False 时由调用方持有事务。"""
 
     get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
     run = session.scalar(
@@ -318,6 +300,8 @@ def cancel_graph_run(
             node_run.finished_at = now
             node_run.active_attempt_id = None
             node_run.progress_updated_at = now
+    if not commit:
+        return run
     session.commit()
     session.expire_all()
     return get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)

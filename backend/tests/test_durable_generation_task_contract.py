@@ -52,7 +52,11 @@ def test_durable_generation_task_contract_keeps_workflow_and_image_models_separa
             WorkflowRunDeliveryState.QUEUED,
         ),
         (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.QUEUED], WorkflowRunDeliveryState.QUEUED),
-        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.SUCCEEDED], WorkflowRunDeliveryState.QUEUED),
+        (
+            WorkflowRunStatus.RUNNING,
+            [WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.UNKNOWN],
+            WorkflowRunDeliveryState.QUEUED,
+        ),
         (
             WorkflowRunStatus.RUNNING,
             [WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING],

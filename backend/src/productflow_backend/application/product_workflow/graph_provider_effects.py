@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import select
@@ -197,7 +196,7 @@ def mark_graph_run_provider_unknown(
     attempt_id: str | None,
     detail: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
 ) -> bool:
-    """把 run/node 标 UNKNOWN 且不可重试；不要把未证明的 provider 调用写成 FAILED。"""
+    """把该节点标 UNKNOWN；不要把未证明的 provider 调用写成 FAILED，也不中止同层独立节点。"""
 
     now = now_utc()
     run = session.scalar(
@@ -205,8 +204,6 @@ def mark_graph_run_provider_unknown(
     )
     if run is None:
         return False
-    if run.status == WorkflowRunStatus.UNKNOWN:
-        return True
     if run.status in {WorkflowRunStatus.SUCCEEDED, WorkflowRunStatus.CANCELLED}:
         return False
     node_run = session.scalar(
@@ -216,6 +213,8 @@ def mark_graph_run_provider_unknown(
     )
     if node_run is None:
         return False
+    if node_run.status == WorkflowNodeStatus.UNKNOWN:
+        return True
     if attempt_id is not None and node_run.active_attempt_id not in {None, attempt_id}:
         return False
     resolved_attempt = attempt_id or node_run.active_attempt_id
@@ -232,11 +231,6 @@ def mark_graph_run_provider_unknown(
     node_run.progress_phase = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE
     node_run.progress_updated_at = now
     node_run.active_attempt_id = None
-    _fail_sibling_active_nodes(run.node_runs, skip_id=node_run.id, reason=detail, now=now)
-    run.status = WorkflowRunStatus.UNKNOWN
-    run.failure_reason = detail
-    run.finished_at = now
-    run.is_retryable = False
     session.flush()
     return True
 
@@ -268,25 +262,6 @@ def load_node_run_effect(session: Session, node_run_id: str) -> WorkflowGraphPro
     return session.scalar(
         select(WorkflowGraphProviderEffect).where(WorkflowGraphProviderEffect.node_run_id == node_run_id)
     )
-
-
-def _fail_sibling_active_nodes(
-    node_runs: Iterable[WorkflowGraphNodeRun],
-    *,
-    skip_id: str,
-    reason: str,
-    now,
-) -> None:
-    # 未证明的节点保持 unknown；尚未完成的兄弟节点没有 provider 结果，可以标 failed。
-    for item in node_runs:
-        if item.id == skip_id:
-            continue
-        if item.status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING}:
-            item.status = WorkflowNodeStatus.FAILED
-            item.failure_reason = reason
-            item.finished_at = now
-            item.active_attempt_id = None
-            item.progress_updated_at = now
 
 
 def _locked_effect(session: Session, *, node_run_id: str) -> WorkflowGraphProviderEffect | None:

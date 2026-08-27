@@ -63,7 +63,7 @@ def test_catalog_document_covers_every_node_type_and_acceptance() -> None:
     assert visual.max_count == 1
     required = {item.role: item.required_to_run for item in image.accepts}
     assert required[GraphEdgeRole.PROMPT] is True
-    assert required[GraphEdgeRole.REFERENCE] is True
+    assert required[GraphEdgeRole.REFERENCE] is False
     prompt_required = next(item for item in image.accepts if item.role == GraphEdgeRole.PROMPT)
     assert prompt_required.max_count == 1
     assert all(item.data_type != graph_node_output_type(GraphNodeType.PRODUCT_SOURCE) for item in image.accepts)
@@ -119,7 +119,7 @@ def test_node_catalog_http_projects_domain_document(configured_env) -> None:
     assert prompt_input["max_count"] == 1
     assert prompt_input["required_to_run"] is True
     assert prompt_input["data_type"] == "prompt"
-    assert reference_input["required_to_run"] is True
+    assert reference_input["required_to_run"] is False
     assert not any(item["data_type"] == "product_facts" for item in image["accepts"])
     assert {field["key"] for field in image["config_fields"]} == {
         "image_type_key",
@@ -439,7 +439,7 @@ def test_image_generation_ready_with_prompt_and_reference_edges() -> None:
         graph_node_output_type(GraphNodeType.IMAGE_ASSET),
         GraphEdgeRole.REFERENCE,
     )
-    assert node_config_status(image, [prompt_edge]) == GraphConfigStatus.INCOMPLETE
+    assert node_config_status(image, [prompt_edge]) == GraphConfigStatus.READY
     assert node_config_status(image, [prompt_edge, reference_edge]) == GraphConfigStatus.READY
     assert node_config_status(
         GraphRuleNode(

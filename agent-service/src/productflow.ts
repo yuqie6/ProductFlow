@@ -279,6 +279,93 @@ export class ProductFlowClient {
     });
   }
 
+  async getNodeDetail(conversationID: string, nodeID: string, signal?: AbortSignal): Promise<JsonObject> {
+    return this.json<JsonObject>(
+      this.conversationPath(conversationID) + `/graph/nodes/${encodeURIComponent(nodeID)}`,
+      { signal },
+    );
+  }
+
+  async discardGraphProposal(
+    conversationID: string,
+    proposalID: string | null,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    return this.json<JsonObject>(this.conversationPath(conversationID) + "/graph/proposals/discard", {
+      method: "POST",
+      body: { proposal_id: proposalID },
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileDiscardGraphProposal(
+    conversationID: string,
+    proposalID: string | null,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/graph/proposals/discard/reconcile", {
+      method: "POST",
+      body: { proposal_id: proposalID },
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async cancelWorkflowRun(
+    conversationID: string,
+    runID: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    return this.json<JsonObject>(
+      this.conversationPath(conversationID) + `/workflow-runs/${encodeURIComponent(runID)}/cancel`,
+      { method: "POST", body: {}, idempotencyKey, signal },
+    );
+  }
+
+  async reconcileCancelWorkflowRun(
+    conversationID: string,
+    runID: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(
+      this.conversationPath(conversationID) + `/workflow-runs/${encodeURIComponent(runID)}/cancel/reconcile`,
+      { method: "POST", body: {}, idempotencyKey, signal },
+    );
+  }
+
+  async focusCanvasItems(
+    conversationID: string,
+    focus: { node_ids: string[]; edge_ids: string[]; group_ids: string[] },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    return this.json<JsonObject>(this.conversationPath(conversationID) + "/canvas/focus", {
+      method: "POST",
+      body: focus,
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileFocusCanvasItems(
+    conversationID: string,
+    focus: { node_ids: string[]; edge_ids: string[]; group_ids: string[] },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/canvas/focus/reconcile", {
+      method: "POST",
+      body: focus,
+      idempotencyKey,
+      signal,
+    });
+  }
+
   async validateGlobalDraft(conversationID: string, value: unknown, signal?: AbortSignal): Promise<void> {
     await this.json(this.conversationPath(conversationID) + "/global-draft/validate", { method: "POST", body: { value }, signal });
   }

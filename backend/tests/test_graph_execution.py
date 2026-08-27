@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from helpers import _make_demo_image_bytes
 from sqlalchemy import select
@@ -40,6 +41,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
+    AppSetting,
     AsyncDispatch,
     DeliveryRenditionJob,
     WorkflowGraphArtifact,
@@ -875,10 +877,67 @@ def test_image_success_queues_delivery_rendition_from_live_node_spec(db_session)
     assert dispatch.actor_name == "run_delivery_rendition_job"
 
 
-class BoomImageProvider(RecordingImageProvider):
+class BoomOnceImageProvider(RecordingImageProvider):
+    def __init__(self, image_bytes: bytes) -> None:
+        super().__init__(image_bytes)
+        self._lock = threading.Lock()
+        self._failed = False
+
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        with self._lock:
+            should_fail = not self._failed
+            if should_fail:
+                self._failed = True
+        if should_fail:
+            self.requests.append(request)
+            raise RuntimeError("provider exploded")
+        return super().generate_workflow_image(request)
+
+
+class BarrierImageProvider(RecordingImageProvider):
+    def __init__(self, image_bytes: bytes, *, parties: int) -> None:
+        super().__init__(image_bytes)
+        self.barrier = threading.Barrier(parties)
+        self._lock = threading.Lock()
+        self.inflight = 0
+        self.max_inflight = 0
+
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        with self._lock:
+            self.inflight += 1
+            self.max_inflight = max(self.max_inflight, self.inflight)
+        self.barrier.wait(timeout=5)
+        try:
+            return super().generate_workflow_image(request)
+        finally:
+            with self._lock:
+                self.inflight -= 1
+
+
+class CountingImageProvider(RecordingImageProvider):
+    def __init__(self, image_bytes: bytes) -> None:
+        super().__init__(image_bytes)
+        self._lock = threading.Lock()
+        self.inflight = 0
+        self.max_inflight = 0
+        self.release = threading.Event()
+
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        with self._lock:
+            self.inflight += 1
+            self.max_inflight = max(self.max_inflight, self.inflight)
+        assert self.release.wait(timeout=5)
+        try:
+            return super().generate_workflow_image(request)
+        finally:
+            with self._lock:
+                self.inflight -= 1
+
+
+class BoomPromptProvider(RecordingPromptProvider):
+    def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         self.requests.append(request)
-        raise RuntimeError("provider exploded")
+        raise RuntimeError("prompt provider exploded")
 
 
 def test_image_node_keeps_bytes_when_measured_aspect_disagrees_with_spec(db_session) -> None:
@@ -941,11 +1000,11 @@ def test_image_node_keeps_bytes_when_measured_aspect_disagrees_with_spec(db_sess
     assert "3:4" in (measured["aspect_mismatch"] or "")
 
 
-def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
+def test_independent_image_unknown_does_not_fail_sibling(db_session) -> None:
     image_bytes = _make_demo_image_bytes()
     created = create_product_with_direct_graph(
         db_session,
-        name="失败停跑商品",
+        name="独立镜头失败商品",
         category=None,
         price=None,
         source_note=None,
@@ -955,7 +1014,7 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
             DirectCreateImageType(key="scene", quantity=1, order=1),
         ],
     )
-    image_provider = BoomImageProvider(image_bytes)
+    image_provider = BoomOnceImageProvider(image_bytes)
     submission = submit_graph_run(
         db_session,
         product_id=created.product.id,
@@ -975,8 +1034,8 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
     }
     image_runs = [item for item in submission.run.node_runs if item.node_id in image_ids]
     assert len(image_runs) == 2
-    assert {item.status for item in image_runs} == {WorkflowNodeStatus.UNKNOWN, WorkflowNodeStatus.FAILED}
-    leftover = next(item for item in image_runs if item.status == WorkflowNodeStatus.FAILED)
+    assert {item.status for item in image_runs} == {WorkflowNodeStatus.UNKNOWN, WorkflowNodeStatus.SUCCEEDED}
+    leftover = next(item for item in image_runs if item.status == WorkflowNodeStatus.SUCCEEDED)
     execute_graph_run(
         submission.run.id,
         dependencies=WorkflowExecutionDependencies(
@@ -986,8 +1045,138 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
     )
     db_session.refresh(leftover)
     db_session.refresh(submission.run)
-    assert leftover.status == WorkflowNodeStatus.FAILED
+    assert leftover.status == WorkflowNodeStatus.SUCCEEDED
     assert submission.run.status == WorkflowRunStatus.UNKNOWN
+    assert len(image_provider.requests) == 2
+
+
+def test_independent_image_nodes_call_provider_concurrently(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="并行生图商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=2, order=0)],
+    )
+    image_provider = BarrierImageProvider(image_bytes, parties=2)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+                image_provider_resolver=lambda: image_provider,
+            ),
+        ),
+    )
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    assert image_provider.max_inflight == 2
+    assert len(image_provider.requests) == 2
+    image_ids = {
+        node.id for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    }
+    image_runs = [item for item in submission.run.node_runs if item.node_id in image_ids]
+    assert {item.status for item in image_runs} == {WorkflowNodeStatus.SUCCEEDED}
+
+
+def test_generation_capacity_serializes_independent_image_nodes(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="并发上限商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=2, order=0)],
+    )
+    db_session.add(AppSetting(key="generation_max_concurrent_tasks", value="1"))
+    db_session.commit()
+    image_provider = CountingImageProvider(image_bytes)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda _run_id: None,
+    )
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            execute_graph_run(
+                submission.run.id,
+                dependencies=WorkflowExecutionDependencies(
+                    prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+                    image_provider_resolver=lambda: image_provider,
+                ),
+            )
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and image_provider.max_inflight < 1:
+        time.sleep(0.05)
+    time.sleep(0.4)
+    assert image_provider.max_inflight == 1
+    image_provider.release.set()
+    thread.join(timeout=30)
+    assert thread.is_alive() is False
+    assert errors == []
+    db_session.expire_all()
+    run = db_session.get(WorkflowGraphRun, submission.run.id)
+    assert run is not None
+    assert run.status == WorkflowRunStatus.SUCCEEDED
+    assert image_provider.max_inflight == 1
+    assert len(image_provider.requests) == 2
+
+
+def test_failed_prompt_blocks_downstream_images_without_calling_image_provider(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="上游失败阻断商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=2, order=0)],
+    )
+    image_provider = RecordingImageProvider(image_bytes)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: BoomPromptProvider(),
+                image_provider_resolver=lambda: image_provider,
+            ),
+        ),
+    )
+    assert submission.run.status == WorkflowRunStatus.UNKNOWN
+    prompt_ids = {
+        node.id for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION
+    }
+    image_ids = {
+        node.id for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    }
+    prompt_runs = [item for item in submission.run.node_runs if item.node_id in prompt_ids]
+    image_runs = [item for item in submission.run.node_runs if item.node_id in image_ids]
+    assert {item.status for item in prompt_runs} == {WorkflowNodeStatus.UNKNOWN}
+    assert {item.status for item in image_runs} == {WorkflowNodeStatus.FAILED}
+    assert all(item.failure_reason == "上游处理节点未成功" for item in image_runs)
+    assert image_provider.requests == []
 
 
 def test_duplicate_artifact_persist_does_not_crash_graph_run(db_session) -> None:
@@ -1127,8 +1316,10 @@ def test_matching_digest_skips_provider_and_stale_only_after_input_edit(db_sessi
     after_edit = project_workflow_graph(db_session, graph)
     visual_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
     prompt_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
-    assert visual_after.config_status == GraphConfigStatus.STALE
-    assert prompt_after.config_status == GraphConfigStatus.STALE
+    image_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    assert visual_after.config_status == GraphConfigStatus.READY
+    assert prompt_after.config_status == GraphConfigStatus.READY
+    assert image_after.config_status == GraphConfigStatus.STALE
 
 
 def test_matching_digest_does_not_skip_explicit_node_run(db_session) -> None:

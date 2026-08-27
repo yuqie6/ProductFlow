@@ -49,6 +49,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNodeRun,
     WorkflowGraphRun,
 )
+from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import WorkflowImageRequest, WorkflowImageResult
 from productflow_backend.infrastructure.storage import LocalStorage
 from productflow_backend.presentation.schemas.graphs import serialize_graph_run
@@ -264,12 +265,16 @@ def test_late_provider_result_after_cancel_is_not_current_artifact(db_session, m
 
     def cancel_after_result(phase: str, node_run: WorkflowGraphNodeRun) -> None:
         if phase == "provider_result_received" and node_run.node_id == image_node.id:
-            cancel_graph_run(
-                db_session,
-                product_id=created.product.id,
-                graph_id=created.graph.id,
-                run_id=submission.run.id,
-            )
+            cancel_session = get_session_factory()()
+            try:
+                cancel_graph_run(
+                    cancel_session,
+                    product_id=created.product.id,
+                    graph_id=created.graph.id,
+                    run_id=submission.run.id,
+                )
+            finally:
+                cancel_session.close()
 
     monkeypatch.setattr(graph_execution_module, "_effect_phase_hook", cancel_after_result)
     execute_graph_run(submission.run.id, dependencies=dependencies)
@@ -474,12 +479,16 @@ def test_late_result_commit_failure_deletes_file_and_keeps_cancelled(
 
     def cancel_after_result(phase: str, node_run: WorkflowGraphNodeRun) -> None:
         if phase == "provider_result_received" and node_run.node_id == image_node.id:
-            cancel_graph_run(
-                db_session,
-                product_id=created.product.id,
-                graph_id=created.graph.id,
-                run_id=submission.run.id,
-            )
+            cancel_session = get_session_factory()()
+            try:
+                cancel_graph_run(
+                    cancel_session,
+                    product_id=created.product.id,
+                    graph_id=created.graph.id,
+                    run_id=submission.run.id,
+                )
+            finally:
+                cancel_session.close()
 
     def boom(_session, storage_writes) -> None:
         tracked.extend(path for _item, path in storage_writes._writes)
@@ -592,3 +601,69 @@ def test_run_history_keeps_rev_n_input_titles_after_rename_disconnect_delete(db_
     assert {entry.source_title for entry in image_after.input_trace} == original_titles
     assert original_prompt_title in {entry.source_title for entry in image_after.input_trace}
     assert all(entry.source_title != "改名后的提示词" for entry in image_after.input_trace)
+
+
+def test_independent_image_crash_does_not_fail_sibling(db_session, monkeypatch) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="并行崩溃隔离",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=2, order=0)],
+    )
+    image_nodes = sorted(
+        (node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION),
+        key=lambda node: node.id,
+    )
+    crashing_node = image_nodes[-1]
+    prompt_provider = RecordingPromptProvider()
+    image_provider = RecordingImageProvider(image_bytes)
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: prompt_provider,
+        image_provider_resolver=lambda: image_provider,
+    )
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda _run_id: None,
+    )
+
+    def crash(phase: str, node_run: WorkflowGraphNodeRun) -> None:
+        if phase == "prepared" and node_run.node_id == crashing_node.id:
+            raise GraphRunEffectCrash(phase, node_run.id)
+
+    monkeypatch.setattr(graph_execution_module, "_effect_phase_hook", crash)
+    execute_graph_run(submission.run.id, dependencies=dependencies)
+    db_session.expire_all()
+    run = db_session.get(WorkflowGraphRun, submission.run.id)
+    assert run is not None
+    assert run.status == WorkflowRunStatus.RUNNING
+    crashing_run = _image_node_run(db_session, submission.run.id, crashing_node.id)
+    sibling_run = _image_node_run(db_session, submission.run.id, image_nodes[0].id)
+    assert crashing_run.status == WorkflowNodeStatus.RUNNING
+    assert sibling_run.status != WorkflowNodeStatus.FAILED
+    assert sibling_run.status != WorkflowNodeStatus.UNKNOWN
+
+    monkeypatch.setattr(graph_execution_module, "_effect_phase_hook", None)
+    sent: list[str] = []
+    summary = recover_unfinished_workflow_runs(
+        enqueue=sent.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(0),
+    )
+    assert summary.unknown_runs == 0
+    db_session.expire_all()
+    assert crashing_run.status == WorkflowNodeStatus.QUEUED
+    db_session.commit()
+    execute_graph_run(submission.run.id, dependencies=dependencies)
+    db_session.expire_all()
+    recovered = db_session.get(WorkflowGraphRun, submission.run.id)
+    assert recovered is not None
+    assert recovered.status == WorkflowRunStatus.SUCCEEDED
+    assert _image_node_run(db_session, submission.run.id, crashing_node.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert _image_node_run(db_session, submission.run.id, image_nodes[0].id).status == WorkflowNodeStatus.SUCCEEDED

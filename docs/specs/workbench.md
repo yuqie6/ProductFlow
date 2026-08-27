@@ -2,7 +2,7 @@
 
 - 文档状态：Draft
 - 批准意图：工作台是成品生产面，不是从 V1/V2 修葺回来的工程清单。
-- 图合同：[`docs/adr/0008-free-canvas-agent-graph-authority.md`](../adr/0008-free-canvas-agent-graph-authority.md)
+- 图合同：[`docs/adr/0008-free-canvas-agent-graph-authority.md`](../adr/0008-free-canvas-agent-graph-authority.md)；当前形状见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) §6
 - 人离开 Agent 仍能操作整张图：[`docs/adr/0009-agent-canvas-sandbox.md`](../adr/0009-agent-canvas-sandbox.md) §1
 - 当前操作说明：[`docs/USER_GUIDE.md`](../USER_GUIDE.md)
 - 未在浏览器证明之前：[`docs/ROADMAP.md`](../ROADMAP.md)

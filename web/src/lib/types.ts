@@ -907,6 +907,12 @@ export interface AgentQuestion {
   options: AgentQuestionOption[];
 }
 
+export interface AgentCanvasFocus {
+  request_id: string;
+  node_ids: string[];
+  edge_ids: string[];
+  group_ids: string[];
+}
 
 export interface AgentTurn {
   id: string;
@@ -931,6 +937,7 @@ export interface AgentTurn {
   workflow_run_request_id: string | null;
   page_context_snapshot_id: string | null;
   sync_error: string | null;
+  canvas_focus?: AgentCanvasFocus | null;
   finished_at: string | null;
   created_at: string;
   updated_at: string;

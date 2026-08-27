@@ -86,7 +86,7 @@ function preset(
     aspect_ratio: aspectRatio,
     applicable_image_type: applicableImageType,
     reviewed_at: "2026-08-24",
-    source: "docs/specs/productflow-studio-requirements.md §18",
+    source: "docs/ARCHITECTURE.md §7",
     disclaimer: "Templates provide convenient defaults.",
     delivery_spec: {
       width,

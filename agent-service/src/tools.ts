@@ -220,9 +220,17 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     createWorkflowRunRequestTool(runtime, false),
     createProductIntakeTool(runtime),
   ];
+
   if (runtime.scope.scope_type === "product_workflow") {
     if (runtime.scope.has_live_graph) {
-      tools.push(createApplyGraphChangeSetTool(runtime), createProposeGraphChangeSetTool(runtime));
+      tools.push(
+        createGetNodeDetailTool(runtime),
+        createApplyGraphChangeSetTool(runtime),
+        createProposeGraphChangeSetTool(runtime),
+        createDiscardWorkflowProposalTool(runtime),
+        createCancelWorkflowRunTool(runtime),
+        createFocusCanvasItemsTool(runtime),
+      );
     }
     return tools.filter((tool) => !tool.name.startsWith("global_"));
   }
@@ -838,6 +846,23 @@ const proposeGraphChangeSetParameters = Type.Object(
   { additionalProperties: false },
 );
 
+const MAX_CANVAS_FOCUS_ITEMS = 20;
+
+function createGetNodeDetailTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "get_node_detail_v1",
+    label: "Get node detail",
+    description:
+      "Read one live-graph node's config, incoming and outgoing edges, and a bounded current artifact summary. Use this before editing or explaining a specific node.",
+    parameters: Type.Object(
+      { node_id: Type.String({ minLength: 1, maxLength: 80 }) },
+      { additionalProperties: false },
+    ),
+    execute: async (_toolCallID: string, params: { node_id: string }): Promise<Result> =>
+      textResult(await runtime.client.getNodeDetail(runtime.scope.conversation_id, params.node_id, runtime.signal)),
+  });
+}
+
 function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
   return defineTool({
     name: "apply_graph_change_set_v1",
@@ -888,6 +913,101 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
         unknownReason: "Graph proposal result is unknown",
         extraDetails: { pending_confirmation: true },
       }),
+  });
+}
+
+function createDiscardWorkflowProposalTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "discard_workflow_proposal_v1",
+    label: "Discard graph proposal",
+    description:
+      "Discard the pending GraphProposal overlay on the live canvas. Does not write the live graph. Omit proposal_id to discard the current pending proposal.",
+    parameters: Type.Object(
+      { proposal_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })) },
+      { additionalProperties: false },
+    ),
+    execute: async (toolCallID: string, params: { proposal_id?: string }): Promise<Result> =>
+      executeGraphMutationTool(runtime, {
+        toolCallID,
+        toolName: "discard_workflow_proposal_v1",
+        params: params as JsonObject,
+        mutate: (idempotencyKey) =>
+          runtime.client.discardGraphProposal(runtime.scope.conversation_id, params.proposal_id ?? null, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileDiscardGraphProposal(
+            runtime.scope.conversation_id,
+            params.proposal_id ?? null,
+            idempotencyKey,
+            runtime.signal,
+          ),
+        unknownReason: "Graph proposal discard result is unknown",
+      }),
+  });
+}
+
+function createCancelWorkflowRunTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "cancel_workflow_run_v1",
+    label: "Cancel workflow run",
+    description:
+      "Cancel one live-graph WorkflowGraphRun that is still running. Already cancelled runs succeed idempotently. Terminal succeeded or failed runs cannot be cancelled.",
+    parameters: Type.Object(
+      { run_id: Type.String({ minLength: 1, maxLength: 64 }) },
+      { additionalProperties: false },
+    ),
+    execute: async (toolCallID: string, params: { run_id: string }): Promise<Result> =>
+      executeGraphMutationTool(runtime, {
+        toolCallID,
+        toolName: "cancel_workflow_run_v1",
+        params: params as JsonObject,
+        mutate: (idempotencyKey) =>
+          runtime.client.cancelWorkflowRun(runtime.scope.conversation_id, params.run_id, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileCancelWorkflowRun(
+            runtime.scope.conversation_id,
+            params.run_id,
+            idempotencyKey,
+            runtime.signal,
+          ),
+        unknownReason: "Workflow run cancel result is unknown",
+      }),
+  });
+}
+
+function createFocusCanvasItemsTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "focus_canvas_items_v1",
+    label: "Focus canvas items",
+    description:
+      "Record a bounded canvas focus request. The workbench selects those live-graph nodes, edges, or groups. At least one id is required. Do not invent a second graph.",
+    parameters: Type.Object(
+      {
+        node_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
+        edge_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
+        group_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (
+      toolCallID: string,
+      params: { node_ids?: string[]; edge_ids?: string[]; group_ids?: string[] },
+    ): Promise<Result> => {
+      const body = {
+        node_ids: uniqueIDs(params.node_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
+        edge_ids: uniqueIDs(params.edge_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
+        group_ids: uniqueIDs(params.group_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
+      };
+      return executeGraphMutationTool(runtime, {
+        toolCallID,
+        toolName: "focus_canvas_items_v1",
+        params: body,
+        mutate: (idempotencyKey) =>
+          runtime.client.focusCanvasItems(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileFocusCanvasItems(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
+        unknownReason: "Canvas focus result is unknown",
+      });
+    },
   });
 }
 
@@ -1119,7 +1239,7 @@ function toolFailureDetails(error: unknown): ToolStepDetails {
     phase: "tool_result",
     error_code: boundedDetailText(error.code, 120, "productflow_error"),
     error_message: boundedDetailText(error.message, 1000, "工具调用失败，详见当前 Turn 错误。"),
-    retryable: error.code === "workflow_draft_validation_failed" || error.status >= 500,
+    retryable: error.status >= 500,
     ...(validationIssues?.length ? { validation_issues: validationIssues.slice(0, 8) } : {}),
   };
 }

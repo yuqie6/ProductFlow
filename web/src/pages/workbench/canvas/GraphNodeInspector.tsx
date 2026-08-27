@@ -4,6 +4,7 @@ import {
   Images,
   Link2,
   Loader2,
+  Pin,
   Plus,
   PencilLine,
   Play,
@@ -54,7 +55,7 @@ import {
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
 import { graphEdgeRoleLabelKey, graphNodeConfigFields } from "./graphCatalog";
-import { graphNodeTitleKey } from "./graphLayout";
+import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
 import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunInputTraceEntries, graphRunsAreLive } from "./graphRunDisplay";
 import {
   graphProductSourceConfig,
@@ -88,6 +89,7 @@ export function GraphNodeInspector({
   onRetryCatalog,
   onCommit,
   onBind,
+  onPinAsset,
   onJump,
   onPreviewImage,
   onOpenLocalEdit,
@@ -108,6 +110,7 @@ export function GraphNodeInspector({
     boundAssetId: string | null;
   }) => Promise<GraphProjection | void> | GraphProjection | void;
   onBind?: () => void;
+  onPinAsset?: () => void;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
@@ -381,6 +384,18 @@ export function GraphNodeInspector({
                 </button>
               ) : null}
             </div>
+          ) : null}
+          {graphNodeHasPinnableOutput(node) && onPinAsset ? (
+            <button
+              type="button"
+              data-graph-pin-asset
+              onClick={onPinAsset}
+              disabled={busy}
+              className="mt-2 inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Pin size={14} className="mr-1.5" aria-hidden="true" />
+              {t("graph.canvas.pinAsset")}
+            </button>
           ) : null}
         </section>
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Header, Path, Query, Response
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -47,8 +47,15 @@ from productflow_backend.application.agent.graph_tools import (
     APPLY_GRAPH_TOOL_NAME,
     PROPOSE_GRAPH_TOOL_NAME,
     apply_agent_graph_change_set_tool,
+    cancel_agent_workflow_run_tool,
+    discard_agent_graph_proposal_tool,
+    focus_agent_canvas_items_tool,
+    get_agent_node_detail,
     propose_agent_graph_change_set_tool,
+    reconcile_agent_canvas_focus_tool,
     reconcile_agent_graph_change_set_tool,
+    reconcile_agent_graph_proposal_discard_tool,
+    reconcile_agent_workflow_run_cancel_tool,
 )
 from productflow_backend.application.agent.media_library_tools import (
     AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
@@ -100,7 +107,9 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetRenamePreparedResponse,
     AgentAssetRenameReconcileResponse,
     AgentAssetRenameResultResponse,
+    AgentCanvasFocusRequest,
     AgentContractResponse,
+    AgentDiscardGraphProposalRequest,
     AgentFinalizeProductIntakeReconcileResponse,
     AgentFinalizeProductIntakeRequest,
     AgentFinalizeProductIntakeResponse,
@@ -128,6 +137,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentTurnExecutionLeaseResponse,
     AgentTurnExecutionReleaseRequest,
     AgentTurnExecutionReleaseResponse,
+    AgentWorkflowDraftValidationRequest,
+    AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
     AgentWorkflowRunRequestCreateRequest,
     AgentWorkflowRunRequestPreparedResponse,
@@ -177,7 +188,7 @@ def _serialize_agent_product_workspace_launch(
         product_conversation_id=creation.conversation.id,
         product_id=creation.product.id,
         product_name=creation.product.name,
-task_id=None,
+        task_id=None,
         intake_finalized=creation.intake_finalized,
         navigation_path=navigation_path,
     )
@@ -190,17 +201,6 @@ def get_agent_contract_endpoint(
 ) -> AgentContractResponse:
     """Pi 的 Scope 来自这份 ProductFlow contract，不来自本地 session 文件。"""
     return AgentContractResponse.model_validate(get_agent_contract(session, conversation_id))
-
-
-@router.post(
-    "/{conversation_id}/workflow-draft/validate",
-    response_model=AgentWorkflowDraftValidationResponse,
-)
-) -> AgentWorkflowDraftValidationResponse:
-    del conversation_id, payload, session
-    from productflow_backend.application.workflow_drafts.service import PRODUCT_WORKFLOW_DRAFT_RETIRED
-
-    raise ConflictError(PRODUCT_WORKFLOW_DRAFT_RETIRED)
 
 
 @router.post("/{conversation_id}/graph/apply-change-set")
@@ -269,6 +269,125 @@ def reconcile_agent_graph_propose_endpoint(
         change_set=payload.change_set,
         idempotency_key=idempotency_key,
         tool_name=PROPOSE_GRAPH_TOOL_NAME,
+    )
+    return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
+
+
+@router.get("/{conversation_id}/graph/nodes/{node_id}")
+def get_agent_node_detail_endpoint(
+    conversation_id: str,
+    node_id: str = Path(min_length=1, max_length=80),
+    session: Session = Depends(get_session),
+) -> dict:
+    return get_agent_node_detail(
+        session,
+        conversation_id=conversation_id,
+        node_id=node_id,
+    )
+
+
+@router.post("/{conversation_id}/graph/proposals/discard")
+def discard_agent_graph_proposal_endpoint(
+    conversation_id: str,
+    payload: AgentDiscardGraphProposalRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> dict:
+    return discard_agent_graph_proposal_tool(
+        session,
+        conversation_id=conversation_id,
+        idempotency_key=idempotency_key,
+        proposal_id=payload.proposal_id,
+    )
+
+
+@router.post(
+    "/{conversation_id}/graph/proposals/discard/reconcile",
+    response_model=AgentGraphChangeSetReconcileResponse,
+)
+def reconcile_agent_graph_proposal_discard_endpoint(
+    conversation_id: str,
+    payload: AgentDiscardGraphProposalRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentGraphChangeSetReconcileResponse:
+    result = reconcile_agent_graph_proposal_discard_tool(
+        session,
+        conversation_id=conversation_id,
+        idempotency_key=idempotency_key,
+        proposal_id=payload.proposal_id,
+    )
+    return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
+
+
+@router.post("/{conversation_id}/workflow-runs/{run_id}/cancel")
+def cancel_agent_workflow_run_endpoint(
+    conversation_id: str,
+    run_id: str = Path(min_length=1, max_length=64),
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> dict:
+    return cancel_agent_workflow_run_tool(
+        session,
+        conversation_id=conversation_id,
+        run_id=run_id,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/{conversation_id}/workflow-runs/{run_id}/cancel/reconcile",
+    response_model=AgentGraphChangeSetReconcileResponse,
+)
+def reconcile_agent_workflow_run_cancel_endpoint(
+    conversation_id: str,
+    run_id: str = Path(min_length=1, max_length=64),
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentGraphChangeSetReconcileResponse:
+    result = reconcile_agent_workflow_run_cancel_tool(
+        session,
+        conversation_id=conversation_id,
+        run_id=run_id,
+        idempotency_key=idempotency_key,
+    )
+    return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
+
+
+@router.post("/{conversation_id}/canvas/focus")
+def focus_agent_canvas_items_endpoint(
+    conversation_id: str,
+    payload: AgentCanvasFocusRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> dict:
+    return focus_agent_canvas_items_tool(
+        session,
+        conversation_id=conversation_id,
+        node_ids=payload.node_ids,
+        edge_ids=payload.edge_ids,
+        group_ids=payload.group_ids,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/{conversation_id}/canvas/focus/reconcile",
+    response_model=AgentGraphChangeSetReconcileResponse,
+)
+def reconcile_agent_canvas_focus_endpoint(
+    conversation_id: str,
+    payload: AgentCanvasFocusRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentGraphChangeSetReconcileResponse:
+    result = reconcile_agent_canvas_focus_tool(
+        session,
+        conversation_id=conversation_id,
+        node_ids=payload.node_ids,
+        edge_ids=payload.edge_ids,
+        group_ids=payload.group_ids,
+        idempotency_key=idempotency_key,
     )
     return AgentGraphChangeSetReconcileResponse.model_validate(result, from_attributes=True)
 
@@ -921,41 +1040,6 @@ def inspect_agent_global_workflow_runs_endpoint(
         limit=payload.limit,
     )
     return InspectAgentWorkflowRunsResponse.model_validate({"items": items})
-
-
-@router.get(
-    "/{conversation_id}/legacy-archives",
-    response_model=AgentLegacyArchiveListResponse,
-)
-) -> AgentLegacyArchiveListResponse:
-    return AgentLegacyArchiveListResponse.model_validate(
-        list_agent_legacy_archives(
-            session,
-            conversation_id=conversation_id,
-            kind=kind,
-            query=query,
-            after=after,
-            limit=limit,
-        )
-    )
-
-
-@router.post(
-    "/{conversation_id}/legacy-archives/inspect",
-    response_model=AgentLegacyArchiveInspectResponse,
-)
-) -> AgentLegacyArchiveInspectResponse:
-    return AgentLegacyArchiveInspectResponse.model_validate(
-        inspect_agent_legacy_archive(
-            session,
-            conversation_id=conversation_id,
-            kind=payload.kind,
-            archive_id=payload.archive_id,
-            section=payload.section,
-            offset=payload.offset,
-            limit=payload.limit,
-        )
-    )
 
 
 @router.get("/{conversation_id}/assets/{asset_id}/content")

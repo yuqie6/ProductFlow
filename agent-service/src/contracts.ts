@@ -348,7 +348,7 @@ export function sameRuntimeScope(left: Scope, right: Scope): boolean {
     left.conversation_id === right.conversation_id &&
     left.task_id === right.task_id &&
     left.product_id === right.product_id &&
-left.run_id === right.run_id
+    left.run_id === right.run_id
   );
 }
 
@@ -381,11 +381,12 @@ export function toolKind(name: string): ToolStepKind {
   if (name === "load_productflow_skill") return "load_skill";
   if (name === "ask_user") return "ask_question";
   if (name === "apply_graph_change_set_v1") return "apply_graph";
-  if (name === "propose_graph_change_set_v1" || name.includes("graph_proposal")) return "propose_graph";
+  if (name === "propose_graph_change_set_v1" || name === "discard_workflow_proposal_v1" || name.includes("graph_proposal")) return "propose_graph";
+  if (name === "cancel_workflow_run_v1") return "request_workflow_run";
   if (name.includes("draft")) return "propose_draft";
   if (name.includes("request_workflow_run")) return "request_workflow_run";
   if (name.includes("workspace")) return "create_product";
-if (name.includes("asset") || name.includes("media")) return name.includes("inspect") ? "inspect_image" : "organize_assets";
+  if (name.includes("asset") || name.includes("media")) return name.includes("inspect") ? "inspect_image" : "organize_assets";
   if (name.includes("context") || name.includes("product") || name.includes("workflow")) return "inspect_context";
   if (name.includes("run")) return "read_history";
   return "inspect_context";

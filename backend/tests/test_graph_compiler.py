@@ -73,8 +73,7 @@ def test_context_compiler_reads_template_facts_and_references() -> None:
     assert brief_runtime.node_type == GraphNodeType.CREATIVE_BRIEF
     assert [item.asset_id for item in brief_runtime.reference_images] == ["asset-a"]
     assert brief_runtime.text_policy == "none"
-    assert {item["key"] for item in visual_runtime.image_types} >= {"hero"}
-    assert any(item["family"] == "photography" for item in visual_runtime.image_types)
+    assert visual_runtime.image_types == ()
 
 
 def test_prompt_compiler_includes_template_reference_images() -> None:
@@ -137,6 +136,68 @@ def test_image_compiler_requires_prompt_artifact_and_prompt_edge() -> None:
     assert "images" not in runtime.prompt_payload or True
     assert [item.asset_id for item in runtime.reference_images] == ["asset-a"]
     assert runtime.generation_spec["aspect_ratio"] == "1:1"
+
+
+def test_image_compiler_allows_missing_reference_edge() -> None:
+    graph = _template_graph()
+    image = next(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    reference_edges = [
+        DisconnectEdgeOp(edge_ref=edge.id)
+        for edge in graph.edges
+        if edge.target_node_id == image.id and edge.role.value == "reference"
+    ]
+    disconnected = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="去掉生图参考边",
+            operations=reference_edges,
+        ),
+    )
+    artifacts = GraphRuntimeArtifacts().with_prompt(
+        prompt.id,
+        artifact_id="art-1",
+        payload={"design_goal": "海报"},
+    )
+    runtime = compile_image_runtime(disconnected, image.id, _sources_for(disconnected), artifacts)
+    assert runtime.reference_images == ()
+    assert runtime.prompt_artifact_id == "art-1"
+
+
+def test_image_digest_ignores_delivery_spec() -> None:
+    graph = _template_graph()
+    image = next(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    artifacts = GraphRuntimeArtifacts().with_prompt(
+        prompt.id,
+        artifact_id="art-1",
+        payload={"design_goal": "海报"},
+    )
+    baseline = compile_image_runtime(graph, image.id, _sources_for(graph), artifacts)
+    with_delivery = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="写入交付规格",
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=image.id,
+                    config={
+                        **image.config,
+                        "delivery_spec": {
+                            "width": 48,
+                            "height": 48,
+                            "format": "png",
+                            "fit": "contain",
+                        },
+                    },
+                )
+            ],
+        ),
+    )
+    updated = compile_image_runtime(with_delivery, image.id, _sources_for(with_delivery), artifacts)
+    assert updated.input_digest == baseline.input_digest
 
 
 def test_image_compiler_separates_missing_prompt_edge_from_invalid_config() -> None:
@@ -267,18 +328,41 @@ def test_graph_scope_selects_processing_nodes_in_topo_order() -> None:
     assert types.index(GraphNodeType.PROMPT_GENERATION) < types.index(GraphNodeType.IMAGE_GENERATION)
 
 
-def test_node_scope_runs_only_the_target_processing_node() -> None:
+def test_node_scope_runs_stale_ancestors_not_downstream() -> None:
     graph = _template_graph()
     visual = next(node for node in graph.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
     prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
     image = next(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
-    assert select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=visual.id) == (visual.id,)
-    assert select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=prompt.id) == (prompt.id,)
-    assert select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=image.id) == (image.id,)
     to_image = select_run_node_ids(graph, scope=GraphRunScope.TO_NODE, target_node_id=image.id)
+    without_sources = select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=image.id)
     assert visual.id in to_image
-    assert prompt.id in to_image
-    assert to_image[-1] == image.id
+    assert prompt.id in without_sources
+    assert visual.id not in without_sources
+    assert without_sources[-1] == image.id
+    assert select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=prompt.id) == (prompt.id,)
+    assert select_run_node_ids(graph, scope=GraphRunScope.NODE, target_node_id=visual.id) == (visual.id,)
+
+    current = _sources_for(graph)
+    prompt_digest = compile_prompt_runtime(graph, prompt.id, current).input_digest
+    record = current[prompt.id]
+    current[prompt.id] = GraphSourceRecord(
+        facts=record.facts,
+        product_source=record.product_source,
+        brief=record.brief,
+        visual_payload=record.visual_payload,
+        visual_system_version_id=record.visual_system_version_id,
+        bound_asset_id=record.bound_asset_id,
+        bound_asset_label=record.bound_asset_label,
+        bound_asset_mime_type=record.bound_asset_mime_type,
+        current_artifact_id="artifact-prompt",
+        current_input_digest=prompt_digest,
+    )
+    assert select_run_node_ids(
+        graph,
+        scope=GraphRunScope.NODE,
+        target_node_id=image.id,
+        sources=current,
+    ) == (image.id,)
 
 
 def test_strip_v3_prompt_payload_drops_topology_keys() -> None:
@@ -359,7 +443,7 @@ def test_prompt_compiler_ignores_disconnected_image_assets() -> None:
     assert runtime.reference_images == ()
 
 
-def test_prompt_compiler_reads_downstream_image_text_policy() -> None:
+def test_prompt_compiler_ignores_downstream_image_text_policy() -> None:
     graph = _template_graph()
     prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
     image = next(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
@@ -384,8 +468,8 @@ def test_prompt_compiler_reads_downstream_image_text_policy() -> None:
         ),
     )
     runtime = compile_prompt_runtime(updated, prompt.id, _sources_for(updated))
-    assert runtime.text_policy == "required"
-    assert runtime.text_language == "zh-CN"
+    assert runtime.text_policy == "none"
+    assert runtime.text_language is None
 
 
 def test_context_compiler_uses_only_incoming_edges() -> None:

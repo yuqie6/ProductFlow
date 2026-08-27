@@ -1,4 +1,8 @@
-"""schema-v3 图运行：内容节点调 prompt 并回写 config，图片节点调 image provider；无法证明的 effect 标 unknown。"""
+"""schema-v3 图运行：内容节点调 prompt 并回写 config，图片节点调 image provider；无法证明的 effect 标 unknown。
+
+同一 WorkflowGraphRun 由一个 worker 持有。互不依赖的处理节点可同时打 provider，
+上限为 runtime generation_max_concurrent_tasks。
+"""
 
 from __future__ import annotations
 
@@ -7,10 +11,12 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ValidationError
 from sqlalchemy import select, text, update
@@ -50,6 +56,7 @@ from productflow_backend.application.product_workflow.graph_provider_effects imp
 )
 from productflow_backend.application.product_workflow.graph_run_durability import (
     claim_queued_node_run,
+    complete_graph_run_if_nodes_terminal,
     fail_claimed_node,
     fail_graph_run,
     mark_graph_run_unknown,
@@ -113,6 +120,7 @@ from productflow_backend.infrastructure.prompt.base import (
     PromptGenerationRequest,
     PromptReferenceImage,
 )
+from productflow_backend.infrastructure.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -120,6 +128,8 @@ SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _effect_phase_hook: Callable[[str, WorkflowGraphNodeRun], None] | None = None
 _storage_bound_commit_hook: Callable[[Session, StorageWriteCompensation], None] | None = None
 GRAPH_RUN_ADVISORY_LOCK_NAMESPACE = 847261
+_BLOCKED_UPSTREAM_REASON = "上游处理节点未成功"
+_CAPACITY_WAIT_SECONDS = 0.25
 _graph_run_execution_locks_guard = threading.Lock()
 _graph_run_execution_locks: dict[str, threading.Lock] = {}
 
@@ -169,6 +179,9 @@ def _execute_graph_run(
     run = session.get(WorkflowGraphRun, run_id)
     if run is None or run.status != WorkflowRunStatus.RUNNING:
         return
+    if complete_graph_run_if_nodes_terminal(session, run):
+        session.commit()
+        return
     graph_row = session.get(WorkflowGraph, run.graph_id)
     if graph_row is None:
         raise NotFoundError("商品工作流不存在")
@@ -177,69 +190,156 @@ def _execute_graph_run(
     resolved_storage = storage or LocalStorage()
     snapshot = run.snapshot_json
     graph = applied_graph_from_snapshot(snapshot)
-    sources = sources_from_snapshot(snapshot)
-    artifacts = artifacts_from_sources(sources)
-    node_runs = session.scalars(
-        select(WorkflowGraphNodeRun)
-        .where(WorkflowGraphNodeRun.graph_run_id == run.id)
-        .order_by(WorkflowGraphNodeRun.sort_order, WorkflowGraphNodeRun.id)
-    ).all()
-    artifacts, sources = _hydrate_runtime_from_succeeded_node_runs(
-        session,
-        node_runs=node_runs,
-        sources=sources,
-        artifacts=artifacts,
-    )
-    for node_run in node_runs:
-        session.refresh(run)
-        if run.status in {WorkflowRunStatus.CANCELLED, WorkflowRunStatus.FAILED}:
+    max_workers = max(1, get_runtime_settings(session).generation_max_concurrent_tasks)
+    executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"graph-run-{run_id[:8]}")
+    futures: dict[Future[None], str] = {}
+    stop_claiming = False
+    try:
+        while True:
+            session.rollback()
+            session.expire_all()
+            run = session.get(WorkflowGraphRun, run_id)
+            if run is None or run.status != WorkflowRunStatus.RUNNING:
+                break
+            if stop_claiming and not futures:
+                return
+            node_runs = _load_node_runs(session, run.id)
+            if _fail_blocked_queued_nodes(session, graph, node_runs):
+                continue
+            ready = [
+                item
+                for item in node_runs
+                if item.status == WorkflowNodeStatus.QUEUED
+                and _processing_upstream_state(graph, node_runs, item) == "ready"
+            ]
+            if not ready and not futures:
+                if complete_graph_run_if_nodes_terminal(session, run):
+                    session.commit()
+                return
+            claimed = False
+            if not stop_claiming:
+                for node_run in ready:
+                    if not claim_queued_node_run(session, node_run, notify=_notify_effect_phase):
+                        continue
+                    future = executor.submit(
+                        _execute_claimed_node_isolated,
+                        run_id=run.id,
+                        node_run_id=node_run.id,
+                        dependencies=resolved_dependencies,
+                        storage=resolved_storage,
+                        product_id=product_id,
+                    )
+                    futures[future] = node_run.id
+                    claimed = True
+            if futures:
+                timeout = None if claimed or stop_claiming else _CAPACITY_WAIT_SECONDS
+                done, _pending = wait(tuple(futures), return_when=FIRST_COMPLETED, timeout=timeout)
+                for future in done:
+                    futures.pop(future, None)
+                    try:
+                        future.result()
+                    except GraphRunEffectCrash:
+                        stop_claiming = True
+                    except GraphRunProviderUnknown:
+                        pass
+            elif not claimed:
+                time.sleep(_CAPACITY_WAIT_SECONDS)
+    finally:
+        executor.shutdown(wait=True)
+
+
+def _execute_claimed_node_isolated(
+    *,
+    run_id: str,
+    node_run_id: str,
+    dependencies: WorkflowExecutionDependencies,
+    storage: LocalStorage,
+    product_id: str,
+) -> None:
+    """每个已 claim 节点自建 Session。SQLAlchemy Session 不能跨线程共享。"""
+
+    session = get_session_factory()()
+    try:
+        run = session.get(WorkflowGraphRun, run_id)
+        node_run = session.get(WorkflowGraphNodeRun, node_run_id)
+        if run is None or node_run is None:
             return
-        for item in node_runs:
-            session.refresh(item)
-        if node_run.status != WorkflowNodeStatus.QUEUED:
-            continue
-        if not _upstream_processing_runs_succeeded(graph, node_runs, node_run):
-            continue
-        if not claim_queued_node_run(session, node_run, notify=_notify_effect_phase):
-            continue
+        if run.status != WorkflowRunStatus.RUNNING or node_run.status != WorkflowNodeStatus.RUNNING:
+            return
+        graph = applied_graph_from_snapshot(run.snapshot_json)
+        sources = sources_from_snapshot(run.snapshot_json)
+        artifacts = artifacts_from_sources(sources)
+        node_runs = _load_node_runs(session, run.id)
+        artifacts, sources = _hydrate_runtime_from_succeeded_node_runs(
+            session,
+            node_runs=node_runs,
+            sources=sources,
+            artifacts=artifacts,
+        )
         try:
-            artifacts = _execute_node_run(
+            _execute_node_run(
                 session,
                 run=run,
                 node_run=node_run,
                 graph=graph,
                 sources=sources,
                 artifacts=artifacts,
-                dependencies=resolved_dependencies,
-                storage=resolved_storage,
+                dependencies=dependencies,
+                storage=storage,
                 product_id=product_id,
             )
         except GraphRunEffectCrash:
-            return
+            raise
         except GraphRunProviderUnknown:
-            return
+            raise
         except BusinessValidationError as exc:
             fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason=str(exc))
-            return
         except IntegrityError:
-            logger.exception("schema-v3 graph node persist conflict: run_id=%s node_run_id=%s", run.id, node_run.id)
+            logger.exception(
+                "schema-v3 graph node persist conflict: run_id=%s node_run_id=%s",
+                run.id,
+                node_run.id,
+            )
             fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
-            return
         except Exception:
             logger.exception("schema-v3 graph node run failed: run_id=%s node_run_id=%s", run.id, node_run.id)
             fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
-            return
-    session.refresh(run)
-    if run.status != WorkflowRunStatus.RUNNING:
-        return
-    unfinished_statuses = session.scalars(
-        select(WorkflowGraphNodeRun.status).where(WorkflowGraphNodeRun.graph_run_id == run.id)
-    ).all()
-    if any(status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING} for status in unfinished_statuses):
-        return
-    run.status = WorkflowRunStatus.SUCCEEDED
-    run.finished_at = now_utc()
+    finally:
+        session.close()
+
+
+def _load_node_runs(session: Session, run_id: str) -> list[WorkflowGraphNodeRun]:
+    return list(
+        session.scalars(
+            select(WorkflowGraphNodeRun)
+            .where(WorkflowGraphNodeRun.graph_run_id == run_id)
+            .order_by(WorkflowGraphNodeRun.sort_order, WorkflowGraphNodeRun.id)
+        ).all()
+    )
+
+
+def _fail_blocked_queued_nodes(
+    session: Session,
+    graph: Any,
+    node_runs: Sequence[WorkflowGraphNodeRun],
+) -> bool:
+    blocked = [
+        item
+        for item in node_runs
+        if item.status == WorkflowNodeStatus.QUEUED
+        and _processing_upstream_state(graph, node_runs, item) == "blocked"
+    ]
+    if not blocked:
+        return False
+    now = now_utc()
+    for node_run in blocked:
+        node_run.status = WorkflowNodeStatus.FAILED
+        node_run.failure_reason = _BLOCKED_UPSTREAM_REASON
+        node_run.finished_at = now
+        node_run.active_attempt_id = None
+        node_run.progress_updated_at = now
     session.commit()
+    return True
 
 
 def _execute_node_run(
@@ -1415,14 +1515,15 @@ def _release_graph_run_advisory_lock(session: Session, run_id: str) -> None:
         logger.exception("schema-v3 graph run lock release failed: run_id=%s", run_id)
 
 
-def _upstream_processing_runs_succeeded(
+def _processing_upstream_state(
     graph: Any,
     node_runs: Sequence[WorkflowGraphNodeRun],
     node_run: WorkflowGraphNodeRun,
-) -> bool:
+) -> Literal["ready", "wait", "blocked"]:
     if node_run.node_id is None:
-        return True
+        return "ready"
     by_node_id = {item.node_id: item for item in node_runs if item.node_id is not None}
+    waiting = False
     for edge in graph.incoming(node_run.node_id):
         try:
             source = graph.node(edge.source_node_id)
@@ -1433,9 +1534,21 @@ def _upstream_processing_runs_succeeded(
         upstream = by_node_id.get(source.id)
         if upstream is None:
             continue
-        if upstream.status != WorkflowNodeStatus.SUCCEEDED:
-            return False
-    return True
+        if upstream.status == WorkflowNodeStatus.SUCCEEDED:
+            continue
+        if upstream.status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING}:
+            waiting = True
+            continue
+        return "blocked"
+    return "wait" if waiting else "ready"
+
+
+def _upstream_processing_runs_succeeded(
+    graph: Any,
+    node_runs: Sequence[WorkflowGraphNodeRun],
+    node_run: WorkflowGraphNodeRun,
+) -> bool:
+    return _processing_upstream_state(graph, node_runs, node_run) == "ready"
 
 
 def _hydrate_runtime_from_succeeded_node_runs(

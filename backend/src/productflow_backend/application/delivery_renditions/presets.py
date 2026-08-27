@@ -10,7 +10,7 @@ from productflow_backend.domain.errors import NotFoundError
 from productflow_backend.domain.image_specs import DeliverySpec
 
 DELIVERY_PRESET_REVIEWED_AT = "2026-08-24"
-DELIVERY_PRESET_SOURCE = "docs/specs/productflow-studio-requirements.md §18"
+DELIVERY_PRESET_SOURCE = "docs/ARCHITECTURE.md §7"
 DELIVERY_PRESET_DISCLAIMER = (
     "内置模板仅提供便捷默认值，不构成平台审核或合规保证；平台规则可能变化，请在使用前自行确认。"
 )

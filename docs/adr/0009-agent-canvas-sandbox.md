@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted；第 1～4 刀与商品路径 WorkflowDraft 退休已落地。当前事实见 `CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`。剩余 Goal 托管环见 [`docs/specs/agent-canvas-sandbox.md`](../specs/agent-canvas-sandbox.md) 与 [`docs/ROADMAP.md`](../ROADMAP.md)。
+Accepted；第 1～4 刀、商品路径 WorkflowDraft 退休，以及 Goal 托管环（显式 `AgentTask`，跑图结束不等于完成）已落地。当前事实见 `CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`。对话壳仍见 [`docs/specs/agent-canvas-sandbox.md`](../specs/agent-canvas-sandbox.md) 与 [`docs/ROADMAP.md`](../ROADMAP.md)。
 
 Decision owner：ProductFlow repository owner。
 
@@ -125,4 +125,4 @@ Pi `sameRuntimeScope` 的 run 身份只包括 conversation / task / run / scope_
 - ADR 0005：工作台 UI。画布占主导区域；对话是可关掉的一层。Agent 对话壳的响应式不在本 ADR 实现刀内。工作台手感以 `docs/specs/workbench.md` 为准。
 - ADR 0007：Pi 仍是 loop；本 ADR 明确 ProductFlow 是该 loop 的沙箱 WebUI。
 - ADR 0008：图权威、ChangeSet、空图合法。本 ADR 落实其 §11 的创建入口，并加上会话归属与可选 Goal。
-- `docs/specs/global-agent-human-workflow-design.md`：Session/Task/WorkflowRun 不得合并。本 ADR 收紧「Session 不绑定商品」：画布 Session 绑定商品，全局 Session 不绑定。
+- `CONTEXT.md`：Session / Task / WorkflowRun 不得合并。本 ADR 收紧「Session 不绑定商品」：画布 Session 绑定商品，全局 Session 不绑定。

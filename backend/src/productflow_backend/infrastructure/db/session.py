@@ -18,6 +18,7 @@ def enable_sqlite_foreign_keys(engine: Engine) -> Engine:
     def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     return engine
@@ -26,7 +27,9 @@ def enable_sqlite_foreign_keys(engine: Engine) -> Engine:
 @lru_cache(maxsize=1)
 def get_engine():
     settings = get_settings()
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+    connect_args = (
+        {"check_same_thread": False, "timeout": 30.0} if settings.database_url.startswith("sqlite") else {}
+    )
     return enable_sqlite_foreign_keys(
         create_engine(
             settings.database_url,

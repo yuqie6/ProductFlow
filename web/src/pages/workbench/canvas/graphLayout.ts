@@ -201,6 +201,36 @@ export function buildDeleteNodeOperations(nodeIds: readonly string[]): GraphChan
   return nodeIds.map((nodeId) => ({ op: "delete_node", node_ref: nodeId }));
 }
 
+/** 生图节点当前输出可以固定成独立 image_asset。绑定不是 reference 边。 */
+export function graphNodeHasPinnableOutput(
+  node: Pick<GraphNode, "node_type" | "preview_asset_id">,
+): boolean {
+  return node.node_type === "image_generation" && Boolean(node.preview_asset_id);
+}
+
+/** 把生图节点当前输出固定成独立 image_asset。绑定不是 reference 边。 */
+export function buildPinImageAssetOperations(
+  graph: GraphProjection,
+  nodeId: string,
+  title: string,
+): GraphChangeSet["operations"] {
+  const source = graph.nodes.find((node) => node.id === nodeId);
+  if (!source || !graphNodeHasPinnableOutput(source)) {
+    return [];
+  }
+  return [{
+    op: "create_node",
+    client_ref: graphChangeSetClientRef("node"),
+    node_type: "image_asset",
+    title,
+    position_x: snapGraphCoordinate(source.position_x + GRAPH_DUPLICATE_OFFSET),
+    position_y: snapGraphCoordinate(source.position_y + GRAPH_DUPLICATE_OFFSET),
+    config: {},
+    bound_asset_id: source.preview_asset_id,
+    ...(source.group_id ? { group_ref: source.group_id } : {}),
+  }];
+}
+
 export function buildRenameGroupOperations(groupId: string, title: string): GraphChangeSet["operations"] {
   return [{ op: "rename_group", group_ref: groupId, title }];
 }

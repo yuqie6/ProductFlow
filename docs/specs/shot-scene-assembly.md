@@ -4,7 +4,7 @@
 
 - 文档状态：Approved
 - 批准依据：仓库目标「完成 Shot/scene assembly plan」。
-- 目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
+- 目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`；当前节点与分组形状见 `docs/ARCHITECTURE.md` §6。
 - 当前实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`
 
 ## 2. 用户对象

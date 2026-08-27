@@ -182,6 +182,17 @@ export function useAgentConversation({
     },
     [conversation.id, productId, queryClient, turnsKey],
   );
+  const invalidateConversation = useCallback(() => {
+    const jobs = [
+      queryClient.invalidateQueries({ queryKey: turnsKey }),
+      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-tasks"] }),
+    ];
+    if (taskId) {
+      jobs.push(queryClient.invalidateQueries({ queryKey: ["agent-task", taskId] }));
+    }
+    return Promise.all(jobs);
+  }, [queryClient, taskId, turnsKey]);
 
   useEffect(() => {
     if (latestProjectionQuery.data) {
@@ -197,22 +208,19 @@ export function useAgentConversation({
         page_context: input.page_context ?? pageContext,
       }),
     onSuccess: (response) => cacheTurn(response.turn),
-    onSettled: () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: turnsKey }),
-      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
-    ]),
+    onSettled: () => invalidateConversation(),
   });
   const cancelTurnMutation = useMutation({
     mutationFn: (projectionId: string) =>
       api.cancelAgentTurn(productId, conversation.id, projectionId),
     onSuccess: cacheTurn,
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => invalidateConversation(),
   });
   const resumeTurnMutation = useMutation({
     mutationFn: (projectionId: string) =>
       api.resumeAgentTurn(productId, conversation.id, projectionId),
     onSuccess: cacheTurn,
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => invalidateConversation(),
   });
   const answerQuestionMutation = useMutation<AnswerQuestionResult, Error, AnswerQuestionInput>({
     mutationFn: async ({ projectionId, questionId, answer }) => {
@@ -234,7 +242,7 @@ export function useAgentConversation({
       cacheTurn(answered);
       cacheTurn(continuation);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => invalidateConversation(),
   });
 
   return {

@@ -29,7 +29,11 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     get_session_factory.cache_clear()
 
     engine = enable_sqlite_foreign_keys(
-        create_engine(f"sqlite:///{database_path}", future=True, connect_args={"check_same_thread": False})
+        create_engine(
+            f"sqlite:///{database_path}",
+            future=True,
+            connect_args={"check_same_thread": False, "timeout": 30.0},
+        )
     )
     Base.metadata.create_all(engine)
     yield storage_root

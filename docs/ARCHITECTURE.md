@@ -65,7 +65,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 商品工作台位于 `pages/workbench/`，按职责分成三组：
 
-- `workbench/agent/`：页面编排、对话、SSE 事件、问题确认和图提案确认。
+- `workbench/agent/`：页面编排、对话、SSE 事件、问题确认、图提案确认和 Goal 托管环。
 - `workbench/canvas/`：当前 Graph 画布、节点详情、运行、配方和交付图。
 - `workbench/chrome/`：画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
 
@@ -78,7 +78,7 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 | 能力 | Owner | 主要测试 |
 |---|---|---|
 | Agent 创建表单 | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent 对话、SSE、图提案 | `pages/workbench/agent/` | reducer, event, conversation 与提案测试 |
+| Agent 对话、SSE、Goal | `pages/workbench/agent/` | reducer, event, conversation, Goal 与提案测试 |
 | Graph 画布与详情 | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs and rendition tests |
 | 全局素材库与工作流子图库 | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
@@ -105,7 +105,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、continuation Turn、`tool_steps` 白名单和 effect reconciliation 以 `application/agent/`、`agent-service/src/pi-runtime.ts` 与 `test_workflow_agent_service.py`、`test_agent_product_workspaces.py`、`test_media_library_drafts.py` 为准。
 
-实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；全局素材 Draft `media_library/drafts.py`。商品 `WorkflowDraft` HTTP 已删除，对应 URL 返回 404。
+实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；全局素材 Draft `media_library/drafts.py`。商品 `WorkflowDraft` HTTP 已删除，对应 URL 返回 404。商品 Goal 是显式 `AgentTask`：Turn 或 `WorkflowGraphRun` 结束不会把 Goal 标成完成；用户通过 `POST /api/v2/agent-tasks/{id}/complete` 完成。
 
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
@@ -130,7 +130,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。
 
-`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。
+`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 runtime `generation_max_concurrent_tasks`。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。证据：`graph_execution.py`、`test_graph_execution.py`。
 
 工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建待确认请求；用户确认后走同一套 `graph_runs.py` / `graph_execution.py` 约束。商品路径 Agent Turn 不能提交 Draft artifact。单次可逆改图走 `apply_graph_change_set`（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
 

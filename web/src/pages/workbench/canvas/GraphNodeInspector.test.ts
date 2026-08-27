@@ -171,7 +171,7 @@ function renderInspector(
   selected: GraphNode | null,
   client?: QueryClient,
   nextCatalog: GraphNodeCatalog | null = catalog,
-  options: { busy?: boolean; catalogError?: string | null; preview?: boolean; localEdit?: boolean } = {},
+  options: { busy?: boolean; catalogError?: string | null; preview?: boolean; localEdit?: boolean; pinAsset?: boolean } = {},
 ): string {
   const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(
@@ -188,6 +188,7 @@ function renderInspector(
       onOpenLibrary: () => undefined,
       onPreviewImage: options.preview ? () => undefined : undefined,
       onOpenLocalEdit: options.localEdit ? () => undefined : undefined,
+      onPinAsset: options.pinAsset ? () => undefined : undefined,
     }),
   ));
 }
@@ -233,6 +234,20 @@ describe("GraphNodeInspector", () => {
     expect(markup).toMatch(/data-fidelity-submit[^>]*disabled=""/);
   });
 
+  it("shows pin-as-image-asset when the generation node has a current output", () => {
+    const selectedImage = node({
+      ...(graph.nodes.find((item) => item.id === "image") ?? {}),
+      id: "image",
+      node_type: "image_generation",
+      preview_asset_id: "asset-current",
+    });
+    const withPin = renderInspector(selectedImage, undefined, catalog, { pinAsset: true });
+    const withoutPin = renderInspector(selectedImage);
+    expect(withPin).toContain("data-graph-pin-asset");
+    expect(withPin).toContain("固定为图片素材");
+    expect(withoutPin).not.toContain("data-graph-pin-asset");
+  });
+
   it("renders server delivery presets with custom support and provenance metadata", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["delivery-presets"], deliveryPresetCatalog);
@@ -257,7 +272,7 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("支持自定义");
     expect(markup).toContain("淘宝/天猫首屏");
     expect(markup).toContain("京东主图");
-    expect(markup).toContain("来源 docs/specs/productflow-studio-requirements.md §18");
+    expect(markup).toContain("来源 docs/ARCHITECTURE.md §7");
     expect(markup).toContain("模板仅提供便捷默认值");
     expect((markup.match(/data-delivery-preset-key=/g) ?? []).length).toBe(5);
   });
@@ -646,7 +661,7 @@ function preset(
     aspect_ratio: aspectRatio,
     applicable_image_type: applicableImageType,
     reviewed_at: "2026-08-24",
-    source: "docs/specs/productflow-studio-requirements.md §18",
+    source: "docs/ARCHITECTURE.md §7",
     disclaimer: "模板仅提供便捷默认值，不构成平台审核或合规保证。",
     delivery_spec: {
       width,

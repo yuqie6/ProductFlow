@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +14,7 @@ from productflow_backend.application.agent.idempotency import (
     canonical_json_request_hash,
     normalize_idempotency_key,
 )
-from productflow_backend.application.agent.tasks import get_agent_task_or_raise
+from productflow_backend.application.agent.tasks import apply_graph_run_status_to_task, get_agent_task_or_raise
 from productflow_backend.application.product_workflow.graph_commands import (
     get_active_workflow_graph,
     load_applied_graph,
@@ -590,7 +589,10 @@ def confirm_agent_workflow_run_request(
         request.failure_reason = None
         request.updated_at = now_utc()
         _mark_turn_succeeded(request.turn_projection)
-        _mark_task_running(request.task)
+        if request.graph_run is not None:
+            apply_graph_run_status_to_task(request.task, request.graph_run, session)
+        else:
+            _mark_task_running(request.task)
         request.conversation.status = AgentConversationStatus.COMPLETED
         request.conversation.updated_at = now_utc()
         session.commit()
@@ -622,7 +624,7 @@ def cancel_agent_workflow_run_request(
         request.finished_at = now_utc()
         request.updated_at = now_utc()
         _mark_turn_cancelled(request.turn_projection)
-        _mark_task_cancelled(request.task)
+        _park_task_after_cancelled_run_request(session, request.task)
         request.conversation.status = AgentConversationStatus.CANCELED
         request.conversation.updated_at = now_utc()
         session.commit()
@@ -796,7 +798,11 @@ def _mark_request_waiting(conversation: AgentConversation, task: AgentTask | Non
     now = now_utc()
     conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
     conversation.updated_at = now
-    if task is not None:
+    if task is not None and task.status not in {
+        AgentTaskStatus.SUCCEEDED,
+        AgentTaskStatus.CANCELED,
+        AgentTaskStatus.PAUSED,
+    }:
         task.status = AgentTaskStatus.AWAITING_CONFIRMATION
         task.waiting_reason = "workflow_run_confirmation"
         task.failure_reason = None
@@ -807,6 +813,12 @@ def _mark_request_waiting(conversation: AgentConversation, task: AgentTask | Non
 def _mark_task_running(task: AgentTask | None) -> None:
     if task is None:
         return
+    if task.status in {
+        AgentTaskStatus.SUCCEEDED,
+        AgentTaskStatus.CANCELED,
+        AgentTaskStatus.PAUSED,
+    }:
+        return
     now = now_utc()
     task.status = AgentTaskStatus.RUNNING
     task.waiting_reason = "workflow_run_running"
@@ -816,10 +828,26 @@ def _mark_task_running(task: AgentTask | None) -> None:
     task.updated_at = now
 
 
-def _mark_task_cancelled(task: AgentTask | None) -> None:
+def _park_task_after_cancelled_run_request(session: Session, task: AgentTask | None) -> None:
     if task is None:
         return
+    if task.status in {
+        AgentTaskStatus.SUCCEEDED,
+        AgentTaskStatus.CANCELED,
+        AgentTaskStatus.PAUSED,
+    }:
+        return
+    conversation = task.conversation
+    if conversation is None and task.conversation_id is not None:
+        conversation = session.get(AgentConversation, task.conversation_id)
     now = now_utc()
+    if conversation is not None and conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW:
+        task.status = AgentTaskStatus.WAITING_USER
+        task.waiting_reason = "goal_loop"
+        task.failure_reason = None
+        task.finished_at = None
+        task.updated_at = now
+        return
     task.status = AgentTaskStatus.CANCELED
     task.waiting_reason = None
     task.canceled_at = now
@@ -837,28 +865,31 @@ def _sync_request_from_workflow_run(session: Session, request: AgentWorkflowRunR
         if request.status != AgentWorkflowRunRequestStatus.CONFIRMED:
             request.status = AgentWorkflowRunRequestStatus.CONFIRMED
             changed = True
-        if request.task is not None:
-            _mark_task_running(request.task)
+        task_changed = apply_graph_run_status_to_task(request.task, run, session)
+        changed = changed or task_changed
     elif run.status == WorkflowRunStatus.SUCCEEDED:
         if request.status != AgentWorkflowRunRequestStatus.SUCCEEDED:
             request.status = AgentWorkflowRunRequestStatus.SUCCEEDED
             request.finished_at = run.finished_at or now
             changed = True
-        _mark_task_finished(request.task, AgentTaskStatus.SUCCEEDED, None, run.finished_at or now)
+        task_changed = apply_graph_run_status_to_task(request.task, run, session)
+        changed = changed or task_changed
     elif run.status == WorkflowRunStatus.FAILED:
         if request.status != AgentWorkflowRunRequestStatus.FAILED or request.failure_reason != run.failure_reason:
             request.status = AgentWorkflowRunRequestStatus.FAILED
             request.failure_reason = run.failure_reason
             request.finished_at = run.finished_at or now
             changed = True
-        _mark_task_finished(request.task, AgentTaskStatus.FAILED, run.failure_reason, run.finished_at or now)
+        task_changed = apply_graph_run_status_to_task(request.task, run, session)
+        changed = changed or task_changed
     elif run.status == WorkflowRunStatus.CANCELLED:
         if request.status != AgentWorkflowRunRequestStatus.CANCELLED:
             request.status = AgentWorkflowRunRequestStatus.CANCELLED
             request.failure_reason = run.failure_reason or GRAPH_CANCELLED_REASON
             request.finished_at = run.finished_at or now
             changed = True
-        _mark_task_finished(request.task, AgentTaskStatus.CANCELED, request.failure_reason, run.finished_at or now)
+        task_changed = apply_graph_run_status_to_task(request.task, run, session)
+        changed = changed or task_changed
     if changed:
         request.updated_at = now
     return changed
@@ -880,21 +911,6 @@ def _mark_turn_cancelled(projection: AgentTurnProjection | None) -> None:
     projection.status = AgentTurnStatus.CANCELED
     projection.finished_at = projection.finished_at or now
     projection.updated_at = now
-
-
-def _mark_task_finished(
-    task: AgentTask | None,
-    status: AgentTaskStatus,
-    failure_reason: str | None,
-    finished_at: Any,
-) -> None:
-    if task is None:
-        return
-    task.status = status
-    task.waiting_reason = None
-    task.failure_reason = failure_reason
-    task.finished_at = finished_at
-    task.updated_at = now_utc()
 
 
 def _load_request(session: Session, request_id: str) -> AgentWorkflowRunRequest:

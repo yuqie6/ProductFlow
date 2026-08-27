@@ -44,7 +44,7 @@ const catalog: GraphNodeCatalog = {
       output_data_type: "image_asset",
       kind: "processing",
       accepts: [
-        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: true },
+        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
         { data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true },
       ],
@@ -200,7 +200,7 @@ describe("missingRequiredRunRoles", () => {
   it("lists Catalog required_to_run gaps on the node", () => {
     const image = graph.nodes.find((node) => node.id === "image");
     expect(image).toBeTruthy();
-    expect(missingRequiredRunRoles(image!, catalog)).toEqual(["reference", "prompt"]);
+    expect(missingRequiredRunRoles(image!, catalog)).toEqual(["prompt"]);
   });
 });
 
