@@ -1,12 +1,2 @@
 # Project-scoped Codex defaults.
 project_doc_fallback_filenames = ["AGENTS.md"]
-model = "gpt-5.6-sol"
-model_reasoning_effort = "medium"
-
-[agents.default]
-description = "ProductFlow implementation agent using Luna with maximum reasoning."
-config_file = "agent-layers/luna-max.toml"
-
-[agents.implementer]
-description = "ProductFlow implementation agent using Luna with maximum reasoning."
-config_file = "agent-layers/luna-max.toml"

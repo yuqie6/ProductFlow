@@ -16,8 +16,6 @@ Documentation ownership is defined in `docs/README.md`. Stable docs describe cur
 
 ## Multi-Agent Delivery
 
-For broad implementation work, the primary agent is the orchestrator and integrator. The project-scoped Codex default is `gpt-5.6-sol` with `medium` reasoning. Implementation sub-agents use `gpt-5.6-luna` with `max` reasoning unless the user explicitly selects another model.
-
 The primary agent owns:
 
 - live-truth inspection, causal analysis, architecture and contract decisions;
@@ -35,8 +33,6 @@ Implementation sub-agents receive one bounded causal slice at a time. Each task 
 - required wire, persistence and runtime invariants;
 - focused tests and completion evidence;
 - known concurrent work and prohibited cleanup, commit or destructive Git actions.
-
-Spawn implementation agents with the project-defined `implementer` role and bounded context via `fork_turns: none` or a small positive turn count. The role is bound by `.codex/agent-layers/luna-max.toml` to `gpt-5.6-luna` with `max` reasoning; the project `default` sub-agent role uses the same layer. Do not rely on per-call model overrides because a configured agent role owns the effective model and reasoning effort. Include all necessary repository context in the task packet when using `fork_turns: none`.
 
 Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
 
