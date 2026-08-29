@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 )
 
@@ -23,6 +24,10 @@ type Runtime struct {
 
 type RuntimeReader interface {
 	Runtime(ctx context.Context) (Runtime, error)
+}
+
+type LimitsReader interface {
+	UploadLimits(ctx context.Context) (media.Limits, error)
 }
 
 type Store struct {
@@ -70,6 +75,52 @@ func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 		}
 	}
 	return runtime, nil
+}
+
+func (s *Store) UploadLimits(ctx context.Context) (media.Limits, error) {
+	overrides, err := s.overrides(ctx)
+	if err != nil {
+		return media.Limits{}, err
+	}
+	limits := media.Limits{
+		MaxImageBytes:      s.env.UploadMaxImageBytes,
+		MaxPixels:          s.env.UploadMaxPixels,
+		AllowedMIMETypes:   media.ParseMIMEList(s.env.UploadAllowedMIMETypes),
+		MaxBatchFiles:      s.env.UploadMaxBatchFiles,
+		MaxBatchBytes:      s.env.UploadMaxBatchBytes,
+		MaxReferenceImages: s.env.UploadMaxReferenceImages,
+	}
+	if n, ok := parseOverrideInt(overrides, "upload_max_image_bytes"); ok {
+		limits.MaxImageBytes = n
+	}
+	if n, ok := parseOverrideInt(overrides, "upload_max_pixels"); ok {
+		limits.MaxPixels = n
+	}
+	if n, ok := parseOverrideInt(overrides, "upload_max_batch_files"); ok {
+		limits.MaxBatchFiles = n
+	}
+	if n, ok := parseOverrideInt(overrides, "upload_max_batch_bytes"); ok {
+		limits.MaxBatchBytes = n
+	}
+	if n, ok := parseOverrideInt(overrides, "upload_max_reference_images"); ok {
+		limits.MaxReferenceImages = n
+	}
+	if raw, ok := overrides["upload_allowed_image_mime_types"]; ok && strings.TrimSpace(raw) != "" {
+		limits.AllowedMIMETypes = media.ParseMIMEList(raw)
+	}
+	return limits, nil
+}
+
+func parseOverrideInt(overrides map[string]string, key string) (int, bool) {
+	raw, ok := overrides[key]
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 func (s *Store) overrides(ctx context.Context) (map[string]string, error) {

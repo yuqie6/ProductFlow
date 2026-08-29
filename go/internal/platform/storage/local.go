@@ -1,61 +1,109 @@
 package storage
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
 type Local struct {
 	Root string
 }
 
-type Compensation struct {
-	created []string
+type write struct {
+	store Local
+	rel   string
 }
 
-func (c *Compensation) Track(absPath string) {
-	c.created = append(c.created, absPath)
+type Compensation struct {
+	writes []write
+}
+
+func (c *Compensation) Track(store Local, rel string) string {
+	if c == nil {
+		return rel
+	}
+	c.writes = append(c.writes, write{store: store, rel: rel})
+	return rel
+}
+
+func (c *Compensation) Release() {
+	if c == nil {
+		return
+	}
+	c.writes = nil
 }
 
 func (c *Compensation) Rollback() {
-	for i := len(c.created) - 1; i >= 0; i-- {
-		_ = os.Remove(c.created[i])
+	if c == nil {
+		return
 	}
+	for i := len(c.writes) - 1; i >= 0; i-- {
+		_ = c.writes[i].store.DeleteWithVariants(c.writes[i].rel)
+	}
+	c.writes = nil
 }
 
 func (s Local) WriteMedia(mediaID, extension string, content []byte, compensation *Compensation) (rel string, err error) {
+	normalized, err := clockid.Normalize(mediaID)
+	if err != nil {
+		return "", fmt.Errorf("媒体 ID 必须是 UUID")
+	}
 	if extension == "" {
 		extension = ".bin"
 	}
-	rel = filepath.ToSlash(filepath.Join("media", mediaID[:2], mediaID+extension))
-	abs := filepath.Join(s.Root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if !strings.HasPrefix(extension, ".") {
+		extension = "." + extension
+	}
+	rel = filepath.ToSlash(filepath.Join("media", normalized[:2], normalized+extension))
+	if err := s.writeRelative(rel, content); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(abs, content, 0o644); err != nil {
+	compensation.Track(s, rel)
+	if err := s.warmVariants(rel); err != nil {
+		_ = s.DeleteWithVariants(rel)
+		if compensation != nil && len(compensation.writes) > 0 {
+			compensation.writes = compensation.writes[:len(compensation.writes)-1]
+		}
 		return "", err
-	}
-	if compensation != nil {
-		compensation.Track(abs)
 	}
 	return rel, nil
 }
 
-func NewID() string {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		panic(err)
+func (s Local) writeRelative(rel string, content []byte) error {
+	abs, err := s.Resolve(rel)
+	if err != nil {
+		return err
 	}
-	buf[6] = (buf[6] & 0x0f) | 0x40
-	buf[8] = (buf[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(abs, content, 0o644)
 }
 
-func RandomHex(n int) string {
-	buf := make([]byte, n)
-	_, _ = rand.Read(buf)
-	return hex.EncodeToString(buf)
+func (s Local) Resolve(relativePath string) (string, error) {
+	if relativePath == "" || filepath.IsAbs(relativePath) {
+		return "", fmt.Errorf("存储路径必须是相对路径")
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(relativePath))
+	if strings.HasPrefix(cleaned, "..") {
+		return "", fmt.Errorf("存储路径越界")
+	}
+	root, err := filepath.Abs(s.Root)
+	if err != nil {
+		return "", err
+	}
+	abs := filepath.Join(root, cleaned)
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("存储路径越界")
+	}
+	return abs, nil
+}
+
+func NewID() string {
+	return clockid.New()
 }

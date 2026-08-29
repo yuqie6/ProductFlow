@@ -21,6 +21,12 @@ type Config struct {
 	SettingsAccessToken string
 	AdminAccessRequired bool
 	DeletionEnabled     bool
+	UploadMaxImageBytes      int
+	UploadMaxBatchBytes      int
+	UploadMaxBatchFiles      int
+	UploadMaxReferenceImages int
+	UploadMaxPixels          int
+	UploadAllowedMIMETypes   string
 }
 
 func Load() (Config, error) {
@@ -33,6 +39,12 @@ func Load() (Config, error) {
 	v.SetDefault("STORAGE_ROOT", "./backend/storage")
 	v.SetDefault("ADMIN_ACCESS_REQUIRED", true)
 	v.SetDefault("DELETION_ENABLED", false)
+	v.SetDefault("UPLOAD_MAX_IMAGE_BYTES", 10*1024*1024)
+	v.SetDefault("UPLOAD_MAX_BATCH_BYTES", 50*1024*1024)
+	v.SetDefault("UPLOAD_MAX_BATCH_FILES", 20)
+	v.SetDefault("UPLOAD_MAX_REFERENCE_IMAGES", 6)
+	v.SetDefault("UPLOAD_MAX_PIXELS", 16_000_000)
+	v.SetDefault("UPLOAD_ALLOWED_IMAGE_MIME_TYPES", "image/png,image/jpeg,image/webp")
 
 	cfg := Config{
 		AppHost:             v.GetString("APP_HOST"),
@@ -45,8 +57,14 @@ func Load() (Config, error) {
 		SessionCookieSecure: v.GetBool("SESSION_COOKIE_SECURE"),
 		AdminAccessKey:      v.GetString("ADMIN_ACCESS_KEY"),
 		SettingsAccessToken: strings.TrimSpace(v.GetString("SETTINGS_ACCESS_TOKEN")),
-		AdminAccessRequired: v.GetBool("ADMIN_ACCESS_REQUIRED"),
-		DeletionEnabled:     v.GetBool("DELETION_ENABLED"),
+		AdminAccessRequired:      v.GetBool("ADMIN_ACCESS_REQUIRED"),
+		DeletionEnabled:          v.GetBool("DELETION_ENABLED"),
+		UploadMaxImageBytes:      v.GetInt("UPLOAD_MAX_IMAGE_BYTES"),
+		UploadMaxBatchBytes:      v.GetInt("UPLOAD_MAX_BATCH_BYTES"),
+		UploadMaxBatchFiles:      v.GetInt("UPLOAD_MAX_BATCH_FILES"),
+		UploadMaxReferenceImages: v.GetInt("UPLOAD_MAX_REFERENCE_IMAGES"),
+		UploadMaxPixels:          v.GetInt("UPLOAD_MAX_PIXELS"),
+		UploadAllowedMIMETypes:   v.GetString("UPLOAD_ALLOWED_IMAGE_MIME_TYPES"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
