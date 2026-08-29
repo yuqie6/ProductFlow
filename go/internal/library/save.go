@@ -321,7 +321,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 				}
 				return nil
 			}
-			if scanErr != nil && !errors.Is(scanErr, pgx.ErrNoRows) {
+			if !errors.Is(scanErr, pgx.ErrNoRows) {
 				return scanErr
 			}
 		}

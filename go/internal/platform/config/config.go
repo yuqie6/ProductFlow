@@ -27,6 +27,11 @@ type Config struct {
 	UploadMaxReferenceImages int
 	UploadMaxPixels          int
 	UploadAllowedMIMETypes   string
+	AgentServiceBaseURL               string
+	AgentServiceInternalToken         string
+	AgentServiceConnectTimeoutSeconds float64
+	AgentServiceReadTimeoutSeconds    float64
+	AgentTurnSyncPollSeconds          float64
 }
 
 func Load() (Config, error) {
@@ -45,6 +50,9 @@ func Load() (Config, error) {
 	v.SetDefault("UPLOAD_MAX_REFERENCE_IMAGES", 6)
 	v.SetDefault("UPLOAD_MAX_PIXELS", 16_000_000)
 	v.SetDefault("UPLOAD_ALLOWED_IMAGE_MIME_TYPES", "image/png,image/jpeg,image/webp")
+	v.SetDefault("AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS", 5.0)
+	v.SetDefault("AGENT_SERVICE_READ_TIMEOUT_SECONDS", 90.0)
+	v.SetDefault("AGENT_TURN_SYNC_POLL_SECONDS", 1.0)
 
 	cfg := Config{
 		AppHost:             v.GetString("APP_HOST"),
@@ -65,6 +73,11 @@ func Load() (Config, error) {
 		UploadMaxReferenceImages: v.GetInt("UPLOAD_MAX_REFERENCE_IMAGES"),
 		UploadMaxPixels:          v.GetInt("UPLOAD_MAX_PIXELS"),
 		UploadAllowedMIMETypes:   v.GetString("UPLOAD_ALLOWED_IMAGE_MIME_TYPES"),
+		AgentServiceBaseURL:               strings.TrimSpace(v.GetString("AGENT_SERVICE_BASE_URL")),
+		AgentServiceInternalToken:         strings.TrimSpace(v.GetString("AGENT_SERVICE_INTERNAL_TOKEN")),
+		AgentServiceConnectTimeoutSeconds: v.GetFloat64("AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS"),
+		AgentServiceReadTimeoutSeconds:    v.GetFloat64("AGENT_SERVICE_READ_TIMEOUT_SECONDS"),
+		AgentTurnSyncPollSeconds:          v.GetFloat64("AGENT_TURN_SYNC_POLL_SECONDS"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")

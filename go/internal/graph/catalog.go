@@ -18,13 +18,6 @@ var forbiddenConfigKeys = map[string]struct{}{
 
 var imageAssetRoleOrder = []string{"product_identity", "environment", "style", "evidence"}
 
-var imageAssetRoles = map[string]struct{}{
-	"product_identity": {},
-	"environment":      {},
-	"style":            {},
-	"evidence":         {},
-}
-
 var defaultGenerationSpec = map[string]any{
 	"aspect_ratio":       "1:1",
 	"resolution_tier":    "high",
@@ -454,7 +447,7 @@ func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]a
 }
 
 func CatalogVisualOverlay(overlay map[string]any) map[string]any {
-	if overlay == nil || len(overlay) == 0 {
+	if len(overlay) == 0 {
 		return nil
 	}
 	filtered := map[string]any{}

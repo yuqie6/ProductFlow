@@ -131,3 +131,22 @@ func nonemptyMap(m map[string]any) map[string]any {
 	}
 	return m
 }
+
+// MarshalChangeSet 把内存 ChangeSet 编成提案/账本用的 JSON。
+func MarshalChangeSet(cs ChangeSet) ([]byte, error) {
+	ops, err := marshalOperations(cs.Operations)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		BaseGraphRevision int             `json:"base_graph_revision"`
+		Summary           string          `json:"summary"`
+		ActorType         ActorType       `json:"actor_type"`
+		Operations        json.RawMessage `json:"operations"`
+	}{
+		BaseGraphRevision: cs.BaseGraphRevision,
+		Summary:           cs.Summary,
+		ActorType:         cs.ActorType,
+		Operations:        ops,
+	})
+}

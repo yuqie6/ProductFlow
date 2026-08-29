@@ -347,10 +347,3 @@ func intField(v any) int {
 		return 0
 	}
 }
-
-func marshalJSON(v any) ([]byte, error) {
-	if v == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(v)
-}

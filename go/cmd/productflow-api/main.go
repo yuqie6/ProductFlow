@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
@@ -83,6 +84,28 @@ func main() {
 	localedit.HTTP{
 		Service:  localedit.Service{Pool: pool, Media: mediaStore},
 		Settings: settingsStore,
+	}.Register(engine)
+	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
+	if poll < time.Millisecond {
+		poll = time.Millisecond
+	}
+	agent.HTTP{
+		Service: agent.Service{
+			Pool: pool, Graph: graph.Service{Pool: pool},
+			Product:  product.Service{Pool: pool, Media: mediaStore},
+			Library:  library.Service{Pool: pool, Media: mediaStore},
+			Media:    mediaStore,
+			Settings: settingsStore,
+			Gateway: agent.HTTPGateway{
+				BaseURL:        cfg.AgentServiceBaseURL,
+				Token:          cfg.AgentServiceInternalToken,
+				ConnectTimeout: time.Duration(cfg.AgentServiceConnectTimeoutSeconds * float64(time.Second)),
+				ReadTimeout:    time.Duration(cfg.AgentServiceReadTimeoutSeconds * float64(time.Second)),
+			},
+			Poll: poll,
+		},
+		Settings:      settingsStore,
+		InternalToken: cfg.AgentServiceInternalToken,
 	}.Register(engine)
 
 	server := &http.Server{

@@ -97,7 +97,7 @@ func (s Service) List(ctx context.Context, in ListFilter) (ListResponse, error) 
 	folderID := strings.TrimSpace(in.FolderID)
 	tag := ""
 	if strings.TrimSpace(in.Tag) != "" {
-		tag = folder.String(strings.TrimSpace(in.Tag))
+		tag = strings.TrimSpace(in.Tag)
 	}
 	signature := filterSignature(search, sourceType, in.IncludeArchived, folderID, tag)
 	asOf := s.now()

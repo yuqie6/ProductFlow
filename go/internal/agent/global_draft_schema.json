@@ -1,0 +1,509 @@
+{
+  "$defs": {
+    "LibraryArchiveOperationV1": {
+      "additionalProperties": false,
+      "description": "归档可见性；不是删除资产或媒体文件。",
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "archive",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryArchiveTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibraryArchiveOperationV1",
+      "type": "object"
+    },
+    "LibraryArchiveTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "is_archived": {
+          "const": true,
+          "title": "Is Archived",
+          "type": "boolean"
+        }
+      },
+      "title": "LibraryArchiveTargetV1",
+      "type": "object",
+      "required": [
+        "is_archived"
+      ]
+    },
+    "LibraryAssetBeforeV1": {
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "minimum": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "display_name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "folder_id": {
+          "anyOf": [
+            {
+              "maxLength": 36,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Folder Id"
+        },
+        "tag_names": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Tag Names",
+          "type": "array"
+        },
+        "is_archived": {
+          "title": "Is Archived",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "revision",
+        "display_name",
+        "folder_id",
+        "tag_names",
+        "is_archived"
+      ],
+      "title": "LibraryAssetBeforeV1",
+      "type": "object"
+    },
+    "LibraryLinkWorkflowOperationV1": {
+      "additionalProperties": false,
+      "description": "工作流使用关联；节点绑定仍走 ProductImageAsset id。",
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "link_workflow",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryWorkflowLinkTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibraryLinkWorkflowOperationV1",
+      "type": "object"
+    },
+    "LibraryMoveOperationV1": {
+      "additionalProperties": false,
+      "description": "改一层文件夹组织，不删素材。",
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "move",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryMoveTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibraryMoveOperationV1",
+      "type": "object"
+    },
+    "LibraryMoveTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "folder_id": {
+          "anyOf": [
+            {
+              "maxLength": 36,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Folder Id"
+        }
+      },
+      "title": "LibraryMoveTargetV1",
+      "type": "object",
+      "required": [
+        "folder_id"
+      ]
+    },
+    "LibraryOrganizationDraftPayloadV1": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "confirmation_summary": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Confirmation Summary",
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LibraryRenameOperationV1"
+              },
+              {
+                "$ref": "#/$defs/LibraryMoveOperationV1"
+              },
+              {
+                "$ref": "#/$defs/LibrarySetTagsOperationV1"
+              },
+              {
+                "$ref": "#/$defs/LibraryArchiveOperationV1"
+              },
+              {
+                "$ref": "#/$defs/LibraryRestoreOperationV1"
+              },
+              {
+                "$ref": "#/$defs/LibraryLinkWorkflowOperationV1"
+              }
+            ]
+          },
+          "maxItems": 256,
+          "minItems": 1,
+          "title": "Operations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "confirmation_summary",
+        "operations"
+      ],
+      "title": "LibraryOrganizationDraftPayloadV1",
+      "type": "object"
+    },
+    "LibraryRenameOperationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "rename",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryRenameTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibraryRenameOperationV1",
+      "type": "object"
+    },
+    "LibraryRenameTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "display_name"
+      ],
+      "title": "LibraryRenameTargetV1",
+      "type": "object"
+    },
+    "LibraryRestoreOperationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "restore",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryRestoreTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibraryRestoreOperationV1",
+      "type": "object"
+    },
+    "LibraryRestoreTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "is_archived": {
+          "const": false,
+          "title": "Is Archived",
+          "type": "boolean"
+        }
+      },
+      "title": "LibraryRestoreTargetV1",
+      "type": "object",
+      "required": [
+        "is_archived"
+      ]
+    },
+    "LibrarySetTagsOperationV1": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "before": {
+          "$ref": "#/$defs/LibraryAssetBeforeV1"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "operation": {
+          "const": "set_tags",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/LibraryTagsTargetV1"
+        }
+      },
+      "required": [
+        "asset_id",
+        "expected_revision",
+        "before",
+        "reason",
+        "operation",
+        "target"
+      ],
+      "title": "LibrarySetTagsOperationV1",
+      "type": "object"
+    },
+    "LibraryTagsTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "tag_names": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 40,
+          "title": "Tag Names",
+          "type": "array"
+        }
+      },
+      "title": "LibraryTagsTargetV1",
+      "type": "object",
+      "required": [
+        "tag_names"
+      ]
+    },
+    "LibraryWorkflowLinkTargetV1": {
+      "additionalProperties": false,
+      "properties": {
+        "workflow_id": {
+          "maxLength": 36,
+          "minLength": 1,
+          "title": "Workflow Id",
+          "type": "string"
+        },
+        "workflow_title": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Workflow Title",
+          "type": "string"
+        },
+        "expected_workflow_revision": {
+          "minimum": 1,
+          "title": "Expected Workflow Revision",
+          "type": "integer"
+        },
+        "expected_linked": {
+          "title": "Expected Linked",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "workflow_title",
+        "expected_workflow_revision",
+        "expected_linked"
+      ],
+      "title": "LibraryWorkflowLinkTargetV1",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "全局 Agent conversation 暴露的唯一可选 artifact。",
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "draft_kind": {
+      "const": "library_organization",
+      "title": "Draft Kind",
+      "type": "string"
+    },
+    "library_payload": {
+      "$ref": "#/$defs/LibraryOrganizationDraftPayloadV1"
+    }
+  },
+  "required": [
+    "schema_version",
+    "draft_kind",
+    "library_payload"
+  ],
+  "title": "GlobalAgentDraftPayloadV1",
+  "type": "object"
+}

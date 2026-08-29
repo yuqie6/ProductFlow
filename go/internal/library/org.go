@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -245,6 +246,43 @@ func (s Service) MoveAssets(ctx context.Context, assetIDs []string, folderID *st
 			}
 		}
 		out, err = reloadInOrder(ctx, pgxTx, ids)
+		return err
+	})
+	return out, err
+}
+
+// RenameAsset 按 expected revision 改素材显示名。
+func (s Service) RenameAsset(ctx context.Context, assetID, expectedName string, expectedRevision int, name string) (Asset, error) {
+	display := whitespace.ReplaceAllString(strings.TrimSpace(name), " ")
+	if display == "" {
+		return Asset{}, apperr.Validation("素材名称不能为空")
+	}
+	if len([]rune(display)) > maxFilename {
+		return Asset{}, apperr.Validationf("素材名称不能超过 %d 个字符", maxFilename)
+	}
+	expected := whitespace.ReplaceAllString(strings.TrimSpace(expectedName), " ")
+	var out Asset
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		assets, err := lockLibraryAssets(ctx, pgxTx, []string{assetID})
+		if err != nil {
+			return err
+		}
+		if len(assets) == 0 {
+			return apperr.NotFound("素材不存在")
+		}
+		asset := assets[0]
+		if expected != "" && asset.DisplayName != expected {
+			return apperr.Conflict("素材名称已被其他操作修改")
+		}
+		if err := checkRevision(asset, map[string]int{assetID: expectedRevision}); err != nil {
+			return err
+		}
+		if _, err := pgxTx.Exec(ctx, `
+			UPDATE media_library_assets SET display_name = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
+		`, display, s.now(), asset.ID); err != nil {
+			return err
+		}
+		out, err = s.loadAsset(ctx, pgxTx, asset.ID)
 		return err
 	})
 	return out, err

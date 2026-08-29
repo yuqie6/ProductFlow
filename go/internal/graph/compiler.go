@@ -360,10 +360,8 @@ func compileVisual(source AppliedNode, record SourceRecord) (any, any, any, erro
 		return cloned, versionID, cloned, nil
 	}
 	payload := cloneMap(record.VisualPayload)
-	if overlay != nil {
-		for key, value := range overlay {
-			payload[key] = cloneValue(value)
-		}
+	for key, value := range overlay {
+		payload[key] = cloneValue(value)
 	}
 	var overlayOut any
 	if overlay != nil {

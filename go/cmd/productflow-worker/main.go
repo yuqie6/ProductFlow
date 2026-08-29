@@ -9,9 +9,11 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
+	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -62,6 +64,22 @@ func main() {
 	imageExecutor := imagesession.Executor{Pool: pool, Media: mediaStore}
 	deliveryExecutor := delivery.Executor{Pool: pool, Media: mediaStore}
 	localExecutor := localedit.Executor{Pool: pool, Media: mediaStore}
+	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
+	if poll < time.Millisecond {
+		poll = time.Millisecond
+	}
+	agentExecutor := agent.Executor{Service: agent.Service{
+		Pool: pool, Graph: graph.Service{Pool: pool},
+		Product:  productService,
+		Library:  library.Service{Pool: pool, Media: mediaStore},
+		Media:    mediaStore,
+		Gateway: agent.HTTPGateway{
+			BaseURL:     cfg.AgentServiceBaseURL,
+			Token:       cfg.AgentServiceInternalToken,
+			ReadTimeout: time.Duration(cfg.AgentServiceReadTimeoutSeconds * float64(time.Second)),
+		},
+		Poll: poll,
+	}}
 	actors := map[string]queue.ActorFunc{
 		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
 			return executor.ExecuteRun(ctx, aggregateID)
@@ -69,6 +87,7 @@ func main() {
 		queue.ActorImageSession: imageExecutor.Execute,
 		queue.ActorDelivery:     deliveryExecutor.Execute,
 		queue.ActorLocalEdit:    localExecutor.Execute,
+		queue.ActorAgentTurnSync: agentExecutor.Execute,
 	}
 
 	mux := asynq.NewServeMux()

@@ -23,6 +23,8 @@ P7 工作流配方 HTTP 已接线：从 live 图提取、列表/归档、预览�
 
 P8 跑图与耐久投递：`POST/GET /api/v3/products/{id}/workflows/{id}/runs`（含 cancel/retry）。HTTP 只写 `workflow_graph_runs` + `async_dispatches` PENDING，不在请求里打 broker。`just go-dispatcher` 先标 SENT 再 asynq 投递；`just go-worker` claim 后执行图运行（`unknown` 不自动当失败重试）。Compose 用 profile `go` 增加三个 Go 进程，默认 `docker compose up` / `just dev` 仍是 uvicorn + dramatiq。同一数据库不要同时跑 Python 与 Go 两个 dispatcher。
 
+P10 Agent 投影：公开 Session / Task / Conversation / Turn / Workbench / SSE，以及 Pi internal tools（claim、心跳、checkpoint、event、graph/素材/工作区）。Turn 提交先写投影和 `async_dispatches` PENDING；worker 执行 `run_agent_turn_sync`。Gateway 未配置时提交 Turn 在 reserve 前返回 503。`AGENT_TOOL_CONTRACT_VERSION` 仍是 15。
+
 ```bash
 just go-worker
 just go-dispatcher

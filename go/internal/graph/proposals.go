@@ -3,9 +3,12 @@ package graph
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
 type proposalRow struct {
@@ -14,6 +17,67 @@ type proposalRow struct {
 	Status            string
 	BaseGraphRevision int
 	ChangeSetJSON     []byte
+}
+
+// CreateProposal 校验后写入 PENDING 提案，不改 live 图。
+func CreateProposal(ctx context.Context, tx pgx.Tx, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
+	row, err := loadActiveGraphForUpdate(ctx, tx, productID)
+	if err != nil {
+		return AgentProposalResult{}, err
+	}
+	if row == nil {
+		return AgentProposalResult{}, apperr.Conflict("当前商品没有可编辑的工作流")
+	}
+	changeSet.ActorType = ActorAgent
+	if changeSet.BaseGraphRevision != row.Revision {
+		return AgentProposalResult{}, apperr.Conflict("图 revision 已变化，请刷新后重试")
+	}
+	var pendingID *string
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM workflow_graph_proposals WHERE graph_id = $1 AND status = 'pending' LIMIT 1
+	`, row.ID).Scan(&pendingID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return AgentProposalResult{}, err
+	}
+	if pendingID != nil {
+		return AgentProposalResult{}, apperr.Conflict("已有未应用的图提案，请先确认或取消")
+	}
+	applied, err := loadAppliedGraph(ctx, tx, *row)
+	if err != nil {
+		return AgentProposalResult{}, err
+	}
+	if _, err := Apply(applied, changeSet); err != nil {
+		var e apperr.Error
+		if errors.As(err, &e) && e.Status == http.StatusBadRequest {
+			return AgentProposalResult{}, apperr.Conflict("图提案无法应用到当前工作流: " + e.Detail)
+		}
+		return AgentProposalResult{}, err
+	}
+	raw, err := MarshalChangeSet(changeSet)
+	if err != nil {
+		return AgentProposalResult{}, err
+	}
+	id := clockid.New()
+	var conversation any
+	if strings.TrimSpace(conversationID) == "" {
+		conversation = nil
+	} else {
+		conversation = conversationID
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO workflow_graph_proposals (
+			id, graph_id, conversation_id, status, summary, base_graph_revision, change_set_json, created_at
+		) VALUES ($1, $2, $3, 'pending', $4, $5, $6, NOW())
+	`, id, row.ID, conversation, changeSet.Summary, row.Revision, raw)
+	if err != nil {
+		return AgentProposalResult{}, err
+	}
+	return AgentProposalResult{
+		ID:                id,
+		GraphID:           row.ID,
+		BaseGraphRevision: row.Revision,
+		Summary:           changeSet.Summary,
+	}, nil
 }
 
 func ConfirmProposal(ctx context.Context, tx pgx.Tx, productID, graphID, proposalID string) (GraphRow, error) {

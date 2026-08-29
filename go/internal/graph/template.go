@@ -58,6 +58,20 @@ var imageTypeGenerationJobs = map[string]string{
 	"shipping":       "发货物流说明图。只写资料里有的发货与时效信息，排版清楚，不要编造快递品牌。",
 }
 
+// ImageTypeCatalogJSON 对齐 Python agent_product_image_type_catalog_json。
+func ImageTypeCatalogJSON() []map[string]any {
+	out := make([]map[string]any, 0, len(agentProductImageTypeCatalog))
+	for _, option := range agentProductImageTypeCatalog {
+		out = append(out, map[string]any{
+			"key":         option.Key,
+			"title":       option.Title,
+			"description": option.Description,
+			"order":       option.Order,
+		})
+	}
+	return out
+}
+
 var imageTypeByKey = func() map[string]imageTypeOption {
 	out := map[string]imageTypeOption{}
 	for _, option := range agentProductImageTypeCatalog {

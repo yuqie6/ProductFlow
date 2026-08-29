@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 )
 
@@ -53,7 +54,19 @@ func (s Service) Get(ctx context.Context, productID, graphID string) (Projection
 }
 
 func (s Service) ApplyChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet) (Projection, error) {
-	changeSet.ActorType = ActorUser
+	return s.applyChangeSet(ctx, productID, graphID, changeSet, ActorUser)
+}
+
+// ApplyAgentChangeSet 立即写入一条 Agent 可逆命令；actor 固定为 agent。
+func (s Service) ApplyAgentChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet) (Projection, error) {
+	if len(changeSet.Operations) != 1 {
+		return Projection{}, apperr.Validation("立即写入只接受一条可逆改图命令；多步改图请提交提案")
+	}
+	return s.applyChangeSet(ctx, productID, graphID, changeSet, ActorAgent)
+}
+
+func (s Service) applyChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet, actor ActorType) (Projection, error) {
+	changeSet.ActorType = actor
 	var out Projection
 	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
 		result, err := Mutate(ctx, pgxTx, productID, graphID, changeSet, HistoryEdit)
@@ -66,6 +79,48 @@ func (s Service) ApplyChangeSet(ctx context.Context, productID, graphID string, 
 		}
 		out, err = Project(ctx, pgxTx, row)
 		return err
+	})
+	return out, err
+}
+
+type AgentProposalResult struct {
+	ID                string
+	GraphID           string
+	BaseGraphRevision int
+	Summary           string
+}
+
+// CreateAgentProposal 只存 PENDING 提案，不改 live 图。
+func (s Service) CreateAgentProposal(ctx context.Context, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
+	var out AgentProposalResult
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		result, err := CreateProposal(ctx, pgxTx, productID, conversationID, changeSet)
+		if err != nil {
+			return err
+		}
+		out = result
+		return nil
+	})
+	return out, err
+}
+
+// TryCurrent 没有 active 图时返回 nil。
+func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection, error) {
+	var out *Projection
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		row, err := TryLoadActiveGraph(ctx, pgxTx, productID)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return nil
+		}
+		proj, err := Project(ctx, pgxTx, *row)
+		if err != nil {
+			return err
+		}
+		out = &proj
+		return nil
 	})
 	return out, err
 }

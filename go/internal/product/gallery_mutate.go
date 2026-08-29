@@ -82,6 +82,52 @@ func (s Service) CreateGalleryFolder(ctx context.Context, productID, name string
 	return out, err
 }
 
+// CreateGalleryFolderWithID 按 Agent 预分配的 folder_id 创建；ID 已存在则 409。
+func (s Service) CreateGalleryFolderWithID(ctx context.Context, productID, folderID, name string) (GalleryFolderMutation, error) {
+	var out GalleryFolderMutation
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		normalized, err := normalizeFolderName(name)
+		if err != nil {
+			return err
+		}
+		id := strings.TrimSpace(folderID)
+		if id == "" || len(id) > 36 {
+			return apperr.Validation("文件夹 ID 无效")
+		}
+		if _, err := loadProductForUpdate(ctx, pgxTx, productID); err != nil {
+			return err
+		}
+		var exists int
+		err = pgxTx.QueryRow(ctx, `SELECT 1 FROM product_asset_folders WHERE id = $1`, id).Scan(&exists)
+		if err == nil {
+			return apperr.Conflict("文件夹 ID 已存在")
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		var maxSort *int
+		if err := pgxTx.QueryRow(ctx, `
+			SELECT MAX(sort_order) FROM product_asset_folders WHERE product_id = $1
+		`, productID).Scan(&maxSort); err != nil {
+			return err
+		}
+		sortOrder := 0
+		if maxSort != nil {
+			sortOrder = *maxSort + 1
+		}
+		err = pgxTx.QueryRow(ctx, `
+			INSERT INTO product_asset_folders (id, product_id, name, sort_order, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, NOW(), NOW())
+			RETURNING id, name, sort_order
+		`, id, productID, normalized, sortOrder).Scan(&out.ID, &out.Name, &out.SortOrder)
+		if uniqueViolation(err) {
+			return apperr.Conflict("当前商品已存在同名文件夹")
+		}
+		return err
+	})
+	return out, err
+}
+
 // RenameGalleryFolder 用 expected_name 做乐观锁；同名冲突 409。
 func (s Service) RenameGalleryFolder(ctx context.Context, productID, folderID, expectedName, name string) (GalleryFolderMutation, error) {
 	var out GalleryFolderMutation

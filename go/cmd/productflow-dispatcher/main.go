@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
@@ -76,6 +77,10 @@ func main() {
 		if err != nil {
 			return err
 		}
+		agentTurns, err := agent.RecoverUnfinished(bg, pool, 0)
+		if err != nil {
+			return err
+		}
 		summary, err := queue.RunDispatcherOnce(bg, pool, enqueue, *limit)
 		if err != nil {
 			return err
@@ -87,7 +92,7 @@ func main() {
 				"workflow_unknown":         workflow.UnknownRuns,
 				"image_session":            imageSession.EnqueuedTasks,
 				"image_session_unknown":    imageSession.UnknownTasks,
-				"agent":                    0,
+				"agent":                    agentTurns.EnqueuedTurns,
 				"rendition":                rendition.EnqueuedJobs,
 				"local_image_edit":         localImageEdit.EnqueuedTasks,
 				"local_image_edit_unknown": localImageEdit.UnknownTasks,

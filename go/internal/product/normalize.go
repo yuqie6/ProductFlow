@@ -39,9 +39,7 @@ func normalizePrice(value string) (*string, error) {
 	if raw == "" {
 		return nil, nil
 	}
-	if strings.HasPrefix(raw, "+") {
-		raw = raw[1:]
-	}
+	raw = strings.TrimPrefix(raw, "+")
 	if _, ok := new(big.Rat).SetString(raw); !ok {
 		return nil, apperr.Validation("价格格式不正确")
 	}
