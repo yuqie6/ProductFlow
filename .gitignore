@@ -59,3 +59,9 @@ aegis/
 
 # Local AI memory
 .ai_memory/
+
+# Go binaries built in-module (`go build` under go/)
+/go/productflow-api
+/go/productflow-worker
+/go/productflow-dispatcher
+/go/productflow-migrate

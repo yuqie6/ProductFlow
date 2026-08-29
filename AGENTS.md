@@ -48,7 +48,7 @@ Use the root `justfile` whenever possible:
 
 - `just backend-install` — install backend dependencies with `uv` dev extras.
 - `docker compose up -d` — start local PostgreSQL and Redis.
-- `just backend-migrate` / `just go-migrate` — apply GORM AutoMigrate and constraint patches with dev env vars.
+- `just backend-migrate` / `just go-migrate` — apply GORM `CreateTable`/`AddColumn` plus ExtraDDL with dev env vars. AutoMigrate is not used.
 - `just go-api` — run the Go business API (default local runtime).
 - `just go-worker` — run the Go asynq worker.
 - `just go-dispatcher` — run the Go async dispatcher.

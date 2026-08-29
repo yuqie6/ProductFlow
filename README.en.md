@@ -131,7 +131,7 @@ Replace at least:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs GORM AutoMigrate and constraint patches before the Go API. uvicorn / dramatiq start only with Compose profile `python` and no longer own schema. Do not run profile `python` against the same database as the default Go dispatcher.
+Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs GORM `CreateTable`/`AddColumn` plus ExtraDDL (CHECK / enum / partial unique / FK) before the Go API; AutoMigrate is not used. uvicorn and the dramatiq worker start only with Compose profile `python`, which no longer starts a Python dispatcher and no longer owns schema. Profile `python` HTTP still Dramatiq-enqueues; do not share that database with a live Go worker.
 
 Default endpoints:
 

@@ -131,7 +131,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM AutoMigrate 与约束补钉。uvicorn / dramatiq 只在 Compose profile `python` 下启动，且不再负责 schema。不要把 profile `python` 与默认 Go dispatcher 同时对着同一库跑。
+Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM `CreateTable`/`AddColumn` 与 ExtraDDL（CHECK / enum / 部分唯一索引 / FK），不使用 AutoMigrate。uvicorn / dramatiq worker 只在 Compose profile `python` 下启动，不再启动 Python dispatcher，也不再负责 schema。profile `python` 的 HTTP 仍会 Dramatiq enqueue；不要把它与正在跑的 Go worker 共用同一库。
 
 默认地址：
 

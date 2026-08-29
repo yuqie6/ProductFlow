@@ -1,6 +1,6 @@
 # Go 业务后端
 
-默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM AutoMigrate + 约束补钉）。Python `backend/` 保留封印树与 Compose profile `python` 回退。实现按 [`docs/specs/go-backend-rewrite-design.md`](../docs/specs/go-backend-rewrite-design.md) 竖切。
+默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM `CreateTable`/`AddColumn` + ExtraDDL，不使用 AutoMigrate）。Python `backend/` 保留封印树与 Compose profile `python` 回退。实现按 [`docs/specs/go-backend-rewrite-design.md`](../docs/specs/go-backend-rewrite-design.md) 竖切。
 
 ```bash
 just go-test
@@ -20,4 +20,4 @@ JSON 日志同时写 stderr 和滚动文件。默认目录是 `STORAGE_ROOT/logs
 
 HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。dispatcher 先标 SENT 再 asynq 投递；worker `MaxRetry=0`。无法证明的供应商结果标 `unknown`，不自动当失败重试。
 
-Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。不要同时跑 Python dispatcher 与 Go dispatcher。
+Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。profile `python` 不再启动 Python dispatcher；Go dispatcher 是唯一 durable scanner。若仍用 Python HTTP（会 Dramatiq enqueue），不要与正在跑的 Go worker 共用同一库。

@@ -1,6 +1,6 @@
 # Go Backend Guidelines
 
-Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is GORM AutoMigrate plus constraint patches (`just go-migrate` / `productflow-migrate`). Command transactions use `tx.WithGorm` and `*gorm.DB`; raw SQL goes through `platform/db` Query/Exec. PostgreSQL pool remains for health checks, recovery entrypoints, and `FOR UPDATE` / advisory locks. Do not use GORM associations to replace existing delete paths.
+Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (`just go-migrate`). AutoMigrate is not used. Command transactions use `tx.WithGorm` and `*gorm.DB`; raw SQL goes through `platform/db` Query/Exec. PostgreSQL pool remains for health checks, recovery entrypoints, and `FOR UPDATE` / advisory locks. Do not use GORM associations to replace existing delete paths.
 
 ## Layout
 
@@ -12,7 +12,7 @@ JSON logs go to stderr and rotating files under `STORAGE_ROOT/logs` (`productflo
 
 ## Contracts
 
-- Cookie name `session`. Errors `{"detail":"..."}`. Queue unavailable is 503 `任务队列暂不可用，请稍后重试`.
+- Cookie name `session`. Errors `{"detail":"..."}`. HTTP 不 enqueue broker；dispatcher 标 SENT 后再入队。
 - JSON extra=forbid via `DisallowUnknownFields` → 400 `请求体无效`.
 - HTTP does not enqueue the broker. Write the business row and `async_dispatches` PENDING; dispatcher marks SENT then enqueues. Worker `MaxRetry=0`.
 - Unprovable provider results stay `unknown` and are not auto-retried as failure.

@@ -7,7 +7,7 @@
 - 决策：`docs/adr/0011-go-vertical-slice-rewrite.md`
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端已切 Go」
 - 当前运行事实：Go API / worker / dispatcher（Gin + GORM + asynq，驱动仍是 pgx）+ `productflow-migrate`。Python `backend/` 保留封印树与可选 Compose profile `python`。
-- schema 权威是 GORM AutoMigrate 与约束补钉。命令事务走 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。
+- schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL。不使用 AutoMigrate。命令事务走 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。
 - 不复用：`exp` 上的 Go Agent service / `agent-harness`。那条线是 Agent runtime 实验。
 
 宏观进程图保持现有七个运行单元，只替换其中三个业务进程。内部从横向分层改成按功能竖切的模块化单体。
@@ -55,14 +55,14 @@ go/
 
 ## 3. 封印基线（2026-08-29 live Python）
 
-Go 与剩余 Python 共用同一把尺子。用户可观察行为以当时 `docs/PRD.md`、`docs/ARCHITECTURE.md` 和测试为准；目录布局不是封印对象。机器可读合同在仓库根 `contracts/`：`just export-http-contracts` 从 live FastAPI 重写 `openapi.json` 与 `http-routes.json`。
+Go 与剩余 Python 共用同一把尺子。用户可观察行为以当时 `docs/PRD.md`、`docs/ARCHITECTURE.md` 和测试为准；目录布局不是封印对象。机器可读合同在仓库根 `contracts/`：`openapi.json` 与 `http-routes.json` 是 2026-08-29 Python 封印快照，不是默认路径上从 live FastAPI 重新生成。
 
 ### 3.1 必须带走的不变量
 
 1. OpenAPI：路径、方法、状态码、`{"detail":"..."}`；结构化校验另带 `error.code` / `error.message` / `error.details.issues`。
 2. Cookie 名 `session`。Cutover 默认发 Go 自己的签名 cookie，要求重新登录。
 3. Agent internal HTTP 与 Turn SSE：`id: <sequence>`、`event: <kind>`、`data: <json>`，心跳 `: heartbeat`。浏览器断开不取消 Turn。回答问题的**可观察**结果是一条 continuation Turn（现实现：`control.answer_agent_question` 预留下一条 Turn 并尝试取消旧 harness Turn），不是把 Python 嵌套 commit 原样搬过去。
-4. Durable 投递：先写业务行和 `async_dispatches`，再 `asynq.Enqueue`；失败把业务行标成可观察失败/pending，HTTP 503。worker `MaxRetry=0`。线上只有这一条投递 seam；专用 Dramatiq actor 不作为 HTTP 默认路径进入 Go。
+4. Durable 投递：HTTP 在同一事务写业务行和 `async_dispatches` PENDING。dispatcher 把行标 SENT 再 `asynq.Enqueue`。HTTP 不直接 enqueue，入队失败不走 HTTP 503。worker `MaxRetry=0`。线上只有这一条投递 seam；专用 Dramatiq actor 不作为 HTTP 默认路径进入 Go。
 5. 媒体路径与 `MediaObject` 身份；节点绑定继续使用 `ProductImageAsset` id。
 6. 配置两层：Viper 只读环境变量 / 本地文件；`app_settings` / `provider_profiles` / `provider_bindings` 仍由设置页写库。
 7. 正式工作流只有 schema-v3 live graph。用户、Agent、配方都走 Graph Command。不完整 DAG 可保存。编译只读 incoming edges。执行读 run snapshot。
@@ -100,7 +100,7 @@ Web 与 `agent-service/` 默认零合同变更。某个 Go 实现无法保持兼
 | 层 | 默认 | 约束 |
 |---|---|---|
 | HTTP | Gin | session、SSE、上传校验、`x-request-id` 自己实现。binding 不替代 application 校验。 |
-| SQL | GORM（postgres/pgx 驱动） | AutoMigrate 建/补表和列。CHECK、PG enum、部分唯一索引走补钉 SQL。生产与测试都是 PostgreSQL，不支持 SQLite。命令事务用 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
+| SQL | GORM（postgres/pgx 驱动） | `productflow-migrate` 用 `CreateTable`/`AddColumn` 建/补表和列。CHECK、PG enum、部分唯一索引、FK 走 ExtraDDL。不使用 AutoMigrate。生产与测试都是 PostgreSQL，不支持 SQLite。命令事务用 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
 | 配置 | Viper | 只加载启动配置。运行时设置读 PostgreSQL。 |
 | 日志 | zap | JSON 同时写 stderr 与 `STORAGE_ROOT/logs/productflow-{api,worker,dispatcher}.log`（滚动）。字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
 | 队列 | asynq + go-redis | 替代 Dramatiq，不替代 `async_dispatches`。task 名与现有 actor 名对齐。 |
@@ -196,7 +196,7 @@ Agent 包只做投影和 tool 入口。改 live graph、请求 Run、改全局�
 
 当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。schema 由 `productflow-migrate` 持有。命令事务用 GORM session 上的 raw SQL。
 
-1. AutoMigrate 开启，只补表和列，不 drop 退休表。约束/enum/部分唯一索引不靠 AutoMigrate。
+1. `productflow-migrate` 用 `CreateTable`/`AddColumn` 补表和列，不 drop 退休表。约束/enum/部分唯一索引/FK 走 ExtraDDL。不使用 AutoMigrate。
 2. 每个 public command 显式 Begin/Commit/Rollback。内部 helper 只组装，不偷偷 commit。
 3. claim / 确认 / 绑定使用 `SELECT ... FOR UPDATE`，锁顺序与封印 Python 相同：先聚合后成员。
 4. 生成容量用 PostgreSQL advisory lock 原语句，不改成 Redis 信号量。
@@ -268,7 +268,7 @@ Agent 切片靠后，因为它和 lease、fencing、SSE cursor、worker 恢复�
 
 1. 封印 live Python 行为后即可写 `go/`。工作台证明约束 cutover，不约束 host 与功能切片开工。
 2. 只换业务后端三个进程。Agent、Web、PostgreSQL 权威和 storage 布局不动。
-3. Gin + GORM + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。schema 走 AutoMigrate 加约束补钉。
+3. Gin + GORM + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。schema 走 GORM `CreateTable`/`AddColumn` 加 ExtraDDL，不使用 AutoMigrate。
 4. 内部按功能竖切，不按全局 `handlers/dto/models` 横向复制。
 5. 跨聚合走同一 `tx` 上的 app 函数，不拆微服务。
 6. 测试与生产都用 PostgreSQL。

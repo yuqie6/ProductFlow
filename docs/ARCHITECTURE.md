@@ -18,7 +18,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 ## 2. 后端分层
 
-业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 raw SQL），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 GORM AutoMigrate 加 CHECK / enum / 部分唯一索引补钉。
+业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 raw SQL），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。
 
 `backend/src/productflow_backend/` 是封印对照与迁移树，不是默认进程。
 
@@ -194,7 +194,7 @@ API / worker / dispatcher 的 JSON 日志写 stderr，并滚动落在 `STORAGE_R
 
 ## 11. Schema 演进
 
-空库和已有库都跑 `productflow-migrate`：GORM AutoMigrate 建/补表和列，随后幂等补上 CHECK、PostgreSQL enum 和部分唯一索引。AutoMigrate 不删除已退休表或列；退休表按 ADR 0010 用显式 SQL 删除。`backend/alembic/` 是封印历史，不再接 `just dev` 或默认 Compose。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
+空库和已有库都跑 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 建/补表和列，随后 ExtraDDL 幂等补上 CHECK、PostgreSQL enum、部分唯一索引和 FK。不使用 AutoMigrate（它会改写已有库的 unique 索引名）。该命令不删除已退休表或列；退休表按 ADR 0010 用显式 SQL 删除。`backend/alembic/` 是封印历史，不再接 `just dev` 或默认 Compose。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
 
 ## 12. 质量门
 

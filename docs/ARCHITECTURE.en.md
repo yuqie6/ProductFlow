@@ -18,7 +18,7 @@ This document describes the current implementation only. Module ownership comes 
 
 ## 2. Backend Layers
 
-The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver; command transactions use `tx.WithGorm` and raw SQL), and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is GORM AutoMigrate plus CHECK / enum / partial-unique-index patches.
+The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver; command transactions use `tx.WithGorm` and raw SQL), and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (CHECK / enum / partial unique / FK). AutoMigrate is not used.
 
 `backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process.
 
@@ -196,7 +196,7 @@ API, worker, and dispatcher JSON logs go to stderr and rotate under `STORAGE_ROO
 
 ## 11. Schema Evolution
 
-Empty and existing databases both run `productflow-migrate`: GORM AutoMigrate creates or adds tables and columns, then idempotent SQL adds CHECKs, PostgreSQL enums, and partial unique indexes. AutoMigrate does not drop retired tables or columns; those deletions stay explicit under ADR 0010. `backend/alembic/` is sealed history and is no longer on `just dev` or default Compose. The main repository does not write old-data backfill, freeze, or cutover gates. Following mainline may recreate the database and storage.
+Empty and existing databases both run `productflow-migrate`: GORM `CreateTable`/`AddColumn` creates or adds tables and columns, then ExtraDDL idempotently adds CHECKs, PostgreSQL enums, partial unique indexes, and FKs. AutoMigrate is not used (it rewrites unique index names on an existing head). The command does not drop retired tables or columns; those deletions stay explicit under ADR 0010. `backend/alembic/` is sealed history and is no longer on `just dev` or default Compose. The main repository does not write old-data backfill, freeze, or cutover gates. Following mainline may recreate the database and storage.
 
 ## 12. Quality Gates
 

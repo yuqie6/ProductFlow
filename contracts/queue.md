@@ -10,7 +10,7 @@ PostgreSQL 是业务终态。Redis / broker 只负责投递。HTTP 默认不在�
   -> 成功 / 失败 / unknown
 ```
 
-- HTTP 投递失败必须留下可观察 pending/failed，返回类型化队列错误。detail 文案：`任务队列暂不可用，请稍后重试`
+- HTTP 不 enqueue broker。dispatcher 将 PENDING 标 SENT 再 enqueue。dispatcher 入队失败留在 dispatch 行与日志，不把 HTTP 打成 503。
 - Worker `max_retries = 0`。asynq/Dramatiq retry 不是 WorkflowRun 状态机。
 - SENT 不等于业务成功。
 - Provider 调用之后不能证明结果：保持 `unknown`，不自动当失败重试。Delivery 没有 unknown。
