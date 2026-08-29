@@ -7,7 +7,7 @@
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端迁 Go」
 - 实现设计：`docs/specs/go-backend-rewrite-design.md`
 - 当前运行事实：Go 业务 API / worker / dispatcher + PostgreSQL `async_dispatches`。schema 权威是 Go GORM AutoMigrate 与约束补钉（`go/cmd/productflow-migrate`）。Python `backend/` 保留封印树与可选 Compose profile `python`；`backend/alembic/` 是历史 revision，不再接默认路径。
-- Gin / GORM / asynq 是当前实现；查询层仍有 pgx 手写 SQL，正在迁到 GORM。Web 与 Agent 合同仍以封印基线为准。
+- Gin / GORM / asynq 是当前实现；命令事务走 `tx.WithGorm` 与 `*gorm.DB`，`FOR UPDATE` 与 advisory lock 仍是 raw SQL。Web 与 Agent 合同仍以封印基线为准。
 
 本文只定义这次工程的产品合同：用户能感知什么、运行单元换成什么、什么算完成。内部包结构、队列状态机和切片顺序见设计文档。
 

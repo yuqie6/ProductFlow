@@ -7,7 +7,7 @@
 - 决策：`docs/adr/0011-go-vertical-slice-rewrite.md`
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端已切 Go」
 - 当前运行事实：Go API / worker / dispatcher（Gin + GORM + asynq，驱动仍是 pgx）+ `productflow-migrate`。Python `backend/` 保留封印树与可选 Compose profile `python`。
-- schema 权威是 GORM AutoMigrate 与约束补钉。查询层仍有 pgx 手写 SQL。
+- schema 权威是 GORM AutoMigrate 与约束补钉。命令事务走 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。
 - 不复用：`exp` 上的 Go Agent service / `agent-harness`。那条线是 Agent runtime 实验。
 
 宏观进程图保持现有七个运行单元，只替换其中三个业务进程。内部从横向分层改成按功能竖切的模块化单体。
@@ -100,7 +100,7 @@ Web 与 `agent-service/` 默认零合同变更。某个 Go 实现无法保持兼
 | 层 | 默认 | 约束 |
 |---|---|---|
 | HTTP | Gin | session、SSE、上传校验、`x-request-id` 自己实现。binding 不替代 application 校验。 |
-| SQL | GORM（postgres/pgx 驱动） | AutoMigrate 建/补表和列。CHECK、PG enum、部分唯一索引走补钉 SQL。生产与测试都是 PostgreSQL，不支持 SQLite。查询层按包从 pgx 迁到 GORM；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
+| SQL | GORM（postgres/pgx 驱动） | AutoMigrate 建/补表和列。CHECK、PG enum、部分唯一索引走补钉 SQL。生产与测试都是 PostgreSQL，不支持 SQLite。命令事务用 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
 | 配置 | Viper | 只加载启动配置。运行时设置读 PostgreSQL。 |
 | 日志 | zap | 字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
 | 队列 | asynq + go-redis | 替代 Dramatiq，不替代 `async_dispatches`。task 名与现有 actor 名对齐。 |
@@ -194,7 +194,7 @@ Agent 包只做投影和 tool 入口。改 live graph、请求 Run、改全局�
 
 ## 6. 持久化
 
-当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。schema 由 `productflow-migrate` 持有。查询层按包迁到 GORM；未迁完的 store 仍用手写 SQL。
+当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。schema 由 `productflow-migrate` 持有。命令事务用 GORM session 上的 raw SQL。
 
 1. AutoMigrate 开启，只补表和列，不 drop 退休表。约束/enum/部分唯一索引不靠 AutoMigrate。
 2. 每个 public command 显式 Begin/Commit/Rollback。内部 helper 只组装，不偷偷 commit。

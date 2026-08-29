@@ -18,7 +18,7 @@ This document describes the current implementation only. Module ownership comes 
 
 ## 2. Backend Layers
 
-The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver) plus remaining handwritten pgx SQL, and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is GORM AutoMigrate plus CHECK / enum / partial-unique-index patches.
+The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver; command transactions use `tx.WithGorm` and raw SQL), and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is GORM AutoMigrate plus CHECK / enum / partial-unique-index patches.
 
 `backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process.
 
