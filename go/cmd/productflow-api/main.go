@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
@@ -52,6 +53,10 @@ func main() {
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	product.HTTP{
 		Service:  product.Service{Pool: pool, Media: mediaStore},
+		Settings: settingsStore,
+	}.Register(engine)
+	library.HTTP{
+		Service:  library.Service{Pool: pool, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 
