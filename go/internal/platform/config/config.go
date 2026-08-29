@@ -9,13 +9,18 @@ import (
 
 // Config is the process start-up overlay. Runtime provider settings still live in PostgreSQL.
 type Config struct {
-	AppHost       string
-	AppPort       int
-	DatabaseURL   string
-	RedisURL      string
-	LogLevel      string
-	StorageRoot   string
-	SessionSecret string
+	AppHost             string
+	AppPort             int
+	DatabaseURL         string
+	RedisURL            string
+	LogLevel            string
+	StorageRoot         string
+	SessionSecret       string
+	SessionCookieSecure bool
+	AdminAccessKey      string
+	SettingsAccessToken string
+	AdminAccessRequired bool
+	DeletionEnabled     bool
 }
 
 func Load() (Config, error) {
@@ -26,18 +31,28 @@ func Load() (Config, error) {
 	v.SetDefault("APP_PORT", 29280)
 	v.SetDefault("LOG_LEVEL", "INFO")
 	v.SetDefault("STORAGE_ROOT", "./backend/storage")
+	v.SetDefault("ADMIN_ACCESS_REQUIRED", true)
+	v.SetDefault("DELETION_ENABLED", false)
 
 	cfg := Config{
-		AppHost:       v.GetString("APP_HOST"),
-		AppPort:       v.GetInt("APP_PORT"),
-		DatabaseURL:   NormalizePostgresURL(v.GetString("DATABASE_URL")),
-		RedisURL:      v.GetString("REDIS_URL"),
-		LogLevel:      v.GetString("LOG_LEVEL"),
-		StorageRoot:   v.GetString("STORAGE_ROOT"),
-		SessionSecret: v.GetString("SESSION_SECRET"),
+		AppHost:             v.GetString("APP_HOST"),
+		AppPort:             v.GetInt("APP_PORT"),
+		DatabaseURL:         NormalizePostgresURL(v.GetString("DATABASE_URL")),
+		RedisURL:            v.GetString("REDIS_URL"),
+		LogLevel:            v.GetString("LOG_LEVEL"),
+		StorageRoot:         v.GetString("STORAGE_ROOT"),
+		SessionSecret:       v.GetString("SESSION_SECRET"),
+		SessionCookieSecure: v.GetBool("SESSION_COOKIE_SECURE"),
+		AdminAccessKey:      v.GetString("ADMIN_ACCESS_KEY"),
+		SettingsAccessToken: strings.TrimSpace(v.GetString("SETTINGS_ACCESS_TOKEN")),
+		AdminAccessRequired: v.GetBool("ADMIN_ACCESS_REQUIRED"),
+		DeletionEnabled:     v.GetBool("DELETION_ENABLED"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	if cfg.SessionSecret == "" {
+		return Config{}, fmt.Errorf("SESSION_SECRET is required")
 	}
 	return cfg, nil
 }

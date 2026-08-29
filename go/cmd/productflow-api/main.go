@@ -8,10 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
+	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
 
@@ -35,7 +37,15 @@ func main() {
 	defer pool.Close()
 
 	engine := httpx.NewEngine(logger)
+	cookieStore := httpx.NewCookieStore(httpx.SessionConfig{
+		Secret: cfg.SessionSecret,
+		Secure: cfg.SessionCookieSecure,
+	})
+	engine.Use(httpx.Session(cookieStore))
 	httpx.RegisterHealth(engine, pool)
+	settingsStore := settings.NewStore(pool, cfg)
+	auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore}.Register(engine)
+	settings.HTTP{Store: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
