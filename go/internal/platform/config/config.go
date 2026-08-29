@@ -1,0 +1,53 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// Config is the process start-up overlay. Runtime provider settings still live in PostgreSQL.
+type Config struct {
+	AppHost       string
+	AppPort       int
+	DatabaseURL   string
+	RedisURL      string
+	LogLevel      string
+	StorageRoot   string
+	SessionSecret string
+}
+
+func Load() (Config, error) {
+	v := viper.New()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+	v.SetDefault("APP_HOST", "0.0.0.0")
+	v.SetDefault("APP_PORT", 29280)
+	v.SetDefault("LOG_LEVEL", "INFO")
+	v.SetDefault("STORAGE_ROOT", "./backend/storage")
+
+	cfg := Config{
+		AppHost:       v.GetString("APP_HOST"),
+		AppPort:       v.GetInt("APP_PORT"),
+		DatabaseURL:   NormalizePostgresURL(v.GetString("DATABASE_URL")),
+		RedisURL:      v.GetString("REDIS_URL"),
+		LogLevel:      v.GetString("LOG_LEVEL"),
+		StorageRoot:   v.GetString("STORAGE_ROOT"),
+		SessionSecret: v.GetString("SESSION_SECRET"),
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("DATABASE_URL is required")
+	}
+	return cfg, nil
+}
+
+func NormalizePostgresURL(raw string) string {
+	replaced := strings.Replace(raw, "postgresql+psycopg://", "postgres://", 1)
+	replaced = strings.Replace(replaced, "postgresql+psycopg2://", "postgres://", 1)
+	return replaced
+}
+
+func (c Config) Addr() string {
+	return fmt.Sprintf("%s:%d", c.AppHost, c.AppPort)
+}

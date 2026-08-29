@@ -42,8 +42,11 @@ backend-test:
 docs-check:
     python3 scripts/check_docs.py
 
-export-http-contracts:
-    uv run --directory backend python ../scripts/export_http_contracts.py
+go-test:
+    bash -lc 'cd go && go test ./...'
+
+go-api:
+    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-api'
 
 backend-test-live-recovery:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
