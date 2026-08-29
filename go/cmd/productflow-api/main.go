@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -57,6 +58,10 @@ func main() {
 	}.Register(engine)
 	library.HTTP{
 		Service:  library.Service{Pool: pool, Media: mediaStore},
+		Settings: settingsStore,
+	}.Register(engine)
+	graph.HTTP{
+		Service:  graph.Service{Pool: pool},
 		Settings: settingsStore,
 	}.Register(engine)
 

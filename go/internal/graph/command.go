@@ -56,21 +56,11 @@ func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet
 	if err := insertGraphContents(ctx, tx, graphID, applied); err != nil {
 		return CommandResult{}, err
 	}
-	opsJSON, err := marshalOperations(changeSet.Operations)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	inverseJSON, err := marshalOperations(Invert(EmptyGraph, applied))
-	if err != nil {
-		return CommandResult{}, err
-	}
-	operationGroupID := clockid.New()
-	_, err = tx.Exec(ctx, `
-		INSERT INTO workflow_operation_groups (
-			id, graph_id, actor_type, history_kind, summary, base_revision, result_revision,
-			operations_json, inverse_operations_json, created_at
-		) VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, NOW())
-	`, operationGroupID, graphID, actor, HistoryEdit, changeSet.Summary, applied.Revision, opsJSON, inverseJSON)
+	operationGroupID, err := recordOperationGroup(ctx, tx, graphID, ChangeSet{
+		Summary:    changeSet.Summary,
+		ActorType:  actor,
+		Operations: changeSet.Operations,
+	}, Invert(EmptyGraph, applied), 0, applied.Revision, HistoryEdit)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -87,7 +77,42 @@ func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet
 		Revision:         applied.Revision,
 		Applied:          applied,
 		OperationGroupID: operationGroupID,
+		HistoryKind:      HistoryEdit,
 	}, nil
+}
+
+func recordOperationGroup(
+	ctx context.Context,
+	tx pgx.Tx,
+	graphID string,
+	changeSet ChangeSet,
+	inverse []Operation,
+	baseRevision, resultRevision int,
+	kind HistoryKind,
+) (string, error) {
+	opsJSON, err := marshalOperations(changeSet.Operations)
+	if err != nil {
+		return "", err
+	}
+	inverseJSON, err := marshalOperations(inverse)
+	if err != nil {
+		return "", err
+	}
+	actor := changeSet.ActorType
+	if actor == "" {
+		actor = ActorUser
+	}
+	id := clockid.New()
+	_, err = tx.Exec(ctx, `
+		INSERT INTO workflow_operation_groups (
+			id, graph_id, actor_type, history_kind, summary, base_revision, result_revision,
+			operations_json, inverse_operations_json, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+	`, id, graphID, actor, kind, changeSet.Summary, baseRevision, resultRevision, opsJSON, inverseJSON)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func lockProduct(ctx context.Context, tx pgx.Tx, productID string) error {

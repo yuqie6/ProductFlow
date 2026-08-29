@@ -1,4 +1,4 @@
-// Package graph 实现 schema-v3 ChangeSet 应用、校验与新建图 flush。
+// Package graph 实现 schema-v3 Graph Command：ChangeSet 应用、空图画布、撤销重做、Catalog 与 live 图 HTTP。
 package graph
 
 const (
@@ -213,6 +213,7 @@ type CommandResult struct {
 	Revision         int
 	Applied          AppliedGraph
 	OperationGroupID string
+	HistoryKind      HistoryKind
 }
 
 type DirectCreateImageType struct {

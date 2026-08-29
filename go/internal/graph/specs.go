@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -223,6 +224,16 @@ func asInt(value any) (int, bool) {
 			return int(n), true
 		}
 		return 0, false
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			f, ferr := n.Float64()
+			if ferr != nil || f != math.Trunc(f) {
+				return 0, false
+			}
+			return int(f), true
+		}
+		return int(i), true
 	default:
 		return 0, false
 	}

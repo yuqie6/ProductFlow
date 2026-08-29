@@ -16,11 +16,56 @@ var forbiddenConfigKeys = map[string]struct{}{
 	"image_plan_keys":  {},
 }
 
+var imageAssetRoleOrder = []string{"product_identity", "environment", "style", "evidence"}
+
 var imageAssetRoles = map[string]struct{}{
 	"product_identity": {},
 	"environment":      {},
 	"style":            {},
 	"evidence":         {},
+}
+
+var defaultGenerationSpec = map[string]any{
+	"aspect_ratio":       "1:1",
+	"resolution_tier":    "high",
+	"quality_intent":     "high",
+	"reference_fidelity": "high",
+	"background_intent":  "auto",
+	"text_policy":        "none",
+	"text_language":      nil,
+}
+
+var defaultDeliverySpec = map[string]any{
+	"width":            1200,
+	"height":           1200,
+	"format":           "png",
+	"max_byte_size":    nil,
+	"fit":              "contain",
+	"background_color": nil,
+	"crop_anchor":      nil,
+}
+
+var catalogNodeOrder = []NodeType{
+	NodeProductSource,
+	NodeImageAsset,
+	NodeCreativeBrief,
+	NodeVisualSystem,
+	NodePromptGeneration,
+	NodeImageGeneration,
+}
+
+var catalogAcceptanceOrder = [][2]string{
+	{string(DataProductFacts), string(NodeCreativeBrief)},
+	{string(DataImageAsset), string(NodeCreativeBrief)},
+	{string(DataProductFacts), string(NodeVisualSystem)},
+	{string(DataImageAsset), string(NodeVisualSystem)},
+	{string(DataProductFacts), string(NodePromptGeneration)},
+	{string(DataImageAsset), string(NodePromptGeneration)},
+	{string(DataCreativeBrief), string(NodePromptGeneration)},
+	{string(DataVisualSystem), string(NodePromptGeneration)},
+	{string(DataImageAsset), string(NodeImageGeneration)},
+	{string(DataVisualSystem), string(NodeImageGeneration)},
+	{string(DataPrompt), string(NodeImageGeneration)},
 }
 
 var visualOverlayKeys = map[string]struct{}{
@@ -36,15 +81,28 @@ type inputContract struct {
 	RequiredToRun bool
 }
 
+type visibleWhen struct {
+	Field  string
+	Op     string
+	Values []string
+}
+
 type configField struct {
-	key       string
-	valueKind string
-	control   string
-	choices   []string
-	minValue  *int
-	maxValue  *int
-	maxLength *int
-	fields    []configField
+	key            string
+	valueKind      string
+	control        string
+	required       bool
+	labelKey       string
+	hintKey        string
+	toggleLabelKey string
+	choices        []string
+	minValue       *int
+	maxValue       *int
+	maxLength      *int
+	defaultValue   any
+	panel          string
+	visibleWhen    *visibleWhen
+	fields         []configField
 }
 
 func i(v int) *int { return &v }
@@ -96,6 +154,32 @@ func withFields(fields ...configField) func(*configField) {
 	return func(f *configField) { f.fields = fields }
 }
 
+func withLabel(key string) func(*configField) {
+	return func(f *configField) { f.labelKey = key }
+}
+
+func withHint(key string) func(*configField) {
+	return func(f *configField) { f.hintKey = key }
+}
+
+func withToggle(key string) func(*configField) {
+	return func(f *configField) { f.toggleLabelKey = key }
+}
+
+func withDefault(value any) func(*configField) {
+	return func(f *configField) { f.defaultValue = value }
+}
+
+func withPanel(panel string) func(*configField) {
+	return func(f *configField) { f.panel = panel }
+}
+
+func withVisible(field string, values ...string) func(*configField) {
+	return func(f *configField) {
+		f.visibleWhen = &visibleWhen{Field: field, Op: "in", Values: values}
+	}
+}
+
 var outputType = map[NodeType]EdgeDataType{
 	NodeProductSource:    DataProductFacts,
 	NodeImageAsset:       DataImageAsset,
@@ -123,48 +207,48 @@ var acceptance = map[[2]string]inputContract{
 
 func visualOverlayFields() []configField {
 	return []configField{
-		fld("style", "string_list", ""),
-		fld("colors", "object_list", "visual_background", withMaxLen(32), withFields(
+		fld("style", "string_list", "", withLabel("graph.inspector.visualStyle")),
+		fld("colors", "object_list", "visual_background", withLabel("graph.inspector.visualBackground"), withMaxLen(32), withFields(
 			fld("role", "string", "", withMaxLen(80)),
 			fld("value", "string", "", withMaxLen(7)),
 			fld("label", "string", "", withMaxLen(255)),
 		)),
-		fld("prohibitions", "string_list", ""),
+		fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 	}
 }
 
 func promptFields() []configField {
 	return []configField{
 		hid("schema_version", "number"),
-		fld("design_goal", "string", "textarea"),
-		fld("shared_rules", "string_list", ""),
-		fld("creative_boundary", "string_list", ""),
-		fld("product_fidelity", "object", "group", withFields(
-			fld("complex_structure", "boolean", ""),
-			fld("product_present", "boolean", ""),
-			fld("picture_in_picture", "string", "select", withChoices("none", "allowed", "required")),
-			fld("requirements", "string_list", ""),
+		fld("design_goal", "string", "textarea", withLabel("workflowConfirmation.designGoal")),
+		fld("shared_rules", "string_list", "", withLabel("workflowConfirmation.sharedRules")),
+		fld("creative_boundary", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
+		fld("product_fidelity", "object", "group", withLabel("workflowConfirmation.productFidelity"), withFields(
+			fld("complex_structure", "boolean", "", withLabel("agentWorkbench.nodeEditor.complexStructure")),
+			fld("product_present", "boolean", "", withLabel("agentWorkbench.nodeEditor.productPresent"), withDefault(true)),
+			fld("picture_in_picture", "string", "select", withLabel("agentWorkbench.nodeEditor.pictureInPicture"), withChoices("none", "allowed", "required"), withDefault("none")),
+			fld("requirements", "string_list", "", withLabel("agentWorkbench.nodeEditor.requirements")),
 		)),
-		fld("composition", "object", "group", withFields(
-			fld("viewpoint", "string", ""),
-			fld("product_share_percent", "number", "", withMinMax(1, 100)),
-			fld("layout", "string", "textarea"),
-			fld("copy_regions", "string_list", ""),
+		fld("composition", "object", "group", withLabel("workflowConfirmation.composition"), withFields(
+			fld("viewpoint", "string", "", withLabel("agentWorkbench.nodeEditor.viewpoint")),
+			fld("product_share_percent", "number", "", withLabel("agentWorkbench.nodeEditor.productShare"), withMinMax(1, 100), withDefault(70)),
+			fld("layout", "string", "textarea", withLabel("agentWorkbench.nodeEditor.layout")),
+			fld("copy_regions", "string_list", "", withLabel("agentWorkbench.nodeEditor.copyRegions")),
 		)),
-		fld("content", "object", "group", withFields(
-			fld("focus", "string_list", ""),
-			fld("selling_points", "string_list", ""),
-			fld("background", "string", "textarea"),
-			fld("decorations", "string_list", ""),
+		fld("content", "object", "group", withLabel("workflowConfirmation.content"), withFields(
+			fld("focus", "string_list", "", withLabel("agentWorkbench.nodeEditor.focus")),
+			fld("selling_points", "string_list", "", withLabel("agentWorkbench.nodeEditor.sellingPoints")),
+			fld("background", "string", "textarea", withLabel("agentWorkbench.nodeEditor.background")),
+			fld("decorations", "string_list", "", withLabel("agentWorkbench.nodeEditor.decorations")),
 		)),
-		fld("text", "object", "group", withFields(
-			fld("headline", "string_or_null", ""),
-			fld("subtitle", "string_or_null", ""),
-			fld("body", "string_or_null", "textarea"),
+		fld("text", "object", "group", withLabel("workflowConfirmation.textContent"), withFields(
+			fld("headline", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.headline")),
+			fld("subtitle", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.subtitle")),
+			fld("body", "string_or_null", "textarea", withLabel("agentWorkbench.nodeEditor.body")),
 		)),
-		fld("atmosphere", "object", "group", withFields(
-			fld("keywords", "string_list", ""),
-			fld("lighting", "string", "textarea"),
+		fld("atmosphere", "object", "group", withLabel("workflowConfirmation.atmosphere"), withFields(
+			fld("keywords", "string_list", "", withLabel("agentWorkbench.nodeEditor.keywords")),
+			fld("lighting", "string", "textarea", withLabel("agentWorkbench.nodeEditor.lighting")),
 		)),
 		hid("visual_variant_key", "string_or_null"),
 	}
@@ -172,25 +256,25 @@ func promptFields() []configField {
 
 func generationSpecFields() []configField {
 	return []configField{
-		fld("aspect_ratio", "string", "aspect_ratio"),
-		fld("resolution_tier", "string", "select", withChoices("standard", "high", "ultra")),
-		fld("quality_intent", "string", "select", withChoices("draft", "standard", "high")),
-		fld("reference_fidelity", "string", "select", withChoices("low", "medium", "high")),
-		fld("background_intent", "string", "select", withChoices("auto", "opaque", "transparent")),
-		fld("text_policy", "string", "select", withChoices("none", "allow", "required")),
-		fld("text_language", "string_or_null", "", withMaxLen(80)),
+		fld("aspect_ratio", "string", "aspect_ratio", withLabel("agentWorkbench.nodeEditor.aspectRatio"), withPanel("basic"), withDefault("1:1")),
+		fld("resolution_tier", "string", "select", withLabel("agentWorkbench.nodeEditor.resolution"), withChoices("standard", "high", "ultra"), withPanel("basic"), withDefault("high")),
+		fld("quality_intent", "string", "select", withLabel("agentWorkbench.nodeEditor.quality"), withChoices("draft", "standard", "high"), withPanel("basic"), withDefault("high")),
+		fld("reference_fidelity", "string", "select", withLabel("agentWorkbench.nodeEditor.referenceFidelity"), withChoices("low", "medium", "high"), withPanel("advanced"), withDefault("high")),
+		fld("background_intent", "string", "select", withLabel("agentWorkbench.nodeEditor.backgroundIntent"), withChoices("auto", "opaque", "transparent"), withPanel("advanced"), withDefault("auto")),
+		fld("text_policy", "string", "select", withLabel("agentWorkbench.nodeEditor.textPolicy"), withChoices("none", "allow", "required"), withPanel("advanced"), withDefault("none")),
+		fld("text_language", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.textLanguage"), withMaxLen(80), withPanel("advanced"), withVisible("text_policy", "allow", "required")),
 	}
 }
 
 func deliverySpecFields() []configField {
 	return []configField{
-		fld("width", "number", "", withMinMax(1, 16384)),
-		fld("height", "number", "", withMinMax(1, 16384)),
-		fld("format", "string", "select", withChoices("png", "jpeg", "webp")),
+		fld("width", "number", "", withLabel("agentWorkbench.nodeEditor.width"), withMinMax(1, 16384), withDefault(1200)),
+		fld("height", "number", "", withLabel("agentWorkbench.nodeEditor.height"), withMinMax(1, 16384), withDefault(1200)),
+		fld("format", "string", "select", withLabel("agentWorkbench.nodeEditor.format"), withChoices("png", "jpeg", "webp"), withDefault("png")),
 		hid("max_byte_size", "number_or_null"),
-		fld("fit", "string", "select", withChoices("contain", "cover")),
-		fld("background_color", "string_or_null", "", withMaxLen(7)),
-		fld("crop_anchor", "string_or_null", "select", withChoices("center", "top", "bottom", "left", "right")),
+		fld("fit", "string", "select", withLabel("agentWorkbench.nodeEditor.fit"), withChoices("contain", "cover"), withDefault("contain")),
+		fld("background_color", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.backgroundColor"), withMaxLen(7), withVisible("fit", "contain")),
+		fld("crop_anchor", "string_or_null", "select", withLabel("agentWorkbench.nodeEditor.cropAnchor"), withChoices("center", "top", "bottom", "left", "right"), withVisible("fit", "cover")),
 	}
 }
 
@@ -202,46 +286,63 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 			hid("fact_set_version_id", "string_or_null"),
 		}, true
 	case NodeImageAsset:
-		choices := make([]string, 0, len(imageAssetRoles))
-		for role := range imageAssetRoles {
-			choices = append(choices, role)
-		}
-		sort.Strings(choices)
 		return []configField{
-			fld("role", "string_or_null", "select", withChoices(choices...), withMaxLen(120)),
-			fld("label", "string_or_null", "", withMaxLen(255)),
+			fld("role", "string_or_null", "select", withLabel("graph.inspector.assetRole"), withChoices(imageAssetRoleOrder...), withMaxLen(120)),
+			fld("label", "string_or_null", "", withLabel("graph.inspector.assetLabel"), withMaxLen(255)),
 		}, true
 	case NodeCreativeBrief:
 		return []configField{
 			hid("title", "string"),
-			fld("goal", "string", "textarea"),
-			fld("design_goals", "string_list", ""),
-			fld("required_copy", "string_list", ""),
-			fld("prohibitions", "string_list", ""),
+			fld("goal", "string", "textarea", withLabel("workflowConfirmation.designGoal")),
+			fld("design_goals", "string_list", "", withLabel("graph.inspector.designGoals")),
+			fld("required_copy", "string_list", "", withLabel("graph.inspector.requiredCopy")),
+			fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 		}, true
 	case NodeVisualSystem:
 		return []configField{
 			hid("visual_system_version_id", "string_or_null"),
-			fld("visual_overlay", "object_or_null", "group", withFields(visualOverlayFields()...)),
+			fld("visual_overlay", "object_or_null", "group", withHint("graph.inspector.visualVersionHint"), withFields(visualOverlayFields()...)),
 			hid("visual_overrides", "object"),
 		}, true
 	case NodePromptGeneration:
 		return []configField{
 			hid("image_type_key", "string"),
-			fld("prompt", "object", "group", withFields(promptFields()...)),
+			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withFields(promptFields()...)),
 		}, true
 	case NodeImageGeneration:
 		return []configField{
 			hid("image_type_key", "string"),
-			fld("variation_instruction", "string_or_null", "textarea", withMaxLen(4000)),
-			fld("generation_spec", "object", "group", withFields(generationSpecFields()...)),
-			fld("delivery_spec", "object_or_null", "optional_object", withFields(deliverySpecFields()...)),
+			fld("variation_instruction", "string_or_null", "textarea", withLabel("workflowConfirmation.variation"), withMaxLen(4000)),
+			fld("generation_spec", "object", "group", withLabel("agentWorkbench.nodeEditor.generationSettings"), withDefault(cloneMap(defaultGenerationSpec)), withFields(generationSpecFields()...)),
+			fld("delivery_spec", "object_or_null", "optional_object", withLabel("workflowConfirmation.deliverySpec"), withToggle("agentWorkbench.nodeEditor.deliveryEnabled"), withPanel("advanced"), withDefault(cloneMap(defaultDeliverySpec)), withFields(deliverySpecFields()...)),
 			fld("visual_overlay", "object_or_null", "group", withFields(visualOverlayFields()...)),
 			hid("visual_overrides", "object"),
 		}, true
 	default:
 		return nil, false
 	}
+}
+
+func IsProcessingNode(nodeType NodeType) bool {
+	switch nodeType {
+	case NodeCreativeBrief, NodeVisualSystem, NodePromptGeneration, NodeImageGeneration:
+		return true
+	default:
+		return false
+	}
+}
+
+func catalogAccepts(nodeType NodeType) []inputContract {
+	var out []inputContract
+	for _, key := range catalogAcceptanceOrder {
+		if key[1] != string(nodeType) {
+			continue
+		}
+		if c, ok := acceptance[key]; ok {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func GraphNodeOutputType(nodeType NodeType) (EdgeDataType, error) {
