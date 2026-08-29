@@ -54,8 +54,8 @@ func newRecipeServer(t *testing.T) *recipeServer {
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
-	graph.HTTP{Service: graph.Service{DB: gdb}, Settings: settingsStore}.Register(engine)
-	recipe.HTTP{Service: recipe.Service{DB: gdb}, Settings: settingsStore}.Register(engine)
+	graph.HTTP{Service: graph.Service{DB: gdb, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
+	recipe.HTTP{Service: recipe.Service{DB: gdb, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	rs := &recipeServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}

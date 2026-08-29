@@ -7,6 +7,7 @@ import (
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -43,6 +44,15 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 		if err != nil {
 			return err
 		}
+		if item.WorkflowRunID != nil {
+			if err := SyncGraphRunToTasks(ctx, pgxTx, *item.WorkflowRunID); err != nil {
+				return err
+			}
+			item, err = loadRunRequest(ctx, pgxTx, productID, conversationID, item.ID)
+			if err != nil {
+				return err
+			}
+		}
 		out = &item
 		return nil
 	})
@@ -50,8 +60,7 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 }
 
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
-	var productIDVal, graphID, status string
-	var sourceRunID, graphRunID *string
+	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 		if err != nil {
@@ -60,74 +69,84 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 		if item.Status == "cancelled" {
 			return apperr.Conflict("已取消的工作流执行请求不能确认")
 		}
-		productIDVal = item.ProductID
-		graphID = item.WorkflowID
-		sourceRunID = item.SourceRunID
-		status = item.Status
-		graphRunID = item.WorkflowRunID
-		return nil
-	})
-	if err != nil {
-		return WorkflowRunRequestResponse{}, err
-	}
-	if graphRunID != nil {
-		return s.reloadRequest(ctx, productID, conversationID, requestID)
-	}
-	if status != "awaiting_confirmation" {
-		return WorkflowRunRequestResponse{}, apperr.Conflict("当前工作流执行请求不在待确认状态")
-	}
-	var runID string
-	if sourceRunID != nil {
-		run, err := s.Graph.RetryRun(ctx, productIDVal, graphID, *sourceRunID)
-		if err != nil {
-			return WorkflowRunRequestResponse{}, err
+		if item.WorkflowRunID != nil {
+			if err := SyncGraphRunToTasks(ctx, pgxTx, *item.WorkflowRunID); err != nil {
+				return err
+			}
+			loaded, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+			out = loaded
+			return err
 		}
-		runID = run.ID
-	} else {
-		run, err := s.Graph.SubmitRun(ctx, productIDVal, graphID, "graph", nil)
-		if err != nil {
-			return WorkflowRunRequestResponse{}, err
+		if item.Status != "awaiting_confirmation" {
+			return apperr.Conflict("当前工作流执行请求不在待确认状态")
 		}
-		runID = run.ID
-	}
-	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		_, err := pfdb.Exec(ctx, pgxTx, `
+		var run graph.GraphRunResponse
+		if item.SourceRunID != nil {
+			run, err = s.Graph.RetryRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, *item.SourceRunID)
+		} else {
+			run, err = s.Graph.SubmitRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, "graph", nil)
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_workflow_run_requests
 			SET status = 'confirmed', graph_run_id = $2, confirmed_at = NOW(), updated_at = NOW()
 			WHERE id = $1
-		`, requestID, runID)
+		`, requestID, run.ID); err != nil {
+			return err
+		}
+		if err := markTurnSucceededForRequest(ctx, pgxTx, requestID, conversationID); err != nil {
+			return err
+		}
+		if err := SyncGraphRunToTasks(ctx, pgxTx, run.ID); err != nil {
+			return err
+		}
+		loaded, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+		out = loaded
 		return err
 	})
-	return s.reloadRequest(ctx, productID, conversationID, requestID)
+	return out, err
 }
 
 func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
-	var item WorkflowRunRequestResponse
+	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		loaded, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
-		item = loaded
-		return err
-	})
-	if err != nil {
-		return WorkflowRunRequestResponse{}, err
-	}
-	if item.Status == "cancelled" {
-		return item, nil
-	}
-	if item.WorkflowRunID != nil {
-		if _, err := s.Graph.CancelRun(ctx, item.ProductID, item.WorkflowID, *item.WorkflowRunID); err != nil {
-			return WorkflowRunRequestResponse{}, err
+		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+		if err != nil {
+			return err
 		}
-	}
-	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_workflow_run_requests
-			SET status = 'cancelled', failure_reason = COALESCE(failure_reason, '工作流运行已取消'), finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, requestID)
+		if item.Status == "cancelled" {
+			out = item
+			return nil
+		}
+		if item.WorkflowRunID != nil {
+			if _, err := s.Graph.CancelRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, *item.WorkflowRunID); err != nil {
+				var app apperr.Error
+				if !errors.As(err, &app) || app.Status != 409 {
+					return err
+				}
+			}
+			if err := SyncGraphRunToTasks(ctx, pgxTx, *item.WorkflowRunID); err != nil {
+				return err
+			}
+		} else {
+			if _, err := pfdb.Exec(ctx, pgxTx, `
+				UPDATE agent_workflow_run_requests
+				SET status = 'cancelled', failure_reason = COALESCE(failure_reason, $2), finished_at = NOW(), updated_at = NOW()
+				WHERE id = $1
+			`, requestID, graph.GraphCancelledReason); err != nil {
+				return err
+			}
+			if err := parkTaskAfterCancelledRunRequest(ctx, pgxTx, item.TaskID); err != nil {
+				return err
+			}
+		}
+		loaded, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+		out = loaded
 		return err
 	})
-	return s.reloadRequest(ctx, productID, conversationID, requestID)
+	return out, err
 }
 
 func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, _ Service, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {

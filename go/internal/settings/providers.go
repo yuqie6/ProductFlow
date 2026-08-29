@@ -334,101 +334,112 @@ func (s *Store) CreateProfile(ctx context.Context, name, providerType string, ba
 }
 
 func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]json.RawMessage) (ProviderProfile, error) {
-	current, err := s.getProfileRow(ctx, id)
+	var out ProviderProfile
+	err := tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
+		current, err := s.getProfileRow(ctx, dbTx, id)
+		if err != nil {
+			return err
+		}
+		if current.ArchivedAt != nil {
+			return apperr.Validation("供应商不存在")
+		}
+		if _, ok := fields["name"]; ok {
+			var name string
+			if err := json.Unmarshal(fields["name"], &name); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.Name = strings.TrimSpace(name)
+			if current.Name == "" {
+				return apperr.Validation("供应商名称不能为空")
+			}
+		}
+		if _, ok := fields["provider_type"]; ok {
+			var raw string
+			if err := json.Unmarshal(fields["provider_type"], &raw); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.ProviderType, err = normalizeProviderType(raw)
+			if err != nil {
+				return err
+			}
+		}
+		if _, ok := fields["base_url"]; ok {
+			var raw *string
+			if err := json.Unmarshal(fields["base_url"], &raw); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.BaseURL = trimPtr(raw)
+		}
+		if _, ok := fields["api_key"]; ok {
+			var raw *string
+			if err := json.Unmarshal(fields["api_key"], &raw); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			if trimmed := trimPtr(raw); trimmed != nil {
+				current.apiKey = trimmed
+			}
+		}
+		if _, ok := fields["capabilities"]; ok {
+			var caps []string
+			if err := json.Unmarshal(fields["capabilities"], &caps); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.Capabilities, err = normalizeCapabilities(caps, current.ProviderType)
+			if err != nil {
+				return err
+			}
+		} else if err := validateCapsForType(current.Capabilities, current.ProviderType); err != nil {
+			return err
+		}
+		if err := validateConnection(current.ProviderType, current.BaseURL); err != nil {
+			return err
+		}
+		if _, ok := fields["default_models"]; ok {
+			var models map[string]any
+			if err := json.Unmarshal(fields["default_models"], &models); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.DefaultModels = orEmptyMap(models)
+		}
+		if _, ok := fields["config"]; ok {
+			var cfg map[string]any
+			if err := json.Unmarshal(fields["config"], &cfg); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.Config = orEmptyMap(cfg)
+		}
+		if _, ok := fields["enabled"]; ok {
+			var enabled bool
+			if err := json.Unmarshal(fields["enabled"], &enabled); err != nil {
+				return apperr.Validation("请求体无效")
+			}
+			current.Enabled = enabled
+		}
+		if err := s.validateProfileKeepsBindings(ctx, dbTx, current); err != nil {
+			return err
+		}
+		capsJSON, _ := json.Marshal(current.Capabilities)
+		modelsJSON, _ := json.Marshal(current.DefaultModels)
+		cfgJSON, _ := json.Marshal(current.Config)
+		if _, err := pfdb.Exec(ctx, dbTx, `
+			UPDATE provider_profiles SET
+				name=$2, provider_type=$3, base_url=$4, api_key=COALESCE($5, api_key),
+				capabilities_json=$6, default_models_json=$7, config_json=$8, enabled=$9, updated_at=NOW()
+			WHERE id=$1
+		`, id, current.Name, current.ProviderType, current.BaseURL, current.apiKey, capsJSON, modelsJSON, cfgJSON, current.Enabled); err != nil {
+			return err
+		}
+		updated, err := s.getProfileRow(ctx, dbTx, id)
+		if err != nil {
+			return err
+		}
+		out = updated.ProviderProfile
+		return nil
+	})
 	if err != nil {
 		return ProviderProfile{}, err
 	}
-	if current.ArchivedAt != nil {
-		return ProviderProfile{}, apperr.Validation("供应商不存在")
-	}
-	if _, ok := fields["name"]; ok {
-		var name string
-		if err := json.Unmarshal(fields["name"], &name); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.Name = strings.TrimSpace(name)
-		if current.Name == "" {
-			return ProviderProfile{}, apperr.Validation("供应商名称不能为空")
-		}
-	}
-	if _, ok := fields["provider_type"]; ok {
-		var raw string
-		if err := json.Unmarshal(fields["provider_type"], &raw); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.ProviderType, err = normalizeProviderType(raw)
-		if err != nil {
-			return ProviderProfile{}, err
-		}
-	}
-	if _, ok := fields["base_url"]; ok {
-		var raw *string
-		if err := json.Unmarshal(fields["base_url"], &raw); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.BaseURL = trimPtr(raw)
-	}
-	if _, ok := fields["api_key"]; ok {
-		var raw *string
-		if err := json.Unmarshal(fields["api_key"], &raw); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		if trimmed := trimPtr(raw); trimmed != nil {
-			current.apiKey = trimmed
-		}
-	}
-	if _, ok := fields["capabilities"]; ok {
-		var caps []string
-		if err := json.Unmarshal(fields["capabilities"], &caps); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.Capabilities, err = normalizeCapabilities(caps, current.ProviderType)
-		if err != nil {
-			return ProviderProfile{}, err
-		}
-	} else if err := validateCapsForType(current.Capabilities, current.ProviderType); err != nil {
-		return ProviderProfile{}, err
-	}
-	if err := validateConnection(current.ProviderType, current.BaseURL); err != nil {
-		return ProviderProfile{}, err
-	}
-	if _, ok := fields["default_models"]; ok {
-		var models map[string]any
-		if err := json.Unmarshal(fields["default_models"], &models); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.DefaultModels = orEmptyMap(models)
-	}
-	if _, ok := fields["config"]; ok {
-		var cfg map[string]any
-		if err := json.Unmarshal(fields["config"], &cfg); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.Config = orEmptyMap(cfg)
-	}
-	if _, ok := fields["enabled"]; ok {
-		var enabled bool
-		if err := json.Unmarshal(fields["enabled"], &enabled); err != nil {
-			return ProviderProfile{}, apperr.Validation("请求体无效")
-		}
-		current.Enabled = enabled
-	}
-	if err := s.validateProfileKeepsBindings(ctx, current); err != nil {
-		return ProviderProfile{}, err
-	}
-	capsJSON, _ := json.Marshal(current.Capabilities)
-	modelsJSON, _ := json.Marshal(current.DefaultModels)
-	cfgJSON, _ := json.Marshal(current.Config)
-	_, err = pfdb.Exec(ctx, s.db, `
-		UPDATE provider_profiles SET
-			name=$2, provider_type=$3, base_url=$4, api_key=COALESCE($5, api_key),
-			capabilities_json=$6, default_models_json=$7, config_json=$8, enabled=$9, updated_at=NOW()
-		WHERE id=$1
-	`, id, current.Name, current.ProviderType, current.BaseURL, current.apiKey, capsJSON, modelsJSON, cfgJSON, current.Enabled)
-	if err != nil {
-		return ProviderProfile{}, err
-	}
-	return s.getProfile(ctx, id)
+	return out, nil
 }
 
 func (s *Store) ArchiveProfile(ctx context.Context, id string) (ProviderProfile, error) {
@@ -472,7 +483,7 @@ func (s *Store) UpdateBinding(ctx context.Context, purpose, kind string, profile
 		if profileID == nil || strings.TrimSpace(*profileID) == "" {
 			return ProviderBindingView{}, apperr.Validation("真实供应商必须选择供应商档案")
 		}
-		profile, err := s.getProfileRow(ctx, *profileID)
+		profile, err := s.getProfileRow(ctx, s.db, *profileID)
 		if err != nil {
 			return ProviderBindingView{}, err
 		}
@@ -506,18 +517,19 @@ type profileRow struct {
 }
 
 func (s *Store) getProfile(ctx context.Context, id string) (ProviderProfile, error) {
-	row, err := s.getProfileRow(ctx, id)
+	row, err := s.getProfileRow(ctx, s.db, id)
 	if err != nil {
 		return ProviderProfile{}, err
 	}
 	return row.ProviderProfile, nil
 }
 
-func (s *Store) getProfileRow(ctx context.Context, id string) (profileRow, error) {
-	row := pfdb.QueryRow(ctx, s.db, `
+func (s *Store) getProfileRow(ctx context.Context, dbTx *gorm.DB, id string) (profileRow, error) {
+	row := pfdb.QueryRow(ctx, dbTx, `
 		SELECT id, name, provider_type, base_url, capabilities_json, default_models_json, config_json,
 		       enabled, archived_at, api_key, created_at, updated_at
 		FROM provider_profiles WHERE id = $1
+		FOR UPDATE
 	`, id)
 	profile, err := scanProfile(row)
 	if err != nil {
@@ -527,7 +539,7 @@ func (s *Store) getProfileRow(ctx context.Context, id string) (profileRow, error
 		return profileRow{}, err
 	}
 	var apiKey *string
-	_ = pfdb.QueryRow(ctx, s.db, `SELECT api_key FROM provider_profiles WHERE id = $1`, id).Scan(&apiKey)
+	_ = pfdb.QueryRow(ctx, dbTx, `SELECT api_key FROM provider_profiles WHERE id = $1`, id).Scan(&apiKey)
 	return profileRow{ProviderProfile: profile, apiKey: apiKey}, nil
 }
 
@@ -549,8 +561,8 @@ func (s *Store) getBinding(ctx context.Context, purpose string) (ProviderBinding
 	return row, nil
 }
 
-func (s *Store) validateProfileKeepsBindings(ctx context.Context, profile profileRow) error {
-	rows, err := pfdb.Query(ctx, s.db, `SELECT provider_kind FROM provider_bindings WHERE provider_profile_id = $1`, profile.ID)
+func (s *Store) validateProfileKeepsBindings(ctx context.Context, dbTx *gorm.DB, profile profileRow) error {
+	rows, err := pfdb.Query(ctx, dbTx, `SELECT provider_kind FROM provider_bindings WHERE provider_profile_id = $1`, profile.ID)
 	if err != nil {
 		return err
 	}

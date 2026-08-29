@@ -12,19 +12,18 @@ import (
 )
 
 type Projection struct {
-	ID                    string        `json:"id"`
-	ProductID             string        `json:"product_id"`
-	Title                 string        `json:"title"`
-	SchemaVersion         int           `json:"schema_version"`
-	Revision              int           `json:"revision"`
-	SourceDraftRevisionID *string       `json:"source_draft_revision_id"`
-	LastOperationGroupID  *string       `json:"last_operation_group_id"`
-	CanUndo               bool          `json:"can_undo"`
-	CanRedo               bool          `json:"can_redo"`
-	Nodes                 []NodeView    `json:"nodes"`
-	Edges                 []EdgeView    `json:"edges"`
-	Groups                []GroupView   `json:"groups"`
-	PendingProposal       *ProposalView `json:"pending_proposal"`
+	ID                   string        `json:"id"`
+	ProductID            string        `json:"product_id"`
+	Title                string        `json:"title"`
+	SchemaVersion        int           `json:"schema_version"`
+	Revision             int           `json:"revision"`
+	LastOperationGroupID *string       `json:"last_operation_group_id"`
+	CanUndo              bool          `json:"can_undo"`
+	CanRedo              bool          `json:"can_redo"`
+	Nodes                []NodeView    `json:"nodes"`
+	Edges                []EdgeView    `json:"edges"`
+	Groups               []GroupView   `json:"groups"`
+	PendingProposal      *ProposalView `json:"pending_proposal"`
 }
 
 type NodeView struct {
@@ -102,7 +101,8 @@ type ProposalEdgeView struct {
 	Order        int    `json:"order"`
 }
 
-func Project(ctx context.Context, tx *gorm.DB, row GraphRow) (Projection, error) {
+func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) {
+	row := graphRow{Identity: id}
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
 		return Projection{}, err
@@ -131,7 +131,7 @@ func Project(ctx context.Context, tx *gorm.DB, row GraphRow) (Projection, error)
 }
 
 func buildProjection(
-	row GraphRow,
+	row graphRow,
 	applied AppliedGraph,
 	lastID *string,
 	canUndo, canRedo bool,
@@ -218,19 +218,18 @@ func buildProjection(
 		groups = append(groups, GroupView{group.ID, group.Title, members})
 	}
 	return Projection{
-		ID:                    row.ID,
-		ProductID:             row.ProductID,
-		Title:                 row.Title,
-		SchemaVersion:         row.SchemaVersion,
-		Revision:              applied.Revision,
-		SourceDraftRevisionID: nil,
-		LastOperationGroupID:  lastID,
-		CanUndo:               canUndo,
-		CanRedo:               canRedo,
-		Nodes:                 nodes,
-		Edges:                 edges,
-		Groups:                groups,
-		PendingProposal:       proposal,
+		ID:                   row.ID,
+		ProductID:            row.ProductID,
+		Title:                row.Title,
+		SchemaVersion:        row.SchemaVersion,
+		Revision:             applied.Revision,
+		LastOperationGroupID: lastID,
+		CanUndo:              canUndo,
+		CanRedo:              canRedo,
+		Nodes:                nodes,
+		Edges:                edges,
+		Groups:               groups,
+		PendingProposal:      proposal,
 	}
 }
 
@@ -248,7 +247,7 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 	return status
 }
 
-func loadGraphSources(ctx context.Context, tx *gorm.DB, row GraphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
+func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
 	nodeRows, err := pfdb.Query(ctx, tx, `
 		SELECT n.id, n.bound_image_asset_id, n.current_artifact_id,
 		       a.artifact_type, a.payload_json, a.input_digest, a.product_image_asset_id
@@ -379,15 +378,9 @@ func loadVisualSystemPayload(ctx context.Context, tx *gorm.DB, versionID string)
 }
 
 func loadBoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (string, string, error) {
-	var display, mime string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.display_name, COALESCE(m.mime_type, '')
-		FROM product_image_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.product_id = $1 AND a.id = $2
-	`, productID, assetID).Scan(&display, &mime)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return "", "", nil
+	guard, err := requireProductGuard(ctx)
+	if err != nil {
+		return "", "", err
 	}
-	return display, mime, err
+	return guard.BoundAssetMeta(ctx, tx, productID, assetID)
 }

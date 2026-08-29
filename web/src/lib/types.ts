@@ -1619,7 +1619,6 @@ export interface GraphProjection {
   title: string;
   schema_version: number;
   revision: number;
-  source_draft_revision_id: string | null;
   last_operation_group_id: string | null;
   can_undo: boolean;
   can_redo: boolean;

@@ -14,18 +14,30 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
+
+type classifiedNodeError struct{ error }
+
+func (e classifiedNodeError) Unwrap() error { return e.error }
 
 func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID string) error {
 	err := e.runClaimedNode(ctx, runID, nodeRunID)
 	if err == nil || isProviderUnknown(err) {
 		return err
 	}
+	var classified classifiedNodeError
+	if errors.As(err, &classified) {
+		return nil
+	}
 	var app apperr.Error
-	reason := "节点运行失败"
+	reason := err.Error()
 	if errors.As(err, &app) {
 		reason = app.Detail
+	}
+	if reason == "" {
+		reason = "节点运行失败"
 	}
 	_ = failClaimedNode(ctx, e.DB, runID, nodeRunID, reason)
 	return nil
@@ -46,6 +58,10 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if nodeRun == nil || run.Status != RunStatusRunning || nodeRun.Status != NodeRunRunning {
 		return nil
 	}
+	e.logger().Info("graph node run",
+		zap.String("workflow_run_id", runID),
+		zap.String("workflow_node_run_id", nodeRunID),
+	)
 	if nodeRun.NodeID == nil {
 		return apperr.Validation("运行节点已从当前图中删除")
 	}
@@ -125,8 +141,13 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if spec, ok := node.Config["generation_spec"].(map[string]any); ok {
 			imgReq.GenerationSpec = spec
 		}
-		if promptPayload, ok := node.Config["prompt"].(map[string]any); ok {
-			imgReq.Prompt = promptPayload
+		promptPayload, err := incomingPromptPayload(applied, node.ID, sources)
+		if err != nil {
+			return err
+		}
+		imgReq.Prompt = promptPayload
+		if stored, ok := node.Config["prompt"].(map[string]any); ok && len(imgReq.Prompt) == 0 {
+			imgReq.Prompt = stored
 		}
 		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
 			return image.GenerateImage(ctx, imgReq)
@@ -183,8 +204,16 @@ func (e Executor) callProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		_ = e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID)
-		return PromptResult{}, false, providerUnknownError{}
+		if isProviderUnknown(err) {
+			if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
+				return PromptResult{}, false, markErr
+			}
+			return PromptResult{}, false, providerUnknownError{}
+		}
+		if markErr := e.markFailedCommitted(ctx, runID, nodeRun.ID, &attemptID, err.Error()); markErr != nil {
+			return PromptResult{}, false, markErr
+		}
+		return PromptResult{}, false, classifiedNodeError{err}
 	}
 	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{
 		"model":       result.Model,
@@ -216,8 +245,16 @@ func (e Executor) callImageProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		_ = e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID)
-		return ImageResult{}, false, providerUnknownError{}
+		if isProviderUnknown(err) {
+			if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
+				return ImageResult{}, false, markErr
+			}
+			return ImageResult{}, false, providerUnknownError{}
+		}
+		if markErr := e.markFailedCommitted(ctx, runID, nodeRun.ID, &attemptID, err.Error()); markErr != nil {
+			return ImageResult{}, false, markErr
+		}
+		return ImageResult{}, false, classifiedNodeError{err}
 	}
 	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{
 		"model":           result.Model,
@@ -278,6 +315,16 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, ProviderUnknownDetail); err != nil {
+			return err
+		}
+		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		return err
+	})
+}
+
+func (e Executor) markFailedCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string, detail string) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		if err := markNodeFailed(ctx, pgxTx, runID, nodeRunID, attemptID, detail); err != nil {
 			return err
 		}
 		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)

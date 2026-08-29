@@ -83,37 +83,37 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 	}, nil
 }
 
-func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) (GraphRow, error) {
+func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) (graphRow, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	proposal, err := loadProposalForUpdate(ctx, tx, row.ID, proposalID)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	if proposal.Status != "pending" {
-		return GraphRow{}, apperr.Conflict("图提案已经结束")
+		return graphRow{}, apperr.Conflict("图提案已经结束")
 	}
 	if proposal.BaseGraphRevision != row.Revision {
-		return GraphRow{}, apperr.Conflict("图 revision 已变化，请刷新后重试")
+		return graphRow{}, apperr.Conflict("图 revision 已变化，请刷新后重试")
 	}
 	parsed, err := ParseChangeSet(proposal.ChangeSetJSON)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	parsed.BaseGraphRevision = row.Revision
 	parsed.ActorType = ActorAgent
 	result, err := Mutate(ctx, tx, productID, row.ID, parsed, HistoryEdit)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	if _, err := pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graph_proposals
 		SET status = 'confirmed', resolved_at = NOW(), operation_group_id = $2
 		WHERE id = $1
 	`, proposal.ID, result.OperationGroupID); err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	row.Revision = result.Revision
 	return row, nil
@@ -139,7 +139,7 @@ func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	return err
 }
 
-func pendingProposalView(ctx context.Context, tx *gorm.DB, row GraphRow, applied AppliedGraph) (*ProposalView, error) {
+func pendingProposalView(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (*ProposalView, error) {
 	var proposal proposalRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, summary, status, base_graph_revision, change_set_json

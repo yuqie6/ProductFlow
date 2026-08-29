@@ -1,6 +1,7 @@
 package canonjson
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 
 // Compact 对齐 Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)。
 func Compact(v any) ([]byte, error) {
-	raw, err := json.Marshal(v)
+	raw, err := marshalUnescaped(v)
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +31,16 @@ func SHA256Hex(v any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+func marshalUnescaped(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
 func marshalSorted(v any) ([]byte, error) {
 	switch typed := v.(type) {
 	case map[string]any:
@@ -43,7 +54,7 @@ func marshalSorted(v any) ([]byte, error) {
 			if i > 0 {
 				buf = append(buf, ',')
 			}
-			keyJSON, err := json.Marshal(key)
+			keyJSON, err := marshalUnescaped(key)
 			if err != nil {
 				return nil, err
 			}
@@ -71,7 +82,9 @@ func marshalSorted(v any) ([]byte, error) {
 		}
 		buf = append(buf, ']')
 		return buf, nil
+	case json.Number:
+		return []byte(typed.String()), nil
 	default:
-		return json.Marshal(typed)
+		return marshalUnescaped(v)
 	}
 }

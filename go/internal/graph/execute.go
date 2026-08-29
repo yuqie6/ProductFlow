@@ -13,27 +13,31 @@ import (
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 const (
 	graphRunAdvisoryLockNamespace = 847261
-	capacityWait                  = 250 * time.Millisecond
 )
 
 var graphRunLocks sync.Map
 
 type Executor struct {
-	DB   *gorm.DB
-	Deps Dependencies
+	DB             *gorm.DB
+	Deps           Dependencies
+	Log            *zap.Logger
+	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
 }
 
 // ExecuteRun 是 worker 入口：同一 run 只允许一个 worker；无法证明的 provider 结果标 unknown。
 func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
+	e.logger().Info("graph run", zap.String("workflow_run_id", runID))
 	unlock, ok := tryProcessLock(runID)
 	if !ok {
-		return nil
+		return queue.ErrBusy
 	}
 	defer unlock()
 
@@ -47,19 +51,44 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 	}
 	defer conn.Close()
 	acquired, err := tryAdvisoryLock(ctx, conn, runID)
-	if err != nil || !acquired {
+	if err != nil {
 		return err
+	}
+	if !acquired {
+		return queue.ErrBusy
 	}
 	defer func() { _ = releaseAdvisoryLock(context.Background(), conn, runID) }()
 
 	if err := e.executeLoop(ctx, runID); err != nil {
+		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
+			return err
+		}
 		if isProviderUnknown(err) {
+			e.notifyRunStatus(ctx, runID)
 			return nil
 		}
 		_ = failGraphRun(ctx, e.DB, runID, "工作流运行失败")
+		e.notifyRunStatus(ctx, runID)
 		return nil
 	}
+	e.notifyRunStatus(ctx, runID)
 	return nil
+}
+
+func (e Executor) notifyRunStatus(ctx context.Context, runID string) {
+	if e.AfterRunStatus == nil {
+		return
+	}
+	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		return e.AfterRunStatus(ctx, pgxTx, runID)
+	})
+}
+
+func (e Executor) logger() *zap.Logger {
+	if e.Log != nil {
+		return e.Log
+	}
+	return zap.NewNop()
 }
 
 func (e Executor) executeLoop(ctx context.Context, runID string) error {
@@ -122,8 +151,13 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		var wg sync.WaitGroup
 		var claimed int
 		errCh := make(chan error, len(ready))
+		var waitingCapacity bool
 		for _, nodeRun := range ready {
 			ok, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
+			if errors.Is(err, errWaitingCapacity) {
+				waitingCapacity = true
+				continue
+			}
 			if err != nil {
 				return err
 			}
@@ -140,8 +174,10 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			}(nodeRun.ID)
 		}
 		if claimed == 0 {
-			time.Sleep(capacityWait)
-			continue
+			if waitingCapacity {
+				return queue.ErrLater
+			}
+			return queue.ErrBusy
 		}
 		wg.Wait()
 		close(errCh)

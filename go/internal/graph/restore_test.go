@@ -81,7 +81,8 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 	if opened.Name != "备份恢复商品" {
 		t.Fatalf("restored name %q", opened.Name)
 	}
-	current, err := (graph.Service{DB: dstDB}).Current(ctx, created.Product.ID)
+	graphs := graph.Service{DB: dstDB, Products: product.GraphGuard{}}
+	current, err := graphs.Current(ctx, created.Product.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 		t.Fatalf("restored graph %s want %s", current.ID, graphID)
 	}
 
-	run, err := (graph.Service{DB: dstDB}).SubmitRun(ctx, created.Product.ID, graphID, "graph", nil)
+	run, err := graphs.SubmitRun(ctx, created.Product.ID, graphID, "graph", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 	if err := executor.ExecuteRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
 	}
-	finished, err := (graph.Service{DB: dstDB}).GetRun(ctx, created.Product.ID, graphID, run.ID)
+	finished, err := graphs.GetRun(ctx, created.Product.ID, graphID, run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,12 +14,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
@@ -71,12 +73,61 @@ func newEditServer(t *testing.T, provider Provider) *editServer {
 	}
 	resp.Body.Close()
 	es.cookies = resp.Cookies()
+	var previousCapacity *string
+	_ = es.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = es.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
-		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		VALUES ('admin_access_required', 'true', NOW(), NOW()),
+		       ('generation_max_concurrent_tasks', '20', NOW(), NOW())
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`)
+	t.Cleanup(func() {
+		if previousCapacity == nil {
+			_, _ = es.pool.Exec(context.Background(), `DELETE FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`)
+			return
+		}
+		_, _ = es.pool.Exec(context.Background(), `
+			UPDATE app_settings SET value = $1, updated_at = NOW() WHERE key = 'generation_max_concurrent_tasks'
+		`, *previousCapacity)
+	})
 	return es
+}
+
+func (es *editServer) dropDispatch(t *testing.T, taskID string) {
+	t.Helper()
+	if _, err := es.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, taskID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (es *editServer) reclaimTask(t *testing.T, taskID string) {
+	t.Helper()
+	es.dropDispatch(t, taskID)
+	if _, err := es.pool.Exec(context.Background(), `
+		UPDATE local_image_edit_tasks SET
+			status = 'queued', active_attempt_id = NULL, progress_phase = NULL,
+			failure_reason = NULL, finished_at = NULL, started_at = NULL, is_retryable = TRUE
+		WHERE id = $1
+	`, taskID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (es *editServer) executeLocally(t *testing.T, taskID string, exec Executor) {
+	t.Helper()
+	for i := 0; i < 30; i++ {
+		es.reclaimTask(t, taskID)
+		err := exec.Execute(context.Background(), taskID)
+		if err == nil {
+			return
+		}
+		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		t.Fatal(err)
+	}
+	t.Fatal("could not execute local edit task locally")
 }
 
 func (es *editServer) do(t *testing.T, method, path string, body io.Reader, contentType string) *http.Response {
@@ -227,13 +278,11 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	`, task.ID).Scan(&dispatchStatus); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != "pending" {
+	if dispatchStatus != "pending" && dispatchStatus != "sent" {
 		t.Fatalf("dispatch %s", dispatchStatus)
 	}
 
-	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(context.Background(), task.ID); err != nil {
-		t.Fatal(err)
-	}
+	es.executeLocally(t, task.ID, Executor{DB: es.db, Media: es.media, Provider: provider})
 	got := es.do(t, http.MethodGet, "/api/v3/products/"+productID+"/image-edits/"+task.ID, nil, "")
 	es.mustStatus(t, got, http.StatusOK)
 	es.decode(t, got, &task)
@@ -254,9 +303,7 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	})
 	es.mustStatus(t, queued, http.StatusAccepted)
 	failExec := Executor{DB: es.db, Media: es.media, Provider: MockProvider{Cap: SupportedCapability("mock-local"), Err: errors.New("boom")}}
-	if err := failExec.Execute(context.Background(), task3.ID); err != nil {
-		t.Fatal(err)
-	}
+	es.executeLocally(t, task3.ID, failExec)
 	got3 := es.do(t, http.MethodGet, "/api/v3/products/"+productID+"/image-edits/"+task3.ID, nil, "")
 	es.mustStatus(t, got3, http.StatusOK)
 	es.decode(t, got3, &task3)

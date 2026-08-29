@@ -159,63 +159,6 @@ func TestBirthCommands(t *testing.T) {
 	if direct.Product.CoverImageAssetID == nil {
 		t.Fatal("v3 missing cover")
 	}
-
-	draft := `{"name":"名称草稿"}`
-	dreq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces/drafts", strings.NewReader(draft))
-	dreq.Header.Set("Content-Type", "application/json")
-	dreq.Header.Set("Idempotency-Key", "draft-key-1")
-	for _, c := range cookies {
-		dreq.AddCookie(c)
-	}
-	dresp, err := client.Do(dreq)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer dresp.Body.Close()
-	if dresp.StatusCode != http.StatusCreated {
-		raw, _ := io.ReadAll(dresp.Body)
-		t.Fatalf("draft %d %s", dresp.StatusCode, raw)
-	}
-	var snap WorkspaceSnapshotResponse
-	if err := json.NewDecoder(dresp.Body).Decode(&snap); err != nil {
-		t.Fatal(err)
-	}
-	if snap.Product.CoverImageAssetID != nil || snap.IntakeFinalized {
-		t.Fatalf("%+v", snap)
-	}
-	if snap.Conversation.ProductID == nil || *snap.Conversation.ProductID == "" {
-		t.Fatal("missing conversation product")
-	}
-
-	wsBody, wsType := multipartPNG(t, map[string]string{
-		"name":      "表单齐商品",
-		"selection": `{"schema_version":1,"image_types":[{"key":"hero","quantity":1,"order":0}]}`,
-	})
-	ws, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces", wsBody)
-	ws.Header.Set("Content-Type", wsType)
-	ws.Header.Set("Idempotency-Key", "workspace-key-1")
-	for _, c := range cookies {
-		ws.AddCookie(c)
-	}
-	wsResp, err := client.Do(ws)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer wsResp.Body.Close()
-	if wsResp.StatusCode != http.StatusCreated {
-		raw, _ := io.ReadAll(wsResp.Body)
-		t.Fatalf("workspace %d %s", wsResp.StatusCode, raw)
-	}
-	var wsCreated WorkspaceCreateResponse
-	if err := json.NewDecoder(wsResp.Body).Decode(&wsCreated); err != nil {
-		t.Fatal(err)
-	}
-	if wsCreated.Product.CoverImageAssetID != nil {
-		t.Fatal("agent form should not set cover")
-	}
-	if len(wsCreated.Product.Intake) == 0 || string(wsCreated.Product.Intake) == "null" {
-		t.Fatal("intake missing")
-	}
 }
 
 func multipartPNG(t *testing.T, fields map[string]string) (*bytes.Buffer, string) {

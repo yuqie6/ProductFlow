@@ -7,6 +7,7 @@ import (
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -203,47 +204,22 @@ func validateTarget(ctx context.Context, tx *gorm.DB, productID, sourceAssetID, 
 	if targetNodeID == "" {
 		return targetSnapshot{}, nil
 	}
-	var graphID, nodeType string
-	var artifactID *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT n.graph_id, n.node_type, n.current_artifact_id
-		FROM workflow_graph_nodes n
-		JOIN workflow_graphs g ON g.id = n.graph_id
-		WHERE n.id = $1 AND g.product_id = $2 AND g.active = TRUE
-		FOR UPDATE OF n
-	`, targetNodeID, productID).Scan(&graphID, &nodeType, &artifactID)
-	if errors.Is(err, sqldb.ErrNoRows) || nodeType != "image_generation" {
-		return targetSnapshot{}, apperr.Conflict("局部编辑 target 必须是当前商品 active graph 的 image_generation 节点")
-	}
+	target, err := graph.LockImageNodeTarget(ctx, tx, productID, targetNodeID)
 	if err != nil {
 		return targetSnapshot{}, err
 	}
-	if artifactID == nil {
-		return targetSnapshot{}, apperr.Conflict("局部编辑 target 必须有当前 image artifact")
-	}
-	var artifactType string
-	var assetID *string
-	var digest *string
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT artifact_type, product_image_asset_id, input_digest FROM workflow_graph_artifacts WHERE id = $1
-	`, *artifactID).Scan(&artifactType, &assetID, &digest)
-	if err != nil || artifactType != "image" || assetID == nil {
-		return targetSnapshot{}, apperr.Conflict("局部编辑 target 必须有当前 image artifact")
-	}
-	if *assetID != sourceAssetID {
+	if target.AssetID != sourceAssetID {
 		return targetSnapshot{}, apperr.Conflict("局部编辑 source asset 必须等于 target 当前 artifact asset")
 	}
-	if digest == nil || len(*digest) != 64 {
-		return targetSnapshot{}, apperr.Conflict("局部编辑 target 当前 artifact 缺少 input digest")
-	}
-	var revision int
-	if err := pfdb.QueryRow(ctx, tx, `SELECT revision FROM workflow_graphs WHERE id = $1`, graphID).Scan(&revision); err != nil {
-		return targetSnapshot{}, apperr.Conflict("局部编辑 target graph 不存在")
-	}
-	nodeID := targetNodeID
+	nodeID := target.NodeID
+	artifactID := target.ArtifactID
+	assetID := target.AssetID
+	digest := target.InputDigest
+	revision := target.Revision
+	graphID := target.GraphID
 	return targetSnapshot{
 		GraphID: &graphID, NodeID: &nodeID, Revision: &revision,
-		ArtifactID: artifactID, AssetID: assetID, InputDigest: digest,
+		ArtifactID: &artifactID, AssetID: &assetID, InputDigest: &digest,
 	}, nil
 }
 

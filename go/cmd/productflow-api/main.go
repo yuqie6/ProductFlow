@@ -65,59 +65,62 @@ func main() {
 	engine.Use(httpx.Session(cookieStore))
 	httpx.RegisterHealth(engine, pool)
 	settingsStore := settings.NewStore(pool, cfg)
-	auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore}.Register(engine)
-	settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
-	product.HTTP{
-		Service:  product.Service{DB: gdb, Media: mediaStore},
-		Settings: settingsStore,
-	}.Register(engine)
-	library.HTTP{
-		Service:  library.Service{DB: gdb, Media: mediaStore},
-		Settings: settingsStore,
-	}.Register(engine)
-	graph.HTTP{
-		Service:  graph.Service{DB: gdb},
-		Settings: settingsStore,
-	}.Register(engine)
-	recipe.HTTP{
-		Service:  recipe.Service{DB: gdb},
-		Settings: settingsStore,
-	}.Register(engine)
-	imagesession.HTTP{
-		Service:  imagesession.Service{DB: gdb, Media: mediaStore, Settings: settingsStore},
-		Settings: settingsStore,
-	}.Register(engine)
-	delivery.HTTP{
-		Service:  delivery.Service{DB: gdb, Media: mediaStore},
-		Settings: settingsStore,
-	}.Register(engine)
-	localedit.HTTP{
-		Service:  localedit.Service{DB: gdb, Media: mediaStore},
-		Settings: settingsStore,
-	}.Register(engine)
+	graphService := graph.Service{DB: gdb, AfterRunStatus: agent.SyncGraphRunToTasks, Products: product.GraphGuard{}}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
 		poll = time.Millisecond
 	}
-	agent.HTTP{
-		Service: agent.Service{
-			DB: gdb, Graph: graph.Service{DB: gdb},
-			Product:  product.Service{DB: gdb, Media: mediaStore},
-			Library:  library.Service{DB: gdb, Media: mediaStore},
-			Media:    mediaStore,
+	registerAPI(engine, apiHandlers{
+		Auth:     auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore},
+		Settings: settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken},
+		Product: product.HTTP{
+			Service:  product.Service{DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas},
 			Settings: settingsStore,
-			Gateway: agent.HTTPGateway{
-				BaseURL:        cfg.AgentServiceBaseURL,
-				Token:          cfg.AgentServiceInternalToken,
-				ConnectTimeout: time.Duration(cfg.AgentServiceConnectTimeoutSeconds * float64(time.Second)),
-				ReadTimeout:    time.Duration(cfg.AgentServiceReadTimeoutSeconds * float64(time.Second)),
-			},
-			Poll: poll,
 		},
-		Settings:      settingsStore,
-		InternalToken: cfg.AgentServiceInternalToken,
-	}.Register(engine)
+		Library: library.HTTP{
+			Service:  library.Service{DB: gdb, Media: mediaStore},
+			Settings: settingsStore,
+		},
+		Graph: graph.HTTP{
+			Service:  graphService,
+			Settings: settingsStore,
+		},
+		Recipe: recipe.HTTP{
+			Service:  recipe.Service{DB: gdb, Products: product.GraphGuard{}},
+			Settings: settingsStore,
+		},
+		ImageSession: imagesession.HTTP{
+			Service:  imagesession.Service{DB: gdb, Media: mediaStore, Settings: settingsStore},
+			Settings: settingsStore,
+		},
+		Delivery: delivery.HTTP{
+			Service:  delivery.Service{DB: gdb, Media: mediaStore},
+			Settings: settingsStore,
+		},
+		LocalEdit: localedit.HTTP{
+			Service:  localedit.Service{DB: gdb, Media: mediaStore},
+			Settings: settingsStore,
+		},
+		Agent: agent.HTTP{
+			Service: agent.Service{
+				DB: gdb, Graph: graphService,
+				Product:  product.Service{DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas},
+				Library:  library.Service{DB: gdb, Media: mediaStore},
+				Media:    mediaStore,
+				Settings: settingsStore,
+				Gateway: agent.HTTPGateway{
+					BaseURL:        cfg.AgentServiceBaseURL,
+					Token:          cfg.AgentServiceInternalToken,
+					ConnectTimeout: time.Duration(cfg.AgentServiceConnectTimeoutSeconds * float64(time.Second)),
+					ReadTimeout:    time.Duration(cfg.AgentServiceReadTimeoutSeconds * float64(time.Second)),
+				},
+				Poll: poll,
+			},
+			Settings:      settingsStore,
+			InternalToken: cfg.AgentServiceInternalToken,
+		},
+	})
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),

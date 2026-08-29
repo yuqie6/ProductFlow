@@ -12,6 +12,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
@@ -32,7 +33,7 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 		return nil
 	}
 	if !claimed.ok {
-		return nil
+		return queue.ErrBusy
 	}
 	sourceBytes, err := readStorage(e.Media.Files, claimed.sourcePath)
 	if err != nil {

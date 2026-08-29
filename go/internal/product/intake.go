@@ -145,6 +145,34 @@ func workspaceRequestHash(name string, selection Selection, uploads []Upload, se
 	return hex.EncodeToString(sum[:])
 }
 
+func intakeRequestHash(selection Selection, uploads []Upload) string {
+	images := make([]map[string]any, 0, len(uploads))
+	for i, upload := range uploads {
+		sum := sha256.Sum256(upload.Content)
+		images = append(images, map[string]any{
+			"order":     i,
+			"filename":  upload.Filename,
+			"mime_type": upload.MIMEType,
+			"sha256":    hex.EncodeToString(sum[:]),
+		})
+	}
+	selectionPayload := map[string]any{
+		"schema_version": selection.SchemaVersion,
+		"image_types":    selection.ImageTypes,
+	}
+	if selection.DeliveryPresetKey != nil {
+		selectionPayload["delivery_preset_key"] = *selection.DeliveryPresetKey
+	}
+	payload := map[string]any{
+		"request_kind": "agent_product_intake_finalization_v1",
+		"selection":    selectionPayload,
+		"images":       images,
+	}
+	raw, _ := canonicalJSON(payload)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
 func intakePayload(selection Selection, assetIDs []string) ([]byte, error) {
 	imageTypes := make([]map[string]any, 0, len(selection.ImageTypes))
 	for _, item := range selection.ImageTypes {

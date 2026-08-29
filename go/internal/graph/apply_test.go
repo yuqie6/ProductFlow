@@ -81,6 +81,61 @@ func TestApplyDirectCreateTemplateHasNoCycle(t *testing.T) {
 	}
 }
 
+func TestTemplateForExistingProductSourceReusesBirthNode(t *testing.T) {
+	birthCS, err := BuildProductSourceCreateGraph("待确认商品", "prod-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	birth, err := Apply(EmptyGraph, birthCS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeSet, err := TemplateForExistingProductSource("product-source", birth.Revision, DirectCreateInput{
+		ImageTypes:        []DirectCreateImageType{{Key: "hero", Quantity: 1, Order: 0, Title: "首屏海报图"}},
+		ReferenceAssetIDs: []string{"asset-a"},
+		ProductTitle:      "待确认商品",
+		SourceProductID:   stringPtr("prod-1"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range changeSet.Operations {
+		if op, ok := operation.(CreateNodeOp); ok && op.ClientRef == "product-source" {
+			t.Fatal("must reuse existing product-source")
+		}
+	}
+	if changeSet.BaseGraphRevision != birth.Revision {
+		t.Fatalf("base %d", changeSet.BaseGraphRevision)
+	}
+	expanded, err := Apply(birth, changeSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := expanded.Node("product-source")
+	if err != nil || source.NodeType != NodeProductSource {
+		t.Fatalf("source %+v %v", source, err)
+	}
+	types := map[NodeType]struct{}{}
+	for _, node := range expanded.Nodes {
+		types[node.NodeType] = struct{}{}
+	}
+	for _, want := range []NodeType{NodeVisualSystem, NodeCreativeBrief, NodeImageAsset, NodePromptGeneration, NodeImageGeneration} {
+		if _, ok := types[want]; !ok {
+			t.Fatalf("missing %s in %+v", want, types)
+		}
+	}
+	found := false
+	for _, edge := range expanded.Edges {
+		if edge.SourceNodeID == "product-source" && edge.TargetNodeID == "visual-system" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("missing product-source -> visual-system")
+	}
+}
+
 func TestApplyConflictsOnBaseGraphRevisionMismatch(t *testing.T) {
 	_, err := Apply(EmptyGraph, ChangeSet{
 		BaseGraphRevision: 1,

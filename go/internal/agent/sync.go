@@ -9,8 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	"github.com/yuqie6/productflow/internal/platform/canonjson"
-	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -74,7 +72,7 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 			return nil
 		}
 		_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-			return applyTurnState(ctx, pgxTx, productID, row.ConversationID, projectionID, state)
+			return s.applyTurnState(ctx, pgxTx, productID, row.ConversationID, projectionID, state)
 		})
 	}
 	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -91,7 +89,7 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	return nil
 }
 
-func applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string, state TurnState) error {
+func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string, state TurnState) error {
 	row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 	if err != nil {
 		return err
@@ -162,7 +160,7 @@ func applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conv
 				}
 			}
 			payload, _ = json.Marshal(inner)
-			revID, err := appendLibraryDraftTx(ctx, pgxTx, conversationID, payload, projectionID, state.Artifact.StepID)
+			revID, err := s.Library.AppendOrganizationDraftRevisionTx(ctx, pgxTx, conversationID, payload, projectionID, state.Artifact.StepID)
 			if err != nil {
 				return err
 			}
@@ -292,41 +290,4 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus 
 		WHERE id = $1
 	`, taskID, *status, waiting)
 	return err
-}
-
-func appendLibraryDraftTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, payload []byte, sourceTurnID, sourceStepID string) (string, error) {
-	hash, err := canonjson.SHA256Hex(json.RawMessage(payload))
-	if err != nil {
-		return "", apperr.Validation("素材整理 Draft payload 无效")
-	}
-	var draftID string
-	err = pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM library_organization_drafts WHERE conversation_id = $1`, conversationID).Scan(&draftID)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		draftID = clockid.New()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
-			VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
-		`, draftID, conversationID); err != nil {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
-	}
-	var version int
-	_ = pfdb.QueryRow(ctx, pgxTx, `SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1`, draftID).Scan(&version)
-	revID := clockid.New()
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO library_organization_draft_revisions (
-			id, draft_id, version, schema_version, payload_json, payload_hash,
-			source_turn_id, source_artifact_step_id, created_at
-		) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, NOW())
-	`, revID, draftID, version+1, payload, hash, sourceTurnID, sourceStepID); err != nil {
-		return "", err
-	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE library_organization_drafts SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = NOW() WHERE id = $1
-	`, draftID, revID); err != nil {
-		return "", err
-	}
-	return revID, nil
 }

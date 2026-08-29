@@ -1,6 +1,6 @@
 package schema
 
-// EnumDDL and ExtraDDL are applied around AutoMigrate.
+// EnumDDL and ExtraDDL are applied around CreateTable/AddColumn.
 // Each statement is idempotent (IF NOT EXISTS or duplicate_object).
 
 // EnumDDL creates PostgreSQL enum types, including leftover unused types from Alembic history.
@@ -143,7 +143,7 @@ WHEN duplicate_table THEN NULL;
 END $enum$;`,
 }
 
-// ExtraDDL adds CHECK/UNIQUE/FK constraints and indexes AutoMigrate does not own.
+// ExtraDDL adds CHECK/UNIQUE/FK constraints and indexes that CreateTable/AddColumn do not own.
 
 var ExtraDDL = []string{
 	`DO $c$ BEGIN

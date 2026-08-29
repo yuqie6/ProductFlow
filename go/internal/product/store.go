@@ -8,7 +8,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"time"
 
 	sqldb "database/sql"
 
@@ -303,6 +302,55 @@ func loadConversationByKey(ctx context.Context, tx *gorm.DB, key string) (Conver
 	return row, err
 }
 
+func loadConversationByID(ctx context.Context, tx *gorm.DB, id string) (Conversation, error) {
+	row, _, _, err := scanConversation(ctx, tx, id, false)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return Conversation{}, apperr.NotFound("Agent 商品工作空间不存在")
+	}
+	return row, err
+}
+
+func loadConversationIntakeForUpdate(ctx context.Context, tx *gorm.DB, id string) (Conversation, *string, *string, error) {
+	row, key, hash, err := scanConversation(ctx, tx, id, true)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return Conversation{}, nil, nil, apperr.NotFound("Agent 商品工作空间不存在")
+	}
+	return row, key, hash, err
+}
+
+func scanConversation(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (Conversation, *string, *string, error) {
+	sql := `
+		SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at,
+		       intake_idempotency_key, intake_request_hash
+		FROM agent_conversations WHERE id = $1`
+	if forUpdate {
+		sql += ` FOR UPDATE`
+	}
+	var row Conversation
+	var key, hash *string
+	err := pfdb.QueryRow(ctx, tx, sql, id).Scan(
+		&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt,
+		&key, &hash,
+	)
+	return row, key, hash, err
+}
+
+func setConversationIntake(ctx context.Context, tx *gorm.DB, conversationID, key, requestHash string) error {
+	_, err := pfdb.Exec(ctx, tx, `
+		UPDATE agent_conversations
+		SET intake_idempotency_key = $2, intake_request_hash = $3, status = 'collecting', updated_at = NOW()
+		WHERE id = $1
+	`, conversationID, key, requestHash)
+	return err
+}
+
+func setSourceNote(ctx context.Context, tx *gorm.DB, productID string, sourceNote *string) error {
+	_, err := pfdb.Exec(ctx, tx, `
+		UPDATE products SET source_note = $1, updated_at = NOW() WHERE id = $2
+	`, sourceNote, productID)
+	return err
+}
+
 func conversationRequestHash(ctx context.Context, tx *gorm.DB, id string) (string, error) {
 	var hash *string
 	err := pfdb.QueryRow(ctx, tx, `SELECT creation_request_hash FROM agent_conversations WHERE id = $1`, id).Scan(&hash)
@@ -313,48 +361,6 @@ func conversationRequestHash(ctx context.Context, tx *gorm.DB, id string) (strin
 		return "", nil
 	}
 	return *hash, nil
-}
-
-func insertSession(ctx context.Context, tx *gorm.DB, title, productID string) (string, time.Time, time.Time, error) {
-	id := clockid.New()
-	if len([]rune(title)) > 160 {
-		title = string([]rune(title)[:160])
-	}
-	var created, updated time.Time
-	err := pfdb.QueryRow(ctx, tx, `
-		INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
-		VALUES ($1, $2, $3, '暂无 Agent Task', 'active', NOW(), NOW())
-		RETURNING created_at, updated_at
-	`, id, productID, title).Scan(&created, &updated)
-	return id, created, updated, err
-}
-
-func loadSessionProduct(ctx context.Context, tx *gorm.DB, sessionID string) (productID *string, status string, err error) {
-	err = pfdb.QueryRow(ctx, tx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, sessionID).Scan(&productID, &status)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return nil, "", apperr.NotFound("Agent Session 不存在")
-	}
-	return productID, status, err
-}
-
-func insertConversation(ctx context.Context, tx *gorm.DB, sessionID, productID, key, requestHash string) (Conversation, error) {
-	id := clockid.New()
-	row := Conversation{
-		ID:           id,
-		ScopeType:    "product_workflow",
-		SessionID:    &sessionID,
-		ProductID:    &productID,
-		HarnessRunID: id,
-		Status:       "collecting",
-	}
-	err := pfdb.QueryRow(ctx, tx, `
-		INSERT INTO agent_conversations (
-			id, scope_type, session_id, product_id, harness_run_id, status,
-			creation_idempotency_key, creation_request_hash, created_at, updated_at
-		) VALUES ($1, 'product_workflow', $2, $3, $1, 'collecting', $4, $5, NOW(), NOW())
-		RETURNING created_at, updated_at
-	`, id, sessionID, productID, key, requestHash).Scan(&row.CreatedAt, &row.UpdatedAt)
-	return row, err
 }
 
 func scanAssets(rows *sqldb.Rows) ([]ImageAsset, error) {

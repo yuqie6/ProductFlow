@@ -11,16 +11,16 @@ import (
 )
 
 // CreateEmpty 持久化一张空的 active schema-v3 图。空画布不能作为 no-op ChangeSet 出生。
-func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (GraphRow, error) {
+func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (graphRow, error) {
 	if err := lockProduct(ctx, tx, productID); err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	exists, err := activeGraphExists(ctx, tx, productID)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
 	if exists {
-		return GraphRow{}, apperr.Conflict("商品已有 active schema-v3 工作流")
+		return graphRow{}, apperr.Conflict("商品已有 active schema-v3 工作流")
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -32,16 +32,16 @@ func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (Gra
 		VALUES ($1, $2, $3, TRUE, $4, 1, NOW(), NOW())
 	`, graphID, productID, title, SchemaVersion)
 	if err != nil {
-		return GraphRow{}, err
+		return graphRow{}, err
 	}
-	return GraphRow{
+	return graphRow{Identity: Identity{
 		ID:            graphID,
 		ProductID:     productID,
 		Title:         title,
 		Active:        true,
 		SchemaVersion: SchemaVersion,
 		Revision:      1,
-	}, nil
+	}}, nil
 }
 
 // Mutate 把 ChangeSet 应用到已有 active schema-v3 图；只 flush 不 commit。

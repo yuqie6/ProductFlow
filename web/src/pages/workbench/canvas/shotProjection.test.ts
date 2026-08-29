@@ -38,7 +38,6 @@ function makeGraph(): GraphProjection {
     title: "商品工作流",
     schema_version: 3,
     revision: 4,
-    source_draft_revision_id: null,
     last_operation_group_id: null,
     can_undo: false,
     can_redo: false,

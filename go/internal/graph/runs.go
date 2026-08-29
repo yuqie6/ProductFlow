@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	sqldb "database/sql"
@@ -67,15 +68,35 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, scope 
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
+	var compileErr error
+	if scope == RunScopeNode {
+		for _, nodeID := range selected {
+			if _, err := compileInputDigest(applied, nodeID, sources); err != nil {
+				compileErr = err
+				break
+			}
+		}
+	}
+	runStatus := RunStatusRunning
+	nodeStatus := NodeRunQueued
+	var failure *string
+	var finishedAt *time.Time
+	now := time.Now().UTC()
+	if compileErr != nil {
+		reason := runFailureReason(compileErr)
+		runStatus = RunStatusFailed
+		nodeStatus = NodeRunFailed
+		failure = &reason
+		finishedAt = &now
+	}
 	meta, _ := json.Marshal(map[string]any{"run_scope": scope, "requested_node_id": targetNodeID})
 	runID := clockid.New()
-	now := time.Now().UTC()
 	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_graph_runs (
 			id, graph_id, status, run_scope, requested_node_id, graph_revision,
-			snapshot_json, is_retryable, progress_metadata, started_at
-		) VALUES ($1, $2, 'running', $3, $4, $5, $6, TRUE, $7, $8)
-	`, runID, row.ID, scope, targetNodeID, row.Revision, snapshotJSON, meta, now)
+			snapshot_json, failure_reason, is_retryable, progress_metadata, started_at, finished_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9, $10, $11)
+	`, runID, row.ID, runStatus, scope, targetNodeID, row.Revision, snapshotJSON, failure, meta, now, finishedAt)
 	if uniqueViolation(err) {
 		return graphRunSubmission{}, apperr.Conflict("工作流已有正在进行的运行")
 	}
@@ -92,14 +113,17 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, scope 
 		nodeRunID := clockid.New()
 		if _, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_node_runs (
-				id, graph_run_id, node_id, status, sort_order, compiled_context_json, started_at
-			) VALUES ($1, $2, $3, 'queued', $4, $5, $6)
-		`, nodeRunID, runID, nodeID, index, compiled, now); err != nil {
+				id, graph_run_id, node_id, status, sort_order, compiled_context_json,
+				failure_reason, started_at, finished_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, nodeRunID, runID, nodeID, nodeStatus, index, compiled, failure, now, finishedAt); err != nil {
 			return graphRunSubmission{}, err
 		}
 	}
-	if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
-		return graphRunSubmission{}, err
+	if compileErr == nil {
+		if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
+			return graphRunSubmission{}, err
+		}
 	}
 	full, err := loadGraphRun(ctx, tx, productID, graphID, runID)
 	if err != nil {
@@ -341,4 +365,12 @@ func ptrEqual(a, b *string) bool {
 func uniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func runFailureReason(err error) string {
+	var app apperr.Error
+	if errors.As(err, &app) && strings.TrimSpace(app.Detail) != "" {
+		return app.Detail
+	}
+	return "节点运行失败"
 }

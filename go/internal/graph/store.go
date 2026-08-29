@@ -12,13 +12,18 @@ import (
 	"gorm.io/gorm"
 )
 
-type GraphRow struct {
+// Identity 是 live 图对外可见的身份；持久化行 graphRow 不导出。
+type Identity struct {
 	ID            string
 	ProductID     string
 	Title         string
 	Active        bool
 	SchemaVersion int
 	Revision      int
+}
+
+type graphRow struct {
+	Identity
 }
 
 type operationGroupRow struct {
@@ -29,21 +34,21 @@ type operationGroupRow struct {
 	ResultRevision        int
 }
 
-func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (GraphRow, error) {
-	var row GraphRow
+func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	var row graphRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE id = $1 AND product_id = $2
 	`, graphID, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
 	if errors.Is(err, sqldb.ErrNoRows) {
-		return GraphRow{}, apperr.NotFound("商品工作流不存在")
+		return graphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (GraphRow, error) {
-	var row GraphRow
+func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	var row graphRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
@@ -51,26 +56,26 @@ func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID str
 		FOR UPDATE
 	`, graphID, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
 	if errors.Is(err, sqldb.ErrNoRows) {
-		return GraphRow{}, apperr.NotFound("商品工作流不存在")
+		return graphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (GraphRow, error) {
-	var row GraphRow
+func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (graphRow, error) {
+	var row graphRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE product_id = $1 AND active = TRUE
 	`, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
 	if errors.Is(err, sqldb.ErrNoRows) {
-		return GraphRow{}, apperr.NotFound("商品工作流不存在")
+		return graphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*GraphRow, error) {
-	var row GraphRow
+func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*graphRow, error) {
+	var row graphRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
@@ -86,7 +91,7 @@ func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string
 	return &row, nil
 }
 
-func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row GraphRow) (AppliedGraph, error) {
+func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row graphRow) (AppliedGraph, error) {
 	groupRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, title FROM workflow_graph_groups
 		WHERE graph_id = $1
@@ -165,7 +170,7 @@ func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row GraphRow) (AppliedGr
 	return AppliedGraph{Revision: row.Revision, Nodes: nodes, Edges: edges, Groups: groups}, nil
 }
 
-func lastOperationGroup(ctx context.Context, tx *gorm.DB, graph GraphRow) (*operationGroupRow, error) {
+func lastOperationGroup(ctx context.Context, tx *gorm.DB, graph graphRow) (*operationGroupRow, error) {
 	var row operationGroupRow
 	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, history_kind, summary, inverse_operations_json, result_revision

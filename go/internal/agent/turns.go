@@ -276,7 +276,7 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 	if ge != nil {
 		return TurnResponse{}, mapGateway(ge)
 	}
-	if err := applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
+	if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 		return TurnResponse{}, err
 	}
 	if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
@@ -615,7 +615,7 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 		return serializeTurn(row, nil), nil
 	}
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
+		if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 			return err
 		}
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
@@ -657,7 +657,7 @@ func (s Service) refreshTurn(ctx context.Context, productID *string, conversatio
 	}
 	var out TurnResponse
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
+		if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 			return err
 		}
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)

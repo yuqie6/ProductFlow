@@ -211,3 +211,67 @@ func TestSettingsUnknownJSON(t *testing.T) {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }
+
+func TestUpdateProfilePersistsNameAndEnabled(t *testing.T) {
+	ss := newSettingsServer(t)
+	unlock := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"settings-token"}`))
+	unlock.Body.Close()
+	name := "go-test-update-" + t.Name()
+	body, _ := json.Marshal(map[string]any{
+		"name": name, "provider_type": "openai_compatible", "api_key": "sk-test",
+		"capabilities": []string{"text_responses"}, "enabled": true,
+	})
+	created := ss.do(t, http.MethodPost, "/api/settings/provider-profiles", bytes.NewReader(body))
+	defer created.Body.Close()
+	if created.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(created.Body)
+		t.Fatalf("create profile %d %s", created.StatusCode, raw)
+	}
+	var profile settings.ProviderProfile
+	if err := json.NewDecoder(created.Body).Decode(&profile); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		del := ss.do(t, http.MethodDelete, "/api/settings/provider-profiles/"+profile.ID, nil)
+		del.Body.Close()
+	})
+	updatedName := name + "-renamed"
+	nameJSON, err := json.Marshal(updatedName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch, err := ss.store.UpdateProfile(context.Background(), profile.ID, map[string]json.RawMessage{
+		"name":    nameJSON,
+		"enabled": json.RawMessage(`false`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch.Name != updatedName {
+		t.Fatalf("response name %q want %q", patch.Name, updatedName)
+	}
+	if patch.Enabled {
+		t.Fatal("response enabled still true")
+	}
+	cfg, err := ss.store.ProviderConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted *settings.ProviderProfile
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].ID == profile.ID {
+			item := cfg.Profiles[i]
+			persisted = &item
+			break
+		}
+	}
+	if persisted == nil {
+		t.Fatal("updated profile missing from provider config")
+	}
+	if persisted.Name != updatedName {
+		t.Fatalf("persisted name %q want %q", persisted.Name, updatedName)
+	}
+	if persisted.Enabled {
+		t.Fatal("persisted enabled still true")
+	}
+}

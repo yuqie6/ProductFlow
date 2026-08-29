@@ -55,7 +55,6 @@ function graph(nodes: GraphNode[], edges: GraphProjection["edges"] = []): GraphP
     title: "图",
     schema_version: 3,
     revision: 1,
-    source_draft_revision_id: null,
     last_operation_group_id: null,
     can_undo: false,
     can_redo: false,

@@ -70,7 +70,7 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 				WHERE actor_name = $1 AND aggregate_id = $2
 				ORDER BY created_at DESC LIMIT 1
 			`, queue.ActorAgentTurnSync, id).Scan(&status)
-			if err == nil && (status == queue.StatusPending || status == queue.StatusSent) {
+			if err == nil && (status == queue.StatusPending || status == queue.StatusSent || status == queue.StatusConsumed) {
 				continue
 			}
 			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, id, 0); err != nil {

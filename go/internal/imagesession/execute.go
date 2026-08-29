@@ -41,19 +41,19 @@ func (e Executor) provider() ChatProvider {
 func (e Executor) Execute(ctx context.Context, taskID string) error {
 	unlock, ok := tryLock(taskID)
 	if !ok {
-		return nil
+		return queue.ErrBusy
 	}
 	defer unlock()
 
 	claimed, attemptID, sessionID, err := e.claim(ctx, taskID)
 	if errors.Is(err, errWaitingCapacity) {
-		return nil
+		return queue.ErrLater
 	}
 	if err != nil {
 		return err
 	}
 	if !claimed {
-		return nil
+		return queue.ErrBusy
 	}
 	if err := e.runGeneration(ctx, taskID, attemptID, sessionID); err != nil {
 		if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
@@ -191,6 +191,10 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			var ae apperr.Error
 			if errors.As(genErr, &ae) && ae.Status == 400 {
 				_ = e.markEffect(ctx, taskID, candidate, "failed", ae.Detail)
+				return genErr
+			}
+			if IsConfirmedProviderFailure(genErr) {
+				_ = e.markEffect(ctx, taskID, candidate, "failed", genErr.Error())
 				return genErr
 			}
 			_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)

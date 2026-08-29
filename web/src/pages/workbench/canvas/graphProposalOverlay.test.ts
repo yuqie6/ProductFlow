@@ -10,7 +10,6 @@ function graph(): GraphProjection {
     title: "图",
     schema_version: 3,
     revision: 2,
-    source_draft_revision_id: null,
     last_operation_group_id: null,
     can_undo: true,
     can_redo: false,

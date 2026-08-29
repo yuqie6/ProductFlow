@@ -1,6 +1,7 @@
 package product
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -51,12 +52,16 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.DELETE("/v2/products/:product_id", h.requireDeletion, h.deleteProduct)
 	api.GET("/v3/products/:product_id/facts", h.getFacts)
 	api.PUT("/v3/products/:product_id/facts", h.updateFacts)
+	api.GET("/v3/products/:product_id/image-assets/:asset_id/fidelity-checks", h.listFidelityChecks)
+	api.POST("/v3/products/:product_id/image-assets/:asset_id/fidelity-checks", h.createFidelityCheck)
 	api.GET("/v2/product-image-assets/:asset_id/download", h.download)
 	api.DELETE("/v2/product-image-assets/:asset_id", h.requireDeletion, h.deleteAsset)
 	api.POST("/v3/products", h.createV3)
 	api.GET("/v2/agent-product-workspaces/options", h.workspaceOptions)
 	api.POST("/v2/agent-product-workspaces/drafts", h.createDraftWorkspace)
 	api.POST("/v2/agent-product-workspaces", h.createWorkspace)
+	api.GET("/v2/agent-product-workspaces/:conversation_id", h.getWorkspace)
+	api.POST("/v2/agent-product-workspaces/:conversation_id/intake", h.finalizeWorkspaceIntake)
 }
 
 func (h HTTP) requireDeletion(c *gin.Context) {
@@ -207,6 +212,41 @@ func (h HTTP) createWorkspace(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, created)
+}
+
+func (h HTTP) getWorkspace(c *gin.Context) {
+	out, err := h.Service.GetAgentWorkspace(c.Request.Context(), c.Param("conversation_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) finalizeWorkspaceIntake(c *gin.Context) {
+	uploads, err := h.readImages(c, "images", "reference.bin", "至少上传一张商品参考图")
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	note := strings.TrimSpace(c.PostForm("source_note"))
+	var notePtr *string
+	if note != "" {
+		notePtr = &note
+	}
+	out, err := h.Service.FinalizeAgentIntake(
+		c.Request.Context(),
+		c.Param("conversation_id"),
+		c.PostForm("selection"),
+		c.GetHeader("Idempotency-Key"),
+		notePtr,
+		uploads,
+	)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h HTTP) workspaceOptions(c *gin.Context) {
@@ -429,6 +469,75 @@ func (h HTTP) deleteProduct(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+func (h HTTP) listFidelityChecks(c *gin.Context) {
+	limit := fidelityCheckMaxLimit
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+			return
+		}
+		limit = n
+	}
+	out, err := h.Service.ListFidelityChecks(c.Request.Context(), c.Param("product_id"), c.Param("asset_id"), limit)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) createFidelityCheck(c *gin.Context) {
+	var payload struct {
+		ExpectedLatestVersion *int    `json:"expected_latest_version"`
+		IdempotencyKey        *string `json:"idempotency_key"`
+		ShapeFidelity         *string `json:"shape_fidelity"`
+		ColorMaterialFidelity *string `json:"color_material_fidelity"`
+		LogoTextLegibility    *string `json:"logo_text_legibility"`
+		TextPolicyCompliance  *string `json:"text_policy_compliance"`
+		Notes                 *string `json:"notes"`
+	}
+	if err := bindJSON(c, &payload); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	if payload.ExpectedLatestVersion == nil || payload.IdempotencyKey == nil || payload.ShapeFidelity == nil ||
+		payload.ColorMaterialFidelity == nil || payload.LogoTextLegibility == nil || payload.TextPolicyCompliance == nil {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	out, err := h.Service.CreateFidelityCheck(c.Request.Context(), c.Param("product_id"), c.Param("asset_id"), CreateFidelityInput{
+		ExpectedLatestVersion: *payload.ExpectedLatestVersion,
+		IdempotencyKey:        *payload.IdempotencyKey,
+		ShapeFidelity:         *payload.ShapeFidelity,
+		ColorMaterialFidelity: *payload.ColorMaterialFidelity,
+		LogoTextLegibility:    *payload.LogoTextLegibility,
+		TextPolicyCompliance:  *payload.TextPolicyCompliance,
+		Notes:                 payload.Notes,
+	})
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, out)
+}
+
+func bindJSON(c *gin.Context, dest any) error {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return apperr.Validation("请求体无效")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return apperr.Validation("请求体无效")
+	}
+	if dec.More() {
+		return apperr.Validation("请求体无效")
+	}
+	return nil
 }
 
 func (h HTTP) readImages(c *gin.Context, field, fallback, emptyDetail string) ([]Upload, error) {

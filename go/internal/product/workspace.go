@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	sqldb "database/sql"
 
@@ -17,6 +18,7 @@ import (
 
 // CreateAgentDraft 是名称-only 出生：写 product_source 图、空 intake、不设封面。
 func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey string, agentSessionID *string) (WorkspaceSnapshotResponse, error) {
+	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)
 	if err != nil {
 		return WorkspaceSnapshotResponse{}, err
@@ -38,12 +40,13 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 		if _, err := graph.StageNew(ctx, pgxTx, creation.product.ID, creation.product.Name, changeSet); err != nil {
 			return canonicalCreation{}, Conversation{}, err
 		}
-		conversation, err := openCanvas(ctx, pgxTx, creation.product, key, requestHash, agentSessionID)
+		conversation, err := s.openCanvas(ctx, pgxTx, creation.product, key, requestHash, agentSessionID)
 		return creation, conversation, err
 	})
 }
 
 func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, idempotencyKey string, agentSessionID *string, uploads []Upload) (WorkspaceCreateResponse, error) {
+	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)
 	if err != nil {
 		return WorkspaceCreateResponse{}, err
@@ -102,7 +105,7 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 			compensation.Rollback()
 			return canonicalCreation{}, Conversation{}, err
 		}
-		conversation, err := openCanvas(ctx, pgxTx, creation.product, key, requestHash, agentSessionID)
+		conversation, err := s.openCanvas(ctx, pgxTx, creation.product, key, requestHash, agentSessionID)
 		if err != nil {
 			compensation.Rollback()
 			return canonicalCreation{}, Conversation{}, err
@@ -118,6 +121,201 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 		CreatedAssets: snap.CreatedAssets,
 		Conversation:  snap.Conversation,
 	}, nil
+}
+
+func (s Service) GetAgentWorkspace(ctx context.Context, conversationID string) (WorkspaceSnapshotResponse, error) {
+	var snap WorkspaceSnapshotResponse
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		conversation, err := loadConversationByID(ctx, pgxTx, conversationID)
+		if err != nil {
+			return err
+		}
+		loaded, err := loadWorkspaceSnapshot(ctx, pgxTx, conversation, false)
+		if err != nil {
+			return err
+		}
+		snap = loaded
+		return nil
+	})
+	return snap, err
+}
+
+func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, selectionJSON, idempotencyKey string, sourceNote *string, uploads []Upload) (WorkspaceSnapshotResponse, error) {
+	ctx = graph.WithProductGuard(ctx, GraphGuard{})
+	key, err := normalizeIdempotencyKey(idempotencyKey)
+	if err != nil {
+		return WorkspaceSnapshotResponse{}, err
+	}
+	if len(uploads) == 0 {
+		return WorkspaceSnapshotResponse{}, apperr.Validation("至少上传一张商品参考图")
+	}
+	if len(uploads) > 6 {
+		return WorkspaceSnapshotResponse{}, apperr.Validation("商品参考图最多上传 6 张")
+	}
+	selection, err := parseSelection(selectionJSON)
+	if err != nil {
+		return WorkspaceSnapshotResponse{}, err
+	}
+	requestHash := intakeRequestHash(selection, uploads)
+	var snap WorkspaceSnapshotResponse
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		conversation, storedKey, storedHash, err := loadConversationIntakeForUpdate(ctx, pgxTx, conversationID)
+		if err != nil {
+			return err
+		}
+		if conversation.ProductID == nil {
+			return apperr.Conflict("Agent 商品工作空间聚合不完整")
+		}
+		product, err := loadProductForUpdate(ctx, pgxTx, *conversation.ProductID)
+		if err != nil {
+			return err
+		}
+		if storedKey != nil {
+			if *storedKey != key || storedHash == nil || *storedHash != requestHash {
+				return apperr.Conflict("Agent 商品输入已经确认，不能提交不同请求")
+			}
+			if len(product.IntakeJSON) == 0 {
+				return apperr.Conflict("Agent 商品输入幂等记录与商品 intake 不一致")
+			}
+			loaded, loadErr := loadWorkspaceSnapshot(ctx, pgxTx, conversation, false)
+			if loadErr != nil {
+				return loadErr
+			}
+			snap = loaded
+			return nil
+		}
+		if storedHash != nil {
+			return apperr.Conflict("Agent 商品输入幂等记录不完整")
+		}
+		if len(product.IntakeJSON) > 0 || product.IntakeVersion != nil {
+			return apperr.Conflict("Agent 商品输入已经确认")
+		}
+		if conversation.Status == "awaiting_confirmation" {
+			return apperr.Conflict("当前 Agent conversation 状态不允许确认商品输入")
+		}
+		var compensation storage.Compensation
+		assets, err := s.appendUploads(ctx, pgxTx, &compensation, product.ID, uploads)
+		if err != nil {
+			compensation.Rollback()
+			return err
+		}
+		if sourceNote != nil {
+			note := strings.TrimSpace(*sourceNote)
+			var notePtr *string
+			if note != "" {
+				notePtr = &note
+			}
+			if err := setSourceNote(ctx, pgxTx, product.ID, notePtr); err != nil {
+				compensation.Rollback()
+				return err
+			}
+		}
+		payload, err := intakePayload(selection, assetIDs(assets))
+		if err != nil {
+			compensation.Rollback()
+			return err
+		}
+		if err := setIntake(ctx, pgxTx, product.ID, payload); err != nil {
+			compensation.Rollback()
+			return err
+		}
+		if err := setConversationIntake(ctx, pgxTx, conversation.ID, key, requestHash); err != nil {
+			compensation.Rollback()
+			return err
+		}
+		product, err = loadProduct(ctx, pgxTx, product.ID)
+		if err != nil {
+			compensation.Rollback()
+			return err
+		}
+		if err := expandBirthGraphFromIntake(ctx, pgxTx, product, selection, assetIDs(assets)); err != nil {
+			compensation.Rollback()
+			return err
+		}
+		updated, err := loadConversationByID(ctx, pgxTx, conversation.ID)
+		if err != nil {
+			compensation.Rollback()
+			return err
+		}
+		loaded, err := loadWorkspaceSnapshot(ctx, pgxTx, updated, true)
+		if err != nil {
+			compensation.Rollback()
+			return err
+		}
+		compensation.Release()
+		snap = loaded
+		return nil
+	})
+	return snap, err
+}
+
+func (s Service) appendUploads(ctx context.Context, pgxTx *gorm.DB, compensation *storage.Compensation, productID string, uploads []Upload) ([]ImageAsset, error) {
+	assets := make([]ImageAsset, 0, len(uploads))
+	for _, upload := range uploads {
+		obj, err := s.Media.Stage(ctx, pgxTx, upload.Content, upload.MIMEType, compensation)
+		if err != nil {
+			return nil, err
+		}
+		asset, err := insertAsset(ctx, pgxTx, productID, obj.ID, upload.Filename)
+		if err != nil {
+			return nil, err
+		}
+		asset.MIMEType = obj.MIMEType
+		asset.ByteSize = intPtr(obj.ByteSize)
+		asset.Width = intPtr(obj.Width)
+		asset.Height = intPtr(obj.Height)
+		asset.StoragePath = obj.StoragePath
+		assets = append(assets, asset)
+	}
+	return loadAssetsByIDs(ctx, pgxTx, productID, assetIDs(assets))
+}
+
+func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Product, selection Selection, assetIDs []string) error {
+	if len(selection.ImageTypes) == 0 || len(assetIDs) == 0 {
+		return nil
+	}
+	sourceID := product.ID
+	in := graph.DirectCreateInput{
+		ImageTypes:        selectionToImageTypes(selection),
+		ReferenceAssetIDs: assetIDs,
+		ProductTitle:      product.Name,
+		SourceProductID:   &sourceID,
+		FactSetVersionID:  product.FactSetVersionID,
+		SourceNote:        product.SourceNote,
+	}
+	identity, err := graph.LoadActiveGraphForUpdate(ctx, pgxTx, product.ID)
+	if err != nil {
+		return err
+	}
+	if identity == nil {
+		changeSet, err := graph.BuildDirectCreateTemplate(in)
+		if err != nil {
+			return err
+		}
+		_, err = graph.StageNew(ctx, pgxTx, product.ID, product.Name, changeSet)
+		return err
+	}
+	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, *identity)
+	if err != nil {
+		return err
+	}
+	var productSources []graph.AppliedNode
+	for _, node := range applied.Nodes {
+		if node.NodeType == graph.NodeProductSource {
+			productSources = append(productSources, node)
+			continue
+		}
+		return nil
+	}
+	if len(productSources) != 1 {
+		return nil
+	}
+	changeSet, err := graph.TemplateForExistingProductSource(productSources[0].ID, applied.Revision, in)
+	if err != nil {
+		return err
+	}
+	_, err = graph.Mutate(ctx, pgxTx, product.ID, identity.ID, changeSet, graph.HistoryEdit)
+	return err
 }
 
 func (s Service) upsertWorkspace(
@@ -232,35 +430,12 @@ func (s Service) stageUploads(ctx context.Context, pgxTx *gorm.DB, compensation 
 	return canonicalCreation{product: loaded, assets: loadedAssets, facts: facts}, nil
 }
 
-func openCanvas(ctx context.Context, tx *gorm.DB, product Product, key, requestHash string, agentSessionID *string) (Conversation, error) {
-	sessionID := ""
-	if agentSessionID != nil && *agentSessionID != "" {
-		productID, status, err := loadSessionProduct(ctx, tx, *agentSessionID)
-		if err != nil {
-			return Conversation{}, err
-		}
-		if status != "active" {
-			return Conversation{}, apperr.Conflict("已归档的 Agent Session 不能创建商品工作区")
-		}
-		if productID == nil {
-			id, _, _, err := insertSession(ctx, tx, product.Name, product.ID)
-			if err != nil {
-				return Conversation{}, err
-			}
-			sessionID = id
-		} else if *productID != product.ID {
-			return Conversation{}, apperr.Conflict("Agent Session 不属于当前商品")
-		} else {
-			sessionID = *agentSessionID
-		}
-	} else {
-		id, _, _, err := insertSession(ctx, tx, product.Name, product.ID)
-		if err != nil {
-			return Conversation{}, err
-		}
-		sessionID = id
+func (s Service) openCanvas(ctx context.Context, tx *gorm.DB, product Product, key, requestHash string, agentSessionID *string) (Conversation, error) {
+	if s.Canvas == nil {
+		return Conversation{}, apperr.Internal("商品工作区缺少会话写入器")
 	}
-	return insertConversation(ctx, tx, sessionID, product.ID, key, requestHash)
+	_, conv, err := s.Canvas(ctx, tx, product.ID, product.Name, key, requestHash, agentSessionID)
+	return conv, err
 }
 
 func loadWorkspaceSnapshot(ctx context.Context, tx *gorm.DB, conversation Conversation, created bool) (WorkspaceSnapshotResponse, error) {

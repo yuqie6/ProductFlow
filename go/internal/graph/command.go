@@ -119,12 +119,11 @@ func recordOperationGroup(
 }
 
 func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return apperr.NotFound("商品不存在")
+	guard, err := requireProductGuard(ctx)
+	if err != nil {
+		return err
 	}
-	return err
+	return guard.Lock(ctx, tx, productID)
 }
 
 func activeGraphExists(ctx context.Context, tx *gorm.DB, productID string) (bool, error) {
@@ -149,30 +148,11 @@ func validateBoundAssets(ctx context.Context, tx *gorm.DB, productID string, gra
 	if len(wanted) == 0 {
 		return nil
 	}
-	ids := sortedKeys(wanted)
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id FROM product_image_assets
-		WHERE product_id = $1 AND id = ANY($2)
-	`, productID, ids)
+	guard, err := requireProductGuard(ctx)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	found := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		found[id] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(found) != len(wanted) {
-		return apperr.Validation("节点绑定了不属于该商品的图片")
-	}
-	return nil
+	return guard.HasAssets(ctx, tx, productID, sortedKeys(wanted))
 }
 
 func validateProductSourceConfigs(ctx context.Context, tx *gorm.DB, graphProductID string, graph AppliedGraph) error {
@@ -214,13 +194,16 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 		}
 		return nil
 	}
-	var currentFactSetID *string
-	err := pfdb.QueryRow(ctx, tx, `SELECT current_fact_set_version_id FROM products WHERE id = $1`, *sourceProductID).Scan(&currentFactSetID)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return apperr.Validation("商品资料节点绑定的商品不存在")
-	}
+	guard, err := requireProductGuard(ctx)
 	if err != nil {
 		return err
+	}
+	src, err := guard.LoadSource(ctx, tx, *sourceProductID)
+	if err != nil {
+		return err
+	}
+	if src == nil {
+		return apperr.Validation("商品资料节点绑定的商品不存在")
 	}
 	rawFactSetID := payload["fact_set_version_id"]
 	if rawFactSetID != nil {
@@ -229,27 +212,26 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 			return apperr.Validation("商品资料节点的 fact_set_version_id 无效")
 		}
 		factSetID := strings.TrimSpace(s)
-		var owner string
-		err := pfdb.QueryRow(ctx, tx, `
-			SELECT product_id FROM product_fact_set_versions WHERE id = $1 AND product_id = $2
-		`, factSetID, *sourceProductID).Scan(&owner)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		set, err := guard.LoadFactSet(ctx, tx, factSetID, *sourceProductID)
+		if err != nil {
+			return err
+		}
+		if set == nil {
 			return apperr.Validation("fact_set_version_id 不属于绑定商品")
 		}
-		return err
-	}
-	if currentFactSetID == nil || *currentFactSetID == "" {
 		return nil
 	}
-	var owner string
-	err = pfdb.QueryRow(ctx, tx, `SELECT product_id FROM product_fact_set_versions WHERE id = $1`, *currentFactSetID).Scan(&owner)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	if src.CurrentFactSetID == nil || *src.CurrentFactSetID == "" {
 		return nil
 	}
+	set, err := guard.LoadFactSet(ctx, tx, *src.CurrentFactSetID, "")
 	if err != nil {
 		return err
 	}
-	if owner != *sourceProductID {
+	if set == nil {
+		return nil
+	}
+	if set.ProductID != *sourceProductID {
 		return apperr.Validation("商品当前事实版本不属于该商品")
 	}
 	return nil

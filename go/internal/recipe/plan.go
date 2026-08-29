@@ -568,7 +568,7 @@ func previewDigest(
 
 func planPayload(
 	target productTarget,
-	live *graph.GraphRow,
+	live *graph.Identity,
 	existing graph.AppliedGraph,
 	recipeID, kind string,
 	recipeVersion int,

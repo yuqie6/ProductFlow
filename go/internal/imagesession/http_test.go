@@ -75,12 +75,31 @@ func newSessionServer(t *testing.T) *sessionServer {
 		t.Fatalf("login %d", resp.StatusCode)
 	}
 	ss.cookies = resp.Cookies()
+	var previousCapacity *string
+	_ = ss.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = ss.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
-		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		VALUES ('admin_access_required', 'true', NOW(), NOW()),
+		       ('generation_max_concurrent_tasks', '20', NOW(), NOW())
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`)
+	t.Cleanup(func() {
+		if previousCapacity == nil {
+			_, _ = ss.pool.Exec(context.Background(), `DELETE FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`)
+			return
+		}
+		_, _ = ss.pool.Exec(context.Background(), `
+			UPDATE app_settings SET value = $1, updated_at = NOW() WHERE key = 'generation_max_concurrent_tasks'
+		`, *previousCapacity)
+	})
 	return ss
+}
+
+func (ss *sessionServer) dropDispatch(t *testing.T, aggregateID string) {
+	t.Helper()
+	if _, err := ss.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, aggregateID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (ss *sessionServer) do(t *testing.T, method, path string, body io.Reader, contentType string) *http.Response {
@@ -166,9 +185,10 @@ func TestImageSessionCreateGenerateAndUnknown(t *testing.T) {
 	`, taskID).Scan(&dispatchStatus); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != "pending" {
+	if dispatchStatus != "pending" && dispatchStatus != "sent" {
 		t.Fatalf("dispatch %s", dispatchStatus)
 	}
+	ss.dropDispatch(t, taskID)
 
 	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{}}
 	if err := exec.Execute(context.Background(), taskID); err != nil {
@@ -188,6 +208,7 @@ func TestImageSessionCreateGenerateAndUnknown(t *testing.T) {
 	ss.mustStatus(t, unknown, http.StatusAccepted)
 	ss.decode(t, unknown, &session)
 	failID := session.GenerationTasks[0].ID
+	ss.dropDispatch(t, failID)
 	failExec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: errors.New("provider crashed")}}
 	if err := failExec.Execute(context.Background(), failID); err != nil {
 		t.Fatal(err)
@@ -215,6 +236,37 @@ func TestImageSessionCreateGenerateAndUnknown(t *testing.T) {
 	}
 }
 
+func TestImageSessionTextOutputFailedNotUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	gen := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "小猫", "size": "1024x1024", "generation_count": 1,
+	})
+	ss.mustStatus(t, gen, http.StatusAccepted)
+	ss.decode(t, gen, &session)
+	taskID := session.GenerationTasks[0].ID
+	ss.dropDispatch(t, taskID)
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrTextOutput}}
+	for i := 0; i < maxAttempts; i++ {
+		if err := exec.Execute(context.Background(), taskID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID, nil, "")
+	ss.mustStatus(t, got, http.StatusOK)
+	ss.decode(t, got, &session)
+	task := session.GenerationTasks[0]
+	if task.Status != "failed" {
+		t.Fatalf("status %s reason %+v", task.Status, task.FailureReason)
+	}
+	if task.FailureReason == nil || *task.FailureReason != ErrTextOutput.Error() {
+		t.Fatalf("reason %+v", task.FailureReason)
+	}
+}
+
 func TestImageSessionAttachToProduct(t *testing.T) {
 	ss := newSessionServer(t)
 	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": "附加会话"})
@@ -226,6 +278,7 @@ func TestImageSessionAttachToProduct(t *testing.T) {
 	})
 	ss.mustStatus(t, gen, http.StatusAccepted)
 	ss.decode(t, gen, &session)
+	ss.dropDispatch(t, session.GenerationTasks[0].ID)
 	if err := (Executor{DB: ss.db, Media: ss.media}).Execute(context.Background(), session.GenerationTasks[0].ID); err != nil {
 		t.Fatal(err)
 	}

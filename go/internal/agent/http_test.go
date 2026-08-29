@@ -91,10 +91,10 @@ func newAgentServer(t *testing.T, gw Gateway, internalToken string) *agentServer
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore, Canvas: WriteProductCanvas}, Settings: settingsStore}.Register(engine)
 	svc := Service{
-		DB: gdb, Graph: graph.Service{DB: gdb},
-		Product: product.Service{DB: gdb, Media: mediaStore},
+		DB: gdb, Graph: graph.Service{DB: gdb, AfterRunStatus: SyncGraphRunToTasks, Products: product.GraphGuard{}},
+		Product: product.Service{DB: gdb, Media: mediaStore, Canvas: WriteProductCanvas},
 		Library: library.Service{DB: gdb, Media: mediaStore},
 		Media:   mediaStore, Settings: settingsStore, Gateway: gw, Poll: time.Millisecond,
 	}
@@ -401,6 +401,45 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	}
 	if dispatchCount != 1 {
 		t.Fatalf("dispatch rows %d", dispatchCount)
+	}
+}
+
+func TestRecoverUnfinishedTurnsDoesNotRestageConsumedDispatch(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "整理素材", "idempotency_key": clockid.New(), "asset_ids": []string{},
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	if submitted.Turn.ID == "" {
+		t.Fatal("missing turn id")
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE async_dispatches
+		SET status = $1, consumed_at = NOW(), updated_at = NOW()
+		WHERE actor_name = $2 AND aggregate_id = $3
+	`, queue.StatusConsumed, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
+		t.Fatal(err)
+	}
+	var dispatchStatus string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status FROM async_dispatches
+		WHERE actor_name = $1 AND aggregate_id = $2
+		ORDER BY created_at DESC LIMIT 1
+	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus); err != nil {
+		t.Fatal(err)
+	}
+	if dispatchStatus != queue.StatusConsumed {
+		t.Fatalf("recovery restaged consumed dispatch to %s", dispatchStatus)
 	}
 }
 

@@ -27,6 +27,58 @@ func Lock(ctx context.Context, tx *gorm.DB, productID string) (Product, error) {
 	return loadProductForUpdate(ctx, tx, productID)
 }
 
+// AssetIDsExist 确认 ids 都属于该商品；缺任一则校验失败。
+func AssetIDsExist(ctx context.Context, tx *gorm.DB, productID string, ids []string) error {
+	wanted := map[string]struct{}{}
+	for _, id := range ids {
+		if id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	unique := make([]string, 0, len(wanted))
+	for id := range wanted {
+		unique = append(unique, id)
+	}
+	rows, err := pfdb.Query(ctx, tx, `
+		SELECT id FROM product_image_assets
+		WHERE product_id = $1 AND id = ANY($2)
+	`, productID, unique)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	found := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		found[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(found) != len(wanted) {
+		return apperr.Validation("节点绑定了不属于该商品的图片")
+	}
+	return nil
+}
+
+// GraphGuard 供 graph.Service / StageNew 注入，SQL 留在本包。
+type GraphGuard struct{}
+
+func (GraphGuard) Lock(ctx context.Context, tx *gorm.DB, productID string) error {
+	_, err := Lock(ctx, tx, productID)
+	return err
+}
+
+func (GraphGuard) HasAssets(ctx context.Context, tx *gorm.DB, productID string, ids []string) error {
+	return AssetIDsExist(ctx, tx, productID, ids)
+}
+
 func Touch(ctx context.Context, tx *gorm.DB, productID string) error {
 	_, err := pfdb.Exec(ctx, tx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
 	return err

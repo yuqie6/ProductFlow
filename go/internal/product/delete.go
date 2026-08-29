@@ -54,6 +54,9 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 		if err != nil {
 			return err
 		}
+		if err := deleteRestrictChildren(ctx, pgxTx, productID); err != nil {
+			return err
+		}
 		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM products WHERE id = $1`, productID); err != nil {
 			return err
 		}
@@ -70,6 +73,19 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 		_ = s.Media.Files.DeleteWithVariants(file.StoragePath)
 	}
 	s.Media.Files.RemoveEmptyProductDirs(productID)
+	return nil
+}
+
+func deleteRestrictChildren(ctx context.Context, tx *gorm.DB, productID string) error {
+	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM product_image_fidelity_checks WHERE product_id = $1`, productID); err != nil {
+		return err
+	}
+	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM delivery_rendition_jobs WHERE product_id = $1`, productID); err != nil {
+		return err
+	}
+	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM local_image_edit_adoption_events WHERE product_id = $1`, productID); err != nil {
+		return err
+	}
 	return nil
 }
 

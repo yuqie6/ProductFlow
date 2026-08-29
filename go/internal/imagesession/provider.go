@@ -3,11 +3,21 @@ package imagesession
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
 )
+
+var (
+	ErrMissingOutput = errors.New("图片供应商没有返回图片结果，请稍后重试")
+	ErrTextOutput    = errors.New("图片供应商已完成请求，但返回的是文字回复，没有返回图片结果")
+)
+
+func IsConfirmedProviderFailure(err error) bool {
+	return errors.Is(err, ErrMissingOutput) || errors.Is(err, ErrTextOutput)
+}
 
 type ChatRequest struct {
 	Prompt      string

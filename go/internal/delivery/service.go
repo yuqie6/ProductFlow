@@ -11,6 +11,7 @@ import (
 	sqldb "database/sql"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -197,8 +198,7 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 
 // QueueAfterImageSuccess 图运行图片成功后按节点 DeliverySpec 入队；失败不影响已成功资产。
 func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nodeID, sourceAssetID string) error {
-	var raw json.RawMessage
-	err := pfdb.QueryRow(ctx, pgxTx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, nodeID).Scan(&raw)
+	raw, err := graph.NodeConfigJSON(ctx, pgxTx, nodeID)
 	if err != nil {
 		return nil
 	}
@@ -275,16 +275,14 @@ func validateSource(ctx context.Context, tx *gorm.DB, source product.ImageAsset)
 	if source.VerificationStatus != media.StatusVerified {
 		return apperr.Validation("交付派生原图媒体尚未通过核验")
 	}
-	var artifactID string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id FROM workflow_graph_artifacts
-		WHERE product_image_asset_id = $1 AND artifact_type = 'image'
-		LIMIT 1
-	`, source.ID).Scan(&artifactID)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	ok, err := graph.HasImageArtifactForAsset(ctx, tx, source.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return apperr.Validation("交付派生只接受成功的工作流生成原图")
 	}
-	return err
+	return nil
 }
 
 func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {

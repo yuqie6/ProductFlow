@@ -63,10 +63,11 @@ func main() {
 	}
 
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
-	productService := product.Service{DB: gdb, Media: mediaStore}
+	productService := product.Service{DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas}
 	deliveryService := delivery.Service{DB: gdb, Media: mediaStore}
 	settingsStore := settings.NewStore(pool, cfg)
 	liveImage := providers.LiveImage{Store: settingsStore}
+	graphService := graph.Service{DB: gdb, AfterRunStatus: agent.SyncGraphRunToTasks, Products: product.GraphGuard{}}
 	executor := graph.Executor{
 		DB: gdb,
 		Deps: graph.Dependencies{
@@ -75,6 +76,8 @@ func main() {
 			Assets:   productService,
 			Delivery: deliveryService,
 		},
+		Log:            logger,
+		AfterRunStatus: agent.SyncGraphRunToTasks,
 	}
 	imageExecutor := imagesession.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
 	deliveryExecutor := delivery.Executor{DB: gdb, Media: mediaStore}
@@ -84,7 +87,7 @@ func main() {
 		poll = time.Millisecond
 	}
 	agentExecutor := agent.Executor{Service: agent.Service{
-		DB: gdb, Graph: graph.Service{DB: gdb},
+		DB: gdb, Graph: graphService,
 		Product: productService,
 		Library: library.Service{DB: gdb, Media: mediaStore},
 		Media:   mediaStore,
@@ -97,12 +100,25 @@ func main() {
 	}}
 	actors := map[string]queue.ActorFunc{
 		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			logger.Info("consume", zap.String("actor", queue.ActorGraphRun), zap.String("workflow_run_id", aggregateID))
 			return executor.ExecuteRun(ctx, aggregateID)
 		},
-		queue.ActorImageSession:  imageExecutor.Execute,
-		queue.ActorDelivery:      deliveryExecutor.Execute,
-		queue.ActorLocalEdit:     localExecutor.Execute,
-		queue.ActorAgentTurnSync: agentExecutor.Execute,
+		queue.ActorImageSession: func(ctx context.Context, aggregateID string) error {
+			logger.Info("consume", zap.String("actor", queue.ActorImageSession), zap.String("image_session_generation_task_id", aggregateID))
+			return imageExecutor.Execute(ctx, aggregateID)
+		},
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
+			logger.Info("consume", zap.String("actor", queue.ActorDelivery), zap.String("delivery_rendition_job_id", aggregateID))
+			return deliveryExecutor.Execute(ctx, aggregateID)
+		},
+		queue.ActorLocalEdit: func(ctx context.Context, aggregateID string) error {
+			logger.Info("consume", zap.String("actor", queue.ActorLocalEdit), zap.String("local_image_edit_task_id", aggregateID))
+			return localExecutor.Execute(ctx, aggregateID)
+		},
+		queue.ActorAgentTurnSync: func(ctx context.Context, aggregateID string) error {
+			logger.Info("consume", zap.String("actor", queue.ActorAgentTurnSync), zap.String("agent_turn_projection_id", aggregateID))
+			return agentExecutor.Execute(ctx, aggregateID)
+		},
 	}
 
 	mux := asynq.NewServeMux()

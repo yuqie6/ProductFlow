@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strings"
 	"time"
 
 	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (WorkspaceLaunchResponse, error) {
@@ -306,10 +309,30 @@ func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string,
 }
 
 func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID string, expectedVersion int, idempotencyKey string) (any, error) {
-	if _, err := s.loadScopedConversation(ctx, conversationID); err != nil {
-		return nil, err
+	key := strings.TrimSpace(idempotencyKey)
+	if key == "" {
+		return nil, apperr.Validation("idempotency key 不能为空")
 	}
-	return s.Library.ConfirmOrganizationDraft(ctx, conversationID, expectedVersion, idempotencyKey)
+	var out any
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		conv, err := loadConversationByID(ctx, pgxTx, conversationID)
+		if err != nil {
+			return err
+		}
+		if err := requireGlobalScope(conv); err != nil {
+			return err
+		}
+		draft, err := s.Library.ConfirmOrganizationDraftTx(ctx, pgxTx, conversationID, expectedVersion, key)
+		if err != nil {
+			return err
+		}
+		if err := completeOrganizationDraftTask(ctx, pgxTx, draft); err != nil {
+			return err
+		}
+		out = draft
+		return nil
+	})
+	return out, err
 }
 
 func (s Service) GetLibraryDraftHTTP(ctx context.Context, conversationID string) (any, error) {

@@ -16,6 +16,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
@@ -39,10 +40,10 @@ func (e Executor) provider() Provider {
 func (e Executor) Execute(ctx context.Context, taskID string) error {
 	claimed, attemptID, err := e.claim(ctx, taskID)
 	if err != nil {
-		return nil
+		return err
 	}
 	if !claimed {
-		return nil
+		return queue.ErrBusy
 	}
 	snap, err := e.loadSnapshot(ctx, taskID, attemptID)
 	if err != nil {
@@ -148,7 +149,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		if task.Status == "running" {
 			stale := task.StartedAt == nil || now.Sub(task.StartedAt.UTC()) >= staleAfter
 			if !stale {
-				return apperr.Conflict("局部编辑任务已被其他 worker 领取")
+				return queue.ErrBusy
 			}
 			phase := ""
 			if task.ProgressPhase != nil {

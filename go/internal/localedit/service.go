@@ -8,6 +8,7 @@ import (
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
@@ -418,53 +419,19 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 		if err := lockProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		var graphID string
-		var revision int
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, revision FROM workflow_graphs
-			WHERE id = $1 AND product_id = $2 AND active = TRUE
-			FOR UPDATE
-		`, *task.TargetGraphID, productID).Scan(&graphID, &revision)
-		if errors.Is(err, sqldb.ErrNoRows) {
-			return apperr.Conflict("局部编辑目标 graph 已变化或不再 active")
-		}
-		if err != nil {
-			return err
-		}
-		var nodeType string
-		var currentArtifact *string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT node_type, current_artifact_id FROM workflow_graph_nodes
-			WHERE id = $1 AND graph_id = $2 FOR UPDATE
-		`, *task.TargetNodeID, graphID).Scan(&nodeType, &currentArtifact)
-		if errors.Is(err, sqldb.ErrNoRows) || nodeType != "image_generation" {
-			return apperr.Conflict("局部编辑目标节点已变化")
-		}
-		if err != nil {
-			return err
-		}
-		if currentArtifact == nil || *currentArtifact != expectedArtifactID || *currentArtifact != *task.SourceArtifactID {
-			return apperr.Conflict("节点当前结果已变化，不能 adoption")
-		}
-		var sourceGraphID, sourceNodeID string
-		var sourceAssetID *string
-		var sourceDigest *string
-		var sourceRevision int
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT graph_id, node_id, product_image_asset_id, input_digest, graph_revision
-			FROM workflow_graph_artifacts WHERE id = $1
-		`, *task.SourceArtifactID).Scan(&sourceGraphID, &sourceNodeID, &sourceAssetID, &sourceDigest, &sourceRevision)
-		if err != nil {
-			return apperr.Conflict("局部编辑 lineage 记录不完整")
-		}
-		if task.SourceArtifactAssetID == nil || sourceGraphID != graphID || sourceNodeID != *task.TargetNodeID ||
-			sourceAssetID == nil || *sourceAssetID != *task.SourceArtifactAssetID || *task.SourceArtifactAssetID != task.SourceAssetID {
+		if task.SourceArtifactAssetID == nil || *task.SourceArtifactAssetID != task.SourceAssetID {
 			return apperr.Conflict("局部编辑 source artifact 与任务快照不一致")
 		}
 		result, err := product.LoadAssetRow(ctx, pgxTx, *task.ResultAssetID)
 		if err != nil || result.ProductID != productID {
 			return apperr.Conflict("局部编辑 lineage 记录不完整")
 		}
+		lineage, err := graph.LoadArtifactLineage(ctx, pgxTx, *task.SourceArtifactID)
+		if err != nil {
+			return err
+		}
+		sourceDigest := lineage.InputDigest
+		sourceRevision := lineage.GraphRevision
 		payload := map[string]any{
 			"kind": "local_image_edit", "task_id": task.ID, "source_asset_id": task.SourceAssetID,
 			"source_artifact_id": *task.SourceArtifactID, "source_artifact_input_digest": sourceDigest,
@@ -479,28 +446,32 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 		if err != nil {
 			return err
 		}
-		artifactID := clockid.New()
 		providerName := "local_edit"
 		if task.ProviderName != nil && *task.ProviderName != "" {
 			providerName = *task.ProviderName
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO workflow_graph_artifacts (
-				id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
-				payload_json, payload_hash, input_digest, product_image_asset_id, provider_name, provider_model, created_at
-			) VALUES ($1, $2, $3, NULL, 'image', 3, $4, $5, $6, $7, $8, $9, $10, NOW())
-		`, artifactID, graphID, *task.TargetNodeID, revision, payloadJSON, hash, sourceDigest, result.ID, providerName, task.ProviderModel); err != nil {
+		artifactID, err := graph.AdoptImageArtifact(ctx, pgxTx, graph.AdoptImageArtifactInput{
+			ProductID:                 productID,
+			GraphID:                   *task.TargetGraphID,
+			NodeID:                    *task.TargetNodeID,
+			ExpectedCurrentArtifactID: expectedArtifactID,
+			SourceArtifactID:          *task.SourceArtifactID,
+			ExpectedSourceAssetID:     *task.SourceArtifactAssetID,
+			ResultAssetID:             result.ID,
+			PayloadJSON:               payloadJSON,
+			PayloadHash:               hash,
+			ProviderName:              providerName,
+			ProviderModel:             task.ProviderModel,
+		})
+		if err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO local_image_edit_adoption_events (
 				id, product_id, task_id, graph_id, node_id, event_type,
 				from_artifact_id, to_artifact_id, created_at
 			) VALUES ($1, $2, $3, $4, $5, 'adopt', $6, $7, NOW())
-		`, clockid.New(), productID, task.ID, graphID, *task.TargetNodeID, *task.SourceArtifactID, artifactID); err != nil {
-			return err
-		}
-		_, err = pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *task.TargetNodeID)
+		`, clockid.New(), productID, task.ID, *task.TargetGraphID, *task.TargetNodeID, *task.SourceArtifactID, artifactID)
 		return err
 	})
 	if err != nil {
@@ -528,32 +499,15 @@ func (s Service) Revert(ctx context.Context, productID, taskID, eventID, expecte
 		if err := lockProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		var liveGraph string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id FROM workflow_graphs WHERE id = $1 AND product_id = $2 AND active = TRUE FOR UPDATE
-		`, graphID, productID).Scan(&liveGraph)
-		if errors.Is(err, sqldb.ErrNoRows) {
-			return apperr.Conflict("adoption 所属 graph 已变化或不再 active")
-		}
-		if err != nil {
+		if err := graph.RevertNodeCurrentArtifact(ctx, pgxTx, productID, graphID, nodeID, expectedArtifactID, toID, fromID); err != nil {
 			return err
 		}
-		var current *string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT current_artifact_id FROM workflow_graph_nodes WHERE id = $1 AND graph_id = $2 FOR UPDATE
-		`, nodeID, graphID).Scan(&current)
-		if err != nil || current == nil || *current != expectedArtifactID || *current != toID {
-			return apperr.Conflict("节点当前结果已变化，不能 revert")
-		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO local_image_edit_adoption_events (
 				id, product_id, task_id, graph_id, node_id, event_type,
 				from_artifact_id, to_artifact_id, related_event_id, created_at
 			) VALUES ($1, $2, $3, $4, $5, 'revert', $6, $7, $8, NOW())
-		`, clockid.New(), productID, taskID, graphID, nodeID, toID, fromID, eventID); err != nil {
-			return err
-		}
-		_, err = pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, fromID, nodeID)
+		`, clockid.New(), productID, taskID, graphID, nodeID, toID, fromID, eventID)
 		return err
 	})
 	if err != nil {

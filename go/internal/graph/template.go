@@ -446,6 +446,41 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 	return cs, validateChangeSet(cs)
 }
 
+// TemplateForExistingProductSource 把名称-only 出生图扩成与直接创建相同的模板，复用已有商品资料节点。
+func TemplateForExistingProductSource(productSourceNodeID string, baseRevision int, in DirectCreateInput) (ChangeSet, error) {
+	changeSet, err := BuildDirectCreateTemplate(in)
+	if err != nil {
+		return ChangeSet{}, err
+	}
+	ops := make([]Operation, 0, len(changeSet.Operations))
+	for _, operation := range changeSet.Operations {
+		switch op := operation.(type) {
+		case CreateNodeOp:
+			if op.ClientRef == "product-source" {
+				continue
+			}
+			ops = append(ops, op)
+		case ConnectNodesOp:
+			if op.SourceRef == "product-source" {
+				op.SourceRef = productSourceNodeID
+			}
+			if op.TargetRef == "product-source" {
+				op.TargetRef = productSourceNodeID
+			}
+			ops = append(ops, op)
+		default:
+			ops = append(ops, operation)
+		}
+	}
+	cs := ChangeSet{
+		BaseGraphRevision: baseRevision,
+		Summary:           "按商品输入补全画布",
+		ActorType:         ActorUser,
+		Operations:        ops,
+	}
+	return cs, validateChangeSet(cs)
+}
+
 func generationSpecForShot(imageType DirectCreateImageType, generationSpec map[string]any) (map[string]any, error) {
 	overrides := cloneMap(generationSpec)
 	if imageType.AspectRatio != "" {

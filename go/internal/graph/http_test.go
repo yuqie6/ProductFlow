@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
@@ -20,6 +24,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
@@ -38,6 +43,21 @@ type graphServer struct {
 func newGraphServer(t *testing.T) *graphServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
+	return startGraphServer(t, pool, gdb)
+}
+
+func newIsolatedGraphServer(t *testing.T) *graphServer {
+	t.Helper()
+	raw := os.Getenv("DATABASE_URL")
+	if raw == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+	name := fmt.Sprintf("pf_gexec_%d", time.Now().UnixNano()%1_000_000_000)
+	_, pool, gdb := isolatedMigratedDB(t, testdb.Pool(t), raw, name)
+	return startGraphServer(t, pool, gdb)
+}
+
+func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServer {
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -53,7 +73,7 @@ func newGraphServer(t *testing.T) *graphServer {
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
-	graph.HTTP{Service: graph.Service{DB: gdb}, Settings: settingsStore}.Register(engine)
+	graph.HTTP{Service: graph.Service{DB: gdb, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	gs := &graphServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}
@@ -71,12 +91,76 @@ func newGraphServer(t *testing.T) *graphServer {
 		t.Fatalf("login %d", resp.StatusCode)
 	}
 	gs.cookies = resp.Cookies()
+	var previousCapacity *string
+	_ = gs.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = gs.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
-		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		VALUES ('admin_access_required', 'true', NOW(), NOW()),
+		       ('generation_max_concurrent_tasks', '20', NOW(), NOW())
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 	`)
+	t.Cleanup(func() {
+		if previousCapacity == nil {
+			_, _ = gs.pool.Exec(context.Background(), `DELETE FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`)
+			return
+		}
+		_, _ = gs.pool.Exec(context.Background(), `
+			UPDATE app_settings SET value = $1, updated_at = NOW() WHERE key = 'generation_max_concurrent_tasks'
+		`, *previousCapacity)
+	})
 	return gs
+}
+
+func (gs *graphServer) dropRunDispatch(t *testing.T, runID string) {
+	t.Helper()
+	if _, err := gs.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, runID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (gs *graphServer) reclaimRun(t *testing.T, runID string) {
+	t.Helper()
+	ctx := context.Background()
+	gs.dropRunDispatch(t, runID)
+	if _, err := gs.pool.Exec(ctx, `
+		DELETE FROM workflow_graph_provider_effects
+		WHERE node_run_id IN (SELECT id FROM workflow_graph_node_runs WHERE graph_run_id = $1)
+	`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gs.pool.Exec(ctx, `
+		UPDATE workflow_graph_node_runs SET
+			status = 'queued', failure_reason = NULL, finished_at = NULL,
+			output_json = NULL, active_attempt_id = NULL,
+			progress_phase = NULL, progress_updated_at = NOW()
+		WHERE graph_run_id = $1
+	`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gs.pool.Exec(ctx, `
+		UPDATE workflow_graph_runs SET
+			status = 'running', failure_reason = NULL, finished_at = NULL, is_retryable = TRUE
+		WHERE id = $1
+	`, runID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (gs *graphServer) executeLocally(t *testing.T, runID string, exec graph.Executor) {
+	t.Helper()
+	for i := 0; i < 30; i++ {
+		gs.reclaimRun(t, runID)
+		err := exec.ExecuteRun(context.Background(), runID)
+		if err == nil {
+			return
+		}
+		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		t.Fatal(err)
+	}
+	t.Fatal("could not execute graph run locally")
 }
 
 func (gs *graphServer) do(t *testing.T, method, path string, body io.Reader, contentType string) *http.Response {
@@ -238,7 +322,7 @@ func TestEmptyCanvasCreateHTTPPersistsAndRejectsSecond(t *testing.T) {
 	if payload.SchemaVersion != 3 || payload.Revision != 1 || len(payload.Nodes) != 0 || len(payload.Edges) != 0 {
 		t.Fatalf("%+v", payload)
 	}
-	if payload.SourceDraftRevisionID != nil || payload.CanUndo || payload.CanRedo {
+	if payload.CanUndo || payload.CanRedo {
 		t.Fatalf("empty flags %+v", payload)
 	}
 	if payload.LastOperationGroupID != nil {

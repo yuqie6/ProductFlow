@@ -12,7 +12,8 @@ import (
 )
 
 type Service struct {
-	DB *gorm.DB
+	DB       *gorm.DB
+	Products graph.ProductGuard
 }
 
 type CreateInput struct {
@@ -245,6 +246,7 @@ func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion i
 }
 
 func (s Service) Preview(ctx context.Context, productID, recipeID string, expectedVersion int) (Preview, error) {
+	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out Preview
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		target, err := getProductTarget(ctx, pgxTx, productID, false)
@@ -262,6 +264,7 @@ func (s Service) Preview(ctx context.Context, productID, recipeID string, expect
 }
 
 func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, error) {
+	ctx = graph.WithProductGuard(ctx, s.Products)
 	key, err := normalizeIdempotencyKey(in.IdempotencyKey)
 	if err != nil {
 		return ApplicationResult{}, err

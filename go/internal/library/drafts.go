@@ -57,56 +57,66 @@ func (s Service) GetOrganizationDraft(ctx context.Context, conversationID string
 
 // AppendOrganizationDraftRevision 追加一条整理 artifact。没有 Draft 时创建。
 func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversationID string, payload json.RawMessage, sourceTurnID, sourceStepID string) (OrganizationDraft, error) {
-	hash, err := canonjson.SHA256Hex(json.RawMessage(payload))
-	if err != nil {
-		return OrganizationDraft{}, apperr.Validation("素材整理 Draft payload 无效")
-	}
 	var out OrganizationDraft
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		draft, err := loadOrganizationDraft(ctx, pgxTx, conversationID)
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		_, err := s.AppendOrganizationDraftRevisionTx(ctx, pgxTx, conversationID, payload, sourceTurnID, sourceStepID)
 		if err != nil {
-			var e apperr.Error
-			if !errors.As(err, &e) || e.Status != 404 {
-				return err
-			}
-			draftID := clockid.New()
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
-				VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
-			`, draftID, conversationID); err != nil {
-				return err
-			}
-			draft.ID = draftID
-			draft.Status = "awaiting_confirmation"
-		}
-		if draft.Status == "confirmed" {
-			return apperr.Conflict("素材整理 Draft 已确认，不能再追加 revision")
-		}
-		var version int
-		_ = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1
-		`, draft.ID).Scan(&version)
-		revID := clockid.New()
-		now := s.now()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO library_organization_draft_revisions (
-				id, draft_id, version, schema_version, payload_json, payload_hash,
-				source_turn_id, source_artifact_step_id, created_at
-			) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
-		`, revID, draft.ID, version+1, payload, hash, nullable(sourceTurnID), nullable(sourceStepID), now); err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE library_organization_drafts
-			SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = $3
-			WHERE id = $1
-		`, draft.ID, revID, now); err != nil {
-			return err
-		}
-		out, err = loadOrganizationDraft(ctx, pgxTx, conversationID)
+		loaded, err := loadOrganizationDraft(ctx, pgxTx, conversationID)
+		out = loaded
 		return err
 	})
 	return out, err
+}
+
+// AppendOrganizationDraftRevisionTx 在调用方事务里追加 revision，返回 revision id。
+func (s Service) AppendOrganizationDraftRevisionTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, payload json.RawMessage, sourceTurnID, sourceStepID string) (string, error) {
+	hash, err := canonjson.SHA256Hex(json.RawMessage(payload))
+	if err != nil {
+		return "", apperr.Validation("素材整理 Draft payload 无效")
+	}
+	draft, err := loadOrganizationDraft(ctx, pgxTx, conversationID)
+	if err != nil {
+		var e apperr.Error
+		if !errors.As(err, &e) || e.Status != 404 {
+			return "", err
+		}
+		draftID := clockid.New()
+		if _, err := pfdb.Exec(ctx, pgxTx, `
+			INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
+			VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
+		`, draftID, conversationID); err != nil {
+			return "", err
+		}
+		draft.ID = draftID
+		draft.Status = "awaiting_confirmation"
+	}
+	if draft.Status == "confirmed" {
+		return "", apperr.Conflict("素材整理 Draft 已确认，不能再追加 revision")
+	}
+	var version int
+	_ = pfdb.QueryRow(ctx, pgxTx, `
+		SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1
+	`, draft.ID).Scan(&version)
+	revID := clockid.New()
+	now := s.now()
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		INSERT INTO library_organization_draft_revisions (
+			id, draft_id, version, schema_version, payload_json, payload_hash,
+			source_turn_id, source_artifact_step_id, created_at
+		) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
+	`, revID, draft.ID, version+1, payload, hash, nullable(sourceTurnID), nullable(sourceStepID), now); err != nil {
+		return "", err
+	}
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE library_organization_drafts
+		SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = $3
+		WHERE id = $1
+	`, draft.ID, revID, now); err != nil {
+		return "", err
+	}
+	return revID, nil
 }
 
 // ConfirmOrganizationDraft 应用当前 revision 的组织变更，不复制媒体 bytes。
@@ -120,68 +130,73 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 	}
 	var out OrganizationDraft
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		draft, err := loadOrganizationDraftForUpdate(ctx, pgxTx, conversationID)
-		if err != nil {
-			return err
-		}
-		if draft.CurrentRevision == nil {
-			return apperr.Conflict("素材整理 Draft 缺少 current revision")
-		}
-		requestHash, err := canonjson.SHA256Hex(map[string]any{
-			"draft_id":               draft.ID,
-			"expected_draft_version": expectedVersion,
-		})
-		if err != nil {
-			return err
-		}
-		if draft.Status == "confirmed" {
-			if draft.ConfirmedRevisionID == nil || *draft.ConfirmedRevisionID != draft.CurrentRevision.ID {
-				return apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
-			}
-			var storedKey, storedHash *string
-			_ = pfdb.QueryRow(ctx, pgxTx, `
-				SELECT confirmation_idempotency_key, confirmation_request_hash
-				FROM library_organization_drafts WHERE id = $1
-			`, draft.ID).Scan(&storedKey, &storedHash)
-			if storedKey == nil || *storedKey != key || storedHash == nil || *storedHash != requestHash {
-				return apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
-			}
-			out = draft
-			return nil
-		}
-		if draft.Status != "awaiting_confirmation" {
-			return apperr.Conflict("当前素材整理 Draft 不在待确认状态")
-		}
-		if draft.CurrentRevision.Version != expectedVersion {
-			return apperr.Conflict("素材整理 Draft version 已变化，请确认最新 revision")
-		}
-		result, err := s.applyDraftOperations(ctx, pgxTx, draft.CurrentRevision.Payload)
-		if err != nil {
-			return err
-		}
-		now := s.now()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE library_organization_draft_revisions SET confirmed_at = $2 WHERE id = $1
-		`, draft.CurrentRevision.ID, now); err != nil {
-			return err
-		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE library_organization_drafts
-			SET status = 'confirmed', confirmed_revision_id = $2, confirmation_idempotency_key = $3,
-			    confirmation_request_hash = $4, confirmation_result_json = $5, confirmed_at = $6, updated_at = $6
-			WHERE id = $1
-		`, draft.ID, draft.CurrentRevision.ID, key, requestHash, result, now); err != nil {
-			return err
-		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_conversations SET status = 'completed', updated_at = $2 WHERE id = $1
-		`, conversationID, now); err != nil {
-			return err
-		}
-		out, err = loadOrganizationDraft(ctx, pgxTx, conversationID)
+		loaded, err := s.ConfirmOrganizationDraftTx(ctx, pgxTx, conversationID, expectedVersion, key)
+		out = loaded
 		return err
 	})
 	return out, err
+}
+
+// ConfirmOrganizationDraftTx 在调用方事务里确认 Draft。
+func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, expectedVersion int, key string) (OrganizationDraft, error) {
+	draft, err := loadOrganizationDraftForUpdate(ctx, pgxTx, conversationID)
+	if err != nil {
+		return OrganizationDraft{}, err
+	}
+	if draft.CurrentRevision == nil {
+		return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 缺少 current revision")
+	}
+	requestHash, err := canonjson.SHA256Hex(map[string]any{
+		"draft_id":               draft.ID,
+		"expected_draft_version": expectedVersion,
+	})
+	if err != nil {
+		return OrganizationDraft{}, err
+	}
+	if draft.Status == "confirmed" {
+		if draft.ConfirmedRevisionID == nil || *draft.ConfirmedRevisionID != draft.CurrentRevision.ID {
+			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
+		}
+		var storedKey, storedHash *string
+		_ = pfdb.QueryRow(ctx, pgxTx, `
+			SELECT confirmation_idempotency_key, confirmation_request_hash
+			FROM library_organization_drafts WHERE id = $1
+		`, draft.ID).Scan(&storedKey, &storedHash)
+		if storedKey == nil || *storedKey != key || storedHash == nil || *storedHash != requestHash {
+			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
+		}
+		return draft, nil
+	}
+	if draft.Status != "awaiting_confirmation" {
+		return OrganizationDraft{}, apperr.Conflict("当前素材整理 Draft 不在待确认状态")
+	}
+	if draft.CurrentRevision.Version != expectedVersion {
+		return OrganizationDraft{}, apperr.Conflict("素材整理 Draft version 已变化，请确认最新 revision")
+	}
+	result, err := s.applyDraftOperations(ctx, pgxTx, draft.CurrentRevision.Payload)
+	if err != nil {
+		return OrganizationDraft{}, err
+	}
+	now := s.now()
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE library_organization_draft_revisions SET confirmed_at = $2 WHERE id = $1
+	`, draft.CurrentRevision.ID, now); err != nil {
+		return OrganizationDraft{}, err
+	}
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE library_organization_drafts
+		SET status = 'confirmed', confirmed_revision_id = $2, confirmation_idempotency_key = $3,
+		    confirmation_request_hash = $4, confirmation_result_json = $5, confirmed_at = $6, updated_at = $6
+		WHERE id = $1
+	`, draft.ID, draft.CurrentRevision.ID, key, requestHash, result, now); err != nil {
+		return OrganizationDraft{}, err
+	}
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE agent_conversations SET status = 'completed', updated_at = $2 WHERE id = $1
+	`, conversationID, now); err != nil {
+		return OrganizationDraft{}, err
+	}
+	return loadOrganizationDraft(ctx, pgxTx, conversationID)
 }
 
 func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, payload json.RawMessage) ([]byte, error) {

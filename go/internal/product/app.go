@@ -19,7 +19,12 @@ type Service struct {
 	Media media.Store
 	// Now 可注入，图库「最近生成」目录用它锚定 30 天窗口。
 	Now func() time.Time
+	// Canvas 写入 Agent 商品工作区会话；直连创建可以不设。
+	Canvas CanvasWriter
 }
+
+// CanvasWriter 在商品出生事务里写入 agent_sessions / agent_conversations。
+type CanvasWriter func(ctx context.Context, tx *gorm.DB, productID, title, key, hash string, agentSessionID *string) (sessionID string, conv Conversation, err error)
 
 func (s Service) now() time.Time {
 	if s.Now != nil {
@@ -54,6 +59,7 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 }
 
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
+	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	var result DirectCreateResponse
 	err := s.createWithGraph(ctx, in, true, true, func(tx *gorm.DB, creation canonicalCreation) error {
 		sourceID := creation.product.ID

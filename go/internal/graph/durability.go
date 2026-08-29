@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	sqldb "database/sql"
@@ -75,7 +76,10 @@ func generationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error)
 	return count < limit, nil
 }
 
-var errNotClaimed = errors.New("not claimed")
+var (
+	errNotClaimed      = errors.New("not claimed")
+	errWaitingCapacity = errors.New("waiting_for_capacity")
+)
 
 func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bool, error) {
 	claimed := false
@@ -85,7 +89,7 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 			return err
 		}
 		if !ok {
-			return errNotClaimed
+			return errWaitingCapacity
 		}
 		now := time.Now().UTC()
 		attemptID := clockid.New()
@@ -111,18 +115,16 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 	if errors.Is(err, errNotClaimed) {
 		return false, nil
 	}
+	if errors.Is(err, errWaitingCapacity) {
+		return false, errWaitingCapacity
+	}
 	return claimed, err
 }
 
-func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
-	var status string
-	err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, runID).Scan(&status)
-	if err != nil || status != RunStatusRunning {
-		return false, err
-	}
+func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]string, []string, error) {
 	rows, err := pfdb.Query(ctx, tx, `SELECT status, failure_reason FROM workflow_graph_node_runs WHERE graph_run_id = $1`, runID)
 	if err != nil {
-		return false, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	var statuses []string
@@ -131,7 +133,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 		var st string
 		var reason *string
 		if err := rows.Scan(&st, &reason); err != nil {
-			return false, err
+			return nil, nil, err
 		}
 		statuses = append(statuses, st)
 		if reason != nil {
@@ -140,11 +142,46 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 			reasons = append(reasons, "")
 		}
 	}
-	if err := rows.Err(); err != nil {
+	return statuses, reasons, rows.Err()
+}
+
+func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
+	var status string
+	err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, runID).Scan(&status)
+	if err != nil || status != RunStatusRunning {
+		return false, err
+	}
+	statuses, reasons, err := loadNodeRunStatuses(ctx, tx, runID)
+	if err != nil {
 		return false, err
 	}
 	if len(statuses) == 0 {
 		return false, nil
+	}
+	blocking := false
+	for _, st := range statuses {
+		if st == NodeRunFailed || st == NodeRunUnknown {
+			blocking = true
+			break
+		}
+	}
+	if blocking {
+		now := time.Now().UTC()
+		if _, err := pfdb.Exec(ctx, tx, `
+			UPDATE workflow_graph_node_runs SET
+				status = 'failed',
+				failure_reason = COALESCE(failure_reason, '上游节点已失败'),
+				finished_at = COALESCE(finished_at, $2),
+				active_attempt_id = NULL,
+				progress_updated_at = $2
+			WHERE graph_run_id = $1 AND status = 'queued'
+		`, runID, now); err != nil {
+			return false, err
+		}
+		statuses, reasons, err = loadNodeRunStatuses(ctx, tx, runID)
+		if err != nil {
+			return false, err
+		}
 	}
 	for _, st := range statuses {
 		if st == NodeRunQueued || st == NodeRunRunning {
@@ -249,7 +286,11 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 		if err != nil {
 			return err
 		}
-		if nodePastProviderBoundary(phase) {
+		if nodeStatus == NodeRunFailed || nodeStatus == NodeRunUnknown || nodeStatus == NodeRunSucceeded {
+			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			return err
+		}
+		if nodePastProviderBoundary(phase) && strings.TrimSpace(reason) == "" {
 			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, attempt, ProviderUnknownDetail); err != nil {
 				return err
 			}

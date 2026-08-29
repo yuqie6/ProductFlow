@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/canonjson"
 )
 
 const (
@@ -153,20 +154,6 @@ type governanceWire struct {
 	ProviderSample       *string  `json:"provider_sample"`
 }
 
-func compactJSON(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	b := buf.Bytes()
-	if n := len(b); n > 0 && b[n-1] == '\n' {
-		b = b[:n-1]
-	}
-	return b, nil
-}
-
 func payloadDict(p Payload) map[string]any {
 	nodes := make([]any, 0, len(p.Nodes))
 	for _, node := range p.Nodes {
@@ -220,7 +207,7 @@ func payloadDict(p Payload) map[string]any {
 }
 
 func payloadJSON(p Payload) ([]byte, error) {
-	encoded, err := compactJSON(payloadDict(p))
+	encoded, err := canonjson.Compact(payloadDict(p))
 	if err != nil {
 		return nil, err
 	}
@@ -240,12 +227,7 @@ func payloadHash(p Payload) (string, error) {
 }
 
 func jsonHash(payload map[string]any) (string, error) {
-	encoded, err := compactJSON(payload)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), nil
+	return canonjson.SHA256Hex(payload)
 }
 
 func decodeStrict(raw []byte, dest any) error {

@@ -105,18 +105,17 @@ func projectGraph(cmd graph.CommandResult, product Product, facts []map[string]a
 		})
 	}
 	return map[string]any{
-		"id":                       cmd.GraphID,
-		"product_id":               cmd.ProductID,
-		"title":                    cmd.Title,
-		"schema_version":           cmd.SchemaVersion,
-		"revision":                 cmd.Revision,
-		"source_draft_revision_id": nil,
-		"last_operation_group_id":  cmd.OperationGroupID,
-		"can_undo":                 true,
-		"can_redo":                 false,
-		"nodes":                    nodes,
-		"edges":                    edges,
-		"groups":                   groups,
-		"pending_proposal":         nil,
+		"id":                      cmd.GraphID,
+		"product_id":              cmd.ProductID,
+		"title":                   cmd.Title,
+		"schema_version":          cmd.SchemaVersion,
+		"revision":                cmd.Revision,
+		"last_operation_group_id": cmd.OperationGroupID,
+		"can_undo":                true,
+		"can_redo":                false,
+		"nodes":                   nodes,
+		"edges":                   edges,
+		"groups":                  groups,
+		"pending_proposal":        nil,
 	}
 }

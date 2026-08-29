@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -115,6 +116,62 @@ func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {
 	gs.decode(t, missing, &body)
 	if body.Detail != "节点运行范围必须指定 node_id" {
 		t.Fatalf("detail %s", body.Detail)
+	}
+}
+
+func TestSubmitNodeRunFailsImmediatelyWhenCompileRejects(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	current := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, current, http.StatusOK)
+	var graphView graph.Projection
+	gs.decode(t, current, &graphView)
+	var visualID string
+	for _, node := range graphView.Nodes {
+		if node.NodeType == graph.NodeVisualSystem {
+			visualID = node.ID
+			break
+		}
+	}
+	if visualID == "" {
+		t.Fatal("missing visual_system")
+	}
+	added := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
+		"base_graph_revision": graphView.Revision,
+		"summary":             "连接未绑定素材",
+		"operations": []map[string]any{
+			{"op": "create_node", "client_ref": "unbound-asset", "node_type": "image_asset", "title": "未绑定", "position_x": 40, "position_y": 40, "config": map[string]any{}},
+			{"op": "connect_nodes", "client_ref": "unbound-edge", "source_ref": "unbound-asset", "target_ref": visualID},
+		},
+	})
+	gs.mustStatus(t, added, http.StatusOK)
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": visualID,
+	})
+	gs.mustStatus(t, resp, http.StatusCreated)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if run.Status != "failed" {
+		t.Fatalf("status %s", run.Status)
+	}
+	if run.FailureReason == nil || !strings.Contains(*run.FailureReason, "参考输入缺少已绑定的图片资产") {
+		t.Fatalf("reason %+v", run.FailureReason)
+	}
+	if !run.IsRetryable {
+		t.Fatal("expected retryable")
+	}
+	if len(run.NodeRuns) != 1 || run.NodeRuns[0].Status != "failed" {
+		t.Fatalf("nodes %+v", run.NodeRuns)
+	}
+	var n int
+	if err := gs.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM async_dispatches
+		WHERE actor_name = 'run_workflow_graph_run' AND aggregate_id = $1
+	`, run.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("dispatch count %d", n)
 	}
 }
 

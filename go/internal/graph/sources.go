@@ -2,14 +2,9 @@ package graph
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"gorm.io/gorm"
 )
 
@@ -64,18 +59,21 @@ func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID 
 		return productSourceSnapshot{}, nil
 	}
 
-	var product productSummary
-	var currentFactSetID *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, name, category, price::text, source_note, current_fact_set_version_id
-		FROM products WHERE id = $1
-	`, *sourceProductID).Scan(&product.ID, &product.Name, &product.Category, &product.Price, &product.SourceNote, &currentFactSetID)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return productSourceSnapshot{}, apperr.Validation("商品资料节点绑定的商品不存在")
-	}
+	guard, err := requireProductGuard(ctx)
 	if err != nil {
 		return productSourceSnapshot{}, err
 	}
+	src, err := guard.LoadSource(ctx, tx, *sourceProductID)
+	if err != nil {
+		return productSourceSnapshot{}, err
+	}
+	if src == nil {
+		return productSourceSnapshot{}, apperr.Validation("商品资料节点绑定的商品不存在")
+	}
+	product := productSummary{
+		ID: src.ID, Name: src.Name, Category: src.Category, Price: src.Price, SourceNote: src.SourceNote,
+	}
+	currentFactSetID := src.CurrentFactSetID
 
 	rawFactSetID := payload["fact_set_version_id"]
 	var factSetID *string
@@ -99,34 +97,20 @@ func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID 
 	if factSetID == nil {
 		return out, nil
 	}
-	var set factSetSnapshot
-	var payloadJSON []byte
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT id, product_id, version, payload_json
-		FROM product_fact_set_versions
-		WHERE id = $1 AND product_id = $2
-	`, *factSetID, *sourceProductID).Scan(&set.ID, &set.ProductID, &set.Version, &payloadJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	set, err := guard.LoadFactSet(ctx, tx, *factSetID, *sourceProductID)
+	if err != nil {
+		return productSourceSnapshot{}, err
+	}
+	if set == nil {
 		if rawFactSetID != nil {
 			return productSourceSnapshot{}, apperr.Validation("fact_set_version_id 不属于绑定商品")
 		}
 		return out, nil
 	}
-	if err != nil {
-		return productSourceSnapshot{}, err
+	out.FactSetVersion = &factSetSnapshot{
+		ID: set.ID, ProductID: set.ProductID, Version: set.Version, Facts: set.Facts,
 	}
-	var parsed struct {
-		Facts []map[string]any `json:"facts"`
-	}
-	if len(payloadJSON) > 0 {
-		_ = json.Unmarshal(payloadJSON, &parsed)
-	}
-	if parsed.Facts == nil {
-		parsed.Facts = []map[string]any{}
-	}
-	set.Facts = parsed.Facts
-	out.FactSetVersion = &set
-	out.Facts = parsed.Facts
+	out.Facts = set.Facts
 	return out, nil
 }
 

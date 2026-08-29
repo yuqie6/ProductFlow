@@ -3,12 +3,71 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
+	sqldb "database/sql"
+
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
+	"gorm.io/gorm"
 )
+
+type cmdTestProducts struct{}
+
+func (cmdTestProducts) Lock(ctx context.Context, tx *gorm.DB, productID string) error {
+	var id string
+	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return apperr.NotFound("商品不存在")
+	}
+	return err
+}
+
+func (cmdTestProducts) HasAssets(context.Context, *gorm.DB, string, []string) error {
+	return nil
+}
+
+func (cmdTestProducts) LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*SourceProduct, error) {
+	var out SourceProduct
+	err := pfdb.QueryRow(ctx, tx, `
+		SELECT id, name, category, price::text, source_note, current_fact_set_version_id
+		FROM products WHERE id = $1
+	`, productID).Scan(&out.ID, &out.Name, &out.Category, &out.Price, &out.SourceNote, &out.CurrentFactSetID)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (cmdTestProducts) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, productID string) (*FactSet, error) {
+	q := `SELECT id, product_id, version, payload_json FROM product_fact_set_versions WHERE id = $1`
+	args := []any{factSetID}
+	if productID != "" {
+		q += ` AND product_id = $2`
+		args = append(args, productID)
+	}
+	var out FactSet
+	var payloadJSON []byte
+	err := pfdb.QueryRow(ctx, tx, q, args...).Scan(&out.ID, &out.ProductID, &out.Version, &payloadJSON)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out.Facts = []map[string]any{}
+	return &out, nil
+}
+
+func (cmdTestProducts) BoundAssetMeta(context.Context, *gorm.DB, string, string) (string, string, error) {
+	return "", "", nil
+}
 
 func TestStageNewRequiresZeroBaseRevision(t *testing.T) {
 	_, err := StageNew(context.Background(), nil, "prod", "标题", ChangeSet{
@@ -23,7 +82,7 @@ func TestStageNewRequiresZeroBaseRevision(t *testing.T) {
 
 func TestStageNewProductSourceTemplate(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	ctx := context.Background()
+	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
 	tx := gdb.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)

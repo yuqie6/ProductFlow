@@ -6,11 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"sort"
 	"time"
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"gorm.io/gorm"
@@ -34,15 +34,7 @@ func isProviderUnknown(err error) bool {
 }
 
 func providerEffectHash(payload map[string]any) (string, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return "", err
-	}
-	compact, err := marshalCompactSorted(decoded)
+	compact, err := canonjson.Compact(payload)
 	if err != nil {
 		return "", err
 	}
@@ -54,49 +46,7 @@ func providerEffectHash(payload map[string]any) (string, error) {
 }
 
 func marshalCompactSorted(v any) ([]byte, error) {
-	switch typed := v.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		buf := []byte{'{'}
-		for i, key := range keys {
-			if i > 0 {
-				buf = append(buf, ',')
-			}
-			keyJSON, err := json.Marshal(key)
-			if err != nil {
-				return nil, err
-			}
-			valJSON, err := marshalCompactSorted(typed[key])
-			if err != nil {
-				return nil, err
-			}
-			buf = append(buf, keyJSON...)
-			buf = append(buf, ':')
-			buf = append(buf, valJSON...)
-		}
-		buf = append(buf, '}')
-		return buf, nil
-	case []any:
-		buf := []byte{'['}
-		for i, item := range typed {
-			if i > 0 {
-				buf = append(buf, ',')
-			}
-			itemJSON, err := marshalCompactSorted(item)
-			if err != nil {
-				return nil, err
-			}
-			buf = append(buf, itemJSON...)
-		}
-		buf = append(buf, ']')
-		return buf, nil
-	default:
-		return json.Marshal(typed)
-	}
+	return canonjson.Compact(v)
 }
 
 func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, attemptID *string, detail string) error {
@@ -142,6 +92,55 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 		UPDATE workflow_graph_node_runs SET
 			status = 'unknown', failure_reason = $2, finished_at = $3,
 			progress_phase = 'unknown_provider_effect', progress_updated_at = $3,
+			active_attempt_id = NULL
+		WHERE id = $1
+	`, nodeRunID, detail, now)
+	return err
+}
+
+func markNodeFailed(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, attemptID *string, detail string) error {
+	if len(detail) > 1000 {
+		detail = detail[:1000]
+	}
+	now := time.Now().UTC()
+	var runStatus string
+	if err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+		return err
+	}
+	if runStatus == RunStatusSucceeded || runStatus == RunStatusCancelled {
+		return nil
+	}
+	var status string
+	var activeAttempt *string
+	err := pfdb.QueryRow(ctx, tx, `
+		SELECT status, active_attempt_id FROM workflow_graph_node_runs
+		WHERE id = $1 AND graph_run_id = $2 FOR UPDATE
+	`, nodeRunID, runID).Scan(&status, &activeAttempt)
+	if err != nil {
+		return err
+	}
+	if status == NodeRunFailed || status == NodeRunUnknown || status == NodeRunSucceeded {
+		return nil
+	}
+	if attemptID != nil && activeAttempt != nil && *activeAttempt != "" && *activeAttempt != *attemptID {
+		return nil
+	}
+	resolved := attemptID
+	if resolved == nil {
+		resolved = activeAttempt
+	}
+	if resolved != nil && *resolved != "" {
+		_, _ = pfdb.Exec(ctx, tx, `
+			UPDATE workflow_graph_provider_effects SET
+				effect_result = 'failed', reconciliation_state = 'failed', detail = $2, updated_at = $3
+			WHERE node_run_id = $1 AND attempt_id = $4
+			  AND effect_result NOT IN ('applied', 'unknown')
+		`, nodeRunID, detail, now, *resolved)
+	}
+	_, err = pfdb.Exec(ctx, tx, `
+		UPDATE workflow_graph_node_runs SET
+			status = 'failed', failure_reason = $2, finished_at = $3,
+			progress_phase = 'provider_result_received', progress_updated_at = $3,
 			active_attempt_id = NULL
 		WHERE id = $1
 	`, nodeRunID, detail, now)
