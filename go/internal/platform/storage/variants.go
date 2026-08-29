@@ -5,8 +5,8 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	_ "image/jpeg"
 	"image/jpeg"
+	_ "image/jpeg"
 	_ "image/png"
 	"os"
 	"path/filepath"
@@ -19,9 +19,9 @@ import (
 type Variant string
 
 const (
-	VariantOriginal   Variant = "original"
-	VariantPreview    Variant = "preview"
-	VariantThumbnail  Variant = "thumbnail"
+	VariantOriginal  Variant = "original"
+	VariantPreview   Variant = "preview"
+	VariantThumbnail Variant = "thumbnail"
 )
 
 var variantMaxEdge = map[Variant]int{

@@ -2,12 +2,16 @@ package media
 
 import (
 	"context"
+	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
+	"gorm.io/gorm"
 )
 
 const StatusVerified = "verified"
@@ -30,7 +34,7 @@ type Store struct {
 	Files storage.Local
 }
 
-func (s Store) Stage(ctx context.Context, tx pgx.Tx, content []byte, expectedMIME string, compensation *storage.Compensation) (Object, error) {
+func (s Store) Stage(ctx context.Context, tx *gorm.DB, content []byte, expectedMIME string, compensation *storage.Compensation) (Object, error) {
 	verified, err := Inspect(content, expectedMIME)
 	if err != nil {
 		return Object{}, err
@@ -41,7 +45,7 @@ func (s Store) Stage(ctx context.Context, tx pgx.Tx, content []byte, expectedMIM
 		return Object{}, apperr.Internal("写入媒体文件失败")
 	}
 	var createdAt, verifiedAt time.Time
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		INSERT INTO media_objects (
 			id, storage_path, mime_type, byte_size, width, height, sha256,
 			verification_status, created_at, verified_at
@@ -65,14 +69,10 @@ func (s Store) Stage(ctx context.Context, tx pgx.Tx, content []byte, expectedMIM
 	}, nil
 }
 
-type rowQuery interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
-func (s Store) Get(ctx context.Context, q rowQuery, id string) (Object, error) {
+func (s Store) Get(ctx context.Context, q *gorm.DB, id string) (Object, error) {
 	var obj Object
 	var verifiedAt *time.Time
-	err := q.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, q, `
 		SELECT id, storage_path, mime_type, byte_size, width, height, sha256,
 		       verification_status, created_at, verified_at
 		FROM media_objects WHERE id = $1
@@ -80,7 +80,7 @@ func (s Store) Get(ctx context.Context, q rowQuery, id string) (Object, error) {
 		&obj.ID, &obj.StoragePath, &obj.MIMEType, &obj.ByteSize, &obj.Width, &obj.Height, &obj.SHA256,
 		&obj.VerificationStatus, &obj.CreatedAt, &verifiedAt,
 	)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Object{}, apperr.NotFound("媒体对象不存在")
 	}
 	if err != nil {

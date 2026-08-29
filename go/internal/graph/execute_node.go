@@ -8,10 +8,13 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID string) error {
@@ -24,7 +27,7 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID strin
 	if errors.As(err, &app) {
 		reason = app.Detail
 	}
-	_ = failClaimedNode(ctx, e.Pool, runID, nodeRunID, reason)
+	_ = failClaimedNode(ctx, e.DB, runID, nodeRunID, reason)
 	return nil
 }
 
@@ -51,7 +54,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		return err
 	}
 	sources := sourcesFromSnapshot(run.Snapshot)
-	sources = hydrateSourcesFromNodeRuns(ctx, e.Pool, run.NodeRuns, sources)
+	sources = hydrateSourcesFromNodeRuns(ctx, e.DB, run.NodeRuns, sources)
 	node, err := applied.Node(*nodeRun.NodeID)
 	if err != nil {
 		return err
@@ -147,8 +150,8 @@ func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun gr
 	}
 	now := time.Now().UTC()
 	output, _ := json.Marshal(map[string]any{"artifact_id": *record.CurrentArtifactID, "skipped": true})
-	return true, tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	return true, tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE workflow_graph_node_runs SET
 				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
 			WHERE id = $1
@@ -230,7 +233,7 @@ func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID,
 		return err
 	}
 	raw, _ := json.Marshal(request)
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		ok, err := advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "prepared")
 		if err != nil || !ok {
 			return err
@@ -249,7 +252,7 @@ func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID,
 
 func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
 	var promote bool
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		ok, err := recordProviderEffectResult(ctx, pgxTx, nodeRunID, attemptID, resultJSON)
 		if err != nil || !ok {
 			return err
@@ -260,10 +263,10 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 		}
 		var runStatus, nodeStatus string
 		var active *string
-		if err := pgxTx.QueryRow(ctx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `SELECT status, active_attempt_id FROM workflow_graph_node_runs WHERE id = $1 FOR UPDATE`, nodeRunID).Scan(&nodeStatus, &active); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status, active_attempt_id FROM workflow_graph_node_runs WHERE id = $1 FOR UPDATE`, nodeRunID).Scan(&nodeStatus, &active); err != nil {
 			return err
 		}
 		promote = runStatus == RunStatusRunning && nodeStatus == NodeRunRunning && active != nil && *active == attemptID
@@ -273,7 +276,7 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 }
 
 func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string) error {
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, ProviderUnknownDetail); err != nil {
 			return err
 		}
@@ -298,23 +301,23 @@ func (e Executor) persistContentArtifact(
 	}
 	hash := sha256Hex(payload)
 	now := time.Now().UTC()
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, artifactType, payload, hash, digest, result.Model, nil)
 		if err != nil {
 			return err
 		}
 		if promote && nodeRun.NodeID != nil {
 			var liveRevision int
-			if err := pgxTx.QueryRow(ctx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
+			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
 				return err
 			}
 			if liveRevision == run.GraphRevision {
-				if _, err := pgxTx.Exec(ctx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
+				if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
 					return err
 				}
 				if writeback != nil {
 					var configJSON []byte
-					if err := pgxTx.QueryRow(ctx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, *nodeRun.NodeID).Scan(&configJSON); err != nil {
+					if err := pfdb.QueryRow(ctx, pgxTx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, *nodeRun.NodeID).Scan(&configJSON); err != nil {
 						return err
 					}
 					config := map[string]any{}
@@ -323,14 +326,14 @@ func (e Executor) persistContentArtifact(
 					if err != nil {
 						return err
 					}
-					if _, err := pgxTx.Exec(ctx, `UPDATE workflow_graph_nodes SET config_json = $2 WHERE id = $1`, *nodeRun.NodeID, updated); err != nil {
+					if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET config_json = $2 WHERE id = $1`, *nodeRun.NodeID, updated); err != nil {
 						return err
 					}
 				}
 			}
 		}
 		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE workflow_graph_node_runs SET
 				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
 			WHERE id = $1
@@ -356,7 +359,7 @@ func (e Executor) persistImageArtifact(
 		return apperr.Validation("节点运行失败")
 	}
 	var productID string
-	if err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	if err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		id, err := loadProductIDForGraph(ctx, pgxTx, run.GraphID)
 		productID = id
 		return err
@@ -368,7 +371,7 @@ func (e Executor) persistImageArtifact(
 		imageTypeKey = &key
 	}
 	now := time.Now().UTC()
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		assetID, err := e.Deps.Assets.Write(ctx, pgxTx, GeneratedImageInput{
 			ProductID:    productID,
 			Title:        node.Title,
@@ -400,11 +403,11 @@ func (e Executor) persistImageArtifact(
 		}
 		if promote && nodeRun.NodeID != nil {
 			var liveRevision int
-			if err := pgxTx.QueryRow(ctx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
+			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
 				return err
 			}
 			if liveRevision == run.GraphRevision {
-				if _, err := pgxTx.Exec(ctx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
+				if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
 					return err
 				}
 			}
@@ -413,7 +416,7 @@ func (e Executor) persistImageArtifact(
 			}
 		}
 		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE workflow_graph_node_runs SET
 				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
 			WHERE id = $1
@@ -427,7 +430,7 @@ func (e Executor) persistImageArtifact(
 
 func upsertArtifact(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *gorm.DB,
 	run graphRunRow,
 	nodeRun graphNodeRunRow,
 	artifactType string,
@@ -436,9 +439,9 @@ func upsertArtifact(
 	assetID *string,
 ) (string, error) {
 	var existing string
-	err := tx.QueryRow(ctx, `SELECT id FROM workflow_graph_artifacts WHERE node_run_id = $1`, nodeRun.ID).Scan(&existing)
+	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM workflow_graph_artifacts WHERE node_run_id = $1`, nodeRun.ID).Scan(&existing)
 	if err == nil {
-		_, err = tx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, tx, `
 			UPDATE workflow_graph_artifacts SET
 				artifact_type = $2, schema_version = 3, graph_revision = $3,
 				payload_json = $4, payload_hash = $5, input_digest = $6,
@@ -447,11 +450,11 @@ func upsertArtifact(
 		`, existing, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, model)
 		return existing, err
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sqldb.ErrNoRows) {
 		return "", err
 	}
 	id := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_graph_artifacts (
 			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
 			payload_json, payload_hash, input_digest, product_image_asset_id, provider_name, provider_model, created_at
@@ -475,9 +478,7 @@ func hashBytes(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func hydrateSourcesFromNodeRuns(ctx context.Context, pool interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}, nodeRuns []graphNodeRunRow, sources map[string]SourceRecord) map[string]SourceRecord {
+func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []graphNodeRunRow, sources map[string]SourceRecord) map[string]SourceRecord {
 	var ids []string
 	for _, item := range nodeRuns {
 		if item.Status == NodeRunSucceeded {
@@ -487,7 +488,7 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool interface {
 	if len(ids) == 0 {
 		return sources
 	}
-	rows, err := pool.Query(ctx, `
+	rows, err := pfdb.Query(ctx, pool, `
 		SELECT node_run_id, id, artifact_type, payload_json, input_digest, product_image_asset_id
 		FROM workflow_graph_artifacts
 		WHERE node_run_id = ANY($1)

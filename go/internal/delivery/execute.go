@@ -8,18 +8,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 type Executor struct {
-	Pool  *pgxpool.Pool
+	DB    *gorm.DB
 	Media media.Store
 }
 
@@ -82,8 +82,8 @@ type claim struct {
 
 func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, error) {
 	var out claim
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		tag, err := pgxTx.Exec(ctx, `
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE delivery_rendition_jobs SET
 				status = 'running', attempts = attempts + 1, active_attempt_id = $2,
 				failure_reason = NULL, started_at = NOW(), finished_at = NULL, updated_at = NOW()
@@ -92,7 +92,7 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if n != 1 {
 			return nil
 		}
 		row, err := loadJob(ctx, pgxTx, jobID)
@@ -119,7 +119,7 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 			out.sourceBytes = *source.ByteSize
 		}
 		var sha string
-		_ = pgxTx.QueryRow(ctx, `SELECT sha256 FROM media_objects WHERE id = $1`, source.MediaObjectID).Scan(&sha)
+		_ = pfdb.QueryRow(ctx, pgxTx, `SELECT sha256 FROM media_objects WHERE id = $1`, source.MediaObjectID).Scan(&sha)
 		out.sourceSHA = sha
 		if source.ByteSize == nil || sha == "" {
 			return apperr.Validation("交付派生原图缺少核验元数据")
@@ -131,7 +131,7 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 
 func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered) error {
 	var compensation storage.Compensation
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadJobForUpdate(ctx, pgxTx, claimed.jobID)
 		if err != nil {
 			return err
@@ -163,7 +163,7 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 		if err != nil {
 			return err
 		}
-		tag, err := pgxTx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE delivery_rendition_jobs SET
 				result_asset_id = $2, status = 'succeeded', active_attempt_id = NULL,
 				failure_reason = NULL, finished_at = NOW(), is_retryable = FALSE, updated_at = NOW()
@@ -172,10 +172,10 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if n != 1 {
 			return nil
 		}
-		_, _ = pgxTx.Exec(ctx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, claimed.productID)
+		_, _ = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, claimed.productID)
 		return nil
 	})
 	if err != nil {
@@ -194,8 +194,8 @@ func (e Executor) fail(ctx context.Context, jobID, attemptID string, reason erro
 			detail = detail[:1000]
 		}
 	}
-	_ = tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE delivery_rendition_jobs SET
 				status = 'failed', active_attempt_id = NULL, is_retryable = $3,
 				failure_reason = $4, finished_at = NOW(), updated_at = NOW()

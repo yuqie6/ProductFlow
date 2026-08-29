@@ -8,6 +8,7 @@ import (
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
@@ -292,7 +293,7 @@ func (s Service) PrepareFolderCreate(ctx context.Context, conversationID, name s
 		return nil, err
 	}
 	var folderID, existingName string
-	err = s.Pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.DB, `
 		SELECT id, name FROM product_asset_folders WHERE product_id = $1 AND name = $2 LIMIT 1
 	`, *conv.ProductID, name).Scan(&folderID, &existingName)
 	if err == nil {
@@ -338,7 +339,7 @@ func (s Service) PrepareFolderRename(ctx context.Context, conversationID, folder
 		return nil, err
 	}
 	var expected string
-	err = s.Pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.DB, `
 		SELECT name FROM product_asset_folders WHERE product_id = $1 AND id = $2
 	`, *conv.ProductID, folderID).Scan(&expected)
 	if err != nil {

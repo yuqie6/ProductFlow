@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
-func (s Service) serializeSummary(ctx context.Context, tx pgx.Tx, sess sessionRow) (SummaryResponse, error) {
+func (s Service) serializeSummary(ctx context.Context, tx *gorm.DB, sess sessionRow) (SummaryResponse, error) {
 	var rounds int
-	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM image_session_rounds WHERE session_id = $1`, sess.ID).Scan(&rounds)
+	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_rounds WHERE session_id = $1`, sess.ID).Scan(&rounds)
 	var latest *AssetResponse
 	var asset assetRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
 		FROM image_session_rounds r
 		JOIN image_session_assets a ON a.id = r.generated_asset_id
@@ -32,7 +33,7 @@ func (s Service) serializeSummary(ctx context.Context, tx pgx.Tx, sess sessionRo
 	}, nil
 }
 
-func (s Service) loadDetail(ctx context.Context, tx pgx.Tx, sessionID string) (DetailResponse, error) {
+func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) (DetailResponse, error) {
 	sess, err := loadSession(ctx, tx, sessionID)
 	if err != nil {
 		return DetailResponse{}, err
@@ -47,7 +48,7 @@ func (s Service) loadDetail(ctx context.Context, tx pgx.Tx, sessionID string) (D
 		assetByID[a.ID] = a
 		assetResp = append(assetResp, serializeAsset(a))
 	}
-	roundRows, err := tx.Query(ctx, `
+	roundRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, prompt, assistant_message, size, model_name, provider_name, prompt_version,
 		       provider_response_id, previous_response_id, image_generation_call_id, generation_group_id,
 		       candidate_index, candidate_count, base_asset_id, selected_reference_asset_ids,
@@ -111,7 +112,7 @@ func (s Service) loadDetail(ctx context.Context, tx pgx.Tx, sessionID string) (D
 
 	overview := s.queueOverview(ctx, tx)
 	positions := queuedPositions(ctx, tx)
-	taskRows, err := tx.Query(ctx, `
+	taskRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, session_id, status, prompt, size, base_asset_id, selected_reference_asset_ids, tool_options,
 		       generation_count, completed_candidates, active_candidate_index, progress_phase, progress_updated_at,
 		       provider_response_id, provider_response_status, progress_metadata, failure_reason, result_generation_group_id,
@@ -167,8 +168,8 @@ func (s Service) loadDetail(ctx context.Context, tx pgx.Tx, sessionID string) (D
 	}, nil
 }
 
-func listEffects(ctx context.Context, tx pgx.Tx, taskID string) ([]EffectResponse, error) {
-	rows, err := tx.Query(ctx, `
+func listEffects(ctx context.Context, tx *gorm.DB, taskID string) ([]EffectResponse, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id, generation_task_id, candidate_start_index, candidate_count, operation_key, effect_kind,
 		       request_hash, provider_name, effect_result, reconciliation_state, provider_response_id, provider_status,
 		       detail, created_at, updated_at
@@ -202,16 +203,16 @@ type queueOverview struct {
 	Active, Running, Queued, Max int
 }
 
-func (s Service) queueOverview(ctx context.Context, tx pgx.Tx) queueOverview {
+func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
 	max := 3
 	if s.Settings != nil {
 		if runtime, err := s.Settings.Runtime(ctx); err == nil && runtime.ImageGenerationMaxDimension > 0 {
 			// 容量上限来自 app_settings generation_max_concurrent_tasks，这里读 graph 共用函数的默认。
 		}
 	}
-	_ = tx.QueryRow(ctx, `SELECT COALESCE((SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'), '3')`).Scan(new(string))
+	_ = pfdb.QueryRow(ctx, tx, `SELECT COALESCE((SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'), '3')`).Scan(new(string))
 	var raw *string
-	_ = tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&raw)
+	_ = pfdb.QueryRow(ctx, tx, `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&raw)
 	if raw != nil && *raw != "" {
 		n := 0
 		for _, ch := range *raw {
@@ -226,15 +227,15 @@ func (s Service) queueOverview(ctx context.Context, tx pgx.Tx) queueOverview {
 		}
 	}
 	var sessionRunning, sessionQueued int
-	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running'`).Scan(&sessionRunning)
-	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'queued'`).Scan(&sessionQueued)
+	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running'`).Scan(&sessionRunning)
+	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'queued'`).Scan(&sessionQueued)
 	var graphRunning, graphQueued int
-	_ = tx.QueryRow(ctx, `
+	_ = pfdb.QueryRow(ctx, tx, `
 		SELECT COUNT(*) FROM workflow_graph_runs r
 		WHERE r.status = 'running'
 		  AND EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = r.id AND n.status = 'running')
 	`).Scan(&graphRunning)
-	_ = tx.QueryRow(ctx, `
+	_ = pfdb.QueryRow(ctx, tx, `
 		SELECT COUNT(*) FROM workflow_graph_runs r
 		WHERE r.status = 'running'
 		  AND NOT EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = r.id AND n.status = 'running')
@@ -245,8 +246,8 @@ func (s Service) queueOverview(ctx context.Context, tx pgx.Tx) queueOverview {
 	return queueOverview{Active: running + queued, Running: running, Queued: queued, Max: max}
 }
 
-func queuedPositions(ctx context.Context, tx pgx.Tx) map[string]int {
-	rows, err := tx.Query(ctx, `
+func queuedPositions(ctx context.Context, tx *gorm.DB) map[string]int {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id FROM image_session_generation_tasks WHERE status = 'queued' ORDER BY created_at ASC, id ASC
 	`)
 	if err != nil {

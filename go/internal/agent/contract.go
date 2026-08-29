@@ -5,10 +5,11 @@ import (
 	_ "embed"
 	"encoding/json"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 //go:embed global_draft_schema.json
@@ -44,7 +45,7 @@ const (
 
 func (s Service) ConversationContract(ctx context.Context, conversationID string) (ContractResponse, error) {
 	var out ContractResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := contractForConversation(ctx, pgxTx, conversationID, nil)
 		if err != nil {
 			return err
@@ -57,7 +58,7 @@ func (s Service) ConversationContract(ctx context.Context, conversationID string
 
 func (s Service) TaskContract(ctx context.Context, taskID string) (ContractResponse, error) {
 	var out ContractResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTask(ctx, pgxTx, taskID)
 		if err != nil {
 			return err
@@ -80,7 +81,7 @@ func (s Service) TaskContract(ctx context.Context, taskID string) (ContractRespo
 
 func (s Service) RuntimeContext(ctx context.Context, conversationID string, taskID *string) (RuntimeContextResponse, error) {
 	var out RuntimeContextResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		conv, err := loadConversationByID(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err
@@ -112,7 +113,7 @@ func (s Service) RuntimeContext(ctx context.Context, conversationID string, task
 	return out, err
 }
 
-func contractForConversation(ctx context.Context, pgxTx pgx.Tx, conversationID string, task *TaskResponse) (ContractResponse, error) {
+func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID string, task *TaskResponse) (ContractResponse, error) {
 	conv, err := loadConversationByID(ctx, pgxTx, conversationID)
 	if err != nil {
 		return ContractResponse{}, err
@@ -124,7 +125,7 @@ func contractForConversation(ctx context.Context, pgxTx pgx.Tx, conversationID s
 	}
 	if conv.ScopeType == "global" {
 		var version int
-		_ = pgxTx.QueryRow(ctx, `
+		_ = pfdb.QueryRow(ctx, pgxTx, `
 			SELECT COALESCE(r.version, 0)
 			FROM library_organization_drafts d
 			LEFT JOIN library_organization_draft_revisions r ON r.id = d.current_revision_id
@@ -142,7 +143,7 @@ func contractForConversation(ctx context.Context, pgxTx pgx.Tx, conversationID s
 			return ContractResponse{}, apperr.Conflict("商品工作流 Agent conversation 缺少商品")
 		}
 		var exists int
-		err := pgxTx.QueryRow(ctx, `SELECT 1 FROM workflow_graphs WHERE product_id = $1 AND active = TRUE LIMIT 1`, *conv.ProductID).Scan(&exists)
+		err := pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM workflow_graphs WHERE product_id = $1 AND active = TRUE LIMIT 1`, *conv.ProductID).Scan(&exists)
 		out.SystemPrompt = workflowAgentLiveGraphPrompt
 		out.DraftKind = ptr("workflow")
 		out.HasLiveGraph = err == nil
@@ -160,7 +161,7 @@ func contractForConversation(ctx context.Context, pgxTx pgx.Tx, conversationID s
 
 func (s Service) ProductContext(ctx context.Context, conversationID string) (map[string]any, error) {
 	var conv conversationRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadConversationByID(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err

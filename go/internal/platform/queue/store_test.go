@@ -7,10 +7,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func uniqueID(t *testing.T) string {
@@ -23,12 +23,12 @@ func uniqueID(t *testing.T) string {
 }
 
 func TestStageAsyncDispatchIsIdempotentByDeliveryKey(t *testing.T) {
-	pool := testdb.Pool(t)
+	_, gdb := testdb.Open(t)
 	ctx := context.Background()
 	key := "workflow_run:" + uniqueID(t)
 	agg := uniqueID(t)
 	var first, second queue.Dispatch
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
 		first, err = queue.Stage(ctx, pgxTx, key, queue.ActorGraphRun, agg, map[string]any{"scope": "workflow"}, nil)
 		if err != nil {
@@ -49,11 +49,11 @@ func TestStageAsyncDispatchIsIdempotentByDeliveryKey(t *testing.T) {
 }
 
 func TestDispatcherMarksSentBeforeEnqueue(t *testing.T) {
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	ctx := context.Background()
 	agg := uniqueID(t)
 	var dispatchID string
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		row, err := queue.Stage(ctx, pgxTx, "delivery:"+agg, queue.ActorDelivery, agg, nil, nil)
 		dispatchID = row.ID
 		return err
@@ -80,11 +80,11 @@ func TestDispatcherMarksSentBeforeEnqueue(t *testing.T) {
 }
 
 func TestEnqueueFailureKeepsSent(t *testing.T) {
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	ctx := context.Background()
 	agg := uniqueID(t)
 	var dispatchID string
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		row, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
 		dispatchID = row.ID
 		return err
@@ -115,11 +115,11 @@ func TestEnqueueFailureKeepsSent(t *testing.T) {
 }
 
 func TestConsumeClaimsSentAndMarksConsumed(t *testing.T) {
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	ctx := context.Background()
 	agg := uniqueID(t)
 	var dispatch queue.Dispatch
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
 		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
 		return err

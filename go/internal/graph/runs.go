@@ -6,11 +6,14 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
+	"gorm.io/gorm"
 )
 
 type graphRunSubmission struct {
@@ -18,7 +21,7 @@ type graphRunSubmission struct {
 	Created bool
 }
 
-func submitGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, scope string, targetNodeID *string) (graphRunSubmission, error) {
+func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, scope string, targetNodeID *string) (graphRunSubmission, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
 		return graphRunSubmission{}, err
@@ -67,7 +70,7 @@ func submitGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, scope st
 	meta, _ := json.Marshal(map[string]any{"run_scope": scope, "requested_node_id": targetNodeID})
 	runID := clockid.New()
 	now := time.Now().UTC()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_graph_runs (
 			id, graph_id, status, run_scope, requested_node_id, graph_revision,
 			snapshot_json, is_retryable, progress_metadata, started_at
@@ -87,7 +90,7 @@ func submitGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, scope st
 			return graphRunSubmission{}, err
 		}
 		nodeRunID := clockid.New()
-		if _, err := tx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_node_runs (
 				id, graph_run_id, node_id, status, sort_order, compiled_context_json, started_at
 			) VALUES ($1, $2, $3, 'queued', $4, $5, $6)
@@ -105,7 +108,7 @@ func submitGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, scope st
 	return graphRunSubmission{Run: full, Created: true}, nil
 }
 
-func listGraphRuns(ctx context.Context, tx pgx.Tx, productID, graphID string, limit int) ([]graphRunRow, error) {
+func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, limit int) ([]graphRunRow, error) {
 	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
 		return nil, err
 	}
@@ -115,7 +118,7 @@ func listGraphRuns(ctx context.Context, tx pgx.Tx, productID, graphID string, li
 	if limit > 50 {
 		limit = 50
 	}
-	rows, err := tx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id FROM workflow_graph_runs
 		WHERE graph_id = $1
 		ORDER BY started_at DESC, id DESC
@@ -147,7 +150,7 @@ func listGraphRuns(ctx context.Context, tx pgx.Tx, productID, graphID string, li
 	return out, nil
 }
 
-func loadGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID string) (graphRunRow, error) {
+func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
 	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
 		return graphRunRow{}, err
 	}
@@ -157,7 +160,7 @@ func loadGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID stri
 		FROM workflow_graph_runs
 		WHERE id = $1 AND graph_id = $2
 	`, runID, graphID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return graphRunRow{}, apperr.NotFound("工作流运行不存在")
 	}
 	if err != nil {
@@ -171,14 +174,14 @@ func loadGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID stri
 	return run, nil
 }
 
-func loadGraphRunByID(ctx context.Context, tx pgx.Tx, runID string) (graphRunRow, error) {
+func loadGraphRunByID(ctx context.Context, tx *gorm.DB, runID string) (graphRunRow, error) {
 	run, err := scanGraphRun(ctx, tx, `
 		SELECT id, graph_id, status, run_scope, requested_node_id, graph_revision,
 		       snapshot_json, failure_reason, is_retryable, started_at, finished_at
 		FROM workflow_graph_runs
 		WHERE id = $1
 	`, runID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return graphRunRow{}, apperr.NotFound("工作流运行不存在")
 	}
 	if err != nil {
@@ -192,12 +195,10 @@ func loadGraphRunByID(ctx context.Context, tx pgx.Tx, runID string) (graphRunRow
 	return run, nil
 }
 
-func scanGraphRun(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sql string, args ...any) (graphRunRow, error) {
+func scanGraphRun(ctx context.Context, q *gorm.DB, sql string, args ...any) (graphRunRow, error) {
 	var run graphRunRow
 	var snapshot []byte
-	err := q.QueryRow(ctx, sql, args...).Scan(
+	err := pfdb.QueryRow(ctx, q, sql, args...).Scan(
 		&run.ID, &run.GraphID, &run.Status, &run.RunScope, &run.RequestedNodeID, &run.GraphRevision,
 		&snapshot, &run.FailureReason, &run.IsRetryable, &run.StartedAt, &run.FinishedAt,
 	)
@@ -213,8 +214,8 @@ func scanGraphRun(ctx context.Context, q interface {
 	return run, nil
 }
 
-func loadNodeRuns(ctx context.Context, tx pgx.Tx, runID string) ([]graphNodeRunRow, error) {
-	rows, err := tx.Query(ctx, `
+func loadNodeRuns(ctx context.Context, tx *gorm.DB, runID string) ([]graphNodeRunRow, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id, graph_run_id, node_id, status, sort_order, compiled_context_json, output_json,
 		       failure_reason, active_attempt_id, progress_phase, progress_updated_at, started_at, finished_at
 		FROM workflow_graph_node_runs
@@ -240,14 +241,14 @@ func loadNodeRuns(ctx context.Context, tx pgx.Tx, runID string) ([]graphNodeRunR
 	return out, rows.Err()
 }
 
-func loadActiveRun(ctx context.Context, tx pgx.Tx, graphID string) (*graphRunRow, error) {
+func loadActiveRun(ctx context.Context, tx *gorm.DB, graphID string) (*graphRunRow, error) {
 	run, err := scanGraphRun(ctx, tx, `
 		SELECT id, graph_id, status, run_scope, requested_node_id, graph_revision,
 		       snapshot_json, failure_reason, is_retryable, started_at, finished_at
 		FROM workflow_graph_runs
 		WHERE graph_id = $1 AND status = 'running'
 	`, graphID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -256,7 +257,7 @@ func loadActiveRun(ctx context.Context, tx pgx.Tx, graphID string) (*graphRunRow
 	return &run, nil
 }
 
-func cancelGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID string) (graphRunRow, error) {
+func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
 	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
 		return graphRunRow{}, err
 	}
@@ -267,7 +268,7 @@ func cancelGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID st
 		WHERE id = $1 AND graph_id = $2
 		FOR UPDATE
 	`, runID, graphID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return graphRunRow{}, apperr.NotFound("工作流运行不存在")
 	}
 	if err != nil {
@@ -286,14 +287,14 @@ func cancelGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID st
 	}
 	now := time.Now().UTC()
 	reason := GraphCancelledReason
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graph_runs
 		SET status = 'cancelled', failure_reason = $2, finished_at = $3
 		WHERE id = $1
 	`, run.ID, reason, now); err != nil {
 		return graphRunRow{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graph_node_runs
 		SET status = 'failed', failure_reason = $2, finished_at = $3,
 		    active_attempt_id = NULL, progress_updated_at = $3
@@ -304,7 +305,7 @@ func cancelGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID st
 	return loadGraphRun(ctx, tx, productID, graphID, runID)
 }
 
-func retryGraphRun(ctx context.Context, tx pgx.Tx, productID, graphID, runID string) (graphRunSubmission, error) {
+func retryGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunSubmission, error) {
 	source, err := loadGraphRun(ctx, tx, productID, graphID, runID)
 	if err != nil {
 		return graphRunSubmission{}, err

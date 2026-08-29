@@ -3,7 +3,7 @@ package graph
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 // PromptProvider 是内容节点（brief / visual / prompt）的供应商缝。
@@ -60,12 +60,12 @@ type GeneratedImageInput struct {
 
 // GeneratedImageWriter 把生成图写成商品图片身份。实现放在 product，避免 graph import product。
 type GeneratedImageWriter interface {
-	Write(ctx context.Context, tx pgx.Tx, in GeneratedImageInput) (assetID string, err error)
+	Write(ctx context.Context, tx *gorm.DB, in GeneratedImageInput) (assetID string, err error)
 }
 
 // DeliveryQueuer 在图片节点成功后排队确定性交付派生。实现放在 delivery，避免 graph import delivery。
 type DeliveryQueuer interface {
-	QueueAfterImageSuccess(ctx context.Context, tx pgx.Tx, nodeID, sourceAssetID string) error
+	QueueAfterImageSuccess(ctx context.Context, tx *gorm.DB, nodeID, sourceAssetID string) error
 }
 
 type Dependencies struct {

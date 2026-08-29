@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/config"
+	"github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 func Pool(t *testing.T) *pgxpool.Pool {
@@ -28,4 +30,21 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// Open returns the live test pool and a GORM handle on the same connections.
+func Open(t *testing.T) (*pgxpool.Pool, *gorm.DB) {
+	t.Helper()
+	pool := Pool(t)
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatalf("gorm: %v", err)
+	}
+	return pool, gdb
+}
+
+func Gorm(t *testing.T) *gorm.DB {
+	t.Helper()
+	_, gdb := Open(t)
+	return gdb
 }

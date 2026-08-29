@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 type GraphRow struct {
@@ -26,55 +29,55 @@ type operationGroupRow struct {
 	ResultRevision        int
 }
 
-func loadGraph(ctx context.Context, tx pgx.Tx, productID, graphID string) (GraphRow, error) {
+func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (GraphRow, error) {
 	var row GraphRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE id = $1 AND product_id = $2
 	`, graphID, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return GraphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadGraphForUpdate(ctx context.Context, tx pgx.Tx, productID, graphID string) (GraphRow, error) {
+func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (GraphRow, error) {
 	var row GraphRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE id = $1 AND product_id = $2
 		FOR UPDATE
 	`, graphID, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return GraphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadActiveGraph(ctx context.Context, tx pgx.Tx, productID string) (GraphRow, error) {
+func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (GraphRow, error) {
 	var row GraphRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE product_id = $1 AND active = TRUE
 	`, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return GraphRow{}, apperr.NotFound("商品工作流不存在")
 	}
 	return row, err
 }
 
-func loadActiveGraphForUpdate(ctx context.Context, tx pgx.Tx, productID string) (*GraphRow, error) {
+func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*GraphRow, error) {
 	var row GraphRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, title, active, schema_version, revision
 		FROM workflow_graphs
 		WHERE product_id = $1 AND active = TRUE
 		FOR UPDATE
 	`, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -83,8 +86,8 @@ func loadActiveGraphForUpdate(ctx context.Context, tx pgx.Tx, productID string) 
 	return &row, nil
 }
 
-func loadAppliedGraph(ctx context.Context, tx pgx.Tx, row GraphRow) (AppliedGraph, error) {
-	groupRows, err := tx.Query(ctx, `
+func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row GraphRow) (AppliedGraph, error) {
+	groupRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, title FROM workflow_graph_groups
 		WHERE graph_id = $1
 		ORDER BY sort_order, id
@@ -105,7 +108,7 @@ func loadAppliedGraph(ctx context.Context, tx pgx.Tx, row GraphRow) (AppliedGrap
 		return AppliedGraph{}, err
 	}
 
-	nodeRows, err := tx.Query(ctx, `
+	nodeRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, node_type, title, position_x, position_y, config_json, bound_image_asset_id, group_id
 		FROM workflow_graph_nodes
 		WHERE graph_id = $1
@@ -138,7 +141,7 @@ func loadAppliedGraph(ctx context.Context, tx pgx.Tx, row GraphRow) (AppliedGrap
 		return AppliedGraph{}, err
 	}
 
-	edgeRows, err := tx.Query(ctx, `
+	edgeRows, err := pfdb.Query(ctx, tx, `
 		SELECT id, source_node_id, target_node_id, data_type, role, sort_order
 		FROM workflow_graph_edges
 		WHERE graph_id = $1
@@ -162,14 +165,14 @@ func loadAppliedGraph(ctx context.Context, tx pgx.Tx, row GraphRow) (AppliedGrap
 	return AppliedGraph{Revision: row.Revision, Nodes: nodes, Edges: edges, Groups: groups}, nil
 }
 
-func lastOperationGroup(ctx context.Context, tx pgx.Tx, graph GraphRow) (*operationGroupRow, error) {
+func lastOperationGroup(ctx context.Context, tx *gorm.DB, graph GraphRow) (*operationGroupRow, error) {
 	var row operationGroupRow
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, history_kind, summary, inverse_operations_json, result_revision
 		FROM workflow_operation_groups
 		WHERE graph_id = $1 AND result_revision = $2
 	`, graph.ID, graph.Revision).Scan(&row.ID, &row.HistoryKind, &row.Summary, &row.InverseOperationsJSON, &row.ResultRevision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -178,32 +181,32 @@ func lastOperationGroup(ctx context.Context, tx pgx.Tx, graph GraphRow) (*operat
 	return &row, nil
 }
 
-func replaceGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applied AppliedGraph) error {
+func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
 	// 先删不再存在的边，再清 current_artifact_id 后删节点，避免历史 artifact 外键卡住 live 图。
 	nextGroupIDs := idsOf(applied.Groups, func(g AppliedGroup) string { return g.ID })
 	nextNodeIDs := idsOf(applied.Nodes, func(n AppliedNode) string { return n.ID })
 	nextEdgeIDs := idsOf(applied.Edges, func(e AppliedEdge) string { return e.ID })
 
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		DELETE FROM workflow_graph_edges
 		WHERE graph_id = $1 AND NOT (id = ANY($2::text[]))
 	`, graphID, nextEdgeIDs); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graph_nodes
 		SET current_artifact_id = NULL, updated_at = NOW()
 		WHERE graph_id = $1 AND NOT (id = ANY($2::text[]))
 	`, graphID, nextNodeIDs); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		DELETE FROM workflow_graph_nodes
 		WHERE graph_id = $1 AND NOT (id = ANY($2::text[]))
 	`, graphID, nextNodeIDs); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, tx, `
 		DELETE FROM workflow_graph_groups
 		WHERE graph_id = $1 AND NOT (id = ANY($2::text[]))
 	`, graphID, nextGroupIDs); err != nil {
@@ -211,7 +214,7 @@ func replaceGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applie
 	}
 
 	for index, group := range applied.Groups {
-		if _, err := tx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_groups (id, graph_id, title, sort_order, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, NOW(), NOW())
 			ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, sort_order = EXCLUDED.sort_order, updated_at = NOW()
@@ -224,7 +227,7 @@ func replaceGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applie
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_nodes (
 				id, graph_id, node_type, title, position_x, position_y,
 				config_json, bound_image_asset_id, group_id, created_at, updated_at
@@ -243,7 +246,7 @@ func replaceGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applie
 		}
 	}
 	for _, edge := range applied.Edges {
-		if _, err := tx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_edges (
 				id, graph_id, source_node_id, target_node_id, data_type, role, sort_order, created_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())

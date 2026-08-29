@@ -10,10 +10,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 const (
@@ -41,7 +41,7 @@ func (s Service) BuildGalleryArchive(ctx context.Context, productID string, asse
 		return GalleryArchive{}, err
 	}
 	var archive GalleryArchive
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProduct(ctx, pgxTx, productID)
 		if err != nil {
 			return err

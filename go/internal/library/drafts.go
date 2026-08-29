@@ -7,11 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type OrganizationDraftRevision struct {
@@ -41,7 +44,7 @@ type OrganizationDraft struct {
 // GetOrganizationDraft 按全局 conversation 读取素材整理 Draft。
 func (s Service) GetOrganizationDraft(ctx context.Context, conversationID string) (OrganizationDraft, error) {
 	var out OrganizationDraft
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		draft, err := loadOrganizationDraft(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err
@@ -59,7 +62,7 @@ func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversati
 		return OrganizationDraft{}, apperr.Validation("素材整理 Draft payload 无效")
 	}
 	var out OrganizationDraft
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		draft, err := loadOrganizationDraft(ctx, pgxTx, conversationID)
 		if err != nil {
 			var e apperr.Error
@@ -67,7 +70,7 @@ func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversati
 				return err
 			}
 			draftID := clockid.New()
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
 				VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
 			`, draftID, conversationID); err != nil {
@@ -80,12 +83,12 @@ func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversati
 			return apperr.Conflict("素材整理 Draft 已确认，不能再追加 revision")
 		}
 		var version int
-		_ = pgxTx.QueryRow(ctx, `
+		_ = pfdb.QueryRow(ctx, pgxTx, `
 			SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1
 		`, draft.ID).Scan(&version)
 		revID := clockid.New()
 		now := s.now()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO library_organization_draft_revisions (
 				id, draft_id, version, schema_version, payload_json, payload_hash,
 				source_turn_id, source_artifact_step_id, created_at
@@ -93,7 +96,7 @@ func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversati
 		`, revID, draft.ID, version+1, payload, hash, nullable(sourceTurnID), nullable(sourceStepID), now); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE library_organization_drafts
 			SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = $3
 			WHERE id = $1
@@ -116,7 +119,7 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 		return OrganizationDraft{}, apperr.Validation("idempotency key 不能超过 200 bytes")
 	}
 	var out OrganizationDraft
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		draft, err := loadOrganizationDraftForUpdate(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err
@@ -136,7 +139,7 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 				return apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
 			}
 			var storedKey, storedHash *string
-			_ = pgxTx.QueryRow(ctx, `
+			_ = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT confirmation_idempotency_key, confirmation_request_hash
 				FROM library_organization_drafts WHERE id = $1
 			`, draft.ID).Scan(&storedKey, &storedHash)
@@ -157,12 +160,12 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 			return err
 		}
 		now := s.now()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE library_organization_draft_revisions SET confirmed_at = $2 WHERE id = $1
 		`, draft.CurrentRevision.ID, now); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE library_organization_drafts
 			SET status = 'confirmed', confirmed_revision_id = $2, confirmation_idempotency_key = $3,
 			    confirmation_request_hash = $4, confirmation_result_json = $5, confirmed_at = $6, updated_at = $6
@@ -170,7 +173,7 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 		`, draft.ID, draft.CurrentRevision.ID, key, requestHash, result, now); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_conversations SET status = 'completed', updated_at = $2 WHERE id = $1
 		`, conversationID, now); err != nil {
 			return err
@@ -181,7 +184,7 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 	return out, err
 }
 
-func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload json.RawMessage) ([]byte, error) {
+func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, payload json.RawMessage) ([]byte, error) {
 	var body struct {
 		Operations []map[string]any `json:"operations"`
 	}
@@ -196,10 +199,10 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 		expected := jsonInt(op["expected_revision"])
 		target, _ := op["target"].(map[string]any)
 		var revision int
-		err := pgxTx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT revision FROM media_library_assets WHERE id = $1 FOR UPDATE
 		`, assetID).Scan(&revision)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return nil, apperr.NotFound("素材不存在")
 		}
 		if err != nil {
@@ -211,7 +214,7 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 		switch kind {
 		case "rename":
 			name, _ := target["display_name"].(string)
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET display_name = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
 			`, name, now, assetID); err != nil {
 				return nil, err
@@ -221,13 +224,13 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 			if raw, ok := target["folder_id"].(string); ok && raw != "" {
 				folderID = &raw
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET folder_id = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
 			`, folderID, now, assetID); err != nil {
 				return nil, err
 			}
 		case "set_tags":
-			if _, err := pgxTx.Exec(ctx, `DELETE FROM media_library_asset_tags WHERE asset_id = $1`, assetID); err != nil {
+			if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_asset_tags WHERE asset_id = $1`, assetID); err != nil {
 				return nil, err
 			}
 			rawTags, _ := target["tag_names"].([]any)
@@ -237,10 +240,10 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 					continue
 				}
 				var tagID string
-				err := pgxTx.QueryRow(ctx, `SELECT id FROM media_library_tags WHERE name = $1`, name).Scan(&tagID)
-				if errors.Is(err, pgx.ErrNoRows) {
+				err := pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM media_library_tags WHERE name = $1`, name).Scan(&tagID)
+				if errors.Is(err, sqldb.ErrNoRows) {
 					tagID = clockid.New()
-					if _, err := pgxTx.Exec(ctx, `
+					if _, err := pfdb.Exec(ctx, pgxTx, `
 						INSERT INTO media_library_tags (id, name, normalized_name, created_at, updated_at)
 						VALUES ($1, $2, $3, $4, $4)
 					`, tagID, name, name, now); err != nil {
@@ -249,32 +252,32 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 				} else if err != nil {
 					return nil, err
 				}
-				if _, err := pgxTx.Exec(ctx, `
+				if _, err := pfdb.Exec(ctx, pgxTx, `
 					INSERT INTO media_library_asset_tags (asset_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
 				`, assetID, tagID); err != nil {
 					return nil, err
 				}
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET revision = revision + 1, updated_at = $2 WHERE id = $1
 			`, assetID, now); err != nil {
 				return nil, err
 			}
 		case "archive":
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET is_archived = TRUE, archived_at = $2, revision = revision + 1, updated_at = $2 WHERE id = $1
 			`, assetID, now); err != nil {
 				return nil, err
 			}
 		case "restore":
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET is_archived = FALSE, archived_at = NULL, revision = revision + 1, updated_at = $2 WHERE id = $1
 			`, assetID, now); err != nil {
 				return nil, err
 			}
 		case "link_workflow":
 			workflowID, _ := target["workflow_id"].(string)
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO workflow_media_library_assets (workflow_id, media_library_asset_id, created_at)
 				VALUES ($1, $2, $3)
 				ON CONFLICT DO NOTHING
@@ -289,15 +292,15 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx pgx.Tx, payload
 	return json.Marshal(map[string]any{"applied_operations": applied})
 }
 
-func loadOrganizationDraft(ctx context.Context, q pgx.Tx, conversationID string) (OrganizationDraft, error) {
+func loadOrganizationDraft(ctx context.Context, q *gorm.DB, conversationID string) (OrganizationDraft, error) {
 	return scanOrganizationDraft(ctx, q, conversationID, false)
 }
 
-func loadOrganizationDraftForUpdate(ctx context.Context, q pgx.Tx, conversationID string) (OrganizationDraft, error) {
+func loadOrganizationDraftForUpdate(ctx context.Context, q *gorm.DB, conversationID string) (OrganizationDraft, error) {
 	return scanOrganizationDraft(ctx, q, conversationID, true)
 }
 
-func scanOrganizationDraft(ctx context.Context, q pgx.Tx, conversationID string, forUpdate bool) (OrganizationDraft, error) {
+func scanOrganizationDraft(ctx context.Context, q *gorm.DB, conversationID string, forUpdate bool) (OrganizationDraft, error) {
 	sql := `
 		SELECT d.id, d.conversation_id, d.status, d.confirmed_revision_id, d.confirmation_result_json,
 		       d.confirmed_at, d.created_at, d.updated_at,
@@ -319,13 +322,13 @@ func scanOrganizationDraft(ctx context.Context, q pgx.Tx, conversationID string,
 	var sourceTurn, sourceStep *string
 	var revConfirmed *time.Time
 	var revCreated *time.Time
-	err := q.QueryRow(ctx, sql, conversationID).Scan(
+	err := pfdb.QueryRow(ctx, q, sql, conversationID).Scan(
 		&d.ID, &d.ConversationID, &d.Status, &d.ConfirmedRevisionID, &result,
 		&d.ConfirmedAt, &d.CreatedAt, &d.UpdatedAt,
 		&revID, &version, &schema, &payload, &payloadHash,
 		&sourceTurn, &sourceStep, &revConfirmed, &revCreated,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return OrganizationDraft{}, apperr.NotFound("全局素材整理 Draft 不存在")
 	}
 	if err != nil {

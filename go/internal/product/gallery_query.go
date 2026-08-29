@@ -12,9 +12,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 const (
@@ -86,22 +89,22 @@ const gallerySelectSQL = `
 // GalleryBootstrap 返回系统目录计数与用户文件夹；cover_image_asset_id 只是展示元数据。
 func (s Service) GalleryBootstrap(ctx context.Context, productID string) (GalleryBootstrap, error) {
 	var out GalleryBootstrap
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProduct(ctx, pgxTx, productID)
 		if err != nil {
 			return err
 		}
 		asOf := s.now()
 		var allCount, unorganized, recent int
-		if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM product_image_assets WHERE product_id = $1`, productID).Scan(&allCount); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM product_image_assets WHERE product_id = $1`, productID).Scan(&allCount); err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT COUNT(*) FROM product_image_assets WHERE product_id = $1 AND user_folder_id IS NULL
 		`, productID).Scan(&unorganized); err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT COUNT(*) FROM product_image_assets
 			WHERE product_id = $1 AND origin_type = ANY($2) AND created_at >= $3
 		`, productID, generatedOrigins, asOf.Add(-galleryRecentDays*24*time.Hour)).Scan(&recent); err != nil {
@@ -158,7 +161,7 @@ type GalleryListInput struct {
 // ListGalleryAssets 按系统目录或用户文件夹分页列出商品图，cursor 绑定筛选条件。
 func (s Service) ListGalleryAssets(ctx context.Context, productID string, in GalleryListInput) (GalleryAssetPage, error) {
 	var page GalleryAssetPage
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
@@ -219,7 +222,7 @@ func (s Service) ListGalleryAssets(ctx context.Context, productID string, in Gal
 			}
 		}
 		sql, args := buildGalleryListSQL(productID, kind, key, query, sort, cursor, asOf, limit+1)
-		rows, err := pgxTx.Query(ctx, sql, args...)
+		rows, err := pfdb.Query(ctx, pgxTx, sql, args...)
 		if err != nil {
 			return err
 		}
@@ -270,11 +273,11 @@ func (s Service) ListGalleryAssets(ctx context.Context, productID string, in Gal
 // GetGalleryAsset 返回单张商品图及其生成/交付 lineage。
 func (s Service) GetGalleryAsset(ctx context.Context, productID, assetID string) (GalleryAssetResponse, error) {
 	var out GalleryAssetResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		row, err := pgxTx.Query(ctx, gallerySelectSQL+` WHERE a.product_id = $1 AND a.id = $2`, productID, assetID)
+		row, err := pfdb.Query(ctx, pgxTx, gallerySelectSQL+` WHERE a.product_id = $1 AND a.id = $2`, productID, assetID)
 		if err != nil {
 			return err
 		}
@@ -292,8 +295,8 @@ func (s Service) GetGalleryAsset(ctx context.Context, productID, assetID string)
 	return out, err
 }
 
-func loadOriginCounts(ctx context.Context, tx pgx.Tx, productID string) (map[string]int, error) {
-	rows, err := tx.Query(ctx, `
+func loadOriginCounts(ctx context.Context, tx *gorm.DB, productID string) (map[string]int, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT origin_type, COUNT(*) FROM product_image_assets WHERE product_id = $1 GROUP BY origin_type
 	`, productID)
 	if err != nil {
@@ -312,8 +315,8 @@ func loadOriginCounts(ctx context.Context, tx pgx.Tx, productID string) (map[str
 	return out, rows.Err()
 }
 
-func loadImageTypeCounts(ctx context.Context, tx pgx.Tx, productID string) ([]GalleryImageType, error) {
-	rows, err := tx.Query(ctx, `
+func loadImageTypeCounts(ctx context.Context, tx *gorm.DB, productID string) ([]GalleryImageType, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT image_type_key, COUNT(*) FROM product_image_assets
 		WHERE product_id = $1 GROUP BY image_type_key ORDER BY image_type_key NULLS FIRST
 	`, productID)
@@ -341,8 +344,8 @@ func loadImageTypeCounts(ctx context.Context, tx pgx.Tx, productID string) ([]Ga
 	return out, rows.Err()
 }
 
-func loadFolderCounts(ctx context.Context, tx pgx.Tx, productID string) ([]GalleryFolder, error) {
-	rows, err := tx.Query(ctx, `
+func loadFolderCounts(ctx context.Context, tx *gorm.DB, productID string) ([]GalleryFolder, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT f.id, f.name, f.sort_order, COUNT(a.id)
 		FROM product_asset_folders f
 		LEFT JOIN product_image_assets a ON a.user_folder_id = f.id
@@ -365,7 +368,7 @@ func loadFolderCounts(ctx context.Context, tx pgx.Tx, productID string) ([]Galle
 	return out, rows.Err()
 }
 
-func normalizeDirectory(ctx context.Context, tx pgx.Tx, productID, kind, key string) (string, *string, error) {
+func normalizeDirectory(ctx context.Context, tx *gorm.DB, productID, kind, key string) (string, *string, error) {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
 		kind = "all"
@@ -401,10 +404,10 @@ func normalizeDirectory(ctx context.Context, tx pgx.Tx, productID, kind, key str
 		}
 	case "user_folder":
 		var exists string
-		err := tx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, tx, `
 			SELECT id FROM product_asset_folders WHERE id = $1 AND product_id = $2
 		`, normalizedKey, productID).Scan(&exists)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return "", nil, apperr.NotFound("商品图片文件夹不存在")
 		}
 		if err != nil {
@@ -507,7 +510,7 @@ func parseCursorTime(raw string) (time.Time, error) {
 	return time.Time{}, apperr.Validation("图库分页 cursor 无效")
 }
 
-func scanGalleryRow(rows pgx.Rows) (galleryRow, error) {
+func scanGalleryRow(rows *sqldb.Rows) (galleryRow, error) {
 	var row galleryRow
 	err := rows.Scan(
 		&row.asset.ID, &row.asset.ProductID, &row.asset.MediaObjectID, &row.asset.OriginType, &row.asset.DisplayName, &row.asset.OriginalFilename,

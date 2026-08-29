@@ -8,13 +8,16 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 func verifiedMedia(obj media.Object) (media.Object, error) {
@@ -133,7 +136,7 @@ func originForLibrary(asset Asset) string {
 
 func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string) (SaveResult, error) {
 	var result SaveResult
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadSessionAsset(ctx, pgxTx, imageSessionAssetID)
 		if err != nil {
 			return err
@@ -195,7 +198,7 @@ func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string
 
 func (s Service) SaveFromProduct(ctx context.Context, productImageAssetID string) (SaveResult, error) {
 	var result SaveResult
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		asset, err := product.LoadImageForUpdate(ctx, pgxTx, productImageAssetID)
 		if err != nil {
 			return err
@@ -281,7 +284,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 	}
 	var results []SaveResult
 	var compensation storage.Compensation
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if folderID != nil {
 			if _, err := getFolder(ctx, pgxTx, *folderID); err != nil {
 				return err
@@ -301,7 +304,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 			}
 			requestHash = hashed
 			var existingHash, assetIDsJSON string
-			scanErr := pgxTx.QueryRow(ctx, `
+			scanErr := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT request_hash, asset_ids_json FROM media_library_upload_keys WHERE idempotency_key = $1
 			`, key).Scan(&existingHash, &assetIDsJSON)
 			if scanErr == nil {
@@ -321,7 +324,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 				}
 				return nil
 			}
-			if !errors.Is(scanErr, pgx.ErrNoRows) {
+			if !errors.Is(scanErr, sqldb.ErrNoRows) {
 				return scanErr
 			}
 		}
@@ -351,7 +354,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 		}
 		if key != "" {
 			raw, _ := json.Marshal(createdIDs)
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO media_library_upload_keys (id, idempotency_key, request_hash, asset_ids_json, created_at)
 				VALUES ($1, $2, $3, $4, NOW())
 			`, clockid.New(), key, requestHash, string(raw)); err != nil {
@@ -386,7 +389,7 @@ func (s Service) Restore(ctx context.Context, assetID string, expectedRevision *
 
 func (s Service) setArchive(ctx context.Context, assetID string, archived bool, expectedRevision *int) (Asset, error) {
 	var out Asset
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		asset, err := s.loadAsset(ctx, pgxTx, assetID)
 		if err != nil {
 			return err
@@ -396,13 +399,13 @@ func (s Service) setArchive(ctx context.Context, assetID string, archived bool, 
 		}
 		if archived {
 			var workflowID string
-			scanErr := pgxTx.QueryRow(ctx, `
+			scanErr := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT workflow_id FROM workflow_media_library_assets WHERE media_library_asset_id = $1 LIMIT 1
 			`, asset.ID).Scan(&workflowID)
 			if scanErr == nil {
 				return apperr.Conflict("素材仍被工作流素材库使用，解除关联后才能归档")
 			}
-			if !errors.Is(scanErr, pgx.ErrNoRows) {
+			if !errors.Is(scanErr, sqldb.ErrNoRows) {
 				return scanErr
 			}
 		}
@@ -415,7 +418,7 @@ func (s Service) setArchive(ctx context.Context, assetID string, archived bool, 
 		if archived {
 			archivedAt = now
 		}
-		tag, err := pgxTx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE media_library_assets
 			SET is_archived = $1, archived_at = $2, revision = revision + 1, updated_at = $3
 			WHERE id = $4 AND revision = $5 AND is_archived = $6
@@ -423,7 +426,7 @@ func (s Service) setArchive(ctx context.Context, assetID string, archived bool, 
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if n != 1 {
 			return apperr.Conflict("素材库资产 revision 已变化")
 		}
 		out, err = s.loadAsset(ctx, pgxTx, asset.ID)

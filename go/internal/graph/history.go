@@ -5,11 +5,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"gorm.io/gorm"
 )
 
-func Undo(ctx context.Context, tx pgx.Tx, productID, graphID string) (CommandResult, error) {
+func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err
@@ -37,7 +37,7 @@ func Undo(ctx context.Context, tx pgx.Tx, productID, graphID string) (CommandRes
 	}, HistoryUndo)
 }
 
-func Redo(ctx context.Context, tx pgx.Tx, productID, graphID string) (CommandResult, error) {
+func Redo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err

@@ -9,10 +9,13 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type turnCursor struct {
@@ -46,14 +49,14 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 		cursor = &decoded
 	}
 	var out TurnPageResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadConversation(ctx, pgxTx, productID, conversationID); err != nil {
 			return err
 		}
 		if taskID != "" {
 			var conv *string
-			err := pgxTx.QueryRow(ctx, `SELECT conversation_id FROM agent_tasks WHERE id = $1`, taskID).Scan(&conv)
-			if errors.Is(err, pgx.ErrNoRows) || conv == nil || *conv != conversationID {
+			err := pfdb.QueryRow(ctx, pgxTx, `SELECT conversation_id FROM agent_tasks WHERE id = $1`, taskID).Scan(&conv)
+			if errors.Is(err, sqldb.ErrNoRows) || conv == nil || *conv != conversationID {
 				return apperr.Conflict("Agent Task 与当前 conversation 不匹配")
 			}
 			if err != nil {
@@ -85,7 +88,7 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 		}
 		q += ` ORDER BY t.created_at DESC, t.id DESC LIMIT $` + strconv.Itoa(n)
 		args = append(args, limit+1)
-		rows, err := pgxTx.Query(ctx, q, args...)
+		rows, err := pfdb.Query(ctx, pgxTx, q, args...)
 		if err != nil {
 			return err
 		}
@@ -156,7 +159,7 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	}
 	var created bool
 	var projectionID string
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, conversationID, in.InputText, in.AssetIDs, in.IdempotencyKey, in.TaskID, in.PageContext)
 		if err != nil {
 			return err
@@ -172,7 +175,7 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	if err != nil {
 		return SubmitTurnResponse{}, err
 	}
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
 			return err
 		}
@@ -187,7 +190,7 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 
 func (s Service) GetTurn(ctx context.Context, productID *string, conversationID, projectionID string, requireLibraryClear bool) (TurnResponse, error) {
 	var row turnRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -209,7 +212,7 @@ func (s Service) GetTurn(ctx context.Context, productID *string, conversationID,
 		}
 	}
 	var out TurnResponse
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -226,7 +229,7 @@ func (s Service) GetTurn(ctx context.Context, productID *string, conversationID,
 
 func (s Service) ControlTurn(ctx context.Context, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
 	var out TurnResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := controlTurnTx(ctx, pgxTx, s, productID, conversationID, projectionID, command)
 		if err != nil {
 			return err
@@ -237,14 +240,14 @@ func (s Service) ControlTurn(ctx context.Context, productID *string, conversatio
 	return out, err
 }
 
-func controlTurnTx(ctx context.Context, pgxTx pgx.Tx, s Service, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
+func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
 	row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 	if err != nil {
 		return TurnResponse{}, err
 	}
 	if row.HarnessTurnID == nil {
 		if command == "cancel" {
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE agent_turn_projections SET status = 'canceled', finished_at = NOW(), updated_at = NOW() WHERE id = $1
 			`, projectionID); err != nil {
 				return TurnResponse{}, err
@@ -288,7 +291,7 @@ func controlTurnTx(ctx context.Context, pgxTx pgx.Tx, s Service, productID *stri
 
 func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
 	var out QuestionAnswerResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -316,7 +319,7 @@ func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversa
 			}
 		}
 		answerJSON, _ := json.Marshal(answer)
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_projections SET question_answer_json = $2, updated_at = NOW() WHERE id = $1
 		`, projectionID, answerJSON); err != nil {
 			return err
@@ -327,7 +330,7 @@ func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversa
 		if err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_projections SET continuation_turn_id = $2, updated_at = NOW() WHERE id = $1
 		`, projectionID, cont.ID); err != nil {
 			return err
@@ -404,7 +407,7 @@ func continuationInput(question, answer map[string]any) string {
 	return "继续当前 Agent 任务。针对问题“" + qtext + "”，用户回答：" + answerText + "。请基于这个回答继续执行，并再次通过 ProductFlow 工具确认业务事实。"
 }
 
-func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, pageContext map[string]any) (turnRow, bool, error) {
+func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, pageContext map[string]any) (turnRow, bool, error) {
 	text, err := normalizeInputText(inputText)
 	if err != nil {
 		return turnRow{}, false, err
@@ -436,7 +439,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 	}
 	var existingID string
 	var existingHash string
-	err = pgxTx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, pgxTx, `
 		SELECT id, request_hash FROM agent_turn_projections WHERE conversation_id = $1 AND idempotency_key = $2
 	`, conversationID, key).Scan(&existingID, &existingHash)
 	if err == nil {
@@ -446,7 +449,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 		row, err := loadTurnByID(ctx, pgxTx, existingID)
 		return row, false, err
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sqldb.ErrNoRows) {
 		return turnRow{}, false, err
 	}
 	if conv.ScopeType == "global" && conv.SessionID != nil {
@@ -468,7 +471,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 		}
 		if task.CurrentTurnID != nil {
 			var st string
-			_ = pgxTx.QueryRow(ctx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&st)
+			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&st)
 			if inSet(blockingTurn, st) {
 				return turnRow{}, false, apperr.Conflict("当前 Agent Task 仍有未结束的 Turn")
 			}
@@ -478,8 +481,8 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 		for _, assetID := range assets {
 			var pid string
 			var status string
-			err := pgxTx.QueryRow(ctx, `SELECT product_id, verification_status FROM product_image_assets WHERE id = $1`, assetID).Scan(&pid, &status)
-			if errors.Is(err, pgx.ErrNoRows) || pid != *conv.ProductID {
+			err := pfdb.QueryRow(ctx, pgxTx, `SELECT product_id, verification_status FROM product_image_assets WHERE id = $1`, assetID).Scan(&pid, &status)
+			if errors.Is(err, sqldb.ErrNoRows) || pid != *conv.ProductID {
 				return turnRow{}, false, apperr.Validation("参考图片不属于当前商品")
 			}
 			if err != nil {
@@ -492,7 +495,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 	}
 	id := newID()
 	assetJSON, _ := json.Marshal(assets)
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO agent_turn_projections (
 			id, conversation_id, task_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
 			status, resume_required, tool_steps_json, created_at, updated_at
@@ -500,7 +503,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 	`, id, conversationID, taskID, key, hash, text, assetJSON); err != nil {
 		if uniqueViolation(err) {
 			var replayID, replayHash string
-			if scanErr := pgxTx.QueryRow(ctx, `
+			if scanErr := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT id, request_hash FROM agent_turn_projections WHERE conversation_id = $1 AND idempotency_key = $2
 			`, conversationID, key).Scan(&replayID, &replayHash); scanErr == nil {
 				if replayHash != hash {
@@ -512,13 +515,13 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 		}
 		return turnRow{}, false, err
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		UPDATE agent_conversations SET status = 'collecting', updated_at = NOW() WHERE id = $1
 	`, conversationID); err != nil {
 		return turnRow{}, false, err
 	}
 	if taskID != nil {
-		if _, err := pgxTx.Exec(ctx, `UPDATE agent_tasks SET current_turn_id = $2, updated_at = NOW() WHERE id = $1`, *taskID, id); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_tasks SET current_turn_id = $2, updated_at = NOW() WHERE id = $1`, *taskID, id); err != nil {
 			return turnRow{}, false, err
 		}
 	}
@@ -531,7 +534,7 @@ func reserveTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversat
 	return row, true, err
 }
 
-func insertPageContext(ctx context.Context, pgxTx pgx.Tx, taskID *string, turnID string, pageContext map[string]any) error {
+func insertPageContext(ctx context.Context, pgxTx *gorm.DB, taskID *string, turnID string, pageContext map[string]any) error {
 	route, _ := pageContext["route"].(string)
 	pageType, _ := pageContext["page_type"].(string)
 	if stringsTrim(route) == "" || stringsTrim(pageType) == "" {
@@ -554,7 +557,7 @@ func insertPageContext(ctx context.Context, pgxTx pgx.Tx, taskID *string, turnID
 	if filters == nil {
 		filters = []byte("{}")
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO agent_page_context_snapshots (
 			id, task_id, turn_id, route, page_type, product_id, workflow_id,
 			selected_asset_ids_json, visible_asset_ids_json, filters_json, digest, captured_at, created_at
@@ -562,16 +565,16 @@ func insertPageContext(ctx context.Context, pgxTx pgx.Tx, taskID *string, turnID
 	`, snapshotID, taskID, turnID, route, pageType, pageContext["product_id"], pageContext["workflow_id"], selected, visible, filters, digest); err != nil {
 		return err
 	}
-	_, err = pgxTx.Exec(ctx, `UPDATE agent_turn_projections SET page_context_snapshot_id = $2 WHERE id = $1`, turnID, snapshotID)
+	_, err = pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_projections SET page_context_snapshot_id = $2 WHERE id = $1`, turnID, snapshotID)
 	return err
 }
 
 func (s Service) recordStartError(ctx context.Context, productID *string, conversationID, projectionID, message string) error {
-	return tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID); err != nil {
 			return err
 		}
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_projections SET sync_error = $2, updated_at = NOW() WHERE id = $1
 		`, projectionID, message)
 		return err
@@ -580,7 +583,7 @@ func (s Service) recordStartError(ctx context.Context, productID *string, conver
 
 func (s Service) bindGatewayTurn(ctx context.Context, productID *string, conversationID, projectionID string, deferIfUnavailable bool) (TurnResponse, error) {
 	var row turnRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -611,7 +614,7 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 		}
 		return serializeTurn(row, nil), nil
 	}
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 			return err
 		}
@@ -630,7 +633,7 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 
 func (s Service) refreshTurn(ctx context.Context, productID *string, conversationID, projectionID string, tolerate bool) (TurnResponse, error) {
 	var row turnRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -653,7 +656,7 @@ func (s Service) refreshTurn(ctx context.Context, productID *string, conversatio
 		return TurnResponse{}, mapGateway(ge)
 	}
 	var out TurnResponse
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 			return err
 		}

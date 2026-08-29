@@ -4,23 +4,24 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 const (
-	applyGraphTool     = "apply_graph_change_set_v1"
-	proposeGraphTool   = "propose_graph_change_set_v1"
+	applyGraphTool      = "apply_graph_change_set_v1"
+	proposeGraphTool    = "propose_graph_change_set_v1"
 	discardProposalTool = "discard_workflow_proposal_v1"
-	cancelRunTool      = "cancel_workflow_run_v1"
-	focusCanvasTool    = "focus_canvas_items_v1"
+	cancelRunTool       = "cancel_workflow_run_v1"
+	focusCanvasTool     = "focus_canvas_items_v1"
 )
 
 func (s Service) loadScopedConversation(ctx context.Context, conversationID string) (conversationRow, error) {
 	var conv conversationRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadConversationByID(ctx, pgxTx, conversationID)
 		conv = loaded
 		return err
@@ -279,7 +280,7 @@ func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string,
 	for _, workflowID := range workflowIDs {
 		var productID, title string
 		var revision int
-		err := s.Pool.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, s.DB, `
 			SELECT product_id, title, revision FROM workflow_graphs WHERE id = $1 AND active = TRUE
 		`, workflowID).Scan(&productID, &title, &revision)
 		if err != nil {

@@ -7,7 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
@@ -196,7 +197,7 @@ func decodeCursor(value string, dest any, invalid string) error {
 }
 
 func isNoRows(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows)
+	return errors.Is(err, sqldb.ErrNoRows)
 }
 
 func mapGateway(err error) error {

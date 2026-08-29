@@ -67,7 +67,7 @@ services:
       JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
       GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
     command: >-
-      sh -c "alembic upgrade head && uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
+      sh -c "uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
     ports:
       - "${PYTHON_APP_HOST_PORT:-29286}:29280"
     volumes:
@@ -79,6 +79,8 @@ services:
         condition: service_healthy
       productflow-redis:
         condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [
@@ -172,14 +174,14 @@ services:
       productflow-agent-service:
         condition: service_healthy
 
-  # Alembic 仍是 schema 权威。Go API 不跑迁移。
+  # schema 权威是 Go AutoMigrate + 约束补钉。Go API 不在进程内跑迁移。
   productflow-migrate:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: go/Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
-    command: ["alembic", "upgrade", "head"]
+    command: ["productflow-migrate"]
     depends_on:
       productflow-postgres:
         condition: service_healthy

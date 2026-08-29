@@ -8,20 +8,22 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 type Service struct {
-	Pool  *pgxpool.Pool
+	DB    *gorm.DB
 	Media media.Store
 }
 
@@ -39,7 +41,7 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 	var created bool
 	var jobID string
 	var queued bool
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		source, err := productLoad(ctx, pgxTx, sourceAssetID)
 		if err != nil {
 			if apperr.IsNotFound(err) {
@@ -65,7 +67,7 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 		if err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO delivery_rendition_jobs (
 				id, product_id, source_asset_id, spec_schema_version, spec_json, spec_hash,
 				status, attempts, is_retryable, created_at, updated_at
@@ -107,7 +109,7 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 
 func (s Service) Get(ctx context.Context, jobID string) (JobResponse, error) {
 	var out JobResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadJob(ctx, pgxTx, jobID)
 		if err != nil {
 			return err
@@ -120,14 +122,14 @@ func (s Service) Get(ctx context.Context, jobID string) (JobResponse, error) {
 
 func (s Service) List(ctx context.Context, sourceAssetID string) (JobListResponse, error) {
 	var out JobListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := productLoad(ctx, pgxTx, sourceAssetID); err != nil {
 			if apperr.IsNotFound(err) {
 				return apperr.NotFound("交付派生原图不存在")
 			}
 			return err
 		}
-		rows, err := pgxTx.Query(ctx, `
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
 			       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
 			FROM delivery_rendition_jobs
@@ -165,7 +167,7 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 }
 
 func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadJobForUpdate(ctx, pgxTx, jobID)
 		if err != nil {
 			return err
@@ -176,7 +178,7 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 		if !row.IsRetryable {
 			return apperr.Conflict("该交付派生任务不可重试")
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE delivery_rendition_jobs SET
 				status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 				started_at = NULL, finished_at = NULL, is_retryable = TRUE, updated_at = NOW()
@@ -194,9 +196,9 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 }
 
 // QueueAfterImageSuccess 图运行图片成功后按节点 DeliverySpec 入队；失败不影响已成功资产。
-func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx pgx.Tx, nodeID, sourceAssetID string) error {
+func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nodeID, sourceAssetID string) error {
 	var raw json.RawMessage
-	err := pgxTx.QueryRow(ctx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, nodeID).Scan(&raw)
+	err := pfdb.QueryRow(ctx, pgxTx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, nodeID).Scan(&raw)
 	if err != nil {
 		return nil
 	}
@@ -228,7 +230,7 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx pgx.Tx, nodeI
 	if err != nil {
 		return nil
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO delivery_rendition_jobs (
 			id, product_id, source_asset_id, spec_schema_version, spec_json, spec_hash,
 			status, attempts, is_retryable, created_at, updated_at
@@ -240,9 +242,7 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx pgx.Tx, nodeI
 	return nil
 }
 
-func (s Service) serialize(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, row jobRow) (JobResponse, error) {
+func (s Service) serialize(ctx context.Context, q *gorm.DB, row jobRow) (JobResponse, error) {
 	spec, err := specFromJSON(row.SpecJSON)
 	if err != nil {
 		return JobResponse{}, err
@@ -264,13 +264,11 @@ func (s Service) serialize(ctx context.Context, q interface {
 	return out, nil
 }
 
-func productLoad(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, assetID string) (product.ImageAsset, error) {
+func productLoad(ctx context.Context, q *gorm.DB, assetID string) (product.ImageAsset, error) {
 	return product.LoadAssetRow(ctx, q, assetID)
 }
 
-func validateSource(ctx context.Context, tx pgx.Tx, source product.ImageAsset) error {
+func validateSource(ctx context.Context, tx *gorm.DB, source product.ImageAsset) error {
 	if source.ParentAssetID != nil {
 		return apperr.Validation("交付派生不能以已有派生图作为原图")
 	}
@@ -278,50 +276,48 @@ func validateSource(ctx context.Context, tx pgx.Tx, source product.ImageAsset) e
 		return apperr.Validation("交付派生原图媒体尚未通过核验")
 	}
 	var artifactID string
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id FROM workflow_graph_artifacts
 		WHERE product_image_asset_id = $1 AND artifact_type = 'image'
 		LIMIT 1
 	`, source.ID).Scan(&artifactID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return apperr.Validation("交付派生只接受成功的工作流生成原图")
 	}
 	return err
 }
 
-func loadJob(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, jobID string) (jobRow, error) {
-	row, err := scanJobRow(q.QueryRow(ctx, `
+func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {
+	row, err := scanJobRow(pfdb.QueryRow(ctx, q, `
 		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
 		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
 		FROM delivery_rendition_jobs WHERE id = $1
 	`, jobID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
 	return row, err
 }
 
-func loadJobForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (jobRow, error) {
-	row, err := scanJobRow(tx.QueryRow(ctx, `
+func loadJobForUpdate(ctx context.Context, tx *gorm.DB, jobID string) (jobRow, error) {
+	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
 		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
 		FROM delivery_rendition_jobs WHERE id = $1 FOR UPDATE
 	`, jobID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
 	return row, err
 }
 
-func loadBySourceHash(ctx context.Context, tx pgx.Tx, sourceID, hash string) (*jobRow, error) {
-	row, err := scanJobRow(tx.QueryRow(ctx, `
+func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (*jobRow, error) {
+	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
 		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
 		FROM delivery_rendition_jobs WHERE source_asset_id = $1 AND spec_hash = $2
 	`, sourceID, hash))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -334,7 +330,7 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanJob(rows pgx.Rows) (jobRow, error) {
+func scanJob(rows *sqldb.Rows) (jobRow, error) {
 	return scanJobRow(rows)
 }
 

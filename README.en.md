@@ -54,7 +54,7 @@ The public instance is a personal live demo with one administrator and one merch
 - Single administrator and single merchant.
 - No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
 - Public demo data and local development databases may be recreated during breaking updates.
-- Alembic evolves the current schema; empty-database `upgrade head` still works. The main repository does not backfill or keep compatibility layers for old data.
+- Historical Alembic revisions remain sealed; empty and existing databases run `just go-migrate` / `productflow-migrate`. The main repository does not backfill or keep compatibility layers for old data.
 
 ## Routes
 
@@ -79,7 +79,7 @@ Repository documentation:
 
 ## Technology
 
-- Backend: Go 1.23 (Gin, pgx, asynq), Alembic migrations, Redis, PostgreSQL. Python `backend/` remains for Alembic and optional fallback.
+- Backend: Go 1.23 (Gin, GORM, asynq), `productflow-migrate`, Redis, PostgreSQL. Python `backend/` remains for the sealed tree and optional fallback.
 - Agent service: Node.js 22, Pi SDK, ProductFlow Tool adapter, JSONL session files, and JSON event files.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, XYFlow, and Tailwind CSS 4.
 - Model SDKs: OpenAI Python/TypeScript provider adapters and Google GenAI.
@@ -131,7 +131,7 @@ Replace at least:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs `alembic upgrade head` before the Go API. uvicorn / dramatiq start only with Compose profile `python`. Do not run profile `python` against the same database as the default Go dispatcher.
+Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs GORM AutoMigrate and constraint patches before the Go API. uvicorn / dramatiq start only with Compose profile `python` and no longer own schema. Do not run profile `python` against the same database as the default Go dispatcher.
 
 Default endpoints:
 
@@ -161,7 +161,7 @@ Set `STORAGE_HOST_PATH=/absolute/host/path` to use a host directory. When omitte
 ### 1. Prerequisites
 
 - Go 1.23+
-- Python 3.12+ and `uv` (Alembic)
+- Python 3.12+ and `uv` (sealed Python tree and optional profile `python`)
 - Node.js 22.19+ and `pnpm`
 - Docker / Docker Compose
 - `just` (recommended)

@@ -11,11 +11,12 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 type ExportArchive struct {
@@ -47,9 +48,9 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	}
 	var files []fileItem
 	var filename string
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var productName string
-		if err := pgxTx.QueryRow(ctx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&productName); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&productName); err != nil {
 			return apperr.NotFound("商品不存在")
 		}
 		var missing, success int

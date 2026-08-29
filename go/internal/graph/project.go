@@ -2,11 +2,13 @@ package graph
 
 import (
 	"context"
+	sqldb "database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 type Projection struct {
@@ -100,7 +102,7 @@ type ProposalEdgeView struct {
 	Order        int    `json:"order"`
 }
 
-func Project(ctx context.Context, tx pgx.Tx, row GraphRow) (Projection, error) {
+func Project(ctx context.Context, tx *gorm.DB, row GraphRow) (Projection, error) {
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
 		return Projection{}, err
@@ -246,8 +248,8 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 	return status
 }
 
-func loadGraphSources(ctx context.Context, tx pgx.Tx, row GraphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
-	nodeRows, err := tx.Query(ctx, `
+func loadGraphSources(ctx context.Context, tx *gorm.DB, row GraphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
+	nodeRows, err := pfdb.Query(ctx, tx, `
 		SELECT n.id, n.bound_image_asset_id, n.current_artifact_id,
 		       a.artifact_type, a.payload_json, a.input_digest, a.product_image_asset_id
 		FROM workflow_graph_nodes n
@@ -360,10 +362,10 @@ func loadGraphSources(ctx context.Context, tx pgx.Tx, row GraphRow, applied Appl
 	return sources, previews, digests, nil
 }
 
-func loadVisualSystemPayload(ctx context.Context, tx pgx.Tx, versionID string) (map[string]any, error) {
+func loadVisualSystemPayload(ctx context.Context, tx *gorm.DB, versionID string) (map[string]any, error) {
 	var payload []byte
-	err := tx.QueryRow(ctx, `SELECT payload_json FROM visual_system_versions WHERE id = $1`, versionID).Scan(&payload)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT payload_json FROM visual_system_versions WHERE id = $1`, versionID).Scan(&payload)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -376,15 +378,15 @@ func loadVisualSystemPayload(ctx context.Context, tx pgx.Tx, versionID string) (
 	return out, nil
 }
 
-func loadBoundAssetMeta(ctx context.Context, tx pgx.Tx, productID, assetID string) (string, string, error) {
+func loadBoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (string, string, error) {
 	var display, mime string
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT a.display_name, COALESCE(m.mime_type, '')
 		FROM product_image_assets a
 		JOIN media_objects m ON m.id = a.media_object_id
 		WHERE a.product_id = $1 AND a.id = $2
 	`, productID, assetID).Scan(&display, &mime)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return "", "", nil
 	}
 	return display, mime, err

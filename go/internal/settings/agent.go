@@ -2,12 +2,13 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 )
 
 type AgentProviderConfig struct {
@@ -27,12 +28,12 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 	var kind string
 	var profileID *string
 	var modelSettings, bindingConfig []byte
-	err := s.pool.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, s.db, `
 		SELECT provider_kind, provider_profile_id, model_settings_json, config_json
 		FROM provider_bindings WHERE purpose = 'agent'
 	`).Scan(&kind, &profileID, &modelSettings, &bindingConfig)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 		}
 		return AgentProviderConfig{}, err
@@ -50,12 +51,12 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 	var archived any
 	var apiKey, baseURL *string
 	var capabilities, defaultModels []byte
-	err = s.pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.db, `
 		SELECT enabled, archived_at, api_key, base_url, capabilities_json, default_models_json
 		FROM provider_profiles WHERE id = $1
 	`, *profileID).Scan(&enabled, &archived, &apiKey, &baseURL, &capabilities, &defaultModels)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 		}
 		return AgentProviderConfig{}, err

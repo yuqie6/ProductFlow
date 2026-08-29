@@ -45,6 +45,10 @@ func main() {
 		logger.Fatal("postgres", zap.Error(err))
 	}
 	defer pool.Close()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		logger.Fatal("gorm", zap.Error(err))
+	}
 
 	engine := httpx.NewEngine(logger)
 	cookieStore := httpx.NewCookieStore(httpx.SessionConfig{
@@ -58,31 +62,31 @@ func main() {
 	settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	product.HTTP{
-		Service:  product.Service{Pool: pool, Media: mediaStore},
+		Service:  product.Service{DB: gdb, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 	library.HTTP{
-		Service:  library.Service{Pool: pool, Media: mediaStore},
+		Service:  library.Service{DB: gdb, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 	graph.HTTP{
-		Service:  graph.Service{Pool: pool},
+		Service:  graph.Service{DB: gdb},
 		Settings: settingsStore,
 	}.Register(engine)
 	recipe.HTTP{
-		Service:  recipe.Service{Pool: pool},
+		Service:  recipe.Service{DB: gdb},
 		Settings: settingsStore,
 	}.Register(engine)
 	imagesession.HTTP{
-		Service:  imagesession.Service{Pool: pool, Media: mediaStore, Settings: settingsStore},
+		Service:  imagesession.Service{DB: gdb, Media: mediaStore, Settings: settingsStore},
 		Settings: settingsStore,
 	}.Register(engine)
 	delivery.HTTP{
-		Service:  delivery.Service{Pool: pool, Media: mediaStore},
+		Service:  delivery.Service{DB: gdb, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 	localedit.HTTP{
-		Service:  localedit.Service{Pool: pool, Media: mediaStore},
+		Service:  localedit.Service{DB: gdb, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
@@ -91,9 +95,9 @@ func main() {
 	}
 	agent.HTTP{
 		Service: agent.Service{
-			Pool: pool, Graph: graph.Service{Pool: pool},
-			Product:  product.Service{Pool: pool, Media: mediaStore},
-			Library:  library.Service{Pool: pool, Media: mediaStore},
+			DB: gdb, Graph: graph.Service{DB: gdb},
+			Product:  product.Service{DB: gdb, Media: mediaStore},
+			Library:  library.Service{DB: gdb, Media: mediaStore},
 			Media:    mediaStore,
 			Settings: settingsStore,
 			Gateway: agent.HTTPGateway{

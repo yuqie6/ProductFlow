@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) GetWorkbench(ctx context.Context, productID string, sessionID, taskID *string) (WorkbenchResponse, error) {
@@ -18,21 +19,21 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 	if err != nil {
 		return WorkbenchResponse{}, err
 	}
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var existingID string
 		q := `SELECT id FROM agent_conversations WHERE product_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`
-		_ = pgxTx.QueryRow(ctx, q, productID).Scan(&existingID)
+		_ = pfdb.QueryRow(ctx, pgxTx, q, productID).Scan(&existingID)
 		if existingID != "" && !forceNew {
 			if sessionID == nil {
 				return nil
 			}
 			var sid *string
-			_ = pgxTx.QueryRow(ctx, `SELECT session_id FROM agent_conversations WHERE id = $1`, existingID).Scan(&sid)
+			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT session_id FROM agent_conversations WHERE id = $1`, existingID).Scan(&sid)
 			if sid != nil && *sid == *sessionID {
 				return nil
 			}
 			var match string
-			_ = pgxTx.QueryRow(ctx, `
+			_ = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT id FROM agent_conversations WHERE product_id = $1 AND session_id = $2 LIMIT 1
 			`, productID, *sessionID).Scan(&match)
 			if match != "" {
@@ -40,11 +41,11 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 			}
 		}
 		var exists int
-		if err := pgxTx.QueryRow(ctx, `SELECT 1 FROM products WHERE id = $1`, productID).Scan(&exists); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM products WHERE id = $1`, productID).Scan(&exists); err != nil {
 			return apperr.NotFound("商品不存在")
 		}
 		var graphExists int
-		if err := pgxTx.QueryRow(ctx, `SELECT 1 FROM workflow_graphs WHERE product_id = $1 AND active = TRUE LIMIT 1`, productID).Scan(&graphExists); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM workflow_graphs WHERE product_id = $1 AND active = TRUE LIMIT 1`, productID).Scan(&graphExists); err != nil {
 			return apperr.Conflict("当前商品还没有可执行的工作流")
 		}
 		payload := map[string]any{"request_kind": "ensure_agent_workbench_v1", "product_id": productID}
@@ -56,10 +57,10 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 			return err
 		}
 		var byKey string
-		err = pgxTx.QueryRow(ctx, `SELECT id FROM agent_conversations WHERE creation_idempotency_key = $1`, key).Scan(&byKey)
+		err = pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM agent_conversations WHERE creation_idempotency_key = $1`, key).Scan(&byKey)
 		if err == nil {
 			var stored string
-			_ = pgxTx.QueryRow(ctx, `SELECT creation_request_hash FROM agent_conversations WHERE id = $1`, byKey).Scan(&stored)
+			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT creation_request_hash FROM agent_conversations WHERE id = $1`, byKey).Scan(&stored)
 			if stored != hash {
 				return apperr.Conflict("相同 Idempotency-Key 不能创建不同的 Agent 商品")
 			}
@@ -69,7 +70,7 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 		if sessionID != nil && *sessionID != "" {
 			var productOf *string
 			var status string
-			err := pgxTx.QueryRow(ctx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, *sessionID).Scan(&productOf, &status)
+			err := pfdb.QueryRow(ctx, pgxTx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, *sessionID).Scan(&productOf, &status)
 			if err != nil {
 				return apperr.NotFound("Agent Session 不存在")
 			}
@@ -79,8 +80,8 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 			if productOf == nil {
 				newSID := newID()
 				var name string
-				_ = pgxTx.QueryRow(ctx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&name)
-				if _, err := pgxTx.Exec(ctx, `
+				_ = pfdb.QueryRow(ctx, pgxTx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&name)
+				if _, err := pfdb.Exec(ctx, pgxTx, `
 					INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
 					VALUES ($1, $2, $3, '暂无 Agent Task', 'active', NOW(), NOW())
 				`, newSID, productID, name); err != nil {
@@ -95,8 +96,8 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 		} else {
 			newSID := newID()
 			var name string
-			_ = pgxTx.QueryRow(ctx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&name)
-			if _, err := pgxTx.Exec(ctx, `
+			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&name)
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
 				VALUES ($1, $2, $3, '暂无 Agent Task', 'active', NOW(), NOW())
 			`, newSID, productID, name); err != nil {
@@ -105,7 +106,7 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 			sessID = newSID
 		}
 		convID := newID()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_conversations (
 				id, scope_type, session_id, product_id, harness_run_id, status,
 				creation_idempotency_key, creation_request_hash, created_at, updated_at
@@ -130,7 +131,7 @@ func (s Service) loadWorkbench(ctx context.Context, productID string, sessionID,
 		return WorkbenchResponse{}, err
 	}
 	var conv conversationRow
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		q := `SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
 			FROM agent_conversations WHERE product_id = $1`
 		args := []any{productID}
@@ -158,7 +159,7 @@ func (s Service) loadWorkbench(ctx context.Context, productID string, sessionID,
 			args = append(args, *task.ConversationID)
 		}
 		q += ` ORDER BY created_at DESC, id DESC LIMIT 1`
-		err := pgxTx.QueryRow(ctx, q, args...).Scan(
+		err := pfdb.QueryRow(ctx, pgxTx, q, args...).Scan(
 			&conv.ID, &conv.ScopeType, &conv.SessionID, &conv.ProductID, &conv.HarnessRunID, &conv.Status, &conv.CreatedAt, &conv.UpdatedAt,
 		)
 		if isNoRows(err) {

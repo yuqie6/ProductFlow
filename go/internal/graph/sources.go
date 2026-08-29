@@ -6,8 +6,11 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 type productSummary struct {
@@ -33,7 +36,7 @@ type productSourceSnapshot struct {
 	Facts            []map[string]any
 }
 
-func loadProductSourceSnapshot(ctx context.Context, tx pgx.Tx, graphProductID string, config map[string]any) (productSourceSnapshot, error) {
+func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) (productSourceSnapshot, error) {
 	payload := config
 	if payload == nil {
 		payload = map[string]any{}
@@ -63,11 +66,11 @@ func loadProductSourceSnapshot(ctx context.Context, tx pgx.Tx, graphProductID st
 
 	var product productSummary
 	var currentFactSetID *string
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, name, category, price::text, source_note, current_fact_set_version_id
 		FROM products WHERE id = $1
 	`, *sourceProductID).Scan(&product.ID, &product.Name, &product.Category, &product.Price, &product.SourceNote, &currentFactSetID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return productSourceSnapshot{}, apperr.Validation("商品资料节点绑定的商品不存在")
 	}
 	if err != nil {
@@ -98,12 +101,12 @@ func loadProductSourceSnapshot(ctx context.Context, tx pgx.Tx, graphProductID st
 	}
 	var set factSetSnapshot
 	var payloadJSON []byte
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, version, payload_json
 		FROM product_fact_set_versions
 		WHERE id = $1 AND product_id = $2
 	`, *factSetID, *sourceProductID).Scan(&set.ID, &set.ProductID, &set.Version, &payloadJSON)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		if rawFactSetID != nil {
 			return productSourceSnapshot{}, apperr.Validation("fact_set_version_id 不属于绑定商品")
 		}

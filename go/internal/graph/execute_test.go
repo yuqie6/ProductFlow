@@ -20,11 +20,11 @@ func TestExecuteGraphRunWithMockProvidersSucceeds(t *testing.T) {
 	gs.decode(t, resp, &run)
 
 	executor := graph.Executor{
-		Pool: gs.pool,
+		DB: gs.db,
 		Deps: graph.Dependencies{
 			Prompt: graph.MockPromptProvider{},
 			Image:  graph.MockImageProvider{},
-			Assets: product.Service{Pool: gs.pool, Media: media.Store{Files: storage.Local{Root: t.TempDir()}}},
+			Assets: product.Service{DB: gs.db, Media: media.Store{Files: storage.Local{Root: t.TempDir()}}},
 		},
 	}
 	if err := executor.ExecuteRun(context.Background(), run.ID); err != nil {
@@ -53,11 +53,11 @@ func TestExecuteGraphRunMarksUnknownWhenProviderFailsAfterIntent(t *testing.T) {
 	gs.decode(t, resp, &run)
 
 	executor := graph.Executor{
-		Pool: gs.pool,
+		DB: gs.db,
 		Deps: graph.Dependencies{
 			Prompt: graph.MockPromptProvider{Err: errors.New("provider crashed")},
 			Image:  graph.MockImageProvider{},
-			Assets: product.Service{Pool: gs.pool, Media: media.Store{Files: storage.Local{Root: t.TempDir()}}},
+			Assets: product.Service{DB: gs.db, Media: media.Store{Files: storage.Local{Root: t.TempDir()}}},
 		},
 	}
 	if err := executor.ExecuteRun(context.Background(), run.ID); err != nil {

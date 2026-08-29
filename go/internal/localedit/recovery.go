@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type RecoverySummary struct {
@@ -22,9 +23,13 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	if staleAfter <= 0 {
 		staleAfter = 10 * time.Minute
 	}
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
 	var summary RecoverySummary
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
-		rows, err := pgxTx.Query(ctx, `
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id FROM local_image_edit_tasks WHERE status IN ('queued', 'running')
 		`)
 		if err != nil {
@@ -65,7 +70,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	return summary, err
 }
 
-func recoverOne(ctx context.Context, pgxTx pgx.Tx, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
+func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
 	task, err := loadTaskByID(ctx, pgxTx, taskID)
 	if err != nil {
 		return "", err

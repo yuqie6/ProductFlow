@@ -5,18 +5,17 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 // Service 拥有商品出生、facts、封面与商品图库命令。
 type Service struct {
-	Pool  *pgxpool.Pool
+	DB    *gorm.DB
 	Media media.Store
 	// Now 可注入，图库「最近生成」目录用它锚定 30 天窗口。
 	Now func() time.Time
@@ -31,7 +30,7 @@ func (s Service) now() time.Time {
 
 // GetAsset 按 id 读取商品图片身份（含媒体元数据）。
 func (s Service) GetAsset(ctx context.Context, assetID string) (ImageAsset, error) {
-	return loadAsset(ctx, s.Pool, assetID)
+	return loadAsset(ctx, s.DB, assetID)
 }
 
 type CreateInput struct {
@@ -56,7 +55,7 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
 	var result DirectCreateResponse
-	err := s.createWithGraph(ctx, in, true, true, func(tx pgx.Tx, creation canonicalCreation) error {
+	err := s.createWithGraph(ctx, in, true, true, func(tx *gorm.DB, creation canonicalCreation) error {
 		sourceID := creation.product.ID
 		factID := creation.product.FactSetVersionID
 		changeSet, err := graph.BuildDirectCreateTemplate(graph.DirectCreateInput{
@@ -88,7 +87,7 @@ func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []
 
 func (s Service) Get(ctx context.Context, id string) (Detail, error) {
 	var detail Detail
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		p, err := loadProduct(ctx, pgxTx, id)
 		if err != nil {
 			return err
@@ -101,7 +100,7 @@ func (s Service) Get(ctx context.Context, id string) (Detail, error) {
 
 func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (ListResponse, error) {
 	var out ListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		items, total, err := listProducts(ctx, pgxTx, page, pageSize, q, sort)
 		if err != nil {
 			return err
@@ -119,12 +118,7 @@ func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (
 }
 
 func (s Service) AssetForDownload(ctx context.Context, assetID string) (ImageAsset, error) {
-	conn, err := s.Pool.Acquire(ctx)
-	if err != nil {
-		return ImageAsset{}, err
-	}
-	defer conn.Release()
-	return loadAsset(ctx, conn, assetID)
+	return loadAsset(ctx, s.DB, assetID)
 }
 
 type canonicalCreation struct {
@@ -133,9 +127,9 @@ type canonicalCreation struct {
 	facts   []map[string]any
 }
 
-func (s Service) createCanonical(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(pgx.Tx, canonicalCreation) error) (canonicalCreation, error) {
+func (s Service) createCanonical(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(*gorm.DB, canonicalCreation) error) (canonicalCreation, error) {
 	var created canonicalCreation
-	err := s.createWithGraph(ctx, in, setCover, writeFacts, func(tx pgx.Tx, creation canonicalCreation) error {
+	err := s.createWithGraph(ctx, in, setCover, writeFacts, func(tx *gorm.DB, creation canonicalCreation) error {
 		created = creation
 		if after != nil {
 			return after(tx, creation)
@@ -145,7 +139,7 @@ func (s Service) createCanonical(ctx context.Context, in CreateInput, setCover, 
 	return created, err
 }
 
-func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(pgx.Tx, canonicalCreation) error) error {
+func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(*gorm.DB, canonicalCreation) error) error {
 	name, err := normalizeName(in.Name)
 	if err != nil {
 		return err
@@ -169,7 +163,7 @@ func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, 
 		return apperr.Validation("商品参考图最多上传 6 张")
 	}
 	var compensation storage.Compensation
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := insertProduct(ctx, pgxTx, name, category, price, note)
 		if err != nil {
 			return err
@@ -232,7 +226,7 @@ func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, 
 	return nil
 }
 
-func (s Service) stageNameOnly(ctx context.Context, tx pgx.Tx, name string) (canonicalCreation, error) {
+func (s Service) stageNameOnly(ctx context.Context, tx *gorm.DB, name string) (canonicalCreation, error) {
 	product, err := insertProduct(ctx, tx, name, nil, nil, nil)
 	if err != nil {
 		return canonicalCreation{}, err

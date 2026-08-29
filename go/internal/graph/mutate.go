@@ -4,13 +4,14 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // CreateEmpty 持久化一张空的 active schema-v3 图。空画布不能作为 no-op ChangeSet 出生。
-func CreateEmpty(ctx context.Context, tx pgx.Tx, productID, title string) (GraphRow, error) {
+func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (GraphRow, error) {
 	if err := lockProduct(ctx, tx, productID); err != nil {
 		return GraphRow{}, err
 	}
@@ -26,7 +27,7 @@ func CreateEmpty(ctx context.Context, tx pgx.Tx, productID, title string) (Graph
 		title = DefaultGraphTitle
 	}
 	graphID := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
 		VALUES ($1, $2, $3, TRUE, $4, 1, NOW(), NOW())
 	`, graphID, productID, title, SchemaVersion)
@@ -44,7 +45,7 @@ func CreateEmpty(ctx context.Context, tx pgx.Tx, productID, title string) (Graph
 }
 
 // Mutate 把 ChangeSet 应用到已有 active schema-v3 图；只 flush 不 commit。
-func Mutate(ctx context.Context, tx pgx.Tx, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
+func Mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err
@@ -70,7 +71,7 @@ func Mutate(ctx context.Context, tx pgx.Tx, productID, graphID string, changeSet
 	if err := validateProductSourceConfigs(ctx, tx, productID, after); err != nil {
 		return CommandResult{}, err
 	}
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graphs SET revision = $2, updated_at = NOW() WHERE id = $1
 	`, row.ID, after.Revision)
 	if err != nil {

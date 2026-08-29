@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func toolPrepared(conversationID, operation string, before, target map[string]any) map[string]any {
@@ -32,7 +35,7 @@ func toolRequestHash(toolName string, prepared map[string]any) (string, error) {
 }
 
 // lookupToolMutation 只读账本，不插入。未命中时 found=false。
-func lookupToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolName, idempotencyKey, operation string, before, target map[string]any) (map[string]any, bool, error) {
+func lookupToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey, operation string, before, target map[string]any) (map[string]any, bool, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
 		return nil, false, err
@@ -43,11 +46,11 @@ func lookupToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolN
 	}
 	var existingHash, status string
 	var resultJSON []byte
-	err = pgxTx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, pgxTx, `
 		SELECT request_hash, status, result_json FROM agent_tool_mutations
 		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
 	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, false, nil
 	}
 	if err != nil {
@@ -64,7 +67,7 @@ func lookupToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolN
 	return replay, true, nil
 }
 
-func applyToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolName, idempotencyKey, operation string, before, target, result map[string]any, extra map[string]any) (map[string]any, error) {
+func applyToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey, operation string, before, target, result map[string]any, extra map[string]any) (map[string]any, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
 		return nil, err
@@ -76,7 +79,7 @@ func applyToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolNa
 	}
 	var existingHash, status string
 	var resultJSON []byte
-	err = pgxTx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, pgxTx, `
 		SELECT request_hash, status, result_json FROM agent_tool_mutations
 		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
 	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
@@ -91,7 +94,7 @@ func applyToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolNa
 		_ = json.Unmarshal(resultJSON, &replay)
 		return replay, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sqldb.ErrNoRows) {
 		return nil, err
 	}
 	preparedJSON, _ := json.Marshal(prepared)
@@ -100,7 +103,7 @@ func applyToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolNa
 	assetID, _ := extra["asset_id"].(string)
 	expectedName, _ := extra["expected_display_name"].(string)
 	targetName, _ := extra["target_display_name"].(string)
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO agent_tool_mutations (
 			id, conversation_id, tool_name, idempotency_key, request_hash, asset_id,
 			expected_display_name, target_display_name, prepared_json, status, result_json, created_at, updated_at
@@ -114,7 +117,7 @@ func applyToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolNa
 	return result, nil
 }
 
-func reconcileToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
+func reconcileToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
 		return ReconcileResponse{}, err
@@ -125,11 +128,11 @@ func reconcileToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, to
 	}
 	var existingHash, status string
 	var resultJSON []byte
-	err = pgxTx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, pgxTx, `
 		SELECT request_hash, status, result_json FROM agent_tool_mutations
 		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
 	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ReconcileResponse{State: "not_applied", Detail: ptr("工具副作用尚未提交")}, nil
 	}
 	if err != nil {
@@ -147,7 +150,7 @@ func reconcileToolMutation(ctx context.Context, pgxTx pgx.Tx, conversationID, to
 
 func (s Service) ReconcileTool(ctx context.Context, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
 	var out ReconcileResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := reconcileToolMutation(ctx, pgxTx, conversationID, toolName, idempotencyKey, prepared)
 		if err != nil {
 			return err
@@ -161,7 +164,7 @@ func (s Service) ReconcileTool(ctx context.Context, conversationID, toolName, id
 func (s Service) lookupMutation(ctx context.Context, conversationID, toolName, idempotencyKey, operation string, before, target map[string]any) (map[string]any, bool, error) {
 	var replay map[string]any
 	var found bool
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadConversationByID(ctx, pgxTx, conversationID); err != nil {
 			return err
 		}
@@ -173,7 +176,7 @@ func (s Service) lookupMutation(ctx context.Context, conversationID, toolName, i
 }
 
 func (s Service) recordMutation(ctx context.Context, conversationID, toolName, idempotencyKey, operation string, before, target, result map[string]any, extra map[string]any) error {
-	return tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		_, err := applyToolMutation(ctx, pgxTx, conversationID, toolName, idempotencyKey, operation, before, target, result, extra)
 		return err
 	})

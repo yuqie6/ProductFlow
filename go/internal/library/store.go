@@ -9,16 +9,18 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // Service 拥有全局素材库的保存、组织、收录与工作流子图库关联。
 type Service struct {
-	Pool  *pgxpool.Pool
+	DB    *gorm.DB
 	Media media.Store
 	Now   func() time.Time
 }
@@ -81,12 +83,9 @@ func scanAsset(row scanner) (Asset, error) {
 	return a, nil
 }
 
-func (s Service) loadAsset(ctx context.Context, q interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, id string) (Asset, error) {
-	asset, err := scanAsset(q.QueryRow(ctx, assetSelect+` WHERE a.id = $1`, id))
-	if errors.Is(err, pgx.ErrNoRows) {
+func (s Service) loadAsset(ctx context.Context, q *gorm.DB, id string) (Asset, error) {
+	asset, err := scanAsset(pfdb.QueryRow(ctx, q, assetSelect+` WHERE a.id = $1`, id))
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Asset{}, apperr.NotFound("素材库资产不存在")
 	}
 	if err != nil {
@@ -103,11 +102,8 @@ func (s Service) loadAsset(ctx context.Context, q interface {
 	return asset, nil
 }
 
-func loadAssets(ctx context.Context, q interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sql string, args ...any) ([]Asset, error) {
-	rows, err := q.Query(ctx, sql, args...)
+func loadAssets(ctx context.Context, q *gorm.DB, sql string, args ...any) ([]Asset, error) {
+	rows, err := pfdb.Query(ctx, q, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,16 +134,12 @@ func loadAssets(ctx context.Context, q interface {
 	return items, nil
 }
 
-type tagQuery interface {
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
-
-func loadTags(ctx context.Context, q tagQuery, assetIDs []string) (map[string][]Tag, error) {
+func loadTags(ctx context.Context, q *gorm.DB, assetIDs []string) (map[string][]Tag, error) {
 	out := map[string][]Tag{}
 	if len(assetIDs) == 0 {
 		return out, nil
 	}
-	rows, err := q.Query(ctx, `
+	rows, err := pfdb.Query(ctx, q, `
 		SELECT at.asset_id, t.id, t.name
 		FROM media_library_asset_tags at
 		JOIN media_library_tags t ON t.id = at.tag_id
@@ -169,7 +161,7 @@ func loadTags(ctx context.Context, q tagQuery, assetIDs []string) (map[string][]
 	return out, rows.Err()
 }
 
-func insertLibraryAsset(ctx context.Context, tx pgx.Tx, in Asset, p Provenance) (string, error) {
+func insertLibraryAsset(ctx context.Context, tx *gorm.DB, in Asset, p Provenance) (string, error) {
 	id := clockid.New()
 	hash, err := provenanceHash(p)
 	if err != nil {
@@ -179,7 +171,7 @@ func insertLibraryAsset(ctx context.Context, tx pgx.Tx, in Asset, p Provenance) 
 	if err != nil {
 		return "", err
 	}
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO media_library_assets (
 			id, media_object_id, source_type, source_id, source_image_session_asset_id, source_product_asset_id,
 			provenance_json, provenance_hash, revision, display_name, original_filename, folder_id,
@@ -190,12 +182,12 @@ func insertLibraryAsset(ctx context.Context, tx pgx.Tx, in Asset, p Provenance) 
 	return id, err
 }
 
-func findBySource(ctx context.Context, tx pgx.Tx, sourceType, sourceID string) (string, bool, error) {
+func findBySource(ctx context.Context, tx *gorm.DB, sourceType, sourceID string) (string, bool, error) {
 	var id string
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id FROM media_library_assets WHERE source_type = $1 AND source_id = $2
 	`, sourceType, sourceID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
@@ -204,39 +196,39 @@ func findBySource(ctx context.Context, tx pgx.Tx, sourceType, sourceID string) (
 	return id, true, nil
 }
 
-func lockFolder(ctx context.Context, tx pgx.Tx, folderID string) (Folder, error) {
+func lockFolder(ctx context.Context, tx *gorm.DB, folderID string) (Folder, error) {
 	var folder Folder
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, name FROM media_library_folders WHERE id = $1 FOR UPDATE
 	`, folderID).Scan(&folder.ID, &folder.Name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Folder{}, apperr.NotFound("素材库文件夹不存在")
 	}
 	return folder, err
 }
 
-func lockTag(ctx context.Context, tx pgx.Tx, tagID string) (Tag, error) {
+func lockTag(ctx context.Context, tx *gorm.DB, tagID string) (Tag, error) {
 	var tag Tag
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, name FROM media_library_tags WHERE id = $1 FOR UPDATE
 	`, tagID).Scan(&tag.ID, &tag.Name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Tag{}, apperr.NotFound("素材库标签不存在")
 	}
 	return tag, err
 }
 
-func getFolder(ctx context.Context, tx pgx.Tx, folderID string) (Folder, error) {
+func getFolder(ctx context.Context, tx *gorm.DB, folderID string) (Folder, error) {
 	var folder Folder
-	err := tx.QueryRow(ctx, `SELECT id, name FROM media_library_folders WHERE id = $1`, folderID).Scan(&folder.ID, &folder.Name)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT id, name FROM media_library_folders WHERE id = $1`, folderID).Scan(&folder.ID, &folder.Name)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Folder{}, apperr.NotFound("文件夹不存在")
 	}
 	return folder, err
 }
 
-func lockLibraryAssets(ctx context.Context, tx pgx.Tx, ids []string) ([]Asset, error) {
-	rows, err := tx.Query(ctx, `
+func lockLibraryAssets(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id FROM media_library_assets WHERE id = ANY($1) ORDER BY id FOR UPDATE
 	`, ids)
 	if err != nil {
@@ -261,7 +253,7 @@ func lockLibraryAssets(ctx context.Context, tx pgx.Tx, ids []string) ([]Asset, e
 	return loadAssets(ctx, tx, assetSelect+` WHERE a.id = ANY($1)`, ids)
 }
 
-func reloadInOrder(ctx context.Context, tx pgx.Tx, ids []string) ([]Asset, error) {
+func reloadInOrder(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset, error) {
 	items, err := loadAssets(ctx, tx, assetSelect+` WHERE a.id = ANY($1)`, ids)
 	if err != nil {
 		return nil, err
@@ -281,10 +273,10 @@ func reloadInOrder(ctx context.Context, tx pgx.Tx, ids []string) ([]Asset, error
 	return out, nil
 }
 
-func loadSessionAsset(ctx context.Context, tx pgx.Tx, id string) (sessionRow, error) {
+func loadSessionAsset(ctx context.Context, tx *gorm.DB, id string) (sessionRow, error) {
 	var row sessionRow
 	var verifiedAt *time.Time
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT a.id, a.kind::text, a.original_filename, a.created_at,
 		       m.id, m.storage_path, m.mime_type, m.byte_size, m.width, m.height, m.sha256,
 		       m.verification_status, m.created_at, m.verified_at
@@ -297,7 +289,7 @@ func loadSessionAsset(ctx context.Context, tx pgx.Tx, id string) (sessionRow, er
 		&row.Media.ID, &row.Media.StoragePath, &row.Media.MIMEType, &row.Media.ByteSize, &row.Media.Width, &row.Media.Height, &row.Media.SHA256,
 		&row.Media.VerificationStatus, &row.Media.CreatedAt, &verifiedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return sessionRow{}, apperr.NotFound("会话图片不存在")
 	}
 	if err != nil {
@@ -309,14 +301,14 @@ func loadSessionAsset(ctx context.Context, tx pgx.Tx, id string) (sessionRow, er
 	return row, nil
 }
 
-func requireWorkflow(ctx context.Context, tx pgx.Tx, productID, workflowID string, forUpdate bool) error {
+func requireWorkflow(ctx context.Context, tx *gorm.DB, productID, workflowID string, forUpdate bool) error {
 	sql := `SELECT id FROM workflow_graphs WHERE id = $1 AND product_id = $2`
 	if forUpdate {
 		sql += ` FOR UPDATE`
 	}
 	var id string
-	err := tx.QueryRow(ctx, sql, workflowID, productID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, sql, workflowID, productID).Scan(&id)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return apperr.NotFound("工作流不存在")
 	}
 	return err

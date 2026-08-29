@@ -9,13 +9,13 @@ import (
 )
 
 func TestStageInsertsVerifiedRow(t *testing.T) {
-	pool := testdb.Pool(t)
+	_, gdb := testdb.Open(t)
 	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	tx := gdb.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		t.Fatal(tx.Error)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	root := t.TempDir()
 	store := Store{Files: storage.Local{Root: root}}

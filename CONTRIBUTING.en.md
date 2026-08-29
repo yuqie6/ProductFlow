@@ -70,7 +70,7 @@ Official docs, release notes, PR descriptions, and contribution guidance should 
 - The backend keeps the `presentation` / `application` / `domain` / `infrastructure` layering.
 - Provider-specific SDK calls should stay in `infrastructure/prompt` or `infrastructure/image`; routes should not call providers directly.
 - Frontend API requests are centralized in `web/src/lib/api.ts`, and DTO types are centralized in `web/src/lib/types.ts`.
-- Database schema changes require an Alembic migration and should include regression coverage where practical.
+- Database schema changes go through GORM models and constraint patches in `go/internal/platform/db/schema`, and should include regression coverage where practical.
 - Changes involving upload, storage, secrets, or provider keys should consider security boundaries first.
 
 ## Commits and PRs

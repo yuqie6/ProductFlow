@@ -24,10 +24,12 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type editServer struct {
 	pool    *pgxpool.Pool
+	db      *gorm.DB
 	media   media.Store
 	svc     Service
 	srv     *httptest.Server
@@ -37,7 +39,7 @@ type editServer struct {
 
 func newEditServer(t *testing.T, provider Provider) *editServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -52,12 +54,12 @@ func newEditServer(t *testing.T, provider Provider) *editServer {
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	svc := Service{Pool: pool, Media: mediaStore, Provider: provider}
-	product.HTTP{Service: product.Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	svc := Service{DB: gdb, Media: mediaStore, Provider: provider}
+	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	HTTP{Service: svc, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	es := &editServer{pool: pool, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
+	es := &editServer{pool: pool, db: gdb, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +231,7 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 		t.Fatalf("dispatch %s", dispatchStatus)
 	}
 
-	if err := (Executor{Pool: es.pool, Media: es.media, Provider: provider}).Execute(context.Background(), task.ID); err != nil {
+	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(context.Background(), task.ID); err != nil {
 		t.Fatal(err)
 	}
 	got := es.do(t, http.MethodGet, "/api/v3/products/"+productID+"/image-edits/"+task.ID, nil, "")
@@ -251,7 +253,7 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 		"idempotency_key": "k-unknown",
 	})
 	es.mustStatus(t, queued, http.StatusAccepted)
-	failExec := Executor{Pool: es.pool, Media: es.media, Provider: MockProvider{Cap: SupportedCapability("mock-local"), Err: errors.New("boom")}}
+	failExec := Executor{DB: es.db, Media: es.media, Provider: MockProvider{Cap: SupportedCapability("mock-local"), Err: errors.New("boom")}}
 	if err := failExec.Execute(context.Background(), task3.ID); err != nil {
 		t.Fatal(err)
 	}

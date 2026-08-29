@@ -8,14 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 	var asset Asset
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var err error
 		asset, err = s.loadAsset(ctx, pgxTx, assetID)
 		return err
@@ -25,20 +26,20 @@ func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 
 func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var out Bootstrap
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM media_library_assets`).Scan(&out.TotalCount); err != nil {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_assets`).Scan(&out.TotalCount); err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM media_library_assets WHERE is_archived = FALSE`).Scan(&out.ActiveCount); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_assets WHERE is_archived = FALSE`).Scan(&out.ActiveCount); err != nil {
 			return err
 		}
 		out.ArchivedCount = out.TotalCount - out.ActiveCount
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT COUNT(*) FROM media_library_assets WHERE is_archived = FALSE AND folder_id IS NULL
 		`).Scan(&out.UnorganizedCount); err != nil {
 			return err
 		}
-		folderRows, err := pgxTx.Query(ctx, `
+		folderRows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT f.id, f.name, COUNT(a.id)
 			FROM media_library_folders f
 			LEFT JOIN media_library_assets a ON a.folder_id = f.id AND a.is_archived = FALSE
@@ -60,7 +61,7 @@ func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 		if err := folderRows.Err(); err != nil {
 			return err
 		}
-		tagRows, err := pgxTx.Query(ctx, `
+		tagRows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT t.id, t.name, COUNT(a.id)
 			FROM media_library_tags t
 			LEFT JOIN media_library_asset_tags at ON at.tag_id = t.id
@@ -113,7 +114,7 @@ func (s Service) List(ctx context.Context, in ListFilter) (ListResponse, error) 
 		asOf = decodedAsOf
 	}
 	var page ListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sql := assetSelect
 		args := []any{}
 		where := []string{}

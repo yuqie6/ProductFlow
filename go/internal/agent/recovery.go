@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type RecoverySummary struct {
@@ -18,16 +19,20 @@ type RecoverySummary struct {
 }
 
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, _ int) (RecoverySummary, error) {
-	return RecoverUnfinishedTurns(ctx, Service{Pool: pool})
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
+	return RecoverUnfinishedTurns(ctx, Service{DB: gdb})
 }
 
 func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, error) {
 	var out RecoverySummary
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := recoverExpiredExecutions(ctx, pgxTx); err != nil {
 			return err
 		}
-		rows, err := pgxTx.Query(ctx, `
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id FROM agent_turn_projections
 			WHERE resume_required = FALSE AND (
 				status IN ('queued','running','cancel_requested')
@@ -60,7 +65,7 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 		out.RecoveredTaskTurns = recovered
 		for _, id := range ids {
 			var status string
-			err := pgxTx.QueryRow(ctx, `
+			err := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT status FROM async_dispatches
 				WHERE actor_name = $1 AND aggregate_id = $2
 				ORDER BY created_at DESC LIMIT 1
@@ -78,8 +83,8 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 	return out, err
 }
 
-func recoverQueuedTaskTurns(ctx context.Context, pgxTx pgx.Tx) ([]string, int, error) {
-	rows, err := pgxTx.Query(ctx, `
+func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int, error) {
+	rows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT t.id, t.goal, t.conversation_id, c.scope_type, c.product_id
 		FROM agent_tasks t
 		JOIN agent_conversations c ON c.id = t.conversation_id
@@ -126,8 +131,8 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx pgx.Tx) ([]string, int, e
 	return ids, created, nil
 }
 
-func recoverExpiredExecutions(ctx context.Context, pgxTx pgx.Tx) (int, error) {
-	rows, err := pgxTx.Query(ctx, `
+func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) {
+	rows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT e.id, e.turn_projection_id, e.phase, t.status
 		FROM agent_turn_executions e
 		JOIN agent_turn_projections t ON t.id = e.turn_projection_id
@@ -157,7 +162,7 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx pgx.Tx) (int, error) {
 	now := time.Now().UTC()
 	_ = now
 	for _, item := range items {
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_executions
 			SET fencing_token = fencing_token + 1, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, released_at = NOW()
 			WHERE id = $1
@@ -165,14 +170,14 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx pgx.Tx) (int, error) {
 			return 0, err
 		}
 		if inSet(activeTurn, item.status) && !(item.status == "queued" && item.phase == "claimed") {
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE agent_turn_projections
 				SET status = 'unknown', error_text = $2, finished_at = NOW(), updated_at = NOW(), resume_required = FALSE
 				WHERE id = $1
 			`, item.projectionID, "Agent execution lease expired before this Turn reached a provable terminal state"); err != nil {
 				return 0, err
 			}
-			if _, err := pgxTx.Exec(ctx, `UPDATE agent_turn_executions SET phase = 'terminal' WHERE id = $1`, item.id); err != nil {
+			if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_executions SET phase = 'terminal' WHERE id = $1`, item.id); err != nil {
 				return 0, err
 			}
 			unknown++

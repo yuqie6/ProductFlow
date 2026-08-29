@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 )
 
@@ -48,7 +49,7 @@ func (s Service) StreamTurnEvents(c *gin.Context, productID *string, conversatio
 			return
 		}
 		var status string
-		_ = s.Pool.QueryRow(ctx, `SELECT status FROM agent_turn_projections WHERE id = $1`, projectionID).Scan(&status)
+		_ = pfdb.QueryRow(ctx, s.DB, `SELECT status FROM agent_turn_projections WHERE id = $1`, projectionID).Scan(&status)
 		if len(events) == 0 && inSet(terminalTurn, status) {
 			return
 		}

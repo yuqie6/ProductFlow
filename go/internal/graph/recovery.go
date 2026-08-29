@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 const defaultStaleRunningAfter = 30 * time.Minute
@@ -24,9 +25,13 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	if staleAfter <= 0 {
 		staleAfter = defaultStaleRunningAfter
 	}
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
 	var summary RecoverySummary
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
-		rows, err := pgxTx.Query(ctx, `
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id FROM workflow_graph_runs WHERE status = 'running'
 		`)
 		if err != nil {
@@ -83,7 +88,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			requeued := false
 			for _, node := range stale {
 				if nodeSafeToRequeue(node) {
-					if _, err := pgxTx.Exec(ctx, `
+					if _, err := pfdb.Exec(ctx, pgxTx, `
 						UPDATE workflow_graph_node_runs SET
 							status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 							finished_at = NULL, progress_phase = 'requeued_after_idle', progress_updated_at = NOW()
@@ -91,7 +96,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 					`, node.ID); err != nil {
 						return err
 					}
-					_, _ = pgxTx.Exec(ctx, `
+					_, _ = pfdb.Exec(ctx, pgxTx, `
 						DELETE FROM workflow_graph_provider_effects
 						WHERE node_run_id = $1 AND effect_result = 'pending'
 					`, node.ID)
@@ -107,7 +112,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				return err
 			}
 			var status string
-			if err := pgxTx.QueryRow(ctx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, run.ID).Scan(&status); err != nil {
+			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, run.ID).Scan(&status); err != nil {
 				return err
 			}
 			if isTerminalRun(status) {

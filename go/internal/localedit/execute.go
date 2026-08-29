@@ -10,18 +10,20 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 type Executor struct {
-	Pool     *pgxpool.Pool
+	DB       *gorm.DB
 	Media    media.Store
 	Provider Provider
 }
@@ -134,7 +136,7 @@ func (s snapshot) auditJSON() map[string]any {
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error) {
 	var claimed bool
 	var attemptID string
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
 			return err
@@ -172,7 +174,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		}
 		attemptID = clockid.New()
 		attemptNumber := task.Attempts + 1
-		tag, err := pgxTx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_tasks SET
 				status = 'running', active_attempt_id = $2, attempts = $3, progress_phase = 'claimed',
 				started_at = NOW(), finished_at = NULL, failure_reason = NULL, is_retryable = TRUE, updated_at = NOW()
@@ -181,10 +183,10 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if n != 1 {
 			return nil
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO local_image_edit_provider_attempts (
 				id, task_id, attempt_id, attempt_number, operation_key, request_hash,
 				phase, effect_result, provider_name, created_at, updated_at
@@ -200,7 +202,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 
 func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (snapshot, error) {
 	var out snapshot
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
 			return err
@@ -213,13 +215,13 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 			return err
 		}
 		var sourceSHA, sourcePath, sourceMIME string
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT sha256, storage_path, mime_type FROM media_objects WHERE id = $1
 		`, source.MediaObjectID).Scan(&sourceSHA, &sourcePath, &sourceMIME); err != nil {
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
 		}
 		var maskSHA, maskPath string
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT sha256, storage_path FROM media_objects WHERE id = $1
 		`, task.MaskMediaID).Scan(&maskSHA, &maskPath); err != nil {
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
@@ -254,7 +256,7 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 }
 
 func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, providerName string, requestJSON map[string]any) error {
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, attemptOK, err := lockFenced(ctx, pgxTx, taskID, attemptID)
 		if err != nil || !attemptOK {
 			return apperr.Conflict("局部编辑 attempt 已失效")
@@ -268,14 +270,14 @@ func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, provi
 			}
 			raw = b
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_tasks SET
 				progress_phase = $3, provider_name = COALESCE(NULLIF($4, ''), provider_name), updated_at = NOW()
 			WHERE id = $1 AND active_attempt_id = $2
 		`, taskID, attemptID, phase, providerName); err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_provider_attempts SET
 				phase = $3, provider_name = COALESCE(NULLIF($4, ''), provider_name),
 				request_json = COALESCE($5, request_json), updated_at = NOW()
@@ -287,7 +289,7 @@ func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, provi
 
 func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID string, result EditResult) error {
 	var compensation storage.Compensation
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, ok, err := lockFenced(ctx, pgxTx, snap.ID, attemptID)
 		if err != nil || !ok {
 			return apperr.Conflict("局部编辑 attempt 已失效")
@@ -320,7 +322,7 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 		if err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_tasks SET
 				status = 'succeeded', active_attempt_id = NULL, progress_phase = 'provider_result_received',
 				failure_reason = NULL, is_retryable = FALSE, finished_at = NOW(), result_asset_id = $2,
@@ -330,7 +332,7 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 		`, snap.ID, asset.ID, result.Model, result.ResponseID, result.ProviderStatus, attemptID); err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_provider_attempts SET
 				phase = 'succeeded', effect_result = 'applied',
 				provider_model = $3, provider_response_id = NULLIF($4, ''), provider_status = NULLIF($5, ''),
@@ -348,12 +350,12 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 }
 
 func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, effect, detail string, retryable bool, providerStatus, responseID string) {
-	_ = tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, ok, err := lockFenced(ctx, pgxTx, taskID, attemptID)
 		if err != nil || !ok {
 			return nil
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_tasks SET
 				status = $3, active_attempt_id = NULL, progress_phase = $4, failure_reason = $5,
 				is_retryable = $6, finished_at = NOW(), provider_status = NULLIF($7, ''),
@@ -362,7 +364,7 @@ func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, 
 		`, taskID, attemptID, status, phase, detail, retryable, providerStatus, responseID); err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE local_image_edit_provider_attempts SET
 				phase = $3, effect_result = $4, detail = $5,
 				provider_status = NULLIF($6, ''), provider_response_id = NULLIF($7, ''), updated_at = NOW()
@@ -372,31 +374,31 @@ func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, 
 	})
 }
 
-func lockFenced(ctx context.Context, tx pgx.Tx, taskID, attemptID string) (taskRow, bool, error) {
-	row, err := scanTask(tx.QueryRow(ctx, `
+func lockFenced(ctx context.Context, tx *gorm.DB, taskID, attemptID string) (taskRow, bool, error) {
+	row, err := scanTask(pfdb.QueryRow(ctx, tx, `
 		SELECT `+taskSelect+` FROM local_image_edit_tasks
 		WHERE id = $1 AND status = 'running' AND active_attempt_id = $2
 		FOR UPDATE
 	`, taskID, attemptID))
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return taskRow{}, false, nil
 	}
 	if err != nil {
 		return taskRow{}, false, err
 	}
 	var attemptExists string
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		SELECT id FROM local_image_edit_provider_attempts WHERE task_id = $1 AND attempt_id = $2 FOR UPDATE
 	`, taskID, attemptID).Scan(&attemptExists)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return taskRow{}, false, apperr.Conflict("局部编辑 attempt 审计记录不存在")
 	}
 	return row, err == nil, err
 }
 
-func markStaleClaimed(ctx context.Context, tx pgx.Tx, task taskRow) error {
+func markStaleClaimed(ctx context.Context, tx *gorm.DB, task taskRow) error {
 	if task.ActiveAttemptID != nil {
-		tag, err := tx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, tx, `
 			UPDATE local_image_edit_provider_attempts SET
 				phase = 'failed', effect_result = 'failed',
 				detail = 'worker claim 已过期，provider boundary 尚未开始', updated_at = NOW()
@@ -405,11 +407,11 @@ func markStaleClaimed(ctx context.Context, tx pgx.Tx, task taskRow) error {
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if n != 1 {
 			return apperr.Conflict("局部编辑 provider effect 已知晓，不能安全重入队")
 		}
 	}
-	_, err := tx.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, tx, `
 		UPDATE local_image_edit_tasks SET
 			status = 'queued', active_attempt_id = NULL, progress_phase = NULL,
 			started_at = NULL, updated_at = NOW()
@@ -418,15 +420,15 @@ func markStaleClaimed(ctx context.Context, tx pgx.Tx, task taskRow) error {
 	return err
 }
 
-func markUnknownLocked(ctx context.Context, tx pgx.Tx, task taskRow, detail string) error {
+func markUnknownLocked(ctx context.Context, tx *gorm.DB, task taskRow, detail string) error {
 	if task.ActiveAttemptID != nil {
-		_, _ = tx.Exec(ctx, `
+		_, _ = pfdb.Exec(ctx, tx, `
 			UPDATE local_image_edit_provider_attempts SET
 				phase = 'unknown', effect_result = 'unknown', detail = $3, updated_at = NOW()
 			WHERE task_id = $1 AND attempt_id = $2
 		`, task.ID, *task.ActiveAttemptID, detail)
 	}
-	_, err := tx.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, tx, `
 		UPDATE local_image_edit_tasks SET
 			status = 'unknown', active_attempt_id = NULL, progress_phase = 'unknown_provider_effect',
 			failure_reason = $2, is_retryable = FALSE, finished_at = NOW(), updated_at = NOW()

@@ -7,9 +7,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 // UpdateFactsInput 对应 PUT /v3/products/{id}/facts。
@@ -29,7 +32,7 @@ type UpdateFactsInput struct {
 // GetFacts 返回当前选中的 fact 版本；v2 无图出生尚未写 fact 时 id 为 null。
 func (s Service) GetFacts(ctx context.Context, productID string) (FactsResponse, error) {
 	var out FactsResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProduct(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -43,7 +46,7 @@ func (s Service) GetFacts(ctx context.Context, productID string) (FactsResponse,
 // UpdateFacts 先锁商品再校验 expected version，然后写入新的不可变 fact 版本。
 func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFactsInput) (FactsResponse, error) {
 	var out FactsResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProductForUpdate(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -83,7 +86,7 @@ func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFac
 			}
 			product.SourceNote = note
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE products SET name = $1, category = $2, price = $3, source_note = $4, updated_at = NOW()
 			WHERE id = $5
 		`, product.Name, product.Category, product.Price, product.SourceNote, product.ID)
@@ -129,7 +132,7 @@ func checkExpectedFactVersion(in UpdateFactsInput, product Product, current *Fac
 	return nil
 }
 
-func factsResponse(ctx context.Context, tx pgx.Tx, product Product) (FactsResponse, error) {
+func factsResponse(ctx context.Context, tx *gorm.DB, product Product) (FactsResponse, error) {
 	current, err := loadCurrentFactSet(ctx, tx, product)
 	if err != nil {
 		return FactsResponse{}, err
@@ -152,17 +155,17 @@ func factsResponse(ctx context.Context, tx pgx.Tx, product Product) (FactsRespon
 	return out, nil
 }
 
-func loadCurrentFactSet(ctx context.Context, tx pgx.Tx, product Product) (*FactSet, error) {
+func loadCurrentFactSet(ctx context.Context, tx *gorm.DB, product Product) (*FactSet, error) {
 	if product.FactSetVersionID == nil {
 		return nil, nil
 	}
 	var set FactSet
 	var payload []byte
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, product_id, version, payload_json, created_at
 		FROM product_fact_set_versions WHERE id = $1
 	`, *product.FactSetVersionID).Scan(&set.ID, &set.ProductID, &set.Version, &payload, &set.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

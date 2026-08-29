@@ -7,8 +7,10 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 )
 
 func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (WorkspaceLaunchResponse, error) {
@@ -44,7 +46,7 @@ func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConvers
 		return ReconcileResponse{}, err
 	}
 	var convID string
-	err = s.Pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.DB, `
 		SELECT id FROM agent_conversations WHERE creation_idempotency_key = $1
 	`, key).Scan(&convID)
 	if err != nil {
@@ -141,7 +143,7 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 	}
 	q += ` ORDER BY updated_at DESC, id DESC LIMIT $` + itoaN(n)
 	args = append(args, limit+1)
-	rows, err := s.Pool.Query(ctx, q, args...)
+	rows, err := pfdb.Query(ctx, s.DB, q, args...)
 	if err != nil {
 		return GlobalProductListResponse{}, err
 	}
@@ -241,12 +243,12 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 		return nil, err
 	}
 	var targetID string
-	err = s.Pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.DB, `
 		SELECT id FROM agent_conversations
 		WHERE scope_type = 'product_workflow' AND product_id = $1
 		ORDER BY updated_at DESC, id DESC LIMIT 1
 	`, productID).Scan(&targetID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, apperr.NotFound("商品没有 Agent 工作区")
 	}
 	if err != nil {

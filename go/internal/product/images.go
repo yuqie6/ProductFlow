@@ -4,17 +4,20 @@ import (
 	"context"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 // SetCover 把展示封面指向一张属于该商品的已核验图片，不改 facts 或节点绑定。
 func (s Service) SetCover(ctx context.Context, productID, assetID string) (Detail, error) {
 	var detail Detail
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
@@ -44,11 +47,11 @@ func (s Service) SetCover(ctx context.Context, productID, assetID string) (Detai
 // ClearCover 只清展示封面，不删资产。
 func (s Service) ClearCover(ctx context.Context, productID string) (Detail, error) {
 	var detail Detail
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		_, err := pgxTx.Exec(ctx, `UPDATE products SET cover_image_asset_id = NULL, updated_at = NOW() WHERE id = $1`, productID)
+		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE products SET cover_image_asset_id = NULL, updated_at = NOW() WHERE id = $1`, productID)
 		if err != nil {
 			return err
 		}
@@ -72,7 +75,7 @@ func (s Service) AddImages(ctx context.Context, productID string, uploads []Uplo
 	}
 	var created []ImageAsset
 	var compensation storage.Compensation
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProductForUpdate(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -94,7 +97,7 @@ func (s Service) AddImages(ctx context.Context, productID string, uploads []Uplo
 				return err
 			}
 		} else {
-			_, err = pgxTx.Exec(ctx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
+			_, err = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
 			if err != nil {
 				return err
 			}
@@ -117,7 +120,7 @@ func (s Service) AddImages(ctx context.Context, productID string, uploads []Uplo
 // DeleteAsset 在无封面/节点/生成/交付/局部编辑引用时删除商品图片身份，commit 后再清无引用文件。
 func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 	var files []media.Deleted
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		asset, err := loadAsset(ctx, pgxTx, assetID)
 		if err != nil {
 			return err
@@ -125,10 +128,10 @@ func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 		if err := ensureAssetNotReferenced(ctx, pgxTx, assetID); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM product_image_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM product_image_assets WHERE id = $1`, assetID); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, asset.ProductID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, asset.ProductID); err != nil {
 			return err
 		}
 		files, err = media.PruneUnreferenced(ctx, pgxTx, []string{asset.MediaObjectID})
@@ -143,7 +146,7 @@ func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 	return nil
 }
 
-func ensureAssetNotReferenced(ctx context.Context, tx pgx.Tx, assetID string) error {
+func ensureAssetNotReferenced(ctx context.Context, tx *gorm.DB, assetID string) error {
 	checks := []struct {
 		sql    string
 		detail string
@@ -161,11 +164,11 @@ func ensureAssetNotReferenced(ctx context.Context, tx pgx.Tx, assetID string) er
 	}
 	for _, check := range checks {
 		var one int
-		err := tx.QueryRow(ctx, check.sql, assetID).Scan(&one)
+		err := pfdb.QueryRow(ctx, tx, check.sql, assetID).Scan(&one)
 		if err == nil {
 			return apperr.Conflict(check.detail)
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, sqldb.ErrNoRows) {
 			return err
 		}
 	}

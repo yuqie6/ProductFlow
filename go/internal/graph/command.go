@@ -6,13 +6,16 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // StageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
-func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet ChangeSet) (CommandResult, error) {
+func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
 	if changeSet.BaseGraphRevision != 0 {
 		return CommandResult{}, apperr.Conflict("新建图的 base_graph_revision 必须为 0")
 	}
@@ -46,7 +49,7 @@ func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet
 		actor = ActorUser
 	}
 	graphID := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
 		VALUES ($1, $2, $3, TRUE, $4, $5, NOW(), NOW())
 	`, graphID, productID, title, SchemaVersion, applied.Revision)
@@ -64,7 +67,7 @@ func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet
 	if err != nil {
 		return CommandResult{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE workflow_graphs SET updated_at = NOW() WHERE id = $1`, graphID)
+	_, err = pfdb.Exec(ctx, tx, `UPDATE workflow_graphs SET updated_at = NOW() WHERE id = $1`, graphID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -83,7 +86,7 @@ func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet
 
 func recordOperationGroup(
 	ctx context.Context,
-	tx pgx.Tx,
+	tx *gorm.DB,
 	graphID string,
 	changeSet ChangeSet,
 	inverse []Operation,
@@ -103,7 +106,7 @@ func recordOperationGroup(
 		actor = ActorUser
 	}
 	id := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO workflow_operation_groups (
 			id, graph_id, actor_type, history_kind, summary, base_revision, result_revision,
 			operations_json, inverse_operations_json, created_at
@@ -115,19 +118,19 @@ func recordOperationGroup(
 	return id, nil
 }
 
-func lockProduct(ctx context.Context, tx pgx.Tx, productID string) error {
+func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
 	var id string
-	err := tx.QueryRow(ctx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return apperr.NotFound("商品不存在")
 	}
 	return err
 }
 
-func activeGraphExists(ctx context.Context, tx pgx.Tx, productID string) (bool, error) {
+func activeGraphExists(ctx context.Context, tx *gorm.DB, productID string) (bool, error) {
 	var id string
-	err := tx.QueryRow(ctx, `SELECT id FROM workflow_graphs WHERE product_id = $1 AND active = TRUE`, productID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM workflow_graphs WHERE product_id = $1 AND active = TRUE`, productID).Scan(&id)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -136,7 +139,7 @@ func activeGraphExists(ctx context.Context, tx pgx.Tx, productID string) (bool, 
 	return true, nil
 }
 
-func validateBoundAssets(ctx context.Context, tx pgx.Tx, productID string, graph AppliedGraph) error {
+func validateBoundAssets(ctx context.Context, tx *gorm.DB, productID string, graph AppliedGraph) error {
 	wanted := map[string]struct{}{}
 	for _, node := range graph.Nodes {
 		if node.BoundAssetID != nil && *node.BoundAssetID != "" {
@@ -147,7 +150,7 @@ func validateBoundAssets(ctx context.Context, tx pgx.Tx, productID string, graph
 		return nil
 	}
 	ids := sortedKeys(wanted)
-	rows, err := tx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id FROM product_image_assets
 		WHERE product_id = $1 AND id = ANY($2)
 	`, productID, ids)
@@ -172,7 +175,7 @@ func validateBoundAssets(ctx context.Context, tx pgx.Tx, productID string, graph
 	return nil
 }
 
-func validateProductSourceConfigs(ctx context.Context, tx pgx.Tx, graphProductID string, graph AppliedGraph) error {
+func validateProductSourceConfigs(ctx context.Context, tx *gorm.DB, graphProductID string, graph AppliedGraph) error {
 	for _, node := range graph.Nodes {
 		if node.NodeType != NodeProductSource {
 			continue
@@ -184,7 +187,7 @@ func validateProductSourceConfigs(ctx context.Context, tx pgx.Tx, graphProductID
 	return nil
 }
 
-func resolveProductSource(ctx context.Context, tx pgx.Tx, graphProductID string, config map[string]any) error {
+func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) error {
 	payload := config
 	if payload == nil {
 		payload = map[string]any{}
@@ -212,8 +215,8 @@ func resolveProductSource(ctx context.Context, tx pgx.Tx, graphProductID string,
 		return nil
 	}
 	var currentFactSetID *string
-	err := tx.QueryRow(ctx, `SELECT current_fact_set_version_id FROM products WHERE id = $1`, *sourceProductID).Scan(&currentFactSetID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT current_fact_set_version_id FROM products WHERE id = $1`, *sourceProductID).Scan(&currentFactSetID)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return apperr.Validation("商品资料节点绑定的商品不存在")
 	}
 	if err != nil {
@@ -227,10 +230,10 @@ func resolveProductSource(ctx context.Context, tx pgx.Tx, graphProductID string,
 		}
 		factSetID := strings.TrimSpace(s)
 		var owner string
-		err := tx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, tx, `
 			SELECT product_id FROM product_fact_set_versions WHERE id = $1 AND product_id = $2
 		`, factSetID, *sourceProductID).Scan(&owner)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return apperr.Validation("fact_set_version_id 不属于绑定商品")
 		}
 		return err
@@ -239,8 +242,8 @@ func resolveProductSource(ctx context.Context, tx pgx.Tx, graphProductID string,
 		return nil
 	}
 	var owner string
-	err = tx.QueryRow(ctx, `SELECT product_id FROM product_fact_set_versions WHERE id = $1`, *currentFactSetID).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = pfdb.QueryRow(ctx, tx, `SELECT product_id FROM product_fact_set_versions WHERE id = $1`, *currentFactSetID).Scan(&owner)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -252,9 +255,9 @@ func resolveProductSource(ctx context.Context, tx pgx.Tx, graphProductID string,
 	return nil
 }
 
-func insertGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applied AppliedGraph) error {
+func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
 	for index, group := range applied.Groups {
-		_, err := tx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_groups (id, graph_id, title, sort_order, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, NOW(), NOW())
 		`, group.ID, graphID, group.Title, index)
@@ -267,7 +270,7 @@ func insertGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applied
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_nodes (
 				id, graph_id, node_type, title, position_x, position_y,
 				config_json, bound_image_asset_id, group_id, created_at, updated_at
@@ -278,7 +281,7 @@ func insertGraphContents(ctx context.Context, tx pgx.Tx, graphID string, applied
 		}
 	}
 	for _, edge := range applied.Edges {
-		_, err := tx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, tx, `
 			INSERT INTO workflow_graph_edges (
 				id, graph_id, source_node_id, target_node_id, data_type, role, sort_order, created_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())

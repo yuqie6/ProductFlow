@@ -1,0 +1,1605 @@
+package schema
+
+// EnumDDL and ExtraDDL are applied around AutoMigrate.
+// Each statement is idempotent (IF NOT EXISTS or duplicate_object).
+
+// EnumDDL creates PostgreSQL enum types, including leftover unused types from Alembic history.
+
+var EnumDDL = []string{
+	`DO $enum$ BEGIN
+CREATE TYPE agentcheckpointkind AS ENUM ('before_model_request', 'tool_effect_intent', 'tool_effect_result', 'question_required', 'external_job_submitted', 'terminal');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentconversationscope AS ENUM ('product_workflow', 'global');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentconversationstatus AS ENUM ('collecting', 'awaiting_confirmation', 'completed', 'failed', 'canceled', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentexecutionphase AS ENUM ('claimed', 'model', 'tool', 'waiting_input', 'external_job', 'terminal');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentsessionstatus AS ENUM ('active', 'archived');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agenttaskstatus AS ENUM ('queued', 'running', 'waiting_user', 'awaiting_confirmation', 'succeeded', 'failed', 'canceled', 'paused', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agenttoolmutationstatus AS ENUM ('prepared', 'applied', 'failed', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentturnstatus AS ENUM ('queued', 'running', 'requires_input', 'awaiting_confirmation', 'succeeded', 'failed', 'cancel_requested', 'canceled', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE agentworkflowrunrequeststatus AS ENUM ('awaiting_confirmation', 'confirmed', 'succeeded', 'failed', 'cancelled');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE asyncdispatchstatus AS ENUM ('pending', 'sent', 'consumed', 'dead');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE copystatus AS ENUM ('draft', 'confirmed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE imagesessionassetkind AS ENUM ('reference_upload', 'generated_image');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE jobstatus AS ENUM ('queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE libraryorganizationdraftstatus AS ENUM ('awaiting_confirmation', 'confirmed', 'failed', 'cancelled');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE localimageedittaskstatus AS ENUM ('draft', 'queued', 'running', 'succeeded', 'failed', 'cancelled', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE mediaverificationstatus AS ENUM ('verified', 'legacy_pending', 'missing');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE posterkind AS ENUM ('main_image', 'promo_poster');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE productimageorigintype AS ENUM ('upload', 'workflow_generation', 'image_session_attach', 'local_edit');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE sourceassetkind AS ENUM ('original_image', 'reference_image', 'processed_product_image');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowdraftstatus AS ENUM ('collecting', 'awaiting_confirmation', 'confirmed', 'materializing', 'ready', 'failed', 'cancelled');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflownodestatus AS ENUM ('idle', 'queued', 'running', 'succeeded', 'failed', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflownodetype AS ENUM ('product_context', 'reference_image', 'copy_generation', 'image_generation', 'prompt_generation');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowrecipecreationsource AS ENUM ('user_extract', 'official_seed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowrecipekind AS ENUM ('workflow_recipe', 'recipe_fragment');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowrecipeorigin AS ENUM ('official', 'user');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowrevealeventkind AS ENUM ('folder', 'node', 'edge', 'completed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+	`DO $enum$ BEGIN
+CREATE TYPE workflowrunstatus AS ENUM ('running', 'succeeded', 'failed', 'cancelled', 'unknown');
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $enum$;`,
+}
+
+// ExtraDDL adds CHECK/UNIQUE/FK constraints and indexes AutoMigrate does not own.
+
+var ExtraDDL = []string{
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT ck_agent_conversations_creation_idempotency_pair CHECK (creation_idempotency_key IS NULL AND creation_request_hash IS NULL OR creation_idempotency_key IS NOT NULL AND length(creation_idempotency_key::text) > 0 AND creation_request_hash IS NOT NULL AND length(creation_request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT ck_agent_conversations_intake_idempotency_pair CHECK (intake_idempotency_key IS NULL AND intake_request_hash IS NULL OR intake_idempotency_key IS NOT NULL AND length(intake_idempotency_key::text) > 0 AND intake_request_hash IS NOT NULL AND length(intake_request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT ck_agent_conversations_scope_fields CHECK (scope_type = 'product_workflow'::agentconversationscope AND product_id IS NOT NULL OR scope_type = 'global'::agentconversationscope AND product_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT ck_agent_conversations_scope_type CHECK (scope_type = ANY (ARRAY['product_workflow'::agentconversationscope, 'global'::agentconversationscope]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT fk_agent_conversations_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT fk_agent_conversations_session_id FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT uq_agent_conversations_creation_idempotency_key UNIQUE (creation_idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT uq_agent_conversations_harness_run_id UNIQUE (harness_run_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_page_context_snapshots ADD CONSTRAINT ck_agent_page_context_snapshots_digest CHECK (length(digest::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_page_context_snapshots ADD CONSTRAINT fk_agent_page_context_snapshots_task_id FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_sessions ADD CONSTRAINT fk_agent_sessions_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tasks ADD CONSTRAINT fk_agent_tasks_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tasks ADD CONSTRAINT fk_agent_tasks_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tasks ADD CONSTRAINT fk_agent_tasks_session_id FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tasks ADD CONSTRAINT uq_agent_tasks_harness_run_id UNIQUE (harness_run_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tool_mutations ADD CONSTRAINT ck_agent_tool_mutations_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tool_mutations ADD CONSTRAINT fk_agent_tool_mutations_asset_id FOREIGN KEY (asset_id) REFERENCES product_image_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tool_mutations ADD CONSTRAINT fk_agent_tool_mutations_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tool_mutations ADD CONSTRAINT uq_agent_tool_mutations_conversation_tool_key UNIQUE (conversation_id, tool_name, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT ck_agent_turn_checkpoints_positive_attempt CHECK (attempt > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT ck_agent_turn_checkpoints_positive_fencing CHECK (fencing_token > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT ck_agent_turn_checkpoints_positive_sequence CHECK (sequence > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT fk_agent_turn_checkpoints_execution_id FOREIGN KEY (execution_id) REFERENCES agent_turn_executions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT fk_agent_turn_checkpoints_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_checkpoints ADD CONSTRAINT uq_agent_turn_checkpoints_execution_attempt_sequence UNIQUE (execution_id, attempt, sequence);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_effect_reconciliations ADD CONSTRAINT ck_agent_turn_effect_reconciliations_effect_result CHECK (effect_result::text = ANY (ARRAY['applied'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_effect_reconciliations ADD CONSTRAINT ck_agent_turn_effect_reconciliations_state CHECK (reconciliation_state::text = ANY (ARRAY['applied'::character varying, 'not_applied'::character varying, 'conflict'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_effect_reconciliations ADD CONSTRAINT fk_agent_turn_effect_reconciliations_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_effect_reconciliations ADD CONSTRAINT uq_agent_turn_effect_reconciliations_projection_tool UNIQUE (turn_projection_id, tool_call_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_attempt CHECK (attempt IS NULL OR attempt > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_fencing CHECK (fencing_token IS NULL OR fencing_token > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_positive_sequence CHECK (sequence > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_schema_version CHECK (schema_version = 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT fk_agent_turn_events_execution_id FOREIGN KEY (execution_id) REFERENCES agent_turn_executions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT fk_agent_turn_events_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT uq_agent_turn_events_projection_sequence UNIQUE (turn_projection_id, sequence);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_executions ADD CONSTRAINT ck_agent_turn_executions_non_negative_attempt CHECK (attempt >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_executions ADD CONSTRAINT ck_agent_turn_executions_non_negative_fencing CHECK (fencing_token >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_executions ADD CONSTRAINT fk_agent_turn_executions_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_executions ADD CONSTRAINT uq_agent_turn_executions_projection_id UNIQUE (turn_projection_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT ck_agent_turn_projections_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT fk_agent_turn_proj_library_org_draft_rev_id FOREIGN KEY (library_organization_draft_revision_id) REFERENCES library_organization_draft_revisions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT fk_agent_turn_projections_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT fk_agent_turn_projections_page_context_snapshot_id FOREIGN KEY (page_context_snapshot_id) REFERENCES agent_page_context_snapshots(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT fk_agent_turn_projections_task_id FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT fk_agent_turn_projections_workflow_run_request_id FOREIGN KEY (workflow_run_request_id) REFERENCES agent_workflow_run_requests(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT uq_agent_turn_proj_library_org_draft_rev_id UNIQUE (library_organization_draft_revision_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT uq_agent_turn_projections_conversation_key UNIQUE (conversation_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT uq_agent_turn_projections_harness_turn_id UNIQUE (harness_turn_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT uq_agent_turn_projections_workflow_run_request_id UNIQUE (workflow_run_request_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_graph_required CHECK (graph_id IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_positive_revision CHECK (expected_workflow_revision > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_source_step_id CHECK (length(source_step_id::text) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_graph_run_id FOREIGN KEY (graph_run_id) REFERENCES workflow_graph_runs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_source_graph_run_id FOREIGN KEY (source_graph_run_id) REFERENCES workflow_graph_runs(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT fk_agent_workflow_run_requests_task_id FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT uq_agent_workflow_run_requests_conversation_key UNIQUE (conversation_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE async_dispatches ADD CONSTRAINT ck_async_dispatches_non_negative_attempts CHECK (attempts >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE async_dispatches ADD CONSTRAINT ck_async_dispatches_status CHECK (status = ANY (ARRAY['pending'::asyncdispatchstatus, 'sent'::asyncdispatchstatus, 'consumed'::asyncdispatchstatus, 'dead'::asyncdispatchstatus]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE async_dispatches ADD CONSTRAINT uq_async_dispatches_delivery_key UNIQUE (delivery_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_active_attempt CHECK (status = 'running'::jobstatus AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL AND finished_at IS NULL OR status <> 'running'::jobstatus AND active_attempt_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_non_negative_attempts CHECK (attempts >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_result_state CHECK (status = 'succeeded'::jobstatus AND result_asset_id IS NOT NULL AND finished_at IS NOT NULL OR status = 'failed'::jobstatus AND result_asset_id IS NULL AND finished_at IS NOT NULL OR (status = ANY (ARRAY['queued'::jobstatus, 'running'::jobstatus])) AND result_asset_id IS NULL AND finished_at IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_schema_version CHECK (spec_schema_version = 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_spec_hash CHECK (length(spec_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT ck_delivery_rendition_jobs_status CHECK (status = ANY (ARRAY['queued'::jobstatus, 'running'::jobstatus, 'succeeded'::jobstatus, 'failed'::jobstatus]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT fk_delivery_rendition_jobs_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT fk_delivery_rendition_jobs_result_asset_id FOREIGN KEY (result_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT fk_delivery_rendition_jobs_source_asset_id FOREIGN KEY (source_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT uq_delivery_rendition_jobs_result_asset_id UNIQUE (result_asset_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_rendition_jobs ADD CONSTRAINT uq_delivery_rendition_jobs_source_spec UNIQUE (source_asset_id, spec_hash);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_assets ADD CONSTRAINT fk_image_session_assets_media_object_id FOREIGN KEY (media_object_id) REFERENCES media_objects(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_assets ADD CONSTRAINT image_session_assets_session_id_fkey FOREIGN KEY (session_id) REFERENCES image_sessions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_generation_tasks ADD CONSTRAINT ck_image_session_generation_tasks_active_attempt CHECK (status = 'running'::jobstatus AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL AND finished_at IS NULL OR status <> 'running'::jobstatus AND active_attempt_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_generation_tasks ADD CONSTRAINT ck_image_session_generation_tasks_non_negative_attempts CHECK (attempts >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_generation_tasks ADD CONSTRAINT fk_image_session_generation_tasks_base_asset_id FOREIGN KEY (base_asset_id) REFERENCES image_session_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_generation_tasks ADD CONSTRAINT image_session_generation_tasks_session_id_fkey FOREIGN KEY (session_id) REFERENCES image_sessions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT ck_image_session_provider_effects_candidate_count CHECK (candidate_count >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT ck_image_session_provider_effects_candidate_start CHECK (candidate_start_index >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT ck_image_session_provider_effects_effect_result CHECK (effect_result::text = ANY (ARRAY['pending'::character varying, 'applied'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT ck_image_session_provider_effects_reconciliation_state CHECK (reconciliation_state::text = ANY (ARRAY['not_requested'::character varying, 'applied'::character varying, 'not_applied'::character varying, 'unknown'::character varying, 'unsupported'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT ck_image_session_provider_effects_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT fk_image_session_provider_effects_generation_task_id FOREIGN KEY (generation_task_id) REFERENCES image_session_generation_tasks(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT uq_image_session_provider_effects_operation_key UNIQUE (operation_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_provider_effects ADD CONSTRAINT uq_image_session_provider_effects_task_candidate UNIQUE (generation_task_id, candidate_start_index);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_rounds ADD CONSTRAINT fk_image_session_rounds_base_asset_id FOREIGN KEY (base_asset_id) REFERENCES image_session_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_rounds ADD CONSTRAINT image_session_rounds_generated_asset_id_fkey FOREIGN KEY (generated_asset_id) REFERENCES image_session_assets(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_session_rounds ADD CONSTRAINT image_session_rounds_session_id_fkey FOREIGN KEY (session_id) REFERENCES image_sessions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT ck_library_organization_draft_revisions_artifact_origin_pair CHECK (source_turn_id IS NULL AND source_artifact_step_id IS NULL OR source_turn_id IS NOT NULL AND source_artifact_step_id IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT ck_library_organization_draft_revisions_payload_hash CHECK (length(payload_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT ck_library_organization_draft_revisions_positive_version CHECK (version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT ck_library_organization_draft_revisions_schema_version CHECK (schema_version = 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT fk_library_organization_draft_revisions_draft_id FOREIGN KEY (draft_id) REFERENCES library_organization_drafts(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT uq_library_organization_draft_revisions_artifact_origin UNIQUE (draft_id, source_turn_id, source_artifact_step_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_draft_revisions ADD CONSTRAINT uq_library_organization_draft_revisions_draft_version UNIQUE (draft_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_drafts ADD CONSTRAINT ck_library_organization_drafts_confirmation_pair CHECK (confirmation_idempotency_key IS NULL AND confirmation_request_hash IS NULL OR confirmation_idempotency_key IS NOT NULL AND length(confirmation_idempotency_key::text) > 0 AND confirmation_request_hash IS NOT NULL AND length(confirmation_request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_drafts ADD CONSTRAINT fk_library_organization_drafts_confirmed_revision_id FOREIGN KEY (confirmed_revision_id) REFERENCES library_organization_draft_revisions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_drafts ADD CONSTRAINT fk_library_organization_drafts_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_drafts ADD CONSTRAINT fk_library_organization_drafts_current_revision_id FOREIGN KEY (current_revision_id) REFERENCES library_organization_draft_revisions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE library_organization_drafts ADD CONSTRAINT uq_library_organization_drafts_conversation_id UNIQUE (conversation_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT ck_local_image_edit_adoption_events_artifacts CHECK (from_artifact_id IS NOT NULL AND to_artifact_id IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT ck_local_image_edit_adoption_events_type CHECK (event_type::text = ANY (ARRAY['adopt'::character varying, 'revert'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_from_artifact_id FOREIGN KEY (from_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_node_id FOREIGN KEY (node_id) REFERENCES workflow_graph_nodes(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_related_event_id FOREIGN KEY (related_event_id) REFERENCES local_image_edit_adoption_events(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_task_id FOREIGN KEY (task_id) REFERENCES local_image_edit_tasks(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_adoption_events ADD CONSTRAINT fk_local_image_edit_adoption_events_to_artifact_id FOREIGN KEY (to_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT ck_local_image_edit_provider_attempts_effect_result CHECK (effect_result::text = ANY (ARRAY['pending'::character varying, 'applied'::character varying, 'failed'::character varying, 'unknown'::character varying, 'unsupported'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT ck_local_image_edit_provider_attempts_phase CHECK (phase::text = ANY (ARRAY['claimed'::character varying, 'provider_pending'::character varying, 'provider_call'::character varying, 'provider_result_received'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT ck_local_image_edit_provider_attempts_positive_number CHECK (attempt_number >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT ck_local_image_edit_provider_attempts_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT fk_local_image_edit_provider_attempts_late_result_asset_id FOREIGN KEY (late_result_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT fk_local_image_edit_provider_attempts_task_id FOREIGN KEY (task_id) REFERENCES local_image_edit_tasks(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT uq_local_image_edit_provider_attempts_task_attempt UNIQUE (task_id, attempt_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_provider_attempts ADD CONSTRAINT uq_local_image_edit_provider_attempts_task_number UNIQUE (task_id, attempt_number);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_task_references ADD CONSTRAINT ck_local_image_edit_task_references_bounded_order CHECK (sort_order >= 0 AND sort_order < 6);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_task_references ADD CONSTRAINT fk_local_image_edit_task_references_asset_id FOREIGN KEY (asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_task_references ADD CONSTRAINT fk_local_image_edit_task_references_task_id FOREIGN KEY (task_id) REFERENCES local_image_edit_tasks(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_task_references ADD CONSTRAINT uq_local_image_edit_task_references_task_order UNIQUE (task_id, sort_order);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_active_attempt CHECK (status = 'running'::localimageedittaskstatus AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL AND finished_at IS NULL OR status <> 'running'::localimageedittaskstatus AND active_attempt_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_attempts CHECK (attempts >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_provider_intent CHECK (request_hash IS NULL OR requested_provider_name IS NOT NULL AND requested_local_edit_mode IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_request_hash CHECK (request_hash IS NULL OR length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_result_state CHECK (status = 'succeeded'::localimageedittaskstatus AND result_asset_id IS NOT NULL AND finished_at IS NOT NULL OR (status = ANY (ARRAY['draft'::localimageedittaskstatus, 'queued'::localimageedittaskstatus, 'running'::localimageedittaskstatus, 'failed'::localimageedittaskstatus, 'cancelled'::localimageedittaskstatus, 'unknown'::localimageedittaskstatus])) AND result_asset_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_revision CHECK (revision >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_source_media_hash CHECK (length(source_media_sha256::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT ck_local_image_edit_tasks_status CHECK (status = ANY (ARRAY['draft'::localimageedittaskstatus, 'queued'::localimageedittaskstatus, 'running'::localimageedittaskstatus, 'succeeded'::localimageedittaskstatus, 'failed'::localimageedittaskstatus, 'cancelled'::localimageedittaskstatus, 'unknown'::localimageedittaskstatus]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_mask_media_object_id FOREIGN KEY (mask_media_object_id) REFERENCES media_objects(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_result_asset_id FOREIGN KEY (result_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_source_artifact_asset_id FOREIGN KEY (source_artifact_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_source_artifact_id FOREIGN KEY (source_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_source_asset_id FOREIGN KEY (source_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_target_graph_id FOREIGN KEY (target_graph_id) REFERENCES workflow_graphs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT fk_local_image_edit_tasks_target_node_id FOREIGN KEY (target_node_id) REFERENCES workflow_graph_nodes(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE local_image_edit_tasks ADD CONSTRAINT uq_local_image_edit_tasks_product_idempotency UNIQUE (product_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_asset_tags ADD CONSTRAINT fk_media_library_asset_tags_asset_id FOREIGN KEY (asset_id) REFERENCES media_library_assets(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_asset_tags ADD CONSTRAINT fk_media_library_asset_tags_tag_id FOREIGN KEY (tag_id) REFERENCES media_library_tags(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT ck_media_library_assets_provenance_hash CHECK (length(provenance_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT ck_media_library_assets_revision CHECK (revision >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT ck_media_library_assets_source_type CHECK (source_type::text = ANY (ARRAY['image_session_generated'::character varying, 'product_asset'::character varying, 'direct_upload'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT fk_media_library_assets_folder_id FOREIGN KEY (folder_id) REFERENCES media_library_folders(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT fk_media_library_assets_media_object_id FOREIGN KEY (media_object_id) REFERENCES media_objects(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT fk_media_library_assets_source_image_session_asset_id FOREIGN KEY (source_image_session_asset_id) REFERENCES image_session_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT fk_media_library_assets_source_product_asset_id FOREIGN KEY (source_product_asset_id) REFERENCES product_image_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT uq_media_library_assets_source UNIQUE (source_type, source_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_collection_keys ADD CONSTRAINT ck_media_library_collection_keys_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_collection_keys ADD CONSTRAINT fk_media_library_collection_keys_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_collection_keys ADD CONSTRAINT uq_media_library_collection_keys_product_key UNIQUE (product_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_folders ADD CONSTRAINT uq_media_library_folders_normalized_name UNIQUE (normalized_name);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_tags ADD CONSTRAINT uq_media_library_tags_normalized_name UNIQUE (normalized_name);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_upload_keys ADD CONSTRAINT ck_media_library_upload_keys_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_upload_keys ADD CONSTRAINT uq_media_library_upload_keys_key UNIQUE (idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_objects ADD CONSTRAINT ck_media_objects_verified_metadata CHECK (verification_status <> 'verified'::mediaverificationstatus OR byte_size > 0 AND width > 0 AND height > 0 AND sha256 IS NOT NULL AND length(sha256::text) = 64 AND verified_at IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_objects ADD CONSTRAINT uq_media_objects_storage_path UNIQUE (storage_path);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_asset_folders ADD CONSTRAINT ck_product_asset_folders_non_negative_sort_order CHECK (sort_order >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_asset_folders ADD CONSTRAINT fk_product_asset_folders_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_asset_folders ADD CONSTRAINT uq_product_asset_folders_product_name UNIQUE (product_id, name);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_fact_set_versions ADD CONSTRAINT ck_product_fact_set_versions_payload_hash CHECK (length(payload_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_fact_set_versions ADD CONSTRAINT ck_product_fact_set_versions_positive_version CHECK (version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_fact_set_versions ADD CONSTRAINT fk_product_fact_set_versions_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_fact_set_versions ADD CONSTRAINT uq_product_fact_set_versions_product_version UNIQUE (product_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_media_object_id FOREIGN KEY (media_object_id) REFERENCES media_objects(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_parent_asset_id FOREIGN KEY (parent_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_source_image_session_asset_id FOREIGN KEY (source_image_session_asset_id) REFERENCES image_session_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_source_library_asset_id FOREIGN KEY (source_library_asset_id) REFERENCES media_library_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_user_folder_id FOREIGN KEY (user_folder_id) REFERENCES product_asset_folders(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_checked_by_authority CHECK (checked_by::text = 'administrator'::text);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_color_outcome CHECK (color_material_fidelity::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_idempotency_nonempty CHECK (length(idempotency_key::text) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_logo_outcome CHECK (logo_text_legibility::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_notes_length CHECK (notes IS NULL OR length(notes) <= 4000);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_positive_version CHECK (version >= 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_shape_outcome CHECK (shape_fidelity::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_text_policy_outcome CHECK (text_policy_compliance::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT fk_product_image_fidelity_checks_asset_id FOREIGN KEY (asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT fk_product_image_fidelity_checks_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT uq_product_image_fidelity_checks_asset_idempotency UNIQUE (asset_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT uq_product_image_fidelity_checks_asset_version UNIQUE (asset_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT ck_products_intake_pair CHECK (intake_schema_version IS NULL AND intake_json IS NULL OR intake_schema_version = 1 AND intake_json IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT fk_products_cover_image_asset_id FOREIGN KEY (cover_image_asset_id) REFERENCES product_image_assets(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT fk_products_current_fact_set_version_id FOREIGN KEY (current_fact_set_version_id) REFERENCES product_fact_set_versions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE provider_bindings ADD CONSTRAINT provider_bindings_provider_profile_id_fkey FOREIGN KEY (provider_profile_id) REFERENCES provider_profiles(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_version_references ADD CONSTRAINT ck_visual_system_version_references_non_negative_position CHECK ("position" >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_version_references ADD CONSTRAINT fk_visual_system_version_references_asset_id FOREIGN KEY (asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_version_references ADD CONSTRAINT fk_visual_system_version_references_version_id FOREIGN KEY (visual_system_version_id) REFERENCES visual_system_versions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_version_references ADD CONSTRAINT uq_visual_system_version_references_asset_role UNIQUE (visual_system_version_id, asset_id, role);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_version_references ADD CONSTRAINT uq_visual_system_version_references_position UNIQUE (visual_system_version_id, "position");
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_versions ADD CONSTRAINT ck_visual_system_versions_payload_hash CHECK (length(payload_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_versions ADD CONSTRAINT ck_visual_system_versions_positive_version CHECK (version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_versions ADD CONSTRAINT ck_visual_system_versions_schema_version CHECK (schema_version = 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_versions ADD CONSTRAINT fk_visual_system_versions_system_id FOREIGN KEY (visual_system_id) REFERENCES visual_systems(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_system_versions ADD CONSTRAINT uq_visual_system_versions_system_version UNIQUE (visual_system_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_input_digest CHECK (length(input_digest::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_payload_hash CHECK (length(payload_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_positive_revision CHECK (graph_revision > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_schema_version CHECK (schema_version = 3);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_type CHECK (artifact_type::text = ANY (ARRAY['creative_brief'::character varying, 'visual_system'::character varying, 'prompt'::character varying, 'image'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT fk_workflow_graph_artifacts_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT fk_workflow_graph_artifacts_node_id FOREIGN KEY (node_id) REFERENCES workflow_graph_nodes(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT fk_workflow_graph_artifacts_node_run_id FOREIGN KEY (node_run_id) REFERENCES workflow_graph_node_runs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT fk_workflow_graph_artifacts_product_image_asset_id FOREIGN KEY (product_image_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT uq_workflow_graph_artifacts_node_run_id UNIQUE (node_run_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT ck_workflow_graph_edges_data_type CHECK (data_type::text = ANY (ARRAY['product_facts'::character varying, 'image_asset'::character varying, 'creative_brief'::character varying, 'visual_system'::character varying, 'prompt'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT ck_workflow_graph_edges_non_negative_order CHECK (sort_order >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT ck_workflow_graph_edges_role CHECK (role::text = ANY (ARRAY['facts'::character varying, 'reference'::character varying, 'brief'::character varying, 'visual_guidance'::character varying, 'prompt'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT fk_workflow_graph_edges_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT fk_workflow_graph_edges_source_node_id FOREIGN KEY (source_node_id) REFERENCES workflow_graph_nodes(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT fk_workflow_graph_edges_target_node_id FOREIGN KEY (target_node_id) REFERENCES workflow_graph_nodes(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_edges ADD CONSTRAINT uq_workflow_graph_edges_pair_role UNIQUE (graph_id, source_node_id, target_node_id, role);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_groups ADD CONSTRAINT ck_workflow_graph_groups_non_negative_order CHECK (sort_order >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_groups ADD CONSTRAINT fk_workflow_graph_groups_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_non_negative_order CHECK (sort_order >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_progress_phase CHECK (progress_phase IS NULL OR (progress_phase::text = ANY (ARRAY['claimed'::character varying, 'prepared'::character varying, 'provider_call'::character varying, 'provider_result_received'::character varying, 'unknown_provider_effect'::character varying, 'requeued_after_idle'::character varying]::text[])));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_status CHECK (status::text = ANY (ARRAY['idle'::character varying, 'queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT fk_workflow_graph_node_runs_node_id FOREIGN KEY (node_id) REFERENCES workflow_graph_nodes(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT fk_workflow_graph_node_runs_run_id FOREIGN KEY (graph_run_id) REFERENCES workflow_graph_runs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_type CHECK (node_type::text = ANY (ARRAY['product_source'::character varying, 'image_asset'::character varying, 'creative_brief'::character varying, 'visual_system'::character varying, 'prompt_generation'::character varying, 'image_generation'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_bound_image_asset_id FOREIGN KEY (bound_image_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_current_artifact_id FOREIGN KEY (current_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_group_id FOREIGN KEY (group_id) REFERENCES workflow_graph_groups(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_proposals ADD CONSTRAINT ck_workflow_graph_proposals_non_negative_base CHECK (base_graph_revision >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_proposals ADD CONSTRAINT ck_workflow_graph_proposals_status CHECK (status::text = ANY (ARRAY['pending'::character varying, 'confirmed'::character varying, 'discarded'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_proposals ADD CONSTRAINT fk_workflow_graph_proposals_conversation_id FOREIGN KEY (conversation_id) REFERENCES agent_conversations(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_proposals ADD CONSTRAINT fk_workflow_graph_proposals_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_proposals ADD CONSTRAINT fk_workflow_graph_proposals_operation_group_id FOREIGN KEY (operation_group_id) REFERENCES workflow_operation_groups(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT ck_workflow_graph_provider_effects_effect_result CHECK (effect_result::text = ANY (ARRAY['pending'::character varying, 'applied'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT ck_workflow_graph_provider_effects_reconciliation_state CHECK (reconciliation_state::text = ANY (ARRAY['not_requested'::character varying, 'applied'::character varying, 'not_applied'::character varying, 'unknown'::character varying, 'unsupported'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT ck_workflow_graph_provider_effects_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT fk_workflow_graph_provider_effects_node_run_id FOREIGN KEY (node_run_id) REFERENCES workflow_graph_node_runs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT uq_workflow_graph_provider_effects_node_run_id UNIQUE (node_run_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_provider_effects ADD CONSTRAINT uq_workflow_graph_provider_effects_operation_key UNIQUE (operation_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_positive_revision CHECK (graph_revision > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_scope CHECK (run_scope::text = ANY (ARRAY['node'::character varying, 'to_node'::character varying, 'graph'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_status CHECK (status::text = ANY (ARRAY['running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'cancelled'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT fk_workflow_graph_runs_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graphs ADD CONSTRAINT ck_workflow_graphs_positive_revision CHECK (revision > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graphs ADD CONSTRAINT ck_workflow_graphs_schema_version CHECK (schema_version = 3);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graphs ADD CONSTRAINT fk_workflow_graphs_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_media_library_assets ADD CONSTRAINT fk_workflow_media_library_assets_library_asset_id FOREIGN KEY (media_library_asset_id) REFERENCES media_library_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_media_library_assets ADD CONSTRAINT fk_workflow_media_library_assets_workflow_id FOREIGN KEY (workflow_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT ck_workflow_operation_groups_actor_type CHECK (actor_type::text = ANY (ARRAY['user'::character varying, 'agent'::character varying, 'recipe'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT ck_workflow_operation_groups_history_kind CHECK (history_kind::text = ANY (ARRAY['edit'::character varying, 'undo'::character varying, 'redo'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT ck_workflow_operation_groups_non_negative_base CHECK (base_revision >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT ck_workflow_operation_groups_revision_step CHECK (result_revision = (base_revision + 1));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT fk_workflow_operation_groups_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT uq_workflow_operation_groups_graph_revision UNIQUE (graph_id, result_revision);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT ck_workflow_recipe_applications_mode CHECK (mode::text = ANY (ARRAY['create'::character varying, 'merge'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT ck_workflow_recipe_applications_preview_v2 CHECK (schema_version = 1 OR schema_version = 2 AND preview_graph_revision IS NOT NULL AND preview_graph_revision >= 0 AND preview_digest IS NOT NULL AND length(preview_digest::text) = 64 AND updated_node_ids_json IS NOT NULL AND required_bindings_json IS NOT NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT ck_workflow_recipe_applications_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT ck_workflow_recipe_applications_schema_version CHECK (schema_version = ANY (ARRAY[1, 2]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT fk_workflow_recipe_applications_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT fk_workflow_recipe_applications_operation_group_id FOREIGN KEY (operation_group_id) REFERENCES workflow_operation_groups(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT fk_workflow_recipe_applications_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT fk_workflow_recipe_applications_recipe_version_id FOREIGN KEY (recipe_version_id) REFERENCES workflow_recipe_versions(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_applications ADD CONSTRAINT uq_workflow_recipe_applications_product_key UNIQUE (product_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT ck_workflow_recipe_versions_catalog_version CHECK (catalog_version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT ck_workflow_recipe_versions_payload_hash CHECK (length(payload_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT ck_workflow_recipe_versions_positive_version CHECK (version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT ck_workflow_recipe_versions_schema_version CHECK (schema_version = 3);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT fk_workflow_recipe_versions_preferred_visual_system_version_id FOREIGN KEY (preferred_visual_system_version_id) REFERENCES visual_system_versions(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT fk_workflow_recipe_versions_recipe_id FOREIGN KEY (recipe_id) REFERENCES workflow_recipes(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipe_versions ADD CONSTRAINT uq_workflow_recipe_versions_recipe_version UNIQUE (recipe_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipes ADD CONSTRAINT ck_workflow_recipes_origin_key CHECK (origin = 'official'::workflowrecipeorigin AND official_key IS NOT NULL OR origin = 'user'::workflowrecipeorigin AND official_key IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipes ADD CONSTRAINT fk_workflow_recipes_current_version_id FOREIGN KEY (current_version_id) REFERENCES workflow_recipe_versions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipes ADD CONSTRAINT uq_workflow_recipes_official_key UNIQUE (official_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_conversations_product_status ON public.agent_conversations USING btree (product_id, status);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_conversations_scope_updated ON public.agent_conversations USING btree (scope_type, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_conversations_session_updated ON public.agent_conversations USING btree (session_id, updated_at, id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_conversations_session_global ON public.agent_conversations USING btree (session_id) WHERE (scope_type = 'global'::agentconversationscope);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_page_context_snapshots_task_created ON public.agent_page_context_snapshots USING btree (task_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_product_status_updated ON public.agent_sessions USING btree (product_id, status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_status_updated ON public.agent_sessions USING btree (status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_conversation_updated ON public.agent_tasks USING btree (conversation_id, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_session_status_updated ON public.agent_tasks USING btree (session_id, status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_status_updated ON public.agent_tasks USING btree (status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_tool_mutations_asset_id ON public.agent_tool_mutations USING btree (asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_checkpoints_projection_sequence ON public.agent_turn_checkpoints USING btree (turn_projection_id, sequence);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_effect_reconciliations_projection_created ON public.agent_turn_effect_reconciliations USING btree (turn_projection_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_events_projection_sequence ON public.agent_turn_events USING btree (turn_projection_id, sequence);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_executions_lease ON public.agent_turn_executions USING btree (lease_expires_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_executions_owner ON public.agent_turn_executions USING btree (owner_id, lease_expires_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_projections_continuation_turn ON public.agent_turn_projections USING btree (continuation_turn_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_projections_conversation_created ON public.agent_turn_projections USING btree (conversation_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_projections_status ON public.agent_turn_projections USING btree (status);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_turn_projections_task_created ON public.agent_turn_projections USING btree (task_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_workflow_run_requests_conversation_status_updated ON public.agent_workflow_run_requests USING btree (conversation_id, status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_workflow_run_requests_task_status_updated ON public.agent_workflow_run_requests USING btree (task_id, status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_async_dispatches_lease_expiry ON public.async_dispatches USING btree (status, lease_expires_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_async_dispatches_status_available ON public.async_dispatches USING btree (status, available_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_delivery_rendition_jobs_product_status_created ON public.delivery_rendition_jobs USING btree (product_id, status, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_delivery_rendition_jobs_source_created ON public.delivery_rendition_jobs USING btree (source_asset_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_assets_media_object_id ON public.image_session_assets USING btree (media_object_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_generation_tasks_session_id ON public.image_session_generation_tasks USING btree (session_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_generation_tasks_status ON public.image_session_generation_tasks USING btree (status);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_provider_effects_reconciliation ON public.image_session_provider_effects USING btree (effect_result, reconciliation_state, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_rounds_base_asset_id ON public.image_session_rounds USING btree (base_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_session_rounds_generation_group_id ON public.image_session_rounds USING btree (generation_group_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_image_session_rounds_generated_asset_id ON public.image_session_rounds USING btree (generated_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_library_organization_drafts_status_updated ON public.library_organization_drafts USING btree (status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_adoption_events_node_created ON public.local_image_edit_adoption_events USING btree (node_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_provider_attempts_task_created ON public.local_image_edit_provider_attempts USING btree (task_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_task_references_asset ON public.local_image_edit_task_references USING btree (asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_tasks_product_status_created ON public.local_image_edit_tasks USING btree (product_id, status, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_tasks_source_asset ON public.local_image_edit_tasks USING btree (source_asset_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_local_image_edit_tasks_target_node_status ON public.local_image_edit_tasks USING btree (target_node_id, status, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_asset_tags_tag_id ON public.media_library_asset_tags USING btree (tag_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_assets_folder_id ON public.media_library_assets USING btree (folder_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_assets_media_object_id ON public.media_library_assets USING btree (media_object_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_assets_source_image_session_asset_id ON public.media_library_assets USING btree (source_image_session_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_assets_source_product_asset_id ON public.media_library_assets USING btree (source_product_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_asset_folders_product_sort ON public.product_asset_folders USING btree (product_id, sort_order, name, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_media_object_id ON public.product_image_assets USING btree (media_object_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_parent_asset_id ON public.product_image_assets USING btree (parent_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_product_created ON public.product_image_assets USING btree (product_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_product_folder_created ON public.product_image_assets USING btree (product_id, user_folder_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_product_origin_created ON public.product_image_assets USING btree (product_id, origin_type, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_product_type_created ON public.product_image_assets USING btree (product_id, image_type_key, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_source_image_session_asset_id ON public.product_image_assets USING btree (source_image_session_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_source_library_asset_id ON public.product_image_assets USING btree (source_library_asset_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_product_image_assets_product_library_asset ON public.product_image_assets USING btree (product_id, source_library_asset_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_product_image_assets_product_session_asset ON public.product_image_assets USING btree (product_id, source_image_session_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_product_image_fidelity_checks_asset_created ON public.product_image_fidelity_checks USING btree (asset_id, created_at, id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_bindings_purpose ON public.provider_bindings USING btree (purpose);`,
+	`CREATE INDEX IF NOT EXISTS ix_provider_profiles_archived_at ON public.provider_profiles USING btree (archived_at);`,
+	`CREATE INDEX IF NOT EXISTS ix_provider_profiles_enabled ON public.provider_profiles USING btree (enabled);`,
+	`CREATE INDEX IF NOT EXISTS ix_visual_systems_archived_at ON public.visual_systems USING btree (archived_at);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_artifacts_graph_id ON public.workflow_graph_artifacts USING btree (graph_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_artifacts_node_id ON public.workflow_graph_artifacts USING btree (node_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_edges_graph_id ON public.workflow_graph_edges USING btree (graph_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_groups_graph_id ON public.workflow_graph_groups USING btree (graph_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_node_runs_run_node ON public.workflow_graph_node_runs USING btree (graph_run_id, node_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graph_node_runs_one_active_per_node ON public.workflow_graph_node_runs USING btree (node_id) WHERE ((status)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying])::text[]));`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_nodes_bound_image_asset_id ON public.workflow_graph_nodes USING btree (bound_image_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_nodes_graph_id ON public.workflow_graph_nodes USING btree (graph_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graph_proposals_one_pending_per_graph ON public.workflow_graph_proposals USING btree (graph_id) WHERE ((status)::text = 'pending'::text);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_provider_effects_reconciliation ON public.workflow_graph_provider_effects USING btree (effect_result, reconciliation_state, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_runs_graph_id ON public.workflow_graph_runs USING btree (graph_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graph_runs_one_active_per_graph ON public.workflow_graph_runs USING btree (graph_id) WHERE ((status)::text = 'running'::text);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graphs_product_id ON public.workflow_graphs USING btree (product_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graphs_one_active_per_product ON public.workflow_graphs USING btree (product_id) WHERE (active = true);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_media_library_assets_library_asset_id ON public.workflow_media_library_assets USING btree (media_library_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_media_library_assets_workflow_created ON public.workflow_media_library_assets USING btree (workflow_id, created_at, media_library_asset_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_operation_groups_graph_id ON public.workflow_operation_groups USING btree (graph_id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_recipe_applications_product_created ON public.workflow_recipe_applications USING btree (product_id, created_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_recipes_archived_at ON public.workflow_recipes USING btree (archived_at);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_recipes_origin ON public.workflow_recipes USING btree (origin);`,
+}

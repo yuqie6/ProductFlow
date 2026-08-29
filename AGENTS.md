@@ -41,18 +41,18 @@ Sub-agents do not commit, push, reset, revert unrelated changes or declare the o
 The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another implementation task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
 
 ## Project Structure & Module Organization
-ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, pgx, asynq). `backend/` keeps Alembic and the sealed Python tree; optional Compose profile `python` can still start uvicorn/dramatiq. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `go/README.md`, `backend/AGENTS.md`, or `web/AGENTS.md` before editing that package.
+ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, asynq). `backend/` keeps the sealed Python tree; optional Compose profile `python` can still start uvicorn/dramatiq. Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `go/README.md`, `backend/AGENTS.md`, or `web/AGENTS.md` before editing that package.
 
 ## Build, Test, and Development Commands
 Use the root `justfile` whenever possible:
 
 - `just backend-install` — install backend dependencies with `uv` dev extras.
 - `docker compose up -d` — start local PostgreSQL and Redis.
-- `just backend-migrate` — apply Alembic migrations with dev env vars.
+- `just backend-migrate` / `just go-migrate` — apply GORM AutoMigrate and constraint patches with dev env vars.
 - `just go-api` — run the Go business API (default local runtime).
 - `just go-worker` — run the Go asynq worker.
 - `just go-dispatcher` — run the Go async dispatcher.
-- `just go-test` — run Go tests (`cd go && go test ./...`).
+- `just go-test` — run Go tests (`go test -C go ./...`).
 - `just backend-run` — optional: run the sealed Python FastAPI API.
 - `just backend-worker` — optional: run Dramatiq workers.
 - `just agent-service-install` — install the Node.js/Pi Agent dependencies from the lockfile.
@@ -71,7 +71,7 @@ Use the root `justfile` whenever possible:
 Python targets 3.12 and uses Ruff with 120-character lines plus `E`, `F`, `I`, `UP`, and `B` lint rules. Keep imports sorted, prefer typed functions, and name modules/functions in `snake_case`. React components and pages use `PascalCase` filenames, such as `ProductListPage.tsx`; hooks, helpers, and API functions use `camelCase`. Keep provider-specific code behind infrastructure factories instead of leaking it into routes.
 
 ## Testing Guidelines
-Go tests live under `go/` and are the default backend gate: `just go-test` (needs `DATABASE_URL` for packages that use PostgreSQL). Python tests remain in `backend/tests/` as `test_*.py` for the sealed tree and Alembic. Run `just backend-test` when changing Python/Alembic, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes require an Alembic revision and focused migration regression coverage. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
+Go tests live under `go/` and are the default backend gate: `just go-test` (needs `DATABASE_URL` for packages that use PostgreSQL). Python tests remain in `backend/tests/` as `test_*.py` for the sealed tree. Run `just backend-test` when changing the sealed Python/Alembic history, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes go through GORM models plus constraint patches in `go/internal/platform/db/schema` and a focused migrate regression. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
 
 ## Commit & Pull Request Guidelines
 Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.

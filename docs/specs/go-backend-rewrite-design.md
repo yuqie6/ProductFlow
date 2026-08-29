@@ -6,8 +6,8 @@
 - 产品合同：`docs/specs/go-backend-rewrite-prd.md`
 - 决策：`docs/adr/0011-go-vertical-slice-rewrite.md`
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端已切 Go」
-- 当前运行事实：Go API / worker / dispatcher（Gin + pgx + asynq）+ Alembic。Python `backend/` 保留迁移与可选 Compose profile `python`。
-- 落地差异：未引入 GORM；schema 权威仍是 Alembic。
+- 当前运行事实：Go API / worker / dispatcher（Gin + GORM + asynq，驱动仍是 pgx）+ `productflow-migrate`。Python `backend/` 保留封印树与可选 Compose profile `python`。
+- schema 权威是 GORM AutoMigrate 与约束补钉。查询层仍有 pgx 手写 SQL。
 - 不复用：`exp` 上的 Go Agent service / `agent-harness`。那条线是 Agent runtime 实验。
 
 宏观进程图保持现有七个运行单元，只替换其中三个业务进程。内部从横向分层改成按功能竖切的模块化单体。
@@ -22,7 +22,7 @@ Browser
         ▼                                        ▼
 ┌───────────────────────────────┐   ┌─────────────────────────────────┐
 │  Go Business Backend          │   │  Agent Service（不变）            │
-│  Gin + pgx + Viper + zap      │◄──┤  Node.js 22 + Pi SDK             │
+│  Gin + GORM + Viper + zap     │◄──┤  Node.js 22 + Pi SDK             │
 │  + go-redis + asynq           │   │  仅交互式 Turn runtime            │
 │  REST（Web）                  │──►│  不拥有业务权威                   │
 │  Internal API（Agent）        │   └─────────────────────────────────┘
@@ -100,7 +100,7 @@ Web 与 `agent-service/` 默认零合同变更。某个 Go 实现无法保持兼
 | 层 | 默认 | 约束 |
 |---|---|---|
 | HTTP | Gin | session、SSE、上传校验、`x-request-id` 自己实现。binding 不替代 application 校验。 |
-| SQL | pgx | 未引入 GORM。关闭 AutoMigrate。schema 权威仍是 Alembic。生产与测试都是 PostgreSQL，不支持 SQLite。 |
+| SQL | GORM（postgres/pgx 驱动） | AutoMigrate 建/补表和列。CHECK、PG enum、部分唯一索引走补钉 SQL。生产与测试都是 PostgreSQL，不支持 SQLite。查询层按包从 pgx 迁到 GORM；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
 | 配置 | Viper | 只加载启动配置。运行时设置读 PostgreSQL。 |
 | 日志 | zap | 字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
 | 队列 | asynq + go-redis | 替代 Dramatiq，不替代 `async_dispatches`。task 名与现有 actor 名对齐。 |
@@ -194,16 +194,16 @@ Agent 包只做投影和 tool 入口。改 live graph、请求 Run、改全局�
 
 ## 6. 持久化
 
-当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。落地用 pgx 手写 SQL，未引入 GORM。
+当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。schema 由 `productflow-migrate` 持有。查询层按包迁到 GORM；未迁完的 store 仍用手写 SQL。
 
-1. 关闭 AutoMigrate。schema 权威仍是 Alembic。
+1. AutoMigrate 开启，只补表和列，不 drop 退休表。约束/enum/部分唯一索引不靠 AutoMigrate。
 2. 每个 public command 显式 Begin/Commit/Rollback。内部 helper 只组装，不偷偷 commit。
 3. claim / 确认 / 绑定使用 `SELECT ... FOR UPDATE`，锁顺序与封印 Python 相同：先聚合后成员。
 4. 生成容量用 PostgreSQL advisory lock 原语句，不改成 Redis 信号量。
 5. JSON 列按现有 payload 读写。合同测试用持久化 fixture。
 6. 禁止 association 级联删除替代应用删除路径。
 
-Cutover 后从当时 `alembic upgrade head` dump 做 Go migration 基线（goose 或等价）仍未做；Alembic 继续是 schema 权威。
+`backend/alembic/` 是封印历史，默认路径不再 `alembic upgrade head`。
 
 ## 7. 队列与 dispatcher
 
@@ -239,7 +239,7 @@ dispatcher 必须能单独启动（独立 binary 或 worker 子命令）。启�
 | 切片 | 结果 | 依赖 |
 |---|---|---|
 | 0. 合同包 | OpenAPI / SSE / session / queue 导出 | 无；不切换默认进程 |
-| 1. Go host | `/healthz`、Viper、zap、pgx | 0 |
+| 1. Go host | `/healthz`、Viper、zap、GORM/pgx | 0 |
 | 2. Auth / settings 读 | 登录与设置只读 | 1 |
 | 3. Storage + MediaObject + 上传 | 上传下载 preview | 2 |
 | 4. Product / facts / 商品图 | 商品 API 与 §3.2 四条出生命令 | 3 |
@@ -260,7 +260,7 @@ Agent 切片靠后，因为它和 lease、fencing、SSE cursor、worker 恢复�
 - 为迁 Go 而改 Web DTO。
 - 在迁移中引入 SaaS。
 - Redis 业务缓存。
-- GORM AutoMigrate 或新表双写。
+- 用 AutoMigrate drop 退休表，或新表双写。
 - 把已删除的 WorkflowDraft 或 v2 executor 搬进 Go。
 - 为迁 Go 而改工作台交互规格。
 
@@ -268,7 +268,7 @@ Agent 切片靠后，因为它和 lease、fencing、SSE cursor、worker 恢复�
 
 1. 封印 live Python 行为后即可写 `go/`。工作台证明约束 cutover，不约束 host 与功能切片开工。
 2. 只换业务后端三个进程。Agent、Web、PostgreSQL 权威和 storage 布局不动。
-3. Gin + pgx + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。未使用 GORM。
+3. Gin + GORM + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。schema 走 AutoMigrate 加约束补钉。
 4. 内部按功能竖切，不按全局 `handlers/dto/models` 横向复制。
 5. 跨聚合走同一 `tx` 上的 app 函数，不拆微服务。
 6. 测试与生产都用 PostgreSQL。
@@ -283,7 +283,7 @@ Agent 切片靠后，因为它和 lease、fencing、SSE cursor、worker 恢复�
 | PR | 标题 | 依赖 |
 |---|---|---|
 | P0 | 导出 HTTP/SSE/session/queue 合同包 | 无 |
-| P1 | 增加 `go/` host：healthz、Viper、zap、pgx | P0 |
+| P1 | 增加 `go/` host：healthz、Viper、zap、GORM/pgx | P0 |
 | P2 | Auth cookie 与 settings 读取 | P1 |
 | P3 | Storage、MediaObject、上传校验 | P2 |
 | P4 | Product / facts / product images 与四条出生命令 | P3 |

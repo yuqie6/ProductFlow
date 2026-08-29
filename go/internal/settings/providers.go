@@ -2,15 +2,17 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 var (
@@ -82,10 +84,13 @@ func (s *Store) ensureBindings(ctx context.Context) error {
 		{"agent", "gpt-5.4"},
 		{"image", "mock-image-v2"},
 	}
-	return tx.With(ctx, s.pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
+		if err := migrateLegacyTextBinding(ctx, dbTx); err != nil {
+			return err
+		}
 		for _, item := range defaults {
 			var exists int
-			if err := pgxTx.QueryRow(ctx, `SELECT COUNT(1) FROM provider_bindings WHERE purpose = $1`, item.purpose).Scan(&exists); err != nil {
+			if err := pfdb.QueryRow(ctx, dbTx, `SELECT COUNT(1) FROM provider_bindings WHERE purpose = $1`, item.purpose).Scan(&exists); err != nil {
 				return err
 			}
 			if exists > 0 {
@@ -93,7 +98,7 @@ func (s *Store) ensureBindings(ctx context.Context) error {
 			}
 			settingsJSON, _ := json.Marshal(map[string]any{"model": item.model})
 			empty := []byte("{}")
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, dbTx, `
 				INSERT INTO provider_bindings (id, purpose, provider_kind, model_settings_json, config_json, created_at, updated_at)
 				VALUES ($1, $2, 'mock', $3, $4, NOW(), NOW())
 			`, clockid.New(), item.purpose, settingsJSON, empty); err != nil {
@@ -104,8 +109,126 @@ func (s *Store) ensureBindings(ctx context.Context) error {
 	})
 }
 
+type legacyBinding struct {
+	id            string
+	kind          string
+	profileID     *string
+	modelSettings []byte
+	configJSON    []byte
+}
+
+func loadBindingByPurpose(ctx context.Context, dbTx *gorm.DB, purpose string) (*legacyBinding, error) {
+	var row legacyBinding
+	err := pfdb.QueryRow(ctx, dbTx, `
+		SELECT id, provider_kind, provider_profile_id, model_settings_json, config_json
+		FROM provider_bindings WHERE purpose = $1
+	`, purpose).Scan(&row.id, &row.kind, &row.profileID, &row.modelSettings, &row.configJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// migrateLegacyTextBinding 把 cutover 前残留的 purpose=text 拆成 prompt 与 agent，避免已部署库上的真实 Key 落到 mock。
+func migrateLegacyTextBinding(ctx context.Context, dbTx *gorm.DB) error {
+	text, err := loadBindingByPurpose(ctx, dbTx, "text")
+	if err != nil || text == nil {
+		return err
+	}
+	promptModel := firstNonEmpty(
+		lookupJSONString(text.modelSettings, "model"),
+		lookupJSONString(text.modelSettings, "copy_model"),
+		lookupJSONString(text.modelSettings, "brief_model"),
+	)
+	if promptModel == "" {
+		promptModel = "gpt-4.1"
+	}
+	agentModel := firstNonEmpty(lookupJSONString(text.modelSettings, "agent_model"), promptModel)
+	promptSettings, _ := json.Marshal(map[string]any{"model": promptModel})
+	agentSettings, _ := json.Marshal(map[string]any{"model": agentModel})
+	agentConfig, _ := json.Marshal(legacyAgentConfig(text.modelSettings))
+
+	prompt, err := loadBindingByPurpose(ctx, dbTx, "prompt")
+	if err != nil {
+		return err
+	}
+	if prompt == nil {
+		if _, err := pfdb.Exec(ctx, dbTx, `
+			UPDATE provider_bindings SET purpose = 'prompt', model_settings_json = $2, updated_at = NOW()
+			WHERE id = $1
+		`, text.id, promptSettings); err != nil {
+			return err
+		}
+	} else if prompt.kind == "mock" && text.kind != "mock" {
+		if _, err := pfdb.Exec(ctx, dbTx, `
+			UPDATE provider_bindings SET
+				provider_kind = $2, provider_profile_id = $3, model_settings_json = $4, config_json = $5, updated_at = NOW()
+			WHERE id = $1
+		`, prompt.id, text.kind, text.profileID, promptSettings, text.configJSON); err != nil {
+			return err
+		}
+		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings WHERE id = $1`, text.id); err != nil {
+			return err
+		}
+	} else if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings WHERE id = $1`, text.id); err != nil {
+		return err
+	}
+
+	agent, err := loadBindingByPurpose(ctx, dbTx, "agent")
+	if err != nil {
+		return err
+	}
+	if agent != nil {
+		return nil
+	}
+	source, err := loadBindingByPurpose(ctx, dbTx, "prompt")
+	if err != nil || source == nil {
+		return err
+	}
+	empty := []byte("{}")
+	if len(agentConfig) == 0 {
+		agentConfig = empty
+	}
+	_, err = pfdb.Exec(ctx, dbTx, `
+		INSERT INTO provider_bindings (id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at)
+		VALUES ($1, 'agent', $2, $3, $4, $5, NOW(), NOW())
+	`, clockid.New(), source.kind, source.profileID, agentSettings, agentConfig)
+	return err
+}
+
+func legacyAgentConfig(raw []byte) map[string]any {
+	out := map[string]any{}
+	pairs := [][2]string{
+		{"agent_reasoning_effort", "reasoning_effort"},
+		{"agent_reasoning_summary", "reasoning_summary"},
+		{"agent_text_verbosity", "text_verbosity"},
+		{"reasoning_effort", "reasoning_effort"},
+		{"reasoning_summary", "reasoning_summary"},
+		{"text_verbosity", "text_verbosity"},
+		{"service_tier", "service_tier"},
+	}
+	for _, pair := range pairs {
+		if v := lookupJSONString(raw, pair[0]); v != "" {
+			out[pair[1]] = v
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func (s *Store) listProfiles(ctx context.Context) ([]ProviderProfile, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := pfdb.Query(ctx, s.db, `
 		SELECT id, name, provider_type, base_url, capabilities_json, default_models_json, config_json,
 		       enabled, archived_at, api_key, created_at, updated_at
 		FROM provider_profiles ORDER BY created_at, name
@@ -126,7 +249,7 @@ func (s *Store) listProfiles(ctx context.Context) ([]ProviderProfile, error) {
 }
 
 func (s *Store) listBindings(ctx context.Context) ([]ProviderBindingView, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := pfdb.Query(ctx, s.db, `
 		SELECT id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at
 		FROM provider_bindings ORDER BY purpose
 	`)
@@ -199,7 +322,7 @@ func (s *Store) CreateProfile(ctx context.Context, name, providerType string, ba
 	capsJSON, _ := json.Marshal(caps)
 	modelsJSON, _ := json.Marshal(orEmptyMap(defaults))
 	cfgJSON, _ := json.Marshal(orEmptyMap(cfg))
-	_, err = s.pool.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, s.db, `
 		INSERT INTO provider_profiles (
 			id, name, provider_type, base_url, api_key, capabilities_json, default_models_json, config_json, enabled, created_at, updated_at
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
@@ -296,7 +419,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]
 	capsJSON, _ := json.Marshal(current.Capabilities)
 	modelsJSON, _ := json.Marshal(current.DefaultModels)
 	cfgJSON, _ := json.Marshal(current.Config)
-	_, err = s.pool.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, s.db, `
 		UPDATE provider_profiles SET
 			name=$2, provider_type=$3, base_url=$4, api_key=COALESCE($5, api_key),
 			capabilities_json=$6, default_models_json=$7, config_json=$8, enabled=$9, updated_at=NOW()
@@ -310,20 +433,20 @@ func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]
 
 func (s *Store) ArchiveProfile(ctx context.Context, id string) (ProviderProfile, error) {
 	var n int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(1) FROM provider_bindings WHERE provider_profile_id = $1`, id).Scan(&n); err != nil {
+	if err := pfdb.QueryRow(ctx, s.db, `SELECT COUNT(1) FROM provider_bindings WHERE provider_profile_id = $1`, id).Scan(&n); err != nil {
 		return ProviderProfile{}, err
 	}
 	if n > 0 {
 		return ProviderProfile{}, apperr.Validation("供应商仍被提示词、图片或 Agent 配置使用，不能归档")
 	}
-	tag, err := s.pool.Exec(ctx, `
+	affected, err := pfdb.Exec(ctx, s.db, `
 		UPDATE provider_profiles SET archived_at = NOW(), enabled = FALSE, updated_at = NOW()
 		WHERE id = $1 AND archived_at IS NULL
 	`, id)
 	if err != nil {
 		return ProviderProfile{}, err
 	}
-	if tag.RowsAffected() == 0 {
+	if affected == 0 {
 		return ProviderProfile{}, apperr.Validation("供应商不存在")
 	}
 	return s.getProfile(ctx, id)
@@ -366,7 +489,7 @@ func (s *Store) UpdateBinding(ctx context.Context, purpose, kind string, profile
 	}
 	modelJSON, _ := json.Marshal(normalizeModelSettings(purpose, modelSettings))
 	cfgJSON, _ := json.Marshal(normalizeBindingConfig(purpose, kind, cfg))
-	_, err := s.pool.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, s.db, `
 		UPDATE provider_bindings SET
 			provider_kind=$2, provider_profile_id=$3, model_settings_json=$4, config_json=$5, updated_at=NOW()
 		WHERE purpose=$1
@@ -391,20 +514,20 @@ func (s *Store) getProfile(ctx context.Context, id string) (ProviderProfile, err
 }
 
 func (s *Store) getProfileRow(ctx context.Context, id string) (profileRow, error) {
-	row := s.pool.QueryRow(ctx, `
+	row := pfdb.QueryRow(ctx, s.db, `
 		SELECT id, name, provider_type, base_url, capabilities_json, default_models_json, config_json,
 		       enabled, archived_at, api_key, created_at, updated_at
 		FROM provider_profiles WHERE id = $1
 	`, id)
 	profile, err := scanProfile(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return profileRow{}, apperr.Validation("供应商不存在")
 		}
 		return profileRow{}, err
 	}
 	var apiKey *string
-	_ = s.pool.QueryRow(ctx, `SELECT api_key FROM provider_profiles WHERE id = $1`, id).Scan(&apiKey)
+	_ = pfdb.QueryRow(ctx, s.db, `SELECT api_key FROM provider_profiles WHERE id = $1`, id).Scan(&apiKey)
 	return profileRow{ProviderProfile: profile, apiKey: apiKey}, nil
 }
 
@@ -412,7 +535,7 @@ func (s *Store) getBinding(ctx context.Context, purpose string) (ProviderBinding
 	var row ProviderBindingView
 	var modelRaw, configRaw []byte
 	var created, updated time.Time
-	err := s.pool.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, s.db, `
 		SELECT id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at
 		FROM provider_bindings WHERE purpose = $1
 	`, purpose).Scan(&row.ID, &row.Purpose, &row.ProviderKind, &row.ProviderProfileID, &modelRaw, &configRaw, &created, &updated)
@@ -427,7 +550,7 @@ func (s *Store) getBinding(ctx context.Context, purpose string) (ProviderBinding
 }
 
 func (s *Store) validateProfileKeepsBindings(ctx context.Context, profile profileRow) error {
-	rows, err := s.pool.Query(ctx, `SELECT provider_kind FROM provider_bindings WHERE provider_profile_id = $1`, profile.ID)
+	rows, err := pfdb.Query(ctx, s.db, `SELECT provider_kind FROM provider_bindings WHERE provider_profile_id = $1`, profile.ID)
 	if err != nil {
 		return err
 	}

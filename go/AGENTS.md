@@ -1,10 +1,10 @@
 # Go Backend Guidelines
 
-Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority remains Alembic in `backend/`. Do not add GORM or AutoMigrate.
+Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is GORM AutoMigrate plus constraint patches (`just go-migrate` / `productflow-migrate`). Command transactions use `tx.WithGorm` and `*gorm.DB`; raw SQL goes through `platform/db` Query/Exec. PostgreSQL pool remains for health checks, recovery entrypoints, and `FOR UPDATE` / advisory locks. Do not use GORM associations to replace existing delete paths.
 
 ## Layout
 
-Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `config`, `tx`, `storage`, `canonjson`).
+Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `db/schema`, `config`, `tx`, `storage`, `canonjson`).
 
 `graph` must not import `product`, `recipe`, or `delivery` (use `graph.DeliveryQueuer`). Agent must not write graph tables directly; call `graph` package functions.
 
@@ -18,7 +18,7 @@ Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `libr
 ## Tests
 
 ```bash
-bash scripts/with_dev_env.sh bash -lc 'cd go && go test ./... -count=1'
+bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -count=1'
 ```
 
 Packages that touch PostgreSQL skip without `DATABASE_URL`. Test harnesses that hit admin routes must set `AdminAccessRequired: true` and overlay `app_settings.admin_access_required=true`.

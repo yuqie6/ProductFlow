@@ -6,9 +6,12 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) ClaimExecution(ctx context.Context, conversationID string, taskID *string, idempotencyKey, harnessTurnID, ownerID string) (ExecutionLeaseResponse, error) {
@@ -25,7 +28,7 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		return ExecutionLeaseResponse{}, apperr.Validation("Agent execution owner ID 无效")
 	}
 	var out ExecutionLeaseResponse
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		q := `
 			SELECT id, harness_turn_id, status FROM agent_turn_projections
 			WHERE conversation_id = $1 AND idempotency_key = $2
@@ -40,8 +43,8 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		var projectionID string
 		var existingTurn *string
 		var status string
-		err := pgxTx.QueryRow(ctx, q, args...).Scan(&projectionID, &existingTurn, &status)
-		if errors.Is(err, pgx.ErrNoRows) {
+		err := pfdb.QueryRow(ctx, pgxTx, q, args...).Scan(&projectionID, &existingTurn, &status)
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return apperr.NotFound("Agent Turn projection 不存在")
 		}
 		if err != nil {
@@ -59,14 +62,14 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		var expires *time.Time
 		var attempt, fencing int
 		var phase string
-		err = pgxTx.QueryRow(ctx, `
+		err = pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, harness_turn_id, owner_id, lease_token, lease_expires_at, attempt, fencing_token, phase
 			FROM agent_turn_executions WHERE turn_projection_id = $1 FOR UPDATE
 		`, projectionID).Scan(&execID, &execTurn, &ownerCol, &token, &expires, &attempt, &fencing, &phase)
 		now := time.Now().UTC()
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			execID = newID()
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO agent_turn_executions (
 					id, turn_projection_id, harness_turn_id, attempt, fencing_token, phase, created_at, updated_at
 				) VALUES ($1, $2, $3, 0, 0, 'claimed', NOW(), NOW())
@@ -99,7 +102,7 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		}
 		lease := newID()
 		expiresAt := now.Add(leaseSeconds * time.Second)
-		if err := pgxTx.QueryRow(ctx, `
+		if err := pfdb.QueryRow(ctx, pgxTx, `
 			UPDATE agent_turn_executions SET
 				owner_id = $2, lease_token = $3, lease_expires_at = $4, last_heartbeat_at = $4,
 				released_at = NULL, attempt = attempt + 1, fencing_token = fencing_token + 1,
@@ -109,7 +112,7 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		`, execID, owner, lease, expiresAt, turnID).Scan(&attempt, &fencing); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `UPDATE agent_turn_projections SET harness_turn_id = $2 WHERE id = $1`, projectionID, turnID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_projections SET harness_turn_id = $2 WHERE id = $1`, projectionID, turnID); err != nil {
 			return err
 		}
 		out = ExecutionLeaseResponse{
@@ -127,13 +130,13 @@ func (s Service) HeartbeatExecution(ctx context.Context, conversationID, executi
 		return ExecutionLeaseResponse{}, apperr.Validation("Agent execution phase 不受支持")
 	}
 	var out ExecutionLeaseResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		lease, err := requireLease(ctx, pgxTx, conversationID, executionID, ownerID, leaseToken)
 		if err != nil {
 			return err
 		}
 		expires := time.Now().UTC().Add(leaseSeconds * time.Second)
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_executions SET phase = $2, lease_expires_at = $3, last_heartbeat_at = NOW(), updated_at = NOW()
 			WHERE id = $1
 		`, executionID, phase, expires); err != nil {
@@ -151,11 +154,11 @@ func (s Service) ReleaseExecution(ctx context.Context, conversationID, execution
 	if phase == "" {
 		phase = "terminal"
 	}
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := requireLease(ctx, pgxTx, conversationID, executionID, ownerID, leaseToken); err != nil {
 			return err
 		}
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_executions
 			SET owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, released_at = NOW(), phase = $2, updated_at = NOW()
 			WHERE id = $1
@@ -187,13 +190,13 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 		}
 	}
 	var out CheckpointResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		lease, err := requireLease(ctx, pgxTx, conversationID, executionID, ownerID, leaseToken)
 		if err != nil {
 			return err
 		}
 		var existing CheckpointResponse
-		scanErr := pgxTx.QueryRow(ctx, `
+		scanErr := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, turn_projection_id, execution_id, attempt, fencing_token, sequence, kind, created_at
 			FROM agent_turn_checkpoints WHERE execution_id = $1 AND attempt = $2 AND sequence = $3
 		`, executionID, lease.Attempt, sequence).Scan(
@@ -207,17 +210,17 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 			out = existing
 			return nil
 		}
-		if !errors.Is(scanErr, pgx.ErrNoRows) {
+		if !errors.Is(scanErr, sqldb.ErrNoRows) {
 			return scanErr
 		}
 		var last int
-		_ = pgxTx.QueryRow(ctx, `SELECT last_checkpoint_sequence FROM agent_turn_executions WHERE id = $1`, executionID).Scan(&last)
+		_ = pfdb.QueryRow(ctx, pgxTx, `SELECT last_checkpoint_sequence FROM agent_turn_executions WHERE id = $1`, executionID).Scan(&last)
 		if sequence != last+1 {
 			return apperr.Conflict("Agent checkpoint sequence 必须连续提交")
 		}
 		id := newID()
 		now := time.Now().UTC()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_turn_checkpoints (
 				id, turn_projection_id, execution_id, attempt, fencing_token, sequence, kind, payload_json, created_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -227,7 +230,7 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 			}
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_turn_executions SET last_checkpoint_sequence = $2, last_checkpoint_at = $3, updated_at = NOW() WHERE id = $1
 		`, executionID, sequence, now); err != nil {
 			return err
@@ -264,7 +267,7 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 		return EventReceipt{}, apperr.Validation("Agent event payload 超过大小限制")
 	}
 	var out EventReceipt
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		lease, err := requireLease(ctx, pgxTx, conversationID, executionID, ownerID, leaseToken)
 		if err != nil {
 			return err
@@ -286,7 +289,7 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 		var existing EventReceipt
 		var existingRun, existingTurn string
 		var existingPayload []byte
-		scanErr := pgxTx.QueryRow(ctx, `
+		scanErr := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, turn_projection_id, execution_id, sequence, schema_version, kind, created_at, run_id, turn_id, payload_json
 			FROM agent_turn_events WHERE turn_projection_id = $1 AND sequence = $2
 		`, lease.ProjectionID, sequence).Scan(
@@ -300,11 +303,11 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 			out = existing
 			return nil
 		}
-		if !errors.Is(scanErr, pgx.ErrNoRows) {
+		if !errors.Is(scanErr, sqldb.ErrNoRows) {
 			return scanErr
 		}
 		var last int
-		_ = pgxTx.QueryRow(ctx, `SELECT COALESCE(MAX(sequence), 0) FROM agent_turn_events WHERE turn_projection_id = $1`, lease.ProjectionID).Scan(&last)
+		_ = pfdb.QueryRow(ctx, pgxTx, `SELECT COALESCE(MAX(sequence), 0) FROM agent_turn_events WHERE turn_projection_id = $1`, lease.ProjectionID).Scan(&last)
 		if sequence != last+1 {
 			return apperr.Conflict("Agent event sequence 必须连续提交")
 		}
@@ -312,7 +315,7 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_turn_events (
 				id, turn_projection_id, execution_id, run_id, turn_id, schema_version, sequence,
 				attempt, fencing_token, kind, payload_json, created_at
@@ -332,11 +335,11 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 	return out, err
 }
 
-func requireLease(ctx context.Context, pgxTx pgx.Tx, conversationID, executionID, ownerID, leaseToken string) (ExecutionLeaseResponse, error) {
+func requireLease(ctx context.Context, pgxTx *gorm.DB, conversationID, executionID, ownerID, leaseToken string) (ExecutionLeaseResponse, error) {
 	var out ExecutionLeaseResponse
 	var owner, token *string
 	var expires *time.Time
-	err := pgxTx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, pgxTx, `
 		SELECT e.id, e.turn_projection_id, e.harness_turn_id, e.owner_id, e.lease_token,
 			e.attempt, e.fencing_token, e.phase, e.lease_expires_at
 		FROM agent_turn_executions e
@@ -347,7 +350,7 @@ func requireLease(ctx context.Context, pgxTx pgx.Tx, conversationID, executionID
 		&out.ExecutionID, &out.ProjectionID, &out.HarnessTurnID, &owner, &token,
 		&out.Attempt, &out.FencingToken, &out.Phase, &expires,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ExecutionLeaseResponse{}, apperr.NotFound("Agent execution 不存在")
 	}
 	if err != nil {
@@ -373,8 +376,8 @@ func (s Service) ListEvents(ctx context.Context, projectionID string, after int)
 		return nil, apperr.Validation("Agent event cursor 无效")
 	}
 	var out []eventRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		rows, err := pgxTx.Query(ctx, `
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, sequence, schema_version, kind, payload_json, run_id, turn_id, created_at
 			FROM agent_turn_events WHERE turn_projection_id = $1 AND sequence > $2
 			ORDER BY sequence LIMIT 100

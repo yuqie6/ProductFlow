@@ -1,0 +1,988 @@
+package schema
+
+// Code generated from live PostgreSQL head (Alembic 20260829_0095). DO NOT hand-edit column tags;
+// regenerate from schema dump if the target head changes.
+
+import "time"
+
+type AgentConversations struct {
+	ID                     string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID              *string   `gorm:"column:product_id;type:varchar(36)"`
+	HarnessRunID           string    `gorm:"column:harness_run_id;type:varchar(120);not null"`
+	Status                 string    `gorm:"column:status;type:agentconversationstatus;not null"`
+	CreatedAt              time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt              time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	CreationIdempotencyKey *string   `gorm:"column:creation_idempotency_key;type:varchar(200)"`
+	CreationRequestHash    *string   `gorm:"column:creation_request_hash;type:varchar(64)"`
+	IntakeIdempotencyKey   *string   `gorm:"column:intake_idempotency_key;type:varchar(200)"`
+	IntakeRequestHash      *string   `gorm:"column:intake_request_hash;type:varchar(64)"`
+	SessionID              *string   `gorm:"column:session_id;type:varchar(36)"`
+	ScopeType              string    `gorm:"column:scope_type;type:agentconversationscope;not null"`
+}
+
+func (AgentConversations) TableName() string { return "agent_conversations" }
+
+type AgentPageContextSnapshots struct {
+	ID                   string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	TaskID               *string   `gorm:"column:task_id;type:varchar(36)"`
+	TurnID               *string   `gorm:"column:turn_id;type:varchar(36)"`
+	Route                string    `gorm:"column:route;type:varchar(512);not null"`
+	PageType             string    `gorm:"column:page_type;type:varchar(80);not null"`
+	ProductID            *string   `gorm:"column:product_id;type:varchar(36)"`
+	WorkflowID           *string   `gorm:"column:workflow_id;type:varchar(36)"`
+	SelectedAssetIdsJSON string    `gorm:"column:selected_asset_ids_json;type:json;not null"`
+	VisibleAssetIdsJSON  string    `gorm:"column:visible_asset_ids_json;type:json;not null"`
+	FiltersJSON          string    `gorm:"column:filters_json;type:json;not null"`
+	WorkflowRevision     *int      `gorm:"column:workflow_revision;type:integer"`
+	LibraryRevision      *int      `gorm:"column:library_revision;type:integer"`
+	Digest               string    `gorm:"column:digest;type:varchar(64);not null"`
+	CapturedAt           time.Time `gorm:"column:captured_at;type:timestamptz;not null"`
+	CreatedAt            time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (AgentPageContextSnapshots) TableName() string { return "agent_page_context_snapshots" }
+
+type AgentSessions struct {
+	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	Title      string     `gorm:"column:title;type:varchar(160);not null"`
+	Status     string     `gorm:"column:status;type:agentsessionstatus;not null"`
+	ArchivedAt *time.Time `gorm:"column:archived_at;type:timestamptz"`
+	CreatedAt  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt  time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	Summary    *string    `gorm:"column:summary;type:text"`
+	ProductID  *string    `gorm:"column:product_id;type:varchar(36)"`
+}
+
+func (AgentSessions) TableName() string { return "agent_sessions" }
+
+type AgentTasks struct {
+	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	SessionID      string     `gorm:"column:session_id;type:varchar(36);not null"`
+	ConversationID *string    `gorm:"column:conversation_id;type:varchar(36)"`
+	ProductID      *string    `gorm:"column:product_id;type:varchar(36)"`
+	HarnessRunID   string     `gorm:"column:harness_run_id;type:varchar(120);not null"`
+	Title          string     `gorm:"column:title;type:varchar(160);not null"`
+	Goal           string     `gorm:"column:goal;type:text;not null"`
+	Status         string     `gorm:"column:status;type:agenttaskstatus;not null"`
+	WaitingReason  *string    `gorm:"column:waiting_reason;type:varchar(160)"`
+	FailureReason  *string    `gorm:"column:failure_reason;type:text"`
+	CurrentTurnID  *string    `gorm:"column:current_turn_id;type:varchar(36)"`
+	StartedAt      *time.Time `gorm:"column:started_at;type:timestamptz"`
+	FinishedAt     *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CanceledAt     *time.Time `gorm:"column:canceled_at;type:timestamptz"`
+	CreatedAt      time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	Summary        *string    `gorm:"column:summary;type:text"`
+}
+
+func (AgentTasks) TableName() string { return "agent_tasks" }
+
+type AgentToolMutations struct {
+	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ConversationID      string    `gorm:"column:conversation_id;type:varchar(36);not null"`
+	ToolName            string    `gorm:"column:tool_name;type:varchar(120);not null"`
+	IdempotencyKey      string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	RequestHash         string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	AssetID             *string   `gorm:"column:asset_id;type:varchar(36)"`
+	ExpectedDisplayName *string   `gorm:"column:expected_display_name;type:varchar(255)"`
+	TargetDisplayName   *string   `gorm:"column:target_display_name;type:varchar(255)"`
+	Status              string    `gorm:"column:status;type:agenttoolmutationstatus;not null"`
+	ResultJSON          *string   `gorm:"column:result_json;type:json"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	PreparedJSON        string    `gorm:"column:prepared_json;type:json;not null"`
+}
+
+func (AgentToolMutations) TableName() string { return "agent_tool_mutations" }
+
+type AgentTurnCheckpoints struct {
+	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	TurnProjectionID string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
+	ExecutionID      string    `gorm:"column:execution_id;type:varchar(36);not null"`
+	Attempt          int       `gorm:"column:attempt;type:integer;not null"`
+	FencingToken     int       `gorm:"column:fencing_token;type:integer;not null"`
+	Sequence         int       `gorm:"column:sequence;type:integer;not null"`
+	Kind             string    `gorm:"column:kind;type:agentcheckpointkind;not null"`
+	PayloadJSON      string    `gorm:"column:payload_json;type:json;not null"`
+	CreatedAt        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (AgentTurnCheckpoints) TableName() string { return "agent_turn_checkpoints" }
+
+type AgentTurnEffectReconciliations struct {
+	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	TurnProjectionID    string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
+	ToolCallID          string    `gorm:"column:tool_call_id;type:varchar(120);not null"`
+	ToolName            string    `gorm:"column:tool_name;type:varchar(120);not null"`
+	IdempotencyKey      string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	EffectResult        string    `gorm:"column:effect_result;type:varchar(20);not null"`
+	ReconciliationState string    `gorm:"column:reconciliation_state;type:varchar(20);not null"`
+	ResultJSON          *string   `gorm:"column:result_json;type:json"`
+	Detail              *string   `gorm:"column:detail;type:text"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (AgentTurnEffectReconciliations) TableName() string { return "agent_turn_effect_reconciliations" }
+
+type AgentTurnEvents struct {
+	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	TurnProjectionID string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
+	ExecutionID      *string   `gorm:"column:execution_id;type:varchar(36)"`
+	RunID            string    `gorm:"column:run_id;type:varchar(120);not null"`
+	TurnID           string    `gorm:"column:turn_id;type:varchar(120);not null"`
+	SchemaVersion    int       `gorm:"column:schema_version;type:integer;not null"`
+	Sequence         int       `gorm:"column:sequence;type:integer;not null"`
+	Attempt          *int      `gorm:"column:attempt;type:integer"`
+	FencingToken     *int      `gorm:"column:fencing_token;type:integer"`
+	Kind             string    `gorm:"column:kind;type:varchar(120);not null"`
+	PayloadJSON      string    `gorm:"column:payload_json;type:json;not null"`
+	CreatedAt        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (AgentTurnEvents) TableName() string { return "agent_turn_events" }
+
+type AgentTurnExecutions struct {
+	ID                     string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	TurnProjectionID       string     `gorm:"column:turn_projection_id;type:varchar(36);not null"`
+	HarnessTurnID          string     `gorm:"column:harness_turn_id;type:varchar(120);not null"`
+	OwnerID                *string    `gorm:"column:owner_id;type:varchar(120)"`
+	LeaseToken             *string    `gorm:"column:lease_token;type:varchar(36)"`
+	LeaseExpiresAt         *time.Time `gorm:"column:lease_expires_at;type:timestamptz"`
+	Attempt                int        `gorm:"column:attempt;type:integer;not null"`
+	FencingToken           int        `gorm:"column:fencing_token;type:integer;not null"`
+	Phase                  string     `gorm:"column:phase;type:agentexecutionphase;not null"`
+	LastHeartbeatAt        *time.Time `gorm:"column:last_heartbeat_at;type:timestamptz"`
+	ReleasedAt             *time.Time `gorm:"column:released_at;type:timestamptz"`
+	CreatedAt              time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt              time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	LastCheckpointSequence int        `gorm:"column:last_checkpoint_sequence;type:integer;not null"`
+	LastCheckpointAt       *time.Time `gorm:"column:last_checkpoint_at;type:timestamptz"`
+}
+
+func (AgentTurnExecutions) TableName() string { return "agent_turn_executions" }
+
+type AgentTurnProjections struct {
+	ID                                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	ConversationID                     string     `gorm:"column:conversation_id;type:varchar(36);not null"`
+	HarnessTurnID                      *string    `gorm:"column:harness_turn_id;type:varchar(120)"`
+	IdempotencyKey                     string     `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	RequestHash                        string     `gorm:"column:request_hash;type:varchar(64);not null"`
+	InputText                          string     `gorm:"column:input_text;type:text;not null"`
+	InputAssetIdsJSON                  string     `gorm:"column:input_asset_ids_json;type:json;not null"`
+	Status                             string     `gorm:"column:status;type:agentturnstatus;not null"`
+	ResumeRequired                     bool       `gorm:"column:resume_required;type:boolean;not null"`
+	OutputText                         *string    `gorm:"column:output_text;type:text"`
+	ErrorText                          *string    `gorm:"column:error_text;type:text"`
+	QuestionJSON                       *string    `gorm:"column:question_json;type:json"`
+	ArtifactName                       *string    `gorm:"column:artifact_name;type:varchar(120)"`
+	ArtifactStepID                     *string    `gorm:"column:artifact_step_id;type:varchar(120)"`
+	SyncError                          *string    `gorm:"column:sync_error;type:text"`
+	FinishedAt                         *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CreatedAt                          time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                          time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	ToolStepsJSON                      string     `gorm:"column:tool_steps_json;type:json;not null"`
+	TaskID                             *string    `gorm:"column:task_id;type:varchar(36)"`
+	PageContextSnapshotID              *string    `gorm:"column:page_context_snapshot_id;type:varchar(36)"`
+	LibraryOrganizationDraftRevisionID *string    `gorm:"column:library_organization_draft_revision_id;type:varchar(36)"`
+	WorkflowRunRequestID               *string    `gorm:"column:workflow_run_request_id;type:varchar(36)"`
+	QuestionAnswerJSON                 *string    `gorm:"column:question_answer_json;type:json"`
+	ContinuationTurnID                 *string    `gorm:"column:continuation_turn_id;type:varchar(36)"`
+}
+
+func (AgentTurnProjections) TableName() string { return "agent_turn_projections" }
+
+type AgentWorkflowRunRequests struct {
+	ID                       string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	ConversationID           string     `gorm:"column:conversation_id;type:varchar(36);not null"`
+	TaskID                   *string    `gorm:"column:task_id;type:varchar(36)"`
+	ProductID                string     `gorm:"column:product_id;type:varchar(36);not null"`
+	ExpectedWorkflowRevision int        `gorm:"column:expected_workflow_revision;type:integer;not null"`
+	IdempotencyKey           string     `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	RequestHash              string     `gorm:"column:request_hash;type:varchar(64);not null"`
+	SourceStepID             string     `gorm:"column:source_step_id;type:varchar(120);not null"`
+	Status                   string     `gorm:"column:status;type:agentworkflowrunrequeststatus;not null"`
+	FailureReason            *string    `gorm:"column:failure_reason;type:text"`
+	ConfirmedAt              *time.Time `gorm:"column:confirmed_at;type:timestamptz"`
+	FinishedAt               *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CreatedAt                time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	GraphID                  string     `gorm:"column:graph_id;type:varchar(36);not null"`
+	GraphRunID               *string    `gorm:"column:graph_run_id;type:varchar(36)"`
+	SourceGraphRunID         *string    `gorm:"column:source_graph_run_id;type:varchar(36)"`
+}
+
+func (AgentWorkflowRunRequests) TableName() string { return "agent_workflow_run_requests" }
+
+type AppSettings struct {
+	Key       string    `gorm:"column:key;type:varchar(120);primaryKey"`
+	Value     string    `gorm:"column:value;type:text;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (AppSettings) TableName() string { return "app_settings" }
+
+type AsyncDispatches struct {
+	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	DeliveryKey    string     `gorm:"column:delivery_key;type:varchar(255);not null"`
+	ActorName      string     `gorm:"column:actor_name;type:varchar(120);not null"`
+	AggregateID    string     `gorm:"column:aggregate_id;type:varchar(36);not null"`
+	PayloadJSON    *string    `gorm:"column:payload_json;type:json"`
+	Status         string     `gorm:"column:status;type:asyncdispatchstatus;not null"`
+	AvailableAt    time.Time  `gorm:"column:available_at;type:timestamptz;not null"`
+	LeaseToken     *string    `gorm:"column:lease_token;type:varchar(36)"`
+	LeaseExpiresAt *time.Time `gorm:"column:lease_expires_at;type:timestamptz"`
+	Attempts       int        `gorm:"column:attempts;type:integer;not null"`
+	LastError      *string    `gorm:"column:last_error;type:text"`
+	SentAt         *time.Time `gorm:"column:sent_at;type:timestamptz"`
+	ConsumedAt     *time.Time `gorm:"column:consumed_at;type:timestamptz"`
+	CreatedAt      time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt      time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (AsyncDispatches) TableName() string { return "async_dispatches" }
+
+type DeliveryRenditionJobs struct {
+	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID         string     `gorm:"column:product_id;type:varchar(36);not null"`
+	SourceAssetID     string     `gorm:"column:source_asset_id;type:varchar(36);not null"`
+	ResultAssetID     *string    `gorm:"column:result_asset_id;type:varchar(36)"`
+	SpecSchemaVersion int        `gorm:"column:spec_schema_version;type:integer;not null"`
+	SpecJSON          string     `gorm:"column:spec_json;type:json;not null"`
+	SpecHash          string     `gorm:"column:spec_hash;type:varchar(64);not null"`
+	Status            string     `gorm:"column:status;type:jobstatus;not null"`
+	Attempts          int        `gorm:"column:attempts;type:integer;not null"`
+	ActiveAttemptID   *string    `gorm:"column:active_attempt_id;type:varchar(36)"`
+	IsRetryable       bool       `gorm:"column:is_retryable;type:boolean;not null"`
+	FailureReason     *string    `gorm:"column:failure_reason;type:text"`
+	StartedAt         *time.Time `gorm:"column:started_at;type:timestamptz"`
+	FinishedAt        *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CreatedAt         time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (DeliveryRenditionJobs) TableName() string { return "delivery_rendition_jobs" }
+
+type ImageSessionAssets struct {
+	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	SessionID        string    `gorm:"column:session_id;type:varchar(36);not null"`
+	Kind             string    `gorm:"column:kind;type:imagesessionassetkind;not null"`
+	OriginalFilename string    `gorm:"column:original_filename;type:varchar(255);not null"`
+	MIMEType         string    `gorm:"column:mime_type;type:varchar(100);not null"`
+	StoragePath      string    `gorm:"column:storage_path;type:varchar(500);not null"`
+	CreatedAt        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	MediaObjectID    string    `gorm:"column:media_object_id;type:varchar(36);not null"`
+}
+
+func (ImageSessionAssets) TableName() string { return "image_session_assets" }
+
+type ImageSessionGenerationTasks struct {
+	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	SessionID                 string     `gorm:"column:session_id;type:varchar(36);not null"`
+	Status                    string     `gorm:"column:status;type:jobstatus;not null"`
+	Prompt                    string     `gorm:"column:prompt;type:text;not null"`
+	Size                      string     `gorm:"column:size;type:varchar(32);not null"`
+	BaseAssetID               *string    `gorm:"column:base_asset_id;type:varchar(36)"`
+	SelectedReferenceAssetIds *string    `gorm:"column:selected_reference_asset_ids;type:json"`
+	GenerationCount           int        `gorm:"column:generation_count;type:integer;not null"`
+	FailureReason             *string    `gorm:"column:failure_reason;type:text"`
+	ResultGenerationGroupID   *string    `gorm:"column:result_generation_group_id;type:varchar(36)"`
+	CreatedAt                 time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	StartedAt                 *time.Time `gorm:"column:started_at;type:timestamptz"`
+	FinishedAt                *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	Attempts                  int        `gorm:"column:attempts;type:integer;not null"`
+	IsRetryable               bool       `gorm:"column:is_retryable;type:boolean;not null"`
+	ToolOptions               *string    `gorm:"column:tool_options;type:json"`
+	CompletedCandidates       int        `gorm:"column:completed_candidates;type:integer;not null"`
+	ActiveCandidateIndex      *int       `gorm:"column:active_candidate_index;type:integer"`
+	ProgressPhase             *string    `gorm:"column:progress_phase;type:varchar(64)"`
+	ProgressUpdatedAt         *time.Time `gorm:"column:progress_updated_at;type:timestamptz"`
+	ProviderResponseID        *string    `gorm:"column:provider_response_id;type:varchar(255)"`
+	ProviderResponseStatus    *string    `gorm:"column:provider_response_status;type:varchar(64)"`
+	ProgressMetadata          *string    `gorm:"column:progress_metadata;type:json"`
+	ActiveAttemptID           *string    `gorm:"column:active_attempt_id;type:varchar(36)"`
+}
+
+func (ImageSessionGenerationTasks) TableName() string { return "image_session_generation_tasks" }
+
+type ImageSessionProviderEffects struct {
+	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GenerationTaskID    string    `gorm:"column:generation_task_id;type:varchar(36);not null"`
+	CandidateStartIndex int       `gorm:"column:candidate_start_index;type:integer;not null"`
+	CandidateCount      int       `gorm:"column:candidate_count;type:integer;not null"`
+	OperationKey        string    `gorm:"column:operation_key;type:varchar(255);not null"`
+	EffectKind          string    `gorm:"column:effect_kind;type:varchar(80);not null"`
+	RequestHash         string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	ProviderName        string    `gorm:"column:provider_name;type:varchar(80);not null"`
+	AttemptID           string    `gorm:"column:attempt_id;type:varchar(36);not null"`
+	EffectResult        string    `gorm:"column:effect_result;type:varchar(20);not null"`
+	ReconciliationState string    `gorm:"column:reconciliation_state;type:varchar(20);not null"`
+	ProviderResponseID  *string   `gorm:"column:provider_response_id;type:varchar(255)"`
+	ProviderStatus      *string   `gorm:"column:provider_status;type:varchar(80)"`
+	RequestJSON         *string   `gorm:"column:request_json;type:json"`
+	ResultJSON          *string   `gorm:"column:result_json;type:json"`
+	Detail              *string   `gorm:"column:detail;type:text"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (ImageSessionProviderEffects) TableName() string { return "image_session_provider_effects" }
+
+type ImageSessionRounds struct {
+	ID                        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	SessionID                 string    `gorm:"column:session_id;type:varchar(36);not null"`
+	Prompt                    string    `gorm:"column:prompt;type:text;not null"`
+	AssistantMessage          string    `gorm:"column:assistant_message;type:text;not null"`
+	Size                      string    `gorm:"column:size;type:varchar(32);not null"`
+	ModelName                 string    `gorm:"column:model_name;type:varchar(100);not null"`
+	ProviderName              string    `gorm:"column:provider_name;type:varchar(50);not null"`
+	PromptVersion             string    `gorm:"column:prompt_version;type:varchar(32);not null"`
+	GeneratedAssetID          string    `gorm:"column:generated_asset_id;type:varchar(36);not null"`
+	CreatedAt                 time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	ProviderResponseID        *string   `gorm:"column:provider_response_id;type:varchar(128)"`
+	PreviousResponseID        *string   `gorm:"column:previous_response_id;type:varchar(128)"`
+	ImageGenerationCallID     *string   `gorm:"column:image_generation_call_id;type:varchar(128)"`
+	ProviderRequestJSON       *string   `gorm:"column:provider_request_json;type:json"`
+	ProviderOutputJSON        *string   `gorm:"column:provider_output_json;type:json"`
+	GenerationGroupID         *string   `gorm:"column:generation_group_id;type:varchar(36)"`
+	CandidateIndex            int       `gorm:"column:candidate_index;type:integer;not null"`
+	CandidateCount            int       `gorm:"column:candidate_count;type:integer;not null"`
+	BaseAssetID               *string   `gorm:"column:base_asset_id;type:varchar(36)"`
+	SelectedReferenceAssetIds *string   `gorm:"column:selected_reference_asset_ids;type:json"`
+}
+
+func (ImageSessionRounds) TableName() string { return "image_session_rounds" }
+
+type ImageSessions struct {
+	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Title     string    `gorm:"column:title;type:varchar(255);not null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (ImageSessions) TableName() string { return "image_sessions" }
+
+type LibraryOrganizationDraftRevisions struct {
+	ID                   string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	DraftID              string     `gorm:"column:draft_id;type:varchar(36);not null"`
+	Version              int        `gorm:"column:version;type:integer;not null"`
+	SchemaVersion        int        `gorm:"column:schema_version;type:integer;not null"`
+	PayloadJSON          string     `gorm:"column:payload_json;type:json;not null"`
+	PayloadHash          string     `gorm:"column:payload_hash;type:varchar(64);not null"`
+	SourceTurnID         *string    `gorm:"column:source_turn_id;type:varchar(120)"`
+	SourceArtifactStepID *string    `gorm:"column:source_artifact_step_id;type:varchar(120)"`
+	ConfirmedAt          *time.Time `gorm:"column:confirmed_at;type:timestamptz"`
+	CreatedAt            time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (LibraryOrganizationDraftRevisions) TableName() string {
+	return "library_organization_draft_revisions"
+}
+
+type LibraryOrganizationDrafts struct {
+	ID                         string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	ConversationID             string     `gorm:"column:conversation_id;type:varchar(36);not null"`
+	Status                     string     `gorm:"column:status;type:libraryorganizationdraftstatus;not null"`
+	CurrentRevisionID          *string    `gorm:"column:current_revision_id;type:varchar(36)"`
+	ConfirmedRevisionID        *string    `gorm:"column:confirmed_revision_id;type:varchar(36)"`
+	ConfirmationIdempotencyKey *string    `gorm:"column:confirmation_idempotency_key;type:varchar(200)"`
+	ConfirmationRequestHash    *string    `gorm:"column:confirmation_request_hash;type:varchar(64)"`
+	ConfirmationResultJSON     *string    `gorm:"column:confirmation_result_json;type:json"`
+	ConfirmedAt                *time.Time `gorm:"column:confirmed_at;type:timestamptz"`
+	CreatedAt                  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                  time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (LibraryOrganizationDrafts) TableName() string { return "library_organization_drafts" }
+
+type LocalImageEditAdoptionEvents struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID      string    `gorm:"column:product_id;type:varchar(36);not null"`
+	TaskID         string    `gorm:"column:task_id;type:varchar(36);not null"`
+	GraphID        string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	NodeID         string    `gorm:"column:node_id;type:varchar(36);not null"`
+	EventType      string    `gorm:"column:event_type;type:varchar(16);not null"`
+	FromArtifactID string    `gorm:"column:from_artifact_id;type:varchar(36);not null"`
+	ToArtifactID   string    `gorm:"column:to_artifact_id;type:varchar(36);not null"`
+	RelatedEventID *string   `gorm:"column:related_event_id;type:varchar(36)"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (LocalImageEditAdoptionEvents) TableName() string { return "local_image_edit_adoption_events" }
+
+type LocalImageEditProviderAttempts struct {
+	ID                      string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	TaskID                  string    `gorm:"column:task_id;type:varchar(36);not null"`
+	AttemptID               string    `gorm:"column:attempt_id;type:varchar(36);not null"`
+	AttemptNumber           int       `gorm:"column:attempt_number;type:integer;not null"`
+	OperationKey            string    `gorm:"column:operation_key;type:varchar(255);not null"`
+	RequestHash             string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	Phase                   string    `gorm:"column:phase;type:varchar(40);not null"`
+	EffectResult            string    `gorm:"column:effect_result;type:varchar(20);not null"`
+	ProviderName            string    `gorm:"column:provider_name;type:varchar(80);not null"`
+	ProviderModel           *string   `gorm:"column:provider_model;type:varchar(255)"`
+	ProviderResponseID      *string   `gorm:"column:provider_response_id;type:varchar(255)"`
+	ProviderStatus          *string   `gorm:"column:provider_status;type:varchar(80)"`
+	RequestJSON             *string   `gorm:"column:request_json;type:json"`
+	EffectiveParametersJSON *string   `gorm:"column:effective_parameters_json;type:json"`
+	ResultJSON              *string   `gorm:"column:result_json;type:json"`
+	LateResultAssetID       *string   `gorm:"column:late_result_asset_id;type:varchar(36)"`
+	Detail                  *string   `gorm:"column:detail;type:text"`
+	CreatedAt               time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt               time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (LocalImageEditProviderAttempts) TableName() string { return "local_image_edit_provider_attempts" }
+
+type LocalImageEditTaskReferences struct {
+	TaskID    string `gorm:"column:task_id;type:varchar(36);primaryKey"`
+	AssetID   string `gorm:"column:asset_id;type:varchar(36);primaryKey"`
+	SortOrder int    `gorm:"column:sort_order;type:integer;not null"`
+}
+
+func (LocalImageEditTaskReferences) TableName() string { return "local_image_edit_task_references" }
+
+type LocalImageEditTasks struct {
+	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID                 string     `gorm:"column:product_id;type:varchar(36);not null"`
+	SourceAssetID             string     `gorm:"column:source_asset_id;type:varchar(36);not null"`
+	SourceMediaSHA256         string     `gorm:"column:source_media_sha256;type:varchar(64);not null"`
+	MaskMediaObjectID         string     `gorm:"column:mask_media_object_id;type:varchar(36);not null"`
+	TargetGraphID             *string    `gorm:"column:target_graph_id;type:varchar(36)"`
+	TargetNodeID              *string    `gorm:"column:target_node_id;type:varchar(36)"`
+	TargetGraphRevision       *int       `gorm:"column:target_graph_revision;type:integer"`
+	SourceArtifactID          *string    `gorm:"column:source_artifact_id;type:varchar(36)"`
+	SourceArtifactAssetID     *string    `gorm:"column:source_artifact_asset_id;type:varchar(36)"`
+	SourceArtifactInputDigest *string    `gorm:"column:source_artifact_input_digest;type:varchar(64)"`
+	Operation                 string     `gorm:"column:operation;type:varchar(32);not null"`
+	Instruction               *string    `gorm:"column:instruction;type:text"`
+	SourceText                *string    `gorm:"column:source_text;type:text"`
+	ReplacementText           *string    `gorm:"column:replacement_text;type:text"`
+	MaskGeometryJSON          string     `gorm:"column:mask_geometry_json;type:json;not null"`
+	Status                    string     `gorm:"column:status;type:localimageedittaskstatus;not null"`
+	Revision                  int        `gorm:"column:revision;type:integer;not null"`
+	IdempotencyKey            *string    `gorm:"column:idempotency_key;type:varchar(120)"`
+	RequestHash               *string    `gorm:"column:request_hash;type:varchar(64)"`
+	Attempts                  int        `gorm:"column:attempts;type:integer;not null"`
+	ActiveAttemptID           *string    `gorm:"column:active_attempt_id;type:varchar(36)"`
+	ProgressPhase             *string    `gorm:"column:progress_phase;type:varchar(80)"`
+	FailureReason             *string    `gorm:"column:failure_reason;type:text"`
+	IsRetryable               bool       `gorm:"column:is_retryable;type:boolean;not null"`
+	ProviderName              *string    `gorm:"column:provider_name;type:varchar(80)"`
+	ProviderModel             *string    `gorm:"column:provider_model;type:varchar(255)"`
+	ProviderResponseID        *string    `gorm:"column:provider_response_id;type:varchar(255)"`
+	ProviderStatus            *string    `gorm:"column:provider_status;type:varchar(80)"`
+	ResultAssetID             *string    `gorm:"column:result_asset_id;type:varchar(36)"`
+	QueuedAt                  *time.Time `gorm:"column:queued_at;type:timestamptz"`
+	StartedAt                 *time.Time `gorm:"column:started_at;type:timestamptz"`
+	FinishedAt                *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CreatedAt                 time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                 time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	RequestedProviderName     *string    `gorm:"column:requested_provider_name;type:varchar(80)"`
+	RequestedLocalEditMode    *string    `gorm:"column:requested_local_edit_mode;type:varchar(32)"`
+}
+
+func (LocalImageEditTasks) TableName() string { return "local_image_edit_tasks" }
+
+type MediaLibraryAssetTags struct {
+	AssetID   string    `gorm:"column:asset_id;type:varchar(36);primaryKey"`
+	TagID     string    `gorm:"column:tag_id;type:varchar(36);primaryKey"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (MediaLibraryAssetTags) TableName() string { return "media_library_asset_tags" }
+
+type MediaLibraryAssets struct {
+	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	MediaObjectID             string     `gorm:"column:media_object_id;type:varchar(36);not null"`
+	SourceType                string     `gorm:"column:source_type;type:varchar(40);not null"`
+	SourceID                  string     `gorm:"column:source_id;type:varchar(36);not null"`
+	SourceImageSessionAssetID *string    `gorm:"column:source_image_session_asset_id;type:varchar(36)"`
+	SourceProductAssetID      *string    `gorm:"column:source_product_asset_id;type:varchar(36)"`
+	ProvenanceJSON            string     `gorm:"column:provenance_json;type:json;not null"`
+	ProvenanceHash            string     `gorm:"column:provenance_hash;type:varchar(64);not null"`
+	Revision                  int        `gorm:"column:revision;type:integer;not null"`
+	DisplayName               string     `gorm:"column:display_name;type:varchar(255);not null"`
+	OriginalFilename          string     `gorm:"column:original_filename;type:varchar(255);not null"`
+	IsArchived                bool       `gorm:"column:is_archived;type:boolean;not null"`
+	ArchivedAt                *time.Time `gorm:"column:archived_at;type:timestamptz"`
+	CreatedAt                 time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                 time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	FolderID                  *string    `gorm:"column:folder_id;type:varchar(36)"`
+}
+
+func (MediaLibraryAssets) TableName() string { return "media_library_assets" }
+
+type MediaLibraryCollectionKeys struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID      string    `gorm:"column:product_id;type:varchar(36);not null"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	RequestHash    string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (MediaLibraryCollectionKeys) TableName() string { return "media_library_collection_keys" }
+
+type MediaLibraryFolders struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name           string    `gorm:"column:name;type:varchar(120);not null"`
+	NormalizedName string    `gorm:"column:normalized_name;type:varchar(120);not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (MediaLibraryFolders) TableName() string { return "media_library_folders" }
+
+type MediaLibraryTags struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name           string    `gorm:"column:name;type:varchar(80);not null"`
+	NormalizedName string    `gorm:"column:normalized_name;type:varchar(80);not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (MediaLibraryTags) TableName() string { return "media_library_tags" }
+
+type MediaLibraryUploadKeys struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	IdempotencyKey string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
+	RequestHash    string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	AssetIdsJSON   string    `gorm:"column:asset_ids_json;type:text;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (MediaLibraryUploadKeys) TableName() string { return "media_library_upload_keys" }
+
+type MediaObjects struct {
+	ID                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	StoragePath        string     `gorm:"column:storage_path;type:varchar(500);not null"`
+	MIMEType           string     `gorm:"column:mime_type;type:varchar(100);not null"`
+	ByteSize           *int64     `gorm:"column:byte_size;type:bigint"`
+	Width              *int       `gorm:"column:width;type:integer"`
+	Height             *int       `gorm:"column:height;type:integer"`
+	SHA256             *string    `gorm:"column:sha256;type:varchar(64)"`
+	VerificationStatus string     `gorm:"column:verification_status;type:mediaverificationstatus;not null"`
+	CreatedAt          time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	VerifiedAt         *time.Time `gorm:"column:verified_at;type:timestamptz"`
+}
+
+func (MediaObjects) TableName() string { return "media_objects" }
+
+type ProductAssetFolders struct {
+	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID string    `gorm:"column:product_id;type:varchar(36);not null"`
+	Name      string    `gorm:"column:name;type:varchar(120);not null"`
+	SortOrder int       `gorm:"column:sort_order;type:integer;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (ProductAssetFolders) TableName() string { return "product_asset_folders" }
+
+type ProductFactSetVersions struct {
+	ID          string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID   string    `gorm:"column:product_id;type:varchar(36);not null"`
+	Version     int       `gorm:"column:version;type:integer;not null"`
+	PayloadJSON string    `gorm:"column:payload_json;type:json;not null"`
+	PayloadHash string    `gorm:"column:payload_hash;type:varchar(64);not null"`
+	CreatedAt   time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (ProductFactSetVersions) TableName() string { return "product_fact_set_versions" }
+
+type ProductImageAssets struct {
+	ID                        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID                 string    `gorm:"column:product_id;type:varchar(36);not null"`
+	MediaObjectID             string    `gorm:"column:media_object_id;type:varchar(36);not null"`
+	OriginType                string    `gorm:"column:origin_type;type:productimageorigintype;not null"`
+	DisplayName               string    `gorm:"column:display_name;type:varchar(255);not null"`
+	OriginalFilename          string    `gorm:"column:original_filename;type:varchar(255);not null"`
+	ParentAssetID             *string   `gorm:"column:parent_asset_id;type:varchar(36)"`
+	SourceImageSessionAssetID *string   `gorm:"column:source_image_session_asset_id;type:varchar(36)"`
+	CreatedAt                 time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                 time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	ImageTypeKey              *string   `gorm:"column:image_type_key;type:varchar(80)"`
+	UserFolderID              *string   `gorm:"column:user_folder_id;type:varchar(36)"`
+	SourceLibraryAssetID      *string   `gorm:"column:source_library_asset_id;type:varchar(36)"`
+}
+
+func (ProductImageAssets) TableName() string { return "product_image_assets" }
+
+type ProductImageFidelityChecks struct {
+	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID             string    `gorm:"column:product_id;type:varchar(36);not null"`
+	AssetID               string    `gorm:"column:asset_id;type:varchar(36);not null"`
+	Version               int       `gorm:"column:version;type:integer;not null"`
+	ShapeFidelity         string    `gorm:"column:shape_fidelity;type:varchar(20);not null"`
+	ColorMaterialFidelity string    `gorm:"column:color_material_fidelity;type:varchar(20);not null"`
+	LogoTextLegibility    string    `gorm:"column:logo_text_legibility;type:varchar(20);not null"`
+	TextPolicyCompliance  string    `gorm:"column:text_policy_compliance;type:varchar(20);not null"`
+	Notes                 *string   `gorm:"column:notes;type:text"`
+	CheckedBy             string    `gorm:"column:checked_by;type:varchar(80);not null"`
+	IdempotencyKey        string    `gorm:"column:idempotency_key;type:varchar(120);not null"`
+	RequestHash           string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	CreatedAt             time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (ProductImageFidelityChecks) TableName() string { return "product_image_fidelity_checks" }
+
+type Products struct {
+	ID                      string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name                    string    `gorm:"column:name;type:varchar(255);not null"`
+	Category                *string   `gorm:"column:category;type:varchar(120)"`
+	Price                   *string   `gorm:"column:price;type:numeric(10,2)"`
+	SourceNote              *string   `gorm:"column:source_note;type:text"`
+	CreatedAt               time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt               time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	CoverImageAssetID       *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`
+	CurrentFactSetVersionID *string   `gorm:"column:current_fact_set_version_id;type:varchar(36)"`
+	IntakeSchemaVersion     *int      `gorm:"column:intake_schema_version;type:integer"`
+	IntakeJSON              *string   `gorm:"column:intake_json;type:json"`
+}
+
+func (Products) TableName() string { return "products" }
+
+type ProviderBindings struct {
+	ID                string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	Purpose           string    `gorm:"column:purpose;type:varchar(40);not null"`
+	ProviderKind      string    `gorm:"column:provider_kind;type:varchar(40);not null"`
+	ProviderProfileID *string   `gorm:"column:provider_profile_id;type:varchar(36)"`
+	ModelSettingsJSON string    `gorm:"column:model_settings_json;type:json;not null"`
+	ConfigJSON        string    `gorm:"column:config_json;type:json;not null"`
+	CreatedAt         time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (ProviderBindings) TableName() string { return "provider_bindings" }
+
+type ProviderProfiles struct {
+	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name              string     `gorm:"column:name;type:varchar(120);not null"`
+	ProviderType      string     `gorm:"column:provider_type;type:varchar(40);not null"`
+	BaseURL           *string    `gorm:"column:base_url;type:text"`
+	APIKey            *string    `gorm:"column:api_key;type:text"`
+	CapabilitiesJSON  string     `gorm:"column:capabilities_json;type:json;not null"`
+	DefaultModelsJSON string     `gorm:"column:default_models_json;type:json;not null"`
+	ConfigJSON        string     `gorm:"column:config_json;type:json;not null"`
+	Enabled           bool       `gorm:"column:enabled;type:boolean;not null"`
+	ArchivedAt        *time.Time `gorm:"column:archived_at;type:timestamptz"`
+	CreatedAt         time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (ProviderProfiles) TableName() string { return "provider_profiles" }
+
+type VisualSystemVersionReferences struct {
+	ID                    string `gorm:"column:id;type:varchar(36);primaryKey"`
+	VisualSystemVersionID string `gorm:"column:visual_system_version_id;type:varchar(36);not null"`
+	AssetID               string `gorm:"column:asset_id;type:varchar(36);not null"`
+	Role                  string `gorm:"column:role;type:varchar(120);not null"`
+	Label                 string `gorm:"column:label;type:varchar(255);not null"`
+	Position              int    `gorm:"column:position;type:integer;not null"`
+}
+
+func (VisualSystemVersionReferences) TableName() string { return "visual_system_version_references" }
+
+type VisualSystemVersions struct {
+	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	VisualSystemID string    `gorm:"column:visual_system_id;type:varchar(36);not null"`
+	Version        int       `gorm:"column:version;type:integer;not null"`
+	SchemaVersion  int       `gorm:"column:schema_version;type:integer;not null"`
+	PayloadJSON    string    `gorm:"column:payload_json;type:json;not null"`
+	PayloadHash    string    `gorm:"column:payload_hash;type:varchar(64);not null"`
+	SourceMarkdown *string   `gorm:"column:source_markdown;type:text"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (VisualSystemVersions) TableName() string { return "visual_system_versions" }
+
+type VisualSystems struct {
+	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	Name       string     `gorm:"column:name;type:varchar(255);not null"`
+	ArchivedAt *time.Time `gorm:"column:archived_at;type:timestamptz"`
+	CreatedAt  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt  time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (VisualSystems) TableName() string { return "visual_systems" }
+
+type WorkflowGraphArtifacts struct {
+	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID             string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	NodeID              *string   `gorm:"column:node_id;type:varchar(36)"`
+	NodeRunID           *string   `gorm:"column:node_run_id;type:varchar(36)"`
+	ArtifactType        string    `gorm:"column:artifact_type;type:varchar(40);not null"`
+	SchemaVersion       int       `gorm:"column:schema_version;type:integer;not null"`
+	GraphRevision       int       `gorm:"column:graph_revision;type:integer;not null"`
+	PayloadJSON         string    `gorm:"column:payload_json;type:json;not null"`
+	PayloadHash         string    `gorm:"column:payload_hash;type:varchar(64);not null"`
+	InputDigest         string    `gorm:"column:input_digest;type:varchar(64);not null"`
+	ProductImageAssetID *string   `gorm:"column:product_image_asset_id;type:varchar(36)"`
+	ProviderName        *string   `gorm:"column:provider_name;type:varchar(80)"`
+	ProviderModel       *string   `gorm:"column:provider_model;type:varchar(255)"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphArtifacts) TableName() string { return "workflow_graph_artifacts" }
+
+type WorkflowGraphEdges struct {
+	ID           string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID      string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	SourceNodeID string    `gorm:"column:source_node_id;type:varchar(36);not null"`
+	TargetNodeID string    `gorm:"column:target_node_id;type:varchar(36);not null"`
+	DataType     string    `gorm:"column:data_type;type:varchar(40);not null"`
+	Role         string    `gorm:"column:role;type:varchar(40);not null"`
+	SortOrder    int       `gorm:"column:sort_order;type:integer;not null"`
+	CreatedAt    time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphEdges) TableName() string { return "workflow_graph_edges" }
+
+type WorkflowGraphGroups struct {
+	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID   string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	Title     string    `gorm:"column:title;type:varchar(255);not null"`
+	SortOrder int       `gorm:"column:sort_order;type:integer;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphGroups) TableName() string { return "workflow_graph_groups" }
+
+type WorkflowGraphNodeRuns struct {
+	ID                  string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphRunID          string     `gorm:"column:graph_run_id;type:varchar(36);not null"`
+	NodeID              *string    `gorm:"column:node_id;type:varchar(36)"`
+	Status              string     `gorm:"column:status;type:varchar(40);not null"`
+	SortOrder           int        `gorm:"column:sort_order;type:integer;not null"`
+	CompiledContextJSON *string    `gorm:"column:compiled_context_json;type:json"`
+	OutputJSON          *string    `gorm:"column:output_json;type:json"`
+	FailureReason       *string    `gorm:"column:failure_reason;type:text"`
+	StartedAt           time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
+	FinishedAt          *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	ActiveAttemptID     *string    `gorm:"column:active_attempt_id;type:varchar(36)"`
+	ProgressPhase       *string    `gorm:"column:progress_phase;type:varchar(80)"`
+	ProgressUpdatedAt   *time.Time `gorm:"column:progress_updated_at;type:timestamptz"`
+}
+
+func (WorkflowGraphNodeRuns) TableName() string { return "workflow_graph_node_runs" }
+
+type WorkflowGraphNodes struct {
+	ID                string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID           string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	NodeType          string    `gorm:"column:node_type;type:varchar(40);not null"`
+	Title             string    `gorm:"column:title;type:varchar(255);not null"`
+	PositionX         int       `gorm:"column:position_x;type:integer;not null"`
+	PositionY         int       `gorm:"column:position_y;type:integer;not null"`
+	ConfigJSON        string    `gorm:"column:config_json;type:json;not null"`
+	BoundImageAssetID *string   `gorm:"column:bound_image_asset_id;type:varchar(36)"`
+	GroupID           *string   `gorm:"column:group_id;type:varchar(36)"`
+	CreatedAt         time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt         time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	CurrentArtifactID *string   `gorm:"column:current_artifact_id;type:varchar(36)"`
+}
+
+func (WorkflowGraphNodes) TableName() string { return "workflow_graph_nodes" }
+
+type WorkflowGraphProposals struct {
+	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID           string     `gorm:"column:graph_id;type:varchar(36);not null"`
+	ConversationID    *string    `gorm:"column:conversation_id;type:varchar(36)"`
+	Status            string     `gorm:"column:status;type:varchar(16);not null"`
+	Summary           string     `gorm:"column:summary;type:varchar(500);not null"`
+	BaseGraphRevision int        `gorm:"column:base_graph_revision;type:integer;not null"`
+	ChangeSetJSON     string     `gorm:"column:change_set_json;type:json;not null"`
+	OperationGroupID  *string    `gorm:"column:operation_group_id;type:varchar(36)"`
+	CreatedAt         time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	ResolvedAt        *time.Time `gorm:"column:resolved_at;type:timestamptz"`
+}
+
+func (WorkflowGraphProposals) TableName() string { return "workflow_graph_proposals" }
+
+type WorkflowGraphProviderEffects struct {
+	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	NodeRunID           string    `gorm:"column:node_run_id;type:varchar(36);not null"`
+	OperationKey        string    `gorm:"column:operation_key;type:varchar(255);not null"`
+	EffectKind          string    `gorm:"column:effect_kind;type:varchar(80);not null"`
+	RequestHash         string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	ProviderName        string    `gorm:"column:provider_name;type:varchar(80);not null"`
+	AttemptID           string    `gorm:"column:attempt_id;type:varchar(36);not null"`
+	EffectResult        string    `gorm:"column:effect_result;type:varchar(20);not null"`
+	ReconciliationState string    `gorm:"column:reconciliation_state;type:varchar(20);not null"`
+	ProviderResponseID  *string   `gorm:"column:provider_response_id;type:varchar(255)"`
+	ProviderStatus      *string   `gorm:"column:provider_status;type:varchar(80)"`
+	RequestJSON         *string   `gorm:"column:request_json;type:json"`
+	ResultJSON          *string   `gorm:"column:result_json;type:json"`
+	Detail              *string   `gorm:"column:detail;type:text"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt           time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphProviderEffects) TableName() string { return "workflow_graph_provider_effects" }
+
+type WorkflowGraphRuns struct {
+	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID          string     `gorm:"column:graph_id;type:varchar(36);not null"`
+	Status           string     `gorm:"column:status;type:varchar(40);not null"`
+	RunScope         string     `gorm:"column:run_scope;type:varchar(40);not null"`
+	RequestedNodeID  *string    `gorm:"column:requested_node_id;type:varchar(36)"`
+	GraphRevision    int        `gorm:"column:graph_revision;type:integer;not null"`
+	SnapshotJSON     string     `gorm:"column:snapshot_json;type:json;not null"`
+	FailureReason    *string    `gorm:"column:failure_reason;type:text"`
+	IsRetryable      bool       `gorm:"column:is_retryable;type:boolean;not null"`
+	ProgressMetadata *string    `gorm:"column:progress_metadata;type:json"`
+	StartedAt        time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
+	FinishedAt       *time.Time `gorm:"column:finished_at;type:timestamptz"`
+}
+
+func (WorkflowGraphRuns) TableName() string { return "workflow_graph_runs" }
+
+type WorkflowGraphs struct {
+	ID            string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID     string    `gorm:"column:product_id;type:varchar(36);not null"`
+	Title         string    `gorm:"column:title;type:varchar(255);not null"`
+	Active        bool      `gorm:"column:active;type:boolean;not null"`
+	SchemaVersion int       `gorm:"column:schema_version;type:integer;not null"`
+	Revision      int       `gorm:"column:revision;type:integer;not null"`
+	CreatedAt     time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt     time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphs) TableName() string { return "workflow_graphs" }
+
+type WorkflowMediaLibraryAssets struct {
+	WorkflowID          string    `gorm:"column:workflow_id;type:varchar(36);primaryKey"`
+	MediaLibraryAssetID string    `gorm:"column:media_library_asset_id;type:varchar(36);primaryKey"`
+	CreatedAt           time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (WorkflowMediaLibraryAssets) TableName() string { return "workflow_media_library_assets" }
+
+type WorkflowOperationGroups struct {
+	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID               string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	ActorType             string    `gorm:"column:actor_type;type:varchar(40);not null"`
+	Summary               string    `gorm:"column:summary;type:varchar(500);not null"`
+	BaseRevision          int       `gorm:"column:base_revision;type:integer;not null"`
+	ResultRevision        int       `gorm:"column:result_revision;type:integer;not null"`
+	OperationsJSON        string    `gorm:"column:operations_json;type:json;not null"`
+	InverseOperationsJSON string    `gorm:"column:inverse_operations_json;type:json;not null"`
+	CreatedAt             time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	HistoryKind           string    `gorm:"column:history_kind;type:varchar(16);not null"`
+}
+
+func (WorkflowOperationGroups) TableName() string { return "workflow_operation_groups" }
+
+type WorkflowRecipeApplications struct {
+	ID                   string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID            string    `gorm:"column:product_id;type:varchar(36);not null"`
+	RecipeVersionID      string    `gorm:"column:recipe_version_id;type:varchar(36);not null"`
+	GraphID              string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	OperationGroupID     string    `gorm:"column:operation_group_id;type:varchar(36);not null"`
+	Mode                 string    `gorm:"column:mode;type:varchar(16);not null"`
+	SchemaVersion        int       `gorm:"column:schema_version;type:integer;not null"`
+	IdempotencyKey       string    `gorm:"column:idempotency_key;type:varchar(120);not null"`
+	RequestHash          string    `gorm:"column:request_hash;type:varchar(64);not null"`
+	AddedNodeIdsJSON     string    `gorm:"column:added_node_ids_json;type:json;not null"`
+	AddedEdgeIdsJSON     string    `gorm:"column:added_edge_ids_json;type:json;not null"`
+	CreatedAt            time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	PreviewGraphRevision *int      `gorm:"column:preview_graph_revision;type:integer"`
+	PreviewDigest        *string   `gorm:"column:preview_digest;type:varchar(64)"`
+	UpdatedNodeIdsJSON   *string   `gorm:"column:updated_node_ids_json;type:json"`
+	RequiredBindingsJSON *string   `gorm:"column:required_bindings_json;type:json"`
+}
+
+func (WorkflowRecipeApplications) TableName() string { return "workflow_recipe_applications" }
+
+type WorkflowRecipeVersions struct {
+	ID                             string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	RecipeID                       string    `gorm:"column:recipe_id;type:varchar(36);not null"`
+	Version                        int       `gorm:"column:version;type:integer;not null"`
+	SchemaVersion                  int       `gorm:"column:schema_version;type:integer;not null"`
+	Title                          string    `gorm:"column:title;type:varchar(255);not null"`
+	Description                    *string   `gorm:"column:description;type:text"`
+	PayloadJSON                    string    `gorm:"column:payload_json;type:json;not null"`
+	PayloadHash                    string    `gorm:"column:payload_hash;type:varchar(64);not null"`
+	PreferredVisualSystemVersionID *string   `gorm:"column:preferred_visual_system_version_id;type:varchar(36)"`
+	CreatedAt                      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	CatalogVersion                 int       `gorm:"column:catalog_version;type:integer;not null"`
+	CreationSource                 string    `gorm:"column:creation_source;type:workflowrecipecreationsource;not null"`
+	GovernanceJSON                 *string   `gorm:"column:governance_json;type:json"`
+}
+
+func (WorkflowRecipeVersions) TableName() string { return "workflow_recipe_versions" }
+
+type WorkflowRecipes struct {
+	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	Kind             string     `gorm:"column:kind;type:workflowrecipekind;not null"`
+	CurrentVersionID *string    `gorm:"column:current_version_id;type:varchar(36)"`
+	ArchivedAt       *time.Time `gorm:"column:archived_at;type:timestamptz"`
+	CreatedAt        time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+	Origin           string     `gorm:"column:origin;type:workflowrecipeorigin;not null"`
+	OfficialKey      *string    `gorm:"column:official_key;type:varchar(80)"`
+}
+
+func (WorkflowRecipes) TableName() string { return "workflow_recipes" }
+
+func AllModels() []any {
+	return []any{
+		&AgentConversations{},
+		&AgentPageContextSnapshots{},
+		&AgentSessions{},
+		&AgentTasks{},
+		&AgentToolMutations{},
+		&AgentTurnCheckpoints{},
+		&AgentTurnEffectReconciliations{},
+		&AgentTurnEvents{},
+		&AgentTurnExecutions{},
+		&AgentTurnProjections{},
+		&AgentWorkflowRunRequests{},
+		&AppSettings{},
+		&AsyncDispatches{},
+		&DeliveryRenditionJobs{},
+		&ImageSessionAssets{},
+		&ImageSessionGenerationTasks{},
+		&ImageSessionProviderEffects{},
+		&ImageSessionRounds{},
+		&ImageSessions{},
+		&LibraryOrganizationDraftRevisions{},
+		&LibraryOrganizationDrafts{},
+		&LocalImageEditAdoptionEvents{},
+		&LocalImageEditProviderAttempts{},
+		&LocalImageEditTaskReferences{},
+		&LocalImageEditTasks{},
+		&MediaLibraryAssetTags{},
+		&MediaLibraryAssets{},
+		&MediaLibraryCollectionKeys{},
+		&MediaLibraryFolders{},
+		&MediaLibraryTags{},
+		&MediaLibraryUploadKeys{},
+		&MediaObjects{},
+		&ProductAssetFolders{},
+		&ProductFactSetVersions{},
+		&ProductImageAssets{},
+		&ProductImageFidelityChecks{},
+		&Products{},
+		&ProviderBindings{},
+		&ProviderProfiles{},
+		&VisualSystemVersionReferences{},
+		&VisualSystemVersions{},
+		&VisualSystems{},
+		&WorkflowGraphArtifacts{},
+		&WorkflowGraphEdges{},
+		&WorkflowGraphGroups{},
+		&WorkflowGraphNodeRuns{},
+		&WorkflowGraphNodes{},
+		&WorkflowGraphProposals{},
+		&WorkflowGraphProviderEffects{},
+		&WorkflowGraphRuns{},
+		&WorkflowGraphs{},
+		&WorkflowMediaLibraryAssets{},
+		&WorkflowOperationGroups{},
+		&WorkflowRecipeApplications{},
+		&WorkflowRecipeVersions{},
+		&WorkflowRecipes{},
+	}
+}

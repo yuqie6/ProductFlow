@@ -6,16 +6,19 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 func (s Service) Collect(ctx context.Context, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
 	var out []product.ImageAsset
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var err error
 		out, err = s.collectTx(ctx, pgxTx, productID, libraryIDs, idempotencyKey)
 		return err
@@ -23,7 +26,7 @@ func (s Service) Collect(ctx context.Context, productID string, libraryIDs []str
 	return out, err
 }
 
-func (s Service) collectTx(ctx context.Context, pgxTx pgx.Tx, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
+func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
 	if len(libraryIDs) > maxCollect {
 		return nil, apperr.Validationf("一次最多收录 %d 个素材", maxCollect)
 	}
@@ -70,7 +73,7 @@ func (s Service) collectTx(ctx context.Context, pgxTx pgx.Tx, productID string, 
 
 	if key != "" {
 		var existingHash string
-		scanErr := pgxTx.QueryRow(ctx, `
+		scanErr := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT request_hash FROM media_library_collection_keys
 			WHERE product_id = $1 AND idempotency_key = $2
 			FOR UPDATE
@@ -92,7 +95,7 @@ func (s Service) collectTx(ctx context.Context, pgxTx pgx.Tx, productID string, 
 			}
 			return out, nil
 		}
-		if !errors.Is(scanErr, pgx.ErrNoRows) {
+		if !errors.Is(scanErr, sqldb.ErrNoRows) {
 			return nil, scanErr
 		}
 	}
@@ -155,13 +158,13 @@ func (s Service) collectTx(ctx context.Context, pgxTx pgx.Tx, productID string, 
 		}
 	}
 	if key != "" {
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO media_library_collection_keys (id, product_id, idempotency_key, request_hash, created_at)
 			VALUES ($1, $2, $3, $4, NOW())
 		`, clockid.New(), productID, key, requestHash)
 		if product.UniqueViolation(err) || uniqueViolation(err) {
 			var existingHash string
-			if scanErr := pgxTx.QueryRow(ctx, `
+			if scanErr := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT request_hash FROM media_library_collection_keys
 				WHERE product_id = $1 AND idempotency_key = $2
 			`, productID, key).Scan(&existingHash); scanErr != nil {

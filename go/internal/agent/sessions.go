@@ -7,9 +7,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 var sentenceSplit = regexp.MustCompile(`[\r\n。！？!?；;]`)
@@ -17,7 +20,7 @@ var headingPrefix = regexp.MustCompile(`^#+\s*`)
 
 func (s Service) ListSessions(ctx context.Context, includeArchived bool, productID *string) (SessionListResponse, error) {
 	var out SessionListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if productID == nil {
 			if err := ensureGlobalConversations(ctx, pgxTx); err != nil {
 				return err
@@ -35,16 +38,16 @@ func (s Service) ListSessions(ctx context.Context, includeArchived bool, product
 
 func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	var out SessionResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		id := newID()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
 			VALUES ($1, NULL, $2, '暂无 Agent Task', 'active', NOW(), NOW())
 		`, id, sessionDefaultTitle); err != nil {
 			return err
 		}
 		convID := newID()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_conversations (
 				id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
 			) VALUES ($1, 'global', $2, NULL, $1, 'collecting', NOW(), NOW())
@@ -67,14 +70,14 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 		return SessionResponse{}, err
 	}
 	var out SessionResponse
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		tag, err := pgxTx.Exec(ctx, `
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_sessions SET title = $2, updated_at = NOW() WHERE id = $1
 		`, sessionID, normalized)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
+		if n == 0 {
 			return apperr.NotFound("Agent Session 不存在")
 		}
 		item, err := loadSession(ctx, pgxTx, sessionID)
@@ -89,11 +92,11 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 
 func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionResponse, error) {
 	var out SessionResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_sessions
 			SET status = 'archived', archived_at = COALESCE(archived_at, NOW()), updated_at = NOW()
 			WHERE id = $1 AND status <> 'archived'
@@ -110,8 +113,8 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 	return out, err
 }
 
-func ensureGlobalConversations(ctx context.Context, pgxTx pgx.Tx) error {
-	rows, err := pgxTx.Query(ctx, `
+func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
+	rows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT s.id
 		FROM agent_sessions s
 		WHERE s.product_id IS NULL AND s.status <> 'archived'
@@ -138,7 +141,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx pgx.Tx) error {
 	}
 	for _, sessionID := range ids {
 		convID := newID()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_conversations (
 				id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
 			) VALUES ($1, 'global', $2, NULL, $1, 'collecting', NOW(), NOW())
@@ -149,7 +152,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx pgx.Tx) error {
 	return nil
 }
 
-func listSessions(ctx context.Context, pgxTx pgx.Tx, includeArchived bool, productID *string) ([]SessionResponse, error) {
+func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string) ([]SessionResponse, error) {
 	q := `
 		SELECT s.id
 		FROM agent_sessions s
@@ -167,7 +170,7 @@ func listSessions(ctx context.Context, pgxTx pgx.Tx, includeArchived bool, produ
 		LIMIT $2
 	`
 	args = append(args, sessionListMax)
-	rows, err := pgxTx.Query(ctx, q, args...)
+	rows, err := pfdb.Query(ctx, pgxTx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -195,19 +198,19 @@ func listSessions(ctx context.Context, pgxTx pgx.Tx, includeArchived bool, produ
 	return out, nil
 }
 
-func loadSession(ctx context.Context, pgxTx pgx.Tx, sessionID string) (SessionResponse, error) {
+func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
 	var row sessionRow
-	err := pgxTx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, pgxTx, `
 		SELECT id, product_id, title, summary, status, archived_at, created_at, updated_at
 		FROM agent_sessions WHERE id = $1
 	`, sessionID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Summary, &row.Status, &row.ArchivedAt, &row.CreatedAt, &row.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return SessionResponse{}, apperr.NotFound("Agent Session 不存在")
 	}
 	if err != nil {
 		return SessionResponse{}, err
 	}
-	convRows, err := pgxTx.Query(ctx, `
+	convRows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT c.id, c.scope_type, c.product_id, COALESCE(p.name, '全局 Agent'), c.status, c.updated_at
 		FROM agent_conversations c
 		LEFT JOIN products p ON p.id = c.product_id
@@ -231,7 +234,7 @@ func loadSession(ctx context.Context, pgxTx pgx.Tx, sessionID string) (SessionRe
 		return SessionResponse{}, err
 	}
 	var count int
-	if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM agent_conversations WHERE session_id = $1`, sessionID).Scan(&count); err != nil {
+	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM agent_conversations WHERE session_id = $1`, sessionID).Scan(&count); err != nil {
 		return SessionResponse{}, err
 	}
 	return SessionResponse{
@@ -257,9 +260,9 @@ func deriveSessionTitle(input string) string {
 	return candidate
 }
 
-func autoNameSession(ctx context.Context, pgxTx pgx.Tx, sessionID, inputText string) error {
+func autoNameSession(ctx context.Context, pgxTx *gorm.DB, sessionID, inputText string) error {
 	var title string
-	if err := pgxTx.QueryRow(ctx, `SELECT title FROM agent_sessions WHERE id = $1`, sessionID).Scan(&title); err != nil {
+	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT title FROM agent_sessions WHERE id = $1`, sessionID).Scan(&title); err != nil {
 		return err
 	}
 	if title != sessionDefaultTitle {
@@ -269,6 +272,6 @@ func autoNameSession(ctx context.Context, pgxTx pgx.Tx, sessionID, inputText str
 	if next == sessionDefaultTitle {
 		return nil
 	}
-	_, err := pgxTx.Exec(ctx, `UPDATE agent_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, next)
+	_, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, next)
 	return err
 }

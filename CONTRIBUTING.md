@@ -70,7 +70,7 @@ just docs-check
 - 后端保持 `presentation` / `application` / `domain` / `infrastructure` 分层。
 - Provider 具体 SDK 调用应留在 `infrastructure/prompt` 或 `infrastructure/image`，不要从路由直接调用。
 - 前端 API 请求集中在 `web/src/lib/api.ts`，DTO 类型集中在 `web/src/lib/types.ts`。
-- 数据库 schema 变更需要 Alembic migration，并尽量补回归测试。
+- 数据库 schema 变更走 GORM models 与 `go/internal/platform/db/schema` 约束补钉，并尽量补回归测试。
 - 涉及上传、storage、secret、provider key 的改动要优先考虑安全边界。
 
 ## 提交和 PR

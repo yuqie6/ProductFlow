@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type ConfigItem struct {
@@ -67,7 +68,7 @@ func (s *Store) ConfigView(ctx context.Context) (ConfigResponse, error) {
 }
 
 func (s *Store) configRows(ctx context.Context) (map[string]configRow, error) {
-	query, err := s.pool.Query(ctx, `SELECT key, value, updated_at FROM app_settings`)
+	query, err := pfdb.Query(ctx, s.db, `SELECT key, value, updated_at FROM app_settings`)
 	if err != nil {
 		return nil, err
 	}
@@ -161,14 +162,14 @@ func (s *Store) UpdateConfig(ctx context.Context, values map[string]any, resetKe
 	if err := validateMerged(merged); err != nil {
 		return ConfigResponse{}, err
 	}
-	err = tx.With(ctx, s.pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
 		for key := range reset {
-			if _, err := pgxTx.Exec(ctx, `DELETE FROM app_settings WHERE key = $1`, key); err != nil {
+			if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM app_settings WHERE key = $1`, key); err != nil {
 				return err
 			}
 		}
 		for key, value := range normalized {
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, dbTx, `
 				INSERT INTO app_settings (key, value, created_at, updated_at)
 				VALUES ($1, $2, NOW(), NOW())
 				ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()

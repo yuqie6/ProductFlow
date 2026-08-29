@@ -8,21 +8,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type Service struct {
-	Pool     *pgxpool.Pool
+	DB       *gorm.DB
 	Media    media.Store
 	Settings interface {
 		settings.RuntimeReader
@@ -57,8 +59,8 @@ func (s Service) allowedToolFields(ctx context.Context) []string {
 
 func (s Service) List(ctx context.Context) (ListResponse, error) {
 	var out ListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		rows, err := pgxTx.Query(ctx, `
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, title, created_at, updated_at FROM image_sessions ORDER BY updated_at DESC, id DESC
 		`)
 		if err != nil {
@@ -103,8 +105,8 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 		}
 	}
 	id := clockid.New()
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())
 		`, id, normalized)
 		return err
@@ -117,7 +119,7 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 
 func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, error) {
 	var out DetailResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		detail, err := s.loadDetail(ctx, pgxTx, sessionID)
 		out = detail
 		return err
@@ -127,7 +129,7 @@ func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, err
 
 func (s Service) Status(ctx context.Context, sessionID string) (StatusResponse, error) {
 	var out StatusResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sess, err := loadSession(ctx, pgxTx, sessionID)
 		if err != nil {
 			return err
@@ -165,11 +167,11 @@ func (s Service) Update(ctx context.Context, sessionID, title string) (DetailRes
 	if trimmed == "" {
 		trimmed = defaultTitle
 	}
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		_, err := pgxTx.Exec(ctx, `UPDATE image_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, trimmed)
+		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, trimmed)
 		return err
 	})
 	if err != nil {
@@ -180,11 +182,11 @@ func (s Service) Update(ctx context.Context, sessionID, title string) (DetailRes
 
 func (s Service) Delete(ctx context.Context, sessionID string) error {
 	var deleted []media.Deleted
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		rows, err := pgxTx.Query(ctx, `SELECT id, media_object_id FROM image_session_assets WHERE session_id = $1`, sessionID)
+		rows, err := pfdb.Query(ctx, pgxTx, `SELECT id, media_object_id FROM image_session_assets WHERE session_id = $1`, sessionID)
 		if err != nil {
 			return err
 		}
@@ -200,12 +202,12 @@ func (s Service) Delete(ctx context.Context, sessionID string) error {
 		}
 		rows.Close()
 		if len(assetIDs) > 0 {
-			_, _ = pgxTx.Exec(ctx, `
+			_, _ = pfdb.Exec(ctx, pgxTx, `
 				UPDATE product_image_assets SET source_image_session_asset_id = NULL
 				WHERE source_image_session_asset_id = ANY($1)
 			`, assetIDs)
 		}
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM image_sessions WHERE id = $1`, sessionID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM image_sessions WHERE id = $1`, sessionID); err != nil {
 			return err
 		}
 		deleted, err = media.PruneUnreferenced(ctx, pgxTx, mediaIDs)
@@ -222,7 +224,7 @@ func (s Service) Delete(ctx context.Context, sessionID string) error {
 
 func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []product.Upload) (DetailResponse, error) {
 	var compensation storage.Compensation
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
@@ -231,7 +233,7 @@ func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []
 			if err != nil {
 				return err
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO image_session_assets (
 					id, session_id, kind, original_filename, mime_type, storage_path, media_object_id, created_at
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -239,7 +241,7 @@ func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []
 				return err
 			}
 		}
-		_, err := pgxTx.Exec(ctx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
+		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
 		return err
 	})
 	if err != nil {
@@ -252,15 +254,15 @@ func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []
 
 func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string) (DetailResponse, error) {
 	var deleted []media.Deleted
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
 		var kind, mediaID string
-		err := pgxTx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT kind, media_object_id FROM image_session_assets WHERE id = $1 AND session_id = $2
 		`, assetID, sessionID).Scan(&kind, &mediaID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return apperr.NotFound("会话参考图不存在")
 		}
 		if err != nil {
@@ -269,13 +271,13 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 		if kind != kindReference {
 			return apperr.Validation("只能删除会话参考图")
 		}
-		_, _ = pgxTx.Exec(ctx, `
+		_, _ = pfdb.Exec(ctx, pgxTx, `
 			UPDATE product_image_assets SET source_image_session_asset_id = NULL WHERE source_image_session_asset_id = $1
 		`, assetID)
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM image_session_assets WHERE id = $1`, assetID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM image_session_assets WHERE id = $1`, assetID); err != nil {
 			return err
 		}
-		_, _ = pgxTx.Exec(ctx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
+		_, _ = pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
 		deleted, err = media.PruneUnreferenced(ctx, pgxTx, []string{mediaID})
 		return err
 	})
@@ -310,7 +312,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	}
 	toolOpts := filterToolOptions(req.ToolOptions, s.allowedToolFields(ctx))
 	var taskID string
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := graph.GenerationCapacityAvailable(ctx, pgxTx); err != nil {
 			return fmt.Errorf("generation capacity: %w", err)
 		}
@@ -343,7 +345,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 			}
 			toolJSON = raw
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_session_generation_tasks (
 				id, session_id, status, prompt, size, base_asset_id, selected_reference_asset_ids,
 				tool_options, generation_count, completed_candidates, attempts, is_retryable, created_at
@@ -351,7 +353,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		`, taskID, sessionID, prompt, normalizedSize, baseID, refJSON, toolJSON, count); err != nil {
 			return fmt.Errorf("insert generation task: %w", err)
 		}
-		if _, err := pgxTx.Exec(ctx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID); err != nil {
 			return fmt.Errorf("touch session: %w", err)
 		}
 		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
@@ -366,7 +368,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 }
 
 func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
@@ -380,7 +382,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		if !task.IsRetryable {
 			return apperr.Validation("该生成任务不可重试")
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 				started_at = NULL, finished_at = NULL, active_candidate_index = NULL,
@@ -401,7 +403,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 }
 
 func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
@@ -415,7 +417,7 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 		if task.Status == "succeeded" || task.Status == "failed" || task.Status == "unknown" {
 			return apperr.Validation("已结束的生成任务不能取消")
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'cancelled', active_attempt_id = NULL, failure_reason = $2,
 				finished_at = NOW(), progress_phase = 'cancelled', progress_updated_at = NOW(),
@@ -432,7 +434,7 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 
 func (s Service) Attach(ctx context.Context, sessionID, assetID, productID string) (product.AssetResponse, error) {
 	var out product.AssetResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
@@ -444,22 +446,22 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 			return apperr.Validation("只有生成结果可以附加到商品")
 		}
 		var exists string
-		err = pgxTx.QueryRow(ctx, `SELECT id FROM products WHERE id = $1`, productID).Scan(&exists)
-		if errors.Is(err, pgx.ErrNoRows) {
+		err = pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM products WHERE id = $1`, productID).Scan(&exists)
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return apperr.NotFound("商品不存在")
 		}
 		if err != nil {
 			return err
 		}
 		var verification string
-		if err := pgxTx.QueryRow(ctx, `SELECT verification_status FROM media_objects WHERE id = $1`, asset.MediaObjectID).Scan(&verification); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT verification_status FROM media_objects WHERE id = $1`, asset.MediaObjectID).Scan(&verification); err != nil {
 			return apperr.Conflict("会话图片引用的媒体对象不存在")
 		}
 		if verification == media.StatusMissing {
 			return apperr.Validation("会话图片文件缺失，不能附加到商品")
 		}
 		var existingID string
-		err = pgxTx.QueryRow(ctx, `
+		err = pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id FROM product_image_assets
 			WHERE product_id = $1 AND source_image_session_asset_id = $2
 		`, productID, asset.ID).Scan(&existingID)
@@ -471,7 +473,7 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 			out = product.SerializeAsset(loaded)
 			return nil
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, sqldb.ErrNoRows) {
 			return err
 		}
 		created, err := product.InsertAssetIdentity(ctx, pgxTx, product.AssetIdentityInput{
@@ -496,13 +498,13 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 
 func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, error) {
 	var row assetRow
-	err := s.Pool.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, s.DB, `
 		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
 		FROM image_session_assets a
 		JOIN media_objects m ON m.id = a.media_object_id
 		WHERE a.id = $1
 	`, assetID).Scan(&row.ID, &row.SessionID, &row.Kind, &row.OriginalFilename, &row.MIMEType, &row.StoragePath, &row.MediaObjectID, &row.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return assetRow{}, apperr.NotFound("会话图片不存在")
 	}
 	return row, err
@@ -510,7 +512,7 @@ func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, e
 
 func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candidateStart int) (EffectResponse, error) {
 	var out EffectResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
 		if err != nil {
 			if apperr.IsNotFound(err) {
@@ -531,7 +533,7 @@ func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candid
 		}
 		now := time.Now().UTC()
 		detail := "当前图片会话 provider 不支持查询原请求"
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_provider_effects SET
 				reconciliation_state = 'unsupported', detail = $2, updated_at = $3
 			WHERE id = $1

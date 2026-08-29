@@ -23,10 +23,12 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type deliveryServer struct {
 	pool    *pgxpool.Pool
+	db      *gorm.DB
 	media   media.Store
 	srv     *httptest.Server
 	client  *http.Client
@@ -35,7 +37,7 @@ type deliveryServer struct {
 
 func newDeliveryServer(t *testing.T) *deliveryServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -50,11 +52,11 @@ func newDeliveryServer(t *testing.T) *deliveryServer {
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	product.HTTP{Service: product.Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
-	HTTP{Service: Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	HTTP{Service: Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	ds := &deliveryServer{pool: pool, media: mediaStore, srv: srv, client: &http.Client{}}
+	ds := &deliveryServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +234,7 @@ func TestDeliverySubmitExecuteAndRetryConflict(t *testing.T) {
 		t.Fatalf("idempotent %s vs %s", same.ID, job.ID)
 	}
 
-	if err := (Executor{Pool: ds.pool, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
 		t.Fatal(err)
 	}
 	got := ds.do(t, http.MethodGet, "/api/v2/delivery-rendition-jobs/"+job.ID, nil, "")

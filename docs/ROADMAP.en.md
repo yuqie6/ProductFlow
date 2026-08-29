@@ -53,7 +53,7 @@ Real provider, real stores, SSE reconnect, and the production switch for backgro
 
 Default `just dev` and Compose start the Go API, worker, and dispatcher. Decision: [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md). Product contract: [`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md).
 
-Still on the roadmap: workbench continuous-action browser proof (above), backup/restore of existing products that can still open and run a graph, and live prompt/image provider success / fail / `unknown` evidence. Python `backend/` remains for Alembic and optional Compose profile `python`.
+Still on the roadmap: workbench continuous-action browser proof (above), backup/restore of existing products that can still open and run a graph, and live prompt/image provider success / fail / `unknown` evidence. Python `backend/` remains for the sealed tree and optional Compose profile `python`.
 
 ## SaaS
 

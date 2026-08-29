@@ -11,10 +11,10 @@ import (
 )
 
 type HTTPGateway struct {
-	BaseURL         string
-	Token           string
-	ConnectTimeout  time.Duration
-	ReadTimeout     time.Duration
+	BaseURL        string
+	Token          string
+	ConnectTimeout time.Duration
+	ReadTimeout    time.Duration
 }
 
 func (g HTTPGateway) Configured() bool {

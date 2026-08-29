@@ -10,16 +10,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // insertProduct 写入商品行；封面与 fact 由调用方随后设置。
-func insertProduct(ctx context.Context, tx pgx.Tx, name string, category, price, sourceNote *string) (Product, error) {
+func insertProduct(ctx context.Context, tx *gorm.DB, name string, category, price, sourceNote *string) (Product, error) {
 	id := clockid.New()
 	row := Product{ID: id, Name: name, Category: category, Price: price, SourceNote: sourceNote}
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		INSERT INTO products (id, name, category, price, source_note, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 		RETURNING created_at, updated_at
@@ -27,28 +30,28 @@ func insertProduct(ctx context.Context, tx pgx.Tx, name string, category, price,
 	return row, err
 }
 
-func assignCover(ctx context.Context, tx pgx.Tx, productID, assetID string) error {
-	_, err := tx.Exec(ctx, `
+func assignCover(ctx context.Context, tx *gorm.DB, productID, assetID string) error {
+	_, err := pfdb.Exec(ctx, tx, `
 		UPDATE products SET cover_image_asset_id = $1, updated_at = NOW() WHERE id = $2
 	`, assetID, productID)
 	return err
 }
 
-func setIntake(ctx context.Context, tx pgx.Tx, productID string, payload []byte) error {
-	_, err := tx.Exec(ctx, `
+func setIntake(ctx context.Context, tx *gorm.DB, productID string, payload []byte) error {
+	_, err := pfdb.Exec(ctx, tx, `
 		UPDATE products SET intake_schema_version = 1, intake_json = $1, updated_at = NOW() WHERE id = $2
 	`, payload, productID)
 	return err
 }
 
-func setCurrentFactSet(ctx context.Context, tx pgx.Tx, productID, factSetID string) error {
-	_, err := tx.Exec(ctx, `
+func setCurrentFactSet(ctx context.Context, tx *gorm.DB, productID, factSetID string) error {
+	_, err := pfdb.Exec(ctx, tx, `
 		UPDATE products SET current_fact_set_version_id = $1, updated_at = NOW() WHERE id = $2
 	`, factSetID, productID)
 	return err
 }
 
-func insertAsset(ctx context.Context, tx pgx.Tx, productID, mediaID, filename string) (ImageAsset, error) {
+func insertAsset(ctx context.Context, tx *gorm.DB, productID, mediaID, filename string) (ImageAsset, error) {
 	return insertAssetOrigin(ctx, tx, productID, mediaID, filename, "upload", nil)
 }
 
@@ -63,7 +66,7 @@ type AssetIdentityInput struct {
 	DisplayName               string
 }
 
-func insertAssetOrigin(ctx context.Context, tx pgx.Tx, productID, mediaID, filename, origin string, imageTypeKey *string) (ImageAsset, error) {
+func insertAssetOrigin(ctx context.Context, tx *gorm.DB, productID, mediaID, filename, origin string, imageTypeKey *string) (ImageAsset, error) {
 	return InsertAssetIdentity(ctx, tx, AssetIdentityInput{
 		ProductID:    productID,
 		MediaID:      mediaID,
@@ -74,7 +77,7 @@ func insertAssetOrigin(ctx context.Context, tx pgx.Tx, productID, mediaID, filen
 }
 
 // InsertAssetIdentity 写入一条商品图片身份，可带 parent / 会话来源。
-func InsertAssetIdentity(ctx context.Context, tx pgx.Tx, in AssetIdentityInput) (ImageAsset, error) {
+func InsertAssetIdentity(ctx context.Context, tx *gorm.DB, in AssetIdentityInput) (ImageAsset, error) {
 	id := clockid.New()
 	display := strings.TrimSpace(in.DisplayName)
 	if display == "" {
@@ -105,7 +108,7 @@ func InsertAssetIdentity(ctx context.Context, tx pgx.Tx, in AssetIdentityInput) 
 		SourceImageSessionAsset: in.SourceImageSessionAssetID,
 		VerificationStatus:      "verified",
 	}
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		INSERT INTO product_image_assets (
 			id, product_id, media_object_id, origin_type, display_name, original_filename,
 			image_type_key, parent_asset_id, source_image_session_asset_id, created_at, updated_at
@@ -115,15 +118,15 @@ func InsertAssetIdentity(ctx context.Context, tx pgx.Tx, in AssetIdentityInput) 
 	return asset, err
 }
 
-func loadProduct(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
+func loadProduct(ctx context.Context, tx *gorm.DB, id string) (Product, error) {
 	return scanProduct(ctx, tx, id, false)
 }
 
-func loadProductForUpdate(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
+func loadProductForUpdate(ctx context.Context, tx *gorm.DB, id string) (Product, error) {
 	return scanProduct(ctx, tx, id, true)
 }
 
-func scanProduct(ctx context.Context, tx pgx.Tx, id string, forUpdate bool) (Product, error) {
+func scanProduct(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (Product, error) {
 	sql := `
 		SELECT id, name, category, price::text, source_note, cover_image_asset_id,
 		       intake_schema_version, intake_json, current_fact_set_version_id, created_at, updated_at
@@ -133,11 +136,11 @@ func scanProduct(ctx context.Context, tx pgx.Tx, id string, forUpdate bool) (Pro
 	}
 	var row Product
 	var intake []byte
-	err := tx.QueryRow(ctx, sql, id).Scan(
+	err := pfdb.QueryRow(ctx, tx, sql, id).Scan(
 		&row.ID, &row.Name, &row.Category, &row.Price, &row.SourceNote, &row.CoverImageAssetID,
 		&row.IntakeVersion, &intake, &row.FactSetVersionID, &row.CreatedAt, &row.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Product{}, apperr.NotFound("商品不存在")
 	}
 	if err != nil {
@@ -149,11 +152,11 @@ func scanProduct(ctx context.Context, tx pgx.Tx, id string, forUpdate bool) (Pro
 	return row, nil
 }
 
-func loadAssetsByIDs(ctx context.Context, tx pgx.Tx, productID string, ids []string) ([]ImageAsset, error) {
+func loadAssetsByIDs(ctx context.Context, tx *gorm.DB, productID string, ids []string) ([]ImageAsset, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rows, err := tx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
 		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
 		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
@@ -170,11 +173,9 @@ func loadAssetsByIDs(ctx context.Context, tx pgx.Tx, productID string, ids []str
 	return scanAssets(rows)
 }
 
-func loadAsset(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, assetID string) (ImageAsset, error) {
+func loadAsset(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
 	var asset ImageAsset
-	err := q.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, q, `
 		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
 		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
 		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
@@ -188,20 +189,18 @@ func loadAsset(ctx context.Context, q interface {
 		&asset.SourceLibraryAsset, &asset.MIMEType, &asset.ByteSize, &asset.Width, &asset.Height, &asset.VerificationStatus,
 		&asset.StoragePath, &asset.CreatedAt, &asset.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ImageAsset{}, apperr.NotFound("商品图片不存在")
 	}
 	return asset, err
 }
 
 // LoadAssetRow 供 delivery / localedit 读取商品图片身份。
-func LoadAssetRow(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, assetID string) (ImageAsset, error) {
+func LoadAssetRow(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, q, assetID)
 }
 
-func listProducts(ctx context.Context, tx pgx.Tx, page, pageSize int, q, sort string) ([]Summary, int, error) {
+func listProducts(ctx context.Context, tx *gorm.DB, page, pageSize int, q, sort string) ([]Summary, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -226,7 +225,7 @@ func listProducts(ctx context.Context, tx pgx.Tx, page, pageSize int, q, sort st
 	}
 	var total int
 	countSQL := `SELECT COUNT(*) FROM products p ` + where
-	if err := tx.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+	if err := pfdb.QueryRow(ctx, tx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	offset := (page - 1) * pageSize
@@ -237,7 +236,7 @@ func listProducts(ctx context.Context, tx pgx.Tx, page, pageSize int, q, sort st
 		LEFT JOIN product_image_assets a ON a.id = p.cover_image_asset_id
 		` + where + ` ORDER BY ` + order + ` OFFSET $` + strconv.Itoa(len(args)+1) + ` LIMIT $` + strconv.Itoa(len(args)+2)
 	args = append(args, offset, pageSize)
-	rows, err := tx.Query(ctx, query, args...)
+	rows, err := pfdb.Query(ctx, tx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -259,7 +258,7 @@ func listProducts(ctx context.Context, tx pgx.Tx, page, pageSize int, q, sort st
 	return items, total, rows.Err()
 }
 
-func insertFactSet(ctx context.Context, tx pgx.Tx, productID string, facts []map[string]any) (string, int, error) {
+func insertFactSet(ctx context.Context, tx *gorm.DB, productID string, facts []map[string]any) (string, int, error) {
 	payload := map[string]any{
 		"schema_version":    1,
 		"source_product_id": productID,
@@ -271,7 +270,7 @@ func insertFactSet(ctx context.Context, tx pgx.Tx, productID string, facts []map
 	}
 	sum := sha256Hex(raw)
 	var version int
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		SELECT COALESCE(MAX(version), 0) FROM product_fact_set_versions WHERE product_id = $1
 	`, productID).Scan(&version)
 	if err != nil {
@@ -279,7 +278,7 @@ func insertFactSet(ctx context.Context, tx pgx.Tx, productID string, facts []map
 	}
 	version++
 	id := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err = pfdb.Exec(ctx, tx, `
 		INSERT INTO product_fact_set_versions (id, product_id, version, payload_json, payload_hash, created_at)
 		VALUES ($1, $2, $3, $4, $5, NOW())
 	`, id, productID, version, raw, sum)
@@ -292,21 +291,21 @@ func insertFactSet(ctx context.Context, tx pgx.Tx, productID string, facts []map
 	return id, version, nil
 }
 
-func loadConversationByKey(ctx context.Context, tx pgx.Tx, key string) (Conversation, error) {
+func loadConversationByKey(ctx context.Context, tx *gorm.DB, key string) (Conversation, error) {
 	var row Conversation
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
 		FROM agent_conversations WHERE creation_idempotency_key = $1
 	`, key).Scan(&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return Conversation{}, err
 	}
 	return row, err
 }
 
-func conversationRequestHash(ctx context.Context, tx pgx.Tx, id string) (string, error) {
+func conversationRequestHash(ctx context.Context, tx *gorm.DB, id string) (string, error) {
 	var hash *string
-	err := tx.QueryRow(ctx, `SELECT creation_request_hash FROM agent_conversations WHERE id = $1`, id).Scan(&hash)
+	err := pfdb.QueryRow(ctx, tx, `SELECT creation_request_hash FROM agent_conversations WHERE id = $1`, id).Scan(&hash)
 	if err != nil {
 		return "", err
 	}
@@ -316,13 +315,13 @@ func conversationRequestHash(ctx context.Context, tx pgx.Tx, id string) (string,
 	return *hash, nil
 }
 
-func insertSession(ctx context.Context, tx pgx.Tx, title, productID string) (string, time.Time, time.Time, error) {
+func insertSession(ctx context.Context, tx *gorm.DB, title, productID string) (string, time.Time, time.Time, error) {
 	id := clockid.New()
 	if len([]rune(title)) > 160 {
 		title = string([]rune(title)[:160])
 	}
 	var created, updated time.Time
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
 		VALUES ($1, $2, $3, '暂无 Agent Task', 'active', NOW(), NOW())
 		RETURNING created_at, updated_at
@@ -330,15 +329,15 @@ func insertSession(ctx context.Context, tx pgx.Tx, title, productID string) (str
 	return id, created, updated, err
 }
 
-func loadSessionProduct(ctx context.Context, tx pgx.Tx, sessionID string) (productID *string, status string, err error) {
-	err = tx.QueryRow(ctx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, sessionID).Scan(&productID, &status)
-	if errors.Is(err, pgx.ErrNoRows) {
+func loadSessionProduct(ctx context.Context, tx *gorm.DB, sessionID string) (productID *string, status string, err error) {
+	err = pfdb.QueryRow(ctx, tx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, sessionID).Scan(&productID, &status)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, "", apperr.NotFound("Agent Session 不存在")
 	}
 	return productID, status, err
 }
 
-func insertConversation(ctx context.Context, tx pgx.Tx, sessionID, productID, key, requestHash string) (Conversation, error) {
+func insertConversation(ctx context.Context, tx *gorm.DB, sessionID, productID, key, requestHash string) (Conversation, error) {
 	id := clockid.New()
 	row := Conversation{
 		ID:           id,
@@ -348,7 +347,7 @@ func insertConversation(ctx context.Context, tx pgx.Tx, sessionID, productID, ke
 		HarnessRunID: id,
 		Status:       "collecting",
 	}
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		INSERT INTO agent_conversations (
 			id, scope_type, session_id, product_id, harness_run_id, status,
 			creation_idempotency_key, creation_request_hash, created_at, updated_at
@@ -358,7 +357,7 @@ func insertConversation(ctx context.Context, tx pgx.Tx, sessionID, productID, ke
 	return row, err
 }
 
-func scanAssets(rows pgx.Rows) ([]ImageAsset, error) {
+func scanAssets(rows *sqldb.Rows) ([]ImageAsset, error) {
 	out := []ImageAsset{}
 	for rows.Next() {
 		var asset ImageAsset

@@ -54,7 +54,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 单管理员、单商家实例。
 - 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
 - 公网体验站数据和本地开发库都可以在破坏性更新时重建。
-- Alembic 只演进当前 schema；空库 `upgrade head` 仍可用。主仓库不为旧数据写回填或兼容层。
+- Alembic 历史 revision 只作为封印记录；空库和已有库都跑 `just go-migrate` / `productflow-migrate`。主仓库不为旧数据写回填或兼容层。
 
 ## 页面入口
 
@@ -79,7 +79,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ## 技术栈
 
-- 后端：Go 1.23（Gin、pgx、asynq）、Alembic 迁移、Redis、PostgreSQL。Python `backend/` 保留给 Alembic 与可选回退。
+- 后端：Go 1.23（Gin、GORM、asynq）、`productflow-migrate`、Redis、PostgreSQL。Python `backend/` 保留封印树与可选回退。
 - Agent service：Node.js 22、Pi SDK、ProductFlow Tool adapter、JSONL session 文件和 JSON event 文件。
 - 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
 - 模型 SDK：OpenAI Python/TypeScript provider adapter 和 Google GenAI。
@@ -131,7 +131,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 `alembic upgrade head`。uvicorn / dramatiq 只在 Compose profile `python` 下启动。不要把 profile `python` 与默认 Go dispatcher 同时对着同一库跑。
+Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM AutoMigrate 与约束补钉。uvicorn / dramatiq 只在 Compose profile `python` 下启动，且不再负责 schema。不要把 profile `python` 与默认 Go dispatcher 同时对着同一库跑。
 
 默认地址：
 
@@ -160,7 +160,7 @@ docker compose down -v
 
 ### 1. 准备工具
 
-- Python 3.12+ 与 `uv`（Alembic）
+- Python 3.12+ 与 `uv`（封印 Python 树与可选 profile `python`）
 - Go 1.23+
 - Node.js 22.19+ 与 `pnpm`
 - Docker / Docker Compose

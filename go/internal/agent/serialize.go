@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 func serializeTurn(row turnRow, focus *CanvasFocus) TurnResponse {
@@ -44,13 +45,13 @@ func serializeTurn(row turnRow, focus *CanvasFocus) TurnResponse {
 		Question: question, QuestionAnswer: answer, ContinuationTurnID: row.ContinuationTurnID,
 		ToolSteps: steps, ArtifactName: row.ArtifactName, ArtifactStepID: row.ArtifactStepID,
 		LibraryOrganizationDraftRevisionID: row.LibraryOrgDraftRevisionID,
-		WorkflowRunRequestID: row.WorkflowRunRequestID, PageContextSnapshotID: row.PageContextSnapshotID,
+		WorkflowRunRequestID:               row.WorkflowRunRequestID, PageContextSnapshotID: row.PageContextSnapshotID,
 		SyncError: row.SyncError, CanvasFocus: focus, FinishedAt: row.FinishedAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
-func loadTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversationID, projectionID string) (turnRow, error) {
+func loadTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string) (turnRow, error) {
 	row, err := scanTurn(ctx, pgxTx, `
 		SELECT t.id, t.conversation_id, t.task_id, t.harness_turn_id, t.idempotency_key, t.request_hash,
 			t.input_text, t.input_asset_ids_json, t.status, t.resume_required, t.output_text, t.error_text,
@@ -84,7 +85,7 @@ func loadTurn(ctx context.Context, pgxTx pgx.Tx, productID *string, conversation
 	return row, nil
 }
 
-func loadTurnByID(ctx context.Context, pgxTx pgx.Tx, projectionID string) (turnRow, error) {
+func loadTurnByID(ctx context.Context, pgxTx *gorm.DB, projectionID string) (turnRow, error) {
 	row, err := scanTurn(ctx, pgxTx, `
 		SELECT t.id, t.conversation_id, t.task_id, t.harness_turn_id, t.idempotency_key, t.request_hash,
 			t.input_text, t.input_asset_ids_json, t.status, t.resume_required, t.output_text, t.error_text,
@@ -106,9 +107,9 @@ func loadTurnByID(ctx context.Context, pgxTx pgx.Tx, projectionID string) (turnR
 	return row, nil
 }
 
-func scanTurn(ctx context.Context, pgxTx pgx.Tx, query string, args ...any) (turnRow, error) {
+func scanTurn(ctx context.Context, pgxTx *gorm.DB, query string, args ...any) (turnRow, error) {
 	var row turnRow
-	err := pgxTx.QueryRow(ctx, query, args...).Scan(
+	err := pfdb.QueryRow(ctx, pgxTx, query, args...).Scan(
 		&row.ID, &row.ConversationID, &row.TaskID, &row.HarnessTurnID, &row.IdempotencyKey, &row.RequestHash,
 		&row.InputText, &row.InputAssetIDs, &row.Status, &row.ResumeRequired, &row.OutputText, &row.ErrorText,
 		&row.QuestionJSON, &row.QuestionAnswerJSON, &row.ContinuationTurnID, &row.ToolStepsJSON,
@@ -120,7 +121,7 @@ func scanTurn(ctx context.Context, pgxTx pgx.Tx, query string, args ...any) (tur
 	return row, err
 }
 
-func canvasFocusForTurns(ctx context.Context, pgxTx pgx.Tx, turns []turnRow) (map[string]*CanvasFocus, error) {
+func canvasFocusForTurns(ctx context.Context, pgxTx *gorm.DB, turns []turnRow) (map[string]*CanvasFocus, error) {
 	out := map[string]*CanvasFocus{}
 	if len(turns) == 0 {
 		return out, nil
@@ -132,7 +133,7 @@ func canvasFocusForTurns(ctx context.Context, pgxTx pgx.Tx, turns []turnRow) (ma
 			earliest = turn.CreatedAt
 		}
 	}
-	rows, err := pgxTx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT id, result_json, created_at
 		FROM agent_tool_mutations
 		WHERE conversation_id = $1 AND tool_name = 'focus_canvas_items_v1' AND status = 'applied' AND created_at >= $2

@@ -20,10 +20,12 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type productServer struct {
 	pool    *pgxpool.Pool
+	db      *gorm.DB
 	svc     Service
 	srv     *httptest.Server
 	client  *http.Client
@@ -32,7 +34,7 @@ type productServer struct {
 
 func newProductServer(t *testing.T) *productServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -47,11 +49,11 @@ func newProductServer(t *testing.T) *productServer {
 		DeletionEnabled:          false,
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
-	svc := Service{Pool: pool, Media: media.Store{Files: storage.Local{Root: root}}}
+	svc := Service{DB: gdb, Media: media.Store{Files: storage.Local{Root: root}}}
 	HTTP{Service: svc, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	ps := &productServer{pool: pool, svc: svc, srv: srv, client: &http.Client{}}
+	ps := &productServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)

@@ -24,6 +24,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type mockGateway struct{}
@@ -66,6 +67,7 @@ func (mockGateway) AnswerQuestion(conversationID, turnID, questionID string, ans
 
 type agentServer struct {
 	pool    *pgxpool.Pool
+	db      *gorm.DB
 	svc     Service
 	srv     *httptest.Server
 	client  *http.Client
@@ -74,7 +76,7 @@ type agentServer struct {
 
 func newAgentServer(t *testing.T, gw Gateway, internalToken string) *agentServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -89,17 +91,17 @@ func newAgentServer(t *testing.T, gw Gateway, internalToken string) *agentServer
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	product.HTTP{Service: product.Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	svc := Service{
-		Pool: pool, Graph: graph.Service{Pool: pool},
-		Product: product.Service{Pool: pool, Media: mediaStore},
-		Library: library.Service{Pool: pool, Media: mediaStore},
-		Media: mediaStore, Settings: settingsStore, Gateway: gw, Poll: time.Millisecond,
+		DB: gdb, Graph: graph.Service{DB: gdb},
+		Product: product.Service{DB: gdb, Media: mediaStore},
+		Library: library.Service{DB: gdb, Media: mediaStore},
+		Media:   mediaStore, Settings: settingsStore, Gateway: gw, Poll: time.Millisecond,
 	}
 	HTTP{Service: svc, Settings: settingsStore, InternalToken: internalToken}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	as := &agentServer{pool: pool, svc: svc, srv: srv, client: &http.Client{}}
+	as := &agentServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -546,8 +548,8 @@ func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 
 	focus := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/canvas/focus",
 		strings.NewReader(`{"node_ids":["n1"]}`), "application/json", http.Header{
-			"Authorization":     []string{"Bearer tok"},
-			"Idempotency-Key":   []string{clockid.New()},
+			"Authorization":   []string{"Bearer tok"},
+			"Idempotency-Key": []string{clockid.New()},
 		})
 	as.mustStatus(t, focus, http.StatusOK)
 	var focusBody map[string]any

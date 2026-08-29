@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type Executor struct {
@@ -24,7 +27,7 @@ func (e Executor) Execute(ctx context.Context, projectionID string) error {
 
 func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	var row turnRow
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurnByID(ctx, pgxTx, projectionID)
 		if err != nil {
 			if apperr.IsNotFound(err) {
@@ -63,18 +66,18 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 				status = gerr.Status
 			}
 			if status == 0 || status >= 500 {
-				_ = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+				_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 					_, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, s.pollDelay())
 					return err
 				})
 			}
 			return nil
 		}
-		_ = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 			return applyTurnState(ctx, pgxTx, productID, row.ConversationID, projectionID, state)
 		})
 	}
-	_ = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurnByID(ctx, pgxTx, projectionID)
 		if err != nil {
 			return err
@@ -88,7 +91,7 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	return nil
 }
 
-func applyTurnState(ctx context.Context, pgxTx pgx.Tx, productID *string, conversationID, projectionID string, state TurnState) error {
+func applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string, state TurnState) error {
 	row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 	if err != nil {
 		return err
@@ -127,7 +130,7 @@ func applyTurnState(ctx context.Context, pgxTx pgx.Tx, productID *string, conver
 	} else {
 		stepsJSON = []byte("[]")
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		UPDATE agent_turn_projections SET
 			harness_turn_id = COALESCE(harness_turn_id, $2),
 			status = $3, output_text = $4, error_text = $5, question_json = $6,
@@ -164,7 +167,7 @@ func applyTurnState(ctx context.Context, pgxTx pgx.Tx, productID *string, conver
 				return err
 			}
 			if revID != "" {
-				_, _ = pgxTx.Exec(ctx, `
+				_, _ = pfdb.Exec(ctx, pgxTx, `
 					UPDATE agent_turn_projections
 					SET artifact_name = $2, artifact_step_id = $3, library_organization_draft_revision_id = $4, updated_at = NOW()
 					WHERE id = $1
@@ -191,13 +194,13 @@ func nullableString(s string) any {
 	return s
 }
 
-func validateFence(ctx context.Context, pgxTx pgx.Tx, projectionID string, state TurnState) error {
+func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, state TurnState) error {
 	var attempt, fencing int
 	var phase string
-	err := pgxTx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, pgxTx, `
 		SELECT attempt, fencing_token, phase FROM agent_turn_executions WHERE turn_projection_id = $1
 	`, projectionID).Scan(&attempt, &fencing, &phase)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		if state.ExecutionAttempt != nil || state.ExecutionFence != nil {
 			return apperr.Conflict("Agent Turn 返回了不存在的 execution lease")
 		}
@@ -221,7 +224,7 @@ func validateFence(ctx context.Context, pgxTx pgx.Tx, projectionID string, state
 	return nil
 }
 
-func isStaleQueued(ctx context.Context, pgxTx pgx.Tx, row turnRow, state TurnState) (bool, error) {
+func isStaleQueued(ctx context.Context, pgxTx *gorm.DB, row turnRow, state TurnState) (bool, error) {
 	if state.Status != "queued" {
 		return false, nil
 	}
@@ -229,8 +232,8 @@ func isStaleQueued(ctx context.Context, pgxTx pgx.Tx, row turnRow, state TurnSta
 		return false, nil
 	}
 	var phase string
-	err := pgxTx.QueryRow(ctx, `SELECT phase FROM agent_turn_executions WHERE turn_projection_id = $1`, row.ID).Scan(&phase)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, pgxTx, `SELECT phase FROM agent_turn_executions WHERE turn_projection_id = $1`, row.ID).Scan(&phase)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -239,7 +242,7 @@ func isStaleQueued(ctx context.Context, pgxTx pgx.Tx, row turnRow, state TurnSta
 	return row.Status != "queued" || phase != "claimed", nil
 }
 
-func pendingWorkflowRequest(ctx context.Context, pgxTx pgx.Tx, conversationID string, state TurnState) string {
+func pendingWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, conversationID string, state TurnState) string {
 	for i := len(state.ToolSteps) - 1; i >= 0; i-- {
 		step := state.ToolSteps[i]
 		kind, _ := step["kind"].(string)
@@ -247,7 +250,7 @@ func pendingWorkflowRequest(ctx context.Context, pgxTx pgx.Tx, conversationID st
 		if kind == "request_workflow_run" && status == "succeeded" {
 			stepID, _ := step["step_id"].(string)
 			var id string
-			_ = pgxTx.QueryRow(ctx, `
+			_ = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT id FROM agent_workflow_run_requests
 				WHERE conversation_id = $1 AND source_step_id = $2
 				ORDER BY created_at DESC LIMIT 1
@@ -258,7 +261,7 @@ func pendingWorkflowRequest(ctx context.Context, pgxTx pgx.Tx, conversationID st
 	return ""
 }
 
-func updateTaskFromTurn(ctx context.Context, pgxTx pgx.Tx, taskID, turnStatus string) error {
+func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus string) error {
 	var status, waiting *string
 	switch turnStatus {
 	case "queued", "running", "cancel_requested":
@@ -278,29 +281,29 @@ func updateTaskFromTurn(ctx context.Context, pgxTx pgx.Tx, taskID, turnStatus st
 		return nil
 	}
 	var current string
-	if err := pgxTx.QueryRow(ctx, `SELECT status FROM agent_tasks WHERE id = $1`, taskID).Scan(&current); err != nil {
+	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_tasks WHERE id = $1`, taskID).Scan(&current); err != nil {
 		return err
 	}
 	if current == "succeeded" || current == "canceled" || current == "paused" {
 		return nil
 	}
-	_, err := pgxTx.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, pgxTx, `
 		UPDATE agent_tasks SET status = $2, waiting_reason = $3, started_at = COALESCE(started_at, NOW()), updated_at = NOW()
 		WHERE id = $1
 	`, taskID, *status, waiting)
 	return err
 }
 
-func appendLibraryDraftTx(ctx context.Context, pgxTx pgx.Tx, conversationID string, payload []byte, sourceTurnID, sourceStepID string) (string, error) {
+func appendLibraryDraftTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, payload []byte, sourceTurnID, sourceStepID string) (string, error) {
 	hash, err := canonjson.SHA256Hex(json.RawMessage(payload))
 	if err != nil {
 		return "", apperr.Validation("素材整理 Draft payload 无效")
 	}
 	var draftID string
-	err = pgxTx.QueryRow(ctx, `SELECT id FROM library_organization_drafts WHERE conversation_id = $1`, conversationID).Scan(&draftID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM library_organization_drafts WHERE conversation_id = $1`, conversationID).Scan(&draftID)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		draftID = clockid.New()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
 			VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
 		`, draftID, conversationID); err != nil {
@@ -310,9 +313,9 @@ func appendLibraryDraftTx(ctx context.Context, pgxTx pgx.Tx, conversationID stri
 		return "", err
 	}
 	var version int
-	_ = pgxTx.QueryRow(ctx, `SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1`, draftID).Scan(&version)
+	_ = pfdb.QueryRow(ctx, pgxTx, `SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1`, draftID).Scan(&version)
 	revID := clockid.New()
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO library_organization_draft_revisions (
 			id, draft_id, version, schema_version, payload_json, payload_hash,
 			source_turn_id, source_artifact_step_id, created_at
@@ -320,7 +323,7 @@ func appendLibraryDraftTx(ctx context.Context, pgxTx pgx.Tx, conversationID stri
 	`, revID, draftID, version+1, payload, hash, sourceTurnID, sourceStepID); err != nil {
 		return "", err
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		UPDATE library_organization_drafts SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = NOW() WHERE id = $1
 	`, draftID, revID); err != nil {
 		return "", err

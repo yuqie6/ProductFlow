@@ -3,15 +3,16 @@ package delivery
 import (
 	"bytes"
 	"fmt"
-	"github.com/yuqie6/productflow/internal/media"
-	"github.com/yuqie6/productflow/internal/platform/apperr"
-	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/jpeg"
 	"image/png"
+
+	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 )
 
 type Rendered struct {

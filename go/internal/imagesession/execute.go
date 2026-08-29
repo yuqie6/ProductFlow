@@ -8,22 +8,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 var sessionTaskLocks sync.Map
 
 type Executor struct {
-	Pool     *pgxpool.Pool
+	DB       *gorm.DB
 	Media    media.Store
 	Provider ChatProvider
 }
@@ -98,12 +100,12 @@ func tryLock(id string) (func(), bool) {
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, string, error) {
 	var claimed bool
 	var attemptID, sessionID string
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var status string
-		err := pgxTx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT session_id, status FROM image_session_generation_tasks WHERE id = $1 FOR UPDATE
 		`, taskID).Scan(&sessionID, &status)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
@@ -117,14 +119,14 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 			return err
 		}
 		if !ok {
-			_, _ = pgxTx.Exec(ctx, `
+			_, _ = pfdb.Exec(ctx, pgxTx, `
 				UPDATE image_session_generation_tasks SET progress_phase = 'waiting_for_capacity', progress_updated_at = NOW()
 				WHERE id = $1 AND status = 'queued'
 			`, taskID)
 			return errWaitingCapacity
 		}
 		attemptID = clockid.New()
-		tag, err := pgxTx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'running', active_attempt_id = $2, started_at = NOW(), finished_at = NULL,
 				failure_reason = NULL, progress_phase = 'running', progress_updated_at = NOW(),
@@ -135,7 +137,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 		if err != nil {
 			return err
 		}
-		claimed = tag.RowsAffected() == 1
+		claimed = n == 1
 		return nil
 	})
 	return claimed, attemptID, sessionID, err
@@ -147,7 +149,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 	var refs []string
 	var count int
 	var toolOpts map[string]any
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
 		if err != nil {
 			return err
@@ -208,7 +210,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string) error {
 	var status string
 	var active *string
-	err := e.Pool.QueryRow(ctx, `SELECT status, active_attempt_id FROM image_session_generation_tasks WHERE id = $1`, taskID).Scan(&status, &active)
+	err := pfdb.QueryRow(ctx, e.DB, `SELECT status, active_attempt_id FROM image_session_generation_tasks WHERE id = $1`, taskID).Scan(&status, &active)
 	if err != nil {
 		return err
 	}
@@ -223,16 +225,16 @@ func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string
 
 func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, start int, opKey, hash, provider string, req map[string]any) error {
 	raw, _ := json.Marshal(req)
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var status string
 		var active *string
-		if err := pgxTx.QueryRow(ctx, `SELECT status, active_attempt_id FROM image_session_generation_tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status, &active); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status, active_attempt_id FROM image_session_generation_tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status, &active); err != nil {
 			return errStale
 		}
 		if status != "running" || active == nil || *active != attemptID {
 			return errStale
 		}
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_session_provider_effects (
 				id, generation_task_id, candidate_start_index, candidate_count, operation_key, effect_kind,
 				request_hash, provider_name, attempt_id, effect_result, reconciliation_state, request_json, created_at, updated_at
@@ -246,8 +248,8 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 }
 
 func (e Executor) markEffect(ctx context.Context, taskID string, start int, result, detail string) error {
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_provider_effects SET
 				effect_result = $3, detail = NULLIF($4, ''), updated_at = NOW()
 			WHERE generation_task_id = $1 AND candidate_start_index = $2
@@ -258,7 +260,7 @@ func (e Executor) markEffect(ctx context.Context, taskID string, start int, resu
 
 func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptID, groupID string, index, count int, prompt, size string, baseID *string, refs []string, result ChatResult) error {
 	var compensation storage.Compensation
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		if err := e.raiseIfCancelled(ctx, taskID, attemptID); err != nil {
 			return err
 		}
@@ -268,7 +270,7 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 		}
 		filename := fmt.Sprintf("generated-%s-%d%s", time.Now().UTC().Format("20060102-150405"), index, media.ExtensionForMIME(result.MIME))
 		assetID := clockid.New()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_session_assets (
 				id, session_id, kind, original_filename, mime_type, storage_path, media_object_id, created_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
@@ -297,7 +299,7 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 		if respID != "" {
 			respAny = respID
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_session_rounds (
 				id, session_id, prompt, assistant_message, size, model_name, provider_name, prompt_version,
 				provider_response_id, generation_group_id, candidate_index, candidate_count, base_asset_id,
@@ -311,13 +313,13 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 		if len([]rune(title)) > 40 {
 			title = string([]rune(title)[:40])
 		}
-		_, _ = pgxTx.Exec(ctx, `
+		_, _ = pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_sessions SET
 				title = CASE WHEN title = $2 THEN $3 ELSE title END,
 				updated_at = NOW()
 			WHERE id = $1
 		`, sessionID, defaultTitle, title)
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				completed_candidates = $2, active_candidate_index = $3,
 				progress_phase = 'candidate_saved', progress_updated_at = NOW(),
@@ -335,8 +337,8 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 }
 
 func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, groupID string) error {
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'succeeded', active_attempt_id = NULL, finished_at = NOW(),
 				is_retryable = FALSE, progress_phase = 'succeeded', progress_updated_at = NOW(),
@@ -348,8 +350,8 @@ func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, groupI
 }
 
 func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID string) error {
-	return tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'unknown', active_attempt_id = NULL, finished_at = NOW(),
 				is_retryable = FALSE, failure_reason = $3,
@@ -368,11 +370,11 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, ca
 			reason = reason[:1000]
 		}
 	}
-	_ = tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var attempts int
-		_ = pgxTx.QueryRow(ctx, `SELECT attempts FROM image_session_generation_tasks WHERE id = $1`, taskID).Scan(&attempts)
+		_ = pfdb.QueryRow(ctx, pgxTx, `SELECT attempts FROM image_session_generation_tasks WHERE id = $1`, taskID).Scan(&attempts)
 		if attempts < maxAttempts {
-			_, err := pgxTx.Exec(ctx, `
+			_, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE image_session_generation_tasks SET
 					status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 					started_at = NULL, finished_at = NULL, progress_phase = 'auto_retry_queued',
@@ -385,7 +387,7 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, ca
 			_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false)
 			return err
 		}
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_generation_tasks SET
 				status = 'failed', active_attempt_id = NULL, finished_at = NOW(),
 				failure_reason = $3, progress_phase = 'failed', progress_updated_at = NOW(), is_retryable = TRUE

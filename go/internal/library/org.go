@@ -6,10 +6,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation, error) {
@@ -22,25 +25,25 @@ func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation,
 		return FolderMutation{}, err
 	}
 	var out FolderMutation
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var existing Folder
-		scanErr := pgxTx.QueryRow(ctx, `
+		scanErr := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, name FROM media_library_folders WHERE normalized_name = $1
 		`, key).Scan(&existing.ID, &existing.Name)
 		if scanErr == nil {
 			out = FolderMutation{ID: existing.ID, Name: existing.Name, Created: false}
 			return nil
 		}
-		if !errors.Is(scanErr, pgx.ErrNoRows) {
+		if !errors.Is(scanErr, sqldb.ErrNoRows) {
 			return scanErr
 		}
 		id := clockid.New()
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO media_library_folders (id, name, normalized_name, created_at, updated_at)
 			VALUES ($1, $2, $3, NOW(), NOW())
 		`, id, display, key)
 		if uniqueViolation(err) {
-			scanErr = pgxTx.QueryRow(ctx, `
+			scanErr = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT id, name FROM media_library_folders WHERE normalized_name = $1
 			`, key).Scan(&existing.ID, &existing.Name)
 			if scanErr != nil {
@@ -60,7 +63,7 @@ func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation,
 
 func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name string) (Folder, error) {
 	var folder Folder
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		locked, err := lockFolder(ctx, pgxTx, folderID)
 		if err != nil {
 			return err
@@ -81,7 +84,7 @@ func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name 
 			return err
 		}
 		if locked.Name != display {
-			_, err = pgxTx.Exec(ctx, `
+			_, err = pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_folders SET name = $1, normalized_name = $2, updated_at = NOW() WHERE id = $3
 			`, display, key, locked.ID)
 			if err != nil {
@@ -96,20 +99,20 @@ func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name 
 
 func (s Service) DeleteFolder(ctx context.Context, folderID string) (int, error) {
 	var moved int
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		folder, err := lockFolder(ctx, pgxTx, folderID)
 		if err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM media_library_assets WHERE folder_id = $1`, folder.ID).Scan(&moved); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_assets WHERE folder_id = $1`, folder.ID).Scan(&moved); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE media_library_assets SET folder_id = NULL, updated_at = NOW() WHERE folder_id = $1
 		`, folder.ID); err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `DELETE FROM media_library_folders WHERE id = $1`, folder.ID)
+		_, err = pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_folders WHERE id = $1`, folder.ID)
 		return err
 	})
 	return moved, err
@@ -125,25 +128,25 @@ func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error
 		return TagMutation{}, err
 	}
 	var out TagMutation
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var existing Tag
-		scanErr := pgxTx.QueryRow(ctx, `
+		scanErr := pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, name FROM media_library_tags WHERE normalized_name = $1
 		`, key).Scan(&existing.ID, &existing.Name)
 		if scanErr == nil {
 			out = TagMutation{ID: existing.ID, Name: existing.Name, Created: false}
 			return nil
 		}
-		if !errors.Is(scanErr, pgx.ErrNoRows) {
+		if !errors.Is(scanErr, sqldb.ErrNoRows) {
 			return scanErr
 		}
 		id := clockid.New()
-		_, err := pgxTx.Exec(ctx, `
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO media_library_tags (id, name, normalized_name, created_at, updated_at)
 			VALUES ($1, $2, $3, NOW(), NOW())
 		`, id, display, key)
 		if uniqueViolation(err) {
-			if err := pgxTx.QueryRow(ctx, `
+			if err := pfdb.QueryRow(ctx, pgxTx, `
 				SELECT id, name FROM media_library_tags WHERE normalized_name = $1
 			`, key).Scan(&existing.ID, &existing.Name); err != nil {
 				return err
@@ -162,7 +165,7 @@ func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error
 
 func (s Service) RenameTag(ctx context.Context, tagID, expectedName, name string) (Tag, error) {
 	var tag Tag
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		locked, err := lockTag(ctx, pgxTx, tagID)
 		if err != nil {
 			return err
@@ -182,7 +185,7 @@ func (s Service) RenameTag(ctx context.Context, tagID, expectedName, name string
 		if err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `
+		_, err = pfdb.Exec(ctx, pgxTx, `
 			UPDATE media_library_tags SET name = $1, normalized_name = $2, updated_at = NOW() WHERE id = $3
 		`, display, key, locked.ID)
 		if err != nil {
@@ -196,18 +199,18 @@ func (s Service) RenameTag(ctx context.Context, tagID, expectedName, name string
 
 func (s Service) DeleteTag(ctx context.Context, tagID string) (int, error) {
 	var removed int
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		tag, err := lockTag(ctx, pgxTx, tagID)
 		if err != nil {
 			return err
 		}
-		if err := pgxTx.QueryRow(ctx, `SELECT COUNT(*) FROM media_library_asset_tags WHERE tag_id = $1`, tag.ID).Scan(&removed); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_asset_tags WHERE tag_id = $1`, tag.ID).Scan(&removed); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM media_library_asset_tags WHERE tag_id = $1`, tag.ID); err != nil {
+		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_asset_tags WHERE tag_id = $1`, tag.ID); err != nil {
 			return err
 		}
-		_, err = pgxTx.Exec(ctx, `DELETE FROM media_library_tags WHERE id = $1`, tag.ID)
+		_, err = pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_tags WHERE id = $1`, tag.ID)
 		return err
 	})
 	return removed, err
@@ -222,7 +225,7 @@ func (s Service) MoveAssets(ctx context.Context, assetIDs []string, folderID *st
 		return nil, err
 	}
 	var out []Asset
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if folderID != nil && *folderID != "" {
 			if _, err := lockFolder(ctx, pgxTx, *folderID); err != nil {
 				return err
@@ -239,7 +242,7 @@ func (s Service) MoveAssets(ctx context.Context, assetIDs []string, folderID *st
 			if err := checkRevision(asset, expected); err != nil {
 				return err
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET folder_id = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
 			`, folderID, now, asset.ID); err != nil {
 				return err
@@ -262,7 +265,7 @@ func (s Service) RenameAsset(ctx context.Context, assetID, expectedName string, 
 	}
 	expected := whitespace.ReplaceAllString(strings.TrimSpace(expectedName), " ")
 	var out Asset
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		assets, err := lockLibraryAssets(ctx, pgxTx, []string{assetID})
 		if err != nil {
 			return err
@@ -277,7 +280,7 @@ func (s Service) RenameAsset(ctx context.Context, assetID, expectedName string, 
 		if err := checkRevision(asset, map[string]int{assetID: expectedRevision}); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE media_library_assets SET display_name = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
 		`, display, s.now(), asset.ID); err != nil {
 			return err
@@ -319,10 +322,10 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 		keys = append(keys, key)
 	}
 	var out []Asset
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		tagIDs := map[string]string{}
 		if len(keys) > 0 {
-			rows, err := pgxTx.Query(ctx, `SELECT id, normalized_name FROM media_library_tags WHERE normalized_name = ANY($1)`, keys)
+			rows, err := pfdb.Query(ctx, pgxTx, `SELECT id, normalized_name FROM media_library_tags WHERE normalized_name = ANY($1)`, keys)
 			if err != nil {
 				return err
 			}
@@ -343,13 +346,13 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 					continue
 				}
 				id := clockid.New()
-				_, err := pgxTx.Exec(ctx, `
+				_, err := pfdb.Exec(ctx, pgxTx, `
 					INSERT INTO media_library_tags (id, name, normalized_name, created_at, updated_at)
 					VALUES ($1, $2, $3, NOW(), NOW())
 				`, id, displays[key], key)
 				if uniqueViolation(err) {
 					var existing string
-					if err := pgxTx.QueryRow(ctx, `SELECT id FROM media_library_tags WHERE normalized_name = $1`, key).Scan(&existing); err != nil {
+					if err := pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM media_library_tags WHERE normalized_name = $1`, key).Scan(&existing); err != nil {
 						return err
 					}
 					tagIDs[key] = existing
@@ -370,17 +373,17 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 			if err := checkRevision(asset, expected); err != nil {
 				return err
 			}
-			if _, err := pgxTx.Exec(ctx, `DELETE FROM media_library_asset_tags WHERE asset_id = $1`, asset.ID); err != nil {
+			if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_asset_tags WHERE asset_id = $1`, asset.ID); err != nil {
 				return err
 			}
 			for _, key := range keys {
-				if _, err := pgxTx.Exec(ctx, `
+				if _, err := pfdb.Exec(ctx, pgxTx, `
 					INSERT INTO media_library_asset_tags (asset_id, tag_id, created_at) VALUES ($1, $2, NOW())
 				`, asset.ID, tagIDs[key]); err != nil {
 					return err
 				}
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE media_library_assets SET revision = revision + 1, updated_at = $1 WHERE id = $2
 			`, now, asset.ID); err != nil {
 				return err

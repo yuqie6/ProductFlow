@@ -1,6 +1,6 @@
 # Backend Engineering Guidelines
 
-Python `backend/` is the sealed FastAPI tree and Alembic source. The default business runtime is `go/`. Edit this package for migrations, contract comparison, or the optional Compose profile `python`. Live HTTP, worker, and dispatcher ownership is `go/internal/` (see `docs/ARCHITECTURE.md` and `go/README.md`).
+Python `backend/` is the sealed FastAPI tree and historical Alembic source. The default business runtime is `go/`. Edit this package for contract comparison or the optional Compose profile `python`. Live HTTP, worker, dispatcher, and schema ownership is `go/` (see `docs/ARCHITECTURE.md` and `go/README.md`).
 
 ## Read First
 
@@ -72,13 +72,9 @@ Current ownership:
 - `MediaObject` owns immutable byte metadata; `ProductImageAsset` owns product-scoped identity. Folder deletion changes organization only. Reference rebinding uses one explicit asset id and preserves historical lineage.
 - Generation intent, provider-effective values, measured output, and delivery rendition are distinct contracts. Candidate quantity is business input, not an advanced provider field.
 
-## Migrations
+## Schema
 
-- Every schema change has an Alembic revision and a focused regression test for the current schema.
-- Fresh-database `upgrade head` must work. PostgreSQL-specific enum, lock, or transaction behavior requires live validation when affected.
-- Historical revisions are immutable unless explicitly repairing a demonstrated broken revision.
-- A migration must not call an Agent/provider or assume storage is mounted.
-- Do not write data backfill, freeze, archive, or cutover-gate migrations. Following mainline may recreate the database and storage. See `docs/adr/0010-mainline-no-compatibility.md`.
+Default schema changes live in `go/internal/platform/db/schema` (GORM models + ExtraDDL). `backend/alembic/` is sealed history and is not on `just dev` or default Compose. Do not add new Alembic revisions for mainline schema. Python tests that still replay historical revisions against SQLite are archive coverage, not the empty-database gate.
 
 ## Verification
 

@@ -25,10 +25,13 @@ agent-service-test:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service test'
 
 backend-migrate:
-    bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
 
 backend-migrate-prod:
-    uv run --directory backend alembic upgrade head
+    go run -C go ./cmd/productflow-migrate
+
+go-migrate:
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
 
 backend-worker-prod:
     uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
@@ -43,16 +46,16 @@ docs-check:
     python3 scripts/check_docs.py
 
 go-test:
-    bash scripts/with_dev_env.sh bash -lc 'cd go && go test ./...'
+    bash scripts/with_dev_env.sh bash -lc 'go test -C go ./...'
 
 go-api:
-    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-api'
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-api'
 
 go-worker:
-    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-worker'
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-worker'
 
 go-dispatcher:
-    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-dispatcher --watch'
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-dispatcher --watch'
 
 backend-test-live-recovery:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
@@ -127,7 +130,7 @@ dev-stop:
 dev:
     bash scripts/stop_dev_app_processes.sh
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
-    bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
     just dev-services
 
 web-preview-prod:

@@ -757,9 +757,9 @@ func (h HTTP) finalizeIntake(c *gin.Context) {
 		return
 	}
 	var req struct {
-		Selection        json.RawMessage `json:"selection"`
-		ReferenceAssetIDs []string       `json:"reference_asset_ids"`
-		TaskID           *string         `json:"task_id"`
+		Selection         json.RawMessage `json:"selection"`
+		ReferenceAssetIDs []string        `json:"reference_asset_ids"`
+		TaskID            *string         `json:"task_id"`
 	}
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)

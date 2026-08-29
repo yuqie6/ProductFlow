@@ -45,6 +45,10 @@ func main() {
 		logger.Fatal("postgres", zap.Error(err))
 	}
 	defer pool.Close()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		logger.Fatal("gorm", zap.Error(err))
+	}
 
 	redisOpt, err := queue.ParseRedis(cfg.RedisURL)
 	if err != nil {
@@ -52,12 +56,12 @@ func main() {
 	}
 
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
-	productService := product.Service{Pool: pool, Media: mediaStore}
-	deliveryService := delivery.Service{Pool: pool, Media: mediaStore}
+	productService := product.Service{DB: gdb, Media: mediaStore}
+	deliveryService := delivery.Service{DB: gdb, Media: mediaStore}
 	settingsStore := settings.NewStore(pool, cfg)
 	liveImage := providers.LiveImage{Store: settingsStore}
 	executor := graph.Executor{
-		Pool: pool,
+		DB: gdb,
 		Deps: graph.Dependencies{
 			Prompt:   providers.LivePrompt{Store: settingsStore},
 			Image:    liveImage,
@@ -65,17 +69,17 @@ func main() {
 			Delivery: deliveryService,
 		},
 	}
-	imageExecutor := imagesession.Executor{Pool: pool, Media: mediaStore, Provider: liveImage}
-	deliveryExecutor := delivery.Executor{Pool: pool, Media: mediaStore}
-	localExecutor := localedit.Executor{Pool: pool, Media: mediaStore, Provider: liveImage}
+	imageExecutor := imagesession.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
+	deliveryExecutor := delivery.Executor{DB: gdb, Media: mediaStore}
+	localExecutor := localedit.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
 		poll = time.Millisecond
 	}
 	agentExecutor := agent.Executor{Service: agent.Service{
-		Pool: pool, Graph: graph.Service{Pool: pool},
+		DB: gdb, Graph: graph.Service{DB: gdb},
 		Product: productService,
-		Library: library.Service{Pool: pool, Media: mediaStore},
+		Library: library.Service{DB: gdb, Media: mediaStore},
 		Media:   mediaStore,
 		Gateway: agent.HTTPGateway{
 			BaseURL:     cfg.AgentServiceBaseURL,

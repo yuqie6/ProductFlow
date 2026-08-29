@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type seededGallery struct {
@@ -28,13 +29,13 @@ func seedGallery(t *testing.T, ps *productServer) seededGallery {
 	otherID := clockid.New()
 	folderID := clockid.New()
 	otherFolderID := clockid.New()
-	err := tx.With(ctx, ps.pool, func(pgxTx pgx.Tx) error {
-		if _, err := pgxTx.Exec(ctx, `
+	err := tx.WithGorm(ctx, ps.db, func(pgxTx *gorm.DB) error {
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '图库测试商品', $2, $2), ($3, '其他商品', $2, $2)
 		`, productID, now, otherID); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO product_asset_folders (id, product_id, name, sort_order, created_at, updated_at)
 			VALUES ($1, $2, '精选', 0, $3, $3), ($4, $5, '其他目录', 0, $3, $3)
 		`, folderID, productID, now, otherFolderID, otherID); err != nil {
@@ -57,7 +58,7 @@ func seedGallery(t *testing.T, ps *productServer) seededGallery {
 		for i, item := range specs {
 			mediaID := clockid.New()
 			assetID := clockid.New()
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO media_objects (
 					id, storage_path, mime_type, byte_size, width, height, sha256,
 					verification_status, created_at, verified_at
@@ -65,7 +66,7 @@ func seedGallery(t *testing.T, ps *productServer) seededGallery {
 			`, mediaID, "gallery/"+productID+"/"+item.name+".png", strings.Repeat("a", 64), item.created); err != nil {
 				return err
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO product_image_assets (
 					id, product_id, media_object_id, origin_type, display_name, original_filename,
 					image_type_key, user_folder_id, created_at, updated_at

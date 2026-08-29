@@ -12,13 +12,13 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 6. PostgreSQL。
 7. Redis 与媒体 storage。
 
-浏览器只访问 Web 和业务 API。Agent service 使用独立 bearer token 调用业务 API 的 internal 路由；API 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。默认进程是 `go/cmd/productflow-api`、`productflow-worker`、`productflow-dispatcher`。`backend/` 保留 Alembic 与可选 Python 回退（Compose profile `python`），不再作为默认运行时。
+浏览器只访问 Web 和业务 API。Agent service 使用独立 bearer token 调用业务 API 的 internal 路由；API 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。默认进程是 `go/cmd/productflow-api`、`productflow-worker`、`productflow-dispatcher`。schema 由 `productflow-migrate` 在启动前应用。`backend/` 保留封印 Python 树与可选 Compose profile `python`，不再作为默认运行时。
 
 本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。
 
 ## 2. 后端分层
 
-业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 pgx，异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威仍是 Alembic。
+业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx）和尚未迁完的 pgx 手写 SQL，异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 GORM AutoMigrate 加 CHECK / enum / 部分唯一索引补钉。
 
 `backend/src/productflow_backend/` 是封印对照与迁移树，不是默认进程。
 
@@ -40,6 +40,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 局部修 | `go/internal/localedit` | `productflow-api`、`productflow-worker` | `go/internal/localedit` |
 | 设置与 provider | `go/internal/settings`、`go/internal/providers` | `productflow-api`、worker 解析绑定 | `go/internal/settings`、`go/internal/providers` |
 | 异步投递 | `go/internal/platform/queue` | `productflow-dispatcher`、`productflow-worker` | `go/internal/platform/queue`、graph/imagesession 投递测试 |
+| schema 演进 | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
 | 错误与日志 | `go/internal/platform/apperr`、`httpx`、`log` | 中间件与 worker | platform 与各包 HTTP 测试 |
 
 ## 3. 前端结构
@@ -191,11 +192,11 @@ Provider profile、purpose binding 和业务运行时设置由 `/settings` 写�
 
 ## 11. Schema 演进
 
-Alembic 历史 revision 目前仍用于空数据库 `upgrade head`。Go 运行时不 AutoMigrate。主仓库不写旧数据回填、冻结或 cutover gate。残留 archive/gallery 表和兼容桩按 ADR 0010 删除，而不是继续包一层。跟上主仓库可以重建数据库和 storage。
+空库和已有库都跑 `productflow-migrate`：GORM AutoMigrate 建/补表和列，随后幂等补上 CHECK、PostgreSQL enum 和部分唯一索引。AutoMigrate 不删除已退休表或列；退休表按 ADR 0010 用显式 SQL 删除。`backend/alembic/` 是封印历史，不再接 `just dev` 或默认 Compose。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
 
 ## 12. 质量门
 
-- Backend：Go `go test ./...`、Alembic `upgrade head`，以及 opt-in PostgreSQL/Redis live tests。
+- Backend：Go `go test ./...`、`productflow-migrate`，以及 opt-in PostgreSQL/Redis live tests。
 - Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。
 - Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`，以及真实 provider/依赖的显式 live gate。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。

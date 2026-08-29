@@ -12,13 +12,13 @@ ProductFlow is a single-administrator, single-merchant workspace with seven runt
 6. PostgreSQL.
 7. Redis and media storage.
 
-The browser reaches only Web and the business API. The Agent service calls internal business-API endpoints with a dedicated bearer token; the API controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher. Default processes are `go/cmd/productflow-api`, `productflow-worker`, and `productflow-dispatcher`. `backend/` keeps Alembic and an optional Python fallback (Compose profile `python`) and is not the default runtime.
+The browser reaches only Web and the business API. The Agent service calls internal business-API endpoints with a dedicated bearer token; the API controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher. Default processes are `go/cmd/productflow-api`, `productflow-worker`, and `productflow-dispatcher`. Schema is applied by `productflow-migrate` before those processes start. `backend/` keeps the sealed Python tree and an optional Python fallback (Compose profile `python`) and is not the default runtime.
 
 This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md` and durable rationale in `adr/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service.
 
 ## 2. Backend Layers
 
-The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses pgx, and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Alembic remains the schema authority.
+The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver) plus remaining handwritten pgx SQL, and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is GORM AutoMigrate plus CHECK / enum / partial-unique-index patches.
 
 `backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process.
 
@@ -40,6 +40,7 @@ Current code ownership:
 | Local image edits | `go/internal/localedit` | `productflow-api`, `productflow-worker` | `go/internal/localedit` |
 | Settings and providers | `go/internal/settings`, `go/internal/providers` | `productflow-api`; worker resolves bindings | `go/internal/settings`, `go/internal/providers` |
 | Async dispatch | `go/internal/platform/queue` | `productflow-dispatcher`, `productflow-worker` | `go/internal/platform/queue`, graph/image-session delivery tests |
+| Schema evolution | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
 | Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
 
 ## 3. Frontend Structure
@@ -193,11 +194,11 @@ Uploads are checked for MIME, actual image format, byte size, pixel count, and c
 
 ## 11. Schema Evolution
 
-Historical Alembic revisions currently still support empty-database `upgrade head`. The Go runtime does not AutoMigrate. The main repository does not write old-data backfill, freeze, or cutover gates. Leftover archive/gallery tables and compatibility stubs are deleted under ADR 0010 rather than wrapped. Following mainline may recreate the database and storage.
+Empty and existing databases both run `productflow-migrate`: GORM AutoMigrate creates or adds tables and columns, then idempotent SQL adds CHECKs, PostgreSQL enums, and partial unique indexes. AutoMigrate does not drop retired tables or columns; those deletions stay explicit under ADR 0010. `backend/alembic/` is sealed history and is no longer on `just dev` or default Compose. The main repository does not write old-data backfill, freeze, or cutover gates. Following mainline may recreate the database and storage.
 
 ## 12. Quality Gates
 
-- Backend: Go `go test ./...`, Alembic `upgrade head`, and opt-in PostgreSQL/Redis live tests.
+- Backend: Go `go test ./...`, `productflow-migrate`, and opt-in PostgreSQL/Redis live tests.
 - Frontend: Vitest, ESLint, TypeScript, and Vite production build. The skip-Agent full-graph browser gate against real prompt/image providers is opt-in: `just web-e2e-live-graph`.
 - Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`, and explicit live provider/dependency gates.
 - Cross-layer changes add real browser, database, or provider validation according to risk.

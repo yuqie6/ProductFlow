@@ -5,9 +5,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string, limit int) (WorkflowList, error) {
@@ -18,7 +19,7 @@ func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string,
 		limit = maxWorkflow
 	}
 	var out WorkflowList
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
@@ -29,8 +30,8 @@ func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string,
 	return out, err
 }
 
-func (s Service) listWorkflowTx(ctx context.Context, pgxTx pgx.Tx, productID, workflowID string, limit int) (WorkflowList, error) {
-	rows, err := pgxTx.Query(ctx, `
+func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, limit int) (WorkflowList, error) {
+	rows, err := pfdb.Query(ctx, pgxTx, `
 		SELECT w.media_library_asset_id, w.created_at, lib.id, src.id
 		FROM workflow_media_library_assets w
 		JOIN media_library_assets a ON a.id = w.media_library_asset_id
@@ -112,7 +113,7 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 		uniqueIDs = append(uniqueIDs, id)
 	}
 	var out WorkflowList
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
@@ -149,7 +150,7 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 			return err
 		}
 		existing := map[string]struct{}{}
-		rows, err := pgxTx.Query(ctx, `
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT media_library_asset_id FROM workflow_media_library_assets
 			WHERE workflow_id = $1 AND media_library_asset_id = ANY($2)
 		`, workflowID, uniqueIDs)
@@ -172,7 +173,7 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 			if _, ok := existing[id]; ok {
 				continue
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO workflow_media_library_assets (workflow_id, media_library_asset_id, created_at)
 				VALUES ($1, $2, NOW())
 			`, workflowID, id); err != nil {
@@ -186,18 +187,18 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 }
 
 func (s Service) RemoveWorkflow(ctx context.Context, productID, workflowID, libraryAssetID string) error {
-	return tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
-		tag, err := pgxTx.Exec(ctx, `
+		n, err := pfdb.Exec(ctx, pgxTx, `
 			DELETE FROM workflow_media_library_assets
 			WHERE workflow_id = $1 AND media_library_asset_id = $2
 		`, workflowID, libraryAssetID)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
+		if n == 0 {
 			return apperr.NotFound("工作流素材关联不存在")
 		}
 		return nil

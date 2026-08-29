@@ -2,12 +2,13 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 )
 
 // ModelBinding 是 prompt / image 用途在 PostgreSQL 里解析出的供应商绑定。
@@ -36,7 +37,7 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 	}
 	var profileID *string
 	var configJSON, capabilities []byte
-	err = s.pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.db, `
 		SELECT b.provider_profile_id, COALESCE(b.config_json::text, '{}'), COALESCE(p.capabilities_json::text, '[]')
 		FROM provider_bindings b
 		LEFT JOIN provider_profiles p ON p.id = b.provider_profile_id
@@ -72,12 +73,12 @@ func (s *Store) resolvePurpose(ctx context.Context, purpose, capability, fallbac
 	var kind string
 	var profileID *string
 	var modelSettings []byte
-	err := s.pool.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, s.db, `
 		SELECT provider_kind, provider_profile_id, model_settings_json
 		FROM provider_bindings WHERE purpose = $1
 	`, purpose).Scan(&kind, &profileID, &modelSettings)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ModelBinding{Kind: "mock"}, nil
 		}
 		return ModelBinding{}, err
@@ -96,12 +97,12 @@ func (s *Store) resolvePurpose(ctx context.Context, purpose, capability, fallbac
 	var archived any
 	var apiKey, baseURL *string
 	var capabilities, defaultModels []byte
-	err = s.pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.db, `
 		SELECT enabled, archived_at, api_key, base_url, capabilities_json, default_models_json
 		FROM provider_profiles WHERE id = $1
 	`, *profileID).Scan(&enabled, &archived, &apiKey, &baseURL, &capabilities, &defaultModels)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ModelBinding{}, apperr.Unavailable("供应商尚未配置")
 		}
 		return ModelBinding{}, err

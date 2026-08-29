@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, conversationID string, taskID *string) (*WorkflowRunRequestResponse, error) {
 	var out *WorkflowRunRequestResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadConversation(ctx, pgxTx, productID, conversationID); err != nil {
 			return err
 		}
@@ -34,7 +37,7 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 		}
 		q += ` ORDER BY r.created_at DESC, r.id DESC LIMIT 1`
 		item, err := scanRunRequest(ctx, pgxTx, q, args...)
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sqldb.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
@@ -49,7 +52,7 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var productIDVal, graphID, status string
 	var sourceRunID, graphRunID *string
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 		if err != nil {
 			return err
@@ -87,8 +90,8 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 		}
 		runID = run.ID
 	}
-	_ = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_workflow_run_requests
 			SET status = 'confirmed', graph_run_id = $2, confirmed_at = NOW(), updated_at = NOW()
 			WHERE id = $1
@@ -100,7 +103,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 
 func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var item WorkflowRunRequestResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 		item = loaded
 		return err
@@ -116,8 +119,8 @@ func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *st
 			return WorkflowRunRequestResponse{}, err
 		}
 	}
-	_ = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
-		_, err := pgxTx.Exec(ctx, `
+	_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE agent_workflow_run_requests
 			SET status = 'cancelled', failure_reason = COALESCE(failure_reason, '工作流运行已取消'), finished_at = NOW(), updated_at = NOW()
 			WHERE id = $1
@@ -127,7 +130,7 @@ func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *st
 	return s.reloadRequest(ctx, productID, conversationID, requestID)
 }
 
-func cancelWorkflowRunRequest(ctx context.Context, pgxTx pgx.Tx, _ Service, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
+func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, _ Service, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 	if err != nil {
 		return WorkflowRunRequestResponse{}, err
@@ -135,7 +138,7 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx pgx.Tx, _ Service, prod
 	if item.Status == "cancelled" {
 		return item, nil
 	}
-	if _, err := pgxTx.Exec(ctx, `
+	if _, err := pfdb.Exec(ctx, pgxTx, `
 		UPDATE agent_workflow_run_requests
 		SET status = 'cancelled', failure_reason = COALESCE(failure_reason, '工作流运行已取消'), finished_at = NOW(), updated_at = NOW()
 		WHERE id = $1
@@ -176,8 +179,8 @@ func (s Service) prepareGraphRequest(ctx context.Context, productID, workflowID 
 		q += ` AND id = $2`
 		args = append(args, workflowID)
 	}
-	err := s.Pool.QueryRow(ctx, q, args...).Scan(&graphID, &title, &revision)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, s.DB, q, args...).Scan(&graphID, &title, &revision)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		if workflowID != "" {
 			return PreparedWorkflowRunRequest{}, apperr.NotFound("工作流不存在")
 		}
@@ -186,7 +189,7 @@ func (s Service) prepareGraphRequest(ctx context.Context, productID, workflowID 
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
-	_ = s.Pool.QueryRow(ctx, `
+	_ = pfdb.QueryRow(ctx, s.DB, `
 		SELECT COUNT(*) FROM workflow_graph_nodes
 		WHERE graph_id = $1 AND node_type IN ('creative_brief','visual_system','prompt_generation','image_generation')
 	`, graphID).Scan(&runnable)
@@ -210,7 +213,7 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 		return WorkflowRunRequestResponse{}, err
 	}
 	var out WorkflowRunRequestResponse
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		conv, err := loadConversationByID(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err
@@ -232,7 +235,7 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 			return err
 		}
 		var existing, existingHash string
-		err = pgxTx.QueryRow(ctx, `
+		err = pfdb.QueryRow(ctx, pgxTx, `
 			SELECT id, request_hash FROM agent_workflow_run_requests WHERE conversation_id = $1 AND idempotency_key = $2
 		`, conversationID, key).Scan(&existing, &existingHash)
 		if err == nil {
@@ -250,11 +253,11 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 			graphArgs = append(graphArgs, workflowID)
 		}
 		var graphID string
-		if err := pgxTx.QueryRow(ctx, graphQ, graphArgs...).Scan(&graphID); err != nil {
+		if err := pfdb.QueryRow(ctx, pgxTx, graphQ, graphArgs...).Scan(&graphID); err != nil {
 			return apperr.Conflict("当前商品没有可执行的 schema-v3 工作流")
 		}
 		id := newID()
-		if _, err := pgxTx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_workflow_run_requests (
 				id, conversation_id, task_id, product_id, graph_id, expected_workflow_revision, status,
 				source_graph_run_id, source_step_id, idempotency_key, request_hash, created_at, updated_at
@@ -275,10 +278,10 @@ func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID
 		return ReconcileResponse{}, err
 	}
 	var item WorkflowRunRequestResponse
-	err = s.Pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, s.DB, `
 		SELECT r.id FROM agent_workflow_run_requests r WHERE r.conversation_id = $1 AND r.idempotency_key = $2
 	`, conversationID, key).Scan(&item.ID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ReconcileResponse{State: "not_applied", Detail: ptr("工作流执行请求尚未提交")}, nil
 	}
 	if err != nil {
@@ -294,7 +297,7 @@ func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID
 
 func (s Service) reloadRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var out WorkflowRunRequestResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 		if err != nil {
 			return err
@@ -305,7 +308,7 @@ func (s Service) reloadRequest(ctx context.Context, productID *string, conversat
 	return out, err
 }
 
-func loadRunRequest(ctx context.Context, pgxTx pgx.Tx, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
+func loadRunRequest(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	q := `
 		SELECT r.id, r.conversation_id, r.task_id, r.product_id, p.name, r.graph_id, COALESCE(g.title, ''),
 			r.expected_workflow_revision, r.status, r.source_graph_run_id, r.graph_run_id, run.status,
@@ -322,15 +325,15 @@ func loadRunRequest(ctx context.Context, pgxTx pgx.Tx, productID *string, conver
 		args = append(args, *productID)
 	}
 	item, err := scanRunRequest(ctx, pgxTx, q, args...)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return WorkflowRunRequestResponse{}, apperr.NotFound("Agent workflow run request 不存在")
 	}
 	return item, err
 }
 
-func scanRunRequest(ctx context.Context, pgxTx pgx.Tx, q string, args ...any) (WorkflowRunRequestResponse, error) {
+func scanRunRequest(ctx context.Context, pgxTx *gorm.DB, q string, args ...any) (WorkflowRunRequestResponse, error) {
 	var item WorkflowRunRequestResponse
-	err := pgxTx.QueryRow(ctx, q, args...).Scan(
+	err := pfdb.QueryRow(ctx, pgxTx, q, args...).Scan(
 		&item.ID, &item.ConversationID, &item.TaskID, &item.ProductID, &item.ProductName,
 		&item.WorkflowID, &item.WorkflowTitle, &item.ExpectedWorkflowRevision, &item.Status,
 		&item.SourceRunID, &item.WorkflowRunID, &item.WorkflowRunStatus, &item.SourceStepID,

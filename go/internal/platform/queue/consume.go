@@ -6,16 +6,26 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
+
+func gormFrom(pool *pgxpool.Pool) (*gorm.DB, error) {
+	return pfdb.OpenGorm(pool)
+}
 
 // ClaimForConsumption 从 SENT 抢消费 lease。抢不到说明另一 worker 正在跑或行已不是 SENT。
 func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, leaseSeconds int) (string, bool, error) {
 	if leaseSeconds <= 0 {
 		leaseSeconds = DefaultConsumerLeaseSeconds
 	}
+	gdb, err := gormFrom(pool)
+	if err != nil {
+		return "", false, err
+	}
 	now := time.Now().UTC()
 	token := clockid.New()
-	tag, err := pool.Exec(ctx, `
+	n, err := pfdb.Exec(ctx, gdb, `
 		UPDATE async_dispatches SET
 			lease_token = $3,
 			lease_expires_at = $4,
@@ -28,7 +38,7 @@ func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, ag
 	if err != nil {
 		return "", false, err
 	}
-	if tag.RowsAffected() != 1 {
+	if n != 1 {
 		return "", false, nil
 	}
 	return token, true, nil
@@ -36,8 +46,12 @@ func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, ag
 
 // MarkConsumed 把 SENT 标 CONSUMED。SENT 只表示已交给 broker。
 func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string) (bool, error) {
+	gdb, err := gormFrom(pool)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now().UTC()
-	tag, err := pool.Exec(ctx, `
+	n, err := pfdb.Exec(ctx, gdb, `
 		UPDATE async_dispatches SET
 			status = 'consumed',
 			lease_token = NULL,
@@ -52,7 +66,7 @@ func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregate
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	return n == 1, nil
 }
 
 // MarkFailed 目标失败后释放消费 lease，走有界重试或死信。
@@ -63,12 +77,16 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 	if backoffSeconds <= 0 {
 		backoffSeconds = DefaultBackoffSeconds
 	}
+	gdb, err := gormFrom(pool)
+	if err != nil {
+		return false, err
+	}
 	now := time.Now().UTC()
 	if len(errMsg) > 1000 {
 		errMsg = errMsg[:1000]
 	}
 	var attempts int
-	err := pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, gdb, `
 		SELECT attempts FROM async_dispatches
 		WHERE id = $1 AND aggregate_id = $2 AND status = 'sent' AND lease_token = $3
 	`, dispatchID, aggregateID, leaseToken).Scan(&attempts)
@@ -83,7 +101,7 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 	} else {
 		availableAt = now.Add(time.Duration(backoffSeconds) * time.Second)
 	}
-	tag, err := pool.Exec(ctx, `
+	n, err := pfdb.Exec(ctx, gdb, `
 		UPDATE async_dispatches SET
 			status = $4,
 			lease_token = NULL,
@@ -98,15 +116,19 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() == 1, nil
+	return n == 1, nil
 }
 
 // Consume 领取 SENT 行、跑 actor、成功才 CONSUMED。claim 失败安静退出。
 func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, actors map[string]ActorFunc) error {
+	gdb, err := gormFrom(pool)
+	if err != nil {
+		return err
+	}
 	var actorName string
 	var status string
 	var storedAggregate string
-	err := pool.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, gdb, `
 		SELECT actor_name, status, aggregate_id FROM async_dispatches WHERE id = $1
 	`, dispatchID).Scan(&actorName, &status, &storedAggregate)
 	if err != nil {

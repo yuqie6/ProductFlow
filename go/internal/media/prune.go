@@ -2,9 +2,11 @@ package media
 
 import (
 	"context"
+	sqldb "database/sql"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // Deleted 是已无逻辑引用、事务内删行之后待提交后清文件的媒体。
@@ -15,7 +17,7 @@ type Deleted struct {
 
 // PruneUnreferenced 删除已无商品图/会话图/全局素材/局部编辑 mask 引用的 MediaObject 行。
 // 文件删除发生在调用方 commit 之后。
-func PruneUnreferenced(ctx context.Context, tx pgx.Tx, mediaIDs []string) ([]Deleted, error) {
+func PruneUnreferenced(ctx context.Context, tx *gorm.DB, mediaIDs []string) ([]Deleted, error) {
 	deleted := make([]Deleted, 0)
 	seen := map[string]struct{}{}
 	for _, mediaID := range mediaIDs {
@@ -27,7 +29,7 @@ func PruneUnreferenced(ctx context.Context, tx pgx.Tx, mediaIDs []string) ([]Del
 		}
 		seen[mediaID] = struct{}{}
 		var referenced bool
-		err := tx.QueryRow(ctx, `
+		err := pfdb.QueryRow(ctx, tx, `
 			SELECT EXISTS (
 				SELECT 1 FROM product_image_assets WHERE media_object_id = $1
 				UNION ALL
@@ -45,16 +47,16 @@ func PruneUnreferenced(ctx context.Context, tx pgx.Tx, mediaIDs []string) ([]Del
 			continue
 		}
 		var path string
-		err = tx.QueryRow(ctx, `
+		err = pfdb.QueryRow(ctx, tx, `
 			SELECT storage_path FROM media_objects WHERE id = $1 FOR UPDATE
 		`, mediaID).Scan(&path)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if errors.Is(err, sqldb.ErrNoRows) {
 				continue
 			}
 			return nil, err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM media_objects WHERE id = $1`, mediaID); err != nil {
+		if _, err := pfdb.Exec(ctx, tx, `DELETE FROM media_objects WHERE id = $1`, mediaID); err != nil {
 			return nil, err
 		}
 		deleted = append(deleted, Deleted{ID: mediaID, StoragePath: path})

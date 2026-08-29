@@ -1204,7 +1204,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 
 - `.env`/runtime DB settings 的所有权保持现有合同；需求书不引入第二套配置中心。
 - Docker Compose 和本地 `just dev` 使用同一 schema/migration 路径。
-- 启动前应用 Alembic；失败时服务不得在半迁移 schema 上继续接受写入。
+- 启动前应用 `productflow-migrate`；失败时服务不得在半迁移 schema 上继续接受写入。
 - media storage 与数据库分别备份，但恢复演练必须验证引用一致。
 - Agent session/event 文件可备份用于交互历史，不替代 PostgreSQL 业务恢复。
 
@@ -1220,7 +1220,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 
 ### 23.4 数据迁移和兼容
 
-- schema 变化使用 Alembic revision 和 migration test，不使用 ORM AutoMigrate。空库 `upgrade head` 到达当前 schema。已删除的兼容表不能降级。
+- schema 变化使用 GORM models、约束补钉和 migrate 测试。空库 `productflow-migrate` 到达当前 schema。已删除的兼容表不能降级。
 - persisted enum/JSON 变化前搜索所有 reader/writer、历史值和导出工具。
 - 不为新功能恢复在线 V1/V2 fallback。主仓库按 ADR 0010 删除兼容路径，不为已部署数据写回填、冻结或 cutover gate。
 - API version 号与 workflow schema version 分开，`/api/v2/...` 不代表在线 V2 graph。

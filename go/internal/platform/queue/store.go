@@ -7,14 +7,17 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // Stage 创建或返回耐久投递行，不 commit。调用方拥有事务。
-func Stage(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time) (Dispatch, error) {
+func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
 		return Dispatch{}, err
@@ -33,7 +36,7 @@ func Stage(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID s
 		}
 		if len(payloadJSON) > 0 && len(existing.PayloadJSON) == 0 {
 			existing.PayloadJSON = payloadJSON
-			if _, err := tx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, tx, `
 				UPDATE async_dispatches SET payload_json = $2, updated_at = $3 WHERE id = $1
 			`, existing.ID, payloadJSON, now); err != nil {
 				return Dispatch{}, err
@@ -54,7 +57,7 @@ func Stage(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID s
 		}
 		if existing.Status == StatusSent && availableAt != nil && existing.LeaseToken != nil {
 			if existing.LeaseExpiresAt == nil || existing.LeaseExpiresAt.After(now) {
-				_, err := tx.Exec(ctx, `
+				_, err := pfdb.Exec(ctx, tx, `
 					UPDATE async_dispatches SET available_at = $2, updated_at = $3 WHERE id = $1
 				`, existing.ID, availableAt.UTC(), now)
 				if err != nil {
@@ -76,7 +79,7 @@ func Stage(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID s
 		ID: id, DeliveryKey: deliveryKey, ActorName: actorName, AggregateID: aggregateID,
 		PayloadJSON: payloadJSON, Status: StatusPending, AvailableAt: avail, Attempts: 0,
 	}
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		INSERT INTO async_dispatches (
 			id, delivery_key, actor_name, aggregate_id, payload_json, status,
 			available_at, attempts, created_at, updated_at
@@ -100,7 +103,7 @@ func Stage(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID s
 }
 
 // StageForActor 按 actor+aggregate 暂存 PENDING 行，不 commit。
-func StageForActor(ctx context.Context, tx pgx.Tx, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
+func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
 	var availableAt *time.Time
 	if delay > 0 {
 		t := time.Now().UTC().Add(delay)
@@ -110,7 +113,7 @@ func StageForActor(ctx context.Context, tx pgx.Tx, actorName, aggregateID string
 }
 
 // Requeue 把已有行重置为 pending，或新建。SENT 且仍持有消费 lease 时默认不抢。
-func Requeue(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time, allowActiveLease bool) (Dispatch, error) {
+func Requeue(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time, allowActiveLease bool) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
 		return Dispatch{}, err
@@ -130,7 +133,7 @@ func Requeue(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID
 	}
 	now := time.Now().UTC()
 	if len(payloadJSON) > 0 && len(existing.PayloadJSON) == 0 {
-		if _, err := tx.Exec(ctx, `UPDATE async_dispatches SET payload_json = $2, updated_at = $3 WHERE id = $1`, existing.ID, payloadJSON, now); err != nil {
+		if _, err := pfdb.Exec(ctx, tx, `UPDATE async_dispatches SET payload_json = $2, updated_at = $3 WHERE id = $1`, existing.ID, payloadJSON, now); err != nil {
 			return Dispatch{}, err
 		}
 	}
@@ -149,14 +152,14 @@ func Requeue(ctx context.Context, tx pgx.Tx, deliveryKey, actorName, aggregateID
 	return resetPending(ctx, tx, existing.ID, avail, now, true)
 }
 
-func loadByDeliveryKey(ctx context.Context, tx pgx.Tx, deliveryKey string) (*Dispatch, error) {
+func loadByDeliveryKey(ctx context.Context, tx *gorm.DB, deliveryKey string) (*Dispatch, error) {
 	row, err := scanDispatch(ctx, tx, `
 		SELECT id, delivery_key, actor_name, aggregate_id, payload_json, status,
 		       available_at, lease_token, lease_expires_at, attempts, last_error,
 		       sent_at, consumed_at, created_at, updated_at
 		FROM async_dispatches WHERE delivery_key = $1
 	`, deliveryKey)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -165,11 +168,9 @@ func loadByDeliveryKey(ctx context.Context, tx pgx.Tx, deliveryKey string) (*Dis
 	return &row, nil
 }
 
-func scanDispatch(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sql string, args ...any) (Dispatch, error) {
+func scanDispatch(ctx context.Context, q *gorm.DB, sql string, args ...any) (Dispatch, error) {
 	var row Dispatch
-	err := q.QueryRow(ctx, sql, args...).Scan(
+	err := pfdb.QueryRow(ctx, q, sql, args...).Scan(
 		&row.ID, &row.DeliveryKey, &row.ActorName, &row.AggregateID, &row.PayloadJSON, &row.Status,
 		&row.AvailableAt, &row.LeaseToken, &row.LeaseExpiresAt, &row.Attempts, &row.LastError,
 		&row.SentAt, &row.ConsumedAt, &row.CreatedAt, &row.UpdatedAt,
@@ -177,7 +178,7 @@ func scanDispatch(ctx context.Context, q interface {
 	return row, err
 }
 
-func resetPending(ctx context.Context, tx pgx.Tx, id string, availableAt, now time.Time, resetAttempts bool) (Dispatch, error) {
+func resetPending(ctx context.Context, tx *gorm.DB, id string, availableAt, now time.Time, resetAttempts bool) (Dispatch, error) {
 	attemptsSQL := "attempts"
 	if resetAttempts {
 		attemptsSQL = "0"

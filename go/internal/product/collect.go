@@ -5,9 +5,12 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 // CollectedInput 把全局素材登记为商品图片身份，共享 MediaObject，不复制 bytes。
@@ -20,24 +23,22 @@ type CollectedInput struct {
 	SourceLibraryAssetID string
 }
 
-func Lock(ctx context.Context, tx pgx.Tx, productID string) (Product, error) {
+func Lock(ctx context.Context, tx *gorm.DB, productID string) (Product, error) {
 	return loadProductForUpdate(ctx, tx, productID)
 }
 
-func Touch(ctx context.Context, tx pgx.Tx, productID string) error {
-	_, err := tx.Exec(ctx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
+func Touch(ctx context.Context, tx *gorm.DB, productID string) error {
+	_, err := pfdb.Exec(ctx, tx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
 	return err
 }
 
-func LoadImage(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, assetID string) (ImageAsset, error) {
+func LoadImage(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, q, assetID)
 }
 
-func LoadImageForUpdate(ctx context.Context, tx pgx.Tx, assetID string) (ImageAsset, error) {
+func LoadImageForUpdate(ctx context.Context, tx *gorm.DB, assetID string) (ImageAsset, error) {
 	var asset ImageAsset
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
 		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
 		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
@@ -52,19 +53,19 @@ func LoadImageForUpdate(ctx context.Context, tx pgx.Tx, assetID string) (ImageAs
 		&asset.SourceLibraryAsset, &asset.MIMEType, &asset.ByteSize, &asset.Width, &asset.Height, &asset.VerificationStatus,
 		&asset.StoragePath, &asset.CreatedAt, &asset.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ImageAsset{}, apperr.NotFound("商品图片不存在")
 	}
 	return asset, err
 }
 
-func LookupByLibrarySource(ctx context.Context, tx pgx.Tx, productID, libraryAssetID string) (ImageAsset, bool, error) {
+func LookupByLibrarySource(ctx context.Context, tx *gorm.DB, productID, libraryAssetID string) (ImageAsset, bool, error) {
 	var id string
-	err := tx.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, tx, `
 		SELECT id FROM product_image_assets
 		WHERE product_id = $1 AND source_library_asset_id = $2
 	`, productID, libraryAssetID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return ImageAsset{}, false, nil
 	}
 	if err != nil {
@@ -74,12 +75,12 @@ func LookupByLibrarySource(ctx context.Context, tx pgx.Tx, productID, libraryAss
 	return asset, true, err
 }
 
-func LoadByLibrarySources(ctx context.Context, tx pgx.Tx, productID string, libraryIDs []string) (map[string]ImageAsset, error) {
+func LoadByLibrarySources(ctx context.Context, tx *gorm.DB, productID string, libraryIDs []string) (map[string]ImageAsset, error) {
 	out := map[string]ImageAsset{}
 	if len(libraryIDs) == 0 {
 		return out, nil
 	}
-	rows, err := tx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
 		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
 		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
@@ -104,7 +105,7 @@ func LoadByLibrarySources(ctx context.Context, tx pgx.Tx, productID string, libr
 	return out, nil
 }
 
-func InsertCollected(ctx context.Context, tx pgx.Tx, in CollectedInput) (ImageAsset, error) {
+func InsertCollected(ctx context.Context, tx *gorm.DB, in CollectedInput) (ImageAsset, error) {
 	id := clockid.New()
 	original := strings.TrimSpace(in.OriginalFilename)
 	if original == "" {
@@ -124,7 +125,7 @@ func InsertCollected(ctx context.Context, tx pgx.Tx, in CollectedInput) (ImageAs
 	if origin == "" {
 		origin = "upload"
 	}
-	_, err := tx.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, tx, `
 		INSERT INTO product_image_assets (
 			id, product_id, media_object_id, origin_type, display_name, original_filename,
 			source_library_asset_id, created_at, updated_at

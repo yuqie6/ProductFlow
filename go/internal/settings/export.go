@@ -6,10 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type SettingsExport struct {
@@ -66,7 +67,7 @@ func (s *Store) Export(ctx context.Context) (SettingsExport, error) {
 			continue
 		}
 		var apiKey *string
-		_ = s.pool.QueryRow(ctx, `SELECT api_key FROM provider_profiles WHERE id = $1`, profile.ID).Scan(&apiKey)
+		_ = pfdb.QueryRow(ctx, s.db, `SELECT api_key FROM provider_profiles WHERE id = $1`, profile.ID).Scan(&apiKey)
 		out.ProviderProfiles = append(out.ProviderProfiles, map[string]any{
 			"id": profile.ID, "name": profile.Name, "provider_type": profile.ProviderType,
 			"base_url": profile.BaseURL, "api_key": trimPtr(apiKey),
@@ -162,9 +163,9 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 	}
 	profiles, _ := doc["provider_profiles"].([]any)
 	bindings, _ := doc["provider_bindings"].([]any)
-	return tx.With(ctx, s.pool, func(pgxTx pgx.Tx) error {
+	return tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
 		for key, value := range normalized {
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, dbTx, `
 				INSERT INTO app_settings (key, value, created_at, updated_at)
 				VALUES ($1, $2, NOW(), NOW())
 				ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
@@ -172,10 +173,10 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 				return err
 			}
 		}
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM provider_bindings`); err != nil {
+		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings`); err != nil {
 			return err
 		}
-		if _, err := pgxTx.Exec(ctx, `DELETE FROM provider_profiles`); err != nil {
+		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_profiles`); err != nil {
 			return err
 		}
 		for _, raw := range profiles {
@@ -195,7 +196,7 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 			if v, ok := item["api_key"].(string); ok {
 				apiKey = trimPtr(&v)
 			}
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, dbTx, `
 				INSERT INTO provider_profiles (
 					id, name, provider_type, base_url, api_key, capabilities_json, default_models_json, config_json, enabled, created_at, updated_at
 				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
@@ -214,7 +215,7 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 			modelJSON, _ := json.Marshal(orEmptyMap(asMap(item["model_settings"])))
 			cfgJSON, _ := json.Marshal(orEmptyMap(asMap(item["config"])))
 			id := clockid.New()
-			if _, err := pgxTx.Exec(ctx, `
+			if _, err := pfdb.Exec(ctx, dbTx, `
 				INSERT INTO provider_bindings (id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 			`, id, purpose, kind, profileID, modelJSON, cfgJSON); err != nil {

@@ -4,22 +4,16 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 )
 
-// With runs fn inside a single transaction. Public commands own commit.
-func With(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+// WithGorm runs fn inside one GORM transaction. Nested calls use savepoints;
+// callers that already hold a transaction must pass that session instead.
+func WithGorm(ctx context.Context, gdb *gorm.DB, fn func(tx *gorm.DB) error) error {
+	if gdb == nil {
+		return fmt.Errorf("begin: nil gorm db")
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := fn(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
-	return nil
+	return gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return fn(tx)
+	})
 }

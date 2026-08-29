@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"gorm.io/gorm"
 )
 
 var defaultImageToolAllowedFields = []string{
@@ -31,12 +33,16 @@ type LimitsReader interface {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
-	env  config.Config
+	db  *gorm.DB
+	env config.Config
 }
 
 func NewStore(pool *pgxpool.Pool, env config.Config) *Store {
-	return &Store{pool: pool, env: env}
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		panic(err)
+	}
+	return &Store{db: gdb, env: env}
 }
 
 func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
@@ -124,7 +130,7 @@ func parseOverrideInt(overrides map[string]string, key string) (int, bool) {
 }
 
 func (s *Store) overrides(ctx context.Context) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT key, value FROM app_settings`)
+	rows, err := pfdb.Query(ctx, s.db, `SELECT key, value FROM app_settings`)
 	if err != nil {
 		return nil, err
 	}

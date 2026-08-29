@@ -4,16 +4,15 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type Service struct {
-	Pool *pgxpool.Pool
+	DB *gorm.DB
 }
 
 type CreateInput struct {
@@ -60,7 +59,7 @@ type ApplicationResult struct {
 
 func (s Service) List(ctx context.Context, includeArchived bool) ([]RecipeView, error) {
 	var out []RecipeView
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		rows, err := listRecipes(ctx, pgxTx, includeArchived)
 		if err != nil {
 			return err
@@ -83,7 +82,7 @@ func (s Service) List(ctx context.Context, includeArchived bool) ([]RecipeView, 
 
 func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 	var out RecipeView
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		rec, err := loadRecipe(ctx, pgxTx, recipeID, false)
 		if err != nil {
 			return err
@@ -96,7 +95,7 @@ func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 
 func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error) {
 	var out RecipeView
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		payload, err := extractLive(ctx, pgxTx, in)
 		if err != nil {
 			return err
@@ -154,7 +153,7 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 
 func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error) {
 	var out RecipeView
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		rec, err := loadRecipe(ctx, pgxTx, in.RecipeID, true)
 		if err != nil {
 			return err
@@ -217,7 +216,7 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 
 func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion int) (ArchiveView, error) {
 	var out ArchiveView
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		rec, err := loadRecipe(ctx, pgxTx, recipeID, true)
 		if err != nil {
 			return err
@@ -247,7 +246,7 @@ func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion i
 
 func (s Service) Preview(ctx context.Context, productID, recipeID string, expectedVersion int) (Preview, error) {
 	var out Preview
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		target, err := getProductTarget(ctx, pgxTx, productID, false)
 		if err != nil {
 			return err
@@ -282,7 +281,7 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 		return ApplicationResult{}, err
 	}
 	var out ApplicationResult
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		target, err := getProductTarget(ctx, pgxTx, in.ProductID, true)
 		if err != nil {
 			return err
@@ -376,7 +375,7 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 
 func (s Service) loadReplay(ctx context.Context, productID, key, requestHash string) (ApplicationResult, error) {
 	var out ApplicationResult
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		existing, err := applicationByKey(ctx, pgxTx, productID, key)
 		if err != nil {
 			return err
@@ -395,7 +394,7 @@ func (s Service) loadReplay(ctx context.Context, productID, key, requestHash str
 
 func (s Service) planForProduct(
 	ctx context.Context,
-	pgxTx pgx.Tx,
+	pgxTx *gorm.DB,
 	target productTarget,
 	recipeID string,
 	expectedVersion int,
@@ -410,7 +409,7 @@ func (s Service) planForProduct(
 
 func (s Service) planFromRecipe(
 	ctx context.Context,
-	pgxTx pgx.Tx,
+	pgxTx *gorm.DB,
 	target productTarget,
 	rec recipeRecord,
 	expectedVersion int,
@@ -456,7 +455,7 @@ func (s Service) planFromRecipe(
 	)
 }
 
-func applyPlanCommand(ctx context.Context, pgxTx pgx.Tx, productID string, plan applyPlan) (graph.CommandResult, error) {
+func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, plan applyPlan) (graph.CommandResult, error) {
 	if plan.Mode == ModeCreate {
 		title := limitRunes(plan.ChangeSet.Summary, 255)
 		if title == "" {
@@ -477,7 +476,7 @@ func applyPlanCommand(ctx context.Context, pgxTx pgx.Tx, productID string, plan 
 	return graph.Mutate(ctx, pgxTx, productID, live.ID, plan.ChangeSet, graph.HistoryEdit)
 }
 
-func (s Service) applicationResult(ctx context.Context, pgxTx pgx.Tx, rec applicationRecord, created bool) (ApplicationResult, error) {
+func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec applicationRecord, created bool) (ApplicationResult, error) {
 	row, err := graph.LoadGraph(ctx, pgxTx, rec.ProductID, rec.GraphID)
 	if err != nil {
 		return ApplicationResult{}, err
@@ -502,7 +501,7 @@ func (s Service) applicationResult(ctx context.Context, pgxTx pgx.Tx, rec applic
 	}, nil
 }
 
-func extractLive(ctx context.Context, pgxTx pgx.Tx, in CreateInput) (Payload, error) {
+func extractLive(ctx context.Context, pgxTx *gorm.DB, in CreateInput) (Payload, error) {
 	row, err := graph.LoadGraphForUpdate(ctx, pgxTx, in.ProductID, in.WorkflowID)
 	if err != nil {
 		return Payload{}, err
@@ -524,7 +523,7 @@ func extractLive(ctx context.Context, pgxTx pgx.Tx, in CreateInput) (Payload, er
 	})
 }
 
-func optionalVisual(ctx context.Context, tx pgx.Tx, id *string) (*string, error) {
+func optionalVisual(ctx context.Context, tx *gorm.DB, id *string) (*string, error) {
 	if id == nil {
 		return nil, nil
 	}

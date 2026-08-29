@@ -6,8 +6,8 @@
 - 决策：[`adr/0011-go-vertical-slice-rewrite.md`](../adr/0011-go-vertical-slice-rewrite.md)
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端迁 Go」
 - 实现设计：`docs/specs/go-backend-rewrite-design.md`
-- 当前运行事实：Go 业务 API / worker / dispatcher + PostgreSQL `async_dispatches` + Alembic。Python `backend/` 保留迁移与可选 Compose profile `python`。
-- Gin / pgx / asynq 是当前实现；未使用 GORM。Web 与 Agent 合同仍以封印基线为准。
+- 当前运行事实：Go 业务 API / worker / dispatcher + PostgreSQL `async_dispatches`。schema 权威是 Go GORM AutoMigrate 与约束补钉（`go/cmd/productflow-migrate`）。Python `backend/` 保留封印树与可选 Compose profile `python`；`backend/alembic/` 是历史 revision，不再接默认路径。
+- Gin / GORM / asynq 是当前实现；查询层仍有 pgx 手写 SQL，正在迁到 GORM。Web 与 Agent 合同仍以封印基线为准。
 
 本文只定义这次工程的产品合同：用户能感知什么、运行单元换成什么、什么算完成。内部包结构、队列状态机和切片顺序见设计文档。
 
@@ -34,7 +34,7 @@ ProductFlow 是单管理员、单商家工作区。浏览器只打 Web 和业务
 - 把 Agent runtime 从 Pi 迁回 `exp` Go harness，或在业务后端内实现模型 loop。
 - 引入 tenant、计费、对象存储云或其它 SaaS 合同。
 - 用 Redis 缓存商品事实、graph 或素材列表。
-- 用双写表或 GORM AutoMigrate 代替现有 schema 权威。
+- 用双写表代替现有 schema 权威。
 - 把 Python 测试一对一翻译成 Go。
 - 把已删除的商品 `WorkflowDraft`、v1/v2 执行器或 Gallery 回填搬进 Go。
 - 把工作台浏览器证明插入这场搬家的实施；证明仍约束 cutover。
@@ -49,7 +49,7 @@ ProductFlow 是单管理员、单商家工作区。浏览器只打 Web 和业务
 
 对操作者：
 
-- 已部署 PostgreSQL 与 storage 不得 reset。空库仍能从历史 Alembic 升到 v3 head，再接 Go 运行时。
+- 已部署 PostgreSQL 与 storage 不得 reset。空库由 `productflow-migrate`（GORM AutoMigrate + 约束补钉）到达当前表结构。已有库在当前 head 上跑同一命令，不得为迁 schema 权威而 `down -v`。
 - 进程名可变，职责不变：HTTP API、异步执行、dispatch 对账。
 - 备份 / 恢复仍以 PostgreSQL + storage 为准；Redis 丢失不得丢掉业务终态，最多需要 dispatcher 重投。
 

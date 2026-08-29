@@ -4,19 +4,18 @@ import (
 	"context"
 	"io"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type Service struct {
-	Pool *pgxpool.Pool
+	DB *gorm.DB
 }
 
 func (s Service) CreateEmpty(ctx context.Context, productID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := CreateEmpty(ctx, pgxTx, productID, DefaultGraphTitle)
 		if err != nil {
 			return err
@@ -29,7 +28,7 @@ func (s Service) CreateEmpty(ctx context.Context, productID string) (Projection,
 
 func (s Service) Current(ctx context.Context, productID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadActiveGraph(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -42,7 +41,7 @@ func (s Service) Current(ctx context.Context, productID string) (Projection, err
 
 func (s Service) Get(ctx context.Context, productID, graphID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadGraph(ctx, pgxTx, productID, graphID)
 		if err != nil {
 			return err
@@ -68,7 +67,7 @@ func (s Service) ApplyAgentChangeSet(ctx context.Context, productID, graphID str
 func (s Service) applyChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet, actor ActorType) (Projection, error) {
 	changeSet.ActorType = actor
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		result, err := Mutate(ctx, pgxTx, productID, graphID, changeSet, HistoryEdit)
 		if err != nil {
 			return err
@@ -93,7 +92,7 @@ type AgentProposalResult struct {
 // CreateAgentProposal 只存 PENDING 提案，不改 live 图。
 func (s Service) CreateAgentProposal(ctx context.Context, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
 	var out AgentProposalResult
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		result, err := CreateProposal(ctx, pgxTx, productID, conversationID, changeSet)
 		if err != nil {
 			return err
@@ -107,7 +106,7 @@ func (s Service) CreateAgentProposal(ctx context.Context, productID, conversatio
 // TryCurrent 没有 active 图时返回 nil。
 func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection, error) {
 	var out *Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := TryLoadActiveGraph(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -127,7 +126,7 @@ func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection,
 
 func (s Service) Undo(ctx context.Context, productID, graphID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		result, err := Undo(ctx, pgxTx, productID, graphID)
 		if err != nil {
 			return err
@@ -144,7 +143,7 @@ func (s Service) Undo(ctx context.Context, productID, graphID string) (Projectio
 
 func (s Service) Redo(ctx context.Context, productID, graphID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		result, err := Redo(ctx, pgxTx, productID, graphID)
 		if err != nil {
 			return err
@@ -161,7 +160,7 @@ func (s Service) Redo(ctx context.Context, productID, graphID string) (Projectio
 
 func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, proposalID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := ConfirmProposal(ctx, pgxTx, productID, graphID, proposalID)
 		if err != nil {
 			return err
@@ -178,7 +177,7 @@ func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, propos
 
 func (s Service) DiscardProposal(ctx context.Context, productID, graphID, proposalID string) (Projection, error) {
 	var out Projection
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := DiscardProposal(ctx, pgxTx, productID, graphID, proposalID); err != nil {
 			return err
 		}
@@ -202,7 +201,7 @@ func ParseChangeSetReader(r io.Reader) (ChangeSet, error) {
 
 func (s Service) SubmitRun(ctx context.Context, productID, graphID, scope string, nodeID *string) (GraphRunResponse, error) {
 	var out GraphRunResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		submission, err := submitGraphRun(ctx, pgxTx, productID, graphID, scope, nodeID)
 		if err != nil {
 			return err
@@ -215,7 +214,7 @@ func (s Service) SubmitRun(ctx context.Context, productID, graphID, scope string
 
 func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
 	var out GraphRunListResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		runs, err := listGraphRuns(ctx, pgxTx, productID, graphID, 20)
 		if err != nil {
 			return err
@@ -232,7 +231,7 @@ func (s Service) ListRuns(ctx context.Context, productID, graphID string) (Graph
 
 func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		run, err := loadGraphRun(ctx, pgxTx, productID, graphID, runID)
 		if err != nil {
 			return err
@@ -245,7 +244,7 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 
 func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		run, err := cancelGraphRun(ctx, pgxTx, productID, graphID, runID)
 		if err != nil {
 			return err
@@ -258,7 +257,7 @@ func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string
 
 func (s Service) RetryRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		submission, err := retryGraphRun(ctx, pgxTx, productID, graphID, runID)
 		if err != nil {
 			return err

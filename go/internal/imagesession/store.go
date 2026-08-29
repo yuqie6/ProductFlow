@@ -6,45 +6,44 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/storage"
+	"gorm.io/gorm"
 )
 
-func loadSession(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, id string) (sessionRow, error) {
+func loadSession(ctx context.Context, q *gorm.DB, id string) (sessionRow, error) {
 	var row sessionRow
-	err := q.QueryRow(ctx, `SELECT id, title, created_at, updated_at FROM image_sessions WHERE id = $1`, id).Scan(
+	err := pfdb.QueryRow(ctx, q, `SELECT id, title, created_at, updated_at FROM image_sessions WHERE id = $1`, id).Scan(
 		&row.ID, &row.Title, &row.CreatedAt, &row.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return sessionRow{}, apperr.NotFound("连续生图会话不存在")
 	}
 	return row, err
 }
 
-func loadAsset(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sessionID, assetID string) (assetRow, error) {
+func loadAsset(ctx context.Context, q *gorm.DB, sessionID, assetID string) (assetRow, error) {
 	var row assetRow
-	err := q.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, q, `
 		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
 		FROM image_session_assets a
 		JOIN media_objects m ON m.id = a.media_object_id
 		WHERE a.id = $1 AND a.session_id = $2
 	`, assetID, sessionID).Scan(&row.ID, &row.SessionID, &row.Kind, &row.OriginalFilename, &row.MIMEType, &row.StoragePath, &row.MediaObjectID, &row.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return assetRow{}, apperr.NotFound("会话图片不存在")
 	}
 	return row, err
 }
 
-func listAssets(ctx context.Context, tx pgx.Tx, sessionID string) ([]assetRow, error) {
+func listAssets(ctx context.Context, tx *gorm.DB, sessionID string) ([]assetRow, error) {
 	if _, err := loadSession(ctx, tx, sessionID); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
 		FROM image_session_assets a
 		JOIN media_objects m ON m.id = a.media_object_id
@@ -66,11 +65,9 @@ func listAssets(ctx context.Context, tx pgx.Tx, sessionID string) ([]assetRow, e
 	return out, rows.Err()
 }
 
-func loadTask(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, sessionID, taskID string) (taskRow, error) {
+func loadTask(ctx context.Context, q *gorm.DB, sessionID, taskID string) (taskRow, error) {
 	var row taskRow
-	err := q.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, q, `
 		SELECT id, session_id, status, prompt, size, base_asset_id, selected_reference_asset_ids, tool_options,
 		       generation_count, completed_candidates, active_candidate_index, progress_phase, progress_updated_at,
 		       provider_response_id, provider_response_status, progress_metadata, failure_reason, result_generation_group_id,
@@ -82,17 +79,15 @@ func loadTask(ctx context.Context, q interface {
 		&row.ProviderResponseID, &row.ProviderResponseStatus, &row.ProgressMetadata, &row.FailureReason, &row.ResultGenerationGroupID,
 		&row.CreatedAt, &row.StartedAt, &row.FinishedAt, &row.Attempts, &row.ActiveAttemptID, &row.IsRetryable,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return taskRow{}, apperr.NotFound("生成任务不存在")
 	}
 	return row, err
 }
 
-func loadEffect(ctx context.Context, q interface {
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}, taskID string, start int) (EffectResponse, error) {
+func loadEffect(ctx context.Context, q *gorm.DB, taskID string, start int) (EffectResponse, error) {
 	var out EffectResponse
-	err := q.QueryRow(ctx, `
+	err := pfdb.QueryRow(ctx, q, `
 		SELECT id, generation_task_id, candidate_start_index, candidate_count, operation_key, effect_kind,
 		       request_hash, provider_name, effect_result, reconciliation_state, provider_response_id, provider_status,
 		       detail, created_at, updated_at
@@ -103,13 +98,13 @@ func loadEffect(ctx context.Context, q interface {
 		&out.RequestHash, &out.ProviderName, &out.EffectResult, &out.ReconciliationState, &out.ProviderResponseID, &out.ProviderStatus,
 		&out.Detail, &out.CreatedAt, &out.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return EffectResponse{}, apperr.Conflict("找不到连续生图 provider effect ledger")
 	}
 	return out, err
 }
 
-func validateGeneration(ctx context.Context, tx pgx.Tx, sessionID string, baseID *string, selected []string, count int) (*string, []string, error) {
+func validateGeneration(ctx context.Context, tx *gorm.DB, sessionID string, baseID *string, selected []string, count int) (*string, []string, error) {
 	if count < 1 || count > maxGenerationCount {
 		return nil, nil, apperr.Validationf("一次生成数量必须在 1-%d 张之间", maxGenerationCount)
 	}
@@ -159,16 +154,16 @@ func validateGeneration(ctx context.Context, tx pgx.Tx, sessionID string, baseID
 	return normalizedBase, normalizedRefs, nil
 }
 
-func hasPriorGeneration(ctx context.Context, tx pgx.Tx, sessionID, excludeTaskID string) (bool, error) {
+func hasPriorGeneration(ctx context.Context, tx *gorm.DB, sessionID, excludeTaskID string) (bool, error) {
 	var roundCount int
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM image_session_rounds WHERE session_id = $1`, sessionID).Scan(&roundCount); err != nil {
+	if err := pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_rounds WHERE session_id = $1`, sessionID).Scan(&roundCount); err != nil {
 		return false, err
 	}
 	if roundCount > 0 {
 		return true, nil
 	}
 	var active int
-	if err := tx.QueryRow(ctx, `
+	if err := pfdb.QueryRow(ctx, tx, `
 		SELECT COUNT(*) FROM image_session_generation_tasks
 		WHERE session_id = $1 AND status IN ('queued', 'running') AND id <> $2
 	`, sessionID, excludeTaskID).Scan(&active); err != nil {

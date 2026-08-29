@@ -22,10 +22,12 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 type libraryServer struct {
 	pool    *pgxpool.Pool
+	db      *gorm.DB
 	srv     *httptest.Server
 	client  *http.Client
 	cookies []*http.Cookie
@@ -33,7 +35,7 @@ type libraryServer struct {
 
 func newLibraryServer(t *testing.T) *libraryServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
@@ -48,11 +50,11 @@ func newLibraryServer(t *testing.T) *libraryServer {
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	product.HTTP{Service: product.Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
-	HTTP{Service: Service{Pool: pool, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
+	HTTP{Service: Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	ls := &libraryServer{pool: pool, srv: srv, client: &http.Client{}}
+	ls := &libraryServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)

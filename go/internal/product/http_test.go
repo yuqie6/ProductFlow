@@ -43,7 +43,7 @@ func TestNormalizePrice(t *testing.T) {
 }
 
 func TestBirthCommands(t *testing.T) {
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	store := httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})
@@ -60,7 +60,7 @@ func TestBirthCommands(t *testing.T) {
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	HTTP{
 		Service: Service{
-			Pool:  pool,
+			DB:    gdb,
 			Media: media.Store{Files: storage.Local{Root: root}},
 		},
 		Settings: settingsStore,

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/jackc/pgx/v5"
+	sqldb "database/sql"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 // CreateAgentDraft 是名称-only 出生：写 product_source 图、空 intake、不设封面。
@@ -24,7 +26,7 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 		return WorkspaceSnapshotResponse{}, err
 	}
 	requestHash := draftRequestHash(normalizedName, agentSessionID)
-	return s.upsertWorkspace(ctx, key, requestHash, func(pgxTx pgx.Tx) (canonicalCreation, Conversation, error) {
+	return s.upsertWorkspace(ctx, key, requestHash, func(pgxTx *gorm.DB) (canonicalCreation, Conversation, error) {
 		creation, err := s.stageNameOnly(ctx, pgxTx, normalizedName)
 		if err != nil {
 			return canonicalCreation{}, Conversation{}, err
@@ -61,7 +63,7 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 		return WorkspaceCreateResponse{}, err
 	}
 	requestHash := workspaceRequestHash(normalizedName, selection, uploads, agentSessionID)
-	snap, err := s.upsertWorkspace(ctx, key, requestHash, func(pgxTx pgx.Tx) (canonicalCreation, Conversation, error) {
+	snap, err := s.upsertWorkspace(ctx, key, requestHash, func(pgxTx *gorm.DB) (canonicalCreation, Conversation, error) {
 		var compensation storage.Compensation
 		creation, err := s.stageUploads(ctx, pgxTx, &compensation, CreateInput{
 			Name:    normalizedName,
@@ -121,10 +123,10 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 func (s Service) upsertWorkspace(
 	ctx context.Context,
 	key, requestHash string,
-	create func(pgx.Tx) (canonicalCreation, Conversation, error),
+	create func(*gorm.DB) (canonicalCreation, Conversation, error),
 ) (WorkspaceSnapshotResponse, error) {
 	var snap WorkspaceSnapshotResponse
-	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		existing, err := loadConversationByKey(ctx, pgxTx, key)
 		if err == nil {
 			storedHash, hashErr := conversationRequestHash(ctx, pgxTx, existing.ID)
@@ -141,7 +143,7 @@ func (s Service) upsertWorkspace(
 			snap = loaded
 			return nil
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, sqldb.ErrNoRows) {
 			return err
 		}
 		creation, conversation, err := create(pgxTx)
@@ -180,7 +182,7 @@ func (s Service) upsertWorkspace(
 	return snap, err
 }
 
-func (s Service) stageUploads(ctx context.Context, pgxTx pgx.Tx, compensation *storage.Compensation, in CreateInput, setCover, writeFacts bool) (canonicalCreation, error) {
+func (s Service) stageUploads(ctx context.Context, pgxTx *gorm.DB, compensation *storage.Compensation, in CreateInput, setCover, writeFacts bool) (canonicalCreation, error) {
 	product, err := insertProduct(ctx, pgxTx, in.Name, nil, nil, nil)
 	if err != nil {
 		return canonicalCreation{}, err
@@ -230,7 +232,7 @@ func (s Service) stageUploads(ctx context.Context, pgxTx pgx.Tx, compensation *s
 	return canonicalCreation{product: loaded, assets: loadedAssets, facts: facts}, nil
 }
 
-func openCanvas(ctx context.Context, tx pgx.Tx, product Product, key, requestHash string, agentSessionID *string) (Conversation, error) {
+func openCanvas(ctx context.Context, tx *gorm.DB, product Product, key, requestHash string, agentSessionID *string) (Conversation, error) {
 	sessionID := ""
 	if agentSessionID != nil && *agentSessionID != "" {
 		productID, status, err := loadSessionProduct(ctx, tx, *agentSessionID)
@@ -261,7 +263,7 @@ func openCanvas(ctx context.Context, tx pgx.Tx, product Product, key, requestHas
 	return insertConversation(ctx, tx, sessionID, product.ID, key, requestHash)
 }
 
-func loadWorkspaceSnapshot(ctx context.Context, tx pgx.Tx, conversation Conversation, created bool) (WorkspaceSnapshotResponse, error) {
+func loadWorkspaceSnapshot(ctx context.Context, tx *gorm.DB, conversation Conversation, created bool) (WorkspaceSnapshotResponse, error) {
 	if conversation.ProductID == nil {
 		return WorkspaceSnapshotResponse{}, apperr.Conflict("Agent 商品工作空间聚合不完整")
 	}

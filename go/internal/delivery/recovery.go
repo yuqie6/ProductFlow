@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type RecoverySummary struct {
@@ -21,10 +22,14 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	if staleAfter <= 0 {
 		staleAfter = 30 * time.Minute
 	}
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
 	var summary RecoverySummary
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
-		rows, err := pgxTx.Query(ctx, `
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, status FROM delivery_rendition_jobs
 			WHERE is_retryable = TRUE
 			  AND (
@@ -53,7 +58,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 		}
 		for _, job := range jobs {
 			if job.status == "running" {
-				tag, err := pgxTx.Exec(ctx, `
+				n, err := pfdb.Exec(ctx, pgxTx, `
 					UPDATE delivery_rendition_jobs SET
 						status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 						started_at = NULL, finished_at = NULL, updated_at = NOW()
@@ -62,7 +67,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				if err != nil {
 					return err
 				}
-				if tag.RowsAffected() != 1 {
+				if n != 1 {
 					continue
 				}
 				summary.StaleRunningJobs++

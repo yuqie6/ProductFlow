@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/jackc/pgx/v5"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
-func serializeTask(ctx context.Context, tx pgx.Tx, row taskRow, includeAudit bool) (TaskResponse, error) {
+func serializeTask(ctx context.Context, tx *gorm.DB, row taskRow, includeAudit bool) (TaskResponse, error) {
 	source, err := product.LoadAssetRow(ctx, tx, row.SourceAssetID)
 	if err != nil {
 		return TaskResponse{}, err
@@ -68,8 +69,8 @@ func serializeTask(ctx context.Context, tx pgx.Tx, row taskRow, includeAudit boo
 	return out, nil
 }
 
-func listAttempts(ctx context.Context, tx pgx.Tx, taskID string) ([]AttemptResponse, error) {
-	rows, err := tx.Query(ctx, `
+func listAttempts(ctx context.Context, tx *gorm.DB, taskID string) ([]AttemptResponse, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id, attempt_id, attempt_number, operation_key, phase, effect_result, provider_name,
 		       provider_model, provider_response_id, provider_status, late_result_asset_id, detail, created_at, updated_at
 		FROM local_image_edit_provider_attempts
@@ -115,8 +116,8 @@ func listAttempts(ctx context.Context, tx pgx.Tx, taskID string) ([]AttemptRespo
 	return out, nil
 }
 
-func listEvents(ctx context.Context, tx pgx.Tx, taskID string) ([]AdoptionEventResponse, error) {
-	rows, err := tx.Query(ctx, `
+func listEvents(ctx context.Context, tx *gorm.DB, taskID string) ([]AdoptionEventResponse, error) {
+	rows, err := pfdb.Query(ctx, tx, `
 		SELECT id, task_id, graph_id, node_id, event_type, from_artifact_id, to_artifact_id, related_event_id, created_at
 		FROM local_image_edit_adoption_events
 		WHERE task_id = $1

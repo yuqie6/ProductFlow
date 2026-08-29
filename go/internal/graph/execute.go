@@ -9,10 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	sqldb "database/sql"
+
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 const (
@@ -23,7 +25,7 @@ const (
 var graphRunLocks sync.Map
 
 type Executor struct {
-	Pool *pgxpool.Pool
+	DB   *gorm.DB
 	Deps Dependencies
 }
 
@@ -35,11 +37,15 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 	}
 	defer unlock()
 
-	conn, err := e.Pool.Acquire(ctx)
+	sqlDB, err := e.DB.DB()
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
 	acquired, err := tryAdvisoryLock(ctx, conn, runID)
 	if err != nil || !acquired {
 		return err
@@ -50,7 +56,7 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 		if isProviderUnknown(err) {
 			return nil
 		}
-		_ = failGraphRun(ctx, e.Pool, runID, "工作流运行失败")
+		_ = failGraphRun(ctx, e.DB, runID, "工作流运行失败")
 		return nil
 	}
 	return nil
@@ -59,7 +65,7 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 func (e Executor) executeLoop(ctx context.Context, runID string) error {
 	for {
 		var stop bool
-		err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+		err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 			run, err := loadGraphRunByID(ctx, pgxTx, runID)
 			if err != nil {
 				return err
@@ -107,7 +113,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			}
 		}
 		if len(ready) == 0 {
-			err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+			err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 				_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
 				return err
 			})
@@ -117,7 +123,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		var claimed int
 		errCh := make(chan error, len(ready))
 		for _, nodeRun := range ready {
-			ok, err := claimQueuedNodeRun(ctx, e.Pool, nodeRun.ID)
+			ok, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
 			if err != nil {
 				return err
 			}
@@ -152,7 +158,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 
 func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error) {
 	var run graphRunRow
-	err := tx.With(ctx, e.Pool, func(pgxTx pgx.Tx) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadGraphRunByID(ctx, pgxTx, runID)
 		if err != nil {
 			return err
@@ -163,7 +169,7 @@ func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error
 	return run, err
 }
 
-func failBlockedQueuedNodes(ctx context.Context, tx pgx.Tx, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
+func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
 	now := time.Now().UTC()
 	for _, item := range nodeRuns {
 		if item.Status != NodeRunQueued {
@@ -172,7 +178,7 @@ func failBlockedQueuedNodes(ctx context.Context, tx pgx.Tx, graph AppliedGraph, 
 		if processingUpstreamState(graph, nodeRuns, item) != "blocked" {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			UPDATE workflow_graph_node_runs SET
 				status = 'failed', failure_reason = '上游节点失败', finished_at = $2,
 				active_attempt_id = NULL, progress_updated_at = $2
@@ -265,23 +271,23 @@ func hexNibble(ch byte) byte {
 	}
 }
 
-func tryAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, runID string) (bool, error) {
+func tryAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) (bool, error) {
 	ns, key := graphRunAdvisoryKeys(runID)
 	var acquired bool
-	err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1, $2)`, ns, key).Scan(&acquired)
+	err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1, $2)`, ns, key).Scan(&acquired)
 	return acquired, err
 }
 
-func releaseAdvisoryLock(ctx context.Context, conn *pgxpool.Conn, runID string) error {
+func releaseAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) error {
 	ns, key := graphRunAdvisoryKeys(runID)
-	_, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1, $2)`, ns, key)
+	_, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1, $2)`, ns, key)
 	return err
 }
 
-func loadProductIDForGraph(ctx context.Context, tx pgx.Tx, graphID string) (string, error) {
+func loadProductIDForGraph(ctx context.Context, tx *gorm.DB, graphID string) (string, error) {
 	var productID string
-	err := tx.QueryRow(ctx, `SELECT product_id FROM workflow_graphs WHERE id = $1`, graphID).Scan(&productID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := pfdb.QueryRow(ctx, tx, `SELECT product_id FROM workflow_graphs WHERE id = $1`, graphID).Scan(&productID)
+	if errors.Is(err, sqldb.ErrNoRows) {
 		return "", apperr.NotFound("商品工作流不存在")
 	}
 	return productID, err

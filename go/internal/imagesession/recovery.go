@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type RecoverySummary struct {
@@ -22,10 +23,14 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	if staleAfter <= 0 {
 		staleAfter = 90 * time.Minute
 	}
+	gdb, err := pfdb.OpenGorm(pool)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
 	var summary RecoverySummary
-	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
-		rows, err := pgxTx.Query(ctx, `
+		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, status, active_attempt_id, progress_phase, completed_candidates,
 			       COALESCE(progress_updated_at, started_at)
 			FROM image_session_generation_tasks
@@ -76,7 +81,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			}
 			safe := phase == "running" || phase == "candidate_saved"
 			var pendingEffect bool
-			_ = pgxTx.QueryRow(ctx, `
+			_ = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT EXISTS (
 					SELECT 1 FROM image_session_provider_effects
 					WHERE generation_task_id = $1
@@ -98,7 +103,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				}
 			}
 			if unknown {
-				_, err := pgxTx.Exec(ctx, `
+				_, err := pfdb.Exec(ctx, pgxTx, `
 					UPDATE image_session_generation_tasks SET
 						status = 'unknown', active_attempt_id = NULL, finished_at = NOW(),
 						is_retryable = FALSE, failure_reason = $2, progress_phase = $3, progress_updated_at = NOW()
@@ -107,7 +112,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				if err != nil {
 					return err
 				}
-				_, _ = pgxTx.Exec(ctx, `
+				_, _ = pfdb.Exec(ctx, pgxTx, `
 					UPDATE image_session_provider_effects SET
 						effect_result = 'unknown', reconciliation_state = 'unknown', detail = $2, updated_at = NOW()
 					WHERE generation_task_id = $1 AND attempt_id = $3 AND effect_result = 'pending'
@@ -115,7 +120,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				summary.UnknownTasks++
 				continue
 			}
-			tag, err := pgxTx.Exec(ctx, `
+			n, err := pfdb.Exec(ctx, pgxTx, `
 				UPDATE image_session_generation_tasks SET
 					status = 'queued', active_attempt_id = NULL, started_at = NULL, finished_at = NULL,
 					active_candidate_index = NULL, provider_response_id = NULL, provider_response_status = NULL,
@@ -125,10 +130,10 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() != 1 {
+			if n != 1 {
 				continue
 			}
-			_, _ = pgxTx.Exec(ctx, `
+			_, _ = pfdb.Exec(ctx, pgxTx, `
 				DELETE FROM image_session_provider_effects WHERE generation_task_id = $1 AND effect_result = 'pending'
 			`, task.id)
 			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, task.id, 0); err != nil {

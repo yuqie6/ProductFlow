@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
@@ -21,16 +22,16 @@ func TestStageNewRequiresZeroBaseRevision(t *testing.T) {
 }
 
 func TestStageNewProductSourceTemplate(t *testing.T) {
-	pool := testdb.Pool(t)
+	_, gdb := testdb.Open(t)
 	ctx := context.Background()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
+	tx := gdb.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		t.Fatal(tx.Error)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback() }()
 
 	productID := clockid.New()
-	_, err = tx.Exec(ctx, `
+	_, err := pfdb.Exec(ctx, tx, `
 		INSERT INTO products (id, name, created_at, updated_at)
 		VALUES ($1, $2, NOW(), NOW())
 	`, productID, "名称出生商品")
@@ -59,7 +60,7 @@ func TestStageNewProductSourceTemplate(t *testing.T) {
 	var schemaVersion, revision int
 	var active bool
 	var title string
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		SELECT schema_version, revision, active, title FROM workflow_graphs WHERE id = $1
 	`, result.GraphID).Scan(&schemaVersion, &revision, &active, &title)
 	if err != nil {
@@ -70,7 +71,7 @@ func TestStageNewProductSourceTemplate(t *testing.T) {
 	}
 
 	var nodeCount int
-	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM workflow_graph_nodes WHERE graph_id = $1`, result.GraphID).Scan(&nodeCount); err != nil {
+	if err := pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM workflow_graph_nodes WHERE graph_id = $1`, result.GraphID).Scan(&nodeCount); err != nil {
 		t.Fatal(err)
 	}
 	if nodeCount != 1 {
@@ -79,7 +80,7 @@ func TestStageNewProductSourceTemplate(t *testing.T) {
 
 	var actor, historyKind, summary string
 	var opsRaw, inverseRaw []byte
-	err = tx.QueryRow(ctx, `
+	err = pfdb.QueryRow(ctx, tx, `
 		SELECT actor_type, history_kind, summary, operations_json, inverse_operations_json
 		FROM workflow_operation_groups WHERE id = $1
 	`, result.OperationGroupID).Scan(&actor, &historyKind, &summary, &opsRaw, &inverseRaw)

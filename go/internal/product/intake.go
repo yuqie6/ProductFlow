@@ -7,10 +7,10 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"gorm.io/gorm"
 )
 
 type ImageTypeSelection struct {
@@ -193,7 +193,7 @@ func (s Service) ApplyIntake(ctx context.Context, productID string, selectionJSO
 	if err != nil {
 		return nil, err
 	}
-	err = tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}

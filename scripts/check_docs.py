@@ -82,6 +82,8 @@ CODE_OWNERS = (
     "go/internal/localedit",
     "go/internal/recipe",
     "go/internal/platform/queue",
+    "go/internal/platform/db/schema",
+    "go/cmd/productflow-migrate",
     "web/src/App.tsx",
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",

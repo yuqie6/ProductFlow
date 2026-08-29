@@ -55,7 +55,7 @@ Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task �
 
 默认 `just dev` 与 Compose 启动 Go API / worker / dispatcher。决策见 [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md)。产品合同：[`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)。
 
-仍未完成、因此留在路线图的闸门：工作台连续动作浏览器证明（见上方）、一次 backup/restore 后已有商品仍能打开并跑图、真实 prompt/image provider 的 live 成功/失败/`unknown` 证据。Python `backend/` 仅保留 Alembic 与可选 profile `python`。
+仍未完成、因此留在路线图的闸门：工作台连续动作浏览器证明（见上方）、一次 backup/restore 后已有商品仍能打开并跑图、真实 prompt/image provider 的 live 成功/失败/`unknown` 证据。Python `backend/` 仅保留封印树与可选 profile `python`。
 
 ## SaaS
 
