@@ -1,0 +1,451 @@
+package graph
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+)
+
+const listingLookRule = "做成能点击的商业套图：商品是主角，层次清楚，卖点好读。" +
+	"不要极简大留白、浅灰空棚、杂志静物；也不要爆炸贴、满屏色块、牛皮癣标签。"
+
+type imageTypeOption struct {
+	Key         string
+	Title       string
+	Description string
+	Order       int
+}
+
+var agentProductImageTypeCatalog = []imageTypeOption{
+	{"hero", "首屏海报图", "搜索列表首图，商品够大能认", 0},
+	{"selling_point", "核心卖点图", "详情卖点图，层次清楚，不要空棚贴字", 1},
+	{"scene", "场景展示图", "使用场景里拍，商品是主角", 2},
+	{"detail", "细节展示图", "材质和工艺特写", 3},
+	{"sku", "SKU 展示图", "白底规格对照，方便选款", 4},
+	{"dimensions", "尺寸图", "尺寸线清晰的信息图", 5},
+	{"specifications", "规格参数图", "参数对照信息图", 6},
+	{"after_sales", "售后保障图", "质保退换说明图", 7},
+	{"brand_story", "品牌故事图", "品牌故事海报", 8},
+	{"precautions", "注意事项图", "使用保养说明图", 9},
+	{"certification", "资质认证图", "只用已提供的资质", 10},
+	{"faq", "常见问题图", "问答说明图", 11},
+	{"factory", "工厂实力图", "只用已提供的工厂画面", 12},
+	{"packaging", "包装展示图", "包装全貌", 13},
+	{"shipping", "发货物流图", "发货物流说明图", 14},
+}
+
+var imageTypeGenerationJobs = map[string]string{
+	"hero": "搜索列表首图。商品约占画面 55%–75%，一眼能认出货，有类别合适的底和光影。" +
+		"最多一句超短主利益点。不要浅灰大海把商品挤到角落，也不要贴满角标。",
+	"selling_point": "详情卖点图，不是照片加字幕。抠出商品重新构图。" +
+		"一个主标题加 2 到 4 条对齐好读的短利益点，色块克制。商品仍是主角。" +
+		"不要原图贴字，不要大面积留白，也不要爆炸贴墙。",
+	"scene": "使用场景。把商品放进会用到的环境，环境为人服务、商品清晰可辨。" +
+		"不要空棚静物，也不要把场景堆满杂物，更不要编造资料里没有的生活道具品牌。",
+	"detail":         "材质或工艺特写。镜头贴近关键结构，光线强调质感，不要整件商品的远景棚拍。",
+	"sku":            "规格/颜色/款式对照图。纯色或白底，商品摆正、边缘干净，方便选款，不要装饰性大标题。",
+	"dimensions":     "尺寸标注信息图。商品在画面中，尺寸线清楚。数字只能来自商品资料；没有数据就画结构关系，不要编造毫米数。",
+	"specifications": "规格参数信息图。用短标签和对照模块呈现资料里已有的参数，不要编造参数。",
+	"after_sales":    "售后保障说明图。只写资料里有的质保、退换、运费政策，排版清楚，不要编造承诺。",
+	"brand_story":    "品牌故事海报。只使用资料或参考图里出现的品牌信息，做成可上详情的设计稿，不要空洞鸡汤。",
+	"precautions":    "使用与保养说明图。条目短、可读，内容来自资料，不要恐吓式极限词。",
+	"certification":  "资质认证图。只能使用用户提供的证书或标志照片，没有素材就留缺口，不要手绘公章。",
+	"faq":            "常见问题说明图。问句短、答句短，内容来自资料，不要编造售后话术。",
+	"factory":        "工厂实力图。只能使用用户提供的产线或厂房照片，没有素材就留缺口，不要生成假车间。",
+	"packaging":      "包装展示图。看清包装结构与内容物，商品可辨认，不要只拍一个模糊纸箱。",
+	"shipping":       "发货物流说明图。只写资料里有的发货与时效信息，排版清楚，不要编造快递品牌。",
+}
+
+var imageTypeByKey = func() map[string]imageTypeOption {
+	out := map[string]imageTypeOption{}
+	for _, option := range agentProductImageTypeCatalog {
+		out[option.Key] = option
+	}
+	return out
+}()
+
+var imageTypeTitles = func() map[string]string {
+	out := map[string]string{}
+	for _, option := range agentProductImageTypeCatalog {
+		out[option.Key] = option.Title
+	}
+	return out
+}()
+
+var evidenceImageTypeKeys = map[string]struct{}{"certification": {}, "factory": {}}
+var infographicImageTypeKeys = map[string]struct{}{
+	"selling_point": {}, "dimensions": {}, "specifications": {}, "after_sales": {},
+	"precautions": {}, "faq": {}, "shipping": {}, "brand_story": {},
+}
+
+func imageTypeFamily(key string) string {
+	if _, ok := evidenceImageTypeKeys[key]; ok {
+		return "evidence"
+	}
+	if _, ok := infographicImageTypeKeys[key]; ok {
+		return "infographic"
+	}
+	return "photography"
+}
+
+func imageTypePromptGoal(key string) string {
+	option, ok := imageTypeByKey[key]
+	title := key
+	if ok {
+		title = option.Title
+	}
+	job := imageTypeGenerationJobs[key]
+	if job == "" && ok {
+		job = option.Description
+	}
+	if job == "" {
+		return title
+	}
+	return title + "：" + job
+}
+
+func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
+	text := ""
+	if sourceNote != nil {
+		text = strings.TrimSpace(*sourceNote)
+	}
+	if text == "" {
+		return map[string]any{}
+	}
+	runes := []rune(text)
+	if len(runes) > 3900 {
+		text = string(runes[:3900])
+	}
+	return map[string]any{
+		"goal":         listingLookRule,
+		"design_goals": []string{"商品与受众资料：" + text},
+		"prohibitions": []string{
+			"商品资料只作事实，不要把浅灰、静物、极简、干净当成套图画风",
+			"不要极简大留白、浅灰空棚、杂志静物",
+			"不要爆炸贴、满屏色块、牛皮癣标签",
+		},
+	}
+}
+
+func BuildProductSourceCreateGraph(productTitle, sourceProductID string, factSetVersionID *string) (ChangeSet, error) {
+	var fact any
+	if factSetVersionID != nil {
+		fact = *factSetVersionID
+	}
+	cs := ChangeSet{
+		BaseGraphRevision: 0,
+		Summary:           "商品资料",
+		ActorType:         ActorUser,
+		Operations: []Operation{
+			CreateNodeOp{
+				ClientRef: "product-source",
+				NodeType:  NodeProductSource,
+				Title:     productTitle,
+				PositionX: 80,
+				PositionY: 220,
+				Config: map[string]any{
+					"source_product_id":   sourceProductID,
+					"fact_set_version_id": fact,
+				},
+			},
+		},
+	}
+	return cs, validateChangeSet(cs)
+}
+
+func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
+	if len(in.ImageTypes) == 0 {
+		return ChangeSet{}, apperr.Validation("至少选择一种图片类型")
+	}
+	if len(in.ReferenceAssetIDs) == 0 {
+		return ChangeSet{}, apperr.Validation("至少上传一张参考图")
+	}
+	seenAssets := map[string]struct{}{}
+	for _, id := range in.ReferenceAssetIDs {
+		if _, ok := seenAssets[id]; ok {
+			return ChangeSet{}, apperr.Validation("参考图资产不能重复")
+		}
+		seenAssets[id] = struct{}{}
+	}
+	if len(in.ReferenceAssetIDs) > maxReferenceAssets {
+		return ChangeSet{}, apperr.Validation(fmt.Sprintf("参考图不能超过 %d 张", maxReferenceAssets))
+	}
+	seenTypes := map[string]struct{}{}
+	for _, item := range in.ImageTypes {
+		if _, ok := seenTypes[item.Key]; ok {
+			return ChangeSet{}, apperr.Validation("图片类型不能重复")
+		}
+		seenTypes[item.Key] = struct{}{}
+	}
+	var generating []DirectCreateImageType
+	var evidence []DirectCreateImageType
+	for _, item := range in.ImageTypes {
+		if imageTypeFamily(item.Key) == "evidence" {
+			evidence = append(evidence, item)
+			continue
+		}
+		generating = append(generating, item)
+	}
+	totalImages := 0
+	for _, item := range generating {
+		if item.Quantity < minImagePerType || item.Quantity > maxImagePerType {
+			return ChangeSet{}, apperr.Validation(fmt.Sprintf("每种图片数量必须在 %d 到 %d 之间", minImagePerType, maxImagePerType))
+		}
+		totalImages += item.Quantity
+	}
+	if totalImages > maxTotalImages {
+		return ChangeSet{}, apperr.Validation(fmt.Sprintf("图片生成总数不能超过 %d", maxTotalImages))
+	}
+
+	productTitle := in.ProductTitle
+	if productTitle == "" {
+		productTitle = "商品资料"
+	}
+	var sourceProduct any
+	if in.SourceProductID != nil {
+		sourceProduct = *in.SourceProductID
+	}
+	var factSet any
+	if in.FactSetVersionID != nil {
+		factSet = *in.FactSetVersionID
+	}
+
+	ops := []Operation{
+		CreateNodeOp{
+			ClientRef: "product-source",
+			NodeType:  NodeProductSource,
+			Title:     productTitle,
+			PositionX: 80,
+			PositionY: 220,
+			Config: map[string]any{
+				"source_product_id":   sourceProduct,
+				"fact_set_version_id": factSet,
+			},
+		},
+		CreateNodeOp{
+			ClientRef: "visual-system",
+			NodeType:  NodeVisualSystem,
+			Title:     "视觉规范",
+			PositionX: 80,
+			PositionY: 40,
+			Config:    map[string]any{},
+		},
+		CreateNodeOp{
+			ClientRef: "creative-brief",
+			NodeType:  NodeCreativeBrief,
+			Title:     "创作要求",
+			PositionX: 80,
+			PositionY: 400,
+			Config:    creativeBriefConfigFromSourceNote(in.SourceNote),
+		},
+	}
+
+	identityRefs := make([]string, len(in.ReferenceAssetIDs))
+	for index, assetID := range in.ReferenceAssetIDs {
+		ref := fmt.Sprintf("image-asset-%d", index+1)
+		identityRefs[index] = ref
+		aid := assetID
+		ops = append(ops, CreateNodeOp{
+			ClientRef:    ref,
+			NodeType:     NodeImageAsset,
+			Title:        fmt.Sprintf("参考图 %d", index+1),
+			PositionX:    80 + index*220,
+			PositionY:    560,
+			Config:       map[string]any{"role": "product_identity"},
+			BoundAssetID: &aid,
+		})
+	}
+
+	sort.SliceStable(generating, func(i, j int) bool {
+		if generating[i].Order != generating[j].Order {
+			return generating[i].Order < generating[j].Order
+		}
+		return generating[i].Key < generating[j].Key
+	})
+	sort.SliceStable(evidence, func(i, j int) bool {
+		if evidence[i].Order != evidence[j].Order {
+			return evidence[i].Order < evidence[j].Order
+		}
+		return evidence[i].Key < evidence[j].Key
+	})
+
+	var processingRefs []string
+	var promptRefs []string
+	for typeIndex, imageType := range generating {
+		typeTitle := imageType.Title
+		if typeTitle == "" {
+			if catalogTitle, ok := imageTypeTitles[imageType.Key]; ok {
+				typeTitle = catalogTitle
+			} else {
+				typeTitle = imageType.Key
+			}
+		}
+		_, typeOption := imageTypeByKey[imageType.Key]
+		groupRef := "shot-" + imageType.Key
+		promptRef := "prompt-" + imageType.Key
+		promptRefs = append(promptRefs, promptRef)
+		processingRefs = append(processingRefs, promptRef)
+		promptGoal := typeTitle
+		if typeOption {
+			promptGoal = imageTypePromptGoal(imageType.Key)
+		}
+		groupY := 40 + typeIndex*280
+		ops = append(ops, CreateGroupOp{ClientRef: groupRef, Title: typeTitle, MemberRefs: []string{}})
+		groupRefCopy := groupRef
+		ops = append(ops, CreateNodeOp{
+			ClientRef: promptRef,
+			NodeType:  NodePromptGeneration,
+			Title:     typeTitle + "提示词",
+			PositionX: 420,
+			PositionY: groupY,
+			GroupRef:  &groupRefCopy,
+			Config: map[string]any{
+				"image_type_key": imageType.Key,
+				"prompt":         map[string]any{"design_goal": promptGoal},
+			},
+		})
+		for assetIndex, identityRef := range identityRefs {
+			ops = append(ops, ConnectNodesOp{
+				ClientRef: fmt.Sprintf("edge-ref-%d-%s", assetIndex+1, promptRef),
+				SourceRef: identityRef,
+				TargetRef: promptRef,
+				Order:     assetIndex,
+			})
+		}
+		typeGenerationSpec, err := generationSpecForShot(imageType, in.GenerationSpec)
+		if err != nil {
+			return ChangeSet{}, err
+		}
+		for imageIndex := 0; imageIndex < imageType.Quantity; imageIndex++ {
+			imageRef := fmt.Sprintf("image-%s-%d", imageType.Key, imageIndex+1)
+			processingRefs = append(processingRefs, imageRef)
+			imageConfig := map[string]any{
+				"image_type_key":  imageType.Key,
+				"generation_spec": cloneMap(typeGenerationSpec),
+			}
+			if in.DeliverySpec != nil {
+				imageConfig["delivery_spec"] = cloneMap(in.DeliverySpec)
+			}
+			shotGroup := groupRef
+			ops = append(ops, CreateNodeOp{
+				ClientRef: imageRef,
+				NodeType:  NodeImageGeneration,
+				Title:     fmt.Sprintf("%s %d", typeTitle, imageIndex+1),
+				PositionX: 760,
+				PositionY: groupY + imageIndex*90,
+				GroupRef:  &shotGroup,
+				Config:    imageConfig,
+			})
+			ops = append(ops, ConnectNodesOp{
+				ClientRef: fmt.Sprintf("edge-prompt-%s-%d", imageType.Key, imageIndex+1),
+				SourceRef: promptRef,
+				TargetRef: imageRef,
+				Order:     imageIndex,
+			})
+			for assetIndex, identityRef := range identityRefs {
+				ops = append(ops, ConnectNodesOp{
+					ClientRef: fmt.Sprintf("edge-ref-%d-%s", assetIndex+1, imageRef),
+					SourceRef: identityRef,
+					TargetRef: imageRef,
+					Order:     assetIndex,
+				})
+			}
+		}
+	}
+
+	for evidenceIndex, imageType := range evidence {
+		typeTitle := imageType.Title
+		if typeTitle == "" {
+			if catalogTitle, ok := imageTypeTitles[imageType.Key]; ok {
+				typeTitle = catalogTitle
+			} else {
+				typeTitle = imageType.Key
+			}
+		}
+		ops = append(ops, CreateNodeOp{
+			ClientRef: "evidence-" + imageType.Key,
+			NodeType:  NodeImageAsset,
+			Title:     typeTitle + "（待绑定）",
+			PositionX: 80 + evidenceIndex*220,
+			PositionY: 760,
+			Config:    map[string]any{"role": "evidence"},
+		})
+	}
+
+	for order, promptRef := range promptRefs {
+		ops = append(ops, ConnectNodesOp{
+			ClientRef: "edge-facts-" + promptRef,
+			SourceRef: "product-source",
+			TargetRef: promptRef,
+			Order:     order,
+		})
+		ops = append(ops, ConnectNodesOp{
+			ClientRef: "edge-brief-" + promptRef,
+			SourceRef: "creative-brief",
+			TargetRef: promptRef,
+			Order:     order,
+		})
+	}
+	ops = append(ops, ConnectNodesOp{
+		ClientRef: "edge-facts-visual-system",
+		SourceRef: "product-source",
+		TargetRef: "visual-system",
+		Order:     0,
+	})
+	ops = append(ops, ConnectNodesOp{
+		ClientRef: "edge-facts-creative-brief",
+		SourceRef: "product-source",
+		TargetRef: "creative-brief",
+		Order:     0,
+	})
+	for assetIndex, identityRef := range identityRefs {
+		ops = append(ops, ConnectNodesOp{
+			ClientRef: fmt.Sprintf("edge-ref-%d-visual-system", assetIndex+1),
+			SourceRef: identityRef,
+			TargetRef: "visual-system",
+			Order:     assetIndex,
+		})
+		ops = append(ops, ConnectNodesOp{
+			ClientRef: fmt.Sprintf("edge-ref-%d-creative-brief", assetIndex+1),
+			SourceRef: identityRef,
+			TargetRef: "creative-brief",
+			Order:     assetIndex,
+		})
+	}
+	for order, nodeRef := range processingRefs {
+		ops = append(ops, ConnectNodesOp{
+			ClientRef: "edge-visual-" + nodeRef,
+			SourceRef: "visual-system",
+			TargetRef: nodeRef,
+			Order:     order,
+		})
+	}
+
+	cs := ChangeSet{
+		BaseGraphRevision: 0,
+		Summary:           "直接创建：按构思表单生成预设工作流模版",
+		ActorType:         ActorUser,
+		Operations:        ops,
+	}
+	return cs, validateChangeSet(cs)
+}
+
+func generationSpecForShot(imageType DirectCreateImageType, generationSpec map[string]any) (map[string]any, error) {
+	overrides := cloneMap(generationSpec)
+	if imageType.AspectRatio != "" {
+		overrides["aspect_ratio"] = imageType.AspectRatio
+	}
+	hasTextPolicy := false
+	if generationSpec != nil {
+		_, hasTextPolicy = generationSpec["text_policy"]
+	}
+	if imageTypeFamily(imageType.Key) == "infographic" && !hasTextPolicy {
+		overrides["text_policy"] = "required"
+		if _, ok := overrides["text_language"]; !ok {
+			overrides["text_language"] = "zh-CN"
+		}
+	}
+	return resolveTemplateGenerationSpec(overrides)
+}

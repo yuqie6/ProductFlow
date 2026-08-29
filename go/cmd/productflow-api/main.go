@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
+	"github.com/yuqie6/productflow/internal/platform/storage"
+	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
@@ -46,6 +49,11 @@ func main() {
 	settingsStore := settings.NewStore(pool, cfg)
 	auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore}.Register(engine)
 	settings.HTTP{Store: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
+	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
+	product.HTTP{
+		Service:  product.Service{Pool: pool, Media: mediaStore},
+		Settings: settingsStore,
+	}.Register(engine)
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
