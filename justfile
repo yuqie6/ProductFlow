@@ -48,6 +48,12 @@ go-test:
 go-api:
     bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-api'
 
+go-worker:
+    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-worker'
+
+go-dispatcher:
+    bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-dispatcher --watch'
+
 backend-test-live-recovery:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py

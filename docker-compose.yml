@@ -168,6 +168,74 @@ services:
       productflow-agent-service:
         condition: service_healthy
 
+  # profile go：双轨增加 Go API / worker / dispatcher，不替换 uvicorn / dramatiq。
+  # 同一数据库不要同时跑两个 dispatcher；启用 profile 前先停 productflow-async-dispatcher。
+  productflow-go-api:
+    profiles: ["go"]
+    build:
+      context: .
+      dockerfile: go/Dockerfile
+    restart: unless-stopped
+    environment: &productflow-go-env
+      APP_HOST: 0.0.0.0
+      APP_PORT: 29280
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+      REDIS_URL: redis://productflow-redis:6379/0
+      STORAGE_ROOT: /app/storage
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["productflow-api"]
+    ports:
+      - "${GO_APP_HOST_PORT:-29285}:29280"
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29280/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  productflow-go-worker:
+    profiles: ["go"]
+    build:
+      context: .
+      dockerfile: go/Dockerfile
+    restart: unless-stopped
+    environment: *productflow-go-env
+    command: ["productflow-worker"]
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+
+  productflow-go-dispatcher:
+    profiles: ["go"]
+    build:
+      context: .
+      dockerfile: go/Dockerfile
+    restart: unless-stopped
+    environment: *productflow-go-env
+    command: ["productflow-dispatcher", "--watch"]
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+
   productflow-agent-service:
     build:
       context: .

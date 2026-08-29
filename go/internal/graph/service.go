@@ -144,3 +144,72 @@ func ParseChangeSetReader(r io.Reader) (ChangeSet, error) {
 	}
 	return ParseChangeSet(raw)
 }
+
+func (s Service) SubmitRun(ctx context.Context, productID, graphID, scope string, nodeID *string) (GraphRunResponse, error) {
+	var out GraphRunResponse
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		submission, err := submitGraphRun(ctx, pgxTx, productID, graphID, scope, nodeID)
+		if err != nil {
+			return err
+		}
+		out = serializeGraphRun(submission.Run)
+		return nil
+	})
+	return out, err
+}
+
+func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
+	var out GraphRunListResponse
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		runs, err := listGraphRuns(ctx, pgxTx, productID, graphID, 20)
+		if err != nil {
+			return err
+		}
+		items := make([]GraphRunResponse, 0, len(runs))
+		for _, run := range runs {
+			items = append(items, serializeGraphRun(run))
+		}
+		out = GraphRunListResponse{Items: items}
+		return nil
+	})
+	return out, err
+}
+
+func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
+	var out GraphRunResponse
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		run, err := loadGraphRun(ctx, pgxTx, productID, graphID, runID)
+		if err != nil {
+			return err
+		}
+		out = serializeGraphRun(run)
+		return nil
+	})
+	return out, err
+}
+
+func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
+	var out GraphRunResponse
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		run, err := cancelGraphRun(ctx, pgxTx, productID, graphID, runID)
+		if err != nil {
+			return err
+		}
+		out = serializeGraphRun(run)
+		return nil
+	})
+	return out, err
+}
+
+func (s Service) RetryRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
+	var out GraphRunResponse
+	err := tx.With(ctx, s.Pool, func(pgxTx pgx.Tx) error {
+		submission, err := retryGraphRun(ctx, pgxTx, productID, graphID, runID)
+		if err != nil {
+			return err
+		}
+		out = serializeGraphRun(submission.Run)
+		return nil
+	})
+	return out, err
+}

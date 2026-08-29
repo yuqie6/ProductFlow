@@ -49,6 +49,10 @@ func setCurrentFactSet(ctx context.Context, tx pgx.Tx, productID, factSetID stri
 }
 
 func insertAsset(ctx context.Context, tx pgx.Tx, productID, mediaID, filename string) (ImageAsset, error) {
+	return insertAssetOrigin(ctx, tx, productID, mediaID, filename, "upload", nil)
+}
+
+func insertAssetOrigin(ctx context.Context, tx pgx.Tx, productID, mediaID, filename, origin string, imageTypeKey *string) (ImageAsset, error) {
 	id := clockid.New()
 	display := strings.TrimSpace(filename)
 	if display == "" {
@@ -62,17 +66,17 @@ func insertAsset(ctx context.Context, tx pgx.Tx, productID, mediaID, filename st
 		ID:                 id,
 		ProductID:          productID,
 		MediaObjectID:      mediaID,
-		OriginType:         "upload",
+		OriginType:         origin,
 		DisplayName:        display,
 		OriginalFilename:   original,
 		VerificationStatus: "verified",
 	}
 	err := tx.QueryRow(ctx, `
 		INSERT INTO product_image_assets (
-			id, product_id, media_object_id, origin_type, display_name, original_filename, created_at, updated_at
-		) VALUES ($1, $2, $3, 'upload', $4, $5, NOW(), NOW())
+			id, product_id, media_object_id, origin_type, display_name, original_filename, image_type_key, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		RETURNING created_at, updated_at
-	`, id, productID, mediaID, display, original).Scan(&asset.CreatedAt, &asset.UpdatedAt)
+	`, id, productID, mediaID, origin, display, original, imageTypeKey).Scan(&asset.CreatedAt, &asset.UpdatedAt)
 	return asset, err
 }
 
