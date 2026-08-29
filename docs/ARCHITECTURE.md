@@ -190,6 +190,8 @@ Provider profile、purpose binding 和业务运行时设置由 `/settings` 写�
 
 上传在持久化前校验 MIME、真实图片格式、字节数、像素数和数量。下载接口按数据库资产定位 storage，不接受任意文件路径。
 
+API / worker / dispatcher 的 JSON 日志写 stderr，并滚动落在 `STORAGE_ROOT/logs/`（默认 `storage-dev/logs/` 或 Compose 的 `/app/storage/logs`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。`LOG_DIR` 覆盖目录。实现与测试：`go/internal/platform/log`。
+
 ## 11. Schema 演进
 
 空库和已有库都跑 `productflow-migrate`：GORM AutoMigrate 建/补表和列，随后幂等补上 CHECK、PostgreSQL enum 和部分唯一索引。AutoMigrate 不删除已退休表或列；退休表按 ADR 0010 用显式 SQL 删除。`backend/alembic/` 是封印历史，不再接 `just dev` 或默认 Compose。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。

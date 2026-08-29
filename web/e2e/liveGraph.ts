@@ -34,6 +34,25 @@ export async function lockLocale(page: Page): Promise<void> {
   });
 }
 
+export async function selectCreateImageType(page: Page, imageType: string): Promise<void> {
+  const card = page.locator(`[data-image-type="${imageType}"]`);
+  await expect(card).toBeVisible();
+  const checkbox = card.locator('input[type="checkbox"]');
+  if (!(await checkbox.isChecked())) {
+    await card.click();
+  }
+  await expect(checkbox).toBeChecked();
+}
+
+export async function openCanvasView(page: Page): Promise<void> {
+  const canvasTab = page.locator('[data-graph-view="canvas"]');
+  await expect(canvasTab).toBeVisible();
+  if ((await canvasTab.getAttribute("aria-selected")) !== "true") {
+    await canvasTab.click({ force: true });
+  }
+  await expect(canvasTab).toHaveAttribute("aria-selected", "true");
+}
+
 export async function loginAsAdmin(page: Page, adminKey: string): Promise<void> {
   await page.goto("/login");
   const keyInput = page.getByPlaceholder("请输入管理员密钥");

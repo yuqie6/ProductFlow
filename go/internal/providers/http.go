@@ -26,6 +26,9 @@ func endpoint(baseURL, path string) string {
 	if base == "" {
 		base = "https://api.openai.com"
 	}
+	if strings.HasSuffix(strings.ToLower(base), "/v1") {
+		base = strings.TrimRight(base[:len(base)-3], "/")
+	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}

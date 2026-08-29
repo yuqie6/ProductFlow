@@ -23,15 +23,14 @@ backend/.mypy_cache/
 backend/.ruff_cache/
 backend/uploads/
 backend/storage/
-backend/backend/storage/
+backend/storage-dev/
+storage-dev/
 web/node_modules/
 web/dist/
 web/playwright-report/
 web/test-results/
 web/blob-report/
 .env.dev
-backend/storage-dev/
-backend/backend/storage-dev/
 agent-service/data/
 # Method-pack dumps named aegis/ at any path, including docs/archive/aegis/.
 aegis/

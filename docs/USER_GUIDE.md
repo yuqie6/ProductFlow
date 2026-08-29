@@ -303,3 +303,5 @@ Agent 可以提出素材整理 Draft。确认前不会改名称、文件夹、�
 ### 日志是否保存完整 secret
 
 应用日志不应记录 API Key、session token、完整上传字节或 data URL。发现包含 secret 的日志应按安全问题处理。
+
+自托管排障时看 `storage-dev/logs/`（Compose 为挂载 storage 下的 `logs/`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。每行一条 JSON，字段含 `ts`、`level`、`msg`、`process`。API 访问日志带 `request_id`。

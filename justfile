@@ -48,6 +48,9 @@ docs-check:
 go-test:
     bash scripts/with_dev_env.sh bash -lc 'go test -C go ./...'
 
+go-test-live-providers:
+    PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'
+
 go-api:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-api'
 

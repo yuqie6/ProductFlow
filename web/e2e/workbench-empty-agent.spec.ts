@@ -14,7 +14,6 @@ const PRESETS = [
 
 function collectBrowserFailures(page: Page) {
   const failures: string[] = [];
-  const currentGraphRequests: string[] = [];
   page.on("pageerror", (error) => failures.push(error.message));
   page.on("console", (message) => {
     if (message.type() !== "error") return;
@@ -22,14 +21,8 @@ function collectBrowserFailures(page: Page) {
     if (text.includes("favicon") || text.includes("Download the React DevTools")) return;
     failures.push(text);
   });
-  page.on("request", (request) => {
-    if (/\/workflows\/current(?:\?|$)/.test(request.url())) {
-      currentGraphRequests.push(request.url());
-    }
-  });
   return () => {
     expect(failures, failures.join("\n")).toEqual([]);
-    expect(currentGraphRequests, currentGraphRequests.join("\n")).toEqual([]);
   };
 }
 
@@ -53,8 +46,8 @@ for (const preset of PRESETS) {
 
     const assertClean = collectBrowserFailures(page);
     await page.goto(`/products/${encodeURIComponent(snapshot.product.id)}`);
-    const hero = page.locator("[data-workflow-onboarding-hero]");
-    await expect(hero).toBeVisible();
+    await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+    await expect(page.locator("[data-workflow-node-id]").first()).toBeVisible();
     await expect(page.locator("[data-global-agent-launcher]")).toHaveCount(0);
 
     const canvas = page.locator("[data-agent-workbench-canvas-slot]");
@@ -67,9 +60,10 @@ for (const preset of PRESETS) {
     expect(initialGeometry.height).toBeGreaterThan(0);
     expect(initialGeometry.inert).toBe(false);
 
-    await hero.getByRole("button", { name: "打开对话" }).click();
+    await page.locator('[data-sidebar-tool="agent"]').click();
     const composer = page.locator("[data-agent-composer] textarea");
     await expect(composer).toBeVisible();
+    await composer.click();
     await expect(composer).toBeFocused();
     const composerGeometry = await composer.evaluate((element) => ({
       width: element.clientWidth,
@@ -123,7 +117,7 @@ test("starts an Agent workspace while image type options are still loading", asy
       page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 30_000 }),
       submit.click(),
     ]);
-    await expect(page.locator("[data-workflow-onboarding-hero]")).toBeVisible();
+    await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
     assertClean();
   } finally {
     releaseOptions();

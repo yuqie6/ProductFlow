@@ -297,3 +297,5 @@ Confirm the independent SETTINGS_ACCESS_TOKEN unlock and inspect provider capabi
 ### Are Secrets Written to Logs?
 
 Application logs must not contain API keys, session tokens, complete upload bytes, or data URLs. Treat any such log as a security issue.
+
+For self-hosted troubleshooting, read `storage-dev/logs/` (Compose: `logs/` under the mounted storage volume): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. Each line is JSON with `ts`, `level`, `msg`, and `process`. API access lines include `request_id`.

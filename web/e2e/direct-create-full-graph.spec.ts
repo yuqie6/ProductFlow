@@ -7,6 +7,7 @@ import {
   assertRealImageProviders,
   lockLocale,
   loginAsAdmin,
+  openCanvasView,
   requiredEnv,
   waitForGraphRunSucceeded,
 } from "./liveGraph";
@@ -39,6 +40,7 @@ test.describe("live browser graph", () => {
     await page.getByRole("button", { name: "只建画布" }).click();
     await page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 });
     await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+    await openCanvasView(page);
 
     const productId = new URL(page.url()).pathname.split("/")[2] ?? "";
     expect(productId).toBeTruthy();

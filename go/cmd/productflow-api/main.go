@@ -32,7 +32,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	logger, err := applog.New(cfg.LogLevel)
+	logger, err := applog.New(applog.Options{
+		Level:         cfg.LogLevel,
+		Dir:           cfg.LogDir,
+		Process:       applog.ProcessAPI,
+		MaxBytes:      cfg.LogMaxBytes,
+		BackupCount:   cfg.LogBackupCount,
+		RetentionDays: cfg.LogRetentionDays,
+	})
 	if err != nil {
 		panic(err)
 	}

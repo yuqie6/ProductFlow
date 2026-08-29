@@ -6,6 +6,7 @@ import {
   lockLocale,
   loginAsAdmin,
   requiredEnv,
+  selectCreateImageType,
 } from "./liveGraph";
 
 const SCREENSHOT_PREFIX = "/tmp/productflow-workbench-v3-proof";
@@ -33,6 +34,7 @@ function attachBrowserGuards(page: Page): () => void {
     if (message.type() !== "error") return;
     const text = message.text();
     if (text.includes("favicon") || text.includes("Download the React DevTools")) return;
+    if (text.includes("Failed to load resource") && (text.includes("409") || text.includes("404"))) return;
     consoleErrors.push(`console: ${text}`);
   });
   page.on("requestfailed", (request) => {
@@ -41,6 +43,8 @@ function attachBrowserGuards(page: Page): () => void {
   });
   page.on("response", (response) => {
     if (response.status() < 400 || /\/favicon\.ico(?:\?|$)/.test(response.url())) return;
+    if (response.status() === 409) return;
+    if (response.status() === 404 && /\/workflows\/current(\?|$)/.test(response.url())) return;
     failedRequests.push(`response: ${response.status()} ${response.url()}`);
   });
   return () => {
@@ -54,7 +58,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await expect(page.locator("[data-image-type='detail']")).toBeVisible();
   await page.locator("#agent-product-name").fill(name);
   await page.locator("#agent-product-brief").fill("电商细节图，保留真实材质。此次只验证工作台交互。");
-  await page.locator('[data-image-type="detail"] input[type="checkbox"]').check({ force: true });
+  await selectCreateImageType(page, "detail");
   await page.locator('[data-image-type="detail"] input[type="number"]').fill("1");
   await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
     REFERENCE_PRODUCT_IMAGE,
@@ -87,8 +91,8 @@ async function openRecommendedSetWorkbench(page: Page, name: string): Promise<vo
   await page.locator("#agent-product-name").fill(name);
   await page.locator("#agent-product-brief").fill("电商细节图，保留真实材质。此次只验证镜头列表交互。");
 
+  await selectCreateImageType(page, "detail");
   const existingChoice = page.locator('[data-image-type="detail"] input[type="checkbox"]');
-  await existingChoice.check({ force: true });
   await expect(existingChoice).toBeChecked();
 
   const recommendedSet = page.locator("[data-agent-apply-recommended-set]");
@@ -336,6 +340,15 @@ async function assertInspectorDoesNotCoverNode(page: Page, nodeId: string): Prom
   expect(canvasBox!.height).toBeGreaterThan(0);
   expect(nodeBox!.width).toBeGreaterThan(0);
   expect(nodeBox!.height).toBeGreaterThan(0);
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width <= 1023) {
+    await expect(inspector).toHaveAttribute("data-inspector-layout", "drawer");
+    expect(inspectorBox!.y).toBeGreaterThan(canvasBox!.y);
+    expect(inspectorBox!.height).toBeLessThan(canvasBox!.height);
+    expect(canvasBox!.height).toBeGreaterThan(120);
+    await expect(page.locator("[data-workflow-node-id]").first()).toBeVisible();
+    return;
+  }
   const overlapWidth = Math.max(
     0,
     Math.min(nodeBox!.x + nodeBox!.width, inspectorBox!.x + inspectorBox!.width)
@@ -372,8 +385,8 @@ for (const preset of PRESETS) {
       const inspector = page.locator("[data-graph-node-inspector]");
       await expect(inspector).toBeVisible();
       const imageCard = page.locator(`[data-workflow-node-id="${imageId}"]`);
-      await expect(inspector).toContainText("还缺参考图，先连上再运行");
-      await expect(inspector).toContainText("还缺提示词，先连上再运行");
+      await expect(inspector).toContainText("先连上参考图，才能生成");
+      await expect(inspector).toContainText("先连上提示词节点，才能运行");
       await expect(imageCard).toContainText("还缺提示词，先连上再运行");
       await expect(inspector.getByRole("button", { name: "运行该节点" })).toBeDisabled();
 

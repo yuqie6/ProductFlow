@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -37,7 +36,14 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	logger, err := applog.New(cfg.LogLevel)
+	logger, err := applog.New(applog.Options{
+		Level:         cfg.LogLevel,
+		Dir:           cfg.LogDir,
+		Process:       applog.ProcessDispatcher,
+		MaxBytes:      cfg.LogMaxBytes,
+		BackupCount:   cfg.LogBackupCount,
+		RetentionDays: cfg.LogRetentionDays,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -85,9 +91,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-		out, _ := json.Marshal(map[string]any{
-			"dispatch": summary,
-			"recovery": map[string]int{
+		logger.Info("dispatcher cycle",
+			zap.Any("dispatch", summary),
+			zap.Any("recovery", map[string]int{
 				"workflow":                 workflow.EnqueuedRuns,
 				"workflow_unknown":         workflow.UnknownRuns,
 				"image_session":            imageSession.EnqueuedTasks,
@@ -96,9 +102,8 @@ func main() {
 				"rendition":                rendition.EnqueuedJobs,
 				"local_image_edit":         localImageEdit.EnqueuedTasks,
 				"local_image_edit_unknown": localImageEdit.UnknownTasks,
-			},
-		})
-		fmt.Println(string(out))
+			}),
+		)
 		return nil
 	}
 
@@ -114,7 +119,6 @@ func main() {
 	for {
 		started := time.Now()
 		if err := runOnce(); err != nil {
-			fmt.Println(`{"error":"dispatcher cycle failed"}`)
 			logger.Error("dispatcher cycle", zap.Error(err))
 		}
 		remaining := time.Duration(*interval*float64(time.Second)) - time.Since(started)

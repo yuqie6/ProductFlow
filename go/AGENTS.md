@@ -4,9 +4,11 @@ Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema a
 
 ## Layout
 
-Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `db/schema`, `config`, `tx`, `storage`, `canonjson`).
+Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `db/schema`, `config`, `tx`, `storage`, `canonjson`, `log`).
 
 `graph` must not import `product`, `recipe`, or `delivery` (use `graph.DeliveryQueuer`). Agent must not write graph tables directly; call `graph` package functions.
+
+JSON logs go to stderr and rotating files under `STORAGE_ROOT/logs` (`productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`). Override with `LOG_DIR`. Tests: `go/internal/platform/log`, `go/internal/platform/config`.
 
 ## Contracts
 

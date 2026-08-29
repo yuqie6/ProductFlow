@@ -14,6 +14,17 @@ import (
 	"github.com/yuqie6/productflow/internal/imagesession"
 )
 
+func TestEndpointStripsTrailingV1(t *testing.T) {
+	got := endpoint("https://anyrouter.top/v1", "/v1/chat/completions")
+	want := "https://anyrouter.top/v1/chat/completions"
+	if got != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+	if endpoint("https://sub.devbin.de", "/v1/images/generations") != "https://sub.devbin.de/v1/images/generations" {
+		t.Fatal(endpoint("https://sub.devbin.de", "/v1/images/generations"))
+	}
+}
+
 func TestPromptSuccessFailUnknown(t *testing.T) {
 	cases := []struct {
 		name   string

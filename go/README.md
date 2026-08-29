@@ -16,6 +16,8 @@ Session cookie 名仍是 `session`，签名用 Go cookie store；从 Python 切�
 
 `STORAGE_ROOT` 相对路径相对**仓库根**解析（`just go-api` 使用 `go run -C go`，cwd 留在仓库根；Go `config.Load` 也会按 `go.mod` 所在 `go/` 的上一级收绝对路径）。本地默认 `./storage-dev`。Compose 里是 `/app/storage`。
 
+JSON 日志同时写 stderr 和滚动文件。默认目录是 `STORAGE_ROOT/logs`（本地即 `storage-dev/logs/`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。可用 `LOG_DIR` 改路径；`LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` / `LOG_RETENTION_DAYS` 控制滚动与按天清理。
+
 HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。dispatcher 先标 SENT 再 asynq 投递；worker `MaxRetry=0`。无法证明的供应商结果标 `unknown`，不自动当失败重试。
 
 Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。不要同时跑 Python dispatcher 与 Go dispatcher。

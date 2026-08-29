@@ -6,9 +6,10 @@ import {
   assertLiveBrowserGraphEnabled,
   loginAsAdmin,
   requiredEnv,
+  selectCreateImageType,
 } from "./liveGraph";
 
-const SCRATCH_ACTIONS = "/tmp/grok-goal-c21a0858e3f5/implementer/e2e";
+const SCRATCH_ACTIONS = "/tmp/productflow-e2e";
 
 const NODE_TYPES = [
   { type: "product_source", label: "商品资料" },
@@ -113,7 +114,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await expect(page.locator("[data-image-type='detail']")).toBeVisible();
   await page.locator("#agent-product-name").fill(name);
   await page.locator("#agent-product-brief").fill("电商细节图，保留真实材质。");
-  await page.locator('[data-image-type="detail"] input[type="checkbox"]').check({ force: true });
+  await selectCreateImageType(page, "detail");
   await expect(page.locator('[data-image-type="detail"] input[type="checkbox"]')).toBeChecked();
   await page.locator('[data-image-type="detail"] input[type="number"]').fill("1");
   await expect(page.locator('[data-image-type="detail"] input[type="number"]')).toHaveValue("1");
@@ -562,26 +563,13 @@ for (const preset of PRESETS) {
         page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 }),
         agentSubmit.click(),
       ]);
-      await expect(page.locator("[data-workflow-onboarding-hero]")).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator("[data-workflow-node-id]").first()).toBeVisible();
       const collapse = page.getByRole("button", { name: "折叠右侧栏" });
       if (await collapse.count()) {
         await collapse.first().evaluate((button: HTMLButtonElement) => button.click());
       }
-      const addCta = page.getByRole("button", { name: "打开添加面板" });
-      await expect(addCta).toBeVisible();
-      const createdResponse = page.waitForResponse((response) => {
-        return response.request().method() === "POST"
-          && /\/api\/v3\/products\/[^/]+\/workflows$/.test(new URL(response.url()).pathname);
-      }, { timeout: 30_000 });
-      await addCta.evaluate((button: HTMLButtonElement) => button.click());
-      const createdHttp = await createdResponse;
-      expect(createdHttp.ok(), await createdHttp.text()).toBeTruthy();
-      await expect.poll(async () => {
-        const response = await page.request.get(
-          `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/current`,
-        );
-        return response.ok();
-      }).toBeTruthy();
+      await page.locator('[data-sidebar-tool="add"]').click({ force: true });
       const addPanel = page.locator("[data-graph-add-node-panel]");
       if (!(await addPanel.isVisible())) {
         const expand = page.locator("[data-product-workbench-drawer-handle]");
@@ -591,9 +579,15 @@ for (const preset of PRESETS) {
         await page.locator('[data-sidebar-tool="add"]').click({ force: true });
       }
       await expect(addPanel).toBeVisible();
-      await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+      await expect.poll(async () => {
+        const response = await page.request.get(
+          `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/current`,
+        );
+        return response.ok();
+      }).toBeTruthy();
       const created = await currentGraph(page);
       expect(created.id).toBeTruthy();
+      expect(created.nodes.length).toBeGreaterThan(0);
       const panel = page.locator("[data-graph-add-node-panel]");
       for (const item of NODE_TYPES) {
         await expect(panel.getByRole("button", { name: new RegExp(item.label) })).toBeVisible();

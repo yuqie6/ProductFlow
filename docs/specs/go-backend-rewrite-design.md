@@ -102,7 +102,7 @@ Web 与 `agent-service/` 默认零合同变更。某个 Go 实现无法保持兼
 | HTTP | Gin | session、SSE、上传校验、`x-request-id` 自己实现。binding 不替代 application 校验。 |
 | SQL | GORM（postgres/pgx 驱动） | AutoMigrate 建/补表和列。CHECK、PG enum、部分唯一索引走补钉 SQL。生产与测试都是 PostgreSQL，不支持 SQLite。命令事务用 `tx.WithGorm`；`FOR UPDATE SKIP LOCKED` 与 advisory lock 仍走 raw SQL。 |
 | 配置 | Viper | 只加载启动配置。运行时设置读 PostgreSQL。 |
-| 日志 | zap | 字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
+| 日志 | zap | JSON 同时写 stderr 与 `STORAGE_ROOT/logs/productflow-{api,worker,dispatcher}.log`（滚动）。字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
 | 队列 | asynq + go-redis | 替代 Dramatiq，不替代 `async_dispatches`。task 名与现有 actor 名对齐。 |
 | 图片 | 与 Pillow 对拍的 Go 编解码 | preview / thumbnail / DeliverySpec 用 golden fixture。WebP 是明确风险。 |
 

@@ -192,6 +192,8 @@ Provider profiles, purpose bindings, and business runtime settings are stored th
 
 Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 
+API, worker, and dispatcher JSON logs go to stderr and rotate under `STORAGE_ROOT/logs/` (local `storage-dev/logs/`, Compose `/app/storage/logs`): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. `LOG_DIR` overrides the directory. Owner and tests: `go/internal/platform/log`.
+
 ## 11. Schema Evolution
 
 Empty and existing databases both run `productflow-migrate`: GORM AutoMigrate creates or adds tables and columns, then idempotent SQL adds CHECKs, PostgreSQL enums, and partial unique indexes. AutoMigrate does not drop retired tables or columns; those deletions stay explicit under ADR 0010. `backend/alembic/` is sealed history and is no longer on `just dev` or default Compose. The main repository does not write old-data backfill, freeze, or cutover gates. Following mainline may recreate the database and storage.
