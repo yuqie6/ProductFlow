@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -153,5 +154,77 @@ func TestConsumeClaimsSentAndMarksConsumed(t *testing.T) {
 	}
 	if status != queue.StatusConsumed {
 		t.Fatalf("status %s", status)
+	}
+}
+
+func TestConsumeBusyReleasesToPending(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx := context.Background()
+	agg := uniqueID(t)
+	var dispatch queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			return queue.ErrBusy
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE id = $1`, dispatch.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != queue.StatusPending {
+		t.Fatalf("status %s, want pending", status)
+	}
+}
+
+func TestConsumeLaterReleasesToPending(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx := context.Background()
+	agg := uniqueID(t)
+	var dispatch queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			return queue.ErrLater
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE id = $1`, dispatch.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != queue.StatusPending {
+		t.Fatalf("status %s, want pending", status)
+	}
+}
+
+func TestConsumerLeaseExceedsTaskTimeout(t *testing.T) {
+	if queue.DefaultConsumerLeaseSeconds <= int(queue.TaskTimeout/time.Second) {
+		t.Fatalf("lease %d must exceed task timeout %s", queue.DefaultConsumerLeaseSeconds, queue.TaskTimeout)
 	}
 }

@@ -1,5 +1,7 @@
 package queue
 
+import "time"
+
 // Actor 名对齐 contracts/queue.md。HTTP 默认只投递 run_async_dispatch 信封。
 const (
 	TaskRunAsyncDispatch = "run_async_dispatch"
@@ -16,13 +18,13 @@ const (
 	StatusDead     = "dead"
 
 	DefaultLeaseSeconds         = 60
-	DefaultConsumerLeaseSeconds = 10 * 60
+	DefaultConsumerLeaseSeconds = int((TaskTimeout + 5*time.Minute) / time.Second)
 	DefaultMaxAttempts          = 10
 	DefaultBackoffSeconds       = 2
 	DefaultSentReconcileAfter   = 5 * 60 // 秒
 	DefaultClaimLimit           = 100
-
-	QueueUnavailableDetail = "任务队列暂不可用，请稍后重试"
+	DefaultBusyRetrySeconds     = 2
+	DefaultLaterRetrySeconds    = 1
 )
 
 // DeliveryKey 是提交与恢复共用的稳定幂等键。

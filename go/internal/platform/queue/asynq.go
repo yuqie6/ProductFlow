@@ -8,6 +8,9 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// TaskTimeout 是 asynq 任务墙钟上限。消费 lease 必须长于它，避免跑着的 worker 被 SENT 对账抢走信封。
+const TaskTimeout = 30 * time.Minute
+
 // ParseRedis 把 REDIS_URL 交给 asynq。asynq 不是 Run 状态源。
 func ParseRedis(redisURL string) (asynq.RedisConnOpt, error) {
 	if redisURL == "" {
@@ -31,7 +34,7 @@ func NewTask(dispatchID, aggregateID string) (*asynq.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TaskRunAsyncDispatch, body, asynq.MaxRetry(0), asynq.Timeout(30*time.Minute)), nil
+	return asynq.NewTask(TaskRunAsyncDispatch, body, asynq.MaxRetry(0), asynq.Timeout(TaskTimeout)), nil
 }
 
 func EnqueueWith(client *asynq.Client) EnqueueFunc {

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -147,9 +148,44 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 		return nil
 	}
 	if err := fn(ctx, aggregateID); err != nil {
+		if errors.Is(err, ErrBusy) || errors.Is(err, ErrLater) {
+			delay := time.Duration(DefaultBusyRetrySeconds) * time.Second
+			if errors.Is(err, ErrLater) {
+				delay = time.Duration(DefaultLaterRetrySeconds) * time.Second
+			}
+			_, _ = ReleaseForRetry(ctx, pool, dispatchID, aggregateID, token, delay)
+			return nil
+		}
 		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, err.Error(), DefaultMaxAttempts, DefaultBackoffSeconds)
 		return err
 	}
 	_, err = MarkConsumed(ctx, pool, dispatchID, aggregateID, token)
 	return err
+}
+
+// ReleaseForRetry 放下消费 lease，信封回到 PENDING，attempts 不变。
+func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string, delay time.Duration) (bool, error) {
+	if delay < 0 {
+		delay = 0
+	}
+	gdb, err := gormFrom(pool)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	n, err := pfdb.Exec(ctx, gdb, `
+		UPDATE async_dispatches SET
+			status = 'pending',
+			lease_token = NULL,
+			lease_expires_at = NULL,
+			sent_at = NULL,
+			consumed_at = NULL,
+			available_at = $4,
+			updated_at = $5
+		WHERE id = $1 AND aggregate_id = $2 AND status = 'sent' AND lease_token = $3
+	`, dispatchID, aggregateID, leaseToken, now.Add(delay), now)
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }
