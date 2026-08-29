@@ -66,6 +66,23 @@ func loadActiveGraph(ctx context.Context, tx pgx.Tx, productID string) (GraphRow
 	return row, err
 }
 
+func loadActiveGraphForUpdate(ctx context.Context, tx pgx.Tx, productID string) (*GraphRow, error) {
+	var row GraphRow
+	err := tx.QueryRow(ctx, `
+		SELECT id, product_id, title, active, schema_version, revision
+		FROM workflow_graphs
+		WHERE product_id = $1 AND active = TRUE
+		FOR UPDATE
+	`, productID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Active, &row.SchemaVersion, &row.Revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 func loadAppliedGraph(ctx context.Context, tx pgx.Tx, row GraphRow) (AppliedGraph, error) {
 	groupRows, err := tx.Query(ctx, `
 		SELECT id, title FROM workflow_graph_groups

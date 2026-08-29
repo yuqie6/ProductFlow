@@ -390,6 +390,21 @@ func runRequiredInputs(nodeType NodeType) []inputContract {
 	return out
 }
 
+// RunInputContract 是配方应用后检查「运行所需输入边」用的端口。
+type RunInputContract struct {
+	DataType EdgeDataType
+	Role     EdgeRole
+}
+
+// RequiredRunContracts 返回该节点类型跑图时必须存在的入边。
+func RequiredRunContracts(nodeType NodeType) []RunInputContract {
+	var out []RunInputContract
+	for _, c := range runRequiredInputs(nodeType) {
+		out = append(out, RunInputContract{DataType: c.DataType, Role: c.Role})
+	}
+	return out
+}
+
 func rejectForbiddenKeys(config map[string]any) error {
 	var illegal []string
 	for key := range config {

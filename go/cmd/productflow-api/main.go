@@ -18,6 +18,7 @@ import (
 	applog "github.com/yuqie6/productflow/internal/platform/log"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
@@ -62,6 +63,10 @@ func main() {
 	}.Register(engine)
 	graph.HTTP{
 		Service:  graph.Service{Pool: pool},
+		Settings: settingsStore,
+	}.Register(engine)
+	recipe.HTTP{
+		Service:  recipe.Service{Pool: pool},
 		Settings: settingsStore,
 	}.Register(engine)
 
