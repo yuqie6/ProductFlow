@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequireAdmin matches Python require_admin: skip when access is not required.
+// RequireAdmin 对齐 Python require_admin：未开启管理员门禁时直接放行。
 func RequireAdmin(reader func(c *gin.Context) (required bool, err error)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		required, err := reader(c)

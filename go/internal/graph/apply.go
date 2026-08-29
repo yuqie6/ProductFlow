@@ -49,6 +49,7 @@ func (g AppliedGraph) ConfigStatus(nodeID string) (ConfigStatus, error) {
 	return NodeConfigStatus(RuleNode{node.ID, node.NodeType, node.Config, node.BoundAssetID}, ruleIncoming), nil
 }
 
+// Apply 把 ops 打到当前图上并跑 catalog/规则校验；不碰数据库。
 func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 	if err := validateChangeSet(changeSet); err != nil {
 		return AppliedGraph{}, err

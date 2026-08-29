@@ -7,6 +7,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/storage"
 )
 
+// serializeDetail 对齐 CanonicalProductDetailResponse；无 intake 时输出 JSON null。
 func serializeDetail(p Product) Detail {
 	intake := json.RawMessage("null")
 	if len(p.IntakeJSON) > 0 {

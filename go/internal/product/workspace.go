@@ -13,6 +13,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/tx"
 )
 
+// CreateAgentDraft 是名称-only 出生：写 product_source 图、空 intake、不设封面。
 func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey string, agentSessionID *string) (WorkspaceSnapshotResponse, error) {
 	normalizedName, err := normalizeName(name)
 	if err != nil {

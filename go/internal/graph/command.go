@@ -11,6 +11,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
+// StageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
 func StageNew(ctx context.Context, tx pgx.Tx, productID, title string, changeSet ChangeSet) (CommandResult, error) {
 	if changeSet.BaseGraphRevision != 0 {
 		return CommandResult{}, apperr.Conflict("新建图的 base_graph_revision 必须为 0")

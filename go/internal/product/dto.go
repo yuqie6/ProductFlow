@@ -42,17 +42,17 @@ type ImageAsset struct {
 }
 
 type Summary struct {
-	ID                     string
-	Name                   string
-	Category               *string
-	Price                  *string
-	CoverImageAssetID      *string
-	CoverImageFilename     *string
-	CoverImageDownloadURL  *string
-	CoverImagePreviewURL   *string
-	CoverImageThumbnailURL *string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	ID                     string    `json:"id"`
+	Name                   string    `json:"name"`
+	Category               *string   `json:"category"`
+	Price                  *string   `json:"price"`
+	CoverImageAssetID      *string   `json:"cover_image_asset_id"`
+	CoverImageFilename     *string   `json:"cover_image_filename"`
+	CoverImageDownloadURL  *string   `json:"cover_image_download_url"`
+	CoverImagePreviewURL   *string   `json:"cover_image_preview_url"`
+	CoverImageThumbnailURL *string   `json:"cover_image_thumbnail_url"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 type Detail struct {
@@ -140,4 +140,108 @@ type Upload struct {
 	Content  []byte
 	Filename string
 	MIMEType string
+}
+
+// Fact 是商品资料里的一条不可变事实。
+type Fact struct {
+	Key                  string `json:"key"`
+	Value                any    `json:"value"`
+	SourceType           string `json:"source_type"`
+	Status               string `json:"status"`
+	RequiresConfirmation bool   `json:"requires_confirmation"`
+	EvidenceAssetIDs     []any  `json:"evidence_asset_ids"`
+	Conflicts            []any  `json:"conflicts"`
+}
+
+type FactSet struct {
+	ID        string    `json:"id"`
+	ProductID string    `json:"product_id"`
+	Version   int       `json:"version"`
+	Facts     []Fact    `json:"facts"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type FactsResponse struct {
+	Product                 Detail   `json:"product"`
+	CurrentFactSetVersionID *string  `json:"current_fact_set_version_id"`
+	CurrentFactVersion      *int     `json:"current_fact_version"`
+	FactSet                 *FactSet `json:"fact_set"`
+	Facts                   []Fact   `json:"facts"`
+}
+
+type AssetListResponse struct {
+	Items []AssetResponse `json:"items"`
+}
+
+type GalleryBootstrap struct {
+	ProductID         string                   `json:"product_id"`
+	CoverImageAssetID *string                  `json:"cover_image_asset_id"`
+	SystemDirectories []GallerySystemDirectory `json:"system_directories"`
+	ImageTypes        []GalleryImageType       `json:"image_types"`
+	Origins           []GalleryOrigin          `json:"origins"`
+	UserFolders       []GalleryFolder          `json:"user_folders"`
+	UnorganizedCount  int                      `json:"unorganized_count"`
+}
+
+type GallerySystemDirectory struct {
+	Kind  string `json:"kind"`
+	Count int    `json:"count"`
+}
+
+type GalleryImageType struct {
+	DirectoryKey string  `json:"directory_key"`
+	ImageTypeKey *string `json:"image_type_key"`
+	Title        string  `json:"title"`
+	Count        int     `json:"count"`
+}
+
+type GalleryOrigin struct {
+	OriginType string `json:"origin_type"`
+	Count      int    `json:"count"`
+}
+
+type GalleryFolder struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sort_order"`
+	Count     int    `json:"count"`
+}
+
+type GalleryFolderMutation struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sort_order"`
+}
+
+type DeleteGalleryFolderResponse struct {
+	FolderID                string `json:"folder_id"`
+	MovedToUnorganizedCount int    `json:"moved_to_unorganized_count"`
+}
+
+type GalleryAssetResponse struct {
+	AssetResponse
+	UserFolderName *string                   `json:"user_folder_name"`
+	ImageTypeTitle *string                   `json:"image_type_title"`
+	Generation     *GalleryGenerationSummary `json:"generation"`
+	Rendition      *GalleryRenditionSummary  `json:"rendition"`
+}
+
+type GalleryGenerationSummary struct {
+	WorkflowID              string  `json:"workflow_id"`
+	NodeID                  string  `json:"node_id"`
+	NodeRunID               string  `json:"node_run_id"`
+	PromptArtifactVersionID *string `json:"prompt_artifact_version_id"`
+	VisualSystemVersionID   *string `json:"visual_system_version_id"`
+}
+
+type GalleryRenditionSummary struct {
+	JobID         string         `json:"job_id"`
+	SourceAssetID string         `json:"source_asset_id"`
+	DeliverySpec  map[string]any `json:"delivery_spec"`
+	Status        string         `json:"status"`
+}
+
+type GalleryAssetPage struct {
+	Items      []GalleryAssetResponse `json:"items"`
+	NextCursor *string                `json:"next_cursor"`
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
+// insertProduct 写入商品行；封面与 fact 由调用方随后设置。
 func insertProduct(ctx context.Context, tx pgx.Tx, name string, category, price, sourceNote *string) (Product, error) {
 	id := clockid.New()
 	row := Product{ID: id, Name: name, Category: category, Price: price, SourceNote: sourceNote}
@@ -76,13 +77,24 @@ func insertAsset(ctx context.Context, tx pgx.Tx, productID, mediaID, filename st
 }
 
 func loadProduct(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
-	var row Product
-	var intake []byte
-	err := tx.QueryRow(ctx, `
+	return scanProduct(ctx, tx, id, false)
+}
+
+func loadProductForUpdate(ctx context.Context, tx pgx.Tx, id string) (Product, error) {
+	return scanProduct(ctx, tx, id, true)
+}
+
+func scanProduct(ctx context.Context, tx pgx.Tx, id string, forUpdate bool) (Product, error) {
+	sql := `
 		SELECT id, name, category, price::text, source_note, cover_image_asset_id,
 		       intake_schema_version, intake_json, current_fact_set_version_id, created_at, updated_at
-		FROM products WHERE id = $1
-	`, id).Scan(
+		FROM products WHERE id = $1`
+	if forUpdate {
+		sql += ` FOR UPDATE`
+	}
+	var row Product
+	var intake []byte
+	err := tx.QueryRow(ctx, sql, id).Scan(
 		&row.ID, &row.Name, &row.Category, &row.Price, &row.SourceNote, &row.CoverImageAssetID,
 		&row.IntakeVersion, &intake, &row.FactSetVersionID, &row.CreatedAt, &row.UpdatedAt,
 	)

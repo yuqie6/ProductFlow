@@ -2,7 +2,7 @@ package apperr
 
 import "fmt"
 
-// Error is a user-visible failure with a fixed HTTP status.
+// Error 是面向用户的失败，HTTP 状态码固定，文案进 {"detail": "..."}。
 type Error struct {
 	Status int
 	Detail string
@@ -11,6 +11,8 @@ type Error struct {
 func (e Error) Error() string { return e.Detail }
 
 func Validation(detail string) Error { return Error{Status: 400, Detail: detail} }
+
+func Forbidden(detail string) Error { return Error{Status: 403, Detail: detail} }
 
 func NotFound(detail string) Error { return Error{Status: 404, Detail: detail} }
 

@@ -1,7 +1,9 @@
+// Package product 实现商品四条出生命令、facts、封面与商品图库，HTTP 合同对齐 Python。
 package product
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -12,9 +14,19 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/tx"
 )
 
+// Service 拥有商品出生、facts、封面与商品图库命令。
 type Service struct {
 	Pool  *pgxpool.Pool
 	Media media.Store
+	// Now 可注入，图库「最近生成」目录用它锚定 30 天窗口。
+	Now func() time.Time
+}
+
+func (s Service) now() time.Time {
+	if s.Now != nil {
+		return s.Now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 type CreateInput struct {

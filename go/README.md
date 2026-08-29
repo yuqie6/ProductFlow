@@ -13,4 +13,4 @@ just go-api
 
 P3 媒体原语：`internal/media` 核验 PNG/JPEG/WEBP、按 Python 文案做 415/413/400 上传校验，写入 `media_objects`（`verification_status=verified`），并生成 preview（最长边 1600）与 thumbnail（320）JPEG 派生图。
 
-P4 四条出生命令已接到 Go HTTP：`POST /api/v2/products`（无图、有封面）、`POST /api/v3/products`（直接创建模板图、有封面、不写 intake）、`POST /api/v2/agent-product-workspaces`（表单齐、写 intake、不设封面）、`POST /api/v2/agent-product-workspaces/drafts`（名称-only、单 `product_source`）。下载走 `/api/v2/product-image-assets/{id}/download`。Graph Command 的通用改图 API 仍在 P6。
+P4 商品 API 已接到 Go HTTP：四条出生命令、`GET/PUT /api/v3/products/{id}/facts`（不可变 version + expected 冲突 409）、封面与追加上传、商品图库 Explorer（系统目录/用户文件夹/keyset cursor/ZIP 打包）、以及 `deletion_enabled` 门禁下的商品/图片删除。下载走 `/api/v2/product-image-assets/{id}/download`。Graph Command 的通用改图 API 仍在 P6。

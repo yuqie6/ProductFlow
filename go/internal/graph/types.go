@@ -1,3 +1,4 @@
+// Package graph 实现 schema-v3 ChangeSet 应用、校验与新建图 flush。
 package graph
 
 const (

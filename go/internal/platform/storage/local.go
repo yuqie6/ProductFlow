@@ -104,6 +104,18 @@ func (s Local) Resolve(relativePath string) (string, error) {
 	return abs, nil
 }
 
+// RemoveEmptyProductDirs 尽力删掉 products/{id} 下已空的目录；新写入走 media/ 时通常是空操作。
+func (s Local) RemoveEmptyProductDirs(productID string) {
+	if productID == "" || strings.Contains(productID, "..") {
+		return
+	}
+	abs, err := s.Resolve(filepath.ToSlash(filepath.Join("products", productID)))
+	if err != nil {
+		return
+	}
+	_ = os.Remove(abs)
+}
+
 func NewID() string {
 	return clockid.New()
 }
