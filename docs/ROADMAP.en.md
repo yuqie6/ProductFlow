@@ -49,16 +49,15 @@ Real provider, real stores, SSE reconnect, and the production switch for backgro
 - More image provider adapters and observability.
 - Workflow run cost, latency, and failure-rate stats.
 
-## Engineering runtime after workbench proof
+## Engineering runtime: move the business backend to Go
 
-Do not start the following, or write them into CONTEXT / PRD / ARCHITECTURE, before the workbench browser proof.
-
-### Move the Python business backend to Go
+Replace the business API, worker, and async dispatcher with vertical Go packages. Decision: [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md). Do not write Gin / GORM / asynq into CONTEXT / PRD / ARCHITECTURE as current fact before cutover.
 
 - Product contract: [`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)
 - Design: [`specs/go-backend-rewrite-design.md`](specs/go-backend-rewrite-design.md)
 - Replace the business API, worker, and async dispatcher only. Web and the Node.js/Pi Agent keep their contracts.
-- Preconditions: workbench proof, v2 leftover gone, HTTP / SSE / session / queue pack exported.
+- The freeze line is live Python user-visible behavior plus the HTTP / SSE / queue pack. Product WorkflowDraft must not return.
+- Workbench browser proof runs in parallel and remains the cutover and product-quality gate. It does not enter the workbench spec's implementation.
 - The Go Agent on `exp` is not the starting point.
 
 ## SaaS

@@ -38,8 +38,8 @@
 | `specs/agent-canvas-sandbox.md` | Draft | Goal 托管环 |
 | `specs/global-agent-human-workflow-design.md` | Approved | 全局 Agent 与人工工作流设计 |
 | `specs/pi-agent-runtime-integration.md` | Approved | Pi 未过的 durability / Fresh Observation gate |
-| `specs/go-backend-rewrite-prd.md` | Draft, deferred | 业务后端迁 Go 的产品合同；工作台证明完成前不开工 |
-| `specs/go-backend-rewrite-design.md` | Draft, deferred | 上述迁移的实现设计 |
+| `specs/go-backend-rewrite-prd.md` | Approved | 业务后端迁 Go 的产品合同；cutover 前不写进当前架构事实 |
+| `specs/go-backend-rewrite-design.md` | Approved | 垂直切片、封印基线、Strangler 顺序 |
 | `specs/productflow-studio-requirements.md` | Draft | Studio 需求清单 |
 
 ## 某次部署的证据
@@ -64,6 +64,7 @@
 | `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | 为什么是 live graph 与 Graph Command；当前形状读 ARCHITECTURE |
 | `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
 | `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库快速破坏性更新，不保兼容、不写旧数据迁移 |
+| `adr/0011-go-vertical-slice-rewrite.md` | Accepted | 业务后端按垂直切片迁 Go；Python 行为是封印基线 |
 
 ## 协作元数据
 

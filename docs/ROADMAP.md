@@ -51,16 +51,15 @@ Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task �
 - 更多图片 provider adapter 和可观测性。
 - 工作流运行成本、时延和失败率统计。
 
-## 工作台证明之后的工程运行时
+## 工程运行时：业务后端迁 Go
 
-下列条目在工作台浏览器证明完成前不得开工，也不进入 CONTEXT / PRD / ARCHITECTURE。
-
-### Python 业务后端迁到 Go
+业务 API、worker、dispatcher 按垂直切片迁到 Go。决策见 [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md)。Gin / GORM / asynq 在 cutover 前不写进 CONTEXT / PRD / ARCHITECTURE 的当前事实段落。
 
 - 产品合同：[`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)
 - 实现设计：[`specs/go-backend-rewrite-design.md`](specs/go-backend-rewrite-design.md)
 - 只替换业务 API、worker 和 async dispatcher。Web 与 Node.js/Pi Agent 保持现有合同。
-- 开工前提：工作台证明完成、v2 leftover 删除、HTTP / SSE / session / queue 合同包已导出。
+- 封印基线是 live Python 的用户可观察行为与 HTTP / SSE / queue 合同。商品 WorkflowDraft 不得复活。
+- 工作台浏览器证明与实现并行，仍是 cutover 与产品完成度闸门，不插入工作台规格的实施。
 - `exp` 上的 Go Agent 不是本项目的起点。
 
 ## SaaS

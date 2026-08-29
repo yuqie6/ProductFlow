@@ -1,0 +1,1087 @@
+[
+  {
+    "method": "DELETE",
+    "path": "/api/auth/session",
+    "name": "destroy_session"
+  },
+  {
+    "method": "GET",
+    "path": "/api/auth/session",
+    "name": "get_session_state"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/session",
+    "name": "create_session"
+  },
+  {
+    "method": "GET",
+    "path": "/api/generation-queue",
+    "name": "get_generation_queue_overview_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/image-session-assets/{asset_id}/download",
+    "name": "download_image_session_asset_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/image-sessions",
+    "name": "list_image_sessions_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions",
+    "name": "create_image_session_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/image-sessions/{image_session_id}",
+    "name": "delete_image_session_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/image-sessions/{image_session_id}",
+    "name": "get_image_session_detail_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/image-sessions/{image_session_id}",
+    "name": "update_image_session_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions/{image_session_id}/generate",
+    "name": "generate_image_session_round_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions/{image_session_id}/generation-tasks/{task_id}/cancel",
+    "name": "cancel_image_session_generation_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions/{image_session_id}/generation-tasks/{task_id}/provider-effects/{candidate_start_index}/reconciliation",
+    "name": "reconcile_image_session_provider_effect_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions/{image_session_id}/generation-tasks/{task_id}/retry",
+    "name": "retry_image_session_generation_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/image-sessions/{image_session_id}/reference-images",
+    "name": "upload_image_session_reference_images_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/image-sessions/{image_session_id}/reference-images/{asset_id}",
+    "name": "delete_image_session_reference_image_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/image-sessions/{image_session_id}/status",
+    "name": "get_image_session_status_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-moves",
+    "name": "apply_agent_asset_move_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-moves/prepare",
+    "name": "prepare_agent_asset_move_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-moves/reconcile",
+    "name": "reconcile_agent_asset_move_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-renames",
+    "name": "apply_agent_asset_rename_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-renames/prepare",
+    "name": "prepare_agent_asset_rename_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/asset-renames/reconcile",
+    "name": "reconcile_agent_asset_rename_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/assets",
+    "name": "list_agent_product_assets_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/assets/inspect",
+    "name": "inspect_agent_product_assets_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/assets/{asset_id}/content",
+    "name": "read_agent_product_asset_content_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/canvas/focus",
+    "name": "focus_agent_canvas_items_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/canvas/focus/reconcile",
+    "name": "reconcile_agent_canvas_focus_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/contract",
+    "name": "get_agent_contract_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-creates",
+    "name": "apply_agent_folder_create_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-creates/prepare",
+    "name": "prepare_agent_folder_create_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-creates/reconcile",
+    "name": "reconcile_agent_folder_create_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-renames",
+    "name": "apply_agent_folder_rename_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-renames/prepare",
+    "name": "prepare_agent_folder_rename_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/folder-renames/reconcile",
+    "name": "reconcile_agent_folder_rename_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/global-draft/validate",
+    "name": "validate_agent_global_draft_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/global-workflow-context",
+    "name": "get_agent_global_workflow_context_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/global-workflow-run-requests",
+    "name": "create_agent_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/global-workflow-run-requests/prepare",
+    "name": "prepare_agent_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/global-workflow-run-requests/reconcile",
+    "name": "reconcile_agent_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/apply-change-set",
+    "name": "apply_agent_graph_change_set_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/apply-change-set/reconcile",
+    "name": "reconcile_agent_graph_apply_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/nodes/{node_id}",
+    "name": "get_agent_node_detail_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/proposals",
+    "name": "propose_agent_graph_change_set_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/proposals/discard",
+    "name": "discard_agent_graph_proposal_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/proposals/discard/reconcile",
+    "name": "reconcile_agent_graph_proposal_discard_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/graph/proposals/reconcile",
+    "name": "reconcile_agent_graph_propose_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/library-organization-draft/validate",
+    "name": "validate_agent_library_organization_draft_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/media-library",
+    "name": "list_agent_global_media_assets_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/media-library/inspect",
+    "name": "inspect_agent_global_media_assets_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/media-library/{asset_id}/content",
+    "name": "read_agent_global_media_asset_content_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/product-context",
+    "name": "get_agent_product_context_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/product-intake",
+    "name": "finalize_agent_product_intake_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/product-intake/reconcile",
+    "name": "reconcile_agent_product_intake_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/product-workspaces",
+    "name": "create_agent_product_workspace_from_global_conversation_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/product-workspaces/reconcile",
+    "name": "reconcile_agent_product_workspace_from_global_conversation_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/products",
+    "name": "list_agent_global_products_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/products/inspect",
+    "name": "inspect_agent_global_products_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/runtime-context",
+    "name": "get_agent_runtime_context_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/turn-executions/claim",
+    "name": "claim_agent_turn_execution_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/turn-executions/{execution_id}/checkpoints",
+    "name": "append_agent_turn_checkpoint_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/turn-executions/{execution_id}/events",
+    "name": "append_agent_turn_event_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/turn-executions/{execution_id}/heartbeat",
+    "name": "heartbeat_agent_turn_execution_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/turn-executions/{execution_id}/release",
+    "name": "release_agent_turn_execution_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-run-requests",
+    "name": "create_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-run-requests/prepare",
+    "name": "prepare_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-run-requests/reconcile",
+    "name": "reconcile_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-runs",
+    "name": "list_agent_workflow_runs_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-runs/inspect",
+    "name": "inspect_agent_global_workflow_runs_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-runs/{run_id}/cancel",
+    "name": "cancel_agent_workflow_run_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/internal/v1/agent-conversations/{conversation_id}/workflow-runs/{run_id}/cancel/reconcile",
+    "name": "reconcile_agent_workflow_run_cancel_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-runtime/provider-config",
+    "name": "get_agent_provider_runtime_config_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/internal/v1/agent-tasks/{task_id}/contract",
+    "name": "get_agent_task_contract_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/media-library",
+    "name": "list_media_library_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/media-library/bootstrap",
+    "name": "media_library_bootstrap_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/collect",
+    "name": "collect_to_product_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/folders",
+    "name": "create_media_library_folder_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/media-library/folders/{folder_id}",
+    "name": "delete_media_library_folder_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/media-library/folders/{folder_id}",
+    "name": "rename_media_library_folder_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/from-product",
+    "name": "save_from_product_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/from-session",
+    "name": "save_from_session_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/organize/move",
+    "name": "move_media_library_assets_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/organize/tags",
+    "name": "set_media_library_tags_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/tags",
+    "name": "create_media_library_tag_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/media-library/tags/{tag_id}",
+    "name": "delete_media_library_tag_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/media-library/tags/{tag_id}",
+    "name": "rename_media_library_tag_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/upload",
+    "name": "upload_media_library_assets_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/media-library/workflows/{workflow_id}/media-library",
+    "name": "list_workflow_media_library_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/workflows/{workflow_id}/media-library/sync",
+    "name": "sync_workflow_media_library_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/media-library/workflows/{workflow_id}/media-library/{media_library_asset_id}",
+    "name": "remove_workflow_media_library_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/media-library/{asset_id}",
+    "name": "get_media_library_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/{asset_id}/archive",
+    "name": "archive_media_library_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/media-library/{asset_id}/download",
+    "name": "download_media_library_asset_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/media-library/{asset_id}/restore",
+    "name": "restore_media_library_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings",
+    "name": "get_config_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/settings",
+    "name": "update_config_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings/export",
+    "name": "export_settings_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/settings/import",
+    "name": "import_settings_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/settings/import/preview",
+    "name": "preview_settings_import_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings/lock-state",
+    "name": "get_settings_lock_state_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/settings/provider-bindings/{purpose}",
+    "name": "update_provider_binding_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings/provider-config",
+    "name": "get_provider_config_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/settings/provider-profiles",
+    "name": "create_provider_profile_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/settings/provider-profiles/{profile_id}",
+    "name": "archive_provider_profile_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/settings/provider-profiles/{profile_id}",
+    "name": "update_provider_profile_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/settings/runtime",
+    "name": "get_runtime_config_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/settings/unlock",
+    "name": "unlock_settings_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-conversations/{conversation_id}/library-organization-draft",
+    "name": "get_global_library_organization_draft_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/library-organization-draft/confirm",
+    "name": "confirm_global_library_organization_draft_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns",
+    "name": "list_global_agent_turns_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns",
+    "name": "submit_global_agent_turn_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}",
+    "name": "get_global_agent_turn_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}/cancel",
+    "name": "cancel_global_agent_turn_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}/effect-reconciliation",
+    "name": "reconcile_global_agent_turn_effect_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}/events",
+    "name": "stream_global_agent_turn_events_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}/questions/{question_id}/answer",
+    "name": "answer_global_agent_question_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/turns/{projection_id}/resume",
+    "name": "resume_global_agent_turn_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-conversations/{conversation_id}/workflow-run-request",
+    "name": "get_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/workflow-run-request/{request_id}/cancel",
+    "name": "cancel_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-conversations/{conversation_id}/workflow-run-request/{request_id}/confirm",
+    "name": "confirm_global_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-product-workspaces",
+    "name": "create_agent_product_workspace_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-product-workspaces/drafts",
+    "name": "create_agent_product_draft_workspace_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-product-workspaces/options",
+    "name": "get_agent_product_workspace_options_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-product-workspaces/{conversation_id}",
+    "name": "get_agent_product_workspace_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-product-workspaces/{conversation_id}/intake",
+    "name": "finalize_agent_product_workspace_intake_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-sessions",
+    "name": "list_agent_sessions_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-sessions",
+    "name": "create_agent_session_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/agent-sessions/{session_id}",
+    "name": "rename_agent_session_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-sessions/{session_id}/archive",
+    "name": "archive_agent_session_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-tasks",
+    "name": "list_agent_tasks_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-tasks",
+    "name": "create_agent_task_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/agent-tasks/{task_id}",
+    "name": "get_agent_task_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/agent-tasks/{task_id}",
+    "name": "rename_agent_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-tasks/{task_id}/cancel",
+    "name": "cancel_agent_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-tasks/{task_id}/complete",
+    "name": "complete_agent_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-tasks/{task_id}/pause",
+    "name": "pause_agent_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/agent-tasks/{task_id}/resume",
+    "name": "resume_agent_task_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/delivery-rendition-jobs/{job_id}",
+    "name": "get_delivery_rendition_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/delivery-rendition-jobs/{job_id}/retry",
+    "name": "retry_delivery_rendition_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/image-sessions/{image_session_id}/assets/{asset_id}/attach-to-product",
+    "name": "attach_image_session_asset_to_product_canonical_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/product-image-assets/{asset_id}",
+    "name": "delete_product_image_asset_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/product-image-assets/{asset_id}/download",
+    "name": "download_product_image_asset_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/product-image-assets/{source_asset_id}/renditions",
+    "name": "list_delivery_renditions_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/product-image-assets/{source_asset_id}/renditions",
+    "name": "create_delivery_rendition_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products",
+    "name": "list_products_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products",
+    "name": "create_canonical_product_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/products/{product_id}",
+    "name": "delete_product_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}",
+    "name": "get_canonical_product_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}",
+    "name": "get_agent_conversation_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns",
+    "name": "list_agent_turns_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns",
+    "name": "submit_agent_turn_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}",
+    "name": "get_agent_turn_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}/cancel",
+    "name": "cancel_agent_turn_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}/effect-reconciliation",
+    "name": "reconcile_agent_turn_effect_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}/events",
+    "name": "stream_agent_turn_events_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}/questions/{question_id}/answer",
+    "name": "answer_agent_question_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/turns/{projection_id}/resume",
+    "name": "resume_agent_turn_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/workflow-run-request",
+    "name": "get_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/workflow-run-request/{request_id}/cancel",
+    "name": "cancel_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-conversations/{conversation_id}/workflow-run-request/{request_id}/confirm",
+    "name": "confirm_agent_workflow_run_request_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/agent-workbench",
+    "name": "get_agent_workbench_bootstrap_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/agent-workbench",
+    "name": "ensure_agent_workbench_bootstrap_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/products/{product_id}/cover",
+    "name": "clear_product_cover_endpoint"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v2/products/{product_id}/cover",
+    "name": "set_product_cover_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/image-assets",
+    "name": "list_product_image_assets_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/image-assets",
+    "name": "add_canonical_product_images_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/image-assets/download-archive",
+    "name": "download_product_image_archive_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/image-assets/move",
+    "name": "move_product_image_assets_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/image-assets/{asset_id}",
+    "name": "get_product_image_asset_detail_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/products/{product_id}/image-assets/{asset_id}",
+    "name": "rename_product_image_asset_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/products/{product_id}/image-folders",
+    "name": "create_product_image_folder_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v2/products/{product_id}/image-folders/{folder_id}",
+    "name": "delete_product_image_folder_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v2/products/{product_id}/image-folders/{folder_id}",
+    "name": "rename_product_image_folder_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v2/products/{product_id}/image-library",
+    "name": "get_product_image_library_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/delivery-presets",
+    "name": "list_delivery_presets_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/local-image-edits/capability",
+    "name": "get_local_image_edit_capability_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/node-catalog",
+    "name": "get_node_catalog_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products",
+    "name": "create_product_with_direct_graph_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/delivery-exports",
+    "name": "export_delivery_rendition_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/facts",
+    "name": "get_product_facts_endpoint"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v3/products/{product_id}/facts",
+    "name": "update_product_facts_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/image-assets/{asset_id}/fidelity-checks",
+    "name": "list_product_image_fidelity_checks_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-assets/{asset_id}/fidelity-checks",
+    "name": "create_product_image_fidelity_check_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/image-edits",
+    "name": "list_local_image_edit_tasks_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits",
+    "name": "create_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}",
+    "name": "get_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}",
+    "name": "update_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}/adopt",
+    "name": "adopt_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}/adoptions/{adoption_event_id}/revert",
+    "name": "revert_local_image_edit_adoption_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}/cancel",
+    "name": "cancel_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}/retry",
+    "name": "retry_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/image-edits/{task_id}/submit",
+    "name": "submit_local_image_edit_task_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflow-recipes/{recipe_id}/apply",
+    "name": "apply_workflow_recipe_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview",
+    "name": "preview_workflow_recipe_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows",
+    "name": "create_empty_workflow_graph_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/workflows/current",
+    "name": "get_current_workflow_graph_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}",
+    "name": "get_workflow_graph_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/changesets",
+    "name": "apply_workflow_change_set_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/proposals/{proposal_id}/confirm",
+    "name": "confirm_graph_proposal_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/proposals/{proposal_id}/discard",
+    "name": "discard_graph_proposal_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/recipes",
+    "name": "create_workflow_recipe_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/recipes/{recipe_id}/versions",
+    "name": "append_workflow_recipe_version_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/redo",
+    "name": "redo_workflow_change_set_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/runs",
+    "name": "list_graph_runs_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/runs",
+    "name": "submit_graph_run_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/runs/{run_id}",
+    "name": "get_graph_run_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/runs/{run_id}/cancel",
+    "name": "cancel_graph_run_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/runs/{run_id}/retry",
+    "name": "retry_graph_run_endpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v3/products/{product_id}/workflows/{workflow_id}/undo",
+    "name": "undo_workflow_change_set_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/workflow-recipes",
+    "name": "list_workflow_recipes_endpoint"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v3/workflow-recipes/{recipe_id}",
+    "name": "archive_workflow_recipe_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v3/workflow-recipes/{recipe_id}",
+    "name": "get_workflow_recipe_endpoint"
+  },
+  {
+    "method": "GET",
+    "path": "/docs",
+    "name": "swagger_ui_html"
+  },
+  {
+    "method": "GET",
+    "path": "/docs/oauth2-redirect",
+    "name": "swagger_ui_redirect"
+  },
+  {
+    "method": "GET",
+    "path": "/healthz",
+    "name": "healthcheck"
+  },
+  {
+    "method": "GET",
+    "path": "/openapi.json",
+    "name": "openapi"
+  },
+  {
+    "method": "GET",
+    "path": "/redoc",
+    "name": "redoc_html"
+  }
+]

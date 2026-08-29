@@ -43,6 +43,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 交付图 | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
 | 商品图片库 | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
 | 连续生图 | `image_sessions/` (`service.py`, `generation.py`), `infrastructure/image/chat_types.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
+| 局部修 | `local_image_edits/` | `routes/local_image_edits.py` | local-image-edit tests |
 | 设置与 provider | `settings.py`, `infrastructure/runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | 异步投递 | `async_delivery.py`, `durable_recovery.py` | `commands/run_async_dispatcher.py`, Compose `productflow-async-dispatcher` | `test_async_delivery.py`, `test_async_dispatcher_command.py` |
 | 错误与日志 | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, request middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
@@ -99,11 +100,11 @@ product name (+ optional types and 1..6 uploads)
 
 ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、`LibraryOrganizationDraft` revision，以及跨实例浏览器事件源 `agent_turn_events`。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `application/agent/turn_projection.py` 的 `expected_harness_run_id`：绑 Task 用 Task run，否则用 Conversation run。
 
-商品创建在一个业务事务中写入 Product、live schema-v3 图、商品 Conversation 和归属该商品的 AgentSession。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了则与直接创建同一套模板。直接创建不建 Session。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
+商品创建在一个业务事务中写入。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了与直接创建使用同一套图模板（`build_direct_create_template`），落库集合不同：Agent 表单齐写入 Product intake、不设封面；直接创建（`POST /api/v3/products`）不写 intake、封面为第一张图、不建 Session。`POST /api/v2/products` 仍可创建带封面的商品而不写 live graph，空图稍后由 `POST /api/v3/products/{id}/workflows` 补。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
 
 `GlobalAgentDock` 负责 Session/Task 列表、搜索、跳转和待确认整理 Draft，不拥有画布或 WorkflowGraphRun。全局素材整理只发布 `LibraryOrganizationDraft`；用户确认后由 ProductFlow 重新观察事实并应用。
 
-主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、continuation Turn、`tool_steps` 白名单和 effect reconciliation 以 `application/agent/`、`agent-service/src/pi-runtime.ts` 与 `test_workflow_agent_service.py`、`test_agent_product_workspaces.py`、`test_media_library_drafts.py` 为准。
+主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。问题回答在 ProductFlow 侧实现为 continuation Turn（`control.answer_agent_question`），不调用 `AgentServiceClient.answer_question`。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、continuation Turn、`tool_steps` 白名单和 effect reconciliation 以 `application/agent/`、`agent-service/src/pi-runtime.ts` 与 `test_workflow_agent_service.py`、`test_agent_product_workspaces.py`、`test_media_library_drafts.py` 为准。Python `AgentToolStepKind` 目前不含 Pi 已发出的 `apply_graph` / `propose_graph`；迁 Go 时白名单与 Pi 对齐，不把这个缺口当产品合同。
 
 实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；全局素材 Draft `media_library/drafts.py`。商品 `WorkflowDraft` HTTP 已删除，对应 URL 返回 404。商品 Goal 是显式 `AgentTask`：Turn 或 `WorkflowGraphRun` 结束不会把 Goal 标成完成；用户通过 `POST /api/v2/agent-tasks/{id}/complete` 完成。
 
@@ -149,6 +150,7 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 - `upload`
 - `workflow_generation`
 - `image_session_attach`
+- `local_edit`
 
 商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。
 

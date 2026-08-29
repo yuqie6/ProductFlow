@@ -42,6 +42,9 @@ backend-test:
 docs-check:
     python3 scripts/check_docs.py
 
+export-http-contracts:
+    uv run --directory backend python ../scripts/export_http_contracts.py
+
 backend-test-live-recovery:
     bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py
