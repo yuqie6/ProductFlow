@@ -1,0 +1,113 @@
+package providers
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/imagesession"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+)
+
+const defaultTimeout = 120 * time.Second
+
+func newHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultTimeout}
+}
+
+func endpoint(baseURL, path string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "https://api.openai.com"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
+}
+
+func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string, body io.Reader, contentType string) (int, []byte, error) {
+	if client == nil {
+		client = newHTTPClient()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return 0, nil, graph.ErrProviderUnknown()
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, mapTransport(err)
+	}
+	defer resp.Body.Close()
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if readErr != nil {
+		return resp.StatusCode, raw, graph.ErrProviderUnknown()
+	}
+	return resp.StatusCode, raw, nil
+}
+
+func mapTransport(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return graph.ErrProviderUnknown()
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return graph.ErrProviderUnknown()
+	}
+	return graph.ErrProviderUnknown()
+}
+
+func mapGraphStatus(status int, body []byte) error {
+	if status >= 500 || status == http.StatusTooManyRequests {
+		return graph.ErrProviderUnknown()
+	}
+	if status >= 400 {
+		return fmt.Errorf("供应商拒绝请求（HTTP %d）", status)
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return graph.ErrProviderUnknown()
+	}
+	return nil
+}
+
+func mapChatStatus(status int, body []byte) error {
+	if status >= 500 || status == http.StatusTooManyRequests {
+		return imagesession.ErrUnknown()
+	}
+	if status >= 400 {
+		return apperr.Validation("图片供应商拒绝了本次请求，请调整提示词、参考图或参数后重试")
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return imagesession.ErrUnknown()
+	}
+	return nil
+}
+
+func decodeB64(raw string) ([]byte, error) {
+	trimmed := strings.TrimSpace(raw)
+	if comma := strings.Index(trimmed, ","); comma >= 0 && strings.Contains(trimmed[:comma], "base64") {
+		trimmed = trimmed[comma+1:]
+	}
+	decoded, err := decodeStdB64(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if len(decoded) == 0 {
+		return nil, fmt.Errorf("供应商没有返回图片结果")
+	}
+	return decoded, nil
+}

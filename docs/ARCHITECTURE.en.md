@@ -5,48 +5,42 @@
 ProductFlow is a single-administrator, single-merchant workspace with seven runtime units:
 
 1. React/Vite Web.
-2. FastAPI business API.
-3. Dramatiq worker.
-4. PostgreSQL async dispatcher.
+2. Go business API.
+3. Go worker.
+4. Go async dispatcher.
 5. Node.js 22 + Pi SDK ProductFlow Agent service.
 6. PostgreSQL.
 7. Redis and media storage.
 
-The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher.
+The browser reaches only Web and the business API. The Agent service calls internal business-API endpoints with a dedicated bearer token; the API controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher. Default processes are `go/cmd/productflow-api`, `productflow-worker`, and `productflow-dispatcher`. `backend/` keeps Alembic and an optional Python fallback (Compose profile `python`) and is not the default runtime.
 
 This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md` and durable rationale in `adr/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service.
 
 ## 2. Backend Layers
 
-`backend/src/productflow_backend/` keeps four boundaries:
+The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses pgx, and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Alembic remains the schema authority.
 
-- `presentation/`: FastAPI routes, request/response schemas, authentication, upload reads, and HTTP error mapping.
-- `application/`: product, Agent conversation, schema-v3 graph, image library, image session, settings, and asynchronous use cases.
-- `domain/`: enums, business errors, and database-free DAG rules.
-- `infrastructure/`: SQLAlchemy, provider clients, Redis/Dramatiq, storage, logging, and the Agent service client.
-
-Routes do not own complex transactions or provider payload construction. The application layer owns business transactions, and infrastructure adapts external systems. FastAPI dependencies and workers own Session lifetime; a public application command may own one explicit commit/rollback, while internal `stage_*` helpers only assemble or flush.
+`backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process.
 
 Current code ownership:
 
-| Capability | Application/Domain owner | HTTP/External owner | Primary regression tests |
+| Capability | Package | HTTP / process | Primary regression tests |
 |---|---|---|---|
-| Agent product creation | `agent/product_workspaces.py`, `application/product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
-| Agent Session and Task | `agent/sessions.py`, `tasks.py` | `routes/agent_sessions.py`, `routes/agent_tasks.py` | `test_agent_sessions.py`, `test_agent_tasks.py` |
-| Agent Turn and sync | `agent/conversations.py`, `turn_projection.py`, `control.py`, `execution.py`, `sync.py`, `turn_status.py`, `idempotency.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
-| Agent tools and context | `agent/tool_ledger.py`, `gallery_tools.py`, `media_library_tools.py`, `graph_tools.py`, `agent_context.py` | `routes/agent_internal.py` | `test_workflow_agent_service.py`, `test_graph_proposals.py`, `test_media_library_drafts.py` |
-| Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
-| Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Graph artifact contracts | `domain/artifact_contracts.py` | `routes/workflow_graphs.py` | `test_workflow_draft_api.py` (retired URLs 404) |
-| schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py`, `graph_run_durability.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
-| Recipes | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
-| Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
-| Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
-| Iterative image generation | `image_sessions/` (`service.py`, `generation.py`), `infrastructure/image/chat_types.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
-| Local image edits | `local_image_edits/` | `routes/local_image_edits.py` | local-image-edit tests |
-| Settings and providers | `settings.py`, `infrastructure/runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
-| Async dispatch | `async_delivery.py`, `durable_recovery.py` | `commands/run_async_dispatcher.py`, Compose `productflow-async-dispatcher` | `test_async_delivery.py`, `test_async_dispatcher_command.py` |
-| Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
+| Agent product creation | `go/internal/product`, `go/internal/agent` | `productflow-api` | `go/internal/product`, `go/internal/agent` |
+| Agent Session and Task | `go/internal/agent` | `productflow-api` | `go/internal/agent/http_test.go` |
+| Agent Turn and sync | `go/internal/agent` | `productflow-api`, `productflow-worker` | `go/internal/agent` |
+| Agent tools and context | `go/internal/agent` | internal HTTP | `go/internal/agent/surface_test.go` |
+| Global media library | `go/internal/library` | `productflow-api` | `go/internal/library` |
+| Global library organization Draft | `go/internal/library` | `productflow-api` | `go/internal/library`, `go/internal/agent` |
+| schema-v3 graph and execution | `go/internal/graph` | `productflow-api`, `productflow-worker` | `go/internal/graph` |
+| Recipes | `go/internal/recipe` | `productflow-api` | `go/internal/recipe` |
+| Delivery renditions | `go/internal/delivery` | `productflow-api`, `productflow-worker` | `go/internal/delivery` |
+| Product image library | `go/internal/product`, `go/internal/media` | `productflow-api` | `go/internal/product` |
+| Iterative image generation | `go/internal/imagesession` | `productflow-api`, `productflow-worker` | `go/internal/imagesession` |
+| Local image edits | `go/internal/localedit` | `productflow-api`, `productflow-worker` | `go/internal/localedit` |
+| Settings and providers | `go/internal/settings`, `go/internal/providers` | `productflow-api`; worker resolves bindings | `go/internal/settings`, `go/internal/providers` |
+| Async dispatch | `go/internal/platform/queue` | `productflow-dispatcher`, `productflow-worker` | `go/internal/platform/queue`, graph/image-session delivery tests |
+| Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
 
 ## 3. Frontend Structure
 
@@ -100,7 +94,7 @@ product name (+ optional types and 1..6 uploads)
 
 ProductFlow owns products, graph-proposal confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, `LibraryOrganizationDraft` revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `expected_harness_run_id` in `application/agent/turn_projection.py`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
 
-Product creation writes one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`. A complete Agent form uses the same graph template as direct create (`build_direct_create_template`) but a different persist set: Agent form-complete writes Product intake and does not set cover; direct create (`POST /api/v3/products`) writes no intake, sets cover to the first image, and creates no Session. `POST /api/v2/products` can still create a covered product without a live graph; an empty graph can be added later with `POST /api/v3/products/{id}/workflows`. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
+Product creation writes one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`. A complete Agent form uses the same graph template as direct create (`graph.BuildDirectCreateTemplate`) but a different persist set: Agent form-complete writes Product intake and does not set cover; direct create (`POST /api/v3/products`) writes no intake, sets cover to the first image, and creates no Session. `POST /api/v2/products` can still create a covered product without a live graph; an empty graph can be added later with `POST /api/v3/products/{id}/workflows`. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
 `GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowGraphRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
 
@@ -170,18 +164,18 @@ Global media-library reads, folder/tag/archive organization, source saves, and w
 - `agent`: workflow Agent.
 - `image`: workflow and image-session generation.
 
-FastAPI resolves prompt/image bindings. The Agent service obtains the agent binding through an internal-token-protected endpoint. Missing bindings, disabled profiles, and empty models produce explicit configuration failures.
+The Go business API resolves prompt/image bindings. The Agent service obtains the agent binding through an internal-token-protected endpoint. Missing bindings, disabled profiles, and empty models produce explicit configuration failures.
 
 Runtime image-tool settings are filtered through the allowed-field contract before a provider adapter maps them. Candidate count comes from image-type quantity or image-session generation_count and is not an advanced tool option.
 
 ## 9. Asynchronous Work and Recovery
 
-- Dramatiq executes workflow nodes, image-session candidates, and delivery renditions.
+- The Go worker executes workflow nodes, image-session candidates, delivery renditions, and local edits.
 - The async dispatcher scans durable dispatch/recovery rows in PostgreSQL and delivers them to Redis. `just dev` and Compose both start this process.
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and FastAPI SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md` and `rollout/pi-agent-durability.md`.
+- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and the business API SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md` and `rollout/pi-agent-durability.md`.
 - ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security
@@ -199,11 +193,11 @@ Uploads are checked for MIME, actual image format, byte size, pixel count, and c
 
 ## 11. Schema Evolution
 
-SQLAlchemy metadata describes current online models. Historical Alembic revisions currently still support empty-database `upgrade head`. The main repository does not write old-data backfill, freeze, or cutover gates. Leftover archive/gallery tables and compatibility stubs are deleted under ADR 0010 rather than wrapped. Following mainline may recreate the database and storage.
+Historical Alembic revisions currently still support empty-database `upgrade head`. The Go runtime does not AutoMigrate. The main repository does not write old-data backfill, freeze, or cutover gates. Leftover archive/gallery tables and compatibility stubs are deleted under ADR 0010 rather than wrapped. Following mainline may recreate the database and storage.
 
 ## 12. Quality Gates
 
-- Backend: Ruff, full pytest, SQLite migration, and opt-in PostgreSQL/Redis live tests.
+- Backend: Go `go test ./...`, Alembic `upgrade head`, and opt-in PostgreSQL/Redis live tests.
 - Frontend: Vitest, ESLint, TypeScript, and Vite production build. The skip-Agent full-graph browser gate against real prompt/image providers is opt-in: `just web-e2e-live-graph`.
 - Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`, and explicit live provider/dependency gates.
 - Cross-layer changes add real browser, database, or provider validation according to risk.
@@ -212,6 +206,6 @@ Code/document synchronization rules:
 
 - Route changes update `App.tsx`, `lib/api.ts`, the PRD page table, and the user guide together.
 - User-operation changes update `USER_GUIDE.en.md` and `web/src/pages/HelpPage.tsx` together.
-- Enum/DTO changes check `domain/enums.py`, Pydantic schemas, `lib/types.ts`, label maps, and parser tests.
+- Enum/DTO changes check Go DTOs, `lib/types.ts`, label maps, and parser tests.
 - Transaction/queue/recovery changes trace the application entrypoint, durable row, broker call, worker claim, and recovery tests.
 - Module moves update this ownership table and package `AGENTS.md`, and remove references to the old path.

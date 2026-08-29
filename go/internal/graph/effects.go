@@ -22,6 +22,9 @@ type providerUnknownError struct{}
 
 func (providerUnknownError) Error() string { return ProviderUnknownDetail }
 
+// ErrProviderUnknown 把超时或 5xx 等无法证明的供应商结果标成 unknown。
+func ErrProviderUnknown() error { return providerUnknownError{} }
+
 func isProviderUnknown(err error) bool {
 	var u providerUnknownError
 	return errors.As(err, &u)

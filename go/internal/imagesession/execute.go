@@ -79,6 +79,9 @@ type unknownErr struct{}
 
 func (unknownErr) Error() string { return unknownDetail }
 
+// ErrUnknown 把超时或 5xx 等无法证明的供应商结果标成 unknown。
+func ErrUnknown() error { return unknownErr{} }
+
 func isUnknown(err error) bool {
 	var u unknownErr
 	return errors.As(err, &u)

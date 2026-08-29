@@ -41,7 +41,7 @@ Sub-agents do not commit, push, reset, revert unrelated changes or declare the o
 The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another implementation task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
 
 ## Project Structure & Module Organization
-ProductFlow is a single-administrator, single-merchant workspace. The backend lives in `backend/src/productflow_backend/` and uses `presentation/` for FastAPI routes and schemas, `application/` for use cases, `domain/` for enums and database-free rules, and `infrastructure/` for database, storage, queues, providers, and service clients. Alembic migrations are in `backend/alembic/versions/`; backend tests are in `backend/tests/`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `backend/AGENTS.md` or `web/AGENTS.md` before editing that package.
+ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, pgx, asynq). `backend/` keeps Alembic and the sealed Python tree; optional Compose profile `python` can still start uvicorn/dramatiq. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `go/README.md`, `backend/AGENTS.md`, or `web/AGENTS.md` before editing that package.
 
 ## Build, Test, and Development Commands
 Use the root `justfile` whenever possible:
@@ -49,12 +49,16 @@ Use the root `justfile` whenever possible:
 - `just backend-install` — install backend dependencies with `uv` dev extras.
 - `docker compose up -d` — start local PostgreSQL and Redis.
 - `just backend-migrate` — apply Alembic migrations with dev env vars.
-- `just backend-run` — run the FastAPI API on the dev port.
-- `just backend-worker` — run Dramatiq workers for async jobs.
+- `just go-api` — run the Go business API (default local runtime).
+- `just go-worker` — run the Go asynq worker.
+- `just go-dispatcher` — run the Go async dispatcher.
+- `just go-test` — run Go tests (`cd go && go test ./...`).
+- `just backend-run` — optional: run the sealed Python FastAPI API.
+- `just backend-worker` — optional: run Dramatiq workers.
 - `just agent-service-install` — install the Node.js/Pi Agent dependencies from the lockfile.
 - `just agent-service-run` — run the Node.js/Pi workflow Agent service.
 - `just agent-service-test` — run Agent service tests.
-- `just dev` — stop leftover API/worker/dispatcher/Agent/Web processes, start local PostgreSQL/Redis, apply migrations, then run backend, worker, dispatcher, Pi Agent, and Web in parallel.
+- `just dev` — stop leftover API/worker/dispatcher/Agent/Web processes, start local PostgreSQL/Redis, apply migrations, then run Go API, worker, dispatcher, Pi Agent, and Web in parallel.
 - `just dev-stop` — stop leftover API/worker/dispatcher/Agent/Web processes from a previous `just dev`.
 - `just backend-test` — run backend pytest tests.
 - `just docs-check` — verify documented routes, code-owner paths, and local Markdown links.
@@ -67,7 +71,7 @@ Use the root `justfile` whenever possible:
 Python targets 3.12 and uses Ruff with 120-character lines plus `E`, `F`, `I`, `UP`, and `B` lint rules. Keep imports sorted, prefer typed functions, and name modules/functions in `snake_case`. React components and pages use `PascalCase` filenames, such as `ProductListPage.tsx`; hooks, helpers, and API functions use `camelCase`. Keep provider-specific code behind infrastructure factories instead of leaking it into routes.
 
 ## Testing Guidelines
-Backend tests use pytest and are discovered from `backend/tests/` as `test_*.py`. Add workflow-level coverage when changing product, Draft, workflow, settings, provider, archive, or image-session behavior. Run `just backend-test` before backend commits, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes require an Alembic revision and focused migration regression coverage. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
+Go tests live under `go/` and are the default backend gate: `just go-test` (needs `DATABASE_URL` for packages that use PostgreSQL). Python tests remain in `backend/tests/` as `test_*.py` for the sealed tree and Alembic. Run `just backend-test` when changing Python/Alembic, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes require an Alembic revision and focused migration regression coverage. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
 
 ## Commit & Pull Request Guidelines
 Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.

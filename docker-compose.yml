@@ -30,7 +30,9 @@ services:
       timeout: 5s
       retries: 20
 
+  # 可选回退：`docker compose --profile python up`。默认不要与 Go 同时占用 29280。
   productflow-backend:
+    profiles: ["python"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -67,7 +69,7 @@ services:
     command: >-
       sh -c "alembic upgrade head && uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
     ports:
-      - "${APP_HOST_PORT:-29280}:29280"
+      - "${PYTHON_APP_HOST_PORT:-29286}:29280"
     volumes:
       # STORAGE_HOST_PATH is host-only. Leave it unset to use the productflow-storage named volume,
       # or set it to an existing absolute host directory.
@@ -89,6 +91,7 @@ services:
       start_period: 20s
 
   productflow-worker:
+    profiles: ["python"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -129,6 +132,7 @@ services:
         condition: service_healthy
 
   productflow-async-dispatcher:
+    profiles: ["python"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -168,10 +172,21 @@ services:
       productflow-agent-service:
         condition: service_healthy
 
-  # profile go：双轨增加 Go API / worker / dispatcher，不替换 uvicorn / dramatiq。
-  # 同一数据库不要同时跑两个 dispatcher；启用 profile 前先停 productflow-async-dispatcher。
+  # Alembic 仍是 schema 权威。Go API 不跑迁移。
+  productflow-migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # 默认业务运行时：Go API / worker / dispatcher。Python 三进程改走 profile python。
   productflow-go-api:
-    profiles: ["go"]
     build:
       context: .
       dockerfile: go/Dockerfile
@@ -186,10 +201,19 @@ services:
       DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
       REDIS_URL: redis://productflow-redis:6379/0
       STORAGE_ROOT: /app/storage
+      AGENT_SERVICE_BASE_URL: http://productflow-agent-service:29284
+      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
+      AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS: ${AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS:-5}
+      AGENT_SERVICE_READ_TIMEOUT_SECONDS: ${AGENT_SERVICE_READ_TIMEOUT_SECONDS:-90}
+      AGENT_TURN_SYNC_POLL_SECONDS: ${AGENT_TURN_SYNC_POLL_SECONDS:-1}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
+      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
+      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
     command: ["productflow-api"]
     ports:
-      - "${GO_APP_HOST_PORT:-29285}:29280"
+      - "${APP_HOST_PORT:-29280}:29280"
     volumes:
       - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
     depends_on:
@@ -197,6 +221,8 @@ services:
         condition: service_healthy
       productflow-redis:
         condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29280/healthz"]
       interval: 10s
@@ -205,7 +231,6 @@ services:
       start_period: 10s
 
   productflow-go-worker:
-    profiles: ["go"]
     build:
       context: .
       dockerfile: go/Dockerfile
@@ -219,9 +244,14 @@ services:
         condition: service_healthy
       productflow-redis:
         condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
+      productflow-go-api:
+        condition: service_healthy
+      productflow-agent-service:
+        condition: service_healthy
 
   productflow-go-dispatcher:
-    profiles: ["go"]
     build:
       context: .
       dockerfile: go/Dockerfile
@@ -235,6 +265,8 @@ services:
         condition: service_healthy
       productflow-redis:
         condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
 
   productflow-agent-service:
     build:
@@ -244,7 +276,7 @@ services:
     environment:
       AGENT_LISTEN_ADDRESS: 0.0.0.0:29284
       AGENT_DATA_ROOT: /data
-      PRODUCTFLOW_INTERNAL_BASE_URL: http://productflow-backend:29280
+      PRODUCTFLOW_INTERNAL_BASE_URL: http://productflow-go-api:29280
       PRODUCTFLOW_REQUEST_TIMEOUT: ${PRODUCTFLOW_REQUEST_TIMEOUT:-30s}
       AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
       AGENT_EVENT_POLL_INTERVAL: ${AGENT_EVENT_POLL_INTERVAL:-100ms}
@@ -256,7 +288,7 @@ services:
     volumes:
       - productflow-agent-data:/data
     depends_on:
-      productflow-backend:
+      productflow-go-api:
         condition: service_healthy
 
   productflow-web:
@@ -269,7 +301,7 @@ services:
     ports:
       - "${WEB_PORT:-29281}:80"
     depends_on:
-      productflow-backend:
+      productflow-go-api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok"]

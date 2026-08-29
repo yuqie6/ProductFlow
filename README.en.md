@@ -47,7 +47,7 @@ The public instance is a personal live demo with one administrator and one merch
 - Image bindings support OpenAI Responses, OpenAI Images-compatible APIs, and Google Gemini image capabilities.
 - Advanced image fields include quality, format, compression, background, moderation, action, input fidelity, and partial images. Business selections own generation count.
 - Agent Turns run in a separate Node.js 22 service backed by the Pi SDK ProductFlow adapter. SSE supports reconnect and replay; Pi operating-system tools are disabled.
-- Dramatiq and Redis execute image and delivery jobs. PostgreSQL stores business state, and storage holds media bytes.
+- The Go worker and Redis execute image and delivery jobs. PostgreSQL stores business state, and storage holds media bytes.
 
 ## Current Scope
 
@@ -79,7 +79,7 @@ Repository documentation:
 
 ## Technology
 
-- Backend: Python 3.12+, FastAPI, SQLAlchemy, Alembic, Dramatiq, Redis, PostgreSQL, and Pillow.
+- Backend: Go 1.23 (Gin, pgx, asynq), Alembic migrations, Redis, PostgreSQL. Python `backend/` remains for Alembic and optional fallback.
 - Agent service: Node.js 22, Pi SDK, ProductFlow Tool adapter, JSONL session files, and JSON event files.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, XYFlow, and Tailwind CSS 4.
 - Model SDKs: OpenAI Python/TypeScript provider adapters and Google GenAI.
@@ -88,6 +88,9 @@ Repository documentation:
 
 ```text
 ProductFlow/
+  go/
+    cmd/
+    internal/
   backend/
     alembic/versions/
     src/productflow_backend/
@@ -128,7 +131,7 @@ Replace at least:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, Redis, FastAPI, the Dramatiq worker, the async dispatcher, the Agent service, and Web. The backend container runs `alembic upgrade head` before Uvicorn.
+Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs `alembic upgrade head` before the Go API. uvicorn / dramatiq start only with Compose profile `python`. Do not run profile `python` against the same database as the default Go dispatcher.
 
 Default endpoints:
 
@@ -141,7 +144,7 @@ Log in with `ADMIN_ACCESS_KEY`, unlock settings with `SETTINGS_ACCESS_TOKEN`, an
 ### 3. Data and Logs
 
 ```bash
-docker compose logs -f productflow-backend productflow-worker productflow-agent-service productflow-web
+docker compose logs -f productflow-go-api productflow-go-worker productflow-agent-service productflow-web
 docker compose down
 ```
 
@@ -157,7 +160,8 @@ Set `STORAGE_HOST_PATH=/absolute/host/path` to use a host directory. When omitte
 
 ### 1. Prerequisites
 
-- Python 3.12+ and `uv`
+- Go 1.23+
+- Python 3.12+ and `uv` (Alembic)
 - Node.js 22.19+ and `pnpm`
 - Docker / Docker Compose
 - `just` (recommended)
@@ -184,7 +188,7 @@ just backend-migrate
 
 ### 4. Start the Local Development Environment
 
-After installation, one command starts PostgreSQL, Redis, migrations, FastAPI, the worker, the Pi Agent, and Web:
+After installation, one command starts PostgreSQL, Redis, migrations, the Go API / worker / dispatcher, the Pi Agent, and Web:
 
 ```bash
 just dev
@@ -193,13 +197,14 @@ just dev
 You can also run the four processes in separate terminals when you need separate logs:
 
 ```bash
-just backend-run
-just backend-worker
+just go-api
+just go-worker
+just go-dispatcher
 just agent-service-run
 just web-dev
 ```
 
-`backend-run`, `backend-worker`, `backend-async-dispatcher`, `agent-service-run`, and `web-dev` all load `.env.dev`. `just dev` stops leftover API / worker / dispatcher / Agent / Web processes before migrating and starting; `just dev-stop` only runs that cleanup. Ctrl+C ends those app processes. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
+`go-api`, `go-worker`, `go-dispatcher`, `agent-service-run`, and `web-dev` all load `.env.dev`. The Go dispatcher scans durable PostgreSQL dispatch rows and delivers them to Redis. Python `backend-run` / `backend-worker` / `backend-async-dispatcher` remain available as a manual fallback. `just dev` stops leftover API / worker / dispatcher / Agent / Web processes before migrating and starting; `just dev-stop` only runs that cleanup. Ctrl+C ends those app processes. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
 
 ```bash
 docker compose down
@@ -214,6 +219,7 @@ Default development endpoints:
 ## Verification
 
 ```bash
+just go-test
 uv run --directory backend ruff check src tests
 just backend-test
 pnpm --dir web test:run
@@ -263,7 +269,7 @@ just release
 - `/api/media-library`
 - `/api/settings`
 
-FastAPI OpenAPI and `backend/src/productflow_backend/presentation/routes/` are authoritative for the complete contract.
+The Go HTTP handlers in `go/internal/*/http.go` are authoritative for the complete contract. The Python route tree is the sealed reference.
 
 ## Open Source and Security
 

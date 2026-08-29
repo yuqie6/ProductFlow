@@ -55,7 +55,7 @@ func main() {
 	httpx.RegisterHealth(engine, pool)
 	settingsStore := settings.NewStore(pool, cfg)
 	auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore}.Register(engine)
-	settings.HTTP{Store: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
+	settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	product.HTTP{
 		Service:  product.Service{Pool: pool, Media: mediaStore},

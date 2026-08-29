@@ -22,6 +22,8 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/providers"
+	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
 
@@ -52,27 +54,29 @@ func main() {
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	productService := product.Service{Pool: pool, Media: mediaStore}
 	deliveryService := delivery.Service{Pool: pool, Media: mediaStore}
+	settingsStore := settings.NewStore(pool, cfg)
+	liveImage := providers.LiveImage{Store: settingsStore}
 	executor := graph.Executor{
 		Pool: pool,
 		Deps: graph.Dependencies{
-			Prompt:   graph.MockPromptProvider{},
-			Image:    graph.MockImageProvider{},
+			Prompt:   providers.LivePrompt{Store: settingsStore},
+			Image:    liveImage,
 			Assets:   productService,
 			Delivery: deliveryService,
 		},
 	}
-	imageExecutor := imagesession.Executor{Pool: pool, Media: mediaStore}
+	imageExecutor := imagesession.Executor{Pool: pool, Media: mediaStore, Provider: liveImage}
 	deliveryExecutor := delivery.Executor{Pool: pool, Media: mediaStore}
-	localExecutor := localedit.Executor{Pool: pool, Media: mediaStore}
+	localExecutor := localedit.Executor{Pool: pool, Media: mediaStore, Provider: liveImage}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
 		poll = time.Millisecond
 	}
 	agentExecutor := agent.Executor{Service: agent.Service{
 		Pool: pool, Graph: graph.Service{Pool: pool},
-		Product:  productService,
-		Library:  library.Service{Pool: pool, Media: mediaStore},
-		Media:    mediaStore,
+		Product: productService,
+		Library: library.Service{Pool: pool, Media: mediaStore},
+		Media:   mediaStore,
 		Gateway: agent.HTTPGateway{
 			BaseURL:     cfg.AgentServiceBaseURL,
 			Token:       cfg.AgentServiceInternalToken,
@@ -84,9 +88,9 @@ func main() {
 		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
 			return executor.ExecuteRun(ctx, aggregateID)
 		},
-		queue.ActorImageSession: imageExecutor.Execute,
-		queue.ActorDelivery:     deliveryExecutor.Execute,
-		queue.ActorLocalEdit:    localExecutor.Execute,
+		queue.ActorImageSession:  imageExecutor.Execute,
+		queue.ActorDelivery:      deliveryExecutor.Execute,
+		queue.ActorLocalEdit:     localExecutor.Execute,
 		queue.ActorAgentTurnSync: agentExecutor.Execute,
 	}
 

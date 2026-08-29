@@ -5,8 +5,9 @@
 - 文档状态：Approved
 - 产品合同：`docs/specs/go-backend-rewrite-prd.md`
 - 决策：`docs/adr/0011-go-vertical-slice-rewrite.md`
-- 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端迁 Go」
-- 当前实现：`backend/` FastAPI 四层 + Dramatiq + Alembic。本文是目标内部设计，不是当前运行事实。
+- 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端已切 Go」
+- 当前运行事实：Go API / worker / dispatcher（Gin + pgx + asynq）+ Alembic。Python `backend/` 保留迁移与可选 Compose profile `python`。
+- 落地差异：未引入 GORM；schema 权威仍是 Alembic。
 - 不复用：`exp` 上的 Go Agent service / `agent-harness`。那条线是 Agent runtime 实验。
 
 宏观进程图保持现有七个运行单元，只替换其中三个业务进程。内部从横向分层改成按功能竖切的模块化单体。
@@ -21,7 +22,7 @@ Browser
         ▼                                        ▼
 ┌───────────────────────────────┐   ┌─────────────────────────────────┐
 │  Go Business Backend          │   │  Agent Service（不变）            │
-│  Gin + GORM + Viper + zap     │◄──┤  Node.js 22 + Pi SDK             │
+│  Gin + pgx + Viper + zap      │◄──┤  Node.js 22 + Pi SDK             │
 │  + go-redis + asynq           │   │  仅交互式 Turn runtime            │
 │  REST（Web）                  │──►│  不拥有业务权威                   │
 │  Internal API（Agent）        │   └─────────────────────────────────┘
@@ -99,11 +100,10 @@ Web 与 `agent-service/` 默认零合同变更。某个 Go 实现无法保持兼
 | 层 | 默认 | 约束 |
 |---|---|---|
 | HTTP | Gin | session、SSE、上传校验、`x-request-id` 自己实现。binding 不替代 application 校验。 |
-| ORM | GORM | 见 §6。关闭 AutoMigrate。 |
+| SQL | pgx | 未引入 GORM。关闭 AutoMigrate。schema 权威仍是 Alembic。生产与测试都是 PostgreSQL，不支持 SQLite。 |
 | 配置 | Viper | 只加载启动配置。运行时设置读 PostgreSQL。 |
 | 日志 | zap | 字段对齐 request / run / node run / image-session task id。禁止 secret、cookie、完整 prompt、provider body、bytes。 |
 | 队列 | asynq + go-redis | 替代 Dramatiq，不替代 `async_dispatches`。task 名与现有 actor 名对齐。 |
-| 驱动 | pgx | 生产与测试都是 PostgreSQL。不支持 SQLite。 |
 | 图片 | 与 Pillow 对拍的 Go 编解码 | preview / thumbnail / DeliverySpec 用 golden fixture。WebP 是明确风险。 |
 
 不引入第二套消息总线，不拆微服务，不在 Go 里实现 Agent loop。
@@ -132,6 +132,7 @@ internal/
   imagesession/
   delivery/
   localedit/
+  providers/    prompt / image HTTP 适配；按 DB binding 解析
   agent/        Session/Task/Turn 投影、internal tools、SSE；不直接写 graph 表
 ```
 
@@ -142,7 +143,7 @@ internal/
 - `store.go`：只访问本包的表。
 - 稳定内部合同（GenerationSpec、DeliverySpec、ChangeSet 操作）放本包 `contract.go`，只此一份。
 
-出包只暴露函数，例如 `graph.ApplyChangeSet`、`graph.SubmitRun`、`library.ConfirmOrganizationDraft`。禁止别的包 import 本包 GORM model。
+出包只暴露函数，例如 `graph.ApplyChangeSet`、`graph.SubmitRun`、`library.ConfirmOrganizationDraft`。禁止别的包 import 本包持久化行类型。
 
 跨聚合在 **一个** 用例里编排，共用一次事务。创建示例：
 
@@ -191,21 +192,18 @@ Agent 包只做投影和 tool 入口。改 live graph、请求 Run、改全局�
 
 没有 `workflow_drafts` 模块。V1 archive 表与 cutover CLI 第一波仍可留在 Python。
 
-## 6. GORM
+## 6. 持久化
 
-当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。GORM 规则：
+当前写入依赖 `FOR UPDATE`、确定性锁顺序、幂等 key 和 JSON 列形状。落地用 pgx 手写 SQL，未引入 GORM。
 
-1. 关闭 AutoMigrate。双轨期 schema 权威仍是 Alembic。
-2. 每个 public command 显式 Begin/Commit/Rollback。内部 helper 只组装或 flush。
-3. claim / 确认 / 绑定使用 `SELECT ... FOR UPDATE`（`clause.Locking` 或原 SQL），锁顺序与现有 Python 相同：先聚合后成员。
+1. 关闭 AutoMigrate。schema 权威仍是 Alembic。
+2. 每个 public command 显式 Begin/Commit/Rollback。内部 helper 只组装，不偷偷 commit。
+3. claim / 确认 / 绑定使用 `SELECT ... FOR UPDATE`，锁顺序与封印 Python 相同：先聚合后成员。
 4. 生成容量用 PostgreSQL advisory lock 原语句，不改成 Redis 信号量。
 5. JSON 列按现有 payload 读写。合同测试用持久化 fixture。
 6. 禁止 association 级联删除替代应用删除路径。
-7. 表达不了的锁或部分更新，该函数用 `tx.Exec` / pgx。
 
-连续两个切片的写路径都被迫绕开 GORM 时，另开 ADR 考虑 sqlc。那不是开工条件。
-
-Cutover 后从当时 `alembic upgrade head` dump 做 Go migration 基线（goose 或等价），再冻结 Alembic。
+Cutover 后从当时 `alembic upgrade head` dump 做 Go migration 基线（goose 或等价）仍未做；Alembic 继续是 schema 权威。
 
 ## 7. 队列与 dispatcher
 
@@ -270,7 +268,7 @@ Agent 切片靠后，因为它和 lease、fencing、SSE cursor、worker 恢复�
 
 1. 封印 live Python 行为后即可写 `go/`。工作台证明约束 cutover，不约束 host 与功能切片开工。
 2. 只换业务后端三个进程。Agent、Web、PostgreSQL 权威和 storage 布局不动。
-3. Gin + GORM + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。
+3. Gin + pgx + Viper + zap + asynq；asynq 不是状态源，保留 `async_dispatches`。未使用 GORM。
 4. 内部按功能竖切，不按全局 `handlers/dto/models` 横向复制。
 5. 跨聚合走同一 `tx` 上的 app 函数，不拆微服务。
 6. 测试与生产都用 PostgreSQL。

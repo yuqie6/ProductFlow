@@ -6,8 +6,8 @@
 - 决策：[`adr/0011-go-vertical-slice-rewrite.md`](../adr/0011-go-vertical-slice-rewrite.md)
 - 阅读入口：`docs/ROADMAP.md`「工程运行时：业务后端迁 Go」
 - 实现设计：`docs/specs/go-backend-rewrite-design.md`
-- 当前运行事实：FastAPI + Dramatiq + PostgreSQL async dispatcher + Alembic。本文不是已上线行为。
-- 不得把 Gin / GORM / asynq 写进 `CONTEXT.md`、`docs/PRD.md` 或 `docs/ARCHITECTURE.md` 的当前事实段落，直到 cutover。
+- 当前运行事实：Go 业务 API / worker / dispatcher + PostgreSQL `async_dispatches` + Alembic。Python `backend/` 保留迁移与可选 Compose profile `python`。
+- Gin / pgx / asynq 是当前实现；未使用 GORM。Web 与 Agent 合同仍以封印基线为准。
 
 本文只定义这次工程的产品合同：用户能感知什么、运行单元换成什么、什么算完成。内部包结构、队列状态机和切片顺序见设计文档。
 

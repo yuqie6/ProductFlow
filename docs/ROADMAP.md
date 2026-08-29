@@ -51,16 +51,11 @@ Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task �
 - 更多图片 provider adapter 和可观测性。
 - 工作流运行成本、时延和失败率统计。
 
-## 工程运行时：业务后端迁 Go
+## 工程运行时：业务后端已切 Go
 
-业务 API、worker、dispatcher 按垂直切片迁到 Go。决策见 [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md)。Gin / GORM / asynq 在 cutover 前不写进 CONTEXT / PRD / ARCHITECTURE 的当前事实段落。
+默认 `just dev` 与 Compose 启动 Go API / worker / dispatcher。决策见 [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md)。产品合同：[`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)。
 
-- 产品合同：[`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)
-- 实现设计：[`specs/go-backend-rewrite-design.md`](specs/go-backend-rewrite-design.md)
-- 只替换业务 API、worker 和 async dispatcher。Web 与 Node.js/Pi Agent 保持现有合同。
-- 封印基线是 live Python 的用户可观察行为与 HTTP / SSE / queue 合同。商品 WorkflowDraft 不得复活。
-- 工作台浏览器证明与实现并行，仍是 cutover 与产品完成度闸门，不插入工作台规格的实施。
-- `exp` 上的 Go Agent 不是本项目的起点。
+仍未完成、因此留在路线图的闸门：工作台连续动作浏览器证明（见上方）、一次 backup/restore 后已有商品仍能打开并跑图、真实 prompt/image provider 的 live 成功/失败/`unknown` 证据。Python `backend/` 仅保留 Alembic 与可选 profile `python`。
 
 ## SaaS
 

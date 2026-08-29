@@ -1,5 +1,7 @@
 # Backend Engineering Guidelines
 
+Python `backend/` is the sealed FastAPI tree and Alembic source. The default business runtime is `go/`. Edit this package for migrations, contract comparison, or the optional Compose profile `python`. Live HTTP, worker, and dispatcher ownership is `go/internal/` (see `docs/ARCHITECTURE.md` and `go/README.md`).
+
 ## Read First
 
 Use `docs/ARCHITECTURE.md` for the current code map and `CONTEXT.md` for domain invariants. Before editing a backend subsystem, read its route/schema, application entrypoint, models or external adapter, and the closest tests. Paths in old design notes are not ownership evidence.

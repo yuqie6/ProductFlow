@@ -49,16 +49,11 @@ Real provider, real stores, SSE reconnect, and the production switch for backgro
 - More image provider adapters and observability.
 - Workflow run cost, latency, and failure-rate stats.
 
-## Engineering runtime: move the business backend to Go
+## Engineering runtime: business backend is Go
 
-Replace the business API, worker, and async dispatcher with vertical Go packages. Decision: [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md). Do not write Gin / GORM / asynq into CONTEXT / PRD / ARCHITECTURE as current fact before cutover.
+Default `just dev` and Compose start the Go API, worker, and dispatcher. Decision: [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md). Product contract: [`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md).
 
-- Product contract: [`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)
-- Design: [`specs/go-backend-rewrite-design.md`](specs/go-backend-rewrite-design.md)
-- Replace the business API, worker, and async dispatcher only. Web and the Node.js/Pi Agent keep their contracts.
-- The freeze line is live Python user-visible behavior plus the HTTP / SSE / queue pack. Product WorkflowDraft must not return.
-- Workbench browser proof runs in parallel and remains the cutover and product-quality gate. It does not enter the workbench spec's implementation.
-- The Go Agent on `exp` is not the starting point.
+Still on the roadmap: workbench continuous-action browser proof (above), backup/restore of existing products that can still open and run a graph, and live prompt/image provider success / fail / `unknown` evidence. Python `backend/` remains for Alembic and optional Compose profile `python`.
 
 ## SaaS
 

@@ -12,7 +12,7 @@
 | [`PRD.md`](PRD.md) | 用户现在能做什么、非目标、成功标准 | 模块路径、部署命令 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 运行单元、代码所有权、数据流、测试锚点 | 未实现设想、操作教程 |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | 页面怎么操作、故障怎么处理 | 内部事务、模型表 |
-| [`../AGENTS.md`](../AGENTS.md)、[`../backend/AGENTS.md`](../backend/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
+| [`../AGENTS.md`](../AGENTS.md)、[`../go/AGENTS.md`](../go/AGENTS.md)、[`../backend/AGENTS.md`](../backend/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
 
 `web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影，同一提交更新。
 
@@ -38,7 +38,7 @@
 | `specs/agent-canvas-sandbox.md` | Draft | Goal 托管环 |
 | `specs/global-agent-human-workflow-design.md` | Approved | 全局 Agent 与人工工作流设计 |
 | `specs/pi-agent-runtime-integration.md` | Approved | Pi 未过的 durability / Fresh Observation gate |
-| `specs/go-backend-rewrite-prd.md` | Approved | 业务后端迁 Go 的产品合同；cutover 前不写进当前架构事实 |
+| `specs/go-backend-rewrite-prd.md` | Approved | 业务后端迁 Go 的产品合同；默认运行时已切 Go，残留闸门见 ROADMAP |
 | `specs/go-backend-rewrite-design.md` | Approved | 垂直切片、封印基线、Strangler 顺序 |
 | `specs/productflow-studio-requirements.md` | Draft | Studio 需求清单 |
 

@@ -122,6 +122,9 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if spec, ok := node.Config["generation_spec"].(map[string]any); ok {
 			imgReq.GenerationSpec = spec
 		}
+		if promptPayload, ok := node.Config["prompt"].(map[string]any); ok {
+			imgReq.Prompt = promptPayload
+		}
 		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
 			return image.GenerateImage(ctx, imgReq)
 		})

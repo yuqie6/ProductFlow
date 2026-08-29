@@ -43,7 +43,7 @@ docs-check:
     python3 scripts/check_docs.py
 
 go-test:
-    bash -lc 'cd go && go test ./...'
+    bash scripts/with_dev_env.sh bash -lc 'cd go && go test ./...'
 
 go-api:
     bash scripts/with_dev_env.sh bash -lc 'cd go && go run ./cmd/productflow-api'
@@ -119,7 +119,7 @@ web-dev:
 
 [parallel]
 [private]
-dev-services: backend-run backend-worker backend-async-dispatcher agent-service-run web-dev
+dev-services: go-api go-worker go-dispatcher agent-service-run web-dev
 
 dev-stop:
     bash scripts/stop_dev_app_processes.sh

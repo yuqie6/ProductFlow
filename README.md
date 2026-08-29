@@ -47,7 +47,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 图片用途支持 OpenAI Responses、OpenAI Images 兼容接口和 Google Gemini 图片能力。
 - 高级图片参数包括质量、格式、压缩、背景、审核、action、input fidelity 和 partial images；生成数量由业务选择决定。
 - Agent Turn 使用独立 Node.js 22 服务和 Pi SDK ProductFlow adapter，SSE 支持断线续传；Pi 不启用操作系统工具。
-- 图片生成和交付图任务由 Dramatiq + Redis 执行，PostgreSQL 保存业务状态，storage 保存媒体字节。
+- 图片生成和交付图任务由 Go worker + Redis 执行，PostgreSQL 保存业务状态，storage 保存媒体字节。
 
 ## 当前边界
 
@@ -79,7 +79,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ## 技术栈
 
-- 后端：Python 3.12+、FastAPI、SQLAlchemy、Alembic、Dramatiq、Redis、PostgreSQL、Pillow。
+- 后端：Go 1.23（Gin、pgx、asynq）、Alembic 迁移、Redis、PostgreSQL。Python `backend/` 保留给 Alembic 与可选回退。
 - Agent service：Node.js 22、Pi SDK、ProductFlow Tool adapter、JSONL session 文件和 JSON event 文件。
 - 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
 - 模型 SDK：OpenAI Python/TypeScript provider adapter 和 Google GenAI。
@@ -88,6 +88,9 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ```text
 ProductFlow/
+  go/
+    cmd/
+    internal/
   backend/
     alembic/versions/
     src/productflow_backend/
@@ -128,7 +131,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、FastAPI、Dramatiq worker、async dispatcher、Agent service 和 Web。后端容器启动时自动执行 `alembic upgrade head`。
+Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 `alembic upgrade head`。uvicorn / dramatiq 只在 Compose profile `python` 下启动。不要把 profile `python` 与默认 Go dispatcher 同时对着同一库跑。
 
 默认地址：
 
@@ -141,7 +144,7 @@ Compose 包含 PostgreSQL、Redis、FastAPI、Dramatiq worker、async dispatcher
 ### 3. 数据与日志
 
 ```bash
-docker compose logs -f productflow-backend productflow-worker productflow-agent-service productflow-web
+docker compose logs -f productflow-go-api productflow-go-worker productflow-agent-service productflow-web
 docker compose down
 ```
 
@@ -157,7 +160,8 @@ docker compose down -v
 
 ### 1. 准备工具
 
-- Python 3.12+ 与 `uv`
+- Python 3.12+ 与 `uv`（Alembic）
+- Go 1.23+
 - Node.js 22.19+ 与 `pnpm`
 - Docker / Docker Compose
 - `just`（推荐）
@@ -184,7 +188,7 @@ just backend-migrate
 
 ### 4. 启动本地开发环境
 
-准备完成后可以用一个命令启动 PostgreSQL、Redis、数据库迁移、FastAPI、worker、Pi Agent 和 Web：
+准备完成后可以用一个命令启动 PostgreSQL、Redis、数据库迁移、Go API / worker / dispatcher、Pi Agent 和 Web：
 
 ```bash
 just dev
@@ -193,13 +197,14 @@ just dev
 也可以分别在四个终端运行进程，便于单独查看日志：
 
 ```bash
-just backend-run
-just backend-worker
+just go-api
+just go-worker
+just go-dispatcher
 just agent-service-run
 just web-dev
 ```
 
-`backend-run`、`backend-worker`、`backend-async-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。`backend-async-dispatcher` 持续扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递，收到停止信号后退出。`just dev` 会先停掉上次残留的 API / worker / dispatcher / Agent / Web 进程，再迁移并启动；`just dev-stop` 只做这一步清理。Ctrl+C 会结束这些应用进程。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
+`go-api`、`go-worker`、`go-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。Go dispatcher 持续扫描 PostgreSQL 中的 durable dispatch 状态并向 Redis 投递。Python `backend-run` / `backend-worker` / `backend-async-dispatcher` 仍可手动启动作对照。`just dev` 会先停掉上次残留的 API / worker / dispatcher / Agent / Web 进程，再迁移并启动；`just dev-stop` 只做这一步清理。Ctrl+C 会结束这些应用进程。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
 
 ```bash
 docker compose down
@@ -214,6 +219,7 @@ docker compose down
 ## 常用验证
 
 ```bash
+just go-test
 uv run --directory backend ruff check src tests
 just backend-test
 pnpm --dir web test:run
@@ -263,7 +269,7 @@ just release
 - `/api/media-library`
 - `/api/settings`
 
-完整合同以 FastAPI OpenAPI 和 `backend/src/productflow_backend/presentation/routes/` 为准。
+完整合同以 Go HTTP 实现（`go/internal/*/http.go`）为准；Python 路由树是封印对照。
 
 ## 开源与安全
 
