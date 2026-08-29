@@ -63,10 +63,16 @@ type GeneratedImageWriter interface {
 	Write(ctx context.Context, tx pgx.Tx, in GeneratedImageInput) (assetID string, err error)
 }
 
+// DeliveryQueuer 在图片节点成功后排队确定性交付派生。实现放在 delivery，避免 graph import delivery。
+type DeliveryQueuer interface {
+	QueueAfterImageSuccess(ctx context.Context, tx pgx.Tx, nodeID, sourceAssetID string) error
+}
+
 type Dependencies struct {
-	Prompt PromptProvider
-	Image  ImageProvider
-	Assets GeneratedImageWriter
+	Prompt   PromptProvider
+	Image    ImageProvider
+	Assets   GeneratedImageWriter
+	Delivery DeliveryQueuer
 }
 
 // MockPromptProvider 用于测试与未配置真实供应商时的可注入默认。

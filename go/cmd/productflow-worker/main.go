@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/imagesession"
+	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
@@ -46,18 +49,26 @@ func main() {
 
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	productService := product.Service{Pool: pool, Media: mediaStore}
+	deliveryService := delivery.Service{Pool: pool, Media: mediaStore}
 	executor := graph.Executor{
 		Pool: pool,
 		Deps: graph.Dependencies{
-			Prompt: graph.MockPromptProvider{},
-			Image:  graph.MockImageProvider{},
-			Assets: productService,
+			Prompt:   graph.MockPromptProvider{},
+			Image:    graph.MockImageProvider{},
+			Assets:   productService,
+			Delivery: deliveryService,
 		},
 	}
+	imageExecutor := imagesession.Executor{Pool: pool, Media: mediaStore}
+	deliveryExecutor := delivery.Executor{Pool: pool, Media: mediaStore}
+	localExecutor := localedit.Executor{Pool: pool, Media: mediaStore}
 	actors := map[string]queue.ActorFunc{
 		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
 			return executor.ExecuteRun(ctx, aggregateID)
 		},
+		queue.ActorImageSession: imageExecutor.Execute,
+		queue.ActorDelivery:     deliveryExecutor.Execute,
+		queue.ActorLocalEdit:    localExecutor.Execute,
 	}
 
 	mux := asynq.NewServeMux()

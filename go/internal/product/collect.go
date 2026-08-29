@@ -140,10 +140,6 @@ func UniqueViolation(err error) bool {
 	return uniqueViolation(err)
 }
 
-func SerializeAsset(asset ImageAsset) AssetResponse {
-	return serializeAsset(asset)
-}
-
 func SerializeAssets(assets []ImageAsset) []AssetResponse {
 	return serializeAssets(assets)
 }

@@ -1,6 +1,9 @@
 package apperr
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Error 是面向用户的失败，HTTP 状态码固定，文案进 {"detail": "..."}。
 type Error struct {
@@ -29,6 +32,11 @@ func Busy(detail string) Error { return Error{Status: 429, Detail: detail} }
 func Unavailable(detail string) Error { return Error{Status: 503, Detail: detail} }
 
 func Internal(detail string) Error { return Error{Status: 500, Detail: detail} }
+
+func IsNotFound(err error) bool {
+	var e Error
+	return errors.As(err, &e) && e.Status == 404
+}
 
 func Validationf(format string, args ...any) Error {
 	return Validation(fmt.Sprintf(format, args...))

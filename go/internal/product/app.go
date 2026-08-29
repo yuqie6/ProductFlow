@@ -29,6 +29,11 @@ func (s Service) now() time.Time {
 	return time.Now().UTC()
 }
 
+// GetAsset 按 id 读取商品图片身份（含媒体元数据）。
+func (s Service) GetAsset(ctx context.Context, assetID string) (ImageAsset, error) {
+	return loadAsset(ctx, s.Pool, assetID)
+}
+
 type CreateInput struct {
 	Name       string
 	Category   string

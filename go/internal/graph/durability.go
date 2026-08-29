@@ -57,6 +57,11 @@ func runningGenerationCount(ctx context.Context, tx pgx.Tx) (int, error) {
 	return graphCount + sessionCount, nil
 }
 
+// GenerationCapacityAvailable 与连续生图共用同一把容量锁。
+func GenerationCapacityAvailable(ctx context.Context, tx pgx.Tx) (bool, error) {
+	return generationCapacityAvailable(ctx, tx)
+}
+
 func generationCapacityAvailable(ctx context.Context, tx pgx.Tx) (bool, error) {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, generationCapacityLockKey); err != nil {
 		return false, err

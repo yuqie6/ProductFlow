@@ -1,0 +1,297 @@
+package imagesession
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/settings"
+)
+
+type HTTP struct {
+	Service  Service
+	Settings interface {
+		settings.RuntimeReader
+		settings.LimitsReader
+	}
+}
+
+func (h HTTP) Register(engine *gin.Engine) {
+	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
+		if h.Settings == nil {
+			return true, nil
+		}
+		runtime, err := h.Settings.Runtime(c.Request.Context())
+		if err != nil {
+			return false, err
+		}
+		return runtime.AdminAccessRequired, nil
+	})
+	api := engine.Group("/api", admin)
+	api.GET("/image-sessions", h.list)
+	api.POST("/image-sessions", h.create)
+	api.GET("/image-session-assets/:asset_id/download", h.download)
+	api.GET("/image-sessions/:image_session_id/status", h.status)
+	api.GET("/image-sessions/:image_session_id", h.get)
+	api.PATCH("/image-sessions/:image_session_id", h.update)
+	api.DELETE("/image-sessions/:image_session_id", h.requireDeletion, h.delete)
+	api.POST("/image-sessions/:image_session_id/reference-images", h.uploadRefs)
+	api.DELETE("/image-sessions/:image_session_id/reference-images/:asset_id", h.deleteRef)
+	api.POST("/image-sessions/:image_session_id/generate", h.generate)
+	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/retry", h.retry)
+	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/cancel", h.cancel)
+	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/provider-effects/:candidate_start_index/reconciliation", h.reconcile)
+	v2 := engine.Group("/api/v2", admin)
+	v2.POST("/image-sessions/:image_session_id/assets/:asset_id/attach-to-product", h.attach)
+}
+
+func (h HTTP) requireDeletion(c *gin.Context) {
+	if h.Settings == nil {
+		httpx.AbortDetail(c, http.StatusForbidden, "删除功能已关闭，请联系管理员")
+		return
+	}
+	runtime, err := h.Settings.Runtime(c.Request.Context())
+	if err != nil {
+		httpx.AbortDetail(c, http.StatusInternalServerError, "读取运行时设置失败")
+		return
+	}
+	if !runtime.DeletionEnabled {
+		httpx.AbortDetail(c, http.StatusForbidden, "删除功能已关闭，请联系管理员")
+		return
+	}
+}
+
+func (h HTTP) list(c *gin.Context) {
+	out, err := h.Service.List(c.Request.Context())
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) create(c *gin.Context) {
+	var req CreateRequest
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.Create(c.Request.Context(), req.Title)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, out)
+}
+
+func (h HTTP) get(c *gin.Context) {
+	out, err := h.Service.Get(c.Request.Context(), c.Param("image_session_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) status(c *gin.Context) {
+	out, err := h.Service.Status(c.Request.Context(), c.Param("image_session_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) update(c *gin.Context) {
+	var req UpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	out, err := h.Service.Update(c.Request.Context(), c.Param("image_session_id"), req.Title)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) delete(c *gin.Context) {
+	if err := h.Service.Delete(c.Request.Context(), c.Param("image_session_id")); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h HTTP) uploadRefs(c *gin.Context) {
+	form, err := c.MultipartForm()
+	if err != nil || form == nil {
+		httpx.AbortErr(c, apperr.Validation("至少上传一张参考图"))
+		return
+	}
+	files := form.File["reference_images"]
+	limits := media.DefaultLimits()
+	if h.Settings != nil {
+		if got, err := h.Settings.UploadLimits(c.Request.Context()); err == nil {
+			limits = got
+		}
+	}
+	if err := limits.RejectReferenceCount(len(files)); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	if len(files) == 0 {
+		httpx.AbortErr(c, apperr.Validation("至少上传一张参考图"))
+		return
+	}
+	uploads := make([]product.Upload, 0, len(files))
+	for _, header := range files {
+		f, err := header.Open()
+		if err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		content, err := io.ReadAll(io.LimitReader(f, int64(limits.MaxImageBytes)+1))
+		_ = f.Close()
+		if err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		filename := header.Filename
+		if filename == "" {
+			filename = "reference.bin"
+		}
+		validated, err := media.ValidateUpload(filename, header.Header.Get("Content-Type"), content, limits)
+		if err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		uploads = append(uploads, product.Upload{Content: validated.Content, Filename: validated.Filename, MIMEType: validated.MIMEType})
+	}
+	out, err := h.Service.AddReferences(c.Request.Context(), c.Param("image_session_id"), uploads)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) deleteRef(c *gin.Context) {
+	out, err := h.Service.DeleteReference(c.Request.Context(), c.Param("image_session_id"), c.Param("asset_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) generate(c *gin.Context) {
+	var req GenerateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	if req.ToolOptions != nil {
+		known := map[string]struct{}{
+			"model": {}, "quality": {}, "output_format": {}, "output_compression": {},
+			"background": {}, "moderation": {}, "action": {}, "input_fidelity": {},
+			"partial_images": {}, "n": {},
+		}
+		for k := range req.ToolOptions {
+			if _, ok := known[k]; !ok {
+				httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+				return
+			}
+		}
+	}
+	out, err := h.Service.Generate(c.Request.Context(), c.Param("image_session_id"), req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, out)
+}
+
+func (h HTTP) retry(c *gin.Context) {
+	out, err := h.Service.Retry(c.Request.Context(), c.Param("image_session_id"), c.Param("task_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, out)
+}
+
+func (h HTTP) cancel(c *gin.Context) {
+	out, err := h.Service.Cancel(c.Request.Context(), c.Param("image_session_id"), c.Param("task_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) reconcile(c *gin.Context) {
+	idx, err := strconv.Atoi(c.Param("candidate_start_index"))
+	if err != nil || idx < 1 {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	out, err := h.Service.Reconcile(c.Request.Context(), c.Param("image_session_id"), c.Param("task_id"), idx)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) download(c *gin.Context) {
+	asset, err := h.Service.AssetDownload(c.Request.Context(), c.Param("asset_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	media.ServeVariant(c, h.Service.Media.Files, asset.StoragePath, asset.OriginalFilename, asset.MIMEType, c.DefaultQuery("variant", "original"), "会话图片文件不存在")
+}
+
+func (h HTTP) attach(c *gin.Context) {
+	var req AttachRequest
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	if strings.TrimSpace(req.ProductID) == "" {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	out, err := h.Service.Attach(c.Request.Context(), c.Param("image_session_id"), c.Param("asset_id"), req.ProductID)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func bindJSONStrict(c *gin.Context, dest any) error {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return apperr.Validation("请求体无效")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return apperr.Validation("请求体无效")
+	}
+	if dec.More() {
+		return apperr.Validation("请求体无效")
+	}
+	return nil
+}

@@ -163,6 +163,14 @@ def test_current_enum_columns_use_database_values() -> None:
         "image_generation",
     ]
     assert [member.value for member in MediaVerificationStatus] == ["verified", "missing", "legacy_pending"]
+    assert [member.value for member in JobStatus] == [
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "unknown",
+    ]
     assert {"upload", "workflow_generation", "image_session_attach", "local_edit"} <= {
         member.value for member in ProductImageOriginType
     }
@@ -211,6 +219,8 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         inspector = sa.inspect(engine)
         tables = set(inspector.get_table_names())
         assert RETIRED_COMPAT_TABLES.isdisjoint(tables)
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260829_0095"
         assert {
             "products",
             "product_image_assets",
@@ -469,7 +479,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
                         ),
                         {"now": now},
                     )
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260829_0095"
     finally:
         engine.dispose()
 
@@ -834,7 +844,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260829_0095"
     finally:
         engine.dispose()
 
@@ -946,6 +956,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         assert "source_run_id" not in source_run_columns
         assert "graph_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260829_0095"
     finally:
         engine.dispose()

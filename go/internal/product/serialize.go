@@ -26,6 +26,11 @@ func serializeDetail(p Product) Detail {
 	}
 }
 
+// SerializeAsset 把商品图片身份投成 Web 合同；delivery / localedit / image-session 共用。
+func SerializeAsset(asset ImageAsset) AssetResponse {
+	return serializeAsset(asset)
+}
+
 func serializeAsset(asset ImageAsset) AssetResponse {
 	download, preview, thumb := assetURLs(asset.ID)
 	return AssetResponse{

@@ -405,6 +405,9 @@ func (e Executor) persistImageArtifact(
 					return err
 				}
 			}
+			if e.Deps.Delivery != nil {
+				_ = e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID)
+			}
 		}
 		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
 		if _, err := pgxTx.Exec(ctx, `

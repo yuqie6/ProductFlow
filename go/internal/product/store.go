@@ -52,31 +52,66 @@ func insertAsset(ctx context.Context, tx pgx.Tx, productID, mediaID, filename st
 	return insertAssetOrigin(ctx, tx, productID, mediaID, filename, "upload", nil)
 }
 
+type AssetIdentityInput struct {
+	ProductID                 string
+	MediaID                   string
+	Filename                  string
+	Origin                    string
+	ImageTypeKey              *string
+	ParentAssetID             *string
+	SourceImageSessionAssetID *string
+	DisplayName               string
+}
+
 func insertAssetOrigin(ctx context.Context, tx pgx.Tx, productID, mediaID, filename, origin string, imageTypeKey *string) (ImageAsset, error) {
+	return InsertAssetIdentity(ctx, tx, AssetIdentityInput{
+		ProductID:    productID,
+		MediaID:      mediaID,
+		Filename:     filename,
+		Origin:       origin,
+		ImageTypeKey: imageTypeKey,
+	})
+}
+
+// InsertAssetIdentity 写入一条商品图片身份，可带 parent / 会话来源。
+func InsertAssetIdentity(ctx context.Context, tx pgx.Tx, in AssetIdentityInput) (ImageAsset, error) {
 	id := clockid.New()
-	display := strings.TrimSpace(filename)
+	display := strings.TrimSpace(in.DisplayName)
+	if display == "" {
+		display = strings.TrimSpace(in.Filename)
+	}
 	if display == "" {
 		display = "image"
 	}
 	if len([]rune(display)) > 255 {
 		display = string([]rune(display)[:255])
 	}
-	original := display
+	original := strings.TrimSpace(in.Filename)
+	if original == "" {
+		original = display
+	}
+	if len([]rune(original)) > 255 {
+		original = string([]rune(original)[:255])
+	}
 	asset := ImageAsset{
-		ID:                 id,
-		ProductID:          productID,
-		MediaObjectID:      mediaID,
-		OriginType:         origin,
-		DisplayName:        display,
-		OriginalFilename:   original,
-		VerificationStatus: "verified",
+		ID:                      id,
+		ProductID:               in.ProductID,
+		MediaObjectID:           in.MediaID,
+		OriginType:              in.Origin,
+		DisplayName:             display,
+		OriginalFilename:        original,
+		ImageTypeKey:            in.ImageTypeKey,
+		ParentAssetID:           in.ParentAssetID,
+		SourceImageSessionAsset: in.SourceImageSessionAssetID,
+		VerificationStatus:      "verified",
 	}
 	err := tx.QueryRow(ctx, `
 		INSERT INTO product_image_assets (
-			id, product_id, media_object_id, origin_type, display_name, original_filename, image_type_key, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+			id, product_id, media_object_id, origin_type, display_name, original_filename,
+			image_type_key, parent_asset_id, source_image_session_asset_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 		RETURNING created_at, updated_at
-	`, id, productID, mediaID, origin, display, original, imageTypeKey).Scan(&asset.CreatedAt, &asset.UpdatedAt)
+	`, id, in.ProductID, in.MediaID, in.Origin, display, original, in.ImageTypeKey, in.ParentAssetID, in.SourceImageSessionAssetID).Scan(&asset.CreatedAt, &asset.UpdatedAt)
 	return asset, err
 }
 
@@ -157,6 +192,13 @@ func loadAsset(ctx context.Context, q interface {
 		return ImageAsset{}, apperr.NotFound("商品图片不存在")
 	}
 	return asset, err
+}
+
+// LoadAssetRow 供 delivery / localedit 读取商品图片身份。
+func LoadAssetRow(ctx context.Context, q interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}, assetID string) (ImageAsset, error) {
+	return loadAsset(ctx, q, assetID)
 }
 
 func listProducts(ctx context.Context, tx pgx.Tx, page, pageSize int, q, sort string) ([]Summary, int, error) {

@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/imagesession"
 	"github.com/yuqie6/productflow/internal/library"
+	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
@@ -67,6 +70,18 @@ func main() {
 	}.Register(engine)
 	recipe.HTTP{
 		Service:  recipe.Service{Pool: pool},
+		Settings: settingsStore,
+	}.Register(engine)
+	imagesession.HTTP{
+		Service:  imagesession.Service{Pool: pool, Media: mediaStore, Settings: settingsStore},
+		Settings: settingsStore,
+	}.Register(engine)
+	delivery.HTTP{
+		Service:  delivery.Service{Pool: pool, Media: mediaStore},
+		Settings: settingsStore,
+	}.Register(engine)
+	localedit.HTTP{
+		Service:  localedit.Service{Pool: pool, Media: mediaStore},
 		Settings: settingsStore,
 	}.Register(engine)
 

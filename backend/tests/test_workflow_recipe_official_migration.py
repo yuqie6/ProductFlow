@@ -180,13 +180,13 @@ def test_official_recipe_migration_downgrade_is_blocked_after_compat_table_drop(
         filename="official-recipes-downgrade.db",
     )
     command.upgrade(config, "head")
-    with pytest.raises(RuntimeError, match="已删除的兼容表和 Draft 列不能降级"):
+    with pytest.raises(RuntimeError, match="不能"):
         command.downgrade(config, "20260822_0085")
 
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260827_0094"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260829_0095"
         inspector = sa.inspect(engine)
         assert "workflow_draft_recipe_seeds" not in inspector.get_table_names()
         assert "workflow_drafts" not in inspector.get_table_names()

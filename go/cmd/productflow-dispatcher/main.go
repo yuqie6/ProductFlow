@@ -11,7 +11,10 @@ import (
 	"time"
 
 	"github.com/hibiken/asynq"
+	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/imagesession"
+	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
@@ -57,7 +60,19 @@ func main() {
 
 	runOnce := func() error {
 		bg := context.Background()
-		recovery, err := graph.RecoverUnfinishedGraphRuns(bg, pool, 0)
+		workflow, err := graph.RecoverUnfinishedGraphRuns(bg, pool, 0)
+		if err != nil {
+			return err
+		}
+		imageSession, err := imagesession.RecoverUnfinished(bg, pool, 0)
+		if err != nil {
+			return err
+		}
+		rendition, err := delivery.RecoverUnfinished(bg, pool, 0)
+		if err != nil {
+			return err
+		}
+		localImageEdit, err := localedit.RecoverUnfinished(bg, pool, 0)
 		if err != nil {
 			return err
 		}
@@ -68,8 +83,14 @@ func main() {
 		out, _ := json.Marshal(map[string]any{
 			"dispatch": summary,
 			"recovery": map[string]int{
-				"workflow":         recovery.EnqueuedRuns,
-				"workflow_unknown": recovery.UnknownRuns,
+				"workflow":                 workflow.EnqueuedRuns,
+				"workflow_unknown":         workflow.UnknownRuns,
+				"image_session":            imageSession.EnqueuedTasks,
+				"image_session_unknown":    imageSession.UnknownTasks,
+				"agent":                    0,
+				"rendition":                rendition.EnqueuedJobs,
+				"local_image_edit":         localImageEdit.EnqueuedTasks,
+				"local_image_edit_unknown": localImageEdit.UnknownTasks,
 			},
 		})
 		fmt.Println(string(out))

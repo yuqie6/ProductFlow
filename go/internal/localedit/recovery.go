@@ -1,0 +1,115 @@
+package localedit
+
+import (
+	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/platform/queue"
+	"github.com/yuqie6/productflow/internal/platform/tx"
+)
+
+type RecoverySummary struct {
+	QueuedTasks       int `json:"queued_tasks"`
+	StaleRunningTasks int `json:"stale_running_tasks"`
+	EnqueuedTasks     int `json:"enqueued_tasks"`
+	UnknownTasks      int `json:"unknown_tasks"`
+}
+
+// RecoverUnfinished 把 queued 任务补回 PENDING；过期且已打 provider 的 running 标 unknown。
+func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
+	if staleAfter <= 0 {
+		staleAfter = 10 * time.Minute
+	}
+	var summary RecoverySummary
+	err := tx.With(ctx, pool, func(pgxTx pgx.Tx) error {
+		rows, err := pgxTx.Query(ctx, `
+			SELECT id FROM local_image_edit_tasks WHERE status IN ('queued', 'running')
+		`)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		for _, id := range ids {
+			outcome, err := recoverOne(ctx, pgxTx, id, true, staleAfter, now)
+			if err != nil {
+				return err
+			}
+			switch outcome {
+			case "queued":
+				summary.QueuedTasks++
+				summary.EnqueuedTasks++
+			case "requeued":
+				summary.StaleRunningTasks++
+				summary.EnqueuedTasks++
+			case "unknown":
+				summary.UnknownTasks++
+			}
+		}
+		return nil
+	})
+	return summary, err
+}
+
+func recoverOne(ctx context.Context, pgxTx pgx.Tx, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
+	task, err := loadTaskByID(ctx, pgxTx, taskID)
+	if err != nil {
+		return "", err
+	}
+	if task.Status == "queued" {
+		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, task.ID), queue.ActorLocalEdit, task.ID, payloadFor(task), nil); err != nil {
+			return "", err
+		}
+		return "queued", nil
+	}
+	if task.Status != "running" {
+		return "ignored", nil
+	}
+	stale := task.StartedAt == nil || now.Sub(task.StartedAt.UTC()) >= staleAfter
+	if !resetStale || !stale {
+		return "fresh", nil
+	}
+	phase := ""
+	if task.ProgressPhase != nil {
+		phase = *task.ProgressPhase
+	}
+	if phase == "claimed" {
+		if err := markStaleClaimed(ctx, pgxTx, task); err != nil {
+			return "", err
+		}
+		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, task.ID), queue.ActorLocalEdit, task.ID, payloadFor(task), nil); err != nil {
+			return "", err
+		}
+		return "requeued", nil
+	}
+	detail := "局部编辑运行阶段无法识别，已停止自动重投"
+	if phase == "provider_pending" || phase == "provider_call" || phase == "provider_result_received" {
+		detail = "provider boundary 已开始，滞留运行不能自动重投"
+	}
+	if err := markUnknownLocked(ctx, pgxTx, task, detail); err != nil {
+		return "", err
+	}
+	return "unknown", nil
+}
+
+func payloadFor(task taskRow) map[string]any {
+	hash := ""
+	if task.RequestHash != nil {
+		hash = *task.RequestHash
+	}
+	return map[string]any{"task_id": task.ID, "request_hash": hash}
+}
