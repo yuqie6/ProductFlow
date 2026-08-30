@@ -14,7 +14,7 @@ export AGENT_SERVICE_BASE_URL="${AGENT_SERVICE_BASE_URL:-http://127.0.0.1:29284}
 export AGENT_LISTEN_ADDRESS="${AGENT_LISTEN_ADDRESS:-127.0.0.1:29284}"
 export PRODUCTFLOW_INTERNAL_BASE_URL="${PRODUCTFLOW_INTERNAL_BASE_URL:-http://127.0.0.1:${APP_PORT:-29282}}"
 
-# STORAGE_ROOT is relative to the repo root, not the process cwd (`go run -C go` or `uv --directory`).
+# STORAGE_ROOT is relative to the repo root, not the process cwd (`go run -C go`).
 if [[ -z "${STORAGE_ROOT:-}" ]]; then
   STORAGE_ROOT="./storage-dev"
 fi

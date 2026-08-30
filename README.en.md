@@ -54,7 +54,7 @@ The public instance is a personal live demo with one administrator and one merch
 - Single administrator and single merchant.
 - No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
 - Public demo data and local development databases may be recreated during breaking updates.
-- Historical Alembic revisions remain sealed; empty and existing databases run `just go-migrate` / `productflow-migrate`. The main repository does not backfill or keep compatibility layers for old data.
+- Empty and existing databases run `just go-migrate` / `productflow-migrate`. The main repository does not backfill or keep compatibility layers for old data.
 
 ## Routes
 
@@ -79,10 +79,10 @@ Repository documentation:
 
 ## Technology
 
-- Backend: Go 1.23 (Gin, GORM, asynq), `productflow-migrate`, Redis, PostgreSQL. Python `backend/` remains for the sealed tree and optional fallback.
+- Backend: Go 1.23 (Gin, GORM, asynq), `productflow-migrate`, Redis, PostgreSQL.
 - Agent service: Node.js 22, Pi SDK, ProductFlow Tool adapter, JSONL session files, and JSON event files.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, XYFlow, and Tailwind CSS 4.
-- Model SDKs: OpenAI Python/TypeScript provider adapters and Google GenAI.
+- Model SDKs: OpenAI-compatible adapters in Go and TypeScript, plus Google GenAI.
 
 ## Repository Layout
 
@@ -91,10 +91,6 @@ ProductFlow/
   go/
     cmd/
     internal/
-  backend/
-    alembic/versions/
-    src/productflow_backend/
-    tests/
   agent-service/
     src/
     .pi/skills/
@@ -131,7 +127,7 @@ Replace at least:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs GORM `CreateTable`/`AddColumn` plus ExtraDDL (CHECK / enum / partial unique / FK) before the Go API; AutoMigrate is not used. uvicorn and the dramatiq worker start only with Compose profile `python`, which no longer starts a Python dispatcher and no longer owns schema. Profile `python` HTTP still Dramatiq-enqueues; do not share that database with a live Go worker.
+Compose starts PostgreSQL, Redis, the Go API / worker / dispatcher, the Agent service, and Web. A dedicated `productflow-migrate` container runs GORM `CreateTable`/`AddColumn` plus ExtraDDL (CHECK / enum / partial unique / FK) before the Go API; AutoMigrate is not used.
 
 Default endpoints:
 
@@ -161,8 +157,8 @@ Set `STORAGE_HOST_PATH=/absolute/host/path` to use a host directory. When omitte
 ### 1. Prerequisites
 
 - Go 1.23+
-- Python 3.12+ and `uv` (sealed Python tree and optional profile `python`)
 - Node.js 22.19+ and `pnpm`
+- Python 3 (repo scripts such as `just docs-check` and `just wipe-dev-data`)
 - Docker / Docker Compose
 - `just` (recommended)
 
@@ -180,10 +176,9 @@ Keep the PostgreSQL password consistent between `.env` and `.env.dev`. Use separ
 
 ```bash
 docker compose up -d productflow-postgres productflow-redis
-just backend-install
 just agent-service-install
 just web-install
-just backend-migrate
+just go-migrate
 ```
 
 ### 4. Start the Local Development Environment
@@ -204,7 +199,7 @@ just agent-service-run
 just web-dev
 ```
 
-`go-api`, `go-worker`, `go-dispatcher`, `agent-service-run`, and `web-dev` all load `.env.dev`. The Go dispatcher scans durable PostgreSQL dispatch rows and delivers them to Redis. Python `backend-run` / `backend-worker` / `backend-async-dispatcher` remain available as a manual fallback. `just dev` stops leftover API / worker / dispatcher / Agent / Web processes before migrating and starting; `just dev-stop` only runs that cleanup. Ctrl+C ends those app processes. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
+`go-api`, `go-worker`, `go-dispatcher`, `agent-service-run`, and `web-dev` all load `.env.dev`. The Go dispatcher scans durable PostgreSQL dispatch rows and delivers them to Redis. `just dev` stops leftover API / worker / dispatcher / Agent / Web processes before migrating and starting; `just dev-stop` only runs that cleanup. Ctrl+C ends those app processes. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
 
 ```bash
 docker compose down
@@ -220,8 +215,6 @@ Default development endpoints:
 
 ```bash
 just go-test
-uv run --directory backend ruff check src tests
-just backend-test
 pnpm --dir web test:run
 pnpm --dir web lint
 just web-build
@@ -231,12 +224,10 @@ just agent-service-test
 Live PostgreSQL/Redis recovery and provider checks are opt-in:
 
 ```bash
-just backend-test-live-recovery
-just backend-test-live-delivery-renditions
-just backend-test-live-agent-product-intake
+just go-test-live-providers
 ```
 
-The browser-level real-image gate is not part of `just backend-test` or `pnpm --dir web test:run`. It needs `just dev` running and real prompt/image providers on the settings page (not mock):
+The browser-level real-image gate is not part of `just go-test` or `pnpm --dir web test:run`. It needs `just dev` running and real prompt/image providers on the settings page (not mock):
 
 ```bash
 just web-e2e-live-graph
@@ -269,7 +260,7 @@ just release
 - `/api/media-library`
 - `/api/settings`
 
-The Go HTTP handlers in `go/internal/*/http.go` are authoritative for the complete contract. The Python route tree is the sealed reference.
+The Go HTTP handlers in `go/internal/*/http.go` are authoritative for the complete contract. `contracts/` is the 2026-08-29 historical sealed snapshot.
 
 ## Open Source and Security
 

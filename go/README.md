@@ -1,6 +1,6 @@
 # Go 业务后端
 
-默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM `CreateTable`/`AddColumn` + ExtraDDL，不使用 AutoMigrate）。Python `backend/` 保留封印树与 Compose profile `python` 回退。竖切与当前形状见 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)；决策见 [`docs/adr/0011-go-vertical-slice-rewrite.md`](../docs/adr/0011-go-vertical-slice-rewrite.md)。
+默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM `CreateTable`/`AddColumn` + ExtraDDL，不使用 AutoMigrate）。竖切与当前形状见 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)；决策见 [`docs/adr/0011-go-vertical-slice-rewrite.md`](../docs/adr/0011-go-vertical-slice-rewrite.md)。退休的 FastAPI 树在 `retired/python`。
 
 ```bash
 just go-test
@@ -12,7 +12,7 @@ just go-dispatcher
 
 `GET /healthz` 返回 `{"status":"ok"}`。`GET /healthz/ready` 额外 ping PostgreSQL，不是现有 Web 合同。
 
-Session cookie 名仍是 `session`，签名用 Go cookie store；从 Python 切过来需要重新登录。
+Session cookie 名是 `session`，签名用 Go cookie store。
 
 `STORAGE_ROOT` 相对路径相对**仓库根**解析（`just go-api` 使用 `go run -C go`，cwd 留在仓库根；Go `config.Load` 也会按 `go.mod` 所在 `go/` 的上一级收绝对路径）。本地默认 `./storage-dev`。Compose 里是 `/app/storage`。
 
@@ -20,4 +20,4 @@ JSON 日志写滚动文件，终端默认是可读行。默认目录是 `STORAGE
 
 HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。dispatcher 先标 SENT 再 asynq 投递；worker `MaxRetry=0`。无法证明的供应商结果标 `unknown`，不自动当失败重试。
 
-Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。profile `python` 不再启动 Python dispatcher；Go dispatcher 是唯一 durable scanner。若仍用 Python HTTP（会 Dramatiq enqueue），不要与正在跑的 Go worker 共用同一库。
+Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。Go dispatcher 是唯一 durable scanner。

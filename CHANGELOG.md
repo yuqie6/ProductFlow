@@ -6,6 +6,8 @@ All notable changes for ProductFlow are recorded here. Current product capabilit
 
 Work after `v0.1.0` is not a tagged public release. The current code and docs describe schema-v3 workflows, the Node.js/Pi Agent, `/media-library`, Global Agent Dock, and `/help`.
 
+- Python FastAPI / Dramatiq / Alembic tree left the default checkout. Retrieve it with `git checkout retired/python`.
+
 ## 0.1.0 - 2026-05-02
 
 Initial public self-hosted release for ProductFlow. This entry is the durable release record for `v0.1.0`.

@@ -8,8 +8,7 @@
 
 ## Verification
 
-- [ ] `uv run --directory backend ruff check .`
-- [ ] `just backend-test`
+- [ ] `just go-test`
 - [ ] `just web-build`
 - [ ] Documentation-only change; build/test not required
 

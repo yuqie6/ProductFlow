@@ -39,6 +39,8 @@
 | `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成；封印树见 0016 | 业务后端按垂直切片迁 Go |
 | `adr/0012-gorm-command-writes.md` | Accepted | 命令路径用 GORM 模型写库，不用手写 INSERT |
 | `adr/0013-agent-live-journal-bff.md` | Accepted | Go 是浏览器 BFF；live UI journal 在 agent-service |
+| `adr/0014-canvas-document-cook.md` | Accepted；端口/队列/origin 列见 0015 | 文稿 vs 产物、cook 范围、`delivery_spec` 不进 digest |
+| `adr/0015-canvas-ports-run-queue.md` | Accepted | 按角色分端口、selection scope、运行队列、skipped |
 | `adr/0016-retire-python-backend.md` | Accepted | Python 业务后端离开主线，树在 `retired/python` |
 
 ## 协作元数据

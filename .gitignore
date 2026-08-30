@@ -15,15 +15,6 @@ node_modules/
 *.egg-info/
 *.tsbuildinfo
 *.log
-backend/.venv/
-backend/.coverage
-backend/htmlcov/
-backend/.pytest_cache/
-backend/.mypy_cache/
-backend/.ruff_cache/
-backend/uploads/
-backend/storage/
-backend/storage-dev/
 storage-dev/
 web/node_modules/
 web/dist/

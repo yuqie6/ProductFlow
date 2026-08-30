@@ -30,114 +30,6 @@ services:
       timeout: 5s
       retries: 20
 
-  # 可选回退：`docker compose --profile python up` 只加 uvicorn 与 dramatiq worker，不再启动 Python dispatcher。
-  # 默认不要与 Go 同时占用 29280。Python HTTP 仍会 Dramatiq enqueue，不要与正在跑的 Go worker 共用同一库。
-  productflow-backend:
-    profiles: ["python"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    restart: unless-stopped
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      APP_HOST: 0.0.0.0
-      APP_PORT: 29280
-      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:29281,http://127.0.0.1:29281}
-      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
-      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
-      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
-      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
-      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
-      REDIS_URL: redis://productflow-redis:6379/0
-      STORAGE_ROOT: /app/storage
-      AGENT_SERVICE_BASE_URL: http://productflow-agent-service:29284
-      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
-      AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS: ${AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS:-5}
-      AGENT_SERVICE_READ_TIMEOUT_SECONDS: ${AGENT_SERVICE_READ_TIMEOUT_SECONDS:-90}
-      AGENT_TURN_SYNC_POLL_SECONDS: ${AGENT_TURN_SYNC_POLL_SECONDS:-1}
-      LOG_DIR: /app/storage/logs
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
-      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
-      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
-      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
-      UPLOAD_MAX_BATCH_BYTES: ${UPLOAD_MAX_BATCH_BYTES:-52428800}
-      UPLOAD_MAX_BATCH_FILES: ${UPLOAD_MAX_BATCH_FILES:-20}
-      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
-      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
-      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
-      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
-      JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
-      GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
-    command: >-
-      sh -c "uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
-    ports:
-      - "${PYTHON_APP_HOST_PORT:-29286}:29280"
-    volumes:
-      # STORAGE_HOST_PATH is host-only. Leave it unset to use the productflow-storage named volume,
-      # or set it to an existing absolute host directory.
-      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
-    depends_on:
-      productflow-postgres:
-        condition: service_healthy
-      productflow-redis:
-        condition: service_healthy
-      productflow-migrate:
-        condition: service_completed_successfully
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python -c \"import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:29280/healthz', timeout=3)); raise SystemExit(0 if data.get('status') == 'ok' else 1)\"",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-  productflow-worker:
-    profiles: ["python"]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    restart: unless-stopped
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
-      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
-      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
-      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
-      REDIS_URL: redis://productflow-redis:6379/0
-      STORAGE_ROOT: /app/storage
-      AGENT_SERVICE_BASE_URL: http://productflow-agent-service:29284
-      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
-      AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS: ${AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS:-5}
-      AGENT_SERVICE_READ_TIMEOUT_SECONDS: ${AGENT_SERVICE_READ_TIMEOUT_SECONDS:-90}
-      AGENT_TURN_SYNC_POLL_SECONDS: ${AGENT_TURN_SYNC_POLL_SECONDS:-1}
-      LOG_DIR: /app/storage/logs
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
-      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
-      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
-      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
-      UPLOAD_MAX_BATCH_BYTES: ${UPLOAD_MAX_BATCH_BYTES:-52428800}
-      UPLOAD_MAX_BATCH_FILES: ${UPLOAD_MAX_BATCH_FILES:-20}
-      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
-      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
-      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
-      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
-      JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
-      GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
-    command: ["dramatiq", "--processes", "2", "--threads", "4", "productflow_backend.workers"]
-    volumes:
-      # Keep this source identical to productflow-backend so API and worker see the same files at /app/storage.
-      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
-    depends_on:
-      productflow-backend:
-        condition: service_healthy
-      productflow-agent-service:
-        condition: service_healthy
-
   # schema 权威是 productflow-migrate：GORM CreateTable/AddColumn + ExtraDDL。不使用 AutoMigrate。Go API 不在进程内跑迁移。
   productflow-migrate:
     build:
@@ -151,7 +43,6 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # 默认业务运行时：Go API / worker / dispatcher。profile python 只加 Python HTTP 与 Dramatiq worker。
   productflow-go-api:
     build:
       context: .

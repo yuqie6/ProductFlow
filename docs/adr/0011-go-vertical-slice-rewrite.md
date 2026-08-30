@@ -4,7 +4,7 @@ Python 业务 API、worker、dispatcher 一次换成 Go，内部按业务功能�
 
 ## 状态
 
-Accepted。Cutover 已完成；当前运行形状见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)。封印 HTTP / SSE / queue 合同在仓库根 `contracts/`。
+Accepted。Cutover 已完成；Python 封印树已离开主线，见 0016。当前运行形状见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md)。封印 HTTP / SSE / queue 合同在仓库根 `contracts/`。
 
 ## 考虑过的方案
 

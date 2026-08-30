@@ -8,7 +8,7 @@ Thank you for considering contributing code, documentation, or issue reports to 
 
 1. Read `README.en.md` to understand the project positioning and local startup flow.
 2. Read `docs/README.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md` to understand documentation ownership and current feature boundaries.
-3. If you change the backend, read `go/AGENTS.md`; the sealed Python tree uses `backend/AGENTS.md`.
+3. If you change the backend, read `go/AGENTS.md`. The retired FastAPI tree is on `retired/python`; do not merge it back.
 4. If you change the frontend, read `web/AGENTS.md`.
 5. For cross-layer or product-semantic changes, check `CONTEXT.md` and `docs/adr/`; unfinished directions belong in `docs/ROADMAP.md`.
 6. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or local database dumps.
@@ -20,13 +20,12 @@ cp .env.example .env
 cp .env.dev.example .env.dev
 cp web/.env.example web/.env
 docker compose up -d productflow-postgres productflow-redis
-just backend-install
 just agent-service-install
 just web-install
-just backend-migrate
-just backend-run
-just backend-worker
-just backend-async-dispatcher
+just go-migrate
+just go-api
+just go-worker
+just go-dispatcher
 just agent-service-run
 just web-dev
 ```
@@ -38,8 +37,7 @@ Or run `just dev` to start PostgreSQL, Redis, migrations, the API, worker, dispa
 For backend changes, run:
 
 ```bash
-uv run --directory backend ruff check .
-just backend-test
+just go-test
 ```
 
 For frontend changes, run:
@@ -66,9 +64,8 @@ Official docs, release notes, PR descriptions, and contribution guidance should 
 
 ## Code Conventions
 
-- Python targets version 3.12, Ruff line width is 120, and lint rules are defined in `backend/pyproject.toml`.
-- The backend keeps the `presentation` / `application` / `domain` / `infrastructure` layering.
-- Provider-specific SDK calls should stay in `infrastructure/prompt` or `infrastructure/image`; routes should not call providers directly.
+- The business backend is vertically sliced under `go/internal/`; conventions live in `go/AGENTS.md`.
+- Provider-specific SDK calls stay in `go/internal/providers`; routes should not call providers directly.
 - Frontend API requests are centralized in `web/src/lib/api.ts`, and DTO types are centralized in `web/src/lib/types.ts`.
 - Database schema changes go through GORM models and constraint patches in `go/internal/platform/db/schema`, and should include regression coverage where practical.
 - Changes involving upload, storage, secrets, or provider keys should consider security boundaries first.

@@ -18,14 +18,6 @@ __pycache__/
 .codex/logs/
 .codex/sessions/
 .codex/tmp/
-backend/.venv/
-backend/.pytest_cache/
-backend/.ruff_cache/
-backend/storage/
-backend/storage-dev/
-backend/uploads/
-backend/htmlcov/
-backend/.coverage
 web/node_modules/
 web/dist/
 web/*.tsbuildinfo

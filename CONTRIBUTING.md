@@ -8,7 +8,7 @@
 
 1. 阅读 `README.md`，确认项目定位和本地启动方式。
 2. 阅读 `docs/README.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解文档职责与当前功能边界。
-3. 如果要改后端，读取 `go/AGENTS.md`；封印 Python 树读 `backend/AGENTS.md`。
+3. 如果要改后端，读取 `go/AGENTS.md`。退休的 FastAPI 树在 `retired/python`，不要合并回主线。
 4. 如果要改前端，读取 `web/AGENTS.md`。
 5. 跨层或产品语义变更先核对 `CONTEXT.md` 与 `docs/adr/`；未完成方向写在 `docs/ROADMAP.md`。
 6. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
@@ -20,13 +20,12 @@ cp .env.example .env
 cp .env.dev.example .env.dev
 cp web/.env.example web/.env
 docker compose up -d productflow-postgres productflow-redis
-just backend-install
 just agent-service-install
 just web-install
-just backend-migrate
-just backend-run
-just backend-worker
-just backend-async-dispatcher
+just go-migrate
+just go-api
+just go-worker
+just go-dispatcher
 just agent-service-run
 just web-dev
 ```
@@ -38,8 +37,7 @@ just web-dev
 后端变更建议运行：
 
 ```bash
-uv run --directory backend ruff check .
-just backend-test
+just go-test
 ```
 
 前端变更建议运行：
@@ -66,9 +64,8 @@ just docs-check
 
 ## 代码约定
 
-- Python 目标版本为 3.12，Ruff 行宽 120，lint 规则见 `backend/pyproject.toml`。
-- 后端保持 `presentation` / `application` / `domain` / `infrastructure` 分层。
-- Provider 具体 SDK 调用应留在 `infrastructure/prompt` 或 `infrastructure/image`，不要从路由直接调用。
+- 业务后端按 `go/internal/` 竖切，约定见 `go/AGENTS.md`。
+- Provider 具体 SDK 调用留在 `go/internal/providers`，不要从路由直接调用。
 - 前端 API 请求集中在 `web/src/lib/api.ts`，DTO 类型集中在 `web/src/lib/types.ts`。
 - 数据库 schema 变更走 GORM models 与 `go/internal/platform/db/schema` 约束补钉，并尽量补回归测试。
 - 涉及上传、storage、secret、provider key 的改动要优先考虑安全边界。

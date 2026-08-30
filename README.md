@@ -54,7 +54,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 单管理员、单商家实例。
 - 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
 - 公网体验站数据和本地开发库都可以在破坏性更新时重建。
-- Alembic 历史 revision 只作为封印记录；空库和已有库都跑 `just go-migrate` / `productflow-migrate`。主仓库不为旧数据写回填或兼容层。
+- 空库和已有库都跑 `just go-migrate` / `productflow-migrate`。主仓库不为旧数据写回填或兼容层。
 
 ## 页面入口
 
@@ -79,10 +79,10 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ## 技术栈
 
-- 后端：Go 1.23（Gin、GORM、asynq）、`productflow-migrate`、Redis、PostgreSQL。Python `backend/` 保留封印树与可选回退。
+- 后端：Go 1.23（Gin、GORM、asynq）、`productflow-migrate`、Redis、PostgreSQL。
 - Agent service：Node.js 22、Pi SDK、ProductFlow Tool adapter、JSONL session 文件和 JSON event 文件。
 - 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
-- 模型 SDK：OpenAI Python/TypeScript provider adapter 和 Google GenAI。
+- 模型 SDK：Go 与 TypeScript 的 OpenAI-compatible adapter，以及 Google GenAI。
 
 ## 仓库结构
 
@@ -91,10 +91,6 @@ ProductFlow/
   go/
     cmd/
     internal/
-  backend/
-    alembic/versions/
-    src/productflow_backend/
-    tests/
   agent-service/
     src/
     .pi/skills/
@@ -131,7 +127,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM `CreateTable`/`AddColumn` 与 ExtraDDL（CHECK / enum / 部分唯一索引 / FK），不使用 AutoMigrate。uvicorn / dramatiq worker 只在 Compose profile `python` 下启动，不再启动 Python dispatcher，也不再负责 schema。profile `python` 的 HTTP 仍会 Dramatiq enqueue；不要把它与正在跑的 Go worker 共用同一库。
+Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM `CreateTable`/`AddColumn` 与 ExtraDDL（CHECK / enum / 部分唯一索引 / FK），不使用 AutoMigrate。
 
 默认地址：
 
@@ -160,9 +156,9 @@ docker compose down -v
 
 ### 1. 准备工具
 
-- Python 3.12+ 与 `uv`（封印 Python 树与可选 profile `python`）
 - Go 1.23+
 - Node.js 22.19+ 与 `pnpm`
+- Python 3（仓库脚本，如 `just docs-check`、`just wipe-dev-data`）
 - Docker / Docker Compose
 - `just`（推荐）
 
@@ -180,10 +176,9 @@ cp web/.env.example web/.env
 
 ```bash
 docker compose up -d productflow-postgres productflow-redis
-just backend-install
 just agent-service-install
 just web-install
-just backend-migrate
+just go-migrate
 ```
 
 ### 4. 启动本地开发环境
@@ -204,7 +199,7 @@ just agent-service-run
 just web-dev
 ```
 
-`go-api`、`go-worker`、`go-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。Go dispatcher 持续扫描 PostgreSQL 中的 durable dispatch 状态并向 Redis 投递。Python `backend-run` / `backend-worker` / `backend-async-dispatcher` 仍可手动启动作对照。`just dev` 会先停掉上次残留的 API / worker / dispatcher / Agent / Web 进程，再迁移并启动；`just dev-stop` 只做这一步清理。Ctrl+C 会结束这些应用进程。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
+`go-api`、`go-worker`、`go-dispatcher`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。Go dispatcher 持续扫描 PostgreSQL 中的 durable dispatch 状态并向 Redis 投递。`just dev` 会先停掉上次残留的 API / worker / dispatcher / Agent / Web 进程，再迁移并启动；`just dev-stop` 只做这一步清理。Ctrl+C 会结束这些应用进程。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
 
 ```bash
 docker compose down
@@ -220,8 +215,6 @@ docker compose down
 
 ```bash
 just go-test
-uv run --directory backend ruff check src tests
-just backend-test
 pnpm --dir web test:run
 pnpm --dir web lint
 just web-build
@@ -231,12 +224,10 @@ just agent-service-test
 依赖真实 PostgreSQL/Redis 的恢复测试和真实 provider 测试为显式 opt-in：
 
 ```bash
-just backend-test-live-recovery
-just backend-test-live-delivery-renditions
-just backend-test-live-agent-product-intake
+just go-test-live-providers
 ```
 
-浏览器级真实出图 gate 不进入 `just backend-test` 或 `pnpm --dir web test:run`。它要求 `just dev` 已在跑、设置页的 prompt/image 用途已绑真实供应商（不能是 mock），然后：
+浏览器级真实出图 gate 不进入 `just go-test` 或 `pnpm --dir web test:run`。它要求 `just dev` 已在跑、设置页的 prompt/image 用途已绑真实供应商（不能是 mock），然后：
 
 ```bash
 just web-e2e-live-graph
@@ -269,7 +260,7 @@ just release
 - `/api/media-library`
 - `/api/settings`
 
-完整合同以 Go HTTP 实现（`go/internal/*/http.go`）为准；Python 路由树是封印对照。
+完整合同以 Go HTTP 实现（`go/internal/*/http.go`）为准。`contracts/` 是 2026-08-29 历史封印快照。
 
 ## 开源与安全
 

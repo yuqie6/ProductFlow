@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Wipe ProductFlow *business* data in the live DATABASE_URL database.
 
-Keeps provider_profiles, provider_bindings, app_settings, and alembic_version.
-tables to $STORAGE_ROOT/settings-keep.sql before truncating anything else.
+Keeps provider_profiles, provider_bindings, and app_settings.
+Dumps those tables to $STORAGE_ROOT/settings-keep.sql before truncating anything else.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-KEEP_TABLES = ("app_settings", "provider_profiles", "provider_bindings", "alembic_version")
+KEEP_TABLES = ("app_settings", "provider_profiles", "provider_bindings")
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "postgres"}
 
 
