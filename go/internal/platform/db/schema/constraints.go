@@ -107,7 +107,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
 	`DO $enum$ BEGIN
-CREATE TYPE workflownodestatus AS ENUM ('idle', 'queued', 'running', 'succeeded', 'failed', 'unknown');
+CREATE TYPE workflownodestatus AS ENUM ('queued', 'running', 'succeeded', 'failed', 'unknown', 'skipped', 'cancelled');
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
@@ -308,6 +308,11 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_schema_version CHECK (schema_version = 1);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_events ADD CONSTRAINT ck_agent_turn_events_ignorable CHECK (ignorable IN (TRUE, FALSE));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1257,7 +1262,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_status CHECK (status::text = ANY (ARRAY['idle'::character varying, 'queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'unknown'::character varying]::text[]));
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_status CHECK (status::text = ANY (ARRAY['queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'unknown'::character varying, 'skipped'::character varying, 'cancelled'::character varying]::text[]));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1602,4 +1607,100 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_recipe_applications_product_created ON public.workflow_recipe_applications USING btree (product_id, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_recipes_archived_at ON public.workflow_recipes USING btree (archived_at);`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_recipes_origin ON public.workflow_recipes USING btree (origin);`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs DROP CONSTRAINT IF EXISTS ck_workflow_graph_node_runs_status;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_status CHECK (status::text = ANY (ARRAY['queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'unknown'::character varying, 'skipped'::character varying, 'cancelled'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_planned_action CHECK (planned_action IS NULL OR (planned_action::text = ANY (ARRAY['generate'::character varying, 'reuse'::character varying, 'frozen'::character varying, 'blocked'::character varying]::text[])));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_node_runs ADD CONSTRAINT ck_workflow_graph_node_runs_non_negative_attempt_count CHECK (attempt_count >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs DROP CONSTRAINT IF EXISTS ck_workflow_graph_runs_status;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_status CHECK (status::text = ANY (ARRAY['queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'cancelled'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs DROP CONSTRAINT IF EXISTS ck_workflow_graph_runs_scope;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_scope CHECK (run_scope::text = ANY (ARRAY['node'::character varying, 'to_node'::character varying, 'graph'::character varying, 'selection'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups DROP CONSTRAINT IF EXISTS ck_workflow_operation_groups_actor_type;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_operation_groups ADD CONSTRAINT ck_workflow_operation_groups_actor_type CHECK (actor_type::text = ANY (ARRAY['user'::character varying, 'agent'::character varying, 'recipe'::character varying, 'system'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_document_origin CHECK (document_origin IS NULL OR (document_origin::text = ANY (ARRAY['seed'::character varying, 'generated'::character varying, 'authored'::character varying]::text[])));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`UPDATE workflow_graph_nodes SET document_origin = CASE
+		WHEN config_json->>'document_origin' IN ('seed', 'generated', 'authored') THEN config_json->>'document_origin'
+		ELSE 'seed'
+	END
+		WHERE node_type IN ('creative_brief', 'visual_system', 'prompt_generation')
+		  AND (document_origin IS NULL OR document_origin = '');`,
+	`UPDATE workflow_graph_nodes
+		SET config_json = (config_json::jsonb - 'document_origin' - 'visual_overrides')::json
+		WHERE config_json::jsonb ?| ARRAY['document_origin', 'visual_overrides'];`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_content_origin_required CHECK (node_type NOT IN ('creative_brief', 'visual_system', 'prompt_generation') OR document_origin IN ('seed', 'generated', 'authored'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_run_scope CHECK (run_scope IS NULL OR (run_scope::text = ANY (ARRAY['graph'::character varying, 'node'::character varying, 'to_node'::character varying, 'selection'::character varying]::text[])));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_run_events ADD CONSTRAINT ck_workflow_graph_run_events_positive_sequence CHECK (sequence > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_run_events ADD CONSTRAINT ck_workflow_graph_run_events_kind CHECK (kind IN ('run.queued', 'run.started', 'run.completed', 'run.failed', 'run.cancelled', 'run.unknown', 'node.claimed', 'node.started', 'node.progress', 'node.succeeded', 'node.failed', 'node.skipped', 'node.cancelled'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_run_events ADD CONSTRAINT fk_workflow_graph_run_events_graph_run_id FOREIGN KEY (graph_run_id) REFERENCES workflow_graph_runs(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_run_events ADD CONSTRAINT fk_workflow_graph_run_events_node_run_id FOREIGN KEY (node_run_id) REFERENCES workflow_graph_node_runs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_run_events ADD CONSTRAINT uq_workflow_graph_run_events_run_sequence UNIQUE (graph_run_id, sequence);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_run_events_run_sequence ON public.workflow_graph_run_events USING btree (graph_run_id, sequence);`,
 }

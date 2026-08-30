@@ -136,6 +136,7 @@ type AgentTurnEvents struct {
 	Attempt          *int      `gorm:"column:attempt;type:integer"`
 	FencingToken     *int      `gorm:"column:fencing_token;type:integer"`
 	Kind             string    `gorm:"column:kind;type:varchar(120);not null"`
+	Ignorable        bool      `gorm:"column:ignorable;type:boolean;not null;default:false"`
 	PayloadJSON      string    `gorm:"column:payload_json;type:json;not null"`
 	CreatedAt        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 }
@@ -211,6 +212,9 @@ type AgentWorkflowRunRequests struct {
 	GraphID                  string     `gorm:"column:graph_id;type:varchar(36);not null"`
 	GraphRunID               *string    `gorm:"column:graph_run_id;type:varchar(36)"`
 	SourceGraphRunID         *string    `gorm:"column:source_graph_run_id;type:varchar(36)"`
+	RunScope                 *string    `gorm:"column:run_scope;type:varchar(40)"`
+	TargetNodeID             *string    `gorm:"column:target_node_id;type:varchar(36)"`
+	TargetNodeIDsJSON        *string    `gorm:"column:target_node_ids_json;type:json"`
 }
 
 func (AgentWorkflowRunRequests) TableName() string { return "agent_workflow_run_requests" }
@@ -763,11 +767,25 @@ type WorkflowGraphNodeRuns struct {
 	StartedAt           time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
 	FinishedAt          *time.Time `gorm:"column:finished_at;type:timestamptz"`
 	ActiveAttemptID     *string    `gorm:"column:active_attempt_id;type:varchar(36)"`
+	AttemptCount        int        `gorm:"column:attempt_count;type:integer;not null;default:0"`
 	ProgressPhase       *string    `gorm:"column:progress_phase;type:varchar(80)"`
 	ProgressUpdatedAt   *time.Time `gorm:"column:progress_updated_at;type:timestamptz"`
+	PlannedAction       *string    `gorm:"column:planned_action;type:varchar(40)"`
 }
 
 func (WorkflowGraphNodeRuns) TableName() string { return "workflow_graph_node_runs" }
+
+type WorkflowGraphRunEvents struct {
+	ID          string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphRunID  string    `gorm:"column:graph_run_id;type:varchar(36);not null"`
+	Sequence    int       `gorm:"column:sequence;type:integer;not null"`
+	Kind        string    `gorm:"column:kind;type:varchar(64);not null"`
+	NodeRunID   *string   `gorm:"column:node_run_id;type:varchar(36)"`
+	PayloadJSON string    `gorm:"column:payload_json;type:json;not null"`
+	CreatedAt   time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (WorkflowGraphRunEvents) TableName() string { return "workflow_graph_run_events" }
 
 type WorkflowGraphNodes struct {
 	ID                string    `gorm:"column:id;type:varchar(36);primaryKey"`
@@ -782,6 +800,7 @@ type WorkflowGraphNodes struct {
 	CreatedAt         time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt         time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
 	CurrentArtifactID *string   `gorm:"column:current_artifact_id;type:varchar(36)"`
+	DocumentOrigin    *string   `gorm:"column:document_origin;type:varchar(40)"`
 }
 
 func (WorkflowGraphNodes) TableName() string { return "workflow_graph_nodes" }
@@ -975,6 +994,7 @@ func AllModels() []any {
 		&WorkflowGraphEdges{},
 		&WorkflowGraphGroups{},
 		&WorkflowGraphNodeRuns{},
+		&WorkflowGraphRunEvents{},
 		&WorkflowGraphNodes{},
 		&WorkflowGraphProposals{},
 		&WorkflowGraphProviderEffects{},
