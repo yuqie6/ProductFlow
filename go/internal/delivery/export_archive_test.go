@@ -117,6 +117,32 @@ func TestExportWritesManifestLineageAndSha256(t *testing.T) {
 	if sha != hex.EncodeToString(sum[:]) {
 		t.Fatalf("sha256 %s vs file %s", sha, hex.EncodeToString(sum[:]))
 	}
+	if len(manifestRaw) == 0 || manifestRaw[len(manifestRaw)-1] != '\n' {
+		t.Fatal("manifest.json must end with a newline")
+	}
+	renditionJob, _ := item["rendition_job"].(map[string]any)
+	if renditionJob["spec_schema_version"] != float64(1) {
+		t.Fatalf("spec_schema_version %+v", renditionJob["spec_schema_version"])
+	}
+	sourceAsset, _ := item["source_asset"].(map[string]any)
+	resultAsset, _ := item["result_asset"].(map[string]any)
+	for _, key := range []string{
+		"id", "origin_type", "image_type_key", "display_name", "original_filename",
+		"parent_asset_id", "created_at", "mime_type", "width", "height", "byte_size", "sha256",
+	} {
+		if _, ok := sourceAsset[key]; !ok {
+			t.Fatalf("source_asset missing %s in %+v", key, sourceAsset)
+		}
+		if _, ok := resultAsset[key]; !ok {
+			t.Fatalf("result_asset missing %s in %+v", key, resultAsset)
+		}
+	}
+	if sourceAsset["id"] != assetID {
+		t.Fatalf("source_asset.id %+v want %s", sourceAsset["id"], assetID)
+	}
+	if resultAsset["sha256"] != sha {
+		t.Fatalf("result_asset.sha256 %+v want %s", resultAsset["sha256"], sha)
+	}
 }
 
 func keys(m map[string][]byte) []string {

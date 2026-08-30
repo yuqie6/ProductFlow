@@ -74,10 +74,13 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			} else {
 				summary.QueuedJobs++
 			}
-			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, job.id, 0); err != nil {
+			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, job.id, nil)
+			if err != nil {
 				return err
 			}
-			summary.EnqueuedJobs++
+			if changed {
+				summary.EnqueuedJobs++
+			}
 		}
 		return nil
 	})

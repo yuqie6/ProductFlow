@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -29,11 +30,10 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 	attemptID := clockid.New()
 	claimed, err := e.claim(ctx, jobID, attemptID)
 	if err != nil {
-		e.fail(ctx, jobID, attemptID, err, false)
-		return nil
+		return err
 	}
 	if !claimed.ok {
-		return queue.ErrBusy
+		return e.releaseIdle(ctx, jobID)
 	}
 	sourceBytes, err := readStorage(e.Media.Files, claimed.sourcePath)
 	if err != nil {
@@ -62,6 +62,22 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 	if err := e.persist(ctx, claimed, rendered); err != nil {
 		e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
 		return nil
+	}
+	return nil
+}
+
+// releaseIdle 在 claim 不到 queued 行时决定信封命运：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil，让 Consume 标 CONSUMED，避免 dispatcher 无限重投。
+func (e Executor) releaseIdle(ctx context.Context, jobID string) error {
+	var status string
+	err := pfdb.QueryRow(ctx, e.DB, `SELECT status FROM delivery_rendition_jobs WHERE id = $1`, jobID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if status == "queued" || status == "running" {
+		return queue.ErrBusy
 	}
 	return nil
 }
@@ -98,32 +114,31 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 		}
 		row, err := loadJob(ctx, pgxTx, jobID)
 		if err != nil {
-			return err
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
 		}
 		source, err := product.LoadAssetRow(ctx, pgxTx, row.SourceAssetID)
 		if err != nil {
-			return err
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
 		}
 		if source.VerificationStatus != media.StatusVerified {
-			return apperr.Validation("交付派生原图媒体尚未通过核验")
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, apperr.Validation("交付派生原图媒体尚未通过核验"))
 		}
 		spec, err := specFromJSON(row.SpecJSON)
 		if err != nil {
-			return err
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
+		}
+		sha, err := loadMediaSHA256(ctx, pgxTx, source.MediaObjectID)
+		if err != nil {
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
+		}
+		if source.ByteSize == nil || sha == "" {
+			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, apperr.Validation("交付派生原图缺少核验元数据"))
 		}
 		out = claim{
 			ok: true, jobID: jobID, attemptID: attemptID, productID: row.ProductID,
 			sourceID: source.ID, sourcePath: source.StoragePath, sourceMIME: source.MIMEType,
 			sourceName: source.DisplayName, imageTypeKey: source.ImageTypeKey, spec: spec,
-		}
-		if source.ByteSize != nil {
-			out.sourceBytes = *source.ByteSize
-		}
-		var sha string
-		_ = pfdb.QueryRow(ctx, pgxTx, `SELECT sha256 FROM media_objects WHERE id = $1`, source.MediaObjectID).Scan(&sha)
-		out.sourceSHA = sha
-		if source.ByteSize == nil || sha == "" {
-			return apperr.Validation("交付派生原图缺少核验元数据")
+			sourceBytes: *source.ByteSize, sourceSHA: sha,
 		}
 		return nil
 	})
@@ -188,6 +203,23 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 }
 
 func (e Executor) fail(ctx context.Context, jobID, attemptID string, reason error, retryable bool) {
+	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		return failJob(ctx, pgxTx, jobID, attemptID, reason, retryable)
+	})
+}
+
+func failClaimIfClient(ctx context.Context, pgxTx *gorm.DB, jobID, attemptID string, err error) error {
+	var ae apperr.Error
+	if !errors.As(err, &ae) || ae.Status < 400 || ae.Status >= 500 {
+		return err
+	}
+	if failErr := failJob(ctx, pgxTx, jobID, attemptID, err, false); failErr != nil {
+		return failErr
+	}
+	return nil
+}
+
+func failJob(ctx context.Context, pgxTx *gorm.DB, jobID, attemptID string, reason error, retryable bool) error {
 	detail := unexpectedFailure
 	if reason != nil {
 		detail = reason.Error()
@@ -195,13 +227,11 @@ func (e Executor) fail(ctx context.Context, jobID, attemptID string, reason erro
 			detail = detail[:1000]
 		}
 	}
-	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE delivery_rendition_jobs SET
-				status = 'failed', active_attempt_id = NULL, is_retryable = $3,
-				failure_reason = $4, finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND status = 'running' AND active_attempt_id = $2
-		`, jobID, attemptID, retryable, detail)
-		return err
-	})
+	_, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE delivery_rendition_jobs SET
+			status = 'failed', active_attempt_id = NULL, is_retryable = $3,
+			failure_reason = $4, finished_at = NOW(), updated_at = NOW()
+		WHERE id = $1 AND status = 'running' AND active_attempt_id = $2
+	`, jobID, attemptID, retryable, detail)
+	return err
 }

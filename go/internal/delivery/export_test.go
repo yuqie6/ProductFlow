@@ -32,3 +32,17 @@ func TestExportArchiveNameSuffix(t *testing.T) {
 		t.Fatalf("name %s", name)
 	}
 }
+
+func TestDeduplicateFilenameIncrementsSerial(t *testing.T) {
+	used := map[string]struct{}{"foo.png": {}}
+	if got := deduplicateFilename("foo.png", used); got != "foo-2.png" {
+		t.Fatalf("got %s", got)
+	}
+	used = map[string]struct{}{"foo.png": {}, "foo-2.png": {}}
+	if got := deduplicateFilename("foo.png", used); got != "foo-3.png" {
+		t.Fatalf("got %s", got)
+	}
+	if _, ok := used["foo-3.png"]; !ok {
+		t.Fatal("used must record foo-3.png")
+	}
+}

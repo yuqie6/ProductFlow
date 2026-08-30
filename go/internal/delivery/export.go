@@ -4,18 +4,21 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
@@ -93,16 +96,9 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if source.ProductID != productID {
 				return apperr.Conflict("交付图原图不属于当前商品")
 			}
-			data, err := readStorage(s.Media.Files, asset.StoragePath)
+			data, meta, resultSHA, err := readVerifiedResultMedia(ctx, pgxTx, s.Media.Files, asset)
 			if err != nil {
-				return apperr.Conflict("交付图结果文件不可用")
-			}
-			meta, err := media.Inspect(data, asset.MIMEType)
-			if err != nil {
-				return apperr.Conflict("交付图结果核验元数据已变化")
-			}
-			if asset.ByteSize != nil && meta.ByteSize != *asset.ByteSize {
-				return apperr.Conflict("交付图结果文件大小已变化")
+				return err
 			}
 			total += meta.ByteSize
 			if total > exportMaxBytes {
@@ -113,15 +109,11 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 				imageType = safeName(*source.ImageTypeKey, "image")
 			}
 			ext := media.ExtensionForMIME(meta.MIMEType)
-			name := exportImageFilename(safeProduct, imageType, index+1, meta.Width, meta.Height, ext)
-			for {
-				if _, exists := used[strings.ToLower(name)]; !exists {
-					break
-				}
-				name = strings.TrimSuffix(name, ext) + "-2" + ext
+			name := deduplicateFilename(exportImageFilename(safeProduct, imageType, index+1, meta.Width, meta.Height, ext), used)
+			sourceSHA, err := loadMediaSHA256(ctx, pgxTx, source.MediaObjectID)
+			if err != nil {
+				return err
 			}
-			used[strings.ToLower(name)] = struct{}{}
-			sum := sha256.Sum256(data)
 			files = append(files, fileItem{name: name, data: data})
 			finishedAt = append(finishedAt, *row.FinishedAt)
 			var spec any
@@ -129,23 +121,27 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			// Python 把 _source_lineage 的 graph/run/node_run_id 展平到 items[]，不要再套一层 graph 对象。
 			lineage := sourceLineage(ctx, pgxTx, source.ID, productID)
 			successItems = append(successItems, map[string]any{
-				"filename":    name,
-				"product":     map[string]any{"id": productID, "name": productName},
-				"graph":       lineage["graph"],
-				"run":         lineage["run"],
-				"node_run_id": lineage["node_run_id"],
-				"source_asset": map[string]any{
-					"id": source.ID, "image_type_key": source.ImageTypeKey, "original_filename": source.OriginalFilename,
-				},
+				"filename":     name,
+				"product":      map[string]any{"id": productID, "name": productName},
+				"graph":        lineage["graph"],
+				"run":          lineage["run"],
+				"node_run_id":  lineage["node_run_id"],
+				"source_asset": assetMetadata(source, sourceSHA),
 				"rendition_job": map[string]any{
-					"id": row.ID, "status": row.Status, "spec_hash": row.SpecHash,
-					"created_at": row.CreatedAt, "started_at": row.StartedAt, "finished_at": row.FinishedAt, "updated_at": row.UpdatedAt,
+					"id":                  row.ID,
+					"status":              row.Status,
+					"spec_schema_version": row.SpecSchemaVersion,
+					"spec_hash":           row.SpecHash,
+					"created_at":          row.CreatedAt,
+					"started_at":          row.StartedAt,
+					"finished_at":         row.FinishedAt,
+					"updated_at":          row.UpdatedAt,
 				},
-				"result_asset":  map[string]any{"id": asset.ID, "original_filename": asset.OriginalFilename},
+				"result_asset":  assetMetadata(asset, resultSHA),
 				"delivery_spec": spec,
 				"measured": map[string]any{
 					"mime_type": meta.MIMEType, "width": meta.Width, "height": meta.Height,
-					"byte_size": meta.ByteSize, "sha256": hex.EncodeToString(sum[:]),
+					"byte_size": meta.ByteSize, "sha256": meta.SHA256,
 				},
 				"generated_at": row.FinishedAt,
 			})
@@ -196,7 +192,11 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	if manifest == nil {
 		manifest = map[string]any{}
 	}
-	manifestBytes, _ := json.Marshal(manifest)
+	manifestBytes, err := canonjson.Compact(manifest)
+	if err != nil {
+		return ExportArchive{}, err
+	}
+	manifestBytes = append(manifestBytes, '\n')
 	mh := &zip.FileHeader{Name: "manifest.json", Method: zip.Deflate}
 	mh.SetModTime(epoch)
 	mw, err := zw.CreateHeader(mh)
@@ -257,6 +257,95 @@ func sourceLineage(ctx context.Context, tx *gorm.DB, sourceAssetID, productID st
 		run = map[string]any{"id": *runID, "revision": runRev}
 	}
 	return map[string]any{"graph": graph, "run": run, "node_run_id": nodeRunID}
+}
+
+func assetMetadata(asset product.ImageAsset, sha256 string) map[string]any {
+	var sha any
+	if sha256 != "" {
+		sha = sha256
+	}
+	return map[string]any{
+		"id":                asset.ID,
+		"origin_type":       asset.OriginType,
+		"image_type_key":    asset.ImageTypeKey,
+		"display_name":      asset.DisplayName,
+		"original_filename": asset.OriginalFilename,
+		"parent_asset_id":   asset.ParentAssetID,
+		"created_at":        asset.CreatedAt,
+		"mime_type":         asset.MIMEType,
+		"width":             asset.Width,
+		"height":            asset.Height,
+		"byte_size":         asset.ByteSize,
+		"sha256":            sha,
+	}
+}
+
+var errFileSizeChanged = errors.New("delivery result file size changed")
+
+func readVerifiedResultMedia(ctx context.Context, q *gorm.DB, files storage.Local, asset product.ImageAsset) ([]byte, media.Verified, string, error) {
+	if asset.VerificationStatus != media.StatusVerified {
+		return nil, media.Verified{}, "", apperr.Conflict("交付图结果媒体不可用")
+	}
+	sha, err := loadMediaSHA256(ctx, q, asset.MediaObjectID)
+	if err != nil {
+		return nil, media.Verified{}, "", err
+	}
+	if asset.ByteSize == nil || asset.Width == nil || asset.Height == nil || sha == "" || strings.TrimSpace(asset.MIMEType) == "" {
+		return nil, media.Verified{}, "", apperr.Conflict("交付图结果缺少核验元数据")
+	}
+	data, err := readExactBoundedFile(files, asset.StoragePath, *asset.ByteSize)
+	if err != nil {
+		if errors.Is(err, errFileSizeChanged) {
+			return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件大小已变化")
+		}
+		return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件不可用")
+	}
+	meta, err := media.Inspect(data, asset.MIMEType)
+	if err != nil {
+		return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件不可用")
+	}
+	if meta.MIMEType != asset.MIMEType || meta.ByteSize != *asset.ByteSize || meta.Width != *asset.Width || meta.Height != *asset.Height || meta.SHA256 != sha {
+		return nil, media.Verified{}, "", apperr.Conflict("交付图结果核验元数据已变化")
+	}
+	return data, meta, sha, nil
+}
+
+func readExactBoundedFile(files storage.Local, rel string, expectedByteSize int) ([]byte, error) {
+	abs, err := files.Resolve(rel)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	content, err := io.ReadAll(io.LimitReader(f, int64(expectedByteSize)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) != expectedByteSize {
+		return nil, errFileSizeChanged
+	}
+	return content, nil
+}
+
+func deduplicateFilename(filename string, used map[string]struct{}) string {
+	key := strings.ToLower(filename)
+	if _, exists := used[key]; !exists {
+		used[key] = struct{}{}
+		return filename
+	}
+	ext := filepath.Ext(filename)
+	stem := strings.TrimSuffix(filename, ext)
+	for serial := 2; ; serial++ {
+		candidate := fmt.Sprintf("%s-%d%s", stem, serial, ext)
+		candidateKey := strings.ToLower(candidate)
+		if _, exists := used[candidateKey]; !exists {
+			used[candidateKey] = struct{}{}
+			return candidate
+		}
+	}
 }
 
 func safeName(value, fallback string) string {

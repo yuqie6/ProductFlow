@@ -32,19 +32,20 @@ type ExportRequest struct {
 }
 
 type jobRow struct {
-	ID            string
-	ProductID     string
-	SourceAssetID string
-	ResultAssetID *string
-	SpecJSON      []byte
-	SpecHash      string
-	Status        string
-	Attempts      int
-	IsRetryable   bool
-	FailureReason *string
-	CreatedAt     time.Time
-	StartedAt     *time.Time
-	FinishedAt    *time.Time
-	UpdatedAt     time.Time
-	ActiveAttempt *string
+	ID                string
+	ProductID         string
+	SourceAssetID     string
+	ResultAssetID     *string
+	SpecSchemaVersion int
+	SpecJSON          []byte
+	SpecHash          string
+	Status            string
+	Attempts          int
+	IsRetryable       bool
+	FailureReason     *string
+	CreatedAt         time.Time
+	StartedAt         *time.Time
+	FinishedAt        *time.Time
+	UpdatedAt         time.Time
+	ActiveAttempt     *string
 }

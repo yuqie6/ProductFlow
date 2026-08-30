@@ -131,8 +131,7 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 			return err
 		}
 		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
-			       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
+			SELECT `+jobSelectColumns+`
 			FROM delivery_rendition_jobs
 			WHERE source_asset_id = $1
 			ORDER BY created_at DESC, id DESC
@@ -299,12 +298,10 @@ func validateSource(ctx context.Context, tx *gorm.DB, source product.ImageAsset)
 	return nil
 }
 
+const jobSelectColumns = `id, product_id, source_asset_id, result_asset_id, spec_schema_version, spec_json, spec_hash, status, attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id`
+
 func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, q, `
-		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
-		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
-		FROM delivery_rendition_jobs WHERE id = $1
-	`, jobID))
+	row, err := scanJobRow(pfdb.QueryRow(ctx, q, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE id = $1`, jobID))
 	if errors.Is(err, sqldb.ErrNoRows) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
@@ -312,11 +309,7 @@ func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {
 }
 
 func loadJobForUpdate(ctx context.Context, tx *gorm.DB, jobID string) (jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `
-		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
-		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
-		FROM delivery_rendition_jobs WHERE id = $1 FOR UPDATE
-	`, jobID))
+	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE id = $1 FOR UPDATE`, jobID))
 	if errors.Is(err, sqldb.ErrNoRows) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
@@ -324,11 +317,7 @@ func loadJobForUpdate(ctx context.Context, tx *gorm.DB, jobID string) (jobRow, e
 }
 
 func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (*jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `
-		SELECT id, product_id, source_asset_id, result_asset_id, spec_json, spec_hash, status,
-		       attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id
-		FROM delivery_rendition_jobs WHERE source_asset_id = $1 AND spec_hash = $2
-	`, sourceID, hash))
+	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE source_asset_id = $1 AND spec_hash = $2`, sourceID, hash))
 	if errors.Is(err, sqldb.ErrNoRows) {
 		return nil, nil
 	}
@@ -336,6 +325,21 @@ func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (
 		return nil, err
 	}
 	return &row, nil
+}
+
+func loadMediaSHA256(ctx context.Context, q *gorm.DB, mediaObjectID string) (string, error) {
+	var sha sqldb.NullString
+	err := pfdb.QueryRow(ctx, q, `SELECT sha256 FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&sha)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !sha.Valid {
+		return "", nil
+	}
+	return sha.String, nil
 }
 
 type rowScanner interface {
@@ -349,7 +353,7 @@ func scanJob(rows *sqldb.Rows) (jobRow, error) {
 func scanJobRow(row rowScanner) (jobRow, error) {
 	var j jobRow
 	err := row.Scan(
-		&j.ID, &j.ProductID, &j.SourceAssetID, &j.ResultAssetID, &j.SpecJSON, &j.SpecHash, &j.Status,
+		&j.ID, &j.ProductID, &j.SourceAssetID, &j.ResultAssetID, &j.SpecSchemaVersion, &j.SpecJSON, &j.SpecHash, &j.Status,
 		&j.Attempts, &j.IsRetryable, &j.FailureReason, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.UpdatedAt, &j.ActiveAttempt,
 	)
 	return j, err

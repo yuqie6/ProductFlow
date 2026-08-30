@@ -288,6 +288,67 @@ func TestDeliverySubmitExecuteAndRetryConflict(t *testing.T) {
 	}
 }
 
+func TestExecuteTerminalJobDoesNotBusyRetry(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifact(t, created.Product.ID, assetID)
+	submitted := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{
+		"width": 64, "height": 64, "format": "png", "fit": "contain",
+	})
+	ds.mustStatus(t, submitted, http.StatusAccepted)
+	var job JobResponse
+	ds.decode(t, submitted, &job)
+	exec := Executor{DB: ds.db, Media: ds.media}
+	if err := exec.Execute(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Execute(context.Background(), job.ID); err != nil {
+		t.Fatalf("terminal job must consume, not busy-retry: %v", err)
+	}
+}
+
+func TestExecuteFailsQueuedJobWhenSourceNotVerified(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifact(t, created.Product.ID, assetID)
+	submitted := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{
+		"width": 64, "height": 64, "format": "png", "fit": "contain",
+	})
+	ds.mustStatus(t, submitted, http.StatusAccepted)
+	var job JobResponse
+	ds.decode(t, submitted, &job)
+	if job.Status != "queued" {
+		t.Fatalf("status %s", job.Status)
+	}
+
+	if _, err := ds.pool.Exec(context.Background(), `
+		UPDATE media_objects SET verification_status = 'missing'
+		WHERE id = (SELECT media_object_id FROM product_image_assets WHERE id = $1)
+	`, assetID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	var reason *string
+	if err := ds.pool.QueryRow(context.Background(), `
+		SELECT status, failure_reason FROM delivery_rendition_jobs WHERE id = $1
+	`, job.ID).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("status %s want failed (claim must commit before source validation)", status)
+	}
+	if reason == nil || *reason != "交付派生原图媒体尚未通过核验" {
+		t.Fatalf("failure_reason %v", reason)
+	}
+}
+
 func TestDeliveryUnknownSpecFieldRejected(t *testing.T) {
 	ds := newDeliveryServer(t)
 	created := ds.createProduct(t)
