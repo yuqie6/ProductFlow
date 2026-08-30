@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/png"
 	"io"
@@ -31,6 +32,16 @@ import (
 )
 
 type mockGateway struct{}
+
+type recordingGateway struct {
+	mockGateway
+	pageContext any
+}
+
+func (g *recordingGateway) StartTurn(conversationID string, taskID *string, inputText string, assetIDs []string, idempotencyKey string, pageContext any) (TurnState, error) {
+	g.pageContext = pageContext
+	return g.mockGateway.StartTurn(conversationID, taskID, inputText, assetIDs, idempotencyKey, pageContext)
+}
 
 func (mockGateway) Configured() bool { return true }
 
@@ -310,6 +321,62 @@ func TestAgentWorkbenchMissingAndTurnGateway(t *testing.T) {
 	}
 }
 
+func TestAgentTurnPassesPageContextToGateway(t *testing.T) {
+	gw := &recordingGateway{}
+	as := newAgentServer(t, gw, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text":      "检查当前商品素材",
+		"idempotency_key": clockid.New(),
+		"page_context": map[string]any{
+			"route":              "/products/p1",
+			"page_type":          "product_workbench",
+			"product_id":         "p1",
+			"selected_asset_ids": []string{"asset-1"},
+			"visible_asset_ids":  []string{"asset-1", "asset-2"},
+			"filters":            map[string]string{"tab": "agent"},
+			"workflow_revision":  2,
+			"library_revision":   3,
+			"captured_at":        "2026-08-17T12:00:00+00:00",
+		},
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	payload, ok := gw.pageContext.(map[string]any)
+	if !ok || payload == nil {
+		t.Fatalf("gateway page context %+v", gw.pageContext)
+	}
+	if payload["route"] != "/products/p1" || payload["page_type"] != "product_workbench" {
+		t.Fatalf("route %+v", payload)
+	}
+	if payload["snapshot_id"] == nil || payload["digest"] == nil {
+		t.Fatalf("snapshot %+v", payload)
+	}
+	if payload["workflow_revision"] != 2 || payload["library_revision"] != 3 {
+		t.Fatalf("revisions %+v", payload)
+	}
+	selected, _ := payload["selected_asset_ids"].([]string)
+	if len(selected) != 1 || selected[0] != "asset-1" {
+		t.Fatalf("selected %+v", payload["selected_asset_ids"])
+	}
+	var storedRoute, storedDigest string
+	var workflowRev, libraryRev *int
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT route, digest, workflow_revision, library_revision
+		FROM agent_page_context_snapshots WHERE id = $1
+	`, payload["snapshot_id"]).Scan(&storedRoute, &storedDigest, &workflowRev, &libraryRev); err != nil {
+		t.Fatal(err)
+	}
+	if storedRoute != "/products/p1" || storedDigest == "" || workflowRev == nil || *workflowRev != 2 || libraryRev == nil || *libraryRev != 3 {
+		t.Fatalf("stored route=%s digest=%s wr=%v lr=%v", storedRoute, storedDigest, workflowRev, libraryRev)
+	}
+}
+
 func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
@@ -390,8 +457,8 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 		t.Fatalf("get %+v", loaded)
 	}
 
-	if err := (Executor{Service: as.svc}).Execute(context.Background(), submitted.Turn.ID); err != nil {
-		t.Fatal(err)
+	if err := (Executor{Service: as.svc}).Execute(context.Background(), submitted.Turn.ID); !errors.Is(err, queue.ErrLater) {
+		t.Fatalf("in-flight turn must return ErrLater, got %v", err)
 	}
 	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
 		t.Fatal(err)
@@ -407,7 +474,7 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	}
 }
 
-func TestRecoverUnfinishedTurnsDoesNotRestageConsumedDispatch(t *testing.T) {
+func TestRecoverUnfinishedTurnsRestagesConsumedDispatch(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -430,8 +497,12 @@ func TestRecoverUnfinishedTurnsDoesNotRestageConsumedDispatch(t *testing.T) {
 	`, queue.StatusConsumed, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
+	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if summary.EnqueuedTurns < 1 {
+		t.Fatalf("expected restage of consumed in-flight turn, summary %+v", summary)
 	}
 	var dispatchStatus string
 	if err := as.pool.QueryRow(context.Background(), `
@@ -441,8 +512,41 @@ func TestRecoverUnfinishedTurnsDoesNotRestageConsumedDispatch(t *testing.T) {
 	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != queue.StatusConsumed {
-		t.Fatalf("recovery restaged consumed dispatch to %s", dispatchStatus)
+	if dispatchStatus != queue.StatusPending {
+		t.Fatalf("recovery left consumed dispatch as %s", dispatchStatus)
+	}
+}
+
+func TestRecoverUnfinishedTurnsDoesNotRestagePendingDispatch(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "整理素材", "idempotency_key": clockid.New(), "asset_ids": []string{},
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.EnqueuedTurns != 0 {
+		t.Fatalf("pending dispatch must not recount as enqueue, summary %+v", summary)
+	}
+	var dispatchStatus string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status FROM async_dispatches
+		WHERE actor_name = $1 AND aggregate_id = $2
+		ORDER BY created_at DESC LIMIT 1
+	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus); err != nil {
+		t.Fatal(err)
+	}
+	if dispatchStatus != queue.StatusPending && dispatchStatus != queue.StatusSent {
+		t.Fatalf("status %s", dispatchStatus)
 	}
 }
 
@@ -611,6 +715,15 @@ func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 	as.decode(t, claim, &lease)
 	if lease.Phase != "claimed" || lease.LeaseToken == "" || lease.ProjectionID != submitted.Turn.ID {
 		t.Fatalf("lease %+v", lease)
+	}
+	var checkpointSeq int
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT last_checkpoint_sequence FROM agent_turn_executions WHERE id = $1
+	`, lease.ExecutionID).Scan(&checkpointSeq); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointSeq != 0 {
+		t.Fatalf("last_checkpoint_sequence %d", checkpointSeq)
 	}
 
 	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{

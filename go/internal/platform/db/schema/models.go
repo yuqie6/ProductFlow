@@ -156,7 +156,7 @@ type AgentTurnExecutions struct {
 	ReleasedAt             *time.Time `gorm:"column:released_at;type:timestamptz"`
 	CreatedAt              time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt              time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
-	LastCheckpointSequence int        `gorm:"column:last_checkpoint_sequence;type:integer;not null"`
+	LastCheckpointSequence int        `gorm:"column:last_checkpoint_sequence;type:integer;not null;default:0"`
 	LastCheckpointAt       *time.Time `gorm:"column:last_checkpoint_at;type:timestamptz"`
 }
 

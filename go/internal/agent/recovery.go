@@ -64,19 +64,13 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 		out.PendingTurns = len(ids)
 		out.RecoveredTaskTurns = recovered
 		for _, id := range ids {
-			var status string
-			err := pfdb.QueryRow(ctx, pgxTx, `
-				SELECT status FROM async_dispatches
-				WHERE actor_name = $1 AND aggregate_id = $2
-				ORDER BY created_at DESC LIMIT 1
-			`, queue.ActorAgentTurnSync, id).Scan(&status)
-			if err == nil && (status == queue.StatusPending || status == queue.StatusSent || status == queue.StatusConsumed) {
-				continue
-			}
-			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, id, 0); err != nil {
+			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
+			if err != nil {
 				return err
 			}
-			out.EnqueuedTurns++
+			if changed {
+				out.EnqueuedTurns++
+			}
 		}
 		return nil
 	})

@@ -101,6 +101,95 @@ func TestConfirmWorkflowRunRequestKeepsProductGoalOpen(t *testing.T) {
 	}
 }
 
+func TestCreateWorkflowRunRequestMarksGoalWaiting(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	task, _ := createProductGoalRunRequest(t, as, false)
+	got := mustGetTask(t, as, task.ID)
+	if got.Status != "awaiting_confirmation" {
+		t.Fatalf("status %s", got.Status)
+	}
+	if got.WaitingReason == nil || *got.WaitingReason != "workflow_run_confirmation" {
+		t.Fatalf("waiting %+v", got.WaitingReason)
+	}
+}
+
+func TestApplyTurnStateAttachesWorkflowRunRequestID(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	task, pending := createProductGoalRunRequest(t, as, false)
+	if task.ConversationID == nil || task.ProductID == nil {
+		t.Fatal("task missing conversation or product")
+	}
+	turnID := clockid.New()
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO agent_turn_projections (
+			id, conversation_id, task_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
+			status, resume_required, tool_steps_json, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, '执行', '[]'::jsonb, 'queued', FALSE, '[]'::jsonb, NOW(), NOW())
+	`, turnID, *task.ConversationID, task.ID, clockid.New(), strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
+		return as.svc.applyTurnState(context.Background(), pgxTx, task.ProductID, *task.ConversationID, turnID, TurnState{
+			APIVersion: "1",
+			RunID:      task.ID,
+			TurnID:     "ht-" + clockid.New(),
+			Status:     "succeeded",
+			ToolSteps: []map[string]any{
+				{"kind": "request_workflow_run", "status": "succeeded", "step_id": "run-1"},
+			},
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var attached *string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status, workflow_run_request_id FROM agent_turn_projections WHERE id = $1
+	`, turnID).Scan(&status, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if attached == nil || *attached != pending.ID {
+		t.Fatalf("workflow_run_request_id %+v want %s", attached, pending.ID)
+	}
+	if status != "awaiting_confirmation" {
+		t.Fatalf("turn status %s", status)
+	}
+}
+
+func TestPrepareEmptyGraphConflicts(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	productID := clockid.New()
+	graphID := clockid.New()
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '空图', NOW(), NOW())
+	`, productID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
+		VALUES ($1, $2, '空工作流', TRUE, 3, 1, NOW(), NOW())
+	`, graphID, productID); err != nil {
+		t.Fatal(err)
+	}
+	ensure := as.do(t, http.MethodPost, "/api/v2/products/"+productID+"/agent-workbench", nil, "", http.Header{
+		"Idempotency-Key": []string{clockid.New()},
+	})
+	as.mustStatus(t, ensure, http.StatusOK)
+	var bench WorkbenchResponse
+	as.decode(t, ensure, &bench)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	prepared := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+bench.Conversation.ID+"/workflow-run-requests/prepare", map[string]any{
+		"expected_workflow_revision": 1,
+	}, auth)
+	as.mustStatus(t, prepared, http.StatusConflict)
+	var detail map[string]string
+	as.decode(t, prepared, &detail)
+	if detail["detail"] != "当前工作流没有可运行的节点" {
+		t.Fatalf("prepare detail %v", detail)
+	}
+}
+
 func TestConfirmOrganizationDraftCompletesGlobalTask(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)

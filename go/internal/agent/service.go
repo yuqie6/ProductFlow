@@ -23,13 +23,6 @@ type Service struct {
 	Poll     time.Duration
 }
 
-func (s Service) pollDelay() time.Duration {
-	if s.Poll > 0 {
-		return s.Poll
-	}
-	return time.Millisecond
-}
-
 func (s Service) GatewayConfigured() bool {
 	if s.Gateway == nil {
 		return false

@@ -71,8 +71,9 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 			execID = newID()
 			if _, err := pfdb.Exec(ctx, pgxTx, `
 				INSERT INTO agent_turn_executions (
-					id, turn_projection_id, harness_turn_id, attempt, fencing_token, phase, created_at, updated_at
-				) VALUES ($1, $2, $3, 0, 0, 'claimed', NOW(), NOW())
+					id, turn_projection_id, harness_turn_id, attempt, fencing_token, phase,
+					last_checkpoint_sequence, created_at, updated_at
+				) VALUES ($1, $2, $3, 0, 0, 'claimed', 0, NOW(), NOW())
 			`, execID, projectionID, turnID); err != nil {
 				return err
 			}

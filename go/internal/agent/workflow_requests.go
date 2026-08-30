@@ -202,10 +202,10 @@ func (s Service) prepareGraphRequest(ctx context.Context, productID, workflowID 
 	if revision != expectedRevision {
 		return PreparedWorkflowRunRequest{}, apperr.Conflict(workflowRevisionChangedDetail)
 	}
-	_ = pfdb.QueryRow(ctx, s.DB, `
-		SELECT COUNT(*) FROM workflow_graph_nodes
-		WHERE graph_id = $1 AND node_type IN ('creative_brief','visual_system','prompt_generation','image_generation')
-	`, graphID).Scan(&runnable)
+	runnable, err = requireRunnableWorkflow(ctx, s.DB, productID, graphID)
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
 	return PreparedWorkflowRunRequest{
 		ProductID: productID, WorkflowID: graphID, WorkflowTitle: title,
 		WorkflowRevision: revision, RunnableNodeCount: runnable, TaskID: taskID, SourceRunID: sourceRunID,
@@ -261,6 +261,9 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 		if err != nil {
 			return err
 		}
+		if _, err := requireRunnableWorkflow(ctx, pgxTx, targetProduct, graphID); err != nil {
+			return err
+		}
 		id := newID()
 		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO agent_workflow_run_requests (
@@ -268,6 +271,9 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 				source_graph_run_id, source_step_id, idempotency_key, request_hash, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_confirmation', $7, $8, $9, $10, NOW(), NOW())
 		`, id, conversationID, taskID, targetProduct, graphID, expectedRevision, sourceRunID, sourceStepID, key, hash); err != nil {
+			return err
+		}
+		if err := markRequestWaiting(ctx, pgxTx, conversationID, taskID); err != nil {
 			return err
 		}
 		item, err := loadRunRequest(ctx, pgxTx, &targetProduct, conversationID, id)
@@ -341,6 +347,57 @@ func hashWorkflowRunRequest(conversationID, productID, workflowID, sourceStepID 
 		"source_step_id": sourceStepID, "task_id": taskID, "source_run_id": sourceRunID,
 		"product_id": productID, "workflow_id": workflowID,
 	})
+}
+
+func requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
+	id, err := graph.LoadGraph(ctx, db, productID, graphID)
+	if err != nil {
+		return 0, err
+	}
+	applied, err := graph.LoadAppliedGraph(ctx, db, id)
+	if err != nil {
+		return 0, err
+	}
+	selected, err := graph.SelectRunNodeIDs(applied, graph.RunScopeGraph, "", nil)
+	if err != nil {
+		var appErr apperr.Error
+		if errors.As(err, &appErr) && appErr.Status == 400 {
+			return 0, apperr.Conflict("当前工作流没有可运行的节点")
+		}
+		return 0, err
+	}
+	if len(selected) == 0 {
+		return 0, apperr.Conflict("当前工作流没有可运行的节点")
+	}
+	return len(selected), nil
+}
+
+func markRequestWaiting(ctx context.Context, pgxTx *gorm.DB, conversationID string, taskID *string) error {
+	if err := applyConversationStatus(ctx, pgxTx, conversationID, "awaiting_confirmation"); err != nil {
+		return err
+	}
+	if taskID == nil || *taskID == "" {
+		return nil
+	}
+	task, err := lockTask(ctx, pgxTx, *taskID)
+	if err != nil {
+		return err
+	}
+	if inSet(terminalTask, task.Status) || task.Status == "paused" {
+		return nil
+	}
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE agent_tasks SET
+			status = 'awaiting_confirmation',
+			waiting_reason = 'workflow_run_confirmation',
+			failure_reason = NULL,
+			finished_at = NULL,
+			updated_at = NOW()
+		WHERE id = $1
+	`, task.ID); err != nil {
+		return err
+	}
+	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 }
 
 func resolveActiveWorkflow(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, expectedRevision int) (string, error) {

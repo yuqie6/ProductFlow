@@ -67,6 +67,16 @@ func inSet(set map[string]struct{}, value string) bool {
 	return ok
 }
 
+func turnNeedsSync(row turnRow) bool {
+	if row.ID == "" || row.ResumeRequired {
+		return false
+	}
+	if inSet(inFlightTurn, row.Status) {
+		return true
+	}
+	return row.Status == "awaiting_confirmation" && row.LibraryOrgDraftRevisionID == nil && row.WorkflowRunRequestID == nil
+}
+
 func ptr[T any](v T) *T { return &v }
 
 func nullable(s string) any {

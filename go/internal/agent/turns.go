@@ -534,40 +534,6 @@ func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, convers
 	return row, true, err
 }
 
-func insertPageContext(ctx context.Context, pgxTx *gorm.DB, taskID *string, turnID string, pageContext map[string]any) error {
-	route, _ := pageContext["route"].(string)
-	pageType, _ := pageContext["page_type"].(string)
-	if stringsTrim(route) == "" || stringsTrim(pageType) == "" {
-		return apperr.Validation("页面上下文缺少 route 或 page_type")
-	}
-	digest, err := turnRequestHash("page", nil, route+"|"+pageType, nil)
-	if err != nil {
-		return err
-	}
-	snapshotID := newID()
-	selected, _ := json.Marshal(pageContext["selected_asset_ids"])
-	visible, _ := json.Marshal(pageContext["visible_asset_ids"])
-	filters, _ := json.Marshal(pageContext["filters"])
-	if selected == nil {
-		selected = []byte("[]")
-	}
-	if visible == nil {
-		visible = []byte("[]")
-	}
-	if filters == nil {
-		filters = []byte("{}")
-	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO agent_page_context_snapshots (
-			id, task_id, turn_id, route, page_type, product_id, workflow_id,
-			selected_asset_ids_json, visible_asset_ids_json, filters_json, digest, captured_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-	`, snapshotID, taskID, turnID, route, pageType, pageContext["product_id"], pageContext["workflow_id"], selected, visible, filters, digest); err != nil {
-		return err
-	}
-	_, err = pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_projections SET page_context_snapshot_id = $2 WHERE id = $1`, turnID, snapshotID)
-	return err
-}
 
 func (s Service) recordStartError(ctx context.Context, productID *string, conversationID, projectionID, message string) error {
 	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -583,12 +549,20 @@ func (s Service) recordStartError(ctx context.Context, productID *string, conver
 
 func (s Service) bindGatewayTurn(ctx context.Context, productID *string, conversationID, projectionID string, deferIfUnavailable bool) (TurnResponse, error) {
 	var row turnRow
+	var pageContext any
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
 		}
 		row = loaded
+		if loaded.PageContextSnapshotID != nil && *loaded.PageContextSnapshotID != "" {
+			payload, err := loadPageContextPayload(ctx, pgxTx, *loaded.PageContextSnapshotID)
+			if err != nil {
+				return err
+			}
+			pageContext = payload
+		}
 		return nil
 	})
 	if err != nil {
@@ -606,7 +580,7 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 	}
 	assets := []string{}
 	_ = json.Unmarshal(row.InputAssetIDs, &assets)
-	state, ge := s.Gateway.StartTurn(conversationID, row.TaskID, row.InputText, assets, row.IdempotencyKey, nil)
+	state, ge := s.Gateway.StartTurn(conversationID, row.TaskID, row.InputText, assets, row.IdempotencyKey, pageContext)
 	if ge != nil {
 		_ = s.recordStartError(ctx, productID, conversationID, projectionID, "Agent 服务暂时不可用")
 		if !deferIfUnavailable {
