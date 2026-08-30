@@ -20,15 +20,22 @@ func IsConfirmedProviderFailure(err error) bool {
 }
 
 type ChatRequest struct {
-	Prompt      string
-	Size        string
-	ToolOptions map[string]any
+	Prompt             string
+	Size               string
+	Count              int
+	ToolOptions        map[string]any
+	BaseBytes          []byte
+	ReferenceBytes     [][]byte
+	HistoryBlock       string
+	PreviousResponseID *string
 }
 
 type ChatResult struct {
 	Bytes          []byte
+	Images         [][]byte
 	MIME           string
 	Model          string
+	PromptVersion  string
 	ResponseID     string
 	ProviderStatus string
 	OutputJSON     map[string]any
@@ -40,9 +47,12 @@ type ChatProvider interface {
 }
 
 type MockChatProvider struct {
-	ProviderName string
-	PNG          []byte
-	Err          error
+	ProviderName  string
+	PNG           []byte
+	Err           error
+	Model         string
+	PromptVersion string
+	ResponseID    string
 }
 
 func (m MockChatProvider) Name() string {
@@ -61,10 +71,18 @@ func (m MockChatProvider) Generate(ctx context.Context, req ChatRequest) (ChatRe
 		w, h := parseSize(req.Size)
 		pngBytes = grayPNG(w, h)
 	}
+	model := m.Model
+	if model == "" {
+		model = "mock-image"
+	}
+	promptVersion := m.PromptVersion
+	if promptVersion == "" {
+		promptVersion = "mock-image-v1"
+	}
 	return ChatResult{
-		Bytes: pngBytes, MIME: "image/png", Model: "mock-image",
-		ProviderStatus: "completed",
-		OutputJSON:     map[string]any{"status": "completed"},
+		Bytes: pngBytes, MIME: "image/png", Model: model, PromptVersion: promptVersion,
+		ResponseID: m.ResponseID, ProviderStatus: "completed",
+		OutputJSON: map[string]any{"status": "completed"},
 	}, nil
 }
 

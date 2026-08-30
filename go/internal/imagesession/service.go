@@ -30,6 +30,9 @@ type Service struct {
 		settings.RuntimeReader
 		settings.LimitsReader
 	}
+	Reconciler interface {
+		ReconcileResponse(ctx context.Context, responseID string) (string, error)
+	}
 }
 
 func (s Service) maxDimension(ctx context.Context) int {
@@ -532,16 +535,50 @@ func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candid
 			return nil
 		}
 		now := time.Now().UTC()
+		state := "unsupported"
 		detail := "当前图片会话 provider 不支持查询原请求"
+		if s.Reconciler != nil && effect.ProviderResponseID != nil && strings.TrimSpace(*effect.ProviderResponseID) != "" {
+			result, recErr := s.Reconciler.ReconcileResponse(ctx, *effect.ProviderResponseID)
+			if recErr != nil {
+				state = "unknown"
+				detail = recErr.Error()
+			} else {
+				switch result {
+				case "applied":
+					state = "applied"
+					detail = ""
+				case "failed":
+					state = "not_applied"
+					detail = "供应商记录显示图片请求未完成"
+				case "unknown":
+					state = "unknown"
+					detail = "供应商 response 没有足够的图片结果证据"
+				default:
+					state = "unsupported"
+				}
+			}
+		}
+		effectResult := effect.EffectResult
+		if state == "applied" {
+			effectResult = "applied"
+		}
+		if state == "not_applied" {
+			effectResult = "failed"
+		}
 		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE image_session_provider_effects SET
-				reconciliation_state = 'unsupported', detail = $2, updated_at = $3
+				reconciliation_state = $2, effect_result = $3, detail = NULLIF($4, ''), updated_at = $5
 			WHERE id = $1
-		`, effect.ID, detail, now); err != nil {
+		`, effect.ID, state, effectResult, detail, now); err != nil {
 			return err
 		}
-		effect.ReconciliationState = "unsupported"
-		effect.Detail = &detail
+		effect.ReconciliationState = state
+		effect.EffectResult = effectResult
+		if detail == "" {
+			effect.Detail = nil
+		} else {
+			effect.Detail = &detail
+		}
 		effect.UpdatedAt = now
 		out = effect
 		return nil

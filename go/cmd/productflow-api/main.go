@@ -22,6 +22,7 @@ import (
 	applog "github.com/yuqie6/productflow/internal/platform/log"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/providers"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
@@ -91,7 +92,10 @@ func main() {
 			Settings: settingsStore,
 		},
 		ImageSession: imagesession.HTTP{
-			Service:  imagesession.Service{DB: gdb, Media: mediaStore, Settings: settingsStore},
+			Service: imagesession.Service{
+				DB: gdb, Media: mediaStore, Settings: settingsStore,
+				Reconciler: providers.LiveImage{Store: settingsStore},
+			},
 			Settings: settingsStore,
 		},
 		Delivery: delivery.HTTP{

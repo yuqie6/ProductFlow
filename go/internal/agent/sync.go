@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	sqldb "database/sql"
 
@@ -145,7 +146,7 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 		return err
 	}
 	if row.TaskID != nil {
-		if err := updateTaskFromTurn(ctx, pgxTx, *row.TaskID, status); err != nil {
+		if err := updateTaskFromTurn(ctx, pgxTx, *row.TaskID, status, state.Error, taskTurnSummary(status, state)); err != nil {
 			return err
 		}
 	}
@@ -259,35 +260,134 @@ func pendingWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, conversationID 
 	return ""
 }
 
-func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus string) error {
-	var status, waiting *string
-	switch turnStatus {
-	case "queued", "running", "cancel_requested":
-		s := "running"
-		status = &s
-	case "requires_input":
-		s, w := "waiting_user", "requires_input"
-		status, waiting = &s, &w
-	case "awaiting_confirmation":
-		s, w := "awaiting_confirmation", "awaiting_confirmation"
-		status, waiting = &s, &w
-	case "succeeded", "failed", "canceled", "unknown":
-		s, w := "waiting_user", "goal_loop"
-		status, waiting = &s, &w
-	}
-	if status == nil {
-		return nil
-	}
-	var current string
-	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_tasks WHERE id = $1`, taskID).Scan(&current); err != nil {
+func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus, errorText, summary string) error {
+	task, err := lockTask(ctx, pgxTx, taskID)
+	if err != nil {
 		return err
 	}
-	if current == "succeeded" || current == "canceled" || current == "paused" {
+	if task.Status == "succeeded" || task.Status == "canceled" {
 		return nil
 	}
-	_, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_tasks SET status = $2, waiting_reason = $3, started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+	keepGoal := false
+	if task.ConversationID != nil {
+		var scope string
+		err := pfdb.QueryRow(ctx, pgxTx, `SELECT scope_type FROM agent_conversations WHERE id = $1`, *task.ConversationID).Scan(&scope)
+		if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+			return err
+		}
+		keepGoal = scope == "product_workflow"
+	}
+	if task.Status == "paused" && (turnStatus == "requires_input" || turnStatus == "awaiting_confirmation") {
+		if summary != "" {
+			if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_tasks SET summary = $2, updated_at = NOW() WHERE id = $1`, task.ID, summary); err != nil {
+				return err
+			}
+		}
+		return refreshSessionSummary(ctx, pgxTx, task.SessionID)
+	}
+	status := ""
+	var waiting any
+	var failure any
+	setFinished := false
+	clearFinished := false
+	setCanceledAt := false
+	switch turnStatus {
+	case "queued":
+		status = "queued"
+	case "running", "cancel_requested":
+		status = "running"
+	case "requires_input":
+		status = "waiting_user"
+		waiting = "requires_input"
+	case "awaiting_confirmation":
+		status = "awaiting_confirmation"
+		waiting = "awaiting_confirmation"
+	case "succeeded", "failed", "canceled", "unknown":
+		if keepGoal {
+			status = "waiting_user"
+			waiting = "goal_loop"
+			clearFinished = true
+		} else {
+			switch turnStatus {
+			case "succeeded":
+				status = "succeeded"
+				setFinished = true
+			case "failed":
+				status = "failed"
+				setFinished = true
+				if errorText != "" {
+					failure = errorText
+				}
+			case "canceled":
+				status = "canceled"
+				setFinished = true
+				setCanceledAt = true
+			default:
+				status = "unknown"
+				setFinished = true
+				if errorText != "" {
+					failure = errorText
+				}
+			}
+		}
+	default:
+		return nil
+	}
+	if _, err := pfdb.Exec(ctx, pgxTx, `
+		UPDATE agent_tasks SET
+			status = $2,
+			waiting_reason = $3,
+			failure_reason = $4,
+			summary = CASE WHEN $8 <> '' THEN $8 ELSE summary END,
+			started_at = COALESCE(started_at, NOW()),
+			finished_at = CASE
+				WHEN $5 THEN NOW()
+				WHEN $6 THEN NULL
+				ELSE finished_at
+			END,
+			canceled_at = CASE WHEN $7 THEN NOW() ELSE canceled_at END,
+			updated_at = NOW()
 		WHERE id = $1
-	`, taskID, *status, waiting)
-	return err
+	`, task.ID, status, waiting, failure, setFinished, clearFinished, setCanceledAt, summary); err != nil {
+		return err
+	}
+	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
+}
+
+func taskTurnSummary(status string, state TurnState) string {
+	const maxLen = 2000
+	bound := func(value string) string {
+		normalized := strings.Join(strings.Fields(value), " ")
+		if len([]rune(normalized)) > maxLen {
+			return string([]rune(normalized)[:maxLen])
+		}
+		return normalized
+	}
+	switch status {
+	case "requires_input":
+		var question struct {
+			Question string `json:"question"`
+		}
+		if len(state.Question) > 0 {
+			_ = json.Unmarshal(state.Question, &question)
+		}
+		if strings.TrimSpace(question.Question) != "" {
+			return bound("等待回答：" + question.Question)
+		}
+		return "等待回答"
+	case "awaiting_confirmation":
+		return "等待确认"
+	}
+	if strings.TrimSpace(state.Error) != "" {
+		return bound("执行失败：" + state.Error)
+	}
+	if strings.TrimSpace(state.Output) != "" {
+		return bound(state.Output)
+	}
+	for i := len(state.ToolSteps) - 1; i >= 0; i-- {
+		if summary, ok := state.ToolSteps[i]["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+			return bound(summary)
+		}
+	}
+	return bound("Agent Turn 状态：" + status)
 }

@@ -58,20 +58,36 @@ func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest
 	if size == "" {
 		size = "1024x1024"
 	}
+	n := req.Count
+	if n < 1 {
+		n = 1
+	}
+	if n > 10 {
+		n = 10
+	}
 	parts := chatImageParts(req, true)
-	var bytesData []byte
-	var mime, model string
+	var images [][]byte
+	var mime, model, id string
 	var err error
 	if len(parts) > 0 {
-		bytesData, mime, model, _, err = p.edit(ctx, req.Prompt, size, p.Quality, parts, nil, mapChatStatus)
+		var bytesData []byte
+		bytesData, mime, model, id, err = p.edit(ctx, req.Prompt, size, p.Quality, parts, nil, mapChatStatus)
+		if err == nil {
+			images = [][]byte{bytesData}
+		}
 	} else {
-		bytesData, mime, model, _, err = p.generate(ctx, req.Prompt, size, p.Quality, mapChatStatus)
+		images, mime, model, id, err = p.generateN(ctx, req.Prompt, size, p.Quality, n, mapChatStatus)
 	}
 	if err != nil {
 		return imagesession.ChatResult{}, err
 	}
+	first := []byte(nil)
+	if len(images) > 0 {
+		first = images[0]
+	}
+	_ = id
 	return imagesession.ChatResult{
-		Bytes: bytesData, MIME: mime, Model: model,
+		Bytes: first, Images: images, MIME: mime, Model: model,
 		ProviderStatus: "completed", OutputJSON: map[string]any{"status": "completed"},
 	}, nil
 }
@@ -106,11 +122,25 @@ func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (loca
 }
 
 func (p OpenAIImages) generate(ctx context.Context, prompt, size, quality string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+	images, mime, model, id, err := p.generateN(ctx, prompt, size, quality, 1, classify)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if len(images) == 0 {
+		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
+	}
+	return images[0], mime, model, id, nil
+}
+
+func (p OpenAIImages) generateN(ctx context.Context, prompt, size, quality string, n int, classify func(int, []byte) error) ([][]byte, string, string, string, error) {
 	if quality == "" {
 		quality = p.Quality
 	}
+	if n < 1 {
+		n = 1
+	}
 	req := map[string]any{
-		"model": p.Model, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json",
+		"model": p.Model, "prompt": prompt, "size": size, "n": n, "response_format": "b64_json",
 	}
 	if quality != "" {
 		req["quality"] = quality
@@ -135,7 +165,7 @@ func (p OpenAIImages) generate(ctx context.Context, prompt, size, quality string
 	if err := classify(status, raw); err != nil {
 		return nil, "", "", "", err
 	}
-	return parseImageResponse(raw, p.Model)
+	return parseImageResponses(raw, p.Model)
 }
 
 func (p OpenAIImages) post(ctx context.Context, url string, body []byte) (int, []byte, error) {
@@ -157,6 +187,17 @@ func (p OpenAIImages) callTyped(ctx context.Context, method, url, contentType st
 }
 
 func parseImageResponse(raw []byte, fallbackModel string) ([]byte, string, string, string, error) {
+	images, mime, model, id, err := parseImageResponses(raw, fallbackModel)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if len(images) == 0 {
+		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
+	}
+	return images[0], mime, model, id, nil
+}
+
+func parseImageResponses(raw []byte, fallbackModel string) ([][]byte, string, string, string, error) {
 	var parsed struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
@@ -167,18 +208,28 @@ func parseImageResponse(raw []byte, fallbackModel string) ([]byte, string, strin
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, "", "", "", graph.ErrProviderUnknown()
 	}
-	if len(parsed.Data) == 0 || parsed.Data[0].B64JSON == "" {
+	if len(parsed.Data) == 0 {
 		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
 	}
-	decoded, err := decodeB64(parsed.Data[0].B64JSON)
-	if err != nil {
+	images := make([][]byte, 0, len(parsed.Data))
+	for _, item := range parsed.Data {
+		if item.B64JSON == "" {
+			continue
+		}
+		decoded, err := decodeB64(item.B64JSON)
+		if err != nil {
+			return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
+		}
+		images = append(images, decoded)
+	}
+	if len(images) == 0 {
 		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
 	}
 	model := parsed.Model
 	if model == "" {
 		model = fallbackModel
 	}
-	return decoded, sniffMIME(decoded), model, parsed.ID, nil
+	return images, sniffMIME(images[0]), model, parsed.ID, nil
 }
 
 func sniffMIME(data []byte) string {
@@ -236,6 +287,34 @@ type OpenAIResponses struct {
 }
 
 func (p OpenAIResponses) Name() string { return "openai-responses" }
+
+func (p OpenAIResponses) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
+	responseID = strings.TrimSpace(responseID)
+	if responseID == "" {
+		return "unsupported", nil
+	}
+	status, raw, err := p.call(ctx, http.MethodGet, endpoint(p.BaseURL, "/v1/responses/"+responseID), nil)
+	if err != nil {
+		return "unknown", nil
+	}
+	if status >= 500 || status == http.StatusTooManyRequests {
+		return "unknown", nil
+	}
+	if status >= 400 {
+		return "unknown", nil
+	}
+	parsed, err := decodeProviderObject(raw)
+	if err != nil {
+		return "unknown", nil
+	}
+	if responsesTerminalFailure(parsed) {
+		return "failed", nil
+	}
+	if _, _, _, _, ok := extractResponsesImage(parsed, p.Model); ok {
+		return "applied", nil
+	}
+	return "unknown", nil
+}
 
 var (
 	responsesPollInterval = 2 * time.Second

@@ -108,6 +108,20 @@ func (l LiveImage) Edit(ctx context.Context, req localedit.EditRequest) (localed
 	return p.Edit(ctx, req)
 }
 
+func (l LiveImage) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return "unsupported", err
+	}
+	r, ok := p.(interface {
+		ReconcileResponse(context.Context, string) (string, error)
+	})
+	if !ok {
+		return "unsupported", nil
+	}
+	return r.ReconcileResponse(ctx, responseID)
+}
+
 // Prompt 按当前 prompt 绑定构造图运行提示词供应商。
 func Prompt(ctx context.Context, store *settings.Store) (graph.PromptProvider, error) {
 	if store == nil {

@@ -68,7 +68,23 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 		}
 		binding.GeminiOutputMIME = lookupJSONString(configJSON, "gemini_output_mime_type")
 	}
+	if need := imageCapabilityForKind(binding.Kind); need != "" && !contains(caps, need) {
+		return ModelBinding{}, apperr.Unavailable("供应商档案不支持当前接口能力")
+	}
 	return binding, nil
+}
+
+func imageCapabilityForKind(kind string) string {
+	switch kind {
+	case "openai_responses":
+		return "image_responses"
+	case "openai_images":
+		return "image_images"
+	case "google_gemini_image":
+		return "image_google_gemini"
+	default:
+		return ""
+	}
 }
 
 func (s *Store) resolvePurpose(ctx context.Context, purpose, capability, fallbackModelKey string, allowed []string) (ModelBinding, error) {

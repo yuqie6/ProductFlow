@@ -539,6 +539,56 @@ func TestGeminiUsesResolutionTierPixels(t *testing.T) {
 	}
 }
 
+func TestImagesAPIBatchesCandidateCount(t *testing.T) {
+	var posted map[string]any
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "batch", "model": "dall-e-3",
+		"data": []map[string]any{{"b64_json": onePixelPNGB64()}, {"b64_json": onePixelPNGB64()}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&posted)
+		w.WriteHeader(200)
+		_, _ = w.Write(okBody)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024", Count: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted["n"] != float64(2) && posted["n"] != 2 {
+		t.Fatalf("n %+v", posted["n"])
+	}
+	if len(got.Images) != 2 {
+		t.Fatalf("images %d", len(got.Images))
+	}
+}
+
+func TestResponsesReconcileApplied(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-1", "status": "completed",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/resp-1") {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.ReconcileResponse(context.Background(), "resp-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "applied" {
+		t.Fatalf("state %s", got)
+	}
+}
+
 func TestProviderDisplayNamesAreHyphenated(t *testing.T) {
 	images := OpenAIImages{Kind: "openai_images"}
 	if images.Name() != "openai-images" {
