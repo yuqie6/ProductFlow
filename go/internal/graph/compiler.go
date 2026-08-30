@@ -420,6 +420,41 @@ func promptArtifact(nodeID string, sources map[string]SourceRecord) (map[string]
 	return cloneMap(record.CurrentArtifactPayload), *record.CurrentArtifactID, nil
 }
 
+func collectPromptInputs(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (facts []map[string]any, briefs []map[string]any, visual map[string]any, refs []compiledReference, err error) {
+	for _, edge := range incomingSorted(graph, nodeID) {
+		record := sources[edge.SourceNodeID]
+		switch edge.Role {
+		case RoleFacts:
+			facts = append(facts, mergeRuntimeFacts(record.Facts, record.ProductSource)...)
+		case RoleBrief:
+			if record.Brief != nil {
+				briefs = append(briefs, cloneMap(record.Brief))
+			}
+		case RoleReference:
+			ref, refErr := compileReference(graph, edge, sources)
+			if refErr != nil {
+				return nil, nil, nil, nil, refErr
+			}
+			refs = append(refs, ref)
+		case RoleVisualGuidance:
+			source, nodeErr := graph.Node(edge.SourceNodeID)
+			if nodeErr != nil {
+				return nil, nil, nil, nil, nodeErr
+			}
+			payload, _, overlay, visErr := compileVisual(source, record)
+			if visErr != nil {
+				return nil, nil, nil, nil, visErr
+			}
+			if overlayMap, ok := overlay.(map[string]any); ok {
+				visual = cloneMap(overlayMap)
+			} else if payloadMap, ok := payload.(map[string]any); ok {
+				visual = cloneMap(payloadMap)
+			}
+		}
+	}
+	return facts, briefs, visual, refs, nil
+}
+
 func incomingPromptPayload(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, error) {
 	for _, edge := range incomingSorted(graph, nodeID) {
 		if edge.Role != RolePrompt {

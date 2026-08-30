@@ -68,27 +68,12 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, scope 
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
-	var compileErr error
-	if scope == RunScopeNode {
-		for _, nodeID := range selected {
-			if _, err := compileInputDigest(applied, nodeID, sources); err != nil {
-				compileErr = err
-				break
-			}
-		}
-	}
+	// Python submit_graph_run 不在提交时编译节点。预编译会把「上游提示词尚未生成」的 NODE 跑图直接标失败，祖先 prompt 永远进不了队。
 	runStatus := RunStatusRunning
 	nodeStatus := NodeRunQueued
 	var failure *string
 	var finishedAt *time.Time
 	now := time.Now().UTC()
-	if compileErr != nil {
-		reason := runFailureReason(compileErr)
-		runStatus = RunStatusFailed
-		nodeStatus = NodeRunFailed
-		failure = &reason
-		finishedAt = &now
-	}
 	meta, _ := json.Marshal(map[string]any{"run_scope": scope, "requested_node_id": targetNodeID})
 	runID := clockid.New()
 	_, err = pfdb.Exec(ctx, tx, `
@@ -120,10 +105,8 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, scope 
 			return graphRunSubmission{}, err
 		}
 	}
-	if compileErr == nil {
-		if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
-			return graphRunSubmission{}, err
-		}
+	if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
+		return graphRunSubmission{}, err
 	}
 	full, err := loadGraphRun(ctx, tx, productID, graphID, runID)
 	if err != nil {
@@ -186,6 +169,28 @@ func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID st
 	`, runID, graphID)
 	if errors.Is(err, sqldb.ErrNoRows) {
 		return graphRunRow{}, apperr.NotFound("工作流运行不存在")
+	}
+	if err != nil {
+		return graphRunRow{}, err
+	}
+	nodes, err := loadNodeRuns(ctx, tx, run.ID)
+	if err != nil {
+		return graphRunRow{}, err
+	}
+	run.NodeRuns = nodes
+	return run, nil
+}
+
+func loadGraphRunByIDLocked(ctx context.Context, tx *gorm.DB, runID string) (graphRunRow, error) {
+	run, err := scanGraphRun(ctx, tx, `
+		SELECT id, graph_id, status, run_scope, requested_node_id, graph_revision,
+		       snapshot_json, failure_reason, is_retryable, started_at, finished_at
+		FROM workflow_graph_runs
+		WHERE id = $1
+		FOR UPDATE
+	`, runID)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return graphRunRow{}, err
 	}
 	if err != nil {
 		return graphRunRow{}, err

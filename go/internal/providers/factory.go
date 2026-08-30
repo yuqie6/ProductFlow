@@ -78,6 +78,17 @@ func (l LiveImage) Generate(ctx context.Context, req imagesession.ChatRequest) (
 	if err != nil {
 		return imagesession.ChatResult{}, err
 	}
+	if l.Store != nil {
+		tmpl, err := l.Store.ImageChatPromptTemplate(ctx)
+		if err != nil {
+			return imagesession.ChatResult{}, err
+		}
+		size := req.Size
+		if size == "" {
+			size = "1024x1024"
+		}
+		req.Prompt = imagesession.RenderChatPrompt(tmpl, req.Prompt, size, req.HistoryBlock)
+	}
 	return p.Generate(ctx, req)
 }
 
@@ -138,7 +149,13 @@ func imageAdapter(ctx context.Context, store *settings.Store) (imageAdapterSet, 
 			Model: binding.Model,
 		}}, nil
 	case "google_gemini_image":
-		return unsupportedImage{kind: binding.Kind}, nil
+		version := binding.GeminiAPIVersion
+		if version == "" {
+			version = "v1beta"
+		}
+		return GeminiImage{
+			APIKey: binding.APIKey, BaseURL: binding.BaseURL, Model: binding.Model, APIVersion: version,
+		}, nil
 	default:
 		return unsupportedImage{kind: binding.Kind}, nil
 	}

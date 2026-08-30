@@ -1,10 +1,12 @@
 package graph
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
@@ -619,6 +621,12 @@ func asFiniteNumber(value any) (float64, bool) {
 		return f, !math.IsNaN(f) && !math.IsInf(f, 0)
 	case float64:
 		return n, !math.IsNaN(n) && !math.IsInf(n, 0)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+			return 0, false
+		}
+		return f, true
 	default:
 		return 0, false
 	}
@@ -627,7 +635,7 @@ func asFiniteNumber(value any) (float64, bool) {
 func valueLen(value any) (int, bool) {
 	switch t := value.(type) {
 	case string:
-		return len(t), true
+		return utf8.RuneCountInString(t), true
 	case []any:
 		return len(t), true
 	case []string:

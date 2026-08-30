@@ -20,12 +20,36 @@ type ImageProvider interface {
 	GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error)
 }
 
+type ReferenceImage struct {
+	AssetID  string
+	Role     string
+	Label    string
+	MIME     string
+	Filename string
+	Bytes    []byte
+}
+
 type PromptRequest struct {
-	NodeType    NodeType
-	NodeTitle   string
-	InputDigest string
-	Facts       []map[string]any
-	Config      map[string]any
+	NodeType             NodeType
+	NodeTitle            string
+	InputDigest          string
+	Facts                []map[string]any
+	Brief                map[string]any
+	Briefs               []map[string]any
+	Visual               map[string]any
+	Config               map[string]any
+	References           []ReferenceImage
+	ImageTypeKey         string
+	ImageTypeTitle       string
+	ImageTypeDescription string
+	ImageTypeFamily      string
+	ImageTypeJob         string
+	GenerateFromContext  bool
+	CurrentPrompt        map[string]any
+	VisualExceptions     []map[string]any
+	TextPolicy           string
+	TextLanguage         string
+	ImageTypes           []map[string]any
 }
 
 type PromptResult struct {
@@ -35,18 +59,28 @@ type PromptResult struct {
 }
 
 type ImageRequest struct {
-	NodeTitle      string
-	InputDigest    string
-	GenerationSpec map[string]any
-	Prompt         map[string]any
+	NodeTitle            string
+	InputDigest          string
+	ImageTypeKey         string
+	GenerationSpec       map[string]any
+	Prompt               map[string]any
+	References           []ReferenceImage
+	VisualSystem         map[string]any
+	VisualOverlay        map[string]any
+	VariationInstruction string
+	IncomingEdgeIDs      []string
+	PromptArtifactID     string
 }
 
 type ImageResult struct {
-	Bytes          []byte
-	MIME           string
-	Model          string
-	ResponseID     string
-	ProviderStatus string
+	Bytes               []byte
+	MIME                string
+	Model               string
+	ResponseID          string
+	ProviderStatus      string
+	Width               int
+	Height              int
+	EffectiveParameters map[string]any
 }
 
 type GeneratedImageInput struct {
@@ -58,9 +92,10 @@ type GeneratedImageInput struct {
 	ImageTypeKey *string
 }
 
-// GeneratedImageWriter 把生成图写成商品图片身份。实现放在 product，避免 graph import product。
+// GeneratedImageWriter 把生成图写成商品图片身份，并按资产 ID 读回参考图字节。实现放在 product，避免 graph import product。
 type GeneratedImageWriter interface {
 	Write(ctx context.Context, tx *gorm.DB, in GeneratedImageInput) (assetID string, err error)
+	ReadAssetBytes(ctx context.Context, tx *gorm.DB, assetID string) (data []byte, mime, filename string, err error)
 }
 
 // DeliveryQueuer 在图片节点成功后排队确定性交付派生。实现放在 delivery，避免 graph import delivery。
@@ -113,7 +148,15 @@ func (m MockPromptProvider) GenerateVisualOverlay(ctx context.Context, req Promp
 	}
 	payload := m.Overlay
 	if payload == nil {
-		payload = map[string]any{"palette": []any{"#111111"}}
+		payload = map[string]any{
+			"style": []any{"商业套图", "商品是主角", "层次清楚"},
+			"colors": []any{
+				map[string]any{"role": "background", "value": "#F3EFE8", "label": "暖白底"},
+				map[string]any{"role": "headline", "value": "#1C1917", "label": "标题色"},
+				map[string]any{"role": "accent", "value": "#6B7C6A", "label": "克制点缀"},
+			},
+			"prohibitions": []any{"不要改变商品结构、颜色或材质"},
+		}
 	}
 	return PromptResult{Payload: payload, Model: "mock-visual"}, nil
 }

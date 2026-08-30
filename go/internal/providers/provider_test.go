@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
+	"github.com/yuqie6/productflow/internal/localedit"
 )
 
 func TestEndpointStripsTrailingV1(t *testing.T) {
@@ -26,6 +29,7 @@ func TestEndpointStripsTrailingV1(t *testing.T) {
 }
 
 func TestPromptSuccessFailUnknown(t *testing.T) {
+	okPayload := `{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[]}`
 	cases := []struct {
 		name   string
 		status int
@@ -36,7 +40,7 @@ func TestPromptSuccessFailUnknown(t *testing.T) {
 	}{
 		{
 			name: "success", status: 200,
-			body:   `{"id":"r1","model":"m","choices":[{"message":{"content":"{\"goal\":\"展示商品\",\"design_goals\":[\"主体\"],\"required_copy\":[],\"prohibitions\":[]}"}}]}`,
+			body:   `{"id":"r1","model":"m","output_parsed":` + okPayload + `}`,
 			wantOK: true,
 		},
 		{name: "fail-400", status: 400, body: `{"error":{"message":"bad"}}`},
@@ -45,7 +49,7 @@ func TestPromptSuccessFailUnknown(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/chat/completions" {
+				if r.URL.Path != "/v1/responses" {
 					t.Errorf("path %s", r.URL.Path)
 				}
 				w.WriteHeader(tc.status)
@@ -143,6 +147,636 @@ func TestChatFourHundredIsFailedNotUnknown(t *testing.T) {
 	}
 }
 
+func onePixelPNGB64() string {
+	return "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+}
+
+func TestResponsesImagePollsUntilResult(t *testing.T) {
+	responsesPollInterval = time.Millisecond
+	t.Cleanup(func() { responsesPollInterval = 2 * time.Second })
+
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-1", "status": "completed", "model": "gpt-image",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	creates := 0
+	retrieves := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/v1/responses"):
+			creates++
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"resp-1","status":"in_progress","output":[{"type":"image_generation_call","status":"generating","result":null}]}`)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/v1/responses/resp-1"):
+			retrieves++
+			w.WriteHeader(200)
+			_, _ = w.Write(completed)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "gpt-5.6-luna"}}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creates != 1 || retrieves < 1 {
+		t.Fatalf("creates=%d retrieves=%d", creates, retrieves)
+	}
+	if len(got.Bytes) == 0 || got.ResponseID != "resp-1" {
+		t.Fatalf("result %+v", got)
+	}
+}
+
+func TestResponsesImageRetrievesWhenCreateOmitsBytes(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-2", "status": "completed", "model": "gpt-image",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"resp-2","status":"completed","output":[{"type":"image_generation_call","status":"completed"}]}`)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("expected image bytes from retrieve")
+	}
+}
+
+func TestResponsesImageReadsBodyLargerThanEightMiB(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{
+		"id": "resp-big", "status": "completed", "model": "gpt-image",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+		"pad": strings.Repeat("a", 9<<20),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload) <= 8<<20 {
+		t.Fatalf("payload %d should exceed old 8MiB cap", len(payload))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("truncated body dropped the image")
+	}
+}
+
+func TestResponsesImageReadsCompletedSSE(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp-sse", "status": "completed",
+			"output": []map[string]any{{
+				"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+			}},
+		},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		_, _ = fmt.Fprintf(w, "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-sse\",\"status\":\"in_progress\"}}\n\n")
+		_, _ = fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResponseID != "resp-sse" || len(got.Bytes) == 0 {
+		t.Fatalf("sse result %+v", got)
+	}
+}
+
+func TestResponsesImageSendsGenerateAction(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-action", "status": "completed",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		var payload struct {
+			Tools      []map[string]any `json:"tools"`
+			ToolChoice map[string]any   `json:"tool_choice"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Tools) != 1 || payload.Tools[0]["type"] != "image_generation" || payload.Tools[0]["action"] != "generate" || payload.Tools[0]["size"] != "1024x1024" {
+			t.Fatalf("tools %+v", payload.Tools)
+		}
+		if payload.ToolChoice["type"] != "image_generation" {
+			t.Fatalf("tool_choice %+v", payload.ToolChoice)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	if _, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResponsesImageTreatsTextOnlyCompletedAsFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("did not expect retrieve %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{
+			"id":"resp-text","status":"completed",
+			"output":[
+				{"type":"reasoning"},
+				{"type":"message","status":"completed","content":[{"type":"output_text","text":"你好！你想让我帮你做什么？"}]}
+			]
+		}`)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if !errors.Is(err, imagesession.ErrTextOutput) {
+		t.Fatalf("got %v", err)
+	}
+	if isUnknown(err) {
+		t.Fatalf("text output must be a confirmed fail, got unknown: %v", err)
+	}
+}
+
+func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-retry", "status": "completed",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		posts++
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if posts == 1 {
+			if payload["tool_choice"] == nil {
+				t.Fatal("first request should force image_generation")
+			}
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"error":{"message":"tool_choice not supported"}}`)
+			return
+		}
+		if payload["tool_choice"] != nil {
+			t.Fatalf("retry should drop tool_choice: %+v", payload)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posts != 2 || len(got.Bytes) == 0 {
+		t.Fatalf("posts=%d bytes=%d", posts, len(got.Bytes))
+	}
+}
+
 func isUnknown(err error) bool {
 	return errors.Is(err, graph.ErrProviderUnknown()) || errors.Is(err, imagesession.ErrUnknown())
+}
+
+func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "edit1", "model": "gpt-image",
+		"data": []map[string]any{{"b64_json": onePixelPNGB64()}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Errorf("content-type %s", r.Header.Get("Content-Type"))
+		}
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if r.FormValue("prompt") != "去掉水印" {
+			t.Errorf("prompt %s", r.FormValue("prompt"))
+		}
+		if _, _, err := r.FormFile("image[]"); err != nil {
+			if _, _, err := r.FormFile("image"); err != nil {
+				t.Errorf("missing image: %v", err)
+			}
+		}
+		if _, _, err := r.FormFile("mask"); err != nil {
+			t.Errorf("missing mask: %v", err)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(okBody)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "gpt-image", MaskEdit: true}
+	got, err := img.Edit(context.Background(), localedit.EditRequest{
+		SourceBytes: png, SourceMIME: "image/png", MaskPNG: png,
+		ReferenceBytes: [][]byte{png}, Instruction: "去掉水印", Operation: "remove",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("expected edited image bytes")
+	}
+}
+
+func TestGenerateImageWithReferencesUsesEdits(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "img-ref", "model": "dall-e-3",
+		"data": []map[string]any{{"b64_json": onePixelPNGB64()}},
+	})
+	path := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Errorf("multipart: %v", err)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(okBody)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	got, err := img.GenerateImage(context.Background(), graph.ImageRequest{
+		NodeTitle: "hero", ImageTypeKey: "hero",
+		Prompt: map[string]any{"design_goal": "展示商品"},
+		References: []graph.ReferenceImage{{
+			AssetID: "a1", Bytes: png, MIME: "image/png", Filename: "ref.png", Role: "product_identity",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/v1/images/edits" {
+		t.Fatalf("path %s", path)
+	}
+	if got.EffectiveParameters["reference_image_count"] != 1 {
+		t.Fatalf("effective %+v", got.EffectiveParameters)
+	}
+	if !strings.Contains(graph.CompileImageModelPrompt(graph.ImageRequest{NodeTitle: "hero", ImageTypeKey: "hero"}), "首屏海报图") {
+		t.Fatal("compiled prompt should be listing text")
+	}
+}
+
+func TestResponsesChatBranchOmitsPreviousResponseID(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-ref", "status": "completed", "model": "gpt-image",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
+		Prompt: "换成蓝色", Size: "1024x1024",
+		BaseBytes: png, ReferenceBytes: [][]byte{png},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := posted["previous_response_id"]; ok {
+		t.Fatalf("branch request must not send previous_response_id: %+v", posted)
+	}
+	if countPostedInputImages(posted) != 2 {
+		t.Fatalf("expected base and reference input_image, got %+v", posted["input"])
+	}
+}
+
+func TestResponsesAdapterForwardsPreviousResponseIDAndKeepsBaseImage(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-ref", "status": "completed", "model": "gpt-image",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	prev := "prev-1"
+	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
+		Prompt: "继续", Size: "1024x1024",
+		BaseBytes: png, ReferenceBytes: [][]byte{png},
+		PreviousResponseID: &prev,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if posted["previous_response_id"] != "prev-1" {
+		t.Fatalf("payload %+v", posted)
+	}
+	if countPostedInputImages(posted) != 2 {
+		t.Fatalf("previous_response_id must not drop base/reference images, got %+v", posted["input"])
+	}
+}
+
+func TestResponsesFourHundredDoesNotFallbackToImages(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	imagesHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/v1/images/") {
+			imagesHits++
+			w.WriteHeader(200)
+			_, _ = fmt.Fprintf(w, `{"id":"img1","data":[{"b64_json":%q}]}`, onePixelPNGB64())
+			return
+		}
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"error":{"message":"previous_response_id is not available for this user","type":"invalid_request_error"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	prev := "resp-from-other-key"
+	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
+		Prompt: "继续", Size: "1024x1024", BaseBytes: png, PreviousResponseID: &prev,
+	})
+	if err == nil {
+		t.Fatal("expected responses 400")
+	}
+	if isUnknown(err) {
+		t.Fatalf("400 should fail, got unknown: %v", err)
+	}
+	if imagesHits != 0 {
+		t.Fatalf("responses 400 fell back to images %d times", imagesHits)
+	}
+	_, err = img.GenerateImage(context.Background(), graph.ImageRequest{
+		NodeTitle: "hero", ImageTypeKey: "hero",
+		References: []graph.ReferenceImage{{AssetID: "a1", Bytes: png, MIME: "image/png"}},
+	})
+	if err == nil {
+		t.Fatal("expected responses 400")
+	}
+	if imagesHits != 0 {
+		t.Fatalf("graph responses 400 fell back to images %d times", imagesHits)
+	}
+}
+
+func TestImagesChatDoesNotPersistResponseID(t *testing.T) {
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "img-edit-1", "model": "gpt-image",
+		"data": []map[string]any{{"b64_json": onePixelPNGB64()}},
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = w.Write(okBody)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ResponseID != "" {
+		t.Fatalf("images chat must not persist response id %q", got.ResponseID)
+	}
+}
+
+func countPostedInputImages(posted map[string]any) int {
+	input, _ := posted["input"].([]any)
+	if len(input) == 0 {
+		return 0
+	}
+	msg, _ := input[0].(map[string]any)
+	content, _ := msg["content"].([]any)
+	n := 0
+	for _, item := range content {
+		part, _ := item.(map[string]any)
+		if part["type"] == "input_image" {
+			n++
+		}
+	}
+	return n
+}
+
+func TestPromptSendsReferenceImageURL(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posted map[string]any
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&posted)
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[]}}`)
+	}))
+	defer srv.Close()
+	p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+	_, err = p.GenerateCreativeBrief(context.Background(), graph.PromptRequest{
+		NodeTitle: "brief",
+		Facts:     []map[string]any{{"key": "product_name", "value": "杯"}},
+		References: []graph.ReferenceImage{{
+			AssetID: "a1", Bytes: png, MIME: "image/png", Label: "主体", Role: "product_identity",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/v1/responses" {
+		t.Fatalf("path %s", path)
+	}
+	if _, ok := posted["messages"]; ok {
+		t.Fatalf("must not use chat completions messages: %+v", posted)
+	}
+	if posted["instructions"] == nil || !strings.Contains(fmt.Sprint(posted["instructions"]), "listing_look") {
+		t.Fatalf("instructions %+v", posted["instructions"])
+	}
+	input, _ := posted["input"].([]any)
+	if len(input) == 0 {
+		t.Fatalf("input %+v", posted["input"])
+	}
+	user, _ := input[0].(map[string]any)
+	content, _ := user["content"].([]any)
+	if len(content) < 3 {
+		t.Fatalf("user content %+v", user["content"])
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	if first["type"] != "input_text" || !strings.Contains(text, `"listing_look"`) || !strings.Contains(text, "generate_ecommerce_context_node") {
+		t.Fatalf("first part %+v", first)
+	}
+	rolePart, _ := content[1].(map[string]any)
+	if rolePart["type"] != "input_text" || !strings.Contains(fmt.Sprint(rolePart["text"]), "product_identity") {
+		t.Fatalf("role part %+v", rolePart)
+	}
+	imagePart, _ := content[2].(map[string]any)
+	if imagePart["type"] != "input_image" {
+		t.Fatalf("image part %+v", imagePart)
+	}
+	format, _ := posted["text"].(map[string]any)
+	inner, _ := format["format"].(map[string]any)
+	if inner["type"] != "json_schema" {
+		t.Fatalf("text.format %+v", posted["text"])
+	}
+}
+
+func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
+	body, err := BuildPromptResponsesBody("gpt", promptInstructions, "listing_prompt_payload", listingPromptJSONSchema, graph.PromptRequest{
+		ImageTypeKey:        "selling_point",
+		ImageTypeTitle:      "核心卖点图",
+		ImageTypeFamily:     "infographic",
+		ImageTypeJob:        "详情卖点图",
+		GenerateFromContext: true,
+		CurrentPrompt:       map[string]any{"design_goal": "卖点"},
+		Facts:               []map[string]any{{"key": "product_name", "value": "杯"}},
+	}, "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, _ := body["input"].([]map[string]any)
+	if len(input) == 0 {
+		t.Fatalf("input %+v", body["input"])
+	}
+	content, _ := input[0]["content"].([]map[string]any)
+	text, _ := content[0]["text"].(string)
+	for _, needle := range []string{
+		`"task":"generate_ecommerce_image_prompt_artifact"`,
+		`"generate_from_context":true`,
+		`"image_type_key":"selling_point"`,
+		`"listing_look"`,
+		`"listing_look_rule"`,
+		`"current_prompt"`,
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("missing %s in %s", needle, text)
+		}
+	}
+}
+
+func TestGeminiGenerateContentSendsInlineData(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posted map[string]any
+	var gotURL string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&posted)
+		resp, _ := json.Marshal(map[string]any{
+			"responseId": "g1", "modelVersion": "gemini-2.5-flash-image",
+			"candidates": []map[string]any{{
+				"content": map[string]any{
+					"parts": []map[string]any{{
+						"inlineData": map[string]any{"mimeType": "image/png", "data": onePixelPNGB64()},
+					}},
+				},
+			}},
+		})
+		w.WriteHeader(200)
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+	g := GeminiImage{APIKey: "key", BaseURL: srv.URL, Model: "gemini-2.5-flash-image", APIVersion: "v1beta"}
+	got, err := g.GenerateImage(context.Background(), graph.ImageRequest{
+		NodeTitle: "hero", ImageTypeKey: "hero",
+		References: []graph.ReferenceImage{{Bytes: png, MIME: "image/png"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(gotURL, ":generateContent") {
+		t.Fatalf("url %s", gotURL)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("expected gemini image bytes")
+	}
+	contents, _ := posted["contents"].([]any)
+	first, _ := contents[0].(map[string]any)
+	parts, _ := first["parts"].([]any)
+	if len(parts) < 2 {
+		t.Fatalf("parts %+v", parts)
+	}
+	inline, _ := parts[1].(map[string]any)
+	if inline["inline_data"] == nil {
+		t.Fatalf("expected inline_data, got %+v", inline)
+	}
 }

@@ -11,6 +11,20 @@ import (
 const listingLookRule = "做成能点击的商业套图：商品是主角，层次清楚，卖点好读。" +
 	"不要极简大留白、浅灰空棚、杂志静物；也不要爆炸贴、满屏色块、牛皮癣标签。"
 
+func ListingLookRule() string { return listingLookRule }
+
+// ListingLookContext 对齐 Python LISTING_LOOK_CONTEXT：prompt 出站 user JSON 必须带这份对象，不能只发 rule 字符串。
+func ListingLookContext() map[string]any {
+	return map[string]any{
+		"rule":                        listingLookRule,
+		"product_share_percent":       "55-75",
+		"benefit_count":               "2-4",
+		"source_note_is_product_fact": true,
+		"ignore_as_art_direction":     []any{"极简", "浅灰", "静物", "干净", "留白", "高级", "苹果风"},
+		"do_not_invert_into":          []any{"爆炸贴", "满屏色块", "牛皮癣标签", "过饱和撞色"},
+	}
+}
+
 type imageTypeOption struct {
 	Key         string
 	Title       string

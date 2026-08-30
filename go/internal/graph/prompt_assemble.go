@@ -1,0 +1,520 @@
+package graph
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+)
+
+var authoredPromptKeys = []string{
+	"composition", "content", "atmosphere", "text", "product_fidelity", "creative_boundary",
+}
+
+var identitySharedRules = []string{
+	"商品外形、结构、颜色和材质以参考图为准",
+	"不要编造参考图和资料里没有的认证、Logo、价格或结构",
+	"参考图只提供商品本体，必须按图种重新构图，禁止原图贴字交差",
+	"不要极简大留白或浅灰空棚，也不要爆炸贴或满屏色块",
+}
+
+var overlayColorRolePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var overlayColorSlugClean = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// AssemblePromptRequest 对齐 Python _to_prompt_request / _to_context_request。
+// 出站 user JSON 要用图种 job、listing_look、seed prompt，不能把节点 config 原样 dump 给模型。
+func AssemblePromptRequest(
+	node AppliedNode,
+	facts []map[string]any,
+	briefs []map[string]any,
+	visual map[string]any,
+	refs []ReferenceImage,
+	digest string,
+) (PromptRequest, error) {
+	req := PromptRequest{
+		NodeType:    node.NodeType,
+		NodeTitle:   node.Title,
+		InputDigest: digest,
+		Facts:       facts,
+		Briefs:      briefs,
+		Visual:      visual,
+		Config:      cloneMap(node.Config),
+		References:  refs,
+		TextPolicy:  "none",
+	}
+	if len(briefs) > 0 {
+		req.Brief = cloneMap(briefs[0])
+	}
+	switch node.NodeType {
+	case NodeCreativeBrief:
+		req.Brief = filteredBriefConfig(node.Config)
+		req.ImageTypes = []map[string]any{}
+	case NodeVisualSystem:
+		if overlay := CatalogVisualOverlay(asMapOrNil(node.Config["visual_overlay"])); overlay != nil {
+			req.Visual = overlay
+		}
+		req.ImageTypes = []map[string]any{}
+	case NodePromptGeneration:
+		key, _ := node.Config["image_type_key"].(string)
+		key = strings.TrimSpace(key)
+		if key == "" {
+			key = "unspecified"
+		}
+		req.ImageTypeKey = key
+		if option, ok := imageTypeByKey[key]; ok {
+			req.ImageTypeTitle = option.Title
+			req.ImageTypeDescription = option.Description
+		}
+		req.ImageTypeFamily = imageTypeFamily(key)
+		req.ImageTypeJob = imageTypeGenerationJobs[key]
+		promptConfig := asMapOrNil(node.Config["prompt"])
+		req.GenerateFromContext = promptConfigIsGenerationSeed(promptConfig)
+		seed, err := seedPromptFromRuntime(node.Title, key, facts, briefs, promptConfig, req.GenerateFromContext, req.TextPolicy)
+		if err != nil {
+			return PromptRequest{}, err
+		}
+		req.CurrentPrompt = stripV3PromptPayload(seed)
+		exceptions, err := visualExceptionsFromOverlay(visual)
+		if err != nil {
+			return PromptRequest{}, err
+		}
+		req.VisualExceptions = exceptions
+		// 工作流内联 overlay 不是完整 VisualSystemDraft，Python 把它放进 visual_exceptions，visual_system 为 null。
+		if len(exceptions) > 0 {
+			req.Visual = nil
+		}
+	}
+	return req, nil
+}
+
+func filteredBriefConfig(config map[string]any) map[string]any {
+	out := map[string]any{}
+	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+		value, ok := config[key]
+		if !ok || value == nil || value == "" {
+			continue
+		}
+		if list, ok := value.([]any); ok && len(list) == 0 {
+			continue
+		}
+		if list, ok := value.([]string); ok && len(list) == 0 {
+			continue
+		}
+		out[key] = cloneValue(value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func promptConfigIsGenerationSeed(promptConfig map[string]any) bool {
+	if len(promptConfig) == 0 {
+		return true
+	}
+	for _, key := range authoredPromptKeys {
+		value := promptConfig[key]
+		switch key {
+		case "text":
+			if m, ok := asMap(value); ok {
+				if mapHasNonEmptyString(m) {
+					return false
+				}
+			}
+			continue
+		case "creative_boundary":
+			if listHasNonEmptyString(value) {
+				return false
+			}
+			continue
+		}
+		if value == nil {
+			continue
+		}
+		if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
+			continue
+		}
+		if m, ok := asMap(value); ok && len(m) == 0 {
+			continue
+		}
+		if list, ok := value.([]any); ok && len(list) == 0 {
+			continue
+		}
+		if list, ok := value.([]string); ok && len(list) == 0 {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func seedPromptFromRuntime(
+	title, imageTypeKey string,
+	facts, briefs []map[string]any,
+	stored map[string]any,
+	seed bool,
+	textPolicy string,
+) (map[string]any, error) {
+	stored = stripV3PromptPayload(stored)
+	briefGoal, briefCopy, briefProhibitions := briefFields(briefs)
+	productName := factValue(facts, "product_name")
+	designGoal := strings.TrimSpace(asString(stored["design_goal"]))
+	if designGoal == "" {
+		designGoal = briefGoal
+	}
+	if designGoal == "" {
+		if option, ok := imageTypeByKey[imageTypeKey]; ok {
+			designGoal = imageTypePromptGoal(option.Key)
+			if productName != "" {
+				designGoal = "为「" + productName + "」生成" + designGoal
+			}
+		} else if productName != "" {
+			designGoal = "为「" + productName + "」生成" + title
+		} else {
+			designGoal = "生成" + title
+		}
+	}
+	creativeBoundary := stringList(stored["creative_boundary"])
+	for _, item := range briefProhibitions {
+		if !containsString(creativeBoundary, item) {
+			creativeBoundary = append(creativeBoundary, item)
+		}
+	}
+	if textPolicy == "none" && !containsString(creativeBoundary, noOnImageTextRule) {
+		creativeBoundary = append(creativeBoundary, noOnImageTextRule)
+	}
+	text := asMapOrNil(stored["text"])
+	if textPolicy == "none" && !promptConfigHasAuthoredText(stored) {
+		text = map[string]any{}
+	} else if len(briefCopy) > 0 && !anyTextField(text) {
+		body := strings.Join(briefCopy[1:], "\n")
+		var bodyVal any
+		if body != "" {
+			bodyVal = body
+		}
+		text = map[string]any{
+			"headline": briefCopy[0],
+			"subtitle": text["subtitle"],
+			"body":     bodyVal,
+		}
+	}
+	sharedRules := stringList(stored["shared_rules"])
+	if len(sharedRules) == 0 {
+		sharedRules = append([]string{}, identitySharedRules...)
+	}
+	if textPolicy == "none" && !containsString(sharedRules, noOnImageTextRule) {
+		sharedRules = append(sharedRules, noOnImageTextRule)
+	}
+	derived := promptContextDerivedPlaceholder
+	composition := asMapOrNil(stored["composition"])
+	if len(composition) == 0 {
+		viewpoint, layout := "正面", "商品居中"
+		if seed {
+			viewpoint, layout = derived, derived
+		}
+		composition = map[string]any{
+			"viewpoint": viewpoint, "product_share_percent": 70, "layout": layout, "copy_regions": []any{},
+		}
+	}
+	content := asMapOrNil(stored["content"])
+	if len(content) == 0 {
+		focus := title
+		if option, ok := imageTypeByKey[imageTypeKey]; ok {
+			focus = option.Title
+		}
+		if productName != "" {
+			focus = productName
+		}
+		background := "干净背景"
+		if seed {
+			background = derived
+		}
+		content = map[string]any{
+			"focus": []any{focus}, "selling_points": []any{}, "background": background, "decorations": []any{},
+		}
+	}
+	atmosphere := asMapOrNil(stored["atmosphere"])
+	if len(atmosphere) == 0 {
+		keywords := []any{"清晰"}
+		lighting := "均匀照明"
+		if seed {
+			keywords = []any{derived}
+			lighting = derived
+		}
+		atmosphere = map[string]any{"keywords": keywords, "lighting": lighting}
+	}
+	fidelity := asMapOrNil(stored["product_fidelity"])
+	if len(fidelity) == 0 {
+		fidelity = map[string]any{
+			"complex_structure":  true,
+			"product_present":    true,
+			"picture_in_picture": "none",
+			"requirements":       []any{"锁住参考图中的商品外形和材质", "构图和排版按图种重做"},
+		}
+	}
+	return map[string]any{
+		"schema_version":    1,
+		"shared_rules":      stringListToAny(sharedRules),
+		"design_goal":       designGoal,
+		"product_fidelity":  fidelity,
+		"creative_boundary": stringListToAny(creativeBoundary),
+		"composition":       composition,
+		"content":           content,
+		"text": map[string]any{
+			"headline": nullableText(text["headline"]),
+			"subtitle": nullableText(text["subtitle"]),
+			"body":     nullableText(text["body"]),
+		},
+		"atmosphere": atmosphere,
+	}, nil
+}
+
+func ApplyTextPolicyToPrompt(payload map[string]any, textPolicy string, keepAuthored bool) map[string]any {
+	out := cloneMap(payload)
+	if textPolicy != "none" || keepAuthored {
+		return out
+	}
+	out["text"] = map[string]any{"headline": nil, "subtitle": nil, "body": nil}
+	if composition, ok := asMap(out["composition"]); ok && composition["copy_regions"] != nil {
+		copied := cloneMap(composition)
+		copied["copy_regions"] = []any{}
+		out["composition"] = copied
+	}
+	return out
+}
+
+func stripV3PromptPayload(payload map[string]any) map[string]any {
+	if payload == nil {
+		return map[string]any{}
+	}
+	out := map[string]any{}
+	for key, value := range payload {
+		if _, skip := promptStrippedKeys[key]; skip {
+			continue
+		}
+		out[key] = cloneValue(value)
+	}
+	return out
+}
+
+func promptConfigHasAuthoredText(promptConfig map[string]any) bool {
+	if promptConfig == nil {
+		return false
+	}
+	if text, ok := asMap(promptConfig["text"]); ok && mapHasNonEmptyString(text) {
+		return true
+	}
+	if composition, ok := asMap(promptConfig["composition"]); ok {
+		if listHasNonEmptyString(composition["copy_regions"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func visualExceptionsFromOverlay(overlay map[string]any) ([]map[string]any, error) {
+	if len(overlay) == 0 {
+		return nil, nil
+	}
+	overrides := make([]any, 0, 3)
+	if style := stringList(overlay["style"]); len(style) > 0 {
+		overrides = append(overrides, map[string]any{"field": "style", "value": stringListToAny(style)})
+	}
+	if rawColors, ok := overlay["colors"].([]any); ok {
+		used := map[string]struct{}{}
+		coerced := make([]any, 0, len(rawColors))
+		for i, item := range rawColors {
+			color, ok := asMap(item)
+			if !ok {
+				continue
+			}
+			value := strings.TrimSpace(asString(color["value"]))
+			if value == "" {
+				continue
+			}
+			roleText := strings.TrimSpace(asString(color["role"]))
+			role := overlayColorRole(roleText, i, used)
+			label := strings.TrimSpace(asString(color["label"]))
+			if label == "" {
+				if roleText != "" {
+					label = roleText
+				} else {
+					label = role
+				}
+			}
+			coerced = append(coerced, map[string]any{"role": role, "value": value, "label": label})
+		}
+		if len(coerced) > 0 {
+			overrides = append(overrides, map[string]any{"field": "colors", "value": coerced})
+		}
+	}
+	if prohibitions := stringList(overlay["prohibitions"]); len(prohibitions) > 0 {
+		overrides = append(overrides, map[string]any{"field": "prohibitions", "value": stringListToAny(prohibitions)})
+	}
+	if len(overrides) == 0 {
+		return nil, apperr.Validation("视觉覆盖输入无效")
+	}
+	return []map[string]any{{
+		"key":       "graph-inline-overlay",
+		"scope":     map[string]any{"type": "workflow"},
+		"overrides": overrides,
+		"reason":    "工作流内联视觉覆盖",
+	}}, nil
+}
+
+func overlayColorRole(raw string, index int, used map[string]struct{}) string {
+	slug := overlayColorSlugClean.ReplaceAllString(strings.ToLower(strings.TrimSpace(raw)), "-")
+	slug = strings.Trim(slug, "-")
+	if len(slug) > 80 {
+		slug = slug[:80]
+	}
+	candidate := slug
+	if candidate == "" || !overlayColorRolePattern.MatchString(candidate) {
+		candidate = "color-" + strconv.Itoa(index+1)
+	}
+	if _, exists := used[candidate]; exists {
+		suffix := 2
+		candidate = "color-" + strconv.Itoa(index+1)
+		for {
+			if _, exists := used[candidate]; !exists {
+				break
+			}
+			candidate = "color-" + strconv.Itoa(index+1) + "-" + strconv.Itoa(suffix)
+			suffix++
+		}
+	}
+	used[candidate] = struct{}{}
+	return candidate
+}
+
+func briefFields(briefs []map[string]any) (string, []string, []string) {
+	var goals, copyItems, prohibitions []string
+	for _, brief := range briefs {
+		if brief == nil {
+			continue
+		}
+		goals = append(goals, stringList(brief["design_goals"])...)
+		if goal := strings.TrimSpace(asString(brief["goal"])); goal != "" {
+			goals = append(goals, goal)
+		} else if title := strings.TrimSpace(asString(brief["title"])); title != "" {
+			goals = append(goals, title)
+		}
+		copyItems = append(copyItems, stringList(brief["required_copy"])...)
+		prohibitions = append(prohibitions, stringList(brief["prohibitions"])...)
+	}
+	goals = uniqueStrings(goals)
+	if len(goals) == 0 {
+		return "", uniqueStrings(copyItems), uniqueStrings(prohibitions)
+	}
+	return goals[0], uniqueStrings(copyItems), uniqueStrings(prohibitions)
+}
+
+func factValue(facts []map[string]any, key string) string {
+	needle := strings.ToLower(key)
+	for _, item := range facts {
+		if strings.ToLower(strings.TrimSpace(asString(item["key"]))) != needle {
+			continue
+		}
+		if value := strings.TrimSpace(asString(item["value"])); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func asMapOrNil(value any) map[string]any {
+	m, ok := asMap(value)
+	if !ok {
+		return map[string]any{}
+	}
+	return cloneMap(m)
+}
+
+func asString(value any) string {
+	s, _ := value.(string)
+	return s
+}
+
+func stringList(value any) []string {
+	switch t := value.(type) {
+	case []string:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s := strings.TrimSpace(item); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s := strings.TrimSpace(asString(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func stringListToAny(in []string) []any {
+	out := make([]any, len(in))
+	for i, item := range in {
+		out[i] = item
+	}
+	return out
+}
+
+func containsString(list []string, needle string) bool {
+	for _, item := range list {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, item := range in {
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func mapHasNonEmptyString(m map[string]any) bool {
+	for _, value := range m {
+		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func listHasNonEmptyString(value any) bool {
+	return len(stringList(value)) > 0
+}
+
+func anyTextField(text map[string]any) bool {
+	for _, key := range []string{"headline", "subtitle", "body"} {
+		if s := strings.TrimSpace(asString(text[key])); s != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func nullableText(value any) any {
+	s := strings.TrimSpace(asString(value))
+	if s == "" {
+		return nil
+	}
+	return s
+}

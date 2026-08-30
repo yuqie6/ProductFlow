@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/product"
 )
 
 func TestSubmitRunOnEmptyCanvasReturnsNoProcessingNodes(t *testing.T) {
@@ -119,7 +120,48 @@ func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {
 	}
 }
 
-func TestSubmitNodeRunFailsImmediatelyWhenCompileRejects(t *testing.T) {
+func TestSubmitNodeRunQueuesWhenPromptArtifactMissing(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	current := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, current, http.StatusOK)
+	var graphView graph.Projection
+	gs.decode(t, current, &graphView)
+	var imageID string
+	for _, node := range graphView.Nodes {
+		if node.NodeType == graph.NodeImageGeneration {
+			imageID = node.ID
+			break
+		}
+	}
+	if imageID == "" {
+		t.Fatal("missing image_generation")
+	}
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": imageID,
+	})
+	gs.mustStatus(t, resp, http.StatusCreated)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if run.Status != "running" {
+		t.Fatalf("status %s reason %+v", run.Status, run.FailureReason)
+	}
+	if run.FailureReason != nil {
+		t.Fatalf("submit must not fail for missing prompt artifact: %+v", run.FailureReason)
+	}
+	var n int
+	if err := gs.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM async_dispatches
+		WHERE actor_name = 'run_workflow_graph_run' AND aggregate_id = $1
+	`, run.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("NODE run with missing prompt artifact must still enqueue")
+	}
+}
+
+func TestSubmitNodeRunExecutesUnboundReferenceAsFailed(t *testing.T) {
 	gs := newGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
 	current := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
@@ -151,27 +193,32 @@ func TestSubmitNodeRunFailsImmediatelyWhenCompileRejects(t *testing.T) {
 	gs.mustStatus(t, resp, http.StatusCreated)
 	var run graph.GraphRunResponse
 	gs.decode(t, resp, &run)
+	if run.Status != "running" {
+		t.Fatalf("submit status %s", run.Status)
+	}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	got := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, http.StatusOK)
+	gs.decode(t, got, &run)
 	if run.Status != "failed" {
-		t.Fatalf("status %s", run.Status)
+		t.Fatalf("status %s reason %+v nodes %+v", run.Status, run.FailureReason, run.NodeRuns)
 	}
-	if run.FailureReason == nil || !strings.Contains(*run.FailureReason, "参考输入缺少已绑定的图片资产") {
-		t.Fatalf("reason %+v", run.FailureReason)
+	found := false
+	for _, node := range run.NodeRuns {
+		if node.FailureReason != nil && strings.Contains(*node.FailureReason, "参考输入缺少已绑定的图片资产") {
+			found = true
+		}
 	}
-	if !run.IsRetryable {
-		t.Fatal("expected retryable")
-	}
-	if len(run.NodeRuns) != 1 || run.NodeRuns[0].Status != "failed" {
-		t.Fatalf("nodes %+v", run.NodeRuns)
-	}
-	var n int
-	if err := gs.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches
-		WHERE actor_name = 'run_workflow_graph_run' AND aggregate_id = $1
-	`, run.ID).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 0 {
-		t.Fatalf("dispatch count %d", n)
+	if !found && (run.FailureReason == nil || !strings.Contains(*run.FailureReason, "参考输入缺少已绑定的图片资产")) {
+		t.Fatalf("reason %+v nodes %+v", run.FailureReason, run.NodeRuns)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/imagesession"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/settings"
@@ -143,6 +144,22 @@ func TestLiveImageSuccessFailUnknown(t *testing.T) {
 			t.Fatalf("live image success is not an image: mime=%s bytes=%d", got.MIME, len(got.Bytes))
 		}
 	})
+}
+
+func TestLiveChatSessionGenerate(t *testing.T) {
+	live := requireLiveBindings(t)
+	image := LiveImage{Store: live.store}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	start := time.Now()
+	got, err := image.Generate(ctx, imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	t.Logf("elapsed=%s err=%v bytes=%d mime=%s id=%s unknown=%v", time.Since(start), err, len(got.Bytes), got.MIME, got.ResponseID, err != nil && isUnknown(err))
+	if err != nil {
+		t.Fatalf("live chat generate: %v", err)
+	}
+	if len(got.Bytes) < 256 || !strings.HasPrefix(got.MIME, "image/") {
+		t.Fatalf("live chat generate is not an image: mime=%s bytes=%d", got.MIME, len(got.Bytes))
+	}
 }
 
 func livePromptFail(ctx context.Context, good OpenAIPrompt, req graph.PromptRequest) error {

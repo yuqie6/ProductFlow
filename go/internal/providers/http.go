@@ -17,6 +17,9 @@ import (
 
 const defaultTimeout = 120 * time.Second
 
+// Responses 出图的 JSON 里带整段 base64，8MiB 会把已经生成的图截断成 unknown。
+var maxProviderJSONBytes int64 = 64 << 20
+
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: defaultTimeout}
 }
@@ -53,9 +56,12 @@ func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string
 		return 0, nil, mapTransport(err)
 	}
 	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxProviderJSONBytes+1))
 	if readErr != nil {
 		return resp.StatusCode, raw, graph.ErrProviderUnknown()
+	}
+	if int64(len(raw)) > maxProviderJSONBytes {
+		return resp.StatusCode, raw[:maxProviderJSONBytes], graph.ErrProviderUnknown()
 	}
 	return resp.StatusCode, raw, nil
 }

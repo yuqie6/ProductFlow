@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	sqldb "database/sql"
@@ -39,9 +40,13 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID strin
 	if reason == "" {
 		reason = "节点运行失败"
 	}
-	_ = failClaimedNode(ctx, e.DB, runID, nodeRunID, reason)
+	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, reason); failErr != nil {
+		return failErr
+	}
 	return nil
 }
+
+var errProviderFenced = errors.New("graph provider call fenced")
 
 func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) error {
 	run, err := e.loadRun(ctx, runID)
@@ -70,13 +75,19 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		return err
 	}
 	sources := sourcesFromSnapshot(run.Snapshot)
-	sources = hydrateSourcesFromNodeRuns(ctx, e.DB, run.NodeRuns, sources)
+	sources, err = hydrateSourcesFromNodeRuns(ctx, e.DB, run.NodeRuns, sources)
+	if err != nil {
+		return err
+	}
 	node, err := applied.Node(*nodeRun.NodeID)
 	if err != nil {
 		return err
 	}
 	digest, err := compileInputDigest(applied, node.ID, sources)
 	if err != nil {
+		return err
+	}
+	if err := writeCompiledContext(ctx, e.DB, nodeRun.ID, node.Title, digest, sources); err != nil {
 		return err
 	}
 	if skipped, err := e.skipUnchanged(ctx, run, *nodeRun, sources, digest); err != nil || skipped {
@@ -90,22 +101,33 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if image == nil {
 		image = MockImageProvider{}
 	}
-	req := PromptRequest{
-		NodeType:    node.NodeType,
-		NodeTitle:   node.Title,
-		InputDigest: digest,
-		Config:      cloneMap(node.Config),
-		Facts:       sources[node.ID].Facts,
+	facts, briefs, visual, promptRefs, err := collectPromptInputs(applied, node.ID, sources)
+	if err != nil {
+		return err
+	}
+	loadedRefs, err := e.loadReferences(ctx, promptRefs)
+	if err != nil {
+		return err
+	}
+	req, err := AssemblePromptRequest(node, facts, briefs, visual, loadedRefs, digest)
+	if err != nil {
+		return err
 	}
 	switch node.NodeType {
 	case NodeCreativeBrief:
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
 			return prompt.GenerateCreativeBrief(ctx, req)
 		})
-		if err != nil || result.Payload == nil {
+		if errors.Is(err, errProviderFenced) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		return e.persistContentArtifact(ctx, run, *nodeRun, "creative_brief", result, digest, promote, func(config map[string]any) map[string]any {
+		if result.Payload == nil {
+			return fmt.Errorf("提示词 provider 未返回结构化输出")
+		}
+		return e.persistContentArtifact(ctx, run, *nodeRun, "creative_brief", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
 			out := cloneMap(config)
 			for key, value := range result.Payload {
 				out[key] = value
@@ -116,10 +138,16 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
 			return prompt.GenerateVisualOverlay(ctx, req)
 		})
-		if err != nil || result.Payload == nil {
+		if errors.Is(err, errProviderFenced) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, func(config map[string]any) map[string]any {
+		if result.Payload == nil {
+			return fmt.Errorf("提示词 provider 未返回结构化输出")
+		}
+		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
 			out := cloneMap(config)
 			out["visual_overlay"] = result.Payload
 			return out
@@ -128,10 +156,22 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
 			return prompt.GeneratePrompt(ctx, req)
 		})
-		if err != nil || result.Payload == nil {
+		if errors.Is(err, errProviderFenced) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, func(config map[string]any) map[string]any {
+		if result.Payload == nil {
+			return fmt.Errorf("提示词 provider 未返回结构化输出")
+		}
+		storedPrompt, _ := node.Config["prompt"].(map[string]any)
+		result.Payload = ApplyTextPolicyToPrompt(
+			stripV3PromptPayload(result.Payload),
+			req.TextPolicy,
+			promptConfigHasAuthoredText(storedPrompt),
+		)
+		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
 			out := cloneMap(config)
 			out["prompt"] = result.Payload
 			return out
@@ -141,6 +181,9 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if spec, ok := node.Config["generation_spec"].(map[string]any); ok {
 			imgReq.GenerationSpec = spec
 		}
+		if key, ok := node.Config["image_type_key"].(string); ok {
+			imgReq.ImageTypeKey = key
+		}
 		promptPayload, err := incomingPromptPayload(applied, node.ID, sources)
 		if err != nil {
 			return err
@@ -149,13 +192,20 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if stored, ok := node.Config["prompt"].(map[string]any); ok && len(imgReq.Prompt) == 0 {
 			imgReq.Prompt = stored
 		}
+		imgReq.References = loadedRefs
 		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
 			return image.GenerateImage(ctx, imgReq)
 		})
-		if err != nil || len(img.Bytes) == 0 {
+		if errors.Is(err, errProviderFenced) {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote)
+		if len(img.Bytes) == 0 {
+			return fmt.Errorf("图片 provider 未返回图片结果")
+		}
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name())
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -204,16 +254,10 @@ func (e Executor) callProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		if isProviderUnknown(err) {
-			if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
-				return PromptResult{}, false, markErr
-			}
-			return PromptResult{}, false, providerUnknownError{}
-		}
-		if markErr := e.markFailedCommitted(ctx, runID, nodeRun.ID, &attemptID, err.Error()); markErr != nil {
+		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
 			return PromptResult{}, false, markErr
 		}
-		return PromptResult{}, false, classifiedNodeError{err}
+		return PromptResult{}, false, providerUnknownError{}
 	}
 	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{
 		"model":       result.Model,
@@ -245,16 +289,10 @@ func (e Executor) callImageProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		if isProviderUnknown(err) {
-			if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
-				return ImageResult{}, false, markErr
-			}
-			return ImageResult{}, false, providerUnknownError{}
-		}
-		if markErr := e.markFailedCommitted(ctx, runID, nodeRun.ID, &attemptID, err.Error()); markErr != nil {
+		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
 			return ImageResult{}, false, markErr
 		}
-		return ImageResult{}, false, classifiedNodeError{err}
+		return ImageResult{}, false, providerUnknownError{}
 	}
 	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{
 		"model":           result.Model,
@@ -272,16 +310,25 @@ func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID,
 	raw, _ := json.Marshal(request)
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		ok, err := advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "prepared")
-		if err != nil || !ok {
+		if err != nil {
 			return err
+		}
+		if !ok {
+			return errProviderFenced
 		}
 		ok, err = ensureProviderEffectIntent(ctx, pgxTx, nodeRunID, attemptID, hash, providerName, raw)
-		if err != nil || !ok {
+		if err != nil {
 			return err
 		}
+		if !ok {
+			return errProviderFenced
+		}
 		ok, err = advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "provider_call")
-		if err != nil || !ok {
+		if err != nil {
 			return err
+		}
+		if !ok {
+			return errProviderFenced
 		}
 		return nil
 	})
@@ -291,12 +338,20 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 	var promote bool
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		ok, err := recordProviderEffectResult(ctx, pgxTx, nodeRunID, attemptID, resultJSON)
-		if err != nil || !ok {
+		if err != nil {
 			return err
 		}
+		if !ok {
+			promote = false
+			return nil
+		}
 		ok, err = advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "provider_result_received")
-		if err != nil || !ok {
+		if err != nil {
 			return err
+		}
+		if !ok {
+			promote = false
+			return nil
 		}
 		var runStatus, nodeStatus string
 		var active *string
@@ -340,8 +395,12 @@ func (e Executor) persistContentArtifact(
 	result PromptResult,
 	digest string,
 	promote bool,
+	providerName string,
 	writeback func(map[string]any) map[string]any,
 ) error {
+	if err := validateGeneratedPayload(artifactType, result.Payload); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(result.Payload)
 	if err != nil {
 		return err
@@ -349,9 +408,12 @@ func (e Executor) persistContentArtifact(
 	hash := sha256Hex(payload)
 	now := time.Now().UTC()
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, artifactType, payload, hash, digest, result.Model, nil)
+		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, artifactType, payload, hash, digest, providerName, result.Model, nil)
 		if err != nil {
 			return err
+		}
+		if !promote {
+			return nil
 		}
 		if promote && nodeRun.NodeID != nil {
 			var liveRevision int
@@ -401,6 +463,7 @@ func (e Executor) persistImageArtifact(
 	img ImageResult,
 	digest string,
 	promote bool,
+	providerName string,
 ) error {
 	if e.Deps.Assets == nil {
 		return apperr.Validation("节点运行失败")
@@ -430,25 +493,39 @@ func (e Executor) persistImageArtifact(
 		if err != nil {
 			return err
 		}
+		measured := map[string]any{
+			"mime_type":       img.MIME,
+			"provider_status": img.ProviderStatus,
+			"byte_size":       len(img.Bytes),
+		}
+		if img.Width > 0 {
+			measured["width"] = img.Width
+		}
+		if img.Height > 0 {
+			measured["height"] = img.Height
+		}
+		if img.EffectiveParameters != nil {
+			measured["effective_parameters"] = img.EffectiveParameters
+		}
 		payloadMap := map[string]any{
 			"schema_version":         3,
 			"product_image_asset_id": assetID,
 			"generation_spec":        node.Config["generation_spec"],
-			"measured_output": map[string]any{
-				"mime_type":       img.MIME,
-				"provider_status": img.ProviderStatus,
-			},
+			"measured_output":        measured,
 		}
 		payload, err := json.Marshal(payloadMap)
 		if err != nil {
 			return err
 		}
 		hash := sha256Hex(payload)
-		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, "image", payload, hash, digest, img.Model, &assetID)
+		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, "image", payload, hash, digest, providerName, img.Model, &assetID)
 		if err != nil {
 			return err
 		}
-		if promote && nodeRun.NodeID != nil {
+		if !promote {
+			return nil
+		}
+		if nodeRun.NodeID != nil {
 			var liveRevision int
 			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
 				return err
@@ -459,7 +536,9 @@ func (e Executor) persistImageArtifact(
 				}
 			}
 			if e.Deps.Delivery != nil {
-				_ = e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID)
+				if err := e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID); err != nil {
+					return err
+				}
 			}
 		}
 		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
@@ -475,6 +554,38 @@ func (e Executor) persistImageArtifact(
 	})
 }
 
+func (e Executor) loadReferences(ctx context.Context, refs []compiledReference) ([]ReferenceImage, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if e.Deps.Assets == nil {
+		return nil, apperr.Validation("参考图不属于该商品")
+	}
+	out := make([]ReferenceImage, 0, len(refs))
+	for _, ref := range refs {
+		data, mime, filename, err := e.Deps.Assets.ReadAssetBytes(ctx, e.DB, ref.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if mime == "" && ref.MIMEType != nil {
+			mime = *ref.MIMEType
+		}
+		switch mime {
+		case "image/png", "image/jpeg", "image/webp":
+		default:
+			return nil, apperr.Validation("参考图仅支持 PNG、JPEG 或 WEBP")
+		}
+		if filename == "" {
+			filename = ref.Label
+		}
+		out = append(out, ReferenceImage{
+			AssetID: ref.AssetID, Role: ref.Role, Label: ref.Label,
+			MIME: mime, Filename: filename, Bytes: data,
+		})
+	}
+	return out, nil
+}
+
 func upsertArtifact(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -482,9 +593,12 @@ func upsertArtifact(
 	nodeRun graphNodeRunRow,
 	artifactType string,
 	payload []byte,
-	payloadHash, digest, model string,
+	payloadHash, digest, providerName, model string,
 	assetID *string,
 ) (string, error) {
+	if providerName == "" {
+		providerName = "unconfigured"
+	}
 	var existing string
 	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM workflow_graph_artifacts WHERE node_run_id = $1`, nodeRun.ID).Scan(&existing)
 	if err == nil {
@@ -492,9 +606,9 @@ func upsertArtifact(
 			UPDATE workflow_graph_artifacts SET
 				artifact_type = $2, schema_version = 3, graph_revision = $3,
 				payload_json = $4, payload_hash = $5, input_digest = $6,
-				product_image_asset_id = $7, provider_model = $8
+				product_image_asset_id = $7, provider_name = $8, provider_model = $9
 			WHERE id = $1
-		`, existing, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, model)
+		`, existing, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, providerName, model)
 		return existing, err
 	}
 	if !errors.Is(err, sqldb.ErrNoRows) {
@@ -505,8 +619,8 @@ func upsertArtifact(
 		INSERT INTO workflow_graph_artifacts (
 			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
 			payload_json, payload_hash, input_digest, product_image_asset_id, provider_name, provider_model, created_at
-		) VALUES ($1, $2, $3, $4, $5, 3, $6, $7, $8, $9, $10, 'mock', $11, NOW())
-	`, id, run.GraphID, nodeRun.NodeID, nodeRun.ID, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, model)
+		) VALUES ($1, $2, $3, $4, $5, 3, $6, $7, $8, $9, $10, $11, $12, NOW())
+	`, id, run.GraphID, nodeRun.NodeID, nodeRun.ID, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, providerName, model)
 	return id, err
 }
 
@@ -525,7 +639,7 @@ func hashBytes(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []graphNodeRunRow, sources map[string]SourceRecord) map[string]SourceRecord {
+func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []graphNodeRunRow, sources map[string]SourceRecord) (map[string]SourceRecord, error) {
 	var ids []string
 	for _, item := range nodeRuns {
 		if item.Status == NodeRunSucceeded {
@@ -533,7 +647,7 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 		}
 	}
 	if len(ids) == 0 {
-		return sources
+		return sources, nil
 	}
 	rows, err := pfdb.Query(ctx, pool, `
 		SELECT node_run_id, id, artifact_type, payload_json, input_digest, product_image_asset_id
@@ -541,7 +655,7 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 		WHERE node_run_id = ANY($1)
 	`, ids)
 	if err != nil {
-		return sources
+		return nil, err
 	}
 	defer rows.Close()
 	byNodeRun := map[string]SourceRecord{}
@@ -550,10 +664,14 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 		var payload []byte
 		var assetID *string
 		if err := rows.Scan(&nodeRunID, &artifactID, &artifactType, &payload, &digest, &assetID); err != nil {
-			return sources
+			return nil, err
 		}
 		payloadMap := map[string]any{}
-		_ = json.Unmarshal(payload, &payloadMap)
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &payloadMap); err != nil {
+				return nil, err
+			}
+		}
 		rec := SourceRecord{
 			CurrentArtifactID:      &artifactID,
 			CurrentArtifactType:    &artifactType,
@@ -561,7 +679,20 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 			CurrentInputDigest:     &digest,
 			CurrentOutputAssetID:   assetID,
 		}
+		switch artifactType {
+		case "creative_brief":
+			rec.Brief = cloneMap(payloadMap)
+		case "visual_system":
+			if overlay, ok := payloadMap["visual_overlay"].(map[string]any); ok {
+				rec.VisualPayload = cloneMap(overlay)
+			} else {
+				rec.VisualPayload = cloneMap(payloadMap)
+			}
+		}
 		byNodeRun[nodeRunID] = rec
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	for _, item := range nodeRuns {
 		if item.NodeID == nil {
@@ -577,7 +708,62 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 		existing.CurrentArtifactPayload = rec.CurrentArtifactPayload
 		existing.CurrentInputDigest = rec.CurrentInputDigest
 		existing.CurrentOutputAssetID = rec.CurrentOutputAssetID
+		if rec.Brief != nil {
+			existing.Brief = rec.Brief
+		}
+		if rec.VisualPayload != nil {
+			existing.VisualPayload = rec.VisualPayload
+		}
 		sources[*item.NodeID] = existing
 	}
-	return sources
+	return sources, nil
+}
+
+func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID, title, digest string, sources map[string]SourceRecord) error {
+	factCount := 0
+	briefCount := 0
+	var refIDs []string
+	visualPresent := false
+	for _, rec := range sources {
+		factCount += len(rec.Facts)
+		if rec.Brief != nil {
+			briefCount++
+		}
+		if rec.VisualPayload != nil {
+			visualPresent = true
+		}
+		if rec.CurrentOutputAssetID != nil && *rec.CurrentOutputAssetID != "" {
+			refIDs = append(refIDs, *rec.CurrentOutputAssetID)
+		}
+	}
+	compiled, err := json.Marshal(map[string]any{
+		"node_title":          title,
+		"input_digest":        digest,
+		"fact_count":          factCount,
+		"brief_count":         briefCount,
+		"visual_present":      visualPresent,
+		"reference_asset_ids": refIDs,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = pfdb.Exec(ctx, db, `UPDATE workflow_graph_node_runs SET compiled_context_json = $2 WHERE id = $1`, nodeRunID, compiled)
+	return err
+}
+
+func validateGeneratedPayload(artifactType string, payload map[string]any) error {
+	if payload == nil {
+		return fmt.Errorf("提示词 provider 未返回结构化输出")
+	}
+	switch artifactType {
+	case "creative_brief":
+		fields, _ := nodeConfigFields(NodeCreativeBrief)
+		return validateConfigFields(fields, payload, "")
+	case "visual_system":
+		return validateConfigFields(visualOverlayFields(), payload, "visual_overlay")
+	case "prompt":
+		return validateConfigFields(promptFields(), payload, "prompt")
+	default:
+		return nil
+	}
 }
