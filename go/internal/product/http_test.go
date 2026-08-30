@@ -159,6 +159,74 @@ func TestBirthCommands(t *testing.T) {
 	if direct.Product.CoverImageAssetID == nil {
 		t.Fatal("v3 missing cover")
 	}
+
+	presetBody, presetType := multipartPNG(t, map[string]string{
+		"name":                "带平台默认交付商品",
+		"image_types":         `[{"key":"hero","quantity":1}]`,
+		"delivery_preset_key": "jd_hero",
+	})
+	presetReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v3/products", presetBody)
+	presetReq.Header.Set("Content-Type", presetType)
+	for _, c := range cookies {
+		presetReq.AddCookie(c)
+	}
+	presetResp, err := client.Do(presetReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer presetResp.Body.Close()
+	if presetResp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(presetResp.Body)
+		t.Fatalf("v3 preset %d %s", presetResp.StatusCode, raw)
+	}
+	var withPreset DirectCreateResponse
+	if err := json.NewDecoder(presetResp.Body).Decode(&withPreset); err != nil {
+		t.Fatal(err)
+	}
+	nodes, _ := withPreset.Graph["nodes"].([]any)
+	found := 0
+	for _, rawNode := range nodes {
+		node, _ := rawNode.(map[string]any)
+		if node["node_type"] != "image_generation" {
+			continue
+		}
+		found++
+		cfg, _ := node["config"].(map[string]any)
+		spec, _ := cfg["delivery_spec"].(map[string]any)
+		if spec["width"] != float64(1200) || spec["height"] != float64(1200) || spec["format"] != "png" || spec["fit"] != "contain" {
+			t.Fatalf("delivery_spec %+v", spec)
+		}
+	}
+	if found == 0 {
+		t.Fatal("missing image_generation node")
+	}
+
+	unknownBody, unknownType := multipartPNG(t, map[string]string{
+		"name":                "未知交付预设商品",
+		"image_types":         `[{"key":"hero","quantity":1}]`,
+		"delivery_preset_key": "unknown-preset",
+	})
+	unknownReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v3/products", unknownBody)
+	unknownReq.Header.Set("Content-Type", unknownType)
+	for _, c := range cookies {
+		unknownReq.AddCookie(c)
+	}
+	unknownResp, err := client.Do(unknownReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unknownResp.Body.Close()
+	if unknownResp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(unknownResp.Body)
+		t.Fatalf("unknown preset %d %s", unknownResp.StatusCode, raw)
+	}
+	var detail map[string]any
+	if err := json.NewDecoder(unknownResp.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["detail"] != "未知 DeliverySpec 预设: unknown-preset" {
+		t.Fatalf("%+v", detail)
+	}
 }
 
 func multipartPNG(t *testing.T, fields map[string]string) (*bytes.Buffer, string) {

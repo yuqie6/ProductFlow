@@ -130,12 +130,14 @@ func markNodeFailed(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, a
 		resolved = activeAttempt
 	}
 	if resolved != nil && *resolved != "" {
-		_, _ = pfdb.Exec(ctx, tx, `
+		if _, err := pfdb.Exec(ctx, tx, `
 			UPDATE workflow_graph_provider_effects SET
-				effect_result = 'failed', reconciliation_state = 'failed', detail = $2, updated_at = $3
+				effect_result = 'failed', reconciliation_state = 'not_applied', detail = $2, updated_at = $3
 			WHERE node_run_id = $1 AND attempt_id = $4
 			  AND effect_result NOT IN ('applied', 'unknown')
-		`, nodeRunID, detail, now, *resolved)
+		`, nodeRunID, detail, now, *resolved); err != nil {
+			return err
+		}
 	}
 	_, err = pfdb.Exec(ctx, tx, `
 		UPDATE workflow_graph_node_runs SET

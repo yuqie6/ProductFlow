@@ -3,6 +3,7 @@ package product_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -11,9 +12,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
+	_ "github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -66,10 +69,17 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	}
 	cookies := loginResp.Cookies()
 
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	draftKey := "draft-key-" + t.Name() + "-" + suffix
+	workspaceKey := "workspace-key-" + t.Name() + "-" + suffix
+	intakeKey := "intake-key-" + t.Name() + "-" + suffix
+	presetKey := "workspace-preset-key-" + t.Name() + "-" + suffix
+	badPresetKey := "workspace-bad-preset-" + t.Name() + "-" + suffix
+
 	draft := `{"name":"名称草稿"}`
 	dreq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces/drafts", strings.NewReader(draft))
 	dreq.Header.Set("Content-Type", "application/json")
-	dreq.Header.Set("Idempotency-Key", "draft-key-1")
+	dreq.Header.Set("Idempotency-Key", draftKey)
 	for _, c := range cookies {
 		dreq.AddCookie(c)
 	}
@@ -99,7 +109,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	})
 	ws, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces", wsBody)
 	ws.Header.Set("Content-Type", wsType)
-	ws.Header.Set("Idempotency-Key", "workspace-key-1")
+	ws.Header.Set("Idempotency-Key", workspaceKey)
 	for _, c := range cookies {
 		ws.AddCookie(c)
 	}
@@ -149,7 +159,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	})
 	intake, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces/"+snap.Conversation.ID+"/intake", intakeBody)
 	intake.Header.Set("Content-Type", intakeType)
-	intake.Header.Set("Idempotency-Key", "intake-key-1")
+	intake.Header.Set("Idempotency-Key", intakeKey)
 	for _, c := range cookies {
 		intake.AddCookie(c)
 	}
@@ -178,7 +188,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	})
 	replay, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces/"+snap.Conversation.ID+"/intake", replayBody)
 	replay.Header.Set("Content-Type", replayType)
-	replay.Header.Set("Idempotency-Key", "intake-key-1")
+	replay.Header.Set("Idempotency-Key", intakeKey)
 	for _, c := range cookies {
 		replay.AddCookie(c)
 	}
@@ -200,6 +210,61 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	}
 	if replayed.CreatedAssets[0].ID != finalized.CreatedAssets[0].ID {
 		t.Fatalf("replay assets %+v %+v", replayed.CreatedAssets, finalized.CreatedAssets)
+	}
+
+	presetBody, presetType := workspacePNG(t, map[string]string{
+		"name":      "带交付预设工作区",
+		"selection": `{"schema_version":1,"image_types":[{"key":"hero","quantity":1,"order":0}],"delivery_preset_key":"jd_hero"}`,
+	})
+	presetReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces", presetBody)
+	presetReq.Header.Set("Content-Type", presetType)
+	presetReq.Header.Set("Idempotency-Key", presetKey)
+	for _, c := range cookies {
+		presetReq.AddCookie(c)
+	}
+	presetResp, err := client.Do(presetReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer presetResp.Body.Close()
+	if presetResp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(presetResp.Body)
+		t.Fatalf("workspace preset %d %s", presetResp.StatusCode, raw)
+	}
+	var presetCreated product.WorkspaceCreateResponse
+	if err := json.NewDecoder(presetResp.Body).Decode(&presetCreated); err != nil {
+		t.Fatal(err)
+	}
+	var intakeDoc map[string]any
+	if err := json.Unmarshal(presetCreated.Product.Intake, &intakeDoc); err != nil {
+		t.Fatal(err)
+	}
+	if intakeDoc["delivery_preset_key"] != "jd_hero" {
+		t.Fatalf("intake %+v", intakeDoc)
+	}
+	spec, _ := intakeDoc["delivery_spec"].(map[string]any)
+	if spec["width"] != float64(1200) || spec["format"] != "png" {
+		t.Fatalf("delivery_spec %+v", spec)
+	}
+
+	badBody, badType := workspacePNG(t, map[string]string{
+		"name":      "未知预设工作区",
+		"selection": `{"schema_version":1,"image_types":[{"key":"hero","quantity":1,"order":0}],"delivery_preset_key":"not-a-real-preset"}`,
+	})
+	badReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces", badBody)
+	badReq.Header.Set("Content-Type", badType)
+	badReq.Header.Set("Idempotency-Key", badPresetKey)
+	for _, c := range cookies {
+		badReq.AddCookie(c)
+	}
+	badResp, err := client.Do(badReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(badResp.Body)
+		t.Fatalf("unknown workspace preset %d %s", badResp.StatusCode, raw)
 	}
 }
 

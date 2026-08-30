@@ -35,6 +35,7 @@ import (
 type graphServer struct {
 	pool    *pgxpool.Pool
 	db      *gorm.DB
+	media   media.Store
 	srv     *httptest.Server
 	client  *http.Client
 	cookies []*http.Cookie
@@ -76,7 +77,7 @@ func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServ
 	graph.HTTP{Service: graph.Service{DB: gdb, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	gs := &graphServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}
+	gs := &graphServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)

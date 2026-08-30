@@ -94,7 +94,7 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 		}
 		items := make([]TaskResponse, 0, len(ids))
 		for _, id := range ids {
-			item, err := loadTask(ctx, pgxTx, id)
+			item, err := loadTaskAfterGraphRunSync(ctx, pgxTx, id)
 			if err != nil {
 				return err
 			}
@@ -173,7 +173,7 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 func (s Service) GetTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		item, err := loadTask(ctx, pgxTx, taskID)
+		item, err := loadTaskAfterGraphRunSync(ctx, pgxTx, taskID)
 		if err != nil {
 			return err
 		}
@@ -425,6 +425,25 @@ func cancelTaskLocal(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskRe
 			}
 		}
 		if err := refreshSessionSummary(ctx, pgxTx, task.SessionID); err != nil {
+			return TaskResponse{}, err
+		}
+	}
+	return loadTask(ctx, pgxTx, taskID)
+}
+
+func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
+	var runID string
+	err := pfdb.QueryRow(ctx, pgxTx, `
+		SELECT graph_run_id FROM agent_workflow_run_requests
+		WHERE task_id = $1 AND graph_run_id IS NOT NULL
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, taskID).Scan(&runID)
+	if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+		return TaskResponse{}, err
+	}
+	if runID != "" {
+		if err := SyncGraphRunToTasks(ctx, pgxTx, runID); err != nil {
 			return TaskResponse{}, err
 		}
 	}

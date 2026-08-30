@@ -17,8 +17,9 @@ import (
 	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
-	applog "github.com/yuqie6/productflow/internal/platform/log"
+	applog 	"github.com/yuqie6/productflow/internal/platform/log"
 	"github.com/yuqie6/productflow/internal/platform/queue"
+	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
 
@@ -67,11 +68,13 @@ func main() {
 
 	runOnce := func() error {
 		bg := context.Background()
+		settingsStore := settings.NewStore(pool, cfg)
+		imageStale := time.Duration(settingsStore.IntSetting(bg, "image_session_stale_running_after_minutes", 90)) * time.Minute
 		workflow, err := graph.RecoverUnfinishedGraphRuns(bg, pool, 0)
 		if err != nil {
 			return err
 		}
-		imageSession, err := imagesession.RecoverUnfinished(bg, pool, 0)
+		imageSession, err := imagesession.RecoverUnfinished(bg, pool, imageStale)
 		if err != nil {
 			return err
 		}

@@ -89,6 +89,11 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 		v := 1
 		creation.product.IntakeVersion = &v
 		sourceID := creation.product.ID
+		deliverySpec, err := selectionDeliverySpec(selection)
+		if err != nil {
+			compensation.Rollback()
+			return canonicalCreation{}, Conversation{}, err
+		}
 		changeSet, err := graph.BuildDirectCreateTemplate(graph.DirectCreateInput{
 			ImageTypes:        selectionToImageTypes(selection),
 			ReferenceAssetIDs: assetIDs(creation.assets),
@@ -96,6 +101,7 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 			SourceProductID:   &sourceID,
 			FactSetVersionID:  creation.product.FactSetVersionID,
 			SourceNote:        creation.product.SourceNote,
+			DeliverySpec:      deliverySpec,
 		})
 		if err != nil {
 			compensation.Rollback()
@@ -275,6 +281,10 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 		return nil
 	}
 	sourceID := product.ID
+	deliverySpec, err := selectionDeliverySpec(selection)
+	if err != nil {
+		return err
+	}
 	in := graph.DirectCreateInput{
 		ImageTypes:        selectionToImageTypes(selection),
 		ReferenceAssetIDs: assetIDs,
@@ -282,6 +292,7 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 		SourceProductID:   &sourceID,
 		FactSetVersionID:  product.FactSetVersionID,
 		SourceNote:        product.SourceNote,
+		DeliverySpec:      deliverySpec,
 	}
 	identity, err := graph.LoadActiveGraphForUpdate(ctx, pgxTx, product.ID)
 	if err != nil {

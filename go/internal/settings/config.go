@@ -312,3 +312,22 @@ func sortedUnique(items []string) []string {
 	}
 	return out
 }
+
+// IntSetting 读取 app_settings 中的正整数配置，缺省或非法时回退。
+func (s *Store) IntSetting(ctx context.Context, key string, fallback int) int {
+	if s == nil {
+		return fallback
+	}
+	raw := envDefault(s, key)
+	rows, err := s.configRows(ctx)
+	if err == nil {
+		if row, ok := rows[key]; ok && strings.TrimSpace(row.value) != "" {
+			raw = row.value
+		}
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}

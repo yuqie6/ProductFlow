@@ -104,10 +104,22 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 	if submitted.Turn.Status != "canceled" {
 		t.Fatalf("cancel %s", submitted.Turn.Status)
 	}
+	canceledTask := as.do(t, http.MethodGet, "/api/v2/agent-tasks/"+task.ID, nil, "", nil)
+	as.mustStatus(t, canceledTask, http.StatusOK)
+	as.decode(t, canceledTask, &task)
+	if task.Status != "canceled" {
+		t.Fatalf("global task after canceled turn %s", task.Status)
+	}
 
 	resumedBusy := as.do(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/resume", nil, "", nil)
 	as.mustStatus(t, resumedBusy, http.StatusConflict)
 	resumedBusy.Body.Close()
+
+	nextTask := as.doJSON(t, http.MethodPost, "/api/v2/agent-tasks", map[string]any{
+		"session_id": sess.ID, "title": "目标二", "goal": "继续内部面", "conversation_id": convID,
+	})
+	as.mustStatus(t, nextTask, http.StatusCreated)
+	as.decode(t, nextTask, &task)
 
 	openKey := clockid.New()
 	openTurn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{

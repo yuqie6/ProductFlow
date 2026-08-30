@@ -196,11 +196,12 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 	return s.Get(ctx, jobID)
 }
 
-// QueueAfterImageSuccess 图运行图片成功后按节点 DeliverySpec 入队；失败不影响已成功资产。
+// QueueAfterImageSuccess 图运行图片成功后按节点 DeliverySpec 入队。
+// 无 DeliverySpec 或规格不合法时跳过；INSERT / StageForActor 失败必须返回 error。
 func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nodeID, sourceAssetID string) error {
 	raw, err := graph.NodeConfigJSON(ctx, pgxTx, nodeID)
 	if err != nil {
-		return nil
+		return err
 	}
 	var config map[string]any
 	if err := json.Unmarshal(raw, &config); err != nil {
@@ -216,19 +217,22 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 	}
 	source, err := productLoad(ctx, pgxTx, sourceAssetID)
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := validateSource(ctx, pgxTx, source); err != nil {
 		return nil
 	}
 	existing, err := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
-	if err != nil || existing != nil {
+	if err != nil {
+		return err
+	}
+	if existing != nil {
 		return nil
 	}
 	id := clockid.New()
 	specJSON, err := json.Marshal(normalized.Payload)
 	if err != nil {
-		return nil
+		return err
 	}
 	if _, err := pfdb.Exec(ctx, pgxTx, `
 		INSERT INTO delivery_rendition_jobs (
@@ -236,10 +240,20 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 			status, attempts, is_retryable, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0, TRUE, NOW(), NOW())
 	`, id, source.ProductID, source.ID, specSchemaVersion, specJSON, normalized.Hash); err != nil {
-		return nil
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			dup, loadErr := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
+			if loadErr != nil {
+				return loadErr
+			}
+			if dup != nil {
+				return nil
+			}
+		}
+		return err
 	}
-	_, _ = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, id, 0)
-	return nil
+	_, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, id, 0)
+	return err
 }
 
 func (s Service) serialize(ctx context.Context, q *gorm.DB, row jobRow) (JobResponse, error) {

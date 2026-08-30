@@ -128,8 +128,14 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err != nil {
 			return nil, err
 		}
-		x, _ := asInt(payload["position_x"])
-		y, _ := asInt(payload["position_y"])
+		x, err := optionalInt(payload, "position_x")
+		if err != nil {
+			return nil, err
+		}
+		y, err := optionalInt(payload, "position_y")
+		if err != nil {
+			return nil, err
+		}
 		config := map[string]any{}
 		if rawCfg, exists := payload["config"]; exists && rawCfg != nil {
 			cfg, ok := rawCfg.(map[string]any)
@@ -138,6 +144,14 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 			}
 			config = cfg
 		}
+		bound, err := optionalRef(payload, "bound_asset_id")
+		if err != nil {
+			return nil, err
+		}
+		group, err := optionalRef(payload, "group_ref")
+		if err != nil {
+			return nil, err
+		}
 		return CreateNodeOp{
 			ClientRef:    ref,
 			NodeType:     NodeType(nodeType),
@@ -145,8 +159,8 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 			PositionX:    x,
 			PositionY:    y,
 			Config:       config,
-			BoundAssetID: optionalRef(payload, "bound_asset_id"),
-			GroupRef:     optionalRef(payload, "group_ref"),
+			BoundAssetID: bound,
+			GroupRef:     group,
 		}, nil
 	case "update_node_config":
 		if err := requireKeys(payload, "node_ref", "config"); err != nil {
@@ -166,10 +180,14 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 			return nil, apperr.Validation("不支持的 Graph 操作")
 		}
 		_, boundSet := payload["bound_asset_id"]
+		bound, err := optionalRef(payload, "bound_asset_id")
+		if err != nil {
+			return nil, err
+		}
 		return UpdateNodeConfigOp{
 			NodeRef:         ref,
 			Config:          cfg,
-			BoundAssetID:    optionalRef(payload, "bound_asset_id"),
+			BoundAssetID:    bound,
 			BoundAssetIDSet: boundSet,
 		}, nil
 	case "rename_node":
@@ -221,7 +239,10 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err != nil {
 			return nil, err
 		}
-		order, _ := asInt(payload["order"])
+		order, err := optionalInt(payload, "order")
+		if err != nil {
+			return nil, err
+		}
 		if order < 0 {
 			return nil, apperr.Validation("不支持的 Graph 操作")
 		}
@@ -305,7 +326,11 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err != nil || len(refs) < 1 {
 			return nil, apperr.Validation("不支持的 Graph 操作")
 		}
-		return MoveNodesToGroupOp{GroupRef: optionalRef(payload, "group_ref"), NodeRefs: refs}, nil
+		group, err := optionalRef(payload, "group_ref")
+		if err != nil {
+			return nil, err
+		}
+		return MoveNodesToGroupOp{GroupRef: group, NodeRefs: refs}, nil
 	case "rename_group":
 		if err := requireKeys(payload, "group_ref", "title"); err != nil {
 			return nil, err
@@ -363,7 +388,7 @@ func graphRef(v any) (string, error) {
 		return "", apperr.Validation("不支持的 Graph 操作")
 	}
 	s = strings.TrimSpace(s)
-	if s == "" || len(s) > maxRefLen {
+	if s == "" || len([]rune(s)) > maxRefLen {
 		return "", apperr.Validation("不支持的 Graph 操作")
 	}
 	return s, nil
@@ -381,20 +406,35 @@ func graphTitle(v any) (string, error) {
 	return s, nil
 }
 
-func optionalRef(payload map[string]any, key string) *string {
+func optionalRef(payload map[string]any, key string) (*string, error) {
 	raw, ok := payload[key]
 	if !ok || raw == nil {
-		return nil
+		return nil, nil
 	}
 	s, ok := raw.(string)
 	if !ok {
-		return nil
+		return nil, apperr.Validation("不支持的 Graph 操作")
 	}
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return nil
+		return nil, nil
 	}
-	return &s
+	if len([]rune(s)) > maxRefLen {
+		return nil, apperr.Validation("不支持的 Graph 操作")
+	}
+	return &s, nil
+}
+
+func optionalInt(payload map[string]any, key string) (int, error) {
+	raw, exists := payload[key]
+	if !exists {
+		return 0, nil
+	}
+	n, ok := asInt(raw)
+	if !ok {
+		return 0, apperr.Validation("不支持的 Graph 操作")
+	}
+	return n, nil
 }
 
 func stringRefs(v any) ([]string, error) {

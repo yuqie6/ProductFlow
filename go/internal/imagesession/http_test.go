@@ -250,10 +250,8 @@ func TestImageSessionTextOutputFailedNotUnknown(t *testing.T) {
 	taskID := session.GenerationTasks[0].ID
 	ss.dropDispatch(t, taskID)
 	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrTextOutput}}
-	for i := 0; i < maxAttempts; i++ {
-		if err := exec.Execute(context.Background(), taskID); err != nil {
-			t.Fatal(err)
-		}
+	if err := exec.Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
 	}
 	got := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID, nil, "")
 	ss.mustStatus(t, got, http.StatusOK)
@@ -261,6 +259,12 @@ func TestImageSessionTextOutputFailedNotUnknown(t *testing.T) {
 	task := session.GenerationTasks[0]
 	if task.Status != "failed" {
 		t.Fatalf("status %s reason %+v", task.Status, task.FailureReason)
+	}
+	if task.IsRetryable {
+		t.Fatal("confirmed provider failure must not auto-retry")
+	}
+	if task.Attempts != 1 {
+		t.Fatalf("attempts %d", task.Attempts)
 	}
 	if task.FailureReason == nil || *task.FailureReason != ErrTextOutput.Error() {
 		t.Fatalf("reason %+v", task.FailureReason)

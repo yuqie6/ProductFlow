@@ -32,6 +32,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		rows, err := pfdb.Query(ctx, pgxTx, `
 			SELECT id, status, active_attempt_id, progress_phase, completed_candidates,
+			       active_candidate_index,
 			       COALESCE(progress_updated_at, started_at)
 			FROM image_session_generation_tasks
 			WHERE is_retryable = TRUE
@@ -48,12 +49,13 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			attempt    *string
 			phase      *string
 			completed  int
+			activeIdx  *int
 			stamp      *time.Time
 		}
 		var tasks []item
 		for rows.Next() {
 			var it item
-			if err := rows.Scan(&it.id, &it.status, &it.attempt, &it.phase, &it.completed, &it.stamp); err != nil {
+			if err := rows.Scan(&it.id, &it.status, &it.attempt, &it.phase, &it.completed, &it.activeIdx, &it.stamp); err != nil {
 				rows.Close()
 				return err
 			}
@@ -80,7 +82,8 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				phase = *task.phase
 			}
 			safe := phase == "running" || phase == "candidate_saved"
-			var pendingEffect bool
+			nextCandidate := task.completed + 1
+			var coveringEffect bool
 			_ = pfdb.QueryRow(ctx, pgxTx, `
 				SELECT EXISTS (
 					SELECT 1 FROM image_session_provider_effects
@@ -89,24 +92,14 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 					  AND candidate_start_index <= $2
 					  AND (candidate_start_index + candidate_count - 1) >= $2
 				)
-			`, task.id, task.completed+1).Scan(&pendingEffect)
-			unknown := task.completed >= 0 && (phase != "" && !safe || pendingEffect)
-			if phase == "running" && !pendingEffect {
-				unknown = false
-			}
-			if !safe || pendingEffect {
-				unknown = true
-			}
-			if phase == "running" || phase == "candidate_saved" {
-				if !pendingEffect {
-					unknown = false
-				}
-			}
+			`, task.id, nextCandidate).Scan(&coveringEffect)
+			unknown := task.activeIdx != nil || !safe || coveringEffect
 			if unknown {
 				_, err := pfdb.Exec(ctx, pgxTx, `
 					UPDATE image_session_generation_tasks SET
 						status = 'unknown', active_attempt_id = NULL, finished_at = NOW(),
-						is_retryable = FALSE, failure_reason = $2, progress_phase = $3, progress_updated_at = NOW()
+						is_retryable = FALSE, failure_reason = $2, progress_phase = $3,
+						progress_updated_at = NOW(), active_candidate_index = NULL
 					WHERE id = $1 AND status = 'running'
 				`, task.id, unknownDetail, unknownPhase)
 				if err != nil {

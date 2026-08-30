@@ -158,31 +158,6 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 	if len(statuses) == 0 {
 		return false, nil
 	}
-	blocking := false
-	for _, st := range statuses {
-		if st == NodeRunFailed || st == NodeRunUnknown {
-			blocking = true
-			break
-		}
-	}
-	if blocking {
-		now := time.Now().UTC()
-		if _, err := pfdb.Exec(ctx, tx, `
-			UPDATE workflow_graph_node_runs SET
-				status = 'failed',
-				failure_reason = COALESCE(failure_reason, '上游节点已失败'),
-				finished_at = COALESCE(finished_at, $2),
-				active_attempt_id = NULL,
-				progress_updated_at = $2
-			WHERE graph_run_id = $1 AND status = 'queued'
-		`, runID, now); err != nil {
-			return false, err
-		}
-		statuses, reasons, err = loadNodeRunStatuses(ctx, tx, runID)
-		if err != nil {
-			return false, err
-		}
-	}
 	for _, st := range statuses {
 		if st == NodeRunQueued || st == NodeRunRunning {
 			return false, nil
@@ -290,8 +265,12 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
-		if nodePastProviderBoundary(phase) && strings.TrimSpace(reason) == "" {
-			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, attempt, ProviderUnknownDetail); err != nil {
+		if nodePastProviderBoundary(phase) {
+			detail := strings.TrimSpace(reason)
+			if detail == "" {
+				detail = ProviderUnknownDetail
+			}
+			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, attempt, detail); err != nil {
 				return err
 			}
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)

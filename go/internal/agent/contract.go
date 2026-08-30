@@ -179,6 +179,17 @@ func (s Service) ProductContext(ctx context.Context, conversationID string) (map
 	if err != nil {
 		return nil, err
 	}
+	facts, err := s.Product.GetFacts(ctx, *conv.ProductID)
+	if err != nil {
+		return nil, err
+	}
+	var confirmed any
+	if facts.FactSet != nil {
+		confirmed = map[string]any{
+			"version": facts.FactSet.Version,
+			"facts":   facts.Facts,
+		}
+	}
 	live, err := s.Graph.TryCurrent(ctx, *conv.ProductID)
 	if err != nil {
 		return nil, err
@@ -193,7 +204,7 @@ func (s Service) ProductContext(ctx context.Context, conversationID string) (map
 			"id": product.ID, "name": product.Name, "category": product.Category,
 			"price": product.Price, "source_note": product.SourceNote,
 		},
-		"confirmed_fact_set": nil,
+		"confirmed_fact_set": confirmed,
 		"intake":             json.RawMessage(orEmptyJSON(product.Intake)),
 		"node_catalog":       graph.CatalogJSON(),
 		"image_type_catalog": graph.ImageTypeCatalogJSON(),
@@ -211,11 +222,27 @@ func orEmptyJSON(raw json.RawMessage) json.RawMessage {
 func liveGraphSummary(proj graph.Projection) map[string]any {
 	nodes := make([]map[string]any, 0, len(proj.Nodes))
 	for _, node := range proj.Nodes {
+		incoming := make([]map[string]any, 0, len(node.Incoming))
+		for _, edge := range node.Incoming {
+			incoming = append(incoming, map[string]any{
+				"source": edge.NodeID, "target": node.ID,
+				"role": edge.Role, "data_type": edge.DataType,
+			})
+		}
+		outgoing := make([]map[string]any, 0, len(node.Outgoing))
+		for _, edge := range node.Outgoing {
+			outgoing = append(outgoing, map[string]any{
+				"source": node.ID, "target": edge.NodeID,
+				"role": edge.Role, "data_type": edge.DataType,
+			})
+		}
 		nodes = append(nodes, map[string]any{
 			"id": node.ID, "node_type": node.NodeType, "title": node.Title,
 			"config_status": node.ConfigStatus, "unused": node.Unused,
 			"bound_asset_id": node.BoundAssetID, "group_id": node.GroupID,
 			"has_current_artifact": node.CurrentArtifactID != nil,
+			"incoming":             incoming,
+			"outgoing":             outgoing,
 		})
 	}
 	edges := make([]map[string]any, 0, len(proj.Edges))

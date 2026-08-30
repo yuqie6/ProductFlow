@@ -2,7 +2,10 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	sqldb "database/sql"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -52,9 +55,15 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 		}
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		for _, runID := range ids {
-			run, err := loadGraphRunByID(ctx, pgxTx, runID)
+			run, err := loadGraphRunByIDLocked(ctx, pgxTx, runID)
 			if err != nil {
+				if errors.Is(err, sqldb.ErrNoRows) {
+					continue
+				}
 				return err
+			}
+			if run.Status != RunStatusRunning {
+				continue
 			}
 			state := classifyDelivery(run)
 			if state == "queued" {
@@ -92,7 +101,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 						UPDATE workflow_graph_node_runs SET
 							status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
 							finished_at = NULL, progress_phase = 'requeued_after_idle', progress_updated_at = NOW()
-						WHERE id = $1
+						WHERE id = $1 AND status = 'running'
 					`, node.ID); err != nil {
 						return err
 					}

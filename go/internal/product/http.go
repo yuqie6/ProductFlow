@@ -116,13 +116,18 @@ func (h HTTP) createV3(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
+	deliverySpec, err := deliveryPresetSpec(c.PostForm("delivery_preset_key"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
 	created, err := h.Service.CreateDirect(c.Request.Context(), CreateInput{
 		Name:       c.PostForm("name"),
 		Category:   c.PostForm("category"),
 		Price:      c.PostForm("price"),
 		SourceNote: c.PostForm("source_note"),
 		Uploads:    uploads,
-	}, imageTypes, generationSpec, nil)
+	}, imageTypes, generationSpec, deliverySpec)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

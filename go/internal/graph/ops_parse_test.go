@@ -49,6 +49,72 @@ func TestParseChangeSetRejectsEmptyOperations(t *testing.T) {
 	assertAppErr(t, err, 400, "不支持的 Graph 操作")
 }
 
+func TestParseChangeSetAcceptsJSONNumberConfig(t *testing.T) {
+	raw := []byte(`{
+		"base_graph_revision": 0,
+		"summary": "数字配置",
+		"operations": [{
+			"op": "create_node",
+			"client_ref": "prompt-1",
+			"node_type": "prompt_generation",
+			"title": "提示词",
+			"config": {"prompt": {"composition": {"product_share_percent": 70}}}
+		}]
+	}`)
+	if _, err := ParseChangeSet(raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NormalizeNodeConfig(NodePromptGeneration, map[string]any{
+		"prompt": map[string]any{"composition": map[string]any{"product_share_percent": json.Number("70")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseChangeSetRejectsNonIntPosition(t *testing.T) {
+	_, err := ParseChangeSet([]byte(`{
+		"base_graph_revision": 0,
+		"summary": "非法坐标",
+		"operations": [{
+			"op": "create_node",
+			"client_ref": "n1",
+			"node_type": "product_source",
+			"title": "资料",
+			"position_x": 1.5
+		}]
+	}`))
+	assertAppErr(t, err, 400, "不支持的 Graph 操作")
+}
+
+func TestParseChangeSetRejectsNonStringBoundAsset(t *testing.T) {
+	_, err := ParseChangeSet([]byte(`{
+		"base_graph_revision": 0,
+		"summary": "错误绑定",
+		"operations": [{
+			"op": "create_node",
+			"client_ref": "asset-1",
+			"node_type": "image_asset",
+			"title": "参考图",
+			"bound_asset_id": 12
+		}]
+	}`))
+	assertAppErr(t, err, 400, "不支持的 Graph 操作")
+}
+
+func TestGraphRefAllowsUnicodeLength(t *testing.T) {
+	ref := strings.Repeat("中", 80)
+	raw, _ := json.Marshal(map[string]any{
+		"base_graph_revision": 0,
+		"summary":             "中文引用",
+		"operations": []map[string]any{{
+			"op": "create_node", "client_ref": ref, "node_type": "product_source", "title": "资料",
+		}},
+	})
+	if _, err := ParseChangeSet(raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCatalogJSONStableNodeOrderAndLabels(t *testing.T) {
 	payload := CatalogJSON()
 	raw, err := json.Marshal(payload)

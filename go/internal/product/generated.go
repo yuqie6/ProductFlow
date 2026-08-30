@@ -10,8 +10,8 @@ import (
 
 // Write 把图运行生成的图片写成商品图片身份（origin=workflow_generation）。
 func (s Service) Write(ctx context.Context, tx *gorm.DB, in graph.GeneratedImageInput) (string, error) {
-	var compensation storage.Compensation
-	obj, err := s.Media.Stage(ctx, tx, in.Bytes, in.MIME, &compensation)
+	compensation := &storage.Compensation{}
+	obj, err := s.Media.Stage(ctx, tx, in.Bytes, in.MIME, compensation)
 	if err != nil {
 		compensation.Rollback()
 		return "", err
@@ -25,6 +25,68 @@ func (s Service) Write(ctx context.Context, tx *gorm.DB, in graph.GeneratedImage
 		compensation.Rollback()
 		return "", err
 	}
-	compensation.Release()
+	bindCompensation(tx, compensation)
 	return asset.ID, nil
+}
+
+type compensatingConnPool struct {
+	gorm.ConnPool
+	files []*storage.Compensation
+}
+
+func (c *compensatingConnPool) Commit() error {
+	committer, ok := c.ConnPool.(gorm.TxCommitter)
+	if !ok {
+		c.rollbackFiles()
+		return gorm.ErrInvalidTransaction
+	}
+	if err := committer.Commit(); err != nil {
+		c.rollbackFiles()
+		return err
+	}
+	c.releaseFiles()
+	return nil
+}
+
+func (c *compensatingConnPool) Rollback() error {
+	committer, ok := c.ConnPool.(gorm.TxCommitter)
+	if !ok {
+		c.rollbackFiles()
+		return gorm.ErrInvalidTransaction
+	}
+	err := committer.Rollback()
+	c.rollbackFiles()
+	return err
+}
+
+func (c *compensatingConnPool) rollbackFiles() {
+	for i := len(c.files) - 1; i >= 0; i-- {
+		c.files[i].Rollback()
+	}
+	c.files = nil
+}
+
+func (c *compensatingConnPool) releaseFiles() {
+	for _, file := range c.files {
+		file.Release()
+	}
+	c.files = nil
+}
+
+func bindCompensation(tx *gorm.DB, compensation *storage.Compensation) {
+	if tx == nil || tx.Statement == nil || compensation == nil {
+		return
+	}
+	if existing, ok := tx.Statement.ConnPool.(*compensatingConnPool); ok {
+		existing.files = append(existing.files, compensation)
+		return
+	}
+	if _, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok {
+		compensation.Release()
+		return
+	}
+	tx.Statement.ConnPool = &compensatingConnPool{
+		ConnPool: tx.Statement.ConnPool,
+		files:    []*storage.Compensation{compensation},
+	}
 }
