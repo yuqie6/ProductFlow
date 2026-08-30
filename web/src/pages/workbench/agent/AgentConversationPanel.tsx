@@ -167,7 +167,6 @@ export function AgentConversationPanel({
   useEffect(() => {
     const live = Boolean(agent.activeTurn);
     const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
       void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId] });
     };
     if (!live) return;
@@ -181,7 +180,7 @@ export function AgentConversationPanel({
   useEffect(() => {
     const request = workflowRunRequestQuery.data;
     if (!request) return;
-    if (request.status === "succeeded" || request.status === "failed" || request.status === "cancelled") {
+    if (request.status === "succeeded" || request.status === "failed" || request.status === "cancelled" || request.workflow_run_status === "unknown") {
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
       void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, request.workflow_id] });
       void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
@@ -630,8 +629,12 @@ export function workflowRunRequestRefetchIntervalMs(
 ): number | false {
   if (!request) return false;
   if (request.status === "awaiting_confirmation") return 1_500;
-  if (request.status === "confirmed") return 1_200;
-  return false;
+  if (request.status !== "confirmed") return false;
+  const runStatus = request.workflow_run_status;
+  if (runStatus === "succeeded" || runStatus === "failed" || runStatus === "cancelled" || runStatus === "unknown") {
+    return false;
+  }
+  return 1_200;
 }
 
 export function canSubmitAgentConversationMessage(input: {

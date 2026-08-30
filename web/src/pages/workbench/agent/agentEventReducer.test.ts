@@ -119,7 +119,7 @@ describe("agentEventReducer", () => {
     state = agentEventReducer(state, { type: "event", event: event(5, "turn.cancel_requested") });
     state = agentEventReducer(state, { type: "event", event: event(6, "turn.awaiting_confirmation") });
 
-    expect(state.question?.id).toBe("question-1");
+    expect(state.question).toBeNull();
     expect(state.question_answered).toBe(true);
     expect(state.resume_requested).toBe(true);
     expect(state.artifact_sequence).toBe(4);

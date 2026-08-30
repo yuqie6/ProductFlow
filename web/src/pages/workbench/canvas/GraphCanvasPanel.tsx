@@ -144,6 +144,12 @@ export function GraphCanvasPanel({
   const catalogRef = useRef(catalog);
   const selectedRef = useRef(selectedNodeIds);
   const clipboardRef = useRef<string[]>([]);
+  const commitLiveGraph = useCallback((next: GraphProjection) => {
+    void queryClient.cancelQueries({ queryKey: ["workflow-graph", productId] });
+    graphRef.current = next;
+    onGraphChange(next);
+    queryClient.setQueryData(["workflow-graph", productId], next);
+  }, [onGraphChange, productId, queryClient]);
   const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
   const enteredGroupIdRef = useRef<string | null>(null);
   const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(
@@ -225,16 +231,13 @@ export function GraphCanvasPanel({
   const applyMutation = useMutation({
     mutationFn: (changeSet: GraphChangeSet) => api.applyWorkflowChangeSet(productId, graph.id, changeSet),
     onSuccess: (next) => {
-      graphRef.current = next;
-      onGraphChange(next);
-      queryClient.setQueryData(["workflow-graph", productId], next);
+      commitLiveGraph(next);
     },
     onError: async (error) => {
       setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
-        graphRef.current = next;
-        onGraphChange(next);
+        commitLiveGraph(next);
       }
     },
   });
@@ -242,16 +245,13 @@ export function GraphCanvasPanel({
   const undoMutation = useMutation({
     mutationFn: () => api.undoWorkflowChangeSet(productId, graph.id),
     onSuccess: (next) => {
-      graphRef.current = next;
-      onGraphChange(next);
-      queryClient.setQueryData(["workflow-graph", productId], next);
+      commitLiveGraph(next);
     },
     onError: async (error) => {
       setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
-        graphRef.current = next;
-        onGraphChange(next);
+        commitLiveGraph(next);
       }
     },
   });
@@ -259,16 +259,13 @@ export function GraphCanvasPanel({
   const redoMutation = useMutation({
     mutationFn: () => api.redoWorkflowChangeSet(productId, graph.id),
     onSuccess: (next) => {
-      graphRef.current = next;
-      onGraphChange(next);
-      queryClient.setQueryData(["workflow-graph", productId], next);
+      commitLiveGraph(next);
     },
     onError: async (error) => {
       setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
-        graphRef.current = next;
-        onGraphChange(next);
+        commitLiveGraph(next);
       }
     },
   });
@@ -342,21 +339,25 @@ export function GraphCanvasPanel({
   );
   const hasShotGroups = shotProjections.length > 0;
   const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
+  const graphWritePending = applyMutation.isPending || undoMutation.isPending || redoMutation.isPending;
 
-  useEffect(() => {
+	useEffect(() => {
     if (!graphRunIsBusy) return;
+    if (graphWritePending) {
+      void queryClient.cancelQueries({ queryKey: ["workflow-graph", productId] });
+      return;
+    }
     const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
       void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
       void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
     };
     refresh();
     const timer = window.setInterval(refresh, 1200);
     return () => {
       window.clearInterval(timer);
-      refresh();
     };
-  }, [graphRunIsBusy, productId, queryClient]);
+  }, [graphRunIsBusy, graphWritePending, productId, queryClient]);
 
   useEffect(() => {
     if (mainViewGraphIdRef.current !== graph.id) {

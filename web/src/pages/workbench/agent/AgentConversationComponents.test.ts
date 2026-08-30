@@ -102,16 +102,16 @@ describe("Agent conversation components", () => {
     })).toBe(1_500);
     expect(workflowRunRequestRefetchIntervalMs({
       status: "confirmed",
-      workflow_run_status: "queued",
-    })).toBe(1_200);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "confirmed",
       workflow_run_status: "running",
     })).toBe(1_200);
     expect(workflowRunRequestRefetchIntervalMs({
       status: "confirmed",
       workflow_run_status: null,
     })).toBe(1_200);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "confirmed",
+      workflow_run_status: "unknown",
+    })).toBe(false);
     expect(workflowRunRequestRefetchIntervalMs({
       status: "succeeded",
       workflow_run_status: "succeeded",

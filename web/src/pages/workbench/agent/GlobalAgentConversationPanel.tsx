@@ -215,7 +215,10 @@ export function GlobalAgentConversationPanel({
     t("globalAgent.requestFailed"),
   );
   const questionAnswered = Boolean(
-    activeQuestion && (answeredQuestionId === activeQuestion.id || agent.activeTurn?.resume_required),
+    activeQuestion &&
+    (answeredQuestionId === activeQuestion.id ||
+      events.state.question_answered ||
+      agent.activeTurn?.resume_required),
   );
   const confirmDraft = () => {
     const draft = agent.libraryOrganizationDraftQuery.data;

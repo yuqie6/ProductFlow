@@ -216,7 +216,7 @@ export function agentEventReducer(
         resume_requested: false,
       };
     case "question.answered":
-      return { ...next, question_answered: true };
+      return { ...next, question: null, question_answered: true };
     case "turn.resume_requested":
       return { ...next, resume_requested: true };
     case "turn.cancel_requested":
