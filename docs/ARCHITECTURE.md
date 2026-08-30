@@ -114,7 +114,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 在线工作流保存在 `workflow_graphs`，schema 固定为 3。为什么是 live graph 而不是第二份 Draft 拓扑，见 `adr/0008-free-canvas-agent-graph-authority.md`。
 
-图上只有三类权威对象：Node（配置与当前输出引用）、Edge（类型、角色、顺序、依赖）、Artifact（一次运行的不可变结果）。用户、Agent 和配方都通过 `apply_graph_change_set` 写入。ChangeSet 操作：`create_node`、`update_node_config`、`rename_node`、`delete_node`、`connect_nodes`、`disconnect_edge`、`move_nodes`、`create_group`、`move_nodes_to_group`、`rename_group`、`dissolve_group`。不完整 DAG 可以保存；运行前再查完整性。处理节点在画布上最多一个聚合输入端口。运行时上下文只读目标节点的 incoming edges，见 `go/internal/graph` 的 catalog 与 rules。
+图上只有三类权威对象：Node（配置与当前输出引用）、Edge（类型、角色、顺序、依赖）、Artifact（一次 cook 的不可变产物）。用户、Agent 和配方都通过 `apply_graph_change_set` 写入。ChangeSet 操作：`create_node`、`update_node_config`、`rename_node`、`delete_node`、`connect_nodes`、`disconnect_edge`、`reorder_edges`、`move_nodes`、`create_group`、`move_nodes_to_group`、`rename_group`、`dissolve_group`。不完整 DAG 可以保存；运行前再查完整性。处理节点左侧按 Catalog `accepts` 渲染具名输入端口，handle id 等于边 `role`。运行时上下文只读目标节点的 incoming edges，见 `go/internal/graph` 的 catalog 与 rules，以及 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
 
 节点类型为：
 
@@ -123,7 +123,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 - `creative_brief`：运行时根据商品资料和参考图生成创作要求，结果写入节点并可以再编辑。
 - `visual_system`：运行时根据商品资料和参考图生成风格与背景约束，结果写入节点并可以再编辑。
 - `prompt_generation`：运行时根据上游上下文生成提示词，结果写入节点并可以再编辑。
-- `image_generation`：根据已生成的提示词和 GenerationSpec 生成图片。运行此节点会入队目标以及 digest 过期或尚无产物的上游处理节点；未连接的视觉规范或创作要求不会被扫进来。需要强制重跑全部上游时使用“运行到此节点”。跑内容节点不会自动跑下游生图。
+- `image_generation`：根据已生成的提示词和 GenerationSpec 生成图片。运行此节点（`scope=node`）只入队目标；需要连带 fill 仍会干活的上游时使用“运行到此节点”。跑内容节点不会自动跑下游生图。文稿、`document_origin` 与 cook 范围见 [`adr/0014-canvas-document-cook.md`](adr/0014-canvas-document-cook.md)。端口、`selection` 运行、运行队列与 `skipped` 见 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
 
 画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。
 
@@ -131,7 +131,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 `WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 runtime `generation_max_concurrent_tasks`。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。证据：`go/internal/graph` 执行与耐久测试。
 
-工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `go/internal/agent` 创建待确认请求；用户确认后走同一套 `go/internal/graph` 约束。商品路径 Agent Turn 不能提交 Draft artifact。单次可逆改图走 Graph Command（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
+工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以提交整图、运行到某节点、单节点，或对镜头/失败子集提交一次 `selection`。已有 `running` run 时新请求进入 FIFO 排队，出队时再快照。用户不需要先创建 Agent Conversation。Agent 通过 `go/internal/agent` 创建待确认请求；用户确认后走同一套 `go/internal/graph` 约束。商品路径 Agent Turn 不能提交 Draft artifact。单次可逆改图走 Graph Command（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配方库只列出用户从 live graph 保存的配方，不预置画布模板。保存从 live schema-v3 graph 提取，payload 是节点/边/分组片段，不含商品身份、绑定素材、生成结果或媒体字节。完整配方只在目标商品还没有 live graph 时创建；已有图时返回冲突。片段配方合并进已有 schema-v3 工作流，无法合并时返回明确冲突，不会写成 Draft 或退休模型。HTTP 保存入口是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`；预览/应用是 `POST /api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview` 与 `.../apply`。
 

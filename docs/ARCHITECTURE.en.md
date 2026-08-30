@@ -114,7 +114,7 @@ Global library organize still uses `LibraryOrganizationDraft`. Multi-node graph 
 
 The online workflow lives on `workflow_graphs` with schema version 3. The decision to keep one live graph instead of a second Draft topology is `adr/0008-free-canvas-agent-graph-authority.md`.
 
-The graph has three authority objects: Node (config and current output reference), Edge (type, role, order, dependency), and Artifact (immutable result of one run). Users, the Agent, and recipes all write through `apply_graph_change_set`. ChangeSet operations: `create_node`, `update_node_config`, `rename_node`, `delete_node`, `connect_nodes`, `disconnect_edge`, `move_nodes`, `create_group`, `move_nodes_to_group`, `rename_group`, `dissolve_group`. Incomplete DAGs may persist; run-time checks completeness separately. Processing nodes expose at most one aggregate input port. Runtime context reads only the target node's incoming edges. Owners: `go/internal/graph` catalog and rules.
+The graph has three authority objects: Node (config and current output reference), Edge (type, role, order, dependency), and Artifact (immutable result of one cook). Users, the Agent, and recipes all write through `apply_graph_change_set`. ChangeSet operations: `create_node`, `update_node_config`, `rename_node`, `delete_node`, `connect_nodes`, `disconnect_edge`, `reorder_edges`, `move_nodes`, `create_group`, `move_nodes_to_group`, `rename_group`, `dissolve_group`. Incomplete DAGs may persist; run-time checks completeness separately. Processing nodes render one named input port per Catalog `accepts` role; the handle id equals the persisted edge `role`. Runtime context reads only the target node's incoming edges. Owners: `go/internal/graph` catalog and rules; [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md).
 
 Node types are:
 
@@ -123,7 +123,7 @@ Node types are:
 - `creative_brief`: running the node writes a creative brief from product facts and photos; the result is editable.
 - `visual_system`: running the node writes style and background constraints from product facts and photos; the result is editable.
 - `prompt_generation`: running the node writes a prompt from upstream context; the result is editable.
-- `image_generation`: generate images from the current prompt and GenerationSpec. Running this node does not fill empty visual or brief nodes; run those first, or use run-to-node.
+- `image_generation`: generate images from the current prompt and GenerationSpec. Running this node (`scope=node`) enqueues only the target; use run-to-node for ancestors that fill still needs. Running a content node does not run downstream image nodes. Documents, `document_origin`, and cook scope: [`adr/0014-canvas-document-cook.md`](adr/0014-canvas-document-cook.md). Ports, `selection`, the run queue, and `skipped`: [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md).
 
 Canvas groups are one-level visual folders. You can enter a group and remember its viewport separately from the full graph. Groups do not change DAG execution, grow ports, or run/cancel/retry. Cross-group edges stay visible on the full graph. Edges use Node Catalog data types and roles. Node inspector forms render from the same `config_fields` document and save with `update_node_config`.
 
@@ -131,7 +131,7 @@ Photography and infographic image types land as one group: one `prompt_generatio
 
 `WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows. One worker holds a run; independent processing nodes may call providers concurrently, limited by runtime `generation_max_concurrent_tasks`. A failed or unknown node does not stop independent siblings; downstream of a failed upstream is marked failed. Evidence: `go/internal/graph` execution and durability tests.
 
-Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `go/internal/agent`; user confirmation uses the same `go/internal/graph` constraints.
+Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph, run-to-node, a single node, or one `selection` for a shot or failed subset. A `running` run causes further submits to enqueue FIFO and snapshot on dequeue. None of this requires an Agent Conversation first. Agent run requests go through `go/internal/agent`; user confirmation uses the same `go/internal/graph` constraints.
 
 After a live graph exists, the Agent cannot submit a product Draft artifact. Single reversible edits go through `apply_graph_change_set`. Multi-node rewrites land as an unapplied `WorkflowGraphProposal`; ghost preview, confirm, and cancel happen on the canvas.
 

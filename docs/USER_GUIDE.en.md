@@ -84,7 +84,7 @@ Closing the Agent conversation leaves the same canvas as never opening it: add, 
 - Running a shot submits one run for the group's image nodes. Independent images in the group run in parallel, using the current prompt document, and do not rewrite authored content nodes.
 - Adding a single node from the add panel places it near the current viewport center and selects it.
 - Drag from an output handle to a matching input port to create an edge. Processing nodes expose one input port per Catalog role. Compatible ports highlight; incompatible ports do not snap. Existing edges can be reconnected by dragging an endpoint. Missing required inputs turn the port and card red and disable that node or shot Run. Whole-graph Run stays available while at least one processing node can enqueue.
-- Hovering the canvas Run control colors nodes that will generate, reuse, freeze, or block; a click submits immediately. A new request while a run is active joins the queue; the top-right chip shows running and queued counts.
+- Hovering whole-graph, node, run-to-node, or shot Run colors nodes that will generate, reuse, freeze, or block for that submit scope; a click submits immediately. A new request while a run is active joins the queue; the top-right chip shows running and queued counts.
 - If the product has no workflow yet, blank-canvas create writes an empty graph, then you can add all six node types.
 - With two or more nodes selected, the node toolbar can duplicate, group, save as recipe, and delete.
 - Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
