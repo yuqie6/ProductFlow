@@ -79,8 +79,16 @@ func (m MockChatProvider) Generate(ctx context.Context, req ChatRequest) (ChatRe
 	if promptVersion == "" {
 		promptVersion = "mock-image-v1"
 	}
+	n := req.Count
+	if n < 1 {
+		n = 1
+	}
+	images := make([][]byte, n)
+	for i := range images {
+		images[i] = pngBytes
+	}
 	return ChatResult{
-		Bytes: pngBytes, MIME: "image/png", Model: model, PromptVersion: promptVersion,
+		Bytes: pngBytes, Images: images, MIME: "image/png", Model: model, PromptVersion: promptVersion,
 		ResponseID: m.ResponseID, ProviderStatus: "completed",
 		OutputJSON: map[string]any{"status": "completed"},
 	}, nil

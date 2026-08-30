@@ -209,6 +209,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			return err
 		}
 		batch := 1
+		// Python openai_images 一次最多 n=10；Go 落库名是 hyphen 形式 openai-images。
 		if prov.Name() == "openai-images" {
 			remaining := count - candidate + 1
 			if remaining > 10 {
@@ -229,7 +230,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			return unknownErr{}
 		}
 		opKey := fmt.Sprintf("image-session-task:%s:candidates:%d-%d", taskID, candidate, batch)
-		effectResult, err := e.ensureEffect(ctx, taskID, attemptID, candidate, opKey, hash, prov.Name(), reqJSON)
+		effectResult, err := e.ensureEffect(ctx, taskID, attemptID, candidate, batch, opKey, hash, prov.Name(), reqJSON)
 		if err != nil {
 			return err
 		}
@@ -291,7 +292,7 @@ func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string
 	return nil
 }
 
-func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, start int, opKey, hash, provider string, req map[string]any) (string, error) {
+func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, start, count int, opKey, hash, provider string, req map[string]any) (string, error) {
 	raw, _ := json.Marshal(req)
 	var result string
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -303,15 +304,23 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 		if status != "running" || active == nil || *active != attemptID {
 			return errStale
 		}
+		if count < 1 {
+			count = 1
+		}
+		// candidate_count 必须是本批实际 n，不能写死 1，否则 reconcile/operation_key 对不上 Images 批次。
 		if _, err := pfdb.Exec(ctx, pgxTx, `
 			INSERT INTO image_session_provider_effects (
 				id, generation_task_id, candidate_start_index, candidate_count, operation_key, effect_kind,
 				request_hash, provider_name, attempt_id, effect_result, reconciliation_state, request_json, created_at, updated_at
-			) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, 'pending', 'not_requested', $9, NOW(), NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', 'not_requested', $10, NOW(), NOW())
 			ON CONFLICT (generation_task_id, candidate_start_index) DO UPDATE SET
-				attempt_id = EXCLUDED.attempt_id, request_json = EXCLUDED.request_json, updated_at = NOW()
+				attempt_id = EXCLUDED.attempt_id,
+				candidate_count = EXCLUDED.candidate_count,
+				operation_key = EXCLUDED.operation_key,
+				request_json = EXCLUDED.request_json,
+				updated_at = NOW()
 			WHERE image_session_provider_effects.effect_result IN ('pending', 'failed')
-		`, clockid.New(), taskID, start, opKey, effectKind, hash, provider, attemptID, raw); err != nil {
+		`, clockid.New(), taskID, start, count, opKey, effectKind, hash, provider, attemptID, raw); err != nil {
 			return err
 		}
 		return pfdb.QueryRow(ctx, pgxTx, `

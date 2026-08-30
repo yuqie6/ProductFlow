@@ -3,6 +3,7 @@ package imagesession
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -279,6 +280,51 @@ func TestExecuteValidationDoesNotAutoRetry(t *testing.T) {
 	}
 	if pending != 0 {
 		t.Fatalf("pending dispatches %d", pending)
+	}
+}
+
+func TestExecutePersistsImagesBatchCandidateCount(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "批量候选", "size": "1024x1024", "generation_count": 3,
+	})
+	prov := &countingProvider{MockChatProvider: MockChatProvider{ProviderName: "openai-images"}}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	if len(prov.reqs) != 1 || prov.reqs[0].Count != 3 {
+		t.Fatalf("request count %+v", prov.reqs)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "succeeded" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) != 3 {
+		t.Fatalf("rounds %d", len(got.Rounds))
+	}
+	var effectCount int
+	var requestJSON []byte
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT candidate_count, request_json FROM image_session_provider_effects
+		WHERE generation_task_id = $1
+	`, taskID).Scan(&effectCount, &requestJSON); err != nil {
+		t.Fatal(err)
+	}
+	if effectCount != 3 {
+		t.Fatalf("effect candidate_count %d", effectCount)
+	}
+	var req map[string]any
+	if err := json.Unmarshal(requestJSON, &req); err != nil {
+		t.Fatal(err)
+	}
+	if req["candidate_count"] != float64(3) {
+		t.Fatalf("request_json %+v", req)
+	}
+	if req["provider"] != "openai-images" {
+		t.Fatalf("provider %+v", req["provider"])
 	}
 }
 
