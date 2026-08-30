@@ -39,8 +39,6 @@ LINK_DOCS = tuple(
 SPEC_STATUS_RE = re.compile(r"文档状态：\s*(Draft|Approved)\b")
 INDEXED_DOC_DIRS = (
     ROOT / "docs/adr",
-    ROOT / "docs/specs",
-    ROOT / "docs/rollout",
     ROOT / "docs/operations",
 )
 

@@ -95,7 +95,7 @@ Closing the Agent conversation leaves the same canvas as never opening it: add, 
 - Use automatic layout to improve routing.
 - Put a local flow in a canvas group. Double-click the group or use the enter control to see only its members; the breadcrumb returns to the full graph. In-group and full-graph viewports are remembered separately. A group changes visual organization only, not DAG execution order. Cross-group edges stay visible on the full graph.
 - While a graph save is in progress, add, inspect, bind, and recipes lock so unsaved prompts are not eaten by a run.
-- Dropping an asset onto blank canvas creates a bound unused image node; dropping onto an aggregate input connects a reference edge.
+- Dropping an asset onto blank canvas creates a bound unused image node; dropping onto an aggregate input creates or reuses a node, then connects a reference edge.
 
 Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 

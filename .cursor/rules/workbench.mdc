@@ -6,7 +6,7 @@ alwaysApply: false
 
 # 工作台
 
-改画布、检查器、图命令、配方或侧栏时读本规则。操作说明以 `docs/USER_GUIDE.md` 为准。1440 / 1024 / 390 连续动作已由 `just web-e2e-live-graph` 证明。
+改画布、检查器、图命令、配方或侧栏时读本规则。操作说明以 `docs/USER_GUIDE.md` 为准。1440 / 1024 / 390 连续动作由 opt-in 的 `just web-e2e-live-graph` 覆盖。
 
 ```tsx
 // ❌ 新卡片、新壳、V2 mutation、plan key、浏览器 undo 权威
