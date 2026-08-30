@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/platform/storage"
+	"gorm.io/gorm"
 )
 
 func ServeVariant(
@@ -38,4 +39,31 @@ func ServeVariant(
 	c.Header("Content-Type", resolved.MediaType)
 	c.Header("Content-Disposition", `attachment; filename="`+url.PathEscape(filename)+`"`)
 	c.File(resolved.AbsPath)
+}
+
+func OriginalMissing(files storage.Local, storagePath string) bool {
+	abs, err := files.Resolve(storagePath)
+	if err != nil {
+		return true
+	}
+	_, err = os.Stat(abs)
+	return err != nil
+}
+
+func ServeExistingVariant(
+	c *gin.Context,
+	store Store,
+	db *gorm.DB,
+	storagePath string,
+	originalFilename string,
+	mimeType string,
+	variantRaw string,
+	missingDetail string,
+) {
+	if OriginalMissing(store.Files, storagePath) {
+		store.MarkMissingByStoragePath(c.Request.Context(), db, storagePath)
+		httpx.AbortDetail(c, http.StatusNotFound, missingDetail)
+		return
+	}
+	ServeVariant(c, store.Files, storagePath, originalFilename, mimeType, variantRaw, missingDetail)
 }

@@ -289,6 +289,12 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	if task.Status != "succeeded" || task.ResultAsset == nil {
 		t.Fatalf("%+v", task)
 	}
+	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(context.Background(), task.ID); err != nil {
+		t.Fatalf("terminal local edit must consume, not busy-retry: %v", err)
+	}
+	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(context.Background(), "ffffffffffffffffffffffffffffffff"); err != nil {
+		t.Fatalf("missing local edit must consume, not fail: %v", err)
+	}
 	if task.ResultAsset.OriginType != "local_edit" {
 		t.Fatalf("origin %s", task.ResultAsset.OriginType)
 	}

@@ -91,3 +91,13 @@ func (s Store) Get(ctx context.Context, q *gorm.DB, id string) (Object, error) {
 	}
 	return obj, nil
 }
+
+func (s Store) MarkMissingByStoragePath(ctx context.Context, db *gorm.DB, storagePath string) {
+	if db == nil || storagePath == "" {
+		return
+	}
+	_, _ = pfdb.Exec(ctx, db, `
+		UPDATE media_objects SET verification_status = 'missing'
+		WHERE storage_path = $1 AND verification_status <> 'missing'
+	`, storagePath)
+}

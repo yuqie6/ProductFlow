@@ -43,7 +43,7 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		return err
 	}
 	if !claimed {
-		return queue.ErrBusy
+		return e.releaseIdle(ctx, taskID)
 	}
 	snap, err := e.loadSnapshot(ctx, taskID, attemptID)
 	if err != nil {
@@ -126,7 +126,13 @@ type snapshot struct {
 	taskRow
 	SourceBytes    []byte
 	SourceMIME     string
+	SourceWidth    int
+	SourceHeight   int
 	MaskBytes      []byte
+	MaskMIME       string
+	MaskWidth      int
+	MaskHeight     int
+	MaskSHA        string
 	ReferenceBytes [][]byte
 	SourcePath     string
 	SourceName     string
@@ -135,14 +141,18 @@ type snapshot struct {
 }
 
 func (s snapshot) auditJSON() map[string]any {
-	w, h := 0, 0
 	return map[string]any{
 		"operation": s.Operation,
 		"provider_intent": map[string]any{
 			"provider_name": s.RequestedProvider, "local_edit_mode": s.RequestedMode,
 		},
-		"size":                fmt.Sprintf("%dx%d", w, h),
-		"source":              map[string]any{"mime_type": s.SourceMIME, "sha256": s.SourceSHA},
+		"size": fmt.Sprintf("%dx%d", s.SourceWidth, s.SourceHeight),
+		"source": map[string]any{
+			"mime_type": s.SourceMIME, "width": s.SourceWidth, "height": s.SourceHeight, "sha256": s.SourceSHA,
+		},
+		"mask": map[string]any{
+			"mime_type": s.MaskMIME, "width": s.MaskWidth, "height": s.MaskHeight, "sha256": s.MaskSHA,
+		},
 		"reference_asset_ids": s.ReferenceIDs,
 	}
 }
@@ -153,6 +163,9 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
+			if apperr.IsNotFound(err) {
+				return nil
+			}
 			return err
 		}
 		if task.RequestHash == nil {
@@ -184,7 +197,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 			}
 		}
 		if task.Status != "queued" && task.Status != "running" {
-			return apperr.Conflict("局部编辑任务当前状态不能 claim")
+			return nil
 		}
 		attemptID = clockid.New()
 		attemptNumber := task.Attempts + 1
@@ -214,6 +227,22 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 	return claimed, attemptID, err
 }
 
+// releaseIdle 在 claim 不到 queued 行时决定信封命运：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil。
+func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
+	var status string
+	err := pfdb.QueryRow(ctx, e.DB, `SELECT status FROM local_image_edit_tasks WHERE id = $1`, taskID).Scan(&status)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if status == "queued" || status == "running" {
+		return queue.ErrBusy
+	}
+	return nil
+}
+
 func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (snapshot, error) {
 	var out snapshot
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -234,10 +263,10 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 		`, source.MediaObjectID).Scan(&sourceSHA, &sourcePath, &sourceMIME); err != nil {
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
 		}
-		var maskSHA, maskPath string
+		var maskSHA, maskPath, maskMIME string
 		if err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT sha256, storage_path FROM media_objects WHERE id = $1
-		`, task.MaskMediaID).Scan(&maskSHA, &maskPath); err != nil {
+			SELECT sha256, storage_path, mime_type FROM media_objects WHERE id = $1
+		`, task.MaskMediaID).Scan(&maskSHA, &maskPath, &maskMIME); err != nil {
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
 		}
 		sourceBytes, err := readFile(e.Media.Files, sourcePath)
@@ -254,10 +283,15 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 		if maskSHA == "" || hexSHA(maskBytes) != maskSHA {
 			return apperr.Validation("局部编辑 mask 版本已变化")
 		}
-		if _, err := media.Inspect(sourceBytes, sourceMIME); err != nil {
+		sourceMeta, err := media.Inspect(sourceBytes, sourceMIME)
+		if err != nil {
 			return apperr.Validation("局部编辑源图未通过媒体核验")
 		}
-		if _, err := media.Inspect(maskBytes, "image/png"); err != nil {
+		if maskMIME == "" {
+			maskMIME = "image/png"
+		}
+		maskMeta, err := media.Inspect(maskBytes, maskMIME)
+		if err != nil {
 			return apperr.Validation("局部编辑 mask 版本已变化")
 		}
 		var refBytes [][]byte
@@ -279,7 +313,10 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 			refBytes = append(refBytes, data)
 		}
 		out = snapshot{
-			taskRow: task, SourceBytes: sourceBytes, SourceMIME: sourceMIME, MaskBytes: maskBytes,
+			taskRow: task, SourceBytes: sourceBytes, SourceMIME: sourceMIME,
+			SourceWidth: sourceMeta.Width, SourceHeight: sourceMeta.Height,
+			MaskBytes: maskBytes, MaskMIME: maskMeta.MIMEType,
+			MaskWidth: maskMeta.Width, MaskHeight: maskMeta.Height, MaskSHA: maskSHA,
 			ReferenceBytes: refBytes,
 			SourcePath:     sourcePath, SourceName: source.OriginalFilename, ImageType: source.ImageTypeKey, Display: source.DisplayName,
 		}

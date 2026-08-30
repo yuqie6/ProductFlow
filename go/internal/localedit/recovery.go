@@ -76,8 +76,12 @@ func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale b
 		return "", err
 	}
 	if task.Status == "queued" {
-		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, task.ID), queue.ActorLocalEdit, task.ID, payloadFor(task), nil); err != nil {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(task))
+		if err != nil {
 			return "", err
+		}
+		if !changed {
+			return "idle", nil
 		}
 		return "queued", nil
 	}
@@ -96,7 +100,7 @@ func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale b
 		if err := markStaleClaimed(ctx, pgxTx, task); err != nil {
 			return "", err
 		}
-		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, task.ID), queue.ActorLocalEdit, task.ID, payloadFor(task), nil); err != nil {
+		if _, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(task)); err != nil {
 			return "", err
 		}
 		return "requeued", nil
