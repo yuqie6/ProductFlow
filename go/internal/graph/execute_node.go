@@ -90,7 +90,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if err != nil {
 		return err
 	}
-	if err := writeCompiledContext(ctx, e.DB, nodeRun.ID, node.Title, digest, sources); err != nil {
+	if err := writeCompiledContext(ctx, e.DB, nodeRun.ID, node, applied, sources, digest); err != nil {
 		return err
 	}
 	if skipped, err := e.skipUnchanged(ctx, run, *nodeRun, sources, digest); err != nil || skipped {
@@ -232,7 +232,11 @@ func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun gr
 		return false, nil
 	}
 	now := time.Now().UTC()
-	output, _ := json.Marshal(map[string]any{"artifact_id": *record.CurrentArtifactID, "skipped": true})
+	skippedOut := map[string]any{"artifact_id": *record.CurrentArtifactID, "skipped": true}
+	if record.CurrentOutputAssetID != nil && *record.CurrentOutputAssetID != "" {
+		skippedOut["product_image_asset_id"] = *record.CurrentOutputAssetID
+	}
+	output, _ := json.Marshal(skippedOut)
 	return true, tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE workflow_graph_node_runs SET
@@ -575,7 +579,10 @@ func (e Executor) persistImageArtifact(
 				}
 			}
 		}
-		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
+		output, _ := json.Marshal(map[string]any{
+			"artifact_id":            artifactID,
+			"product_image_asset_id": assetID,
+		})
 		if _, err := pfdb.Exec(ctx, pgxTx, `
 			UPDATE workflow_graph_node_runs SET
 				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
@@ -775,31 +782,25 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 	return sources, nil
 }
 
-func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID, title, digest string, sources map[string]SourceRecord) error {
-	factCount := 0
-	briefCount := 0
-	var refIDs []string
-	visualPresent := false
-	for _, rec := range sources {
-		factCount += len(rec.Facts)
-		if rec.Brief != nil {
-			briefCount++
-		}
-		if rec.VisualPayload != nil {
-			visualPresent = true
-		}
-		if rec.CurrentOutputAssetID != nil && *rec.CurrentOutputAssetID != "" {
-			refIDs = append(refIDs, *rec.CurrentOutputAssetID)
+func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID string, node AppliedNode, applied AppliedGraph, sources map[string]SourceRecord, digest string) error {
+	trace := compiledContextTrace(applied, node, sources, digest)
+	var existing []byte
+	if err := pfdb.QueryRow(ctx, db, `SELECT compiled_context_json FROM workflow_graph_node_runs WHERE id = $1`, nodeRunID).Scan(&existing); err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+		return err
+	}
+	merged := map[string]any{}
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &merged)
+	}
+	if title, ok := merged["node_title"].(string); ok && strings.TrimSpace(title) != "" {
+		trace["node_title"] = title
+	}
+	if _, has := trace["input_trace"]; !has {
+		if inputTrace, ok := merged["input_trace"]; ok {
+			trace["input_trace"] = inputTrace
 		}
 	}
-	compiled, err := json.Marshal(map[string]any{
-		"node_title":          title,
-		"input_digest":        digest,
-		"fact_count":          factCount,
-		"brief_count":         briefCount,
-		"visual_present":      visualPresent,
-		"reference_asset_ids": refIDs,
-	})
+	compiled, err := json.Marshal(trace)
 	if err != nil {
 		return err
 	}

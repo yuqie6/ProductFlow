@@ -39,7 +39,7 @@ var gemini3ImageModels = map[string]struct{}{
 	"gemini-3-pro-image-preview":     {},
 }
 
-// GeminiImage 调用 Google generateContent，把参考图作为 inline_data 交给模型。
+// GeminiImage 调用 Google generateContent，把参考图作为 inlineData 交给模型。
 type GeminiImage struct {
 	APIKey     string
 	BaseURL    string
@@ -100,9 +100,9 @@ func (p GeminiImage) generateContent(ctx context.Context, prompt, size string, r
 			mime = sniffMIME(ref.Bytes)
 		}
 		parts = append(parts, map[string]any{
-			"inline_data": map[string]any{
-				"mime_type": mime,
-				"data":      base64.StdEncoding.EncodeToString(ref.Bytes),
+			"inlineData": map[string]any{
+				"mimeType": mime,
+				"data":     base64.StdEncoding.EncodeToString(ref.Bytes),
 			},
 		})
 	}

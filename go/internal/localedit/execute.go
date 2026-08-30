@@ -82,9 +82,15 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 	if err := e.markPhase(ctx, taskID, attemptID, "provider_call", cap.ProviderName, nil); err != nil {
 		return nil
 	}
-	editSize := ""
-	if verified, err := media.Inspect(snap.SourceBytes, snap.SourceMIME); err == nil && verified.Width > 0 && verified.Height > 0 {
-		editSize = fmt.Sprintf("%dx%d", verified.Width, verified.Height)
+	editSize, err := sourceEditSize(snap.SourceBytes, snap.SourceMIME)
+	if err != nil {
+		detail := "局部编辑源图未通过媒体核验"
+		var ae apperr.Error
+		if errors.As(err, &ae) && ae.Status == 400 && ae.Detail != "" {
+			detail = ae.Detail
+		}
+		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
+		return nil
 	}
 	result, err := e.provider().Edit(ctx, EditRequest{
 		SourceBytes: snap.SourceBytes, SourceMIME: snap.SourceMIME, MaskPNG: snap.MaskBytes,
@@ -482,4 +488,15 @@ func truncStatus(s string) string {
 		return s[:80]
 	}
 	return s
+}
+
+func sourceEditSize(data []byte, mime string) (string, error) {
+	verified, err := media.Inspect(data, mime)
+	if err != nil {
+		return "", err
+	}
+	if verified.Width <= 0 || verified.Height <= 0 {
+		return "", apperr.Validation("局部编辑源图尺寸无效")
+	}
+	return fmt.Sprintf("%dx%d", verified.Width, verified.Height), nil
 }

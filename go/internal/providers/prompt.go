@@ -130,7 +130,7 @@ func (p OpenAIPrompt) parseStructured(
 	if err := mapGraphStatus(status, raw); err != nil {
 		return nil, "", "", err
 	}
-	payload, model, id, err := parseResponsesStructured(raw, p.Model)
+	payload, model, id, err := parseResponsesStructured(raw, p.Model, schema)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -241,7 +241,7 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 	return content, nil
 }
 
-func parseResponsesStructured(raw []byte, fallbackModel string) (map[string]any, string, string, error) {
+func parseResponsesStructured(raw []byte, fallbackModel string, schema map[string]any) (map[string]any, string, string, error) {
 	var envelope struct {
 		ID           string          `json:"id"`
 		Model        string          `json:"model"`
@@ -279,6 +279,9 @@ func parseResponsesStructured(raw []byte, fallbackModel string) (map[string]any,
 		}
 	}
 	if payload == nil {
+		return nil, "", "", fmt.Errorf("提示词 provider 未返回结构化输出")
+	}
+	if err := matchJSONSchema(schema, payload); err != nil {
 		return nil, "", "", fmt.Errorf("提示词 provider 未返回结构化输出")
 	}
 	model := envelope.Model

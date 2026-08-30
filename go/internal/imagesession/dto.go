@@ -153,7 +153,7 @@ type GenerateRequest struct {
 	Size                      string         `json:"size"`
 	BaseAssetID               *string        `json:"base_asset_id"`
 	SelectedReferenceAssetIDs []string       `json:"selected_reference_asset_ids"`
-	GenerationCount           int            `json:"generation_count"`
+	GenerationCount           *int           `json:"generation_count"`
 	ToolOptions               map[string]any `json:"tool_options"`
 }
 

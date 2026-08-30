@@ -156,6 +156,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 
 	intakeBody, intakeType := workspacePNG(t, map[string]string{
 		"selection": `{"schema_version":1,"image_types":[{"key":"hero","quantity":1,"order":0}]}`,
+		"task_id":   "task-from-create-page",
 	})
 	intake, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/agent-product-workspaces/"+snap.Conversation.ID+"/intake", intakeBody)
 	intake.Header.Set("Content-Type", intakeType)

@@ -41,6 +41,63 @@ func TestExecuteGraphRunWithMockProvidersSucceeds(t *testing.T) {
 	}
 }
 
+func TestExecuteGraphRunImageOutputIncludesProductImageAssetID(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var finished graph.GraphRunResponse
+	gs.decode(t, got, &finished)
+	if finished.Status != "succeeded" {
+		t.Fatalf("status %s", finished.Status)
+	}
+	var imageRuns int
+	for _, node := range finished.NodeRuns {
+		ctx := node.CompiledContext
+		if ctx == nil {
+			t.Fatalf("compiled_context missing on %s", node.ID)
+		}
+		if _, ok := ctx["incoming_edge_ids"]; !ok {
+			t.Fatalf("compiled_context missing incoming_edge_ids: %+v", ctx)
+		}
+		if _, ok := ctx["input_digest"]; !ok {
+			t.Fatalf("compiled_context missing input_digest: %+v", ctx)
+		}
+		if node.Output["product_image_asset_id"] != nil {
+			imageRuns++
+			assetID, _ := node.Output["product_image_asset_id"].(string)
+			if assetID == "" {
+				t.Fatalf("empty product_image_asset_id %+v", node.Output)
+			}
+			if _, ok := ctx["prompt_artifact_id"]; !ok {
+				t.Fatalf("image compiled_context missing prompt_artifact_id: %+v", ctx)
+			}
+			if _, ok := ctx["prompt_edge_id"]; !ok {
+				t.Fatalf("image compiled_context missing prompt_edge_id: %+v", ctx)
+			}
+			if _, ok := ctx["fact_count"]; ok {
+				t.Fatalf("image compiled_context must not include fact_count from whole snapshot: %+v", ctx)
+			}
+		}
+	}
+	if imageRuns == 0 {
+		t.Fatal("expected at least one image node_run with product_image_asset_id")
+	}
+}
+
 func TestExecuteGraphRunMarksUnknownWhenProviderFailsAfterIntent(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)

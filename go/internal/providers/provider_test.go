@@ -938,7 +938,269 @@ func TestGeminiGenerateContentSendsInlineData(t *testing.T) {
 		t.Fatalf("parts %+v", parts)
 	}
 	inline, _ := parts[1].(map[string]any)
-	if inline["inline_data"] == nil {
-		t.Fatalf("expected inline_data, got %+v", inline)
+	data, _ := inline["inlineData"].(map[string]any)
+	if data == nil || data["mimeType"] != "image/png" || data["data"] == nil {
+		t.Fatalf("expected inlineData camelCase, got %+v", inline)
+	}
+	if inline["inline_data"] != nil {
+		t.Fatalf("must not send snake_case inline_data: %+v", inline)
+	}
+}
+
+func completedResponsesImage() []byte {
+	raw, _ := json.Marshal(map[string]any{
+		"id": "resp-ok", "status": "completed",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	return raw
+}
+
+func TestResponsesDropsBackgroundWhenUnsupported(t *testing.T) {
+	completed := completedResponsesImage()
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, payload)
+		if _, ok := payload["background"]; ok {
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"error":{"message":"Unknown parameter: background is unsupported"}}`)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}, Background: true}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("expected image")
+	}
+	if len(bodies) < 2 {
+		t.Fatalf("posts %d", len(bodies))
+	}
+	if bodies[0]["background"] != true {
+		t.Fatalf("first payload %+v", bodies[0])
+	}
+	last := bodies[len(bodies)-1]
+	if _, ok := last["background"]; ok {
+		t.Fatalf("retry must drop background: %+v", last)
+	}
+}
+
+func TestResponsesRetriesWithTypeSizeOnlyTool(t *testing.T) {
+	completed := completedResponsesImage()
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+			return
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, payload)
+		tools, _ := payload["tools"].([]any)
+		if len(tools) != 1 {
+			t.Fatalf("tools %+v", tools)
+		}
+		tool, _ := tools[0].(map[string]any)
+		if len(tool) > 2 {
+			w.WriteHeader(400)
+			_, _ = io.WriteString(w, `{"error":{"message":"Unknown parameter: tools[0].quality"}}`)
+			return
+		}
+		if tool["type"] != "image_generation" || tool["size"] != "1024x1024" {
+			t.Fatalf("minimal tool %+v", tool)
+		}
+		if _, ok := tool["quality"]; ok {
+			t.Fatalf("quality still present %+v", tool)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	got, err := img.GenerateImage(context.Background(), graph.ImageRequest{
+		NodeTitle: "hero", ImageTypeKey: "hero",
+		GenerationSpec: map[string]any{"quality_intent": "high"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 {
+		t.Fatal("expected image")
+	}
+	if len(bodies) < 2 {
+		t.Fatalf("posts %d", len(bodies))
+	}
+	firstTools, _ := bodies[0]["tools"].([]any)
+	first, _ := firstTools[0].(map[string]any)
+	if first["quality"] == nil && first["action"] == nil && first["output_format"] == nil {
+		t.Fatalf("first tool should include optional fields: %+v", first)
+	}
+	lastTools, _ := bodies[len(bodies)-1]["tools"].([]any)
+	last, _ := lastTools[0].(map[string]any)
+	if len(last) != 2 || last["type"] != "image_generation" || last["size"] != "1024x1024" {
+		t.Fatalf("later tool must be type+size only: %+v", last)
+	}
+}
+
+func TestPromptRejectsExtraAndMissingKeys(t *testing.T) {
+	t.Run("brief-extra", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"extra":"no"}}`)
+		}))
+		defer srv.Close()
+		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+		if _, err := p.GenerateCreativeBrief(context.Background(), graph.PromptRequest{NodeTitle: "t"}); err == nil {
+			t.Fatal("expected extra key rejection")
+		}
+	})
+	t.Run("brief-missing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"]}}`)
+		}))
+		defer srv.Close()
+		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+		if _, err := p.GenerateCreativeBrief(context.Background(), graph.PromptRequest{NodeTitle: "t"}); err == nil {
+			t.Fatal("expected missing key rejection")
+		}
+	})
+	t.Run("prompt-extra", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"schema_version":1,"extra":true}}`)
+		}))
+		defer srv.Close()
+		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+		if _, err := p.GeneratePrompt(context.Background(), graph.PromptRequest{NodeTitle: "t"}); err == nil {
+			t.Fatal("expected extra key rejection")
+		}
+	})
+	t.Run("prompt-missing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(200)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"schema_version":1,"shared_rules":["a"],"design_goal":"g"}}`)
+		}))
+		defer srv.Close()
+		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+		if _, err := p.GeneratePrompt(context.Background(), graph.PromptRequest{NodeTitle: "t"}); err == nil {
+			t.Fatal("expected missing key rejection")
+		}
+	})
+}
+
+func TestImagesChatAppliesToolOptionsModelAndQuality(t *testing.T) {
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "img1", "model": "gpt-image-1",
+		"data": []map[string]any{{"b64_json": onePixelPNGB64()}},
+	})
+	t.Run("generations", func(t *testing.T) {
+		var payload map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/images/generations" {
+				t.Errorf("path %s", r.URL.Path)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			w.WriteHeader(200)
+			_, _ = w.Write(okBody)
+		}))
+		defer srv.Close()
+		img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3", Quality: "standard"}
+		if _, err := img.Generate(context.Background(), imagesession.ChatRequest{
+			Prompt: "x", Size: "1024x1024",
+			ToolOptions: map[string]any{"model": " gpt-image-1 ", "quality": "high"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if payload["model"] != "gpt-image-1" || payload["quality"] != "high" {
+			t.Fatalf("payload %+v", payload)
+		}
+	})
+	t.Run("edits", func(t *testing.T) {
+		png, err := decodeB64(onePixelPNGB64())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var model, quality string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/images/edits" {
+				t.Errorf("path %s", r.URL.Path)
+			}
+			if err := r.ParseMultipartForm(4 << 20); err != nil {
+				t.Fatal(err)
+			}
+			model = r.FormValue("model")
+			quality = r.FormValue("quality")
+			w.WriteHeader(200)
+			_, _ = w.Write(okBody)
+		}))
+		defer srv.Close()
+		img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3", Quality: "standard"}
+		if _, err := img.Generate(context.Background(), imagesession.ChatRequest{
+			Prompt: "x", Size: "1024x1024", BaseBytes: png,
+			ToolOptions: map[string]any{"model": "gpt-image-1", "quality": "low"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if model != "gpt-image-1" || quality != "low" {
+			t.Fatalf("model=%s quality=%s", model, quality)
+		}
+	})
+}
+
+func TestChat429IsConfirmedRetryableFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = io.WriteString(w, `{"error":{"message":"rate limit"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	if err == nil {
+		t.Fatal("expected 429")
+	}
+	if isUnknown(err) {
+		t.Fatalf("chat 429 should not be unknown: %v", err)
+	}
+	if !imagesession.IsConfirmedProviderFailure(err) {
+		t.Fatalf("chat 429 should be confirmed: %v", err)
+	}
+}
+
+func TestGraph429StaysUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = io.WriteString(w, `{"error":{"message":"rate limit"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.GenerateImage(context.Background(), graph.ImageRequest{NodeTitle: "hero"})
+	if err == nil {
+		t.Fatal("expected 429")
+	}
+	if !isUnknown(err) {
+		t.Fatalf("graph 429 should stay unknown: %v", err)
 	}
 }

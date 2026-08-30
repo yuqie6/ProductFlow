@@ -503,6 +503,23 @@ func (h HTTP) appendEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+type workflowRunRequestBody struct {
+	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
+	WorkflowID               string  `json:"workflow_id"`
+	SourceStepID             string  `json:"source_step_id"`
+	TaskID                   *string `json:"task_id"`
+	SourceRunID              *string `json:"source_run_id"`
+}
+
+type globalWorkflowRunRequestBody struct {
+	ProductID                string  `json:"product_id"`
+	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
+	WorkflowID               string  `json:"workflow_id"`
+	SourceStepID             string  `json:"source_step_id"`
+	TaskID                   *string `json:"task_id"`
+	SourceRunID              *string `json:"source_run_id"`
+}
+
 func (h HTTP) prepareRunRequest(c *gin.Context) {
 	var req struct {
 		ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
@@ -513,7 +530,7 @@ func (h HTTP) prepareRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.PrepareWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.SourceRunID, req.TaskID)
+	out, err := h.Service.PrepareWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ExpectedWorkflowRevision, req.SourceRunID, req.TaskID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -533,7 +550,7 @@ func (h HTTP) prepareGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.PrepareGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, req.SourceRunID, req.TaskID)
+	out, err := h.Service.PrepareGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, req.ExpectedWorkflowRevision, req.SourceRunID, req.TaskID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -546,18 +563,12 @@ func (h HTTP) createRunRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
-		WorkflowID               string  `json:"workflow_id"`
-		SourceStepID             string  `json:"source_step_id"`
-		TaskID                   *string `json:"task_id"`
-		SourceRunID              *string `json:"source_run_id"`
-	}
+	var req workflowRunRequestBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -570,14 +581,7 @@ func (h HTTP) createGlobalRunRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		ProductID                string  `json:"product_id"`
-		ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
-		WorkflowID               string  `json:"workflow_id"`
-		SourceStepID             string  `json:"source_step_id"`
-		TaskID                   *string `json:"task_id"`
-		SourceRunID              *string `json:"source_run_id"`
-	}
+	var req globalWorkflowRunRequestBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -595,7 +599,12 @@ func (h HTTP) reconcileRunRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key)
+	var req workflowRunRequestBody
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, "", req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -604,7 +613,21 @@ func (h HTTP) reconcileRunRequest(c *gin.Context) {
 }
 
 func (h HTTP) reconcileGlobalRunRequest(c *gin.Context) {
-	h.reconcileRunRequest(c)
+	key, ok := requireIdempotency(c)
+	if !ok {
+		return
+	}
+	var req globalWorkflowRunRequestBody
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h HTTP) listAssets(c *gin.Context) {
@@ -781,11 +804,13 @@ func (h HTTP) reconcileIntake(c *gin.Context) {
 	var req struct {
 		Selection         json.RawMessage `json:"selection"`
 		ReferenceAssetIDs []string        `json:"reference_asset_ids"`
+		TaskID            *string         `json:"task_id"`
 	}
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
+	_ = req.TaskID
 	var target map[string]any
 	_ = json.Unmarshal(req.Selection, &target)
 	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), "finalize_product_intake_v1", key, toolPrepared(c.Param("conversation_id"), "finalize_product_intake_v1", map[string]any{}, map[string]any{

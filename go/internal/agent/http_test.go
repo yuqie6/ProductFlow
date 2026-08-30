@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -685,4 +688,87 @@ func (as *agentServer) doJSONAuth(t *testing.T, method, path string, payload any
 		t.Fatal(err)
 	}
 	return as.do(t, method, path, bytes.NewReader(raw), "application/json", extra)
+}
+
+func TestInternalProductIntakeReconcileAcceptsTaskID(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	selection := map[string]any{"schema_version": 1, "image_types": []any{}}
+
+	nullAuth := http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
+	nullResp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake/reconcile", map[string]any{
+		"selection": selection, "reference_asset_ids": []string{}, "task_id": nil,
+	}, nullAuth)
+	as.mustStatus(t, nullResp, http.StatusOK)
+	var nullOut ReconcileResponse
+	as.decode(t, nullResp, &nullOut)
+	if nullOut.State != "not_applied" {
+		t.Fatalf("null task_id state %s", nullOut.State)
+	}
+
+	strAuth := http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
+	strResp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake/reconcile", map[string]any{
+		"selection": selection, "reference_asset_ids": []string{}, "task_id": clockid.New(),
+	}, strAuth)
+	as.mustStatus(t, strResp, http.StatusOK)
+	var strOut ReconcileResponse
+	as.decode(t, strResp, &strOut)
+	if strOut.State != "not_applied" {
+		t.Fatalf("string task_id state %s", strOut.State)
+	}
+}
+
+func TestBrowserWorkspaceIntakeAcceptsTaskID(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	draft := as.do(t, http.MethodPost, "/api/v2/agent-product-workspaces/drafts", strings.NewReader(`{"name":"草稿商品"}`), "application/json", http.Header{
+		"Idempotency-Key": []string{clockid.New()},
+	})
+	as.mustStatus(t, draft, http.StatusCreated)
+	var snap product.WorkspaceSnapshotResponse
+	as.decode(t, draft, &snap)
+	if snap.Conversation.ID == "" {
+		t.Fatal("draft missing conversation")
+	}
+
+	body, contentType := workspaceIntakePNG(t, map[string]string{
+		"selection": `{"schema_version":1,"image_types":[{"key":"hero","quantity":1,"order":0}]}`,
+		"task_id":   "task-from-create-page",
+	})
+	resp := as.do(t, http.MethodPost, "/api/v2/agent-product-workspaces/"+snap.Conversation.ID+"/intake", body, contentType, http.Header{
+		"Idempotency-Key": []string{clockid.New()},
+	})
+	as.mustStatus(t, resp, http.StatusOK)
+	as.decode(t, resp, &snap)
+	if !snap.IntakeFinalized {
+		t.Fatalf("intake %+v", snap)
+	}
+}
+
+func workspaceIntakePNG(t *testing.T, fields map[string]string) (*bytes.Buffer, string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 6))
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, img); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		_ = w.WriteField(k, v)
+	}
+	part, err := w.CreateFormFile("images", "cup.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(pngBuf.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return &buf, w.FormDataContentType()
 }

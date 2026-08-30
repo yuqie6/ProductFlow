@@ -219,6 +219,30 @@ func cloneJSONMap(in map[string]any) map[string]any {
 	return out
 }
 
+func chatImagesOverrides(opts map[string]any, model, quality string) (string, string) {
+	if len(opts) == 0 {
+		return model, quality
+	}
+	if m := optionalToolText(opts["model"]); m != "" {
+		model = m
+	}
+	if q := optionalToolText(opts["quality"]); q != "" {
+		quality = q
+	}
+	return model, quality
+}
+
+func optionalToolText(value any) string {
+	if value == nil {
+		return ""
+	}
+	s, ok := value.(string)
+	if !ok {
+		s = fmt.Sprint(value)
+	}
+	return strings.TrimSpace(s)
+}
+
 func dataURL(mimeType string, data []byte) string {
 	if strings.TrimSpace(mimeType) == "" {
 		mimeType = sniffMIME(data)

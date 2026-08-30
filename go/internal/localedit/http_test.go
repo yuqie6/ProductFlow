@@ -312,6 +312,44 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	}
 }
 
+type capturingEditProvider struct {
+	MockProvider
+	lastSize string
+}
+
+func (c *capturingEditProvider) Edit(ctx context.Context, req EditRequest) (EditResult, error) {
+	c.lastSize = req.Size
+	return c.MockProvider.Edit(ctx, req)
+}
+
+func TestLocalEditExecuteUsesInspectedSize(t *testing.T) {
+	provider := &capturingEditProvider{MockProvider: MockProvider{Cap: SupportedCapability("mock-local")}}
+	es := newEditServer(t, provider)
+	created := es.createProduct(t)
+	form := createForm(t, created.CreatedAssets[0].ID, false)
+	draft := es.do(t, http.MethodPost, "/api/v3/products/"+created.Product.ID+"/image-edits", form.body, form.contentType)
+	es.mustStatus(t, draft, http.StatusCreated)
+	var task TaskResponse
+	es.decode(t, draft, &task)
+	submitted := es.doJSON(t, http.MethodPost, "/api/v3/products/"+created.Product.ID+"/image-edits/"+task.ID+"/submit", map[string]any{
+		"idempotency_key": "k-size",
+	})
+	es.mustStatus(t, submitted, http.StatusAccepted)
+	es.executeLocally(t, task.ID, Executor{DB: es.db, Media: es.media, Provider: provider})
+	if provider.lastSize != "8x6" {
+		t.Fatalf("size %q", provider.lastSize)
+	}
+}
+
+func TestSourceEditSizeRejectsInvalid(t *testing.T) {
+	if _, err := sourceEditSize(nil, "image/png"); err == nil {
+		t.Fatal("expected inspect failure")
+	}
+	if _, err := sourceEditSize([]byte("not-an-image"), "image/png"); err == nil {
+		t.Fatal("expected inspect failure")
+	}
+}
+
 func TestLocalEditRetryConflictOnDraft(t *testing.T) {
 	es := newEditServer(t, MockProvider{Cap: SupportedCapability("mock-local")})
 	created := es.createProduct(t)

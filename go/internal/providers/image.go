@@ -65,18 +65,20 @@ func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest
 	if n > 10 {
 		n = 10
 	}
+	call := p
+	call.Model, call.Quality = chatImagesOverrides(req.ToolOptions, p.Model, p.Quality)
 	parts := chatImageParts(req, true)
 	var images [][]byte
 	var mime, model, id string
 	var err error
 	if len(parts) > 0 {
 		var bytesData []byte
-		bytesData, mime, model, id, err = p.edit(ctx, req.Prompt, size, p.Quality, parts, nil, mapChatStatus)
+		bytesData, mime, model, id, err = call.edit(ctx, req.Prompt, size, call.Quality, parts, nil, mapChatStatus)
 		if err == nil {
 			images = [][]byte{bytesData}
 		}
 	} else {
-		images, mime, model, id, err = p.generateN(ctx, req.Prompt, size, p.Quality, n, mapChatStatus)
+		images, mime, model, id, err = call.generateN(ctx, req.Prompt, size, call.Quality, n, mapChatStatus)
 	}
 	if err != nil {
 		return imagesession.ChatResult{}, err
@@ -370,35 +372,71 @@ func imageGenerationTool(size string, opts map[string]any) map[string]any {
 
 func (p OpenAIResponses) createResponses(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string) (int, []byte, error) {
 	tool := imageGenerationTool(size, toolOptions)
-	base := map[string]any{
-		"model": p.Model,
-		"input": input,
-		"tools": []map[string]any{tool},
+	payload := map[string]any{
+		"model":       p.Model,
+		"input":       input,
+		"tools":       []map[string]any{cloneJSONMap(tool)},
+		"tool_choice": map[string]any{"type": "image_generation"},
 	}
 	if previousID != nil && strings.TrimSpace(*previousID) != "" {
-		base["previous_response_id"] = strings.TrimSpace(*previousID)
+		payload["previous_response_id"] = strings.TrimSpace(*previousID)
 	}
 	if p.Background {
-		base["background"] = true
+		payload["background"] = true
 	}
-	withChoice := cloneJSONMap(base)
-	withChoice["tool_choice"] = map[string]any{"type": "image_generation"}
-	payloads := []map[string]any{withChoice, base}
+	url := endpoint(p.BaseURL, "/v1/responses")
 	var status int
 	var raw []byte
-	var err error
-	url := endpoint(p.BaseURL, "/v1/responses")
-	for i, payload := range payloads {
+	for range 8 {
 		body, _ := json.Marshal(payload)
+		var err error
 		status, raw, err = p.call(ctx, http.MethodPost, url, body)
 		if err != nil {
 			return 0, nil, err
 		}
-		if status < 400 || status >= 500 || status == http.StatusTooManyRequests || i == len(payloads)-1 {
+		if status < 400 || status >= 500 || status == http.StatusTooManyRequests {
 			return status, raw, nil
 		}
+		if background, _ := payload["background"].(bool); background && isBackgroundUnsupported(status, raw) {
+			delete(payload, "background")
+			continue
+		}
+		if tools, ok := payload["tools"].([]map[string]any); ok && len(tools) > 0 && hasOptionalImageToolFields(tools[0]) {
+			payload["tools"] = []map[string]any{imageGenerationTool(size, nil)}
+			continue
+		}
+		if _, ok := payload["tool_choice"]; ok {
+			delete(payload, "tool_choice")
+			continue
+		}
+		return status, raw, nil
 	}
 	return status, raw, nil
+}
+
+func isBackgroundUnsupported(status int, body []byte) bool {
+	if status < 400 || status >= 500 {
+		return false
+	}
+	message := strings.ToLower(string(body))
+	if !strings.Contains(message, "background") {
+		return false
+	}
+	for _, marker := range []string{"unknown", "unsupported", "unexpected", "extra", "unrecognized", "not support", "not_supported"} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasOptionalImageToolFields(tool map[string]any) bool {
+	for _, key := range imageToolOptionalKeys {
+		if _, ok := tool[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error) ([]byte, string, string, string, error) {

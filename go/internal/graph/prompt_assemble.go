@@ -75,14 +75,19 @@ func AssemblePromptRequest(
 			return PromptRequest{}, err
 		}
 		req.CurrentPrompt = stripV3PromptPayload(seed)
-		exceptions, err := visualExceptionsFromOverlay(visual)
-		if err != nil {
-			return PromptRequest{}, err
-		}
-		req.VisualExceptions = exceptions
-		// 工作流内联 overlay 不是完整 VisualSystemDraft，Python 把它放进 visual_exceptions，visual_system 为 null。
-		if len(exceptions) > 0 {
-			req.Visual = nil
+		if len(visual) > 0 && !isInlineVisualOverlay(visual) {
+			req.Visual = visual
+			req.VisualExceptions = nil
+		} else {
+			exceptions, err := visualExceptionsFromOverlay(visual)
+			if err != nil {
+				return PromptRequest{}, err
+			}
+			req.VisualExceptions = exceptions
+			// 工作流内联 overlay 不是完整 VisualSystemDraft，Python 把它放进 visual_exceptions，visual_system 为 null。
+			if len(exceptions) > 0 {
+				req.Visual = nil
+			}
 		}
 	}
 	return req, nil
@@ -311,6 +316,20 @@ func promptConfigHasAuthoredText(promptConfig map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func isInlineVisualOverlay(visual map[string]any) bool {
+	if len(visual) == 0 {
+		return true
+	}
+	for key := range visual {
+		switch key {
+		case "style", "colors", "prohibitions":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func visualExceptionsFromOverlay(overlay map[string]any) ([]map[string]any, error) {

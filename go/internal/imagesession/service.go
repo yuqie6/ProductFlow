@@ -167,8 +167,8 @@ func (s Service) Status(ctx context.Context, sessionID string) (StatusResponse, 
 
 func (s Service) Update(ctx context.Context, sessionID, title string) (DetailResponse, error) {
 	trimmed := strings.TrimSpace(title)
-	if trimmed == "" {
-		trimmed = defaultTitle
+	if trimmed == "" || len([]rune(trimmed)) > 255 {
+		return DetailResponse{}, apperr.Validation("请求体无效")
 	}
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
@@ -301,9 +301,9 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	if len([]rune(prompt)) > 4000 {
 		return DetailResponse{}, apperr.Validation("提示词不能为空")
 	}
-	count := req.GenerationCount
-	if count == 0 {
-		count = 1
+	count := 1
+	if req.GenerationCount != nil {
+		count = *req.GenerationCount
 	}
 	size := req.Size
 	if strings.TrimSpace(size) == "" {

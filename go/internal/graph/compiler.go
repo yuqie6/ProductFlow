@@ -445,14 +445,101 @@ func collectPromptInputs(graph AppliedGraph, nodeID string, sources map[string]S
 			if visErr != nil {
 				return nil, nil, nil, nil, visErr
 			}
-			if overlayMap, ok := overlay.(map[string]any); ok {
-				visual = cloneMap(overlayMap)
-			} else if payloadMap, ok := payload.(map[string]any); ok {
+			// Python _compile_visual 把 version draft 与 overlay merge 后作为 visual_system；
+			// overlay-wins 会丢掉 visual_system_version_id 对应的 draft。
+			if payloadMap, ok := payload.(map[string]any); ok && len(payloadMap) > 0 {
 				visual = cloneMap(payloadMap)
+			} else if overlayMap, ok := overlay.(map[string]any); ok {
+				visual = cloneMap(overlayMap)
 			}
 		}
 	}
 	return facts, briefs, visual, refs, nil
+}
+
+// compiledContextTrace 对齐 Python _prompt/_context/_image_context_trace：只统计 incoming 边，merge 进已有 compiled_context。
+func compiledContextTrace(graph AppliedGraph, node AppliedNode, sources map[string]SourceRecord, digest string) map[string]any {
+	incoming := incomingSorted(graph, node.ID)
+	incomingIDs := make([]string, 0, len(incoming))
+	var facts []map[string]any
+	var briefs []map[string]any
+	refIDs := []string{}
+	for _, edge := range incoming {
+		incomingIDs = append(incomingIDs, edge.ID)
+		record := sources[edge.SourceNodeID]
+		switch edge.Role {
+		case RoleFacts:
+			facts = append(facts, mergeRuntimeFacts(record.Facts, record.ProductSource)...)
+		case RoleBrief:
+			if record.Brief != nil {
+				briefs = append(briefs, cloneMap(record.Brief))
+			}
+		case RoleReference:
+			ref, refErr := compileReference(graph, edge, sources)
+			if refErr == nil && ref.AssetID != "" {
+				refIDs = append(refIDs, ref.AssetID)
+			}
+		}
+	}
+	trace := map[string]any{
+		"node_title":          node.Title,
+		"incoming_edge_ids":   incomingIDs,
+		"input_digest":        digest,
+		"reference_asset_ids": refIDs,
+	}
+	switch node.NodeType {
+	case NodePromptGeneration:
+		trace["fact_count"] = len(facts)
+		trace["brief_count"] = len(briefs)
+		if version := incomingVisualVersionID(graph, node.ID, sources); version != nil {
+			trace["visual_system_version_id"] = version
+		}
+	case NodeCreativeBrief, NodeVisualSystem:
+		trace["node_type"] = string(node.NodeType)
+		trace["fact_count"] = len(facts)
+	case NodeImageGeneration:
+		var promptEdgeID, promptArtifactID string
+		for _, edge := range incoming {
+			if edge.Role != RolePrompt {
+				continue
+			}
+			promptEdgeID = edge.ID
+			if _, id, err := promptArtifact(edge.SourceNodeID, sources); err == nil {
+				promptArtifactID = id
+			}
+			break
+		}
+		if promptArtifactID != "" {
+			trace["prompt_artifact_id"] = promptArtifactID
+		}
+		if promptEdgeID != "" {
+			trace["prompt_edge_id"] = promptEdgeID
+		}
+		if version := incomingVisualVersionID(graph, node.ID, sources); version != nil {
+			trace["visual_system_version_id"] = version
+		}
+	}
+	return trace
+}
+
+func incomingVisualVersionID(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) any {
+	for _, edge := range incomingSorted(graph, nodeID) {
+		if edge.Role != RoleVisualGuidance {
+			continue
+		}
+		source, err := graph.Node(edge.SourceNodeID)
+		if err != nil {
+			return nil
+		}
+		_, versionID, _, visErr := compileVisual(source, sources[source.ID])
+		if visErr != nil {
+			return nil
+		}
+		if versionID != nil {
+			return versionID
+		}
+	}
+	return nil
 }
 
 func incomingPromptPayload(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, error) {

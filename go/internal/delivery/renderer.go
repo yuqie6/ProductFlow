@@ -7,7 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"image/jpeg"
+	_ "image/jpeg"
 	"image/png"
 
 	// chai2010/webp 需要 CGO（镜像见 go/Dockerfile 的 CGO_ENABLED=1），才能按 Pillow 的 quality 阶做有损 WebP。
@@ -51,13 +51,11 @@ func Render(source []byte, spec Spec) (Rendered, error) {
 }
 
 func decodeSource(source []byte) (image.Image, error) {
-	img, format, err := image.Decode(bytes.NewReader(source))
+	img, _, err := image.Decode(bytes.NewReader(source))
 	if err != nil {
 		return nil, apperr.Validation("交付派生原图不是可解码图片")
 	}
-	if format == "jpeg" {
-		img = exifTransposeJPEG(source, img)
-	}
+	img = exifTranspose(source, img)
 	b := img.Bounds()
 	if int64(b.Dx())*int64(b.Dy()) > int64(maxTotalPixels)*4 {
 		return nil, apperr.Validation("交付派生原图像素规模过大")
@@ -197,7 +195,7 @@ func flattenJPEG(img image.Image) image.Image {
 
 func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+	if err := encodeJPEG444(&buf, img, quality); err != nil {
 		return nil, apperr.Validation("当前运行环境不支持 JPEG 交付编码")
 	}
 	return buf.Bytes(), nil
@@ -212,9 +210,9 @@ func encodeWebP(img image.Image, quality int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// exifTransposeJPEG 对齐 Pillow ImageOps.exif_transpose：只读 JPEG EXIF Orientation 并变换像素。
-func exifTransposeJPEG(source []byte, img image.Image) image.Image {
-	orientation, ok := jpegExifOrientation(source)
+// exifTranspose 对齐 Pillow ImageOps.exif_transpose：读 JPEG APP1 / PNG eXIf / WebP EXIF。
+func exifTranspose(source []byte, img image.Image) image.Image {
+	orientation, ok := sourceExifOrientation(source)
 	if !ok {
 		return img
 	}
@@ -236,6 +234,16 @@ func exifTransposeJPEG(source []byte, img image.Image) image.Image {
 	default:
 		return img
 	}
+}
+
+func sourceExifOrientation(source []byte) (int, bool) {
+	if orientation, ok := jpegExifOrientation(source); ok {
+		return orientation, true
+	}
+	if orientation, ok := pngExifOrientation(source); ok {
+		return orientation, true
+	}
+	return webpExifOrientation(source)
 }
 
 func jpegExifOrientation(source []byte) (int, bool) {
@@ -276,12 +284,61 @@ func jpegExifOrientation(source []byte) (int, bool) {
 	return 0, false
 }
 
-func tiffOrientation(app1 []byte) (int, bool) {
-	const prefix = "Exif\x00\x00"
-	if !bytes.HasPrefix(app1, []byte(prefix)) {
+func pngExifOrientation(source []byte) (int, bool) {
+	sig := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	if !bytes.HasPrefix(source, sig) {
 		return 0, false
 	}
-	tiff := app1[len(prefix):]
+	offset := 8
+	for offset+12 <= len(source) {
+		length := int(binary.BigEndian.Uint32(source[offset:]))
+		typ := string(source[offset+4 : offset+8])
+		offset += 8
+		if length < 0 || offset+length+4 > len(source) {
+			return 0, false
+		}
+		data := source[offset : offset+length]
+		if typ == "eXIf" {
+			return tiffOrientation(data)
+		}
+		if typ == "IEND" {
+			return 0, false
+		}
+		offset += length + 4
+	}
+	return 0, false
+}
+
+func webpExifOrientation(source []byte) (int, bool) {
+	if len(source) < 12 || string(source[:4]) != "RIFF" || string(source[8:12]) != "WEBP" {
+		return 0, false
+	}
+	offset := 12
+	for offset+8 <= len(source) {
+		fourcc := string(source[offset : offset+4])
+		size := int(binary.LittleEndian.Uint32(source[offset+4 : offset+8]))
+		offset += 8
+		if size < 0 || offset+size > len(source) {
+			return 0, false
+		}
+		data := source[offset : offset+size]
+		if fourcc == "EXIF" {
+			return tiffOrientation(data)
+		}
+		offset += size
+		if size%2 == 1 {
+			offset++
+		}
+	}
+	return 0, false
+}
+
+func tiffOrientation(data []byte) (int, bool) {
+	const prefix = "Exif\x00\x00"
+	tiff := data
+	if bytes.HasPrefix(data, []byte(prefix)) {
+		tiff = data[len(prefix):]
+	}
 	if len(tiff) < 8 {
 		return 0, false
 	}

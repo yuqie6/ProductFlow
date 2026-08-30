@@ -239,6 +239,11 @@ func (h HTTP) finalizeWorkspaceIntake(c *gin.Context) {
 	if note != "" {
 		notePtr = &note
 	}
+	taskID := strings.TrimSpace(c.PostForm("task_id"))
+	var taskPtr *string
+	if taskID != "" {
+		taskPtr = &taskID
+	}
 	out, err := h.Service.FinalizeAgentIntake(
 		c.Request.Context(),
 		c.Param("conversation_id"),
@@ -246,6 +251,7 @@ func (h HTTP) finalizeWorkspaceIntake(c *gin.Context) {
 		c.GetHeader("Idempotency-Key"),
 		notePtr,
 		uploads,
+		taskPtr,
 	)
 	if err != nil {
 		httpx.AbortErr(c, err)

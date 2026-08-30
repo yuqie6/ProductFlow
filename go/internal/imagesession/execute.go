@@ -495,6 +495,9 @@ func isNonRetryableGenerationError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, ErrRateLimit) {
+		return false
+	}
 	if IsConfirmedProviderFailure(err) {
 		return true
 	}

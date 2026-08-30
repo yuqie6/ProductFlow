@@ -146,7 +146,8 @@ func (s Service) GetAgentWorkspace(ctx context.Context, conversationID string) (
 	return snap, err
 }
 
-func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, selectionJSON, idempotencyKey string, sourceNote *string, uploads []Upload) (WorkspaceSnapshotResponse, error) {
+func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, selectionJSON, idempotencyKey string, sourceNote *string, uploads []Upload, taskID *string) (WorkspaceSnapshotResponse, error) {
+	_ = taskID
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	key, err := normalizeIdempotencyKey(idempotencyKey)
 	if err != nil {

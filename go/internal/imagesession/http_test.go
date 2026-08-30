@@ -331,6 +331,38 @@ func TestImageSessionMissingIs404(t *testing.T) {
 	}
 }
 
+func TestImageSessionUpdateRejectsEmptyTitle(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": "原标题"})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	for _, title := range []string{"", "   "} {
+		resp := ss.doJSON(t, http.MethodPatch, "/api/image-sessions/"+session.ID, map[string]any{"title": title})
+		ss.mustStatus(t, resp, http.StatusBadRequest)
+		resp.Body.Close()
+	}
+	got := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID, nil, "")
+	ss.mustStatus(t, got, http.StatusOK)
+	ss.decode(t, got, &session)
+	if session.Title != "原标题" {
+		t.Fatalf("title rewritten to %q", session.Title)
+	}
+}
+
+func TestImageSessionGenerateRejectsZeroCount(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	resp := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "数量非法", "size": "1024x1024", "generation_count": 0,
+	})
+	ss.mustStatus(t, resp, http.StatusBadRequest)
+	resp.Body.Close()
+}
+
 func TestImageSessionCreateRejectsUnknownFields(t *testing.T) {
 	ss := newSessionServer(t)
 	resp := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": "a", "foo": 1})

@@ -95,7 +95,10 @@ func mapGraphStatus(status int, body []byte) error {
 }
 
 func mapChatStatus(status int, body []byte) error {
-	if status >= 500 || status == http.StatusTooManyRequests {
+	if status == http.StatusTooManyRequests {
+		return imagesession.ErrRateLimit
+	}
+	if status >= 500 {
 		return imagesession.ErrUnknown()
 	}
 	if status >= 400 {

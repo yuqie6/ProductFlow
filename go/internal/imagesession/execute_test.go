@@ -283,6 +283,33 @@ func TestExecuteValidationDoesNotAutoRetry(t *testing.T) {
 	}
 }
 
+func TestExecuteRateLimitIsFailedRetryable(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "限流", "size": "1024x1024", "generation_count": 1,
+	})
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrRateLimit}}
+	for i := 0; i < maxAttempts; i++ {
+		if err := exec.Execute(context.Background(), taskID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	task := got.GenerationTasks[0]
+	if task.Status != "failed" {
+		t.Fatalf("status %s", task.Status)
+	}
+	if !task.IsRetryable {
+		t.Fatal("429 must stay retryable")
+	}
+	if task.Attempts != maxAttempts {
+		t.Fatalf("attempts %d", task.Attempts)
+	}
+	if len(task.ProviderEffects) == 0 || task.ProviderEffects[0].EffectResult != "failed" {
+		t.Fatalf("effects %+v", task.ProviderEffects)
+	}
+}
+
 func TestExecutePersistsImagesBatchCandidateCount(t *testing.T) {
 	ss := newSessionServer(t)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{

@@ -13,10 +13,11 @@ import (
 var (
 	ErrMissingOutput = errors.New("图片供应商没有返回图片结果，请稍后重试")
 	ErrTextOutput    = errors.New("图片供应商已完成请求，但返回的是文字回复，没有返回图片结果")
+	ErrRateLimit     = errors.New("图片供应商限流或配额不足，请稍后重试或降低并发后再试")
 )
 
 func IsConfirmedProviderFailure(err error) bool {
-	return errors.Is(err, ErrMissingOutput) || errors.Is(err, ErrTextOutput)
+	return errors.Is(err, ErrMissingOutput) || errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit)
 }
 
 type ChatRequest struct {
