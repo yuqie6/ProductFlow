@@ -51,7 +51,7 @@ for (const preset of PRESETS) {
     await expect(page.locator("[data-global-agent-launcher]")).toHaveCount(0);
 
     const canvas = page.locator("[data-agent-workbench-canvas-slot]");
-    const initialGeometry = await canvas.evaluate((element) => ({
+    const initialGeometry = await canvas.evaluate((element: HTMLElement) => ({
       width: element.clientWidth,
       height: element.clientHeight,
       inert: element.inert,

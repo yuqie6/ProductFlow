@@ -18,12 +18,13 @@ import type {
   LibraryOrganizationDraft,
   SubmitAgentTurnInput,
 } from "../../../lib/types";
+import { workflowRunRequestRefetchIntervalMs } from "./AgentConversationPanel";
+import { isAgentTurnTerminal } from "./agentEventReducer";
 import {
   flattenAgentTurnPages,
   selectNewestAgentTurnProjection,
   upsertAgentTurnPageData,
 } from "./useAgentConversation";
-import { isAgentTurnTerminal } from "./agentEventReducer";
 
 const PAGE_SIZE = 20;
 const PROJECTION_POLL_MS = 1_500;
@@ -150,10 +151,7 @@ export function useGlobalAgentConversation({
     queryKey: globalWorkflowRunRequestQueryKey(conversationId, taskId),
     queryFn: () => api.getGlobalWorkflowRunRequest(conversationId, taskId),
     enabled: Boolean(enabled && conversationId && workflowRunRequestId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "awaiting_confirmation" || status === "confirmed" ? 1_500 : false;
-    },
+    refetchInterval: (query) => workflowRunRequestRefetchIntervalMs(query.state.data),
   });
   const turns = useMemo(
     () =>

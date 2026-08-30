@@ -367,7 +367,7 @@ for (const preset of PRESETS) {
     test.use({
       viewport: { width: preset.width, height: preset.height },
       colorScheme: "light",
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
 
     test("keeps one no-cost workbench flow observable from canvas to recipe preview", async ({ page }) => {
@@ -439,7 +439,7 @@ for (const preset of SHOT_LIST_PRESETS) {
     test.use({
       viewport: { width: preset.width, height: preset.height },
       colorScheme: "light",
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
 
     test("keeps the recommended set visible across shot list and canvas without cost", async ({ page }) => {

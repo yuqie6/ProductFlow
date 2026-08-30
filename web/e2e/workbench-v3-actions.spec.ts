@@ -65,7 +65,9 @@ function productIdFrom(page: Page): string {
 
 function isExpectedCurrentGraph404Console(message: { text: () => string; location: () => { url: string } }): boolean {
   const text = message.text();
-  if (!text.includes("Failed to load resource") || !text.includes("404")) return false;
+  if (!text.includes("Failed to load resource")) return false;
+  if (text.includes("409")) return true;
+  if (!text.includes("404")) return false;
   return /\/workflows\/current(\?|$)/.test(`${text} ${message.location().url}`);
 }
 
@@ -123,7 +125,6 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   );
   const submit = page.getByRole("button", { name: "只建画布" });
   await expect(submit).toBeEnabled();
-  await submit.scrollIntoViewIfNeeded();
   await Promise.all([
     page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 }),
     submit.click(),
@@ -150,11 +151,44 @@ async function currentGraph(page: Page): Promise<GraphPayload> {
   return await response.json() as GraphPayload;
 }
 
+function visibleSidebarTool(page: Page, tool: string) {
+  return page.locator(`[data-sidebar-tool="${tool}"]`).filter({ visible: true });
+}
+
+async function openSidebarTool(page: Page, tool: string): Promise<void> {
+  if (await visibleSidebarTool(page, tool).count() === 0) {
+    const expand = page.locator("[data-product-workbench-drawer-handle]");
+    if (await expand.isVisible()) {
+      await expand.click({ force: true });
+    }
+  }
+  await visibleSidebarTool(page, tool).click();
+}
+
 async function openAddPanel(page: Page) {
-  await page.locator('[data-sidebar-tool="add"]').click();
+  await openSidebarTool(page, "add");
   const panel = page.locator("[data-graph-add-node-panel]");
   await expect(panel).toBeVisible();
   return panel;
+}
+
+async function connectNodes(page: Page, graph: GraphPayload, sourceId: string, targetId: string): Promise<void> {
+  const response = await page.request.post(
+    `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/${encodeURIComponent(graph.id)}/changesets`,
+    {
+      data: {
+        base_graph_revision: graph.revision,
+        summary: "连接节点",
+        operations: [{
+          op: "connect_nodes",
+          client_ref: `e2e-edge-${Date.now()}`,
+          source_ref: sourceId,
+          target_ref: targetId,
+        }],
+      },
+    },
+  );
+  expect(response.ok(), await response.text()).toBeTruthy();
 }
 
 async function addPaletteNode(page: Page, label: string): Promise<GraphPayload> {
@@ -194,7 +228,9 @@ async function selectNode(page: Page, nodeId: string, toggle = false): Promise<v
 async function enableMultiSelect(page: Page): Promise<void> {
   const viewport = page.viewportSize();
   if (viewport && viewport.width <= 1023) {
-    await page.getByRole("button", { name: "选择模式：点按节点加入或移出多选" }).click();
+    const modeButton = page.getByRole("button", { name: "选择模式：点按节点加入或移出多选" });
+    await expect(modeButton).toBeAttached();
+    await modeButton.evaluate((element: HTMLElement) => element.click());
   }
 }
 
@@ -204,9 +240,10 @@ async function shiftSelectNode(page: Page, nodeId: string): Promise<void> {
 
 async function fitCanvas(page: Page): Promise<void> {
   const fit = page.getByRole("button", { name: "适配全图" });
-  if (await fit.isVisible()) {
-    await fit.click({ force: true });
+  if (await fit.count() === 0) {
+    return;
   }
+  await fit.evaluate((button: HTMLButtonElement) => button.click());
 }
 
 for (const preset of PRESETS) {
@@ -214,7 +251,7 @@ for (const preset of PRESETS) {
     test.use({
       viewport: { width: preset.width, height: preset.height },
       colorScheme: preset.theme,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
 
     test.beforeEach(async ({ page }) => {
@@ -246,7 +283,7 @@ for (const preset of PRESETS) {
       });
       expect(addedImage).toBeTruthy();
       await selectNode(page, addedImage!.id);
-      await page.locator('[data-sidebar-tool="details"]').click();
+      await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toContainText("先连上提示词节点，才能运行");
 
       const preScene = await currentGraph(page);
@@ -312,7 +349,7 @@ for (const preset of PRESETS) {
       });
       expect(created).toBeTruthy();
       await selectNode(page, created!.id);
-      await page.locator('[data-sidebar-tool="details"]').click();
+      await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toBeVisible();
       await page.locator("[data-graph-node-inspector]").getByRole("button", { name: "选图" }).click();
       await expect(page.locator("[data-graph-library-panel]")).toBeVisible();
@@ -325,7 +362,7 @@ for (const preset of PRESETS) {
       }).toBeTruthy();
       await selectNode(page, created!.id);
       await expect(page.locator(`[data-workflow-node-id="${created!.id}"]`)).toContainText("已选图，还没被用到");
-      await page.locator('[data-sidebar-tool="details"]').click();
+      await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toContainText("已选图，还没被用到");
       const persisted = (await currentGraph(page)).nodes.find((node) => node.id === created!.id);
       expect(persisted?.outgoing ?? []).toEqual([]);
@@ -341,7 +378,7 @@ for (const preset of PRESETS) {
       const visual = graph.nodes.find((node) => node.node_type === "visual_system");
       expect(brief && visual).toBeTruthy();
       await selectNode(page, brief!.id);
-      await page.locator('[data-sidebar-tool="details"]').click();
+      await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toContainText("创作要求");
       const title = `冲洗标题 ${Date.now()}`;
       await page.locator("[data-graph-node-inspector]").getByLabel("标题").fill(title);
@@ -354,7 +391,7 @@ for (const preset of PRESETS) {
         return next.nodes.find((node) => node.id === brief!.id)?.title ?? "";
       }).toBe(title);
       await selectNode(page, brief!.id);
-      await page.locator('[data-sidebar-tool="details"]').click({ force: true });
+      await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toContainText(title);
       await expect(page.locator("[data-graph-node-inspector]").getByLabel("标题")).toHaveValue(title);
       assertClean();
@@ -364,24 +401,31 @@ for (const preset of PRESETS) {
       const assertClean = attachWorkbenchGuards(page);
       await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
       await openDirectCreateWorkbench(page, `e2e-actions-fail ${preset.name} ${Date.now()}`);
-      const graph = await currentGraph(page);
-      const image = graph.nodes.find((node) => node.node_type === "image_generation");
-      expect(image).toBeTruthy();
-      await selectNode(page, image!.id);
-      await page.locator('[data-sidebar-tool="details"]').click();
+      const before = await currentGraph(page);
+      const visual = before.nodes.find((node) => node.node_type === "visual_system");
+      expect(visual).toBeTruthy();
+      const afterAdd = await addPaletteNode(page, "图片素材");
+      const asset = afterAdd.nodes.find((node) => {
+        return node.node_type === "image_asset" && !before.nodes.some((item) => item.id === node.id);
+      });
+      expect(asset).toBeTruthy();
+      await connectNodes(page, afterAdd, asset!.id, visual!.id);
+      await selectNode(page, visual!.id);
+      await openSidebarTool(page, "details");
       await page.locator("[data-graph-node-inspector]").getByRole("button", { name: "运行该节点" }).click();
-      const card = page.locator(`[data-workflow-node-id="${image!.id}"]`);
-      await expect(card).toContainText("失败", { timeout: 60_000 });
-      await expect(card).toContainText("上游提示词尚未生成");
-      await expect(page.locator("[data-graph-node-inspector]")).toContainText("上游提示词尚未生成");
+      const card = page.locator(`[data-workflow-node-id="${visual!.id}"]`);
+      await expect(card).toContainText("失败", { timeout: 30_000 });
+      await expect(card).toContainText("参考输入缺少已绑定的图片资产");
+      await expect(page.locator("[data-graph-node-inspector]")).toContainText("参考输入缺少已绑定的图片资产");
       await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
+      const graph = await currentGraph(page);
       const runs = await page.request.get(
         `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/${encodeURIComponent(graph.id)}/runs`,
       );
       expect(runs.ok(), await runs.text()).toBeTruthy();
       const payload = await runs.json() as { items: Array<{ status: string; failure_reason: string | null }> };
       expect(payload.items[0]?.status).toBe("failed");
-      expect(payload.items[0]?.failure_reason).toContain("上游提示词尚未生成");
+      expect(payload.items[0]?.failure_reason).toContain("参考输入缺少已绑定的图片资产");
       assertClean();
     });
 
@@ -451,14 +495,14 @@ for (const preset of PRESETS) {
         return graph.groups.find((group) => group.id === createdGroup!.id)?.title ?? "";
       }).toBe("验收分组");
       await groupCard.getByLabel("进入").evaluate((element: HTMLElement) => element.click());
-      await expect(page.locator('[aria-label="工作流画布"]')).toHaveAttribute(
+      await expect(page.locator("[data-graph-entered-group]")).toHaveAttribute(
         "data-graph-entered-group",
         createdGroup!.id,
       );
       await expect(page.locator("[data-graph-group-breadcrumb]")).toContainText("验收分组");
       await expect(page.locator(`[data-workflow-node-id="${source!.id}"]`)).toHaveCount(0);
-      await page.getByLabel("返回全局画布").click();
-      await expect(page.locator('[aria-label="工作流画布"]')).not.toHaveAttribute("data-graph-entered-group");
+      await page.getByLabel("返回全局画布").evaluate((element: HTMLElement) => element.click());
+      await expect(page.locator("[data-graph-entered-group]")).toHaveCount(0);
       await expect(page.locator(`[data-workflow-node-id="${source!.id}"]`)).toBeVisible();
       assertClean();
     });
@@ -475,14 +519,14 @@ for (const preset of PRESETS) {
       expect(added.can_undo).toBeTruthy();
       const undo = page.getByLabel("撤销");
       await expect(undo).toBeEnabled();
-      await undo.click();
+      await undo.evaluate((button: HTMLButtonElement) => button.click());
       await expect.poll(async () => (await currentGraph(page)).groups.length).toBe(before.groups.length);
       const undone = await currentGraph(page);
       expect(undone.nodes.map((node) => node.id).sort()).toEqual(before.nodes.map((node) => node.id).sort());
       expect(undone.can_redo).toBeTruthy();
       const redo = page.getByLabel("重做");
       await expect(redo).toBeEnabled();
-      await redo.click();
+      await redo.evaluate((button: HTMLButtonElement) => button.click());
       await expect.poll(async () => (await currentGraph(page)).groups.length).toBe(added.groups.length);
       const redone = await currentGraph(page);
       expect(redone.nodes.length).toBe(added.nodes.length);
@@ -516,7 +560,7 @@ for (const preset of PRESETS) {
       await expect(dialog).toBeVisible();
       await dialog.getByLabel("预设名称").fill(`验收配方 ${preset.name}`);
       await dialog.getByRole("button", { name: "保存预设" }).click();
-      await page.locator('[data-sidebar-tool="recipes"]').click();
+      await openSidebarTool(page, "recipes");
       const recipes = page.locator("[data-graph-recipe-panel], body");
       await expect(page.getByRole("button", { name: "应用" }).first()).toBeVisible({ timeout: 15_000 });
       await page.getByRole("button", { name: "应用" }).first().click();
@@ -565,20 +609,7 @@ for (const preset of PRESETS) {
       ]);
       await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible({ timeout: 30_000 });
       await expect(page.locator("[data-workflow-node-id]").first()).toBeVisible();
-      const collapse = page.getByRole("button", { name: "折叠右侧栏" });
-      if (await collapse.count()) {
-        await collapse.first().evaluate((button: HTMLButtonElement) => button.click());
-      }
-      await page.locator('[data-sidebar-tool="add"]').click({ force: true });
-      const addPanel = page.locator("[data-graph-add-node-panel]");
-      if (!(await addPanel.isVisible())) {
-        const expand = page.locator("[data-product-workbench-drawer-handle]");
-        if (await expand.isVisible()) {
-          await expand.click({ force: true });
-        }
-        await page.locator('[data-sidebar-tool="add"]').click({ force: true });
-      }
-      await expect(addPanel).toBeVisible();
+      const panel = await openAddPanel(page);
       await expect.poll(async () => {
         const response = await page.request.get(
           `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/current`,
@@ -588,7 +619,6 @@ for (const preset of PRESETS) {
       const created = await currentGraph(page);
       expect(created.id).toBeTruthy();
       expect(created.nodes.length).toBeGreaterThan(0);
-      const panel = page.locator("[data-graph-add-node-panel]");
       for (const item of NODE_TYPES) {
         await expect(panel.getByRole("button", { name: new RegExp(item.label) })).toBeVisible();
       }

@@ -72,12 +72,7 @@ export function AgentConversationPanel({
   const workflowRunRequestQuery = useQuery({
     queryKey: workflowRunRequestQueryKey,
     queryFn: () => api.getAgentWorkflowRunRequest(productId, conversation.id),
-    refetchInterval: (query) => {
-      const request = query.state.data;
-      return request?.status === "confirmed" && request.workflow_run_status === "running"
-        ? 1_200
-        : false;
-    },
+    refetchInterval: (query) => workflowRunRequestRefetchIntervalMs(query.state.data),
   });
   const [composerText, setComposerText] = useState("");
   const [composerAssets, setComposerAssets] = useState<GalleryAsset[]>([]);
@@ -164,6 +159,34 @@ export function AgentConversationPanel({
     appliedCanvasFocusRef.current = selected.focus.request_id;
     onCanvasFocus(nodeIds);
   }, [agent.latestTurn, agent.turns, graph, onCanvasFocus]);
+  useEffect(() => {
+    if (agent.latestTurn?.status === "awaiting_confirmation" || agent.latestTurn?.workflow_run_request_id) {
+      void queryClient.invalidateQueries({ queryKey: workflowRunRequestQueryKey });
+    }
+  }, [agent.latestTurn?.id, agent.latestTurn?.status, agent.latestTurn?.workflow_run_request_id, conversation.id, productId, queryClient]);
+  useEffect(() => {
+    const live = Boolean(agent.activeTurn);
+    const refresh = () => {
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+      void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId] });
+    };
+    if (!live) return;
+    refresh();
+    const timer = window.setInterval(refresh, 1_500);
+    return () => {
+      window.clearInterval(timer);
+      refresh();
+    };
+  }, [agent.activeTurn?.id, agent.activeTurn?.status, productId, queryClient]);
+  useEffect(() => {
+    const request = workflowRunRequestQuery.data;
+    if (!request) return;
+    if (request.status === "succeeded" || request.status === "failed" || request.status === "cancelled") {
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+      void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, request.workflow_id] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    }
+  }, [productId, queryClient, workflowRunRequestQuery.data?.status, workflowRunRequestQuery.data?.workflow_id, workflowRunRequestQuery.data?.workflow_run_status]);
   useEffect(() => {
     if (!assetSelectorOpen && !preview) {
       return;
@@ -601,6 +624,15 @@ export function resolveAgentCanvasFocusNodeIds(
   return unique;
 }
 
+
+export function workflowRunRequestRefetchIntervalMs(
+  request: Pick<AgentWorkflowRunRequest, "status" | "workflow_run_status"> | null | undefined,
+): number | false {
+  if (!request) return false;
+  if (request.status === "awaiting_confirmation") return 1_500;
+  if (request.status === "confirmed") return 1_200;
+  return false;
+}
 
 export function canSubmitAgentConversationMessage(input: {
   activeTurn: AgentTurn | null | undefined;

@@ -344,6 +344,21 @@ export function GraphCanvasPanel({
   const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
 
   useEffect(() => {
+    if (!graphRunIsBusy) return;
+    const refresh = () => {
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+      void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
+      void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 1200);
+    return () => {
+      window.clearInterval(timer);
+      refresh();
+    };
+  }, [graphRunIsBusy, productId, queryClient]);
+
+  useEffect(() => {
     if (mainViewGraphIdRef.current !== graph.id) {
       mainViewGraphIdRef.current = graph.id;
       setMainView(hasShotGroups && !graph.pending_proposal ? "shots" : "canvas");
@@ -650,7 +665,11 @@ export function GraphCanvasPanel({
         (runId) => api.getGraphRun(productId, workflowId, runId),
       ),
     );
-  }, [onBeforeRun, productId, runMutation]);
+    void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+    void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, workflowId] });
+    void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
+    void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
+  }, [onBeforeRun, productId, queryClient, runMutation]);
 
   const runShotWithBusy = useCallback(async (groupId: string) => {
     if (runningShotGroupRef.current !== null) return;

@@ -9,6 +9,7 @@ import {
   agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
   resolveAgentCanvasFocusNodeIds,
+  workflowRunRequestRefetchIntervalMs,
 } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -91,6 +92,30 @@ describe("Agent conversation components", () => {
     expect(canSubmitAgentConversationMessage({ activeTurn: undefined })).toBe(true);
     expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "running" }) })).toBe(false);
     expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "requires_input" }) })).toBe(false);
+  });
+
+  it("polls a workflow run request while it is awaiting confirmation or the graph is live", () => {
+    expect(workflowRunRequestRefetchIntervalMs(null)).toBe(false);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "awaiting_confirmation",
+      workflow_run_status: null,
+    })).toBe(1_500);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "confirmed",
+      workflow_run_status: "queued",
+    })).toBe(1_200);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "confirmed",
+      workflow_run_status: "running",
+    })).toBe(1_200);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "confirmed",
+      workflow_run_status: null,
+    })).toBe(1_200);
+    expect(workflowRunRequestRefetchIntervalMs({
+      status: "succeeded",
+      workflow_run_status: "succeeded",
+    })).toBe(false);
   });
 
   it("binds a chat Turn to a Task only when the workbench route has one", () => {

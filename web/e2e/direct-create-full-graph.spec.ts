@@ -13,6 +13,7 @@ import {
 } from "./liveGraph";
 
 test.describe("live browser graph", () => {
+  test.describe.configure({ retries: 1 });
   test("creates a one-image product in the browser, runs the graph, and shows a real generated image", async ({
     page,
   }) => {

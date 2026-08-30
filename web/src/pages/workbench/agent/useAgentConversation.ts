@@ -187,12 +187,14 @@ export function useAgentConversation({
       queryClient.invalidateQueries({ queryKey: turnsKey }),
       queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
       queryClient.invalidateQueries({ queryKey: ["agent-tasks"] }),
+      queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["graph-runs", productId] }),
     ];
     if (taskId) {
       jobs.push(queryClient.invalidateQueries({ queryKey: ["agent-task", taskId] }));
     }
     return Promise.all(jobs);
-  }, [queryClient, taskId, turnsKey]);
+  }, [productId, queryClient, taskId, turnsKey]);
 
   useEffect(() => {
     if (latestProjectionQuery.data) {
