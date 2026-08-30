@@ -35,6 +35,7 @@ func main() {
 	}
 	logger, err := applog.New(applog.Options{
 		Level:         cfg.LogLevel,
+		Format:        cfg.LogFormat,
 		Dir:           cfg.LogDir,
 		Process:       applog.ProcessAPI,
 		MaxBytes:      cfg.LogMaxBytes,

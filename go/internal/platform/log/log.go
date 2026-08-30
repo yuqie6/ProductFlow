@@ -2,6 +2,7 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,16 +18,22 @@ const (
 	ProcessAPI        = "api"
 	ProcessWorker     = "worker"
 	ProcessDispatcher = "dispatcher"
+
+	FormatConsole = "console"
+	FormatJSON    = "json"
 )
 
-// Options 配置 JSON 日志：stderr 给终端/Compose，滚动文件给排障。
+// Options 配置日志：stderr 给终端（默认可读行），滚动 JSON 文件给排障。
 type Options struct {
 	Level         string
+	Format        string
 	Dir           string
 	Process       string
 	MaxBytes      int
 	BackupCount   int
 	RetentionDays int
+	Stderr        io.Writer
+	DisableColor  bool
 }
 
 func New(opts Options) (*zap.Logger, error) {
@@ -34,18 +41,26 @@ func New(opts Options) (*zap.Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	level := zapcore.InfoLevel
-	if parsedErr := level.UnmarshalText([]byte(strings.ToLower(opts.Level))); parsedErr != nil {
-		level = zapcore.InfoLevel
+	consoleLevel := parseLevel(opts.Level)
+	stderr := opts.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
 	}
 
-	encoderCfg := zap.NewProductionEncoderConfig()
-	encoderCfg.TimeKey = "ts"
-	encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
-	encoder := zapcore.NewJSONEncoder(encoderCfg)
+	fileEncoderCfg := zap.NewProductionEncoderConfig()
+	fileEncoderCfg.TimeKey = "ts"
+	fileEncoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	fileEncoder := zapcore.NewJSONEncoder(fileEncoderCfg)
+
+	var consoleEncoder zapcore.Encoder
+	if resolveFormat(opts.Format) == FormatJSON {
+		consoleEncoder = zapcore.NewJSONEncoder(fileEncoderCfg)
+	} else {
+		consoleEncoder = newPrettyEncoder(consoleColorEnabled(stderr, opts.DisableColor))
+	}
 
 	cores := []zapcore.Core{
-		zapcore.NewCore(encoder, zapcore.Lock(os.Stderr), level),
+		zapcore.NewCore(consoleEncoder, lockWriter(stderr), consoleLevel),
 	}
 
 	logFile := ""
@@ -67,7 +82,7 @@ func New(opts Options) (*zap.Logger, error) {
 			LocalTime:  false,
 			Compress:   false,
 		})
-		cores = append(cores, zapcore.NewCore(encoder, fileSync, level))
+		cores = append(cores, zapcore.NewCore(fileEncoder, fileSync, zapcore.DebugLevel))
 	}
 
 	logger := zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)).
@@ -107,6 +122,30 @@ func CleanupOldLogs(dir string, retentionDays int) (int, error) {
 		deleted++
 	}
 	return deleted, nil
+}
+
+func parseLevel(raw string) zapcore.Level {
+	level := zapcore.InfoLevel
+	if err := level.UnmarshalText([]byte(strings.ToLower(strings.TrimSpace(raw)))); err != nil {
+		return zapcore.InfoLevel
+	}
+	return level
+}
+
+func resolveFormat(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case FormatJSON:
+		return FormatJSON
+	default:
+		return FormatConsole
+	}
+}
+
+func lockWriter(w io.Writer) zapcore.WriteSyncer {
+	if ws, ok := w.(zapcore.WriteSyncer); ok {
+		return zapcore.Lock(ws)
+	}
+	return zapcore.Lock(zapcore.AddSync(w))
 }
 
 func sanitizeProcess(process string) (string, error) {

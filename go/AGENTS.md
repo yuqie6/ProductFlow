@@ -8,7 +8,7 @@ Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `libr
 
 `graph` must not import `product`, `recipe`, or `delivery` (use `graph.DeliveryQueuer`). Agent must not write graph tables directly; call `graph` package functions.
 
-JSON logs go to stderr and rotating files under `STORAGE_ROOT/logs` (`productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`). Override with `LOG_DIR`. Tests: `go/internal/platform/log`, `go/internal/platform/config`.
+Terminal logs are readable lines (time, level, process, message, `key=value`). JSON logs rotate under `STORAGE_ROOT/logs` (`productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`) and keep caller/stack for troubleshooting. Override the directory with `LOG_DIR`. `LOG_FORMAT=json` writes JSON to stderr as well. Idle dispatcher cycles, `/healthz`, and Agent heartbeats are Debug (files only unless `LOG_LEVEL=DEBUG`). Tests: `go/internal/platform/log`, `go/internal/platform/config`.
 
 ## Contracts
 

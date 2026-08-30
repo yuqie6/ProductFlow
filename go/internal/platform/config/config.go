@@ -16,6 +16,7 @@ type Config struct {
 	DatabaseURL                       string
 	RedisURL                          string
 	LogLevel                          string
+	LogFormat                         string
 	LogDir                            string
 	LogMaxBytes                       int
 	LogBackupCount                    int
@@ -47,6 +48,7 @@ func Load() (Config, error) {
 	v.SetDefault("APP_HOST", "0.0.0.0")
 	v.SetDefault("APP_PORT", 29280)
 	v.SetDefault("LOG_LEVEL", "INFO")
+	v.SetDefault("LOG_FORMAT", "console")
 	v.SetDefault("LOG_MAX_BYTES", 10*1024*1024)
 	v.SetDefault("LOG_BACKUP_COUNT", 5)
 	v.SetDefault("LOG_RETENTION_DAYS", 14)
@@ -77,6 +79,7 @@ func Load() (Config, error) {
 		DatabaseURL:                       NormalizePostgresURL(v.GetString("DATABASE_URL")),
 		RedisURL:                          v.GetString("REDIS_URL"),
 		LogLevel:                          v.GetString("LOG_LEVEL"),
+		LogFormat:                         v.GetString("LOG_FORMAT"),
 		LogDir:                            logDir,
 		LogMaxBytes:                       v.GetInt("LOG_MAX_BYTES"),
 		LogBackupCount:                    v.GetInt("LOG_BACKUP_COUNT"),

@@ -16,7 +16,7 @@ is_repo_dev_process() {
   fi
   cmd="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null || true)"
   case "${cmd}" in
-    *productflow_backend.workers* | *productflow_backend.main:app* | *productflow_backend.commands.run_async_dispatcher* | *cmd/productflow-api* | *cmd/productflow-worker* | *cmd/productflow-dispatcher* | *productflow-api* | *productflow-worker* | *productflow-dispatcher* | *"pnpm --dir agent-service"* | *"pnpm --dir web"* | *" --dir web dev"* | *"/node_modules/.bin/vite"*)
+    *productflow_backend.workers* | *productflow_backend.main:app* | *productflow_backend.commands.run_async_dispatcher* | *cmd/productflow-api* | *cmd/productflow-worker* | *cmd/productflow-dispatcher* | *productflow-api* | *productflow-worker* | *productflow-dispatcher* | *"pnpm --dir agent-service"* | *"/agent-service/"* | *"tsx src/main.ts"* | *" src/main.ts"* | *"pnpm --dir web"* | *" --dir web dev"* | *"/node_modules/.bin/vite"* | *"/vite/bin/vite.js"*)
       return 0
       ;;
   esac

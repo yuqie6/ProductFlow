@@ -17,7 +17,7 @@ import (
 	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
-	applog 	"github.com/yuqie6/productflow/internal/platform/log"
+	applog "github.com/yuqie6/productflow/internal/platform/log"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
@@ -39,6 +39,7 @@ func main() {
 	}
 	logger, err := applog.New(applog.Options{
 		Level:         cfg.LogLevel,
+		Format:        cfg.LogFormat,
 		Dir:           cfg.LogDir,
 		Process:       applog.ProcessDispatcher,
 		MaxBytes:      cfg.LogMaxBytes,
@@ -94,19 +95,31 @@ func main() {
 		if err != nil {
 			return err
 		}
-		logger.Info("dispatcher cycle",
-			zap.Any("dispatch", summary),
-			zap.Any("recovery", map[string]int{
-				"workflow":                 workflow.EnqueuedRuns,
-				"workflow_unknown":         workflow.UnknownRuns,
-				"image_session":            imageSession.EnqueuedTasks,
-				"image_session_unknown":    imageSession.UnknownTasks,
-				"agent":                    agentTurns.EnqueuedTurns,
-				"rendition":                rendition.EnqueuedJobs,
-				"local_image_edit":         localImageEdit.EnqueuedTasks,
-				"local_image_edit_unknown": localImageEdit.UnknownTasks,
-			}),
-		)
+		fields := []zap.Field{
+			zap.Int("pending", summary.Pending),
+			zap.Int("sent", summary.Sent),
+			zap.Int("reconciled", summary.Reconciled),
+			zap.Int("dead", summary.Dead),
+			zap.Int("workflow", workflow.EnqueuedRuns),
+			zap.Int("workflow_unknown", workflow.UnknownRuns),
+			zap.Int("image_session", imageSession.EnqueuedTasks),
+			zap.Int("image_session_unknown", imageSession.UnknownTasks),
+			zap.Int("agent", agentTurns.EnqueuedTurns),
+			zap.Int("rendition", rendition.EnqueuedJobs),
+			zap.Int("local_image_edit", localImageEdit.EnqueuedTasks),
+			zap.Int("local_image_edit_unknown", localImageEdit.UnknownTasks),
+		}
+		recoveryWork := []int{
+			workflow.EnqueuedRuns, workflow.UnknownRuns,
+			imageSession.EnqueuedTasks, imageSession.UnknownTasks,
+			agentTurns.EnqueuedTurns, rendition.EnqueuedJobs,
+			localImageEdit.EnqueuedTasks, localImageEdit.UnknownTasks,
+		}
+		if dispatcherCycleIdle(summary, recoveryWork...) {
+			logger.Debug("dispatcher cycle", fields...)
+		} else {
+			logger.Info("dispatcher cycle", fields...)
+		}
 		return nil
 	}
 
@@ -136,4 +149,16 @@ func main() {
 		case <-timer.C:
 		}
 	}
+}
+
+func dispatcherCycleIdle(summary queue.Summary, recovery ...int) bool {
+	if summary.Pending != 0 || summary.Sent != 0 || summary.Reconciled != 0 {
+		return false
+	}
+	for _, n := range recovery {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }

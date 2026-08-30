@@ -23,8 +23,12 @@ func Unauthorized(c *gin.Context, detail string) {
 func AbortErr(c *gin.Context, err error) {
 	var e apperr.Error
 	if errors.As(err, &e) {
+		if e.Status >= 500 {
+			_ = c.Error(err)
+		}
 		AbortDetail(c, e.Status, e.Detail)
 		return
 	}
+	_ = c.Error(err)
 	AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
 }
