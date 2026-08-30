@@ -16,6 +16,20 @@ func TestParseChangeSetForbidsExtraFields(t *testing.T) {
 	assertAppErr(t, err, 400, "请求体无效")
 }
 
+func TestParseChangeSetRejectsTrailingJSON(t *testing.T) {
+	_, err := ParseChangeSet([]byte(`{"base_graph_revision": 1, "summary": "移动", "operations": [{"op": "move_nodes", "nodes": [["n1", 1, 2]]}]} {}`))
+	assertAppErr(t, err, 400, "请求体无效")
+}
+
+func TestParseChangeSetRejectsInternalDocumentOrigin(t *testing.T) {
+	_, err := ParseChangeSet([]byte(`{
+		"base_graph_revision": 0,
+		"summary": "内部字段",
+		"operations": [{"op": "create_node", "client_ref": "brief", "node_type": "creative_brief", "title": "要求", "document_origin": "generated"}]
+	}`))
+	assertAppErr(t, err, 400, "请求体无效")
+}
+
 func TestParseChangeSetRoundTripMoveNodes(t *testing.T) {
 	raw := []byte(`{
 		"base_graph_revision": 2,
@@ -53,7 +67,7 @@ func TestGraphCommandOpNamesMatchUnmarshalCases(t *testing.T) {
 	want := []string{
 		"create_node", "update_node_config", "rename_node", "delete_node",
 		"connect_nodes", "disconnect_edge", "move_nodes", "create_group",
-		"move_nodes_to_group", "rename_group", "dissolve_group",
+		"move_nodes_to_group", "rename_group", "dissolve_group", "reorder_edges",
 	}
 	if len(GraphCommandOpNames) != len(want) {
 		t.Fatalf("%v", GraphCommandOpNames)

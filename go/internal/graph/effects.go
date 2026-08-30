@@ -57,7 +57,7 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
 		return err
 	}
-	if run.Status == RunStatusSucceeded || run.Status == RunStatusCancelled {
+	if isTerminalRun(run.Status) {
 		return nil
 	}
 	var node schema.WorkflowGraphNodeRuns
@@ -67,38 +67,52 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	if err != nil {
 		return err
 	}
-	if node.Status == NodeRunUnknown {
+	if node.Status != NodeRunRunning || node.ActiveAttemptID == nil || *node.ActiveAttemptID == "" {
 		return nil
 	}
-	if attemptID != nil && node.ActiveAttemptID != nil && *node.ActiveAttemptID != "" && *node.ActiveAttemptID != *attemptID {
+	if attemptID != nil && *attemptID != *node.ActiveAttemptID {
 		return nil
 	}
-	resolved := attemptID
-	if resolved == nil {
-		resolved = node.ActiveAttemptID
+	resolved := *node.ActiveAttemptID
+	effectRes := tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).
+		Where("node_run_id = ? AND attempt_id = ? AND effect_result NOT IN ?", nodeRunID, resolved, []string{"applied", "failed"}).
+		Updates(map[string]any{
+			"effect_result":        "unknown",
+			"reconciliation_state": "unknown",
+			"detail":               detail,
+			"updated_at":           now,
+		})
+	if err := effectRes.Error; err != nil {
+		return err
 	}
-	if resolved != nil && *resolved != "" {
-		_ = tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).
-			Where("node_run_id = ? AND attempt_id = ? AND effect_result NOT IN ?", nodeRunID, *resolved, []string{"applied", "failed"}).
-			Updates(map[string]any{
-				"effect_result":        "unknown",
-				"reconciliation_state": "unknown",
-				"detail":               detail,
-				"updated_at":           now,
-			}).Error
-	}
-	return tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRunID).Updates(map[string]any{
+	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ? AND active_attempt_id = ?", nodeRunID, NodeRunRunning, resolved).Updates(map[string]any{
 		"status":              "unknown",
 		"failure_reason":      detail,
 		"finished_at":         now,
 		"progress_phase":      "unknown_provider_effect",
 		"progress_updated_at": now,
 		"active_attempt_id":   nil,
-	}).Error
+	})
+	if err := res.Error; err != nil {
+		return err
+	}
+	if res.RowsAffected != 1 {
+		return nil
+	}
+	return appendGraphRunEvent(ctx, tx, runID, "node.failed", &nodeRunID, map[string]any{
+		"status": NodeRunUnknown, "node_id": node.NodeID, "reason": detail,
+	})
 }
 
-func advanceNodePhase(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, phase string) (bool, error) {
+func advanceNodePhase(ctx context.Context, tx *gorm.DB, runID, nodeRunID, attemptID, phase string) (bool, error) {
 	now := time.Now().UTC()
+	var run schema.WorkflowGraphRuns
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status").Where("id = ?", runID).Take(&run).Error; err != nil {
+		return false, err
+	}
+	if run.Status != RunStatusRunning {
+		return false, nil
+	}
 	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 		Where("id = ? AND active_attempt_id = ? AND status = ?", nodeRunID, attemptID, "running").
 		Updates(map[string]any{
@@ -108,7 +122,19 @@ func advanceNodePhase(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, ph
 	if res.Error != nil {
 		return false, res.Error
 	}
-	return res.RowsAffected == 1, nil
+	if res.RowsAffected != 1 {
+		return false, nil
+	}
+	var node schema.WorkflowGraphNodeRuns
+	if err := tx.WithContext(ctx).Select("graph_run_id", "node_id").Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
+		return false, err
+	}
+	if err := appendGraphRunEvent(ctx, tx, node.GraphRunID, "node.progress", &nodeRunID, map[string]any{
+		"status": NodeRunRunning, "node_id": node.NodeID, "phase": phase, "attempt_id": attemptID,
+	}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, requestHash, providerName string, requestJSON []byte) (bool, error) {

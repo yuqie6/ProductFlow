@@ -80,8 +80,9 @@ var (
 	errWaitingCapacity = errors.New("waiting_for_capacity")
 )
 
-func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bool, error) {
+func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bool, string, error) {
 	claimed := false
+	claimedAttemptID := ""
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		ok, err := generationCapacityAvailable(ctx, dbTx)
 		if err != nil {
@@ -90,6 +91,27 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		if !ok {
 			return errWaitingCapacity
 		}
+		var ref schema.WorkflowGraphNodeRuns
+		if err := dbTx.WithContext(ctx).Select("graph_run_id").Where("id = ?", nodeRunID).Take(&ref).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errNotClaimed
+			}
+			return err
+		}
+		// All node state transitions that append a run event use run -> node
+		// locking. Keep claiming in the same order so cancellation cannot form
+		// a run/node deadlock with the worker.
+		var run schema.WorkflowGraphRuns
+		if err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Select("id", "status").Where("id = ?", ref.GraphRunID).Take(&run).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errNotClaimed
+			}
+			return err
+		}
+		if run.Status != RunStatusRunning {
+			return errNotClaimed
+		}
 		now := time.Now().UTC()
 		attemptID := clockid.New()
 		res := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
@@ -97,6 +119,7 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 			Updates(map[string]any{
 				"status":              "running",
 				"active_attempt_id":   attemptID,
+				"attempt_count":       gorm.Expr("attempt_count + 1"),
 				"progress_phase":      "claimed",
 				"progress_updated_at": now,
 				"started_at":          now,
@@ -108,16 +131,31 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		if res.RowsAffected != 1 {
 			return errNotClaimed
 		}
+		var node schema.WorkflowGraphNodeRuns
+		if err := dbTx.WithContext(ctx).Select("graph_run_id", "node_id", "attempt_count").Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
+			return err
+		}
+		if err := appendGraphRunEvent(ctx, dbTx, node.GraphRunID, "node.claimed", &nodeRunID, map[string]any{
+			"status": NodeRunRunning, "node_id": node.NodeID, "attempt_id": attemptID, "attempt_count": node.AttemptCount,
+		}); err != nil {
+			return err
+		}
+		if err := appendGraphRunEvent(ctx, dbTx, node.GraphRunID, "node.started", &nodeRunID, map[string]any{
+			"status": NodeRunRunning, "node_id": node.NodeID, "attempt_id": attemptID, "attempt_count": node.AttemptCount,
+		}); err != nil {
+			return err
+		}
 		claimed = true
+		claimedAttemptID = attemptID
 		return nil
 	})
 	if errors.Is(err, errNotClaimed) {
-		return false, nil
+		return false, "", nil
 	}
 	if errors.Is(err, errWaitingCapacity) {
-		return false, errWaitingCapacity
+		return false, "", errWaitingCapacity
 	}
-	return claimed, err
+	return claimed, claimedAttemptID, err
 }
 
 func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]string, []string, error) {
@@ -140,7 +178,7 @@ func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]stri
 
 func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
 	var run schema.WorkflowGraphRuns
-	err := tx.WithContext(ctx).Select("status").Where("id = ?", runID).Take(&run).Error
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status").Where("id = ?", runID).Take(&run).Error
 	if err != nil || run.Status != RunStatusRunning {
 		return false, err
 	}
@@ -160,6 +198,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 	runStatus := RunStatusSucceeded
 	var failure *string
 	retryable := false
+	cancelledOnly := true
 	for i, st := range statuses {
 		if st == NodeRunUnknown {
 			runStatus = RunStatusUnknown
@@ -172,7 +211,11 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 			}
 			failure = &msg
 			retryable = false
+			cancelledOnly = false
 			break
+		}
+		if st != NodeRunCancelled {
+			cancelledOnly = false
 		}
 	}
 	if runStatus == RunStatusSucceeded {
@@ -192,15 +235,43 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 			}
 		}
 	}
-	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+	if runStatus == RunStatusSucceeded && cancelledOnly {
+		runStatus = RunStatusCancelled
+		msg := GraphCancelledReason
+		failure = &msg
+	}
+	result := tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
 		Where("id = ? AND status = ?", runID, "running").
 		Updates(map[string]any{
 			"status":         runStatus,
 			"failure_reason": failure,
 			"is_retryable":   retryable,
 			"finished_at":    now,
-		}).Error
-	return err == nil, err
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return false, nil
+	}
+	runEventKind := "run.completed"
+	switch runStatus {
+	case RunStatusFailed:
+		runEventKind = "run.failed"
+	case RunStatusCancelled:
+		runEventKind = "run.cancelled"
+	case RunStatusUnknown:
+		runEventKind = "run.unknown"
+	}
+	if err := appendGraphRunEvent(ctx, tx, runID, runEventKind, nil, map[string]any{
+		"status": runStatus, "failure_reason": failure,
+	}); err != nil {
+		return false, err
+	}
+	if err := promoteNextQueuedRun(ctx, tx, run.GraphID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) error {
@@ -208,25 +279,56 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 	if len(reason) > 1000 {
 		reason = reason[:1000]
 	}
-	if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
-		Where("graph_run_id = ? AND status IN ?", runID, []string{"queued", "running"}).
-		Updates(map[string]any{
-			"status":              "failed",
-			"failure_reason":      reason,
-			"finished_at":         now,
-			"active_attempt_id":   nil,
-			"progress_updated_at": now,
-		}).Error; err != nil {
+	var nodeRuns []schema.WorkflowGraphNodeRuns
+	if err := tx.WithContext(ctx).Select("id", "node_id").Where("graph_run_id = ? AND status IN ?", runID, []string{"queued", "running"}).Find(&nodeRuns).Error; err != nil {
 		return err
 	}
-	return tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+	for _, node := range nodeRuns {
+		result := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+			Where("id = ? AND status IN ?", node.ID, []string{"queued", "running"}).
+			Updates(map[string]any{
+				"status":              "failed",
+				"failure_reason":      reason,
+				"finished_at":         now,
+				"active_attempt_id":   nil,
+				"progress_updated_at": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			continue
+		}
+		if err := appendGraphRunEvent(ctx, tx, runID, "node.failed", &node.ID, map[string]any{
+			"status": NodeRunFailed, "node_id": node.NodeID, "reason": reason,
+		}); err != nil {
+			return err
+		}
+	}
+	result := tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
 		Where("id = ? AND status = ?", runID, "running").
 		Updates(map[string]any{
 			"status":         "failed",
 			"failure_reason": reason,
 			"finished_at":    now,
 			"is_retryable":   true,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return nil
+	}
+	if err := appendGraphRunEvent(ctx, tx, runID, "run.failed", nil, map[string]any{
+		"status": RunStatusFailed, "reason": reason,
+	}); err != nil {
+		return err
+	}
+	var rec schema.WorkflowGraphRuns
+	if err := tx.WithContext(ctx).Select("graph_id").Where("id = ?", runID).Take(&rec).Error; err != nil {
+		return err
+	}
+	return promoteNextQueuedRun(ctx, tx, rec.GraphID)
 }
 
 func nodePastProviderBoundary(phase *string) bool {
@@ -236,7 +338,7 @@ func nodePastProviderBoundary(phase *string) bool {
 	return *phase == "provider_call" || *phase == "provider_result_received"
 }
 
-func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason string) error {
+func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expectedAttemptID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		var run schema.WorkflowGraphRuns
 		err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error
@@ -257,7 +359,11 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 		if err != nil {
 			return err
 		}
-		if node.Status == NodeRunFailed || node.Status == NodeRunUnknown || node.Status == NodeRunSucceeded {
+		if node.Status == NodeRunFailed || node.Status == NodeRunUnknown || node.Status == NodeRunSucceeded || node.Status == NodeRunSkipped || node.Status == NodeRunCancelled {
+			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			return err
+		}
+		if expectedAttemptID == "" || node.ActiveAttemptID == nil || *node.ActiveAttemptID != expectedAttemptID {
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
@@ -266,7 +372,8 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 			if detail == "" {
 				detail = ProviderUnknownDetail
 			}
-			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, node.ActiveAttemptID, detail); err != nil {
+			attemptID := expectedAttemptID
+			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, &attemptID, detail); err != nil {
 				return err
 			}
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
@@ -280,13 +387,23 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 		if len(reason) > 1000 {
 			reason = reason[:1000]
 		}
-		if err := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRunID).Updates(map[string]any{
+		result := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{"queued", "running"}, expectedAttemptID).Updates(map[string]any{
 			"status":              "failed",
 			"failure_reason":      reason,
 			"finished_at":         now,
 			"active_attempt_id":   nil,
 			"progress_updated_at": now,
-		}).Error; err != nil {
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			return err
+		}
+		if err := appendGraphRunEvent(ctx, dbTx, runID, "node.failed", &nodeRunID, map[string]any{
+			"status": NodeRunFailed, "node_id": node.NodeID, "reason": reason,
+		}); err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)

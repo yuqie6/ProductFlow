@@ -281,6 +281,7 @@ func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, appli
 			ConfigJSON:        string(configJSON),
 			BoundImageAssetID: node.BoundAssetID,
 			GroupID:           node.GroupID,
+			DocumentOrigin:    documentOriginPtr(node),
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		}).Error

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/product"
@@ -96,6 +97,15 @@ func TestSubmitRunStagesPendingDispatch(t *testing.T) {
 	if cancelledRun.FailureReason == nil || *cancelledRun.FailureReason != "已取消" {
 		t.Fatalf("reason %+v", cancelledRun.FailureReason)
 	}
+	for _, node := range cancelledRun.NodeRuns {
+		if node.Status != "cancelled" {
+			id := ""
+			if node.NodeID != nil {
+				id = *node.NodeID
+			}
+			t.Fatalf("cancelled node %s %s", id, node.Status)
+		}
+	}
 
 	conflict := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID+"/cancel", nil, "")
 	gs.mustStatus(t, conflict, http.StatusOK)
@@ -109,6 +119,8 @@ func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {
 	productID, graphID := gs.createDirectGraph(t)
 	extra := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph", "foo": 1})
 	gs.mustStatus(t, extra, http.StatusBadRequest)
+	trailing := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", strings.NewReader(`{"scope":"graph"} {}`), "application/json")
+	gs.mustStatus(t, trailing, http.StatusBadRequest)
 	empty := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", strings.NewReader(""), "application/json")
 	gs.mustStatus(t, empty, http.StatusBadRequest)
 	empty.Body.Close()
@@ -244,6 +256,192 @@ func TestSubmitNodeRunExecutesUnboundReferenceAsFailed(t *testing.T) {
 	}
 	if !found && (run.FailureReason == nil || !strings.Contains(*run.FailureReason, "参考输入缺少已绑定的图片资产")) {
 		t.Fatalf("reason %+v nodes %+v", run.FailureReason, run.NodeRuns)
+	}
+}
+
+func TestSubmitGraphRunRejectsForce(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "graph", "force": true, "regenerate_mode": "replace",
+	})
+	gs.mustStatus(t, resp, http.StatusBadRequest)
+	var body struct {
+		Detail string `json:"detail"`
+	}
+	gs.decode(t, resp, &body)
+	if body.Detail != "全图运行不能携带 force" {
+		t.Fatalf("detail %s", body.Detail)
+	}
+}
+
+func TestPreviewGraphRunReturnsPlannedActions(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/preview", map[string]any{
+		"scope": "graph",
+	})
+	gs.mustStatus(t, resp, http.StatusOK)
+	var preview graph.GraphRunPreviewResponse
+	gs.decode(t, resp, &preview)
+	if preview.Scope != "graph" || len(preview.Nodes) == 0 {
+		t.Fatalf("preview %+v", preview)
+	}
+	for _, node := range preview.Nodes {
+		switch node.Action {
+		case graph.PlannedGenerate, graph.PlannedReuse, graph.PlannedFrozen, graph.PlannedBlocked:
+		default:
+			t.Fatalf("action %s", node.Action)
+		}
+	}
+}
+
+func TestPreviewGraphRunRejectsUnknownTarget(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/preview", map[string]any{
+		"scope":   "node",
+		"node_id": "missing-node",
+	})
+	gs.mustStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestSubmitRunQueuesWhenAnotherRunIsActive(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	first := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, first, http.StatusCreated)
+	var running graph.GraphRunResponse
+	gs.decode(t, first, &running)
+	if running.Status != "running" {
+		t.Fatalf("first %s", running.Status)
+	}
+	current := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, current, http.StatusOK)
+	var graphView graph.Projection
+	gs.decode(t, current, &graphView)
+	var imageID string
+	for _, node := range graphView.Nodes {
+		if node.NodeType == graph.NodeImageGeneration {
+			imageID = node.ID
+			break
+		}
+	}
+	if imageID == "" {
+		t.Fatal("missing image_generation")
+	}
+	second := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": imageID,
+	})
+	gs.mustStatus(t, second, http.StatusCreated)
+	var queued graph.GraphRunResponse
+	gs.decode(t, second, &queued)
+	if queued.ID == running.ID {
+		t.Fatal("queued run must be a new row")
+	}
+	if queued.Status != "queued" {
+		t.Fatalf("queued status %s", queued.Status)
+	}
+	if len(queued.NodeRuns) != 0 {
+		t.Fatalf("queued snapshot must wait until dequeue: %+v", queued.NodeRuns)
+	}
+	dup := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": imageID,
+	})
+	gs.mustStatus(t, dup, http.StatusCreated)
+	var again graph.GraphRunResponse
+	gs.decode(t, dup, &again)
+	if again.ID != queued.ID {
+		t.Fatalf("duplicate queued %s vs %s", again.ID, queued.ID)
+	}
+	cancelled := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+running.ID+"/cancel", nil, "")
+	gs.mustStatus(t, cancelled, http.StatusOK)
+	promoted := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+queued.ID, nil, "")
+	gs.mustStatus(t, promoted, http.StatusOK)
+	gs.decode(t, promoted, &queued)
+	if queued.Status != "running" {
+		t.Fatalf("promoted %s", queued.Status)
+	}
+	if len(queued.NodeRuns) == 0 {
+		t.Fatal("dequeue must snapshot node runs")
+	}
+}
+
+func TestRecoverPromotesQueuedRunWhenActiveRunIsAlreadyTerminal(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	first := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, first, http.StatusCreated)
+	var running graph.GraphRunResponse
+	gs.decode(t, first, &running)
+	second := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": running.NodeRuns[0].NodeID,
+	})
+	gs.mustStatus(t, second, http.StatusCreated)
+	var queued graph.GraphRunResponse
+	gs.decode(t, second, &queued)
+	if queued.Status != "queued" {
+		t.Fatalf("queued status %s", queued.Status)
+	}
+
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_node_runs
+		SET status = 'succeeded', finished_at = NOW(), active_attempt_id = NULL,
+		    progress_updated_at = NOW()
+		WHERE graph_run_id = $1
+	`, running.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs
+		SET status = 'succeeded', finished_at = NOW()
+		WHERE id = $1
+	`, running.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := graph.RecoverUnfinishedGraphRuns(context.Background(), gs.pool, time.Hour, product.GraphGuard{}); err != nil {
+		t.Fatal(err)
+	}
+
+	promoted := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+queued.ID, nil, "")
+	gs.mustStatus(t, promoted, http.StatusOK)
+	gs.decode(t, promoted, &queued)
+	if queued.Status != "running" {
+		t.Fatalf("recovery status %s", queued.Status)
+	}
+	if len(queued.NodeRuns) != 1 {
+		t.Fatalf("recovery node_runs %+v", queued.NodeRuns)
+	}
+}
+
+func TestSubmitSelectionRunQueuesExplicitNodes(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	current := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, current, http.StatusOK)
+	var graphView graph.Projection
+	gs.decode(t, current, &graphView)
+	var imageID string
+	for _, node := range graphView.Nodes {
+		if node.NodeType == graph.NodeImageGeneration {
+			imageID = node.ID
+			break
+		}
+	}
+	if imageID == "" {
+		t.Fatal("missing image_generation")
+	}
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "selection", "node_ids": []string{imageID},
+	})
+	gs.mustStatus(t, resp, http.StatusCreated)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if run.Scope != "selection" {
+		t.Fatalf("scope %s", run.Scope)
+	}
+	if len(run.NodeRuns) != 1 || run.NodeRuns[0].NodeID == nil || *run.NodeRuns[0].NodeID != imageID {
+		t.Fatalf("node_runs %+v", run.NodeRuns)
 	}
 }
 

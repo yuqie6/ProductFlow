@@ -125,14 +125,15 @@ func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row graphRow) (AppliedGr
 			}
 		}
 		nodes = append(nodes, AppliedNode{
-			ID:           rec.ID,
-			NodeType:     NodeType(rec.NodeType),
-			Title:        rec.Title,
-			PositionX:    rec.PositionX,
-			PositionY:    rec.PositionY,
-			Config:       config,
-			BoundAssetID: rec.BoundImageAssetID,
-			GroupID:      rec.GroupID,
+			ID:             rec.ID,
+			NodeType:       NodeType(rec.NodeType),
+			Title:          rec.Title,
+			PositionX:      rec.PositionX,
+			PositionY:      rec.PositionY,
+			Config:         config,
+			BoundAssetID:   rec.BoundImageAssetID,
+			GroupID:        rec.GroupID,
+			DocumentOrigin: loadDocumentOrigin(NodeType(rec.NodeType), rec.DocumentOrigin),
 		})
 	}
 
@@ -230,6 +231,7 @@ func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, appl
 				"config_json":          configStr,
 				"bound_image_asset_id": node.BoundAssetID,
 				"group_id":             node.GroupID,
+				"document_origin":      documentOriginPtr(node),
 				"updated_at":           now,
 			}),
 		}).Create(&schema.WorkflowGraphNodes{
@@ -242,6 +244,7 @@ func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, appl
 			ConfigJSON:        configStr,
 			BoundImageAssetID: node.BoundAssetID,
 			GroupID:           node.GroupID,
+			DocumentOrigin:    documentOriginPtr(node),
 			CreatedAt:         now,
 			UpdatedAt:         now,
 		}).Error

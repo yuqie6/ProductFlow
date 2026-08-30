@@ -114,6 +114,9 @@ func NodeConfigStatus(node RuleNode, incoming []RuleEdge) ConfigStatus {
 	if node.NodeType == NodeVisualSystem && !hasVisualSystemConfig(node.Config) {
 		return ConfigIncomplete
 	}
+	if requiredConfigIncomplete(node.NodeType, node.Config) {
+		return ConfigIncomplete
+	}
 	if len(missingRequiredInputs(node, incoming)) > 0 {
 		return ConfigIncomplete
 	}
@@ -161,14 +164,7 @@ func hasVisualSystemConfig(config map[string]any) bool {
 	if overlay, ok := asMap(payload["visual_overlay"]); ok && len(overlay) > 0 {
 		return true
 	}
-	switch overrides := payload["visual_overrides"].(type) {
-	case []any:
-		return len(overrides) > 0
-	case []map[string]any:
-		return len(overrides) > 0
-	default:
-		return false
-	}
+	return false
 }
 
 func sortedKeys[V any](m map[string]V) []string {

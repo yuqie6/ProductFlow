@@ -79,6 +79,7 @@ func main() {
 		},
 		Log:            logger,
 		AfterRunStatus: agent.SyncGraphRunToTasks,
+		Products:       product.GraphGuard{},
 	}
 	imageExecutor := imagesession.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
 	deliveryExecutor := delivery.Executor{DB: gdb, Media: mediaStore}

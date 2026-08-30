@@ -16,6 +16,8 @@ var forbiddenConfigKeys = map[string]struct{}{
 	"image_plan_key":   {},
 	"prompt_plan_keys": {},
 	"image_plan_keys":  {},
+	"document_origin":  {},
+	"visual_overrides": {},
 }
 
 var imageAssetRoleOrder = []string{"product_identity", "environment", "style", "evidence"}
@@ -87,6 +89,7 @@ type configField struct {
 	valueKind      string
 	control        string
 	required       bool
+	affectsDigest  bool
 	labelKey       string
 	hintKey        string
 	toggleLabelKey string
@@ -102,12 +105,16 @@ type configField struct {
 
 func i(v int) *int { return &v }
 
-func hid(key, kind string) configField {
-	return configField{key: key, valueKind: kind, control: "hidden"}
+func hid(key, kind string, opts ...func(*configField)) configField {
+	item := configField{key: key, valueKind: kind, control: "hidden", affectsDigest: false}
+	for _, opt := range opts {
+		opt(&item)
+	}
+	return item
 }
 
 func fld(key, kind, control string, opts ...func(*configField)) configField {
-	item := configField{key: key, valueKind: kind, control: control}
+	item := configField{key: key, valueKind: kind, control: control, affectsDigest: control != "hidden"}
 	if control == "" {
 		switch kind {
 		case "boolean":
@@ -123,6 +130,7 @@ func fld(key, kind, control string, opts ...func(*configField)) configField {
 		default:
 			item.control = "text"
 		}
+		item.affectsDigest = true
 	}
 	for _, opt := range opts {
 		opt(&item)
@@ -175,6 +183,18 @@ func withVisible(field string, values ...string) func(*configField) {
 	}
 }
 
+func withDigest() func(*configField) {
+	return func(f *configField) { f.affectsDigest = true }
+}
+
+func withNoDigest() func(*configField) {
+	return func(f *configField) { f.affectsDigest = false }
+}
+
+func withRequired() func(*configField) {
+	return func(f *configField) { f.required = true }
+}
+
 var outputType = map[NodeType]EdgeDataType{
 	NodeProductSource:    DataProductFacts,
 	NodeImageAsset:       DataImageAsset,
@@ -193,7 +213,7 @@ var acceptance = map[[2]string]inputContract{
 	{string(DataImageAsset), string(NodeVisualSystem)}:        {DataImageAsset, RoleReference, nil, false},
 	{string(DataProductFacts), string(NodePromptGeneration)}:  {DataProductFacts, RoleFacts, nil, false},
 	{string(DataImageAsset), string(NodePromptGeneration)}:    {DataImageAsset, RoleReference, nil, false},
-	{string(DataCreativeBrief), string(NodePromptGeneration)}: {DataCreativeBrief, RoleBrief, nil, false},
+	{string(DataCreativeBrief), string(NodePromptGeneration)}: {DataCreativeBrief, RoleBrief, one(1), false},
 	{string(DataVisualSystem), string(NodePromptGeneration)}:  {DataVisualSystem, RoleVisualGuidance, one(1), false},
 	{string(DataImageAsset), string(NodeImageGeneration)}:     {DataImageAsset, RoleReference, nil, false},
 	{string(DataVisualSystem), string(NodeImageGeneration)}:   {DataVisualSystem, RoleVisualGuidance, one(1), false},
@@ -278,7 +298,7 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	case NodeProductSource:
 		return []configField{
 			hid("source_product_id", "string_or_null"),
-			hid("fact_set_version_id", "string_or_null"),
+			hid("fact_set_version_id", "string_or_null", withDigest()),
 		}, true
 	case NodeImageAsset:
 		return []configField{
@@ -296,26 +316,100 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	case NodeVisualSystem:
 		return []configField{
 			hid("visual_system_version_id", "string_or_null"),
-			fld("visual_overlay", "object_or_null", "group", withHint("graph.inspector.visualVersionHint"), withFields(visualOverlayFields()...)),
-			hid("visual_overrides", "object"),
+			fld("visual_overlay", "object_or_null", "group", withHint("graph.inspector.visualVersionHint"), withNoDigest(), withFields(visualOverlayFields()...)),
 		}, true
 	case NodePromptGeneration:
 		return []configField{
-			hid("image_type_key", "string"),
-			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withFields(promptFields()...)),
+			hid("image_type_key", "string", withDigest()),
+			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withNoDigest(), withFields(promptFields()...)),
 		}, true
 	case NodeImageGeneration:
 		return []configField{
-			hid("image_type_key", "string"),
+			hid("image_type_key", "string", withDigest()),
 			fld("variation_instruction", "string_or_null", "textarea", withLabel("workflowConfirmation.variation"), withMaxLen(4000)),
-			fld("generation_spec", "object", "group", withLabel("agentWorkbench.nodeEditor.generationSettings"), withDefault(cloneMap(defaultGenerationSpec)), withFields(generationSpecFields()...)),
-			fld("delivery_spec", "object_or_null", "optional_object", withLabel("workflowConfirmation.deliverySpec"), withToggle("agentWorkbench.nodeEditor.deliveryEnabled"), withPanel("advanced"), withDefault(cloneMap(defaultDeliverySpec)), withFields(deliverySpecFields()...)),
+			fld("generation_spec", "object", "group", withLabel("agentWorkbench.nodeEditor.generationSettings"), withRequired(), withDefault(cloneMap(defaultGenerationSpec)), withFields(generationSpecFields()...)),
+			fld("delivery_spec", "object_or_null", "optional_object", withLabel("workflowConfirmation.deliverySpec"), withToggle("agentWorkbench.nodeEditor.deliveryEnabled"), withPanel("advanced"), withNoDigest(), withDefault(cloneMap(defaultDeliverySpec)), withFields(deliverySpecFields()...)),
 			fld("visual_overlay", "object_or_null", "group", withFields(visualOverlayFields()...)),
-			hid("visual_overrides", "object"),
 		}, true
 	default:
 		return nil, false
 	}
+}
+
+func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]any {
+	out := cloneMap(config)
+	if out == nil {
+		out = map[string]any{}
+	}
+	fields, ok := nodeConfigFields(nodeType)
+	if !ok {
+		return out
+	}
+	applyConfigDefaults(fields, out)
+	return out
+}
+
+func applyConfigDefaults(fields []configField, payload map[string]any) {
+	for _, field := range fields {
+		if field.defaultValue == nil {
+			continue
+		}
+		if _, exists := payload[field.key]; exists {
+			continue
+		}
+		payload[field.key] = cloneValue(field.defaultValue)
+	}
+}
+
+func catalogDigestKeys(nodeType NodeType) map[string]struct{} {
+	fields, ok := nodeConfigFields(nodeType)
+	if !ok {
+		return nil
+	}
+	out := map[string]struct{}{}
+	collectDigestKeys(fields, out)
+	return out
+}
+
+func collectDigestKeys(fields []configField, out map[string]struct{}) {
+	for _, field := range fields {
+		if field.affectsDigest {
+			out[field.key] = struct{}{}
+		}
+	}
+}
+
+func requiredConfigIncomplete(nodeType NodeType, config map[string]any) bool {
+	fields, ok := nodeConfigFields(nodeType)
+	if !ok {
+		return false
+	}
+	return requiredFieldsMissing(fields, config)
+}
+
+func requiredFieldsMissing(fields []configField, payload map[string]any) bool {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	for _, field := range fields {
+		if field.required && documentFieldEmpty(payload[field.key]) {
+			return true
+		}
+		if len(field.fields) == 0 {
+			continue
+		}
+		child, ok := asMap(payload[field.key])
+		if !ok {
+			if field.required {
+				return true
+			}
+			continue
+		}
+		if requiredFieldsMissing(field.fields, child) {
+			return true
+		}
+	}
+	return false
 }
 
 func IsProcessingNode(nodeType NodeType) bool {

@@ -21,37 +21,41 @@ func marshalOperation(op Operation) ([]byte, error) {
 	switch t := op.(type) {
 	case CreateNodeOp:
 		return json.Marshal(struct {
-			Op           string         `json:"op"`
-			ClientRef    string         `json:"client_ref"`
-			NodeType     NodeType       `json:"node_type"`
-			Title        string         `json:"title"`
-			PositionX    int            `json:"position_x"`
-			PositionY    int            `json:"position_y"`
-			Config       map[string]any `json:"config"`
-			BoundAssetID *string        `json:"bound_asset_id"`
-			GroupRef     *string        `json:"group_ref"`
+			Op             string         `json:"op"`
+			ClientRef      string         `json:"client_ref"`
+			NodeType       NodeType       `json:"node_type"`
+			Title          string         `json:"title"`
+			PositionX      int            `json:"position_x"`
+			PositionY      int            `json:"position_y"`
+			Config         map[string]any `json:"config"`
+			BoundAssetID   *string        `json:"bound_asset_id"`
+			GroupRef       *string        `json:"group_ref"`
+			DocumentOrigin *string        `json:"document_origin,omitempty"`
 		}{
-			Op:           "create_node",
-			ClientRef:    t.ClientRef,
-			NodeType:     t.NodeType,
-			Title:        t.Title,
-			PositionX:    t.PositionX,
-			PositionY:    t.PositionY,
-			Config:       nonemptyMap(t.Config),
-			BoundAssetID: t.BoundAssetID,
-			GroupRef:     t.GroupRef,
+			Op:             "create_node",
+			ClientRef:      t.ClientRef,
+			NodeType:       t.NodeType,
+			Title:          t.Title,
+			PositionX:      t.PositionX,
+			PositionY:      t.PositionY,
+			Config:         nonemptyMap(t.Config),
+			BoundAssetID:   t.BoundAssetID,
+			GroupRef:       t.GroupRef,
+			DocumentOrigin: t.DocumentOrigin,
 		})
 	case UpdateNodeConfigOp:
 		return json.Marshal(struct {
-			Op           string         `json:"op"`
-			NodeRef      string         `json:"node_ref"`
-			Config       map[string]any `json:"config"`
-			BoundAssetID *string        `json:"bound_asset_id"`
+			Op             string         `json:"op"`
+			NodeRef        string         `json:"node_ref"`
+			Config         map[string]any `json:"config"`
+			BoundAssetID   *string        `json:"bound_asset_id"`
+			DocumentOrigin *string        `json:"document_origin,omitempty"`
 		}{
-			Op:           "update_node_config",
-			NodeRef:      t.NodeRef,
-			Config:       nonemptyMap(t.Config),
-			BoundAssetID: t.BoundAssetID,
+			Op:             "update_node_config",
+			NodeRef:        t.NodeRef,
+			Config:         nonemptyMap(t.Config),
+			BoundAssetID:   t.BoundAssetID,
+			DocumentOrigin: t.DocumentOrigin,
 		})
 	case RenameNodeOp:
 		return json.Marshal(struct {
@@ -120,6 +124,17 @@ func marshalOperation(op Operation) ([]byte, error) {
 			Op       string `json:"op"`
 			GroupRef string `json:"group_ref"`
 		}{Op: "dissolve_group", GroupRef: t.GroupRef})
+	case ReorderEdgesOp:
+		refs := t.EdgeRefs
+		if refs == nil {
+			refs = []string{}
+		}
+		return json.Marshal(struct {
+			Op       string   `json:"op"`
+			NodeRef  string   `json:"node_ref"`
+			Role     EdgeRole `json:"role"`
+			EdgeRefs []string `json:"edge_refs"`
+		}{Op: "reorder_edges", NodeRef: t.NodeRef, Role: t.Role, EdgeRefs: refs})
 	default:
 		return json.Marshal(map[string]any{"op": "unknown"})
 	}

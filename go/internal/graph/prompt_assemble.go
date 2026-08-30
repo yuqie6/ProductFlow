@@ -9,10 +9,6 @@ import (
 	"github.com/yuqie6/productflow/prompts"
 )
 
-var authoredPromptKeys = []string{
-	"composition", "content", "atmosphere", "text", "product_fidelity", "creative_boundary",
-}
-
 var overlayColorRolePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 var overlayColorSlugClean = regexp.MustCompile(`[^a-z0-9_-]+`)
 
@@ -25,6 +21,7 @@ func AssemblePromptRequest(
 	visual map[string]any,
 	refs []ReferenceImage,
 	digest string,
+	graph AppliedGraph,
 ) (PromptRequest, error) {
 	req := PromptRequest{
 		NodeType:    node.NodeType,
@@ -36,6 +33,7 @@ func AssemblePromptRequest(
 		Config:      cloneMap(node.Config),
 		References:  refs,
 		TextPolicy:  "none",
+		ImageTypes:  collectGraphImageTypes(graph),
 	}
 	if len(briefs) > 0 {
 		req.Brief = cloneMap(briefs[0])
@@ -43,12 +41,10 @@ func AssemblePromptRequest(
 	switch node.NodeType {
 	case NodeCreativeBrief:
 		req.Brief = filteredBriefConfig(node.Config)
-		req.ImageTypes = []map[string]any{}
 	case NodeVisualSystem:
 		if overlay := CatalogVisualOverlay(asMapOrNil(node.Config["visual_overlay"])); overlay != nil {
 			req.Visual = overlay
 		}
-		req.ImageTypes = []map[string]any{}
 	case NodePromptGeneration:
 		key, _ := node.Config["image_type_key"].(string)
 		key = strings.TrimSpace(key)
@@ -62,8 +58,9 @@ func AssemblePromptRequest(
 		}
 		req.ImageTypeFamily = imageTypeFamily(key)
 		req.ImageTypeJob = imageTypeJob(key)
+		req.TextPolicy, req.TextLanguage = downstreamTextPolicy(graph, node.ID)
 		promptConfig := asMapOrNil(node.Config["prompt"])
-		req.GenerateFromContext = promptConfigIsGenerationSeed(promptConfig)
+		req.GenerateFromContext = DocumentOrigin(node) == OriginSeed
 		seed, err := seedPromptFromRuntime(node.Title, key, facts, briefs, promptConfig, req.GenerateFromContext, req.TextPolicy)
 		if err != nil {
 			return PromptRequest{}, err
@@ -108,44 +105,13 @@ func filteredBriefConfig(config map[string]any) map[string]any {
 	return out
 }
 
-func promptConfigIsGenerationSeed(promptConfig map[string]any) bool {
-	if len(promptConfig) == 0 {
-		return true
+func identityDefaultFidelity() map[string]any {
+	return map[string]any{
+		"complex_structure":  true,
+		"product_present":    true,
+		"picture_in_picture": "none",
+		"requirements":       []any{"锁住参考图中的商品外形和材质", "构图和排版按图种重做"},
 	}
-	for _, key := range authoredPromptKeys {
-		value := promptConfig[key]
-		switch key {
-		case "text":
-			if m, ok := asMap(value); ok {
-				if mapHasNonEmptyString(m) {
-					return false
-				}
-			}
-			continue
-		case "creative_boundary":
-			if listHasNonEmptyString(value) {
-				return false
-			}
-			continue
-		}
-		if value == nil {
-			continue
-		}
-		if s, ok := value.(string); ok && strings.TrimSpace(s) == "" {
-			continue
-		}
-		if m, ok := asMap(value); ok && len(m) == 0 {
-			continue
-		}
-		if list, ok := value.([]any); ok && len(list) == 0 {
-			continue
-		}
-		if list, ok := value.([]string); ok && len(list) == 0 {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func seedPromptFromRuntime(
@@ -246,12 +212,7 @@ func seedPromptFromRuntime(
 	}
 	fidelity := asMapOrNil(stored["product_fidelity"])
 	if len(fidelity) == 0 {
-		fidelity = map[string]any{
-			"complex_structure":  true,
-			"product_present":    true,
-			"picture_in_picture": "none",
-			"requirements":       []any{"锁住参考图中的商品外形和材质", "构图和排版按图种重做"},
-		}
+		fidelity = identityDefaultFidelity()
 	}
 	return map[string]any{
 		"schema_version":     1,

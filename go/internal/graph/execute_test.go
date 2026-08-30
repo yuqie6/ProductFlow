@@ -43,6 +43,9 @@ func TestExecuteGraphRunWithMockProvidersSucceeds(t *testing.T) {
 		if node.Status != "succeeded" {
 			t.Fatalf("node %s %s", node.ID, node.Status)
 		}
+		if node.AttemptCount != 1 {
+			t.Fatalf("node %s attempt_count %d", node.ID, node.AttemptCount)
+		}
 	}
 }
 
@@ -165,6 +168,90 @@ func TestExecuteGraphRunMarksUnknownWhenProviderRejectsAfterCall(t *testing.T) {
 	}
 	if finished.IsRetryable {
 		t.Fatal("unknown must not be retryable")
+	}
+}
+
+type terminalRunPrompt struct {
+	graph.MockPromptProvider
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *terminalRunPrompt) waitForRelease(ctx context.Context) error {
+	p.once.Do(func() { close(p.entered) })
+	select {
+	case <-p.release:
+		return errors.New("provider failed after run became terminal")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *terminalRunPrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	return graph.PromptResult{}, p.waitForRelease(ctx)
+}
+
+func (p *terminalRunPrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	return graph.PromptResult{}, p.waitForRelease(ctx)
+}
+
+func (p *terminalRunPrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	return graph.PromptResult{}, p.waitForRelease(ctx)
+}
+
+func TestProviderErrorDoesNotOverwriteTerminalRunOrNode(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+
+	prompt := &terminalRunPrompt{entered: make(chan struct{}), release: make(chan struct{})}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: prompt,
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- executor.ExecuteRun(context.Background(), run.ID) }()
+	select {
+	case <-prompt.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider was not called")
+	}
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs
+		SET status = 'failed', failure_reason = '测试终止'
+		WHERE id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(prompt.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("terminal run should be consumed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("executor did not finish")
+	}
+
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var finished graph.GraphRunResponse
+	gs.decode(t, got, &finished)
+	if finished.Status != "failed" {
+		t.Fatalf("status %s", finished.Status)
+	}
+	for _, nodeRun := range finished.NodeRuns {
+		if nodeRun.Status == "unknown" {
+			t.Fatalf("terminal run node was overwritten by late provider error: %+v", nodeRun)
+		}
 	}
 }
 

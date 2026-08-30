@@ -29,8 +29,8 @@ import (
 
 var pathParamPattern = regexp.MustCompile(`\{[^}]+\}|:[^/]+`)
 
-// FastAPI docs UI is not a business route. Go keeps /healthz and adds /healthz/ready.
-var pythonDocsOnly = map[string]bool{
+// Historical sealed snapshot includes FastAPI docs UI. Go keeps /healthz and adds /healthz/ready.
+var sealedDocsOnly = map[string]bool{
 	"GET /docs":                 true,
 	"GET /docs/oauth2-redirect": true,
 	"GET /openapi.json":         true,
@@ -93,7 +93,7 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 
 	var missing []string
 	for key := range sealedKeys {
-		if pythonDocsOnly[key] {
+		if sealedDocsOnly[key] {
 			continue
 		}
 		if !goKeys[key] {

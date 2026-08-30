@@ -20,14 +20,16 @@ var promptEmptyKeys = map[string]struct{}{
 	"schema_version": {}, "visual_variant_key": {},
 }
 
-var digestSelfOutputKeys = map[NodeType]map[string]struct{}{
-	NodeVisualSystem:     {"visual_overlay": {}},
-	NodeCreativeBrief:    {"goal": {}, "design_goals": {}, "required_copy": {}, "prohibitions": {}},
-	NodePromptGeneration: {"prompt": {}},
-}
-
-var digestIgnoredKeys = map[NodeType]map[string]struct{}{
-	NodeImageGeneration: {"delivery_spec": {}},
+func requestConfigForDigest(nodeType NodeType, config map[string]any) map[string]any {
+	allowed := catalogDigestKeys(nodeType)
+	out := map[string]any{}
+	for key, value := range config {
+		if _, ok := allowed[key]; !ok {
+			continue
+		}
+		out[key] = cloneValue(value)
+	}
+	return out
 }
 
 type SourceRecord struct {
@@ -44,6 +46,7 @@ type SourceRecord struct {
 	CurrentArtifactPayload map[string]any
 	CurrentOutputAssetID   *string
 	CurrentInputDigest     *string
+	PromptDocument         map[string]any
 }
 
 type compiledReference struct {
@@ -73,6 +76,27 @@ func incomingSorted(graph AppliedGraph, nodeID string) []AppliedEdge {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+// incomingFactSetVersions keeps the selected product fact-set identity in the
+// downstream signature even when two versions currently contain equal facts.
+func incomingFactSetVersions(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) []map[string]any {
+	entries := make([]map[string]any, 0)
+	for _, edge := range incomingSorted(graph, nodeID) {
+		if edge.Role != RoleFacts {
+			continue
+		}
+		entry := map[string]any{
+			"edge_id":             edge.ID,
+			"source_node_id":      edge.SourceNodeID,
+			"fact_set_version_id": nil,
+		}
+		if record := sources[edge.SourceNodeID]; record.ProductSource != nil && record.ProductSource.FactSetVersionID != nil {
+			entry["fact_set_version_id"] = *record.ProductSource.FactSetVersionID
+		}
+		entries = append(entries, entry)
+	}
+	return entries
 }
 
 func compileInputDigest(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (string, error) {
@@ -153,6 +177,7 @@ func compilePromptRuntime(graph AppliedGraph, nodeID string, sources map[string]
 		"node_id":                  nodeID,
 		"config":                   requestConfigForDigest(node.NodeType, node.Config),
 		"facts":                    factsOrEmpty(facts),
+		"fact_set_versions":        incomingFactSetVersions(graph, nodeID, sources),
 		"briefs":                   briefsOrEmpty(briefs),
 		"references":               refIDs,
 		"visual_system":            visualPayload,
@@ -202,6 +227,7 @@ func compileContextRuntime(graph AppliedGraph, nodeID string, sources map[string
 		"node_type":         node.NodeType,
 		"config":            requestConfigForDigest(node.NodeType, node.Config),
 		"facts":             factsOrEmpty(facts),
+		"fact_set_versions": incomingFactSetVersions(graph, nodeID, sources),
 		"references":        refIDs,
 		"incoming_edge_ids": incomingIDs,
 	}), nil
@@ -229,16 +255,13 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 	if promptEdge == nil {
 		return "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
 	}
-	promptSource, err := graph.Node(promptEdge.SourceNodeID)
-	if err != nil {
-		return "", err
-	}
-	_, promptArtifactID, err := promptArtifact(promptSource.ID, sources)
+	promptPayload, _, err := incomingPromptDocument(graph, nodeID, sources)
 	if err != nil {
 		return "", err
 	}
 	var references []compiledReference
 	var visualVersionID any
+	var visualOverlay any
 	for _, edge := range edges {
 		switch edge.Role {
 		case RoleReference:
@@ -252,11 +275,17 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 			if err != nil {
 				return "", err
 			}
-			_, versionID, _, err := compileVisual(source, sources[source.ID])
+			payload, versionID, overlay, err := compileVisual(source, sources[source.ID])
 			if err != nil {
 				return "", err
 			}
 			visualVersionID = versionID
+			published := CatalogVisualOverlay(asMapOrNil(payload))
+			if overlayMap, ok := overlay.(map[string]any); ok && len(overlayMap) > 0 {
+				visualOverlay = overlayMap
+			} else if len(published) > 0 {
+				visualOverlay = published
+			}
 		}
 	}
 	normalized, err := NormalizeNodeConfig(node.NodeType, node.Config)
@@ -274,9 +303,10 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 	return inputDigest(map[string]any{
 		"node_id":                  nodeID,
 		"config":                   requestConfigForDigest(node.NodeType, normalized),
-		"prompt_artifact_id":       promptArtifactID,
+		"prompt_document":          stripV3Prompt(promptPayload),
 		"references":               refIDs,
 		"visual_system_version_id": visualVersionID,
+		"visual_overlay":           visualOverlay,
 		"incoming_edge_ids":        incomingIDs,
 	}), nil
 }
@@ -378,46 +408,30 @@ func visualOverlayFromConfig(config map[string]any) map[string]any {
 	if overlay, ok := asMap(payload["visual_overlay"]); ok && len(overlay) > 0 {
 		return CatalogVisualOverlay(overlay)
 	}
-	if overrides, ok := payload["visual_overrides"].([]any); ok {
-		return CatalogVisualOverlay(mergeVisualOverrideItems(overrides))
-	}
 	return nil
 }
 
-func mergeVisualOverrideItems(items []any) map[string]any {
-	overlay := map[string]any{}
-	for _, item := range items {
-		entry, ok := asMap(item)
-		if !ok {
+func incomingPromptDocument(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
+	for _, edge := range incomingSorted(graph, nodeID) {
+		if edge.Role != RolePrompt {
 			continue
 		}
-		overrides, ok := entry["overrides"].([]any)
-		if !ok {
-			continue
+		source, err := graph.Node(edge.SourceNodeID)
+		if err != nil {
+			return nil, "", err
 		}
-		for _, fieldOverride := range overrides {
-			fo, ok := asMap(fieldOverride)
-			if !ok {
-				continue
-			}
-			fieldName, _ := fo["field"].(string)
-			if fieldName != "" {
-				overlay[fieldName] = fo["value"]
-			}
+		record := sources[source.ID]
+		payload := publishedPromptDocument(source, record)
+		if !hasPromptPayload(stripV3Prompt(payload)) {
+			return nil, "", apperr.Validation("上游提示词文稿为空")
 		}
+		artifactID := ""
+		if record.CurrentArtifactID != nil {
+			artifactID = *record.CurrentArtifactID
+		}
+		return payload, artifactID, nil
 	}
-	return overlay
-}
-
-func promptArtifact(nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
-	record := sources[nodeID]
-	if record.CurrentArtifactPayload == nil || record.CurrentArtifactID == nil {
-		return nil, "", apperr.Validation("上游提示词尚未生成")
-	}
-	if !hasPromptPayload(stripV3Prompt(record.CurrentArtifactPayload)) {
-		return nil, "", apperr.Validation("上游提示词尚未生成")
-	}
-	return cloneMap(record.CurrentArtifactPayload), *record.CurrentArtifactID, nil
+	return nil, "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
 }
 
 func collectPromptInputs(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (facts []map[string]any, briefs []map[string]any, visual map[string]any, refs []compiledReference, err error) {
@@ -504,8 +518,8 @@ func compiledContextTrace(graph AppliedGraph, node AppliedNode, sources map[stri
 				continue
 			}
 			promptEdgeID = edge.ID
-			if _, id, err := promptArtifact(edge.SourceNodeID, sources); err == nil {
-				promptArtifactID = id
+			if record := sources[edge.SourceNodeID]; record.CurrentArtifactID != nil {
+				promptArtifactID = *record.CurrentArtifactID
 			}
 			break
 		}
@@ -639,13 +653,7 @@ func incomingVisualVersionID(graph AppliedGraph, nodeID string, sources map[stri
 }
 
 func incomingPromptArtifact(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
-	for _, edge := range incomingSorted(graph, nodeID) {
-		if edge.Role != RolePrompt {
-			continue
-		}
-		return promptArtifact(edge.SourceNodeID, sources)
-	}
-	return nil, "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
+	return incomingPromptDocument(graph, nodeID, sources)
 }
 
 func stripV3Prompt(payload map[string]any) map[string]any {
@@ -686,24 +694,6 @@ func isEmptyPromptValue(value any) bool {
 	default:
 		return false
 	}
-}
-
-func requestConfigForDigest(nodeType NodeType, config map[string]any) map[string]any {
-	excluded := map[string]struct{}{}
-	for key := range digestSelfOutputKeys[nodeType] {
-		excluded[key] = struct{}{}
-	}
-	for key := range digestIgnoredKeys[nodeType] {
-		excluded[key] = struct{}{}
-	}
-	out := map[string]any{}
-	for key, value := range config {
-		if _, skip := excluded[key]; skip {
-			continue
-		}
-		out[key] = cloneValue(value)
-	}
-	return out
 }
 
 func inputDigest(payload map[string]any) string {

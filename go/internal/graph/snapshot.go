@@ -12,14 +12,15 @@ func SnapshotGraph(graph AppliedGraph, sources map[string]SourceRecord) map[stri
 	nodes := make([]map[string]any, 0, len(graph.Nodes))
 	for _, node := range graph.Nodes {
 		nodes = append(nodes, map[string]any{
-			"id":             node.ID,
-			"node_type":      string(node.NodeType),
-			"title":          node.Title,
-			"position_x":     node.PositionX,
-			"position_y":     node.PositionY,
-			"config":         cloneMap(node.Config),
-			"bound_asset_id": node.BoundAssetID,
-			"group_id":       node.GroupID,
+			"id":              node.ID,
+			"node_type":       string(node.NodeType),
+			"title":           node.Title,
+			"position_x":      node.PositionX,
+			"position_y":      node.PositionY,
+			"config":          cloneMap(node.Config),
+			"bound_asset_id":  node.BoundAssetID,
+			"group_id":        node.GroupID,
+			"document_origin": documentOriginPtr(node),
 		})
 	}
 	edges := make([]map[string]any, 0, len(graph.Edges))
@@ -70,6 +71,7 @@ func sourceSnapshot(record SourceRecord) map[string]any {
 		"current_artifact_payload": record.CurrentArtifactPayload,
 		"current_output_asset_id":  record.CurrentOutputAssetID,
 		"current_input_digest":     record.CurrentInputDigest,
+		"prompt_document":          record.PromptDocument,
 	}
 }
 
@@ -218,6 +220,7 @@ func appliedGraphFromSnapshot(payload map[string]any) (AppliedGraph, error) {
 		}
 		node.BoundAssetID = strPtrField(raw["bound_asset_id"])
 		node.GroupID = strPtrField(raw["group_id"])
+		node.DocumentOrigin = loadDocumentOrigin(node.NodeType, strPtrField(raw["document_origin"]))
 		out.Nodes = append(out.Nodes, node)
 	}
 	for _, raw := range snapshotSlice(payload["edges"]) {
@@ -269,6 +272,9 @@ func sourcesFromSnapshot(payload map[string]any) map[string]SourceRecord {
 		}
 		record.CurrentOutputAssetID = strPtrField(rec["current_output_asset_id"])
 		record.CurrentInputDigest = strPtrField(rec["current_input_digest"])
+		if promptDoc, ok := rec["prompt_document"].(map[string]any); ok {
+			record.PromptDocument = cloneMap(promptDoc)
+		}
 		if src, ok := rec["product_source"].(map[string]any); ok {
 			snap := productSourceFromDict(src)
 			record.ProductSource = &snap

@@ -21,18 +21,10 @@ import (
 	"gorm.io/gorm"
 )
 
-type classifiedNodeError struct{ error }
-
-func (e classifiedNodeError) Unwrap() error { return e.error }
-
-func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID string) error {
-	err := e.runClaimedNode(ctx, runID, nodeRunID)
-	if err == nil || isProviderUnknown(err) {
+func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, attemptID string) error {
+	err := e.runClaimedNode(ctx, runID, nodeRunID, attemptID)
+	if err == nil || isProviderUnknown(err) || errors.Is(err, errProviderFenced) {
 		return err
-	}
-	var classified classifiedNodeError
-	if errors.As(err, &classified) {
-		return nil
 	}
 	var app apperr.Error
 	reason := err.Error()
@@ -42,7 +34,7 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID strin
 	if reason == "" {
 		reason = "节点运行失败"
 	}
-	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, reason); failErr != nil {
+	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
 		return failErr
 	}
 	return nil
@@ -50,7 +42,7 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID strin
 
 var errProviderFenced = errors.New("graph provider call fenced")
 
-func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) error {
+func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expectedAttemptID string) error {
 	run, err := e.loadRun(ctx, runID)
 	if err != nil {
 		return err
@@ -64,6 +56,9 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	}
 	if nodeRun == nil || run.Status != RunStatusRunning || nodeRun.Status != NodeRunRunning {
 		return nil
+	}
+	if expectedAttemptID == "" || nodeRun.ActiveAttemptID == nil || *nodeRun.ActiveAttemptID != expectedAttemptID {
+		return errProviderFenced
 	}
 	e.logger().Info("graph node run",
 		zap.String("workflow_run_id", runID),
@@ -92,6 +87,11 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if err := writeCompiledContext(ctx, e.DB, nodeRun.ID, node, applied, sources, digest); err != nil {
 		return err
 	}
+	forceTarget := isForceTarget(run, node.ID)
+	mode := validRegenerateMode(run.RegenerateMode)
+	if isContentNodeType(node.NodeType) && !contentNodeShouldGenerate(node, forceTarget, mode) {
+		return e.skipFrozenContent(ctx, run, *nodeRun, sources)
+	}
 	if skipped, err := e.skipUnchanged(ctx, run, *nodeRun, sources, digest); err != nil || skipped {
 		return err
 	}
@@ -115,7 +115,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if err != nil {
 		return err
 	}
-	req, err := AssemblePromptRequest(node, facts, briefs, visual, loadedRefs, digest)
+	req, err := AssemblePromptRequest(node, facts, briefs, visual, loadedRefs, digest, applied)
 	if err != nil {
 		return err
 	}
@@ -134,11 +134,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 			return fmt.Errorf("提示词 provider 未返回结构化输出")
 		}
 		return e.persistContentArtifact(ctx, run, *nodeRun, "creative_brief", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
-			out := cloneMap(config)
-			for key, value := range result.Payload {
-				out[key] = value
-			}
-			return out
+			return mergeGeneratedBrief(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeVisualSystem:
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
@@ -154,9 +150,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 			return fmt.Errorf("提示词 provider 未返回结构化输出")
 		}
 		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
-			out := cloneMap(config)
-			out["visual_overlay"] = result.Payload
-			return out
+			return mergeGeneratedOverlay(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodePromptGeneration:
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
@@ -178,9 +172,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 			promptConfigHasAuthoredText(storedPrompt),
 		)
 		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
-			out := cloneMap(config)
-			out["prompt"] = result.Payload
-			return out
+			return mergeGeneratedPrompt(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeImageGeneration:
 		imgReq := ImageRequest{NodeTitle: node.Title, InputDigest: digest, GenerationSpec: map[string]any{}}
@@ -190,17 +182,14 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if key, ok := node.Config["image_type_key"].(string); ok {
 			imgReq.ImageTypeKey = key
 		}
-		promptPayload, artifactID, err := incomingPromptArtifact(applied, node.ID, sources)
+		promptPayload, artifactID, err := incomingPromptDocument(applied, node.ID, sources)
 		if err != nil {
 			return err
 		}
 		imgReq.Prompt = promptPayload
 		imgReq.PromptArtifactID = artifactID
-		if stored, ok := node.Config["prompt"].(map[string]any); ok && len(imgReq.Prompt) == 0 {
-			imgReq.Prompt = stored
-		}
 		imgReq.References = loadedRefs
-		imgReq.VisualSystem = visual
+		imgReq.VisualSystem = mergeImageVisual(visual, visualOverlayFromConfig(node.Config))
 		imgReq.VisualOverlay = visualOverlayFromConfig(node.Config)
 		if variation, ok := node.Config["variation_instruction"].(string); ok {
 			imgReq.VariationInstruction = variation
@@ -226,28 +215,86 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	}
 }
 
+func isForceTarget(run graphRunRow, nodeID string) bool {
+	if !run.Force || nodeID == "" {
+		return false
+	}
+	if ptrStr(run.RequestedNodeID) == nodeID {
+		return true
+	}
+	for _, id := range run.RequestedNodeIDs {
+		if id == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun graphNodeRunRow, sources map[string]SourceRecord, digest string) (bool, error) {
-	if run.RunScope != RunScopeGraph || nodeRun.NodeID == nil {
+	if nodeRun.NodeID == nil {
+		return false, nil
+	}
+	if isForceTarget(run, *nodeRun.NodeID) {
 		return false, nil
 	}
 	record := sources[*nodeRun.NodeID]
 	if record.CurrentArtifactID == nil || record.CurrentInputDigest == nil || *record.CurrentInputDigest != digest {
 		return false, nil
 	}
+	return true, e.markNodeSkipped(ctx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, record)
+}
+
+func (e Executor) skipFrozenContent(ctx context.Context, run graphRunRow, nodeRun graphNodeRunRow, sources map[string]SourceRecord) error {
+	record := SourceRecord{}
+	if nodeRun.NodeID != nil {
+		record = sources[*nodeRun.NodeID]
+	}
+	return e.markNodeSkipped(ctx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, record)
+}
+
+func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, attemptID *string, record SourceRecord) error {
 	now := time.Now().UTC()
-	skippedOut := map[string]any{"artifact_id": *record.CurrentArtifactID, "skipped": true}
+	skippedOut := map[string]any{"skipped": true}
+	if record.CurrentArtifactID != nil {
+		skippedOut["artifact_id"] = *record.CurrentArtifactID
+	}
 	if record.CurrentOutputAssetID != nil && *record.CurrentOutputAssetID != "" {
 		skippedOut["product_image_asset_id"] = *record.CurrentOutputAssetID
 	}
 	output, _ := json.Marshal(skippedOut)
-	return true, tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		if attemptID == nil || *attemptID == "" {
+			return apperr.Validation("节点运行缺少 attempt token")
+		}
+		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, runID, nodeRunID, attemptID)
+		if err != nil {
+			return err
+		}
+		if !promotable {
+			return nil
+		}
 		outputStr := string(output)
-		return pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
-			"status":            "succeeded",
-			"finished_at":       now,
-			"active_attempt_id": nil,
-			"output_json":       outputStr,
-		}).Error
+		res := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+			Where("id = ? AND status = ? AND active_attempt_id = ?", nodeRunID, NodeRunRunning, *attemptID).
+			Updates(map[string]any{
+				"status":            NodeRunSkipped,
+				"finished_at":       now,
+				"active_attempt_id": nil,
+				"output_json":       outputStr,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return nil
+		}
+		if err := appendGraphRunEvent(ctx, pgxTx, runID, "node.skipped", &nodeRunID, map[string]any{
+			"status": NodeRunSkipped, "output": skippedOut,
+		}); err != nil {
+			return err
+		}
+		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		return err
 	})
 }
 
@@ -269,7 +316,7 @@ func (e Executor) callProvider(
 		"input_digest": digest,
 		"attempt_id":   attemptID,
 	}
-	if err := e.prepareProviderCall(ctx, nodeRun.ID, attemptID, providerName, request); err != nil {
+	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
 		return PromptResult{}, false, err
 	}
 	result, err := invoke()
@@ -304,7 +351,7 @@ func (e Executor) callImageProvider(
 		"input_digest": digest,
 		"attempt_id":   attemptID,
 	}
-	if err := e.prepareProviderCall(ctx, nodeRun.ID, attemptID, providerName, request); err != nil {
+	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
 		return ImageResult{}, false, err
 	}
 	result, err := invoke()
@@ -322,14 +369,14 @@ func (e Executor) callImageProvider(
 	return result, promote, err
 }
 
-func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID, providerName string, request map[string]any) error {
+func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, attemptID, providerName string, request map[string]any) error {
 	hash, err := providerEffectHash(request)
 	if err != nil {
 		return err
 	}
 	raw, _ := json.Marshal(request)
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		ok, err := advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "prepared")
+		ok, err := advanceNodePhase(ctx, pgxTx, runID, nodeRunID, attemptID, "prepared")
 		if err != nil {
 			return err
 		}
@@ -343,7 +390,7 @@ func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID,
 		if !ok {
 			return errProviderFenced
 		}
-		ok, err = advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "provider_call")
+		ok, err = advanceNodePhase(ctx, pgxTx, runID, nodeRunID, attemptID, "provider_call")
 		if err != nil {
 			return err
 		}
@@ -357,6 +404,16 @@ func (e Executor) prepareProviderCall(ctx context.Context, nodeRunID, attemptID,
 func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
 	var promote bool
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		// Keep the same run -> node -> effect order used by cancellation and
+		// unknown-result fencing before touching the provider effect row.
+		var run schema.WorkflowGraphRuns
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
+			return err
+		}
+		if run.Status != RunStatusRunning {
+			promote = false
+			return nil
+		}
 		ok, err := recordProviderEffectResult(ctx, pgxTx, nodeRunID, attemptID, resultJSON)
 		if err != nil {
 			return err
@@ -365,17 +422,13 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 			promote = false
 			return nil
 		}
-		ok, err = advanceNodePhase(ctx, pgxTx, nodeRunID, attemptID, "provider_result_received")
+		ok, err = advanceNodePhase(ctx, pgxTx, runID, nodeRunID, attemptID, "provider_result_received")
 		if err != nil {
 			return err
 		}
 		if !ok {
 			promote = false
 			return nil
-		}
-		var run schema.WorkflowGraphRuns
-		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
-			return err
 		}
 		var node schema.WorkflowGraphNodeRuns
 		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
@@ -417,53 +470,79 @@ func (e Executor) persistContentArtifact(
 	}
 	hash := sha256Hex(payload)
 	now := time.Now().UTC()
+	adoptionAttempted := promote && nodeRun.NodeID != nil && writeback != nil
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		var productID string
+		if adoptionAttempted {
+			id, err := loadProductIDForGraph(ctx, pgxTx, run.GraphID)
+			if err != nil {
+				return err
+			}
+			productID = id
+			// 采用走 Mutate 会改写整图节点行。先锁 graph，避免与并行内容节点的 artifact/节点行锁形成环。
+			if _, err := loadGraphForUpdate(ctx, pgxTx, productID, run.GraphID); err != nil {
+				return err
+			}
+		}
 		artifactID, err := upsertArtifact(ctx, pgxTx, run, nodeRun, artifactType, payload, hash, digest, providerName, result.Model, nil)
 		if err != nil {
 			return err
 		}
 		if !promote {
-			return nil
+			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
+		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID)
+		if err != nil {
+			return err
+		}
+		if !promotable {
+			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+		}
+		adopted := false
 		if promote && nodeRun.NodeID != nil {
-			var live schema.WorkflowGraphs
-			if err := pgxTx.WithContext(ctx).Select("revision").Where("id = ?", run.GraphID).Take(&live).Error; err != nil {
-				return err
-			}
-			if live.Revision == run.GraphRevision {
-				if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
-					Select("current_artifact_id").
-					Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
+			if adoptionAttempted {
+				revision, didAdopt, err := adoptGeneratedDocument(ctx, pgxTx, productID, run.GraphID, *nodeRun.NodeID, adoptSummary(artifactType), run.Snapshot, writeback)
+				if err != nil {
 					return err
 				}
-				if writeback != nil {
-					var node schema.WorkflowGraphNodes
-					if err := pgxTx.WithContext(ctx).Select("config_json").Where("id = ?", *nodeRun.NodeID).Take(&node).Error; err != nil {
-						return err
-					}
-					config := map[string]any{}
-					_ = json.Unmarshal([]byte(node.ConfigJSON), &config)
-					updated, err := json.Marshal(writeback(config))
-					if err != nil {
-						return err
-					}
-					if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
-						Select("config_json").
-						Updates(map[string]any{"config_json": string(updated)}).Error; err != nil {
+				adopted = didAdopt
+				if didAdopt {
+					if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).Where("id = ?", run.ID).
+						Select("graph_revision").
+						Updates(map[string]any{"graph_revision": revision}).Error; err != nil {
 						return err
 					}
 				}
 			}
+			if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
+				Select("current_artifact_id").
+				Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
+				return err
+			}
 		}
-		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
+		outputPayload := map[string]any{"artifact_id": artifactID}
+		if adoptionAttempted {
+			outputPayload["adopted"] = adopted
+			outputPayload["stale"] = !adopted
+		}
+		output, _ := json.Marshal(outputPayload)
 		outputStr := string(output)
-		err = pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
+		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(map[string]any{
 			"status":            "succeeded",
 			"finished_at":       now,
 			"active_attempt_id": nil,
 			"output_json":       outputStr,
-		}).Error
-		if err != nil {
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
+			return err
+		}
+		if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
+			"status": NodeRunSucceeded, "node_id": nodeRun.NodeID, "output": outputPayload,
+		}); err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
@@ -560,7 +639,14 @@ func (e Executor) persistImageArtifact(
 			return err
 		}
 		if !promote {
-			return nil
+			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+		}
+		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID)
+		if err != nil {
+			return err
+		}
+		if !promotable {
+			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
 		if nodeRun.NodeID != nil {
 			var live schema.WorkflowGraphs
@@ -586,12 +672,24 @@ func (e Executor) persistImageArtifact(
 			"product_image_asset_id": assetID,
 		})
 		outputStr := string(output)
-		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
+		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(map[string]any{
 			"status":            "succeeded",
 			"finished_at":       now,
 			"active_attempt_id": nil,
 			"output_json":       outputStr,
-		}).Error; err != nil {
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
+			return err
+		}
+		if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
+			"status": NodeRunSucceeded, "node_id": nodeRun.NodeID, "output": map[string]any{
+				"artifact_id": artifactID, "product_image_asset_id": assetID,
+			},
+		}); err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
@@ -766,6 +864,8 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 			} else {
 				source.VisualPayload = cloneMap(payloadMap)
 			}
+		case "prompt":
+			source.PromptDocument = cloneMap(payloadMap)
 		}
 		byNodeRun[*rec.NodeRunID] = source
 	}
@@ -788,6 +888,9 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 		}
 		if rec.VisualPayload != nil {
 			existing.VisualPayload = rec.VisualPayload
+		}
+		if rec.PromptDocument != nil {
+			existing.PromptDocument = rec.PromptDocument
 		}
 		sources[*item.NodeID] = existing
 	}
@@ -833,4 +936,124 @@ func validateGeneratedPayload(artifactType string, payload map[string]any) error
 	default:
 		return nil
 	}
+}
+
+func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string, now time.Time) error {
+	reason := GraphCancelledReason
+	if attemptID == nil || *attemptID == "" {
+		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		return err
+	}
+	promotable, err := lockNodeRunForPromotion(ctx, pgxTx, runID, nodeRunID, attemptID)
+	if err != nil {
+		return err
+	}
+	if !promotable {
+		return nil
+	}
+	res := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+		Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{NodeRunQueued, NodeRunRunning}, *attemptID).Updates(map[string]any{
+		"status":            NodeRunCancelled,
+		"failure_reason":    reason,
+		"finished_at":       now,
+		"active_attempt_id": nil,
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected != 1 {
+		return nil
+	}
+	if err := appendGraphRunEvent(ctx, pgxTx, runID, "node.cancelled", &nodeRunID, map[string]any{
+		"status": NodeRunCancelled, "reason": reason,
+	}); err != nil {
+		return err
+	}
+	_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+	return err
+}
+
+// lockNodeRunForPromotion closes the gap between provider result fencing and
+// artifact promotion. Cancellation or a newer attempt wins before any live
+// node/config projection is changed.
+func lockNodeRunForPromotion(ctx context.Context, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string) (bool, error) {
+	var run schema.WorkflowGraphRuns
+	if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
+		return false, err
+	}
+	if run.Status != RunStatusRunning {
+		return false, nil
+	}
+	var node schema.WorkflowGraphNodeRuns
+	if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ? AND graph_run_id = ?", nodeRunID, runID).Take(&node).Error; err != nil {
+		return false, err
+	}
+	if node.Status != NodeRunRunning || attemptID == nil || node.ActiveAttemptID == nil {
+		return false, nil
+	}
+	return *node.ActiveAttemptID == *attemptID, nil
+}
+
+func adoptSummary(artifactType string) string {
+	switch artifactType {
+	case "creative_brief":
+		return "采用生成的创作要求"
+	case "visual_system":
+		return "采用生成的视觉规范"
+	case "prompt":
+		return "采用生成的提示词"
+	default:
+		return "采用生成文稿"
+	}
+}
+
+func adoptGeneratedDocument(
+	ctx context.Context,
+	pgxTx *gorm.DB,
+	productID, graphID, nodeID, summary string,
+	snapshot map[string]any,
+	writeback func(map[string]any) map[string]any,
+) (int, bool, error) {
+	row, err := loadGraphForUpdate(ctx, pgxTx, productID, graphID)
+	if err != nil {
+		return 0, false, err
+	}
+	applied, err := loadAppliedGraph(ctx, pgxTx, row)
+	if err != nil {
+		return 0, false, err
+	}
+	node, err := applied.Node(nodeID)
+	if err != nil {
+		return 0, false, err
+	}
+	if snapshot == nil {
+		return row.Revision, false, nil
+	}
+	snapshotGraph, err := appliedGraphFromSnapshot(snapshot)
+	if err != nil {
+		return 0, false, err
+	}
+	snapshotNode, snapErr := snapshotGraph.Node(nodeID)
+	if snapErr != nil || liveDocumentDivergedFromSnapshot(node, snapshotNode) {
+		return row.Revision, false, nil
+	}
+	merged := writeback(originConfigForInvert(node))
+	result, err := Mutate(ctx, pgxTx, productID, graphID, ChangeSet{
+		BaseGraphRevision: row.Revision,
+		Summary:           summary,
+		ActorType:         ActorSystem,
+		Operations: []Operation{UpdateNodeConfigOp{
+			NodeRef:        nodeID,
+			Config:         merged,
+			DocumentOrigin: strPtr(OriginGenerated),
+		}},
+	}, HistoryEdit)
+	if err == nil {
+		return result.Revision, true, nil
+	}
+	var app apperr.Error
+	if errors.As(err, &app) && app.Status == 409 {
+		return row.Revision, false, nil
+	}
+	return 0, false, err
 }

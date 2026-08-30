@@ -149,6 +149,9 @@ func (gs *graphServer) reclaimRun(t *testing.T, runID string) {
 
 func (gs *graphServer) executeLocally(t *testing.T, runID string, exec graph.Executor) {
 	t.Helper()
+	if exec.Products == nil {
+		exec.Products = product.GraphGuard{}
+	}
 	for i := 0; i < 30; i++ {
 		gs.reclaimRun(t, runID)
 		err := exec.ExecuteRun(context.Background(), runID)

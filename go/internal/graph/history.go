@@ -70,7 +70,7 @@ func inverseOperations(raw []byte) ([]Operation, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("[]")) || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	return UnmarshalOperations(trimmed)
+	return unmarshalOperations(trimmed, true)
 }
 
 func sourceHistorySummary(summary string) string {

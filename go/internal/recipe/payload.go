@@ -51,6 +51,8 @@ var (
 		"image_plan_key":     {},
 		"prompt_plan_keys":   {},
 		"image_plan_keys":    {},
+		"document_origin":    {},
+		"visual_overrides":   {},
 	}
 	forbiddenPlanKeys = map[string]struct{}{
 		"prompt_plan_key":  {},

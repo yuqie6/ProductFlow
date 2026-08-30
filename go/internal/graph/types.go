@@ -3,7 +3,7 @@ package graph
 
 const (
 	SchemaVersion      = 3
-	CatalogVersion     = 5
+	CatalogVersion     = 7
 	DefaultGraphTitle  = "商品创意工作流"
 	maxImagePerType    = 6
 	minImagePerType    = 1
@@ -59,6 +59,7 @@ const (
 	ActorUser   ActorType = "user"
 	ActorAgent  ActorType = "agent"
 	ActorRecipe ActorType = "recipe"
+	ActorSystem ActorType = "system"
 )
 
 type HistoryKind string
@@ -70,14 +71,15 @@ const (
 )
 
 type AppliedNode struct {
-	ID           string
-	NodeType     NodeType
-	Title        string
-	PositionX    int
-	PositionY    int
-	Config       map[string]any
-	BoundAssetID *string
-	GroupID      *string
+	ID             string
+	NodeType       NodeType
+	Title          string
+	PositionX      int
+	PositionY      int
+	Config         map[string]any
+	BoundAssetID   *string
+	GroupID        *string
+	DocumentOrigin string
 }
 
 type AppliedEdge struct {
@@ -116,6 +118,9 @@ type CreateNodeOp struct {
 	Config       map[string]any
 	BoundAssetID *string
 	GroupRef     *string
+	// DocumentOrigin is server-side metadata used by generated-content writeback
+	// and history restore. Public ChangeSets must not provide it.
+	DocumentOrigin *string
 }
 
 func (CreateNodeOp) graphOp() {}
@@ -125,6 +130,9 @@ type UpdateNodeConfigOp struct {
 	Config          map[string]any
 	BoundAssetID    *string
 	BoundAssetIDSet bool
+	// DocumentOrigin is server-side metadata used by generated-content writeback
+	// and history restore. Public ChangeSets must not provide it.
+	DocumentOrigin *string
 }
 
 func (UpdateNodeConfigOp) graphOp() {}
@@ -156,6 +164,14 @@ type DisconnectEdgeOp struct {
 }
 
 func (DisconnectEdgeOp) graphOp() {}
+
+type ReorderEdgesOp struct {
+	NodeRef  string
+	Role     EdgeRole
+	EdgeRefs []string
+}
+
+func (ReorderEdgesOp) graphOp() {}
 
 type NodeMove struct {
 	Ref string
@@ -198,19 +214,7 @@ type DissolveGroupOp struct {
 func (DissolveGroupOp) graphOp() {}
 
 // GraphCommandOpNames 是 schema-v3 ChangeSet 的封闭 op 表。Agent tool JSON Schema 必须与此对齐。
-var GraphCommandOpNames = []string{
-	"create_node",
-	"update_node_config",
-	"rename_node",
-	"delete_node",
-	"connect_nodes",
-	"disconnect_edge",
-	"move_nodes",
-	"create_group",
-	"move_nodes_to_group",
-	"rename_group",
-	"dissolve_group",
-}
+var GraphCommandOpNames = generatedGraphCommandOpNames
 
 type ChangeSet struct {
 	BaseGraphRevision int

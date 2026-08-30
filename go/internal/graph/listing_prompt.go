@@ -65,6 +65,9 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if designGoal := usablePromptText(payload["design_goal"]); designGoal != "" {
 		briefLines = append(briefLines, "图目标："+designGoal)
 	}
+	for _, line := range overlayBriefLines(mergeImageVisual(req.VisualSystem, req.VisualOverlay)) {
+		briefLines = append(briefLines, line)
+	}
 	viewpoint := usablePromptText(composition["viewpoint"])
 	layout := usablePromptText(composition["layout"])
 	if viewpoint != "" || layout != "" {
@@ -89,6 +92,9 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if background := usablePromptText(content["background"]); background != "" {
 		briefLines = append(briefLines, "背景："+background)
 	}
+	if decorations := usablePromptTexts(content["decorations"]); len(decorations) > 0 {
+		briefLines = append(briefLines, "点缀："+strings.Join(decorations, "、"))
+	}
 	lighting := usablePromptText(atmosphere["lighting"])
 	mood := strings.Join(usablePromptTexts(atmosphere["keywords"]), "、")
 	if lighting != "" || mood != "" {
@@ -104,6 +110,9 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if requirements := usablePromptTexts(fidelity["requirements"]); len(requirements) > 0 {
 		briefLines = append(briefLines, "保真："+strings.Join(requirements, "、"))
 	}
+	if boundary := usablePromptTexts(payload["creative_boundary"]); len(boundary) > 0 {
+		briefLines = append(briefLines, "禁令："+strings.Join(boundary, "、"))
+	}
 	if policy != "none" {
 		copyBits := []string{}
 		for _, key := range []string{"headline", "subtitle", "body"} {
@@ -113,6 +122,9 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		}
 		if len(copyBits) > 0 {
 			briefLines = append(briefLines, "图片内文字："+strings.Join(copyBits, "；"))
+		}
+		if regions := usablePromptTexts(composition["copy_regions"]); len(regions) > 0 {
+			briefLines = append(briefLines, "文案区域："+strings.Join(regions, "、"))
 		}
 	}
 	if shared := usablePromptTexts(payload["shared_rules"]); len(shared) > 0 {
@@ -147,6 +159,51 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		"incoming_edge_ids":     incoming,
 	})
 	return strings.Join(briefLines, "\n") + "\n\n" + contract
+}
+
+func overlayBriefLines(overlay map[string]any) []string {
+	if len(overlay) == 0 {
+		return nil
+	}
+	var lines []string
+	if style := usablePromptTexts(overlay["style"]); len(style) > 0 {
+		lines = append(lines, "风格："+strings.Join(style, "、"))
+	}
+	if colors := overlayColorTexts(overlay["colors"]); len(colors) > 0 {
+		lines = append(lines, "色彩："+strings.Join(colors, "、"))
+	}
+	if prohibitions := usablePromptTexts(overlay["prohibitions"]); len(prohibitions) > 0 {
+		lines = append(lines, "外观禁令："+strings.Join(prohibitions, "、"))
+	}
+	return lines
+}
+
+func overlayColorTexts(value any) []string {
+	list, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if text := usablePromptText(item); text != "" {
+			out = append(out, text)
+			continue
+		}
+		entry, ok := asMap(item)
+		if !ok {
+			continue
+		}
+		hex := usablePromptText(entry["value"])
+		if hex == "" {
+			continue
+		}
+		if role := usablePromptText(entry["role"]); role != "" {
+			out = append(out, role+" "+hex)
+			continue
+		}
+		out = append(out, hex)
+	}
+	return out
 }
 
 func imageTypeTitle(key string) string {

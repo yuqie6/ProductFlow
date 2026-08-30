@@ -7,16 +7,17 @@ import (
 
 func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 	node := AppliedNode{
-		ID:       "prompt-1",
-		NodeType: NodePromptGeneration,
-		Title:    "核心卖点图提示词",
+		ID:             "prompt-1",
+		NodeType:       NodePromptGeneration,
+		Title:          "核心卖点图提示词",
+		DocumentOrigin: OriginSeed,
 		Config: map[string]any{
 			"image_type_key": "selling_point",
 			"prompt":         map[string]any{},
 		},
 	}
 	facts := []map[string]any{{"key": "product_name", "value": "云白瓷杯"}}
-	req, err := AssemblePromptRequest(node, facts, nil, nil, nil, "digest")
+	req, err := AssemblePromptRequest(node, facts, nil, nil, nil, "digest", AppliedGraph{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +45,92 @@ func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 	shared, _ := req.CurrentPrompt["shared_rules"].([]any)
 	if len(shared) == 0 {
 		t.Fatal("seed must include identity shared rules")
+	}
+}
+
+func TestAssemblePromptRequestAuthoredDoesNotGenerateFromContext(t *testing.T) {
+	node := AppliedNode{
+		ID:             "prompt-1",
+		NodeType:       NodePromptGeneration,
+		Title:          "核心卖点图提示词",
+		DocumentOrigin: OriginAuthored,
+		Config: map[string]any{
+			"image_type_key": "selling_point",
+			"prompt":         map[string]any{"design_goal": imageTypePromptGoal("selling_point")},
+		},
+	}
+	req, err := AssemblePromptRequest(node, nil, nil, nil, nil, "digest", AppliedGraph{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.GenerateFromContext {
+		t.Fatal("authored prompt must not be treated as generation seed")
+	}
+}
+
+func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t *testing.T) {
+	prompt := AppliedNode{
+		ID:       "prompt-1",
+		NodeType: NodePromptGeneration,
+		Title:    "信息图提示词",
+		Config: map[string]any{
+			"image_type_key": "faq",
+			"prompt":         map[string]any{"design_goal": imageTypePromptGoal("faq")},
+		},
+	}
+	image := AppliedNode{
+		ID:       "image-1",
+		NodeType: NodeImageGeneration,
+		Title:    "信息图",
+		Config: map[string]any{
+			"image_type_key": "faq",
+			"generation_spec": map[string]any{
+				"text_policy":   "required",
+				"text_language": "zh-CN",
+			},
+		},
+	}
+	g := AppliedGraph{
+		Nodes: []AppliedNode{prompt, image},
+		Edges: []AppliedEdge{
+			{ID: "e-prompt", SourceNodeID: prompt.ID, TargetNodeID: image.ID, DataType: DataPrompt, Role: RolePrompt, Order: 0},
+		},
+	}
+	briefs := []map[string]any{
+		{"goal": "卖点一", "design_goals": []any{"镜头 A"}},
+		{"goal": "卖点二", "required_copy": []any{"限时"}},
+	}
+	req, err := AssemblePromptRequest(prompt, nil, briefs, nil, nil, "digest", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.TextPolicy != "required" || req.TextLanguage != "zh-CN" {
+		t.Fatalf("text policy %q %q", req.TextPolicy, req.TextLanguage)
+	}
+	if len(req.Briefs) != 2 || req.Briefs[0]["goal"] != "卖点一" {
+		t.Fatalf("briefs %+v", req.Briefs)
+	}
+	if len(req.ImageTypes) != 1 {
+		t.Fatalf("image types %+v", req.ImageTypes)
+	}
+	if req.ImageTypes[0]["key"] != "faq" {
+		t.Fatalf("image type %+v", req.ImageTypes[0])
+	}
+}
+
+func TestAssembleCreativeBriefCollectsGraphImageTypes(t *testing.T) {
+	brief := AppliedNode{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}}
+	prompt := AppliedNode{
+		ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词",
+		Config: map[string]any{"image_type_key": "hero"},
+	}
+	g := AppliedGraph{Nodes: []AppliedNode{brief, prompt}}
+	req, err := AssemblePromptRequest(brief, nil, nil, nil, nil, "digest", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.ImageTypes) != 1 || req.ImageTypes[0]["key"] != "hero" {
+		t.Fatalf("image types %+v", req.ImageTypes)
 	}
 }
 

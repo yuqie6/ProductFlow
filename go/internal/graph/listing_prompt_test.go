@@ -59,7 +59,27 @@ func TestCompileImageModelPromptIncludesVisualVariationAndEdges(t *testing.T) {
 	})
 	for _, needle := range []string{
 		"变化：换暖光", `"visual_system"`, `"visual_overlay"`, `"incoming_edge_ids"`, `"edge_id"`, "e-ref",
+		"风格：商业套图", "色彩：", "#F3EFE8",
 	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("missing %q in\n%s", needle, got)
+		}
+	}
+}
+
+func TestCompileImageModelPromptIncludesBoundaryDecorationsAndCopyRegions(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{
+		ImageTypeKey:   "faq",
+		GenerationSpec: map[string]any{"text_policy": "required", "text_language": "zh-CN"},
+		Prompt: map[string]any{
+			"design_goal":       "问答",
+			"creative_boundary": []any{"不要变形"},
+			"content":           map[string]any{"decorations": []any{"弱投影"}},
+			"composition":       map[string]any{"copy_regions": []any{"顶栏"}},
+			"text":              map[string]any{"headline": "三问三答"},
+		},
+	})
+	for _, needle := range []string{"禁令：不要变形", "点缀：弱投影", "文案区域：顶栏", "图片内文字：三问三答"} {
 		if !strings.Contains(got, needle) {
 			t.Fatalf("missing %q in\n%s", needle, got)
 		}

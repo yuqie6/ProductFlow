@@ -1,0 +1,174 @@
+package graph
+
+import "testing"
+
+func TestDocumentOriginStampsSeedOnCreate(t *testing.T) {
+	if got := stampDocumentOriginOnCreate(NodeCreativeBrief, nil); got != OriginSeed {
+		t.Fatalf("origin %s", got)
+	}
+	requested := OriginGenerated
+	if got := stampDocumentOriginOnCreate(NodeCreativeBrief, &requested); got != OriginGenerated {
+		t.Fatalf("requested origin %s", got)
+	}
+}
+
+func TestDocumentOriginDoesNotInferSeedWhenColumnIsMissing(t *testing.T) {
+	node := AppliedNode{NodeType: NodePromptGeneration, Config: map[string]any{}}
+	if got := DocumentOrigin(node); got != "" {
+		t.Fatalf("missing origin %q", got)
+	}
+	if contentNodeShouldGenerate(node, false, RegenerateFill) {
+		t.Fatal("missing origin must not be treated as a generation seed")
+	}
+	if got := documentOriginPtr(node); got != nil {
+		t.Fatalf("missing origin pointer %+v", got)
+	}
+}
+
+func TestApplyDocumentOriginMarksAuthoredOnVisibleEdit(t *testing.T) {
+	prev := AppliedNode{NodeType: NodeCreativeBrief, Config: map[string]any{"goal": "卖"}, DocumentOrigin: OriginGenerated}
+	next := map[string]any{"goal": "改过"}
+	normalized, err := NormalizeNodeConfig(NodeCreativeBrief, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nextDocumentOrigin(NodeCreativeBrief, prev, normalized, nil); got != OriginAuthored {
+		t.Fatalf("origin %s", got)
+	}
+}
+
+func TestApplyDocumentOriginKeepsPreviousWhenUnchanged(t *testing.T) {
+	prev := AppliedNode{NodeType: NodeCreativeBrief, Config: map[string]any{"goal": "卖"}, DocumentOrigin: OriginGenerated}
+	next := map[string]any{"goal": "卖"}
+	normalized, err := NormalizeNodeConfig(NodeCreativeBrief, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nextDocumentOrigin(NodeCreativeBrief, prev, normalized, nil); got != OriginGenerated {
+		t.Fatalf("origin %s", got)
+	}
+}
+
+func TestBirthPromptDesignGoalLooksLikeSeed(t *testing.T) {
+	key := "hero"
+	node := AppliedNode{
+		NodeType:       NodePromptGeneration,
+		DocumentOrigin: OriginSeed,
+		Config: map[string]any{
+			"image_type_key": key,
+			"prompt":         map[string]any{"design_goal": imageTypePromptGoal(key)},
+		},
+	}
+	if DocumentOrigin(node) != OriginSeed {
+		t.Fatalf("origin %s", DocumentOrigin(node))
+	}
+	if !contentNodeShouldGenerate(node, false, RegenerateFill) {
+		t.Fatal("seed prompt must generate on fill")
+	}
+}
+
+func TestAuthoredPromptDoesNotGenerateWithoutForce(t *testing.T) {
+	node := AppliedNode{
+		NodeType:       NodePromptGeneration,
+		DocumentOrigin: OriginAuthored,
+		Config: map[string]any{
+			"image_type_key": "hero",
+			"prompt": map[string]any{
+				"design_goal": "自定义",
+				"composition": map[string]any{"layout": "左侧留白"},
+			},
+		},
+	}
+	if contentNodeShouldGenerate(node, false, RegenerateFill) {
+		t.Fatal("authored prompt must not generate")
+	}
+	if !contentNodeShouldGenerate(node, true, RegenerateReplace) {
+		t.Fatal("force replace must generate")
+	}
+	if !contentNodeShouldGenerate(node, true, RegenerateRefine) {
+		t.Fatal("force refine must generate")
+	}
+}
+
+func TestMergeGeneratedPromptRefineKeepsUserFields(t *testing.T) {
+	current := map[string]any{
+		"prompt": map[string]any{
+			"design_goal": "手填目标",
+			"composition": map[string]any{"layout": "左侧留白", "product_share_percent": 40},
+			"text":        map[string]any{"headline": "夏日", "subtitle": nil, "body": nil},
+		},
+	}
+	generated := map[string]any{
+		"design_goal": "模型目标",
+		"composition": map[string]any{"layout": "居中", "viewpoint": "正面", "product_share_percent": 90},
+		"text":        map[string]any{"headline": "模型标题", "subtitle": "副标题", "body": nil},
+		"content":     map[string]any{"background": "干净背景"},
+	}
+	got := mergeGeneratedPrompt(current, generated, RegenerateRefine, OriginAuthored)
+	prompt, _ := got["prompt"].(map[string]any)
+	if prompt["design_goal"] != "手填目标" {
+		t.Fatalf("design_goal %+v", prompt["design_goal"])
+	}
+	composition, _ := prompt["composition"].(map[string]any)
+	if composition["layout"] != "左侧留白" {
+		t.Fatalf("layout %+v", composition["layout"])
+	}
+	if composition["viewpoint"] != "正面" {
+		t.Fatalf("viewpoint %+v", composition["viewpoint"])
+	}
+	if composition["product_share_percent"] != 40 {
+		t.Fatalf("share %+v", composition["product_share_percent"])
+	}
+	text, _ := prompt["text"].(map[string]any)
+	if text["headline"] != "夏日" {
+		t.Fatalf("headline %+v", text["headline"])
+	}
+	if text["subtitle"] != "副标题" {
+		t.Fatalf("subtitle %+v", text["subtitle"])
+	}
+	content, _ := prompt["content"].(map[string]any)
+	if content["background"] != "干净背景" {
+		t.Fatalf("background %+v", content["background"])
+	}
+}
+
+func TestNormalizeRejectsRetiredDocumentKeys(t *testing.T) {
+	_, err := NormalizeNodeConfig(NodeCreativeBrief, map[string]any{
+		"goal":            "卖",
+		"document_origin": OriginGenerated,
+	})
+	if err == nil {
+		t.Fatal("retired document_origin must be rejected")
+	}
+}
+
+func TestLiveDocumentDivergedFromSnapshot(t *testing.T) {
+	snapshot := AppliedNode{NodeType: NodeCreativeBrief, Config: map[string]any{"goal": "卖"}}
+	live := AppliedNode{NodeType: NodeCreativeBrief, Config: map[string]any{"goal": "用户中途改过"}}
+	if !liveDocumentDivergedFromSnapshot(live, snapshot) {
+		t.Fatal("changed goal must diverge")
+	}
+	if liveDocumentDivergedFromSnapshot(snapshot, snapshot) {
+		t.Fatal("identical documents must not diverge")
+	}
+}
+
+func TestMergeGeneratedPromptAuthoredSeedLookingKeepsGoal(t *testing.T) {
+	current := map[string]any{
+		"image_type_key": "hero",
+		"prompt":         map[string]any{"design_goal": "手填目标"},
+	}
+	generated := map[string]any{
+		"design_goal": "模型目标",
+		"composition": map[string]any{"layout": "居中"},
+	}
+	got := mergeGeneratedPrompt(current, generated, RegenerateRefine, OriginAuthored)
+	prompt, _ := got["prompt"].(map[string]any)
+	if prompt["design_goal"] != "手填目标" {
+		t.Fatalf("design_goal %+v", prompt["design_goal"])
+	}
+	composition, _ := prompt["composition"].(map[string]any)
+	if composition["layout"] != "居中" {
+		t.Fatalf("layout %+v", composition["layout"])
+	}
+}

@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -113,7 +114,9 @@ func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 			if _, exists := aliases[clientRef]; exists {
 				return AppliedGraph{}, apperr.Validation("ChangeSet client_ref 与已有对象冲突")
 			}
-			config, err := NormalizeNodeConfig(op.NodeType, op.Config)
+			origin := stampDocumentOriginOnCreate(op.NodeType, op.DocumentOrigin)
+			filled := FillDefaultNodeConfig(op.NodeType, cloneMap(op.Config))
+			config, err := NormalizeNodeConfig(op.NodeType, filled)
 			if err != nil {
 				return AppliedGraph{}, err
 			}
@@ -126,14 +129,15 @@ func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 				groupID = stringPtr(resolved)
 			}
 			nodes[clientRef] = AppliedNode{
-				ID:           clientRef,
-				NodeType:     op.NodeType,
-				Title:        strings.TrimSpace(op.Title),
-				PositionX:    op.PositionX,
-				PositionY:    op.PositionY,
-				Config:       config,
-				BoundAssetID: cloneStringPtr(op.BoundAssetID),
-				GroupID:      groupID,
+				ID:             clientRef,
+				NodeType:       op.NodeType,
+				Title:          strings.TrimSpace(op.Title),
+				PositionX:      op.PositionX,
+				PositionY:      op.PositionY,
+				Config:         config,
+				BoundAssetID:   cloneStringPtr(op.BoundAssetID),
+				GroupID:        groupID,
+				DocumentOrigin: origin,
 			}
 			aliases[clientRef] = clientRef
 		case ConnectNodesOp:
@@ -198,6 +202,51 @@ func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 			}
 			delete(edges, edgeID)
 			delete(aliases, edgeID)
+		case ReorderEdgesOp:
+			nodeID, err := resolve(op.NodeRef)
+			if err != nil {
+				return AppliedGraph{}, err
+			}
+			if _, ok := nodes[nodeID]; !ok {
+				return AppliedGraph{}, apperr.Validation("图节点不存在")
+			}
+			role := op.Role
+			seen := map[string]struct{}{}
+			for index, ref := range op.EdgeRefs {
+				edgeID, err := resolve(ref)
+				if err != nil {
+					return AppliedGraph{}, err
+				}
+				edge, ok := edges[edgeID]
+				if !ok {
+					return AppliedGraph{}, apperr.Validation("工作流连线不存在")
+				}
+				if edge.TargetNodeID != nodeID || edge.Role != role {
+					return AppliedGraph{}, apperr.Validation("只能重排指向该节点同一角色的入边")
+				}
+				if _, dup := seen[edgeID]; dup {
+					return AppliedGraph{}, apperr.Validation("ChangeSet 内部 client_ref 不能重复")
+				}
+				seen[edgeID] = struct{}{}
+				edge.Order = index
+				edges[edgeID] = edge
+			}
+			var remaining []string
+			for edgeID, edge := range edges {
+				if edge.TargetNodeID != nodeID || edge.Role != role {
+					continue
+				}
+				if _, ok := seen[edgeID]; ok {
+					continue
+				}
+				remaining = append(remaining, edgeID)
+			}
+			sort.Strings(remaining)
+			for index, edgeID := range remaining {
+				edge := edges[edgeID]
+				edge.Order = len(op.EdgeRefs) + index
+				edges[edgeID] = edge
+			}
 		case DeleteNodeOp:
 			nodeID, err := resolve(op.NodeRef)
 			if err != nil {
@@ -239,6 +288,7 @@ func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 			if err != nil {
 				return AppliedGraph{}, err
 			}
+			node.DocumentOrigin = nextDocumentOrigin(node.NodeType, node, config, op.DocumentOrigin)
 			bound := node.BoundAssetID
 			if op.BoundAssetIDSet {
 				bound = cloneStringPtr(op.BoundAssetID)
@@ -419,12 +469,13 @@ func Invert(before, after AppliedGraph) []Operation {
 		if node.Title != previous.Title {
 			operations = append(operations, RenameNodeOp{NodeRef: node.ID, Title: previous.Title})
 		}
-		if !mapsEqual(node.Config, previous.Config) || !samePtr(node.BoundAssetID, previous.BoundAssetID) {
+		if !mapsEqual(node.Config, previous.Config) || !samePtr(node.BoundAssetID, previous.BoundAssetID) || node.DocumentOrigin != previous.DocumentOrigin {
 			operations = append(operations, UpdateNodeConfigOp{
 				NodeRef:         node.ID,
-				Config:          cloneMap(previous.Config),
+				Config:          originConfigForInvert(previous),
 				BoundAssetID:    cloneStringPtr(previous.BoundAssetID),
 				BoundAssetIDSet: true,
+				DocumentOrigin:  documentOriginPtr(previous),
 			})
 		}
 	}
@@ -444,14 +495,15 @@ func Invert(before, after AppliedGraph) []Operation {
 			continue
 		}
 		operations = append(operations, CreateNodeOp{
-			ClientRef:    node.ID,
-			NodeType:     node.NodeType,
-			Title:        node.Title,
-			PositionX:    node.PositionX,
-			PositionY:    node.PositionY,
-			Config:       cloneMap(node.Config),
-			BoundAssetID: cloneStringPtr(node.BoundAssetID),
-			GroupRef:     cloneStringPtr(node.GroupID),
+			ClientRef:      node.ID,
+			NodeType:       node.NodeType,
+			Title:          node.Title,
+			PositionX:      node.PositionX,
+			PositionY:      node.PositionY,
+			Config:         originConfigForInvert(node),
+			BoundAssetID:   cloneStringPtr(node.BoundAssetID),
+			GroupRef:       cloneStringPtr(node.GroupID),
+			DocumentOrigin: documentOriginPtr(node),
 		})
 	}
 	for _, edge := range before.Edges {
@@ -465,7 +517,62 @@ func Invert(before, after AppliedGraph) []Operation {
 			Order:     edge.Order,
 		})
 	}
+	beforeEdgeOrder := groupedEdgeOrder(before.Edges)
+	afterEdgeOrder := groupedEdgeOrder(after.Edges)
+	for _, key := range sortedEdgeOrderKeys(beforeEdgeOrder) {
+		beforeIDs := beforeEdgeOrder[key]
+		if sameStringSlice(beforeIDs, afterEdgeOrder[key]) {
+			continue
+		}
+		operations = append(operations, ReorderEdgesOp{
+			NodeRef:  key.TargetNodeID,
+			Role:     key.Role,
+			EdgeRefs: append([]string(nil), beforeIDs...),
+		})
+	}
 	return operations
+}
+
+type edgeOrderKey struct {
+	TargetNodeID string
+	Role         EdgeRole
+}
+
+func groupedEdgeOrder(edges []AppliedEdge) map[edgeOrderKey][]string {
+	grouped := map[edgeOrderKey][]AppliedEdge{}
+	for _, edge := range edges {
+		key := edgeOrderKey{TargetNodeID: edge.TargetNodeID, Role: edge.Role}
+		grouped[key] = append(grouped[key], edge)
+	}
+	out := make(map[edgeOrderKey][]string, len(grouped))
+	for key, items := range grouped {
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].Order != items[j].Order {
+				return items[i].Order < items[j].Order
+			}
+			return items[i].ID < items[j].ID
+		})
+		ids := make([]string, 0, len(items))
+		for _, edge := range items {
+			ids = append(ids, edge.ID)
+		}
+		out[key] = ids
+	}
+	return out
+}
+
+func sortedEdgeOrderKeys(groups map[edgeOrderKey][]string) []edgeOrderKey {
+	keys := make([]edgeOrderKey, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].TargetNodeID != keys[j].TargetNodeID {
+			return keys[i].TargetNodeID < keys[j].TargetNodeID
+		}
+		return keys[i].Role < keys[j].Role
+	})
+	return keys
 }
 
 func assignPersistentIDs(before, after AppliedGraph, newID func() string) AppliedGraph {

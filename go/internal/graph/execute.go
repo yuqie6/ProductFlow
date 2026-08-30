@@ -30,10 +30,12 @@ type Executor struct {
 	Deps           Dependencies
 	Log            *zap.Logger
 	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
+	Products       ProductGuard
 }
 
 // ExecuteRun 是 worker 入口：同一 run 只允许一个 worker；无法证明的 provider 结果标 unknown。
 func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
+	ctx = WithProductGuard(ctx, e.Products)
 	e.logger().Info("graph run", zap.String("workflow_run_id", runID))
 	unlock, ok := tryProcessLock(runID)
 	if !ok {
@@ -205,7 +207,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		waitingCapacity := false
 		if !stopClaiming {
 			for _, nodeRun := range ready {
-				ok, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
+				ok, attemptID, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
 				if errors.Is(err, errWaitingCapacity) {
 					waitingCapacity = true
 					continue
@@ -218,9 +220,9 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 				}
 				claimed++
 				inflight++
-				go func(nodeRunID string) {
-					outcomes <- nodeOutcome{err: e.executeClaimedNode(ctx, runID, nodeRunID)}
-				}(nodeRun.ID)
+				go func(nodeRunID, attemptID string) {
+					outcomes <- nodeOutcome{err: e.executeClaimedNode(ctx, runID, nodeRunID, attemptID)}
+				}(nodeRun.ID, attemptID)
 			}
 		}
 		if inflight > 0 {
@@ -279,7 +281,7 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 			if processingUpstreamState(graph, nodeRuns, item) != "blocked" {
 				continue
 			}
-			if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+			result := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 				Where("id = ? AND status = ?", item.ID, "queued").
 				Updates(map[string]any{
 					"status":              "failed",
@@ -287,7 +289,16 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 					"finished_at":         now,
 					"active_attempt_id":   nil,
 					"progress_updated_at": now,
-				}).Error; err != nil {
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				continue
+			}
+			if err := appendGraphRunEvent(ctx, tx, item.GraphRunID, "node.failed", &item.ID, map[string]any{
+				"status": NodeRunFailed, "node_id": item.NodeID, "reason": "上游处理节点未成功",
+			}); err != nil {
 				return err
 			}
 			nodeRuns[i].Status = NodeRunFailed
@@ -322,7 +333,7 @@ func processingUpstreamState(graph AppliedGraph, nodeRuns []graphNodeRunRow, nod
 		if !ok {
 			continue
 		}
-		if upstream.Status == NodeRunSucceeded {
+		if upstream.Status == NodeRunSucceeded || upstream.Status == NodeRunSkipped {
 			continue
 		}
 		if upstream.Status == NodeRunQueued || upstream.Status == NodeRunRunning {

@@ -17,6 +17,9 @@ func validateChangeSet(cs ChangeSet) error {
 			if err := rejectForbiddenKeys(op.Config); err != nil {
 				return err
 			}
+			if err := validateDocumentOriginMetadata(op.NodeType, op.DocumentOrigin); err != nil {
+				return err
+			}
 			if err := claimCreateRef(seen, op.ClientRef); err != nil {
 				return err
 			}
@@ -32,10 +35,28 @@ func validateChangeSet(cs ChangeSet) error {
 			if err := rejectForbiddenKeys(op.Config); err != nil {
 				return err
 			}
-		case RenameNodeOp, DeleteNodeOp, DisconnectEdgeOp, MoveNodesOp, MoveNodesToGroupOp, RenameGroupOp, DissolveGroupOp:
+			if op.DocumentOrigin != nil {
+				if _, ok := validDocumentOrigin(*op.DocumentOrigin); !ok {
+					return apperr.Validation("不支持的 Graph 操作")
+				}
+			}
+		case RenameNodeOp, DeleteNodeOp, DisconnectEdgeOp, MoveNodesOp, MoveNodesToGroupOp, RenameGroupOp, DissolveGroupOp, ReorderEdgesOp:
 		default:
 			return apperr.Validation("不支持的 Graph 操作")
 		}
+	}
+	return nil
+}
+
+func validateDocumentOriginMetadata(nodeType NodeType, origin *string) error {
+	if origin == nil {
+		return nil
+	}
+	if !isContentNodeType(nodeType) {
+		return apperr.Validation("不支持的 Graph 操作")
+	}
+	if _, ok := validDocumentOrigin(*origin); !ok {
+		return apperr.Validation("不支持的 Graph 操作")
 	}
 	return nil
 }

@@ -76,6 +76,7 @@ func configFieldJSON(item configField) map[string]any {
 		"default":          cloneValue(item.defaultValue),
 		"panel":            emptyToNil(item.panel),
 		"visible_when":     visible,
+		"affects_digest":   item.affectsDigest,
 		"fields":           children,
 	}
 }

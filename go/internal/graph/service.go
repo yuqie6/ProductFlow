@@ -214,24 +214,66 @@ func ParseChangeSetReader(r io.Reader) (ChangeSet, error) {
 	return ParseChangeSet(raw)
 }
 
-func (s Service) SubmitRun(ctx context.Context, productID, graphID, scope string, nodeID *string) (GraphRunResponse, error) {
+func (s Service) SubmitRun(ctx context.Context, productID, graphID string, req GraphRunRequest) (GraphRunResponse, error) {
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var err error
-		out, err = s.SubmitRunTx(ctx, pgxTx, productID, graphID, scope, nodeID)
+		out, err = s.SubmitRunTx(ctx, pgxTx, productID, graphID, req)
 		return err
 	})
 	return out, err
 }
 
 // SubmitRunTx 在调用方已有的事务里提交 GraphRun。
-func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, scope string, nodeID *string) (GraphRunResponse, error) {
+func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID string, req GraphRunRequest) (GraphRunResponse, error) {
 	ctx = s.guardCtx(ctx)
-	submission, err := submitGraphRun(ctx, pgxTx, productID, graphID, scope, nodeID)
+	if req.Scope == "" {
+		req.Scope = RunScopeGraph
+	}
+	submission, err := submitGraphRun(ctx, pgxTx, productID, graphID, req)
 	if err != nil {
 		return GraphRunResponse{}, err
 	}
 	return serializeGraphRun(submission.Run), nil
+}
+
+func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req GraphRunRequest) (GraphRunPreviewResponse, error) {
+	if req.Scope == "" {
+		req.Scope = RunScopeGraph
+	}
+	if err := validateGraphRunRequest(req); err != nil {
+		return GraphRunPreviewResponse{}, err
+	}
+	var out GraphRunPreviewResponse
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		ctx := s.guardCtx(ctx)
+		row, err := loadGraph(ctx, pgxTx, productID, graphID)
+		if err != nil {
+			return err
+		}
+		applied, err := loadAppliedGraph(ctx, pgxTx, row)
+		if err != nil {
+			return err
+		}
+		sources, _, _, err := loadGraphSources(ctx, pgxTx, row, applied)
+		if err != nil {
+			return err
+		}
+		nodes, err := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validRegenerateMode(req.RegenerateMode))
+		if err != nil {
+			return err
+		}
+		out = GraphRunPreviewResponse{
+			Scope:            req.Scope,
+			RequestedNodeID:  req.NodeID,
+			RequestedNodeIDs: requestedNodeIDsOrEmpty(req.NodeIDs),
+			Force:            req.Force,
+			RegenerateMode:   validRegenerateMode(req.RegenerateMode),
+			Nodes:            nodes,
+		}
+		return nil
+	})
+	return out, err
 }
 
 func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
@@ -276,6 +318,7 @@ func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string
 
 // CancelRunTx 在调用方已有的事务里取消 GraphRun。
 func (s Service) CancelRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, runID string) (GraphRunResponse, error) {
+	ctx = s.guardCtx(ctx)
 	run, err := cancelGraphRun(ctx, pgxTx, productID, graphID, runID)
 	if err != nil {
 		return GraphRunResponse{}, err

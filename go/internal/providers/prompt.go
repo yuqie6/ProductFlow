@@ -139,6 +139,7 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 			"visual_system":          req.Visual,
 			"visual_exceptions":      exceptionsOrEmpty(req.VisualExceptions),
 			"current_prompt":         current,
+			"briefs":                 briefsOrEmpty(req.Briefs),
 			"text_policy":            textPolicyOrNone(req.TextPolicy),
 			"text_languages":         textLanguages,
 			"reference_images":       refMeta,
@@ -258,6 +259,13 @@ func factsOrEmpty(facts []map[string]any) []map[string]any {
 		return []map[string]any{}
 	}
 	return facts
+}
+
+func briefsOrEmpty(briefs []map[string]any) []map[string]any {
+	if briefs == nil {
+		return []map[string]any{}
+	}
+	return briefs
 }
 
 func exceptionsOrEmpty(items []map[string]any) []map[string]any {

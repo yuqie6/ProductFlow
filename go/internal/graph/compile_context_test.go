@@ -176,7 +176,7 @@ func TestAssemblePromptRequestKeepsFullVisualDraft(t *testing.T) {
 		"photography": map[string]any{"lighting": "柔光"},
 		"colors":      []any{map[string]any{"role": "background", "value": "#F3EFE8", "label": "暖白"}},
 	}
-	req, err := AssemblePromptRequest(node, nil, nil, visual, nil, "d")
+	req, err := AssemblePromptRequest(node, nil, nil, visual, nil, "d", AppliedGraph{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,5 +185,170 @@ func TestAssemblePromptRequestKeepsFullVisualDraft(t *testing.T) {
 	}
 	if len(req.VisualExceptions) != 0 {
 		t.Fatalf("full draft must not be coerced to inline overlay exceptions: %+v", req.VisualExceptions)
+	}
+}
+
+func TestCompileImageRuntimeHashesPromptDocumentNotArtifactID(t *testing.T) {
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+				"prompt": map[string]any{"design_goal": "主图", "composition": map[string]any{"layout": "居中"}},
+			}},
+			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{
+				"image_type_key": "hero",
+				"generation_spec": map[string]any{
+					"aspect_ratio": "1:1", "resolution_tier": "high", "quality_intent": "high",
+					"reference_fidelity": "high", "background_intent": "auto", "text_policy": "none",
+				},
+			}},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e-prompt", SourceNodeID: "prompt", TargetNodeID: "image", DataType: DataPrompt, Role: RolePrompt, Order: 0},
+		},
+	}
+	sources := map[string]SourceRecord{
+		"prompt": {PromptDocument: map[string]any{"design_goal": "主图", "composition": map[string]any{"layout": "居中"}}},
+	}
+	first, err := compileImageRuntime(g, "image", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Nodes[0].Config["prompt"] = map[string]any{"design_goal": "主图", "composition": map[string]any{"layout": "左侧留白"}}
+	sources["prompt"] = SourceRecord{PromptDocument: map[string]any{"design_goal": "主图", "composition": map[string]any{"layout": "左侧留白"}}}
+	second, err := compileImageRuntime(g, "image", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("changing prompt layout must change image digest")
+	}
+}
+
+func TestCompileImageRuntimeHashesUpstreamVisualOverlay(t *testing.T) {
+	spec := map[string]any{
+		"aspect_ratio": "1:1", "resolution_tier": "high", "quality_intent": "high",
+		"reference_fidelity": "high", "background_intent": "auto", "text_policy": "none",
+	}
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "visual", NodeType: NodeVisualSystem, Title: "视觉", Config: map[string]any{
+				"visual_overlay": map[string]any{"style": []any{"冷色"}},
+			}},
+			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+				"prompt": map[string]any{"design_goal": "主图"},
+			}},
+			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{
+				"image_type_key": "hero", "generation_spec": spec,
+			}},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e-prompt", SourceNodeID: "prompt", TargetNodeID: "image", DataType: DataPrompt, Role: RolePrompt, Order: 0},
+			{ID: "e-vis", SourceNodeID: "visual", TargetNodeID: "image", DataType: DataVisualSystem, Role: RoleVisualGuidance, Order: 1},
+		},
+	}
+	sources := map[string]SourceRecord{
+		"prompt": {PromptDocument: map[string]any{"design_goal": "主图"}},
+		"visual": {VisualPayload: map[string]any{"style": []any{"冷色"}}},
+	}
+	first, err := compileImageRuntime(g, "image", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Nodes[0].Config["visual_overlay"] = map[string]any{"style": []any{"暖色"}}
+	sources["visual"] = SourceRecord{VisualPayload: map[string]any{"style": []any{"暖色"}}}
+	second, err := compileImageRuntime(g, "image", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("changing visual overlay must change image digest")
+	}
+}
+
+func TestIncomingPromptDocumentUsesConfigWithoutArtifact(t *testing.T) {
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+				"prompt": map[string]any{"design_goal": "主图"},
+			}},
+			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{}},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e-prompt", SourceNodeID: "prompt", TargetNodeID: "image", DataType: DataPrompt, Role: RolePrompt, Order: 0},
+		},
+	}
+	payload, artifactID, err := incomingPromptDocument(g, "image", map[string]SourceRecord{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifactID != "" {
+		t.Fatalf("artifact id %q", artifactID)
+	}
+	if payload["design_goal"] != "主图" {
+		t.Fatalf("payload %+v", payload)
+	}
+}
+
+func TestCatalogBriefFieldsAffectDigest(t *testing.T) {
+	keys := catalogDigestKeys(NodeCreativeBrief)
+	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+		if _, ok := keys[key]; !ok {
+			t.Fatalf("missing %s in %+v", key, keys)
+		}
+	}
+}
+
+func TestCompileContextRuntimeHashesBriefGoal(t *testing.T) {
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}},
+		},
+	}
+	first, err := compileContextRuntime(g, "brief", map[string]SourceRecord{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Nodes[0].Config["goal"] = "改过"
+	second, err := compileContextRuntime(g, "brief", map[string]SourceRecord{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("changing brief goal must change digest")
+	}
+}
+
+func TestCompileContextRuntimeHashesIncomingFactSetVersion(t *testing.T) {
+	v1 := "fact-v1"
+	v2 := "fact-v2"
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "source", NodeType: NodeProductSource, Title: "资料"},
+			{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}},
+		},
+		Edges: []AppliedEdge{{
+			ID: "facts", SourceNodeID: "source", TargetNodeID: "brief",
+			DataType: DataProductFacts, Role: RoleFacts, Order: 0,
+		}},
+	}
+	sources := map[string]SourceRecord{
+		"source": {ProductSource: &productSourceSnapshot{FactSetVersionID: &v1}},
+	}
+	first, err := compileContextRuntime(g, "brief", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources["source"] = SourceRecord{ProductSource: &productSourceSnapshot{FactSetVersionID: &v2}}
+	second, err := compileContextRuntime(g, "brief", sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("changing incoming fact-set version must change digest")
 	}
 }

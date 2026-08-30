@@ -90,7 +90,7 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 		t.Fatalf("restored graph %s want %s", current.ID, graphID)
 	}
 
-	run, err := graphs.SubmitRun(ctx, created.Product.ID, graphID, "graph", nil)
+	run, err := graphs.SubmitRun(ctx, created.Product.ID, graphID, graph.GraphRunRequest{Scope: "graph"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +101,7 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 			Image:  graph.MockImageProvider{},
 			Assets: product.Service{DB: dstDB, Media: media.Store{Files: storage.Local{Root: root}}},
 		},
+		Products: product.GraphGuard{},
 	}
 	if err := executor.ExecuteRun(ctx, run.ID); err != nil {
 		t.Fatal(err)
@@ -110,7 +111,11 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	if finished.Status != "succeeded" {
-		t.Fatalf("status %s reason %+v", finished.Status, finished.FailureReason)
+		reason := ""
+		if finished.FailureReason != nil {
+			reason = *finished.FailureReason
+		}
+		t.Fatalf("status %s reason %s nodes %+v", finished.Status, reason, finished.NodeRuns)
 	}
 }
 

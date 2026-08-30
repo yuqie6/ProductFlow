@@ -40,6 +40,8 @@ type NodeView struct {
 	PreviewAssetID         *string          `json:"preview_asset_id"`
 	ConfigStatus           ConfigStatus     `json:"config_status"`
 	Unused                 bool             `json:"unused"`
+	DocumentOrigin         *string          `json:"document_origin"`
+	BindingStatus          *string          `json:"binding_status,omitempty"`
 	CurrentArtifactID      *string          `json:"current_artifact_id"`
 	CurrentArtifactType    *string          `json:"current_artifact_type"`
 	CurrentArtifactPayload map[string]any   `json:"current_artifact_payload"`
@@ -184,6 +186,16 @@ func buildProjection(
 			status = ConfigIncomplete
 		}
 		status = configStatusWithStale(applied, node, artifactDigests[node.ID], sources, status)
+		var binding *string
+		if node.NodeType == NodeImageAsset {
+			if node.BoundAssetID != nil && *node.BoundAssetID != "" {
+				bound := "bound"
+				binding = &bound
+			} else {
+				unbound := "unbound"
+				binding = &unbound
+			}
+		}
 		nodes = append(nodes, NodeView{
 			ID:                     node.ID,
 			NodeType:               node.NodeType,
@@ -198,6 +210,8 @@ func buildProjection(
 			PreviewAssetID:         preview,
 			ConfigStatus:           status,
 			Unused:                 unused,
+			DocumentOrigin:         documentOriginPtr(node),
+			BindingStatus:          binding,
 			CurrentArtifactID:      record.CurrentArtifactID,
 			CurrentArtifactType:    record.CurrentArtifactType,
 			CurrentArtifactPayload: record.CurrentArtifactPayload,
@@ -235,6 +249,14 @@ func buildProjection(
 
 func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDigest string, sources map[string]SourceRecord, status ConfigStatus) ConfigStatus {
 	if status != ConfigReady || !IsProcessingNode(node.NodeType) || artifactDigest == "" || sources == nil {
+		return status
+	}
+	// Content artifacts hash the document-generation request before the generated
+	// document is adopted. The adopted document necessarily changes the node's
+	// own config, so comparing that request hash with the post-adopt config would
+	// mark every successful content cook stale. Authored content still falls
+	// through and is reported stale when its current document diverges.
+	if isContentNodeType(node.NodeType) && DocumentOrigin(node) == OriginGenerated {
 		return status
 	}
 	digest, err := compileInputDigest(applied, node.ID, sources)
@@ -340,15 +362,11 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 				record.VisualPayload = payload
 			}
 			if record.VisualPayload == nil {
-				if overrides, ok := node.Config["visual_overrides"].([]any); ok {
-					merged := mergeVisualOverrideItems(overrides)
-					if len(merged) > 0 {
-						record.VisualPayload = CatalogVisualOverlay(merged)
-					}
-				}
-			}
-			if record.VisualPayload == nil {
 				record.VisualPayload = visualOverlayFromConfig(node.Config)
+			}
+		case NodePromptGeneration:
+			if prompt, ok := node.Config["prompt"].(map[string]any); ok {
+				record.PromptDocument = cloneMap(prompt)
 			}
 		case NodeImageAsset:
 			record.BoundAssetID = node.BoundAssetID

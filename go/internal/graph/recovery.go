@@ -23,10 +23,11 @@ type RecoverySummary struct {
 }
 
 // RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
-func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
+func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, products ProductGuard) (RecoverySummary, error) {
 	if staleAfter <= 0 {
 		staleAfter = defaultStaleRunningAfter
 	}
+	ctx = WithProductGuard(ctx, products)
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
 		return RecoverySummary{}, err
@@ -86,7 +87,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			now := time.Now().UTC()
 			for _, node := range stale {
 				if nodeSafeToRequeue(node) {
-					if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+					result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 						Where("id = ? AND status = ?", node.ID, "running").
 						Updates(map[string]any{
 							"status":              "queued",
@@ -95,12 +96,20 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 							"finished_at":         nil,
 							"progress_phase":      "requeued_after_idle",
 							"progress_updated_at": now,
-						}).Error; err != nil {
-						return err
+						})
+					if result.Error != nil {
+						return result.Error
+					}
+					if result.RowsAffected == 1 {
+						if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.progress", &node.ID, map[string]any{
+							"status": "queued", "phase": "requeued_after_idle", "reason": "stale_worker",
+						}); err != nil {
+							return err
+						}
+						requeued = true
 					}
 					_ = pgxTx.WithContext(ctx).Where("node_run_id = ? AND effect_result = ?", node.ID, "pending").
 						Delete(&schema.WorkflowGraphProviderEffects{}).Error
-					requeued = true
 					continue
 				}
 				if err := markNodeUnknown(ctx, pgxTx, run.ID, node.ID, node.ActiveAttemptID, ProviderUnknownDetail); err != nil {
@@ -135,6 +144,21 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				summary.StaleRunningRuns++
 			}
 		}
+		// A terminal transition and queue promotion are separate writes. If the
+		// process dies between them, no running row remains to lead recovery to
+		// the queued run. Promote one queued run per affected graph explicitly.
+		var queuedGraphIDs []string
+		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+			Where("status = ?", RunStatusQueued).
+			Distinct("graph_id").
+			Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
+			return err
+		}
+		for _, graphID := range queuedGraphIDs {
+			if err := promoteNextQueuedRun(ctx, pgxTx, graphID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	return summary, err
@@ -155,7 +179,7 @@ func classifyDelivery(run graphRunRow) string {
 		case NodeRunQueued:
 			hasQueued = true
 			allTerminal = false
-		case NodeRunSucceeded, NodeRunFailed, NodeRunUnknown:
+		case NodeRunSucceeded, NodeRunFailed, NodeRunUnknown, NodeRunSkipped, NodeRunCancelled:
 		default:
 			allTerminal = false
 		}

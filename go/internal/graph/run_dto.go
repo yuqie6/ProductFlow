@@ -7,8 +7,11 @@ import (
 )
 
 type GraphRunRequest struct {
-	Scope  string  `json:"scope"`
-	NodeID *string `json:"node_id"`
+	Scope          string   `json:"scope"`
+	NodeID         *string  `json:"node_id"`
+	NodeIDs        []string `json:"node_ids"`
+	Force          bool     `json:"force"`
+	RegenerateMode string   `json:"regenerate_mode"`
 }
 
 type GraphRunInputTraceEntry struct {
@@ -33,22 +36,35 @@ type GraphNodeRunResponse struct {
 	InputTrace      []GraphRunInputTraceEntry `json:"input_trace"`
 	Output          map[string]any            `json:"output"`
 	FailureReason   *string                   `json:"failure_reason"`
+	AttemptCount    int                       `json:"attempt_count"`
+	ProgressPhase   *string                   `json:"progress_phase"`
+	PlannedAction   *string                   `json:"planned_action"`
 	StartedAt       time.Time                 `json:"started_at"`
 	FinishedAt      *time.Time                `json:"finished_at"`
 }
 
 type GraphRunResponse struct {
-	ID              string                 `json:"id"`
-	GraphID         string                 `json:"graph_id"`
-	Status          string                 `json:"status"`
-	Scope           string                 `json:"scope"`
-	RequestedNodeID *string                `json:"requested_node_id"`
-	GraphRevision   int                    `json:"graph_revision"`
-	FailureReason   *string                `json:"failure_reason"`
-	IsRetryable     bool                   `json:"is_retryable"`
-	NodeRuns        []GraphNodeRunResponse `json:"node_runs"`
-	StartedAt       time.Time              `json:"started_at"`
-	FinishedAt      *time.Time             `json:"finished_at"`
+	ID               string                 `json:"id"`
+	GraphID          string                 `json:"graph_id"`
+	Status           string                 `json:"status"`
+	Scope            string                 `json:"scope"`
+	RequestedNodeID  *string                `json:"requested_node_id"`
+	RequestedNodeIDs []string               `json:"requested_node_ids"`
+	GraphRevision    int                    `json:"graph_revision"`
+	FailureReason    *string                `json:"failure_reason"`
+	IsRetryable      bool                   `json:"is_retryable"`
+	NodeRuns         []GraphNodeRunResponse `json:"node_runs"`
+	StartedAt        time.Time              `json:"started_at"`
+	FinishedAt       *time.Time             `json:"finished_at"`
+}
+
+type GraphRunPreviewResponse struct {
+	Scope            string           `json:"scope"`
+	RequestedNodeID  *string          `json:"requested_node_id"`
+	RequestedNodeIDs []string         `json:"requested_node_ids"`
+	Force            bool             `json:"force"`
+	RegenerateMode   string           `json:"regenerate_mode"`
+	Nodes            []RunPreviewNode `json:"nodes"`
 }
 
 type GraphRunListResponse struct {
@@ -56,18 +72,21 @@ type GraphRunListResponse struct {
 }
 
 type graphRunRow struct {
-	ID              string
-	GraphID         string
-	Status          string
-	RunScope        string
-	RequestedNodeID *string
-	GraphRevision   int
-	Snapshot        map[string]any
-	FailureReason   *string
-	IsRetryable     bool
-	StartedAt       time.Time
-	FinishedAt      *time.Time
-	NodeRuns        []graphNodeRunRow
+	ID               string
+	GraphID          string
+	Status           string
+	RunScope         string
+	RequestedNodeID  *string
+	RequestedNodeIDs []string
+	GraphRevision    int
+	Snapshot         map[string]any
+	FailureReason    *string
+	IsRetryable      bool
+	StartedAt        time.Time
+	FinishedAt       *time.Time
+	Force            bool
+	RegenerateMode   string
+	NodeRuns         []graphNodeRunRow
 }
 
 type graphNodeRunRow struct {
@@ -79,9 +98,11 @@ type graphNodeRunRow struct {
 	CompiledContext []byte
 	OutputJSON      []byte
 	FailureReason   *string
+	AttemptCount    int
 	ActiveAttemptID *string
 	ProgressPhase   *string
 	ProgressUpdated *time.Time
+	PlannedAction   *string
 	StartedAt       time.Time
 	FinishedAt      *time.Time
 }
@@ -92,17 +113,18 @@ func serializeGraphRun(run graphRunRow) GraphRunResponse {
 		nodeRuns = append(nodeRuns, serializeNodeRun(item, run.Snapshot))
 	}
 	return GraphRunResponse{
-		ID:              run.ID,
-		GraphID:         run.GraphID,
-		Status:          run.Status,
-		Scope:           run.RunScope,
-		RequestedNodeID: run.RequestedNodeID,
-		GraphRevision:   run.GraphRevision,
-		FailureReason:   run.FailureReason,
-		IsRetryable:     run.IsRetryable,
-		NodeRuns:        nodeRuns,
-		StartedAt:       run.StartedAt,
-		FinishedAt:      run.FinishedAt,
+		ID:               run.ID,
+		GraphID:          run.GraphID,
+		Status:           run.Status,
+		Scope:            run.RunScope,
+		RequestedNodeID:  run.RequestedNodeID,
+		RequestedNodeIDs: requestedNodeIDsOrEmpty(run.RequestedNodeIDs),
+		GraphRevision:    run.GraphRevision,
+		FailureReason:    run.FailureReason,
+		IsRetryable:      run.IsRetryable,
+		NodeRuns:         nodeRuns,
+		StartedAt:        run.StartedAt,
+		FinishedAt:       run.FinishedAt,
 	}
 }
 
@@ -160,9 +182,19 @@ func serializeNodeRun(nodeRun graphNodeRunRow, snapshot map[string]any) GraphNod
 		InputTrace:      inputTrace,
 		Output:          output,
 		FailureReason:   nodeRun.FailureReason,
+		AttemptCount:    nodeRun.AttemptCount,
+		ProgressPhase:   nodeRun.ProgressPhase,
+		PlannedAction:   nodeRun.PlannedAction,
 		StartedAt:       nodeRun.StartedAt,
 		FinishedAt:      nodeRun.FinishedAt,
 	}
+}
+
+func requestedNodeIDsOrEmpty(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 func ptrStr(v *string) string {
@@ -170,4 +202,21 @@ func ptrStr(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func stringSliceField(raw any) []string {
+	switch typed := raw.(type) {
+	case []string:
+		return normalizeRunNodeIDs(typed)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return normalizeRunNodeIDs(out)
+	default:
+		return nil
+	}
 }

@@ -43,8 +43,10 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3.POST("/products/:product_id/workflows/:workflow_id/proposals/:proposal_id/confirm", h.confirmProposal)
 	v3.POST("/products/:product_id/workflows/:workflow_id/proposals/:proposal_id/discard", h.discardProposal)
 	v3.POST("/products/:product_id/workflows/:workflow_id/runs", h.submitRun)
+	v3.POST("/products/:product_id/workflows/:workflow_id/runs/preview", h.previewRun)
 	v3.GET("/products/:product_id/workflows/:workflow_id/runs", h.listRuns)
 	v3.GET("/products/:product_id/workflows/:workflow_id/runs/:run_id", h.getRun)
+	v3.GET("/products/:product_id/workflows/:workflow_id/runs/:run_id/events", h.streamRunEvents)
 	v3.POST("/products/:product_id/workflows/:workflow_id/runs/:run_id/cancel", h.cancelRun)
 	v3.POST("/products/:product_id/workflows/:workflow_id/runs/:run_id/retry", h.retryRun)
 }
@@ -151,16 +153,26 @@ func (h HTTP) submitRun(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	if req.Scope != RunScopeGraph && (req.NodeID == nil || strings.TrimSpace(*req.NodeID) == "") {
-		httpx.AbortErr(c, apperr.Validation("节点运行范围必须指定 node_id"))
-		return
-	}
-	out, err := h.Service.SubmitRun(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), req.Scope, req.NodeID)
+	out, err := h.Service.SubmitRun(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), req)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, out)
+}
+
+func (h HTTP) previewRun(c *gin.Context) {
+	req, err := parseGraphRunRequest(c)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.PreviewRun(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h HTTP) listRuns(c *gin.Context) {
@@ -213,14 +225,14 @@ func parseGraphRunRequest(c *gin.Context) (GraphRunRequest, error) {
 	if err := dec.Decode(&req); err != nil {
 		return GraphRunRequest{}, apperr.Validation("请求体无效")
 	}
-	if dec.More() {
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return GraphRunRequest{}, apperr.Validation("请求体无效")
 	}
 	if req.Scope == "" {
 		req.Scope = RunScopeGraph
 	}
 	switch req.Scope {
-	case RunScopeGraph, RunScopeNode, RunScopeToNode:
+	case RunScopeGraph, RunScopeNode, RunScopeToNode, RunScopeSelection:
 	default:
 		return GraphRunRequest{}, apperr.Validation("请求体无效")
 	}
@@ -231,6 +243,17 @@ func parseGraphRunRequest(c *gin.Context) (GraphRunRequest, error) {
 		} else {
 			req.NodeID = &trimmed
 		}
+	}
+	req.NodeIDs = normalizeRunNodeIDs(req.NodeIDs)
+	req.RegenerateMode = validRegenerateMode(req.RegenerateMode)
+	if err := validateGraphRunRequest(req); err != nil {
+		return GraphRunRequest{}, err
+	}
+	if (req.Scope == RunScopeNode || req.Scope == RunScopeToNode) && req.NodeID == nil {
+		return GraphRunRequest{}, apperr.Validation("节点运行范围必须指定 node_id")
+	}
+	if req.Scope == RunScopeSelection && len(req.NodeIDs) == 0 {
+		return GraphRunRequest{}, apperr.Validation("选区运行必须指定 node_ids")
 	}
 	return req, nil
 }

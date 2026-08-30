@@ -30,6 +30,79 @@ func TestApplyCreateNodeProductSourceNormalizesConfig(t *testing.T) {
 	if node.Config["fact_set_version_id"] != nil {
 		t.Fatalf("fact_set_version_id %+v", node.Config["fact_set_version_id"])
 	}
+}
+
+func TestApplyReorderEdgesUpdatesOrder(t *testing.T) {
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "img1", NodeType: NodeImageAsset, Title: "a"},
+			{ID: "img2", NodeType: NodeImageAsset, Title: "b"},
+			{ID: "prompt", NodeType: NodePromptGeneration, Title: "p", DocumentOrigin: OriginSeed},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e1", SourceNodeID: "img1", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 0},
+			{ID: "e2", SourceNodeID: "img2", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 1},
+		},
+	}
+	got, err := Apply(g, ChangeSet{
+		BaseGraphRevision: 1,
+		Summary:           "重排参考图",
+		Operations: []Operation{ReorderEdgesOp{
+			NodeRef:  "prompt",
+			Role:     RoleReference,
+			EdgeRefs: []string{"e2", "e1"},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]AppliedEdge{}
+	for _, edge := range got.Edges {
+		byID[edge.ID] = edge
+	}
+	if byID["e2"].Order != 0 || byID["e1"].Order != 1 {
+		t.Fatalf("order %+v %+v", byID["e1"], byID["e2"])
+	}
+}
+
+func TestInvertReorderEdges(t *testing.T) {
+	before := AppliedGraph{
+		Nodes: []AppliedNode{
+			{ID: "img1", NodeType: NodeImageAsset},
+			{ID: "img2", NodeType: NodeImageAsset},
+			{ID: "prompt", NodeType: NodePromptGeneration, DocumentOrigin: OriginSeed},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e1", SourceNodeID: "img1", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 0},
+			{ID: "e2", SourceNodeID: "img2", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 1},
+		},
+	}
+	after := before
+	after.Revision = 1
+	after.Edges = []AppliedEdge{
+		{ID: "e1", SourceNodeID: "img1", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 1},
+		{ID: "e2", SourceNodeID: "img2", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 0},
+	}
+	inverse := Invert(before, after)
+	if len(inverse) != 1 {
+		t.Fatalf("inverse %+v", inverse)
+	}
+	reorder, ok := inverse[0].(ReorderEdgesOp)
+	if !ok || reorder.NodeRef != "prompt" || reorder.Role != RoleReference || !sameStringSlice(reorder.EdgeRefs, []string{"e1", "e2"}) {
+		t.Fatalf("inverse %+v", inverse)
+	}
+}
+
+func TestFillDefaultNodeConfigAddsGenerationSpec(t *testing.T) {
+	got := FillDefaultNodeConfig(NodeImageGeneration, map[string]any{})
+	spec, _ := got["generation_spec"].(map[string]any)
+	if spec["text_language"] != nil || spec["text_policy"] != "none" {
+		t.Fatalf("spec %+v", spec)
+	}
+}
+
+func TestNormalizeRejectsUnknownConfigField(t *testing.T) {
 	if _, err := NormalizeNodeConfig(NodeProductSource, map[string]any{
 		"source_product_id": "prod-1",
 		"unknown_field":     true,

@@ -17,6 +17,7 @@ export const GRAPH_COMMAND_OPS = [
   "move_nodes_to_group",
   "rename_group",
   "dissolve_group",
+  "reorder_edges",
 ] as const;
 
 const ref = Type.String({ minLength: 1, maxLength: 80 });
@@ -122,6 +123,15 @@ const graphCommandOperation = Type.Union([
     {
       op: Type.Literal("dissolve_group"),
       group_ref: ref,
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      op: Type.Literal("reorder_edges"),
+      node_ref: ref,
+      role: Type.String({ minLength: 1, maxLength: 80 }),
+      edge_refs: Type.Array(ref, { minItems: 1 }),
     },
     { additionalProperties: false },
   ),

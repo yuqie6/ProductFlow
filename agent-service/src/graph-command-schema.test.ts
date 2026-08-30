@@ -39,6 +39,7 @@ describe("Graph Command tool schema", () => {
       "move_nodes_to_group",
       "rename_group",
       "dissolve_group",
+      "reorder_edges",
     ]);
   });
 

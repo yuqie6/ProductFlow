@@ -3,6 +3,7 @@ package graph
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -21,6 +22,9 @@ func ParseChangeSet(raw []byte) (ChangeSet, error) {
 	dec.UseNumber()
 	var payload map[string]any
 	if err := dec.Decode(&payload); err != nil {
+		return ChangeSet{}, apperr.Validation("请求体无效")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return ChangeSet{}, apperr.Validation("请求体无效")
 	}
 	if err := rejectUnknownKeys(payload, changeSetKnownKeys); err != nil {
@@ -60,7 +64,7 @@ func ParseChangeSet(raw []byte) (ChangeSet, error) {
 	if err != nil {
 		return ChangeSet{}, apperr.Validation("不支持的 Graph 操作")
 	}
-	operations, err := UnmarshalOperations(opsBytes)
+	operations, err := unmarshalOperations(opsBytes, false)
 	if err != nil {
 		return ChangeSet{}, err
 	}
@@ -77,10 +81,17 @@ func ParseChangeSet(raw []byte) (ChangeSet, error) {
 }
 
 func UnmarshalOperations(raw []byte) ([]Operation, error) {
+	return unmarshalOperations(raw, false)
+}
+
+func unmarshalOperations(raw []byte, allowInternal bool) ([]Operation, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var items []json.RawMessage
 	if err := dec.Decode(&items); err != nil {
+		return nil, apperr.Validation("不支持的 Graph 操作")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return nil, apperr.Validation("不支持的 Graph 操作")
 	}
 	if len(items) < 1 {
@@ -88,7 +99,7 @@ func UnmarshalOperations(raw []byte) ([]Operation, error) {
 	}
 	out := make([]Operation, 0, len(items))
 	for _, item := range items {
-		op, err := unmarshalOperation(item)
+		op, err := unmarshalOperation(item, allowInternal)
 		if err != nil {
 			return nil, err
 		}
@@ -97,11 +108,14 @@ func UnmarshalOperations(raw []byte) ([]Operation, error) {
 	return out, nil
 }
 
-func unmarshalOperation(raw json.RawMessage) (Operation, error) {
+func unmarshalOperation(raw json.RawMessage, allowInternal bool) (Operation, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	var payload map[string]any
 	if err := dec.Decode(&payload); err != nil {
+		return nil, apperr.Validation("不支持的 Graph 操作")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return nil, apperr.Validation("不支持的 Graph 操作")
 	}
 	op, _ := payload["op"].(string)
@@ -110,10 +124,14 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err := requireKeys(payload, "client_ref", "node_type", "title"); err != nil {
 			return nil, err
 		}
-		if err := rejectUnknownKeys(payload, map[string]struct{}{
+		knownKeys := map[string]struct{}{
 			"op": {}, "client_ref": {}, "node_type": {}, "title": {},
 			"position_x": {}, "position_y": {}, "config": {}, "bound_asset_id": {}, "group_ref": {},
-		}); err != nil {
+		}
+		if allowInternal {
+			knownKeys["document_origin"] = struct{}{}
+		}
+		if err := rejectUnknownKeys(payload, knownKeys); err != nil {
 			return nil, err
 		}
 		nodeType, ok := payload["node_type"].(string)
@@ -152,23 +170,32 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err != nil {
 			return nil, err
 		}
+		origin, err := optionalDocumentOrigin(payload, "document_origin", allowInternal)
+		if err != nil {
+			return nil, err
+		}
 		return CreateNodeOp{
-			ClientRef:    ref,
-			NodeType:     NodeType(nodeType),
-			Title:        title,
-			PositionX:    x,
-			PositionY:    y,
-			Config:       config,
-			BoundAssetID: bound,
-			GroupRef:     group,
+			ClientRef:      ref,
+			NodeType:       NodeType(nodeType),
+			Title:          title,
+			PositionX:      x,
+			PositionY:      y,
+			Config:         config,
+			BoundAssetID:   bound,
+			GroupRef:       group,
+			DocumentOrigin: origin,
 		}, nil
 	case "update_node_config":
 		if err := requireKeys(payload, "node_ref", "config"); err != nil {
 			return nil, err
 		}
-		if err := rejectUnknownKeys(payload, map[string]struct{}{
+		knownKeys := map[string]struct{}{
 			"op": {}, "node_ref": {}, "config": {}, "bound_asset_id": {},
-		}); err != nil {
+		}
+		if allowInternal {
+			knownKeys["document_origin"] = struct{}{}
+		}
+		if err := rejectUnknownKeys(payload, knownKeys); err != nil {
 			return nil, err
 		}
 		ref, err := graphRef(payload["node_ref"])
@@ -184,11 +211,16 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		if err != nil {
 			return nil, err
 		}
+		origin, err := optionalDocumentOrigin(payload, "document_origin", allowInternal)
+		if err != nil {
+			return nil, err
+		}
 		return UpdateNodeConfigOp{
 			NodeRef:         ref,
 			Config:          cfg,
 			BoundAssetID:    bound,
 			BoundAssetIDSet: boundSet,
+			DocumentOrigin:  origin,
 		}, nil
 	case "rename_node":
 		if err := requireKeys(payload, "node_ref", "title"); err != nil {
@@ -359,6 +391,28 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 			return nil, err
 		}
 		return DissolveGroupOp{GroupRef: ref}, nil
+	case "reorder_edges":
+		if err := requireKeys(payload, "node_ref", "role", "edge_refs"); err != nil {
+			return nil, err
+		}
+		if err := rejectUnknownKeys(payload, map[string]struct{}{
+			"op": {}, "node_ref": {}, "role": {}, "edge_refs": {},
+		}); err != nil {
+			return nil, err
+		}
+		nodeRef, err := graphRef(payload["node_ref"])
+		if err != nil {
+			return nil, err
+		}
+		roleRaw, ok := payload["role"].(string)
+		if !ok || strings.TrimSpace(roleRaw) == "" {
+			return nil, apperr.Validation("不支持的 Graph 操作")
+		}
+		refs, err := stringRefs(payload["edge_refs"])
+		if err != nil || len(refs) < 1 {
+			return nil, apperr.Validation("不支持的 Graph 操作")
+		}
+		return ReorderEdgesOp{NodeRef: nodeRef, Role: EdgeRole(roleRaw), EdgeRefs: refs}, nil
 	default:
 		return nil, apperr.Validation(unknownGraphOpDetail(op))
 	}
@@ -432,6 +486,25 @@ func optionalRef(payload map[string]any, key string) (*string, error) {
 		return nil, apperr.Validation("不支持的 Graph 操作")
 	}
 	return &s, nil
+}
+
+func optionalDocumentOrigin(payload map[string]any, key string, allowInternal bool) (*string, error) {
+	raw, exists := payload[key]
+	if !exists || raw == nil {
+		return nil, nil
+	}
+	if !allowInternal {
+		return nil, apperr.Validation("请求体无效")
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, apperr.Validation("不支持的 Graph 操作")
+	}
+	origin, ok := validDocumentOrigin(s)
+	if !ok {
+		return nil, apperr.Validation("不支持的 Graph 操作")
+	}
+	return &origin, nil
 }
 
 func optionalInt(payload map[string]any, key string) (int, error) {
