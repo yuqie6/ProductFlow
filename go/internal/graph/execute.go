@@ -63,11 +63,17 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
 			return err
 		}
+		if isMissingGraphRun(err) {
+			return nil
+		}
 		if isProviderUnknown(err) {
 			e.notifyRunStatus(ctx, runID)
 			return nil
 		}
 		if failErr := failGraphRun(ctx, e.DB, runID, "工作流运行失败"); failErr != nil {
+			if isMissingGraphRun(failErr) {
+				return nil
+			}
 			return failErr
 		}
 		e.notifyRunStatus(ctx, runID)
@@ -98,6 +104,10 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		var stop bool
 		err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 			run, err := loadGraphRunByID(ctx, pgxTx, runID)
+			if isMissingGraphRun(err) {
+				stop = true
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -127,6 +137,9 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		}
 
 		run, err := e.loadRun(ctx, runID)
+		if isMissingGraphRun(err) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -144,11 +157,32 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			}
 		}
 		if len(ready) == 0 {
+			var stillRunning bool
 			err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-				_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
-				return err
+				done, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+				if err != nil {
+					return err
+				}
+				if done {
+					return nil
+				}
+				loaded, err := loadGraphRunByID(ctx, pgxTx, runID)
+				if isMissingGraphRun(err) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				stillRunning = loaded.Status == RunStatusRunning
+				return nil
 			})
-			return err
+			if err != nil {
+				return err
+			}
+			if stillRunning {
+				return queue.ErrLater
+			}
+			return nil
 		}
 		var wg sync.WaitGroup
 		var claimed int
@@ -192,6 +226,10 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			}
 		}
 	}
+}
+
+func isMissingGraphRun(err error) bool {
+	return err != nil && (apperr.IsNotFound(err) || errors.Is(err, sqldb.ErrNoRows))
 }
 
 func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error) {

@@ -109,6 +109,9 @@ func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {
 	productID, graphID := gs.createDirectGraph(t)
 	extra := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph", "foo": 1})
 	gs.mustStatus(t, extra, http.StatusBadRequest)
+	empty := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", strings.NewReader(""), "application/json")
+	gs.mustStatus(t, empty, http.StatusBadRequest)
+	empty.Body.Close()
 	missing := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "node"})
 	gs.mustStatus(t, missing, http.StatusBadRequest)
 	var body struct {
@@ -117,6 +120,28 @@ func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {
 	gs.decode(t, missing, &body)
 	if body.Detail != "节点运行范围必须指定 node_id" {
 		t.Fatalf("detail %s", body.Detail)
+	}
+}
+
+func TestGraphProjectionIncludesSourceDraftRevisionID(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, resp, http.StatusOK)
+	raw, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["source_draft_revision_id"]; !ok {
+		t.Fatalf("missing source_draft_revision_id: %s", raw)
+	}
+	if payload["source_draft_revision_id"] != nil {
+		t.Fatalf("source_draft_revision_id %+v", payload["source_draft_revision_id"])
 	}
 }
 

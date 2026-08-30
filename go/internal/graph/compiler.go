@@ -519,7 +519,103 @@ func compiledContextTrace(graph AppliedGraph, node AppliedNode, sources map[stri
 			trace["visual_system_version_id"] = version
 		}
 	}
+	trace["input_trace"] = graphRuntimeInputTrace(graph, node.ID, sources)
 	return trace
+}
+
+// graphRuntimeInputTrace 对齐 Python graph_runtime_input_trace：按 incoming 边写入 artifact/asset/version 身份。
+func graphRuntimeInputTrace(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) []map[string]any {
+	var incoming []AppliedEdge
+	for _, edge := range graph.Edges {
+		if edge.TargetNodeID == nodeID {
+			incoming = append(incoming, edge)
+		}
+	}
+	sort.Slice(incoming, func(i, j int) bool {
+		if incoming[i].Order != incoming[j].Order {
+			return incoming[i].Order < incoming[j].Order
+		}
+		return incoming[i].ID < incoming[j].ID
+	})
+	entries := make([]map[string]any, 0, len(incoming))
+	for _, edge := range incoming {
+		source, err := graph.Node(edge.SourceNodeID)
+		if err != nil {
+			entries = append(entries, map[string]any{
+				"edge_id":        edge.ID,
+				"source_node_id": edge.SourceNodeID,
+				"source_title":   nil,
+				"role":           string(edge.Role),
+				"order":          edge.Order,
+				"artifact_id":    nil,
+				"artifact_type":  nil,
+				"asset_id":       nil,
+				"version_id":     nil,
+			})
+			continue
+		}
+		record := sources[source.ID]
+		artifactID := record.CurrentArtifactID
+		artifactType := record.CurrentArtifactType
+		if artifactID != nil && *artifactID != "" && (artifactType == nil || *artifactType == "") {
+			artifactType = inferredArtifactType(source.NodeType)
+		}
+		var assetID *string
+		switch source.NodeType {
+		case NodeImageAsset:
+			if record.BoundAssetID != nil && *record.BoundAssetID != "" {
+				assetID = record.BoundAssetID
+			} else {
+				assetID = source.BoundAssetID
+			}
+		case NodeImageGeneration:
+			assetID = record.CurrentOutputAssetID
+		}
+		var versionID *string
+		if source.NodeType == NodeProductSource && record.ProductSource != nil {
+			versionID = record.ProductSource.FactSetVersionID
+		} else if source.NodeType == NodeVisualSystem {
+			versionID = record.VisualSystemVersionID
+		}
+		var sourceTitle any
+		if strings.TrimSpace(source.Title) != "" {
+			sourceTitle = source.Title
+		}
+		entries = append(entries, map[string]any{
+			"edge_id":        edge.ID,
+			"source_node_id": source.ID,
+			"source_title":   sourceTitle,
+			"role":           string(edge.Role),
+			"order":          edge.Order,
+			"artifact_id":    emptyToNilPtr(artifactID),
+			"artifact_type":  emptyToNilPtr(artifactType),
+			"asset_id":       emptyToNilPtr(assetID),
+			"version_id":     emptyToNilPtr(versionID),
+		})
+	}
+	return entries
+}
+
+func inferredArtifactType(nodeType NodeType) *string {
+	switch nodeType {
+	case NodeCreativeBrief:
+		return strPtr("creative_brief")
+	case NodeVisualSystem:
+		return strPtr("visual_system")
+	case NodePromptGeneration:
+		return strPtr("prompt")
+	case NodeImageGeneration:
+		return strPtr("image")
+	default:
+		return nil
+	}
+}
+
+func emptyToNilPtr(v *string) any {
+	if v == nil || strings.TrimSpace(*v) == "" {
+		return nil
+	}
+	return *v
 }
 
 func incomingVisualVersionID(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) any {

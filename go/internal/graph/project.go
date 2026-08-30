@@ -12,18 +12,19 @@ import (
 )
 
 type Projection struct {
-	ID                   string        `json:"id"`
-	ProductID            string        `json:"product_id"`
-	Title                string        `json:"title"`
-	SchemaVersion        int           `json:"schema_version"`
-	Revision             int           `json:"revision"`
-	LastOperationGroupID *string       `json:"last_operation_group_id"`
-	CanUndo              bool          `json:"can_undo"`
-	CanRedo              bool          `json:"can_redo"`
-	Nodes                []NodeView    `json:"nodes"`
-	Edges                []EdgeView    `json:"edges"`
-	Groups               []GroupView   `json:"groups"`
-	PendingProposal      *ProposalView `json:"pending_proposal"`
+	ID                    string        `json:"id"`
+	ProductID             string        `json:"product_id"`
+	Title                 string        `json:"title"`
+	SchemaVersion         int           `json:"schema_version"`
+	Revision              int           `json:"revision"`
+	SourceDraftRevisionID *string       `json:"source_draft_revision_id"`
+	LastOperationGroupID  *string       `json:"last_operation_group_id"`
+	CanUndo               bool          `json:"can_undo"`
+	CanRedo               bool          `json:"can_redo"`
+	Nodes                 []NodeView    `json:"nodes"`
+	Edges                 []EdgeView    `json:"edges"`
+	Groups                []GroupView   `json:"groups"`
+	PendingProposal       *ProposalView `json:"pending_proposal"`
 }
 
 type NodeView struct {

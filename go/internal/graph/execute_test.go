@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
@@ -90,6 +91,15 @@ func TestExecuteGraphRunImageOutputIncludesProductImageAssetID(t *testing.T) {
 			}
 			if _, ok := ctx["fact_count"]; ok {
 				t.Fatalf("image compiled_context must not include fact_count from whole snapshot: %+v", ctx)
+			}
+			var promptArtifact string
+			for _, item := range node.InputTrace {
+				if item.Role == "prompt" && item.ArtifactID != nil {
+					promptArtifact = *item.ArtifactID
+				}
+			}
+			if promptArtifact == "" {
+				t.Fatalf("image input_trace missing prompt artifact identity: %+v", node.InputTrace)
 			}
 		}
 	}
@@ -273,6 +283,70 @@ func TestImageNodeSucceedsWhenDeliveryQueueFails(t *testing.T) {
 	}
 	if payload.Measured.Matched == nil || payload.Measured.Width <= 0 || payload.Measured.Height <= 0 {
 		t.Fatalf("measured %+v raw %s", payload.Measured, raw)
+	}
+}
+
+func TestExecuteMissingGraphRunConsumes(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	if err := executor.ExecuteRun(context.Background(), "ffffffffffffffffffffffffffffffff"); err != nil {
+		t.Fatalf("missing graph run must consume, not fail: %v", err)
+	}
+}
+
+func TestExecuteWaitingGraphRunDoesNotConsume(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_node_runs SET
+			status = 'running', started_at = NOW(), progress_phase = 'claimed', progress_updated_at = NOW()
+		WHERE graph_run_id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	err := executor.ExecuteRun(context.Background(), run.ID)
+	if !errors.Is(err, queue.ErrLater) {
+		t.Fatalf("in-flight graph run with no ready nodes must retry later, got %v", err)
+	}
+}
+
+func TestExecuteTerminalGraphRunConsumes(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	if err := executor.ExecuteRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("terminal graph run must consume, not busy-retry: %v", err)
 	}
 }
 

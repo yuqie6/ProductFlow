@@ -205,12 +205,15 @@ func parseGraphRunRequest(c *gin.Context) (GraphRunRequest, error) {
 		return GraphRunRequest{}, err
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return GraphRunRequest{Scope: RunScopeGraph}, nil
+		return GraphRunRequest{}, apperr.Validation("请求体无效")
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var req GraphRunRequest
 	if err := dec.Decode(&req); err != nil {
+		return GraphRunRequest{}, apperr.Validation("请求体无效")
+	}
+	if dec.More() {
 		return GraphRunRequest{}, apperr.Validation("请求体无效")
 	}
 	if req.Scope == "" {

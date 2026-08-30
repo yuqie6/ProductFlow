@@ -29,6 +29,7 @@ type productSourceSnapshot struct {
 	SourceProduct    *productSummary
 	FactSetVersion   *factSetSnapshot
 	Facts            []map[string]any
+	LegacyFallback   bool
 }
 
 func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) (productSourceSnapshot, error) {
@@ -93,6 +94,7 @@ func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID 
 		FactSetVersionID: factSetID,
 		SourceProduct:    &product,
 		Facts:            []map[string]any{},
+		LegacyFallback:   !hasSourceBinding,
 	}
 	if factSetID == nil {
 		return out, nil

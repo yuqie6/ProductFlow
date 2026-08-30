@@ -78,6 +78,58 @@ func TestCompiledContextTraceImageIncludesPromptArtifact(t *testing.T) {
 	}
 }
 
+func TestGraphRuntimeInputTraceFillsArtifactIdentities(t *testing.T) {
+	promptID := "art-prompt"
+	factVersion := "fact-v1"
+	bound := "asset-ref"
+	g := AppliedGraph{
+		Revision: 1,
+		Nodes: []AppliedNode{
+			{ID: "src", NodeType: NodeProductSource, Title: "资料", Config: map[string]any{}},
+			{ID: "ref", NodeType: NodeImageAsset, Title: "参考", BoundAssetID: &bound, Config: map[string]any{}},
+			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
+			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{"image_type_key": "hero"}},
+		},
+		Edges: []AppliedEdge{
+			{ID: "e-prompt", SourceNodeID: "prompt", TargetNodeID: "image", DataType: DataPrompt, Role: RolePrompt, Order: 0},
+			{ID: "e-ref", SourceNodeID: "ref", TargetNodeID: "image", DataType: DataImageAsset, Role: RoleReference, Order: 1},
+			{ID: "e-facts", SourceNodeID: "src", TargetNodeID: "prompt", DataType: DataProductFacts, Role: RoleFacts, Order: 0},
+		},
+	}
+	sources := map[string]SourceRecord{
+		"src": {
+			ProductSource: &productSourceSnapshot{FactSetVersionID: &factVersion},
+		},
+		"ref": {BoundAssetID: &bound},
+		"prompt": {
+			CurrentArtifactID:   &promptID,
+			CurrentArtifactType: strPtr("prompt"),
+		},
+	}
+	imageTrace := graphRuntimeInputTrace(g, "image", sources)
+	if len(imageTrace) != 2 {
+		t.Fatalf("image incoming %+v", imageTrace)
+	}
+	if imageTrace[0]["edge_id"] != "e-prompt" || imageTrace[0]["artifact_id"] != promptID {
+		t.Fatalf("prompt identity %+v", imageTrace[0])
+	}
+	if imageTrace[0]["artifact_type"] != "prompt" {
+		t.Fatalf("prompt type %+v", imageTrace[0])
+	}
+	if imageTrace[1]["edge_id"] != "e-ref" || imageTrace[1]["asset_id"] != bound {
+		t.Fatalf("reference identity %+v", imageTrace[1])
+	}
+	promptTrace := graphRuntimeInputTrace(g, "prompt", sources)
+	if len(promptTrace) != 1 || promptTrace[0]["version_id"] != factVersion {
+		t.Fatalf("facts version %+v", promptTrace)
+	}
+	merged := compiledContextTrace(g, g.Nodes[3], sources, "digest-img")
+	raw, ok := merged["input_trace"].([]map[string]any)
+	if !ok || len(raw) != 2 {
+		t.Fatalf("compiled_context must replace snapshot input_trace: %+v", merged["input_trace"])
+	}
+}
+
 func TestCollectPromptInputsPrefersMergedVisualPayload(t *testing.T) {
 	g := AppliedGraph{
 		Revision: 1,

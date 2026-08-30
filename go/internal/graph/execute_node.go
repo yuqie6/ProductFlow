@@ -795,11 +795,6 @@ func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID string, no
 	if title, ok := merged["node_title"].(string); ok && strings.TrimSpace(title) != "" {
 		trace["node_title"] = title
 	}
-	if _, has := trace["input_trace"]; !has {
-		if inputTrace, ok := merged["input_trace"]; ok {
-			trace["input_trace"] = inputTrace
-		}
-	}
 	compiled, err := json.Marshal(trace)
 	if err != nil {
 		return err

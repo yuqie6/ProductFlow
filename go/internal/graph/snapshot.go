@@ -102,7 +102,7 @@ func productSourceDict(snap *productSourceSnapshot) any {
 		"source_product":      product,
 		"fact_set_version":    factSet,
 		"facts":               factsOrEmpty(snap.Facts),
-		"legacy_fallback":     false,
+		"legacy_fallback":     snap.LegacyFallback,
 	}
 }
 
@@ -285,6 +285,7 @@ func productSourceFromDict(src map[string]any) productSourceSnapshot {
 	snap := productSourceSnapshot{Facts: []map[string]any{}}
 	snap.SourceProductID = strPtrField(src["source_product_id"])
 	snap.FactSetVersionID = strPtrField(src["fact_set_version_id"])
+	snap.LegacyFallback, _ = src["legacy_fallback"].(bool)
 	if product, ok := src["source_product"].(map[string]any); ok {
 		summary := productSummary{
 			ID:   strField(product["id"]),

@@ -67,11 +67,14 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			}
 			state := classifyDelivery(run)
 			if state == "queued" {
-				if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, runID, 0); err != nil {
+				summary.QueuedRuns++
+				changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, runID, nil)
+				if err != nil {
 					return err
 				}
-				summary.QueuedRuns++
-				summary.EnqueuedRuns++
+				if changed {
+					summary.EnqueuedRuns++
+				}
 				continue
 			}
 			if state != "running" {
@@ -130,10 +133,13 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				}
 				continue
 			}
-			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, run.ID, 0); err != nil {
+			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, run.ID, nil)
+			if err != nil {
 				return err
 			}
-			summary.EnqueuedRuns++
+			if changed {
+				summary.EnqueuedRuns++
+			}
 			if markedUnknown {
 				summary.UnknownRuns++
 			}
