@@ -68,15 +68,7 @@ func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 		}
 	}
 	if raw, ok := overrides["image_tool_allowed_fields"]; ok && strings.TrimSpace(raw) != "" {
-		parts := strings.Split(raw, ",")
-		fields := make([]string, 0, len(parts))
-		for _, part := range parts {
-			item := strings.TrimSpace(part)
-			if item != "" {
-				fields = append(fields, item)
-			}
-		}
-		if len(fields) > 0 {
+		if fields := storedImageToolAllowedFields(raw); len(fields) > 0 {
 			runtime.ImageToolAllowedFields = fields
 		}
 	}
@@ -101,15 +93,7 @@ func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) 
 		Allowed: append([]string{}, defaultImageToolAllowedFields...),
 	}
 	if raw, ok := overrides["image_tool_allowed_fields"]; ok && strings.TrimSpace(raw) != "" {
-		parts := strings.Split(raw, ",")
-		fields := make([]string, 0, len(parts))
-		for _, part := range parts {
-			item := strings.TrimSpace(part)
-			if item != "" {
-				fields = append(fields, item)
-			}
-		}
-		if len(fields) > 0 {
+		if fields := storedImageToolAllowedFields(raw); len(fields) > 0 {
 			out.Allowed = fields
 		}
 	}
@@ -205,6 +189,11 @@ func (s *Store) ImageChatPromptTemplate(ctx context.Context) (string, error) {
 		return raw, nil
 	}
 	return defaultPromptTemplate, nil
+}
+
+func storedImageToolAllowedFields(raw string) []string {
+	fields, _ := parseImageToolAllowedFields(raw)
+	return fields
 }
 
 func parseBool(raw string, fallback bool) bool {

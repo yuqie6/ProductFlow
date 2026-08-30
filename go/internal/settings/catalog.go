@@ -3,6 +3,8 @@ package settings
 import (
 	"strconv"
 	"strings"
+
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
 const (
@@ -84,7 +86,7 @@ func definitionByKey(key string) (configDefinition, bool) {
 	return configDefinition{}, false
 }
 
-func parseImageToolAllowedFields(value string) []string {
+func parseImageToolAllowedFields(value string) ([]string, error) {
 	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' })
 	selected := map[string]struct{}{}
 	for _, part := range parts {
@@ -94,13 +96,26 @@ func parseImageToolAllowedFields(value string) []string {
 		}
 		selected[part] = struct{}{}
 	}
+	allowed := map[string]struct{}{}
+	for _, key := range imageToolFieldKeys {
+		allowed[key] = struct{}{}
+	}
+	unknown := make([]string, 0)
+	for part := range selected {
+		if _, ok := allowed[part]; !ok {
+			unknown = append(unknown, part)
+		}
+	}
 	out := make([]string, 0, len(imageToolFieldKeys))
 	for _, key := range imageToolFieldKeys {
 		if _, ok := selected[key]; ok {
 			out = append(out, key)
 		}
 	}
-	return out
+	if len(unknown) > 0 {
+		return out, apperr.Validation("可用 Tool 字段包含不支持的字段: " + strings.Join(sortedUnique(unknown), ", "))
+	}
+	return out, nil
 }
 
 func defaultImageToolAllowedFieldsText() string {

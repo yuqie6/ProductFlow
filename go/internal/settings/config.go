@@ -93,7 +93,8 @@ func publicValue(def configDefinition, raw string) any {
 	case "boolean":
 		return parseBool(raw, false)
 	case "multi_select":
-		return parseImageToolAllowedFields(raw)
+		fields, _ := parseImageToolAllowedFields(raw)
+		return fields
 	case "number":
 		if def.Optional && strings.TrimSpace(raw) == "" {
 			return nil
@@ -208,7 +209,11 @@ func normalizeConfigValue(key string, value any) (string, error) {
 		}
 		return "", apperr.Validation(def.Label + " 必须是布尔值")
 	case "multi_select":
-		return strings.Join(parseAnyStringList(value), ","), nil
+		fields, err := parseAnyStringList(value)
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(fields, ","), nil
 	case "number":
 		if def.Optional && isEmptyNumber(value) {
 			return "", nil
@@ -255,7 +260,10 @@ func validateMerged(merged map[string]string) error {
 	return nil
 }
 
-func parseAnyStringList(value any) []string {
+func parseAnyStringList(value any) ([]string, error) {
+	if value == nil {
+		return parseImageToolAllowedFields("")
+	}
 	switch typed := value.(type) {
 	case []any:
 		parts := make([]string, 0, len(typed))

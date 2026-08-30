@@ -41,6 +41,27 @@ func testEngine(required bool) *httptest.Server {
 	return httptest.NewServer(engine)
 }
 
+func TestLoginMalformedJSON(t *testing.T) {
+	srv := testEngine(true)
+	defer srv.Close()
+	for _, body := range []string{``, `{`, `not-json`, `{"admin_key":"correct-admin-key"}{}`} {
+		resp, err := http.Post(srv.URL+"/api/auth/session", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusBadRequest {
+			resp.Body.Close()
+			t.Fatalf("body %q status %d", body, resp.StatusCode)
+		}
+		var payload map[string]string
+		_ = json.NewDecoder(resp.Body).Decode(&payload)
+		resp.Body.Close()
+		if payload["detail"] != "请求体无效" {
+			t.Fatalf("body %q payload %#v", body, payload)
+		}
+	}
+}
+
 func TestLoginWrongKey(t *testing.T) {
 	srv := testEngine(true)
 	defer srv.Close()

@@ -255,15 +255,64 @@ func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
 	if key == "" || utf8.RuneCountInString(key) > 120 {
 		return nil, apperr.Validation("商品事实 key 不能为空且不能超过 120 个字符")
 	}
+	sourceType := "user"
+	if v, ok := payload["source_type"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+		s = strings.TrimSpace(s)
+		if _, allowed := factSourceTypes[s]; !allowed {
+			return nil, apperr.Validation("请求体无效")
+		}
+		sourceType = s
+	}
+	status := "confirmed"
+	if v, ok := payload["status"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+		s = strings.TrimSpace(s)
+		if _, allowed := factStatuses[s]; !allowed {
+			return nil, apperr.Validation("请求体无效")
+		}
+		status = s
+	}
+	if v, ok := payload["requires_confirmation"]; ok && v != nil {
+		if _, ok := v.(bool); !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+	}
+	evidence := anyList(payload["evidence_asset_ids"])
+	for _, item := range evidence {
+		if _, ok := item.(string); !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+	}
+	conflicts := anyList(payload["conflicts"])
+	for _, item := range conflicts {
+		if _, ok := item.(map[string]any); !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+	}
 	return map[string]any{
 		"key":                   key,
 		"value":                 payload["value"],
-		"source_type":           stringOr(payload["source_type"], "user"),
-		"status":                stringOr(payload["status"], "confirmed"),
+		"source_type":           sourceType,
+		"status":                status,
 		"requires_confirmation": boolOr(payload["requires_confirmation"]),
-		"evidence_asset_ids":    anyList(payload["evidence_asset_ids"]),
-		"conflicts":             anyList(payload["conflicts"]),
+		"evidence_asset_ids":    evidence,
+		"conflicts":             conflicts,
 	}, nil
+}
+
+var factSourceTypes = map[string]struct{}{
+	"user": {}, "image_observation": {}, "agent_inference": {},
+}
+
+var factStatuses = map[string]struct{}{
+	"observed": {}, "user_declared": {}, "confirmed": {}, "conflicted": {},
 }
 
 func deref(v *string) string {

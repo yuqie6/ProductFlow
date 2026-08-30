@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 )
@@ -383,6 +386,19 @@ func TestListCursorBoundToFilter(t *testing.T) {
 	_ = first
 }
 
+func TestListRejectsOversizedQuery(t *testing.T) {
+	ls := newLibraryServer(t)
+	longQ := ls.do(t, http.MethodGet, "/api/media-library?q="+strings.Repeat("q", 256), nil, "", nil)
+	ls.mustStatus(t, longQ, http.StatusBadRequest)
+	longQ.Body.Close()
+	longFolder := ls.do(t, http.MethodGet, "/api/media-library?folder_id="+strings.Repeat("f", 37), nil, "", nil)
+	ls.mustStatus(t, longFolder, http.StatusBadRequest)
+	longFolder.Body.Close()
+	longTag := ls.do(t, http.MethodGet, "/api/media-library?tag="+strings.Repeat("t", 81), nil, "", nil)
+	ls.mustStatus(t, longTag, http.StatusBadRequest)
+	longTag.Body.Close()
+}
+
 func TestWorkflowDeleteRouteRegistered(t *testing.T) {
 	engine := httpx.NewEngine(nil)
 	HTTP{}.Register(engine)
@@ -408,4 +424,50 @@ func TestDownloadServesOriginal(t *testing.T) {
 		t.Fatalf("download %d %s", resp.StatusCode, raw)
 	}
 	resp.Body.Close()
+}
+
+func TestDownloadMissingOriginalMarksVerification(t *testing.T) {
+	ls := newLibraryServer(t)
+	asset := ls.uploadOne(t, "gone.png", nil)
+	var rel string
+	if err := ls.pool.QueryRow(context.Background(), `
+		SELECT m.storage_path
+		FROM media_library_assets a
+		JOIN media_objects m ON m.id = a.media_object_id
+		WHERE a.id = $1
+	`, asset.ID).Scan(&rel); err != nil {
+		t.Fatal(err)
+	}
+	if rel == "" {
+		t.Fatal("missing storage path")
+	}
+	if err := os.Remove(filepath.Join(ls.root, rel)); err != nil {
+		t.Fatal(err)
+	}
+	resp := ls.do(t, http.MethodGet, asset.DownloadURL, nil, "", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("download %d %s", resp.StatusCode, raw)
+	}
+	resp.Body.Close()
+	var status string
+	if err := ls.pool.QueryRow(context.Background(), `
+		SELECT m.verification_status
+		FROM media_library_assets a
+		JOIN media_objects m ON m.id = a.media_object_id
+		WHERE a.id = $1
+	`, asset.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != media.StatusMissing {
+		t.Fatalf("verification %s, want missing", status)
+	}
+	again := ls.do(t, http.MethodGet, asset.DownloadURL, nil, "", nil)
+	if again.StatusCode != http.StatusConflict {
+		raw, _ := io.ReadAll(again.Body)
+		again.Body.Close()
+		t.Fatalf("second download %d %s", again.StatusCode, raw)
+	}
+	again.Body.Close()
 }

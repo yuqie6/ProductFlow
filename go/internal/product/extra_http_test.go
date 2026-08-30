@@ -109,6 +109,34 @@ func TestParseUpdateFactsDetectsProvidedVersionKeys(t *testing.T) {
 	}
 }
 
+func TestParseUpdateFactsRejectsUnknownFieldsAndInvalidEnums(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"name":"x","foo":1}`,
+		`{"facts":[{"key":"a","value":1,"extra":true}]}`,
+		`{"facts":[{"key":"a","value":1,"source_type":"nope"}]}`,
+		`{"facts":[{"key":"a","value":1,"status":"maybe"}]}`,
+		`{"facts":[{"key":"a"}]}`,
+		`{"expected_fact_version":0}`,
+		`{"expected_fact_set_version_id":""}`,
+		`{"name":"x"}{}`,
+		``,
+	}
+	for _, raw := range cases {
+		if _, err := parseUpdateFacts([]byte(raw)); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+	in, err := parseUpdateFacts([]byte(`{"facts":[{"key":"material","value":"钢","source_type":"agent_inference","status":"observed"}]}`))
+	if err != nil || in.Facts == nil || len(*in.Facts) != 1 {
+		t.Fatalf("%+v %v", in, err)
+	}
+	got := (*in.Facts)[0]
+	if got["source_type"] != "agent_inference" || got["status"] != "observed" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestNormalizeFolderAndDisplayNames(t *testing.T) {
 	if _, err := normalizeFolderName(""); err == nil {
 		t.Fatal("empty folder")

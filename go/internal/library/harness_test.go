@@ -28,6 +28,7 @@ import (
 type libraryServer struct {
 	pool    *pgxpool.Pool
 	db      *gorm.DB
+	root    string
 	srv     *httptest.Server
 	client  *http.Client
 	cookies []*http.Cookie
@@ -54,7 +55,7 @@ func newLibraryServer(t *testing.T) *libraryServer {
 	HTTP{Service: Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
-	ls := &libraryServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}
+	ls := &libraryServer{pool: pool, db: gdb, root: root, srv: srv, client: &http.Client{}}
 	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
 	if err != nil {
 		t.Fatal(err)

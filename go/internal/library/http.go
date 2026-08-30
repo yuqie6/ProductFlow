@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/media"
@@ -76,14 +77,29 @@ func (h HTTP) list(c *gin.Context) {
 		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
 		return
 	}
+	q, err := queryBounded(c, "q", 255)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	folderID, err := queryBounded(c, "folder_id", 36)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	tag, err := queryBounded(c, "tag", 80)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
 	out, err := h.Service.List(c.Request.Context(), ListFilter{
 		Limit:           limit,
 		Cursor:          c.Query("cursor"),
 		IncludeArchived: includeArchived,
-		Search:          c.Query("q"),
+		Search:          q,
 		SourceType:      sourceType,
-		FolderID:        c.Query("folder_id"),
-		Tag:             c.Query("tag"),
+		FolderID:        folderID,
+		Tag:             tag,
 	})
 	if err != nil {
 		httpx.AbortErr(c, err)
@@ -422,9 +438,10 @@ func (h HTTP) download(c *gin.Context) {
 		httpx.AbortDetail(c, http.StatusConflict, "素材库媒体尚未通过核验")
 		return
 	}
-	media.ServeVariant(
+	media.ServeExistingVariant(
 		c,
-		h.Service.Media.Files,
+		h.Service.Media,
+		h.Service.DB,
 		asset.StoragePath,
 		asset.OriginalFilename,
 		asset.MIMEType,
@@ -534,7 +551,18 @@ func bindJSON(c *gin.Context, dest any) error {
 	if err := dec.Decode(dest); err != nil {
 		return apperr.Validation("请求体无效")
 	}
+	if dec.More() {
+		return apperr.Validation("请求体无效")
+	}
 	return nil
+}
+
+func queryBounded(c *gin.Context, key string, maxRunes int) (string, error) {
+	raw := c.Query(key)
+	if utf8.RuneCountInString(raw) > maxRunes {
+		return "", apperr.Validation("请求参数无效")
+	}
+	return raw, nil
 }
 
 func queryLimit(c *gin.Context, def, max int) (int, error) {

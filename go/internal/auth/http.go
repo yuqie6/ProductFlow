@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
@@ -40,7 +41,19 @@ func (h HTTP) create(c *gin.Context) {
 	}
 	var payload sessionCreateRequest
 	body, _ := io.ReadAll(c.Request.Body)
-	_ = json.Unmarshal(body, &payload)
+	if len(bytes.TrimSpace(body)) == 0 {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if err := dec.Decode(&payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	if dec.More() {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
 	if !secretEqual(payload.AdminKey, h.AdminAccessKey) {
 		httpx.WriteDetail(c, http.StatusUnauthorized, "管理员密钥不正确")
 		return

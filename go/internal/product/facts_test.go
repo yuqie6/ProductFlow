@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -19,6 +20,12 @@ func TestNormalizeFactPayloadAndDuplicates(t *testing.T) {
 	}
 	if _, err := normalizeFactPayload(map[string]any{"key": ""}); err == nil {
 		t.Fatal("empty key")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "source_type": "nope"}); err == nil {
+		t.Fatal("invalid source_type")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "status": "maybe"}); err == nil {
+		t.Fatal("invalid status")
 	}
 	_, err = normalizeFactMaps([]map[string]any{
 		{"key": "Material", "value": "1"},
@@ -165,4 +172,33 @@ func TestProductListUsesSnakeCaseJSON(t *testing.T) {
 	if !found {
 		t.Fatalf("created product missing: %s", raw)
 	}
+}
+
+func TestProductListRejectsInvalidQuery(t *testing.T) {
+	ps := newProductServer(t)
+	_ = ps.createV2(t, "列表校验", nil, 1)
+	cases := []string{
+		"/api/v2/products?page=0",
+		"/api/v2/products?page=abc",
+		"/api/v2/products?page_size=0",
+		"/api/v2/products?page_size=101",
+		"/api/v2/products?sort=created_asc",
+		"/api/v2/products?q=" + strings.Repeat("q", 101),
+	}
+	for _, path := range cases {
+		resp := ps.do(t, http.MethodGet, path, nil, "")
+		if resp.StatusCode != http.StatusBadRequest {
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("%s got %d %s", path, resp.StatusCode, raw)
+		}
+		resp.Body.Close()
+	}
+	ok := ps.do(t, http.MethodGet, "/api/v2/products?page=1&page_size=20&sort=name_asc", nil, "")
+	if ok.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(ok.Body)
+		ok.Body.Close()
+		t.Fatalf("valid list %d %s", ok.StatusCode, raw)
+	}
+	ok.Body.Close()
 }

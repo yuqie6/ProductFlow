@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/media"
@@ -136,9 +137,27 @@ func (h HTTP) createV3(c *gin.Context) {
 }
 
 func (h HTTP) list(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	out, err := h.Service.List(c.Request.Context(), page, pageSize, c.Query("q"), c.DefaultQuery("sort", "updated_desc"))
+	page, err := parseQueryInt(c, "page", 1, 1, 0)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	pageSize, err := parseQueryInt(c, "page_size", 20, 1, 100)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	q := c.Query("q")
+	if utf8.RuneCountInString(q) > 100 {
+		httpx.AbortErr(c, apperr.Validation("请求参数无效"))
+		return
+	}
+	sort, err := parseProductListSort(c)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.List(c.Request.Context(), page, pageSize, q, sort)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -165,9 +184,10 @@ func (h HTTP) download(c *gin.Context) {
 		httpx.AbortDetail(c, http.StatusNotFound, "商品图片文件不存在")
 		return
 	}
-	media.ServeVariant(
+	media.ServeExistingVariant(
 		c,
-		h.Service.Media.Files,
+		h.Service.Media,
+		h.Service.DB,
 		asset.StoragePath,
 		asset.OriginalFilename,
 		asset.MIMEType,
@@ -600,9 +620,30 @@ func (h HTTP) limits(ctx context.Context) media.Limits {
 }
 
 func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return UpdateFactsInput{}, apperr.Validation("请求体无效")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var fields map[string]json.RawMessage
+	if err := dec.Decode(&fields); err != nil || fields == nil {
+		return UpdateFactsInput{}, apperr.Validation("请求体无效")
+	}
+	if dec.More() {
+		return UpdateFactsInput{}, apperr.Validation("请求体无效")
+	}
+	allowed := map[string]struct{}{
+		"expected_fact_set_version_id": {},
+		"expected_fact_version":        {},
+		"name":                         {},
+		"category":                     {},
+		"price":                        {},
+		"source_note":                  {},
+		"facts":                        {},
+	}
+	for key := range fields {
+		if _, ok := allowed[key]; !ok {
+			return UpdateFactsInput{}, apperr.Validation("请求体无效")
+		}
 	}
 	in := UpdateFactsInput{Fields: map[string]bool{}}
 	for key := range fields {
@@ -616,11 +657,17 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 		if err := json.Unmarshal(rawID, &id); err != nil {
 			return UpdateFactsInput{}, apperr.Validation("请求体无效")
 		}
+		if utf8.RuneCountInString(id) < 1 || utf8.RuneCountInString(id) > 36 {
+			return UpdateFactsInput{}, apperr.Validation("请求体无效")
+		}
 		in.ExpectedFactSetVersionID = &id
 	}
 	if rawVersion, ok := fields["expected_fact_version"]; ok && string(rawVersion) != "null" {
 		var version int
 		if err := json.Unmarshal(rawVersion, &version); err != nil {
+			return UpdateFactsInput{}, apperr.Validation("请求体无效")
+		}
+		if version < 1 {
 			return UpdateFactsInput{}, apperr.Validation("请求体无效")
 		}
 		in.ExpectedFactVersion = &version
@@ -630,12 +677,18 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 		if err := json.Unmarshal(rawName, &name); err != nil && string(rawName) != "null" {
 			return UpdateFactsInput{}, apperr.Validation("请求体无效")
 		}
+		if string(rawName) != "null" && utf8.RuneCountInString(name) > 255 {
+			return UpdateFactsInput{}, apperr.Validation("请求体无效")
+		}
 		in.Name = &name
 	}
 	if rawCategory, ok := fields["category"]; ok {
 		var category string
 		if string(rawCategory) != "null" {
 			if err := json.Unmarshal(rawCategory, &category); err != nil {
+				return UpdateFactsInput{}, apperr.Validation("请求体无效")
+			}
+			if utf8.RuneCountInString(category) > 120 {
 				return UpdateFactsInput{}, apperr.Validation("请求体无效")
 			}
 		}
@@ -647,6 +700,9 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 			if err := json.Unmarshal(rawPrice, &price); err != nil {
 				return UpdateFactsInput{}, apperr.Validation("请求体无效")
 			}
+			if utf8.RuneCountInString(price) > 40 {
+				return UpdateFactsInput{}, apperr.Validation("请求体无效")
+			}
 		}
 		in.Price = &price
 	}
@@ -656,15 +712,134 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 			if err := json.Unmarshal(rawNote, &note); err != nil {
 				return UpdateFactsInput{}, apperr.Validation("请求体无效")
 			}
+			if utf8.RuneCountInString(note) > 4000 {
+				return UpdateFactsInput{}, apperr.Validation("请求体无效")
+			}
 		}
 		in.SourceNote = &note
 	}
 	if rawFacts, ok := fields["facts"]; ok && string(rawFacts) != "null" {
-		var facts []map[string]any
-		if err := json.Unmarshal(rawFacts, &facts); err != nil {
-			return UpdateFactsInput{}, apperr.Validation("请求体无效")
+		facts, err := parseFactItems(rawFacts)
+		if err != nil {
+			return UpdateFactsInput{}, err
 		}
-		in.Facts = &facts
+		in.Facts = facts
 	}
 	return in, nil
+}
+
+func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, apperr.Validation("请求体无效")
+	}
+	allowed := map[string]struct{}{
+		"key": {}, "value": {}, "source_type": {}, "status": {},
+		"requires_confirmation": {}, "evidence_asset_ids": {}, "conflicts": {},
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		dec := json.NewDecoder(bytes.NewReader(item))
+		dec.DisallowUnknownFields()
+		var wire struct {
+			Key                  string           `json:"key"`
+			Value                json.RawMessage  `json:"value"`
+			SourceType           *string          `json:"source_type"`
+			Status               *string          `json:"status"`
+			RequiresConfirmation *bool            `json:"requires_confirmation"`
+			EvidenceAssetIDs     []string         `json:"evidence_asset_ids"`
+			Conflicts            []map[string]any `json:"conflicts"`
+		}
+		if err := dec.Decode(&wire); err != nil {
+			return nil, apperr.Validation("请求体无效")
+		}
+		if dec.More() {
+			return nil, apperr.Validation("请求体无效")
+		}
+		var presence map[string]json.RawMessage
+		if err := json.Unmarshal(item, &presence); err != nil || presence == nil {
+			return nil, apperr.Validation("请求体无效")
+		}
+		for key := range presence {
+			if _, ok := allowed[key]; !ok {
+				return nil, apperr.Validation("请求体无效")
+			}
+		}
+		if _, ok := presence["key"]; !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+		if _, ok := presence["value"]; !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+		row := map[string]any{"key": wire.Key}
+		if string(presence["value"]) == "null" {
+			row["value"] = nil
+		} else {
+			var value any
+			if err := json.Unmarshal(presence["value"], &value); err != nil {
+				return nil, apperr.Validation("请求体无效")
+			}
+			row["value"] = value
+		}
+		if wire.SourceType != nil {
+			if _, ok := factSourceTypes[*wire.SourceType]; !ok {
+				return nil, apperr.Validation("请求体无效")
+			}
+			row["source_type"] = *wire.SourceType
+		}
+		if wire.Status != nil {
+			if _, ok := factStatuses[*wire.Status]; !ok {
+				return nil, apperr.Validation("请求体无效")
+			}
+			row["status"] = *wire.Status
+		}
+		if wire.RequiresConfirmation != nil {
+			row["requires_confirmation"] = *wire.RequiresConfirmation
+		}
+		if _, ok := presence["evidence_asset_ids"]; ok {
+			ids := make([]any, 0, len(wire.EvidenceAssetIDs))
+			for _, id := range wire.EvidenceAssetIDs {
+				ids = append(ids, id)
+			}
+			row["evidence_asset_ids"] = ids
+		}
+		if _, ok := presence["conflicts"]; ok {
+			conflicts := make([]any, 0, len(wire.Conflicts))
+			for _, conflict := range wire.Conflicts {
+				conflicts = append(conflicts, conflict)
+			}
+			row["conflicts"] = conflicts
+		}
+		out = append(out, row)
+	}
+	return &out, nil
+}
+
+func parseQueryInt(c *gin.Context, key string, def, min, max int) (int, error) {
+	raw, present := c.GetQuery(key)
+	if !present {
+		return def, nil
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, apperr.Validation("请求参数无效")
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < min || (max > 0 && n > max) {
+		return 0, apperr.Validation("请求参数无效")
+	}
+	return n, nil
+}
+
+func parseProductListSort(c *gin.Context) (string, error) {
+	raw, present := c.GetQuery("sort")
+	if !present {
+		return "updated_desc", nil
+	}
+	switch raw {
+	case "updated_desc", "created_desc", "name_asc":
+		return raw, nil
+	default:
+		return "", apperr.Validation("请求参数无效")
+	}
 }

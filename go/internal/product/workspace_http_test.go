@@ -2,6 +2,7 @@ package product_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -102,6 +103,12 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	if snap.Conversation.ProductID == nil || *snap.Conversation.ProductID == "" {
 		t.Fatal("missing conversation product")
 	}
+	if snap.Conversation.SessionID == nil {
+		t.Fatal("missing conversation session")
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE agent_sessions SET summary = 'stale-summary' WHERE id = $1`, *snap.Conversation.SessionID); err != nil {
+		t.Fatal(err)
+	}
 
 	wsBody, wsType := workspacePNG(t, map[string]string{
 		"name":      "表单齐商品",
@@ -182,6 +189,13 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	}
 	if finalized.Product.CoverImageAssetID != nil {
 		t.Fatal("intake must not set cover")
+	}
+	var summary string
+	if err := pool.QueryRow(context.Background(), `SELECT summary FROM agent_sessions WHERE id = $1`, *snap.Conversation.SessionID).Scan(&summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary != "暂无 Agent Task" {
+		t.Fatalf("session summary %q", summary)
 	}
 
 	replayBody, replayType := workspacePNG(t, map[string]string{

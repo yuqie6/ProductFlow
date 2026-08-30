@@ -41,6 +41,13 @@ func TestParseSelectionRejectsUnknownFieldsAndInvalidQuantities(t *testing.T) {
 	if _, err := parseSelection(`{"schema_version":1,"image_types":[{"key":"hero","quantity":2,"order":0}],"delivery_preset_key":"jd_hero"}`); err != nil {
 		t.Fatal(err)
 	}
+	trimmed, err := parseSelection(`{"schema_version":1,"image_types":[{"key":" hero ","quantity":2,"order":0}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trimmed.ImageTypes[0].Key != "hero" {
+		t.Fatalf("persisted key %q", trimmed.ImageTypes[0].Key)
+	}
 
 	invalid := []string{
 		`{"schema_version":1,"image_types":[]}`,

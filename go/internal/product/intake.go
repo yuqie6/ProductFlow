@@ -112,6 +112,7 @@ func parseSelection(raw string) (Selection, error) {
 			return Selection{}, apperr.Validation(selectionInvalidDetail)
 		}
 		seen[key] = struct{}{}
+		selection.ImageTypes[i].Key = key
 		total += item.Quantity
 	}
 	if total > intakeMaxTotalImages {

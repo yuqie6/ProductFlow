@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/agentsession"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -239,6 +240,10 @@ func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, select
 			compensation.Rollback()
 			return err
 		}
+		if err := refreshWorkspaceSessionSummary(ctx, pgxTx, conversation); err != nil {
+			compensation.Rollback()
+			return err
+		}
 		updated, err := loadConversationByID(ctx, pgxTx, conversation.ID)
 		if err != nil {
 			compensation.Rollback()
@@ -447,7 +452,20 @@ func (s Service) openCanvas(ctx context.Context, tx *gorm.DB, product Product, k
 		return Conversation{}, apperr.Internal("商品工作区缺少会话写入器")
 	}
 	_, conv, err := s.Canvas(ctx, tx, product.ID, product.Name, key, requestHash, agentSessionID)
-	return conv, err
+	if err != nil {
+		return Conversation{}, err
+	}
+	if err := refreshWorkspaceSessionSummary(ctx, tx, conv); err != nil {
+		return Conversation{}, err
+	}
+	return conv, nil
+}
+
+func refreshWorkspaceSessionSummary(ctx context.Context, pgxTx *gorm.DB, conversation Conversation) error {
+	if conversation.SessionID == nil || strings.TrimSpace(*conversation.SessionID) == "" {
+		return nil
+	}
+	return agentsession.RefreshSummary(ctx, pgxTx, *conversation.SessionID)
 }
 
 func loadWorkspaceSnapshot(ctx context.Context, tx *gorm.DB, conversation Conversation, created bool) (WorkspaceSnapshotResponse, error) {
