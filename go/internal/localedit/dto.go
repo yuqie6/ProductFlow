@@ -152,11 +152,13 @@ type Provider interface {
 }
 
 type EditRequest struct {
-	SourceBytes []byte
-	SourceMIME  string
-	MaskPNG     []byte
-	Instruction string
-	Operation   string
+	SourceBytes    []byte
+	SourceMIME     string
+	MaskPNG        []byte
+	ReferenceBytes [][]byte
+	Instruction    string
+	Operation      string
+	Size           string
 }
 
 type EditResult struct {

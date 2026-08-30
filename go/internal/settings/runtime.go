@@ -83,6 +83,56 @@ func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 	return runtime, nil
 }
 
+type ImageToolRuntime struct {
+	Options map[string]any
+	Allowed []string
+}
+
+func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) {
+	if s == nil {
+		return ImageToolRuntime{Allowed: append([]string{}, defaultImageToolAllowedFields...)}, nil
+	}
+	overrides, err := s.overrides(ctx)
+	if err != nil {
+		return ImageToolRuntime{}, err
+	}
+	out := ImageToolRuntime{
+		Options: map[string]any{},
+		Allowed: append([]string{}, defaultImageToolAllowedFields...),
+	}
+	if raw, ok := overrides["image_tool_allowed_fields"]; ok && strings.TrimSpace(raw) != "" {
+		parts := strings.Split(raw, ",")
+		fields := make([]string, 0, len(parts))
+		for _, part := range parts {
+			item := strings.TrimSpace(part)
+			if item != "" {
+				fields = append(fields, item)
+			}
+		}
+		if len(fields) > 0 {
+			out.Allowed = fields
+		}
+	}
+	for _, key := range []string{
+		"model", "quality", "output_format", "output_compression",
+		"background", "moderation", "action", "input_fidelity", "partial_images",
+	} {
+		raw, ok := overrides["image_tool_"+key]
+		if !ok || strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if key == "output_compression" || key == "partial_images" {
+			n, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err == nil {
+				out.Options[key] = n
+			}
+			continue
+		}
+		out.Options[key] = strings.TrimSpace(raw)
+	}
+	return out, nil
+}
+
 func (s *Store) UploadLimits(ctx context.Context) (media.Limits, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
@@ -144,6 +194,17 @@ func (s *Store) overrides(ctx context.Context) (map[string]string, error) {
 		out[key] = value
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ImageChatPromptTemplate(ctx context.Context) (string, error) {
+	overrides, err := s.overrides(ctx)
+	if err != nil {
+		return "", err
+	}
+	if raw, ok := overrides["prompt_image_chat_template"]; ok && strings.TrimSpace(raw) != "" {
+		return raw, nil
+	}
+	return defaultPromptTemplate, nil
 }
 
 func parseBool(raw string, fallback bool) bool {

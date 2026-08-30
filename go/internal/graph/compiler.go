@@ -456,14 +456,18 @@ func collectPromptInputs(graph AppliedGraph, nodeID string, sources map[string]S
 }
 
 func incomingPromptPayload(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, error) {
+	payload, _, err := incomingPromptArtifact(graph, nodeID, sources)
+	return payload, err
+}
+
+func incomingPromptArtifact(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
 	for _, edge := range incomingSorted(graph, nodeID) {
 		if edge.Role != RolePrompt {
 			continue
 		}
-		payload, _, err := promptArtifact(edge.SourceNodeID, sources)
-		return payload, err
+		return promptArtifact(edge.SourceNodeID, sources)
 	}
-	return nil, apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
+	return nil, "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
 }
 
 func stripV3Prompt(payload map[string]any) map[string]any {

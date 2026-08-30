@@ -45,10 +45,18 @@ type GeminiImage struct {
 	BaseURL    string
 	Model      string
 	APIVersion string
+	OutputMIME string
 	Transport  jsonRoundTrip
 }
 
-func (p GeminiImage) Name() string { return "google_gemini_image" }
+func geminiRejectCustomBaseURL(baseURL string) error {
+	if strings.TrimSpace(baseURL) != "" {
+		return fmt.Errorf("Google Gemini 供应商暂不支持自定义 Base URL")
+	}
+	return nil
+}
+
+func (p GeminiImage) Name() string { return "google-gemini-image" }
 
 func (p GeminiImage) Capability() localedit.Capability {
 	return localedit.UnsupportedCapability(p.Name())
@@ -59,7 +67,7 @@ func (p GeminiImage) Edit(context.Context, localedit.EditRequest) (localedit.Edi
 }
 
 func (p GeminiImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
-	size := openaiSizeFromSpec(req.GenerationSpec)
+	size := pixelSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
 	bytesData, mime, model, id, err := p.generateContent(ctx, prompt, size, req.References, mapGraphStatus)
 	if err != nil {
@@ -102,6 +110,9 @@ func (p GeminiImage) generateContent(ctx context.Context, prompt, size string, r
 	imageConfig := map[string]any{"aspectRatio": aspect}
 	if imageSize != "" {
 		imageConfig["imageSize"] = imageSize
+	}
+	if strings.TrimSpace(p.OutputMIME) != "" {
+		imageConfig["outputMimeType"] = p.OutputMIME
 	}
 	payload := map[string]any{
 		"contents": []map[string]any{{"role": "user", "parts": parts}},

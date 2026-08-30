@@ -30,9 +30,9 @@ type OpenAIImages struct {
 
 func (p OpenAIImages) Name() string {
 	if p.Kind != "" {
-		return p.Kind
+		return providerDisplayName(p.Kind)
 	}
-	return "openai_images"
+	return "openai-images"
 }
 
 func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
@@ -94,7 +94,11 @@ func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (loca
 	for i, ref := range req.ReferenceBytes {
 		parts = append(parts, imagePart{Bytes: ref, MIME: sniffMIME(ref), Filename: fmt.Sprintf("reference-%d.png", i+1)})
 	}
-	bytesData, mime, model, id, err := p.edit(ctx, req.Instruction, "1024x1024", p.Quality, parts, req.MaskPNG, mapChatStatus)
+	size := openaiSizeFromPixels(req.Size)
+	if size == "" {
+		size = "1024x1024"
+	}
+	bytesData, mime, model, id, err := p.edit(ctx, req.Instruction, size, p.Quality, parts, req.MaskPNG, mapChatStatus)
 	if err != nil {
 		return localedit.EditResult{}, err
 	}
@@ -226,9 +230,12 @@ func openaiSizeFromSpec(spec map[string]any) string {
 // OpenAIResponses 只用 /v1/responses 出图；4xx 不回退 Images edits/generations。
 type OpenAIResponses struct {
 	OpenAIImages
+	Background    bool
+	ToolRuntime   map[string]any
+	AllowedFields []string
 }
 
-func (p OpenAIResponses) Name() string { return "openai_responses" }
+func (p OpenAIResponses) Name() string { return "openai-responses" }
 
 var (
 	responsesPollInterval = 2 * time.Second
@@ -241,7 +248,7 @@ var (
 func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	size := openaiSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
-	opts := generationSpecToolOptions(req.GenerationSpec)
+	opts := WorkflowImageToolOptions(req, p.ToolRuntime, p.AllowedFields)
 	bytesData, mime, model, id, err := p.generateResponses(ctx, prompt, size, opts, req.References, nil, mapGraphStatus)
 	if err != nil {
 		return graph.ImageResult{}, err
@@ -256,7 +263,8 @@ func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequ
 		size = "1024x1024"
 	}
 	refs := chatGraphRefs(req, true)
-	bytesData, mime, model, id, err := p.generateResponses(ctx, req.Prompt, size, req.ToolOptions, refs, req.PreviousResponseID, mapChatStatus)
+	opts := filterImageToolOptions(mergeToolOptions(p.ToolRuntime, req.ToolOptions), p.AllowedFields)
+	bytesData, mime, model, id, err := p.generateResponses(ctx, req.Prompt, size, opts, refs, req.PreviousResponseID, mapChatStatus)
 	if err != nil {
 		return imagesession.ChatResult{}, err
 	}
@@ -267,11 +275,7 @@ func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequ
 }
 
 func imageGenerationTool(size string, opts map[string]any) map[string]any {
-	tool := map[string]any{
-		"type":   "image_generation",
-		"action": "generate",
-		"size":   size,
-	}
+	tool := map[string]any{"type": "image_generation", "size": size}
 	for _, key := range imageToolOptionalKeys {
 		value, ok := opts[key]
 		if !ok || value == nil {
@@ -294,6 +298,9 @@ func (p OpenAIResponses) createResponses(ctx context.Context, input any, size st
 	}
 	if previousID != nil && strings.TrimSpace(*previousID) != "" {
 		base["previous_response_id"] = strings.TrimSpace(*previousID)
+	}
+	if p.Background {
+		base["background"] = true
 	}
 	withChoice := cloneJSONMap(base)
 	withChoice["tool_choice"] = map[string]any{"type": "image_generation"}

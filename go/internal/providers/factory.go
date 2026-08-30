@@ -144,17 +144,34 @@ func imageAdapter(ctx context.Context, store *settings.Store) (imageAdapterSet, 
 			MaskEdit: binding.MaskEdit,
 		}, nil
 	case "openai_responses":
-		return OpenAIResponses{OpenAIImages: OpenAIImages{
-			Kind: "openai_responses", APIKey: binding.APIKey, BaseURL: binding.BaseURL,
-			Model: binding.Model,
-		}}, nil
+		tool := settings.ImageToolRuntime{}
+		if store != nil {
+			resolved, err := store.ImageToolRuntime(ctx)
+			if err != nil {
+				return nil, err
+			}
+			tool = resolved
+		}
+		return OpenAIResponses{
+			OpenAIImages: OpenAIImages{
+				Kind: "openai_responses", APIKey: binding.APIKey, BaseURL: binding.BaseURL,
+				Model: binding.Model,
+			},
+			Background:    binding.ResponsesBackground,
+			ToolRuntime:   tool.Options,
+			AllowedFields: tool.Allowed,
+		}, nil
 	case "google_gemini_image":
+		if err := geminiRejectCustomBaseURL(binding.BaseURL); err != nil {
+			return nil, err
+		}
 		version := binding.GeminiAPIVersion
 		if version == "" {
 			version = "v1beta"
 		}
 		return GeminiImage{
-			APIKey: binding.APIKey, BaseURL: binding.BaseURL, Model: binding.Model, APIVersion: version,
+			APIKey: binding.APIKey, Model: binding.Model,
+			APIVersion: version, OutputMIME: binding.GeminiOutputMIME,
 		}, nil
 	default:
 		return unsupportedImage{kind: binding.Kind}, nil

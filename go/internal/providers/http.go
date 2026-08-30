@@ -15,7 +15,8 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
-const defaultTimeout = 120 * time.Second
+// Python 工作流生图默认 15 分钟；120s 会把长 Responses 调用标成 unknown。
+const defaultTimeout = 15 * time.Minute
 
 // Responses 出图的 JSON 里带整段 base64，8MiB 会把已经生成的图截断成 unknown。
 var maxProviderJSONBytes int64 = 64 << 20

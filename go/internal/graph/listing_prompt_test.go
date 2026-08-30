@@ -29,3 +29,24 @@ func TestCompileImageModelPromptIsListingText(t *testing.T) {
 		}
 	}
 }
+
+func TestCompileImageModelPromptIncludesVisualVariationAndEdges(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{
+		NodeTitle:            "核心卖点图",
+		ImageTypeKey:         "selling_point",
+		VariationInstruction: "换暖光",
+		IncomingEdgeIDs:      []string{"e-prompt", "e-ref"},
+		VisualSystem:         map[string]any{"style": []any{"商业套图"}},
+		VisualOverlay:        map[string]any{"colors": []any{map[string]any{"value": "#F3EFE8"}}},
+		GenerationSpec:       map[string]any{"text_policy": "required"},
+		Prompt:               map[string]any{"design_goal": "卖点"},
+		References:           []ReferenceImage{{AssetID: "a1", Label: "主体", EdgeID: "e-ref"}},
+	})
+	for _, needle := range []string{
+		"变化：换暖光", `"visual_system"`, `"visual_overlay"`, `"incoming_edge_ids"`, `"edge_id"`, "e-ref",
+	} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("missing %q in\n%s", needle, got)
+		}
+	}
+}

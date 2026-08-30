@@ -184,15 +184,24 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if key, ok := node.Config["image_type_key"].(string); ok {
 			imgReq.ImageTypeKey = key
 		}
-		promptPayload, err := incomingPromptPayload(applied, node.ID, sources)
+		promptPayload, artifactID, err := incomingPromptArtifact(applied, node.ID, sources)
 		if err != nil {
 			return err
 		}
 		imgReq.Prompt = promptPayload
+		imgReq.PromptArtifactID = artifactID
 		if stored, ok := node.Config["prompt"].(map[string]any); ok && len(imgReq.Prompt) == 0 {
 			imgReq.Prompt = stored
 		}
 		imgReq.References = loadedRefs
+		imgReq.VisualSystem = visual
+		imgReq.VisualOverlay = visualOverlayFromConfig(node.Config)
+		if variation, ok := node.Config["variation_instruction"].(string); ok {
+			imgReq.VariationInstruction = variation
+		}
+		for _, edge := range incomingSorted(applied, node.ID) {
+			imgReq.IncomingEdgeIDs = append(imgReq.IncomingEdgeIDs, edge.ID)
+		}
 		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
 			return image.GenerateImage(ctx, imgReq)
 		})
@@ -580,7 +589,7 @@ func (e Executor) loadReferences(ctx context.Context, refs []compiledReference) 
 		}
 		out = append(out, ReferenceImage{
 			AssetID: ref.AssetID, Role: ref.Role, Label: ref.Label,
-			MIME: mime, Filename: filename, Bytes: data,
+			MIME: mime, Filename: filename, Bytes: data, EdgeID: ref.EdgeID,
 		})
 	}
 	return out, nil

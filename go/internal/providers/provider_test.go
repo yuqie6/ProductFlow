@@ -311,7 +311,10 @@ func TestResponsesImageSendsGenerateAction(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	if _, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"}); err != nil {
+	if _, err := img.GenerateImage(context.Background(), graph.ImageRequest{
+		NodeTitle: "hero", ImageTypeKey: "hero",
+		GenerationSpec: map[string]any{"quality_intent": "high"},
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -415,6 +418,9 @@ func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
 		if r.FormValue("prompt") != "去掉水印" {
 			t.Errorf("prompt %s", r.FormValue("prompt"))
 		}
+		if r.FormValue("size") != "1024x1536" {
+			t.Errorf("size %s", r.FormValue("size"))
+		}
 		if _, _, err := r.FormFile("image[]"); err != nil {
 			if _, _, err := r.FormFile("image"); err != nil {
 				t.Errorf("missing image: %v", err)
@@ -431,12 +437,118 @@ func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
 	got, err := img.Edit(context.Background(), localedit.EditRequest{
 		SourceBytes: png, SourceMIME: "image/png", MaskPNG: png,
 		ReferenceBytes: [][]byte{png}, Instruction: "去掉水印", Operation: "remove",
+		Size: "768x1024",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got.Bytes) == 0 {
 		t.Fatal("expected edited image bytes")
+	}
+}
+
+func TestResponsesSellingPointSendsLowFidelityOnWire(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, _ := json.Marshal(map[string]any{
+		"id": "resp-fid", "status": "completed",
+		"output": []map[string]any{{
+			"type": "image_generation_call", "status": "completed", "result": onePixelPNGB64(),
+		}},
+	})
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	_, err = img.GenerateImage(context.Background(), graph.ImageRequest{
+		ImageTypeKey: "selling_point",
+		GenerationSpec: map[string]any{
+			"quality_intent": "high", "reference_fidelity": "high",
+		},
+		References: []graph.ReferenceImage{{AssetID: "a1", Bytes: png, MIME: "image/png"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools, _ := posted["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatalf("tools %+v", posted["tools"])
+	}
+	tool, _ := tools[0].(map[string]any)
+	if tool["input_fidelity"] != "low" || tool["output_format"] != "png" {
+		t.Fatalf("tool %+v", tool)
+	}
+}
+
+func TestWorkflowInfographicUsesLowInputFidelity(t *testing.T) {
+	opts := WorkflowImageToolOptions(graph.ImageRequest{
+		ImageTypeKey: "selling_point",
+		GenerationSpec: map[string]any{
+			"quality_intent":     "high",
+			"reference_fidelity": "high",
+			"background_intent":  "auto",
+		},
+		References: []graph.ReferenceImage{{AssetID: "a1"}},
+	}, nil, nil)
+	if opts["input_fidelity"] != "low" {
+		t.Fatalf("infographic fidelity %+v", opts)
+	}
+	if opts["output_format"] != "png" {
+		t.Fatalf("output_format %+v", opts)
+	}
+	if opts["action"] != "generate" {
+		t.Fatalf("action %+v", opts)
+	}
+	photo := WorkflowImageToolOptions(graph.ImageRequest{
+		ImageTypeKey: "hero",
+		GenerationSpec: map[string]any{
+			"quality_intent":     "high",
+			"reference_fidelity": "high",
+		},
+		References: []graph.ReferenceImage{{AssetID: "a1"}},
+	}, nil, nil)
+	if photo["input_fidelity"] != "high" {
+		t.Fatalf("photography fidelity %+v", photo)
+	}
+}
+
+func TestLocalEditSizeMapsPortraitSource(t *testing.T) {
+	if openaiSizeFromPixels("768x1024") != "1024x1536" {
+		t.Fatalf("3:4 source mapped to %s", openaiSizeFromPixels("768x1024"))
+	}
+	if openaiSizeFromPixels("1024x1024") != "1024x1024" {
+		t.Fatal(openaiSizeFromPixels("1024x1024"))
+	}
+}
+
+func TestGeminiUsesResolutionTierPixels(t *testing.T) {
+	got := pixelSizeFromSpec(map[string]any{"aspect_ratio": "3:4", "resolution_tier": "high"})
+	if got != "1536x2048" {
+		t.Fatalf("pixel size %s", got)
+	}
+	if err := geminiRejectCustomBaseURL("https://example.test"); err == nil {
+		t.Fatal("custom base url must be rejected")
+	}
+}
+
+func TestProviderDisplayNamesAreHyphenated(t *testing.T) {
+	images := OpenAIImages{Kind: "openai_images"}
+	if images.Name() != "openai-images" {
+		t.Fatal(images.Name())
+	}
+	if (OpenAIResponses{}).Name() != "openai-responses" {
+		t.Fatal((OpenAIResponses{}).Name())
+	}
+	if (GeminiImage{}).Name() != "google-gemini-image" {
+		t.Fatal((GeminiImage{}).Name())
 	}
 }
 

@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -134,24 +135,35 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if shared := usablePromptTexts(payload["shared_rules"]); len(shared) > 0 {
 		briefLines = append(briefLines, "规则："+strings.Join(shared, "；"))
 	}
+	if strings.TrimSpace(req.VariationInstruction) != "" {
+		briefLines = append(briefLines, "变化："+strings.TrimSpace(req.VariationInstruction))
+	}
 	refAssets := make([]map[string]any, 0, len(req.References))
 	for _, item := range req.References {
 		refAssets = append(refAssets, map[string]any{
 			"asset_id": item.AssetID,
 			"label":    item.Label,
-			"role":     item.Role,
+			"edge_id":  emptyToNil(item.EdgeID),
 		})
 	}
-	contract, _ := json.MarshalIndent(map[string]any{
-		"contract_version":  3,
-		"task":              "generate_one_ecommerce_listing_image",
-		"image_type_key":    emptyToNil(imageTypeKey),
-		"image_type_family": family,
-		"prompt_artifact":   payload,
-		"generation_spec":   spec,
-		"reference_assets":  refAssets,
-	}, "", "  ")
-	return strings.Join(briefLines, "\n") + "\n\n" + string(contract)
+	incoming := req.IncomingEdgeIDs
+	if incoming == nil {
+		incoming = []string{}
+	}
+	contract := marshalListingContract(map[string]any{
+		"contract_version":      3,
+		"task":                  "generate_one_ecommerce_listing_image",
+		"image_type_key":        emptyToNil(imageTypeKey),
+		"image_type_family":     family,
+		"prompt_artifact":       payload,
+		"visual_system":         req.VisualSystem,
+		"visual_overlay":        req.VisualOverlay,
+		"variation_instruction": emptyToNil(strings.TrimSpace(req.VariationInstruction)),
+		"generation_spec":       spec,
+		"reference_assets":      refAssets,
+		"incoming_edge_ids":     incoming,
+	})
+	return strings.Join(briefLines, "\n") + "\n\n" + contract
 }
 
 func imageTypeTitle(key string) string {
@@ -207,4 +219,15 @@ func usablePromptTexts(value any) []string {
 		}
 	}
 	return out
+}
+
+func marshalListingContract(v any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return "{}"
+	}
+	return strings.TrimSpace(buf.String())
 }

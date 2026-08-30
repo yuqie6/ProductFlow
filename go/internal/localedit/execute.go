@@ -82,13 +82,19 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 	if err := e.markPhase(ctx, taskID, attemptID, "provider_call", cap.ProviderName, nil); err != nil {
 		return nil
 	}
+	editSize := ""
+	if verified, err := media.Inspect(snap.SourceBytes, snap.SourceMIME); err == nil && verified.Width > 0 && verified.Height > 0 {
+		editSize = fmt.Sprintf("%dx%d", verified.Width, verified.Height)
+	}
 	result, err := e.provider().Edit(ctx, EditRequest{
 		SourceBytes: snap.SourceBytes, SourceMIME: snap.SourceMIME, MaskPNG: snap.MaskBytes,
+		ReferenceBytes: snap.ReferenceBytes,
 		Instruction: providerInstruction(Draft{
 			Operation: snap.Operation, Instruction: snap.Instruction,
 			SourceText: snap.SourceText, ReplacementText: snap.ReplacementText,
 		}),
 		Operation: snap.Operation,
+		Size:      editSize,
 	})
 	if err != nil {
 		var ae apperr.Error
@@ -112,13 +118,14 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 
 type snapshot struct {
 	taskRow
-	SourceBytes []byte
-	SourceMIME  string
-	MaskBytes   []byte
-	SourcePath  string
-	SourceName  string
-	ImageType   *string
-	Display     string
+	SourceBytes    []byte
+	SourceMIME     string
+	MaskBytes      []byte
+	ReferenceBytes [][]byte
+	SourcePath     string
+	SourceName     string
+	ImageType      *string
+	Display        string
 }
 
 func (s snapshot) auditJSON() map[string]any {
@@ -247,9 +254,28 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 		if _, err := media.Inspect(maskBytes, "image/png"); err != nil {
 			return apperr.Validation("局部编辑 mask 版本已变化")
 		}
+		var refBytes [][]byte
+		for _, refID := range task.ReferenceIDs {
+			refAsset, err := product.LoadAssetRow(ctx, pgxTx, refID)
+			if err != nil {
+				return err
+			}
+			var refPath, refMIME string
+			if err := pfdb.QueryRow(ctx, pgxTx, `
+				SELECT storage_path, mime_type FROM media_objects WHERE id = $1
+			`, refAsset.MediaObjectID).Scan(&refPath, &refMIME); err != nil {
+				return apperr.Validation("局部编辑参考图媒体不存在")
+			}
+			data, err := readFile(e.Media.Files, refPath)
+			if err != nil {
+				return apperr.Validation("局部编辑媒体读取失败")
+			}
+			refBytes = append(refBytes, data)
+		}
 		out = snapshot{
 			taskRow: task, SourceBytes: sourceBytes, SourceMIME: sourceMIME, MaskBytes: maskBytes,
-			SourcePath: sourcePath, SourceName: source.OriginalFilename, ImageType: source.ImageTypeKey, Display: source.DisplayName,
+			ReferenceBytes: refBytes,
+			SourcePath:     sourcePath, SourceName: source.OriginalFilename, ImageType: source.ImageTypeKey, Display: source.DisplayName,
 		}
 		return nil
 	})

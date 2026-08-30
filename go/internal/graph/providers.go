@@ -27,6 +27,7 @@ type ReferenceImage struct {
 	MIME     string
 	Filename string
 	Bytes    []byte
+	EdgeID   string
 }
 
 type PromptRequest struct {

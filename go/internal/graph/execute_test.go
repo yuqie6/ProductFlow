@@ -144,6 +144,9 @@ func TestExecuteGraphRunLoadsReferenceBytesForImageProvider(t *testing.T) {
 	if images.last.ImageTypeKey != "hero" {
 		t.Fatalf("image type %q", images.last.ImageTypeKey)
 	}
+	if len(images.last.IncomingEdgeIDs) == 0 {
+		t.Fatal("image request must include incoming edge ids")
+	}
 	if len(prompts.last.References) == 0 {
 		t.Fatal("prompt provider must receive reference image bytes")
 	}

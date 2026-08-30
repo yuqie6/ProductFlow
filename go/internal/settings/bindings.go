@@ -21,6 +21,7 @@ type ModelBinding struct {
 	ImagesStyle         string
 	ResponsesBackground bool
 	GeminiAPIVersion    string
+	GeminiOutputMIME    string
 	MaskEdit            bool
 }
 
@@ -65,6 +66,7 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 		if binding.GeminiAPIVersion == "" {
 			binding.GeminiAPIVersion = "v1beta"
 		}
+		binding.GeminiOutputMIME = lookupJSONString(configJSON, "gemini_output_mime_type")
 	}
 	return binding, nil
 }
