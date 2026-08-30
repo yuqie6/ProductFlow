@@ -33,6 +33,14 @@ backend-migrate-prod:
 go-migrate:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
 
+# Truncate live business rows. Keeps provider_profiles / provider_bindings / app_settings
+# (dumped first to storage-dev/settings-keep.sql). Does not drop the schema.
+wipe-dev-data:
+    bash scripts/with_dev_env.sh python3 scripts/wipe_dev_data.py --yes
+
+seed-dev-providers:
+    bash scripts/with_dev_env.sh python3 scripts/wipe_dev_data.py --seed-from-env
+
 backend-worker-prod:
     uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 
