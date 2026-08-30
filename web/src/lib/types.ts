@@ -849,7 +849,9 @@ export type AgentToolStepKind =
   | "read_history"
   | "organize_assets"
   | "request_workflow_run"
-  | "create_product";
+  | "create_product"
+  | "apply_graph"
+  | "propose_graph";
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 
@@ -926,6 +928,7 @@ export interface AgentTurn {
   status: AgentTurnStatus;
   resume_required: boolean;
   output_text: string | null;
+  thinking_text: string | null;
   error_text: string | null;
   tool_steps?: AgentToolStep[];
   question: AgentQuestion | null;
@@ -1085,8 +1088,9 @@ export interface AgentQuestionAnswerResponse extends AgentTurn {
 }
 
 export type AgentQuestionAnswer =
-  | { option: number; text?: never }
-  | { option?: never; text: string };
+  | { option: number; text?: never; skip?: never }
+  | { option?: never; text: string; skip?: never }
+  | { option?: never; text?: never; skip: true };
 
 export interface AgentTurnEvent {
   schema_version: 1;

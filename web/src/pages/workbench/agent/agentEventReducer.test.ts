@@ -8,6 +8,8 @@ import {
   parseAgentTurnEvent,
   selectAgentAssistantText,
   selectAgentToolSteps,
+  selectAgentTurnBlocks,
+  splitAgentTurnProcess,
 } from "./agentEventReducer";
 
 function event(
@@ -39,6 +41,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     status: "running",
     resume_required: false,
     output_text: null,
+    thinking_text: null,
     error_text: null,
     question: null,
     question_answer: null,
@@ -100,6 +103,21 @@ describe("agentEventReducer", () => {
     const reset = agentEventReducer(retained, { type: "reset", turn_key: "projection-2" });
     expect(reset).toEqual(createAgentTurnEventState("projection-2"));
     expect(reset).not.toBe(retained);
+  });
+
+  it("settles streaming text on assistant.finish without treating it as output", () => {
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "text.delta", { delta: "终答", step_id: "step-1", attempt_id: "attempt-1" }),
+    });
+    expect(state.text_settled).toBe(false);
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "assistant.finish", { reason: "stop", attempt_id: "attempt-1" }),
+    });
+    expect(state.text_settled).toBe(true);
+    expect(currentAgentAttempt(state)?.text).toBe("终答");
   });
 
   it("tracks Question, answer/resume, artifact, cancel, and terminal control events", () => {
@@ -170,6 +188,18 @@ describe("agentEventReducer", () => {
 
     expect(parseAgentTurnEvent(JSON.stringify(event(1, "tool.step", validPayload)), "tool.step", scope).payload)
       .toEqual(validPayload);
+    expect(
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", {
+          step_id: "apply-1",
+          kind: "apply_graph",
+          summary: "立即写入 live graph ChangeSet",
+          status: "succeeded",
+        })),
+        "tool.step",
+        scope,
+      ).payload.kind,
+    ).toBe("apply_graph");
     const detailedPayload = {
       ...validPayload,
       kind: "propose_draft",
@@ -415,5 +445,110 @@ describe("agentEventReducer", () => {
     expect(state.protocol_error).toContain("step_id");
     expect(state.attempts["attempt-1"].text).toBe("a");
     expect(state.last_sequence).toBe(2);
+  });
+
+  it("interleaves thinking, text, and tools by sequence and keeps thinking out of the final answer", () => {
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "thinking.delta", {
+        delta: "先看约束",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+        content_index: 0,
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "text.delta", {
+        delta: "中间说明",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+        content_index: 0,
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(3, "tool.step", {
+        step_id: "tool-1",
+        kind: "inspect_context",
+        summary: "读取商品上下文",
+        status: "succeeded",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(4, "thinking.delta", {
+        delta: "再给结论",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+        content_index: 0,
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(5, "text.delta", {
+        delta: "终答",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+        content_index: 1,
+      }),
+    });
+
+    const blocks = selectAgentTurnBlocks(turn(), state);
+    expect(blocks.map((block) => block.type)).toEqual(["thinking", "text", "tool", "thinking", "text"]);
+    expect(blocks[0]).toMatchObject({ type: "thinking", text: "先看约束" });
+    expect(blocks[3]).toMatchObject({ type: "thinking", text: "再给结论" });
+    expect(selectAgentAssistantText(turn(), state)).toBe("中间说明终答");
+
+    const compact = splitAgentTurnProcess(
+      selectAgentTurnBlocks(turn({ status: "succeeded", output_text: "终答" }), state),
+    );
+    expect(compact.body?.text).toBe("终答");
+    expect(compact.process.map((block) => block.type)).toEqual(["thinking", "text", "tool", "thinking"]);
+    expect(compact.body?.text).not.toContain("先看约束");
+    expect(compact.body?.text).not.toContain("再给结论");
+  });
+
+  it("projects historical thinking_text before tools and output when events are gone", () => {
+    const blocks = selectAgentTurnBlocks(
+      turn({
+        status: "succeeded",
+        thinking_text: "内部推理",
+        output_text: "终答",
+        tool_steps: [
+          {
+            step_id: "step-1",
+            kind: "inspect_context",
+            summary: "读取商品上下文",
+            status: "succeeded",
+          },
+        ],
+      }),
+      null,
+    );
+    expect(blocks.map((block) => block.type)).toEqual(["thinking", "tool", "text"]);
+    expect(blocks[0]).toMatchObject({ type: "thinking", text: "内部推理" });
+    expect(selectAgentAssistantText(turn({ status: "succeeded", thinking_text: "内部推理", output_text: "终答" }), null)).toBe(
+      "终答",
+    );
+  });
+
+  it("rejects malformed thinking.delta payloads", () => {
+    const scope = { run_id: "run-1", turn_id: "harness-turn-1" };
+    expect(
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "thinking.delta", { delta: "", step_id: "step-1", attempt_id: "attempt-1" })),
+        "thinking.delta",
+        scope,
+      ).payload.delta,
+    ).toBe("");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "thinking.delta", { delta: "x", attempt_id: "attempt-1" })),
+        "thinking.delta",
+        scope,
+      ),
+    ).toThrow("thinking.delta payload");
   });
 });

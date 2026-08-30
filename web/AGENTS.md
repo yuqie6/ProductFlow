@@ -35,7 +35,7 @@ Current feature owners:
 ## Interaction State
 
 - Render explicit loading, empty, error, pending, success, failed, cancelled, and unknown states where the contract exposes them.
-- Event streams reconnect from persisted cursors and converge to server state without duplicating text or messages.
+- Event streams reconnect from the runtime cursor while a Turn is live, and fold the Turn snapshot after it settles, without duplicating text or messages.
 - Draft confirmation renders structured data, not parsed assistant prose.
 - Creation-to-workbench transition retains the same Agent conversation context.
 - Visible actions use semantic controls, visible focus, labels/tooltips, keyboard access, touch targets, and reduced-motion handling.

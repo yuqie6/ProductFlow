@@ -20,6 +20,8 @@ const AGENT_TOOL_STEP_KINDS = new Set<AgentToolStepKind>([
   "organize_assets",
   "request_workflow_run",
   "create_product",
+  "apply_graph",
+  "propose_graph",
 ]);
 const AGENT_TOOL_STEP_STATUSES = new Set<AgentToolStepStatus>([
   "running",
@@ -52,6 +54,28 @@ export interface AgentLiveToolStep {
   sequence: number;
 }
 
+export type AgentTurnBlock =
+  | {
+    type: "thinking";
+    key: string;
+    attempt_id: string;
+    content_index: number;
+    text: string;
+    truncated: boolean;
+  }
+  | {
+    type: "text";
+    key: string;
+    attempt_id: string;
+    content_index: number;
+    text: string;
+  }
+  | {
+    type: "tool";
+    key: string;
+    step_id: string;
+  };
+
 export interface AgentTurnEventState {
   turn_key: string;
   last_sequence: number;
@@ -59,6 +83,7 @@ export interface AgentTurnEventState {
   attempt_order: string[];
   tool_steps: Record<string, AgentLiveToolStep>;
   tool_step_order: string[];
+  blocks: AgentTurnBlock[];
   current_attempt_id: string | null;
   question: AgentQuestion | null;
   question_answered: boolean;
@@ -66,6 +91,7 @@ export interface AgentTurnEventState {
   cancel_requested: boolean;
   artifact_sequence: number | null;
   terminal_kind: AgentTerminalEventKind | null;
+  text_settled: boolean;
   protocol_error: string | null;
 }
 
@@ -78,7 +104,7 @@ export interface AgentTurnEventScope {
   turn_id: string;
 }
 
-export class AgentEventProtocolError extends Error {}
+export class AgentEventProtocolError extends Error { }
 
 export function createAgentTurnEventState(turnKey: string): AgentTurnEventState {
   return {
@@ -88,6 +114,7 @@ export function createAgentTurnEventState(turnKey: string): AgentTurnEventState 
     attempt_order: [],
     tool_steps: {},
     tool_step_order: [],
+    blocks: [],
     current_attempt_id: null,
     question: null,
     question_answered: false,
@@ -95,6 +122,7 @@ export function createAgentTurnEventState(turnKey: string): AgentTurnEventState 
     cancel_requested: false,
     artifact_sequence: null,
     terminal_kind: null,
+    text_settled: false,
     protocol_error: null,
   };
 }
@@ -139,11 +167,17 @@ export function parseAgentTurnEvent(
   if (value.kind === "text.delta") {
     parseTextDeltaPayload(value.payload);
   }
+  if (value.kind === "thinking.delta") {
+    parseThinkingDeltaPayload(value.payload);
+  }
   if (value.kind === "question.required") {
     parseAgentQuestion(value.payload);
   }
   if (value.kind === "tool.step") {
     parseAgentToolStep(value.payload);
+  }
+  if (value.kind === "assistant.finish") {
+    parseAssistantFinishPayload(value.payload);
   }
   return value as unknown as AgentTurnEvent;
 }
@@ -174,17 +208,17 @@ export function agentEventReducer(
       }
       const attempt: AgentAttemptBuffer = existing
         ? {
-            ...existing,
-            text: existing.text + payload.delta,
-            last_sequence: event.sequence,
-          }
+          ...existing,
+          text: existing.text + payload.delta,
+          last_sequence: event.sequence,
+        }
         : {
-            attempt_id: payload.attempt_id,
-            step_id: payload.step_id,
-            text: payload.delta,
-            first_sequence: event.sequence,
-            last_sequence: event.sequence,
-          };
+          attempt_id: payload.attempt_id,
+          step_id: payload.step_id,
+          text: payload.delta,
+          first_sequence: event.sequence,
+          last_sequence: event.sequence,
+        };
       return {
         ...next,
         attempts: { ...state.attempts, [payload.attempt_id]: attempt },
@@ -192,6 +226,21 @@ export function agentEventReducer(
           ? state.attempt_order
           : [...state.attempt_order, payload.attempt_id],
         current_attempt_id: payload.attempt_id,
+        blocks: appendStreamBlock(state.blocks, "text", payload.attempt_id, payload.content_index, payload.delta),
+      };
+    }
+    case "thinking.delta": {
+      const payload = parseThinkingDeltaPayload(event.payload);
+      return {
+        ...next,
+        blocks: appendStreamBlock(
+          state.blocks,
+          "thinking",
+          payload.attempt_id,
+          payload.content_index,
+          payload.delta,
+          payload.truncated,
+        ),
       };
     }
     case "tool.step": {
@@ -206,6 +255,9 @@ export function agentEventReducer(
         tool_step_order: existing
           ? state.tool_step_order
           : [...state.tool_step_order, step.step_id],
+        blocks: existing
+          ? state.blocks
+          : [...state.blocks, { type: "tool", key: `tool:${step.step_id}`, step_id: step.step_id }],
       };
     }
     case "question.required":
@@ -223,12 +275,15 @@ export function agentEventReducer(
       return { ...next, cancel_requested: true };
     case "artifact.proposed":
       return { ...next, artifact_sequence: event.sequence };
+    case "assistant.finish":
+      parseAssistantFinishPayload(event.payload);
+      return { ...next, text_settled: true };
     case "turn.awaiting_confirmation":
     case "turn.succeeded":
     case "turn.failed":
     case "turn.canceled":
     case "turn.unknown":
-      return { ...next, terminal_kind: event.kind };
+      return { ...next, terminal_kind: event.kind, text_settled: true };
     default:
       return next;
   }
@@ -265,6 +320,38 @@ export function selectAgentAssistantText(
   return turn.output_text ?? "";
 }
 
+export function selectAgentTurnBlocks(
+  turn: AgentTurn,
+  eventState: AgentTurnEventState | null,
+): AgentTurnBlock[] {
+  if (eventState?.turn_key === turn.id && eventState.blocks.length > 0) {
+    return canonicalizeTerminalBlocks(turn, eventState.blocks);
+  }
+  return snapshotTurnBlocks(turn);
+}
+
+export function splitAgentTurnProcess(blocks: readonly AgentTurnBlock[]): {
+  process: AgentTurnBlock[];
+  body: Extract<AgentTurnBlock, { type: "text" }> | null;
+} {
+  let lastTextIndex = -1;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.type === "text" && block.text.trim()) {
+      lastTextIndex = index;
+      break;
+    }
+  }
+  if (lastTextIndex === -1) {
+    return { process: [...blocks], body: null };
+  }
+  const body = blocks[lastTextIndex];
+  if (body.type !== "text") {
+    return { process: [...blocks], body: null };
+  }
+  return { process: blocks.slice(0, lastTextIndex), body };
+}
+
 export function selectAgentToolSteps(
   turn: AgentTurn | null | undefined,
   eventState: AgentTurnEventState | null | undefined,
@@ -299,6 +386,7 @@ function parseTextDeltaPayload(payload: Record<string, unknown>): {
   delta: string;
   step_id: string;
   attempt_id: string;
+  content_index: number;
 } {
   if (
     typeof payload.delta !== "string" ||
@@ -313,7 +401,170 @@ function parseTextDeltaPayload(payload: Record<string, unknown>): {
     delta: payload.delta,
     step_id: payload.step_id,
     attempt_id: payload.attempt_id,
+    content_index: parseContentIndex(payload.content_index, "text.delta"),
   };
+}
+
+function parseThinkingDeltaPayload(payload: Record<string, unknown>): {
+  delta: string;
+  step_id: string;
+  attempt_id: string;
+  content_index: number;
+  truncated: boolean;
+} {
+  if (
+    typeof payload.delta !== "string" ||
+    typeof payload.step_id !== "string" ||
+    !payload.step_id ||
+    typeof payload.attempt_id !== "string" ||
+    !payload.attempt_id
+  ) {
+    throw new AgentEventProtocolError("thinking.delta payload 无效");
+  }
+  if (payload.truncated !== undefined && typeof payload.truncated !== "boolean") {
+    throw new AgentEventProtocolError("thinking.delta payload 无效");
+  }
+  return {
+    delta: payload.delta,
+    step_id: payload.step_id,
+    attempt_id: payload.attempt_id,
+    content_index: parseContentIndex(payload.content_index, "thinking.delta"),
+    truncated: payload.truncated === true,
+  };
+}
+
+function parseAssistantFinishPayload(payload: Record<string, unknown>): void {
+  if (typeof payload.reason !== "string" || !payload.reason || typeof payload.attempt_id !== "string" || !payload.attempt_id) {
+    throw new AgentEventProtocolError("assistant.finish payload 无效");
+  }
+}
+
+function parseContentIndex(value: unknown, kind: string): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 10_000) {
+    throw new AgentEventProtocolError(`${kind} payload 无效`);
+  }
+  return value as number;
+}
+
+function appendStreamBlock(
+  blocks: AgentTurnBlock[],
+  type: "thinking" | "text",
+  attemptId: string,
+  contentIndex: number,
+  delta: string,
+  truncated = false,
+): AgentTurnBlock[] {
+  const last = blocks[blocks.length - 1];
+  if (
+    last &&
+    last.type === type &&
+    last.attempt_id === attemptId &&
+    last.content_index === contentIndex
+  ) {
+    if (last.type === "thinking") {
+      return [
+        ...blocks.slice(0, -1),
+        {
+          ...last,
+          text: last.text + delta,
+          truncated: last.truncated || truncated,
+        },
+      ];
+    }
+    return [...blocks.slice(0, -1), { ...last, text: last.text + delta }];
+  }
+  const key = `${type}:${attemptId}:${blocks.length}`;
+  if (type === "thinking") {
+    return [
+      ...blocks,
+      {
+        type: "thinking",
+        key,
+        attempt_id: attemptId,
+        content_index: contentIndex,
+        text: delta,
+        truncated,
+      },
+    ];
+  }
+  return [
+    ...blocks,
+    {
+      type: "text",
+      key,
+      attempt_id: attemptId,
+      content_index: contentIndex,
+      text: delta,
+    },
+  ];
+}
+
+function canonicalizeTerminalBlocks(turn: AgentTurn, blocks: AgentTurnBlock[]): AgentTurnBlock[] {
+  if (!isAgentTurnTerminal(turn.status)) {
+    return blocks;
+  }
+  const output = turn.output_text ?? "";
+  const lastTextIndex = lastNonEmptyTextIndex(blocks);
+  if (lastTextIndex >= 0) {
+    const last = blocks[lastTextIndex];
+    if (last.type !== "text" || last.text === output) {
+      return blocks;
+    }
+    const next = blocks.slice();
+    next[lastTextIndex] = { ...last, text: output };
+    return next;
+  }
+  if (!output) {
+    return blocks;
+  }
+  return [
+    ...blocks,
+    {
+      type: "text",
+      key: "text:snapshot",
+      attempt_id: "snapshot",
+      content_index: 0,
+      text: output,
+    },
+  ];
+}
+
+function snapshotTurnBlocks(turn: AgentTurn): AgentTurnBlock[] {
+  const blocks: AgentTurnBlock[] = [];
+  if (turn.thinking_text) {
+    blocks.push({
+      type: "thinking",
+      key: "thinking:snapshot",
+      attempt_id: "snapshot",
+      content_index: 0,
+      text: turn.thinking_text,
+      truncated: false,
+    });
+  }
+  for (const step of turn.tool_steps ?? []) {
+    blocks.push({ type: "tool", key: `tool:${step.step_id}`, step_id: step.step_id });
+  }
+  if (turn.output_text) {
+    blocks.push({
+      type: "text",
+      key: "text:snapshot",
+      attempt_id: "snapshot",
+      content_index: 0,
+      text: turn.output_text,
+    });
+  }
+  return blocks;
+}
+
+function lastNonEmptyTextIndex(blocks: readonly AgentTurnBlock[]): number {
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.type === "text" && block.text.trim()) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {

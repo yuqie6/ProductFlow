@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { agentTurnRetrySubmitInput, canRetryAgentTurn, groupAgentTurnAttempts } from "./agentTurnRetry";
+import {
+  agentTurnRetrySubmitInput,
+  canRetryAgentTurn,
+  excludeQuestionContinuationTurns,
+  groupAgentTurnAttempts,
+} from "./agentTurnRetry";
 
 describe("agentTurnRetry", () => {
   it("retries any Turn that still has the original input", () => {
@@ -83,5 +88,27 @@ describe("agentTurnRetry", () => {
     const groups = groupAgentTurnAttempts([first as never, second as never]);
     expect(groups).toHaveLength(2);
     expect(groups.map((group) => group.root.id)).toEqual(["turn-a", "turn-b"]);
+  });
+
+  it("drops orphan question continuation turns from the timeline", () => {
+    const parent = {
+      id: "turn-a",
+      status: "requires_input" as const,
+      input_text: "可以帮我创建商品工作流吗",
+      input_asset_ids: [] as string[],
+      task_id: null,
+      idempotency_key: "first",
+      continuation_turn_id: "turn-b",
+    };
+    const child = {
+      ...parent,
+      id: "turn-b",
+      status: "queued" as const,
+      input_text: "继续当前 Agent 任务。针对问题“这个商品叫什么名字？”，用户回答：筋膜枪。",
+      idempotency_key: "continuation",
+      continuation_turn_id: null,
+    };
+    const visible = excludeQuestionContinuationTurns([parent as never, child as never]);
+    expect(visible.map((turn) => turn.id)).toEqual(["turn-a"]);
   });
 });

@@ -234,7 +234,6 @@ export function useAgentConversation({
         answer,
       );
       cacheTurn(result.answered_turn);
-      cacheTurn(result.continuation_turn);
       return {
         answered: result.answered_turn,
         continuation: result.continuation_turn,
@@ -242,7 +241,9 @@ export function useAgentConversation({
     },
     onSuccess: ({ answered, continuation }) => {
       cacheTurn(answered);
-      cacheTurn(continuation);
+      if (continuation.id === answered.id) {
+        cacheTurn(continuation);
+      }
     },
     onSettled: () => invalidateConversation(),
   });

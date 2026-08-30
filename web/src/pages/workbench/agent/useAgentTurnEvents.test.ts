@@ -120,50 +120,34 @@ describe("subscribeToAgentTurnEvents", () => {
     close();
   });
 
-  it("repairs a sequence gap by replaying from the last accepted cursor", () => {
-    vi.useFakeTimers();
-    const sources: FakeEventSource[] = [];
+  it("accepts a forward sequence jump so durable control events can skip live-only rows", () => {
+    const source = new FakeEventSource();
     const events: AgentTurnEvent[] = [];
     const protocolErrors: Error[] = [];
     const close = subscribeToAgentTurnEvents({
       url: "/events?after=0",
       scope: { run_id: "run-1", turn_id: "turn-1" },
-      createEventSource: (url) => {
-        const source = new FakeEventSource(url);
-        sources.push(source);
-        return source;
-      },
+      createEventSource: () => source,
       onEvent: (value) => events.push(value),
       onProtocolError: (error) => protocolErrors.push(error),
     });
 
-    sources[0].emit("text.delta", event(1, "text.delta", {
+    source.emit("text.delta", event(1, "text.delta", {
       delta: "a",
       step_id: "step-1",
       attempt_id: "attempt-1",
     }));
-    sources[0].emit("text.delta", event(3, "text.delta", {
-      delta: "c",
-      step_id: "step-1",
-      attempt_id: "attempt-1",
+    source.emit("tool.step", event(4, "tool.step", {
+      step_id: "step-2",
+      kind: "inspect_image",
+      summary: "检查商品图片",
+      status: "succeeded",
     }));
-    expect(protocolErrors).toHaveLength(1);
-    vi.advanceTimersByTime(250);
-    expect(sources[1].url).toBe("/events?after=1");
-    sources[1].emit("text.delta", event(2, "text.delta", {
-      delta: "b",
-      step_id: "step-1",
-      attempt_id: "attempt-1",
-    }));
-    sources[1].emit("text.delta", event(3, "text.delta", {
-      delta: "c",
-      step_id: "step-1",
-      attempt_id: "attempt-1",
-    }));
+    source.emit("turn.succeeded", event(6, "turn.succeeded"));
 
-    expect(events.map((item) => item.sequence)).toEqual([1, 2, 3]);
+    expect(protocolErrors).toHaveLength(0);
+    expect(events.map((item) => item.sequence)).toEqual([1, 4, 6]);
     close();
-    vi.useRealTimers();
   });
 
   it("rejects a mismatched scope without exposing the event", () => {

@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
-import type { AgentAttachment } from "../../../lib/types";
+import type { AgentAttachment, AgentQuestion, AgentQuestionAnswer } from "../../../lib/types";
+import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 
 export const AGENT_COMPOSER_MAX_ASSETS = 6;
 const ACCEPT_IMAGE_TYPES = "image/jpeg,image/png,image/webp";
@@ -44,6 +45,10 @@ interface AgentComposerProps {
   onStop: () => void;
   onUploadFiles?: (files: File[]) => void;
   isUploading?: boolean;
+  question?: AgentQuestion | null;
+  questionBusy?: boolean;
+  questionError?: string | null;
+  onAnswerQuestion?: (answer: AgentQuestionAnswer) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -72,6 +77,10 @@ export function AgentComposer({
   onStop,
   onUploadFiles,
   isUploading = false,
+  question = null,
+  questionBusy = false,
+  questionError = null,
+  onAnswerQuestion,
 }: AgentComposerProps) {
   const { t } = useI18n();
   const keyboardHintId = useId();
@@ -146,7 +155,7 @@ export function AgentComposer({
   return (
     <div data-agent-composer className="shrink-0 border-t border-border-l1 bg-surface-base/95 px-3 py-3 backdrop-blur sm:px-4 sm:py-4">
       <div className="mx-auto w-full max-w-[48rem]">
-        {!value.trim() && !selectedAssets.length && !stopAvailable ? (
+        {!question && !value.trim() && !selectedAssets.length && !stopAvailable ? (
           <div className="mb-2.5 flex items-center gap-2 overflow-x-auto pb-0.5 text-xs text-text-secondary scrollbar-none [&::-webkit-scrollbar]:hidden">
             <Sparkles size={13} className="shrink-0 text-accent" aria-hidden="true" />
             <div className="flex items-center gap-1.5">
@@ -236,23 +245,32 @@ export function AgentComposer({
             </div>
           ) : null}
 
-          <textarea
-            ref={textareaRef}
-            value={value}
-            maxLength={20_000}
-            rows={1}
-            onChange={(event) => onChange(event.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            placeholder={placeholder ?? t("agentWorkbench.composerPlaceholder")}
-            aria-label={t("agentWorkbench.composerLabel")}
-            aria-describedby={keyboardHintId}
-            className="block max-h-36 min-h-[42px] w-full resize-none border-0 bg-transparent px-4 pb-1 pt-3 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted"
-          />
+          {question && onAnswerQuestion ? (
+            <AgentQuestionPrompt
+              question={question}
+              busy={questionBusy}
+              error={questionError}
+              onAnswer={onAnswerQuestion}
+            />
+          ) : (
+            <textarea
+              ref={textareaRef}
+              value={value}
+              maxLength={20_000}
+              rows={1}
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={placeholder ?? t("agentWorkbench.composerPlaceholder")}
+              aria-label={t("agentWorkbench.composerLabel")}
+              aria-describedby={keyboardHintId}
+              className="block max-h-36 min-h-[42px] w-full resize-none border-0 bg-transparent px-4 pb-1 pt-3 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted"
+            />
+          )}
 
           <div className="flex min-h-12 items-center justify-between gap-3 px-2 pb-2 pt-1">
             <div className="flex min-w-0 items-center gap-1.5">
-              {onUploadFiles ? (
+              {!question && onUploadFiles ? (
                 <>
                   <input
                     id={uploadInputId}
@@ -281,7 +299,7 @@ export function AgentComposer({
                   </label>
                 </>
               ) : null}
-              {showAssetPicker ? (
+              {!question && showAssetPicker ? (
                 <button
                   type="button"
                   onClick={onOpenAssets}
@@ -297,14 +315,14 @@ export function AgentComposer({
                   <ImagePlus size={17} />
                 </button>
               ) : null}
-              {value.length > 30 ? (
+              {!question && value.length > 30 ? (
                 <span className="truncate text-[10px] tabular-nums text-text-muted">{value.length} / 20000</span>
               ) : null}
             </div>
             <button
               type="button"
               onClick={stopAvailable ? onStop : onSubmit}
-              disabled={stopAvailable ? isStopping : !submitReady}
+              disabled={question ? !stopAvailable || isStopping : stopAvailable ? isStopping : !submitReady}
               aria-label={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
               title={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-colors focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-40 ${

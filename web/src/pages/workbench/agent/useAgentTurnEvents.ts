@@ -1,20 +1,21 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import type { AgentTurn, AgentTurnEvent } from "../../../lib/types";
 import {
   AGENT_TERMINAL_EVENT_KINDS,
-  agentEventReducer,
   agentTurnNeedsEventStream,
-  createAgentTurnEventState,
   parseAgentTurnEvent,
   type AgentTurnEventScope,
   type AgentTurnEventState,
 } from "./agentEventReducer";
+import { ConversationAssembler } from "./conversation/assembler";
 
 const AGENT_EVENT_TYPES = [
   "turn.queued",
   "turn.started",
   "text.delta",
+  "thinking.delta",
+  "assistant.finish",
   "tool.step",
   "question.required",
   "question.answered",
@@ -130,13 +131,6 @@ export function subscribeToAgentTurnEvents(input: AgentEventSubscriptionInput): 
         try {
           const parsed = parseAgentTurnEvent(data, eventType, input.scope);
           if (parsed.sequence <= cursor) return;
-          if (parsed.sequence !== cursor + 1) {
-            input.onProtocolError?.(
-              new Error(`Agent SSE 事件序列断档：当前为 ${cursor}，收到 ${parsed.sequence}`),
-            );
-            scheduleReconnect();
-            return;
-          }
           cursor = parsed.sequence;
           input.onEvent(parsed);
           if (AGENT_TERMINAL_EVENT_KINDS.some((kind) => kind === parsed.kind)) close();
@@ -164,18 +158,25 @@ export function useAgentTurnEvents({
   const harnessTurnId = turn?.harness_turn_id ?? "";
   const shouldSubscribe = Boolean(enabled && turn && agentTurnNeedsEventStream(turn) && harnessTurnId);
   const eventURL = getEventsUrl(turnKey, 0);
-  const [state, dispatch] = useReducer(agentEventReducer, turnKey, createAgentTurnEventState);
+  const assemblerRef = useRef<ConversationAssembler | null>(null);
+  if (!assemblerRef.current) {
+    assemblerRef.current = new ConversationAssembler(turnKey);
+  }
+  const assembler = assemblerRef.current;
+  const state = useSyncExternalStore(assembler.subscribe, assembler.getSnapshot, assembler.getSnapshot);
   const [connectionState, setConnectionState] = useState<AgentEventConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
   const callbacksRef = useRef({ onEvent, onArtifactProposed, onTerminal });
   callbacksRef.current = { onEvent, onArtifactProposed, onTerminal };
+  useEffect(() => {
+    return () => assembler.dispose();
+  }, [assembler]);
 
   useEffect(() => {
-    if (turnKey) {
-      dispatch({ type: "reset", turn_key: turnKey });
-      setStreamError(null);
-    }
-  }, [turnKey]);
+    if (!turnKey) return;
+    assembler.reset(turnKey);
+    setStreamError(null);
+  }, [assembler, turnKey]);
 
   useEffect(() => {
     if (!shouldSubscribe) {
@@ -189,9 +190,11 @@ export function useAgentTurnEvents({
         scope: { run_id: runId, turn_id: harnessTurnId },
         onConnectionState: setConnectionState,
         onProtocolError: (error) => setStreamError(error.message),
-        onStreamError: setStreamError,
+        onStreamError: (message) => {
+          setStreamError(message);
+        },
         onEvent: (event) => {
-          dispatch({ type: "event", event });
+          assembler.apply(event);
           callbacksRef.current.onEvent?.(event);
           if (event.kind === "artifact.proposed") {
             callbacksRef.current.onArtifactProposed?.();
@@ -205,7 +208,7 @@ export function useAgentTurnEvents({
       setConnectionState("closed");
       setStreamError(error instanceof Error ? error.message : "Agent SSE 连接失败");
     }
-  }, [eventURL, harnessTurnId, runId, shouldSubscribe, turnKey]);
+  }, [assembler, eventURL, harnessTurnId, runId, shouldSubscribe, turnKey]);
 
   return {
     state,

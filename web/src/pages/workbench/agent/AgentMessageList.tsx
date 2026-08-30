@@ -4,16 +4,18 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
 import { useI18n } from "../../../lib/preferences";
-import type { AgentTurn } from "../../../lib/types";
+import type { AgentQuestion, AgentTurn } from "../../../lib/types";
 import {
+  isAgentTurnTerminal,
   selectAgentAssistantText,
   selectAgentToolSteps,
+  selectAgentTurnBlocks,
   type AgentTurnEventState,
 } from "./agentEventReducer";
-import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
-import { AgentToolStepList } from "./AgentToolStepList";
+import { assembleTurnNodes, echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
 import { AgentTurnTail } from "./AgentTurnTail";
-import { canRetryAgentTurn, groupAgentTurnAttempts } from "./agentTurnRetry";
+import { AgentTurnTimeline } from "./AgentTurnTimeline";
+import { canRetryAgentTurn, excludeQuestionContinuationTurns, groupAgentTurnAttempts } from "./agentTurnRetry";
 import { toolStepSignature } from "./toolStepSignature";
 
 interface AgentMessageListProps {
@@ -30,6 +32,7 @@ interface AgentMessageListProps {
   onReviewDraft?: () => void;
   onRetryTurn?: (turn: AgentTurn) => void;
   retryingTurnId?: string | null;
+  pendingEcho?: PendingUserEcho | null;
   renderTurnExtras?: (turn: AgentTurn) => ReactNode;
   emptyLabel?: string;
 }
@@ -48,6 +51,7 @@ export function AgentMessageList({
   onReviewDraft,
   onRetryTurn,
   retryingTurnId = null,
+  pendingEcho = null,
   renderTurnExtras,
   emptyLabel,
 }: AgentMessageListProps) {
@@ -55,7 +59,10 @@ export function AgentMessageList({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
   const [atLatest, setAtLatest] = useState(true);
-  const groups = useMemo(() => groupAgentTurnAttempts(turns), [turns]);
+  const groups = useMemo(
+    () => groupAgentTurnAttempts(excludeQuestionContinuationTurns(turns)),
+    [turns],
+  );
   const latestLiveSignature = useMemo(() => {
     const eventTurnId = activeTurnId ?? eventState?.turn_key ?? null;
     const eventTurn = turns.find((turn) => turn.id === eventTurnId);
@@ -63,8 +70,12 @@ export function AgentMessageList({
       return "";
     }
     const text = selectAgentAssistantText(eventTurn, eventState);
+    const blocks = selectAgentTurnBlocks(eventTurn, eventState);
+    const thinking = blocks
+      .flatMap((block) => (block.type === "thinking" ? [block.text] : []))
+      .join("\u0001");
     const tools = toolStepSignature(selectAgentToolSteps(eventTurn, eventState));
-    return `${text}\u0000${tools}`;
+    return `${text}\u0000${thinking}\u0000${tools}`;
   }, [activeTurnId, eventState, turns]);
 
   useEffect(() => {
@@ -131,9 +142,24 @@ export function AgentMessageList({
           const matchingEventState = eventState?.turn_key === latest.id ? eventState : null;
           const assistantText = hideFailedTail ? "" : selectAgentAssistantText(latest, matchingEventState);
           const toolSteps = hideFailedTail ? [] : selectAgentToolSteps(latest, matchingEventState);
+          const blocks = hideFailedTail ? [] : selectAgentTurnBlocks(latest, matchingEventState);
+          const nodes = hideFailedTail
+            ? []
+            : assembleTurnNodes({
+              turn: latest,
+              eventState: matchingEventState,
+              blocks,
+              live: active,
+            });
+          const questionNode = nodes.find((node) => node.type === "question");
           const waitingForAssistant =
             (active && latest.status !== "requires_input" && latest.status !== "awaiting_confirmation") ||
             hideFailedTail;
+          const hasThinkingOrText = blocks.some(
+            (block) => block.type === "thinking" || (block.type === "text" && block.text.trim()),
+          );
+          const showWaitingSpinner = waitingForAssistant && !hasThinkingOrText;
+          const foldProcess = isAgentTurnTerminal(latest.status) && !hideFailedTail;
           const reviewDraft = Boolean(
             reviewDraftRevisionId && latest.library_organization_draft_revision_id === reviewDraftRevisionId,
           );
@@ -144,53 +170,42 @@ export function AgentMessageList({
 
           return (
             <article key={root.id} data-agent-turn-id={latest.id} className="group/turn space-y-5">
-              <div className="flex justify-end">
-                <div className="min-w-0 max-w-[88%] sm:max-w-[34rem]">
-                  {root.input_asset_ids.length && canPreviewAssets ? (
-                    <div className="mb-2.5 flex flex-wrap justify-end gap-2">
-                      {root.input_asset_ids.map((assetId) => (
-                        <button
-                          key={assetId}
-                          type="button"
-                          onClick={() => onPreviewAsset?.(assetId)}
-                          aria-label={t("agentWorkbench.previewTurnAsset")}
-                          className="h-16 w-16 overflow-hidden rounded-xl border border-border-l2 bg-surface-subtle shadow-sm transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        >
-                          <img
-                            src={getAssetThumbnailUrl(assetId)}
-                            alt=""
-                            className="h-full w-full object-cover"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="rounded-[20px] border border-blue-200/80 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-slate-100">
-                    <div className="whitespace-pre-wrap break-words">{root.input_text}</div>
-                  </div>
-                  <div className="mt-1.5 flex min-h-7 items-center justify-end gap-1 text-[11px] text-text-muted">
-                    <time dateTime={root.created_at}>{formatDateTime(root.created_at, t.locale)}</time>
-                    <CopyAction text={root.input_text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
-                  </div>
-                </div>
+              <div className="flex justify-end" data-agent-conversation-node="user">
+                <UserTurnBubble
+                  text={root.input_text}
+                  assetIds={root.input_asset_ids}
+                  createdAt={root.created_at}
+                  canPreviewAssets={canPreviewAssets}
+                  onPreviewAsset={onPreviewAsset}
+                  getAssetThumbnailUrl={getAssetThumbnailUrl}
+                />
               </div>
 
               <div className="min-w-0">
-                {assistantText || waitingForAssistant ? (
+                {blocks.length || showWaitingSpinner ? (
                   <div aria-live={active || hideFailedTail ? "polite" : undefined} className="min-w-0 text-[15px] leading-7 text-text-primary">
-                    {assistantText ? (
-                      <AgentAssistantMarkdown text={assistantText} streaming={active} />
-                    ) : (
+                    {blocks.length ? (
+                      <AgentTurnTimeline
+                        blocks={blocks}
+                        toolSteps={toolSteps}
+                        live={active}
+                        fold={foldProcess}
+                        textSettled={Boolean(matchingEventState?.text_settled) || isAgentTurnTerminal(latest.status)}
+                      />
+                    ) : null}
+                    {questionNode && questionNode.type === "question" ? (
+                      <TurnQuestionNode question={questionNode.question} />
+                    ) : null}
+                    {showWaitingSpinner ? (
                       <div className="flex h-8 items-center gap-2 text-sm text-text-secondary">
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-accent">
                           <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
                         </span>
                         {t("agentWorkbench.waitingForAgent")}
                       </div>
-                    )}
+                    ) : null}
                   </div>
                 ) : null}
-                <AgentToolStepList steps={toolSteps} live={active} />
                 {showAssistantActions ? (
                   <div data-agent-message-actions className="mt-2 flex min-h-7 items-center gap-1 text-text-muted">
                     {assistantText ? (
@@ -216,12 +231,14 @@ export function AgentMessageList({
                   </div>
                 ) : null}
                 {hideFailedTail ? null : (
-                  <AgentTurnTail
-                    turn={latest}
-                    active={active}
-                    reviewDraft={reviewDraft}
-                    onReviewDraft={onReviewDraft}
-                  />
+                  <div data-agent-conversation-node="turn-tail">
+                    <AgentTurnTail
+                      turn={latest}
+                      active={active}
+                      reviewDraft={reviewDraft}
+                      onReviewDraft={onReviewDraft}
+                    />
+                  </div>
                 )}
                 {hideFailedTail ? null : renderTurnExtras?.(latest)}
               </div>
@@ -229,7 +246,21 @@ export function AgentMessageList({
           );
         })}
 
-        {!turns.length && initialTurnPending ? (
+        {pendingEcho && !turns.some((item) => echoMatchesTurn(pendingEcho, item)) ? (
+          <article data-agent-pending-echo data-agent-conversation-node="user" className="flex justify-end">
+            <UserTurnBubble
+              text={pendingEcho.text}
+              assetIds={pendingEcho.assetIds}
+              createdAt={pendingEcho.createdAt}
+              canPreviewAssets={Boolean(onPreviewAsset)}
+              onPreviewAsset={onPreviewAsset}
+              getAssetThumbnailUrl={getAssetThumbnailUrl}
+              pending
+            />
+          </article>
+        ) : null}
+
+        {!turns.length && !pendingEcho && initialTurnPending ? (
           <div className="flex min-h-36 flex-col items-center justify-center gap-3 text-sm text-text-secondary">
             <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
               <Loader2 size={18} className="animate-spin motion-reduce:animate-none" />
@@ -237,7 +268,7 @@ export function AgentMessageList({
             {t("agentWorkbench.starting")}
           </div>
         ) : null}
-        {!turns.length && !initialTurnPending ? (
+        {!turns.length && !pendingEcho && !initialTurnPending ? (
           <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center text-sm text-text-secondary">
             <MessagesSquare size={22} className="text-text-muted" />
             {emptyLabel ?? t("agentWorkbench.emptyConversation")}
@@ -245,7 +276,7 @@ export function AgentMessageList({
         ) : null}
       </div>
 
-      {!atLatest && turns.length ? (
+      {!atLatest && (turns.length || pendingEcho) ? (
         <button
           type="button"
           onClick={scrollToLatest}
@@ -256,6 +287,70 @@ export function AgentMessageList({
           <ChevronDown size={17} />
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function UserTurnBubble({
+  text,
+  assetIds,
+  createdAt,
+  canPreviewAssets,
+  onPreviewAsset,
+  getAssetThumbnailUrl,
+  pending = false,
+}: {
+  text: string;
+  assetIds: readonly string[];
+  createdAt: string;
+  canPreviewAssets: boolean;
+  onPreviewAsset?: (assetId: string) => void;
+  getAssetThumbnailUrl: (assetId: string) => string;
+  pending?: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="min-w-0 max-w-[88%] sm:max-w-[34rem]">
+      {assetIds.length && canPreviewAssets ? (
+        <div className="mb-2.5 flex flex-wrap justify-end gap-2">
+          {assetIds.map((assetId) => (
+            <button
+              key={assetId}
+              type="button"
+              onClick={() => onPreviewAsset?.(assetId)}
+              aria-label={t("agentWorkbench.previewTurnAsset")}
+              className="h-16 w-16 overflow-hidden rounded-xl border border-border-l2 bg-surface-subtle shadow-sm transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <img
+                src={getAssetThumbnailUrl(assetId)}
+                alt=""
+                className="h-full w-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div className="rounded-[20px] border border-blue-200/80 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-slate-100">
+        <div className="whitespace-pre-wrap break-words">{text}</div>
+      </div>
+      <div className="mt-1.5 flex min-h-7 items-center justify-end gap-1 text-[11px] text-text-muted">
+        <time dateTime={createdAt}>{formatDateTime(createdAt, t.locale)}</time>
+        {pending ? <span>{t("agentWorkbench.starting")}</span> : null}
+        <CopyAction text={text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
+      </div>
+    </div>
+  );
+}
+
+function TurnQuestionNode({ question }: { question: AgentQuestion }) {
+  return (
+    <div
+      data-agent-conversation-node="question"
+      data-agent-question-node
+      className="rounded-xl border border-border-l2 bg-surface-subtle px-3 py-2.5"
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-accent">{question.header}</div>
+      <p className="mt-1 text-sm font-medium leading-6 text-text-primary">{question.question}</p>
     </div>
   );
 }

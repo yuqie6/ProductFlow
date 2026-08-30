@@ -18,9 +18,9 @@ import type {
 import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMediaLibraryPicker } from "./AgentMediaLibraryPicker";
 import { AgentMessageList } from "./AgentMessageList";
-import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
+import { echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
@@ -55,6 +55,7 @@ export function GlobalAgentConversationPanel({
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
   const retryKeysRef = useRef(new Map<string, string>());
   const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
+  const [pendingEcho, setPendingEcho] = useState<PendingUserEcho | null>(null);
   const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
   const agent = useGlobalAgentConversation({
     conversationId: conversationId ?? "",
@@ -84,10 +85,17 @@ export function GlobalAgentConversationPanel({
     setPreviewError(null);
     setAnsweredQuestionId(null);
     setRetryingTurnId(null);
+    setPendingEcho(null);
     composerKeyRef.current = globalThis.crypto.randomUUID();
     retryKeysRef.current = new Map();
     confirmationKeyRef.current = null;
   }, [conversationId, taskId]);
+  useEffect(() => {
+    if (!pendingEcho) return;
+    if (agent.turns.some((item) => echoMatchesTurn(pendingEcho, item))) {
+      setPendingEcho(null);
+    }
+  }, [agent.turns, pendingEcho]);
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
     if (!assetPickerOpen && !preview) {
@@ -127,29 +135,38 @@ export function GlobalAgentConversationPanel({
     }
   };
 
-  const canSubmit = Boolean(conversationId && composerText.trim() && !agent.activeTurn);
+  const canSubmit = Boolean(conversationId && composerText.trim() && !agent.activeTurn && !pendingEcho);
   const submit = async () => {
     const input = composerText.trim();
     if (!input || !canSubmit || agent.submitTurnMutation.isPending) {
       return;
     }
+    const assets = composerAssets.map((asset) => asset.id);
+    const selected = composerAssets;
+    setPendingEcho({
+      text: input,
+      assetIds: assets,
+      createdAt: new Date().toISOString(),
+    });
+    setComposerText("");
+    setComposerAssets([]);
     try {
       await agent.submitTurnMutation.mutateAsync({
         input_text: input,
-        asset_ids: composerAssets.map((asset) => asset.id),
+        asset_ids: assets,
         idempotency_key: composerKeyRef.current,
         task_id: taskId,
         page_context: {
           ...pageContext,
-          selected_asset_ids: composerAssets.map((asset) => asset.id),
+          selected_asset_ids: assets,
           captured_at: new Date().toISOString(),
         },
       });
-      setComposerText("");
-      setComposerAssets([]);
       rotateComposerKey();
     } catch {
-      // 保留文本和幂等键，失败请求可以安全重试
+      setPendingEcho(null);
+      setComposerText(input);
+      setComposerAssets(selected);
     }
   };
   const answerQuestion = async (answer: AgentQuestionAnswer) => {
@@ -325,8 +342,16 @@ export function GlobalAgentConversationPanel({
           </div>
           <span
             role="status"
-            aria-label={agent.activeTurn ? t("agentWorkbench.connection.open") : t("agentWorkbench.status.succeeded")}
-            className={`h-2.5 w-2.5 shrink-0 rounded-full ${agent.activeTurn ? "animate-pulse bg-accent" : "bg-state-success"}`}
+            aria-label={agent.activeTurn
+              ? (events.connectionState === "open"
+                ? t("agentWorkbench.connection.open")
+                : t("agentWorkbench.connection.reconnecting"))
+              : t("agentWorkbench.status.succeeded")}
+            className={`h-2.5 w-2.5 shrink-0 rounded-full ${agent.activeTurn
+              ? events.connectionState === "open"
+                ? "animate-pulse bg-accent"
+                : "animate-pulse bg-amber-500"
+              : "bg-state-success"}`}
           />
         </div>
         <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted">
@@ -342,6 +367,7 @@ export function GlobalAgentConversationPanel({
         activeTurnId={agent.activeTurn?.id ?? null}
         eventState={events.state}
         initialTurnPending={agent.turnsQuery.isLoading}
+        pendingEcho={pendingEcho}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
         getAssetThumbnailUrl={(assetId) => api.getMediaLibraryAssetMediaUrl(assetId, "thumbnail")}
         onRetryTurn={(turn) => void retryTurn(turn)}
@@ -377,48 +403,38 @@ export function GlobalAgentConversationPanel({
         }}
       />
 
-      {activeQuestion && agent.activeTurn ? (
-        <AgentQuestionPrompt
-          question={activeQuestion}
-          answered={questionAnswered}
-          resumeRequired={Boolean(agent.activeTurn.resume_required)}
-          busy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
-          error={errorDetail(agent.answerQuestionMutation.error, t("globalAgent.requestFailed"))}
-          onAnswer={(answer) => void answerQuestion(answer)}
-          onResume={() => agent.resumeTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-        />
-      ) : null}
-
-      {!activeQuestion ? (
-        <AgentComposer
-          value={composerText}
-          selectedAssets={composerAssets}
-          isSubmitting={agent.submitTurnMutation.isPending}
-          canSubmit={canSubmit}
-          stopAvailable={Boolean(agent.activeTurn)}
-          isStopping={
-            agent.cancelTurnMutation.isPending ||
-            agent.activeTurn?.status === "cancel_requested" ||
-            Boolean(events.state.terminal_kind)
-          }
-          error={errorDetail(agent.submitTurnMutation.error, t("globalAgent.requestFailed"))}
-          placeholder={t("globalAgent.chatPlaceholder")}
-          assetPickerLabel={t("globalAgent.attachImage")}
-          selectedAssetsCountLabel={t("globalAgent.assetPicker.selected", {
-            count: composerAssets.length,
-            maximum: AGENT_COMPOSER_MAX_ASSETS,
-          })}
-          onChange={setComposerText}
-          onOpenAssets={() => setAssetPickerOpen(true)}
-          onRemoveAsset={(assetId) => {
-            setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
-            rotateComposerKey();
-          }}
-          onPreviewAsset={previewSelectedAsset}
-          onSubmit={() => void submit()}
-          onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-        />
-      ) : null}
+      <AgentComposer
+        value={composerText}
+        selectedAssets={composerAssets}
+        isSubmitting={agent.submitTurnMutation.isPending}
+        canSubmit={canSubmit}
+        stopAvailable={Boolean(agent.activeTurn)}
+        isStopping={
+          agent.cancelTurnMutation.isPending ||
+          agent.activeTurn?.status === "cancel_requested" ||
+          Boolean(events.state.terminal_kind)
+        }
+        error={errorDetail(agent.submitTurnMutation.error, t("globalAgent.requestFailed"))}
+        placeholder={t("globalAgent.chatPlaceholder")}
+        assetPickerLabel={t("globalAgent.attachImage")}
+        selectedAssetsCountLabel={t("globalAgent.assetPicker.selected", {
+          count: composerAssets.length,
+          maximum: AGENT_COMPOSER_MAX_ASSETS,
+        })}
+        question={activeQuestion && !questionAnswered ? activeQuestion : null}
+        questionBusy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
+        questionError={errorDetail(agent.answerQuestionMutation.error, t("globalAgent.requestFailed"))}
+        onAnswerQuestion={(answer) => void answerQuestion(answer)}
+        onChange={setComposerText}
+        onOpenAssets={() => setAssetPickerOpen(true)}
+        onRemoveAsset={(assetId) => {
+          setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
+          rotateComposerKey();
+        }}
+        onPreviewAsset={previewSelectedAsset}
+        onSubmit={() => void submit()}
+        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
+      />
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>

@@ -1,12 +1,14 @@
 import {
   BookOpen,
+  ChevronDown,
   CircleCheck,
   CircleHelp,
   CircleX,
-  ChevronDown,
   FileClock,
+  FilePen,
   FileSearch,
   FolderCog,
+  GitBranch,
   Layers3,
   LoaderCircle,
   MessageCircleQuestion,
@@ -32,6 +34,8 @@ const KIND_KEYS: Record<AgentToolStepKind, TranslationKey> = {
   organize_assets: "agentWorkbench.toolStep.kind.organizeAssets",
   request_workflow_run: "agentWorkbench.toolStep.kind.requestWorkflowRun",
   create_product: "agentWorkbench.toolStep.kind.createProduct",
+  apply_graph: "agentWorkbench.toolStep.kind.applyGraph",
+  propose_graph: "agentWorkbench.toolStep.kind.proposeGraph",
 };
 
 const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; className?: string }>> = {
@@ -45,6 +49,8 @@ const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; class
   organize_assets: FolderCog,
   request_workflow_run: Workflow,
   create_product: PackagePlus,
+  apply_graph: GitBranch,
+  propose_graph: FilePen,
 };
 
 const STATUS_KEYS: Record<AgentToolStepStatus, TranslationKey> = {
@@ -86,63 +92,75 @@ export function AgentToolStepList({ steps, live = false }: AgentToolStepListProp
       aria-live={live ? "polite" : undefined}
       className="mt-4 space-y-1 border-l border-border-l2 pl-3"
     >
-      {steps.map((step) => {
-        const KindIcon = KIND_ICONS[step.kind];
-        const StatusIcon = STATUS_ICONS[step.status];
-        const kindLabel = t(KIND_KEYS[step.kind]);
-        const statusLabel = t(STATUS_KEYS[step.status]);
-        const title = t("agentWorkbench.toolStep.title", {
-          kind: kindLabel,
-          status: statusLabel,
-          summary: step.summary,
-        });
-        const tone = STATUS_TONES[step.status];
-        const hasDetails = Boolean(step.tool_name || step.details && Object.keys(step.details).length > 0);
-        const row = (
-          <div className="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-surface-subtle">
-            <KindIcon size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
-            <span className="shrink-0 font-medium text-text-secondary">{kindLabel}</span>
-            {step.tool_name ? (
-              <code className="max-w-[12rem] shrink truncate rounded bg-surface-subtle px-1 font-mono text-[10px] text-text-muted">
-                {step.tool_name}
-              </code>
-            ) : null}
-            <span className="min-w-0 flex-1 truncate leading-5 text-text-secondary">{step.summary}</span>
-            <span className={`inline-flex shrink-0 items-center gap-1 text-[10px] font-medium ${tone}`}>
-              <StatusIcon
-                size={12}
-                className={step.status === "running" ? "animate-spin motion-reduce:animate-none" : ""}
-                aria-hidden="true"
-              />
-              <span>{statusLabel}</span>
-            </span>
-            {hasDetails ? <ChevronDown size={13} className="shrink-0 text-text-muted transition-transform group-open/details:rotate-180" aria-hidden="true" /> : null}
-          </div>
-        );
-
-        return (
-          <li
-            key={step.step_id}
-            data-agent-tool-step-id={step.step_id}
-            data-agent-tool-step-status={step.status}
-            title={title}
-            className="group min-w-0 text-xs"
-          >
-            {hasDetails ? (
-              <ToolStepDisclosure
-                defaultOpen={step.status === "failed" && Boolean(step.details?.validation_issues?.length)}
-                title={title}
-                summary={row}
-              >
-                <ToolStepDetailsView details={step.details} />
-              </ToolStepDisclosure>
-            ) : (
-              <div title={title}>{row}</div>
-            )}
-          </li>
-        );
-      })}
+      {steps.map((step) => (
+        <li key={step.step_id} className="min-w-0">
+          <AgentToolStepRow step={step} />
+        </li>
+      ))}
     </ul>
+  );
+}
+
+export function AgentToolStepRow({ step }: { step: AgentToolStep }) {
+  const { t } = useI18n();
+  const kindKey = KIND_KEYS[step.kind];
+  const statusKey = STATUS_KEYS[step.status];
+  const KindIcon = KIND_ICONS[step.kind] ?? CircleHelp;
+  const StatusIcon = STATUS_ICONS[step.status] ?? CircleHelp;
+  const kindLabel = kindKey ? t(kindKey) : (step.tool_name || step.kind);
+  const statusLabel = statusKey ? t(statusKey) : step.status;
+  const title = t("agentWorkbench.toolStep.title", {
+    kind: kindLabel,
+    status: statusLabel,
+    summary: step.summary,
+  });
+  const tone = STATUS_TONES[step.status] ?? "text-text-muted";
+  const hasDetails = Boolean(step.tool_name || (step.details && Object.keys(step.details).length > 0));
+  const row = (
+    <div className="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-surface-subtle">
+      <KindIcon size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
+      <span className="shrink-0 font-medium text-text-secondary">{kindLabel}</span>
+      {step.tool_name ? (
+        <code className="max-w-[12rem] shrink truncate rounded bg-surface-subtle px-1 font-mono text-[10px] text-text-muted">
+          {step.tool_name}
+        </code>
+      ) : null}
+      <span className="min-w-0 flex-1 truncate leading-5 text-text-secondary">
+        {step.kind === "ask_question" && step.status !== "running" && step.details?.output_summary
+          ? step.details.output_summary
+          : step.summary}
+      </span>
+      <span className={`inline-flex shrink-0 items-center gap-1 text-[10px] font-medium ${tone}`}>
+        <StatusIcon
+          size={12}
+          className={step.status === "running" ? "animate-spin motion-reduce:animate-none" : ""}
+          aria-hidden="true"
+        />
+        <span>{statusLabel}</span>
+      </span>
+      {hasDetails ? <ChevronDown size={13} className="shrink-0 text-text-muted transition-transform group-open/details:rotate-180" aria-hidden="true" /> : null}
+    </div>
+  );
+
+  return (
+    <div
+      data-agent-tool-step-id={step.step_id}
+      data-agent-tool-step-status={step.status}
+      title={title}
+      className="group min-w-0 text-xs"
+    >
+      {hasDetails ? (
+        <ToolStepDisclosure
+          defaultOpen={step.status === "failed" && Boolean(step.details?.validation_issues?.length)}
+          title={title}
+          summary={row}
+        >
+          <ToolStepDetailsView details={step.details} />
+        </ToolStepDisclosure>
+      ) : (
+        <div title={title}>{row}</div>
+      )}
+    </div>
   );
 }
 

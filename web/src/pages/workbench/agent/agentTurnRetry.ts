@@ -39,6 +39,15 @@ export interface AgentTurnDisplayGroup {
   latest: AgentTurn;
 }
 
+export function excludeQuestionContinuationTurns(turns: readonly AgentTurn[]): AgentTurn[] {
+  const childIds = new Set(
+    turns.flatMap((turn) =>
+      turn.continuation_turn_id && turn.continuation_turn_id !== turn.id ? [turn.continuation_turn_id] : [],
+    ),
+  );
+  return turns.filter((turn) => !childIds.has(turn.id));
+}
+
 export function groupAgentTurnAttempts(turns: readonly AgentTurn[]): AgentTurnDisplayGroup[] {
   const byId = new Map(turns.map((turn) => [turn.id, turn]));
   const attemptsByRoot = new Map<string, AgentTurn[]>();

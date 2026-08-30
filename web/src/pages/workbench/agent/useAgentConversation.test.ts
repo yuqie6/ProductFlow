@@ -22,6 +22,7 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
     status,
     resume_required: false,
     output_text: status === "succeeded" ? `output-${id}` : null,
+    thinking_text: null,
     error_text: null,
     question: null,
     question_answer: null,

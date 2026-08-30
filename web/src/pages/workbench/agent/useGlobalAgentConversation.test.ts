@@ -19,6 +19,7 @@ function turn(id: string, taskId: string | null, status: AgentTurn["status"]): A
     status,
     resume_required: false,
     output_text: null,
+    thinking_text: null,
     error_text: null,
     question: null,
     question_answer: null,

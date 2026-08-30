@@ -30,6 +30,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     status: "running",
     resume_required: false,
     output_text: null,
+    thinking_text: null,
     error_text: null,
     question: null,
     question_answer: null,
@@ -85,6 +86,18 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("<strong>商品材质</strong>");
     expect(markup).toContain("<code>hero</code>");
     expect(markup).not.toContain("<script");
+  });
+
+  it("keeps streaming assistant text as plaintext until the turn settles", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentAssistantMarkdown, {
+        text: "# 还在写",
+        streaming: true,
+      }),
+    );
+    expect(markup).toContain("data-streaming");
+    expect(markup).toContain("# 还在写");
+    expect(markup).not.toContain("<h1>");
   });
 
   it("lets an empty product conversation submit the first user message", () => {
@@ -271,7 +284,7 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("把参考图拖进来，直接说你要什么");
   });
 
-  it("renders listed Question options, free text, and the recoverable resume state", () => {
+  it("renders listed Question options, free text, and skip in the composer slot", () => {
     const question: AgentQuestion = {
       id: "question-1",
       header: "价格",
@@ -281,32 +294,76 @@ describe("Agent conversation components", () => {
     const openMarkup = renderToStaticMarkup(
       createElement(AgentQuestionPrompt, {
         question,
-        answered: false,
-        resumeRequired: false,
         busy: false,
         error: null,
         onAnswer: () => undefined,
-        onResume: () => undefined,
-      }),
-    );
-    const recoveryMarkup = renderToStaticMarkup(
-      createElement(AgentQuestionPrompt, {
-        question,
-        answered: true,
-        resumeRequired: true,
-        busy: false,
-        error: "恢复失败",
-        onAnswer: () => undefined,
-        onResume: () => undefined,
       }),
     );
 
     expect(openMarkup).toContain("商品价格是多少？");
     expect(openMarkup).toContain("299 元");
     expect(openMarkup).toContain("输入其他回答");
-    expect(recoveryMarkup).toContain("回答已保存");
-    expect(recoveryMarkup).toContain("恢复失败");
-    expect(recoveryMarkup).toContain("继续执行");
+    expect(openMarkup).toContain("跳过");
+  });
+
+  it("puts the question card inside the composer instead of a panel above it", () => {
+    const question: AgentQuestion = {
+      id: "question-1",
+      header: "商品名",
+      question: "这个商品叫什么名字？",
+      options: [{ label: "筋膜枪" }, { label: "稍后再说" }],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(AgentComposer, {
+        value: "",
+        selectedAssets: [],
+        isSubmitting: false,
+        canSubmit: false,
+        stopAvailable: true,
+        isStopping: false,
+        error: null,
+        question,
+        questionBusy: false,
+        questionError: null,
+        onAnswerQuestion: () => undefined,
+        onChange: () => undefined,
+        onOpenAssets: () => undefined,
+        onRemoveAsset: () => undefined,
+        onPreviewAsset: () => undefined,
+        onSubmit: () => undefined,
+        onStop: () => undefined,
+      }),
+    );
+    expect(markup).toContain("data-agent-composer");
+    expect(markup).toContain("这个商品叫什么名字？");
+    expect(markup).toContain("筋膜枪");
+    expect(markup).toContain("跳过");
+    expect(markup).not.toContain("把参考图拖进来，直接说你要什么");
+  });
+
+  it("hides orphan question continuation turns from the timeline", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [
+          turn({
+            id: "projection-1",
+            input_text: "可以帮我创建商品工作流吗",
+            continuation_turn_id: "projection-2",
+            status: "requires_input",
+          }),
+          turn({
+            id: "projection-2",
+            input_text: "继续当前 Agent 任务。针对问题“这个商品叫什么名字？”，用户回答：筋膜枪。",
+            status: "queued",
+          }),
+        ],
+        activeTurnId: "projection-1",
+        eventState: null,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain("可以帮我创建商品工作流吗");
+    expect(markup).not.toContain("继续当前 Agent 任务");
   });
 
   it("renders live delta for an active Turn and canonical output after terminal projection sync", () => {
@@ -365,6 +422,169 @@ describe("Agent conversation components", () => {
     expect(globalMarkup).toContain("/api/media-library/media%2F1/download?variant=thumbnail");
   });
 
+  it("shows a pending user echo before the prompt Turn is persisted", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        pendingEcho: {
+          text: "先发这一句",
+          assetIds: [],
+          createdAt: "2026-08-30T00:00:00Z",
+        },
+      }),
+    );
+    expect(markup).toContain("data-agent-pending-echo");
+    expect(markup).toContain("先发这一句");
+    expect(markup).not.toContain("data-agent-empty");
+  });
+
+  it("places the pending user echo after existing turns", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ input_text: "上一句" })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        pendingEcho: {
+          text: "还在提交",
+          assetIds: [],
+          createdAt: "2026-08-30T00:00:01Z",
+        },
+      }),
+    );
+    expect(markup.indexOf("上一句")).toBeGreaterThan(-1);
+    expect(markup.indexOf("上一句")).toBeLessThan(markup.indexOf("data-agent-pending-echo"));
+    expect(markup).toContain("还在提交");
+  });
+
+  it("renders a live thinking row before tools and folds process after the final answer", () => {
+    let eventState = createAgentTurnEventState("projection-1");
+    eventState = agentEventReducer(eventState, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 1,
+        created_at: "2026-08-14T00:00:01Z",
+        kind: "thinking.delta",
+        payload: { delta: "内部推理", step_id: "step-1", attempt_id: "attempt-1", content_index: 0 },
+      },
+    });
+    const thinkingMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn()],
+        activeTurnId: "projection-1",
+        eventState,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onPreviewAsset: () => undefined,
+      }),
+    );
+    expect(thinkingMarkup).toContain("data-agent-thinking-row");
+    expect(thinkingMarkup).toContain("data-agent-thinking-running");
+    expect(thinkingMarkup).toContain("内部推理");
+    expect(thinkingMarkup).not.toContain("data-agent-turn-process");
+
+    eventState = agentEventReducer(eventState, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 2,
+        created_at: "2026-08-14T00:00:02Z",
+        kind: "tool.step",
+        payload: {
+          step_id: "step-tool",
+          kind: "inspect_context",
+          summary: "读取商品上下文",
+          status: "succeeded",
+        },
+      },
+    });
+    eventState = agentEventReducer(eventState, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 3,
+        created_at: "2026-08-14T00:00:03Z",
+        kind: "text.delta",
+        payload: { delta: "流式终答", step_id: "step-1", attempt_id: "attempt-1" },
+      },
+    });
+    const liveMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn()],
+        activeTurnId: "projection-1",
+        eventState,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onPreviewAsset: () => undefined,
+      }),
+    );
+    const thinkingIndex = liveMarkup.indexOf("data-agent-thinking-row");
+    const toolIndex = liveMarkup.indexOf("data-agent-tool-step-id=\"step-tool\"");
+    const textIndex = liveMarkup.indexOf("流式终答");
+    expect(thinkingIndex).toBeGreaterThan(-1);
+    expect(toolIndex).toBeGreaterThan(thinkingIndex);
+    expect(textIndex).toBeGreaterThan(toolIndex);
+    expect(liveMarkup).not.toContain("data-agent-turn-process");
+
+    const compactMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ status: "succeeded", output_text: "最终回答" })],
+        activeTurnId: null,
+        eventState,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onPreviewAsset: () => undefined,
+      }),
+    );
+    expect(compactMarkup).toContain("data-agent-turn-process");
+    expect(compactMarkup).not.toMatch(/data-agent-turn-process[^>]*open/);
+    expect(compactMarkup).toContain("已处理 1 步");
+    expect(compactMarkup).toContain("内部推理");
+    expect(compactMarkup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
+    expect(compactMarkup).not.toContain("流式终答");
+  });
+
+  it("lets a historical thinking snapshot expand inside the folded process", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "succeeded",
+          thinking_text: "刷新后的思考",
+          output_text: "最终回答",
+        })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onPreviewAsset: () => undefined,
+      }),
+    );
+    expect(markup).toContain("data-agent-turn-process");
+    expect(markup).toContain("已思考");
+    expect(markup).toContain("data-agent-thinking-row");
+    expect(markup).toContain("刷新后的思考");
+    expect(markup).toContain("data-agent-thinking-text");
+    expect(markup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
+  });
+
   it("renders compact localized tool step rows with textual statuses", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentToolStepList, {
@@ -393,6 +613,58 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("失败");
     expect(markup).toContain("motion-reduce:animate-none");
     expect(markup).not.toContain("button");
+  });
+
+  it("renders apply_graph and propose_graph tool rows without crashing", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentToolStepList, {
+        steps: [
+          {
+            step_id: "apply-1",
+            kind: "apply_graph",
+            summary: "立即写入 live graph ChangeSet",
+            status: "succeeded",
+            tool_name: "apply_graph_change_set_v1",
+          },
+          {
+            step_id: "propose-1",
+            kind: "propose_graph",
+            summary: "提交未应用的图提案",
+            status: "running",
+            tool_name: "propose_graph_change_set_v1",
+          },
+        ],
+      }),
+    );
+
+    expect(markup).toContain("写入工作流");
+    expect(markup).toContain("提出图修改");
+    expect(markup).toContain("data-agent-tool-step-id=\"apply-1\"");
+    expect(markup).toContain("data-agent-tool-step-id=\"propose-1\"");
+  });
+
+  it("shows a compact ask_question answer summary instead of a second user bubble", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentToolStepList, {
+        steps: [
+          {
+            step_id: "ask-1",
+            kind: "ask_question",
+            summary: "等待用户回答结构化问题",
+            status: "succeeded",
+            tool_name: "ask_user",
+            details: {
+              phase: "question",
+              question_text: "这个商品叫什么名字？",
+              output_summary: "筋膜枪",
+            },
+          },
+        ],
+      }),
+    );
+    expect(markup).toContain("筋膜枪");
+    expect(markup).toContain("提出问题");
+    expect(markup).not.toContain("继续当前 Agent 任务");
   });
 
   it("renders expandable skill, context, and validation details without exposing raw payloads", () => {
@@ -667,7 +939,7 @@ describe("Agent conversation components", () => {
   it("adds copy and retry actions to settled user and assistant messages", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentMessageList, {
-        turns: [turn({ status: "succeeded", output_text: "已整理完成" })],
+        turns: [turn({ status: "succeeded", thinking_text: "不要复制这段思考", output_text: "已整理完成" })],
         activeTurnId: null,
         eventState: null,
         initialTurnPending: false,
@@ -679,6 +951,8 @@ describe("Agent conversation components", () => {
     );
 
     expect(markup.match(/aria-label="复制消息"/g)).toHaveLength(2);
+    expect(markup).toContain("不要复制这段思考");
+    expect(markup).toContain("data-agent-turn-process");
     expect(markup).toContain("agent-markdown");
     expect(markup).toContain("data-agent-message-actions");
     expect(markup).toContain("data-agent-turn-retry");

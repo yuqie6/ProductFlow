@@ -29,9 +29,9 @@ import {
 import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
 import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMessageList } from "./AgentMessageList";
-import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
+import { echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
 import { agentProductWorkbenchPath } from "./productWorkbenchRoute";
 import { useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
@@ -83,6 +83,7 @@ export function AgentConversationPanel({
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
   const retryKeysRef = useRef(new Map<string, string>());
   const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
+  const [pendingEcho, setPendingEcho] = useState<PendingUserEcho | null>(null);
   const appliedCanvasFocusRef = useRef<string | null>(null);
 
   const cacheWorkflowRunRequest = (request: AgentWorkflowRunRequest) => {
@@ -125,7 +126,17 @@ export function AgentConversationPanel({
     getEventsUrl: (turnId, after) => api.getAgentTurnEventsUrl(productId, conversation.id, turnId, after),
     runId: agent.activeTurn?.harness_run_id ?? null,
     turn: agent.activeTurn,
-    onTerminal: () => void agent.refreshLatestTurn(),
+    onEvent: (event) => {
+      if (event.kind !== "tool.step") return;
+      const kind = typeof event.payload.kind === "string" ? event.payload.kind : "";
+      if (kind === "apply_graph" || kind === "propose_graph") {
+        void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+      }
+    },
+    onTerminal: () => {
+      void agent.refreshLatestTurn();
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+    },
   });
   const activeQuestion =
     events.state.turn_key === agent.activeTurn?.id && events.state.question
@@ -133,6 +144,16 @@ export function AgentConversationPanel({
       : agent.activeTurn?.question ?? null;
 
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
+  useEffect(() => {
+    setPendingEcho(null);
+  }, [conversation.id]);
+  useEffect(() => {
+    if (!pendingEcho) return;
+    const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
+    if (turns.some((item) => echoMatchesTurn(pendingEcho, item))) {
+      setPendingEcho(null);
+    }
+  }, [agent.latestTurn, agent.turns, pendingEcho]);
   useEffect(() => {
     if (!onCanvasFocus) return;
     const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
@@ -151,8 +172,10 @@ export function AgentConversationPanel({
     if (!selected || appliedCanvasFocusRef.current === selected.focus.request_id) return;
     const nodeIds = resolveAgentCanvasFocusNodeIds(selected.focus, graph);
     if (!nodeIds.length) {
-      const needsGraph = selected.focus.edge_ids.length > 0 || selected.focus.group_ids.length > 0;
-      if (needsGraph && !graph) return;
+      const waitingForGraph = selected.focus.node_ids.length > 0
+        || selected.focus.edge_ids.length > 0
+        || selected.focus.group_ids.length > 0;
+      if (waitingForGraph) return;
       appliedCanvasFocusRef.current = selected.focus.request_id;
       return;
     }
@@ -218,31 +241,40 @@ export function AgentConversationPanel({
       ]);
     },
   });
-  const canSubmitMessage = canSubmitAgentConversationMessage({ activeTurn: agent.activeTurn });
+  const canSubmitMessage = canSubmitAgentConversationMessage({ activeTurn: agent.activeTurn }) && !pendingEcho;
   const submitMessage = async () => {
     const normalized = composerText.trim();
     if (!normalized || !canSubmitMessage || agent.submitTurnMutation.isPending) {
       return;
     }
+    const assets = composerAssets.map((asset) => asset.id);
+    const selected = composerAssets;
+    setPendingEcho({
+      text: normalized,
+      assetIds: assets,
+      createdAt: new Date().toISOString(),
+    });
+    setComposerText("");
+    setComposerAssets([]);
     try {
       await agent.submitTurnMutation.mutateAsync({
         input_text: normalized,
-        asset_ids: composerAssets.map((asset) => asset.id),
+        asset_ids: assets,
         idempotency_key: composerKeyRef.current,
         task_id: agentConversationSubmitTaskId(taskId),
         page_context: pageContext
           ? {
             ...pageContext,
-            selected_asset_ids: composerAssets.map((asset) => asset.id),
+            selected_asset_ids: assets,
             captured_at: new Date().toISOString(),
           }
           : null,
       });
-      setComposerText("");
-      setComposerAssets([]);
       rotateComposerKey();
     } catch {
-      // 失败时 mutation 状态会渲染错误，草稿和幂等键保持不变
+      setPendingEcho(null);
+      setComposerText(normalized);
+      setComposerAssets(selected);
     }
   };
   const answerQuestion = async (answer: AgentQuestionAnswer) => {
@@ -478,6 +510,7 @@ export function AgentConversationPanel({
         activeTurnId={agent.activeTurn?.id ?? null}
         eventState={events.state}
         initialTurnPending={agent.turnsQuery.isLoading}
+        pendingEcho={pendingEcho}
         hasOlder={Boolean(agent.turnsQuery.hasNextPage)}
         loadingOlder={agent.turnsQuery.isFetchingNextPage}
         onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
@@ -496,18 +529,6 @@ export function AgentConversationPanel({
         onOpenRuns={onOpenRuns}
       />
 
-      {activeQuestion && agent.activeTurn ? (
-        <AgentQuestionPrompt
-          question={activeQuestion}
-          answered={questionAnswered}
-          resumeRequired={Boolean(agent.activeTurn.resume_required)}
-          busy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
-          error={questionError}
-          onAnswer={(answer) => void answerQuestion(answer)}
-          onResume={() => agent.resumeTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-        />
-      ) : null}
-
       {agent.activeTurn?.resume_required && !activeQuestion ? (
         <div className="flex items-center gap-3 border-t border-zinc-200 bg-blue-50 px-4 py-3 dark:border-slate-800 dark:bg-cyan-400/5">
           <CircleAlert size={16} className="shrink-0 text-blue-700 dark:text-cyan-300" />
@@ -524,37 +545,39 @@ export function AgentConversationPanel({
         </div>
       ) : null}
 
-      {!activeQuestion ? (
-        <AgentComposer
-          value={composerText}
-          selectedAssets={composerAssets}
-          isSubmitting={agent.submitTurnMutation.isPending}
-          canSubmit={canSubmitMessage}
-          stopAvailable={Boolean(agent.activeTurn)}
-          isStopping={
-            agent.cancelTurnMutation.isPending ||
-            agent.activeTurn?.status === "cancel_requested" ||
-            Boolean(events.state.terminal_kind)
-          }
-          error={composerError}
-          placeholder={
-            agent.turns.length === 0 && graphHasCreateTemplate(graph)
-              ? t("agentWorkbench.composerPlaceholder.intakeLanded")
-              : undefined
-          }
-          onChange={setComposerText}
-          onOpenAssets={() => setAssetSelectorOpen(true)}
-          onRemoveAsset={(assetId) => {
-            setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
-            rotateComposerKey();
-          }}
-          onPreviewAsset={previewSelectedAsset}
-          onSubmit={() => void submitMessage()}
-          onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-          onUploadFiles={(files) => uploadAssetsMutation.mutate(files)}
-          isUploading={uploadAssetsMutation.isPending}
-        />
-      ) : null}
+      <AgentComposer
+        value={composerText}
+        selectedAssets={composerAssets}
+        isSubmitting={agent.submitTurnMutation.isPending}
+        canSubmit={canSubmitMessage}
+        stopAvailable={Boolean(agent.activeTurn)}
+        isStopping={
+          agent.cancelTurnMutation.isPending ||
+          agent.activeTurn?.status === "cancel_requested" ||
+          Boolean(events.state.terminal_kind)
+        }
+        error={composerError}
+        placeholder={
+          agent.turns.length === 0 && graphHasCreateTemplate(graph)
+            ? t("agentWorkbench.composerPlaceholder.intakeLanded")
+            : undefined
+        }
+        question={activeQuestion && !questionAnswered ? activeQuestion : null}
+        questionBusy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
+        questionError={questionError}
+        onAnswerQuestion={(answer) => void answerQuestion(answer)}
+        onChange={setComposerText}
+        onOpenAssets={() => setAssetSelectorOpen(true)}
+        onRemoveAsset={(assetId) => {
+          setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
+          rotateComposerKey();
+        }}
+        onPreviewAsset={previewSelectedAsset}
+        onSubmit={() => void submitMessage()}
+        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
+        onUploadFiles={(files) => uploadAssetsMutation.mutate(files)}
+        isUploading={uploadAssetsMutation.isPending}
+      />
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>
