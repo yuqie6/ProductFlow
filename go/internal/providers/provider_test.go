@@ -347,6 +347,43 @@ func TestResponsesImageTreatsTextOnlyCompletedAsFailure(t *testing.T) {
 	}
 }
 
+func TestResponsesTerminalFailureWithoutTextIsMissingOutput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"id":"resp-fail","status":"failed","output":[]}`)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if !errors.Is(err, imagesession.ErrMissingOutput) {
+		t.Fatalf("got %v", err)
+	}
+	if imagesession.IsConfirmedProviderFailure(err) {
+		t.Fatalf("missing output must not be confirmed: %v", err)
+	}
+}
+
+func TestResponsesTerminalFailureWithTextIsTextOutput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{
+			"id":"resp-fail-text","status":"failed",
+			"output":[{"type":"message","status":"completed","content":[{"type":"output_text","text":"无法生成图片"}]}]
+		}`)
+	}))
+	defer srv.Close()
+
+	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	if !errors.Is(err, imagesession.ErrTextOutput) {
+		t.Fatalf("got %v", err)
+	}
+	if !imagesession.IsConfirmedProviderFailure(err) {
+		t.Fatalf("text output must be confirmed: %v", err)
+	}
+}
+
 func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
 	completed, _ := json.Marshal(map[string]any{
 		"id": "resp-retry", "status": "completed",
@@ -598,6 +635,59 @@ func TestChatGenerateEditSendsCandidateCount(t *testing.T) {
 	}
 	if len(got.Images) != 3 {
 		t.Fatalf("images %d", len(got.Images))
+	}
+}
+
+func TestChatGenerateDoesNotFallbackToN1(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var posted map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&posted)
+		if posted["n"] != float64(4) && posted["n"] != 4 {
+			t.Errorf("n %+v", posted["n"])
+		}
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"error":{"message":"n must be 1"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024", Count: 4})
+	if err == nil {
+		t.Fatal("4xx with n>1 must not succeed via n=1 retry")
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls %d, n=1 fallback must not exist", calls)
+	}
+}
+
+func TestChatGenerateEditDoesNotFallbackToN1(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if r.FormValue("n") != "3" {
+			t.Errorf("n %s", r.FormValue("n"))
+		}
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"error":{"message":"n must be 1"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
+		Prompt: "x", Size: "1024x1024", Count: 3, BaseBytes: png,
+	})
+	if err == nil {
+		t.Fatal("edit 4xx with n>1 must not succeed via n=1 retry")
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls %d, n=1 fallback must not exist", calls)
 	}
 }
 
@@ -1280,6 +1370,22 @@ func TestChat400QuotaIsRateLimit(t *testing.T) {
 	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
 	if !errors.Is(err, imagesession.ErrRateLimit) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestChat400QuotaWordIsNotRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"error":{"message":"prompt mentions product quota"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	if err == nil {
+		t.Fatal("expected 400")
+	}
+	if errors.Is(err, imagesession.ErrRateLimit) {
+		t.Fatal("bare quota in a 400 message is not a rate limit")
 	}
 }
 

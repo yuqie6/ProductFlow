@@ -46,6 +46,7 @@ func (h HTTP) create(c *gin.Context) {
 		return
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(&payload); err != nil {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
 		return

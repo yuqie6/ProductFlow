@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -160,11 +161,27 @@ func mapChatStatus(status int, body []byte) error {
 }
 
 func chatBodyRateLimited(body []byte) bool {
+	var parsed struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &parsed) == nil {
+		code := strings.ToLower(parsed.Error.Code)
+		typ := strings.ToLower(parsed.Error.Type)
+		if code == "insufficient_quota" || strings.Contains(code, "rate_limit") {
+			return true
+		}
+		if typ == "insufficient_quota" || strings.Contains(typ, "rate_limit") {
+			return true
+		}
+	}
 	msg := strings.ToLower(string(body))
-	return strings.Contains(msg, "quota") ||
-		strings.Contains(msg, "insufficient_quota") ||
+	return strings.Contains(msg, "insufficient_quota") ||
+		strings.Contains(msg, "rate_limit_exceeded") ||
 		strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "rate_limit") ||
 		strings.Contains(msg, "rate-limit")
 }
 

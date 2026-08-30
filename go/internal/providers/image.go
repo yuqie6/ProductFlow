@@ -176,17 +176,6 @@ func (p OpenAIImages) callTyped(ctx context.Context, method, url, contentType st
 	return doJSON(ctx, newHTTPClient(), method, url, p.APIKey, bytes.NewReader(body), contentType)
 }
 
-func parseImageResponse(raw []byte, fallbackModel string) ([]byte, string, string, string, error) {
-	images, mime, model, id, err := parseImageResponses(raw, fallbackModel)
-	if err != nil {
-		return nil, "", "", "", err
-	}
-	if len(images) == 0 {
-		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
-	}
-	return images[0], mime, model, id, nil
-}
-
 func parseImageResponses(raw []byte, fallbackModel string) ([][]byte, string, string, string, error) {
 	var parsed struct {
 		ID    string `json:"id"`
@@ -457,14 +446,14 @@ func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size str
 			return bytesData, mime, model, id, nil
 		}
 		if responsesTerminalFailure(parsed) {
-			return nil, "", "", "", imagesession.ErrMissingOutput
+			return nil, "", "", "", responsesNoImageError(parsed)
 		}
 		if !responsesShouldRetrieve(parsed) {
 			return nil, "", "", "", responsesNoImageError(parsed)
 		}
 		id := responsesID(parsed)
 		if id == "" {
-			return nil, "", "", "", imagesession.ErrMissingOutput
+			return nil, "", "", "", responsesNoImageError(parsed)
 		}
 		if retrieved && !responsesNeedsPoll(parsed) {
 			return nil, "", "", "", responsesNoImageError(parsed)
@@ -500,17 +489,6 @@ func sleepPoll(ctx context.Context) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-func parseResponsesImage(raw []byte, fallbackModel string) ([]byte, string, string, string, error) {
-	parsed, err := decodeProviderObject(raw)
-	if err != nil {
-		return nil, "", "", "", err
-	}
-	if bytesData, mime, model, id, ok := extractResponsesImage(parsed, fallbackModel); ok {
-		return bytesData, mime, model, id, nil
-	}
-	return nil, "", "", "", responsesNoImageError(parsed)
 }
 
 func decodeProviderObject(raw []byte) (map[string]any, error) {

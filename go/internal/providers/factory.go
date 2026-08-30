@@ -158,13 +158,9 @@ func imageAdapter(ctx context.Context, store *settings.Store) (imageAdapterSet, 
 			MaskEdit: binding.MaskEdit,
 		}, nil
 	case "openai_responses":
-		tool := settings.ImageToolRuntime{}
-		if store != nil {
-			resolved, err := store.ImageToolRuntime(ctx)
-			if err != nil {
-				return nil, err
-			}
-			tool = resolved
+		tool, err := store.ImageToolRuntime(ctx)
+		if err != nil {
+			return nil, err
 		}
 		return OpenAIResponses{
 			OpenAIImages: OpenAIImages{

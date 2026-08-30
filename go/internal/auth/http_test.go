@@ -44,7 +44,7 @@ func testEngine(required bool) *httptest.Server {
 func TestLoginMalformedJSON(t *testing.T) {
 	srv := testEngine(true)
 	defer srv.Close()
-	for _, body := range []string{``, `{`, `not-json`, `{"admin_key":"correct-admin-key"}{}`} {
+	for _, body := range []string{``, `{`, `not-json`, `{"admin_key":"correct-admin-key"}{}`, `{"admin_key":"correct-admin-key","extra":1}`} {
 		resp, err := http.Post(srv.URL+"/api/auth/session", "application/json", strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)

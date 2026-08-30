@@ -180,23 +180,6 @@ func responsesInput(prompt string, refs []graph.ReferenceImage) any {
 	return []map[string]any{{"role": "user", "content": content}}
 }
 
-func generationSpecToolOptions(spec map[string]any) map[string]any {
-	out := map[string]any{}
-	if quality := openaiQualityFromSpec(spec); quality != "" {
-		out["quality"] = quality
-	}
-	if fidelity, _ := spec["reference_fidelity"].(string); fidelity == "high" || fidelity == "low" {
-		out["input_fidelity"] = fidelity
-	}
-	if background, _ := spec["background_intent"].(string); background == "transparent" || background == "opaque" {
-		out["background"] = background
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 func finishImageResult(adapter string, data []byte, mime, model, id, size, quality string, refCount int) graph.ImageResult {
 	width, height := 0, 0
 	if verified, err := media.Inspect(data, ""); err == nil {
