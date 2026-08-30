@@ -179,6 +179,9 @@ type WorkflowRunRequestResponse struct {
 	FinishedAt               *time.Time `json:"finished_at"`
 	CreatedAt                time.Time  `json:"created_at"`
 	UpdatedAt                time.Time  `json:"updated_at"`
+	RunScope                 string     `json:"run_scope"`
+	TargetNodeID             *string    `json:"target_node_id"`
+	TargetNodeIDs            []string   `json:"target_node_ids"`
 }
 
 type ReconcileResponse struct {

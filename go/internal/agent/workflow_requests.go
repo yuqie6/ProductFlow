@@ -31,7 +31,36 @@ func runRequestFromScan(row runRequestScan) WorkflowRunRequestResponse {
 		WorkflowRunStatus: row.WorkflowRunStatus, SourceStepID: row.SourceStepID,
 		FailureReason: row.FailureReason, ConfirmedAt: row.ConfirmedAt, FinishedAt: row.FinishedAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		RunScope:      agentRunScope(row.RunScope),
+		TargetNodeID:  row.TargetNodeID,
+		TargetNodeIDs: parseAgentRunNodeIDs(row.TargetNodeIDsJSON),
 	}
+}
+
+func agentRunScope(value *string) string {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		return "graph"
+	}
+	return strings.TrimSpace(*value)
+}
+
+func parseAgentRunNodeIDs(raw *string) []string {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(*raw), &ids); err != nil {
+		return nil
+	}
+	return ids
+}
+
+func graphRunRequestFromAgent(item WorkflowRunRequestResponse) graph.GraphRunRequest {
+	scope := item.RunScope
+	if scope == "" {
+		scope = "graph"
+	}
+	return graph.GraphRunRequest{Scope: scope, NodeID: item.TargetNodeID, NodeIDs: item.TargetNodeIDs}
 }
 
 func runRequestBaseQuery(pgxTx *gorm.DB) *gorm.DB {
@@ -105,7 +134,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 		if item.SourceRunID != nil {
 			run, err = s.Graph.RetryRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, *item.SourceRunID)
 		} else {
-			run, err = s.Graph.SubmitRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, "graph", nil)
+			run, err = s.Graph.SubmitRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, graphRunRequestFromAgent(item))
 		}
 		if err != nil {
 			return err
@@ -278,15 +307,15 @@ func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productI
 	}, nil
 }
 
-func (s Service) CreateWorkflowRunRequest(ctx context.Context, conversationID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (WorkflowRunRequestResponse, error) {
-	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, false)
+func (s Service) CreateWorkflowRunRequest(ctx context.Context, conversationID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
+	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
-func (s Service) CreateGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (WorkflowRunRequestResponse, error) {
-	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, true)
+func (s Service) CreateGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
+	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }
 
-func (s Service) createRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool) (WorkflowRunRequestResponse, error) {
+func (s Service) createRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	if err := requireExpectedWorkflowRevision(expectedRevision); err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
@@ -303,6 +332,10 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 		return WorkflowRunRequestResponse{}, err
 	}
 	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
+	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs)
 	if err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
@@ -334,7 +367,7 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 				return err
 			}
 		}
-		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
+		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, spec)
 		if err != nil {
 			return err
 		}
@@ -380,6 +413,9 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 			SourceStepID:             sourceStepID,
 			IdempotencyKey:           key,
 			RequestHash:              hash,
+			RunScope:                 spec.columnScope(),
+			TargetNodeID:             spec.NodeID,
+			TargetNodeIDsJSON:        spec.nodeIDsJSON(),
 			CreatedAt:                now,
 			UpdatedAt:                now,
 		}
@@ -396,15 +432,15 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 	return out, err
 }
 
-func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (ReconcileResponse, error) {
-	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, false)
+func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
+	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
-func (s Service) ReconcileGlobalWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (ReconcileResponse, error) {
-	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, true)
+func (s Service) ReconcileGlobalWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
+	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }
 
-func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool) (ReconcileResponse, error) {
+func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool, spec runScopeSpec) (ReconcileResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
 		return ReconcileResponse{}, err
@@ -418,6 +454,10 @@ func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempo
 		return ReconcileResponse{}, err
 	}
 	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return ReconcileResponse{}, err
+	}
+	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs)
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
@@ -449,7 +489,7 @@ func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempo
 				return err
 			}
 		}
-		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
+		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, spec)
 		if err != nil {
 			return err
 		}
@@ -502,7 +542,63 @@ func requireGlobalWorkflowConversation(conv conversationRow) error {
 	return nil
 }
 
-func workflowRunRequestHashPayload(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) map[string]any {
+type runScopeSpec struct {
+	Scope   string
+	NodeID  *string
+	NodeIDs []string
+}
+
+func parseRunScopeSpec(scope string, nodeID *string, nodeIDs []string) (runScopeSpec, error) {
+	normalized := strings.TrimSpace(scope)
+	if normalized == "" {
+		normalized = "graph"
+	}
+	switch normalized {
+	case "graph":
+		return runScopeSpec{Scope: "graph"}, nil
+	case "node", "to_node":
+		if nodeID == nil || strings.TrimSpace(*nodeID) == "" {
+			return runScopeSpec{}, apperr.Validation("node_id 不能为空")
+		}
+		id := strings.TrimSpace(*nodeID)
+		return runScopeSpec{Scope: normalized, NodeID: &id}, nil
+	case "selection":
+		cleaned := make([]string, 0, len(nodeIDs))
+		for _, id := range nodeIDs {
+			if trimmed := strings.TrimSpace(id); trimmed != "" {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		if len(cleaned) == 0 {
+			return runScopeSpec{}, apperr.Validation("node_ids 不能为空")
+		}
+		return runScopeSpec{Scope: normalized, NodeIDs: cleaned}, nil
+	default:
+		return runScopeSpec{}, apperr.Validation("scope 无效")
+	}
+}
+
+func (spec runScopeSpec) columnScope() *string {
+	if spec.Scope == "" || spec.Scope == "graph" {
+		return nil
+	}
+	scope := spec.Scope
+	return &scope
+}
+
+func (spec runScopeSpec) nodeIDsJSON() *string {
+	if len(spec.NodeIDs) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(spec.NodeIDs)
+	if err != nil {
+		return nil
+	}
+	encoded := string(raw)
+	return &encoded
+}
+
+func workflowRunRequestHashPayload(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) map[string]any {
 	payload := map[string]any{
 		"schema_version":             1,
 		"conversation_id":            strings.TrimSpace(conversationID),
@@ -519,11 +615,20 @@ func workflowRunRequestHashPayload(conversationID string, productID *string, wor
 			payload["source_run_id"] = trimmed
 		}
 	}
+	if spec.Scope != "" && spec.Scope != "graph" {
+		payload["run_scope"] = spec.Scope
+		if spec.NodeID != nil {
+			payload["node_id"] = *spec.NodeID
+		}
+		if len(spec.NodeIDs) > 0 {
+			payload["node_ids"] = spec.NodeIDs
+		}
+	}
 	return payload
 }
 
-func hashWorkflowRunRequest(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (string, error) {
-	return canonjson.SHA256Hex(workflowRunRequestHashPayload(conversationID, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID))
+func hashWorkflowRunRequest(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (string, error) {
+	return canonjson.SHA256Hex(workflowRunRequestHashPayload(conversationID, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, spec))
 }
 
 func normalizeRequiredID(value, field string) (string, error) {

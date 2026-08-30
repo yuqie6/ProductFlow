@@ -16,7 +16,7 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 	stepID := "run-1"
 	productID := "prod-1"
 
-	productPayload := workflowRunRequestHashPayload(convID, nil, workflowID, stepID, 1, nil, nil)
+	productPayload := workflowRunRequestHashPayload(convID, nil, workflowID, stepID, 1, nil, nil, runScopeSpec{})
 	productJSON, err := canonjson.Compact(productPayload)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 		t.Fatalf("nil task_id must encode as JSON null: %s", got)
 	}
 
-	globalPayload := workflowRunRequestHashPayload(convID, &productID, workflowID, stepID, 1, nil, nil)
+	globalPayload := workflowRunRequestHashPayload(convID, &productID, workflowID, stepID, 1, nil, nil, runScopeSpec{})
 	globalJSON, err := canonjson.Compact(globalPayload)
 	if err != nil {
 		t.Fatal(err)
@@ -44,11 +44,11 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 		t.Fatalf("global hash must include product_id: %s", globalJSON)
 	}
 
-	productHash, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, nil)
+	productHash, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, nil, runScopeSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	globalHash, err := hashWorkflowRunRequest(convID, &productID, workflowID, stepID, 1, nil, nil)
+	globalHash, err := hashWorkflowRunRequest(convID, &productID, workflowID, stepID, 1, nil, nil, runScopeSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 	}
 
 	emptySource := ptr("")
-	withEmptySource, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, emptySource)
+	withEmptySource, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, emptySource, runScopeSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,11 +66,11 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 	}
 
 	sourceID := "run-source"
-	withSource, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, &sourceID)
+	withSource, err := hashWorkflowRunRequest(convID, nil, workflowID, stepID, 1, nil, &sourceID, runScopeSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceJSON, err := canonjson.Compact(workflowRunRequestHashPayload(convID, nil, workflowID, stepID, 1, nil, &sourceID))
+	sourceJSON, err := canonjson.Compact(workflowRunRequestHashPayload(convID, nil, workflowID, stepID, 1, nil, &sourceID, runScopeSpec{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWorkflowRunRequestHashMatchesPythonShape(t *testing.T) {
 		t.Fatal("source_run_id must change the hash when present")
 	}
 
-	trimmedStep, err := hashWorkflowRunRequest(convID, nil, " "+workflowID+" ", " "+stepID+" ", 1, nil, nil)
+	trimmedStep, err := hashWorkflowRunRequest(convID, nil, " "+workflowID+" ", " "+stepID+" ", 1, nil, nil, runScopeSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -505,20 +505,26 @@ func (h HTTP) appendEvent(c *gin.Context) {
 }
 
 type workflowRunRequestBody struct {
-	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
-	WorkflowID               string  `json:"workflow_id"`
-	SourceStepID             string  `json:"source_step_id"`
-	TaskID                   *string `json:"task_id"`
-	SourceRunID              *string `json:"source_run_id"`
+	ExpectedWorkflowRevision int      `json:"expected_workflow_revision"`
+	WorkflowID               string   `json:"workflow_id"`
+	SourceStepID             string   `json:"source_step_id"`
+	TaskID                   *string  `json:"task_id"`
+	SourceRunID              *string  `json:"source_run_id"`
+	Scope                    string   `json:"scope"`
+	NodeID                   *string  `json:"node_id"`
+	NodeIDs                  []string `json:"node_ids"`
 }
 
 type globalWorkflowRunRequestBody struct {
-	ProductID                string  `json:"product_id"`
-	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
-	WorkflowID               string  `json:"workflow_id"`
-	SourceStepID             string  `json:"source_step_id"`
-	TaskID                   *string `json:"task_id"`
-	SourceRunID              *string `json:"source_run_id"`
+	ProductID                string   `json:"product_id"`
+	ExpectedWorkflowRevision int      `json:"expected_workflow_revision"`
+	WorkflowID               string   `json:"workflow_id"`
+	SourceStepID             string   `json:"source_step_id"`
+	TaskID                   *string  `json:"task_id"`
+	SourceRunID              *string  `json:"source_run_id"`
+	Scope                    string   `json:"scope"`
+	NodeID                   *string  `json:"node_id"`
+	NodeIDs                  []string `json:"node_ids"`
 }
 
 func (h HTTP) prepareRunRequest(c *gin.Context) {
@@ -569,7 +575,7 @@ func (h HTTP) createRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -587,7 +593,7 @@ func (h HTTP) createGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.CreateGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.CreateGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -605,7 +611,7 @@ func (h HTTP) reconcileRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, "", req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, "", req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -623,7 +629,7 @@ func (h HTTP) reconcileGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.ReconcileGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
