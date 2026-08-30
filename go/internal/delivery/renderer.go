@@ -10,7 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 
-	"github.com/HugoSmits86/nativewebp"
+	chaiwebp "github.com/chai2010/webp"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	xdraw "golang.org/x/image/draw"
@@ -167,12 +167,12 @@ func encodeImage(img image.Image, spec Spec) ([]byte, error) {
 		}
 		return nil, apperr.Validation("交付图无法在保持尺寸和格式的前提下满足最大字节限制")
 	case "webp":
-		// nativewebp 只提供无损 VP8L，没有 Pillow 的 quality 阶；用 encoder effort 去贴 max_byte_size。
+		// Pillow WEBP：无上限时 quality=95；有 max_byte_size 再按同一阶 95→1 降，而不是无损 VP8L 的 encoder effort。
 		if spec.MaxByteSize == nil {
-			return encodeWebP(img, nativewebp.BestCompression)
+			return encodeWebP(img, 95)
 		}
-		for _, level := range []nativewebp.CompressionLevel{nativewebp.BestCompression, nativewebp.DefaultCompression, nativewebp.BestSpeed} {
-			encoded, err := encodeWebP(img, level)
+		for _, q := range qualityLadder {
+			encoded, err := encodeWebP(img, q)
 			if err != nil {
 				return nil, err
 			}
@@ -202,9 +202,10 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func encodeWebP(img image.Image, level nativewebp.CompressionLevel) ([]byte, error) {
+func encodeWebP(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := nativewebp.Encode(&buf, img, &nativewebp.Options{CompressionLevel: level}); err != nil {
+	// Exact 对齐 Pillow exact=True：透明像素下保留 RGB。有损路径仍走 quality 阶。
+	if err := chaiwebp.Encode(&buf, img, &chaiwebp.Options{Quality: float32(quality), Exact: true}); err != nil {
 		return nil, apperr.Validation("当前运行环境不支持 WEBP 交付编码")
 	}
 	return buf.Bytes(), nil

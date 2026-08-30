@@ -152,8 +152,15 @@ func (ds *deliveryServer) createProduct(t *testing.T) product.CreateResponse {
 
 func (ds *deliveryServer) attachArtifact(t *testing.T, productID, assetID string) {
 	t.Helper()
-	graphID := clockid.New()
+	ds.attachArtifactLineage(t, productID, assetID)
+}
+
+func (ds *deliveryServer) attachArtifactLineage(t *testing.T, productID, assetID string) (graphID, runID, nodeRunID string) {
+	t.Helper()
+	graphID = clockid.New()
 	nodeID := clockid.New()
+	runID = clockid.New()
+	nodeRunID = clockid.New()
 	artifactID := clockid.New()
 	digest := strings.Repeat("a", 64)
 	hash := strings.Repeat("b", 64)
@@ -171,13 +178,28 @@ func (ds *deliveryServer) attachArtifact(t *testing.T, productID, assetID string
 		t.Fatal(err)
 	}
 	if _, err := ds.pool.Exec(context.Background(), `
-		INSERT INTO workflow_graph_artifacts (
-			id, graph_id, node_id, artifact_type, schema_version, graph_revision,
-			payload_json, payload_hash, input_digest, product_image_asset_id, created_at
-		) VALUES ($1, $2, $3, 'image', 3, 1, '{}'::jsonb, $4, $5, $6, NOW())
-	`, artifactID, graphID, nodeID, hash, digest, assetID); err != nil {
+		INSERT INTO workflow_graph_runs (
+			id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at, finished_at
+		) VALUES ($1, $2, 'succeeded', 'graph', 1, '{}'::json, TRUE, NOW(), NOW())
+	`, runID, graphID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_node_runs (
+			id, graph_run_id, node_id, status, sort_order, started_at, finished_at
+		) VALUES ($1, $2, $3, 'succeeded', 0, NOW(), NOW())
+	`, nodeRunID, runID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_artifacts (
+			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
+			payload_json, payload_hash, input_digest, product_image_asset_id, created_at
+		) VALUES ($1, $2, $3, $4, 'image', 3, 1, '{}'::jsonb, $5, $6, $7, NOW())
+	`, artifactID, graphID, nodeID, nodeRunID, hash, digest, assetID); err != nil {
+		t.Fatal(err)
+	}
+	return graphID, runID, nodeRunID
 }
 
 func TestDeliveryPresetsCatalog(t *testing.T) {

@@ -3,7 +3,7 @@ module github.com/yuqie6/productflow
 go 1.23.0
 
 require (
-	github.com/HugoSmits86/nativewebp v1.3.0
+	github.com/chai2010/webp v1.4.0
 	github.com/gin-gonic/gin v1.10.0
 	github.com/gorilla/sessions v1.4.0
 	github.com/hibiken/asynq v0.25.1

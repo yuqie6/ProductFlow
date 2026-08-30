@@ -24,6 +24,9 @@ func TestEncodeImageWritesWebP(t *testing.T) {
 	if meta.MIMEType != "image/webp" || meta.Width != 24 || meta.Height != 24 {
 		t.Fatalf("%+v", meta)
 	}
+	if bytes.Contains(rendered.Bytes, []byte("VP8L")) {
+		t.Fatal("default webp must be lossy, not VP8L")
+	}
 	limited := 4096
 	small, err := Render(src, Spec{Width: 80, Height: 80, Format: "webp", Fit: "cover", MaxByteSize: &limited})
 	if err != nil {
@@ -31,6 +34,49 @@ func TestEncodeImageWritesWebP(t *testing.T) {
 	}
 	if small.Metadata.ByteSize > limited || small.Metadata.MIMEType != "image/webp" {
 		t.Fatalf("%+v", small.Metadata)
+	}
+}
+
+func TestEncodeWebPUsesLossyQualityLadder(t *testing.T) {
+	src := noisyPNG(t, 160, 160)
+	img, err := decodeSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Width: 160, Height: 160, Format: "webp", Fit: "cover"}
+	resized := resize(img, spec)
+	q95, err := encodeWebP(resized, 95)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q1, err := encodeWebP(resized, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(q95, []byte("VP8L")) {
+		t.Fatal("quality 95 webp must be lossy")
+	}
+	if len(q95) <= len(q1) {
+		t.Fatalf("quality 95 size %d should exceed quality 1 size %d", len(q95), len(q1))
+	}
+	limit := (len(q95) + len(q1)) / 2
+	if limit >= len(q95) || limit <= len(q1) {
+		t.Fatalf("limit %d not between q1=%d and q95=%d", limit, len(q1), len(q95))
+	}
+	capped := spec
+	capped.MaxByteSize = &limit
+	encoded, err := encodeImage(resized, capped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > limit {
+		t.Fatalf("byte size %d exceeds %d", len(encoded), limit)
+	}
+	tooSmall := 32
+	failSpec := spec
+	failSpec.MaxByteSize = &tooSmall
+	if _, err := encodeImage(resized, failSpec); err == nil {
+		t.Fatal("expected max_byte_size failure")
 	}
 }
 
@@ -58,6 +104,26 @@ func TestDecodeSourceTransposesJPEGExifOrientation(t *testing.T) {
 	if r>>8 < 180 || bl>>8 > 80 {
 		t.Fatalf("top-left after orientation 6 should be red, got %d %d %d", r>>8, g>>8, bl>>8)
 	}
+}
+
+func noisyPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{
+				R: uint8((x*37 + y*19) % 251),
+				G: uint8((x*11 + y*73) % 241),
+				B: uint8((x*91 + y*5) % 239),
+				A: 255,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func solidPNG(t *testing.T, w, h int, c color.RGBA) []byte {

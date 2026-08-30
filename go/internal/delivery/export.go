@@ -126,10 +126,14 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			finishedAt = append(finishedAt, *row.FinishedAt)
 			var spec any
 			_ = json.Unmarshal(row.SpecJSON, &spec)
+			// Python 把 _source_lineage 的 graph/run/node_run_id 展平到 items[]，不要再套一层 graph 对象。
+			lineage := sourceLineage(ctx, pgxTx, source.ID, productID)
 			successItems = append(successItems, map[string]any{
-				"filename": name,
-				"product":  map[string]any{"id": productID, "name": productName},
-				"graph":    sourceLineage(ctx, pgxTx, source.ID, productID),
+				"filename":    name,
+				"product":     map[string]any{"id": productID, "name": productName},
+				"graph":       lineage["graph"],
+				"run":         lineage["run"],
+				"node_run_id": lineage["node_run_id"],
 				"source_asset": map[string]any{
 					"id": source.ID, "image_type_key": source.ImageTypeKey, "original_filename": source.OriginalFilename,
 				},
