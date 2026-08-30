@@ -26,6 +26,7 @@ export interface Config {
   providerReasoningSummary: string | null;
   providerTextVerbosity: string | null;
   providerServiceTier: string | null;
+  questionTimeoutMS: number;
 }
 
 function env(key: string, fallback = ""): string {
@@ -90,5 +91,6 @@ export function loadConfig(): Config {
     providerReasoningSummary: env("AGENT_PROVIDER_REASONING_SUMMARY") || null,
     providerTextVerbosity: env("AGENT_PROVIDER_TEXT_VERBOSITY") || null,
     providerServiceTier: env("AGENT_PROVIDER_SERVICE_TIER") || null,
+    questionTimeoutMS: durationMS("AGENT_QUESTION_TIMEOUT", 900_000),
   };
 }

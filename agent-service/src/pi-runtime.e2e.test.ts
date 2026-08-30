@@ -44,6 +44,7 @@ const config = {
   providerReasoningSummary: null,
   providerTextVerbosity: null,
   providerServiceTier: null,
+  questionTimeoutMS: 900_000,
 };
 
 describe("Pi runtime fake provider E2E", () => {
@@ -103,10 +104,13 @@ describe("Pi runtime fake provider E2E", () => {
         "turn.started",
         "tool.step",
         "tool.step",
-        "text.delta",
         "turn.succeeded",
       ]);
-      expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(events.some((event) => event.kind === "text.delta")).toBe(false);
+      const local = await store.events(scope.run_id, started.turn_id, 0);
+      expect(local.filter((event) => event.kind === "text.delta").map((event) => event.payload.delta).join("")).toBe(
+        "fake provider response",
+      );
       expect(events[2]?.payload).toMatchObject({
         kind: "inject_context",
         tool_name: "productflow_context_injection",
@@ -126,6 +130,66 @@ describe("Pi runtime fake provider E2E", () => {
       expect(toolNames).toContain("ask_user");
       expect(toolNames).not.toContain("bash");
       expect(toolNames).not.toContain("read");
+    } finally {
+      await manager?.close();
+      await provider.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("projects reasoning summary as thinking.delta and keeps it out of output", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-reasoning-e2e-"));
+    const provider = await createFakeResponsesServer("reasoning");
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> = [];
+    const releasedPhases: string[] = [];
+    let manager: PiRuntimeManager | undefined;
+
+    try {
+      const productFlow = createFakeProductFlow(provider.baseURL, checkpoints, events, releasedPhases, () => 1);
+      const store = new TurnStore(root);
+      await store.init();
+      const skills = {
+        root: "/tmp/fake-productflow-skills",
+        hash: "fake-skill-catalog",
+        names: [],
+        prompt: "",
+        load: async () => "",
+      } satisfies SkillCatalog;
+      manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
+      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
+
+      const started = await manager.start({
+        lookup: { conversationID: scope.conversation_id },
+        input: {
+          input_text: "请给出一句确认结果",
+          asset_ids: [],
+          idempotency_key: "fake-provider-reasoning-e2e-1",
+          page_context: null,
+        },
+      });
+      const terminal = await waitForTerminal(store, scope.run_id, started.turn_id);
+      const local = await store.events(scope.run_id, started.turn_id, 0);
+      const thinkingEvents = local.filter((item) => item.kind === "thinking.delta");
+      const textEvents = local.filter((item) => item.kind === "text.delta");
+
+      expect(terminal).toMatchObject({
+        status: "succeeded",
+        output: "fake provider response",
+        thinking: "先核对约束再给结论",
+      });
+      expect(thinkingEvents.length).toBeGreaterThanOrEqual(1);
+      expect(thinkingEvents.some((item) => item.payload.delta === "先核对约束再给结论")).toBe(true);
+      expect(thinkingEvents.every((item) => item.payload.truncated !== true)).toBe(true);
+      expect(textEvents.map((item) => item.payload.delta).join("")).toBe("fake provider response");
+      expect(events.map((item) => item.kind)).toEqual([
+        "turn.queued",
+        "turn.started",
+        "tool.step",
+        "tool.step",
+        "turn.succeeded",
+      ]);
+      expect(events.some((item) => item.kind === "thinking.delta" || item.kind === "text.delta")).toBe(false);
     } finally {
       await manager?.close();
       await provider.close();
@@ -298,9 +362,9 @@ describe("Pi runtime fake provider E2E", () => {
         result: "applied",
       });
       expect(events.map((event) => event.kind)).toEqual(
-        expect.arrayContaining(["turn.queued", "turn.started", "tool.step", "text.delta", "turn.succeeded"]),
+        expect.arrayContaining(["turn.queued", "turn.started", "tool.step", "turn.succeeded"]),
       );
-      expect(events.map((event) => event.sequence)).toEqual(events.map((_event, index) => index + 1));
+      expect(events.some((event) => event.kind === "text.delta")).toBe(false);
     } finally {
       await manager?.close();
       await provider.close();
@@ -558,7 +622,7 @@ async function waitForTerminal(store: TurnStore, runID: string, turnID: string):
   throw new Error("fake provider E2E Turn did not reach a terminal state");
 }
 
-type FakeProviderMode = "text" | "workspace" | "disconnect" | "reset" | "timeout";
+type FakeProviderMode = "text" | "reasoning" | "workspace" | "disconnect" | "reset" | "timeout";
 
 async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promise<{
   baseURL: string;
@@ -589,6 +653,7 @@ async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promi
         });
       }
       if (mode === "workspace" && requestCount === 1) writeWorkspaceToolResponse(response);
+      else if (mode === "reasoning") writeReasoningTextResponse(response, requestCount);
       else if (mode === "disconnect") writeTruncatedTextResponse(response, requestCount);
       else if (mode === "reset") response.destroy();
       else if (mode === "timeout") {
@@ -667,6 +732,68 @@ function writeTextResponse(response: import("node:http").ServerResponse, respons
   writeSSE(response, { type: "response.output_text.delta", output_index: 0, delta: "fake provider response" });
   writeSSE(response, { type: "response.output_text.done", output_index: 0, text: "fake provider response" });
   writeSSE(response, { type: "response.output_item.done", output_index: 0, item: message });
+  writeSSE(response, { type: "response.completed", response: responseBody });
+}
+
+function writeReasoningTextResponse(response: import("node:http").ServerResponse, responseNumber: number): void {
+  const reasoning = {
+    type: "reasoning",
+    id: `rs-fake-provider-e2e-${responseNumber}`,
+    summary: [{ type: "summary_text", text: "先核对约束再给结论" }],
+  };
+  const message = {
+    type: "message",
+    id: `msg-fake-provider-reasoning-e2e-${responseNumber}`,
+    role: "assistant",
+    status: "completed",
+    phase: "final_answer",
+    content: [{ type: "output_text", text: "fake provider response", annotations: [] }],
+  };
+  const responseBody = {
+    id: `resp-fake-provider-reasoning-e2e-${responseNumber}`,
+    object: "response",
+    status: "completed",
+    output: [reasoning, message],
+    usage: {
+      input_tokens: 1,
+      output_tokens: 8,
+      total_tokens: 9,
+      output_tokens_details: { reasoning_tokens: 4 },
+    },
+  };
+  writeSSE(response, {
+    type: "response.created",
+    response: { id: responseBody.id, object: "response", status: "in_progress", output: [] },
+  });
+  writeSSE(response, {
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { type: "reasoning", id: reasoning.id },
+  });
+  writeSSE(response, {
+    type: "response.reasoning_summary_text.delta",
+    output_index: 0,
+    delta: "先核对约束再给结论",
+  });
+  writeSSE(response, {
+    type: "response.output_item.done",
+    output_index: 0,
+    item: reasoning,
+  });
+  writeSSE(response, {
+    type: "response.output_item.added",
+    output_index: 1,
+    item: {
+      type: "message",
+      id: message.id,
+      role: "assistant",
+      status: "in_progress",
+      content: [],
+    },
+  });
+  writeSSE(response, { type: "response.output_text.delta", output_index: 1, delta: "fake provider response" });
+  writeSSE(response, { type: "response.output_text.done", output_index: 1, text: "fake provider response" });
+  writeSSE(response, { type: "response.output_item.done", output_index: 1, item: message });
   writeSSE(response, { type: "response.completed", response: responseBody });
 }
 

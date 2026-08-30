@@ -26,6 +26,7 @@ COPY --from=build /src/agent-service/package.json /src/agent-service/pnpm-lock.y
 RUN pnpm install --prod --frozen-lockfile
 COPY --from=build /src/agent-service/dist ./dist
 COPY --from=build /src/agent-service/.pi ./.pi
+COPY go/prompts /app/go/prompts
 
 USER productflow
 

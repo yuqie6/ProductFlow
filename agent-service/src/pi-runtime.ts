@@ -50,6 +50,7 @@ import {
   byteLength,
   isTerminalStatus,
   nowISO,
+  questionAnswerToolPayload,
   safeErrorMessage,
   sameRuntimeScope,
   sha256,
@@ -58,12 +59,33 @@ import {
 } from "./contracts.js";
 import { Config } from "./config.js";
 import { ProductFlowClient } from "./productflow.js";
+import { loadRuntimePolicy } from "./runtime-policy.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME, SkillCatalog } from "./skills.js";
 import { RuntimeError, TurnStore } from "./store.js";
 import { createProductFlowTools, ToolRuntime } from "./tools.js";
+import {
+  compactAskUserSummary,
+  continueAgentSession,
+  injectAskUserToolResult,
+  storedAnswerFromEvents,
+  QUESTION_WAIT_EXPIRED_MESSAGE,
+} from "./question-resume.js";
+import {
+  isDurableTurnEventKind,
+  normalizeAssistantMessageEvent,
+  reportUnknownPiAssistantEvent,
+  type AssistantFinishPayload,
+} from "./pi-chunks.js";
+import {
+  applyThinkingEvent,
+  createThinkingProjectionState,
+  type ThinkingAssistantEvent,
+  type ThinkingProjectionState,
+} from "./thinking-projection.js";
 
 const RUNTIME_VERSION = "0.1.0";
 const MAX_INPUT_TEXT_BYTES = 64 << 10;
+const RUNTIME_POLICY = loadRuntimePolicy();
 
 interface ProviderRequestOptions {
   reasoningSummary: string | null;
@@ -166,7 +188,7 @@ export class PiRuntimeManager {
     return this.store.getState(runtime.scope.run_id, turnID);
   }
 
-  /** 只有 queued Turn，或进程内仍挂着问题等待者时才能 resume。 */
+  /** 只有 queued Turn，或已写入问题答案时才能 resume。活 waiter 在进程内续跑；无 waiter 时用 toolResult 续同一 session。 */
   async resume(request: RuntimeLookup, turnID: string): Promise<TurnState> {
     const runtime = await this.runtimeForLookup(request);
     const state = await this.store.getState(runtime.scope.run_id, turnID);
@@ -216,6 +238,8 @@ export class PiRuntimeManager {
       for (const event of events) {
         cursor = Math.max(cursor, event.sequence);
         yield event;
+        const kindStatus = event.kind.startsWith("turn.") ? event.kind.slice("turn.".length) : "";
+        if (kindStatus && isTerminalStatus(kindStatus as TurnStatus)) return;
       }
       const state = await this.store.getState(runID, turnID);
       if (isTerminalStatus(state.status)) return;
@@ -355,11 +379,14 @@ class RunRuntime implements ToolRuntime {
     questionID: string;
     resolve: (answer: TurnAnswer) => void;
     reject: (error: Error) => void;
+    timeout?: ReturnType<typeof setTimeout>;
   };
   private pendingQuestionAnswer?: TurnAnswer;
   private artifact?: TurnArtifact;
   private workflowRunRequested = false;
   private output = "";
+  private thinkingProjection: ThinkingProjectionState = createThinkingProjectionState();
+  private unknownPiEventTypes = new Set<string>();
   private attemptID = "";
   private toolCount = 0;
   private eventChain = Promise.resolve();
@@ -428,6 +455,10 @@ class RunRuntime implements ToolRuntime {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
     if (initial.status !== "queued" && initial.status !== "cancel_requested") return;
     this.resetTurnState();
+    this.output = initial.output ?? "";
+    if (initial.thinking) {
+      this.thinkingProjection = { ...createThinkingProjectionState(), text: initial.thinking };
+    }
     this.currentTurn = turnID;
     this.abortController = new AbortController();
     let executionClaimed = false;
@@ -460,13 +491,18 @@ class RunRuntime implements ToolRuntime {
       const { session, model } = await this.createSession(turnID, runtimeContext, initial.input.page_context, images);
       this.session = session;
       this.model = model;
-      const prompt = initial.input.asset_ids.length > 0
-        ? `${initial.input.input_text}\n\nProductFlow selected asset IDs for this turn (inspect with the matching ProductFlow tool when needed): ${initial.input.asset_ids.join(", ")}`
-        : initial.input.input_text;
-      await session.prompt(prompt, {
-        images: images.length > 0 && model.input.includes("image") ? images : undefined,
-        source: "rpc",
-      });
+      const storedAnswer = await this.storedQuestionAnswer(turnID);
+      if (storedAnswer) {
+        await this.continueWithStoredQuestionAnswer(session, turnID, storedAnswer);
+      } else {
+        const prompt = initial.input.asset_ids.length > 0
+          ? `${initial.input.input_text}\n\nProductFlow selected asset IDs for this turn (inspect with the matching ProductFlow tool when needed): ${initial.input.asset_ids.join(", ")}`
+          : initial.input.input_text;
+        await session.prompt(prompt, {
+          images: images.length > 0 && model.input.includes("image") ? images : undefined,
+          source: "rpc",
+        });
+      }
       await session.waitForIdle();
       await this.eventChain;
       if (this.persistenceError) throw this.persistenceError;
@@ -501,6 +537,11 @@ class RunRuntime implements ToolRuntime {
         await this.finishTurn(turnID, "unknown", {
           output: this.output,
           error: "Agent execution lease was lost before this Turn reached a provable terminal state",
+        });
+      } else if (error instanceof RuntimeError && error.code === "question_wait_expired") {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: error.message,
         });
       } else if (this.iterationError) {
         await this.finishTurn(turnID, "failed", {
@@ -609,7 +650,10 @@ class RunRuntime implements ToolRuntime {
 
   private async syncDurableEvents(turnID: string): Promise<void> {
     const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
-    for (const event of events) await this.publishDurableEvent(event);
+    for (const event of events) {
+      if (!isDurableTurnEventKind(event.kind)) continue;
+      await this.publishDurableEvent(event);
+    }
     if (this.persistenceError) throw this.persistenceError;
   }
 
@@ -651,7 +695,10 @@ class RunRuntime implements ToolRuntime {
     status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
     details: { output?: string; error?: string; question?: TurnQuestion; artifact?: TurnArtifact },
   ): Promise<void> {
-    await this.manager.store.terminal(this.scope.run_id, turnID, status, details);
+    await this.manager.store.terminal(this.scope.run_id, turnID, status, {
+      ...details,
+      thinking: this.thinkingProjection.text,
+    });
     let terminalStatus = status;
     let terminalError = details.error;
     if (this.persistenceError && status !== "unknown") {
@@ -748,6 +795,7 @@ class RunRuntime implements ToolRuntime {
   cancel(turnID: string): void {
     if (this.currentTurn !== turnID) return;
     if (this.questionWaiter?.turnID === turnID) {
+      this.clearQuestionTimeout();
       this.questionWaiter.reject(new RuntimeError(499, "canceled", "Agent Turn was canceled"));
       this.questionWaiter = undefined;
     }
@@ -770,6 +818,7 @@ class RunRuntime implements ToolRuntime {
   close(): void {
     this.abortController?.abort();
     this.session?.dispose();
+    this.clearQuestionTimeout();
     this.questionWaiter?.reject(new RuntimeError(503, "closed", "Agent runtime is shutting down"));
     this.questionWaiter = undefined;
   }
@@ -786,6 +835,7 @@ class RunRuntime implements ToolRuntime {
       throw new RuntimeError(409, "not_resumable", "the answered question is no longer attached to a live Pi turn");
     }
     this.pendingQuestionAnswer = undefined;
+    this.clearQuestionTimeout();
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
     await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.resume_requested", { status: "running" });
     this.questionWaiter = undefined;
@@ -796,7 +846,16 @@ class RunRuntime implements ToolRuntime {
     const state = await this.manager.store.getState(this.scope.run_id, this.currentTurnID());
     if (this.questionWaiter) throw new Error("Pi requested more than one unanswered question");
     const answerPromise = new Promise<TurnAnswer>((resolve, reject) => {
-      this.questionWaiter = { turnID: state.turn_id, questionID: question.id, resolve, reject };
+      this.questionWaiter = {
+        turnID: state.turn_id,
+        questionID: question.id,
+        resolve,
+        reject,
+        timeout: setTimeout(() => {
+          void this.expireQuestionWaiter(state.turn_id, question.id);
+        }, this.manager.config.questionTimeoutMS),
+      };
+      this.questionWaiter.timeout?.unref?.();
     });
     await this.updateExecutionPhase("waiting_input");
     await this.checkpoint("question_required", { question: question as unknown as JsonObject });
@@ -819,10 +878,19 @@ class RunRuntime implements ToolRuntime {
       }
       return state;
     }
+    const stored = await this.storedQuestionAnswer(turnID);
+    if (stored) {
+      if (JSON.stringify(stored) !== JSON.stringify(answer)) {
+        throw new RuntimeError(409, "question_already_answered", "the question already has a different answer");
+      }
+      return state;
+    }
     if (state.status !== "requires_input" || !state.question || state.question.id !== questionID) {
       throw new RuntimeError(409, "question_expired", "the requested question is no longer active");
     }
-    if ("option" in answer) {
+    if ("skip" in answer && answer.skip) {
+      // skip / 超时：不校验选项和文本
+    } else if ("option" in answer) {
       const option = answer.option;
       if (option === undefined || !Number.isInteger(option) || option < 0 || option >= state.question.options.length) {
         throw new RuntimeError(400, "invalid_argument", "question option index is out of range");
@@ -830,10 +898,11 @@ class RunRuntime implements ToolRuntime {
     } else if (!answer.text.trim() || Buffer.byteLength(answer.text, "utf8") > 4000) {
       throw new RuntimeError(400, "invalid_argument", "question text answer is empty or exceeds the limit");
     }
-    if (!waiter || waiter.turnID !== turnID || waiter.questionID !== questionID) {
+    if (waiter && (waiter.turnID !== turnID || waiter.questionID !== questionID)) {
       throw new RuntimeError(409, "not_resumable", "the question is no longer attached to a live Pi turn");
     }
-    this.pendingQuestionAnswer = answer;
+    this.clearQuestionTimeout();
+    if (waiter) this.pendingQuestionAnswer = answer;
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "queued", question: undefined });
     await this.manager.store.appendEvent(this.scope.run_id, turnID, "question.answered", {
       question_id: questionID,
@@ -931,10 +1000,7 @@ class RunRuntime implements ToolRuntime {
     });
     const staticPrompt = [
       this.scope.system_prompt,
-      "ProductFlow runtime policy:",
-      "All business authority and side effects remain behind ProductFlow internal tools. ProductFlow validates every scope, revision, permission, idempotency key, draft and run request.",
-      "Pi has no operating-system tools. Do not invent storage paths, provider payloads, database facts, asset URLs or completed effects.",
-      "Only the versioned ProductFlow tools registered by this adapter are available. A capability mentioned in an older prompt but absent from the tool list is not available; use reviewable ProductFlow proposals for changes.",
+      RUNTIME_POLICY,
       this.scope.task_goal?.trim() ? `Authoritative ProductFlow Task goal:\n${this.scope.task_goal.trim()}` : "",
       `Runtime: ${RUNTIME_NAME}; API contract: ${API_VERSION}; context schema: ${CONTEXT_SCHEMA_VERSION}; skill catalog: ${this.manager.skills.hash}.`,
       this.manager.skills.prompt,
@@ -1035,17 +1101,8 @@ class RunRuntime implements ToolRuntime {
 
   private bindSessionEvents(session: AgentSession, turnID: string): void {
     session.subscribe((event: AgentSessionEvent) => {
-      if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-        const delta = event.assistantMessageEvent.delta;
-        this.output += delta;
-        this.enqueue(async () => {
-          await this.manager.store.appendEvent(this.scope.run_id, turnID, "text.delta", {
-            delta,
-            step_id: `pi_${turnID}`,
-            attempt_id: this.attemptID,
-          });
-          await this.manager.store.updateState(this.scope.run_id, turnID, { output: this.output });
-        });
+      if (event.type === "message_update") {
+        this.projectAssistantMessageEvent(turnID, event.assistantMessageEvent);
         return;
       }
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
@@ -1083,13 +1140,18 @@ class RunRuntime implements ToolRuntime {
         const failureDetails = this.toolStepFailureDetails.get(event.toolCallId);
         const resultDetails = toolStepDetailsForResult(event.toolName, event.result, event.isError);
         const details = mergeToolStepDetails(startedDetails, resultDetails, failureDetails);
+        if (details && event.toolName === "ask_user" && !event.isError) {
+          details.output_summary = compactAskUserSummary(event.result, startedDetails?.option_labels ?? []);
+        }
         this.activeToolStepDetails.delete(event.toolCallId);
         this.toolStepFailureDetails.delete(event.toolCallId);
         this.enqueue(() =>
           this.manager.store.setToolStep(this.scope.run_id, turnID, {
             step_id: event.toolCallId,
             kind: toolStepKind(event.toolName),
-            summary: toolStepSummary(event.toolName),
+            summary: event.toolName === "ask_user" && details?.output_summary
+              ? details.output_summary
+              : toolStepSummary(event.toolName),
             status: this.unknownToolStepIDs.has(event.toolCallId)
               ? "unknown"
               : event.isError
@@ -1216,8 +1278,120 @@ class RunRuntime implements ToolRuntime {
 
   private currentTurn?: string;
 
+  private clearQuestionTimeout(): void {
+    const timeout = this.questionWaiter?.timeout;
+    if (timeout !== undefined) clearTimeout(timeout);
+    if (this.questionWaiter) this.questionWaiter.timeout = undefined;
+  }
+
+  private async expireQuestionWaiter(turnID: string, questionID: string): Promise<void> {
+    const waiter = this.questionWaiter;
+    if (!waiter || waiter.turnID !== turnID || waiter.questionID !== questionID) return;
+    if (this.pendingQuestionAnswer) return;
+    const stored = await this.storedQuestionAnswer(turnID);
+    if (stored || this.pendingQuestionAnswer) return;
+    if (this.questionWaiter !== waiter) return;
+    const state = await this.manager.store.getState(this.scope.run_id, turnID);
+    if (state.status !== "requires_input") return;
+    this.clearQuestionTimeout();
+    this.questionWaiter = undefined;
+    this.pendingQuestionAnswer = undefined;
+    await this.updateExecutionPhase("model");
+    await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
+    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question.answered", {
+      question_id: questionID,
+      answer: { skip: true },
+      status: "no_answer",
+    });
+    waiter.resolve({ skip: true });
+  }
+
+  private async storedQuestionAnswer(turnID: string): Promise<TurnAnswer | null> {
+    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    return storedAnswerFromEvents(events);
+  }
+
+  private async continueWithStoredQuestionAnswer(
+    session: AgentSession,
+    turnID: string,
+    answer: TurnAnswer,
+  ): Promise<void> {
+    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    const answered = [...events].reverse().find((event) => event.kind === "question.answered");
+    const questionID = typeof answered?.payload.question_id === "string"
+      ? answered.payload.question_id
+      : "";
+    if (!questionID) {
+      throw new RuntimeError(409, "question_wait_expired", QUESTION_WAIT_EXPIRED_MESSAGE);
+    }
+    const toolCallId = await injectAskUserToolResult(session, questionID, answer);
+    if (toolCallId) {
+      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+        step_id: toolCallId,
+        kind: toolStepKind("ask_user"),
+        summary: compactAskUserSummary(questionAnswerToolPayload(answer), []),
+        status: "succeeded",
+        tool_name: "ask_user",
+      });
+    }
+    await continueAgentSession(session);
+  }
+
+  private projectAssistantMessageEvent(turnID: string, raw: { type: string }): void {
+    const mapped = normalizeAssistantMessageEvent(raw);
+    if (mapped.action === "unknown") {
+      if (!this.unknownPiEventTypes.has(mapped.type)) {
+        this.unknownPiEventTypes.add(mapped.type);
+        reportUnknownPiAssistantEvent(mapped.type);
+      }
+      return;
+    }
+    if (mapped.action === "ignore") return;
+    if (mapped.action === "thinking") {
+      this.projectThinking(turnID, mapped.event);
+      return;
+    }
+    if (mapped.action === "text.delta") {
+      this.output += mapped.delta;
+      this.enqueue(async () => {
+        await this.manager.store.appendEvent(this.scope.run_id, turnID, "text.delta", {
+          delta: mapped.delta,
+          step_id: `pi_${turnID}`,
+          attempt_id: this.attemptID,
+          content_index: mapped.contentIndex,
+        });
+        await this.manager.store.updateState(this.scope.run_id, turnID, { output: this.output });
+      });
+      return;
+    }
+    const finish: AssistantFinishPayload = {
+      reason: mapped.reason,
+      attempt_id: this.attemptID,
+      ...(mapped.usage ? { usage: mapped.usage } : {}),
+    };
+    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant.finish", finish as never));
+  }
+
+  private projectThinking(turnID: string, event: ThinkingAssistantEvent): void {
+    const { state, emit } = applyThinkingEvent(this.thinkingProjection, event);
+    this.thinkingProjection = state;
+    if (!emit) return;
+    this.enqueue(async () => {
+      await this.manager.store.appendEvent(this.scope.run_id, turnID, "thinking.delta", {
+        delta: emit.delta,
+        step_id: `pi_${turnID}`,
+        attempt_id: this.attemptID,
+        content_index: emit.content_index,
+        ...(emit.truncated ? { truncated: true } : {}),
+      });
+      await this.manager.store.updateState(this.scope.run_id, turnID, { thinking: this.thinkingProjection.text });
+    });
+  }
+
   private resetTurnState(): void {
     this.output = "";
+    this.thinkingProjection = createThinkingProjectionState();
+    this.unknownPiEventTypes.clear();
     this.artifact = undefined;
     this.executionLease = undefined;
     this.checkpointSequence = 0;
@@ -1247,6 +1421,7 @@ class RunRuntime implements ToolRuntime {
   private async cleanupAfterTurn(): Promise<void> {
     await this.stopExecutionHeartbeat();
     this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
+    this.clearQuestionTimeout();
     this.questionWaiter = undefined;
     this.pendingQuestionAnswer = undefined;
     this.iterationError = undefined;
@@ -1557,7 +1732,7 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
         ...(safeDetailString(resultDetails.question_id, 120)
           ? { question_id: safeDetailString(resultDetails.question_id, 120) }
           : {}),
-        output_summary: "用户回答已保存，等待 Agent 恢复执行。",
+        output_summary: compactAskUserSummary(result, []),
       };
     case "inspect_context": {
       const includesNodeCatalog =

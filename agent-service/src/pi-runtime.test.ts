@@ -47,6 +47,7 @@ const config = {
   providerReasoningSummary: null,
   providerTextVerbosity: null,
   providerServiceTier: null,
+  questionTimeoutMS: 900_000,
 };
 
 async function waitForTerminalTurn(store: TurnStore, runID: string, turnID: string): Promise<TurnState> {
@@ -717,4 +718,167 @@ describe("PiRuntimeManager turn state", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("stores an answer when the in-process waiter is gone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-dead-waiter-answer-"));
+    const managerHolder: { manager?: PiRuntimeManager } = {};
+    try {
+      const productFlow = {
+        conversationContract: async () => ({
+          schema_version: 1,
+          scope_type: "product_workflow",
+          conversation_id: scope.conversation_id,
+          task_id: null,
+          task_goal: null,
+          product_id: scope.product_id,
+          harness_run_id: scope.run_id,
+          current_draft_version: 1,
+          system_prompt: "ProductFlow",
+          draft_kind: "workflow",
+          draft_schema: { type: "object" },
+          tool_contract_version: TOOL_CONTRACT_VERSION,
+        }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root },
+        store,
+        productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      managerHolder.manager = manager;
+      const created = await store.createTurn(scope, {
+        input_text: "帮我建商品",
+        asset_ids: [],
+        idempotency_key: "dead-waiter-answer",
+        page_context: null,
+      });
+      const question = {
+        id: "question-name",
+        header: "商品名",
+        question: "这个商品叫什么名字？",
+        options: [{ label: "还没想好" }, { label: "稍后再说" }],
+      };
+      await store.updateState(scope.run_id, created.state.turn_id, { status: "requires_input", question });
+      await store.appendEvent(scope.run_id, created.state.turn_id, "turn.requires_input", {
+        status: "requires_input",
+        question,
+      });
+
+      const answered = await manager.answerQuestion(
+        { conversationID: scope.conversation_id },
+        created.state.turn_id,
+        question.id,
+        { text: "筋膜枪" },
+      );
+      expect(answered.status).toBe("queued");
+      expect(answered.question).toBeUndefined();
+      expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toContain(
+        "question.answered",
+      );
+    } finally {
+      await managerHolder.manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("expires a live question as no_answer without a new user prompt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-question-timeout-"));
+    const managerHolder: { manager?: PiRuntimeManager } = {};
+    try {
+      const productFlow = {
+        conversationContract: async () => ({
+          schema_version: 1,
+          scope_type: "product_workflow",
+          conversation_id: scope.conversation_id,
+          task_id: null,
+          task_goal: null,
+          product_id: scope.product_id,
+          harness_run_id: scope.run_id,
+          current_draft_version: 1,
+          system_prompt: "ProductFlow",
+          draft_kind: "workflow",
+          draft_schema: { type: "object" },
+          tool_contract_version: TOOL_CONTRACT_VERSION,
+        }),
+        appendTurnCheckpoint: async () => ({
+          id: "checkpoint-timeout",
+          projection_id: "projection-timeout",
+          execution_id: "execution-timeout",
+          attempt: 1,
+          fencing_token: 1,
+          sequence: 1,
+          kind: "question_required",
+          created_at: "2099-01-01T00:00:00.000Z",
+        }),
+        heartbeatTurnExecution: async () => ({
+          execution_id: "execution-timeout",
+          projection_id: "projection-timeout",
+          harness_turn_id: "turn-timeout",
+          owner_id: "owner-timeout",
+          lease_token: "lease-timeout",
+          attempt: 1,
+          fencing_token: 1,
+          phase: "waiting_input" as const,
+          lease_expires_at: "2099-01-01T00:00:00.000Z",
+        }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root, questionTimeoutMS: 20 },
+        store,
+        productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      managerHolder.manager = manager;
+      const created = await store.createTurn(scope, {
+        input_text: "帮我建商品",
+        asset_ids: [],
+        idempotency_key: "question-timeout",
+        page_context: null,
+      });
+      const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
+      const internal = runtime as {
+        currentTurn: string;
+        abortController: AbortController;
+        executionLease: {
+          execution_id: string;
+          owner_id: string;
+          lease_token: string;
+        };
+        askUser(question: {
+          id: string;
+          header: string;
+          question: string;
+          options: Array<{ label: string }>;
+        }): Promise<{ skip?: true; text?: string }>;
+      };
+      internal.currentTurn = created.state.turn_id;
+      internal.abortController = new AbortController();
+      internal.executionLease = {
+        execution_id: "execution-timeout",
+        owner_id: "owner-timeout",
+        lease_token: "lease-timeout",
+      };
+
+      const answer = await internal.askUser({
+        id: "question-timeout",
+        header: "商品名",
+        question: "这个商品叫什么名字？",
+        options: [{ label: "还没想好" }, { label: "稍后再说" }],
+      });
+      expect(answer).toEqual({ skip: true });
+      expect((await store.getState(scope.run_id, created.state.turn_id)).status).toBe("running");
+      expect((await store.events(scope.run_id, created.state.turn_id, 0)).at(-1)).toMatchObject({
+        kind: "question.answered",
+        payload: { answer: { skip: true }, status: "no_answer" },
+      });
+    } finally {
+      await managerHolder.manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
+

@@ -32,6 +32,7 @@ describe("ProductFlow Pi HTTP contract", () => {
         providerReasoningSummary: null,
         providerTextVerbosity: null,
         providerServiceTier: null,
+        questionTimeoutMS: 900_000,
       },
       store,
       new ProductFlowClient("http://127.0.0.1:29282", token, 1000),

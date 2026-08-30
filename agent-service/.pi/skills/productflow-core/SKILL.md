@@ -12,22 +12,22 @@ Use this skill for every ProductFlow conversation.
 - ProductFlow backend owns scope, permission, current facts, revisions, idempotency, transactions, queues, storage, and provider effects.
 - The current page snapshot is bounded context. It is not authorization and it never overrides the task goal.
 - Make the work visible through ProductFlow tools: load this skill, read the current bounded context, ask one focused question when a decision is genuinely missing, then apply one reversible graph change, propose a multi-node overlay, save product intake, or submit a reviewable library or run request.
-- Read only the bounded objects needed for the user's request. Product-workflow context contains current product facts, intake, selected reference assets, live_graph, and node_catalog. Do not enumerate an entire media library or invent product facts.
+- Read only the bounded objects needed for the user's request. Product-workflow context contains current product facts, intake, `birth_expandable`, selected reference assets, live_graph, and node_catalog. Do not enumerate an entire media library or invent product facts.
 - Use the latest revision returned by ProductFlow. A previous assistant message, recipe, or page snapshot is a design input only; it cannot replace the current backend result. After a user answers a question, reread the current context before the next write.
-- The live graph is the production artifact. Do not submit a second complete topology. A pending graph proposal or workflow-run request waits for human review on the canvas.
+- Birth topology comes from ProductFlow intake expand, not from an Agent-authored complete DAG. After the graph is expanded, do not submit a second complete topology. A pending graph proposal or workflow-run request waits for human review on the canvas.
 - Never call a confirmation or materialization operation. The user confirms graph proposals, library organization, and run requests through ProductFlow UI/API.
 - Before any write, use the latest tool result and preserve its expected revision. A conflict means reread and recompute.
-- When a write fails, use every returned `issues[].path` and `issues[].message` to repair. Do not repeat an identical payload, hide the failure in prose, or ask the user to resolve an internal schema invariant.
+- When a write fails, use every returned `issues[].path` and `issues[].message` to repair. Do not repeat an identical payload, hide the failure in prose, or ask the user to resolve an internal schema invariant. Unknown Graph `op` names are not repairable by guessing; use only operations listed on the apply/propose tool schema.
 - Do not expose storage paths, media bytes as text, provider payloads, credentials, internal exception traces, or raw HTTP responses.
 - Only tools present in this turn's tool list exist.
 
 ## Product-workflow loop
 
-1. Call `get_product_workflow_context_v1`. `node_catalog.config_fields` is the only inspector write surface. `live_graph` is topology without full config bodies.
-2. If intake is empty, load `product-intake`.
+1. Call `get_product_workflow_context_v1`. `node_catalog.config_fields` is the only inspector write surface. `live_graph` is topology without full config bodies. `birth_expandable` means intake is present and the graph is still a name-only `product_source`.
+2. If intake is empty, or intake is present and `birth_expandable` is true, load `product-intake` and call `finalize_product_intake_v1`. Reread context. Do not propose a first complete topology.
 3. Use `ask_user` only when a missing fact changes the run or explanation.
-4. One reversible edit (one node config, one edge, one rename): `apply_graph_change_set_v1` with exactly one operation.
-5. Multi-node reconstructs, bulk deletes, or preset overlays: `propose_graph_change_set_v1`. Do not claim the graph already changed.
+4. One reversible edit (one node config, one edge, one rename): `apply_graph_change_set_v1` with exactly one operation whose `op` comes from the tool schema (`create_node`, `connect_nodes`, and the other Graph Command names). Never invent `add_node` or `connect`.
+5. Multi-node reconstructs, adding a shot, bulk deletes, or preset overlays: `propose_graph_change_set_v1`. A shot matches canvas add-shot: `create_group` + `prompt_generation` + N `image_generation` + `connect_nodes`. Load `references/add-shot.md` when adding a generating image type. Do not claim the graph already changed.
 6. The user asks to run: `request_workflow_run_v1`. Do not claim the run started.
 
 ## Global scope

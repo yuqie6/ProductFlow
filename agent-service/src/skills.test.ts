@@ -17,6 +17,10 @@ describe("ProductFlow Skill catalog", () => {
     expect(catalog.prompt).toContain("<name>productflow-core</name>");
     expect(catalog.prompt).not.toContain("ProductFlow backend owns scope");
     await expect(catalog.load("productflow-core")).resolves.toContain("ProductFlow backend owns scope");
+    await expect(catalog.load("product-intake")).resolves.toContain("finalize_product_intake_v1");
+    await expect(catalog.load("product-intake")).resolves.toContain("birth_expandable");
+    await expect(catalog.load("productflow-core")).resolves.toContain("create_node");
+    await expect(catalog.load("productflow-core", "references/add-shot.md")).resolves.toContain("create_group");
   });
 
   it("loads static references only inside the skill references directory", async () => {

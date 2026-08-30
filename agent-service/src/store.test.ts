@@ -230,6 +230,36 @@ describe("TurnStore", () => {
     }
   });
 
+  it("keeps live deltas in the local journal without publishing them to ProductFlow", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-live-events-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const published: string[] = [];
+      store.setEventPublisher(async (_scope, event) => {
+        published.push(event.kind);
+      });
+      const turn = await store.createTurn(scope, input);
+      const waiting = store.waitForEvents(scope.run_id, turn.state.turn_id, 1, { timeoutMS: 1_000 });
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "text.delta", {
+        delta: "hi",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+      });
+      expect(await waiting).toBe(true);
+      expect((await store.events(scope.run_id, turn.state.turn_id, 1)).map((event) => event.kind)).toEqual(["text.delta"]);
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "读取上下文",
+        status: "succeeded",
+      });
+      expect(published).toEqual(["turn.queued", "tool.step"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("serializes concurrent turn creation and preserves idempotency", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-concurrent-turns-"));
     try {

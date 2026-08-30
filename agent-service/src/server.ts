@@ -225,10 +225,19 @@ function parseAnswer(value: unknown): TurnAnswer {
   const body = object(value, "request body");
   rejectUnknown(body, ["answer"]);
   const answer = object(body.answer, "answer");
-  rejectUnknown(answer, ["option", "text"]);
+  rejectUnknown(answer, ["option", "text", "skip"]);
+  if (answer.skip === true) {
+    if (answer.option !== undefined || answer.text !== undefined) {
+      throw new RuntimeError(400, "invalid_argument", "skip cannot be combined with option or text");
+    }
+    return { skip: true };
+  }
+  if (answer.skip !== undefined && answer.skip !== false) {
+    throw new RuntimeError(400, "invalid_argument", "answer.skip must be true when provided");
+  }
   const hasOption = answer.option !== undefined;
   const text = answer.text === undefined ? "" : stringValue(answer.text, "answer.text").trim();
-  if (hasOption === Boolean(text)) throw new RuntimeError(400, "invalid_argument", "answer must contain exactly one of option or text");
+  if (hasOption === Boolean(text)) throw new RuntimeError(400, "invalid_argument", "answer must contain exactly one of option, text, or skip");
   if (hasOption) {
     if (!Number.isSafeInteger(answer.option) || Number(answer.option) < 0) throw new RuntimeError(400, "invalid_argument", "answer.option must be a non-negative integer");
     return { option: Number(answer.option) };

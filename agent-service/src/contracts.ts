@@ -12,11 +12,13 @@ export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 15 as const;
+export const TOOL_CONTRACT_VERSION = 16 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
 export const MAX_DYNAMIC_CONTEXT_BYTES = 64 << 10;
+/** 思考投影上限：完整 chain-of-thought 不得灌进浏览器。 */
+export const MAX_THINKING_TEXT_BYTES = 16 << 10;
 
 /** unknown 是终态：运行时无法证明成功或失败。 */
 export const TURN_STATUSES = [
@@ -188,7 +190,32 @@ export interface TurnQuestion {
   options: TurnQuestionOption[];
 }
 
-export type TurnAnswer = { option: number; text?: never } | { option?: never; text: string };
+export type TurnAnswer =
+  | { option: number; text?: never; skip?: never }
+  | { option?: never; text: string; skip?: never }
+  | { option?: never; text?: never; skip: true };
+
+export function isSkipAnswer(answer: TurnAnswer): answer is { skip: true } {
+  return "skip" in answer && answer.skip === true;
+}
+
+function optionAnswer(answer: TurnAnswer): number | null {
+  if (!("option" in answer) || typeof answer.option !== "number") return null;
+  return answer.option;
+}
+
+/** ask_user 工具返回给模型的 payload。skip / 超时都是 no_answer。 */
+export function questionAnswerToolPayload(answer: TurnAnswer): JsonObject {
+  if (isSkipAnswer(answer)) {
+    return { accepted: false, status: "no_answer" };
+  }
+  const option = optionAnswer(answer);
+  if (option !== null) {
+    return { accepted: true, answer: { option } };
+  }
+  const text = "text" in answer && typeof answer.text === "string" ? answer.text : "";
+  return { accepted: true, answer: { text } };
+}
 
 export interface TurnArtifact {
   name: string;
@@ -252,6 +279,8 @@ export interface TurnState {
   artifact?: TurnArtifact;
   tool_steps?: ToolStep[];
   output: string;
+  /** 有界思考投影；不是模型 transcript。缺省视为无思考。 */
+  thinking?: string;
   error: string;
   created_at: string;
   updated_at: string;
@@ -269,10 +298,19 @@ export interface TurnEvent {
   payload: JsonObject;
 }
 
-export interface TextDeltaPayload extends JsonObject {
+export interface TextDeltaPayload {
   delta: string;
   step_id: string;
   attempt_id: string;
+  content_index?: number;
+}
+
+export interface ThinkingDeltaPayload {
+  delta: string;
+  step_id: string;
+  attempt_id: string;
+  content_index?: number;
+  truncated?: boolean;
 }
 
 export interface RuntimeStatus {

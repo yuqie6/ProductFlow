@@ -18,6 +18,7 @@ import {
   JsonObject,
   MAX_PRODUCT_CONTEXT_BYTES,
   ProductFlowError,
+  questionAnswerToolPayload,
   Scope,
   TurnAnswer,
   TurnArtifact,
@@ -31,6 +32,7 @@ import {
   ReconcileResult,
 } from "./productflow.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME } from "./skills.js";
+import { applyGraphChangeSetParameters, proposeGraphChangeSetParameters } from "./graph-command-schema.js";
 
 const MAX_INSPECTED_ASSETS = 6;
 const MAX_TOTAL_IMAGE_BYTES = 20 << 20;
@@ -148,14 +150,14 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
           })),
         };
         const answer = await runtime.askUser(question);
-        return textResult({ accepted: true, answer }, { question_id: question.id });
+        return textResult(questionAnswerToolPayload(answer), { question_id: question.id });
       },
     }),
     defineTool({
       name: "get_product_workflow_context_v1",
       label: "Read product context",
       description:
-        "Read current bounded product facts, intake, live graph summary, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
+        "Read current bounded product facts, intake, live graph summary, birth_expandable, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
       promptSnippet: "Read current product, workflow facts, and node catalog",
       parameters: EMPTY_OBJECT,
       execute: async (): Promise<Result> =>
@@ -256,7 +258,7 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
     name: "finalize_product_intake_v1",
     label: "Save product intake",
     description:
-      "Persist image types and already-uploaded reference asset IDs as this product's immutable intake. Use after the user sent photos and requirements in this conversation. This does not start a run.",
+      "Persist image types and already-uploaded reference asset IDs as this product's intake, then expand a name-only live graph into the photography/infographic template (one group + prompt + N image nodes per generating type). Do not use propose_graph_change_set_v1 to invent a first complete topology. This does not start a run.",
     parameters: Type.Object(
       {
         selection: Type.Object(
@@ -828,24 +830,6 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
   });
 }
 
-const applyGraphChangeSetParameters = Type.Object(
-  {
-    base_graph_revision: Type.Integer({ minimum: 0 }),
-    summary: Type.String({ minLength: 1, maxLength: 500 }),
-    operations: Type.Array(Type.Object({}, { additionalProperties: true }), { minItems: 1, maxItems: 1 }),
-  },
-  { additionalProperties: false },
-);
-
-const proposeGraphChangeSetParameters = Type.Object(
-  {
-    base_graph_revision: Type.Integer({ minimum: 0 }),
-    summary: Type.String({ minLength: 1, maxLength: 500 }),
-    operations: Type.Array(Type.Object({}, { additionalProperties: true }), { minItems: 1, maxItems: 128 }),
-  },
-  { additionalProperties: false },
-);
-
 const MAX_CANVAS_FOCUS_ITEMS = 20;
 
 function createGetNodeDetailTool(runtime: ToolRuntime): ToolDefinition {
@@ -868,7 +852,7 @@ function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
     name: "apply_graph_change_set_v1",
     label: "Apply graph change",
     description:
-      "Apply one reversible Graph Command to the live schema-v3 graph. operations must contain exactly one edit such as updating one node, connecting or disconnecting one edge, or renaming. Do not use this for multi-node reconstructs or bulk deletes.",
+      "Apply one reversible Graph Command to the live schema-v3 graph. operations must contain exactly one object whose op is a Graph Command name (create_node, update_node_config, rename_node, delete_node, connect_nodes, disconnect_edge, move_nodes, create_group, move_nodes_to_group, rename_group, dissolve_group). Do not invent names such as add_node or connect. Do not use this for multi-node reconstructs or bulk deletes.",
     parameters: applyGraphChangeSetParameters,
     execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
       executeGraphMutationTool(runtime, {
@@ -894,7 +878,7 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
     name: "propose_graph_change_set_v1",
     label: "Propose graph change",
     description:
-      "Store an unapplied GraphProposal overlay on the live canvas. Use for multi-node reconstructs, bulk deletes, or preset overlays. The proposal cannot run. The user confirms or discards it on the canvas.",
+      "Store an unapplied GraphProposal overlay. Use for multi-node reconstructs, adding a shot (create_group + prompt_generation + N image_generation + connect_nodes), or bulk deletes. operations[].op must be a Graph Command name from the tool schema, never add_node or connect. Do not propose a second complete topology on an already expanded graph. The proposal cannot run. The user confirms or discards it on the canvas.",
     parameters: proposeGraphChangeSetParameters,
     execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
       executeGraphMutationTool(runtime, {
