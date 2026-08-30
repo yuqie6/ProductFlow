@@ -3,10 +3,12 @@ WORKDIR /src
 COPY go/go.mod go/go.sum ./
 RUN go mod download
 COPY go/ ./
-RUN CGO_ENABLED=0 go build -o /out/productflow-api ./cmd/productflow-api \
- && CGO_ENABLED=0 go build -o /out/productflow-worker ./cmd/productflow-worker \
- && CGO_ENABLED=0 go build -o /out/productflow-dispatcher ./cmd/productflow-dispatcher \
- && CGO_ENABLED=0 go build -o /out/productflow-migrate ./cmd/productflow-migrate
+# 交付 WebP 走 chai2010/webp，把 vendored libwebp C 编进二进制。关掉 CGO 会 undefined webpGetInfo/Encode。
+ENV CGO_ENABLED=1
+RUN go build -o /out/productflow-api ./cmd/productflow-api \
+ && go build -o /out/productflow-worker ./cmd/productflow-worker \
+ && go build -o /out/productflow-dispatcher ./cmd/productflow-dispatcher \
+ && go build -o /out/productflow-migrate ./cmd/productflow-migrate
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*

@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 
+	// chai2010/webp 需要 CGO（镜像见 go/Dockerfile 的 CGO_ENABLED=1），才能按 Pillow 的 quality 阶做有损 WebP。
 	chaiwebp "github.com/chai2010/webp"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
