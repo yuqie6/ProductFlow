@@ -67,11 +67,14 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 		}
 		for _, task := range tasks {
 			if task.status == "queued" {
-				if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, task.id, 0); err != nil {
+				summary.QueuedTasks++
+				changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.id, nil)
+				if err != nil {
 					return err
 				}
-				summary.QueuedTasks++
-				summary.EnqueuedTasks++
+				if changed {
+					summary.EnqueuedTasks++
+				}
 				continue
 			}
 			if task.attempt == nil {
@@ -129,11 +132,14 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			_, _ = pfdb.Exec(ctx, pgxTx, `
 				DELETE FROM image_session_provider_effects WHERE generation_task_id = $1 AND effect_result = 'pending'
 			`, task.id)
-			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, task.id, 0); err != nil {
+			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.id, nil)
+			if err != nil {
 				return err
 			}
 			summary.StaleRunningTasks++
-			summary.EnqueuedTasks++
+			if changed {
+				summary.EnqueuedTasks++
+			}
 		}
 		return nil
 	})

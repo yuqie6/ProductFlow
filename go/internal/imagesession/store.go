@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	sqldb "database/sql"
 
@@ -217,6 +218,110 @@ func filterToolOptions(in map[string]any, allowed []string) map[string]any {
 		return nil
 	}
 	return out
+}
+
+func validateToolOptions(in map[string]any) error {
+	if len(in) == 0 {
+		return nil
+	}
+	known := map[string]struct{}{
+		"model": {}, "quality": {}, "output_format": {}, "output_compression": {},
+		"background": {}, "moderation": {}, "action": {}, "input_fidelity": {},
+		"partial_images": {}, "n": {},
+	}
+	for key := range in {
+		if _, ok := known[key]; !ok {
+			return apperr.Validation("请求体无效")
+		}
+	}
+	if err := optionalStringEnum(in, "quality", "auto", "low", "medium", "high"); err != nil {
+		return err
+	}
+	if err := optionalStringEnum(in, "output_format", "png", "jpeg", "webp"); err != nil {
+		return err
+	}
+	if err := optionalStringEnum(in, "background", "auto", "opaque", "transparent"); err != nil {
+		return err
+	}
+	if err := optionalStringEnum(in, "moderation", "auto", "low"); err != nil {
+		return err
+	}
+	if err := optionalStringEnum(in, "action", "auto", "generate", "edit"); err != nil {
+		return err
+	}
+	if err := optionalStringEnum(in, "input_fidelity", "low", "high"); err != nil {
+		return err
+	}
+	if v, ok := in["model"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return apperr.Validation("请求体无效")
+		}
+		s = strings.TrimSpace(s)
+		if s == "" || utf8.RuneCountInString(s) > 100 {
+			return apperr.Validation("请求体无效")
+		}
+	}
+	if err := optionalIntRange(in, "output_compression", 0, 100); err != nil {
+		return err
+	}
+	if err := optionalIntRange(in, "partial_images", 0, 3); err != nil {
+		return err
+	}
+	return optionalIntRange(in, "n", 1, 10)
+}
+
+func optionalStringEnum(in map[string]any, key string, allowed ...string) error {
+	v, ok := in[key]
+	if !ok || v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return apperr.Validation("请求体无效")
+	}
+	for _, item := range allowed {
+		if s == item {
+			return nil
+		}
+	}
+	return apperr.Validation("请求体无效")
+}
+
+func optionalIntRange(in map[string]any, key string, min, max int) error {
+	v, ok := in[key]
+	if !ok || v == nil {
+		return nil
+	}
+	n, ok := jsonInt(v)
+	if !ok || n < min || n > max {
+		return apperr.Validation("请求体无效")
+	}
+	return nil
+}
+
+func jsonInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case float64:
+		if n != float64(int(n)) {
+			return 0, false
+		}
+		return int(n), true
+	case json.Number:
+		parsed, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
 }
 
 func decodeStringSlice(raw []byte) []string {

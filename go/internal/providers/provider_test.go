@@ -302,8 +302,8 @@ func TestResponsesImageSendsGenerateAction(t *testing.T) {
 		if len(payload.Tools) != 1 || payload.Tools[0]["type"] != "image_generation" || payload.Tools[0]["action"] != "generate" || payload.Tools[0]["size"] != "1024x1024" {
 			t.Fatalf("tools %+v", payload.Tools)
 		}
-		if payload.ToolChoice["type"] != "image_generation" {
-			t.Fatalf("tool_choice %+v", payload.ToolChoice)
+		if payload.ToolChoice != nil {
+			t.Fatalf("tool_choice must be absent: %+v", payload.ToolChoice)
 		}
 		w.WriteHeader(200)
 		_, _ = w.Write(completed)
@@ -366,16 +366,8 @@ func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatal(err)
 		}
-		if posts == 1 {
-			if payload["tool_choice"] == nil {
-				t.Fatal("first request should force image_generation")
-			}
-			w.WriteHeader(400)
-			_, _ = io.WriteString(w, `{"error":{"message":"tool_choice not supported"}}`)
-			return
-		}
 		if payload["tool_choice"] != nil {
-			t.Fatalf("retry should drop tool_choice: %+v", payload)
+			t.Fatalf("request must omit tool_choice: %+v", payload)
 		}
 		w.WriteHeader(200)
 		_, _ = w.Write(completed)
@@ -387,7 +379,7 @@ func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if posts != 2 || len(got.Bytes) == 0 {
+	if posts != 1 || len(got.Bytes) == 0 {
 		t.Fatalf("posts=%d bytes=%d", posts, len(got.Bytes))
 	}
 }
@@ -420,6 +412,9 @@ func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
 		}
 		if r.FormValue("size") != "1024x1536" {
 			t.Errorf("size %s", r.FormValue("size"))
+		}
+		if r.FormValue("n") != "1" {
+			t.Errorf("local edit n %s", r.FormValue("n"))
 		}
 		if _, _, err := r.FormFile("image[]"); err != nil {
 			if _, _, err := r.FormFile("image"); err != nil {
@@ -564,6 +559,48 @@ func TestImagesAPIBatchesCandidateCount(t *testing.T) {
 	}
 }
 
+func TestChatGenerateEditSendsCandidateCount(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	okBody, _ := json.Marshal(map[string]any{
+		"id": "edit-batch", "model": "dall-e-3",
+		"data": []map[string]any{
+			{"b64_json": onePixelPNGB64()},
+			{"b64_json": onePixelPNGB64()},
+			{"b64_json": onePixelPNGB64()},
+		},
+	})
+	var gotN string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/images/edits" {
+			t.Errorf("path %s", r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Fatal(err)
+		}
+		gotN = r.FormValue("n")
+		w.WriteHeader(200)
+		_, _ = w.Write(okBody)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	got, err := img.Generate(context.Background(), imagesession.ChatRequest{
+		Prompt: "x", Size: "1024x1024", Count: 3,
+		BaseBytes: png, ReferenceBytes: [][]byte{png},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotN != "3" {
+		t.Fatalf("n %s", gotN)
+	}
+	if len(got.Images) != 3 {
+		t.Fatalf("images %d", len(got.Images))
+	}
+}
+
 func TestResponsesReconcileApplied(t *testing.T) {
 	completed, _ := json.Marshal(map[string]any{
 		"id": "resp-1", "status": "completed",
@@ -616,6 +653,9 @@ func TestGenerateImageWithReferencesUsesEdits(t *testing.T) {
 		path = r.URL.Path
 		if err := r.ParseMultipartForm(4 << 20); err != nil {
 			t.Errorf("multipart: %v", err)
+		}
+		if r.FormValue("n") != "1" {
+			t.Errorf("graph edit n %s", r.FormValue("n"))
 		}
 		w.WriteHeader(200)
 		_, _ = w.Write(okBody)
@@ -1187,6 +1227,9 @@ func TestChat429IsConfirmedRetryableFailure(t *testing.T) {
 	if !imagesession.IsConfirmedProviderFailure(err) {
 		t.Fatalf("chat 429 should be confirmed: %v", err)
 	}
+	if !imagesession.IsRetryableProviderFailure(err) {
+		t.Fatalf("chat 429 should be retryable: %v", err)
+	}
 }
 
 func TestGraph429StaysUnknown(t *testing.T) {
@@ -1202,5 +1245,64 @@ func TestGraph429StaysUnknown(t *testing.T) {
 	}
 	if !isUnknown(err) {
 		t.Fatalf("graph 429 should stay unknown: %v", err)
+	}
+}
+
+func TestChat503IsProvider5xxNotUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		_, _ = io.WriteString(w, `service unavailable`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	if err == nil {
+		t.Fatal("expected 503")
+	}
+	if isUnknown(err) {
+		t.Fatalf("chat 503 should not be unknown: %v", err)
+	}
+	if !errors.Is(err, imagesession.ErrProvider5xx) {
+		t.Fatalf("got %v", err)
+	}
+	if !imagesession.IsRetryableProviderFailure(err) {
+		t.Fatalf("chat 503 should be retryable: %v", err)
+	}
+}
+
+func TestChat400QuotaIsRateLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"error":{"code":"insufficient_quota","message":"quota exceeded"}}`)
+	}))
+	defer srv.Close()
+	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
+	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	if !errors.Is(err, imagesession.ErrRateLimit) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMapTransportClassifiesTimeoutAndConnection(t *testing.T) {
+	timeoutErr := mapTransport(context.DeadlineExceeded)
+	if !errors.Is(timeoutErr, imagesession.ErrTimeout) {
+		t.Fatalf("timeout %v", timeoutErr)
+	}
+	if !errors.Is(timeoutErr, graph.ErrProviderUnknown()) {
+		t.Fatalf("graph path must still see unknown: %v", timeoutErr)
+	}
+	connErr := mapTransport(fmt.Errorf("read: connection reset by peer"))
+	if !errors.Is(connErr, imagesession.ErrConnection) {
+		t.Fatalf("connection %v", connErr)
+	}
+	if !imagesession.IsRetryableProviderFailure(timeoutErr) || !imagesession.IsRetryableProviderFailure(connErr) {
+		t.Fatal("timeout/connection should be retryable")
+	}
+	other := mapTransport(fmt.Errorf("tls handshake failed"))
+	if !errors.Is(other, graph.ErrProviderUnknown()) {
+		t.Fatalf("unclassifiable %v", other)
+	}
+	if imagesession.IsRetryableProviderFailure(other) {
+		t.Fatalf("unclassifiable must not be retryable: %v", other)
 	}
 }

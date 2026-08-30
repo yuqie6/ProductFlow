@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -71,14 +72,59 @@ func mapTransport(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return graph.ErrProviderUnknown()
+	if isTimeoutTransport(err) {
+		return retryableTransportError{sentinel: imagesession.ErrTimeout}
+	}
+	if isConnectionTransport(err) {
+		return retryableTransportError{sentinel: imagesession.ErrConnection}
+	}
+	return graph.ErrProviderUnknown()
+}
+
+// retryableTransportError 让 Chat 能按超时/断连重试，图路径仍能 errors.As 成 unknown。
+type retryableTransportError struct {
+	sentinel error
+}
+
+func (e retryableTransportError) Error() string { return e.sentinel.Error() }
+
+func (e retryableTransportError) Unwrap() []error {
+	return []error{e.sentinel, graph.ErrProviderUnknown()}
+}
+
+func isTimeoutTransport(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out")
+}
+
+func isConnectionTransport(err error) bool {
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"connection reset", "connection refused", "broken pipe", "econnreset"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func asGraphUnknown(err error) error {
+	if err == nil {
+		return nil
+	}
+	if imagesession.IsRetryableProviderFailure(err) {
 		return graph.ErrProviderUnknown()
 	}
-	return graph.ErrProviderUnknown()
+	return err
 }
 
 func mapGraphStatus(status int, body []byte) error {
@@ -99,15 +145,27 @@ func mapChatStatus(status int, body []byte) error {
 		return imagesession.ErrRateLimit
 	}
 	if status >= 500 {
-		return imagesession.ErrUnknown()
+		return imagesession.ErrProvider5xx
 	}
 	if status >= 400 {
+		if chatBodyRateLimited(body) {
+			return imagesession.ErrRateLimit
+		}
 		return apperr.Validation("图片供应商拒绝了本次请求，请调整提示词、参考图或参数后重试")
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
 		return imagesession.ErrUnknown()
 	}
 	return nil
+}
+
+func chatBodyRateLimited(body []byte) bool {
+	msg := strings.ToLower(string(body))
+	return strings.Contains(msg, "quota") ||
+		strings.Contains(msg, "insufficient_quota") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "rate_limit") ||
+		strings.Contains(msg, "rate-limit")
 }
 
 func decodeB64(raw string) ([]byte, error) {

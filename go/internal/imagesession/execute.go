@@ -55,7 +55,7 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		return err
 	}
 	if !claimed {
-		return queue.ErrBusy
+		return e.releaseIdle(ctx, taskID)
 	}
 	if err := e.runGeneration(ctx, taskID, attemptID, sessionID); err != nil {
 		if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
@@ -83,7 +83,7 @@ type unknownErr struct{}
 
 func (unknownErr) Error() string { return unknownDetail }
 
-// ErrUnknown 把超时或 5xx 等无法证明的供应商结果标成 unknown。
+// ErrUnknown 把无法证明的供应商结果标成 unknown。
 func ErrUnknown() error { return unknownErr{} }
 
 func isUnknown(err error) bool {
@@ -143,6 +143,22 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 		return nil
 	})
 	return claimed, attemptID, sessionID, err
+}
+
+// releaseIdle 在 claim 不到 queued 行时决定信封命运：queued/running 表示别人持有，返回 ErrBusy；终态或缺行返回 nil，Consume 标 CONSUMED。
+func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
+	var status string
+	err := pfdb.QueryRow(ctx, e.DB, `SELECT status FROM image_session_generation_tasks WHERE id = $1`, taskID).Scan(&status)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if status == "queued" || status == "running" {
+		return queue.ErrBusy
+	}
+	return nil
 }
 
 func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionID string) error {
@@ -252,7 +268,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 				_ = e.markEffect(ctx, taskID, candidate, "failed", ae.Detail)
 				return genErr
 			}
-			if IsConfirmedProviderFailure(genErr) {
+			if IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr) {
 				_ = e.markEffect(ctx, taskID, candidate, "failed", genErr.Error())
 				return genErr
 			}
@@ -495,7 +511,7 @@ func isNonRetryableGenerationError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrRateLimit) {
+	if IsRetryableProviderFailure(err) {
 		return false
 	}
 	if IsConfirmedProviderFailure(err) {

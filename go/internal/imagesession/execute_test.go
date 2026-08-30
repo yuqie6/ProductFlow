@@ -283,6 +283,24 @@ func TestExecuteValidationDoesNotAutoRetry(t *testing.T) {
 	}
 }
 
+func TestExecuteTerminalTaskDoesNotBusyRetry(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "终态不再 busy", "size": "1024x1024", "generation_count": 1,
+	})
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{}}
+	if err := exec.Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "succeeded" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if err := exec.Execute(context.Background(), taskID); err != nil {
+		t.Fatalf("terminal task must consume, not busy-retry: %v", err)
+	}
+}
+
 func TestExecuteRateLimitIsFailedRetryable(t *testing.T) {
 	ss := newSessionServer(t)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{
@@ -301,6 +319,33 @@ func TestExecuteRateLimitIsFailedRetryable(t *testing.T) {
 	}
 	if !task.IsRetryable {
 		t.Fatal("429 must stay retryable")
+	}
+	if task.Attempts != maxAttempts {
+		t.Fatalf("attempts %d", task.Attempts)
+	}
+	if len(task.ProviderEffects) == 0 || task.ProviderEffects[0].EffectResult != "failed" {
+		t.Fatalf("effects %+v", task.ProviderEffects)
+	}
+}
+
+func TestExecuteProvider5xxIsFailedRetryable(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "供应商 5xx", "size": "1024x1024", "generation_count": 1,
+	})
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrProvider5xx}}
+	for i := 0; i < maxAttempts; i++ {
+		if err := exec.Execute(context.Background(), taskID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	task := got.GenerationTasks[0]
+	if task.Status != "failed" {
+		t.Fatalf("status %s", task.Status)
+	}
+	if !task.IsRetryable {
+		t.Fatal("5xx must stay retryable")
 	}
 	if task.Attempts != maxAttempts {
 		t.Fatalf("attempts %d", task.Attempts)
@@ -370,5 +415,17 @@ func TestIsNonRetryableGenerationError(t *testing.T) {
 	}
 	if isNonRetryableGenerationError(errors.New("provider crashed")) {
 		t.Fatal("unknown crash should retry/unknown path, not this helper")
+	}
+	if isNonRetryableGenerationError(ErrRateLimit) {
+		t.Fatal("rate limit")
+	}
+	if isNonRetryableGenerationError(ErrTimeout) {
+		t.Fatal("timeout")
+	}
+	if isNonRetryableGenerationError(ErrConnection) {
+		t.Fatal("connection")
+	}
+	if isNonRetryableGenerationError(ErrProvider5xx) {
+		t.Fatal("provider 5xx")
 	}
 }

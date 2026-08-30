@@ -169,14 +169,15 @@ type sessionRow struct {
 }
 
 type assetRow struct {
-	ID               string
-	SessionID        string
-	Kind             string
-	OriginalFilename string
-	MIMEType         string
-	StoragePath      string
-	MediaObjectID    string
-	CreatedAt        time.Time
+	ID                 string
+	SessionID          string
+	Kind               string
+	OriginalFilename   string
+	MIMEType           string
+	StoragePath        string
+	MediaObjectID      string
+	VerificationStatus string
+	CreatedAt          time.Time
 }
 
 type taskRow struct {

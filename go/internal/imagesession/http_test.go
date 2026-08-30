@@ -363,6 +363,41 @@ func TestImageSessionGenerateRejectsZeroCount(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestImageSessionGenerateRejectsLongPromptAndInvalidToolOptions(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	long := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": strings.Repeat("字", 4001), "size": "1024x1024",
+	})
+	ss.mustStatus(t, long, http.StatusBadRequest)
+	var longBody struct {
+		Detail string `json:"detail"`
+	}
+	ss.decode(t, long, &longBody)
+	if longBody.Detail != "提示词不能超过 4000 个字符" {
+		t.Fatalf("detail %s", longBody.Detail)
+	}
+	paddedEmpty := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": strings.Repeat(" ", 4001), "size": "1024x1024",
+	})
+	ss.mustStatus(t, paddedEmpty, http.StatusBadRequest)
+	var emptyBody struct {
+		Detail string `json:"detail"`
+	}
+	ss.decode(t, paddedEmpty, &emptyBody)
+	if emptyBody.Detail != "提示词不能为空" {
+		t.Fatalf("padded empty detail %s", emptyBody.Detail)
+	}
+	badTool := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "杯子", "size": "1024x1024", "tool_options": map[string]any{"quality": "ultra"},
+	})
+	ss.mustStatus(t, badTool, http.StatusBadRequest)
+	badTool.Body.Close()
+}
+
 func TestImageSessionCreateRejectsUnknownFields(t *testing.T) {
 	ss := newSessionServer(t)
 	resp := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": "a", "foo": 1})

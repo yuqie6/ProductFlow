@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	sqldb "database/sql"
 
@@ -298,8 +299,8 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	if prompt == "" {
 		return DetailResponse{}, apperr.Validation("提示词不能为空")
 	}
-	if len([]rune(prompt)) > 4000 {
-		return DetailResponse{}, apperr.Validation("提示词不能为空")
+	if utf8.RuneCountInString(prompt) > 4000 {
+		return DetailResponse{}, apperr.Validation("提示词不能超过 4000 个字符")
 	}
 	count := 1
 	if req.GenerationCount != nil {
@@ -311,6 +312,9 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	}
 	normalizedSize, err := normalizeSize(size, s.maxDimension(ctx))
 	if err != nil {
+		return DetailResponse{}, err
+	}
+	if err := validateToolOptions(req.ToolOptions); err != nil {
 		return DetailResponse{}, err
 	}
 	toolOpts := filterToolOptions(req.ToolOptions, s.allowedToolFields(ctx))
@@ -502,11 +506,11 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, error) {
 	var row assetRow
 	err := pfdb.QueryRow(ctx, s.DB, `
-		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
+		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, m.verification_status, a.created_at
 		FROM image_session_assets a
 		JOIN media_objects m ON m.id = a.media_object_id
 		WHERE a.id = $1
-	`, assetID).Scan(&row.ID, &row.SessionID, &row.Kind, &row.OriginalFilename, &row.MIMEType, &row.StoragePath, &row.MediaObjectID, &row.CreatedAt)
+	`, assetID).Scan(&row.ID, &row.SessionID, &row.Kind, &row.OriginalFilename, &row.MIMEType, &row.StoragePath, &row.MediaObjectID, &row.VerificationStatus, &row.CreatedAt)
 	if errors.Is(err, sqldb.ErrNoRows) {
 		return assetRow{}, apperr.NotFound("会话图片不存在")
 	}

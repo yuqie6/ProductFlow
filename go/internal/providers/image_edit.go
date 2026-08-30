@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/textproto"
+	"strconv"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -20,14 +21,26 @@ type imagePart struct {
 	Filename string
 }
 
-func (p OpenAIImages) edit(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+func (p OpenAIImages) edit(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte, n int, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+	batch, mime, model, id, err := p.editN(ctx, prompt, size, quality, images, mask, n, classify)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	if len(batch) == 0 {
+		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
+	}
+	return batch[0], mime, model, id, nil
+}
+
+func (p OpenAIImages) editN(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte, n int, classify func(int, []byte) error) ([][]byte, string, string, string, error) {
 	if len(images) == 0 {
 		return nil, "", "", "", fmt.Errorf("图片供应商缺少编辑输入图片")
 	}
 	if quality == "" {
 		quality = p.Quality
 	}
-	status, raw, err := p.postEdit(ctx, prompt, size, quality, images, mask)
+	n = clampImageN(n)
+	status, raw, err := p.postEdit(ctx, prompt, size, quality, images, mask, n)
 	if err != nil {
 		return nil, "", "", "", err
 	}
@@ -40,7 +53,7 @@ func (p OpenAIImages) edit(ctx context.Context, prompt, size, quality string, im
 		if len(images) > 1 {
 			fallbackImages = images[:1]
 		}
-		status, raw, err = p.postEdit(ctx, prompt, size, fallbackQuality, fallbackImages, mask)
+		status, raw, err = p.postEdit(ctx, prompt, size, fallbackQuality, fallbackImages, mask, n)
 		if err != nil {
 			return nil, "", "", "", err
 		}
@@ -48,25 +61,26 @@ func (p OpenAIImages) edit(ctx context.Context, prompt, size, quality string, im
 	if err := classify(status, raw); err != nil {
 		return nil, "", "", "", err
 	}
-	return parseImageResponse(raw, p.Model)
+	return parseImageResponses(raw, p.Model)
 }
 
-func (p OpenAIImages) postEdit(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte) (int, []byte, error) {
-	body, contentType, err := buildImagesEditMultipart(p.Model, prompt, size, quality, images, mask)
+func (p OpenAIImages) postEdit(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte, n int) (int, []byte, error) {
+	body, contentType, err := buildImagesEditMultipart(p.Model, prompt, size, quality, images, mask, n)
 	if err != nil {
 		return 0, nil, err
 	}
 	return p.callTyped(ctx, "POST", endpoint(p.BaseURL, "/v1/images/edits"), contentType, body)
 }
 
-func buildImagesEditMultipart(model, prompt, size, quality string, images []imagePart, mask []byte) ([]byte, string, error) {
+func buildImagesEditMultipart(model, prompt, size, quality string, images []imagePart, mask []byte, n int) ([]byte, string, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
+	n = clampImageN(n)
 	fields := [][2]string{
 		{"model", model},
 		{"prompt", prompt},
 		{"size", size},
-		{"n", "1"},
+		{"n", strconv.Itoa(n)},
 		{"response_format", "b64_json"},
 	}
 	if quality != "" {

@@ -259,7 +259,20 @@ func (h HTTP) download(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	media.ServeVariant(c, h.Service.Media.Files, asset.StoragePath, asset.OriginalFilename, asset.MIMEType, c.DefaultQuery("variant", "original"), "会话图片文件不存在")
+	if asset.VerificationStatus == media.StatusMissing {
+		httpx.AbortDetail(c, http.StatusNotFound, "会话图片文件不存在")
+		return
+	}
+	media.ServeExistingVariant(
+		c,
+		h.Service.Media,
+		h.Service.DB,
+		asset.StoragePath,
+		asset.OriginalFilename,
+		asset.MIMEType,
+		c.DefaultQuery("variant", "original"),
+		"会话图片文件不存在",
+	)
 }
 
 func (h HTTP) attach(c *gin.Context) {

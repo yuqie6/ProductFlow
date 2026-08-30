@@ -43,12 +43,12 @@ func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest)
 	var mime, model, id string
 	var err error
 	if len(req.References) > 0 {
-		bytesData, mime, model, id, err = p.edit(ctx, prompt, size, quality, graphRefsToParts(req.References), nil, mapGraphStatus)
+		bytesData, mime, model, id, err = p.edit(ctx, prompt, size, quality, graphRefsToParts(req.References), nil, 1, mapGraphStatus)
 	} else {
 		bytesData, mime, model, id, err = p.generate(ctx, prompt, size, quality, mapGraphStatus)
 	}
 	if err != nil {
-		return graph.ImageResult{}, err
+		return graph.ImageResult{}, asGraphUnknown(err)
 	}
 	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
 }
@@ -58,13 +58,7 @@ func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest
 	if size == "" {
 		size = "1024x1024"
 	}
-	n := req.Count
-	if n < 1 {
-		n = 1
-	}
-	if n > 10 {
-		n = 10
-	}
+	n := clampImageN(req.Count)
 	call := p
 	call.Model, call.Quality = chatImagesOverrides(req.ToolOptions, p.Model, p.Quality)
 	parts := chatImageParts(req, true)
@@ -72,11 +66,7 @@ func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest
 	var mime, model, id string
 	var err error
 	if len(parts) > 0 {
-		var bytesData []byte
-		bytesData, mime, model, id, err = call.edit(ctx, req.Prompt, size, call.Quality, parts, nil, mapChatStatus)
-		if err == nil {
-			images = [][]byte{bytesData}
-		}
+		images, mime, model, id, err = call.editN(ctx, req.Prompt, size, call.Quality, parts, nil, n, mapChatStatus)
 	} else {
 		images, mime, model, id, err = call.generateN(ctx, req.Prompt, size, call.Quality, n, mapChatStatus)
 	}
@@ -116,7 +106,7 @@ func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (loca
 	if size == "" {
 		size = "1024x1024"
 	}
-	bytesData, mime, model, id, err := p.edit(ctx, req.Instruction, size, p.Quality, parts, req.MaskPNG, mapChatStatus)
+	bytesData, mime, model, id, err := p.edit(ctx, req.Instruction, size, p.Quality, parts, req.MaskPNG, 1, mapChatStatus)
 	if err != nil {
 		return localedit.EditResult{}, err
 	}
@@ -138,9 +128,7 @@ func (p OpenAIImages) generateN(ctx context.Context, prompt, size, quality strin
 	if quality == "" {
 		quality = p.Quality
 	}
-	if n < 1 {
-		n = 1
-	}
+	n = clampImageN(n)
 	req := map[string]any{
 		"model": p.Model, "prompt": prompt, "size": size, "n": n, "response_format": "b64_json",
 	}
@@ -261,6 +249,16 @@ func openaiQualityFromSpec(spec map[string]any) string {
 	}
 }
 
+func clampImageN(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 10 {
+		return 10
+	}
+	return n
+}
+
 func openaiSizeFromSpec(spec map[string]any) string {
 	ratio := 1.0
 	if raw, ok := spec["aspect_ratio"].(string); ok && strings.Contains(raw, ":") {
@@ -332,7 +330,7 @@ func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageReque
 	opts := WorkflowImageToolOptions(req, p.ToolRuntime, p.AllowedFields)
 	bytesData, mime, model, id, err := p.generateResponses(ctx, prompt, size, opts, req.References, nil, mapGraphStatus)
 	if err != nil {
-		return graph.ImageResult{}, err
+		return graph.ImageResult{}, asGraphUnknown(err)
 	}
 	quality := openaiQualityFromSpec(req.GenerationSpec)
 	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
@@ -373,10 +371,9 @@ func imageGenerationTool(size string, opts map[string]any) map[string]any {
 func (p OpenAIResponses) createResponses(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string) (int, []byte, error) {
 	tool := imageGenerationTool(size, toolOptions)
 	payload := map[string]any{
-		"model":       p.Model,
-		"input":       input,
-		"tools":       []map[string]any{cloneJSONMap(tool)},
-		"tool_choice": map[string]any{"type": "image_generation"},
+		"model": p.Model,
+		"input": input,
+		"tools": []map[string]any{cloneJSONMap(tool)},
 	}
 	if previousID != nil && strings.TrimSpace(*previousID) != "" {
 		payload["previous_response_id"] = strings.TrimSpace(*previousID)
@@ -403,10 +400,6 @@ func (p OpenAIResponses) createResponses(ctx context.Context, input any, size st
 		}
 		if tools, ok := payload["tools"].([]map[string]any); ok && len(tools) > 0 && hasOptionalImageToolFields(tools[0]) {
 			payload["tools"] = []map[string]any{imageGenerationTool(size, nil)}
-			continue
-		}
-		if _, ok := payload["tool_choice"]; ok {
-			delete(payload, "tool_choice")
 			continue
 		}
 		return status, raw, nil
@@ -503,7 +496,7 @@ func sleepPoll(ctx context.Context) error {
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return graph.ErrProviderUnknown()
+		return mapTransport(ctx.Err())
 	case <-timer.C:
 		return nil
 	}

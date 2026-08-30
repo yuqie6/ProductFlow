@@ -126,7 +126,7 @@ func TestRecoverUnfinishedRequeuesIdleRunningWithoutProviderBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.StaleRunningTasks < 1 || summary.EnqueuedTasks < 1 {
+	if summary.StaleRunningTasks < 1 {
 		t.Fatalf("summary %+v", summary)
 	}
 	var status, phase string
