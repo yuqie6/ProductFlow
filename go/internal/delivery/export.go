@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -48,15 +50,19 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	}
 	var files []fileItem
 	var filename string
+	var manifest map[string]any
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var productName string
 		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&productName); err != nil {
 			return apperr.NotFound("商品不存在")
 		}
-		var missing, success int
+		safeProduct := safeName(productName, "product")
+		missingItems := []map[string]any{}
+		successItems := []map[string]any{}
+		var finishedAt []time.Time
 		var total int
-		used := map[string]int{}
-		for _, jobID := range cleaned {
+		used := map[string]struct{}{}
+		for index, jobID := range cleaned {
 			row, err := loadJob(ctx, pgxTx, jobID)
 			if err != nil {
 				return apperr.NotFound("交付图任务不存在")
@@ -65,11 +71,13 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 				return apperr.Conflict("交付图资产不属于当前商品")
 			}
 			if row.Status != "succeeded" || row.ResultAssetID == nil {
-				missing++
-				if !allowPartial {
-					return apperr.Conflict("存在未成功或缺少结果的交付图任务")
-				}
+				missingItems = append(missingItems, map[string]any{
+					"job_id": row.ID, "status": row.Status, "failure_reason": row.FailureReason,
+				})
 				continue
+			}
+			if row.FinishedAt == nil {
+				return apperr.Conflict("交付图任务缺少完成时间")
 			}
 			asset, err := product.LoadAssetRow(ctx, pgxTx, *row.ResultAssetID)
 			if err != nil {
@@ -77,6 +85,13 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			}
 			if asset.ProductID != productID {
 				return apperr.Conflict("交付图结果不属于当前商品")
+			}
+			source, err := product.LoadAssetRow(ctx, pgxTx, row.SourceAssetID)
+			if err != nil {
+				return apperr.Conflict("交付图原图不属于当前商品")
+			}
+			if source.ProductID != productID {
+				return apperr.Conflict("交付图原图不属于当前商品")
 			}
 			data, err := readStorage(s.Media.Files, asset.StoragePath)
 			if err != nil {
@@ -93,26 +108,67 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if total > exportMaxBytes {
 				return apperr.Validation("交付导出图片总大小不能超过 512 MiB")
 			}
-			ext := filepath.Ext(asset.OriginalFilename)
-			if ext == "" {
-				ext = media.ExtensionForMIME(asset.MIMEType)
+			imageType := "image"
+			if source.ImageTypeKey != nil && strings.TrimSpace(*source.ImageTypeKey) != "" {
+				imageType = safeName(*source.ImageTypeKey, "image")
 			}
-			base := safeName(strings.TrimSuffix(asset.OriginalFilename, filepath.Ext(asset.OriginalFilename)), "rendition")
-			name := base + ext
-			if n := used[strings.ToLower(name)]; n > 0 {
-				name = base + "-" + itoaCount(n+1) + ext
+			ext := media.ExtensionForMIME(meta.MIMEType)
+			name := exportImageFilename(safeProduct, imageType, index+1, meta.Width, meta.Height, ext)
+			for {
+				if _, exists := used[strings.ToLower(name)]; !exists {
+					break
+				}
+				name = strings.TrimSuffix(name, ext) + "-2" + ext
 			}
-			used[strings.ToLower(name)]++
-			if used[strings.ToLower(name)] == 1 {
-				used[strings.ToLower(name)] = 1
-			}
+			used[strings.ToLower(name)] = struct{}{}
+			sum := sha256.Sum256(data)
 			files = append(files, fileItem{name: name, data: data})
-			success++
+			finishedAt = append(finishedAt, *row.FinishedAt)
+			var spec any
+			_ = json.Unmarshal(row.SpecJSON, &spec)
+			successItems = append(successItems, map[string]any{
+				"filename": name,
+				"product":  map[string]any{"id": productID, "name": productName},
+				"graph":    sourceLineage(ctx, pgxTx, source.ID, productID),
+				"source_asset": map[string]any{
+					"id": source.ID, "image_type_key": source.ImageTypeKey, "original_filename": source.OriginalFilename,
+				},
+				"rendition_job": map[string]any{
+					"id": row.ID, "status": row.Status, "spec_hash": row.SpecHash,
+					"created_at": row.CreatedAt, "started_at": row.StartedAt, "finished_at": row.FinishedAt, "updated_at": row.UpdatedAt,
+				},
+				"result_asset":  map[string]any{"id": asset.ID, "original_filename": asset.OriginalFilename},
+				"delivery_spec": spec,
+				"measured": map[string]any{
+					"mime_type": meta.MIMEType, "width": meta.Width, "height": meta.Height,
+					"byte_size": meta.ByteSize, "sha256": hex.EncodeToString(sum[:]),
+				},
+				"generated_at": row.FinishedAt,
+			})
 		}
-		if success == 0 {
+		if len(missingItems) > 0 && !allowPartial {
+			return apperr.Conflict("存在未成功或缺少结果的交付图任务")
+		}
+		if len(successItems) == 0 {
 			return apperr.Conflict("没有可导出的成功交付图")
 		}
-		filename = safeName(productName, "product") + "-delivery.zip"
+		generated := finishedAt[0]
+		for _, ts := range finishedAt[1:] {
+			if ts.After(generated) {
+				generated = ts
+			}
+		}
+		manifest = map[string]any{
+			"schema_version": 1,
+			"kind":           "productflow.delivery_export",
+			"complete":       len(missingItems) == 0,
+			"allow_partial":  allowPartial,
+			"product":        map[string]any{"id": productID, "name": productName},
+			"generated_at":   generated,
+			"items":          successItems,
+			"missing_items":  missingItems,
+		}
+		filename = safeProduct + "-delivery-export.zip"
 		return nil
 	})
 	if err != nil {
@@ -133,18 +189,17 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			return ExportArchive{}, err
 		}
 	}
-	manifest, _ := json.Marshal(map[string]any{
-		"schema_version": 1,
-		"product_id":     productID,
-		"files":          len(files),
-	})
+	if manifest == nil {
+		manifest = map[string]any{}
+	}
+	manifestBytes, _ := json.Marshal(manifest)
 	mh := &zip.FileHeader{Name: "manifest.json", Method: zip.Deflate}
 	mh.SetModTime(epoch)
 	mw, err := zw.CreateHeader(mh)
 	if err != nil {
 		return ExportArchive{}, err
 	}
-	if _, err := mw.Write(manifest); err != nil {
+	if _, err := mw.Write(manifestBytes); err != nil {
 		return ExportArchive{}, err
 	}
 	if err := zw.Close(); err != nil {
@@ -164,6 +219,40 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		return ExportArchive{}, err
 	}
 	return ExportArchive{Path: tmp.Name(), Filename: filename}, nil
+}
+
+func exportImageFilename(productName, imageType string, index, width, height int, ext string) string {
+	return fmt.Sprintf("%s-%s-%02d-%dx%d%s", productName, imageType, index, width, height, ext)
+}
+
+func sourceLineage(ctx context.Context, tx *gorm.DB, sourceAssetID, productID string) map[string]any {
+	var graphID *string
+	var graphRev *int
+	var nodeRunID *string
+	var runID *string
+	var runRev *int
+	err := pfdb.QueryRow(ctx, tx, `
+		SELECT a.graph_id, a.graph_revision, a.node_run_id, r.id, r.graph_revision
+		FROM workflow_graph_artifacts a
+		JOIN workflow_graphs g ON g.id = a.graph_id
+		LEFT JOIN workflow_graph_node_runs nr ON nr.id = a.node_run_id
+		LEFT JOIN workflow_graph_runs r ON r.id = nr.graph_run_id
+		WHERE a.product_image_asset_id = $1 AND a.artifact_type = 'image' AND g.product_id = $2
+		ORDER BY a.created_at DESC, a.id DESC
+		LIMIT 1
+	`, sourceAssetID, productID).Scan(&graphID, &graphRev, &nodeRunID, &runID, &runRev)
+	if err != nil {
+		return map[string]any{"graph": nil, "run": nil, "node_run_id": nil}
+	}
+	var graph any
+	if graphID != nil {
+		graph = map[string]any{"id": *graphID, "revision": graphRev}
+	}
+	var run any
+	if runID != nil {
+		run = map[string]any{"id": *runID, "revision": runRev}
+	}
+	return map[string]any{"graph": graph, "run": run, "node_run_id": nodeRunID}
 }
 
 func safeName(value, fallback string) string {

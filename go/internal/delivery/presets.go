@@ -1,10 +1,25 @@
 package delivery
 
+import (
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/product"
+)
+
 const (
 	presetReviewedAt = "2026-08-24"
 	presetSource     = "docs/ARCHITECTURE.md §7"
 	presetDisclaimer = "内置模板仅提供便捷默认值，不构成平台审核或合规保证；平台规则可能变化，请在使用前自行确认。"
 )
+
+func init() {
+	product.BindDeliveryPresetSpec(func(key string) (map[string]any, error) {
+		preset, err := GetPreset(key)
+		if err != nil {
+			return nil, err
+		}
+		return SpecAsMap(preset.DeliverySpec), nil
+	})
+}
 
 type Preset struct {
 	Key                 string `json:"key"`
@@ -32,6 +47,39 @@ func ListPresets() PresetCatalog {
 			makePreset("detail_portrait", "详情竖图", "3:4", "detail", 1200, 1600),
 			makePreset("scene_landscape", "场景横图", "4:3", "scene", 1600, 1200),
 		},
+	}
+}
+
+func GetPreset(key string) (Preset, error) {
+	for _, item := range ListPresets().Items {
+		if item.Key == key {
+			return item, nil
+		}
+	}
+	return Preset{}, apperr.NotFound("交付预设不存在")
+}
+
+func SpecAsMap(spec Spec) map[string]any {
+	var maxByte any
+	if spec.MaxByteSize != nil {
+		maxByte = *spec.MaxByteSize
+	}
+	var background any
+	if spec.BackgroundColor != nil {
+		background = *spec.BackgroundColor
+	}
+	var crop any
+	if spec.CropAnchor != nil {
+		crop = *spec.CropAnchor
+	}
+	return map[string]any{
+		"width":            spec.Width,
+		"height":           spec.Height,
+		"format":           spec.Format,
+		"max_byte_size":    maxByte,
+		"fit":              spec.Fit,
+		"background_color": background,
+		"crop_anchor":      crop,
 	}
 }
 

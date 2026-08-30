@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -9,6 +10,7 @@ import (
 	"image/jpeg"
 	"image/png"
 
+	"github.com/HugoSmits86/nativewebp"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	xdraw "golang.org/x/image/draw"
@@ -48,9 +50,12 @@ func Render(source []byte, spec Spec) (Rendered, error) {
 }
 
 func decodeSource(source []byte) (image.Image, error) {
-	img, _, err := image.Decode(bytes.NewReader(source))
+	img, format, err := image.Decode(bytes.NewReader(source))
 	if err != nil {
 		return nil, apperr.Validation("交付派生原图不是可解码图片")
+	}
+	if format == "jpeg" {
+		img = exifTransposeJPEG(source, img)
 	}
 	b := img.Bounds()
 	if int64(b.Dx())*int64(b.Dy()) > int64(maxTotalPixels)*4 {
@@ -162,7 +167,20 @@ func encodeImage(img image.Image, spec Spec) ([]byte, error) {
 		}
 		return nil, apperr.Validation("交付图无法在保持尺寸和格式的前提下满足最大字节限制")
 	case "webp":
-		return nil, apperr.Validation("当前运行环境不支持 WEBP 交付编码")
+		// nativewebp 只提供无损 VP8L，没有 Pillow 的 quality 阶；用 encoder effort 去贴 max_byte_size。
+		if spec.MaxByteSize == nil {
+			return encodeWebP(img, nativewebp.BestCompression)
+		}
+		for _, level := range []nativewebp.CompressionLevel{nativewebp.BestCompression, nativewebp.DefaultCompression, nativewebp.BestSpeed} {
+			encoded, err := encodeWebP(img, level)
+			if err != nil {
+				return nil, err
+			}
+			if len(encoded) <= *spec.MaxByteSize {
+				return encoded, nil
+			}
+		}
+		return nil, apperr.Validation("交付图无法在保持尺寸和格式的前提下满足最大字节限制")
 	default:
 		return nil, apperr.Validation(fmt.Sprintf("当前运行环境不支持 %s 交付编码", spec.Format))
 	}
@@ -182,6 +200,216 @@ func encodeJPEG(img image.Image, quality int) ([]byte, error) {
 		return nil, apperr.Validation("当前运行环境不支持 JPEG 交付编码")
 	}
 	return buf.Bytes(), nil
+}
+
+func encodeWebP(img image.Image, level nativewebp.CompressionLevel) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := nativewebp.Encode(&buf, img, &nativewebp.Options{CompressionLevel: level}); err != nil {
+		return nil, apperr.Validation("当前运行环境不支持 WEBP 交付编码")
+	}
+	return buf.Bytes(), nil
+}
+
+// exifTransposeJPEG 对齐 Pillow ImageOps.exif_transpose：只读 JPEG EXIF Orientation 并变换像素。
+func exifTransposeJPEG(source []byte, img image.Image) image.Image {
+	orientation, ok := jpegExifOrientation(source)
+	if !ok {
+		return img
+	}
+	switch orientation {
+	case 2:
+		return flipHorizontal(img)
+	case 3:
+		return rotate180(img)
+	case 4:
+		return flipVertical(img)
+	case 5:
+		return transposeImage(img)
+	case 6:
+		return rotate90CW(img)
+	case 7:
+		return transverseImage(img)
+	case 8:
+		return rotate90CCW(img)
+	default:
+		return img
+	}
+}
+
+func jpegExifOrientation(source []byte) (int, bool) {
+	if len(source) < 4 || source[0] != 0xff || source[1] != 0xd8 {
+		return 0, false
+	}
+	offset := 2
+	for offset+4 <= len(source) {
+		if source[offset] != 0xff {
+			return 0, false
+		}
+		marker := source[offset+1]
+		offset += 2
+		if marker == 0xda || marker == 0xd9 {
+			return 0, false
+		}
+		if marker == 0xd0 || marker == 0xd1 || marker == 0xd2 || marker == 0xd3 ||
+			marker == 0xd4 || marker == 0xd5 || marker == 0xd6 || marker == 0xd7 ||
+			marker == 0x01 {
+			continue
+		}
+		if offset+2 > len(source) {
+			return 0, false
+		}
+		length := int(binary.BigEndian.Uint16(source[offset:]))
+		if length < 2 || offset+length > len(source) {
+			return 0, false
+		}
+		payload := source[offset+2 : offset+length]
+		offset += length
+		if marker != 0xe1 {
+			continue
+		}
+		if orientation, ok := tiffOrientation(payload); ok {
+			return orientation, true
+		}
+	}
+	return 0, false
+}
+
+func tiffOrientation(app1 []byte) (int, bool) {
+	const prefix = "Exif\x00\x00"
+	if !bytes.HasPrefix(app1, []byte(prefix)) {
+		return 0, false
+	}
+	tiff := app1[len(prefix):]
+	if len(tiff) < 8 {
+		return 0, false
+	}
+	var order binary.ByteOrder
+	switch {
+	case bytes.HasPrefix(tiff, []byte("II")):
+		order = binary.LittleEndian
+	case bytes.HasPrefix(tiff, []byte("MM")):
+		order = binary.BigEndian
+	default:
+		return 0, false
+	}
+	if order.Uint16(tiff[2:4]) != 42 {
+		return 0, false
+	}
+	ifd := int(order.Uint32(tiff[4:8]))
+	if ifd < 0 || ifd+2 > len(tiff) {
+		return 0, false
+	}
+	count := int(order.Uint16(tiff[ifd : ifd+2]))
+	entryStart := ifd + 2
+	for i := 0; i < count; i++ {
+		start := entryStart + i*12
+		if start+12 > len(tiff) {
+			return 0, false
+		}
+		tag := order.Uint16(tiff[start : start+2])
+		if tag != 0x0112 {
+			continue
+		}
+		typ := order.Uint16(tiff[start+2 : start+4])
+		n := order.Uint32(tiff[start+4 : start+8])
+		if n != 1 {
+			return 0, false
+		}
+		value := tiff[start+8 : start+12]
+		switch typ {
+		case 3:
+			return int(order.Uint16(value[:2])), true
+		case 4:
+			return int(order.Uint32(value)), true
+		default:
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+func rotate90CW(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(h-1-y, x, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func rotate90CCW(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(y, w-1-x, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func rotate180(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(w-1-x, h-1-y, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func flipHorizontal(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(w-1-x, y, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func flipVertical(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(x, h-1-y, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func transposeImage(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(y, x, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
+}
+
+func transverseImage(src image.Image) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	out := image.NewRGBA(image.Rect(0, 0, h, w))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			out.Set(h-1-y, w-1-x, src.At(b.Min.X+x, b.Min.Y+y))
+		}
+	}
+	return out
 }
 
 func parseRGB(s string) (uint8, uint8, uint8, bool) {
