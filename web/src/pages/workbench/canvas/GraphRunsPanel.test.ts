@@ -12,9 +12,9 @@ const graph: GraphProjection = {
   title: "夏季主图",
   schema_version: 3,
   revision: 2,
-    last_operation_group_id: null,
-    can_undo: false,
-    can_redo: false,
+  last_operation_group_id: null,
+  can_undo: false,
+  can_redo: false,
   nodes: [{
     id: "image",
     node_type: "image_generation",
@@ -87,6 +87,7 @@ const run: GraphRun = {
     output: { product_image_asset_id: "out-1" },
     failure_reason: null,
     attempt_count: 1,
+    progress_phase: "provider_result_received",
     started_at: "2026-08-21T00:00:00Z",
     finished_at: "2026-08-21T00:00:08Z",
   }],
@@ -112,6 +113,8 @@ describe("GraphRunsPanel", () => {
     expect(firstScreen).toContain("主图 1");
     expect(firstScreen).toContain("主图提示词");
     expect(firstScreen).toContain("提示词");
+    expect(firstScreen).toContain("已收到结果");
+    expect(firstScreen).toContain("8.0s");
     expect(firstScreen).not.toContain("asset-a");
     expect(markup).toContain("运行证据");
     expect(markup).not.toContain("incoming_edge_ids");

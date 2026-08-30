@@ -58,9 +58,9 @@ import {
 } from "./catalogConfig";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
-import { graphEdgeRoleLabelKey, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles } from "./graphCatalog";
+import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles, missingRunNodesSummary } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
-import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphProgressPhaseLabelKey, graphRunInputTraceEntries } from "./graphRunDisplay";
+import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
 import {
   graphProductSourceConfig,
@@ -80,7 +80,6 @@ import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAuto
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { ImageFidelityCheckController } from "../fidelity/ImageFidelityCheckController";
 
-const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
 type InspectorFlush = () => Promise<unknown>;
 type RegisterInspectorFlush = (id: string, flush: InspectorFlush) => () => void;
 const InspectorFlushContext = createContext<RegisterInspectorFlush>(() => () => undefined);
@@ -160,7 +159,7 @@ export function GraphNodeInspector({
   const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
     ? runsQuery.data?.items.find((run) => run.status === "running" && run.node_runs.some((item) => (
-      item.node_id === node.id && ACTIVE_RUN_STATUSES.has(item.status)
+      item.node_id === node.id && LIVE_RUN_STATUSES.has(item.status)
     ))) ?? null
     : null;
   const nodeStatus: WorkflowNodeDisplayStatus = presentation?.status ?? "idle";
@@ -168,13 +167,15 @@ export function GraphNodeInspector({
     () => missingRequiredRunNodes(graph, catalog),
     [catalog, graph],
   );
-  const graphRunBlockedReason = useMemo(() => missingRunNodes.map(({ node: missingNode, roles }) => {
-    const missing = roles.map((role) => {
+  const graphRunBlocked = !graphHasRunnableProcessingNode(graph, catalog);
+  const graphRunBlockedReason = useMemo(() => {
+    if (!graphRunBlocked) return undefined;
+    const missing = missingRunNodesSummary(missingRunNodes, (role) => {
       const key = graphEdgeRoleLabelKey(role);
       return t("graph.missingRunInput", { role: key ? t(key) : role });
-    }).join(" · ");
-    return `${missingNode.title}: ${missing}`;
-  }).join(" · "), [missingRunNodes, t]);
+    });
+    return missing || t("graph.runs.noRunnableNodes");
+  }, [graphRunBlocked, missingRunNodes, t]);
   const runMutation = useMutation({
     mutationFn: (input: GraphRunSubmitInput) =>
       api.submitGraphRun(graph.product_id, graph.id, input),
@@ -261,7 +262,7 @@ export function GraphNodeInspector({
       <GraphInspectorDashboard
         graph={graph}
         busy={busy || runMutation.isPending}
-        runBlocked={missingRunNodes.length > 0}
+        runBlocked={graphRunBlocked}
         runBlockedReason={graphRunBlockedReason}
         onRunGraph={() => {
           submitInspectorRun({ scope: "graph" });
@@ -317,7 +318,7 @@ export function GraphNodeInspector({
                   {t(graphNodeTitleKey(node.node_type))}
                 </span>
                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(nodeStatus)}`}>
-                  {ACTIVE_RUN_STATUSES.has(nodeStatus) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
+                  {LIVE_RUN_STATUSES.has(nodeStatus) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
                   {t(`detail.nodeStatus.${nodeStatus}`)}
                 </span>
                 <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${node.config_status === "ready"

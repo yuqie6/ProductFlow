@@ -136,6 +136,8 @@ describe("graph workflow node ports", () => {
     expect(handles.some((handle) => handle.includes('data-handleid="prompt"') && handle.includes('data-handlepos="left"'))).toBe(true);
     expect(handles.some((handle) => handle.includes('data-handleid="output"') && handle.includes('data-handlepos="right"'))).toBe(true);
     expect(handles.some((handle) => handle.includes("提示词"))).toBe(true);
+    expect(handles.some((handle) => handle.includes("接受提示词"))).toBe(true);
+    expect(handles.some((handle) => handle.includes("必连"))).toBe(true);
     expect(handles.some((handle) => handle.includes('aria-label="输出连接点"'))).toBe(true);
     expect(handles.every((handle) => !handle.includes('aria-hidden="true"'))).toBe(true);
   });

@@ -32,7 +32,8 @@ The current release serves a personal project and live demo. The main repository
 - Visual system and creative brief nodes distinguish seed from authored; fill only completes seed documents and does not trigger image generation.
 - Reference nodes bind one image from the product library.
 - Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy; running them renders from the live prompt document and does not rewrite authored upstream content. A reference edge is optional.
-- Users run a whole DAG or one node, inspect runs, cancel, and retry. Independent processing nodes call providers concurrently, limited by the generation concurrency setting; one failed image does not stop sibling shots. None of this requires the Agent conversation to be open; closing it matches never having opened it.
+- Users run a whole DAG, run-to-node, a single node, or one selection for a shot or failed subset; they inspect runs, cancel, and retry. A busy graph queues new submits. Independent processing nodes call providers concurrently, limited by the generation concurrency setting; one failed image does not stop sibling shots. None of this requires the Agent conversation to be open; closing it matches never having opened it.
+- Processing nodes expose one input port per role; missing required inputs mark the port and card red and disable that node or shot Play. Whole-graph Play stays available while at least one processing node can enqueue.
 - A whole workflow, folder, or selected node group can be saved as a user recipe.
 - Canvas folders are one-level visual organization only; they do not support nesting, independent run, cancel, or retry behavior.
 

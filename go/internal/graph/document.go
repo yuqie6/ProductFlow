@@ -2,6 +2,8 @@ package graph
 
 import (
 	"strings"
+
+	"github.com/yuqie6/productflow/prompts"
 )
 
 const (
@@ -128,13 +130,120 @@ func liveDocumentDivergedFromSnapshot(live, snapshot AppliedNode) bool {
 }
 
 func documentVisibleKeys(nodeType NodeType) []string {
+	fields, ok := nodeConfigFields(nodeType)
+	if !ok {
+		return nil
+	}
+	var keys []string
+	for _, field := range fields {
+		if field.control == "hidden" {
+			continue
+		}
+		keys = append(keys, field.key)
+	}
+	return keys
+}
+
+func inferDocumentOriginFromConfig(nodeType NodeType, config map[string]any) string {
+	if !isContentNodeType(nodeType) {
+		return ""
+	}
+	if config == nil {
+		config = map[string]any{}
+	}
 	switch nodeType {
 	case NodeCreativeBrief:
-		return []string{"goal", "design_goals", "required_copy", "prohibitions"}
+		if contentFieldsEmpty(nodeType, config) || looksLikeSourceNoteSeedBrief(config) {
+			return OriginSeed
+		}
+		return OriginAuthored
 	case NodeVisualSystem:
-		return []string{"visual_overlay"}
+		if documentFieldEmpty(config["visual_overlay"]) {
+			return OriginSeed
+		}
+		return OriginAuthored
 	case NodePromptGeneration:
-		return []string{"prompt"}
+		if looksLikeBirthPromptSeed(config) {
+			return OriginSeed
+		}
+		return OriginAuthored
+	default:
+		return OriginSeed
+	}
+}
+
+func contentFieldsEmpty(nodeType NodeType, config map[string]any) bool {
+	for _, key := range documentVisibleKeys(nodeType) {
+		if !documentFieldEmpty(config[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeSourceNoteSeedBrief(config map[string]any) bool {
+	look := prompts.ListingLook()
+	goal, _ := config["goal"].(string)
+	if strings.TrimSpace(goal) != look.Rule {
+		return false
+	}
+	if !documentFieldEmpty(config["required_copy"]) {
+		return false
+	}
+	goals := stringListValues(config["design_goals"])
+	if len(goals) != 1 || !strings.HasPrefix(goals[0], sourceNoteDesignGoalPrefix) {
+		return false
+	}
+	prohibitions := stringListValues(config["prohibitions"])
+	if len(prohibitions) != len(look.BriefProhibitions) {
+		return false
+	}
+	for i, item := range look.BriefProhibitions {
+		if prohibitions[i] != item {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeBirthPromptSeed(config map[string]any) bool {
+	prompt, _ := config["prompt"].(map[string]any)
+	if prompt == nil {
+		return documentFieldEmpty(config["prompt"])
+	}
+	key, _ := config["image_type_key"].(string)
+	expected := imageTypePromptGoal(strings.TrimSpace(key))
+	goal, _ := prompt["design_goal"].(string)
+	goal = strings.TrimSpace(goal)
+	if goal != "" && goal != expected {
+		return false
+	}
+	for childKey, value := range prompt {
+		switch childKey {
+		case "design_goal", "schema_version", "visual_variant_key":
+			continue
+		default:
+			if !documentFieldEmpty(value) {
+				return false
+			}
+		}
+	}
+	return goal == "" || goal == expected
+}
+
+func stringListValues(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		out := make([]string, len(typed))
+		copy(out, typed)
+		return out
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, _ := item.(string)
+			out = append(out, text)
+		}
+		return out
 	default:
 		return nil
 	}

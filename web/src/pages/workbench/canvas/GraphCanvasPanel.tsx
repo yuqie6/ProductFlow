@@ -53,7 +53,7 @@ import { graphNodeRunPresentations, graphQueuedRuns, graphRunningRuns } from "./
 import { applyGraphRunEvent, subscribeGraphRunEvents } from "./graphRunEvents";
 import { withGraphRunSubmit } from "./graphRunLock";
 import { isMoveNodesOnly } from "./graphChangeSetQueue";
-import { graphEdgeRoleLabelKey, missingRequiredRunNodes } from "./graphCatalog";
+import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
   buildCreateShotOperations,
   shotRunRequest,
@@ -257,7 +257,7 @@ export function GraphCanvasPanel({
     onSuccess: (next) => {
       commitLiveGraph(next);
     },
-    onError: (error) => {
+    onError: () => {
       setCanvasSyncVersion((current) => current + 1);
     },
   });
@@ -372,23 +372,27 @@ export function GraphCanvasPanel({
     () => missingRequiredRunNodes(graph, catalog),
     [catalog, graph],
   );
-  const graphRunBlocked = missingRunNodes.length > 0;
-  const graphRunBlockedReason = useMemo(() => missingRunNodes.map(({ node, roles }) => {
-    const missing = roles.map((role) => {
+  const graphRunBlocked = !graphHasRunnableProcessingNode(graph, catalog);
+  const graphRunBlockedReason = useMemo(() => {
+    if (!graphRunBlocked) return undefined;
+    const missing = missingRunNodesSummary(missingRunNodes, (role) => {
       const key = graphEdgeRoleLabelKey(role);
       return t("graph.missingRunInput", { role: key ? t(key) : role });
-    }).join(" · ");
-    return `${node.title}: ${missing}`;
-  }).join(" · "), [missingRunNodes, t]);
-  const blockedShotGroupIds = useMemo(() => {
-    const blocked = new Set<string>();
+    });
+    return missing || t("graph.runs.noRunnableNodes");
+  }, [graphRunBlocked, missingRunNodes, t]);
+  const blockedShotReasons = useMemo(() => {
+    const reasons: Record<string, string> = {};
     for (const group of graph.groups) {
-      if (missingRequiredRunNodes(graph, catalog, new Set(group.member_ids)).length > 0) {
-        blocked.add(group.id);
-      }
+      const missing = missingRequiredRunNodes(graph, catalog, new Set(group.member_ids));
+      if (!missing.length) continue;
+      reasons[group.id] = missingRunNodesSummary(missing, (role) => {
+        const key = graphEdgeRoleLabelKey(role);
+        return t("graph.missingRunInput", { role: key ? t(key) : role });
+      });
     }
-    return blocked;
-  }, [catalog, graph]);
+    return reasons;
+  }, [catalog, graph, t]);
   const plannedActions = useMemo(() => {
     const next: Record<string, GraphPlannedAction> = {};
     for (const node of runPreview?.nodes ?? []) next[node.node_id] = node.planned_action;
@@ -467,6 +471,8 @@ export function GraphCanvasPanel({
         const latest = await api.getWorkflowGraph(productId, graph.id);
         commitLiveGraph(latest);
         if (!isMoveNodesOnly(operations)) {
+          showNotice(t("graph.canvas.revisionConflict"));
+          setCanvasSyncVersion((current) => current + 1);
           return null;
         }
         return await applyMutation.mutateAsync({
@@ -481,7 +487,7 @@ export function GraphCanvasPanel({
       applyInFlightRef.current = false;
       mutationPreparationRef.current = false;
     }
-  }, [applyMutation, commitLiveGraph, graph.id, onBeforeRun]);
+  }, [applyMutation, commitLiveGraph, graph.id, onBeforeRun, showNotice, t]);
 
   const pumpApplyQueue = useCallback(() => {
     if (applyPumpRef.current) return;
@@ -1118,9 +1124,9 @@ export function GraphCanvasPanel({
           data-graph-proposal-banner
           className={`absolute z-20 ${compact ? "left-3 right-3 top-[8.25rem]" : "left-4 top-16 max-w-md"}`}
         >
-          <div className="rounded-xl border border-indigo-200 bg-white/95 p-3 text-xs shadow-sm dark:border-indigo-400/30 dark:bg-[#0f1726]/95">
-            <div className="font-semibold text-indigo-800 dark:text-indigo-200">{t("graph.proposal.title")}</div>
-            <p className="mt-1 leading-5 text-slate-600 dark:text-slate-300">
+          <div className="rounded-xl border border-accent/30 bg-surface-raised/95 p-3 text-xs shadow-sm">
+            <div className="font-semibold text-accent">{t("graph.proposal.title")}</div>
+            <p className="mt-1 leading-5 text-text-secondary">
               {graph.pending_proposal.stale ? t("graph.proposal.stale") : graph.pending_proposal.summary}
             </p>
             <div className="mt-2 flex gap-2">
@@ -1130,7 +1136,7 @@ export function GraphCanvasPanel({
                 onClick={() => {
                   void proposalMutation.mutateAsync("confirm").catch(() => undefined);
                 }}
-                className="inline-flex h-8 items-center rounded-lg bg-slate-900 px-3 text-[11px] font-semibold text-white disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900"
+                className="inline-flex h-8 items-center rounded-lg bg-accent px-3 text-[11px] font-semibold text-accent-fg disabled:opacity-45"
               >
                 {t("graph.proposal.confirm")}
               </button>
@@ -1140,7 +1146,7 @@ export function GraphCanvasPanel({
                 onClick={() => {
                   void proposalMutation.mutateAsync("discard").catch(() => undefined);
                 }}
-                className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-[11px] font-semibold text-slate-700 disabled:opacity-45 dark:border-slate-700 dark:text-slate-200"
+                className="inline-flex h-8 items-center rounded-lg border border-border-l1 px-3 text-[11px] font-semibold text-text-primary disabled:opacity-45"
               >
                 {t("graph.proposal.discard")}
               </button>
@@ -1149,9 +1155,9 @@ export function GraphCanvasPanel({
         </div>
       ) : null}
       {mainView === "canvas" && (enteredGroup || error || notice) ? (
-          <div
-            className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-16 max-w-sm"
-              }`}
+        <div
+          className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-16 max-w-sm"
+            }`}
         >
           {enteredGroup ? (
             <nav
@@ -1192,8 +1198,6 @@ export function GraphCanvasPanel({
             selectedNodeIds={selectedNodeIds}
             busy={structureBusy}
             runDisabled={runControlsBusy}
-            blockedGroupIds={blockedShotGroupIds}
-            runBlockedReason={graphRunBlockedReason}
             nodeStatuses={nodeStatuses}
             nodePresentations={nodePresentations}
             plannedActions={plannedActions}
@@ -1288,16 +1292,16 @@ export function GraphCanvasPanel({
               void submitRun({ scope: "graph" }).catch(() => undefined);
             }}
             runAllDisabled={graphRunBlocked}
-            blockedGroupIds={blockedShotGroupIds}
-            runBlockedReason={graphRunBlockedReason}
+            blockedReasons={blockedShotReasons}
+            runAllBlockedReason={graphRunBlockedReason}
           />
         </div>
       </div>
       {reusePrompt ? (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/40 p-4">
           <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl dark:bg-[#0f1726]">
-            <h3 className="text-sm font-semibold text-zinc-950 dark:text-white">{t("graph.drop.reuseTitle")}</h3>
-            <p className="mt-1 text-xs leading-5 text-zinc-500 dark:text-slate-400">{t("graph.drop.reuseDescription")}</p>
+            <h3 className="text-sm font-semibold text-text-primary">{t("graph.drop.reuseTitle")}</h3>
+            <p className="mt-1 text-xs leading-5 text-text-muted">{t("graph.drop.reuseDescription")}</p>
             <div className="mt-3 space-y-2">
               {reusePrompt.existing.map((node) => (
                 <button
@@ -1327,7 +1331,7 @@ export function GraphCanvasPanel({
                   );
                   setReusePrompt(null);
                 }}
-                className="flex h-10 w-full items-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white dark:bg-slate-100 dark:text-slate-900"
+                className="flex h-10 w-full items-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white "
               >
                 {t("graph.drop.createAndConnect")}
               </button>

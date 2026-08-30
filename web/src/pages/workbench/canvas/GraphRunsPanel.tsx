@@ -23,8 +23,10 @@ import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
   graphContextEntries,
   graphNodeRunPreviewAssetId,
+  graphProgressPhaseLabelKey,
   graphRunInputTraceEntries,
   graphRunScopeLabelKey,
+  formatElapsed,
   LIVE_RUN_STATUSES,
 } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
@@ -109,12 +111,12 @@ export function GraphRunsPanel({
   const operationError = cancelMutation.error ?? retryMutation.error ?? selectionMutation.error;
   return (
     <div className="space-y-3 pb-4" data-graph-runs-panel>
-      <div className="flex items-center justify-between gap-2 px-1 text-xs text-zinc-500 dark:text-slate-400">
+      <div className="flex items-center justify-between gap-2 px-1 text-xs text-text-muted">
         <span>{t("agentWorkbench.runHistory.workflowCount", { count: runs.length })}</span>
         {runsQuery.isFetching ? <Loader2 size={13} className="animate-spin" /> : null}
       </div>
       {operationError ? (
-        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+        <div role="alert" className="rounded-lg border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
           {errorDetail(operationError, t("graph.runs.loadFailed"))}
         </div>
       ) : null}
@@ -183,14 +185,14 @@ function GraphRunRecord({
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-zinc-900 dark:text-slate-100">
+              <span className="text-xs font-semibold text-text-primary">
                 {t(graphRunScopeLabelKey(run.scope))}
               </span>
               <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(run.status as WorkflowNodeDisplayStatus)}`}>
                 {t(`detail.nodeStatus.${run.status}`)}
               </span>
             </div>
-            <div className="mt-1 space-y-0.5 text-[10px] text-zinc-500 dark:text-slate-400">
+            <div className="mt-1 space-y-0.5 text-[10px] text-text-muted">
               {requested ? <div>{requested.title}</div> : null}
               <div>{t("agentWorkbench.runHistory.nodeCount", { count: run.node_runs.length })}</div>
               <div>{t("agentWorkbench.runHistory.started", { time: formatDateTime(run.started_at, t.locale) })}</div>
@@ -261,6 +263,8 @@ function NodeRunRecord({
   const active = LIVE_RUN_STATUSES.has(nodeRun.status);
   const sources = graphRunInputTraceEntries(nodeRun);
   const evidence = graphContextEntries(nodeRun.compiled_context);
+  const phaseKey = graphProgressPhaseLabelKey(nodeRun.progress_phase);
+  const elapsed = formatElapsed(nodeRun.started_at, nodeRun.finished_at, nodeRun.status);
   return (
     <div className={selected ? "bg-slate-50 dark:bg-slate-800/50" : ""}>
       <div className="flex min-w-0 items-start gap-2.5 px-3.5 py-3">
@@ -270,22 +274,31 @@ function NodeRunRecord({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {onJump ? (
-              <button type="button" onClick={onJump} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-zinc-800 hover:text-slate-950 dark:text-slate-100 dark:hover:text-white">
+              <button type="button" onClick={onJump} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-zinc-800 hover:text-text-primary dark:hover:text-white">
                 {title}
               </button>
             ) : (
-              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-800 dark:text-slate-100">{title}</span>
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">{title}</span>
             )}
             <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${statusClass(nodeRun.status)}`}>
               {t(`detail.nodeStatus.${nodeRun.status}`)}
             </span>
           </div>
+          {phaseKey || elapsed || nodeRun.attempt_count > 1 ? (
+            <div className="mt-1 space-y-0.5 text-[10px] text-text-muted">
+              {phaseKey ? <div>{t(phaseKey)}</div> : null}
+              {elapsed ? <div>{elapsed}</div> : null}
+              {nodeRun.attempt_count > 1 ? (
+                <div>{t("detail.nodeAttemptSummary", { attempts: nodeRun.attempt_count, retries: Math.max(0, nodeRun.attempt_count - 1) })}</div>
+              ) : null}
+            </div>
+          ) : null}
           {sources.length ? (
             <ul data-graph-run-inputs className="mt-1.5 space-y-0.5">
               {sources.map((item) => {
                 const roleKey = graphEdgeRoleLabelKey(item.role);
                 return (
-                  <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-slate-400">
+                  <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-text-muted">
                     <span className="min-w-0 truncate">{item.title || t("graph.runs.deletedNode")}</span>
                     <span>{roleKey ? t(roleKey) : item.role}</span>
                   </li>
@@ -294,7 +307,7 @@ function NodeRunRecord({
             </ul>
           ) : null}
           {nodeRun.failure_reason ? (
-            <div className="mt-1.5 text-[10px] leading-4 text-red-600 dark:text-red-300">{nodeRun.failure_reason}</div>
+            <div className="mt-1.5 text-[10px] leading-4 text-state-error">{nodeRun.failure_reason}</div>
           ) : null}
         </div>
         {previewAssetId && onPreviewImage ? (
@@ -321,7 +334,7 @@ function NodeRunRecord({
             {evidence.map((item) => (
               <div key={item.key} className="grid grid-cols-[minmax(88px,0.4fr)_minmax(0,1fr)] gap-2 text-[10px] leading-4">
                 <dt className="break-words text-zinc-400 dark:text-slate-500">{t(item.labelKey)}</dt>
-                <dd className="break-words text-zinc-600 dark:text-slate-300">{item.value}</dd>
+                <dd className="break-words text-text-secondary">{item.value}</dd>
               </div>
             ))}
           </dl>
@@ -350,8 +363,8 @@ function IconButton({
       onClick={onClick}
       disabled={disabled}
       className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border disabled:opacity-40 ${danger
-          ? "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-400/35 dark:text-red-200 dark:hover:bg-red-500/10"
-          : "border-zinc-200 text-zinc-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
+        ? "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-400/35 dark:text-red-200 dark:hover:bg-red-500/10"
+        : "border-zinc-200 text-zinc-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
         }`}
       aria-label={label}
       title={label}
@@ -375,7 +388,7 @@ function PanelState({
   compact?: boolean;
 }) {
   return (
-    <div className={`flex flex-col items-center justify-center gap-2 px-6 text-center text-xs text-zinc-500 dark:text-slate-400 ${compact ? "min-h-[180px]" : "min-h-[260px]"}`}>
+    <div className={`flex flex-col items-center justify-center gap-2 px-6 text-center text-xs text-text-muted ${compact ? "min-h-[180px]" : "min-h-[260px]"}`}>
       {icon ? <span className="text-zinc-400 dark:text-slate-500">{icon}</span> : null}
       <span className="max-w-[260px] leading-5">{text}</span>
       {action && onAction ? (

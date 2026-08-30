@@ -175,6 +175,41 @@ export function missingRequiredRunNodes(
     .filter((item) => item.roles.length > 0);
 }
 
+const FALLBACK_PROCESSING_TYPES = new Set<GraphNodeType>([
+  "creative_brief",
+  "visual_system",
+  "prompt_generation",
+  "image_generation",
+]);
+
+function nodeIsProcessing(
+  node: GraphNode,
+  catalog: GraphNodeCatalog | null | undefined,
+): boolean {
+  const spec = graphCatalogNode(catalog, node.node_type);
+  if (spec) return spec.kind === "processing";
+  return FALLBACK_PROCESSING_TYPES.has(node.node_type);
+}
+
+/** 整图入队条件与后端一致：至少有一个具备必需输入的处理节点。 */
+export function graphHasRunnableProcessingNode(
+  graph: GraphProjection,
+  catalog: GraphNodeCatalog | null | undefined,
+): boolean {
+  return graph.nodes.some((node) => (
+    nodeIsProcessing(node, catalog) && missingRequiredRunRoles(node, catalog).length === 0
+  ));
+}
+
+export function missingRunNodesSummary(
+  items: Array<{ node: GraphNode; roles: GraphEdgeRole[] }>,
+  roleLabel: (role: GraphEdgeRole) => string,
+): string {
+  return items
+    .map(({ node, roles }) => `${node.title}: ${roles.map(roleLabel).join(" · ")}`)
+    .join(" · ");
+}
+
 export function graphPortVisualState(
   graph: GraphProjection,
   nodeId: string,
@@ -232,7 +267,7 @@ export function isProcessingNode(
   node: GraphNode,
   catalog: GraphNodeCatalog | null | undefined,
 ): boolean {
-  return graphCatalogNode(catalog, node.node_type)?.kind === "processing";
+  return nodeIsProcessing(node, catalog);
 }
 
 const EDGE_ROLE_LABEL_KEYS: Record<GraphEdgeRole, TranslationKey> = {
@@ -245,4 +280,18 @@ const EDGE_ROLE_LABEL_KEYS: Record<GraphEdgeRole, TranslationKey> = {
 
 export function graphEdgeRoleLabelKey(role: string): TranslationKey | null {
   return EDGE_ROLE_LABEL_KEYS[role as GraphEdgeRole] ?? null;
+}
+
+const DATA_TYPE_LABEL_KEYS: Record<GraphCatalogInputContract["data_type"], TranslationKey> = {
+  product_facts: "graph.dataType.product_facts",
+  image_asset: "graph.dataType.image_asset",
+  creative_brief: "graph.dataType.creative_brief",
+  visual_system: "graph.dataType.visual_system",
+  prompt: "graph.dataType.prompt",
+};
+
+export function graphDataTypeLabelKey(
+  dataType: GraphCatalogInputContract["data_type"] | string,
+): TranslationKey | null {
+  return DATA_TYPE_LABEL_KEYS[dataType as GraphCatalogInputContract["data_type"]] ?? null;
 }

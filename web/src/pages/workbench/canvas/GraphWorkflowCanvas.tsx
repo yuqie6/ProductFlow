@@ -70,6 +70,7 @@ import {
 } from "./canvasState";
 import {
   graphConnectionInvalidReason,
+  graphDataTypeLabelKey,
   graphEdgeRoleLabelKey,
   graphInputPorts,
   graphNodeHasInput,
@@ -78,7 +79,9 @@ import {
   graphPortVisualState,
   isGraphConnectionValid,
   isProcessingNode,
+  missingRequiredRunNodes,
   missingRequiredRunRoles,
+  missingRunNodesSummary,
 } from "./graphCatalog";
 import { graphProgressPhaseLabelKey, type GraphNodeRunPresentation } from "./graphRunDisplay";
 import {
@@ -218,13 +221,13 @@ function nodeImage(node: GraphNode): DownloadableImage | null {
 function plannedActionClass(action: GraphPlannedAction | null | undefined): string {
   switch (action) {
     case "generate":
-      return "outline outline-2 outline-sky-400/90";
+      return "outline outline-2 outline-accent/90";
     case "reuse":
-      return "opacity-70";
+      return "outline outline-2 outline-border-l3 opacity-80";
     case "frozen":
-      return "outline outline-2 outline-slate-400/90";
+      return "outline outline-2 outline-text-muted";
     case "blocked":
-      return "outline outline-2 outline-red-500/90";
+      return "outline outline-2 outline-state-error/90";
     default:
       return "";
   }
@@ -279,15 +282,14 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   const plannedClass = plannedActionClass(data.plannedAction);
   return (
     <div
-      className={`relative w-[248px] overflow-visible ${
-        proposalState === "deleted"
-          ? "opacity-40"
-          : proposalState === "added"
-            ? "opacity-90 outline-dashed outline-2 outline-indigo-400/80"
-            : proposalState === "changed"
-              ? "outline outline-2 outline-amber-400/80"
-              : plannedClass
-      }`}
+      className={`relative w-[248px] overflow-visible ${proposalState === "deleted"
+        ? "opacity-40"
+        : proposalState === "added"
+          ? "opacity-90 outline-dashed outline-2 outline-accent/80"
+          : proposalState === "changed"
+            ? "outline outline-2 outline-state-warning/80"
+            : plannedClass
+        }`}
       data-graph-proposal-state={proposalState ?? undefined}
       data-graph-planned-action={data.plannedAction ?? undefined}
     >
@@ -295,7 +297,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         <div
           data-graph-selection-actions
           data-node-action
-          className="nodrag nopan nowheel absolute -top-12 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-slate-200 bg-white/98 p-1 shadow-lg dark:border-slate-700/80 dark:bg-[#111a2b]/98"
+          className="nodrag nopan nowheel absolute -top-12 left-1/2 z-dropdown flex -translate-x-1/2 items-center gap-1 rounded-panel border border-border-l1 bg-surface-raised/98 p-1 shadow-elev-2"
         >
           <WorkflowCanvasNodeToolbarButton
             label={t("detail.duplicate")}
@@ -328,81 +330,83 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           </WorkflowCanvasNodeToolbarButton>
         </div>
       ) : (
-      <WorkflowCanvasNodeToolbar visible={selected}>
-        {node.node_type === "image_asset" ? (
-          <WorkflowCanvasNodeToolbarButton
-            label={t("graph.inspector.bind")}
-            disabled={data.structureBusy}
-            onClick={() => data.onBind(node)}
-          >
-            <Link2 size={16} aria-hidden="true" />
-          </WorkflowCanvasNodeToolbarButton>
-        ) : null}
-        {graphNodeHasPinnableOutput(node) && data.onPin ? (
-          <WorkflowCanvasNodeToolbarButton
-            label={t("graph.canvas.pinAsset")}
-            disabled={data.structureBusy}
-            onClick={() => data.onPin?.(node)}
-          >
-            <Pin size={16} aria-hidden="true" />
-          </WorkflowCanvasNodeToolbarButton>
-        ) : null}
-        {isProcessingNode(node, data.catalog) && data.proposalState !== "added" ? (
-          <>
+        <WorkflowCanvasNodeToolbar visible={selected}>
+          {node.node_type === "image_asset" ? (
             <WorkflowCanvasNodeToolbarButton
-              label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.canvas.runNode")}
-              disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
-              onClick={() => data.onRun(node)}
+              label={t("graph.inspector.bind")}
+              disabled={data.structureBusy}
+              onClick={() => data.onBind(node)}
             >
-              {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+              <Link2 size={16} aria-hidden="true" />
             </WorkflowCanvasNodeToolbarButton>
+          ) : null}
+          {graphNodeHasPinnableOutput(node) && data.onPin ? (
             <WorkflowCanvasNodeToolbarButton
-              label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.runs.scope.toNode")}
-              disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
-              onClick={() => data.onRunToNode(node)}
+              label={t("graph.canvas.pinAsset")}
+              disabled={data.structureBusy}
+              onClick={() => data.onPin?.(node)}
             >
-              <ChevronsRight size={16} aria-hidden="true" />
+              <Pin size={16} aria-hidden="true" />
             </WorkflowCanvasNodeToolbarButton>
-          </>
-        ) : null}
-        <WorkflowCanvasNodeToolbarButton
-          label={t("detail.duplicate")}
-          disabled={data.structureBusy || running}
-          onClick={() => data.onDuplicate(node)}
-        >
-          <CopyPlus size={16} aria-hidden="true" />
-        </WorkflowCanvasNodeToolbarButton>
-        <WorkflowCanvasNodeToolbarButton
-          label={t("graph.canvas.saveRecipe")}
-          disabled={data.structureBusy || running}
-          onClick={() => data.onSaveRecipe(node)}
-        >
-          <BookmarkPlus size={16} aria-hidden="true" />
-        </WorkflowCanvasNodeToolbarButton>
-        <WorkflowCanvasNodeToolbarButton
-          label={t("detail.fitSelection")}
-          onClick={() => {
-            void reactFlow.fitView({ padding: 0.22, duration: 180, maxZoom: 1.05, nodes: [{ id }] });
-          }}
-        >
-          <Focus size={16} aria-hidden="true" />
-        </WorkflowCanvasNodeToolbarButton>
-        <WorkflowCanvasNodeToolbarButton
-          label={t("graph.canvas.delete")}
-          disabled={data.structureBusy || running}
-          destructive
-          onClick={() => data.onDelete(node)}
-        >
-          <Trash2 size={16} aria-hidden="true" />
-        </WorkflowCanvasNodeToolbarButton>
-      </WorkflowCanvasNodeToolbar>
+          ) : null}
+          {isProcessingNode(node, data.catalog) && data.proposalState !== "added" ? (
+            <>
+              <WorkflowCanvasNodeToolbarButton
+                label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.canvas.runNode")}
+                disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
+                onClick={() => data.onRun(node)}
+              >
+                {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+              </WorkflowCanvasNodeToolbarButton>
+              <WorkflowCanvasNodeToolbarButton
+                label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.runs.scope.toNode")}
+                disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
+                onClick={() => data.onRunToNode(node)}
+              >
+                <ChevronsRight size={16} aria-hidden="true" />
+              </WorkflowCanvasNodeToolbarButton>
+            </>
+          ) : null}
+          <WorkflowCanvasNodeToolbarButton
+            label={t("detail.duplicate")}
+            disabled={data.structureBusy || running}
+            onClick={() => data.onDuplicate(node)}
+          >
+            <CopyPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.canvas.saveRecipe")}
+            disabled={data.structureBusy || running}
+            onClick={() => data.onSaveRecipe(node)}
+          >
+            <BookmarkPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("detail.fitSelection")}
+            onClick={() => {
+              void reactFlow.fitView({ padding: 0.22, duration: 180, maxZoom: 1.05, nodes: [{ id }] });
+            }}
+          >
+            <Focus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.canvas.delete")}
+            disabled={data.structureBusy || running}
+            destructive
+            onClick={() => data.onDelete(node)}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+        </WorkflowCanvasNodeToolbar>
       )}
       {inputPorts.length ? inputPorts.map((port, index) => {
         const occupancy = node.incoming.filter((edge) => edge.role === port.role).length;
         const maxLabel = port.max_count == null ? t("graph.port.unbounded") : String(port.max_count);
         const roleKey = graphEdgeRoleLabelKey(port.role);
+        const typeKey = graphDataTypeLabelKey(port.data_type);
         const titleParts = [
           roleKey ? t(roleKey) : port.role,
+          typeKey ? t("graph.port.accepts", { type: t(typeKey) }) : null,
           t("graph.port.occupancy", { count: occupancy, max: maxLabel }),
           port.required_to_run ? t("graph.port.required") : null,
         ].filter(Boolean);
@@ -499,14 +503,14 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         }}
       />
       {data.plannedAction === "frozen" ? (
-        <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-slate-800/90 p-1 text-white" aria-hidden="true">
+        <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-surface-inverse p-1 text-surface-raised" aria-hidden="true">
           <Lock size={10} />
         </span>
       ) : null}
       {data.missingRunLabels.length ? (
         <div
           data-graph-missing-run-input
-          className="absolute -right-1 -top-1 z-30 max-w-[11rem] rounded-full bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold leading-4 text-white shadow"
+          className="absolute -right-1 -top-1 z-30 max-w-[11rem] rounded-full bg-state-error px-1.5 py-0.5 text-[9px] font-semibold leading-4 text-white shadow-elev-1"
         >
           {data.missingRunLabels.join(" · ")}
         </div>
@@ -539,14 +543,14 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   return (
     <div
       style={{ width: bounds.width, height: bounds.height }}
-      className={`group relative rounded-2xl border-2 border-dashed transition-all pointer-events-none ${selected
-        ? "border-slate-400 bg-slate-50/40 dark:border-slate-500 dark:bg-slate-800/20"
-        : "border-slate-300/80 bg-slate-50/30 dark:border-slate-700/80 dark:bg-[#0c1322]/25"
+      className={`group relative rounded-surface border-2 border-dashed transition-all pointer-events-none ${selected
+        ? "border-border-l3 bg-surface-subtle/40"
+        : "border-border-l1 bg-surface-subtle/30"
         }`}
       data-graph-group-id={group.id}
     >
       <div
-        className="pointer-events-auto flex items-center gap-2 border-b border-dashed border-slate-200/80 bg-white/70 px-3.5 py-2 backdrop-blur-sm dark:border-slate-800/80 dark:bg-[#0f172a]/60 rounded-t-2xl"
+        className="pointer-events-auto flex items-center gap-2 rounded-t-surface border-b border-dashed border-border-l1 bg-surface-raised/70 px-3.5 py-2 backdrop-blur-sm"
         onDoubleClick={(event) => {
           if (structureBusy) return;
           if ((event.target as HTMLElement).closest("input, button")) return;
@@ -554,7 +558,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
           onEnter(group.id);
         }}
       >
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control bg-surface-subtle text-text-secondary">
           <Folder size={13} aria-hidden="true" />
         </span>
         {editing ? (
@@ -575,18 +579,18 @@ export const GraphGroupCard = memo(function GraphGroupCard({
                 setEditing(false);
               }
             }}
-            className="nodrag nowheel nopan min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-bold text-slate-800 outline-none dark:border-slate-600 dark:bg-[#0f1726] dark:text-slate-100"
+            className="nodrag nowheel nopan min-w-0 flex-1 rounded-control border border-border-l1 bg-surface-raised px-2 py-1 text-xs font-bold text-text-primary outline-none focus:border-accent focus:ring-2 focus:ring-focus-ring"
           />
         ) : (
-          <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-800 dark:text-slate-200">{group.title}</span>
+          <span className="min-w-0 flex-1 truncate text-xs font-bold text-text-primary">{group.title}</span>
         )}
-        <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+        <span className="rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-semibold text-text-secondary">
           {t("workbench.folder.memberCount", { count: group.member_ids.length })}
         </span>
         {onRunShot ? (
           <button
             type="button"
-            className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+            className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
             disabled={structureBusy || runDisabled || runBlocked}
             title={runBlocked ? runBlockedReason : t("graph.canvas.runShot")}
             aria-label={t("graph.canvas.runShot")}
@@ -601,7 +605,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
         ) : null}
         <button
           type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
           disabled={structureBusy}
           title={t("graph.canvas.enterGroup")}
           aria-label={t("graph.canvas.enterGroup")}
@@ -615,7 +619,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
         </button>
         <button
           type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
           disabled={structureBusy}
           title={t("graph.canvas.renameGroup")}
           aria-label={t("graph.canvas.renameGroup")}
@@ -628,7 +632,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
         </button>
         <button
           type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-state-error-soft hover:text-state-error disabled:opacity-40"
           disabled={structureBusy}
           title={t("graph.palette.dissolve")}
           aria-label={t("graph.palette.dissolve")}
@@ -672,17 +676,17 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         path={edgePath}
         style={{
           stroke: data?.proposalState === "added"
-            ? "#6366f1"
+            ? "var(--color-edge-proposal)"
             : data?.proposalState === "deleted"
-              ? "rgba(148,163,184,0.45)"
-              : emphasis === "active" ? (selected ? "#334155" : "#64748b") : "rgba(148,163,184,0.28)",
+              ? "var(--color-edge-receded)"
+              : emphasis === "active" ? (selected ? "var(--color-edge-selected)" : "var(--color-edge-active)") : "var(--color-edge-receded)",
           strokeWidth: emphasis === "active" ? (selected ? 2.2 : 1.6) : 1.1,
           strokeDasharray: data?.proposalState === "added" || data?.proposalState === "deleted" ? "6 4" : undefined,
           opacity: data?.proposalState === "deleted" ? 0.45 : 1,
         }}
         data-graph-proposal-state={data?.proposalState ?? undefined}
         label={(hovered || selected) ? data?.roleLabel ?? undefined : undefined}
-        labelStyle={{ fontSize: 10, fill: "#64748b" }}
+        labelStyle={{ fontSize: 10, fill: "var(--color-text-muted)" }}
       />
       <path
         d={edgePath}
@@ -705,7 +709,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
       >
         <button
           type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-500 shadow-sm hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-45 dark:border-slate-800 dark:bg-[#0f1726]/95"
+          className="nodrag nowheel nopan flex h-8 w-8 items-center justify-center rounded-full border border-border-l1 bg-surface-raised text-text-muted shadow-elev-1 hover:border-state-error/40 hover:bg-state-error-soft hover:text-state-error disabled:opacity-45"
           onClick={(event) => {
             event.stopPropagation();
             if (!data?.structureBusy) data?.onDelete(id);
@@ -734,8 +738,6 @@ export function GraphWorkflowCanvas({
   selectedNodeIds,
   busy,
   runDisabled = false,
-  blockedGroupIds,
-  runBlockedReason,
   nodeStatuses,
   nodePresentations = {},
   plannedActions = {},
@@ -776,8 +778,6 @@ export function GraphWorkflowCanvas({
   selectedNodeIds: string[];
   busy: boolean;
   runDisabled?: boolean;
-  blockedGroupIds?: ReadonlySet<string>;
-  runBlockedReason?: string;
   nodeStatuses: Record<string, WorkflowNodeStatus>;
   nodePresentations?: Record<string, GraphNodeRunPresentation>;
   plannedActions?: Record<string, GraphPlannedAction>;
@@ -878,6 +878,7 @@ export function GraphWorkflowCanvas({
     const groups = viewGraph.groups.flatMap((group) => {
       const bounds = computeGraphGroupBounds(viewGraph, group);
       if (!bounds) return [];
+      const missing = missingRequiredRunNodes(displayGraph, catalog, new Set(group.member_ids));
       return [{
         id: `group:${group.id}`,
         type: "graph-group" as const,
@@ -892,8 +893,13 @@ export function GraphWorkflowCanvas({
           group,
           bounds,
           runDisabled,
-          runBlocked: blockedGroupIds?.has(group.id) ?? false,
-          runBlockedReason,
+          runBlocked: missing.length > 0,
+          runBlockedReason: missing.length
+            ? missingRunNodesSummary(missing, (role) => {
+              const key = graphEdgeRoleLabelKey(role);
+              return t("graph.missingRunInput", { role: key ? t(key) : role });
+            })
+            : undefined,
           structureBusy: busy,
           onEnter: onEnterGroup,
           onRename: onRenameGroup,
@@ -948,7 +954,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [blockedGroupIds, busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, plannedActions, proposalNodeStates, runBlockedReason, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, plannedActions, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -1204,7 +1210,7 @@ export function GraphWorkflowCanvas({
         connectOnClick={false}
         connectionMode={ConnectionMode.Strict}
         connectionLineType={ConnectionLineType.Bezier}
-        connectionLineStyle={{ stroke: "#64748b", strokeWidth: 2, strokeDasharray: "6 4" }}
+        connectionLineStyle={{ stroke: "var(--color-edge-default)", strokeWidth: 2, strokeDasharray: "6 4" }}
         autoPanOnConnect
         onConnect={handleConnect}
         onConnectEnd={handleConnectEnd}
@@ -1235,7 +1241,7 @@ export function GraphWorkflowCanvas({
           position="bottom-right"
           aria-label={t("detail.canvasMiniMap")}
           className="workflow-canvas-minimap nopan nodrag nowheel hidden lg:block"
-          nodeColor={(node) => node.data?.kind === "group" ? "#94a3b8" : "#a5b4fc"}
+          nodeColor={(node) => node.data?.kind === "group" ? "var(--color-canvas-minimap-group)" : "var(--color-canvas-minimap-node)"}
           nodeBorderRadius={8}
           nodeStrokeWidth={3}
           pannable

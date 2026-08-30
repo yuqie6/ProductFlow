@@ -4,12 +4,15 @@ import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import {
   GRAPH_NODE_TYPE_ORDER,
   graphConnectionInvalidReason,
+  graphDataTypeLabelKey,
   graphNodeHasInput,
   graphNodeTypeOrder,
   inspectableGraphNodeId,
   isGraphConnectionValid,
+  graphHasRunnableProcessingNode,
   missingRequiredRunNodes,
   missingRequiredRunRoles,
+  missingRunNodesSummary,
 } from "./graphCatalog";
 
 const catalog: GraphNodeCatalog = {
@@ -239,6 +242,32 @@ describe("missingRequiredRunNodes", () => {
   });
 });
 
+describe("graphHasRunnableProcessingNode", () => {
+  it("keeps whole-graph run available when only some processing nodes lack required edges", () => {
+    expect(graphHasRunnableProcessingNode(graph, catalog)).toBe(true);
+  });
+
+  it("blocks whole-graph run when no processing node can enqueue", () => {
+    const sourceOnly: GraphProjection = {
+      ...graph,
+      nodes: graph.nodes.filter((node) => node.node_type === "product_source"),
+    };
+    expect(graphHasRunnableProcessingNode(sourceOnly, catalog)).toBe(false);
+    const unwiredImage: GraphProjection = {
+      ...graph,
+      nodes: graph.nodes.filter((node) => node.id === "image" || node.id === "source"),
+    };
+    expect(graphHasRunnableProcessingNode(unwiredImage, catalog)).toBe(false);
+  });
+});
+
+describe("missingRunNodesSummary", () => {
+  it("joins node titles with missing roles", () => {
+    const image = graph.nodes.find((node) => node.id === "image")!;
+    expect(missingRunNodesSummary([{ node: image, roles: ["prompt"] }], (role) => role)).toBe("图: prompt");
+  });
+});
+
 describe("graphNodeHasInput", () => {
   it("uses catalog accepts, not a local type list", () => {
     expect(graphNodeHasInput("prompt_generation", catalog)).toBe(true);
@@ -263,5 +292,13 @@ describe("inspectableGraphNodeId", () => {
     expect(inspectableGraphNodeId(graph, "source")).toBe("source");
     expect(inspectableGraphNodeId(graph, "group:missing")).toBeNull();
     expect(inspectableGraphNodeId(graph, null)).toBeNull();
+  });
+});
+
+describe("graphDataTypeLabelKey", () => {
+  it("maps catalog data types to tooltip copy keys", () => {
+    expect(graphDataTypeLabelKey("prompt")).toBe("graph.dataType.prompt");
+    expect(graphDataTypeLabelKey("product_facts")).toBe("graph.dataType.product_facts");
+    expect(graphDataTypeLabelKey("unknown")).toBeNull();
   });
 });

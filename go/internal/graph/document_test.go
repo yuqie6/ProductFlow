@@ -49,7 +49,7 @@ func TestApplyDocumentOriginKeepsPreviousWhenUnchanged(t *testing.T) {
 	}
 }
 
-func TestBirthPromptDesignGoalLooksLikeSeed(t *testing.T) {
+func TestBirthPromptDesignGoalRemainsSeed(t *testing.T) {
 	key := "hero"
 	node := AppliedNode{
 		NodeType:       NodePromptGeneration,
@@ -64,6 +64,48 @@ func TestBirthPromptDesignGoalLooksLikeSeed(t *testing.T) {
 	}
 	if !contentNodeShouldGenerate(node, false, RegenerateFill) {
 		t.Fatal("seed prompt must generate on fill")
+	}
+	if got := inferDocumentOriginFromConfig(NodePromptGeneration, node.Config); got != OriginSeed {
+		t.Fatalf("infer %s", got)
+	}
+}
+
+func TestInferDocumentOriginFromConfigMatchesSeedTemplates(t *testing.T) {
+	if got := inferDocumentOriginFromConfig(NodeCreativeBrief, map[string]any{}); got != OriginSeed {
+		t.Fatalf("empty brief %s", got)
+	}
+	note := "棉麻夏装，面向通勤"
+	seedBrief := creativeBriefConfigFromSourceNote(&note)
+	if got := inferDocumentOriginFromConfig(NodeCreativeBrief, seedBrief); got != OriginSeed {
+		t.Fatalf("source-note brief %s", got)
+	}
+	if got := inferDocumentOriginFromConfig(NodeCreativeBrief, map[string]any{"goal": "手填卖点"}); got != OriginAuthored {
+		t.Fatalf("authored brief %s", got)
+	}
+	if got := inferDocumentOriginFromConfig(NodeVisualSystem, map[string]any{}); got != OriginSeed {
+		t.Fatalf("empty visual %s", got)
+	}
+	if got := inferDocumentOriginFromConfig(NodeVisualSystem, map[string]any{
+		"visual_overlay": map[string]any{"style": []any{"干净白底"}},
+	}); got != OriginAuthored {
+		t.Fatalf("overlay visual %s", got)
+	}
+	hero := map[string]any{
+		"image_type_key": "hero",
+		"prompt":         map[string]any{"design_goal": imageTypePromptGoal("hero")},
+	}
+	if got := inferDocumentOriginFromConfig(NodePromptGeneration, hero); got != OriginSeed {
+		t.Fatalf("birth prompt %s", got)
+	}
+	authoredPrompt := map[string]any{
+		"image_type_key": "hero",
+		"prompt": map[string]any{
+			"design_goal": imageTypePromptGoal("hero"),
+			"composition": map[string]any{"layout": "左侧留白"},
+		},
+	}
+	if got := inferDocumentOriginFromConfig(NodePromptGeneration, authoredPrompt); got != OriginAuthored {
+		t.Fatalf("composed prompt %s", got)
 	}
 }
 

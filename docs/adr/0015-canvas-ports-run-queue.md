@@ -13,7 +13,7 @@ ADR 0014 把单输入 handle、镜头逐张 `scope=node` 和一图一活跃 run 
 ## 决策
 
 - 处理节点左侧按 Catalog `accepts` 渲染具名输入端口，handle id 等于持久化边 `role`。连接时只校验类型、基数和防环；就绪校验留在运行时。brief → prompt 扇入上限为 1。边可重连，同角色扇入用 `reorder_edges` 排序。
-- `document_origin` 是内容节点列（`seed|generated|authored`），不再用文稿启发式。Catalog 字段声明 `affects_digest` 与 `required`。`create_node` 默认 config 由后端 Catalog 填充。
+- `document_origin` 是内容节点列（`seed|generated|authored`），不再用文稿启发式。存量行在 migrate 时：`config_json` 若仍有合法 origin 键则沿用后删除；其余 `seed`/空列对照当前种子模板，可见文稿有差异则标 `authored`。Catalog 字段声明 `affects_digest` 与 `required`。`create_node` 默认 config 由后端 Catalog 填充。
 - 节点 run 状态为 `queued|running|succeeded|failed|unknown|skipped|cancelled`。digest 未变或 frozen 写 `skipped`。取消写 `cancelled`。`idle` 不再写入。
 - 运行 scope：`node`、`to_node`、`selection`（显式节点集合）、`graph`。`force` 仅在 `node|to_node|selection` 且有目标时合法。镜头「运行此场景」与「重试失败节点」各提交一次 `selection`。
 - 已有 `running` run 时新请求写入图级 `queued` run，FIFO 出队时再快照。同类请求（同 scope、同目标、同 force/mode）合并。`POST .../runs/preview` 返回 `planned_action`。`GET .../runs/:id/events` 推送节点状态；浏览器保留轮询兜底。内容 adopt 用系统 Actor；live 可见文稿相对运行快照有差异或 revision 冲突时不覆盖 config，生成 artifact 仍保留并成为 `current_artifact_id`，节点投影为 `stale`。
@@ -23,12 +23,12 @@ ADR 0014 把单输入 handle、镜头逐张 `scope=node` 和一图一活跃 run 
 
 ## 后果
 
-- 缺必连输入（目前仅 prompt → image）在端口和卡片上可见，Play 禁用。
-- 全图会为具备必需输入的处理节点建立 node run；无需重算的节点显示为已复用/已冻结的 `skipped`，不再伪装成功。缺少必连输入的节点不会入队，整图提交仍返回校验错误。
+- 缺必连输入（目前仅 prompt → image）在端口和卡片上可见；该节点与该镜头的 Play 禁用。整图 Play 在至少有一个可入队处理节点时仍可用，悬停预览把缺边节点标为 blocked。
+- 全图会为具备必需输入的处理节点建立 node run；无需重算的节点显示为已复用/已冻结的 `skipped`，不再伪装成功。缺少必连输入的节点不会入队；没有任何可入队处理节点时整图提交返回校验错误。
 - 排队期间用户可继续改图；出队跑的是当时 live 图。
 
 ## 证据
 
-- `go/internal/graph/catalog.go`、`select.go`、`runs.go`、`document.go`、`run_sse.go`
+- `go/internal/graph/catalog.go`、`select.go`、`runs.go`、`document.go`、`origin_backfill.go`、`run_sse.go`
 - `web/src/pages/workbench/canvas/GraphWorkflowCanvas.tsx`、`shotChangeSet.ts`、`GraphCanvasPanel.tsx`
 - `just go-test`、`pnpm --dir web test:run`

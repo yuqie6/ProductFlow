@@ -41,6 +41,25 @@ func cookSelectGraph() AppliedGraph {
 	}
 }
 
+func TestSelectGraphOmitsNodesMissingRequiredEdges(t *testing.T) {
+	g := cookSelectGraph()
+	g.Edges = g.Edges[:1]
+	ids, err := SelectRunNodeIDs(g, RunScopeGraph, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, id := range ids {
+		got[id] = true
+	}
+	if !got["brief"] || !got["prompt"] {
+		t.Fatalf("ready nodes %v", ids)
+	}
+	if got["image"] {
+		t.Fatalf("incomplete image must not enqueue: %v", ids)
+	}
+}
+
 func TestSelectGraphQueuesReadyNodesForSkipHistory(t *testing.T) {
 	g := cookSelectGraph()
 	ids, err := SelectRunNodeIDs(g, RunScopeGraph, "", nil)

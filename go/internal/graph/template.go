@@ -122,6 +122,8 @@ func imageTypePromptGoal(key string) string {
 	return title + "：" + job
 }
 
+const sourceNoteDesignGoalPrefix = "商品与受众资料："
+
 func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 	text := ""
 	if sourceNote != nil {
@@ -137,7 +139,7 @@ func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 	look := prompts.ListingLook()
 	return map[string]any{
 		"goal":         look.Rule,
-		"design_goals": []string{"商品与受众资料：" + text},
+		"design_goals": []string{sourceNoteDesignGoalPrefix + text},
 		"prohibitions": append([]string{}, look.BriefProhibitions...),
 	}
 }

@@ -652,10 +652,6 @@ func incomingVisualVersionID(graph AppliedGraph, nodeID string, sources map[stri
 	return nil
 }
 
-func incomingPromptArtifact(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
-	return incomingPromptDocument(graph, nodeID, sources)
-}
-
 func stripV3Prompt(payload map[string]any) map[string]any {
 	out := map[string]any{}
 	for key, value := range payload {

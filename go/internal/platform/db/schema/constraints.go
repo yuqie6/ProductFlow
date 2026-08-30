@@ -1658,7 +1658,9 @@ ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_document
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
-	`UPDATE workflow_graph_nodes SET document_origin = CASE
+	`-- Copy a retired config_json origin key when present. Remaining seed/NULL
+	-- rows are compared to current seed templates in graph.BackfillDocumentOrigin.
+	UPDATE workflow_graph_nodes SET document_origin = CASE
 		WHEN config_json->>'document_origin' IN ('seed', 'generated', 'authored') THEN config_json->>'document_origin'
 		ELSE 'seed'
 	END

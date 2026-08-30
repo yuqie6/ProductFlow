@@ -23,8 +23,8 @@ export interface GraphShotListProps {
   onRunShot: (groupId: string) => void;
   onRunAll: () => void;
   runAllDisabled?: boolean;
-  blockedGroupIds?: ReadonlySet<string>;
-  runBlockedReason?: string;
+  runAllBlockedReason?: string;
+  blockedReasons?: Readonly<Record<string, string>>;
 }
 
 export function GraphShotList({
@@ -42,8 +42,8 @@ export function GraphShotList({
   onRunShot,
   onRunAll,
   runAllDisabled = false,
-  blockedGroupIds,
-  runBlockedReason,
+  runAllBlockedReason,
+  blockedReasons,
 }: GraphShotListProps) {
   const { t } = useI18n();
 
@@ -65,6 +65,7 @@ export function GraphShotList({
           type="button"
           data-graph-shot-run-all
           disabled={busy || runningGroupId !== null || runAllDisabled}
+          title={runAllDisabled ? runAllBlockedReason : undefined}
           onClick={onRunAll}
           className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-45"
         >
@@ -76,7 +77,7 @@ export function GraphShotList({
       {operationError ? (
         <div
           role="alert"
-          className="mx-3 mt-3 flex shrink-0 items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200 sm:mx-5"
+          className="mx-3 mt-3 flex shrink-0 items-start gap-2 rounded-lg border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error sm:mx-5"
         >
           <AlertCircle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0">{errorDetail(operationError, t("workbench.error.run"))}</span>
@@ -93,7 +94,7 @@ export function GraphShotList({
       {runsError ? (
         <div
           role="alert"
-          className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200 sm:mx-5"
+          className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error sm:mx-5"
         >
           <AlertCircle size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1">{errorDetail(runsError, t("graph.runs.loadFailed"))}</span>
@@ -120,8 +121,8 @@ export function GraphShotList({
                 busy={busy}
                 running={runningGroupId === shot.groupId}
                 anotherShotRunning={runningGroupId !== null && runningGroupId !== shot.groupId}
-                runBlocked={blockedGroupIds?.has(shot.groupId) ?? false}
-                runBlockedReason={runBlockedReason}
+                runBlocked={Boolean(blockedReasons?.[shot.groupId])}
+                runBlockedReason={blockedReasons?.[shot.groupId]}
                 onOpenNode={onOpenNode}
                 onOpenLocalEdit={onOpenLocalEdit}
                 onRunShot={onRunShot}
@@ -208,7 +209,7 @@ function GraphShotRow({
           </span>
         </div>
         {failureReason ? (
-          <p role="alert" className="mt-2 break-words text-xs leading-5 text-red-700 dark:text-red-200">
+          <p role="alert" className="mt-2 break-words text-xs leading-5 text-state-error">
             {failureReason}
           </p>
         ) : null}
@@ -230,7 +231,7 @@ function GraphShotRow({
             disabled={busy || running || anotherShotRunning || runBlocked}
             onClick={() => onRunShot(shot.groupId)}
             title={runBlocked ? runBlockedReason : undefined}
-            className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+            className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-45 "
           >
             {running ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
             <span>{running ? t("detail.runAction.submitting") : t("graph.canvas.runShot")}</span>

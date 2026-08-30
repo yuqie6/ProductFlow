@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -32,6 +33,10 @@ func main() {
 	}
 	if err := schema.Apply(gdb); err != nil {
 		fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
+		os.Exit(1)
+	}
+	if err := graph.BackfillDocumentOrigin(gdb); err != nil {
+		fmt.Fprintf(os.Stderr, "document_origin: %v\n", err)
 		os.Exit(1)
 	}
 }
