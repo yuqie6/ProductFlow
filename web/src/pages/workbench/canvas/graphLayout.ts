@@ -192,6 +192,7 @@ export function buildDuplicateGraphOperations(
       client_ref: graphChangeSetClientRef("edge"),
       source_ref: refById.get(edge.source_node_id),
       target_ref: refById.get(edge.target_node_id),
+      order: edge.order,
     });
   }
   return { operations, clientRefs: [...refById.values()] };
@@ -233,26 +234,6 @@ export function buildPinImageAssetOperations(
 
 export function buildRenameGroupOperations(groupId: string, title: string): GraphChangeSet["operations"] {
   return [{ op: "rename_group", group_ref: groupId, title }];
-}
-
-export function defaultGraphNodeConfig(nodeType: GraphNode["node_type"]): Record<string, unknown> {
-  if (nodeType === "product_source") {
-    return {
-      source_product_id: null,
-      fact_set_version_id: null,
-    };
-  }
-  if (nodeType !== "image_generation") return {};
-  return {
-    generation_spec: {
-      aspect_ratio: "1:1",
-      resolution_tier: "high",
-      quality_intent: "high",
-      reference_fidelity: "high",
-      background_intent: "auto",
-      text_policy: "none",
-    },
-  };
 }
 
 export function graphNodeTitleKey(nodeType: GraphNode["node_type"]): TranslationKey {

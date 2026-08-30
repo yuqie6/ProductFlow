@@ -55,11 +55,39 @@ export function graphConnectionContract(
   catalog: GraphNodeCatalog | null | undefined,
   sourceType: GraphNodeType,
   targetType: GraphNodeType,
+  targetRole?: GraphEdgeRole | string | null,
 ): GraphCatalogInputContract | null {
   const source = graphCatalogNode(catalog, sourceType);
   const target = graphCatalogNode(catalog, targetType);
   if (!source || !target) return null;
+  if (targetRole && targetRole !== "input") {
+    return target.accepts.find((input) => input.role === targetRole && input.data_type === source.output_data_type) ?? null;
+  }
   return target.accepts.find((input) => input.data_type === source.output_data_type) ?? null;
+}
+
+export function graphInputPorts(
+  catalog: GraphNodeCatalog | null | undefined,
+  nodeType: GraphNodeType,
+): GraphCatalogInputContract[] {
+  return graphCatalogNode(catalog, nodeType)?.accepts ?? [];
+}
+
+export function graphPortDataTypeClass(dataType: GraphCatalogInputContract["data_type"] | "output"): string {
+  switch (dataType) {
+    case "product_facts":
+      return "!border-slate-600 !bg-slate-100 dark:!border-slate-300 dark:!bg-slate-800";
+    case "image_asset":
+      return "!border-emerald-700 !bg-emerald-50 dark:!border-emerald-300 dark:!bg-emerald-950/70";
+    case "creative_brief":
+      return "!border-amber-700 !bg-amber-50 dark:!border-amber-300 dark:!bg-amber-950/70";
+    case "visual_system":
+      return "!border-violet-700 !bg-violet-50 dark:!border-violet-300 dark:!bg-violet-950/70";
+    case "prompt":
+      return "!border-sky-700 !bg-sky-50 dark:!border-sky-300 dark:!bg-sky-950/70";
+    default:
+      return "";
+  }
 }
 
 export function graphNodeHasInput(
@@ -80,26 +108,34 @@ export function graphConnectionInvalidReason(
   sourceNodeId: string,
   targetNodeId: string,
   catalog: GraphNodeCatalog | null | undefined,
+  targetHandle?: string | null,
+  ignoredEdgeId?: string | null,
 ): TranslationKey | null {
   if (!catalog) return "graph.connect.catalogMissing";
   if (sourceNodeId === targetNodeId) return "graph.connect.self";
   const source = graph.nodes.find((node) => node.id === sourceNodeId);
   const target = graph.nodes.find((node) => node.id === targetNodeId);
   if (!source || !target) return "graph.connect.missingNode";
-  const contract = graphConnectionContract(catalog, source.node_type, target.node_type);
+  const contract = graphConnectionContract(catalog, source.node_type, target.node_type, targetHandle);
   if (!contract) return "graph.connect.incompatible";
-  if (graph.edges.some((edge) => edge.source_node_id === sourceNodeId && edge.target_node_id === targetNodeId)) {
+  if (graph.edges.some((edge) => (
+    edge.id !== ignoredEdgeId
+    && edge.source_node_id === sourceNodeId
+    && edge.target_node_id === targetNodeId
+    && edge.role === contract.role
+  ))) {
     return "graph.connect.duplicate";
   }
   if (contract.max_count != null) {
     const sameRoleCount = graph.edges.filter((edge) => (
-      edge.target_node_id === targetNodeId
+      edge.id !== ignoredEdgeId
+      && edge.target_node_id === targetNodeId
       && edge.data_type === contract.data_type
       && edge.role === contract.role
     )).length;
     if (sameRoleCount >= contract.max_count) return "graph.connect.cardinality";
   }
-  return wouldCreateCycle(graph, sourceNodeId, targetNodeId) ? "graph.connect.cycle" : null;
+  return wouldCreateCycle(graph, sourceNodeId, targetNodeId, ignoredEdgeId) ? "graph.connect.cycle" : null;
 }
 
 export function isGraphConnectionValid(
@@ -107,8 +143,10 @@ export function isGraphConnectionValid(
   sourceNodeId: string,
   targetNodeId: string,
   catalog: GraphNodeCatalog | null | undefined,
+  targetHandle?: string | null,
+  ignoredEdgeId?: string | null,
 ): boolean {
-  return graphConnectionInvalidReason(graph, sourceNodeId, targetNodeId, catalog) === null;
+  return graphConnectionInvalidReason(graph, sourceNodeId, targetNodeId, catalog, targetHandle, ignoredEdgeId) === null;
 }
 
 /** 能否运行只看 incoming 边；断开边就失去该输入。 */
@@ -126,24 +164,46 @@ export function missingRequiredRunRoles(
     .map((input) => input.role);
 }
 
+export function missingRequiredRunNodes(
+  graph: GraphProjection,
+  catalog: GraphNodeCatalog | null | undefined,
+  nodeIds?: ReadonlySet<string>,
+): Array<{ node: GraphNode; roles: GraphEdgeRole[] }> {
+  return graph.nodes
+    .filter((node) => !nodeIds || nodeIds.has(node.id))
+    .map((node) => ({ node, roles: missingRequiredRunRoles(node, catalog) }))
+    .filter((item) => item.roles.length > 0);
+}
+
 export function graphPortVisualState(
   graph: GraphProjection,
   nodeId: string,
   handleType: "source" | "target",
   connection: { inProgress: boolean; fromNodeId: string | null; fromType: "source" | "target" | null },
   catalog: GraphNodeCatalog | null | undefined,
+  role?: string | null,
 ): WorkflowCanvasPortVisualState {
+  if (handleType === "target" && role) {
+    const node = graph.nodes.find((item) => item.id === nodeId);
+    const spec = node ? graphCatalogNode(catalog, node.node_type) : null;
+    const port = spec?.accepts.find((input) => input.role === role);
+    if (port?.required_to_run && node && !node.incoming.some((edge) => edge.role === role)) {
+      if (!connection.inProgress) return "missing";
+    }
+  }
   if (!connection.inProgress || !connection.fromNodeId || !connection.fromType) return "idle";
   if (connection.fromNodeId === nodeId && connection.fromType === handleType) return "origin";
   if (connection.fromType === handleType) return "idle";
   const sourceNodeId = handleType === "target" ? connection.fromNodeId : nodeId;
   const targetNodeId = handleType === "target" ? nodeId : connection.fromNodeId;
-  return isGraphConnectionValid(graph, sourceNodeId, targetNodeId, catalog) ? "valid-target" : "invalid-target";
+  const targetHandle = handleType === "target" ? role : undefined;
+  return isGraphConnectionValid(graph, sourceNodeId, targetNodeId, catalog, targetHandle) ? "valid-target" : "invalid-target";
 }
 
-function wouldCreateCycle(graph: GraphProjection, sourceNodeId: string, targetNodeId: string): boolean {
+function wouldCreateCycle(graph: GraphProjection, sourceNodeId: string, targetNodeId: string, ignoredEdgeId?: string | null): boolean {
   const outgoing = new Map<string, string[]>();
   for (const edge of graph.edges) {
+    if (edge.id === ignoredEdgeId) continue;
     const targets = outgoing.get(edge.source_node_id) ?? [];
     targets.push(edge.target_node_id);
     outgoing.set(edge.source_node_id, targets);

@@ -35,8 +35,10 @@ export type GalleryDirectoryKind =
   | "user_folder";
 export type GalleryAssetSort = "created_desc" | "created_asc" | "name_asc" | "name_desc";
 export type MediaLibrarySourceType = "image_session_generated" | "product_asset" | "direct_upload";
-export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
-export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled" | "unknown";
+/** API/DB node-run statuses. "idle" is intentionally not persisted. */
+export type WorkflowNodeStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown" | "skipped";
+export type WorkflowNodeDisplayStatus = WorkflowNodeStatus | "idle";
+export type WorkflowRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 
 export interface SessionState {
   authenticated: boolean;
@@ -851,7 +853,8 @@ export type AgentToolStepKind =
   | "request_workflow_run"
   | "create_product"
   | "apply_graph"
-  | "propose_graph";
+  | "propose_graph"
+  | "focus_canvas";
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 
@@ -942,24 +945,6 @@ export interface AgentTurn {
   sync_error: string | null;
   canvas_focus?: AgentCanvasFocus | null;
   finished_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export type AgentTurnEffectResult = "applied" | "failed" | "unknown";
-export type AgentTurnReconciliationState = "applied" | "not_applied" | "conflict" | "unknown";
-
-export interface AgentTurnEffectReconciliation {
-  schema_version: 1;
-  id: string;
-  projection_id: string;
-  tool_call_id: string;
-  tool_name: "request_workflow_run_v1" | "create_product_workspace_v1" | "finalize_product_intake_v1";
-  idempotency_key: string;
-  effect_result: AgentTurnEffectResult;
-  reconciliation_state: AgentTurnReconciliationState;
-  result: Record<string, unknown> | null;
-  detail: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1099,6 +1084,7 @@ export interface AgentTurnEvent {
   sequence: number;
   created_at: string;
   kind: string;
+  ignorable?: boolean;
   payload: Record<string, unknown>;
 }
 
@@ -1476,7 +1462,20 @@ export type GraphNodeType =
 export type GraphEdgeDataType = "product_facts" | "image_asset" | "creative_brief" | "visual_system" | "prompt";
 export type GraphEdgeRole = "facts" | "reference" | "brief" | "visual_guidance" | "prompt";
 export type GraphConfigStatus = "incomplete" | "ready" | "stale";
-export type GraphRunScope = "node" | "to_node" | "graph";
+export type GraphRunScope = "node" | "to_node" | "graph" | "selection";
+export type GraphRegenerateMode = "fill" | "refine" | "replace";
+export type GraphDocumentOrigin = "seed" | "generated" | "authored";
+export type GraphPlannedAction = "generate" | "reuse" | "frozen" | "blocked";
+export type GraphBindingStatus = "bound" | "unbound";
+
+export interface GraphRunSubmitInput {
+  scope: GraphRunScope;
+  node_id?: string | null;
+  node_ids?: string[] | null;
+  force?: boolean;
+  regenerate_mode?: GraphRegenerateMode;
+}
+
 export type GraphNodeKind = "source" | "processing";
 
 export interface GraphCatalogInputContract {
@@ -1530,6 +1529,7 @@ export interface GraphCatalogConfigField {
   default?: unknown;
   panel?: string | null;
   visible_when?: GraphCatalogVisibleWhen | null;
+  affects_digest?: boolean;
   fields?: GraphCatalogConfigField[];
 }
 
@@ -1566,6 +1566,8 @@ export interface GraphNode {
   preview_asset_id: string | null;
   config_status: GraphConfigStatus;
   unused: boolean;
+  document_origin?: GraphDocumentOrigin | null;
+  binding_status?: GraphBindingStatus | null;
   current_artifact_id?: string | null;
   current_artifact_type?: "creative_brief" | "visual_system" | "prompt" | "image" | null;
   current_artifact_payload?: Record<string, unknown> | null;
@@ -1666,6 +1668,9 @@ export interface GraphNodeRun {
   input_trace?: GraphRunInputTraceEntry[];
   output: Record<string, unknown> | null;
   failure_reason: string | null;
+  attempt_count: number;
+  progress_phase?: string | null;
+  planned_action?: GraphPlannedAction | null;
   started_at: string;
   finished_at: string | null;
 }
@@ -1676,12 +1681,29 @@ export interface GraphRun {
   status: WorkflowRunStatus;
   scope: GraphRunScope;
   requested_node_id: string | null;
+  requested_node_ids?: string[];
   graph_revision: number;
   failure_reason: string | null;
   is_retryable: boolean;
   node_runs: GraphNodeRun[];
   started_at: string;
   finished_at: string | null;
+}
+
+export interface GraphRunPreviewNode {
+  node_id: string;
+  title: string;
+  planned_action: GraphPlannedAction;
+  reason: string;
+}
+
+export interface GraphRunPreviewResponse {
+  scope: GraphRunScope;
+  requested_node_id: string | null;
+  requested_node_ids: string[];
+  force: boolean;
+  regenerate_mode: GraphRegenerateMode;
+  nodes: GraphRunPreviewNode[];
 }
 
 export interface GraphRunListResponse {

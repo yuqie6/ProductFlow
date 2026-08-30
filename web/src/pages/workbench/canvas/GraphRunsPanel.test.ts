@@ -86,6 +86,7 @@ const run: GraphRun = {
     },
     output: { product_image_asset_id: "out-1" },
     failure_reason: null,
+    attempt_count: 1,
     started_at: "2026-08-21T00:00:00Z",
     finished_at: "2026-08-21T00:00:08Z",
   }],
@@ -143,5 +144,21 @@ describe("GraphRunsPanel", () => {
     const firstScreen = markup.split("data-graph-run-inputs-technical")[0];
     expect(firstScreen).toContain("主图提示词");
     expect(firstScreen).not.toContain("改名后的提示词");
+  });
+
+  it("does not offer run retry while a run is queued or running", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const liveRuns: GraphRun[] = [
+      { ...run, id: "queued", status: "queued", is_retryable: true, node_runs: run.node_runs.map((item) => ({ ...item, status: "queued" })) },
+      { ...run, id: "running", status: "running", is_retryable: true, node_runs: run.node_runs.map((item) => ({ ...item, status: "running" })) },
+    ];
+    client.setQueryData(["graph-runs", "p1", "g1"], { items: liveRuns });
+    const markup = renderToStaticMarkup(createElement(
+      QueryClientProvider,
+      { client },
+      createElement(GraphRunsPanel, { productId: "p1", graph }),
+    ));
+    expect(markup).not.toContain('aria-label="重试该运行"');
+    expect(markup.match(/aria-label="取消当前运行"/g) ?? []).toHaveLength(2);
   });
 });

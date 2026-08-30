@@ -6,14 +6,14 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Play, Redo2, Undo2 } from "lucide-react";
+import { Bot, ChevronRight, Loader2, Play, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { api, ApiError } from "../../../lib/api";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { useI18n } from "../../../lib/preferences";
-import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection } from "../../../lib/types";
+import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphPlannedAction, GraphProjection, GraphRunListResponse, GraphRunPreviewResponse, GraphRunSubmitInput } from "../../../lib/types";
 import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCanvasChromeToggle";
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
@@ -43,19 +43,20 @@ import {
   buildPinImageAssetOperations,
   buildRenameGroupOperations,
   createdGraphNodeIds,
-  defaultGraphNodeConfig,
   graphCanvasView,
   graphChangeSetClientRef,
   graphNodeTitleKey,
   graphViewportCenterPosition,
   selectionInsideGroup,
 } from "./graphLayout";
-import { graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
+import { graphNodeRunPresentations, graphQueuedRuns, graphRunningRuns } from "./graphRunDisplay";
+import { applyGraphRunEvent, subscribeGraphRunEvents } from "./graphRunEvents";
+import { withGraphRunSubmit } from "./graphRunLock";
+import { isMoveNodesOnly } from "./graphChangeSetQueue";
+import { graphEdgeRoleLabelKey, missingRequiredRunNodes } from "./graphCatalog";
 import {
   buildCreateShotOperations,
-  sequenceShotRuns,
-  shotRunRequests,
-  waitUntilGraphRunNotRunning,
+  shotRunRequest,
 } from "./shotChangeSet";
 import { GraphShotList } from "./GraphShotList";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
@@ -109,6 +110,12 @@ function compactWorkbench(): boolean {
     && window.matchMedia("(max-width: 1023px)").matches;
 }
 
+interface PendingGraphApply {
+  summary: string;
+  operations: GraphChangeSet["operations"];
+  resolve: (next: GraphProjection | null) => void;
+}
+
 export function GraphCanvasPanel({
   productId,
   graph,
@@ -123,6 +130,7 @@ export function GraphCanvasPanel({
   onOpenLocalEdit,
   chromeCollapsed = false,
   onToggleChrome,
+  agentEditing = false,
 }: {
   productId: string;
   graph: GraphProjection;
@@ -137,6 +145,7 @@ export function GraphCanvasPanel({
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   chromeCollapsed?: boolean;
   onToggleChrome?: () => void;
+  agentEditing?: boolean;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -158,6 +167,8 @@ export function GraphCanvasPanel({
   const viewportRef = useRef(viewport);
   const [canvasSyncVersion, setCanvasSyncVersion] = useState(0);
   const applyInFlightRef = useRef(false);
+  const pendingApplyRef = useRef<PendingGraphApply | null>(null);
+  const applyPumpRef = useRef(false);
   const historyInFlightRef = useRef(false);
   const mutationPreparationRef = useRef(false);
   const [compact, setCompact] = useState(compactWorkbench);
@@ -181,7 +192,11 @@ export function GraphCanvasPanel({
   const mainViewGraphIdRef = useRef(graph.id);
   const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
   const runningShotGroupRef = useRef<string | null>(null);
+  const [runPreview, setRunPreview] = useState<GraphRunPreviewResponse | null>(null);
+  const [runEventsFallback, setRunEventsFallback] = useState(false);
+  const previewTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const runEventCursorRef = useRef<Record<string, number>>({});
   graphRef.current = graph;
   catalogRef.current = catalog;
   selectedRef.current = selectedNodeIds;
@@ -192,6 +207,12 @@ export function GraphCanvasPanel({
     setEnteredGroupId(null);
     setViewport(readStoredWorkflowCanvasViewport(graph.id));
   }, [graph.id]);
+
+  useEffect(() => {
+    if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = null;
+    setRunPreview(null);
+  }, [graph.id, graph.revision]);
 
   useEffect(() => {
     if (!enteredGroupId) return;
@@ -225,20 +246,19 @@ export function GraphCanvasPanel({
 
   useEffect(() => () => {
     if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
+    pendingApplyRef.current?.resolve(null);
+    pendingApplyRef.current = null;
   }, []);
 
-  // Graph Command 是写入者。409 表示 revision 已变，应重载 live 图，而不是重试过期操作。
+  // 409 先刷新 live 图；只有纯位置操作可以在新 revision 上安全重放一次。
   const applyMutation = useMutation({
     mutationFn: (changeSet: GraphChangeSet) => api.applyWorkflowChangeSet(productId, graph.id, changeSet),
     onSuccess: (next) => {
       commitLiveGraph(next);
     },
-    onError: async (error) => {
+    onError: (error) => {
       setCanvasSyncVersion((current) => current + 1);
-      if (error instanceof ApiError && error.status === 409) {
-        const next = await api.getWorkflowGraph(productId, graph.id);
-        commitLiveGraph(next);
-      }
     },
   });
 
@@ -271,7 +291,7 @@ export function GraphCanvasPanel({
   });
 
   const runMutation = useMutation({
-    mutationFn: (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) =>
+    mutationFn: (input: GraphRunSubmitInput) =>
       api.submitGraphRun(productId, graph.id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, graph.id] });
@@ -317,7 +337,13 @@ export function GraphCanvasPanel({
   const runsQuery = useQuery({
     queryKey: ["graph-runs", productId, graph.id],
     queryFn: () => api.listGraphRuns(productId, graph.id),
-    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
+    refetchInterval: runEventsFallback ? 1200 : false,
+  });
+  const cancelRunMutation = useMutation({
+    mutationFn: (runId: string) => api.cancelGraphRun(productId, graph.id, runId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, graph.id] });
+    },
   });
 
   const nodePresentations = useMemo(
@@ -338,26 +364,67 @@ export function GraphCanvasPanel({
     [graph, runsQuery.data?.items],
   );
   const hasShotGroups = shotProjections.length > 0;
-  const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
-  const graphWritePending = applyMutation.isPending || undoMutation.isPending || redoMutation.isPending;
-
-	useEffect(() => {
-    if (!graphRunIsBusy) return;
-    if (graphWritePending) {
-      void queryClient.cancelQueries({ queryKey: ["workflow-graph", productId] });
+  const queuedRuns = graphQueuedRuns(runsQuery.data?.items);
+  const runningRuns = graphRunningRuns(runsQuery.data?.items);
+  const liveRun = runningRuns[0] ?? queuedRuns[0] ?? null;
+  const liveRunId = liveRun?.id ?? null;
+  const missingRunNodes = useMemo(
+    () => missingRequiredRunNodes(graph, catalog),
+    [catalog, graph],
+  );
+  const graphRunBlocked = missingRunNodes.length > 0;
+  const graphRunBlockedReason = useMemo(() => missingRunNodes.map(({ node, roles }) => {
+    const missing = roles.map((role) => {
+      const key = graphEdgeRoleLabelKey(role);
+      return t("graph.missingRunInput", { role: key ? t(key) : role });
+    }).join(" · ");
+    return `${node.title}: ${missing}`;
+  }).join(" · "), [missingRunNodes, t]);
+  const blockedShotGroupIds = useMemo(() => {
+    const blocked = new Set<string>();
+    for (const group of graph.groups) {
+      if (missingRequiredRunNodes(graph, catalog, new Set(group.member_ids)).length > 0) {
+        blocked.add(group.id);
+      }
+    }
+    return blocked;
+  }, [catalog, graph]);
+  const plannedActions = useMemo(() => {
+    const next: Record<string, GraphPlannedAction> = {};
+    for (const node of runPreview?.nodes ?? []) next[node.node_id] = node.planned_action;
+    return next;
+  }, [runPreview]);
+  useEffect(() => {
+    if (!liveRunId) {
+      setRunEventsFallback(false);
       return;
     }
-    const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
-      void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
-      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 1200);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [graphRunIsBusy, graphWritePending, productId, queryClient]);
+    return subscribeGraphRunEvents(api.graphRunEventsUrl(productId, graph.id, liveRunId), (event) => {
+      runEventCursorRef.current[event.run_id] = event.sequence;
+      queryClient.setQueryData<GraphRunListResponse | undefined>(["graph-runs", productId, graph.id], (previous) => applyGraphRunEvent(previous, event));
+      if (event.kind === "run.started"
+        || event.kind === "run.completed"
+        || event.kind === "run.failed"
+        || event.kind === "run.cancelled"
+        || event.kind === "run.unknown") {
+        // A queued run has no node_runs until activation. Terminal refreshes
+        // also pick up attempt_count, retryability, and a promoted queue item.
+        void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, graph.id] });
+      }
+      if (event.kind === "node.succeeded" || event.kind === "node.skipped" || event.kind === "run.completed") {
+        void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+        void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
+        void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
+      }
+    }, {
+      after: runEventCursorRef.current[liveRunId] ?? 0,
+      onOpen: () => setRunEventsFallback(false),
+      onError: () => {
+        setRunEventsFallback(true);
+        showNotice(t("graph.runs.liveConnectionFailed"));
+      },
+    });
+  }, [graph.id, liveRunId, productId, queryClient, showNotice, t]);
 
   useEffect(() => {
     if (mainViewGraphIdRef.current !== graph.id) {
@@ -372,17 +439,7 @@ export function GraphCanvasPanel({
     if (!hasShotGroups) setMainView("canvas");
   }, [graph.id, graph.pending_proposal, hasShotGroups]);
 
-  const applyAsync = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
-    if (!operations.length) return null;
-    if (
-      applyInFlightRef.current
-      || historyInFlightRef.current
-      || mutationPreparationRef.current
-      || applyMutation.isPending
-    ) {
-      setCanvasSyncVersion((current) => current + 1);
-      return null;
-    }
+  const executeApply = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
     mutationPreparationRef.current = true;
     try {
       try {
@@ -391,16 +448,32 @@ export function GraphCanvasPanel({
         setCanvasSyncVersion((current) => current + 1);
         return null;
       }
-      if (applyMutation.isPending || historyInFlightRef.current) {
+      if (historyInFlightRef.current) {
         setCanvasSyncVersion((current) => current + 1);
         return null;
       }
       applyInFlightRef.current = true;
-      return await applyMutation.mutateAsync({
+      const changeSet = () => ({
         base_graph_revision: graphRef.current.revision,
         summary,
         operations,
       });
+      try {
+        return await applyMutation.mutateAsync(changeSet());
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 409) {
+          throw error;
+        }
+        const latest = await api.getWorkflowGraph(productId, graph.id);
+        commitLiveGraph(latest);
+        if (!isMoveNodesOnly(operations)) {
+          return null;
+        }
+        return await applyMutation.mutateAsync({
+          ...changeSet(),
+          base_graph_revision: latest.revision,
+        });
+      }
     } catch {
       setCanvasSyncVersion((current) => current + 1);
       return null;
@@ -408,7 +481,44 @@ export function GraphCanvasPanel({
       applyInFlightRef.current = false;
       mutationPreparationRef.current = false;
     }
-  }, [applyMutation, onBeforeRun]);
+  }, [applyMutation, commitLiveGraph, graph.id, onBeforeRun]);
+
+  const pumpApplyQueue = useCallback(() => {
+    if (applyPumpRef.current) return;
+    applyPumpRef.current = true;
+    void (async () => {
+      try {
+        while (pendingApplyRef.current) {
+          const pending = pendingApplyRef.current;
+          pendingApplyRef.current = null;
+          const next = await executeApply(pending.summary, pending.operations);
+          pending.resolve(next);
+        }
+      } finally {
+        applyPumpRef.current = false;
+        if (pendingApplyRef.current) pumpApplyQueue();
+      }
+    })();
+  }, [executeApply]);
+
+  const applyAsync = useCallback((summary: string, operations: GraphChangeSet["operations"]) => {
+    if (!operations.length) return Promise.resolve(null);
+    if (applyInFlightRef.current || historyInFlightRef.current || mutationPreparationRef.current || applyPumpRef.current) {
+      if (pendingApplyRef.current) {
+        showNotice(t("graph.canvas.changeConflict"));
+        return Promise.resolve(null);
+      }
+      const queued = new Promise<GraphProjection | null>((resolve) => {
+        pendingApplyRef.current = { summary, operations, resolve };
+      });
+      showNotice(t("graph.canvas.changeQueued"));
+      if (!applyInFlightRef.current && !historyInFlightRef.current && !mutationPreparationRef.current) {
+        pumpApplyQueue();
+      }
+      return queued;
+    }
+    return executeApply(summary, operations).finally(pumpApplyQueue);
+  }, [executeApply, pumpApplyQueue, showNotice, t]);
 
   const apply = useCallback((summary: string, operations: GraphChangeSet["operations"]) => {
     void applyAsync(summary, operations);
@@ -443,8 +553,9 @@ export function GraphCanvasPanel({
     } finally {
       historyInFlightRef.current = false;
       mutationPreparationRef.current = false;
+      pumpApplyQueue();
     }
-  }, [applyMutation, onBeforeRun, redoMutation, undoMutation]);
+  }, [applyMutation, onBeforeRun, pumpApplyQueue, redoMutation, undoMutation]);
 
   const selectCreatedNodes = useCallback((before: GraphProjection, after: GraphProjection) => {
     const created = createdGraphNodeIds(before, after);
@@ -477,7 +588,7 @@ export function GraphCanvasPanel({
       title: t(graphNodeTitleKey(nodeType)),
       position_x: position.position_x,
       position_y: position.position_y,
-      config: defaultGraphNodeConfig(nodeType),
+      config: {},
       ...(groupRef ? { group_ref: groupRef } : {}),
     }]).then((next) => {
       if (next) selectCreatedNodes(before, next);
@@ -628,8 +739,9 @@ export function GraphCanvasPanel({
       });
     } finally {
       applyInFlightRef.current = false;
+      pumpApplyQueue();
     }
-  }, [applyMutation]);
+  }, [applyMutation, pumpApplyQueue]);
 
   const pinCurrentOutput = useCallback((nodeId: string) => {
     const before = graphRef.current;
@@ -640,37 +752,46 @@ export function GraphCanvasPanel({
     });
   }, [applyAsync, selectCreatedNodes, t]);
 
-  const submitRun = useCallback(async (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) => {
-    try {
-      await onBeforeRun?.();
-    } catch {
-      return;
-    }
-    await runMutation.mutateAsync(input);
+  const submitRun = useCallback(async (input: GraphRunSubmitInput) => {
+    await withGraphRunSubmit(async () => {
+      try {
+        await onBeforeRun?.();
+      } catch {
+        return;
+      }
+      await runMutation.mutateAsync(input);
+    });
   }, [onBeforeRun, runMutation]);
 
   const runShot = useCallback(async (groupId: string) => {
-    const requests = shotRunRequests(graphRef.current, groupId);
-    if (!requests.length) return;
-    try {
-      await onBeforeRun?.();
-    } catch {
-      return;
-    }
-    const workflowId = graphRef.current.id;
-    await sequenceShotRuns(
-      requests,
-      (input) => runMutation.mutateAsync(input),
-      (run) => waitUntilGraphRunNotRunning(
-        run,
-        (runId) => api.getGraphRun(productId, workflowId, runId),
-      ),
-    );
+    const request = shotRunRequest(graphRef.current, groupId);
+    if (!request) return;
+    await submitRun(request);
     void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
-    void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, workflowId] });
+    void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, graphRef.current.id] });
     void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
     void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
-  }, [onBeforeRun, productId, queryClient, runMutation]);
+  }, [productId, queryClient, submitRun]);
+
+  const showGraphRunPreview = useCallback(() => {
+    if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
+    const previewGraphId = graphRef.current.id;
+    const previewRevision = graphRef.current.revision;
+    previewTimerRef.current = window.setTimeout(() => {
+      void api.previewGraphRun(productId, previewGraphId, { scope: "graph" })
+        .then((preview) => {
+          const current = graphRef.current;
+          if (current.id !== previewGraphId || current.revision !== previewRevision) return;
+          setRunPreview(preview);
+        })
+        .catch(() => undefined);
+    }, 160);
+  }, [productId]);
+  const hideGraphRunPreview = useCallback(() => {
+    if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = null;
+    setRunPreview(null);
+  }, []);
 
   const runShotWithBusy = useCallback(async (groupId: string) => {
     if (runningShotGroupRef.current !== null) return;
@@ -857,7 +978,7 @@ export function GraphCanvasPanel({
   const structureBusy = applyMutation.isPending || undoMutation.isPending || redoMutation.isPending || proposalMutation.isPending;
   const runBusy = runMutation.isPending;
   const busy = structureBusy || runBusy;
-  const runControlsBusy = busy || runningShotGroupId !== null || graphRunIsBusy;
+  const runControlsBusy = structureBusy || runningShotGroupId !== null;
 
   useEffect(() => {
     onBusyChange?.(structureBusy);
@@ -905,15 +1026,27 @@ export function GraphCanvasPanel({
             {t("agentWorkbench.canvas")}
           </button>
         </div>
-        {onToggleChrome ? (
-          <ProductWorkbenchCanvasChromeToggle
-            embedded
-            collapsed={chromeCollapsed}
-            maximizeLabel={t("detail.maximizeCanvas")}
-            restoreLabel={t("detail.restoreCanvas")}
-            onToggle={onToggleChrome}
-          />
-        ) : null}
+        <div className="flex min-w-0 items-center gap-2">
+          {agentEditing ? (
+            <span
+              role="status"
+              data-agent-canvas-presence
+              className="inline-flex min-h-8 min-w-0 items-center gap-1.5 rounded-md border border-accent/30 bg-accent-soft px-2 text-[11px] font-medium text-accent-strong"
+            >
+              <Bot size={13} className="shrink-0" aria-hidden="true" />
+              <span className="truncate">{t("graph.canvas.agentEditing")}</span>
+            </span>
+          ) : null}
+          {onToggleChrome ? (
+            <ProductWorkbenchCanvasChromeToggle
+              embedded
+              collapsed={chromeCollapsed}
+              maximizeLabel={t("detail.maximizeCanvas")}
+              restoreLabel={t("detail.restoreCanvas")}
+              onToggle={onToggleChrome}
+            />
+          ) : null}
+        </div>
       </div>
       {mainView === "canvas" ? <div
         className={`absolute z-20 flex items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 p-1 shadow-sm backdrop-blur ${compact ? "right-3 top-[4.75rem]" : "right-4 top-16"
@@ -942,16 +1075,43 @@ export function GraphCanvasPanel({
         <button
           type="button"
           data-graph-run-all
-          disabled={runControlsBusy}
+          disabled={structureBusy || graphRunBlocked}
           onClick={() => {
+            hideGraphRunPreview();
             void submitRun({ scope: "graph" }).catch(() => undefined);
           }}
+          onMouseEnter={showGraphRunPreview}
+          onMouseLeave={hideGraphRunPreview}
+          onFocus={showGraphRunPreview}
+          onBlur={hideGraphRunPreview}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent text-accent-fg hover:bg-accent-strong disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.run")}
-          title={t("graph.canvas.run")}
+          title={graphRunBlocked ? graphRunBlockedReason : t("graph.canvas.run")}
         >
-          {runControlsBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+          {runBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
         </button>
+        {runningRuns.length || queuedRuns.length ? (
+          <div
+            data-graph-run-queue
+            className="ml-1 flex max-w-[14rem] items-center gap-1 rounded-lg border border-border-l1 bg-surface-subtle px-2 py-1 text-[10px] font-semibold text-text-secondary"
+          >
+            <span>
+              {t("graph.runs.queue", { running: runningRuns.length, queued: queuedRuns.length })}
+            </span>
+            {queuedRuns.map((run) => (
+              <button
+                key={run.id}
+                type="button"
+                disabled={cancelRunMutation.isPending}
+                onClick={() => cancelRunMutation.mutate(run.id)}
+                className="rounded px-1 text-[10px] text-red-700 hover:bg-red-50 dark:text-red-300"
+                title={t("graph.runs.cancelQueued")}
+              >
+                {t("graph.runs.cancelQueued")}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div> : null}
       {graph.pending_proposal ? (
         <div
@@ -1032,8 +1192,11 @@ export function GraphCanvasPanel({
             selectedNodeIds={selectedNodeIds}
             busy={structureBusy}
             runDisabled={runControlsBusy}
+            blockedGroupIds={blockedShotGroupIds}
+            runBlockedReason={graphRunBlockedReason}
             nodeStatuses={nodeStatuses}
             nodePresentations={nodePresentations}
+            plannedActions={plannedActions}
             runningNodeId={runningNodeId}
             canvasSyncVersion={canvasSyncVersion}
             viewport={viewport}
@@ -1049,6 +1212,16 @@ export function GraphCanvasPanel({
               source_ref: source,
               target_ref: target,
             }])}
+            onReconnect={(edgeId, source, target, order) => apply("重连", [
+              { op: "disconnect_edge", edge_ref: edgeId },
+              {
+                op: "connect_nodes",
+                client_ref: graphChangeSetClientRef("edge"),
+                source_ref: source,
+                target_ref: target,
+                order,
+              },
+            ])}
             onConnectionRejected={(reasonKey) => {
               if (reasonKey) showNotice(t(reasonKey));
             }}
@@ -1114,6 +1287,9 @@ export function GraphCanvasPanel({
             onRunAll={() => {
               void submitRun({ scope: "graph" }).catch(() => undefined);
             }}
+            runAllDisabled={graphRunBlocked}
+            blockedGroupIds={blockedShotGroupIds}
+            runBlockedReason={graphRunBlockedReason}
           />
         </div>
       </div>

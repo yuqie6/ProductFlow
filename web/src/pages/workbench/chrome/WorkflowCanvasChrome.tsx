@@ -16,7 +16,7 @@ import { useCallback } from "react";
 
 import type { CanvasInteractionMode } from "./workflowCanvasInteraction";
 
-export type WorkflowCanvasPortVisualState = "idle" | "origin" | "valid-target" | "invalid-target";
+export type WorkflowCanvasPortVisualState = "idle" | "origin" | "valid-target" | "invalid-target" | "missing";
 
 const SOURCE_PORT_CLASS_NAME =
   "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-slate-700 !bg-white !opacity-100 !shadow-[0_0_0_2px_#fff,0_1px_2px_rgba(15,23,42,0.18)] hover:!bg-slate-50 dark:!border-slate-200 dark:!bg-[#111b2d] dark:!shadow-[0_0_0_2px_#0d1424,0_1px_2px_rgba(0,0,0,0.45)] dark:hover:!bg-slate-800";
@@ -30,6 +30,8 @@ const PORT_STATE_CLASS_NAMES: Record<WorkflowCanvasPortVisualState, string> = {
     "!border-emerald-700 !bg-emerald-50 !shadow-[0_0_0_3px_#d1fae5] dark:!border-emerald-300 dark:!bg-emerald-950/70 dark:!shadow-[0_0_0_3px_#14532d]",
   "invalid-target":
     "!border-dashed !border-red-600 !bg-red-50 !shadow-[0_0_0_3px_#fee2e2] dark:!border-red-400 dark:!bg-red-950/50 dark:!shadow-[0_0_0_3px_#7f1d1d]",
+  missing:
+    "!border-red-600 !bg-red-100 !shadow-[0_0_0_3px_#fecaca] dark:!border-red-400 dark:!bg-red-950/80 dark:!shadow-[0_0_0_3px_#7f1d1d]",
 };
 
 export function WorkflowCanvasNodePort({
@@ -41,6 +43,7 @@ export function WorkflowCanvasNodePort({
   presentationHidden = false,
   visualState = "idle",
   visualScale = 1,
+  colorClass = "",
 }: {
   id?: string | null;
   type: "source" | "target";
@@ -50,6 +53,7 @@ export function WorkflowCanvasNodePort({
   presentationHidden?: boolean;
   visualState?: WorkflowCanvasPortVisualState;
   visualScale?: number;
+  colorClass?: string;
 }) {
   const interactionEnabled = connectable && !presentationHidden;
   return (
@@ -69,8 +73,8 @@ export function WorkflowCanvasNodePort({
         pointerEvents: presentationHidden ? "none" : undefined,
       }}
       className={`${type === "source" ? SOURCE_PORT_CLASS_NAME : TARGET_PORT_CLASS_NAME} ${
-        PORT_STATE_CLASS_NAMES[visualState]
-      } ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}
+        colorClass
+      } ${PORT_STATE_CLASS_NAMES[visualState]} ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}
       title={label}
       aria-label={label}
       aria-hidden={presentationHidden || undefined}

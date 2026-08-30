@@ -8,6 +8,7 @@ import {
   graphNodeTypeOrder,
   inspectableGraphNodeId,
   isGraphConnectionValid,
+  missingRequiredRunNodes,
   missingRequiredRunRoles,
 } from "./graphCatalog";
 
@@ -35,7 +36,7 @@ const catalog: GraphNodeCatalog = {
       accepts: [
         { data_type: "product_facts", role: "facts", max_count: null, required_to_run: false },
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
-        { data_type: "creative_brief", role: "brief", max_count: null, required_to_run: false },
+        { data_type: "creative_brief", role: "brief", max_count: 1, required_to_run: false },
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
       ],
     },
@@ -145,7 +146,8 @@ const graph: GraphProjection = {
 describe("isGraphConnectionValid", () => {
   it("allows facts into prompt and prompt into image", () => {
     expect(isGraphConnectionValid(graph, "source", "prompt", catalog)).toBe(true);
-    expect(isGraphConnectionValid(graph, "prompt", "image", catalog)).toBe(true);
+    expect(isGraphConnectionValid(graph, "prompt", "image", catalog, "prompt")).toBe(true);
+    expect(isGraphConnectionValid(graph, "prompt", "image", catalog, "reference")).toBe(false);
   });
 
   it("rejects facts into image generation", () => {
@@ -155,6 +157,11 @@ describe("isGraphConnectionValid", () => {
   it("rejects a second prompt edge into the same image node", () => {
     const withPrompt = {
       ...graph,
+      nodes: [...graph.nodes, {
+        ...graph.nodes.find((node) => node.id === "prompt")!,
+        id: "prompt-2",
+        title: "提示词 2",
+      }],
       edges: [{
         id: "e1",
         source_node_id: "prompt",
@@ -165,6 +172,26 @@ describe("isGraphConnectionValid", () => {
       }],
     };
     expect(isGraphConnectionValid(withPrompt, "prompt", "image", catalog)).toBe(false);
+  });
+
+  it("allows reconnecting a max-one port after ignoring the edge being replaced", () => {
+    const withPrompt = {
+      ...graph,
+      nodes: [...graph.nodes, {
+        ...graph.nodes.find((node) => node.id === "prompt")!,
+        id: "prompt-2",
+        title: "提示词 2",
+      }],
+      edges: [{
+        id: "e1",
+        source_node_id: "prompt",
+        target_node_id: "image",
+        data_type: "prompt" as const,
+        role: "prompt" as const,
+        order: 0,
+      }],
+    };
+    expect(isGraphConnectionValid(withPrompt, "prompt-2", "image", catalog, "prompt", "e1")).toBe(true);
   });
 
   it("rejects a second visual_guidance edge from catalog cardinality", () => {
@@ -200,6 +227,15 @@ describe("missingRequiredRunRoles", () => {
     const image = graph.nodes.find((node) => node.id === "image");
     expect(image).toBeTruthy();
     expect(missingRequiredRunRoles(image!, catalog)).toEqual(["prompt"]);
+  });
+});
+
+describe("missingRequiredRunNodes", () => {
+  it("can scope the run blocker to a selected group", () => {
+    const image = graph.nodes.find((node) => node.id === "image")!;
+    const scoped = missingRequiredRunNodes(graph, catalog, new Set([image.id]));
+    expect(scoped.map((item) => [item.node.id, item.roles])).toEqual([["image", ["prompt"]]]);
+    expect(missingRequiredRunNodes(graph, catalog, new Set(["source"]))).toEqual([]);
   });
 });
 

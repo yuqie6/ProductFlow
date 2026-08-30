@@ -9,7 +9,6 @@ import type {
   AgentQuestionAnswer,
   AgentQuestionAnswerResponse,
   AgentTurn,
-  AgentTurnEffectReconciliation,
   AgentTurnPage,
   AgentWorkflowRunRequest,
   AgentWorkbenchBootstrap,
@@ -60,7 +59,8 @@ import type {
   GraphProjection,
   GraphRun,
   GraphRunListResponse,
-  GraphRunScope,
+  GraphRunPreviewResponse,
+  GraphRunSubmitInput,
   CanonicalProductDetail,
   ProductFactsResponse,
   ProductListResponse,
@@ -539,17 +539,6 @@ export const api = {
       { method: "POST", body: JSON.stringify(answer) },
     );
   },
-  reconcileAgentTurnEffect(
-    productId: string,
-    conversationId: string,
-    projectionId: string,
-    toolCallId: string,
-  ): Promise<AgentTurnEffectReconciliation> {
-    return request(
-      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/effect-reconciliation`,
-      { method: "POST", body: JSON.stringify({ tool_call_id: toolCallId }) },
-    );
-  },
   getAgentTurnEventsUrl(
     productId: string,
     conversationId: string,
@@ -646,16 +635,6 @@ export const api = {
     return request(
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
       { method: "POST", body: JSON.stringify(answer) },
-    );
-  },
-  reconcileGlobalAgentTurnEffect(
-    conversationId: string,
-    projectionId: string,
-    toolCallId: string,
-  ): Promise<AgentTurnEffectReconciliation> {
-    return request(
-      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/effect-reconciliation`,
-      { method: "POST", body: JSON.stringify({ tool_call_id: toolCallId }) },
     );
   },
   getGlobalLibraryOrganizationDraft(conversationId: string): Promise<LibraryOrganizationDraft> {
@@ -1145,12 +1124,25 @@ export const api = {
   submitGraphRun(
     productId: string,
     workflowId: string,
-    input: { scope: GraphRunScope; node_id?: string | null },
+    input: GraphRunSubmitInput,
   ): Promise<GraphRun> {
     return request(
       `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs`,
       { method: "POST", body: JSON.stringify(input) },
     );
+  },
+  previewGraphRun(
+    productId: string,
+    workflowId: string,
+    input: GraphRunSubmitInput,
+  ): Promise<GraphRunPreviewResponse> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/preview`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+  graphRunEventsUrl(productId: string, workflowId: string, runId: string): string {
+    return `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/events`;
   },
   listGraphRuns(productId: string, workflowId: string): Promise<GraphRunListResponse> {
     return request(

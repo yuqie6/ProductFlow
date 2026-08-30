@@ -133,9 +133,9 @@ describe("graph workflow node ports", () => {
     })));
 
     expect(handles).toHaveLength(2);
-    expect(handles.some((handle) => handle.includes('data-handleid="input"') && handle.includes('data-handlepos="left"'))).toBe(true);
+    expect(handles.some((handle) => handle.includes('data-handleid="prompt"') && handle.includes('data-handlepos="left"'))).toBe(true);
     expect(handles.some((handle) => handle.includes('data-handleid="output"') && handle.includes('data-handlepos="right"'))).toBe(true);
-    expect(handles.some((handle) => handle.includes('aria-label="输入连接点"'))).toBe(true);
+    expect(handles.some((handle) => handle.includes("提示词"))).toBe(true);
     expect(handles.some((handle) => handle.includes('aria-label="输出连接点"'))).toBe(true);
     expect(handles.every((handle) => !handle.includes('aria-hidden="true"'))).toBe(true);
   });
@@ -282,6 +282,17 @@ describe("graph workflow node ports", () => {
     expect(gapMarkup).toContain("还缺提示词，先连上再运行");
   });
 
+  it("labels an unbound image asset on the card", () => {
+    const markup = renderNodeCard(graphNode({
+      id: "ref",
+      node_type: "image_asset",
+      title: "参考图",
+      binding_status: "unbound",
+      bound_asset_id: null,
+    }));
+    expect(markup).toContain("还没选图");
+  });
+
   it("puts copy, group, delete, and save-as-recipe on a multi-selection toolbar", () => {
     const graph = graphWith(graphNode({
       id: "image",
@@ -409,6 +420,7 @@ describe("graph group chrome", () => {
         group: { id: "group-1", title: "主图组", member_ids: ["prompt"] },
         bounds: { x: 0, y: 0, width: 320, height: 280 },
         runDisabled: false,
+        runBlocked: false,
         structureBusy: false,
         onEnter: () => undefined,
         onRename: () => undefined,
@@ -445,6 +457,7 @@ describe("graph group chrome", () => {
         group: { id: "group-1", title: "主图组", member_ids: ["prompt"] },
         bounds: { x: 0, y: 0, width: 320, height: 280 },
         runDisabled: true,
+        runBlocked: false,
         structureBusy: false,
         onEnter: () => undefined,
         onRename: () => undefined,

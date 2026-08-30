@@ -3,10 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { GraphNode, GraphProjection } from "../../../lib/types";
 import {
   buildCreateShotOperations,
-  sequenceShotRuns,
   shotGenerationSpec,
-  shotRunRequests,
-  waitUntilGraphRunNotRunning,
+  shotRunRequest,
 } from "./shotChangeSet";
 
 function node(input: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
@@ -95,98 +93,21 @@ describe("shotChangeSet", () => {
     expect(operations.filter((op) => op.op === "connect_nodes")).toHaveLength(1);
   });
 
-  it("runs the first image in a group with to_node then remaining images with node", () => {
+  it("runs every image in a group with one selection run", () => {
     const current = graph([
       node({ id: "prompt", node_type: "prompt_generation", group_id: "shot-hero" }),
       node({ id: "image-2", node_type: "image_generation", group_id: "shot-hero", position_y: 120 }),
       node({ id: "image-1", node_type: "image_generation", group_id: "shot-hero", position_y: 40 }),
       node({ id: "other", node_type: "image_generation", group_id: "shot-detail" }),
     ], [{ id: "shot-hero", title: "首屏", member_ids: ["prompt", "image-1", "image-2"] }]);
-    expect(shotRunRequests(current, "shot-hero")).toEqual([
-      { scope: "to_node", node_id: "image-1" },
-      { scope: "node", node_id: "image-2" },
-    ]);
+    expect(shotRunRequest(current, "shot-hero")).toEqual({
+      scope: "selection",
+      node_ids: ["image-1", "image-2"],
+    });
   });
 
   it("defaults infographic shots to required on-image copy", () => {
     expect(shotGenerationSpec("faq").text_policy).toBe("required");
     expect(shotGenerationSpec("hero").text_policy).toBe("none");
-  });
-
-  it("does not submit the next shot run while the previous run is still running", async () => {
-    let activeRunning = false;
-    const submits: string[] = [];
-    const waits: string[] = [];
-    await sequenceShotRuns(
-      [
-        { scope: "to_node", node_id: "image-1" },
-        { scope: "node", node_id: "image-2" },
-      ],
-      async (input) => {
-        if (activeRunning) {
-          throw new Error("second submit happened while the first run is still RUNNING");
-        }
-        activeRunning = true;
-        submits.push(input.node_id);
-        return { id: `run-${input.node_id}`, status: "running" };
-      },
-      async (run) => {
-        waits.push(run.id);
-        expect(activeRunning).toBe(true);
-        expect(submits).toHaveLength(waits.length);
-        activeRunning = false;
-        return { ...run, status: "succeeded" };
-      },
-    );
-    expect(submits).toEqual(["image-1", "image-2"]);
-    expect(waits).toEqual(["run-image-1", "run-image-2"]);
-  });
-
-  it("polls getGraphRun until the submitted run leaves RUNNING before returning", async () => {
-    const statuses = ["running", "running", "succeeded"] as const;
-    let fetches = 0;
-    const settled = await waitUntilGraphRunNotRunning(
-      { id: "run-1", status: "running" },
-      async (runId) => {
-        fetches += 1;
-        return { id: runId, status: statuses[Math.min(fetches, statuses.length - 1)] };
-      },
-      async () => undefined,
-      0,
-    );
-    expect(fetches).toBe(2);
-    expect(settled.status).toBe("succeeded");
-  });
-
-  it("waits through queued as well as running before the next submit", async () => {
-    const statuses = ["queued", "running", "succeeded"] as const;
-    let fetches = 0;
-    const settled = await waitUntilGraphRunNotRunning(
-      { id: "run-q", status: "queued" },
-      async (runId) => {
-        fetches += 1;
-        return { id: runId, status: statuses[Math.min(fetches, statuses.length - 1)] };
-      },
-      async () => undefined,
-      0,
-    );
-    expect(fetches).toBe(2);
-    expect(settled.status).toBe("succeeded");
-  });
-
-  it("does not submit later images if an earlier shot run fails", async () => {
-    const submits: string[] = [];
-    await sequenceShotRuns(
-      [
-        { scope: "to_node", node_id: "image-1" },
-        { scope: "node", node_id: "image-2" },
-      ],
-      async (input) => {
-        submits.push(input.node_id);
-        return { id: `run-${input.node_id}`, status: "running" };
-      },
-      async (run) => ({ ...run, status: "failed" }),
-    );
-    expect(submits).toEqual(["image-1"]);
   });
 });

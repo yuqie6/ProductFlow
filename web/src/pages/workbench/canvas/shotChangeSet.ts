@@ -2,13 +2,12 @@
  * 为一个可生成图种构造 Graph Command 操作。
  *
  * 证据类在别处是未绑定的 `image_asset` 占位。可生成类是一组、一个提示词节点和 N 个图节点。
- * 第一张图用 `to_node` 跑，让上游内容节点只执行一次。
+ * 镜头运行提交一次 `scope=selection`，组内生图节点并行（受全局并发上限）。
  */
 
 import { defaultAspectRatioForType, imageTypeFamily, isGeneratingImageType } from "../../../lib/imageTypeFamilies";
-import type { AgentProductImageTypeKey, GraphChangeSet, GraphNode, GraphProjection, GraphRunScope } from "../../../lib/types";
-import { defaultGraphNodeConfig, graphChangeSetClientRef, snapGraphCoordinate } from "./graphLayout";
-import { LIVE_RUN_STATUSES } from "./graphRunDisplay";
+import type { AgentProductImageTypeKey, GraphChangeSet, GraphNode, GraphProjection, GraphRunSubmitInput } from "../../../lib/types";
+import { graphChangeSetClientRef, snapGraphCoordinate } from "./graphLayout";
 
 export interface CreateShotInput {
   imageTypeKey: AgentProductImageTypeKey;
@@ -63,7 +62,6 @@ export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSe
       position_y: y,
       group_ref: groupRef,
       config: {
-        ...defaultGraphNodeConfig("image_generation"),
         image_type_key: input.imageTypeKey,
         generation_spec: shotGenerationSpec(input.imageTypeKey),
       },
@@ -97,50 +95,19 @@ export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSe
   return operations;
 }
 
-/** 组内第一张图用 `to_node` 跑，让上游提示词/brief 只执行一次。 */
-export function shotRunRequests(
+/** 镜头内生图节点一次 `scope=selection` 运行，使用当前提示词文稿。 */
+export function shotRunRequest(
   graph: GraphProjection,
   groupId: string,
-): Array<{ scope: GraphRunScope; node_id: string }> {
+): GraphRunSubmitInput | null {
   const images = graph.nodes
     .filter((node) => node.group_id === groupId && node.node_type === "image_generation")
     .sort((left, right) => left.position_y - right.position_y || left.position_x - right.position_x || left.id.localeCompare(right.id));
-  return images.map((node, index) => ({
-    scope: index === 0 ? "to_node" : "node",
-    node_id: node.id,
-  }));
-}
-
-export function graphRunIsActive(status: string): boolean {
-  return LIVE_RUN_STATUSES.has(status);
-}
-
-export async function waitUntilGraphRunNotRunning<TRun extends { id: string; status: string }>(
-  run: TRun,
-  fetchRun: (runId: string) => Promise<TRun>,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  }),
-  intervalMs = 400,
-): Promise<TRun> {
-  let current = run;
-  while (graphRunIsActive(current.status)) {
-    await sleep(intervalMs);
-    current = await fetchRun(current.id);
-  }
-  return current;
-}
-
-export async function sequenceShotRuns<TRun extends { id: string; status: string }>(
-  requests: Array<{ scope: GraphRunScope; node_id: string }>,
-  submit: (input: { scope: GraphRunScope; node_id: string }) => Promise<TRun>,
-  waitUntilNotRunning: (run: TRun) => Promise<TRun>,
-): Promise<void> {
-  for (const request of requests) {
-    const run = await submit(request);
-    const settled = await waitUntilNotRunning(run);
-    if (settled.status !== "succeeded") return;
-  }
+  if (!images.length) return null;
+  return {
+    scope: "selection",
+    node_ids: images.map((node) => node.id),
+  };
 }
 
 function firstNodeOfType(graph: GraphProjection, nodeType: GraphNode["node_type"]): GraphNode | undefined {

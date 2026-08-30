@@ -68,6 +68,7 @@ function nodeRun(partial: Partial<GraphNodeRun>): GraphNodeRun {
     compiled_context: null,
     output: null,
     failure_reason: null,
+    attempt_count: 0,
     started_at: "2026-08-21T00:00:00Z",
     finished_at: "2026-08-21T00:00:01Z",
     ...partial,
@@ -79,6 +80,7 @@ describe("graph run display", () => {
     expect(graphRunScopeLabelKey("graph")).toBe("graph.runs.scope.graph");
     expect(graphRunScopeLabelKey("node")).toBe("graph.runs.scope.node");
     expect(graphRunScopeLabelKey("to_node")).toBe("graph.runs.scope.toNode");
+    expect(graphRunScopeLabelKey("selection")).toBe("graph.runs.scope.selection");
   });
 
   it("prefers an explicit product image on the node run, then the current preview", () => {
@@ -213,7 +215,7 @@ describe("graph run display", () => {
       graph_revision: 2,
       failure_reason: "上游失败",
       is_retryable: true,
-      node_runs: [nodeRun({ status: "failed", failure_reason: "模型超时", finished_at: "2026-08-21T00:00:02Z" })],
+      node_runs: [nodeRun({ attempt_count: 1, status: "failed", failure_reason: "模型超时", finished_at: "2026-08-21T00:00:02Z" })],
       started_at: "2026-08-21T00:00:00Z",
       finished_at: "2026-08-21T00:00:02Z",
     };
@@ -223,7 +225,35 @@ describe("graph run display", () => {
       lastRunAt: "2026-08-21T00:00:02Z",
       retryable: true,
       runId: "run-1",
+      plannedAction: null,
+      progressPhase: null,
+      elapsedLabel: "2.0s",
+      attemptCount: 1,
     });
+  });
+
+  it("uses the persisted provider attempt count instead of historical run count", () => {
+    const latest: GraphRun = {
+      id: "run-latest",
+      graph_id: "g1",
+      status: "failed",
+      scope: "node",
+      requested_node_id: "image",
+      graph_revision: 2,
+      failure_reason: "模型超时",
+      is_retryable: true,
+      node_runs: [nodeRun({ id: "nr-latest", attempt_count: 3, status: "failed", finished_at: "2026-08-21T00:00:03Z" })],
+      started_at: "2026-08-21T00:00:00Z",
+      finished_at: "2026-08-21T00:00:03Z",
+    };
+    const older: GraphRun = {
+      ...latest,
+      id: "run-older",
+      node_runs: [nodeRun({ id: "nr-older", attempt_count: 1, status: "failed", finished_at: "2026-08-20T00:00:02Z" })],
+      started_at: "2026-08-20T00:00:00Z",
+      finished_at: "2026-08-20T00:00:02Z",
+    };
+    expect(graphNodeRunPresentations([latest, older]).image.attemptCount).toBe(3);
   });
 
   it("polls queued and running graph runs, not terminal ones", () => {
@@ -244,5 +274,36 @@ describe("graph run display", () => {
     expect(graphRunsAreLive([{ ...queued, status: "running" }])).toBe(true);
     expect(graphRunsAreLive([{ ...queued, status: "succeeded", finished_at: "2026-08-21T00:01:00Z" }])).toBe(false);
     expect(graphRunsAreLive([])).toBe(false);
+  });
+
+  it("overlays the running graph run even when a newer queued run exists", () => {
+    const running: GraphRun = {
+      id: "run-running",
+      graph_id: "g1",
+      status: "running",
+      scope: "graph",
+      requested_node_id: null,
+      graph_revision: 2,
+      failure_reason: null,
+      is_retryable: false,
+      node_runs: [nodeRun({ status: "running", finished_at: null })],
+      started_at: "2026-08-21T00:00:00Z",
+      finished_at: null,
+    };
+    const queued: GraphRun = {
+      id: "run-queued",
+      graph_id: "g1",
+      status: "queued",
+      scope: "graph",
+      requested_node_id: null,
+      graph_revision: 2,
+      failure_reason: null,
+      is_retryable: false,
+      node_runs: [],
+      started_at: "2026-08-21T00:01:00Z",
+      finished_at: null,
+    };
+    expect(graphNodeRunPresentations([queued, running]).image.status).toBe("running");
+    expect(graphNodeRunPresentations([queued, running]).image.runId).toBe("run-running");
   });
 });

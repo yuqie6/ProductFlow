@@ -14,7 +14,7 @@ import {
 import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphNodeType, WorkflowNodeStatus } from "../../../lib/types";
+import type { GraphNodeType, WorkflowNodeDisplayStatus } from "../../../lib/types";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "./constants";
 
@@ -25,7 +25,7 @@ export interface WorkflowNodePresentationCardProps {
   kind: WorkflowNodePresentationKind;
   title: string;
   label: string;
-  status: WorkflowNodeStatus;
+  status: WorkflowNodeDisplayStatus;
   statusLabel: string;
   image: DownloadableImage | null;
   imageWaiting?: boolean;
@@ -84,14 +84,15 @@ const KIND_THEMES: Record<WorkflowNodePresentationKind, {
   },
 };
 
-const STATUS_BADGE_CLASSES: Record<WorkflowNodeStatus, string> = {
+const STATUS_BADGE_CLASSES: Record<WorkflowNodeDisplayStatus, string> = {
   idle: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
   queued: "animate-pulse border-amber-300 bg-amber-100/80 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/60 dark:text-amber-200",
   running: "border-blue-300 bg-blue-100/90 text-blue-900 dark:border-cyan-700/60 dark:bg-cyan-950/80 dark:text-cyan-200",
   succeeded: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200",
   failed: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200",
   cancelled: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
-  unknown: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
+    skipped: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
+    unknown: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
 };
 
 export function WorkflowNodePresentationCard({

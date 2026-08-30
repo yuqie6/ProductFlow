@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Images,
   Link2,
   Loader2,
@@ -32,13 +34,15 @@ import type {
   GraphNode,
   GraphNodeRun,
   GraphProjection,
+  GraphRunSubmitInput,
   ProductFactsResponse,
   WorkflowDeliverySpec,
-  WorkflowNodeStatus,
+  WorkflowNodeDisplayStatus,
 } from "../../../lib/types";
 import { parseAspectRatio } from "../../../components/ImageRatioFrame";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "../chrome/constants";
 import { parseWorkflowGenerationSpec } from "./generationSpec";
+import { graphDocumentOrigin, isContentGraphNodeType } from "./graphDocument";
 import { DownloadLink } from "../chrome/ImageDownloadComponents";
 import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { TextArea } from "../chrome/TextArea";
@@ -54,9 +58,10 @@ import {
 } from "./catalogConfig";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
-import { graphEdgeRoleLabelKey, graphNodeConfigFields } from "./graphCatalog";
+import { graphEdgeRoleLabelKey, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
-import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunInputTraceEntries, graphRunsAreLive } from "./graphRunDisplay";
+import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphProgressPhaseLabelKey, graphRunInputTraceEntries } from "./graphRunDisplay";
+import { withGraphRunSubmit } from "./graphRunLock";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -145,25 +150,52 @@ export function GraphNodeInspector({
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
-    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
+    // GraphCanvasPanel owns the shared run SSE and updates this query cache.
+    refetchInterval: false,
   });
   const presentations = useMemo(
     () => graphNodeRunPresentations(runsQuery.data?.items ?? []),
     [runsQuery.data],
   );
-  const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
   const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
     ? runsQuery.data?.items.find((run) => run.status === "running" && run.node_runs.some((item) => (
       item.node_id === node.id && ACTIVE_RUN_STATUSES.has(item.status)
     ))) ?? null
     : null;
-  const nodeStatus: WorkflowNodeStatus = presentation?.status ?? "idle";
+  const nodeStatus: WorkflowNodeDisplayStatus = presentation?.status ?? "idle";
+  const missingRunNodes = useMemo(
+    () => missingRequiredRunNodes(graph, catalog),
+    [catalog, graph],
+  );
+  const graphRunBlockedReason = useMemo(() => missingRunNodes.map(({ node: missingNode, roles }) => {
+    const missing = roles.map((role) => {
+      const key = graphEdgeRoleLabelKey(role);
+      return t("graph.missingRunInput", { role: key ? t(key) : role });
+    }).join(" · ");
+    return `${missingNode.title}: ${missing}`;
+  }).join(" · "), [missingRunNodes, t]);
   const runMutation = useMutation({
-    mutationFn: (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) =>
+    mutationFn: (input: GraphRunSubmitInput) =>
       api.submitGraphRun(graph.product_id, graph.id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
+    },
+  });
+  const reorderMutation = useMutation({
+    mutationFn: (input: { nodeId: string; role: string; edgeRefs: string[] }) =>
+      api.applyWorkflowChangeSet(graph.product_id, graph.id, {
+        base_graph_revision: graph.revision,
+        summary: "调整连线顺序",
+        operations: [{
+          op: "reorder_edges",
+          node_ref: input.nodeId,
+          role: input.role,
+          edge_refs: input.edgeRefs,
+        }],
+      }),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
     },
   });
@@ -207,6 +239,11 @@ export function GraphNodeInspector({
   useEffect(() => {
     onRegisterFlush?.(flushInspector);
   }, [flushInspector, onRegisterFlush]);
+  const submitInspectorRun = useCallback((input: GraphRunSubmitInput) => {
+    void flushInspector()
+      .then(() => withGraphRunSubmit(() => runMutation.mutateAsync(input)))
+      .catch(() => undefined);
+  }, [flushInspector, runMutation]);
 
   const retryRun = useCallback(async () => {
     const runId = presentation?.runId;
@@ -223,11 +260,11 @@ export function GraphNodeInspector({
     return (
       <GraphInspectorDashboard
         graph={graph}
-        busy={busy || runMutation.isPending || graphRunIsBusy}
+        busy={busy || runMutation.isPending}
+        runBlocked={missingRunNodes.length > 0}
+        runBlockedReason={graphRunBlockedReason}
         onRunGraph={() => {
-          void flushInspector()
-            .then(() => runMutation.mutate({ scope: "graph" }))
-            .catch(() => undefined);
+          submitInspectorRun({ scope: "graph" });
         }}
         onOpenAdd={onOpenAdd}
         onOpenLibrary={onOpenLibrary}
@@ -238,11 +275,16 @@ export function GraphNodeInspector({
   const theme = workflowNodeKindTheme(node.node_type);
   const Icon = theme.icon;
   const image = nodePreview(node);
-  const missingPrompt = node.node_type === "image_generation"
-    && !node.incoming.some((edge) => edge.role === "prompt");
-  const missingReference = node.node_type === "image_generation"
-    && !node.incoming.some((edge) => edge.role === "reference");
-  const runBlocked = missingPrompt || missingReference;
+  const missingRoles = missingRequiredRunRoles(node, catalog);
+  const runBlocked = missingRoles.length > 0;
+  const origin = graphDocumentOrigin(node);
+  const contentNode = isContentGraphNodeType(node.node_type);
+  const frozenDocument = contentNode && (origin === "authored" || origin === "generated");
+  const seedDocument = contentNode && origin === "seed";
+  const promptSource = node.node_type === "image_generation"
+    ? graph.nodes.find((item) => item.id === node.incoming.find((edge) => edge.role === "prompt")?.node_id)
+    : null;
+  const seedPromptForImage = Boolean(promptSource && graphDocumentOrigin(promptSource) === "seed");
   const canRun = node.node_type === "creative_brief"
     || node.node_type === "visual_system"
     || node.node_type === "prompt_generation"
@@ -299,14 +341,17 @@ export function GraphNodeInspector({
               {t("graph.inspector.unbound")}
             </div>
           ) : null}
-          {missingPrompt ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-              {t("graph.inspector.missingPrompt")}
+          {missingRoles.length ? (
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+              {missingRoles.map((role) => {
+                const key = graphEdgeRoleLabelKey(role);
+                return t("graph.missingRunInput", { role: key ? t(key) : role });
+              }).join(" · ")}
             </div>
           ) : null}
-          {missingReference ? (
+          {seedDocument || seedPromptForImage ? (
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-              {t("graph.inspector.missingReference")}
+              {t("graph.inspector.seedDocument")}
             </div>
           ) : null}
           {presentation?.failureReason && !activeRun ? (
@@ -323,7 +368,15 @@ export function GraphNodeInspector({
           {activeRun ? (
             <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
               <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
-              <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>
+              <div>
+                <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>
+                {graphProgressPhaseLabelKey(presentation?.progressPhase) ? (
+                  <div className="mt-0.5 text-[10px]">{t(graphProgressPhaseLabelKey(presentation?.progressPhase)!)}</div>
+                ) : null}
+                {presentation?.elapsedLabel ? (
+                  <div className="mt-0.5 text-[10px]">{presentation.elapsedLabel}</div>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -334,12 +387,8 @@ export function GraphNodeInspector({
                   <button
                     type="button"
                     data-graph-inspector-run-node
-                    onClick={() => {
-                      void flushInspector()
-                        .then(() => runMutation.mutate({ scope: "node", node_id: node.id }))
-                        .catch(() => undefined);
-                    }}
-                    disabled={Boolean(activeRun) || graphRunIsBusy || runMutation.isPending || busy || runBlocked}
+                    onClick={() => submitInspectorRun({ scope: "node", node_id: node.id })}
+                    disabled={runMutation.isPending || busy || runBlocked}
                     className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                   >
                     {runMutation.isPending && runMutation.variables?.scope === "node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
@@ -348,16 +397,49 @@ export function GraphNodeInspector({
                   <button
                     type="button"
                     data-graph-inspector-run-to-node
-                    onClick={() => {
-                      void flushInspector()
-                        .then(() => runMutation.mutate({ scope: "to_node", node_id: node.id }))
-                        .catch(() => undefined);
-                    }}
-                    disabled={Boolean(activeRun) || graphRunIsBusy || runMutation.isPending || busy || runBlocked}
+                    onClick={() => submitInspectorRun({ scope: "to_node", node_id: node.id })}
+                    disabled={runMutation.isPending || busy || runBlocked}
                     className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
                     {t("graph.runs.scope.toNode")}
+                  </button>
+                </div>
+              ) : null}
+              {frozenDocument ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    data-graph-inspector-refine
+                    onClick={() => submitInspectorRun({
+                      scope: "node",
+                      node_id: node.id,
+                      force: true,
+                      regenerate_mode: "refine",
+                    })}
+                    disabled={runMutation.isPending || busy}
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "refine" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
+                    {t("graph.inspector.refine")}
+                  </button>
+                  <button
+                    type="button"
+                    data-graph-inspector-replace
+                    onClick={() => {
+                      if (!window.confirm(t("graph.inspector.replaceConfirm"))) return;
+                      submitInspectorRun({
+                        scope: "node",
+                        node_id: node.id,
+                        force: true,
+                        regenerate_mode: "replace",
+                      });
+                    }}
+                    disabled={runMutation.isPending || busy}
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "replace" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
+                    {t("graph.inspector.replace")}
                   </button>
                 </div>
               ) : null}
@@ -376,7 +458,7 @@ export function GraphNodeInspector({
                 <button
                   type="button"
                   onClick={() => void retryRun()}
-                  disabled={retryMutation.isPending || graphRunIsBusy || busy}
+                  disabled={retryMutation.isPending || busy}
                   className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
@@ -490,7 +572,14 @@ export function GraphNodeInspector({
           />
         ) : null}
 
-        <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
+        <IncomingEdgeList
+          heading={t("graph.inspector.inputs")}
+          empty={t("graph.inspector.inputsEmpty")}
+          items={incoming}
+          busy={busy || reorderMutation.isPending}
+          onJump={onJump}
+          onReorder={(role, edgeRefs) => reorderMutation.mutate({ nodeId: node.id, role, edgeRefs })}
+        />
         <RuntimeInputList node={node} graph={graph} lastRun={lastNodeRun} />
         <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
       </div>
@@ -556,12 +645,16 @@ function CatalogLoadError({
 function GraphInspectorDashboard({
   graph,
   busy,
+  runBlocked,
+  runBlockedReason,
   onRunGraph,
   onOpenAdd,
   onOpenLibrary,
 }: {
   graph: GraphProjection;
   busy: boolean;
+  runBlocked: boolean;
+  runBlockedReason?: string;
   onRunGraph: () => void;
   onOpenAdd?: () => void;
   onOpenLibrary?: () => void;
@@ -596,7 +689,8 @@ function GraphInspectorDashboard({
           <button
             type="button"
             onClick={onRunGraph}
-            disabled={busy}
+            disabled={busy || runBlocked}
+            title={runBlocked ? runBlockedReason : undefined}
             className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
           >
             {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
@@ -647,6 +741,7 @@ function ProductSourceEditor({
     serverValue: graphTitleDraft(node),
     serverEditVersion: graphRevision,
     disabled: busy,
+    versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => ({ title: draft.title.trim() }),
     validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
     save: (draft) => onSave({ title: draft.title, config: node.config, boundAssetId: node.bound_asset_id }),
@@ -911,6 +1006,7 @@ function ImageAssetEditor({
     serverValue: catalogNodeDraft(node, fields),
     serverEditVersion: graphRevision,
     disabled: busy,
+    versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => normalizeCatalogDraft(draft, fields),
     validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
     save: (draft) => onSave({
@@ -998,6 +1094,7 @@ function CatalogNodeEditor({
     serverValue: catalogNodeDraft(node, fields),
     serverEditVersion: graphRevision,
     disabled: busy,
+    versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => normalizeCatalogDraft(draft, fields),
     validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
     save: (draft) => onSave({
@@ -1142,6 +1239,13 @@ function RuntimeInputRow({ item }: { item: ReturnType<typeof graphIncomingSource
   return (
     <li data-graph-runtime-input-entry={item.id} className="min-w-0 px-2.5 py-1.5">
       <div className="flex min-w-0 items-start justify-between gap-2">
+        {item.assetId ? (
+          <img
+            src={api.getProductImageAssetMediaUrl(item.assetId, "thumbnail")}
+            alt=""
+            className="mt-0.5 h-8 w-8 shrink-0 rounded-md object-cover"
+          />
+        ) : null}
         <div className="min-w-0">
           <div className="truncate text-xs font-medium text-zinc-800 dark:text-slate-100">{sourceLabel}</div>
           <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 text-[10px] text-zinc-500 dark:text-slate-400">
@@ -1171,6 +1275,148 @@ function InputArtifactSummary({ item }: { item: ReturnType<typeof graphIncomingS
       {item.assetId ? <span> · {t("graph.inspector.asset")}: {item.assetId}</span> : null}
       {item.versionId ? <span> · {t("graph.inspector.version")}: {item.versionId}</span> : null}
     </div>
+  );
+}
+
+function IncomingEdgeList({
+  heading,
+  empty,
+  items,
+  busy,
+  onJump,
+  onReorder,
+}: {
+  heading: string;
+  empty: string;
+  items: Array<{ edge: GraphNode["incoming"][number]; related: GraphNode | null }>;
+  busy: boolean;
+  onJump?: (nodeId: string) => void;
+  onReorder: (role: string, edgeRefs: string[]) => void;
+}) {
+  const { t } = useI18n();
+  const [draggingEdgeId, setDraggingEdgeId] = useState<string | null>(null);
+  const grouped = new Map<string, typeof items>();
+  for (const item of items) {
+    const group = grouped.get(item.edge.role) ?? [];
+    group.push(item);
+    grouped.set(item.edge.role, group);
+  }
+  return (
+    <section className="config-bubble rounded-2xl p-4 shadow-sm">
+      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{heading}</h4>
+      {items.length === 0 ? <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{empty}</p> : null}
+      <div className="mt-2 space-y-3">
+        {[...grouped.entries()].map(([role, group]) => {
+          const roleKey = graphEdgeRoleLabelKey(role);
+          const ordered = group.slice().sort((left, right) => left.edge.order - right.edge.order || left.edge.id.localeCompare(right.edge.id));
+          return (
+            <div key={role}>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-slate-400">
+                {roleKey ? t(roleKey) : role}
+              </div>
+              <ul className="space-y-1">
+                {ordered.map((item, index) => {
+                  const assetId = item.related?.preview_asset_id ?? item.related?.bound_asset_id;
+                  const primaryBrief = role === "brief" && index === 0;
+                  return (
+                    <li
+                      key={item.edge.id}
+                      draggable={!busy && ordered.length > 1}
+                      aria-grabbed={draggingEdgeId === item.edge.id}
+                      onDragStart={(event) => {
+                        if (busy || ordered.length < 2) return;
+                        setDraggingEdgeId(item.edge.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", item.edge.id);
+                      }}
+                      onDragEnd={() => setDraggingEdgeId(null)}
+                      onDragOver={(event) => {
+                        if (draggingEdgeId && draggingEdgeId !== item.edge.id) event.preventDefault();
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const sourceId = draggingEdgeId ?? event.dataTransfer.getData("text/plain");
+                        if (!sourceId || sourceId === item.edge.id || busy) {
+                          setDraggingEdgeId(null);
+                          return;
+                        }
+                        const refs = ordered.map((entry) => entry.edge.id);
+                        const sourceIndex = refs.indexOf(sourceId);
+                        const targetIndex = refs.indexOf(item.edge.id);
+                        if (sourceIndex < 0 || targetIndex < 0) {
+                          setDraggingEdgeId(null);
+                          return;
+                        }
+                        const [moved] = refs.splice(sourceIndex, 1);
+                        if (!moved) {
+                          setDraggingEdgeId(null);
+                          return;
+                        }
+                        refs.splice(targetIndex, 0, moved);
+                        setDraggingEdgeId(null);
+                        onReorder(role, refs);
+                      }}
+                      className={`flex items-center gap-2 rounded-xl px-1 py-1 ${draggingEdgeId === item.edge.id ? "bg-zinc-100 dark:bg-slate-800" : ""}`}
+                    >
+                      {assetId ? (
+                        <img
+                          src={api.getProductImageAssetMediaUrl(assetId, "thumbnail")}
+                          alt=""
+                          className="h-8 w-8 shrink-0 rounded-md object-cover"
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={!item.related || !onJump}
+                        onClick={() => item.related && onJump?.(item.related.id)}
+                        className="min-w-0 flex-1 truncate text-left text-xs font-medium text-zinc-800 hover:underline disabled:text-zinc-400 dark:text-slate-100"
+                      >
+                        {item.related?.title ?? t("graph.runs.deletedNode")}
+                        {primaryBrief ? ` · ${t("graph.inspector.primaryBrief")}` : ""}
+                      </button>
+                      {ordered.length > 1 ? (
+                        <span className="flex shrink-0 gap-0.5">
+                          <button
+                            type="button"
+                            disabled={busy || index === 0}
+                            aria-label={t("graph.inspector.moveUp")}
+                            onClick={() => {
+                              const refs = ordered.map((entry) => entry.edge.id);
+                              const swap = refs[index - 1];
+                              refs[index - 1] = refs[index];
+                              refs[index] = swap;
+                              onReorder(role, refs);
+                            }}
+                            className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                          >
+                            <ArrowUp size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy || index === ordered.length - 1}
+                            aria-label={t("graph.inspector.moveDown")}
+                            onClick={() => {
+                              const refs = ordered.map((entry) => entry.edge.id);
+                              const swap = refs[index + 1];
+                              refs[index + 1] = refs[index];
+                              refs[index] = swap;
+                              onReorder(role, refs);
+                            }}
+                            className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                          >
+                            <ArrowDown size={12} />
+                          </button>
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

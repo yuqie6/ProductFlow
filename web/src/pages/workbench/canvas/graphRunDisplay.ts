@@ -7,6 +7,7 @@
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GraphNodeRun,
+  GraphPlannedAction,
   GraphProjection,
   GraphRun,
   GraphRunInputTraceEntry,
@@ -20,12 +21,24 @@ export interface GraphNodeRunPresentation {
   lastRunAt: string | null;
   retryable: boolean;
   runId: string | null;
+  plannedAction: GraphPlannedAction | null;
+  progressPhase: string | null;
+  elapsedLabel: string | null;
+  attemptCount: number;
 }
 
 export const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
 
 export function graphRunsAreLive(runs: readonly GraphRun[] | undefined): boolean {
   return Boolean(runs?.some((run) => LIVE_RUN_STATUSES.has(run.status)));
+}
+
+export function graphQueuedRuns(runs: readonly GraphRun[] | undefined): GraphRun[] {
+  return (runs ?? []).filter((run) => run.status === "queued");
+}
+
+export function graphRunningRuns(runs: readonly GraphRun[] | undefined): GraphRun[] {
+  return (runs ?? []).filter((run) => run.status === "running");
 }
 
 /** 历史运行补缺口；进行中的运行覆盖它仍拥有的每个节点。 */
@@ -35,20 +48,26 @@ export function graphNodeRunPresentations(
   const presentations: Record<string, GraphNodeRunPresentation> = {};
   for (const run of runs) {
     for (const nodeRun of run.node_runs) {
-      if (!nodeRun.node_id || presentations[nodeRun.node_id]) continue;
+      if (!nodeRun.node_id) continue;
+      if (presentations[nodeRun.node_id]) continue;
       presentations[nodeRun.node_id] = presentationFromNodeRun(run, nodeRun);
     }
   }
-  const live = runs.find((run) => LIVE_RUN_STATUSES.has(run.status));
-  if (!live) return presentations;
-  for (const nodeRun of live.node_runs) {
-    if (!nodeRun.node_id) continue;
-    presentations[nodeRun.node_id] = presentationFromNodeRun(live, nodeRun);
+  const live = runs.find((run) => run.status === "running")
+    ?? runs.find((run) => run.status === "queued");
+  if (live) {
+    for (const nodeRun of live.node_runs) {
+      if (!nodeRun.node_id) continue;
+      presentations[nodeRun.node_id] = presentationFromNodeRun(live, nodeRun);
+    }
   }
   return presentations;
 }
 
-function presentationFromNodeRun(run: GraphRun, nodeRun: GraphNodeRun): GraphNodeRunPresentation {
+function presentationFromNodeRun(
+  run: GraphRun,
+  nodeRun: GraphNodeRun,
+): GraphNodeRunPresentation {
   const failed = nodeRun.status === "failed";
   return {
     status: nodeRun.status,
@@ -56,12 +75,50 @@ function presentationFromNodeRun(run: GraphRun, nodeRun: GraphNodeRun): GraphNod
     lastRunAt: nodeRun.finished_at ?? nodeRun.started_at,
     retryable: failed && run.is_retryable,
     runId: run.id,
+    plannedAction: nodeRun.planned_action ?? null,
+    progressPhase: nodeRun.progress_phase ?? null,
+    elapsedLabel: formatElapsed(nodeRun.started_at, nodeRun.finished_at, nodeRun.status),
+    attemptCount: nodeRun.attempt_count,
   };
+}
+
+export function formatElapsed(
+  startedAt: string,
+  finishedAt: string | null | undefined,
+  status?: string,
+): string | null {
+  const start = Date.parse(startedAt);
+  if (!Number.isFinite(start)) return null;
+  const end = finishedAt ? Date.parse(finishedAt) : Date.now();
+  if (!Number.isFinite(end)) return null;
+  const ms = Math.max(0, end - start);
+  if (status === "skipped" && ms < 100) return `${ms}ms`;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
+export function graphProgressPhaseLabelKey(phase: string | null | undefined): TranslationKey | null {
+  switch (phase) {
+    case "claimed":
+      return "graph.phase.claimed";
+    case "prepared":
+      return "graph.phase.prepared";
+    case "provider_call":
+      return "graph.phase.provider_call";
+    case "provider_result_received":
+      return "graph.phase.provider_result_received";
+    case "requeued_after_idle":
+      return "graph.phase.requeued_after_idle";
+    default:
+      return null;
+  }
 }
 
 export function graphRunScopeLabelKey(scope: GraphRunScope): TranslationKey {
   if (scope === "node") return "graph.runs.scope.node";
   if (scope === "to_node") return "graph.runs.scope.toNode";
+  if (scope === "selection") return "graph.runs.scope.selection";
   return "graph.runs.scope.graph";
 }
 
@@ -118,7 +175,7 @@ export function graphIncomingSourceEntries(
         order: edge.order,
         artifactId: source?.current_artifact_id ?? null,
         artifactType: source?.current_artifact_type ?? null,
-        assetId: source?.bound_asset_id ?? null,
+        assetId: source?.bound_asset_id ?? source?.preview_asset_id ?? null,
         versionId: source ? currentSourceVersionId(source) : null,
       };
     });

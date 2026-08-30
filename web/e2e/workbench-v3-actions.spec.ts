@@ -284,7 +284,7 @@ for (const preset of PRESETS) {
       expect(addedImage).toBeTruthy();
       await selectNode(page, addedImage!.id);
       await openSidebarTool(page, "details");
-      await expect(page.locator("[data-graph-node-inspector]")).toContainText("先连上提示词节点，才能运行");
+      await expect(page.locator("[data-graph-node-inspector]")).toContainText("还缺提示词，先连上再运行");
 
       const preScene = await currentGraph(page);
       const panel = await openAddPanel(page);

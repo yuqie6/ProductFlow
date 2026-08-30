@@ -72,6 +72,36 @@ describe("graph layout commands", () => {
     expect(creates.every((item) => item.position_x === 10 + 24 || item.position_x === 10 + 24)).toBe(true);
   });
 
+  it("preserves multi-input edge order when duplicating a selection", () => {
+    const multiInput = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        node({ id: "asset-1", node_type: "image_asset" }),
+        node({ id: "asset-2", node_type: "image_asset" }),
+      ],
+      edges: [
+        ...graph.edges,
+        { id: "e-ref-1", source_node_id: "asset-1", target_node_id: "prompt", data_type: "image_asset" as const, role: "reference" as const, order: 4 },
+        { id: "e-ref-2", source_node_id: "asset-2", target_node_id: "prompt", data_type: "image_asset" as const, role: "reference" as const, order: 2 },
+      ],
+    };
+    const { operations } = buildDuplicateGraphOperations(multiInput, ["asset-1", "asset-2", "prompt"], 24);
+    const references = operations.filter((item) => item.op === "connect_nodes" && item.target_ref);
+    expect(references.map((item) => item.order)).toContain(4);
+    expect(references.map((item) => item.order)).toContain(2);
+  });
+
+  it("does not copy the origin column into duplicate create_node config", () => {
+    const authored = {
+      ...graph,
+      nodes: graph.nodes.map((item) => item.id === "prompt" ? { ...item, document_origin: "authored" as const } : item),
+    };
+    const { operations } = buildDuplicateGraphOperations(authored, ["prompt"], 24);
+    const create = operations.find((item) => item.op === "create_node");
+    expect(create?.config).not.toHaveProperty("document_origin");
+  });
+
   it("pins an image_generation current output as a nearby image_asset without a reference edge", () => {
     const source = node({
       id: "image",

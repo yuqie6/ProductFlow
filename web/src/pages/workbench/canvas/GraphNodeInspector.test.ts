@@ -79,7 +79,11 @@ const catalog: GraphNodeCatalog = {
     },
     { node_type: "prompt_generation", output_data_type: "prompt", kind: "processing", accepts: [], config_fields: [] },
     {
-      node_type: "image_generation", output_data_type: "image_asset", kind: "processing", accepts: [], config_fields: [
+      node_type: "image_generation", output_data_type: "image_asset", kind: "processing", accepts: [
+        { data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true },
+        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
+        { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
+      ], config_fields: [
         field("variation_instruction", "textarea", {
           label_key: "workflowConfirmation.variation",
           value_kind: "string_or_null",
@@ -209,12 +213,53 @@ describe("GraphNodeInspector", () => {
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null);
     expect(markup).toContain("画面比例");
     expect(markup).toContain("4:5");
-    expect(markup).toContain("先连上提示词节点");
-    expect(markup).toContain("先连上参考图");
+    expect(markup).toContain("还缺提示词，先连上再运行");
+    expect(markup).not.toContain("先连上参考图");
     expect(markup).not.toContain("generation_spec");
     expect(markup).toContain("运行该节点");
     expect(markup).toContain("运行到这里");
     expect(markup).not.toContain('data-image-fidelity-panel="true"');
+  });
+
+  it("lets an image node run without a reference edge", () => {
+    const selectedImage = node({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+      incoming: [{
+        id: "edge-prompt",
+        node_id: "prompt",
+        data_type: "prompt",
+        role: "prompt",
+        order: 0,
+      }],
+      config: {
+        generation_spec: {
+          aspect_ratio: "1:1",
+          text_policy: "none",
+        },
+      },
+    });
+    const markup = renderInspector(selectedImage);
+    expect(markup).not.toContain("先连上参考图");
+    expect(markup).not.toContain("先连上提示词节点");
+    expect(markup).toContain("运行该节点");
+  });
+
+  it("offers refine and replace when the document is authored", () => {
+    const selected = node({
+      id: "prompt",
+      node_type: "prompt_generation",
+      title: "提示词",
+      document_origin: "authored",
+      config: {
+        prompt: { composition: { layout: "左侧留白" } },
+      },
+    });
+    const markup = renderInspector(selected);
+    expect(markup).toContain("润色文稿");
+    expect(markup).toContain("重新生成");
+    expect(markup).toContain("data-graph-inspector-refine");
   });
 
   it("exposes local edit for the current generation asset and keeps its node target", () => {
@@ -424,7 +469,7 @@ describe("GraphNodeInspector", () => {
     expect(source).not.toContain("运行该节点");
   });
 
-  it("disables new inspector runs while another graph run is live", () => {
+  it("keeps inspector runs available while another graph run is queued", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["graph-runs", "p1", "g1"], {
       items: [{
@@ -444,8 +489,9 @@ describe("GraphNodeInspector", () => {
 
     const markup = renderInspector(graph.nodes.find((item) => item.id === "brief") ?? null, client);
 
-    expect(markup).toMatch(/data-graph-inspector-run-node="true"[^>]*disabled=""/);
-    expect(markup).toMatch(/data-graph-inspector-run-to-node="true"[^>]*disabled=""/);
+    expect(markup).toContain('data-graph-inspector-run-node="true"');
+    expect(markup).not.toMatch(/data-graph-inspector-run-node="true"[^>]*disabled=""/);
+    expect(markup).not.toMatch(/data-graph-inspector-run-to-node="true"[^>]*disabled=""/);
   });
 
   it("lets a visual system be edited as overlay fields instead of a version UUID", () => {
@@ -499,6 +545,7 @@ describe("GraphNodeInspector", () => {
           },
           output: null,
           failure_reason: null,
+          attempt_count: 1,
           started_at: "2026-08-21T00:00:00Z",
           finished_at: "2026-08-21T00:00:08Z",
         }],
@@ -558,6 +605,7 @@ describe("GraphNodeInspector", () => {
           compiled_context: null,
           output: null,
           failure_reason: "模型超时",
+          attempt_count: 1,
           started_at: "2026-08-21T00:00:00Z",
           finished_at: "2026-08-21T00:00:02Z",
         }],

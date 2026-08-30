@@ -8,7 +8,7 @@ import type {
   GraphNodeRun,
   GraphProjection,
   GraphRun,
-  WorkflowNodeStatus,
+  WorkflowNodeDisplayStatus,
 } from "../../../lib/types";
 import {
   graphNodeRunPreviewAssetId,
@@ -23,7 +23,7 @@ export interface GraphShotProjection {
   primaryImageAssetId: string | null;
   imageNodeCount: number;
   completedImageCount: number;
-  latestNodeStatus: WorkflowNodeStatus;
+  latestNodeStatus: WorkflowNodeDisplayStatus;
   latestFailureReason: string | null;
   currentResultAssetIds: string[];
 }
@@ -45,12 +45,13 @@ export function projectGraphShots(
     const nodeFacts = imageNodes.map((node) => {
       const latestRun = latestRuns.get(node.id) ?? null;
       const previewAssetId = node.preview_asset_id
-        ?? (latestRun?.nodeRun.status === "succeeded"
+        ?? (latestRun?.nodeRun.status === "succeeded" || latestRun?.nodeRun.status === "skipped"
           ? graphNodeRunPreviewAssetId(latestRun.nodeRun, graph)
           : null);
+      const status: WorkflowNodeDisplayStatus = latestRun?.nodeRun.status ?? (previewAssetId ? "succeeded" : "idle");
       return {
         node,
-        status: latestRun?.nodeRun.status ?? (previewAssetId ? "succeeded" : "idle"),
+        status,
         failureReason: latestRun?.nodeRun.status === "failed"
           ? latestRun.nodeRun.failure_reason ?? latestRun.runFailureReason
           : null,

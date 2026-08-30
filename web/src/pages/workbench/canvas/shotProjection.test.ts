@@ -66,6 +66,7 @@ function makeNodeRun(input: Partial<GraphNodeRun> & { id: string; node_id: strin
     input_trace: [],
     output: input.output ?? null,
     failure_reason: input.failure_reason ?? null,
+    attempt_count: input.attempt_count ?? 0,
     started_at: input.started_at ?? "2026-08-20T00:00:00Z",
     finished_at: input.finished_at ?? null,
   };
@@ -180,6 +181,30 @@ describe("projectGraphShots", () => {
 
     expect(shot.primaryImageAssetId).toBe("asset-adopted");
     expect(shot.currentResultAssetIds).toEqual(["asset-adopted"]);
+  });
+
+  it("uses a skipped run output as the current shot result", () => {
+    const graph = makeGraph();
+    graph.nodes[0] = { ...graph.nodes[0], preview_asset_id: null };
+    const reused = makeRun({
+      id: "run-reused",
+      status: "succeeded",
+      startedAt: "2026-08-23T00:00:00Z",
+      nodeRuns: [makeNodeRun({
+        id: "node-reused",
+        node_id: "image-1",
+        status: "skipped",
+        output: { product_image_asset_id: "asset-reused" },
+        started_at: "2026-08-23T00:00:00Z",
+        finished_at: "2026-08-23T00:00:00Z",
+      })],
+    });
+
+    const shot = projectGraphShots(graph, [reused])[0];
+
+    expect(shot.primaryImageAssetId).toBe("asset-reused");
+    expect(shot.completedImageCount).toBe(1);
+    expect(shot.currentResultAssetIds).toEqual(["asset-reused"]);
   });
 
   it("lets an active run override historical status while retaining the current graph preview", () => {

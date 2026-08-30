@@ -3,7 +3,7 @@ import { AlertCircle, ExternalLink, Images, Loader2, PencilLine, Play } from "lu
 import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { TranslationKey } from "../../../lib/i18n";
-import type { WorkflowNodeStatus } from "../../../lib/types";
+import type { WorkflowNodeDisplayStatus } from "../../../lib/types";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { statusClass } from "../chrome/utils";
 import type { GraphShotProjection } from "./shotProjection";
@@ -22,6 +22,9 @@ export interface GraphShotListProps {
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   onRunShot: (groupId: string) => void;
   onRunAll: () => void;
+  runAllDisabled?: boolean;
+  blockedGroupIds?: ReadonlySet<string>;
+  runBlockedReason?: string;
 }
 
 export function GraphShotList({
@@ -38,6 +41,9 @@ export function GraphShotList({
   onOpenLocalEdit,
   onRunShot,
   onRunAll,
+  runAllDisabled = false,
+  blockedGroupIds,
+  runBlockedReason,
 }: GraphShotListProps) {
   const { t } = useI18n();
 
@@ -58,7 +64,7 @@ export function GraphShotList({
         <button
           type="button"
           data-graph-shot-run-all
-          disabled={busy || runningGroupId !== null}
+          disabled={busy || runningGroupId !== null || runAllDisabled}
           onClick={onRunAll}
           className="inline-flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-45"
         >
@@ -114,6 +120,8 @@ export function GraphShotList({
                 busy={busy}
                 running={runningGroupId === shot.groupId}
                 anotherShotRunning={runningGroupId !== null && runningGroupId !== shot.groupId}
+                runBlocked={blockedGroupIds?.has(shot.groupId) ?? false}
+                runBlockedReason={runBlockedReason}
                 onOpenNode={onOpenNode}
                 onOpenLocalEdit={onOpenLocalEdit}
                 onRunShot={onRunShot}
@@ -135,6 +143,8 @@ function GraphShotRow({
   busy,
   running,
   anotherShotRunning,
+  runBlocked,
+  runBlockedReason,
   onOpenNode,
   onOpenLocalEdit,
   onRunShot,
@@ -143,6 +153,8 @@ function GraphShotRow({
   busy: boolean;
   running: boolean;
   anotherShotRunning: boolean;
+  runBlocked: boolean;
+  runBlockedReason?: string;
   onOpenNode: (nodeId: string) => void;
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   onRunShot: (groupId: string) => void;
@@ -215,8 +227,9 @@ function GraphShotRow({
             data-graph-shot-run
             data-graph-shot-running={running ? "true" : undefined}
             aria-busy={running}
-            disabled={busy || running || anotherShotRunning}
+            disabled={busy || running || anotherShotRunning || runBlocked}
             onClick={() => onRunShot(shot.groupId)}
+            title={runBlocked ? runBlockedReason : undefined}
             className="inline-flex min-h-8 items-center gap-1 rounded-lg bg-slate-900 px-2.5 text-[11px] font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
           >
             {running ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
@@ -253,14 +266,15 @@ function GraphShotRow({
   );
 }
 
-function statusKey(status: WorkflowNodeStatus): TranslationKey {
-  const keys: Record<WorkflowNodeStatus, TranslationKey> = {
+function statusKey(status: WorkflowNodeDisplayStatus): TranslationKey {
+  const keys: Record<WorkflowNodeDisplayStatus, TranslationKey> = {
     idle: "detail.nodeStatus.idle",
     queued: "detail.nodeStatus.queued",
     running: "detail.nodeStatus.running",
     succeeded: "detail.nodeStatus.succeeded",
     failed: "detail.nodeStatus.failed",
     cancelled: "detail.nodeStatus.cancelled",
+    skipped: "detail.nodeStatus.skipped",
     unknown: "detail.nodeStatus.unknown",
   };
   return keys[status];

@@ -22,13 +22,14 @@ import type {
   NodeProps,
   NodeMouseHandler,
   OnConnectEnd,
+  OnReconnect,
   OnMoveEnd,
   OnNodeDrag,
   OnSelectionChangeFunc,
   ReactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Pin, Play, Trash2, Ungroup } from "lucide-react";
+import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, Focus, Hand, Link2, Loader2, Lock, MousePointer2, Pencil, Pin, Play, Trash2, Ungroup } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -36,7 +37,7 @@ import { api } from "../../../lib/api";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphGroup, GraphNode, GraphNodeCatalog, GraphProjection, WorkflowNodeStatus } from "../../../lib/types";
+import type { GraphGroup, GraphNode, GraphNodeCatalog, GraphPlannedAction, GraphProjection, WorkflowNodeDisplayStatus, WorkflowNodeStatus } from "../../../lib/types";
 import {
   graphProposalEdgeStates,
   graphProposalNodeStates,
@@ -70,14 +71,16 @@ import {
 import {
   graphConnectionInvalidReason,
   graphEdgeRoleLabelKey,
+  graphInputPorts,
   graphNodeHasInput,
   graphNodePresentationKind,
+  graphPortDataTypeClass,
   graphPortVisualState,
   isGraphConnectionValid,
   isProcessingNode,
   missingRequiredRunRoles,
 } from "./graphCatalog";
-import type { GraphNodeRunPresentation } from "./graphRunDisplay";
+import { graphProgressPhaseLabelKey, type GraphNodeRunPresentation } from "./graphRunDisplay";
 import {
   GRAPH_NODE_WIDTH,
   GRAPH_SNAP,
@@ -104,7 +107,7 @@ export function rejectedGraphConnectionNotice(
   if (state.isValid) return null;
   if (!state.fromNodeId || !state.toNodeId) return null;
   if (state.toHandleId === null) return null;
-  return graphConnectionInvalidReason(graph, state.fromNodeId, state.toNodeId, catalog);
+  return graphConnectionInvalidReason(graph, state.fromNodeId, state.toNodeId, catalog, state.toHandleId);
 }
 
 type ConnectionHandleSnapshot = {
@@ -115,7 +118,7 @@ type ConnectionHandleSnapshot = {
 interface GraphNodeData extends Record<string, unknown> {
   kind: "node";
   node: GraphNode;
-  status: WorkflowNodeStatus;
+  status: WorkflowNodeDisplayStatus;
   failureReason: string | null;
   lastRunAt: string | null;
   retryable: boolean;
@@ -137,6 +140,10 @@ interface GraphNodeData extends Record<string, unknown> {
   selectedCount: number;
   selectionPrimary: boolean;
   missingRunLabels: string[];
+  plannedAction?: GraphPlannedAction | null;
+  progressPhase?: string | null;
+  elapsedLabel?: string | null;
+  attemptCount?: number;
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
@@ -148,6 +155,8 @@ interface GraphGroupData extends Record<string, unknown> {
   group: GraphGroup;
   bounds: { x: number; y: number; width: number; height: number };
   runDisabled: boolean;
+  runBlocked: boolean;
+  runBlockedReason?: string;
   structureBusy: boolean;
   onEnter: (groupId: string) => void;
   onRename: (groupId: string, title: string) => void;
@@ -181,7 +190,7 @@ function nodeTypeLabel(type: GraphNode["node_type"], t: ReturnType<typeof useI18
   return t(keys[type]);
 }
 
-function nodeStatusLabel(status: WorkflowNodeStatus, t: ReturnType<typeof useI18n>["t"]): string {
+function nodeStatusLabel(status: WorkflowNodeDisplayStatus, t: ReturnType<typeof useI18n>["t"]): string {
   const keys = {
     idle: "detail.nodeStatus.idle",
     queued: "detail.nodeStatus.queued",
@@ -189,19 +198,36 @@ function nodeStatusLabel(status: WorkflowNodeStatus, t: ReturnType<typeof useI18
     succeeded: "detail.nodeStatus.succeeded",
     failed: "detail.nodeStatus.failed",
     cancelled: "detail.nodeStatus.cancelled",
+    skipped: "detail.nodeStatus.skipped",
     unknown: "detail.nodeStatus.unknown",
   } as const;
   return t(keys[status]);
 }
 
 function nodeImage(node: GraphNode): DownloadableImage | null {
-  if (!node.preview_asset_id) return null;
+  const assetId = node.preview_asset_id ?? node.bound_asset_id;
+  if (!assetId) return null;
   return {
-    previewUrl: api.getProductImageAssetMediaUrl(node.preview_asset_id, "thumbnail"),
-    downloadUrl: api.getProductImageAssetMediaUrl(node.preview_asset_id),
+    previewUrl: api.getProductImageAssetMediaUrl(assetId, "thumbnail"),
+    downloadUrl: api.getProductImageAssetMediaUrl(assetId),
     filename: `${sanitizeFilenamePart(node.title, "workflow-image")}.png`,
     alt: node.title,
   };
+}
+
+function plannedActionClass(action: GraphPlannedAction | null | undefined): string {
+  switch (action) {
+    case "generate":
+      return "outline outline-2 outline-sky-400/90";
+    case "reuse":
+      return "opacity-70";
+    case "frozen":
+      return "outline outline-2 outline-slate-400/90";
+    case "blocked":
+      return "outline outline-2 outline-red-500/90";
+    default:
+      return "";
+  }
 }
 
 export const GraphNodeCard = memo(function GraphNodeCard({
@@ -223,40 +249,34 @@ export const GraphNodeCard = memo(function GraphNodeCard({
       : null,
   }));
   const updateNodeInternals = useUpdateNodeInternals();
-  const hasInput = graphNodeHasInput(node.node_type, data.catalog)
+  const inputPorts = graphInputPorts(data.catalog, node.node_type);
+  const hasInput = inputPorts.length > 0
+    || graphNodeHasInput(node.node_type, data.catalog)
     || node.node_type === "prompt_generation"
     || node.node_type === "image_generation";
   const running = data.status === "queued" || data.status === "running";
+  const runBlocked = data.missingRunLabels.length > 0;
+  const connectionSnapshot = {
+    inProgress: connection.inProgress,
+    fromNodeId: connection.fromHandle?.nodeId ?? null,
+    fromType: connection.fromHandle?.type ?? null,
+  };
 
   useLayoutEffect(() => {
     updateNodeInternals(id);
-  }, [id, hasInput, node.preview_asset_id, node.title, running, updateNodeInternals]);
+  }, [id, hasInput, inputPorts.length, node.preview_asset_id, node.title, running, updateNodeInternals]);
 
-  const portState = graphPortVisualState(
-    data.graph,
-    node.id,
-    "target",
-    {
-      inProgress: connection.inProgress,
-      fromNodeId: connection.fromHandle?.nodeId ?? null,
-      fromType: connection.fromHandle?.type ?? null,
-    },
-    data.catalog,
-  );
   const sourceState = graphPortVisualState(
     data.graph,
     node.id,
     "source",
-    {
-      inProgress: connection.inProgress,
-      fromNodeId: connection.fromHandle?.nodeId ?? null,
-      fromType: connection.fromHandle?.type ?? null,
-    },
+    connectionSnapshot,
     data.catalog,
   );
 
   const proposalState = data.proposalState ?? null;
   const multi = data.selectedCount >= 2 && data.selectionPrimary;
+  const plannedClass = plannedActionClass(data.plannedAction);
   return (
     <div
       className={`relative w-[248px] overflow-visible ${
@@ -266,9 +286,10 @@ export const GraphNodeCard = memo(function GraphNodeCard({
             ? "opacity-90 outline-dashed outline-2 outline-indigo-400/80"
             : proposalState === "changed"
               ? "outline outline-2 outline-amber-400/80"
-              : ""
+              : plannedClass
       }`}
       data-graph-proposal-state={proposalState ?? undefined}
+      data-graph-planned-action={data.plannedAction ?? undefined}
     >
       {multi ? (
         <div
@@ -329,15 +350,15 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         {isProcessingNode(node, data.catalog) && data.proposalState !== "added" ? (
           <>
             <WorkflowCanvasNodeToolbarButton
-              label={t("graph.canvas.runNode")}
-              disabled={data.runBusy || data.runDisabled || running || data.structureBusy}
+              label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.canvas.runNode")}
+              disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
               onClick={() => data.onRun(node)}
             >
               {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
             </WorkflowCanvasNodeToolbarButton>
             <WorkflowCanvasNodeToolbarButton
-              label={t("graph.runs.scope.toNode")}
-              disabled={data.runBusy || data.runDisabled || running || data.structureBusy}
+              label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.runs.scope.toNode")}
+              disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
               onClick={() => data.onRunToNode(node)}
             >
               <ChevronsRight size={16} aria-hidden="true" />
@@ -376,14 +397,50 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         </WorkflowCanvasNodeToolbarButton>
       </WorkflowCanvasNodeToolbar>
       )}
-      {hasInput ? (
+      {inputPorts.length ? inputPorts.map((port, index) => {
+        const occupancy = node.incoming.filter((edge) => edge.role === port.role).length;
+        const maxLabel = port.max_count == null ? t("graph.port.unbounded") : String(port.max_count);
+        const roleKey = graphEdgeRoleLabelKey(port.role);
+        const titleParts = [
+          roleKey ? t(roleKey) : port.role,
+          t("graph.port.occupancy", { count: occupancy, max: maxLabel }),
+          port.required_to_run ? t("graph.port.required") : null,
+        ].filter(Boolean);
+        const top = inputPorts.length === 1 ? "50%" : `${((index + 1) / (inputPorts.length + 1)) * 100}%`;
+        return (
+          <WorkflowCanvasNodePort
+            key={port.role}
+            id={port.role}
+            type="target"
+            top={top}
+            label={titleParts.join(" · ")}
+            connectable={Boolean(isConnectable)}
+            visualState={graphPortVisualState(
+              data.graph,
+              node.id,
+              "target",
+              connectionSnapshot,
+              data.catalog,
+              port.role,
+            )}
+            visualScale={portVisualScale}
+            colorClass={graphPortDataTypeClass(port.data_type)}
+          />
+        );
+      }) : hasInput ? (
         <WorkflowCanvasNodePort
           id="input"
           type="target"
           top="50%"
           label={t("detail.inputHandle")}
           connectable={Boolean(isConnectable)}
-          visualState={portState}
+          visualState={graphPortVisualState(
+            data.graph,
+            node.id,
+            "target",
+            connectionSnapshot,
+            data.catalog,
+          )}
           visualScale={portVisualScale}
         />
       ) : null}
@@ -395,6 +452,9 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         connectable={Boolean(isConnectable)}
         visualState={sourceState}
         visualScale={portVisualScale}
+        colorClass={graphPortDataTypeClass(
+          data.catalog?.nodes.find((item) => item.node_type === node.node_type)?.output_data_type ?? "output",
+        )}
       />
       <WorkflowNodePresentationCard
         id={node.id}
@@ -402,18 +462,35 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         title={node.title}
         label={nodeTypeLabel(node.node_type, t)}
         status={data.status}
-        statusLabel={data.status !== "idle"
-          ? nodeStatusLabel(data.status, t)
-          : node.unused
-            ? t("graph.inspector.unused")
-            : nodeStatusLabel(data.status, t)}
+        statusLabel={
+          node.node_type === "image_asset" && !node.bound_asset_id
+            ? t("graph.inspector.unbound")
+            : data.status === "skipped"
+              ? (data.plannedAction === "frozen" ? t("graph.node.skippedFrozen") : t("graph.node.skippedReuse"))
+              : data.status !== "idle"
+                ? nodeStatusLabel(data.status, t)
+                : node.unused
+                  ? t("graph.inspector.unused")
+                  : nodeStatusLabel(data.status, t)}
         image={nodeImage(node)}
         imageWaiting={node.node_type === "image_generation" && running}
-        waitingLabel={nodeStatusLabel(data.status, t)}
-        activityText={running ? nodeStatusLabel(data.status, t) : null}
-        failureReason={data.failureReason ?? (data.missingRunLabels.length ? data.missingRunLabels.join(" · ") : null)}
+        waitingLabel={graphProgressPhaseLabelKey(data.progressPhase)
+          ? t(graphProgressPhaseLabelKey(data.progressPhase)!)
+          : nodeStatusLabel(data.status, t)}
+        activityText={running
+          ? [
+            graphProgressPhaseLabelKey(data.progressPhase)
+              ? t(graphProgressPhaseLabelKey(data.progressPhase)!)
+              : nodeStatusLabel(data.status, t),
+            data.elapsedLabel,
+          ].filter(Boolean).join(" · ")
+          : data.elapsedLabel && data.status !== "idle"
+            ? data.elapsedLabel
+            : null}
+        failureReason={data.failureReason}
         lastRunAt={data.lastRunAt}
         retryable={data.retryable}
+        attemptCount={data.attemptCount ?? 0}
         primarySelected={selected}
         dragging={dragging}
         onSelect={(event) => {
@@ -421,8 +498,18 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           data.onSelectNode(node.id, event);
         }}
       />
+      {data.plannedAction === "frozen" ? (
+        <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-slate-800/90 p-1 text-white" aria-hidden="true">
+          <Lock size={10} />
+        </span>
+      ) : null}
       {data.missingRunLabels.length ? (
-        <div data-graph-missing-run-input className="sr-only">{data.missingRunLabels.join(" · ")}</div>
+        <div
+          data-graph-missing-run-input
+          className="absolute -right-1 -top-1 z-30 max-w-[11rem] rounded-full bg-red-600 px-1.5 py-0.5 text-[9px] font-semibold leading-4 text-white shadow"
+        >
+          {data.missingRunLabels.join(" · ")}
+        </div>
       ) : null}
     </div>
   );
@@ -433,7 +520,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   selected,
 }: NodeProps<Node<GraphGroupData>>) {
   const { t } = useI18n();
-  const { group, bounds, runDisabled, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
+  const { group, bounds, runDisabled, runBlocked, runBlockedReason, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
   const [draft, setDraft] = useState(group.title);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -500,8 +587,8 @@ export const GraphGroupCard = memo(function GraphGroupCard({
           <button
             type="button"
             className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
-            disabled={structureBusy || runDisabled}
-            title={t("graph.canvas.runShot")}
+            disabled={structureBusy || runDisabled || runBlocked}
+            title={runBlocked ? runBlockedReason : t("graph.canvas.runShot")}
             aria-label={t("graph.canvas.runShot")}
             data-run-shot=""
             onClick={(event) => {
@@ -647,8 +734,11 @@ export function GraphWorkflowCanvas({
   selectedNodeIds,
   busy,
   runDisabled = false,
+  blockedGroupIds,
+  runBlockedReason,
   nodeStatuses,
   nodePresentations = {},
+  plannedActions = {},
   runningNodeId,
   viewport,
   onViewportChange,
@@ -659,6 +749,7 @@ export function GraphWorkflowCanvas({
   canvasSyncVersion = 0,
   onSelect,
   onConnect,
+  onReconnect,
   onMove,
   onTranslateGroup,
   onDeleteNode,
@@ -685,8 +776,11 @@ export function GraphWorkflowCanvas({
   selectedNodeIds: string[];
   busy: boolean;
   runDisabled?: boolean;
+  blockedGroupIds?: ReadonlySet<string>;
+  runBlockedReason?: string;
   nodeStatuses: Record<string, WorkflowNodeStatus>;
   nodePresentations?: Record<string, GraphNodeRunPresentation>;
+  plannedActions?: Record<string, GraphPlannedAction>;
   runningNodeId: string | null;
   viewport: WorkflowCanvasViewport | null;
   onViewportChange: (viewport: WorkflowCanvasViewport, groupId: string | null) => void;
@@ -697,6 +791,7 @@ export function GraphWorkflowCanvas({
   canvasSyncVersion?: number;
   onSelect: (nodeIds: string[]) => void | Promise<void>;
   onConnect: (source: string, target: string) => void;
+  onReconnect?: (edgeId: string, source: string, target: string, order: number) => void;
   onMove: (positions: Array<{ node_id: string; position_x: number; position_y: number }>) => void;
   onTranslateGroup: (groupId: string, deltaX: number, deltaY: number) => void;
   onDeleteNode: (nodeId: string) => void;
@@ -797,6 +892,8 @@ export function GraphWorkflowCanvas({
           group,
           bounds,
           runDisabled,
+          runBlocked: blockedGroupIds?.has(group.id) ?? false,
+          runBlockedReason,
           structureBusy: busy,
           onEnter: onEnterGroup,
           onRename: onRenameGroup,
@@ -840,6 +937,10 @@ export function GraphWorkflowCanvas({
           const key = graphEdgeRoleLabelKey(role);
           return t("graph.missingRunInput", { role: key ? t(key) : role });
         }),
+        plannedAction: plannedActions[node.id] ?? nodePresentations[node.id]?.plannedAction ?? null,
+        progressPhase: nodePresentations[node.id]?.progressPhase ?? null,
+        elapsedLabel: nodePresentations[node.id]?.elapsedLabel ?? null,
+        attemptCount: nodePresentations[node.id]?.attemptCount ?? 0,
         onSelectNode: selectNodeFromPointer,
         graph: displayGraph,
         catalog,
@@ -847,7 +948,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
+  }, [blockedGroupIds, busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, plannedActions, proposalNodeStates, runBlockedReason, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -855,7 +956,7 @@ export function GraphWorkflowCanvas({
       source: edge.source_node_id,
       target: edge.target_node_id,
       sourceHandle: "output",
-      targetHandle: "input",
+      targetHandle: edge.role,
       type: "graph-edge" as const,
       data: {
         role: edge.role,
@@ -957,10 +1058,29 @@ export function GraphWorkflowCanvas({
     onEnterGroup(node.data.group.id);
   }, [busy, onEnterGroup]);
   const handleConnect = useCallback((connection: Connection) => {
-    if (connection.source && connection.target && isGraphConnectionValid(graph, connection.source, connection.target, catalog)) {
+    if (
+      connection.source
+      && connection.target
+      && isGraphConnectionValid(graph, connection.source, connection.target, catalog, connection.targetHandle)
+    ) {
       onConnect(connection.source, connection.target);
     }
   }, [catalog, graph, onConnect]);
+  const handleReconnect = useCallback<OnReconnect<GraphCanvasEdge>>((oldEdge, connection) => {
+    if (
+      !onReconnect
+      || !connection.source
+      || !connection.target
+      || !isGraphConnectionValid(graph, connection.source, connection.target, catalog, connection.targetHandle, oldEdge.id)
+    ) {
+      return;
+    }
+    if (oldEdge.source === connection.source && oldEdge.target === connection.target && oldEdge.targetHandle === connection.targetHandle) {
+      return;
+    }
+    const order = graph.edges.find((edge) => edge.id === oldEdge.id)?.order ?? 0;
+    onReconnect(oldEdge.id, connection.source, connection.target, order);
+  }, [catalog, graph, onReconnect]);
   const handleConnectEnd = useCallback<OnConnectEnd>((_event, state) => {
     const reason = rejectedGraphConnectionNotice(graph, {
       isValid: state.isValid,
@@ -968,13 +1088,13 @@ export function GraphWorkflowCanvas({
       toNodeId: state.toNode?.id ?? null,
       toHandleId: state.toHandle?.id ?? null,
     }, catalog);
-    if (reason) onConnectionRejected?.(reason);
+    if (reason && reason !== "graph.connect.incompatible") onConnectionRejected?.(reason);
   }, [catalog, graph, onConnectionRejected]);
   const isValidConnection = useCallback<IsValidConnection<GraphCanvasEdge>>(
     (connection) => Boolean(
       connection.source
       && connection.target
-      && isGraphConnectionValid(graph, connection.source, connection.target, catalog),
+      && isGraphConnectionValid(graph, connection.source, connection.target, catalog, connection.targetHandle),
     ),
     [catalog, graph],
   );
@@ -1062,7 +1182,8 @@ export function GraphWorkflowCanvas({
         maxZoom={2}
         nodesDraggable={interactionPolicy.nodesDraggable}
         nodesConnectable={interactionPolicy.nodesConnectable}
-        edgesReconnectable={false}
+        edgesReconnectable
+        onReconnect={handleReconnect}
         elementsSelectable
         selectNodesOnDrag={interactionPolicy.selectNodesOnDrag}
         snapToGrid={snapToGrid}

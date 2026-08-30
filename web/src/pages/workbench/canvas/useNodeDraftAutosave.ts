@@ -19,6 +19,7 @@ interface UseNodeDraftAutosaveOptions<T> {
   debounceMs?: number;
   normalize?: (draft: T) => T;
   validate: (draft: T) => string | null;
+  versionConflictMessage: string;
   save: (draft: T, expectedEditVersion: number) => Promise<VersionedSaveResult>;
   onStateChange?: (status: SaveStatus, error: string | null) => void;
 }
@@ -45,6 +46,7 @@ export function useNodeDraftAutosave<T>({
   debounceMs = 700,
   normalize = (value) => value,
   validate,
+  versionConflictMessage,
   save,
   onStateChange,
 }: UseNodeDraftAutosaveOptions<T>): NodeDraftAutosave<T> {
@@ -93,6 +95,13 @@ export function useNodeDraftAutosave<T>({
     lastServerSignatureRef.current = nextSignature;
     const hadLocalChanges = !sameJson(draftRef.current, baselineRef.current);
     baselineRef.current = serverValue;
+    if (versionAdvanced && hadLocalChanges && !sameJson(draftRef.current, serverValue)) {
+      const conflict = new Error(versionConflictMessage);
+      blockedRef.current = { sequence: sequenceRef.current, error: conflict };
+      setError(conflict.message);
+      setStatus("failed");
+      return;
+    }
     if (!hadLocalChanges || sameJson(draftRef.current, serverValue)) {
       draftRef.current = serverValue;
       setDraft(serverValue);
@@ -101,7 +110,7 @@ export function useNodeDraftAutosave<T>({
         setError(null);
       }
     }
-  }, [serverEditVersion, serverValue]);
+  }, [serverEditVersion, serverValue, versionConflictMessage]);
 
   const update = useCallback((nextDraft: T) => {
     sequenceRef.current += 1;

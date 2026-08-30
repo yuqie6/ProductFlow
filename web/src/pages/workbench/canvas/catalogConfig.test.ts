@@ -132,6 +132,17 @@ describe("catalog config drafts", () => {
     expect(saved.design_goals).toEqual(["主图"]);
   });
 
+  it("only serializes fields declared by the catalog", () => {
+    const fields: GraphCatalogConfigField[] = [
+      { key: "goal", value_kind: "string", required: false, control: "textarea" },
+    ];
+    const saved = catalogConfigForSave(fields, {
+      document_origin: "generated",
+      goal: "手填目标",
+    });
+    expect(saved).toEqual({ goal: "手填目标" });
+  });
+
   it("fills image generation defaults from catalog instead of a private draft type", () => {
     const source = node({ id: "image", node_type: "image_generation", title: "主图 1" });
     const draft = catalogNodeDraft(source, imageFields);

@@ -17,7 +17,7 @@ import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphNodeRun, GraphProjection, GraphRun, WorkflowNodeStatus } from "../../../lib/types";
+import type { GraphNodeRun, GraphProjection, GraphRun, GraphRunSubmitInput, WorkflowNodeDisplayStatus } from "../../../lib/types";
 import { statusClass } from "../chrome/utils";
 import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
@@ -25,9 +25,9 @@ import {
   graphNodeRunPreviewAssetId,
   graphRunInputTraceEntries,
   graphRunScopeLabelKey,
-  graphRunsAreLive,
   LIVE_RUN_STATUSES,
 } from "./graphRunDisplay";
+import { withGraphRunSubmit } from "./graphRunLock";
 
 export function GraphRunsPanel({
   productId,
@@ -52,7 +52,8 @@ export function GraphRunsPanel({
   const runsQuery = useQuery({
     queryKey,
     queryFn: () => api.listGraphRuns(productId, graph.id),
-    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
+    // GraphCanvasPanel owns the shared run SSE and updates this query cache.
+    refetchInterval: false,
   });
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => api.cancelGraphRun(productId, graph.id, runId),
@@ -60,6 +61,10 @@ export function GraphRunsPanel({
   });
   const retryMutation = useMutation({
     mutationFn: (runId: string) => api.retryGraphRun(productId, graph.id, runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+  });
+  const selectionMutation = useMutation({
+    mutationFn: (input: GraphRunSubmitInput) => api.submitGraphRun(productId, graph.id, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
   const retryRun = useCallback(async (runId: string) => {
@@ -70,6 +75,21 @@ export function GraphRunsPanel({
     }
     retryMutation.mutate(runId);
   }, [onBeforeRun, retryMutation]);
+  const retryFailedNodes = useCallback(async (run: GraphRun) => {
+    const nodeIds = run.node_runs
+      .filter((nodeRun) => nodeRun.status === "failed" && nodeRun.node_id)
+      .map((nodeRun) => nodeRun.node_id as string);
+    if (!nodeIds.length) return;
+    try {
+      await onBeforeRun?.();
+    } catch {
+      return;
+    }
+    await withGraphRunSubmit(() => selectionMutation.mutateAsync({
+      scope: "selection",
+      node_ids: nodeIds,
+    }));
+  }, [onBeforeRun, selectionMutation]);
 
   if (runsQuery.isLoading) {
     return <PanelState icon={<Loader2 size={20} className="animate-spin" />} text={t("app.loading")} />;
@@ -86,7 +106,7 @@ export function GraphRunsPanel({
   }
 
   const runs = runsQuery.data?.items ?? [];
-  const operationError = cancelMutation.error ?? retryMutation.error;
+  const operationError = cancelMutation.error ?? retryMutation.error ?? selectionMutation.error;
   return (
     <div className="space-y-3 pb-4" data-graph-runs-panel>
       <div className="flex items-center justify-between gap-2 px-1 text-xs text-zinc-500 dark:text-slate-400">
@@ -106,8 +126,10 @@ export function GraphRunsPanel({
           selectedNodeId={selectedNodeId}
           cancelBusy={structureBusy || (cancelMutation.isPending && cancelMutation.variables === run.id)}
           retryBusy={structureBusy || (retryMutation.isPending && retryMutation.variables === run.id)}
+          retryFailedBusy={structureBusy || selectionMutation.isPending}
           onCancel={() => cancelMutation.mutate(run.id)}
           onRetry={() => void retryRun(run.id)}
+          onRetryFailed={() => void retryFailedNodes(run)}
           onJump={onJump}
           onPreviewImage={onPreviewImage}
         />
@@ -124,8 +146,10 @@ function GraphRunRecord({
   selectedNodeId,
   cancelBusy,
   retryBusy,
+  retryFailedBusy,
   onCancel,
   onRetry,
+  onRetryFailed,
   onJump,
   onPreviewImage,
 }: {
@@ -134,8 +158,10 @@ function GraphRunRecord({
   selectedNodeId: string | null;
   cancelBusy: boolean;
   retryBusy: boolean;
+  retryFailedBusy: boolean;
   onCancel: () => void;
   onRetry: () => void;
+  onRetryFailed: () => void;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
@@ -152,7 +178,7 @@ function GraphRunRecord({
     >
       <div className="p-3.5">
         <div className="flex min-w-0 items-start gap-2.5">
-          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${statusClass(run.status as WorkflowNodeStatus)}`}>
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${statusClass(run.status as WorkflowNodeDisplayStatus)}`}>
             {active ? <Loader2 size={14} className="animate-spin" /> : <Workflow size={14} />}
           </span>
           <div className="min-w-0 flex-1">
@@ -160,7 +186,7 @@ function GraphRunRecord({
               <span className="text-xs font-semibold text-zinc-900 dark:text-slate-100">
                 {t(graphRunScopeLabelKey(run.scope))}
               </span>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(run.status as WorkflowNodeStatus)}`}>
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(run.status as WorkflowNodeDisplayStatus)}`}>
                 {t(`detail.nodeStatus.${run.status}`)}
               </span>
             </div>
@@ -174,7 +200,12 @@ function GraphRunRecord({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
-            {run.is_retryable ? (
+            {run.node_runs.some((nodeRun) => nodeRun.status === "failed" && nodeRun.node_id) && !active ? (
+              <IconButton label={t("graph.runs.retryFailed")} disabled={retryFailedBusy} onClick={onRetryFailed}>
+                {retryFailedBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+              </IconButton>
+            ) : null}
+            {run.status === "failed" && run.is_retryable ? (
               <IconButton label={t("agentWorkbench.runHistory.retryRun")} disabled={retryBusy} onClick={onRetry}>
                 {retryBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
               </IconButton>

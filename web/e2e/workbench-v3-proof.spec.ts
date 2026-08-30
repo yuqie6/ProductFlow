@@ -385,8 +385,7 @@ for (const preset of PRESETS) {
       const inspector = page.locator("[data-graph-node-inspector]");
       await expect(inspector).toBeVisible();
       const imageCard = page.locator(`[data-workflow-node-id="${imageId}"]`);
-      await expect(inspector).toContainText("先连上参考图，才能生成");
-      await expect(inspector).toContainText("先连上提示词节点，才能运行");
+      await expect(inspector).toContainText("还缺提示词，先连上再运行");
       await expect(imageCard).toContainText("还缺提示词，先连上再运行");
       await expect(inspector.getByRole("button", { name: "运行该节点" })).toBeDisabled();
 
