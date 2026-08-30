@@ -67,7 +67,9 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 			e.notifyRunStatus(ctx, runID)
 			return nil
 		}
-		_ = failGraphRun(ctx, e.DB, runID, "工作流运行失败")
+		if failErr := failGraphRun(ctx, e.DB, runID, "工作流运行失败"); failErr != nil {
+			return failErr
+		}
 		e.notifyRunStatus(ctx, runID)
 		return nil
 	}
@@ -216,7 +218,7 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 		}
 		if _, err := pfdb.Exec(ctx, tx, `
 			UPDATE workflow_graph_node_runs SET
-				status = 'failed', failure_reason = '上游节点失败', finished_at = $2,
+				status = 'failed', failure_reason = '上游处理节点未成功', finished_at = $2,
 				active_attempt_id = NULL, progress_updated_at = $2
 			WHERE id = $1 AND status = 'queued'
 		`, item.ID, now); err != nil {

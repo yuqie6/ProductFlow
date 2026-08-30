@@ -108,6 +108,8 @@ var infographicImageTypeKeys = map[string]struct{}{
 	"precautions": {}, "faq": {}, "shipping": {}, "brand_story": {},
 }
 
+func ImageTypeFamily(key string) string { return imageTypeFamily(key) }
+
 func imageTypeFamily(key string) string {
 	if _, ok := evidenceImageTypeKeys[key]; ok {
 		return "evidence"

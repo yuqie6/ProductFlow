@@ -1,10 +1,12 @@
 package product
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -12,6 +14,24 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
+
+const (
+	intakeMinImagesPerType  = 1
+	intakeMaxImagesPerType  = 6
+	intakeMaxTotalImages    = 30
+	selectionInvalidDetail  = "图片类型选择不符合 AgentProductSelectionV1"
+	directTypesArrayDetail  = "图片类型必须是 JSON 数组"
+	directTypesFormatDetail = "图片类型格式无效"
+)
+
+var aspectRatioPattern = regexp.MustCompile(`^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$`)
+
+var lookupDeliveryPresetSpec func(key string) (map[string]any, error)
+
+// BindDeliveryPresetSpec 由 delivery 包注入 GetPreset+SpecAsMap，避免 product→delivery 循环依赖。
+func BindDeliveryPresetSpec(fn func(key string) (map[string]any, error)) {
+	lookupDeliveryPresetSpec = fn
+}
 
 type ImageTypeSelection struct {
 	Key      string `json:"key"`
@@ -25,56 +45,147 @@ type Selection struct {
 	DeliveryPresetKey *string              `json:"delivery_preset_key"`
 }
 
+func catalogKeySet() map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, item := range graph.ImageTypeCatalogJSON() {
+		key, _ := item["key"].(string)
+		if key != "" {
+			out[key] = struct{}{}
+		}
+	}
+	return out
+}
+
+func deliveryPresetSpec(key string) (map[string]any, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+	if lookupDeliveryPresetSpec == nil {
+		return nil, apperr.Validation("未知 DeliverySpec 预设: " + key)
+	}
+	spec, err := lookupDeliveryPresetSpec(key)
+	if err != nil || spec == nil {
+		return nil, apperr.Validation("未知 DeliverySpec 预设: " + key)
+	}
+	return spec, nil
+}
+
+func selectionDeliverySpec(selection Selection) (map[string]any, error) {
+	if selection.DeliveryPresetKey == nil {
+		return nil, nil
+	}
+	return deliveryPresetSpec(*selection.DeliveryPresetKey)
+}
+
 func parseSelection(raw string) (Selection, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
 	var selection Selection
-	if err := json.Unmarshal([]byte(raw), &selection); err != nil {
-		return Selection{}, apperr.Validation("图片类型选择不符合 AgentProductSelectionV1")
+	if err := dec.Decode(&selection); err != nil {
+		return Selection{}, apperr.Validation(selectionInvalidDetail)
+	}
+	if dec.More() {
+		return Selection{}, apperr.Validation(selectionInvalidDetail)
 	}
 	if selection.SchemaVersion != 1 {
-		return Selection{}, apperr.Validation("图片类型选择不符合 AgentProductSelectionV1")
+		return Selection{}, apperr.Validation(selectionInvalidDetail)
 	}
-	if len(selection.ImageTypes) == 0 {
-		return Selection{}, apperr.Validation("图片类型选择不符合 AgentProductSelectionV1")
+	catalog := catalogKeySet()
+	if len(selection.ImageTypes) == 0 || len(selection.ImageTypes) > len(catalog) {
+		return Selection{}, apperr.Validation(selectionInvalidDetail)
 	}
 	seen := map[string]struct{}{}
+	total := 0
 	for i, item := range selection.ImageTypes {
 		if item.Order != i {
-			return Selection{}, apperr.Validation("图片类型选择不符合 AgentProductSelectionV1")
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
 		}
-		if _, ok := seen[item.Key]; ok {
-			return Selection{}, apperr.Validation("图片类型选择不符合 AgentProductSelectionV1")
+		key := strings.TrimSpace(item.Key)
+		if _, ok := catalog[key]; !ok {
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
 		}
-		seen[item.Key] = struct{}{}
+		if item.Quantity < intakeMinImagesPerType || item.Quantity > intakeMaxImagesPerType {
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
+		}
+		if _, ok := seen[key]; ok {
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
+		}
+		seen[key] = struct{}{}
+		total += item.Quantity
+	}
+	if total > intakeMaxTotalImages {
+		return Selection{}, apperr.Validation(selectionInvalidDetail)
+	}
+	if selection.DeliveryPresetKey != nil {
+		key := strings.TrimSpace(*selection.DeliveryPresetKey)
+		if key == "" || len(key) > 80 {
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
+		}
+		if _, err := deliveryPresetSpec(key); err != nil {
+			return Selection{}, apperr.Validation(selectionInvalidDetail)
+		}
+		selection.DeliveryPresetKey = &key
 	}
 	return selection, nil
 }
 
 func parseDirectImageTypes(raw string) ([]graph.DirectCreateImageType, error) {
-	var payload []map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil, apperr.Validation("图片类型必须是 JSON 数组")
+	dec := json.NewDecoder(strings.NewReader(raw))
+	var items []json.RawMessage
+	if err := dec.Decode(&items); err != nil {
+		return nil, apperr.Validation(directTypesArrayDetail)
 	}
-	out := make([]graph.DirectCreateImageType, 0, len(payload))
-	for i, item := range payload {
-		key, _ := item["key"].(string)
-		if strings.TrimSpace(key) == "" {
-			return nil, apperr.Validation("图片类型格式无效")
+	if dec.More() {
+		return nil, apperr.Validation(directTypesArrayDetail)
+	}
+	catalog := catalogKeySet()
+	out := make([]graph.DirectCreateImageType, 0, len(items))
+	unknown := make([]string, 0)
+	total := 0
+	for i, rawItem := range items {
+		itemDec := json.NewDecoder(bytes.NewReader(rawItem))
+		itemDec.DisallowUnknownFields()
+		var item struct {
+			Key         string  `json:"key"`
+			Quantity    int     `json:"quantity"`
+			AspectRatio *string `json:"aspect_ratio"`
 		}
-		quantity := 1
-		switch typed := item["quantity"].(type) {
-		case float64:
-			quantity = int(typed)
-		case json.Number:
-			n, _ := typed.Int64()
-			quantity = int(n)
+		if err := itemDec.Decode(&item); err != nil || itemDec.More() {
+			return nil, apperr.Validation(directTypesFormatDetail)
 		}
-		aspect, _ := item["aspect_ratio"].(string)
+		key := strings.TrimSpace(item.Key)
+		if key == "" {
+			return nil, apperr.Validation(directTypesFormatDetail)
+		}
+		if item.Quantity < intakeMinImagesPerType || item.Quantity > intakeMaxImagesPerType {
+			return nil, apperr.Validation(directTypesFormatDetail)
+		}
+		if item.AspectRatio != nil && !aspectRatioPattern.MatchString(*item.AspectRatio) {
+			return nil, apperr.Validation(directTypesFormatDetail)
+		}
+		if _, ok := catalog[key]; !ok {
+			unknown = append(unknown, key)
+		}
+		aspect := ""
+		if item.AspectRatio != nil {
+			aspect = *item.AspectRatio
+		}
+		if graph.ImageTypeFamily(key) != "evidence" {
+			total += item.Quantity
+		}
 		out = append(out, graph.DirectCreateImageType{
 			Key:         key,
-			Quantity:    quantity,
+			Quantity:    item.Quantity,
 			Order:       i,
 			AspectRatio: aspect,
 		})
+	}
+	if len(unknown) > 0 {
+		return nil, apperr.Validation("不支持的图片类型: " + strings.Join(unknown, ", "))
+	}
+	if total > intakeMaxTotalImages {
+		return nil, apperr.Validation("图片生成总数不能超过 30")
 	}
 	return out, nil
 }
@@ -189,6 +300,13 @@ func intakePayload(selection Selection, assetIDs []string) ([]byte, error) {
 	}
 	if selection.DeliveryPresetKey != nil {
 		payload["delivery_preset_key"] = *selection.DeliveryPresetKey
+		spec, err := deliveryPresetSpec(*selection.DeliveryPresetKey)
+		if err != nil {
+			return nil, err
+		}
+		if spec != nil {
+			payload["delivery_spec"] = spec
+		}
 	}
 	return canonicalJSON(payload)
 }

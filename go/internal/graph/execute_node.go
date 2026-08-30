@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -214,7 +217,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 		if len(img.Bytes) == 0 {
 			return fmt.Errorf("图片 provider 未返回图片结果")
 		}
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name())
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID)
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -472,7 +475,7 @@ func (e Executor) persistImageArtifact(
 	img ImageResult,
 	digest string,
 	promote bool,
-	providerName string,
+	providerName, promptArtifactID string,
 ) error {
 	if e.Deps.Assets == nil {
 		return apperr.Validation("节点运行失败")
@@ -502,16 +505,36 @@ func (e Executor) persistImageArtifact(
 		if err != nil {
 			return err
 		}
+		width, height := img.Width, img.Height
+		if width <= 0 || height <= 0 {
+			if verified, inspectErr := media.Inspect(img.Bytes, img.MIME); inspectErr == nil {
+				width, height = verified.Width, verified.Height
+			}
+		}
+		if width <= 0 || height <= 0 {
+			return apperr.Validation("供应商没有返回可读取的图片")
+		}
+		spec, _ := node.Config["generation_spec"].(map[string]any)
+		if spec == nil {
+			spec = map[string]any{}
+		}
+		requestedAspect, _ := spec["aspect_ratio"].(string)
+		matched := measuredAspectMatches(requestedAspect, width, height)
 		measured := map[string]any{
-			"mime_type":       img.MIME,
-			"provider_status": img.ProviderStatus,
-			"byte_size":       len(img.Bytes),
+			"mime_type":              img.MIME,
+			"provider_status":        img.ProviderStatus,
+			"byte_size":              len(img.Bytes),
+			"width":                  width,
+			"height":                 height,
+			"measured_width":         width,
+			"measured_height":        height,
+			"requested_aspect_ratio": requestedAspect,
+			"requested_quality":      spec["quality_intent"],
+			"aspect_matched":         matched,
+			"aspect_mismatch":        nil,
 		}
-		if img.Width > 0 {
-			measured["width"] = img.Width
-		}
-		if img.Height > 0 {
-			measured["height"] = img.Height
+		if !matched {
+			measured["aspect_mismatch"] = fmt.Sprintf("供应商没有按 %s 出图（实际 %d×%d）", requestedAspect, width, height)
 		}
 		if img.EffectiveParameters != nil {
 			measured["effective_parameters"] = img.EffectiveParameters
@@ -519,7 +542,8 @@ func (e Executor) persistImageArtifact(
 		payloadMap := map[string]any{
 			"schema_version":         3,
 			"product_image_asset_id": assetID,
-			"generation_spec":        node.Config["generation_spec"],
+			"generation_spec":        spec,
+			"prompt_artifact_id":     emptyToNil(promptArtifactID),
 			"measured_output":        measured,
 		}
 		payload, err := json.Marshal(payloadMap)
@@ -546,7 +570,8 @@ func (e Executor) persistImageArtifact(
 			}
 			if e.Deps.Delivery != nil {
 				if err := e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID); err != nil {
-					return err
+					e.logger().Warn("image success kept; delivery rendition queue failed",
+						zap.String("node_id", *nodeRun.NodeID), zap.Error(err))
 				}
 			}
 		}
@@ -631,6 +656,28 @@ func upsertArtifact(
 		) VALUES ($1, $2, $3, $4, $5, 3, $6, $7, $8, $9, $10, $11, $12, NOW())
 	`, id, run.GraphID, nodeRun.NodeID, nodeRun.ID, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, providerName, model)
 	return id, err
+}
+
+func measuredAspectMatches(aspect string, width, height int) bool {
+	if width <= 0 || height <= 0 || !strings.Contains(aspect, ":") {
+		return false
+	}
+	parts := strings.SplitN(aspect, ":", 2)
+	w, errW := strconv.ParseFloat(parts[0], 64)
+	h, errH := strconv.ParseFloat(parts[1], 64)
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return false
+	}
+	requested := w / h
+	actual := float64(width) / float64(height)
+	return absFloat(actual-requested) <= requested*0.08
+}
+
+func absFloat(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func sha256Hex(payload []byte) string {
