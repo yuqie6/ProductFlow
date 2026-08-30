@@ -102,6 +102,23 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 	return row, nil
 }
 
+// RestageIfIdle 把缺失 / consumed / dead 信封补回 PENDING。
+// pending、sent 视为已在投递路径上，不改行、不计数。
+func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, payload any) (bool, error) {
+	key := DeliveryKey(actorName, aggregateID)
+	existing, err := loadByDeliveryKey(ctx, tx, key)
+	if err != nil {
+		return false, err
+	}
+	if existing != nil && (existing.Status == StatusPending || existing.Status == StatusSent) {
+		return false, nil
+	}
+	if _, err := Requeue(ctx, tx, key, actorName, aggregateID, payload, nil, false); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // StageForActor 按 actor+aggregate 暂存 PENDING 行，不 commit。
 func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
 	var availableAt *time.Time

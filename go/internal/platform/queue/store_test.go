@@ -228,3 +228,73 @@ func TestConsumerLeaseExceedsTaskTimeout(t *testing.T) {
 		t.Fatalf("lease %d must exceed task timeout %s", queue.DefaultConsumerLeaseSeconds, queue.TaskTimeout)
 	}
 }
+
+func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx := context.Background()
+	agg := uniqueID(t)
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		_, err := queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		if err != nil {
+			return err
+		}
+		if changed {
+			t.Fatal("pending dispatch must not restage")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE async_dispatches SET status = $1, consumed_at = NOW(), updated_at = NOW()
+		WHERE aggregate_id = $2
+	`, queue.StatusConsumed, agg); err != nil {
+		t.Fatal(err)
+	}
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			t.Fatal("consumed unfinished dispatch must restage")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE async_dispatches SET status = $1, updated_at = NOW() WHERE aggregate_id = $2
+	`, queue.StatusDead, agg); err != nil {
+		t.Fatal(err)
+	}
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			t.Fatal("dead unfinished dispatch must restage")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE aggregate_id = $1`, agg).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != queue.StatusPending {
+		t.Fatalf("status %s", status)
+	}
+}
