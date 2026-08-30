@@ -94,6 +94,8 @@ Closing the Agent conversation leaves the same canvas as never opening it: add, 
 - Maximize hides the top navigation so the canvas fills the main area.
 - Use automatic layout to improve routing.
 - Put a local flow in a canvas group. Double-click the group or use the enter control to see only its members; the breadcrumb returns to the full graph. In-group and full-graph viewports are remembered separately. A group changes visual organization only, not DAG execution order. Cross-group edges stay visible on the full graph.
+- While a graph save is in progress, add, inspect, bind, and recipes lock so unsaved prompts are not eaten by a run.
+- Dropping an asset onto blank canvas creates a bound unused image node; dropping onto an aggregate input connects a reference edge.
 
 Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 
@@ -298,4 +300,4 @@ Confirm the independent SETTINGS_ACCESS_TOKEN unlock and inspect provider capabi
 
 Application logs must not contain API keys, session tokens, complete upload bytes, or data URLs. Treat any such log as a security issue.
 
-For self-hosted troubleshooting, read `storage-dev/logs/` (Compose: `logs/` under the mounted storage volume): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. Each line is JSON with `ts`, `level`, `msg`, and `process`. API access lines include `request_id`.
+For self-hosted troubleshooting, read `storage-dev/logs/` (Compose: `logs/` under the mounted storage volume): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. Each line is JSON with `ts`, `level`, `msg`, and `process`. API access lines include `request_id`. The terminal shows the same events as readable lines, not JSON.

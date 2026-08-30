@@ -12,15 +12,15 @@ ProductFlow is a single-administrator, single-merchant workspace with seven runt
 6. PostgreSQL.
 7. Redis and media storage.
 
-The browser reaches only Web and the business API. The Agent service calls internal business-API endpoints with a dedicated bearer token; the API controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher. Default processes are `go/cmd/productflow-api`, `productflow-worker`, and `productflow-dispatcher`. Schema is applied by `productflow-migrate` before those processes start. `backend/` keeps the sealed Python tree and an optional Python fallback (Compose profile `python`) and is not the default runtime.
+The browser reaches only Web and the business API. The Agent service calls internal business-API endpoints with a dedicated bearer token; the API controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher. Default processes are `go/cmd/productflow-api`, `productflow-worker`, and `productflow-dispatcher`. Schema is applied by `productflow-migrate` before those processes start. `backend/` keeps the sealed Python tree and an optional Python fallback (Compose profile `python`) and is not the default runtime. Machine-readable contracts live at the repo root `contracts/`: `http-routes.json` and `openapi.json` are sealed Python snapshots and are not regenerated from live FastAPI by default. Go rejects unknown JSON fields with `DisallowUnknownFields` → 400. HTTP writes the business row and `async_dispatches` PENDING; it does not enqueue the broker.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md` and durable rationale in `adr/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md` and durable rationale in `adr/`. Read `adr/0007-pi-agent-runtime-boundary.md` when changing the Agent service. Remaining durability gates live in `ROADMAP.en.md`.
 
 ## 2. Backend Layers
 
 The business backend is vertically sliced under `go/internal/`. HTTP uses Gin, PostgreSQL access uses GORM (still on the pgx driver; command transactions use `tx.WithGorm` and raw SQL), and async delivery uses an asynq envelope. PostgreSQL `async_dispatches` and business tables remain the state authority. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (CHECK / enum / partial unique / FK). AutoMigrate is not used.
 
-`backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process.
+`backend/src/productflow_backend/` is the sealed Python tree and migration source, not the default process. Machine-readable contracts live at the repo root `contracts/`: `http-routes.json` and `openapi.json` are sealed Python snapshots and are not regenerated from live FastAPI by default. Go rejects unknown JSON fields with `DisallowUnknownFields` → 400. HTTP writes the business row and `async_dispatches` PENDING; it does not enqueue the broker.
 
 Current code ownership:
 
@@ -126,6 +126,8 @@ Node types are:
 
 Canvas groups are one-level visual folders. You can enter a group and remember its viewport separately from the full graph. Groups do not change DAG execution, grow ports, or run/cancel/retry. Cross-group edges stay visible on the full graph. Edges use Node Catalog data types and roles. Node inspector forms render from the same `config_fields` document and save with `update_node_config`.
 
+Photography and infographic image types land as one group: one `prompt_generation` plus N `image_generation` nodes (N is that shot's count). Evidence types (certification, factory) are unbound `image_asset` nodes with `role=evidence`. Create-time uploads use `role=product_identity` and connect to visual system, creative brief, and generating shots, not to evidence placeholders. The add panel's "add shot" writes one ChangeSet: group + prompt + one image node. Implementation: `web/src/pages/workbench/canvas/shotChangeSet.ts`; template in `go/internal/graph`.
+
 `WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows. One worker holds a run; independent processing nodes may call providers concurrently, limited by runtime `generation_max_concurrent_tasks`. A failed or unknown node does not stop independent siblings; downstream of a failed upstream is marked failed. Evidence: `graph_execution.py`, `test_graph_execution.py`.
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
@@ -176,7 +178,7 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and the business API SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md` and `rollout/pi-agent-durability.md`.
+- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and the business API SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md`.
 - ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security
@@ -192,7 +194,7 @@ Provider profiles, purpose bindings, and business runtime settings are stored th
 
 Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 
-API, worker, and dispatcher JSON logs go to stderr and rotate under `STORAGE_ROOT/logs/` (local `storage-dev/logs/`, Compose `/app/storage/logs`): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. `LOG_DIR` overrides the directory. Owner and tests: `go/internal/platform/log`.
+API, worker, and dispatcher write readable lines to stderr (time, level, process, message, `key=value`) and rotate JSON files under `STORAGE_ROOT/logs/` (local `storage-dev/logs/`, Compose `/app/storage/logs`): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`, including caller and error stacks. `LOG_DIR` overrides the directory. `LOG_FORMAT=json` also writes JSON to stderr. Idle dispatcher cycles, `/healthz`, and Agent heartbeats go to files only. Owner and tests: `go/internal/platform/log`.
 
 ## 11. Schema Evolution
 

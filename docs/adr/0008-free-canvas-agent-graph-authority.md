@@ -2,9 +2,7 @@
 
 ## 状态
 
-Accepted。当前在线图是 schema-v3 `workflow_graphs`。节点目录、端口、ChangeSet 操作和执行入口见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) §6。
-
-尚未交付的后续：工作台浏览器证明见 [`docs/ROADMAP.md`](../ROADMAP.md)；会话归属与可选 Goal 见 [`0009-agent-canvas-sandbox.md`](0009-agent-canvas-sandbox.md)。
+Accepted。当前在线图是 schema-v3 `workflow_graphs`。节点目录、端口、ChangeSet 操作和执行入口见 [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) §6。工作台连续动作见 [`docs/USER_GUIDE.md`](../USER_GUIDE.md)；会话归属与 Goal 见 [`0009-agent-canvas-sandbox.md`](0009-agent-canvas-sandbox.md)。
 
 ## 背景
 

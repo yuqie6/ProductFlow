@@ -2,7 +2,7 @@
 
 ## Working Method
 
-Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/adr/` for accepted architecture decisions, and `docs/rollout/` for unfinished operational work. When documentation conflicts with code or tests, verify the live behavior and correct the documentation.
+Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/adr/` for accepted architecture decisions, and `docs/ROADMAP.md` for unfinished directions. When documentation conflicts with code or tests, verify the live behavior and correct the documentation.
 
 Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. For broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
@@ -12,7 +12,7 @@ Before a cross-layer change, trace `input -> wire schema -> application use case
 
 Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. V1/Gallery cutover notes in `docs/rollout/` and `docs/operations/` are leftover, not mainline obligations.
+Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`.
 
 ## Multi-Agent Delivery
 

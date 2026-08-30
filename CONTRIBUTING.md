@@ -8,9 +8,9 @@
 
 1. 阅读 `README.md`，确认项目定位和本地启动方式。
 2. 阅读 `docs/README.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解文档职责与当前功能边界。
-3. 如果要改后端，读取 `backend/AGENTS.md`。
+3. 如果要改后端，读取 `go/AGENTS.md`；封印 Python 树读 `backend/AGENTS.md`。
 4. 如果要改前端，读取 `web/AGENTS.md`。
-5. 跨层或产品语义变更先核对 `CONTEXT.md` 与 `docs/adr/`；发布状态和未完成证据记录在 `docs/rollout/`。
+5. 跨层或产品语义变更先核对 `CONTEXT.md` 与 `docs/adr/`；未完成方向写在 `docs/ROADMAP.md`。
 6. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
 
 ## 本地开发
@@ -115,5 +115,4 @@ Boundaries:
 
 ## 工程知识位置
 
-`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界，`docs/adr/` 保存需要长期解释的架构决策，
-`docs/rollout/` 保存具体迁移或发布的已完成项、证据和停止条件。任务状态由 GitHub Issues 与实际 Git 状态承担。
+`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界，`docs/adr/` 保存需要长期解释的架构决策。任务状态由 GitHub Issues 与实际 Git 状态承担。

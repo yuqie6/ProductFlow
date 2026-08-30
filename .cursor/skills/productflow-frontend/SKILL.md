@@ -15,7 +15,7 @@ paths: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css
 5. [frontend-design](../frontend-design/SKILL.md) — 反模板审美，但必须先读 [PRODUCTFLOW.md](../frontend-design/PRODUCTFLOW.md)
 6. [web-design-guidelines](../web-design-guidelines/SKILL.md) — 无障碍 / 焦点 / 触控审计
 
-画布、检查器、配方、侧栏还要跟 `.cursor/rules/workbench.mdc` 和 `docs/specs/workbench.md`。
+画布、检查器、配方、侧栏还要跟 `.cursor/rules/workbench.mdc`。操作说明以 `docs/USER_GUIDE.md` 为准。
 
 ## 这是什么产品
 

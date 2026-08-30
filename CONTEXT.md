@@ -82,9 +82,7 @@ The online product is schema-v3 graphs, Agent-first create, the workbench, media
 - `docs/USER_GUIDE.md`: page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
 - `docs/ARCHITECTURE.md`: current implementation structure and data flow.
 - `docs/ROADMAP.md`: directions that are not yet product fact.
-- `docs/adr/`: frozen decisions still on the default reading path. ADR 0011 records the Go vertical-slice rewrite; it is not current runtime fact.
-- `docs/archive/`: superseded records, including ADR 0003.
-- `docs/rollout/` and `docs/operations/`: leftover operator notes; V1/Gallery cutover is not a mainline obligation.
-- `AGENTS.md`, `backend/AGENTS.md`, `web/AGENTS.md`: how to change this repository.
+- `docs/adr/`: frozen decisions. ADR 0011 records the Go vertical-slice rewrite; current runtime shape is `docs/ARCHITECTURE.md`.
+- `AGENTS.md`, `go/AGENTS.md`, `backend/AGENTS.md`, `web/AGENTS.md`: how to change this repository.
 
 Code, tests, migrations, and runtime behavior remain the final source of current implementation truth. Documentation must be corrected when they disagree.

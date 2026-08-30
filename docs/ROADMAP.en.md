@@ -4,27 +4,36 @@ Directions that are not yet product fact, or that still lack real validation. Cu
 
 ## Near term
 
-### Workbench proof
+### Studio increments
 
-Leaving the Agent must still leave a complete canvas. Interaction follows [`specs/workbench.md`](specs/workbench.md): commands on the object, failures on the object, results immediately operable. This bar is not deferred for Agent-sandbox slices.
+Do not write these into CONTEXT / PRD / ARCHITECTURE until they land.
 
-Workbench code already follows [`USER_GUIDE.en.md`](USER_GUIDE.en.md) and that spec. Still missing: continuous-action evidence on 1440 / 1024 / 390 with a real provider and PostgreSQL / Redis / worker — copy/paste, illegal-connect reasons, failures on the object, recipe preview confirm, bottom drawer leaving canvas visible, no console/network errors.
+| Item | User-visible | Out of scope |
+|---|---|---|
+| Shot list as default surface | Workbench opens on shot rows (type, count, status, thumbnail, run this shot); same schema-v3 canvas remains available | A Shot table or a second executor |
+| Generate-set copy | One merchant action runs the existing DAG (content nodes first, then each shot); progress projected per shot | A second run model |
+| Recommended types on create | One click fills missing image types; a second click does not overwrite existing shot config | Official canvas-template recipes |
+| Post-generation local edit | Inpaint / replace text / local redraw on an existing `ProductImageAsset`; new asset keeps lineage; failure does not replace the node's current result | A seventh node type, watermark-removal shelf, batch 200 |
+| Human fidelity checklist | People check form, color, and text on the result; then local-edit or rerun that shot | Auto quality scores as a formal gate |
 
-After that proof, delete `specs/workbench.md` and keep user-facing sentences in the user guide.
+Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe library lists only recipes the user saved from a live graph.
 
-### Agent canvas sandbox
+### Agent conversation chrome and conversation path
 
-Landed: Turn run identity, create as live graph, canvas vs global session ownership, `sameRuntimeScope` ignoring prompt / live-graph refreshes, no product-path WorkflowDraft writes (intake lives on Product), and the Goal loop on an explicit `AgentTask` (a finished graph run is not Goal complete). Current contract: CONTEXT / PRD / ARCHITECTURE. Conversation chrome remains in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md).
+- Collapsed sidebar, mobile conversation sheet, clipped suggestion chips. Decision boundary: [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md).
+- Question-count and visual-quality samples for conversation create.
+- A separate browser regression for the conversation path. `just web-e2e-live-graph` covers skip-Agent direct create and workbench continuous actions.
 
-The Goal loop (run graph → inspect → edit canvas → run again) is on the product conversation sidebar. Complete is user-only; graph-checkable criteria are not automated. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above.
+### Agent durability
 
-Question-count and visual-quality samples for conversation create are still missing. `just web-e2e-live-graph` still covers skip-Agent direct create until the conversation path has its own browser regression.
+Until these gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md). The old Go Agent on `exp` is not an implicit fallback on main.
 
-Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) and [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md). Background durable Tasks and multi-instance reconciliation expand only after a dedicated gate. The old Go Agent on `exp` is not an implicit fallback on main.
+- Real provider, PostgreSQL / Redis, and browser.
+- A production claim for SSE reconnect.
+- Background durable Tasks, cross-process claim, and full effect reconciliation.
+- An independent Fresh Observation harness (re-read before/after side effects is already a rule).
 
-### Studio increment
-
-[`specs/studio-increments.md`](specs/studio-increments.md): shot list as the default surface, generate-set copy, recommended types on create, post-generation local edits, and a human fidelity checklist. Do not write these into CONTEXT / PRD / ARCHITECTURE until they land. Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe library does not ship official canvas templates; users save their own recipes.
+Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
 
 ### Image production quality
 
@@ -33,14 +42,6 @@ Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 
-### Mainline cleanup
-
-Delete leftover V1 archives, Gallery backfill, WorkflowDraft write stubs, and compatibility readers under [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md). Do not add deployment-grade backfill or cutover evidence.
-
-### Agent durability
-
-Real provider, real stores, SSE reconnect, and the production switch for background durable / reconciliation. See [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md). Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`). A business Task scheduler, cross-process durable admission, and a unified Fresh Observation harness are still unbuilt.
-
 ## Medium term
 
 - Richer fact conflict resolution and structured spec entry.
@@ -48,12 +49,6 @@ Real provider, real stores, SSE reconnect, and the production switch for backgro
 - Image quality scores, similar-candidate clustering, and selection help.
 - More image provider adapters and observability.
 - Workflow run cost, latency, and failure-rate stats.
-
-## Engineering runtime: business backend is Go
-
-Default `just dev` and Compose start the Go API, worker, and dispatcher. Decision: [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md). Product contract: [`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md).
-
-Still on the roadmap: workbench continuous-action browser proof (above), backup/restore of existing products that can still open and run a graph, and live prompt/image provider success / fail / `unknown` evidence. Python `backend/` remains for the sealed tree and optional Compose profile `python`.
 
 ## SaaS
 

@@ -4,27 +4,36 @@
 
 ## 近期
 
-### 工作台证明
-
-人离开 Agent 也必须能完整操作画布，交互按 [`specs/workbench.md`](specs/workbench.md)：命令靠近对象、失败写在对象上、结果立刻可再操作。这是不可妥协的质量条，不因 Agent 沙箱切片往后排。
-
-工作台代码已经按 [`USER_GUIDE.md`](USER_GUIDE.md) 和该规格接线。还缺 1440 / 1024 / 390、真实 provider、PostgreSQL / Redis / worker 的连续动作证据：复制粘贴、拖线原因、运行失败写在对象上、配方预览确认、底抽屉不挡节点、无 console/network error。
-
-证明之后删除 `specs/workbench.md`，把仍约束用户操作的句子留在 USER_GUIDE。
-
-### Agent 画布沙箱
-
-已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新、商品路径不再写入 WorkflowDraft（intake 在 Product 上）、Goal 托管环接到显式 `AgentTask`（跑图结束不等于 Goal 完成）。当前合同见 CONTEXT / PRD / ARCHITECTURE。对话壳见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md)。
-
-Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）已接到商品工作台对话侧栏。完成只能由用户点完成；图上可核对完成标准尚未自动化。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收。
-
-对话创建的追问质量和视觉样本还没有。`just web-e2e-live-graph` 继续只覆盖跳过 Agent 的直接创建，直到对话路径有独立浏览器回归。
-
-Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) 与 [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md)。后台 durable Task 与多实例对账只有单独 gate 通过后才扩大默认能力；旧 Go Agent 留在 `exp`，不是 main 的隐式 fallback。
-
 ### 工作室增量
 
-[`specs/studio-increments.md`](specs/studio-increments.md)：镜头列表默认主区、生成套图文案、创建页推荐套图、出图后局部修、结果保真核对清单。落地前不写进 CONTEXT / PRD / ARCHITECTURE。内置 DeliverySpec 模板已在 ARCHITECTURE §7。配方库不预置官方画布模板，只保留用户主动保存的配方。
+落地前不写进 CONTEXT / PRD / ARCHITECTURE。
+
+| 项 | 用户可见 | 不做 |
+|---|---|---|
+| 镜头列表默认主区 | 工作台打开先看镜头行（图种、张数、状态、缩略图、运行此镜头），可切到同一张 schema-v3 画布 | 新 Shot 表、第二套执行器 |
+| 生成套图文案 | 商家按钮跑现有整图 DAG（先内容节点，后各镜头生图），进度按镜头投影 | 另一套 run 模型 |
+| 创建页推荐套图 | 一键填缺失图种；再次点击不覆盖已有镜头配置 | 官方画布模板配方 |
+| 出图后局部修 | 对已有 `ProductImageAsset` 消除 / 换字 / 局部重绘；新资产保留谱系；失败不改节点当前结果 | 第七类节点、去水印货架、批量 200 张 |
+| 结果保真核对清单 | 人在结果上核对外形、颜色、文字，不满意则局部修或重跑该镜头 | 自动质量评分当作正式闸门 |
+
+内置 DeliverySpec 模板已在 ARCHITECTURE §7。配方库只列用户从 live graph 保存的配方。
+
+### Agent 对话壳与对话路径
+
+- 侧栏收起、手机对话 sheet、建议 chip。决策边界见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md)。
+- 对话创建的追问质量和视觉样本。
+- 对话路径的独立浏览器回归。`just web-e2e-live-graph` 覆盖跳过 Agent 的直接创建与工作台连续动作。
+
+### Agent 耐久
+
+通过下列 gate 之前，不扩大默认能力，也不把 Pi session 文件当作 durable 证明。边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md)。旧 Go Agent 留在 `exp`，不是 main 的隐式 fallback。
+
+- 真实 provider、PostgreSQL / Redis、浏览器。
+- SSE 断线恢复的生产声明。
+- 后台 durable Task、跨进程 claim、全量 effect reconciliation。
+- 独立的 Fresh Observation harness（副作用前后端重读已是规则）。
+
+Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
 ### 图片生产质量
 
@@ -33,16 +42,6 @@ Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 
-### 主线清理
-
-旧 V1 归档、Gallery 回填、WorkflowDraft 写入桩和兼容读取器按 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md) 删除。不补做部署级回填或 cutover 证据。
-
-### Agent 耐久
-
-真实 provider、真实库、SSE 断线恢复、后台 durable / reconciliation 的部署 gate 与能力声明。见 [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md)。
-
-Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task 调度器、跨进程 durable admission、统一 Fresh Observation 仍未做。
-
 ## 中期
 
 - 更丰富的商品事实冲突解决和结构化规格录入。
@@ -50,12 +49,6 @@ Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。业务级 Task �
 - 图片质量评分、相似候选聚类和人工选择辅助。
 - 更多图片 provider adapter 和可观测性。
 - 工作流运行成本、时延和失败率统计。
-
-## 工程运行时：业务后端已切 Go
-
-默认 `just dev` 与 Compose 启动 Go API / worker / dispatcher。决策见 [`adr/0011-go-vertical-slice-rewrite.md`](adr/0011-go-vertical-slice-rewrite.md)。产品合同：[`specs/go-backend-rewrite-prd.md`](specs/go-backend-rewrite-prd.md)。
-
-仍未完成、因此留在路线图的闸门：工作台连续动作浏览器证明（见上方）、一次 backup/restore 后已有商品仍能打开并跑图、真实 prompt/image provider 的 live 成功/失败/`unknown` 证据。Python `backend/` 仅保留封印树与可选 profile `python`。
 
 ## SaaS
 

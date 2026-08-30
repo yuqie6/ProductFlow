@@ -96,6 +96,8 @@ Agent 常见追问包括：
 - 最大化会收起顶部导航，让画布占满主区。
 - 使用自动布局整理排线。
 - 用画布分组收纳一个局部流程。双击分组或点进入，只看组内节点；点面包屑可返回全图。组内和全图各自记住视口。分组只整理视觉布局，不改变执行顺序；跨组连线仍在全图上。
+- 图保存进行中时，添加、详情、绑定和配方会暂时不可用，避免未保存的提示词被运行吃掉。
+- 把素材拖到画布空白处会新建已绑定、未连线的图片节点；拖到聚合输入口会创建或复用后再连参考边。
 
 节点卡片只显示适合扫描的摘要。完整内容在右侧详情面板编辑，避免卡片因大量表单失去可读性。
 
@@ -304,4 +306,4 @@ Agent 可以提出素材整理 Draft。确认前不会改名称、文件夹、�
 
 应用日志不应记录 API Key、session token、完整上传字节或 data URL。发现包含 secret 的日志应按安全问题处理。
 
-自托管排障时看 `storage-dev/logs/`（Compose 为挂载 storage 下的 `logs/`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。每行一条 JSON，字段含 `ts`、`level`、`msg`、`process`。API 访问日志带 `request_id`。
+自托管排障时看 `storage-dev/logs/`（Compose 为挂载 storage 下的 `logs/`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。每行一条 JSON，字段含 `ts`、`level`、`msg`、`process`；API 访问日志带 `request_id`。终端默认是同一事件的可读行，不含 JSON 外壳。
