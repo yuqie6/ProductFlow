@@ -6,23 +6,30 @@ import (
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/prompts"
 )
 
-const listingLookRule = "做成能点击的商业套图：商品是主角，层次清楚，卖点好读。" +
-	"不要极简大留白、浅灰空棚、杂志静物；也不要爆炸贴、满屏色块、牛皮癣标签。"
+func ListingLookRule() string { return prompts.ListingLook().Rule }
 
-func ListingLookRule() string { return listingLookRule }
-
-// ListingLookContext 对齐 Python LISTING_LOOK_CONTEXT：prompt 出站 user JSON 必须带这份对象，不能只发 rule 字符串。
+// ListingLookContext 出站 user JSON 必须带这份对象，不能只发 rule 字符串。权威在 go/prompts/listing/look.md。
 func ListingLookContext() map[string]any {
+	look := prompts.ListingLook()
 	return map[string]any{
-		"rule":                        listingLookRule,
-		"product_share_percent":       "55-75",
-		"benefit_count":               "2-4",
-		"source_note_is_product_fact": true,
-		"ignore_as_art_direction":     []any{"极简", "浅灰", "静物", "干净", "留白", "高级", "苹果风"},
-		"do_not_invert_into":          []any{"爆炸贴", "满屏色块", "牛皮癣标签", "过饱和撞色"},
+		"rule":                        look.Rule,
+		"product_share_percent":       look.ProductSharePercent,
+		"benefit_count":               look.BenefitCount,
+		"source_note_is_product_fact": look.SourceNoteIsProductFact,
+		"ignore_as_art_direction":     stringSliceToAny(look.IgnoreAsArtDirection),
+		"do_not_invert_into":          stringSliceToAny(look.DoNotInvertInto),
 	}
+}
+
+func stringSliceToAny(in []string) []any {
+	out := make([]any, len(in))
+	for i, item := range in {
+		out[i] = item
+	}
+	return out
 }
 
 type imageTypeOption struct {
@@ -32,47 +39,26 @@ type imageTypeOption struct {
 	Order       int
 }
 
-var agentProductImageTypeCatalog = []imageTypeOption{
-	{"hero", "首屏海报图", "搜索列表首图，商品够大能认", 0},
-	{"selling_point", "核心卖点图", "详情卖点图，层次清楚，不要空棚贴字", 1},
-	{"scene", "场景展示图", "使用场景里拍，商品是主角", 2},
-	{"detail", "细节展示图", "材质和工艺特写", 3},
-	{"sku", "SKU 展示图", "白底规格对照，方便选款", 4},
-	{"dimensions", "尺寸图", "尺寸线清晰的信息图", 5},
-	{"specifications", "规格参数图", "参数对照信息图", 6},
-	{"after_sales", "售后保障图", "质保退换说明图", 7},
-	{"brand_story", "品牌故事图", "品牌故事海报", 8},
-	{"precautions", "注意事项图", "使用保养说明图", 9},
-	{"certification", "资质认证图", "只用已提供的资质", 10},
-	{"faq", "常见问题图", "问答说明图", 11},
-	{"factory", "工厂实力图", "只用已提供的工厂画面", 12},
-	{"packaging", "包装展示图", "包装全貌", 13},
-	{"shipping", "发货物流图", "发货物流说明图", 14},
+func imageTypeJob(key string) string {
+	item, ok := prompts.ImageTypeByKey(key)
+	if !ok {
+		return ""
+	}
+	return item.Job
 }
 
-var imageTypeGenerationJobs = map[string]string{
-	"hero": "搜索列表首图。商品约占画面 55%–75%，一眼能认出货，有类别合适的底和光影。" +
-		"最多一句超短主利益点。不要浅灰大海把商品挤到角落，也不要贴满角标。",
-	"selling_point": "详情卖点图，不是照片加字幕。抠出商品重新构图。" +
-		"一个主标题加 2 到 4 条对齐好读的短利益点，色块克制。商品仍是主角。" +
-		"不要原图贴字，不要大面积留白，也不要爆炸贴墙。",
-	"scene": "使用场景。把商品放进会用到的环境，环境为人服务、商品清晰可辨。" +
-		"不要空棚静物，也不要把场景堆满杂物，更不要编造资料里没有的生活道具品牌。",
-	"detail":         "材质或工艺特写。镜头贴近关键结构，光线强调质感，不要整件商品的远景棚拍。",
-	"sku":            "规格/颜色/款式对照图。纯色或白底，商品摆正、边缘干净，方便选款，不要装饰性大标题。",
-	"dimensions":     "尺寸标注信息图。商品在画面中，尺寸线清楚。数字只能来自商品资料；没有数据就画结构关系，不要编造毫米数。",
-	"specifications": "规格参数信息图。用短标签和对照模块呈现资料里已有的参数，不要编造参数。",
-	"after_sales":    "售后保障说明图。只写资料里有的质保、退换、运费政策，排版清楚，不要编造承诺。",
-	"brand_story":    "品牌故事海报。只使用资料或参考图里出现的品牌信息，做成可上详情的设计稿，不要空洞鸡汤。",
-	"precautions":    "使用与保养说明图。条目短、可读，内容来自资料，不要恐吓式极限词。",
-	"certification":  "资质认证图。只能使用用户提供的证书或标志照片，没有素材就留缺口，不要手绘公章。",
-	"faq":            "常见问题说明图。问句短、答句短，内容来自资料，不要编造售后话术。",
-	"factory":        "工厂实力图。只能使用用户提供的产线或厂房照片，没有素材就留缺口，不要生成假车间。",
-	"packaging":      "包装展示图。看清包装结构与内容物，商品可辨认，不要只拍一个模糊纸箱。",
-	"shipping":       "发货物流说明图。只写资料里有的发货与时效信息，排版清楚，不要编造快递品牌。",
-}
+var agentProductImageTypeCatalog = func() []imageTypeOption {
+	types := prompts.ImageTypes()
+	out := make([]imageTypeOption, 0, len(types))
+	for _, item := range types {
+		out = append(out, imageTypeOption{
+			Key: item.Key, Title: item.Title, Description: item.Description, Order: item.Order,
+		})
+	}
+	return out
+}()
 
-// ImageTypeCatalogJSON 对齐 Python agent_product_image_type_catalog_json。
+// ImageTypeCatalogJSON 给 Agent 商品上下文；标题与描述来自 go/prompts/listing/image-types.md。
 func ImageTypeCatalogJSON() []map[string]any {
 	out := make([]map[string]any, 0, len(agentProductImageTypeCatalog))
 	for _, option := range agentProductImageTypeCatalog {
@@ -126,7 +112,7 @@ func imageTypePromptGoal(key string) string {
 	if ok {
 		title = option.Title
 	}
-	job := imageTypeGenerationJobs[key]
+	job := imageTypeJob(key)
 	if job == "" && ok {
 		job = option.Description
 	}
@@ -148,14 +134,11 @@ func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 	if len(runes) > 3900 {
 		text = string(runes[:3900])
 	}
+	look := prompts.ListingLook()
 	return map[string]any{
-		"goal":         listingLookRule,
+		"goal":         look.Rule,
 		"design_goals": []string{"商品与受众资料：" + text},
-		"prohibitions": []string{
-			"商品资料只作事实，不要把浅灰、静物、极简、干净当成套图画风",
-			"不要极简大留白、浅灰空棚、杂志静物",
-			"不要爆炸贴、满屏色块、牛皮癣标签",
-		},
+		"prohibitions": append([]string{}, look.BriefProhibitions...),
 	}
 }
 

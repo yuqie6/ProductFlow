@@ -6,17 +6,11 @@ import (
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/prompts"
 )
 
 var authoredPromptKeys = []string{
 	"composition", "content", "atmosphere", "text", "product_fidelity", "creative_boundary",
-}
-
-var identitySharedRules = []string{
-	"商品外形、结构、颜色和材质以参考图为准",
-	"不要编造参考图和资料里没有的认证、Logo、价格或结构",
-	"参考图只提供商品本体，必须按图种重新构图，禁止原图贴字交差",
-	"不要极简大留白或浅灰空棚，也不要爆炸贴或满屏色块",
 }
 
 var overlayColorRolePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
@@ -67,7 +61,7 @@ func AssemblePromptRequest(
 			req.ImageTypeDescription = option.Description
 		}
 		req.ImageTypeFamily = imageTypeFamily(key)
-		req.ImageTypeJob = imageTypeGenerationJobs[key]
+		req.ImageTypeJob = imageTypeJob(key)
 		promptConfig := asMapOrNil(node.Config["prompt"])
 		req.GenerateFromContext = promptConfigIsGenerationSeed(promptConfig)
 		seed, err := seedPromptFromRuntime(node.Title, key, facts, briefs, promptConfig, req.GenerateFromContext, req.TextPolicy)
@@ -186,8 +180,9 @@ func seedPromptFromRuntime(
 			creativeBoundary = append(creativeBoundary, item)
 		}
 	}
-	if textPolicy == "none" && !containsString(creativeBoundary, noOnImageTextRule) {
-		creativeBoundary = append(creativeBoundary, noOnImageTextRule)
+	noOnImageText := prompts.IdentityRules().NoOnImageText
+	if textPolicy == "none" && !containsString(creativeBoundary, noOnImageText) {
+		creativeBoundary = append(creativeBoundary, noOnImageText)
 	}
 	text := asMapOrNil(stored["text"])
 	if textPolicy == "none" && !promptConfigHasAuthoredText(stored) {
@@ -206,12 +201,12 @@ func seedPromptFromRuntime(
 	}
 	sharedRules := stringList(stored["shared_rules"])
 	if len(sharedRules) == 0 {
-		sharedRules = append([]string{}, identitySharedRules...)
+		sharedRules = append([]string{}, prompts.IdentityRules().Shared...)
 	}
-	if textPolicy == "none" && !containsString(sharedRules, noOnImageTextRule) {
-		sharedRules = append(sharedRules, noOnImageTextRule)
+	if textPolicy == "none" && !containsString(sharedRules, noOnImageText) {
+		sharedRules = append(sharedRules, noOnImageText)
 	}
-	derived := promptContextDerivedPlaceholder
+	derived := prompts.IdentityRules().ContextDerived
 	composition := asMapOrNil(stored["composition"])
 	if len(composition) == 0 {
 		viewpoint, layout := "正面", "商品居中"

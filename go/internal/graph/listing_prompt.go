@@ -5,12 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-)
 
-const (
-	noOnImageTextRule               = "画面中不得出现文字、数字、价格、Logo 或水印"
-	noCaptionOnReferenceRule        = "禁止把参考图原样放大缩小后只加一行字交差"
-	promptContextDerivedPlaceholder = "根据参考图、商品资料与图片类型生成"
+	"github.com/yuqie6/productflow/prompts"
 )
 
 // CompileImageModelPrompt 把 listing prompt 与 generation_spec 编成发给生图模型的自然语言，而不是 JSON dump。
@@ -43,39 +39,28 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	imageTypeKey := strings.TrimSpace(req.ImageTypeKey)
 	family := imageTypeFamily(imageTypeKey)
 	typeTitle := imageTypeTitle(imageTypeKey)
-	job := imageTypeGenerationJobs[imageTypeKey]
+	job := imageTypeJob(imageTypeKey)
+	compile := prompts.CompileImageTemplates()
+	identity := prompts.IdentityRules()
 	briefLines := []string{
-		fmt.Sprintf("生成一张能上淘宝/天猫详情的%s，不是参考图修图交差。", typeTitle),
-		"商品外形、结构、颜色、材质和可见零件以参考图为准。",
-		"参考图只提供商品本体，构图、布光、场景和排版必须按图种重做。",
-		listingLookRule,
-		noCaptionOnReferenceRule + "。",
-		"不要编造 Logo、认证、规格数字、价格或参考图与商品资料中未出现的结构。",
+		compile.LeadFor(typeTitle),
+		compile.Identity,
+		compile.Recompose,
+		prompts.ListingLook().Rule,
+		identity.NoCaptionOnReference + "。",
+		compile.Invent,
 	}
 	if job != "" {
 		briefLines = append(briefLines, "图种任务："+job)
 	}
-	switch family {
-	case "infographic":
-		briefLines = append(briefLines, "这是详情卖点图：抠出商品重新排版。一个主标题加 2 到 4 条对齐的短利益点，色块克制。商品仍是主角。")
-	case "evidence":
-		briefLines = append(briefLines, "只能使用用户提供的资质或工厂画面，没有素材就不要生成假文件或假车间。")
-	default:
-		briefLines = append(briefLines, "这是可上架的商品摄影：主体约占画面 55%–75%，有光影质感。不要大面积空洞把商品挤到一角，也不要贴满标签。")
-	}
+	briefLines = append(briefLines, compile.FamilyLine(family))
 	policy, _ := spec["text_policy"].(string)
 	if policy == "" {
 		policy = "none"
 	}
-	switch policy {
-	case "none":
-		briefLines = append(briefLines, noOnImageTextRule+"。")
-	case "required":
-		if language, ok := spec["text_language"].(string); ok && strings.TrimSpace(language) != "" {
-			briefLines = append(briefLines, "画面必须包含图片内文字，语种为"+strings.TrimSpace(language)+"，写短利益点，不要说明书。")
-		} else {
-			briefLines = append(briefLines, "画面必须包含图片内文字，写短利益点，不要说明书。")
-		}
+	language, _ := spec["text_language"].(string)
+	if line := compile.TextPolicyLine(policy, language); line != "" {
+		briefLines = append(briefLines, line)
 	}
 	if designGoal := usablePromptText(payload["design_goal"]); designGoal != "" {
 		briefLines = append(briefLines, "图目标："+designGoal)
@@ -199,7 +184,7 @@ func usablePromptText(value any) string {
 		return ""
 	}
 	text = strings.TrimSpace(text)
-	if text == "" || text == promptContextDerivedPlaceholder {
+	if text == "" || text == prompts.IdentityRules().ContextDerived {
 		return ""
 	}
 	return text

@@ -8,66 +8,10 @@ import (
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/prompts"
 )
 
-// 指令必须与 Python openai_provider.py 的长 listing 文本一致，缩短会直接改 brief/prompt 质量。
-const (
-	briefInstructions = "You write one ecommerce listing brief from the attached product photos, confirmed facts, and image_types. " +
-		"Follow listing_look: a shopper would click, the product is the hero, hierarchy is clear. " +
-		"goal is the listing job, not a restatement of studio notes. " +
-		"current_brief.goal and source notes are product facts (what it is, who it is for). " +
-		"Ignore leftover art-direction words such as 极简, 浅灰, 静物, 干净, 留白. " +
-		"Do not invert them into sticker-bomb or oversaturated layouts either. " +
-		"design_goals are concrete layout and photography aims for the planned image_types. " +
-		"If image_types include infographic keys such as selling_point, require cutout, recomposed layout, " +
-		"and 2-4 short aligned benefits with restrained color. If they include photography keys such as hero or scene, " +
-		"require a large product and commercial lighting, not empty-canvas still life and not badge spam. " +
-		"prohibitions must include both extremes: 极简大留白/浅灰空棚/杂志静物, and 爆炸贴/满屏色块/牛皮癣标签. " +
-		"Also block invented logos, certificates, prices, and product structures. " +
-		"Do not prohibit new composition, lighting, scene, or type layout. " +
-		"Obey text_policy: none means required_copy must be empty; allow or required may include " +
-		"short on-image benefit copy in text_language. " +
-		"Do not invent facts that are not in the photos or confirmed facts."
-
-	overlayInstructions = "You write a compact visual overlay for a commercial listing set. " +
-		"style is 2 to 6 keywords for a balanced sellable look " +
-		"(product hero, clear hierarchy, category-appropriate color), " +
-		"not 极简静物, not 干净商业摄影, not 花里胡哨. " +
-		"Do not copy the reference photo's empty background or crop as the brand system; " +
-		"only lock product material colors. " +
-		"colors must include a background with presence (warm off-white or a category color, never empty zinc-gray studio) " +
-		"plus one muted accent for headlines or modules. Hex values like #F3EFE8. Never neon carnival palettes. " +
-		"prohibitions block product-identity changes and both listing extremes " +
-		"(empty gray still-life, sticker-bomb layouts). Do not block layout changes. " +
-		"Do not invent a brand system that is not visible in the photos or facts."
-
-	promptInstructions = "You write one ListingPromptPayload for a clickable commercial listing image. " +
-		"Attached photos lock product identity only: shape, materials, color, structure, visible parts. " +
-		"The photo's crop, empty background, camera distance, and layout are not the finished frame. " +
-		"Follow listing_look: product is the hero, hierarchy is clear, benefits are readable. " +
-		"Forbidden both extremes: empty gray still-life / huge whitespace; and sticker-bomb / neon carnival layouts. " +
-		"Treat leftover brief text such as 极简, 浅灰, 静物, or 干净 as product-photo notes, not the listing look. " +
-		"Do not invert those notes into busy sticker spam. " +
-		"Use image_type_key, image_type_family, image_type_job, image_type_title, " +
-		"and image_type_description as the job. " +
-		"photography: commercial product photography; product occupies about 55-75% of the frame; real lighting; " +
-		"category-appropriate background; never shrink the product into a corner of empty canvas; " +
-		"never cover it with badges. " +
-		"infographic: cut the product out and redesign the layout. One clear headline plus 2-4 short aligned benefits. " +
-		"Restrained color blocks, readable type. The product stays the visual hero. " +
-		"Never paste a caption onto the original photo. " +
-		"evidence: only user-supplied certificates or factory photos; if missing, leave the gap; " +
-		"never invent seals or plants. " +
-		"Do not invent logos, certifications, prices, spec numbers, or structures absent from facts and photos. " +
-		"When generate_from_context is true, current_prompt is a schema seed. Observe the photos and write composition, " +
-		"background, lighting, focus, and selling points for that image type. " +
-		"Do not keep placeholder phrases such as 干净背景, 正面, 均匀照明, or 根据参考图、商品资料与图片类型生成. " +
-		"When generate_from_context is false, refine current_prompt and keep user-authored fields. " +
-		"Obey text_policy. none means no on-image letters, digits, prices, logos, or watermarks; keep text.headline, " +
-		"subtitle, and body null and copy_regions empty. " +
-		"required means short benefit copy in text_language, not a spec sheet. " +
-		"Do not emit images, image_plan_key, fact_keys, or evidence_asset_ids."
-)
+// 指令正文在 go/prompts/providers；缩短或改口径会直接改 brief/prompt 质量。
 
 type jsonRoundTrip func(ctx context.Context, method, url, apiKey string, body []byte) (int, []byte, error)
 
@@ -82,7 +26,7 @@ type OpenAIPrompt struct {
 func (p OpenAIPrompt) Name() string { return "openai" }
 
 func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	payload, model, id, err := p.parseStructured(ctx, briefInstructions, "generated_creative_brief", briefJSONSchema, req, "brief")
+	payload, model, id, err := p.parseStructured(ctx, prompts.BriefInstructions(), "generated_creative_brief", briefJSONSchema, req, "brief")
 	if err != nil {
 		return graph.PromptResult{}, err
 	}
@@ -93,7 +37,7 @@ func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.Promp
 }
 
 func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	payload, model, id, err := p.parseStructured(ctx, overlayInstructions, "generated_visual_overlay", overlayJSONSchema, req, "overlay")
+	payload, model, id, err := p.parseStructured(ctx, prompts.OverlayInstructions(), "generated_visual_overlay", overlayJSONSchema, req, "overlay")
 	if err != nil {
 		return graph.PromptResult{}, err
 	}
@@ -101,7 +45,7 @@ func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.Promp
 }
 
 func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	payload, model, id, err := p.parseStructured(ctx, promptInstructions, "listing_prompt_payload", listingPromptJSONSchema, req, "prompt")
+	payload, model, id, err := p.parseStructured(ctx, prompts.PromptInstructions(), "listing_prompt_payload", listingPromptJSONSchema, req, "prompt")
 	if err != nil {
 		return graph.PromptResult{}, err
 	}

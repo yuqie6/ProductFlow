@@ -75,6 +75,7 @@ CODE_OWNERS = (
     "go/internal/library",
     "go/internal/settings",
     "go/internal/providers",
+    "go/prompts",
     "go/internal/imagesession",
     "go/internal/delivery",
     "go/internal/localedit",

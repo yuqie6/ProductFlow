@@ -15,6 +15,7 @@ import (
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
 	"github.com/yuqie6/productflow/internal/localedit"
+	"github.com/yuqie6/productflow/prompts"
 )
 
 func TestEndpointStripsTrailingV1(t *testing.T) {
@@ -991,7 +992,7 @@ func TestPromptSendsReferenceImageURL(t *testing.T) {
 }
 
 func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
-	body, err := BuildPromptResponsesBody("gpt", promptInstructions, "listing_prompt_payload", listingPromptJSONSchema, graph.PromptRequest{
+	body, err := BuildPromptResponsesBody("gpt", prompts.PromptInstructions(), "listing_prompt_payload", listingPromptJSONSchema, graph.PromptRequest{
 		ImageTypeKey:        "selling_point",
 		ImageTypeTitle:      "核心卖点图",
 		ImageTypeFamily:     "infographic",
