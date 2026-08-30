@@ -202,16 +202,22 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 	} else {
 		stepsJSON = []byte("[]")
 	}
-	if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+	updates := map[string]any{
 		"harness_turn_id": gorm.Expr("COALESCE(harness_turn_id, ?)", state.TurnID),
 		"status":          status,
-		"output_text":     output,
 		"error_text":      errText,
 		"question_json":   questionJSON,
 		"tool_steps_json": string(stepsJSON),
 		"finished_at":     state.FinishedAt,
 		"updated_at":      time.Now().UTC(),
-	}).Error; err != nil {
+	}
+	if state.Output != "" {
+		updates["output_text"] = output
+	}
+	if strings.TrimSpace(state.Thinking) != "" {
+		updates["thinking_text"] = state.Thinking
+	}
+	if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(updates).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "uq_agent_turn_projections_harness_turn_id" {
 			return apperr.Conflict("Agent Turn projection 已绑定其他 harness Turn")

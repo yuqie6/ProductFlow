@@ -471,6 +471,7 @@ func (h HTTP) answerQuestion(c *gin.Context, productID *string) {
 	var req struct {
 		Option *int    `json:"option"`
 		Text   *string `json:"text"`
+		Skip   *bool   `json:"skip"`
 	}
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
@@ -479,11 +480,24 @@ func (h HTTP) answerQuestion(c *gin.Context, productID *string) {
 	answer := map[string]any{}
 	hasOption := req.Option != nil
 	hasText := req.Text != nil && strings.TrimSpace(*req.Text) != ""
-	if hasOption == hasText {
-		httpx.AbortDetail(c, http.StatusBadRequest, "回答必须且只能提供 option 或 text")
+	hasSkip := req.Skip != nil && *req.Skip
+	count := 0
+	if hasOption {
+		count++
+	}
+	if hasText {
+		count++
+	}
+	if hasSkip {
+		count++
+	}
+	if count != 1 {
+		httpx.AbortDetail(c, http.StatusBadRequest, "回答必须且只能提供 option、text 或 skip")
 		return
 	}
-	if hasOption {
+	if hasSkip {
+		answer["skip"] = true
+	} else if hasOption {
 		answer["option"] = *req.Option
 	} else {
 		answer["text"] = strings.TrimSpace(*req.Text)
@@ -516,7 +530,7 @@ func (h HTTP) streamEvents(c *gin.Context, productID *string) {
 	after := 0
 	if raw := strings.TrimSpace(c.Query("after")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
+		if err != nil || parsed < 0 || parsed > maxEventSequence {
 			httpx.AbortDetail(c, http.StatusBadRequest, "Last-Event-ID 无效")
 			return
 		}

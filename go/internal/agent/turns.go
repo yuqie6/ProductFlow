@@ -2,11 +2,8 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -275,24 +272,20 @@ func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversa
 	if err != nil {
 		return QuestionAnswerResponse{}, err
 	}
-	if row.HarnessTurnID != nil && s.Gateway != nil {
-		resumed, rerr := s.resumeLiveQuestion(ctx, productID, conversationID, projectionID, questionID, answer)
-		if rerr == nil {
-			if row.ContinuationTurnID != nil {
-				_ = s.cancelUnusedContinuation(ctx, productID, turnRow{
-					ID:             *row.ContinuationTurnID,
-					ConversationID: conversationID,
-				})
-			}
-			return questionAnswerResult(resumed, resumed), nil
-		}
-		if !gatewayQuestionNotLive(rerr) {
-			return QuestionAnswerResponse{}, mapGateway(rerr)
-		}
-	} else if s.Gateway == nil {
+	if s.Gateway == nil {
 		return QuestionAnswerResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
 	}
-	return s.continueAfterDeadWaiter(ctx, productID, conversationID, projectionID, questionID, answer)
+	resumed, rerr := s.resumeLiveQuestion(ctx, productID, conversationID, projectionID, questionID, answer)
+	if rerr != nil {
+		return QuestionAnswerResponse{}, mapGateway(rerr)
+	}
+	if row.ContinuationTurnID != nil {
+		_ = s.cancelUnusedContinuation(ctx, productID, turnRow{
+			ID:             *row.ContinuationTurnID,
+			ConversationID: conversationID,
+		})
+	}
+	return questionAnswerResult(resumed, resumed), nil
 }
 
 func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (turnRow, error) {
@@ -313,7 +306,7 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 			return err
 		}
 		if loaded.ContinuationTurnID != nil && len(loaded.QuestionAnswerJSON) > 0 && !sameQuestionAnswer(loaded.QuestionAnswerJSON, answer) {
-			return apperr.Conflict("当前问题已经使用其他答案创建 continuation Turn")
+			return apperr.Conflict("当前问题已经使用其他答案")
 		}
 		answerJSON, err := json.Marshal(answer)
 		if err != nil {
@@ -334,6 +327,15 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 }
 
 func validateQuestionAnswer(question, answer map[string]any) error {
+	if skip, ok := answer["skip"].(bool); ok && skip {
+		if _, hasOption := answer["option"]; hasOption {
+			return apperr.Validation("跳过不能同时提交选项")
+		}
+		if text, _ := answer["text"].(string); stringsTrim(text) != "" {
+			return apperr.Validation("跳过不能同时提交文本回答")
+		}
+		return nil
+	}
 	if _, hasOption := answer["option"]; hasOption {
 		option, ok := intAnswerOption(answer["option"])
 		options, _ := question["options"].([]any)
@@ -435,68 +437,6 @@ func (s Service) resumeLiveQuestion(ctx context.Context, productID *string, conv
 	return s.serializedTurn(ctx, productID, conversationID, projectionID)
 }
 
-func (s Service) continueAfterDeadWaiter(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
-	var answeredID string
-	var continuationID string
-	var originalHarness *string
-	var originalTaskID *string
-	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
-		if err != nil {
-			return err
-		}
-		answeredID = row.ID
-		originalHarness = row.HarnessTurnID
-		originalTaskID = row.TaskID
-		if row.ContinuationTurnID != nil {
-			continuationID = *row.ContinuationTurnID
-			return nil
-		}
-		key := "question-continuation:" + projectionID + ":" + sha256hex(questionID)
-		cont, _, err := reserveTurn(ctx, pgxTx, productID, conversationID, continuationInput(questionMap(row), answer), inputAssetIDs(row), key, row.TaskID, row.ID, nil)
-		if err != nil {
-			return err
-		}
-		continuationID = cont.ID
-		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
-			"continuation_turn_id": cont.ID,
-			"updated_at":           time.Now().UTC(),
-		}).Error; err != nil {
-			return err
-		}
-		_, err = queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, cont.ID, 0)
-		return err
-	})
-	if err != nil {
-		return QuestionAnswerResponse{}, err
-	}
-	if s.Gateway != nil && originalHarness != nil {
-		state, ge := s.Gateway.CancelTurn(conversationID, *originalHarness, originalTaskID)
-		if ge == nil {
-			if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-				return s.applyTurnState(ctx, pgxTx, productID, conversationID, answeredID, state)
-			}); err != nil {
-				return QuestionAnswerResponse{}, err
-			}
-		}
-	}
-	continuation, err := s.serializedTurn(ctx, productID, conversationID, continuationID)
-	if err != nil {
-		return QuestionAnswerResponse{}, err
-	}
-	if continuation.HarnessTurnID == nil {
-		bound, bindErr := s.bindGatewayTurn(ctx, productID, conversationID, continuationID, true)
-		if bindErr == nil {
-			continuation = bound
-		}
-	}
-	answered, err := s.serializedTurn(ctx, productID, conversationID, answeredID)
-	if err != nil {
-		return QuestionAnswerResponse{}, err
-	}
-	return questionAnswerResult(answered, continuation), nil
-}
-
 func (s Service) serializedTurn(ctx context.Context, productID *string, conversationID, projectionID string) (TurnResponse, error) {
 	var out TurnResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -593,32 +533,6 @@ func stringsTrim(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
-}
-
-func sha256hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-func continuationInput(question, answer map[string]any) string {
-	qtext, _ := question["question"].(string)
-	answerText := ""
-	if opt, ok := answer["option"]; ok {
-		idx := 0
-		switch v := opt.(type) {
-		case float64:
-			idx = int(v)
-		case int:
-			idx = v
-		case json.Number:
-			n, _ := v.Int64()
-			idx = int(n)
-		}
-		answerText = "选择第 " + strconv.Itoa(idx+1) + " 项"
-	} else {
-		answerText, _ = answer["text"].(string)
-	}
-	return "继续当前 Agent 任务。针对问题“" + qtext + "”，用户回答：" + answerText + "。请基于这个回答继续执行，并再次通过 ProductFlow 工具确认业务事实。"
 }
 
 func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, ignoreTurnID string, pageContext map[string]any) (turnRow, bool, error) {

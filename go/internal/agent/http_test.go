@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,14 @@ func (mockGateway) ResumeTurn(conversationID, turnID string, taskID *string) (Tu
 
 func (mockGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
 	return mockGateway{}.GetTurn(conversationID, turnID, taskID)
+}
+
+func (mockGateway) StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error {
+	if _, err := io.WriteString(w, ": heartbeat\n\n"); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 type questionGateway struct {
@@ -604,8 +613,35 @@ func TestAnswerQuestionResumesLiveWaiter(t *testing.T) {
 	}
 }
 
+func TestAnswerQuestionSkipResumesSameTurn(t *testing.T) {
+	gw := &questionGateway{}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-skip-1")
+	gw.calls = nil
+	gw.startCount = 0
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-skip-1/answer", map[string]any{
+		"skip": true,
+	})
+	as.mustStatus(t, resp, http.StatusOK)
+	var body QuestionAnswerResponse
+	as.decode(t, resp, &body)
+	if body.AnsweredTurn.ID != turnID || body.ContinuationTurn.ID != turnID {
+		t.Fatalf("expected same-turn skip, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
+	}
+	if as.conversationTurnCount(t, convID) != 1 {
+		t.Fatalf("created a continuation turn")
+	}
+	if gw.startCount != 0 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v want answer+resume %s", gw.calls, harnessID)
+	}
+}
+
 func TestAnswerQuestionFallsBackWhenWaiterGone(t *testing.T) {
-	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
+	gw := &questionGateway{}
 	as := newAgentServer(t, gw, "")
 	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-2")
 	gw.calls = nil
@@ -617,31 +653,25 @@ func TestAnswerQuestionFallsBackWhenWaiterGone(t *testing.T) {
 	as.mustStatus(t, resp, http.StatusOK)
 	var body QuestionAnswerResponse
 	as.decode(t, resp, &body)
-	if body.ContinuationTurn.ID == turnID || body.ContinuationTurn.HarnessTurnID == nil {
-		t.Fatalf("continuation %+v", body.ContinuationTurn)
+	if body.AnsweredTurn.ID != turnID || body.ContinuationTurn.ID != turnID {
+		t.Fatalf("expected same-turn resume, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
 	}
-	if body.AnsweredTurn.Status != "canceled" {
-		t.Fatalf("original status %s", body.AnsweredTurn.Status)
+	if body.AnsweredTurn.Status != "running" || body.AnsweredTurn.ContinuationTurnID != nil {
+		t.Fatalf("answered %+v", body.AnsweredTurn)
 	}
-	if as.conversationTurnCount(t, convID) != 2 {
+	if as.conversationTurnCount(t, convID) != 1 {
 		t.Fatalf("turn count %d", as.conversationTurnCount(t, convID))
 	}
-	if gw.startCount != 1 {
+	if gw.startCount != 0 {
 		t.Fatalf("StartTurn calls %d", gw.startCount)
 	}
-	foundCancel := false
-	for _, call := range gw.calls {
-		if call == "cancel:"+harnessID {
-			foundCancel = true
-		}
-	}
-	if !foundCancel {
-		t.Fatalf("expected cancel of original waiter %v", gw.calls)
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v want answer+resume %s", gw.calls, harnessID)
 	}
 }
 
 func TestAnswerQuestionTaskBoundContinuationCopiesAssetsAndCancelsWaiter(t *testing.T) {
-	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
+	gw := &questionGateway{}
 	as := newAgentServer(t, gw, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -684,35 +714,26 @@ func TestAnswerQuestionTaskBoundContinuationCopiesAssetsAndCancelsWaiter(t *test
 	as.mustStatus(t, resp, http.StatusOK)
 	var body QuestionAnswerResponse
 	as.decode(t, resp, &body)
-	if body.ContinuationTurn.ID == turnID {
-		t.Fatal("task-bound dead waiter must create a continuation")
+	if body.ContinuationTurn.ID != turnID || body.AnsweredTurn.ID != turnID {
+		t.Fatalf("expected same-turn resume, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
 	}
-	if body.AnsweredTurn.Status != "canceled" {
+	if body.AnsweredTurn.Status != "running" {
 		t.Fatalf("original status %s", body.AnsweredTurn.Status)
 	}
-	if as.conversationTurnCount(t, convID) != 2 {
+	if as.conversationTurnCount(t, convID) != 1 {
 		t.Fatalf("turn count %d", as.conversationTurnCount(t, convID))
 	}
-	if gw.startCount != 1 {
+	if gw.startCount != 0 {
 		t.Fatalf("StartTurn calls %d", gw.startCount)
 	}
-	foundCancel := false
-	for _, call := range gw.calls {
-		if call == "cancel:"+harnessID {
-			foundCancel = true
-		}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v want answer+resume %s", gw.calls, harnessID)
 	}
-	if !foundCancel {
-		t.Fatalf("expected cancel of original waiter %v", gw.calls)
+	if len(body.AnsweredTurn.InputAssetIDs) != 1 || body.AnsweredTurn.InputAssetIDs[0] != "asset-copy-1" {
+		t.Fatalf("assets %+v", body.AnsweredTurn.InputAssetIDs)
 	}
-	if len(body.ContinuationTurn.InputAssetIDs) != 1 || body.ContinuationTurn.InputAssetIDs[0] != "asset-copy-1" {
-		t.Fatalf("continuation assets %+v", body.ContinuationTurn.InputAssetIDs)
-	}
-	if len(gw.lastStartAssets) != 1 || gw.lastStartAssets[0] != "asset-copy-1" {
-		t.Fatalf("StartTurn assets %+v", gw.lastStartAssets)
-	}
-	if body.ContinuationTurn.TaskID == nil || *body.ContinuationTurn.TaskID != task.ID {
-		t.Fatalf("continuation task %+v", body.ContinuationTurn.TaskID)
+	if body.AnsweredTurn.TaskID == nil || *body.AnsweredTurn.TaskID != task.ID {
+		t.Fatalf("task %+v", body.AnsweredTurn.TaskID)
 	}
 }
 
@@ -736,6 +757,22 @@ func TestAnswerQuestionUnavailableDoesNotCreateContinuation(t *testing.T) {
 	}
 	if status != "requires_input" {
 		t.Fatalf("status %s", status)
+	}
+}
+
+func TestAnswerQuestionNotResumableDoesNotCreateContinuation(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, _ := as.submitAndParkQuestion(t, "question-name-4")
+	gw.startCount = 0
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-name-4/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	if as.conversationTurnCount(t, convID) != 1 {
+		t.Fatalf("continuation created during not_resumable")
 	}
 }
 
@@ -1035,6 +1072,65 @@ func TestAgentTurnSSEHeartbeat(t *testing.T) {
 	cancel()
 }
 
+func TestAgentTurnSSEProxiesRuntimeCursor(t *testing.T) {
+	gw := &scriptedStreamGateway{}
+	as := newAgentServer(t, gw, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "转发直播", "idempotency_key": clockid.New(),
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+"/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events?after=4", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Last-Event-ID", "7")
+	for _, c := range as.cookies {
+		req.AddCookie(c)
+	}
+	resp, err := as.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("sse %d %s", resp.StatusCode, raw)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "event: text.delta") || !strings.Contains(body, `"sequence":8`) {
+		t.Fatalf("proxied sse %q", body)
+	}
+	if gw.after != 7 {
+		t.Fatalf("runtime cursor %d", gw.after)
+	}
+}
+
+type scriptedStreamGateway struct {
+	mockGateway
+	after int
+}
+
+func (g *scriptedStreamGateway) StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error {
+	g.after = after
+	event := `{"schema_version":1,"run_id":"` + conversationID + `","turn_id":"` + turnID + `","sequence":` + strconv.Itoa(after+1) + `,"created_at":"2026-08-30T00:00:00.000Z","kind":"text.delta","payload":{"delta":"hi","step_id":"s","attempt_id":"a"}}`
+	_, err := io.WriteString(w, "id: "+strconv.Itoa(after+1)+"\nevent: text.delta\ndata: "+event+"\n\n")
+	return err
+}
+
 func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
@@ -1115,6 +1211,238 @@ func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 	if reconDetail["detail"] != "只有 unknown Agent Turn 才能执行副作用对账" {
 		t.Fatalf("detail %v", reconDetail)
 	}
+}
+
+func TestAppendEventRejectsLiveDeltasAndAllowsGaps(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "控制事件", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	live := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
+		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+		"kind": "text.delta", "payload": json.RawMessage(`{"delta":"no"}`), "created_at": time.Now().UTC(),
+	}, auth)
+	as.mustStatus(t, live, http.StatusBadRequest)
+	live.Body.Close()
+
+	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
+		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+		"kind": "turn.started", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+	}, auth)
+	as.mustStatus(t, started, http.StatusOK)
+	started.Body.Close()
+
+	gapped := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 5,
+		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+		"kind": "tool.step", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
+		"created_at": time.Now().UTC(),
+	}, auth)
+	as.mustStatus(t, gapped, http.StatusOK)
+	gapped.Body.Close()
+}
+
+func TestSettledTurnSSEReplaysGappedControlEvents(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "结束后重放控制事件", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
+		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+		"kind": "turn.started", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+	}, auth)
+	as.mustStatus(t, started, http.StatusOK)
+	started.Body.Close()
+	gapped := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 5,
+		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+		"kind": "tool.step", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
+		"created_at": time.Now().UTC(),
+	}, auth)
+	as.mustStatus(t, gapped, http.StatusOK)
+	gapped.Body.Close()
+
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET status = 'succeeded', output_text = 'ok', updated_at = NOW()
+		WHERE id = $1
+	`, submitted.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := as.do(t, http.MethodGet, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events", nil, "", nil)
+	as.mustStatus(t, resp, http.StatusOK)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "event: turn.started") || !strings.Contains(body, "event: tool.step") {
+		t.Fatalf("settled sse %q", body)
+	}
+}
+
+func TestAgentClaimAllowsExpiredWaitingInput(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "提问后续跑", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "waiting_input",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET lease_expires_at = NOW() - INTERVAL '1 second', updated_at = NOW()
+		WHERE id = $1
+	`, lease.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+
+	reclaim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-2",
+		})), "application/json", auth)
+	as.mustStatus(t, reclaim, http.StatusOK)
+	var next ExecutionLeaseResponse
+	as.decode(t, reclaim, &next)
+	if next.OwnerID != "worker-2" || next.Phase != "claimed" {
+		t.Fatalf("reclaim %+v", next)
+	}
+}
+
+func TestRecoverUnfinishedTurnsLeavesExpiredWaitingInput(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "提问后续跑", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "waiting_input",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections SET status = 'requires_input', updated_at = NOW() WHERE id = $1
+	`, submitted.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET lease_expires_at = NOW() - INTERVAL '1 second', updated_at = NOW()
+		WHERE id = $1
+	`, lease.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UnknownExecutions != 0 {
+		t.Fatalf("parked question marked unknown: %+v", summary)
+	}
+	var status string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status FROM agent_turn_projections WHERE id = $1
+	`, submitted.Turn.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "requires_input" {
+		t.Fatalf("status %s", status)
+	}
+
+	reclaim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-2",
+		})), "application/json", auth)
+	as.mustStatus(t, reclaim, http.StatusOK)
 }
 
 func TestAgentWorkbenchEnsureWithGraph(t *testing.T) {
@@ -1287,6 +1615,151 @@ func TestInternalAssetMoveReconcileRejectsInvalidBody(t *testing.T) {
 		}
 	} else {
 		unknownConv.Body.Close()
+	}
+}
+
+func TestAgentFinalizeIntakeExpandsBirthGraph(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	draft := as.do(t, http.MethodPost, "/api/v2/agent-product-workspaces/drafts", strings.NewReader(`{"name":"名称草稿"}`), "application/json", http.Header{
+		"Idempotency-Key": []string{clockid.New()},
+	})
+	as.mustStatus(t, draft, http.StatusCreated)
+	var snap product.WorkspaceSnapshotResponse
+	as.decode(t, draft, &snap)
+	productID := snap.Product.ID
+	convID := snap.Conversation.ID
+	authTok := http.Header{"Authorization": []string{"Bearer tok"}}
+
+	before := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+convID+"/product-context", nil, "", authTok)
+	as.mustStatus(t, before, http.StatusOK)
+	var beforeCtx map[string]any
+	as.decode(t, before, &beforeCtx)
+	if beforeCtx["birth_expandable"] != false {
+		t.Fatalf("name-only without intake birth_expandable=%+v", beforeCtx["birth_expandable"])
+	}
+
+	body, contentType := workspaceIntakePNG(t, map[string]string{})
+	add := as.do(t, http.MethodPost, "/api/v2/products/"+productID+"/image-assets", body, contentType, nil)
+	as.mustStatus(t, add, http.StatusCreated)
+	var added product.AssetListResponse
+	as.decode(t, add, &added)
+	if len(added.Items) != 1 {
+		t.Fatalf("assets %+v", added)
+	}
+	assetID := added.Items[0].ID
+	selection := map[string]any{
+		"schema_version": 1,
+		"image_types": []any{
+			map[string]any{"key": "hero", "quantity": 2, "order": 0},
+			map[string]any{"key": "selling_point", "quantity": 2, "order": 1},
+			map[string]any{"key": "scene", "quantity": 1, "order": 2},
+			map[string]any{"key": "detail", "quantity": 2, "order": 3},
+			map[string]any{"key": "sku", "quantity": 1, "order": 4},
+			map[string]any{"key": "dimensions", "quantity": 1, "order": 5},
+		},
+	}
+	stuckIntake, err := json.Marshal(map[string]any{
+		"schema_version": 1, "image_types": selection["image_types"], "reference_asset_ids": []string{assetID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE products SET intake_schema_version = 1, intake_json = $2, updated_at = NOW() WHERE id = $1
+	`, productID, string(stuckIntake)); err != nil {
+		t.Fatal(err)
+	}
+
+	stuck := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+convID+"/product-context", nil, "", authTok)
+	as.mustStatus(t, stuck, http.StatusOK)
+	var stuckCtx map[string]any
+	as.decode(t, stuck, &stuckCtx)
+	if stuckCtx["birth_expandable"] != true {
+		t.Fatalf("stuck birth_expandable=%+v", stuckCtx["birth_expandable"])
+	}
+
+	unknownOp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/graph/proposals", map[string]any{
+		"change_set": map[string]any{
+			"base_graph_revision": 1,
+			"summary":             "猜操作",
+			"operations":          []any{map[string]any{"op": "add_node", "title": "节点"}},
+		},
+	}, http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}})
+	as.mustDetail(t, unknownOp, http.StatusBadRequest, "不支持的 Graph 操作 add_node。operations[].op 必须是: "+strings.Join(graph.GraphCommandOpNames, ", "))
+
+	apply := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake", map[string]any{
+		"selection": selection, "reference_asset_ids": []string{assetID},
+	}, http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}})
+	as.mustStatus(t, apply, http.StatusOK)
+	var expanded struct {
+		GraphExpanded bool `json:"graph_expanded"`
+		Revision      int  `json:"revision"`
+		NodeCount     int  `json:"node_count"`
+		GroupCount    int  `json:"group_count"`
+	}
+	as.decode(t, apply, &expanded)
+	if !expanded.GraphExpanded || expanded.GroupCount != 6 || expanded.NodeCount != 19 {
+		t.Fatalf("expand %+v", expanded)
+	}
+
+	after := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+convID+"/product-context", nil, "", authTok)
+	as.mustStatus(t, after, http.StatusOK)
+	var afterCtx map[string]any
+	as.decode(t, after, &afterCtx)
+	if afterCtx["birth_expandable"] != false {
+		t.Fatalf("expanded birth_expandable=%+v", afterCtx["birth_expandable"])
+	}
+	live, _ := afterCtx["live_graph"].(map[string]any)
+	counts := map[string]int{}
+	for _, item := range live["nodes"].([]any) {
+		node, _ := item.(map[string]any)
+		key, _ := node["node_type"].(string)
+		counts[key]++
+	}
+	if counts["product_source"] != 1 || counts["visual_system"] != 1 || counts["creative_brief"] != 1 ||
+		counts["image_asset"] != 1 || counts["prompt_generation"] != 6 || counts["image_generation"] != 9 {
+		t.Fatalf("nodes %+v", counts)
+	}
+	if groups, _ := live["groups"].([]any); len(groups) != 6 {
+		t.Fatalf("groups %+v", live["groups"])
+	}
+
+	againSelection := map[string]any{
+		"schema_version": 1,
+		"image_types": []any{
+			map[string]any{"key": "hero", "quantity": 3, "order": 0},
+			map[string]any{"key": "selling_point", "quantity": 2, "order": 1},
+			map[string]any{"key": "scene", "quantity": 1, "order": 2},
+			map[string]any{"key": "detail", "quantity": 2, "order": 3},
+			map[string]any{"key": "sku", "quantity": 1, "order": 4},
+			map[string]any{"key": "dimensions", "quantity": 1, "order": 5},
+		},
+	}
+	again := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake", map[string]any{
+		"selection": againSelection, "reference_asset_ids": []string{assetID},
+	}, http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}})
+	as.mustStatus(t, again, http.StatusOK)
+	var noop struct {
+		GraphExpanded bool `json:"graph_expanded"`
+		NodeCount     int  `json:"node_count"`
+		GroupCount    int  `json:"group_count"`
+	}
+	as.decode(t, again, &noop)
+	if noop.GraphExpanded || noop.NodeCount != 19 || noop.GroupCount != 6 {
+		t.Fatalf("second finalize should not rebuild %+v", noop)
+	}
+	updated := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+convID+"/product-context", nil, "", authTok)
+	as.mustStatus(t, updated, http.StatusOK)
+	var updatedCtx map[string]any
+	as.decode(t, updated, &updatedCtx)
+	intake, _ := updatedCtx["intake"].(map[string]any)
+	types, _ := intake["image_types"].([]any)
+	if len(types) == 0 {
+		t.Fatalf("updated intake %+v", updatedCtx["intake"])
+	}
+	hero, _ := types[0].(map[string]any)
+	if hero["key"] != "hero" || hero["quantity"] != float64(3) {
+		t.Fatalf("expanded graph must still accept intake updates %+v", intake)
 	}
 }
 

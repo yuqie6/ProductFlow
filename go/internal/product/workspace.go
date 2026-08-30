@@ -234,7 +234,7 @@ func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, select
 			compensation.Rollback()
 			return err
 		}
-		if err := expandBirthGraphFromIntake(ctx, pgxTx, product, selection, assetIDs(assets)); err != nil {
+		if _, err := expandBirthGraphFromIntake(ctx, pgxTx, product, selection, assetIDs(assets)); err != nil {
 			compensation.Rollback()
 			return err
 		}
@@ -280,14 +280,14 @@ func (s Service) appendUploads(ctx context.Context, pgxTx *gorm.DB, compensation
 	return loadAssetsByIDs(ctx, pgxTx, productID, assetIDs(assets))
 }
 
-func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Product, selection Selection, assetIDs []string) error {
+func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Product, selection Selection, assetIDs []string) (bool, error) {
 	if len(selection.ImageTypes) == 0 || len(assetIDs) == 0 {
-		return nil
+		return false, nil
 	}
 	sourceID := product.ID
 	deliverySpec, err := selectionDeliverySpec(selection)
 	if err != nil {
-		return err
+		return false, err
 	}
 	in := graph.DirectCreateInput{
 		ImageTypes:        selectionToImageTypes(selection),
@@ -300,19 +300,19 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 	}
 	identity, err := graph.LoadActiveGraphForUpdate(ctx, pgxTx, product.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if identity == nil {
 		changeSet, err := graph.BuildDirectCreateTemplate(in)
 		if err != nil {
-			return err
+			return false, err
 		}
 		_, err = graph.StageNew(ctx, pgxTx, product.ID, product.Name, changeSet)
-		return err
+		return err == nil, err
 	}
 	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, *identity)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var productSources []graph.AppliedNode
 	for _, node := range applied.Nodes {
@@ -320,17 +320,29 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 			productSources = append(productSources, node)
 			continue
 		}
-		return nil
+		return false, nil
 	}
 	if len(productSources) != 1 {
-		return nil
+		return false, nil
 	}
 	changeSet, err := graph.TemplateForExistingProductSource(productSources[0].ID, applied.Revision, in)
 	if err != nil {
-		return err
+		return false, err
 	}
 	_, err = graph.Mutate(ctx, pgxTx, product.ID, identity.ID, changeSet, graph.HistoryEdit)
-	return err
+	return err == nil, err
+}
+
+func liveGraphCounts(ctx context.Context, pgxTx *gorm.DB, productID string) (revision, nodeCount, groupCount int, err error) {
+	identity, err := graph.TryLoadActiveGraph(ctx, pgxTx, productID)
+	if err != nil || identity == nil {
+		return 0, 0, 0, err
+	}
+	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, *identity)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return applied.Revision, len(applied.Nodes), len(applied.Groups), nil
 }
 
 func (s Service) upsertWorkspace(

@@ -360,8 +360,17 @@ func unmarshalOperation(raw json.RawMessage) (Operation, error) {
 		}
 		return DissolveGroupOp{GroupRef: ref}, nil
 	default:
-		return nil, apperr.Validation("不支持的 Graph 操作")
+		return nil, apperr.Validation(unknownGraphOpDetail(op))
 	}
+}
+
+func unknownGraphOpDetail(op string) string {
+	allowed := strings.Join(GraphCommandOpNames, ", ")
+	op = strings.TrimSpace(op)
+	if op == "" {
+		return "不支持的 Graph 操作。operations[].op 必须是: " + allowed
+	}
+	return "不支持的 Graph 操作 " + op + "。operations[].op 必须是: " + allowed
 }
 
 func rejectUnknownKeys(payload map[string]any, known map[string]struct{}) error {

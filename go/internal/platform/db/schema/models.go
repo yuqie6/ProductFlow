@@ -173,6 +173,7 @@ type AgentTurnProjections struct {
 	Status                             string     `gorm:"column:status;type:agentturnstatus;not null"`
 	ResumeRequired                     bool       `gorm:"column:resume_required;type:boolean;not null"`
 	OutputText                         *string    `gorm:"column:output_text;type:text"`
+	ThinkingText                       *string    `gorm:"column:thinking_text;type:text"`
 	ErrorText                          *string    `gorm:"column:error_text;type:text"`
 	QuestionJSON                       *string    `gorm:"column:question_json;type:json"`
 	ArtifactName                       *string    `gorm:"column:artifact_name;type:varchar(120)"`

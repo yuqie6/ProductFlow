@@ -329,30 +329,64 @@ func selectionToImageTypes(selection Selection) []graph.DirectCreateImageType {
 	return out
 }
 
-// ApplyIntake 把图片类型选择与参考图写入商品 intake。
-func (s Service) ApplyIntake(ctx context.Context, productID string, selectionJSON []byte, assetIDs []string) (json.RawMessage, error) {
+// ApplyIntakeResult 是 Agent 落库 intake 后的有界结果：是否展开了 birth 套图。
+type ApplyIntakeResult struct {
+	Intake        json.RawMessage
+	GraphExpanded bool
+	Revision      int
+	NodeCount     int
+	GroupCount    int
+}
+
+// ApplyIntake 把图片类型选择与参考图写入商品 intake；名称-only 图画按模板展开套图。
+func (s Service) ApplyIntake(ctx context.Context, productID string, selectionJSON []byte, assetIDs []string) (ApplyIntakeResult, error) {
+	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	selection, err := parseSelection(string(selectionJSON))
 	if err != nil {
-		return nil, err
+		return ApplyIntakeResult{}, err
 	}
 	if len(assetIDs) == 0 {
-		return nil, apperr.Validation("至少选择一张参考图")
+		return ApplyIntakeResult{}, apperr.Validation("至少选择一张参考图")
 	}
 	if len(assetIDs) > 6 {
-		return nil, apperr.Validation("参考图最多上传 6 张")
+		return ApplyIntakeResult{}, apperr.Validation("参考图最多上传 6 张")
 	}
 	payload, err := intakePayload(selection, assetIDs)
 	if err != nil {
-		return nil, err
+		return ApplyIntakeResult{}, err
 	}
+	var result ApplyIntakeResult
+	result.Intake = payload
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		return setIntake(ctx, pgxTx, productID, payload)
+		if err := AssetIDsExist(ctx, pgxTx, productID, assetIDs); err != nil {
+			return err
+		}
+		product, err := loadProduct(ctx, pgxTx, productID)
+		if err != nil {
+			return err
+		}
+		if err := setIntake(ctx, pgxTx, productID, payload); err != nil {
+			return err
+		}
+		expanded, err := expandBirthGraphFromIntake(ctx, pgxTx, product, selection, assetIDs)
+		if err != nil {
+			return err
+		}
+		revision, nodes, groups, err := liveGraphCounts(ctx, pgxTx, product.ID)
+		if err != nil {
+			return err
+		}
+		result.GraphExpanded = expanded
+		result.Revision = revision
+		result.NodeCount = nodes
+		result.GroupCount = groups
+		return nil
 	})
 	if err != nil {
-		return nil, err
+		return ApplyIntakeResult{}, err
 	}
-	return payload, nil
+	return result, nil
 }

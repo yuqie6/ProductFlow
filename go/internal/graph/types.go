@@ -197,6 +197,21 @@ type DissolveGroupOp struct {
 
 func (DissolveGroupOp) graphOp() {}
 
+// GraphCommandOpNames 是 schema-v3 ChangeSet 的封闭 op 表。Agent tool JSON Schema 必须与此对齐。
+var GraphCommandOpNames = []string{
+	"create_node",
+	"update_node_config",
+	"rename_node",
+	"delete_node",
+	"connect_nodes",
+	"disconnect_edge",
+	"move_nodes",
+	"create_group",
+	"move_nodes_to_group",
+	"rename_group",
+	"dissolve_group",
+}
+
 type ChangeSet struct {
 	BaseGraphRevision int
 	Summary           string

@@ -30,9 +30,11 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, _ int) (Recovery
 func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, error) {
 	var out RecoverySummary
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := recoverExpiredExecutions(ctx, pgxTx); err != nil {
+		n, err := recoverExpiredExecutions(ctx, pgxTx)
+		if err != nil {
 			return err
 		}
+		out.UnknownExecutions = n
 		var ids []string
 		if err := pgxTx.Model(&schema.AgentTurnProjections{}).
 			Where("resume_required = FALSE AND status IN ('queued','running','cancel_requested')").
@@ -117,6 +119,9 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 	unknown := 0
 	now := time.Now().UTC()
 	for _, item := range items {
+		if item.Status == "requires_input" && item.Phase == "waiting_input" {
+			continue
+		}
 		if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 			"fencing_token":    gorm.Expr("fencing_token + 1"),
 			"owner_id":         nil,

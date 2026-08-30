@@ -338,6 +338,10 @@ func TestProductContextConfirmedFactsAndLiveGraphRoles(t *testing.T) {
 		t.Fatalf("fact row %+v", row)
 	}
 
+	if payload["birth_expandable"] != false {
+		t.Fatalf("birth_expandable %+v", payload["birth_expandable"])
+	}
+
 	live, _ := payload["live_graph"].(map[string]any)
 	if live == nil {
 		t.Fatal("missing live_graph")

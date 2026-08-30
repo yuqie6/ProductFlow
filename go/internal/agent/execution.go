@@ -78,7 +78,7 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 		if exec.OwnerID != nil && exec.LeaseToken != nil && exec.LeaseExpiresAt != nil && exec.LeaseExpiresAt.After(now) && *exec.OwnerID != owner {
 			return apperr.Conflict("Agent Turn 已被其他 Agent worker claim")
 		}
-		if exec.OwnerID != nil && exec.LeaseToken != nil && exec.LeaseExpiresAt != nil && !exec.LeaseExpiresAt.After(now) && exec.Phase != "claimed" {
+		if exec.OwnerID != nil && exec.LeaseToken != nil && exec.LeaseExpiresAt != nil && !exec.LeaseExpiresAt.After(now) && exec.Phase != "claimed" && exec.Phase != "waiting_input" {
 			return apperr.Conflict("Agent Turn execution 已过期，必须先完成副作用对账")
 		}
 		if exec.OwnerID == nil && exec.LeaseToken == nil && exec.Phase != "claimed" {
@@ -280,6 +280,9 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 	if turnID == "" || len(turnID) > 120 {
 		return EventReceipt{}, apperr.Validation("Agent event turn ID 无效")
 	}
+	if inSet(liveOnlyEventKinds, kind) {
+		return EventReceipt{}, apperr.Validation("Agent 直播事件不写入 PostgreSQL")
+	}
 	if !inSet(eventKinds, kind) {
 		return EventReceipt{}, apperr.Validation("Agent event kind 不受支持")
 	}
@@ -326,8 +329,8 @@ func (s Service) AppendEvent(ctx context.Context, conversationID, executionID, o
 			Select("COALESCE(MAX(sequence), 0)").Scan(&last).Error; err != nil {
 			return err
 		}
-		if sequence != last+1 {
-			return apperr.Conflict("Agent event sequence 必须连续提交")
+		if sequence <= last {
+			return apperr.Conflict("Agent event sequence 必须递增提交")
 		}
 		if createdAt.IsZero() {
 			createdAt = time.Now().UTC()

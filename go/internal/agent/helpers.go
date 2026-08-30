@@ -38,11 +38,14 @@ var (
 		"awaiting_confirmation": {}, "succeeded": {}, "failed": {}, "canceled": {}, "unknown": {},
 	}
 	eventKinds = map[string]struct{}{
-		"turn.queued": {}, "turn.started": {}, "text.delta": {}, "tool.step": {},
+		"turn.queued": {}, "turn.started": {}, "tool.step": {},
 		"question.required": {}, "question.answered": {}, "turn.resume_requested": {},
 		"turn.cancel_requested": {}, "turn.requires_input": {}, "artifact.proposed": {},
 		"turn.awaiting_confirmation": {}, "turn.succeeded": {}, "turn.failed": {},
 		"turn.canceled": {}, "turn.unknown": {},
+	}
+	liveOnlyEventKinds = map[string]struct{}{
+		"text.delta": {}, "thinking.delta": {}, "assistant.finish": {},
 	}
 	checkpointKinds = map[string]struct{}{
 		"before_model_request": {}, "tool_effect_intent": {}, "tool_effect_result": {},
@@ -221,8 +224,8 @@ func mapGateway(err error) error {
 	}
 }
 
-// gatewayQuestionNotLive 表示 Pi 进程内已经没有这个问题的 waiter，
-// 同一 Turn 无法 resume，只能取消后改走 continuation。
+// gatewayQuestionNotLive 表示 Pi 进程内已经没有这个问题的 waiter。
+// 答案仍打原 Turn 的 answer + resume，由 Pi 把 ask_user 收成 toolResult。
 func gatewayQuestionNotLive(err error) bool {
 	var ge GatewayError
 	if !errors.As(err, &ge) || ge.Status != 409 {

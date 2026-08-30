@@ -2,11 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -49,6 +51,56 @@ func (g HTTPGateway) ResumeTurn(conversationID, turnID string, taskID *string) (
 
 func (g HTTPGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/questions/"+url.PathEscape(questionID)+"/answer", map[string]any{"answer": answer})
+}
+
+func (g HTTPGateway) StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error {
+	if !g.configured() {
+		return GatewayError{Code: "not_configured", Detail: "Agent 服务尚未配置"}
+	}
+	if after < 0 {
+		after = 0
+	}
+	path := g.turnPath(conversationID, turnID, taskID) + "/events?after=" + strconv.Itoa(after)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.BaseURL+path, nil)
+	if err != nil {
+		return GatewayError{Code: "unavailable", Detail: "Agent 服务暂时不可用"}
+	}
+	req.Header.Set("Authorization", "Bearer "+g.Token)
+	req.Header.Set("Accept", "text/event-stream")
+	headerTimeout := g.ConnectTimeout
+	if headerTimeout <= 0 {
+		headerTimeout = 10 * time.Second
+	}
+	client := &http.Client{
+		Transport: &http.Transport{ResponseHeaderTimeout: headerTimeout},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return GatewayError{Code: "unavailable", Detail: "Agent 服务暂时不可用"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		code := "upstream_error"
+		msg := "Agent 服务请求失败"
+		var payload map[string]any
+		if json.Unmarshal(data, &payload) == nil {
+			if errObj, ok := payload["error"].(map[string]any); ok {
+				if c, ok := errObj["code"].(string); ok && c != "" {
+					code = c
+				}
+				if m, ok := errObj["message"].(string); ok && m != "" {
+					msg = m
+				}
+			}
+		}
+		return GatewayError{Status: resp.StatusCode, Code: code, Detail: msg}
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
 }
 
 func (g HTTPGateway) executionPath(conversationID string, taskID *string) string {

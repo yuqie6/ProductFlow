@@ -85,10 +85,12 @@ func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idem
 		return nil, err
 	}
 	var intakeObj any
-	_ = json.Unmarshal(intake, &intakeObj)
+	_ = json.Unmarshal(intake.Intake, &intakeObj)
 	result := map[string]any{
 		"schema_version": 1, "accepted": true, "intake_finalized": true,
 		"product_id": *conv.ProductID, "reference_asset_ids": ids, "intake": intakeObj,
+		"graph_expanded": intake.GraphExpanded, "revision": intake.Revision,
+		"node_count": intake.NodeCount, "group_count": intake.GroupCount,
 	}
 	if err := s.recordMutation(ctx, conversationID, "finalize_product_intake_v1", idempotencyKey, "finalize_product_intake_v1", before, target, result, nil); err != nil {
 		return nil, err

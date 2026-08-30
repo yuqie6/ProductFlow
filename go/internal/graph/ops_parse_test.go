@@ -49,6 +49,62 @@ func TestParseChangeSetRejectsEmptyOperations(t *testing.T) {
 	assertAppErr(t, err, 400, "不支持的 Graph 操作")
 }
 
+func TestGraphCommandOpNamesMatchUnmarshalCases(t *testing.T) {
+	want := []string{
+		"create_node", "update_node_config", "rename_node", "delete_node",
+		"connect_nodes", "disconnect_edge", "move_nodes", "create_group",
+		"move_nodes_to_group", "rename_group", "dissolve_group",
+	}
+	if len(GraphCommandOpNames) != len(want) {
+		t.Fatalf("%v", GraphCommandOpNames)
+	}
+	for i, name := range want {
+		if GraphCommandOpNames[i] != name {
+			t.Fatalf("%v", GraphCommandOpNames)
+		}
+	}
+}
+
+func TestParseChangeSetAcceptsCreateNodeAndConnectNodes(t *testing.T) {
+	cs, err := ParseChangeSet([]byte(`{
+		"base_graph_revision": 1,
+		"summary": "加节点并连线",
+		"operations": [
+			{"op": "create_node", "client_ref": "n1", "node_type": "prompt_generation", "title": "提示词"},
+			{"op": "connect_nodes", "client_ref": "e1", "source_ref": "src", "target_ref": "n1"}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs.Operations) != 2 {
+		t.Fatalf("%+v", cs.Operations)
+	}
+	if _, ok := cs.Operations[0].(CreateNodeOp); !ok {
+		t.Fatalf("%T", cs.Operations[0])
+	}
+	if _, ok := cs.Operations[1].(ConnectNodesOp); !ok {
+		t.Fatalf("%T", cs.Operations[1])
+	}
+}
+
+func TestParseChangeSetRejectsUnknownOpWithAllowedList(t *testing.T) {
+	_, err := ParseChangeSet([]byte(`{
+		"base_graph_revision": 1,
+		"summary": "猜操作",
+		"operations": [{"op": "add_node", "title": "节点"}]
+	}`))
+	assertAppErr(t, err, 400, "不支持的 Graph 操作 add_node")
+	assertAppErr(t, err, 400, "operations[].op 必须是: "+strings.Join(GraphCommandOpNames, ", "))
+
+	_, connectErr := ParseChangeSet([]byte(`{
+		"base_graph_revision": 1,
+		"summary": "猜连线",
+		"operations": [{"op": "connect", "source_ref": "a", "target_ref": "b"}]
+	}`))
+	assertAppErr(t, connectErr, 400, "不支持的 Graph 操作 connect")
+}
+
 func TestParseChangeSetAcceptsJSONNumberConfig(t *testing.T) {
 	raw := []byte(`{
 		"base_graph_revision": 0,

@@ -4,44 +4,18 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"github.com/yuqie6/productflow/prompts"
 	"gorm.io/gorm"
 )
 
 //go:embed global_draft_schema.json
 var globalDraftSchemaJSON []byte
-
-const (
-	workflowAgentLiveGraphPrompt = `你是 ProductFlow 的商品工作流协作 Agent。
-当前商品已有 live schema-v3 图。用户是画布的主编辑者。
-
-加载匹配任务的 ProductFlow Skill。只使用本轮工具列表里的工具。
-不得提交第二份完整拓扑。不得编造商品事实或资产。
-不得输出 base64、data URL、存储路径或内部 URL。
-提案、跑图和素材整理的确认只在 ProductFlow UI 完成。
-`
-
-	goalLoopPrompt = `
-当前是用户显式开始的 Goal，不是开聊入场券。
-循环使用已有工具：request_workflow_run → 等用户在画布确认 → inspect 结果 → apply 或 propose → 再请求跑图。
-不得自行宣布 Goal 完成。完成只能由用户点完成。
-一次 WorkflowGraphRun 结束不等于 Goal 结束，不要接管跑图状态机。
-默认仍须用户在画布确认跑图。
-`
-
-	globalAgentSystemPrompt = `你是 ProductFlow 的全局素材与工作流辅助 Agent。
-作用域是整个应用，不绑定某一个商品画布。
-
-加载匹配任务的 ProductFlow Skill。只使用本轮工具列表里的工具。
-不能在全局会话上改某个商品的 live graph。
-素材整理必须先提交可审阅 Draft。不得编造事实。
-不得输出 base64、data URL、存储路径或内部 URL。
-`
-)
 
 func (s Service) ConversationContract(ctx context.Context, conversationID string) (ContractResponse, error) {
 	var out ContractResponse
@@ -135,7 +109,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		var schemaDoc map[string]any
 		_ = json.Unmarshal(globalDraftSchemaJSON, &schemaDoc)
 		out.CurrentDraftVersion = draft.Version
-		out.SystemPrompt = globalAgentSystemPrompt
+		out.SystemPrompt = prompts.AgentGlobal()
 		out.DraftKind = ptr("global")
 		out.DraftSchema = schemaDoc
 		out.HasLiveGraph = false
@@ -145,7 +119,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		}
 		var graph schema.WorkflowGraphs
 		err := pgxTx.Select("id").Where("product_id = ? AND active = TRUE", *conv.ProductID).Take(&graph).Error
-		out.SystemPrompt = workflowAgentLiveGraphPrompt
+		out.SystemPrompt = prompts.AgentWorkflow()
 		out.DraftKind = ptr("workflow")
 		out.HasLiveGraph = err == nil
 	}
@@ -154,7 +128,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		out.TaskGoal = &task.Goal
 		out.HarnessRunID = task.ID
 		if conv.ScopeType == "product_workflow" {
-			out.SystemPrompt = out.SystemPrompt + goalLoopPrompt
+			out.SystemPrompt = out.SystemPrompt + "\n" + prompts.AgentGoalLoop()
 		}
 	}
 	return out, nil
@@ -207,6 +181,7 @@ func (s Service) ProductContext(ctx context.Context, conversationID string) (map
 		},
 		"confirmed_fact_set": confirmed,
 		"intake":             json.RawMessage(orEmptyJSON(product.Intake)),
+		"birth_expandable":   birthExpandable(product.Intake, live),
 		"node_catalog":       graph.CatalogJSON(),
 		"image_type_catalog": graph.ImageTypeCatalogJSON(),
 		"live_graph":         liveSummary,
@@ -218,6 +193,33 @@ func orEmptyJSON(raw json.RawMessage) json.RawMessage {
 		return []byte("null")
 	}
 	return raw
+}
+
+func intakePresent(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	return len(trimmed) > 0 && trimmed != "null"
+}
+
+func isBirthGraph(proj graph.Projection) bool {
+	sources := 0
+	for _, node := range proj.Nodes {
+		if node.NodeType == graph.NodeProductSource {
+			sources++
+			continue
+		}
+		return false
+	}
+	return sources == 1
+}
+
+func birthExpandable(intake json.RawMessage, live *graph.Projection) bool {
+	if !intakePresent(intake) {
+		return false
+	}
+	if live == nil {
+		return true
+	}
+	return isBirthGraph(*live)
 }
 
 func liveGraphSummary(proj graph.Projection) map[string]any {

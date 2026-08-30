@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -29,7 +31,7 @@ const (
 	maxEventPayloadBytes  = 128 * 1024
 	maxCheckpointPayload  = 64 * 1024
 	leaseSeconds          = 60
-	toolContractVersion   = 15
+	toolContractVersion   = 16
 	assetListDefaultLimit = 50
 	assetListMaxLimit     = 100
 	globalProductListMax  = 100
@@ -116,6 +118,7 @@ type TurnResponse struct {
 	Status                             string           `json:"status"`
 	ResumeRequired                     bool             `json:"resume_required"`
 	OutputText                         *string          `json:"output_text"`
+	ThinkingText                       *string          `json:"thinking_text"`
 	ErrorText                          *string          `json:"error_text"`
 	Question                           json.RawMessage  `json:"question"`
 	QuestionAnswer                     json.RawMessage  `json:"question_answer"`
@@ -328,6 +331,7 @@ type TurnState struct {
 	Artifact         *TurnArtifact    `json:"artifact"`
 	ToolSteps        []map[string]any `json:"tool_steps"`
 	Output           string           `json:"output"`
+	Thinking         string           `json:"thinking"`
 	Error            string           `json:"error"`
 	CreatedAt        time.Time        `json:"created_at"`
 	UpdatedAt        time.Time        `json:"updated_at"`
@@ -385,6 +389,7 @@ type turnRow struct {
 	Status                    string
 	ResumeRequired            bool
 	OutputText                *string
+	ThinkingText              *string
 	ErrorText                 *string
 	QuestionJSON              []byte
 	QuestionAnswerJSON        []byte
@@ -419,4 +424,5 @@ type Gateway interface {
 	CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error)
+	StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error
 }
