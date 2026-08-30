@@ -18,7 +18,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 ## 2. 后端分层
 
-业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 raw SQL），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。
+业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`adr/0012-gorm-command-writes.md`](adr/0012-gorm-command-writes.md)。
 
 `backend/src/productflow_backend/` 是封印对照与迁移树，不是默认进程。机器可读合同在仓库根 `contracts/`：`http-routes.json` 与 `openapi.json` 是封印 Python 快照，默认不从 live FastAPI 重生。Go 对未知 JSON 字段 `DisallowUnknownFields` → 400。HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。
 

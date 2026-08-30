@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type OrganizationDraftRevision struct {
@@ -82,11 +82,15 @@ func (s Service) AppendOrganizationDraftRevisionTx(ctx context.Context, pgxTx *g
 		if !errors.As(err, &e) || e.Status != 404 {
 			return "", err
 		}
+		now := time.Now().UTC()
 		draftID := clockid.New()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO library_organization_drafts (id, conversation_id, status, created_at, updated_at)
-			VALUES ($1, $2, 'awaiting_confirmation', NOW(), NOW())
-		`, draftID, conversationID); err != nil {
+		if err := pgxTx.WithContext(ctx).Create(&schema.LibraryOrganizationDrafts{
+			ID:             draftID,
+			ConversationID: conversationID,
+			Status:         "awaiting_confirmation",
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		}).Error; err != nil {
 			return "", err
 		}
 		draft.ID = draftID
@@ -96,24 +100,39 @@ func (s Service) AppendOrganizationDraftRevisionTx(ctx context.Context, pgxTx *g
 		return "", apperr.Conflict("素材整理 Draft 已确认，不能再追加 revision")
 	}
 	var version int
-	_ = pfdb.QueryRow(ctx, pgxTx, `
-		SELECT COALESCE(MAX(version), 0) FROM library_organization_draft_revisions WHERE draft_id = $1
-	`, draft.ID).Scan(&version)
-	revID := clockid.New()
-	now := s.now()
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO library_organization_draft_revisions (
-			id, draft_id, version, schema_version, payload_json, payload_hash,
-			source_turn_id, source_artifact_step_id, created_at
-		) VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
-	`, revID, draft.ID, version+1, payload, hash, nullable(sourceTurnID), nullable(sourceStepID), now); err != nil {
+	if err := pgxTx.WithContext(ctx).Model(&schema.LibraryOrganizationDraftRevisions{}).
+		Where("draft_id = ?", draft.ID).
+		Select("COALESCE(MAX(version), 0)").
+		Scan(&version).Error; err != nil {
 		return "", err
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE library_organization_drafts
-		SET current_revision_id = $2, status = 'awaiting_confirmation', updated_at = $3
-		WHERE id = $1
-	`, draft.ID, revID, now); err != nil {
+	revID := clockid.New()
+	now := s.now()
+	var turnID, stepID *string
+	if v := nullableString(sourceTurnID); v != nil {
+		turnID = v
+	}
+	if v := nullableString(sourceStepID); v != nil {
+		stepID = v
+	}
+	if err := pgxTx.WithContext(ctx).Create(&schema.LibraryOrganizationDraftRevisions{
+		ID:                   revID,
+		DraftID:              draft.ID,
+		Version:              version + 1,
+		SchemaVersion:        1,
+		PayloadJSON:          string(payload),
+		PayloadHash:          hash,
+		SourceTurnID:         turnID,
+		SourceArtifactStepID: stepID,
+		CreatedAt:            now,
+	}).Error; err != nil {
+		return "", err
+	}
+	if err := pgxTx.WithContext(ctx).Model(&schema.LibraryOrganizationDrafts{}).Where("id = ?", draft.ID).Updates(map[string]any{
+		"current_revision_id": revID,
+		"status":              "awaiting_confirmation",
+		"updated_at":          now,
+	}).Error; err != nil {
 		return "", err
 	}
 	return revID, nil
@@ -157,12 +176,10 @@ func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB,
 		if draft.ConfirmedRevisionID == nil || *draft.ConfirmedRevisionID != draft.CurrentRevision.ID {
 			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
 		}
-		var storedKey, storedHash *string
-		_ = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT confirmation_idempotency_key, confirmation_request_hash
-			FROM library_organization_drafts WHERE id = $1
-		`, draft.ID).Scan(&storedKey, &storedHash)
-		if storedKey == nil || *storedKey != key || storedHash == nil || *storedHash != requestHash {
+		var rec schema.LibraryOrganizationDrafts
+		_ = pgxTx.WithContext(ctx).Select("confirmation_idempotency_key, confirmation_request_hash").
+			Where("id = ?", draft.ID).Take(&rec).Error
+		if rec.ConfirmationIdempotencyKey == nil || *rec.ConfirmationIdempotencyKey != key || rec.ConfirmationRequestHash == nil || *rec.ConfirmationRequestHash != requestHash {
 			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
 		}
 		return draft, nil
@@ -178,22 +195,27 @@ func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB,
 		return OrganizationDraft{}, err
 	}
 	now := s.now()
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE library_organization_draft_revisions SET confirmed_at = $2 WHERE id = $1
-	`, draft.CurrentRevision.ID, now); err != nil {
+	if err := pgxTx.WithContext(ctx).Model(&schema.LibraryOrganizationDraftRevisions{}).Where("id = ?", draft.CurrentRevision.ID).Updates(map[string]any{
+		"confirmed_at": now,
+	}).Error; err != nil {
 		return OrganizationDraft{}, err
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE library_organization_drafts
-		SET status = 'confirmed', confirmed_revision_id = $2, confirmation_idempotency_key = $3,
-		    confirmation_request_hash = $4, confirmation_result_json = $5, confirmed_at = $6, updated_at = $6
-		WHERE id = $1
-	`, draft.ID, draft.CurrentRevision.ID, key, requestHash, result, now); err != nil {
+	resultStr := string(result)
+	if err := pgxTx.WithContext(ctx).Model(&schema.LibraryOrganizationDrafts{}).Where("id = ?", draft.ID).Updates(map[string]any{
+		"status":                       "confirmed",
+		"confirmed_revision_id":        draft.CurrentRevision.ID,
+		"confirmation_idempotency_key": key,
+		"confirmation_request_hash":    requestHash,
+		"confirmation_result_json":     resultStr,
+		"confirmed_at":                 now,
+		"updated_at":                   now,
+	}).Error; err != nil {
 		return OrganizationDraft{}, err
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_conversations SET status = 'completed', updated_at = $2 WHERE id = $1
-	`, conversationID, now); err != nil {
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
+		"status":     "completed",
+		"updated_at": now,
+	}).Error; err != nil {
 		return OrganizationDraft{}, err
 	}
 	return loadOrganizationDraft(ctx, pgxTx, conversationID)
@@ -213,25 +235,25 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 		assetID, _ := op["asset_id"].(string)
 		expected := jsonInt(op["expected_revision"])
 		target, _ := op["target"].(map[string]any)
-		var revision int
-		err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT revision FROM media_library_assets WHERE id = $1 FOR UPDATE
-		`, assetID).Scan(&revision)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var rec schema.MediaLibraryAssets
+		err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("revision").Where("id = ?", assetID).Take(&rec).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperr.NotFound("素材不存在")
 		}
 		if err != nil {
 			return nil, err
 		}
-		if expected > 0 && revision != expected {
+		if expected > 0 && rec.Revision != expected {
 			return nil, apperr.Conflict("素材已被其他操作修改")
 		}
 		switch kind {
 		case "rename":
 			name, _ := target["display_name"].(string)
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE media_library_assets SET display_name = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
-			`, name, now, assetID); err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"display_name": name,
+				"revision":     gorm.Expr("revision + 1"),
+				"updated_at":   now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		case "move":
@@ -239,13 +261,15 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 			if raw, ok := target["folder_id"].(string); ok && raw != "" {
 				folderID = &raw
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE media_library_assets SET folder_id = $1, revision = revision + 1, updated_at = $2 WHERE id = $3
-			`, folderID, now, assetID); err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"folder_id":  folderID,
+				"revision":   gorm.Expr("revision + 1"),
+				"updated_at": now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		case "set_tags":
-			if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM media_library_asset_tags WHERE asset_id = $1`, assetID); err != nil {
+			if err := pgxTx.WithContext(ctx).Where("asset_id = ?", assetID).Delete(&schema.MediaLibraryAssetTags{}).Error; err != nil {
 				return nil, err
 			}
 			rawTags, _ := target["tag_names"].([]any)
@@ -254,49 +278,61 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 				if name == "" {
 					continue
 				}
-				var tagID string
-				err := pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM media_library_tags WHERE name = $1`, name).Scan(&tagID)
-				if errors.Is(err, sqldb.ErrNoRows) {
-					tagID = clockid.New()
-					if _, err := pfdb.Exec(ctx, pgxTx, `
-						INSERT INTO media_library_tags (id, name, normalized_name, created_at, updated_at)
-						VALUES ($1, $2, $3, $4, $4)
-					`, tagID, name, name, now); err != nil {
+				var tag schema.MediaLibraryTags
+				err := pgxTx.WithContext(ctx).Select("id").Where("name = ?", name).Take(&tag).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					tag.ID = clockid.New()
+					if err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryTags{
+						ID:             tag.ID,
+						Name:           name,
+						NormalizedName: name,
+						CreatedAt:      now,
+						UpdatedAt:      now,
+					}).Error; err != nil {
 						return nil, err
 					}
 				} else if err != nil {
 					return nil, err
 				}
-				if _, err := pfdb.Exec(ctx, pgxTx, `
-					INSERT INTO media_library_asset_tags (asset_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
-				`, assetID, tagID); err != nil {
+				if err := pgxTx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&schema.MediaLibraryAssetTags{
+					AssetID:   assetID,
+					TagID:     tag.ID,
+					CreatedAt: now,
+				}).Error; err != nil {
 					return nil, err
 				}
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE media_library_assets SET revision = revision + 1, updated_at = $2 WHERE id = $1
-			`, assetID, now); err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"revision":   gorm.Expr("revision + 1"),
+				"updated_at": now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		case "archive":
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE media_library_assets SET is_archived = TRUE, archived_at = $2, revision = revision + 1, updated_at = $2 WHERE id = $1
-			`, assetID, now); err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"is_archived": true,
+				"archived_at": now,
+				"revision":    gorm.Expr("revision + 1"),
+				"updated_at":  now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		case "restore":
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE media_library_assets SET is_archived = FALSE, archived_at = NULL, revision = revision + 1, updated_at = $2 WHERE id = $1
-			`, assetID, now); err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"is_archived": false,
+				"archived_at": nil,
+				"revision":    gorm.Expr("revision + 1"),
+				"updated_at":  now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		case "link_workflow":
 			workflowID, _ := target["workflow_id"].(string)
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO workflow_media_library_assets (workflow_id, media_library_asset_id, created_at)
-				VALUES ($1, $2, $3)
-				ON CONFLICT DO NOTHING
-			`, workflowID, assetID, now); err != nil {
+			if err := pgxTx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&schema.WorkflowMediaLibraryAssets{
+				WorkflowID:          workflowID,
+				MediaLibraryAssetID: assetID,
+				CreatedAt:           now,
+			}).Error; err != nil {
 				return nil, err
 			}
 		default:
@@ -315,73 +351,91 @@ func loadOrganizationDraftForUpdate(ctx context.Context, q *gorm.DB, conversatio
 	return scanOrganizationDraft(ctx, q, conversationID, true)
 }
 
+type organizationDraftScan struct {
+	ID                     string     `gorm:"column:id"`
+	ConversationID         string     `gorm:"column:conversation_id"`
+	Status                 string     `gorm:"column:status"`
+	ConfirmedRevisionID    *string    `gorm:"column:confirmed_revision_id"`
+	ConfirmationResultJSON *string    `gorm:"column:confirmation_result_json"`
+	ConfirmedAt            *time.Time `gorm:"column:confirmed_at"`
+	CreatedAt              time.Time  `gorm:"column:created_at"`
+	UpdatedAt              time.Time  `gorm:"column:updated_at"`
+	RevID                  *string    `gorm:"column:rev_id"`
+	RevVersion             *int       `gorm:"column:rev_version"`
+	RevSchema              *int       `gorm:"column:rev_schema"`
+	RevPayload             *string    `gorm:"column:rev_payload"`
+	RevPayloadHash         *string    `gorm:"column:rev_payload_hash"`
+	RevSourceTurn          *string    `gorm:"column:rev_source_turn"`
+	RevSourceStep          *string    `gorm:"column:rev_source_step"`
+	RevConfirmedAt         *time.Time `gorm:"column:rev_confirmed_at"`
+	RevCreatedAt           *time.Time `gorm:"column:rev_created_at"`
+}
+
 func scanOrganizationDraft(ctx context.Context, q *gorm.DB, conversationID string, forUpdate bool) (OrganizationDraft, error) {
-	sql := `
-		SELECT d.id, d.conversation_id, d.status, d.confirmed_revision_id, d.confirmation_result_json,
+	query := q.WithContext(ctx).Table("library_organization_drafts AS d").
+		Select(`d.id, d.conversation_id, d.status, d.confirmed_revision_id, d.confirmation_result_json,
 		       d.confirmed_at, d.created_at, d.updated_at,
-		       r.id, r.version, r.schema_version, r.payload_json, r.payload_hash,
-		       r.source_turn_id, r.source_artifact_step_id, r.confirmed_at, r.created_at
-		FROM library_organization_drafts d
-		LEFT JOIN library_organization_draft_revisions r ON r.id = d.current_revision_id
-		WHERE d.conversation_id = $1`
+		       r.id AS rev_id, r.version AS rev_version, r.schema_version AS rev_schema, r.payload_json AS rev_payload, r.payload_hash AS rev_payload_hash,
+		       r.source_turn_id AS rev_source_turn, r.source_artifact_step_id AS rev_source_step, r.confirmed_at AS rev_confirmed_at, r.created_at AS rev_created_at`).
+		Joins("LEFT JOIN library_organization_draft_revisions r ON r.id = d.current_revision_id").
+		Where("d.conversation_id = ?", conversationID)
 	if forUpdate {
-		sql += " FOR UPDATE OF d"
+		query = query.Clauses(pfdb.ForUpdateOf("d"))
 	}
-	var d OrganizationDraft
-	var result []byte
-	var rev OrganizationDraftRevision
-	var revID *string
-	var version, schema *int
-	var payload []byte
-	var payloadHash *string
-	var sourceTurn, sourceStep *string
-	var revConfirmed *time.Time
-	var revCreated *time.Time
-	err := pfdb.QueryRow(ctx, q, sql, conversationID).Scan(
-		&d.ID, &d.ConversationID, &d.Status, &d.ConfirmedRevisionID, &result,
-		&d.ConfirmedAt, &d.CreatedAt, &d.UpdatedAt,
-		&revID, &version, &schema, &payload, &payloadHash,
-		&sourceTurn, &sourceStep, &revConfirmed, &revCreated,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row organizationDraftScan
+	err := query.Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return OrganizationDraft{}, apperr.NotFound("全局素材整理 Draft 不存在")
 	}
 	if err != nil {
 		return OrganizationDraft{}, err
 	}
-	if len(result) > 0 {
-		d.ConfirmationResult = result
+	d := OrganizationDraft{
+		ID:                  row.ID,
+		ConversationID:      row.ConversationID,
+		Status:              row.Status,
+		ConfirmedRevisionID: row.ConfirmedRevisionID,
+		ConfirmedAt:         row.ConfirmedAt,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+	}
+	if row.ConfirmationResultJSON != nil && *row.ConfirmationResultJSON != "" {
+		d.ConfirmationResult = json.RawMessage(*row.ConfirmationResultJSON)
 	} else {
 		d.ConfirmationResult = nil
 	}
-	if revID != nil {
-		rev.ID = *revID
-		if version != nil {
-			rev.Version = *version
+	if row.RevID != nil {
+		rev := OrganizationDraftRevision{
+			ID:                   *row.RevID,
+			SourceTurnID:         row.RevSourceTurn,
+			SourceArtifactStepID: row.RevSourceStep,
+			ConfirmedAt:          row.RevConfirmedAt,
 		}
-		if schema != nil {
-			rev.SchemaVersion = *schema
+		if row.RevVersion != nil {
+			rev.Version = *row.RevVersion
 		}
-		rev.Payload = payload
-		if payloadHash != nil {
-			rev.PayloadHash = *payloadHash
+		if row.RevSchema != nil {
+			rev.SchemaVersion = *row.RevSchema
 		}
-		rev.SourceTurnID = sourceTurn
-		rev.SourceArtifactStepID = sourceStep
-		rev.ConfirmedAt = revConfirmed
-		if revCreated != nil {
-			rev.CreatedAt = *revCreated
+		if row.RevPayload != nil {
+			rev.Payload = json.RawMessage(*row.RevPayload)
+		}
+		if row.RevPayloadHash != nil {
+			rev.PayloadHash = *row.RevPayloadHash
+		}
+		if row.RevCreatedAt != nil {
+			rev.CreatedAt = *row.RevCreatedAt
 		}
 		d.CurrentRevision = &rev
 	}
 	return d, nil
 }
 
-func nullable(value string) any {
+func nullableString(value string) *string {
 	if value == "" {
 		return nil
 	}
-	return value
+	return &value
 }
 
 func jsonInt(v any) int {

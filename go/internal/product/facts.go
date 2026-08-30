@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -86,10 +85,13 @@ func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFac
 			}
 			product.SourceNote = note
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			UPDATE products SET name = $1, category = $2, price = $3, source_note = $4, updated_at = NOW()
-			WHERE id = $5
-		`, product.Name, product.Category, product.Price, product.SourceNote, product.ID)
+		err = pgxTx.WithContext(ctx).Model(&schema.Products{}).Where("id = ?", product.ID).Updates(map[string]any{
+			"name":        product.Name,
+			"category":    product.Category,
+			"price":       product.Price,
+			"source_note": product.SourceNote,
+			"updated_at":  time.Now().UTC(),
+		}).Error
 		if err != nil {
 			return err
 		}
@@ -159,18 +161,21 @@ func loadCurrentFactSet(ctx context.Context, tx *gorm.DB, product Product) (*Fac
 	if product.FactSetVersionID == nil {
 		return nil, nil
 	}
-	var set FactSet
-	var payload []byte
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, product_id, version, payload_json, created_at
-		FROM product_fact_set_versions WHERE id = $1
-	`, *product.FactSetVersionID).Scan(&set.ID, &set.ProductID, &set.Version, &payload, &set.CreatedAt)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductFactSetVersions
+	err := tx.WithContext(ctx).Where("id = ?", *product.FactSetVersionID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	set := FactSet{
+		ID:        rec.ID,
+		ProductID: rec.ProductID,
+		Version:   rec.Version,
+		CreatedAt: rec.CreatedAt,
+	}
+	payload := []byte(rec.PayloadJSON)
 	var parsed struct {
 		Facts []map[string]any `json:"facts"`
 	}
@@ -251,6 +256,11 @@ func normalizeFactMaps(items []map[string]any) ([]map[string]any, error) {
 }
 
 func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
+	for _, key := range []string{"source_type", "status", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
+		if v, ok := payload[key]; ok && v == nil {
+			return nil, apperr.Validation("请求体无效")
+		}
+	}
 	key := strings.TrimSpace(stringOr(payload["key"], ""))
 	if key == "" || utf8.RuneCountInString(key) > 120 {
 		return nil, apperr.Validation("商品事实 key 不能为空且不能超过 120 个字符")

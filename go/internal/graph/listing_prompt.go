@@ -43,9 +43,6 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	imageTypeKey := strings.TrimSpace(req.ImageTypeKey)
 	family := imageTypeFamily(imageTypeKey)
 	typeTitle := imageTypeTitle(imageTypeKey)
-	if typeTitle == imageTypeKey && strings.TrimSpace(req.NodeTitle) != "" {
-		typeTitle = req.NodeTitle
-	}
 	job := imageTypeGenerationJobs[imageTypeKey]
 	briefLines := []string{
 		fmt.Sprintf("生成一张能上淘宝/天猫详情的%s，不是参考图修图交差。", typeTitle),
@@ -70,9 +67,10 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if policy == "" {
 		policy = "none"
 	}
-	if policy == "none" {
+	switch policy {
+	case "none":
 		briefLines = append(briefLines, noOnImageTextRule+"。")
-	} else if policy == "required" {
+	case "required":
 		if language, ok := spec["text_language"].(string); ok && strings.TrimSpace(language) != "" {
 			briefLines = append(briefLines, "画面必须包含图片内文字，语种为"+strings.TrimSpace(language)+"，写短利益点，不要说明书。")
 		} else {

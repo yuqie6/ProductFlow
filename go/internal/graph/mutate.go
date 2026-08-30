@@ -3,10 +3,11 @@ package graph
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -27,10 +28,17 @@ func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (gra
 		title = DefaultGraphTitle
 	}
 	graphID := clockid.New()
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
-		VALUES ($1, $2, $3, TRUE, $4, 1, NOW(), NOW())
-	`, graphID, productID, title, SchemaVersion)
+	now := time.Now().UTC()
+	err = tx.WithContext(ctx).Create(&schema.WorkflowGraphs{
+		ID:            graphID,
+		ProductID:     productID,
+		Title:         title,
+		Active:        true,
+		SchemaVersion: SchemaVersion,
+		Revision:      1,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error
 	if err != nil {
 		return graphRow{}, err
 	}
@@ -71,9 +79,10 @@ func Mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeS
 	if err := validateProductSourceConfigs(ctx, tx, productID, after); err != nil {
 		return CommandResult{}, err
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graphs SET revision = $2, updated_at = NOW() WHERE id = $1
-	`, row.ID, after.Revision)
+	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphs{}).Where("id = ?", row.ID).Updates(map[string]any{
+		"revision":   after.Revision,
+		"updated_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return CommandResult{}, err
 	}

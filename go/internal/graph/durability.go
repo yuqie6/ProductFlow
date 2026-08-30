@@ -6,10 +6,9 @@ import (
 	"strings"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -17,12 +16,13 @@ import (
 const generationCapacityLockKey = 42630001
 
 func generationMaxConcurrent(ctx context.Context, q *gorm.DB) int {
-	var raw *string
-	_ = pfdb.QueryRow(ctx, q, `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&raw)
+	var rec schema.AppSettings
+	_ = q.WithContext(ctx).Where("key = ?", "generation_max_concurrent_tasks").Take(&rec).Error
 	n := 3
-	if raw != nil && *raw != "" {
+	raw := rec.Value
+	if raw != "" {
 		parsed := 0
-		for _, ch := range *raw {
+		for _, ch := range raw {
 			if ch < '0' || ch > '9' {
 				parsed = 0
 				break
@@ -43,20 +43,19 @@ func generationMaxConcurrent(ctx context.Context, q *gorm.DB) int {
 }
 
 func runningGenerationCount(ctx context.Context, tx *gorm.DB) (int, error) {
-	var graphCount, sessionCount int
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT COUNT(*)
-		FROM workflow_graph_node_runs n
-		JOIN workflow_graph_runs r ON r.id = n.graph_run_id
-		WHERE r.status = 'running' AND n.status = 'running'
-	`).Scan(&graphCount)
+	var graphCount int64
+	err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+		Joins("JOIN workflow_graph_runs r ON r.id = workflow_graph_node_runs.graph_run_id").
+		Where("r.status = ? AND workflow_graph_node_runs.status = ?", "running", "running").
+		Count(&graphCount).Error
 	if err != nil {
 		return 0, err
 	}
-	_ = pfdb.QueryRow(ctx, tx, `
-		SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running'
-	`).Scan(&sessionCount)
-	return graphCount + sessionCount, nil
+	var sessionCount int64
+	_ = tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
+		Where("status = ?", "running").
+		Count(&sessionCount).Error
+	return int(graphCount) + int(sessionCount), nil
 }
 
 // GenerationCapacityAvailable 与连续生图共用同一把容量锁。
@@ -65,7 +64,7 @@ func GenerationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error)
 }
 
 func generationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error) {
-	if _, err := pfdb.Exec(ctx, tx, `SELECT pg_advisory_xact_lock($1)`, generationCapacityLockKey); err != nil {
+	if err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(?)", generationCapacityLockKey).Error; err != nil {
 		return false, err
 	}
 	limit := generationMaxConcurrent(ctx, tx)
@@ -93,20 +92,20 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		}
 		now := time.Now().UTC()
 		attemptID := clockid.New()
-		n, err := pfdb.Exec(ctx, dbTx, `
-		UPDATE workflow_graph_node_runs SET
-			status = 'running',
-			active_attempt_id = $2,
-			progress_phase = 'claimed',
-			progress_updated_at = $3,
-			started_at = $3,
-			failure_reason = NULL
-		WHERE id = $1 AND status = 'queued'
-	`, nodeRunID, attemptID, now)
-		if err != nil {
-			return err
+		res := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+			Where("id = ? AND status = ?", nodeRunID, "queued").
+			Updates(map[string]any{
+				"status":              "running",
+				"active_attempt_id":   attemptID,
+				"progress_phase":      "claimed",
+				"progress_updated_at": now,
+				"started_at":          now,
+				"failure_reason":      nil,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n != 1 {
+		if res.RowsAffected != 1 {
 			return errNotClaimed
 		}
 		claimed = true
@@ -122,33 +121,27 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 }
 
 func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]string, []string, error) {
-	rows, err := pfdb.Query(ctx, tx, `SELECT status, failure_reason FROM workflow_graph_node_runs WHERE graph_run_id = $1`, runID)
-	if err != nil {
+	var recs []schema.WorkflowGraphNodeRuns
+	if err := tx.WithContext(ctx).Select("status", "failure_reason").Where("graph_run_id = ?", runID).Find(&recs).Error; err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
 	var statuses []string
 	var reasons []string
-	for rows.Next() {
-		var st string
-		var reason *string
-		if err := rows.Scan(&st, &reason); err != nil {
-			return nil, nil, err
-		}
-		statuses = append(statuses, st)
-		if reason != nil {
-			reasons = append(reasons, *reason)
+	for _, rec := range recs {
+		statuses = append(statuses, rec.Status)
+		if rec.FailureReason != nil {
+			reasons = append(reasons, *rec.FailureReason)
 		} else {
 			reasons = append(reasons, "")
 		}
 	}
-	return statuses, reasons, rows.Err()
+	return statuses, reasons, nil
 }
 
 func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
-	var status string
-	err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, runID).Scan(&status)
-	if err != nil || status != RunStatusRunning {
+	var run schema.WorkflowGraphRuns
+	err := tx.WithContext(ctx).Select("status").Where("id = ?", runID).Take(&run).Error
+	if err != nil || run.Status != RunStatusRunning {
 		return false, err
 	}
 	statuses, reasons, err := loadNodeRunStatuses(ctx, tx, runID)
@@ -199,11 +192,14 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 			}
 		}
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_runs
-		SET status = $2, failure_reason = $3, is_retryable = $4, finished_at = $5
-		WHERE id = $1 AND status = 'running'
-	`, runID, runStatus, failure, retryable, now)
+	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+		Where("id = ? AND status = ?", runID, "running").
+		Updates(map[string]any{
+			"status":         runStatus,
+			"failure_reason": failure,
+			"is_retryable":   retryable,
+			"finished_at":    now,
+		}).Error
 	return err == nil, err
 }
 
@@ -212,20 +208,25 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 	if len(reason) > 1000 {
 		reason = reason[:1000]
 	}
-	if _, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_node_runs SET
-			status = 'failed', failure_reason = $2, finished_at = $3,
-			active_attempt_id = NULL, progress_updated_at = $3
-		WHERE graph_run_id = $1 AND status IN ('queued', 'running')
-	`, runID, reason, now); err != nil {
+	if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+		Where("graph_run_id = ? AND status IN ?", runID, []string{"queued", "running"}).
+		Updates(map[string]any{
+			"status":              "failed",
+			"failure_reason":      reason,
+			"finished_at":         now,
+			"active_attempt_id":   nil,
+			"progress_updated_at": now,
+		}).Error; err != nil {
 		return err
 	}
-	_, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_runs SET
-			status = 'failed', failure_reason = $2, finished_at = $3, is_retryable = TRUE
-		WHERE id = $1 AND status = 'running'
-	`, runID, reason, now)
-	return err
+	return tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+		Where("id = ? AND status = ?", runID, "running").
+		Updates(map[string]any{
+			"status":         "failed",
+			"failure_reason": reason,
+			"finished_at":    now,
+			"is_retryable":   true,
+		}).Error
 }
 
 func nodePastProviderBoundary(phase *string) bool {
@@ -237,46 +238,41 @@ func nodePastProviderBoundary(phase *string) bool {
 
 func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
-		var runStatus string
-		err := pfdb.QueryRow(ctx, dbTx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus)
+		var run schema.WorkflowGraphRuns
+		err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error
 		if err != nil {
 			return err
 		}
-		if isTerminalRun(runStatus) {
+		if isTerminalRun(run.Status) {
 			return nil
 		}
-		var nodeStatus string
-		var phase *string
-		var attempt *string
-		err = pfdb.QueryRow(ctx, dbTx, `
-		SELECT status, progress_phase, active_attempt_id
-		FROM workflow_graph_node_runs
-		WHERE id = $1 AND graph_run_id = $2
-		FOR UPDATE
-	`, nodeRunID, runID).Scan(&nodeStatus, &phase, &attempt)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var node schema.WorkflowGraphNodeRuns
+		err = dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Where("id = ? AND graph_run_id = ?", nodeRunID, runID).
+			Take(&node).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
 		if err != nil {
 			return err
 		}
-		if nodeStatus == NodeRunFailed || nodeStatus == NodeRunUnknown || nodeStatus == NodeRunSucceeded {
+		if node.Status == NodeRunFailed || node.Status == NodeRunUnknown || node.Status == NodeRunSucceeded {
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
-		if nodePastProviderBoundary(phase) {
+		if nodePastProviderBoundary(node.ProgressPhase) {
 			detail := strings.TrimSpace(reason)
 			if detail == "" {
 				detail = ProviderUnknownDetail
 			}
-			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, attempt, detail); err != nil {
+			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, node.ActiveAttemptID, detail); err != nil {
 				return err
 			}
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
-		if nodeStatus != NodeRunQueued && nodeStatus != NodeRunRunning {
+		if node.Status != NodeRunQueued && node.Status != NodeRunRunning {
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
@@ -284,12 +280,13 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 		if len(reason) > 1000 {
 			reason = reason[:1000]
 		}
-		if _, err := pfdb.Exec(ctx, dbTx, `
-		UPDATE workflow_graph_node_runs SET
-			status = 'failed', failure_reason = $2, finished_at = $3,
-			active_attempt_id = NULL, progress_updated_at = $3
-		WHERE id = $1
-	`, nodeRunID, reason, now); err != nil {
+		if err := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRunID).Updates(map[string]any{
+			"status":              "failed",
+			"failure_reason":      reason,
+			"finished_at":         now,
+			"active_attempt_id":   nil,
+			"progress_updated_at": now,
+		}).Error; err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
@@ -299,40 +296,32 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, reason
 
 func failGraphRun(ctx context.Context, gdb *gorm.DB, runID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
-		var runStatus string
-		err := pfdb.QueryRow(ctx, dbTx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus)
+		var run schema.WorkflowGraphRuns
+		err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error
 		if err != nil {
 			return err
 		}
-		if isTerminalRun(runStatus) {
+		if isTerminalRun(run.Status) {
 			return nil
 		}
-		rows, err := pfdb.Query(ctx, dbTx, `
-		SELECT id, status, progress_phase, active_attempt_id
-		FROM workflow_graph_node_runs WHERE graph_run_id = $1
-	`, runID)
-		if err != nil {
+		var nodes []schema.WorkflowGraphNodeRuns
+		if err := dbTx.WithContext(ctx).
+			Select("id", "status", "progress_phase", "active_attempt_id").
+			Where("graph_run_id = ?", runID).
+			Find(&nodes).Error; err != nil {
 			return err
 		}
 		var boundaryID string
 		var boundaryAttempt *string
 		found := false
-		for rows.Next() {
-			var id, status string
-			var phase *string
-			var attempt *string
-			if err := rows.Scan(&id, &status, &phase, &attempt); err != nil {
-				rows.Close()
-				return err
-			}
-			if status == NodeRunRunning && nodePastProviderBoundary(phase) {
-				boundaryID = id
-				boundaryAttempt = attempt
+		for _, node := range nodes {
+			if node.Status == NodeRunRunning && nodePastProviderBoundary(node.ProgressPhase) {
+				boundaryID = node.ID
+				boundaryAttempt = node.ActiveAttemptID
 				found = true
 				break
 			}
 		}
-		rows.Close()
 		if found {
 			if err := markNodeUnknown(ctx, dbTx, runID, boundaryID, boundaryAttempt, ProviderUnknownDetail); err != nil {
 				return err

@@ -10,7 +10,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -142,40 +142,42 @@ func insertPageContext(ctx context.Context, pgxTx *gorm.DB, taskID *string, turn
 		return err
 	}
 	snapshotID := newID()
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO agent_page_context_snapshots (
-			id, task_id, turn_id, route, page_type, product_id, workflow_id,
-			selected_asset_ids_json, visible_asset_ids_json, filters_json,
-			workflow_revision, library_revision, digest, captured_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
-	`, snapshotID, taskID, turnID, normalized.Route, normalized.PageType, normalized.ProductID, normalized.WorkflowID,
-		normalized.SelectedJSON, normalized.VisibleJSON, normalized.FiltersJSON,
-		normalized.WorkflowRevision, normalized.LibraryRevision, normalized.Digest, normalized.CapturedAt); err != nil {
+	now := time.Now().UTC()
+	snap := schema.AgentPageContextSnapshots{
+		ID:                   snapshotID,
+		TaskID:               taskID,
+		TurnID:               &turnID,
+		Route:                normalized.Route,
+		PageType:             normalized.PageType,
+		ProductID:            normalized.ProductID,
+		WorkflowID:           normalized.WorkflowID,
+		SelectedAssetIdsJSON: string(normalized.SelectedJSON),
+		VisibleAssetIdsJSON:  string(normalized.VisibleJSON),
+		FiltersJSON:          string(normalized.FiltersJSON),
+		WorkflowRevision:     normalized.WorkflowRevision,
+		LibraryRevision:      normalized.LibraryRevision,
+		Digest:               normalized.Digest,
+		CapturedAt:           normalized.CapturedAt,
+		CreatedAt:            now,
+	}
+	if err := pgxTx.WithContext(ctx).Create(&snap).Error; err != nil {
 		return err
 	}
-	_, err = pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_projections SET page_context_snapshot_id = $2 WHERE id = $1`, turnID, snapshotID)
-	return err
+	return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("id = ?", turnID).Updates(map[string]any{
+		"page_context_snapshot_id": snapshotID,
+	}).Error
 }
 
 func loadPageContextPayload(ctx context.Context, pgxTx *gorm.DB, snapshotID string) (map[string]any, error) {
-	var (
-		route, pageType, digest             string
-		productID, workflowID               *string
-		selectedRaw, visibleRaw, filtersRaw []byte
-		workflowRevision, libraryRevision   *int
-		capturedAt                          time.Time
-	)
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT route, page_type, product_id, workflow_id, selected_asset_ids_json, visible_asset_ids_json,
-		       filters_json, workflow_revision, library_revision, digest, captured_at
-		FROM agent_page_context_snapshots WHERE id = $1
-	`, snapshotID).Scan(
-		&route, &pageType, &productID, &workflowID, &selectedRaw, &visibleRaw, &filtersRaw,
-		&workflowRevision, &libraryRevision, &digest, &capturedAt,
-	)
-	if err != nil {
+	var snap schema.AgentPageContextSnapshots
+	if err := pgxTx.WithContext(ctx).Where("id = ?", snapshotID).Take(&snap).Error; err != nil {
 		return nil, err
 	}
+	route, pageType, digest := snap.Route, snap.PageType, snap.Digest
+	productID, workflowID := snap.ProductID, snap.WorkflowID
+	selectedRaw, visibleRaw, filtersRaw := []byte(snap.SelectedAssetIdsJSON), []byte(snap.VisibleAssetIdsJSON), []byte(snap.FiltersJSON)
+	workflowRevision, libraryRevision := snap.WorkflowRevision, snap.LibraryRevision
+	capturedAt := snap.CapturedAt
 	selected := []string{}
 	if len(selectedRaw) > 0 && string(selectedRaw) != "null" {
 		if err := json.Unmarshal(selectedRaw, &selected); err != nil {

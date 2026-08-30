@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -42,23 +42,11 @@ func AssetIDsExist(ctx context.Context, tx *gorm.DB, productID string, ids []str
 	for id := range wanted {
 		unique = append(unique, id)
 	}
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id FROM product_image_assets
-		WHERE product_id = $1 AND id = ANY($2)
-	`, productID, unique)
+	var found []schema.ProductImageAssets
+	err := tx.WithContext(ctx).Select("id").
+		Where("product_id = ? AND id IN ?", productID, unique).
+		Find(&found).Error
 	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	found := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		found[id] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	if len(found) != len(wanted) {
@@ -80,8 +68,9 @@ func (GraphGuard) HasAssets(ctx context.Context, tx *gorm.DB, productID string, 
 }
 
 func Touch(ctx context.Context, tx *gorm.DB, productID string) error {
-	_, err := pfdb.Exec(ctx, tx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
-	return err
+	return tx.WithContext(ctx).Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{
+		"updated_at": time.Now().UTC(),
+	}).Error
 }
 
 func LoadImage(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
@@ -89,41 +78,32 @@ func LoadImage(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, err
 }
 
 func LoadImageForUpdate(ctx context.Context, tx *gorm.DB, assetID string) (ImageAsset, error) {
-	var asset ImageAsset
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
-		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
-		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
-		       m.storage_path, a.created_at, a.updated_at
-		FROM product_image_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.id = $1
-		FOR UPDATE OF a
-	`, assetID).Scan(
-		&asset.ID, &asset.ProductID, &asset.MediaObjectID, &asset.OriginType, &asset.DisplayName, &asset.OriginalFilename,
-		&asset.ImageTypeKey, &asset.UserFolderID, &asset.ParentAssetID, &asset.SourceImageSessionAsset,
-		&asset.SourceLibraryAsset, &asset.MIMEType, &asset.ByteSize, &asset.Width, &asset.Height, &asset.VerificationStatus,
-		&asset.StoragePath, &asset.CreatedAt, &asset.UpdatedAt,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row assetJoinRow
+	err := assetJoinQuery(tx.WithContext(ctx)).
+		Clauses(pfdb.ForUpdateOf("a")).
+		Where("a.id = ?", assetID).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ImageAsset{}, apperr.NotFound("商品图片不存在")
 	}
-	return asset, err
+	if err != nil {
+		return ImageAsset{}, err
+	}
+	return imageAssetFromJoin(row), nil
 }
 
 func LookupByLibrarySource(ctx context.Context, tx *gorm.DB, productID, libraryAssetID string) (ImageAsset, bool, error) {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id FROM product_image_assets
-		WHERE product_id = $1 AND source_library_asset_id = $2
-	`, productID, libraryAssetID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductImageAssets
+	err := tx.WithContext(ctx).Select("id").
+		Where("product_id = ? AND source_library_asset_id = ?", productID, libraryAssetID).
+		Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ImageAsset{}, false, nil
 	}
 	if err != nil {
 		return ImageAsset{}, false, err
 	}
-	asset, err := loadAsset(ctx, tx, id)
+	asset, err := loadAsset(ctx, tx, rec.ID)
 	return asset, true, err
 }
 
@@ -132,24 +112,15 @@ func LoadByLibrarySources(ctx context.Context, tx *gorm.DB, productID string, li
 	if len(libraryIDs) == 0 {
 		return out, nil
 	}
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT a.id, a.product_id, a.media_object_id, a.origin_type, a.display_name, a.original_filename,
-		       a.image_type_key, a.user_folder_id, a.parent_asset_id, a.source_image_session_asset_id,
-		       a.source_library_asset_id, m.mime_type, m.byte_size, m.width, m.height, m.verification_status,
-		       m.storage_path, a.created_at, a.updated_at
-		FROM product_image_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.product_id = $1 AND a.source_library_asset_id = ANY($2)
-	`, productID, libraryIDs)
+	var rows []assetJoinRow
+	err := assetJoinQuery(tx.WithContext(ctx)).
+		Where("a.product_id = ? AND a.source_library_asset_id IN ?", productID, libraryIDs).
+		Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	assets, err := scanAssets(rows)
-	if err != nil {
-		return nil, err
-	}
-	for _, asset := range assets {
+	for _, row := range rows {
+		asset := imageAssetFromJoin(row)
 		if asset.SourceLibraryAsset != nil {
 			out[*asset.SourceLibraryAsset] = asset
 		}
@@ -177,13 +148,20 @@ func InsertCollected(ctx context.Context, tx *gorm.DB, in CollectedInput) (Image
 	if origin == "" {
 		origin = "upload"
 	}
-	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO product_image_assets (
-			id, product_id, media_object_id, origin_type, display_name, original_filename,
-			source_library_asset_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-	`, id, in.ProductID, in.MediaObjectID, origin, display, original, in.SourceLibraryAssetID)
-	if err != nil {
+	now := time.Now().UTC()
+	sourceID := in.SourceLibraryAssetID
+	rec := schema.ProductImageAssets{
+		ID:                   id,
+		ProductID:            in.ProductID,
+		MediaObjectID:        in.MediaObjectID,
+		OriginType:           origin,
+		DisplayName:          display,
+		OriginalFilename:     original,
+		SourceLibraryAssetID: &sourceID,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
 		return ImageAsset{}, err
 	}
 	return loadAsset(ctx, tx, id)

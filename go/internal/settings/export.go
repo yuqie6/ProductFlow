@@ -3,13 +3,13 @@ package settings
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -68,7 +68,10 @@ func (s *Store) Export(ctx context.Context) (SettingsExport, error) {
 			continue
 		}
 		var apiKey *string
-		_ = pfdb.QueryRow(ctx, s.db, `SELECT api_key FROM provider_profiles WHERE id = $1`, profile.ID).Scan(&apiKey)
+		var row schema.ProviderProfiles
+		if err := s.db.WithContext(ctx).Where("id = ?", profile.ID).Take(&row).Error; err == nil {
+			apiKey = row.APIKey
+		}
 		out.ProviderProfiles = append(out.ProviderProfiles, map[string]any{
 			"id": profile.ID, "name": profile.Name, "provider_type": profile.ProviderType,
 			"base_url": profile.BaseURL, "api_key": trimPtr(apiKey),
@@ -147,40 +150,41 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 	}
 	return tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
 		for key, value := range bundle.runtime {
-			if _, err := pfdb.Exec(ctx, dbTx, `
-				INSERT INTO app_settings (key, value, created_at, updated_at)
-				VALUES ($1, $2, NOW(), NOW())
-				ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-			`, key, value); err != nil {
+			if err := upsertAppSetting(dbTx, key, value); err != nil {
 				return err
 			}
 		}
-		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings`); err != nil {
+		if err := dbTx.Where("id IS NOT NULL").Delete(&schema.ProviderBindings{}).Error; err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_profiles`); err != nil {
+		if err := dbTx.Where("id IS NOT NULL").Delete(&schema.ProviderProfiles{}).Error; err != nil {
 			return err
 		}
+		now := time.Now().UTC()
 		for _, profile := range bundle.profiles {
 			caps, _ := json.Marshal(profile.Capabilities)
 			models, _ := json.Marshal(orEmptyMap(profile.DefaultModels))
 			cfg, _ := json.Marshal(orEmptyMap(profile.Config))
-			if _, err := pfdb.Exec(ctx, dbTx, `
-				INSERT INTO provider_profiles (
-					id, name, provider_type, base_url, api_key, capabilities_json, default_models_json, config_json, enabled, created_at, updated_at
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
-			`, profile.ID, profile.Name, profile.ProviderType, profile.BaseURL, profile.APIKey, caps, models, cfg, profile.Enabled); err != nil {
+			row := schema.ProviderProfiles{
+				ID: profile.ID, Name: profile.Name, ProviderType: profile.ProviderType,
+				BaseURL: profile.BaseURL, APIKey: profile.APIKey,
+				CapabilitiesJSON: string(caps), DefaultModelsJSON: string(models), ConfigJSON: string(cfg),
+				Enabled: profile.Enabled, CreatedAt: now, UpdatedAt: now,
+			}
+			if err := dbTx.Create(&row).Error; err != nil {
 				return err
 			}
 		}
 		for _, binding := range bundle.bindings {
 			modelJSON, _ := json.Marshal(orEmptyMap(binding.ModelSettings))
 			cfgJSON, _ := json.Marshal(orEmptyMap(binding.Config))
-			id := clockid.New()
-			if _, err := pfdb.Exec(ctx, dbTx, `
-				INSERT INTO provider_bindings (id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
-			`, id, binding.Purpose, binding.ProviderKind, binding.ProviderProfileID, modelJSON, cfgJSON); err != nil {
+			row := schema.ProviderBindings{
+				ID: clockid.New(), Purpose: binding.Purpose, ProviderKind: binding.ProviderKind,
+				ProviderProfileID: binding.ProviderProfileID,
+				ModelSettingsJSON: string(modelJSON), ConfigJSON: string(cfgJSON),
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := dbTx.Create(&row).Error; err != nil {
 				return err
 			}
 		}
@@ -192,27 +196,27 @@ func normalizeImportDocument(doc map[string]any) (importBundle, error) {
 	if doc == nil {
 		return importBundle{}, apperr.Validation("配置文件格式不正确")
 	}
-	meta, _ := doc["metadata"].(map[string]any)
-	if meta == nil {
-		return importBundle{}, apperr.Validation("配置文件格式不正确")
-	}
-	version := toIntOr(meta["schema_version"], 0)
-	compat, _ := meta["compatibility"].(string)
-	if version != exportSchemaVersion {
-		return importBundle{}, apperr.Validation("配置文件版本不支持")
-	}
-	if compat != exportCompatibility {
-		return importBundle{}, apperr.Validation("配置文件兼容标识不支持")
+	version, err := validateImportMetadata(doc["metadata"])
+	if err != nil {
+		return importBundle{}, err
 	}
 	runtime, err := normalizeImportRuntime(doc["runtime_config"])
 	if err != nil {
 		return importBundle{}, err
 	}
-	profiles, err := normalizeImportProfiles(doc["provider_profiles"])
+	profileItems, err := fieldObjectList(doc, "provider_profiles")
 	if err != nil {
 		return importBundle{}, err
 	}
-	bindings, err := normalizeImportBindings(doc["provider_bindings"], profiles)
+	profiles, err := normalizeImportProfiles(profileItems)
+	if err != nil {
+		return importBundle{}, err
+	}
+	bindingItems, err := fieldObjectList(doc, "provider_bindings")
+	if err != nil {
+		return importBundle{}, err
+	}
+	bindings, err := normalizeImportBindings(bindingItems, profiles)
 	if err != nil {
 		return importBundle{}, err
 	}
@@ -258,15 +262,14 @@ func normalizeImportRuntime(raw any) (map[string]string, error) {
 	return normalized, nil
 }
 
-func normalizeImportProfiles(raw any) ([]importProfile, error) {
-	items, err := asObjectList(raw)
-	if err != nil {
-		return nil, err
-	}
+func normalizeImportProfiles(items []map[string]any) ([]importProfile, error) {
 	seen := map[string]struct{}{}
 	out := make([]importProfile, 0, len(items))
 	for _, item := range items {
-		id := anyText(item["id"])
+		id, err := requiredImportString(item, "id", 36)
+		if err != nil {
+			return nil, err
+		}
 		if id == "" {
 			return nil, apperr.Validation("供应商档案 ID 不能为空")
 		}
@@ -274,42 +277,67 @@ func normalizeImportProfiles(raw any) ([]importProfile, error) {
 			return nil, apperr.Validation("供应商档案不能重复")
 		}
 		seen[id] = struct{}{}
-		providerTypeRaw := anyText(item["provider_type"])
-		if strings.TrimSpace(providerTypeRaw) == "" {
+		providerTypeRaw, err := requiredImportString(item, "provider_type", 40)
+		if err != nil {
+			return nil, err
+		}
+		if providerTypeRaw == "" {
 			return nil, apperr.Validation("供应商类型不支持")
 		}
 		providerType, err := normalizeProviderType(providerTypeRaw)
 		if err != nil {
 			return nil, err
 		}
-		caps, err := normalizeCapabilities(anyStringSlice(item["capabilities"]), providerType)
+		capsRaw, err := optionalStringSlice(item, "capabilities")
 		if err != nil {
 			return nil, err
 		}
-		name := anyText(item["name"])
+		caps, err := normalizeCapabilities(capsRaw, providerType)
+		if err != nil {
+			return nil, err
+		}
+		name, err := requiredImportString(item, "name", 120)
+		if err != nil {
+			return nil, err
+		}
 		if name == "" {
 			return nil, apperr.Validation("供应商名称不能为空")
 		}
-		baseURL := optionalTextPtr(item["base_url"])
+		baseURL, err := optionalImportStringPtr(item, "base_url", 0)
+		if err != nil {
+			return nil, err
+		}
 		if err := validateConnection(providerType, baseURL); err != nil {
+			return nil, err
+		}
+		apiKey, err := optionalImportStringPtr(item, "api_key", 0)
+		if err != nil {
+			return nil, err
+		}
+		defaultModels, err := optionalObject(item, "default_models")
+		if err != nil {
+			return nil, err
+		}
+		cfg, err := optionalObject(item, "config")
+		if err != nil {
+			return nil, err
+		}
+		enabled, err := lookupBoolDefault(item, "enabled", true)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, importProfile{
 			ID: id, Name: name, ProviderType: providerType, BaseURL: baseURL,
-			APIKey: optionalTextPtr(item["api_key"]), Capabilities: caps,
-			DefaultModels: orEmptyMap(asMap(item["default_models"])),
-			Config:        orEmptyMap(asMap(item["config"])),
-			Enabled:       lookupBoolDefault(item, "enabled", true),
+			APIKey: apiKey, Capabilities: caps,
+			DefaultModels: orEmptyMap(defaultModels),
+			Config:        orEmptyMap(cfg),
+			Enabled:       enabled,
 		})
 	}
 	return out, nil
 }
 
-func normalizeImportBindings(raw any, profiles []importProfile) ([]importBinding, error) {
-	items, err := asObjectList(raw)
-	if err != nil {
-		return nil, err
-	}
+func normalizeImportBindings(items []map[string]any, profiles []importProfile) ([]importBinding, error) {
 	profilesByID := map[string]importProfile{}
 	for _, profile := range profiles {
 		profilesByID[profile.ID] = profile
@@ -317,7 +345,10 @@ func normalizeImportBindings(raw any, profiles []importProfile) ([]importBinding
 	seen := map[string]struct{}{}
 	out := make([]importBinding, 0, len(items))
 	for _, item := range items {
-		purpose := anyText(item["purpose"])
+		purpose, err := requiredImportString(item, "purpose", 40)
+		if err != nil {
+			return nil, err
+		}
 		if _, dup := seen[purpose]; dup {
 			return nil, apperr.Validation("供应商用途绑定不能重复")
 		}
@@ -326,12 +357,23 @@ func normalizeImportBindings(raw any, profiles []importProfile) ([]importBinding
 		if !ok {
 			return nil, apperr.Validation("用途必须是 prompt、agent 或 image")
 		}
-		kind := anyText(item["provider_kind"])
+		kind, err := requiredImportString(item, "provider_kind", 40)
+		if err != nil {
+			return nil, err
+		}
 		if _, ok := allowed[kind]; !ok {
 			return nil, apperr.Validation("供应商接口类型不支持当前用途")
 		}
-		modelSettings := orEmptyMap(asMap(item["model_settings"]))
-		cfg := orEmptyMap(asMap(item["config"]))
+		modelSettings, err := optionalObject(item, "model_settings")
+		if err != nil {
+			return nil, err
+		}
+		cfg, err := optionalObject(item, "config")
+		if err != nil {
+			return nil, err
+		}
+		modelSettings = orEmptyMap(modelSettings)
+		cfg = orEmptyMap(cfg)
 		if err := validateBindingRuntime(purpose, kind, modelSettings, cfg); err != nil {
 			return nil, err
 		}
@@ -339,7 +381,10 @@ func normalizeImportBindings(raw any, profiles []importProfile) ([]importBinding
 		if kind == "mock" {
 			profileID = nil
 		} else {
-			profileID = optionalTextPtr(item["provider_profile_id"])
+			profileID, err = optionalImportStringPtr(item, "provider_profile_id", 36)
+			if err != nil {
+				return nil, err
+			}
 			if profileID == nil {
 				return nil, apperr.Validation("真实供应商必须选择供应商档案")
 			}
@@ -407,10 +452,18 @@ func (b importBundle) wire(meta any) map[string]any {
 	}
 }
 
-func asObjectList(v any) ([]map[string]any, error) {
-	if v == nil {
+func fieldObjectList(doc map[string]any, key string) ([]map[string]any, error) {
+	raw, ok := doc[key]
+	if !ok {
 		return []map[string]any{}, nil
 	}
+	if raw == nil {
+		return nil, apperr.Validation("请求体无效")
+	}
+	return asObjectList(raw)
+}
+
+func asObjectList(v any) ([]map[string]any, error) {
 	list, ok := v.([]any)
 	if !ok {
 		return nil, apperr.Validation("配置文件格式不正确")
@@ -426,43 +479,152 @@ func asObjectList(v any) ([]map[string]any, error) {
 	return out, nil
 }
 
-func anyText(v any) string {
-	if v == nil {
-		return ""
+func validateImportMetadata(raw any) (int, error) {
+	meta, ok := raw.(map[string]any)
+	if !ok || meta == nil {
+		return 0, apperr.Validation("配置文件格式不正确")
 	}
-	if s, ok := v.(string); ok {
-		return strings.TrimSpace(s)
+	version, err := requiredImportInt(meta, "schema_version")
+	if err != nil {
+		return 0, err
 	}
-	return strings.TrimSpace(fmt.Sprint(v))
+	if version != exportSchemaVersion {
+		return 0, apperr.Validation("配置文件版本不支持")
+	}
+	for _, key := range []string{"exported_at", "app", "app_version", "compatibility"} {
+		text, err := requiredImportString(meta, key, 0)
+		if err != nil {
+			return 0, err
+		}
+		if text == "" {
+			return 0, apperr.Validation("请求体无效")
+		}
+		if key == "exported_at" {
+			if err := parseImportDateTime(text); err != nil {
+				return 0, err
+			}
+		}
+	}
+	compat, err := requiredImportString(meta, "compatibility", 0)
+	if err != nil {
+		return 0, err
+	}
+	if compat != exportCompatibility {
+		return 0, apperr.Validation("配置文件兼容标识不支持")
+	}
+	return version, nil
 }
 
-func anyStringSlice(v any) []string {
-	switch typed := v.(type) {
-	case nil:
-		return nil
+func parseImportDateTime(value string) error {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999999", "2006-01-02T15:04:05"} {
+		if _, err := time.Parse(layout, value); err == nil {
+			return nil
+		}
+	}
+	return apperr.Validation("请求体无效")
+}
+
+func requiredImportInt(item map[string]any, key string) (int, error) {
+	raw, ok := item[key]
+	if !ok || raw == nil {
+		return 0, apperr.Validation("请求体无效")
+	}
+	switch typed := raw.(type) {
+	case int:
+		return typed, nil
+	case int64:
+		return int(typed), nil
+	case float64:
+		if typed != float64(int(typed)) {
+			return 0, apperr.Validation("请求体无效")
+		}
+		return int(typed), nil
+	default:
+		return 0, apperr.Validation("请求体无效")
+	}
+}
+
+func requiredImportString(item map[string]any, key string, max int) (string, error) {
+	raw, ok := item[key]
+	if !ok {
+		return "", apperr.Validation("请求体无效")
+	}
+	if raw == nil {
+		return "", apperr.Validation("请求体无效")
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return "", apperr.Validation("请求体无效")
+	}
+	s = strings.TrimSpace(s)
+	if max > 0 && utf8.RuneCountInString(s) > max {
+		return "", apperr.Validation("请求体无效")
+	}
+	return s, nil
+}
+
+func optionalImportStringPtr(item map[string]any, key string, max int) (*string, error) {
+	raw, ok := item[key]
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return nil, apperr.Validation("请求体无效")
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	if max > 0 && utf8.RuneCountInString(s) > max {
+		return nil, apperr.Validation("请求体无效")
+	}
+	return &s, nil
+}
+
+func optionalStringSlice(item map[string]any, key string) ([]string, error) {
+	raw, ok := item[key]
+	if !ok {
+		return nil, nil
+	}
+	if raw == nil {
+		return nil, apperr.Validation("请求体无效")
+	}
+	switch typed := raw.(type) {
 	case []string:
 		out := make([]string, 0, len(typed))
 		for _, item := range typed {
 			out = append(out, strings.TrimSpace(item))
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]string, 0, len(typed))
 		for _, item := range typed {
-			out = append(out, anyText(item))
+			s, ok := item.(string)
+			if !ok {
+				return nil, apperr.Validation("请求体无效")
+			}
+			out = append(out, strings.TrimSpace(s))
 		}
-		return out
+		return out, nil
 	default:
-		return nil
+		return nil, apperr.Validation("请求体无效")
 	}
 }
 
-func optionalTextPtr(v any) *string {
-	s := anyText(v)
-	if s == "" {
-		return nil
+func optionalObject(item map[string]any, key string) (map[string]any, error) {
+	raw, ok := item[key]
+	if !ok {
+		return map[string]any{}, nil
 	}
-	return &s
+	if raw == nil {
+		return nil, apperr.Validation("请求体无效")
+	}
+	out, ok := raw.(map[string]any)
+	if !ok {
+		return nil, apperr.Validation("请求体无效")
+	}
+	return out, nil
 }
 
 func anyOrNil(v *string) any {
@@ -472,26 +634,17 @@ func anyOrNil(v *string) any {
 	return *v
 }
 
-func lookupBoolDefault(item map[string]any, key string, fallback bool) bool {
+func lookupBoolDefault(item map[string]any, key string, fallback bool) (bool, error) {
 	v, ok := item[key]
-	if !ok || v == nil {
-		return fallback
+	if !ok {
+		return fallback, nil
 	}
-	if typed, ok := v.(bool); ok {
-		return typed
+	if v == nil {
+		return false, apperr.Validation("请求体无效")
 	}
-	return fallback
-}
-
-func asMap(v any) map[string]any {
-	out, _ := v.(map[string]any)
-	return out
-}
-
-func toIntOr(v any, fallback int) int {
-	n, err := toInt(v)
-	if err != nil {
-		return fallback
+	typed, ok := v.(bool)
+	if !ok {
+		return false, apperr.Validation("请求体无效")
 	}
-	return n
+	return typed, nil
 }

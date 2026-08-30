@@ -11,12 +11,11 @@ import (
 	"strings"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -96,6 +95,10 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if skipped, err := e.skipUnchanged(ctx, run, *nodeRun, sources, digest); err != nil || skipped {
 		return err
 	}
+	productID, err := loadProductIDForGraph(ctx, e.DB, run.GraphID)
+	if err != nil {
+		return err
+	}
 	prompt := e.Deps.Prompt
 	if prompt == nil {
 		prompt = MockPromptProvider{}
@@ -108,7 +111,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID string) e
 	if err != nil {
 		return err
 	}
-	loadedRefs, err := e.loadReferences(ctx, promptRefs)
+	loadedRefs, err := e.loadReferences(ctx, productID, promptRefs)
 	if err != nil {
 		return err
 	}
@@ -238,12 +241,13 @@ func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun gr
 	}
 	output, _ := json.Marshal(skippedOut)
 	return true, tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE workflow_graph_node_runs SET
-				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
-			WHERE id = $1
-		`, nodeRun.ID, now, output)
-		return err
+		outputStr := string(output)
+		return pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
+			"status":            "succeeded",
+			"finished_at":       now,
+			"active_attempt_id": nil,
+			"output_json":       outputStr,
+		}).Error
 	})
 }
 
@@ -369,15 +373,15 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 			promote = false
 			return nil
 		}
-		var runStatus, nodeStatus string
-		var active *string
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+		var run schema.WorkflowGraphRuns
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status, active_attempt_id FROM workflow_graph_node_runs WHERE id = $1 FOR UPDATE`, nodeRunID).Scan(&nodeStatus, &active); err != nil {
+		var node schema.WorkflowGraphNodeRuns
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
 			return err
 		}
-		promote = runStatus == RunStatusRunning && nodeStatus == NodeRunRunning && active != nil && *active == attemptID
+		promote = run.Status == RunStatusRunning && node.Status == NodeRunRunning && node.ActiveAttemptID != nil && *node.ActiveAttemptID == attemptID
 		return nil
 	})
 	return promote, err
@@ -386,16 +390,6 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, ProviderUnknownDetail); err != nil {
-			return err
-		}
-		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
-		return err
-	})
-}
-
-func (e Executor) markFailedCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string, detail string) error {
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		if err := markNodeFailed(ctx, pgxTx, runID, nodeRunID, attemptID, detail); err != nil {
 			return err
 		}
 		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
@@ -432,37 +426,43 @@ func (e Executor) persistContentArtifact(
 			return nil
 		}
 		if promote && nodeRun.NodeID != nil {
-			var liveRevision int
-			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
+			var live schema.WorkflowGraphs
+			if err := pgxTx.WithContext(ctx).Select("revision").Where("id = ?", run.GraphID).Take(&live).Error; err != nil {
 				return err
 			}
-			if liveRevision == run.GraphRevision {
-				if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
+			if live.Revision == run.GraphRevision {
+				if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
+					Select("current_artifact_id").
+					Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
 					return err
 				}
 				if writeback != nil {
-					var configJSON []byte
-					if err := pfdb.QueryRow(ctx, pgxTx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, *nodeRun.NodeID).Scan(&configJSON); err != nil {
+					var node schema.WorkflowGraphNodes
+					if err := pgxTx.WithContext(ctx).Select("config_json").Where("id = ?", *nodeRun.NodeID).Take(&node).Error; err != nil {
 						return err
 					}
 					config := map[string]any{}
-					_ = json.Unmarshal(configJSON, &config)
+					_ = json.Unmarshal([]byte(node.ConfigJSON), &config)
 					updated, err := json.Marshal(writeback(config))
 					if err != nil {
 						return err
 					}
-					if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET config_json = $2 WHERE id = $1`, *nodeRun.NodeID, updated); err != nil {
+					if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
+						Select("config_json").
+						Updates(map[string]any{"config_json": string(updated)}).Error; err != nil {
 						return err
 					}
 				}
 			}
 		}
 		output, _ := json.Marshal(map[string]any{"artifact_id": artifactID})
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			UPDATE workflow_graph_node_runs SET
-				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
-			WHERE id = $1
-		`, nodeRun.ID, now, output)
+		outputStr := string(output)
+		err = pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
+			"status":            "succeeded",
+			"finished_at":       now,
+			"active_attempt_id": nil,
+			"output_json":       outputStr,
+		}).Error
 		if err != nil {
 			return err
 		}
@@ -563,12 +563,14 @@ func (e Executor) persistImageArtifact(
 			return nil
 		}
 		if nodeRun.NodeID != nil {
-			var liveRevision int
-			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT revision FROM workflow_graphs WHERE id = $1`, run.GraphID).Scan(&liveRevision); err != nil {
+			var live schema.WorkflowGraphs
+			if err := pgxTx.WithContext(ctx).Select("revision").Where("id = ?", run.GraphID).Take(&live).Error; err != nil {
 				return err
 			}
-			if liveRevision == run.GraphRevision {
-				if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE workflow_graph_nodes SET current_artifact_id = $1 WHERE id = $2`, artifactID, *nodeRun.NodeID); err != nil {
+			if live.Revision == run.GraphRevision {
+				if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
+					Select("current_artifact_id").
+					Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
 					return err
 				}
 			}
@@ -583,11 +585,13 @@ func (e Executor) persistImageArtifact(
 			"artifact_id":            artifactID,
 			"product_image_asset_id": assetID,
 		})
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE workflow_graph_node_runs SET
-				status = 'succeeded', finished_at = $2, active_attempt_id = NULL, output_json = $3
-			WHERE id = $1
-		`, nodeRun.ID, now, output); err != nil {
+		outputStr := string(output)
+		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRun.ID).Updates(map[string]any{
+			"status":            "succeeded",
+			"finished_at":       now,
+			"active_attempt_id": nil,
+			"output_json":       outputStr,
+		}).Error; err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
@@ -595,7 +599,7 @@ func (e Executor) persistImageArtifact(
 	})
 }
 
-func (e Executor) loadReferences(ctx context.Context, refs []compiledReference) ([]ReferenceImage, error) {
+func (e Executor) loadReferences(ctx context.Context, productID string, refs []compiledReference) ([]ReferenceImage, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
@@ -604,7 +608,7 @@ func (e Executor) loadReferences(ctx context.Context, refs []compiledReference) 
 	}
 	out := make([]ReferenceImage, 0, len(refs))
 	for _, ref := range refs {
-		data, mime, filename, err := e.Deps.Assets.ReadAssetBytes(ctx, e.DB, ref.AssetID)
+		data, mime, filename, err := e.Deps.Assets.ReadAssetBytes(ctx, e.DB, productID, ref.AssetID)
 		if err != nil {
 			return nil, err
 		}
@@ -640,28 +644,42 @@ func upsertArtifact(
 	if providerName == "" {
 		providerName = "unconfigured"
 	}
-	var existing string
-	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM workflow_graph_artifacts WHERE node_run_id = $1`, nodeRun.ID).Scan(&existing)
+	var existing schema.WorkflowGraphArtifacts
+	err := tx.WithContext(ctx).Select("id").Where("node_run_id = ?", nodeRun.ID).Take(&existing).Error
 	if err == nil {
-		_, err = pfdb.Exec(ctx, tx, `
-			UPDATE workflow_graph_artifacts SET
-				artifact_type = $2, schema_version = 3, graph_revision = $3,
-				payload_json = $4, payload_hash = $5, input_digest = $6,
-				product_image_asset_id = $7, provider_name = $8, provider_model = $9
-			WHERE id = $1
-		`, existing, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, providerName, model)
-		return existing, err
+		err = tx.WithContext(ctx).Model(&schema.WorkflowGraphArtifacts{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			"artifact_type":          artifactType,
+			"schema_version":         3,
+			"graph_revision":         run.GraphRevision,
+			"payload_json":           string(payload),
+			"payload_hash":           payloadHash,
+			"input_digest":           digest,
+			"product_image_asset_id": assetID,
+			"provider_name":          providerName,
+			"provider_model":         model,
+		}).Error
+		return existing.ID, err
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", err
 	}
 	id := clockid.New()
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_graph_artifacts (
-			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
-			payload_json, payload_hash, input_digest, product_image_asset_id, provider_name, provider_model, created_at
-		) VALUES ($1, $2, $3, $4, $5, 3, $6, $7, $8, $9, $10, $11, $12, NOW())
-	`, id, run.GraphID, nodeRun.NodeID, nodeRun.ID, artifactType, run.GraphRevision, payload, payloadHash, digest, assetID, providerName, model)
+	err = tx.WithContext(ctx).Create(&schema.WorkflowGraphArtifacts{
+		ID:                  id,
+		GraphID:             run.GraphID,
+		NodeID:              nodeRun.NodeID,
+		NodeRunID:           &nodeRun.ID,
+		ArtifactType:        artifactType,
+		SchemaVersion:       3,
+		GraphRevision:       run.GraphRevision,
+		PayloadJSON:         string(payload),
+		PayloadHash:         payloadHash,
+		InputDigest:         digest,
+		ProductImageAssetID: assetID,
+		ProviderName:        &providerName,
+		ProviderModel:       &model,
+		CreatedAt:           time.Now().UTC(),
+	}).Error
 	return id, err
 }
 
@@ -712,50 +730,44 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 	if len(ids) == 0 {
 		return sources, nil
 	}
-	rows, err := pfdb.Query(ctx, pool, `
-		SELECT node_run_id, id, artifact_type, payload_json, input_digest, product_image_asset_id
-		FROM workflow_graph_artifacts
-		WHERE node_run_id = ANY($1)
-	`, ids)
-	if err != nil {
+	var recs []schema.WorkflowGraphArtifacts
+	if err := pool.WithContext(ctx).
+		Where("node_run_id IN ?", ids).
+		Find(&recs).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	byNodeRun := map[string]SourceRecord{}
-	for rows.Next() {
-		var nodeRunID, artifactID, artifactType, digest string
-		var payload []byte
-		var assetID *string
-		if err := rows.Scan(&nodeRunID, &artifactID, &artifactType, &payload, &digest, &assetID); err != nil {
-			return nil, err
+	for _, rec := range recs {
+		if rec.NodeRunID == nil {
+			continue
 		}
 		payloadMap := map[string]any{}
-		if len(payload) > 0 {
-			if err := json.Unmarshal(payload, &payloadMap); err != nil {
+		if rec.PayloadJSON != "" {
+			if err := json.Unmarshal([]byte(rec.PayloadJSON), &payloadMap); err != nil {
 				return nil, err
 			}
 		}
-		rec := SourceRecord{
+		digest := rec.InputDigest
+		artifactID := rec.ID
+		artifactType := rec.ArtifactType
+		source := SourceRecord{
 			CurrentArtifactID:      &artifactID,
 			CurrentArtifactType:    &artifactType,
 			CurrentArtifactPayload: payloadMap,
 			CurrentInputDigest:     &digest,
-			CurrentOutputAssetID:   assetID,
+			CurrentOutputAssetID:   rec.ProductImageAssetID,
 		}
 		switch artifactType {
 		case "creative_brief":
-			rec.Brief = cloneMap(payloadMap)
+			source.Brief = cloneMap(payloadMap)
 		case "visual_system":
 			if overlay, ok := payloadMap["visual_overlay"].(map[string]any); ok {
-				rec.VisualPayload = cloneMap(overlay)
+				source.VisualPayload = cloneMap(overlay)
 			} else {
-				rec.VisualPayload = cloneMap(payloadMap)
+				source.VisualPayload = cloneMap(payloadMap)
 			}
 		}
-		byNodeRun[nodeRunID] = rec
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		byNodeRun[*rec.NodeRunID] = source
 	}
 	for _, item := range nodeRuns {
 		if item.NodeID == nil {
@@ -784,10 +796,11 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 
 func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID string, node AppliedNode, applied AppliedGraph, sources map[string]SourceRecord, digest string) error {
 	trace := compiledContextTrace(applied, node, sources, digest)
-	var existing []byte
-	if err := pfdb.QueryRow(ctx, db, `SELECT compiled_context_json FROM workflow_graph_node_runs WHERE id = $1`, nodeRunID).Scan(&existing); err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphNodeRuns
+	if err := db.WithContext(ctx).Select("compiled_context_json").Where("id = ?", nodeRunID).Take(&rec).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
+	existing := jsonPtrBytes(rec.CompiledContextJSON)
 	merged := map[string]any{}
 	if len(existing) > 0 {
 		_ = json.Unmarshal(existing, &merged)
@@ -799,8 +812,10 @@ func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID string, no
 	if err != nil {
 		return err
 	}
-	_, err = pfdb.Exec(ctx, db, `UPDATE workflow_graph_node_runs SET compiled_context_json = $2 WHERE id = $1`, nodeRunID, compiled)
-	return err
+	compiledStr := string(compiled)
+	return db.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRunID).Updates(map[string]any{
+		"compiled_context_json": compiledStr,
+	}).Error
 }
 
 func validateGeneratedPayload(artifactType string, payload map[string]any) error {

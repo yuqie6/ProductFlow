@@ -212,6 +212,13 @@ func (h HTTP) generate(c *gin.Context) {
 				return
 			}
 		}
+		if raw, ok := req.ToolOptions["n"]; ok {
+			n, ok := toolOptionN(raw)
+			if !ok || n < 1 || n > 10 {
+				httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+				return
+			}
+		}
 	}
 	out, err := h.Service.Generate(c.Request.Context(), c.Param("image_session_id"), req)
 	if err != nil {
@@ -307,4 +314,19 @@ func bindJSONStrict(c *gin.Context, dest any) error {
 		return apperr.Validation("请求体无效")
 	}
 	return nil
+}
+
+func toolOptionN(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case float64:
+		n := int(v)
+		return n, float64(n) == v
+	case int:
+		return v, true
+	case json.Number:
+		n, err := v.Int64()
+		return int(n), err == nil
+	default:
+		return 0, false
+	}
 }

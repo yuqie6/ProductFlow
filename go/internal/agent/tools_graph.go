@@ -6,7 +6,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -278,14 +278,13 @@ func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string,
 	}
 	items := make([]map[string]any, 0, len(workflowIDs))
 	for _, workflowID := range workflowIDs {
-		var productID, title string
-		var revision int
-		err := pfdb.QueryRow(ctx, s.DB, `
-			SELECT product_id, title, revision FROM workflow_graphs WHERE id = $1 AND active = TRUE
-		`, workflowID).Scan(&productID, &title, &revision)
+		var g schema.WorkflowGraphs
+		err := s.DB.WithContext(ctx).Select("product_id, title, revision").
+			Where("id = ? AND active = TRUE", workflowID).Take(&g).Error
 		if err != nil {
 			return nil, apperr.NotFound("工作流不存在")
 		}
+		productID, title, revision := g.ProductID, g.Title, g.Revision
 		listed, err := s.Graph.ListRuns(ctx, productID, workflowID)
 		if err != nil {
 			return nil, err

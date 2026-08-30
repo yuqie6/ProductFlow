@@ -3,11 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
@@ -46,11 +45,12 @@ func WriteProductCanvas(ctx context.Context, tx *gorm.DB, productID, title, key,
 }
 
 func loadSessionProduct(ctx context.Context, tx *gorm.DB, sessionID string) (productID *string, status string, err error) {
-	err = pfdb.QueryRow(ctx, tx, `SELECT product_id, status FROM agent_sessions WHERE id = $1`, sessionID).Scan(&productID, &status)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.AgentSessions
+	err = tx.WithContext(ctx).Select("product_id, status").Where("id = ?", sessionID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, "", apperr.NotFound("Agent Session 不存在")
 	}
-	return productID, status, err
+	return rec.ProductID, rec.Status, err
 }
 
 func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID string) (string, error) {
@@ -58,29 +58,50 @@ func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID str
 	if len([]rune(title)) > 160 {
 		title = string([]rune(title)[:160])
 	}
-	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
-		VALUES ($1, $2, $3, '暂无 Agent Task', 'active', NOW(), NOW())
-	`, id, productID, title)
-	return id, err
+	now := time.Now().UTC()
+	pid := productID
+	rec := schema.AgentSessions{
+		ID:        id,
+		ProductID: &pid,
+		Title:     title,
+		Summary:   ptr("暂无 Agent Task"),
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	return id, tx.WithContext(ctx).Create(&rec).Error
 }
 
 func insertProductConversation(ctx context.Context, tx *gorm.DB, sessionID, productID, key, requestHash string) (product.Conversation, error) {
 	id := newID()
-	row := product.Conversation{
-		ID:           id,
-		ScopeType:    "product_workflow",
-		SessionID:    &sessionID,
-		ProductID:    &productID,
-		HarnessRunID: id,
-		Status:       "collecting",
+	now := time.Now().UTC()
+	sid := sessionID
+	pid := productID
+	idempotencyKey := key
+	hash := requestHash
+	rec := schema.AgentConversations{
+		ID:                     id,
+		ScopeType:              "product_workflow",
+		SessionID:              &sid,
+		ProductID:              &pid,
+		HarnessRunID:           id,
+		Status:                 "collecting",
+		CreationIdempotencyKey: &idempotencyKey,
+		CreationRequestHash:    &hash,
+		CreatedAt:              now,
+		UpdatedAt:              now,
 	}
-	err := pfdb.QueryRow(ctx, tx, `
-		INSERT INTO agent_conversations (
-			id, scope_type, session_id, product_id, harness_run_id, status,
-			creation_idempotency_key, creation_request_hash, created_at, updated_at
-		) VALUES ($1, 'product_workflow', $2, $3, $1, 'collecting', $4, $5, NOW(), NOW())
-		RETURNING created_at, updated_at
-	`, id, sessionID, productID, key, requestHash).Scan(&row.CreatedAt, &row.UpdatedAt)
-	return row, err
+	if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
+		return product.Conversation{}, err
+	}
+	return product.Conversation{
+		ID:           rec.ID,
+		ScopeType:    rec.ScopeType,
+		SessionID:    rec.SessionID,
+		ProductID:    rec.ProductID,
+		HarnessRunID: rec.HarnessRunID,
+		Status:       rec.Status,
+		CreatedAt:    rec.CreatedAt,
+		UpdatedAt:    rec.UpdatedAt,
+	}, nil
 }

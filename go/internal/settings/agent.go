@@ -2,13 +2,13 @@ package settings
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"gorm.io/gorm"
 )
 
 type AgentProviderConfig struct {
@@ -25,50 +25,39 @@ type AgentProviderConfig struct {
 
 // ResolveAgentProvider 给 Pi 内部服务解析当前工作流 Agent 绑定。
 func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, error) {
-	var kind string
-	var profileID *string
-	var modelSettings, bindingConfig []byte
-	err := pfdb.QueryRow(ctx, s.db, `
-		SELECT provider_kind, provider_profile_id, model_settings_json, config_json
-		FROM provider_bindings WHERE purpose = 'agent'
-	`).Scan(&kind, &profileID, &modelSettings, &bindingConfig)
+	var binding schema.ProviderBindings
+	err := s.db.WithContext(ctx).Where("purpose = ?", "agent").Take(&binding).Error
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 		}
 		return AgentProviderConfig{}, err
 	}
-	if kind == "mock" {
+	if binding.ProviderKind == "mock" {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 	}
-	if kind != "openai" {
-		return AgentProviderConfig{}, apperr.Unavailable(fmt.Sprintf("暂不支持的工作流 Agent provider: %s", kind))
+	if binding.ProviderKind != "openai" {
+		return AgentProviderConfig{}, apperr.Unavailable(fmt.Sprintf("暂不支持的工作流 Agent provider: %s", binding.ProviderKind))
 	}
-	if profileID == nil {
+	if binding.ProviderProfileID == nil {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 	}
-	var enabled bool
-	var archived any
-	var apiKey, baseURL *string
-	var capabilities, defaultModels []byte
-	err = pfdb.QueryRow(ctx, s.db, `
-		SELECT enabled, archived_at, api_key, base_url, capabilities_json, default_models_json
-		FROM provider_profiles WHERE id = $1
-	`, *profileID).Scan(&enabled, &archived, &apiKey, &baseURL, &capabilities, &defaultModels)
+	var profile schema.ProviderProfiles
+	err = s.db.WithContext(ctx).Where("id = ?", *binding.ProviderProfileID).Take(&profile).Error
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 		}
 		return AgentProviderConfig{}, err
 	}
-	if !enabled || archived != nil {
+	if !profile.Enabled || profile.ArchivedAt != nil {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商尚未配置")
 	}
-	if apiKey == nil || *apiKey == "" {
+	if profile.APIKey == nil || *profile.APIKey == "" {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商 API Key 未配置")
 	}
 	caps := []string{}
-	_ = json.Unmarshal(capabilities, &caps)
+	_ = json.Unmarshal([]byte(profile.CapabilitiesJSON), &caps)
 	hasText := false
 	for _, cap := range caps {
 		if cap == "text_responses" {
@@ -79,9 +68,9 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 	if !hasText {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 供应商缺少 text_responses 能力")
 	}
-	model := lookupJSONString(modelSettings, "model")
+	model := lookupJSONString([]byte(binding.ModelSettingsJSON), "model")
 	if model == "" {
-		model = lookupJSONString(defaultModels, "agent_model")
+		model = lookupJSONString([]byte(profile.DefaultModelsJSON), "agent_model")
 	}
 	if model == "" {
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 模型未配置")
@@ -89,13 +78,13 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 	cfg := AgentProviderConfig{
 		SchemaVersion:    1,
 		ProviderKind:     "openai",
-		APIKey:           *apiKey,
-		BaseURL:          emptyToNil(baseURL),
+		APIKey:           *profile.APIKey,
+		BaseURL:          emptyToNil(profile.BaseURL),
 		Model:            model,
-		ReasoningEffort:  lookupJSONStringPtr(bindingConfig, "reasoning_effort"),
-		ReasoningSummary: lookupJSONStringPtr(bindingConfig, "reasoning_summary"),
-		TextVerbosity:    lookupJSONStringPtr(bindingConfig, "text_verbosity"),
-		ServiceTier:      lookupJSONStringPtr(bindingConfig, "service_tier"),
+		ReasoningEffort:  lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_effort"),
+		ReasoningSummary: lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_summary"),
+		TextVerbosity:    lookupJSONStringPtr([]byte(binding.ConfigJSON), "text_verbosity"),
+		ServiceTier:      lookupJSONStringPtr([]byte(binding.ConfigJSON), "service_tier"),
 	}
 	return cfg, nil
 }

@@ -5,12 +5,11 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -40,18 +39,29 @@ func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		id := newID()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO agent_sessions (id, product_id, title, summary, status, created_at, updated_at)
-			VALUES ($1, NULL, $2, '暂无 Agent Task', 'active', NOW(), NOW())
-		`, id, sessionDefaultTitle); err != nil {
+		now := time.Now().UTC()
+		session := schema.AgentSessions{
+			ID:        id,
+			Title:     sessionDefaultTitle,
+			Summary:   ptr("暂无 Agent Task"),
+			Status:    "active",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		if err := pgxTx.WithContext(ctx).Create(&session).Error; err != nil {
 			return err
 		}
 		convID := newID()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO agent_conversations (
-				id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-			) VALUES ($1, 'global', $2, NULL, $1, 'collecting', NOW(), NOW())
-		`, convID, id); err != nil {
+		conv := schema.AgentConversations{
+			ID:           convID,
+			ScopeType:    "global",
+			SessionID:    &id,
+			HarnessRunID: convID,
+			Status:       "collecting",
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := pgxTx.WithContext(ctx).Create(&conv).Error; err != nil {
 			return err
 		}
 		item, err := loadSession(ctx, pgxTx, id)
@@ -71,13 +81,14 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 	}
 	var out SessionResponse
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_sessions SET title = $2, updated_at = NOW() WHERE id = $1
-		`, sessionID, normalized)
-		if err != nil {
-			return err
+		res := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+			"title":      normalized,
+			"updated_at": time.Now().UTC(),
+		})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n == 0 {
+		if res.RowsAffected == 0 {
 			return apperr.NotFound("Agent Session 不存在")
 		}
 		item, err := loadSession(ctx, pgxTx, sessionID)
@@ -96,11 +107,13 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_sessions
-			SET status = 'archived', archived_at = COALESCE(archived_at, NOW()), updated_at = NOW()
-			WHERE id = $1 AND status <> 'archived'
-		`, sessionID); err != nil {
+		if err := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).
+			Where("id = ? AND status <> ?", sessionID, "archived").
+			Updates(map[string]any{
+				"status":      "archived",
+				"archived_at": gorm.Expr("COALESCE(archived_at, NOW())"),
+				"updated_at":  gorm.Expr("NOW()"),
+			}).Error; err != nil {
 			return err
 		}
 		item, err := loadSession(ctx, pgxTx, sessionID)
@@ -114,38 +127,28 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 }
 
 func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
-	rows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT s.id
-		FROM agent_sessions s
-		WHERE s.product_id IS NULL AND s.status <> 'archived'
-		  AND NOT EXISTS (
-			SELECT 1 FROM agent_conversations c
-			WHERE c.session_id = s.id AND c.scope_type = 'global'
-		  )
-	`)
+	var ids []string
+	err := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).
+		Where("product_id IS NULL AND status <> ?", "archived").
+		Where("NOT EXISTS (SELECT 1 FROM agent_conversations c WHERE c.session_id = agent_sessions.id AND c.scope_type = ?)", "global").
+		Pluck("id", &ids).Error
 	if err != nil {
 		return err
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
+	now := time.Now().UTC()
 	for _, sessionID := range ids {
 		convID := newID()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO agent_conversations (
-				id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-			) VALUES ($1, 'global', $2, NULL, $1, 'collecting', NOW(), NOW())
-		`, convID, sessionID); err != nil {
+		sid := sessionID
+		conv := schema.AgentConversations{
+			ID:           convID,
+			ScopeType:    "global",
+			SessionID:    &sid,
+			HarnessRunID: convID,
+			Status:       "collecting",
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+		if err := pgxTx.WithContext(ctx).Create(&conv).Error; err != nil {
 			return err
 		}
 	}
@@ -153,38 +156,23 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 }
 
 func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string) ([]SessionResponse, error) {
-	q := `
-		SELECT s.id
-		FROM agent_sessions s
-		WHERE ($1::text IS NULL AND s.product_id IS NULL) OR ($1::text IS NOT NULL AND s.product_id = $1)
-	`
-	args := []any{productID}
-	if !includeArchived {
-		q += ` AND s.status = 'active'`
+	q := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{})
+	if productID == nil {
+		q = q.Where("product_id IS NULL")
+	} else {
+		q = q.Where("product_id = ?", *productID)
 	}
-	q += `
-		ORDER BY GREATEST(
-			s.updated_at,
-			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = s.id), s.updated_at)
-		) DESC, s.id DESC
-		LIMIT $2
-	`
-	args = append(args, sessionListMax)
-	rows, err := pfdb.Query(ctx, pgxTx, q, args...)
-	if err != nil {
-		return nil, err
+	if !includeArchived {
+		q = q.Where("status = ?", "active")
 	}
 	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	err := q.Order(`GREATEST(
+			agent_sessions.updated_at,
+			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
+		) DESC, agent_sessions.id DESC`).
+		Limit(sessionListMax).
+		Pluck("id", &ids).Error
+	if err != nil {
 		return nil, err
 	}
 	out := make([]SessionResponse, 0, len(ids))
@@ -199,47 +187,40 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 }
 
 func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
-	var row sessionRow
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, product_id, title, summary, status, archived_at, created_at, updated_at
-		FROM agent_sessions WHERE id = $1
-	`, sessionID).Scan(&row.ID, &row.ProductID, &row.Title, &row.Summary, &row.Status, &row.ArchivedAt, &row.CreatedAt, &row.UpdatedAt)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.AgentSessions
+	err := pgxTx.WithContext(ctx).Where("id = ?", sessionID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return SessionResponse{}, apperr.NotFound("Agent Session 不存在")
 	}
 	if err != nil {
 		return SessionResponse{}, err
 	}
-	convRows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT c.id, c.scope_type, c.product_id, COALESCE(p.name, '全局 Agent'), c.status, c.updated_at
-		FROM agent_conversations c
-		LEFT JOIN products p ON p.id = c.product_id
-		WHERE c.session_id = $1
-		ORDER BY (c.scope_type = 'global'), c.updated_at DESC, c.id
-		LIMIT 20
-	`, sessionID)
+	var conversations []SessionConversation
+	err = pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
+		Select(`agent_conversations.id AS conversation_id,
+			agent_conversations.scope_type,
+			agent_conversations.product_id,
+			COALESCE(products.name, '全局 Agent') AS product_name,
+			agent_conversations.status AS conversation_status,
+			agent_conversations.updated_at`).
+		Joins("LEFT JOIN products ON products.id = agent_conversations.product_id").
+		Where("agent_conversations.session_id = ?", sessionID).
+		Order("(agent_conversations.scope_type = 'global'), agent_conversations.updated_at DESC, agent_conversations.id").
+		Limit(20).
+		Find(&conversations).Error
 	if err != nil {
 		return SessionResponse{}, err
 	}
-	defer convRows.Close()
-	conversations := []SessionConversation{}
-	for convRows.Next() {
-		var item SessionConversation
-		if err := convRows.Scan(&item.ConversationID, &item.ScopeType, &item.ProductID, &item.ProductName, &item.ConversationStatus, &item.UpdatedAt); err != nil {
-			return SessionResponse{}, err
-		}
-		conversations = append(conversations, item)
+	if conversations == nil {
+		conversations = []SessionConversation{}
 	}
-	if err := convRows.Err(); err != nil {
-		return SessionResponse{}, err
-	}
-	var count int
-	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM agent_conversations WHERE session_id = $1`, sessionID).Scan(&count); err != nil {
+	var count int64
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("session_id = ?", sessionID).Count(&count).Error; err != nil {
 		return SessionResponse{}, err
 	}
 	return SessionResponse{
 		ID: row.ID, ProductID: row.ProductID, Title: row.Title, Summary: row.Summary,
-		Status: row.Status, ArchivedAt: row.ArchivedAt, ConversationCount: count,
+		Status: row.Status, ArchivedAt: row.ArchivedAt, ConversationCount: int(count),
 		Conversations: conversations, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}, nil
 }
@@ -261,17 +242,19 @@ func deriveSessionTitle(input string) string {
 }
 
 func autoNameSession(ctx context.Context, pgxTx *gorm.DB, sessionID, inputText string) error {
-	var title string
-	if err := pfdb.QueryRow(ctx, pgxTx, `SELECT title FROM agent_sessions WHERE id = $1`, sessionID).Scan(&title); err != nil {
+	var session schema.AgentSessions
+	if err := pgxTx.WithContext(ctx).Select("title").Where("id = ?", sessionID).Take(&session).Error; err != nil {
 		return err
 	}
-	if title != sessionDefaultTitle {
+	if session.Title != sessionDefaultTitle {
 		return nil
 	}
 	next := deriveSessionTitle(inputText)
 	if next == sessionDefaultTitle {
 		return nil
 	}
-	_, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, next)
-	return err
+	return pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+		"title":      next,
+		"updated_at": time.Now().UTC(),
+	}).Error
 }

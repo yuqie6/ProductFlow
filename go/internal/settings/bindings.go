@@ -2,13 +2,13 @@ package settings
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"gorm.io/gorm"
 )
 
 // ModelBinding 是 prompt / image 用途在 PostgreSQL 里解析出的供应商绑定。
@@ -36,16 +36,17 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 	if err != nil || binding.Kind == "mock" {
 		return binding, err
 	}
-	var profileID *string
-	var configJSON, capabilities []byte
-	err = pfdb.QueryRow(ctx, s.db, `
-		SELECT b.provider_profile_id, COALESCE(b.config_json::text, '{}'), COALESCE(p.capabilities_json::text, '[]')
-		FROM provider_bindings b
-		LEFT JOIN provider_profiles p ON p.id = b.provider_profile_id
-		WHERE b.purpose = 'image'
-	`).Scan(&profileID, &configJSON, &capabilities)
-	if err != nil {
+	var row schema.ProviderBindings
+	if err := s.db.WithContext(ctx).Where("purpose = ?", "image").Take(&row).Error; err != nil {
 		return binding, err
+	}
+	configJSON := []byte(row.ConfigJSON)
+	capabilities := []byte("[]")
+	if row.ProviderProfileID != nil {
+		var profile schema.ProviderProfiles
+		if err := s.db.WithContext(ctx).Where("id = ?", *row.ProviderProfileID).Take(&profile).Error; err == nil {
+			capabilities = []byte(profile.CapabilitiesJSON)
+		}
 	}
 	cfg := map[string]any{}
 	_ = json.Unmarshal(configJSON, &cfg)
@@ -88,66 +89,55 @@ func imageCapabilityForKind(kind string) string {
 }
 
 func (s *Store) resolvePurpose(ctx context.Context, purpose, capability, fallbackModelKey string, allowed []string) (ModelBinding, error) {
-	var kind string
-	var profileID *string
-	var modelSettings []byte
-	err := pfdb.QueryRow(ctx, s.db, `
-		SELECT provider_kind, provider_profile_id, model_settings_json
-		FROM provider_bindings WHERE purpose = $1
-	`, purpose).Scan(&kind, &profileID, &modelSettings)
+	var row schema.ProviderBindings
+	err := s.db.WithContext(ctx).Where("purpose = ?", purpose).Take(&row).Error
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ModelBinding{Kind: "mock"}, nil
 		}
 		return ModelBinding{}, err
 	}
-	if !contains(allowed, kind) {
-		return ModelBinding{}, apperr.Unavailable(fmt.Sprintf("暂不支持的 %s provider: %s", purpose, kind))
+	if !contains(allowed, row.ProviderKind) {
+		return ModelBinding{}, apperr.Unavailable(fmt.Sprintf("暂不支持的 %s provider: %s", purpose, row.ProviderKind))
 	}
-	if kind == "mock" {
-		model := lookupJSONString(modelSettings, "model")
+	if row.ProviderKind == "mock" {
+		model := lookupJSONString([]byte(row.ModelSettingsJSON), "model")
 		return ModelBinding{Kind: "mock", Model: model}, nil
 	}
-	if profileID == nil {
+	if row.ProviderProfileID == nil {
 		return ModelBinding{}, apperr.Unavailable("供应商尚未配置")
 	}
-	var enabled bool
-	var archived any
-	var apiKey, baseURL *string
-	var capabilities, defaultModels []byte
-	err = pfdb.QueryRow(ctx, s.db, `
-		SELECT enabled, archived_at, api_key, base_url, capabilities_json, default_models_json
-		FROM provider_profiles WHERE id = $1
-	`, *profileID).Scan(&enabled, &archived, &apiKey, &baseURL, &capabilities, &defaultModels)
+	var profile schema.ProviderProfiles
+	err = s.db.WithContext(ctx).Where("id = ?", *row.ProviderProfileID).Take(&profile).Error
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ModelBinding{}, apperr.Unavailable("供应商尚未配置")
 		}
 		return ModelBinding{}, err
 	}
-	if !enabled || archived != nil {
+	if !profile.Enabled || profile.ArchivedAt != nil {
 		return ModelBinding{}, apperr.Unavailable("供应商尚未配置")
 	}
-	if apiKey == nil || *apiKey == "" {
+	if profile.APIKey == nil || *profile.APIKey == "" {
 		return ModelBinding{}, apperr.Unavailable("供应商 API Key 未配置")
 	}
 	if capability != "" {
 		caps := []string{}
-		_ = json.Unmarshal(capabilities, &caps)
+		_ = json.Unmarshal([]byte(profile.CapabilitiesJSON), &caps)
 		if !contains(caps, capability) {
 			return ModelBinding{}, apperr.Unavailable("供应商缺少 " + capability + " 能力")
 		}
 	}
-	model := lookupJSONString(modelSettings, "model")
+	model := lookupJSONString([]byte(row.ModelSettingsJSON), "model")
 	if model == "" {
-		model = lookupJSONString(defaultModels, fallbackModelKey)
+		model = lookupJSONString([]byte(profile.DefaultModelsJSON), fallbackModelKey)
 	}
 	if model == "" {
 		return ModelBinding{}, apperr.Unavailable("模型未配置")
 	}
-	out := ModelBinding{Kind: kind, APIKey: *apiKey, Model: model}
-	if baseURL != nil {
-		out.BaseURL = *baseURL
+	out := ModelBinding{Kind: row.ProviderKind, APIKey: *profile.APIKey, Model: model}
+	if profile.BaseURL != nil {
+		out.BaseURL = *profile.BaseURL
 	}
 	return out, nil
 }

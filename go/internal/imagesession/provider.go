@@ -20,7 +20,11 @@ var (
 )
 
 func IsConfirmedProviderFailure(err error) bool {
-	return errors.Is(err, ErrMissingOutput) || errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit)
+	return errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit)
+}
+
+func IsUncertainProviderFailure(err error) bool {
+	return errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx)
 }
 
 func IsRetryableProviderFailure(err error) bool {

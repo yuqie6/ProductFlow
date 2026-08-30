@@ -2,12 +2,11 @@ package graph
 
 import (
 	"context"
-	sqldb "database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -249,17 +248,26 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 }
 
 func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
-	nodeRows, err := pfdb.Query(ctx, tx, `
-		SELECT n.id, n.bound_image_asset_id, n.current_artifact_id,
-		       a.artifact_type, a.payload_json, a.input_digest, a.product_image_asset_id
-		FROM workflow_graph_nodes n
-		LEFT JOIN workflow_graph_artifacts a ON a.id = n.current_artifact_id
-		WHERE n.graph_id = $1
-	`, row.ID)
-	if err != nil {
+	var nodeRecs []schema.WorkflowGraphNodes
+	if err := tx.WithContext(ctx).Where("graph_id = ?", row.ID).Find(&nodeRecs).Error; err != nil {
 		return nil, nil, nil, err
 	}
-	defer nodeRows.Close()
+	artifactIDs := make([]string, 0)
+	for _, n := range nodeRecs {
+		if n.CurrentArtifactID != nil && *n.CurrentArtifactID != "" {
+			artifactIDs = append(artifactIDs, *n.CurrentArtifactID)
+		}
+	}
+	artifactByID := map[string]schema.WorkflowGraphArtifacts{}
+	if len(artifactIDs) > 0 {
+		var artifactRecs []schema.WorkflowGraphArtifacts
+		if err := tx.WithContext(ctx).Where("id IN ?", artifactIDs).Find(&artifactRecs).Error; err != nil {
+			return nil, nil, nil, err
+		}
+		for _, a := range artifactRecs {
+			artifactByID[a.ID] = a
+		}
+	}
 
 	type nodeArtifact struct {
 		boundAssetID  *string
@@ -270,16 +278,18 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 		outputAssetID *string
 	}
 	artifacts := map[string]nodeArtifact{}
-	for nodeRows.Next() {
-		var rec nodeArtifact
-		var nodeID string
-		if err := nodeRows.Scan(&nodeID, &rec.boundAssetID, &rec.artifactID, &rec.artifactType, &rec.payload, &rec.digest, &rec.outputAssetID); err != nil {
-			return nil, nil, nil, err
+	for _, n := range nodeRecs {
+		rec := nodeArtifact{boundAssetID: n.BoundImageAssetID, artifactID: n.CurrentArtifactID}
+		if n.CurrentArtifactID != nil {
+			if a, ok := artifactByID[*n.CurrentArtifactID]; ok {
+				rec.artifactType = &a.ArtifactType
+				rec.payload = []byte(a.PayloadJSON)
+				digest := a.InputDigest
+				rec.digest = &digest
+				rec.outputAssetID = a.ProductImageAssetID
+			}
 		}
-		artifacts[nodeID] = rec
-	}
-	if err := nodeRows.Err(); err != nil {
-		return nil, nil, nil, err
+		artifacts[n.ID] = rec
 	}
 
 	previews := map[string]string{}
@@ -363,16 +373,16 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 }
 
 func loadVisualSystemPayload(ctx context.Context, tx *gorm.DB, versionID string) (map[string]any, error) {
-	var payload []byte
-	err := pfdb.QueryRow(ctx, tx, `SELECT payload_json FROM visual_system_versions WHERE id = $1`, versionID).Scan(&payload)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.VisualSystemVersions
+	err := tx.WithContext(ctx).Select("payload_json").Where("id = ?", versionID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	out := map[string]any{}
-	if err := json.Unmarshal(payload, &out); err != nil {
+	if err := json.Unmarshal([]byte(rec.PayloadJSON), &out); err != nil {
 		return nil, err
 	}
 	return out, nil

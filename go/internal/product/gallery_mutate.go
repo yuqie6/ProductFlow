@@ -4,18 +4,21 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
-
-	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
 
-const galleryMoveMaxAssets = 100
+const (
+	galleryMoveMaxAssets = 100
+	entityIDMaxLen       = 36
+)
 
 type GalleryAssetMove struct {
 	AssetID          string
@@ -50,6 +53,20 @@ func normalizeDisplayName(value string) (string, error) {
 	return normalized, nil
 }
 
+func folderMaxSort(ctx context.Context, tx *gorm.DB, productID string) (int, error) {
+	var maxSort *int
+	if err := tx.WithContext(ctx).Model(&schema.ProductAssetFolders{}).
+		Where("product_id = ?", productID).
+		Select("MAX(sort_order)").
+		Scan(&maxSort).Error; err != nil {
+		return 0, err
+	}
+	if maxSort == nil {
+		return 0, nil
+	}
+	return *maxSort + 1, nil
+}
+
 // CreateGalleryFolder 创建一层用户文件夹；不移动资产，也不改商品 updated_at。
 func (s Service) CreateGalleryFolder(ctx context.Context, productID, name string) (GalleryFolderMutation, error) {
 	var out GalleryFolderMutation
@@ -61,26 +78,27 @@ func (s Service) CreateGalleryFolder(ctx context.Context, productID, name string
 		if _, err := loadProductForUpdate(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		var maxSort *int
-		if err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT MAX(sort_order) FROM product_asset_folders WHERE product_id = $1
-		`, productID).Scan(&maxSort); err != nil {
+		sortOrder, err := folderMaxSort(ctx, pgxTx, productID)
+		if err != nil {
 			return err
 		}
-		sortOrder := 0
-		if maxSort != nil {
-			sortOrder = *maxSort + 1
+		now := time.Now().UTC()
+		rec := schema.ProductAssetFolders{
+			ID:        clockid.New(),
+			ProductID: productID,
+			Name:      normalized,
+			SortOrder: sortOrder,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-		id := clockid.New()
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			INSERT INTO product_asset_folders (id, product_id, name, sort_order, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NOW(), NOW())
-			RETURNING id, name, sort_order
-		`, id, productID, normalized, sortOrder).Scan(&out.ID, &out.Name, &out.SortOrder)
-		if uniqueViolation(err) {
-			return apperr.Conflict("当前商品已存在同名文件夹")
+		if err := pgxTx.WithContext(ctx).Create(&rec).Error; err != nil {
+			if uniqueViolation(err) {
+				return apperr.Conflict("当前商品已存在同名文件夹")
+			}
+			return err
 		}
-		return err
+		out = GalleryFolderMutation{ID: rec.ID, Name: rec.Name, SortOrder: rec.SortOrder}
+		return nil
 	})
 	return out, err
 }
@@ -100,33 +118,35 @@ func (s Service) CreateGalleryFolderWithID(ctx context.Context, productID, folde
 		if _, err := loadProductForUpdate(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		var exists int
-		err = pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM product_asset_folders WHERE id = $1`, id).Scan(&exists)
+		var existing schema.ProductAssetFolders
+		err = pgxTx.WithContext(ctx).Select("id").Where("id = ?", id).Take(&existing).Error
 		if err == nil {
 			return apperr.Conflict("文件夹 ID 已存在")
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		var maxSort *int
-		if err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT MAX(sort_order) FROM product_asset_folders WHERE product_id = $1
-		`, productID).Scan(&maxSort); err != nil {
+		sortOrder, err := folderMaxSort(ctx, pgxTx, productID)
+		if err != nil {
 			return err
 		}
-		sortOrder := 0
-		if maxSort != nil {
-			sortOrder = *maxSort + 1
+		now := time.Now().UTC()
+		rec := schema.ProductAssetFolders{
+			ID:        id,
+			ProductID: productID,
+			Name:      normalized,
+			SortOrder: sortOrder,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			INSERT INTO product_asset_folders (id, product_id, name, sort_order, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NOW(), NOW())
-			RETURNING id, name, sort_order
-		`, id, productID, normalized, sortOrder).Scan(&out.ID, &out.Name, &out.SortOrder)
-		if uniqueViolation(err) {
-			return apperr.Conflict("当前商品已存在同名文件夹")
+		if err := pgxTx.WithContext(ctx).Create(&rec).Error; err != nil {
+			if uniqueViolation(err) {
+				return apperr.Conflict("当前商品已存在同名文件夹")
+			}
+			return err
 		}
-		return err
+		out = GalleryFolderMutation{ID: rec.ID, Name: rec.Name, SortOrder: rec.SortOrder}
+		return nil
 	})
 	return out, err
 }
@@ -154,9 +174,10 @@ func (s Service) RenameGalleryFolder(ctx context.Context, productID, folderID, e
 			return apperr.Conflict("文件夹名称已被其他操作修改")
 		}
 		if folder.Name != normalized {
-			_, err = pfdb.Exec(ctx, pgxTx, `
-				UPDATE product_asset_folders SET name = $1, updated_at = NOW() WHERE id = $2
-			`, normalized, folderID)
+			err = pgxTx.WithContext(ctx).Model(&schema.ProductAssetFolders{}).Where("id = ?", folderID).Updates(map[string]any{
+				"name":       normalized,
+				"updated_at": time.Now().UTC(),
+			}).Error
 			if uniqueViolation(err) {
 				return apperr.Conflict("当前商品已存在同名文件夹")
 			}
@@ -189,17 +210,19 @@ func (s Service) DeleteGalleryFolder(ctx context.Context, productID, folderID, e
 		if folder.Name != expected {
 			return apperr.Conflict("文件夹名称已被其他操作修改")
 		}
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE product_image_assets SET user_folder_id = NULL, updated_at = NOW()
-			WHERE product_id = $1 AND user_folder_id = $2
-		`, productID, folderID)
-		if err != nil {
+		res := pgxTx.WithContext(ctx).Model(&schema.ProductImageAssets{}).
+			Where("product_id = ? AND user_folder_id = ?", productID, folderID).
+			Updates(map[string]any{
+				"user_folder_id": nil,
+				"updated_at":     time.Now().UTC(),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if err := pgxTx.WithContext(ctx).Where("id = ?", folderID).Delete(&schema.ProductAssetFolders{}).Error; err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM product_asset_folders WHERE id = $1`, folderID); err != nil {
-			return err
-		}
-		out = DeleteGalleryFolderResponse{FolderID: folderID, MovedToUnorganizedCount: int(n)}
+		out = DeleteGalleryFolderResponse{FolderID: folderID, MovedToUnorganizedCount: int(res.RowsAffected)}
 		return nil
 	})
 	return out, err
@@ -228,10 +251,10 @@ func (s Service) RenameGalleryAsset(ctx context.Context, productID, assetID, exp
 			return apperr.Conflict("图片显示名已被其他操作修改")
 		}
 		if asset.DisplayName != normalized {
-			_, err = pfdb.Exec(ctx, pgxTx, `
-				UPDATE product_image_assets SET display_name = $1, updated_at = NOW() WHERE id = $2
-			`, normalized, assetID)
-			if err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.ProductImageAssets{}).Where("id = ?", assetID).Updates(map[string]any{
+				"display_name": normalized,
+				"updated_at":   time.Now().UTC(),
+			}).Error; err != nil {
 				return err
 			}
 		}
@@ -249,7 +272,7 @@ func (s Service) RenameGalleryAsset(ctx context.Context, productID, assetID, exp
 func (s Service) MoveGalleryAssets(ctx context.Context, productID string, moves []GalleryAssetMove, folderID *string) (GalleryAssetPage, error) {
 	var page GalleryAssetPage
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		normalized, err := normalizeMoves(moves)
+		normalized, err := NormalizeMoves(moves)
 		if err != nil {
 			return err
 		}
@@ -276,23 +299,11 @@ func (s Service) MoveGalleryAssets(ctx context.Context, productID string, moves 
 			for id := range folderIDs {
 				ids = append(ids, id)
 			}
-			rows, err := pfdb.Query(ctx, pgxTx, `
-				SELECT id FROM product_asset_folders WHERE product_id = $1 AND id = ANY($2) FOR UPDATE
-			`, productID, ids)
-			if err != nil {
-				return err
-			}
-			found := map[string]struct{}{}
-			for rows.Next() {
-				var id string
-				if err := rows.Scan(&id); err != nil {
-					rows.Close()
-					return err
-				}
-				found[id] = struct{}{}
-			}
-			rows.Close()
-			if err := rows.Err(); err != nil {
+			var found []schema.ProductAssetFolders
+			if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+				Select("id").
+				Where("product_id = ? AND id IN ?", productID, ids).
+				Find(&found).Error; err != nil {
 				return err
 			}
 			if len(found) != len(folderIDs) {
@@ -305,44 +316,30 @@ func (s Service) MoveGalleryAssets(ctx context.Context, productID string, moves 
 			assetIDs = append(assetIDs, move.AssetID)
 			expected[move.AssetID] = move.ExpectedFolderID
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id, user_folder_id FROM product_image_assets
-			WHERE product_id = $1 AND id = ANY($2)
-			ORDER BY id FOR UPDATE
-		`, productID, assetIDs)
-		if err != nil {
-			return err
-		}
-		type locked struct {
-			id       string
-			folderID *string
-		}
-		var lockedAssets []locked
-		for rows.Next() {
-			var item locked
-			if err := rows.Scan(&item.id, &item.folderID); err != nil {
-				rows.Close()
-				return err
-			}
-			lockedAssets = append(lockedAssets, item)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var lockedAssets []schema.ProductImageAssets
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Select("id, user_folder_id").
+			Where("product_id = ? AND id IN ?", productID, assetIDs).
+			Order("id").
+			Find(&lockedAssets).Error; err != nil {
 			return err
 		}
 		if len(lockedAssets) != len(assetIDs) {
 			return apperr.NotFound("商品图片不存在")
 		}
 		for _, asset := range lockedAssets {
-			if !sameOptionalString(asset.folderID, expected[asset.id]) {
+			if !sameOptionalString(asset.UserFolderID, expected[asset.ID]) {
 				return apperr.Conflict("图片所在文件夹已被其他操作修改")
 			}
 		}
+		now := time.Now().UTC()
 		for _, assetID := range assetIDs {
-			_, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE product_image_assets SET user_folder_id = $1, updated_at = NOW() WHERE id = $2 AND (user_folder_id IS DISTINCT FROM $1)
-			`, target, assetID)
-			if err != nil {
+			if err := pgxTx.WithContext(ctx).Model(&schema.ProductImageAssets{}).
+				Where("id = ? AND user_folder_id IS DISTINCT FROM ?", assetID, target).
+				Updates(map[string]any{
+					"user_folder_id": target,
+					"updated_at":     now,
+				}).Error; err != nil {
 				return err
 			}
 		}
@@ -361,15 +358,7 @@ func (s Service) MoveGalleryAssets(ctx context.Context, productID string, moves 
 }
 
 func (s Service) loadGalleryAssetInTx(ctx context.Context, tx *gorm.DB, productID, assetID string) (GalleryAssetResponse, error) {
-	rows, err := pfdb.Query(ctx, tx, gallerySelectSQL+` WHERE a.product_id = $1 AND a.id = $2`, productID, assetID)
-	if err != nil {
-		return GalleryAssetResponse{}, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return GalleryAssetResponse{}, apperr.NotFound("商品图片不存在")
-	}
-	row, err := scanGalleryRow(rows)
+	row, err := loadGalleryRow(ctx, tx, productID, assetID)
 	if err != nil {
 		return GalleryAssetResponse{}, err
 	}
@@ -377,15 +366,18 @@ func (s Service) loadGalleryAssetInTx(ctx context.Context, tx *gorm.DB, productI
 }
 
 func loadFolderForUpdate(ctx context.Context, tx *gorm.DB, productID, folderID string) (folderRow, error) {
-	var folder folderRow
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, name, sort_order FROM product_asset_folders
-		WHERE id = $1 AND product_id = $2 FOR UPDATE
-	`, folderID, productID).Scan(&folder.ID, &folder.Name, &folder.SortOrder)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductAssetFolders
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+		Select("id, name, sort_order").
+		Where("id = ? AND product_id = ?", folderID, productID).
+		Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return folderRow{}, apperr.NotFound("商品图片文件夹不存在")
 	}
-	return folder, err
+	if err != nil {
+		return folderRow{}, err
+	}
+	return folderRow{ID: rec.ID, Name: rec.Name, SortOrder: rec.SortOrder}, nil
 }
 
 func loadAssetForUpdate(ctx context.Context, tx *gorm.DB, productID, assetID string) (ImageAsset, error) {
@@ -396,14 +388,15 @@ func loadAssetForUpdate(ctx context.Context, tx *gorm.DB, productID, assetID str
 	if asset.ProductID != productID {
 		return ImageAsset{}, apperr.NotFound("商品图片不存在")
 	}
-	_, err = pfdb.Exec(ctx, tx, `SELECT id FROM product_image_assets WHERE id = $1 FOR UPDATE`, assetID)
-	if err != nil {
+	var rec schema.ProductImageAssets
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", assetID).Take(&rec).Error; err != nil {
 		return ImageAsset{}, err
 	}
 	return loadAsset(ctx, tx, assetID)
 }
 
-func normalizeMoves(moves []GalleryAssetMove) ([]GalleryAssetMove, error) {
+// NormalizeMoves 校验 1–100 条移动项：asset_id 去空白、非空、最长 36、不重复；expected_folder_id 可选且同样最长 36。
+func NormalizeMoves(moves []GalleryAssetMove) ([]GalleryAssetMove, error) {
 	if len(moves) < 1 || len(moves) > galleryMoveMaxAssets {
 		return nil, apperr.Validationf("单次必须移动 1 到 %d 张图片", galleryMoveMaxAssets)
 	}
@@ -414,6 +407,9 @@ func normalizeMoves(moves []GalleryAssetMove) ([]GalleryAssetMove, error) {
 		if assetID == "" {
 			return nil, apperr.Validation("图片 ID 不能为空")
 		}
+		if len(assetID) > entityIDMaxLen {
+			return nil, apperr.Validation("图片 ID 无效")
+		}
 		if _, ok := seen[assetID]; ok {
 			return nil, apperr.Validation("移动列表不能包含重复图片 ID")
 		}
@@ -421,7 +417,7 @@ func normalizeMoves(moves []GalleryAssetMove) ([]GalleryAssetMove, error) {
 		var expected *string
 		if move.ExpectedFolderID != nil {
 			trimmed := strings.TrimSpace(*move.ExpectedFolderID)
-			if trimmed == "" {
+			if trimmed == "" || len(trimmed) > entityIDMaxLen {
 				return nil, apperr.Validation("expected_folder_id 无效")
 			}
 			expected = &trimmed

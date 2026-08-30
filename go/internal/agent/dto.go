@@ -352,17 +352,6 @@ type conversationRow struct {
 	UpdatedAt    time.Time
 }
 
-type sessionRow struct {
-	ID         string
-	ProductID  *string
-	Title      string
-	Summary    *string
-	Status     string
-	ArchivedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-}
-
 type taskRow struct {
 	ID             string
 	SessionID      string

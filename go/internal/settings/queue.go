@@ -3,7 +3,7 @@ package settings
 import (
 	"context"
 
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 )
 
 type GenerationQueueOverview struct {
@@ -19,36 +19,24 @@ func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, e
 		status string
 	}
 	runStatus := map[string]string{}
-	rows, err := pfdb.Query(ctx, s.db, `SELECT id, status FROM workflow_graph_runs WHERE status = 'running'`)
-	if err != nil {
+	var runs []schema.WorkflowGraphRuns
+	if err := s.db.WithContext(ctx).Where("status = ?", "running").Find(&runs).Error; err != nil {
 		return GenerationQueueOverview{}, err
 	}
 	ids := []string{}
-	for rows.Next() {
-		var id, status string
-		if err := rows.Scan(&id, &status); err != nil {
-			rows.Close()
-			return GenerationQueueOverview{}, err
-		}
-		runStatus[id] = status
-		ids = append(ids, id)
+	for _, run := range runs {
+		runStatus[run.ID] = run.Status
+		ids = append(ids, run.ID)
 	}
-	rows.Close()
 	nodes := []nodeRow{}
 	if len(ids) > 0 {
-		nRows, err := pfdb.Query(ctx, s.db, `SELECT graph_run_id, status FROM workflow_graph_node_runs WHERE graph_run_id = ANY($1)`, ids)
-		if err != nil {
+		var nodeRuns []schema.WorkflowGraphNodeRuns
+		if err := s.db.WithContext(ctx).Where("graph_run_id IN ?", ids).Find(&nodeRuns).Error; err != nil {
 			return GenerationQueueOverview{}, err
 		}
-		for nRows.Next() {
-			var row nodeRow
-			if err := nRows.Scan(&row.runID, &row.status); err != nil {
-				nRows.Close()
-				return GenerationQueueOverview{}, err
-			}
-			nodes = append(nodes, row)
+		for _, row := range nodeRuns {
+			nodes = append(nodes, nodeRow{runID: row.GraphRunID, status: row.Status})
 		}
-		nRows.Close()
 	}
 	byRun := map[string][]string{}
 	for _, node := range nodes {
@@ -63,11 +51,11 @@ func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, e
 			graphQueued++
 		}
 	}
-	var sessionRunning, sessionQueued int
-	if err := pfdb.QueryRow(ctx, s.db, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running'`).Scan(&sessionRunning); err != nil {
+	var sessionRunning, sessionQueued int64
+	if err := s.db.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "running").Count(&sessionRunning).Error; err != nil {
 		return GenerationQueueOverview{}, err
 	}
-	if err := pfdb.QueryRow(ctx, s.db, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'queued'`).Scan(&sessionQueued); err != nil {
+	if err := s.db.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "queued").Count(&sessionQueued).Error; err != nil {
 		return GenerationQueueOverview{}, err
 	}
 	maxConcurrent := 3
@@ -76,8 +64,8 @@ func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, e
 			maxConcurrent = n
 		}
 	}
-	running := graphRunning + sessionRunning
-	queued := graphQueued + sessionQueued
+	running := graphRunning + int(sessionRunning)
+	queued := graphQueued + int(sessionQueued)
 	return GenerationQueueOverview{
 		ActiveCount: running + queued, RunningCount: running, QueuedCount: queued,
 		MaxConcurrentTasks: maxConcurrent,

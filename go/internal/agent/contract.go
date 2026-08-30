@@ -7,7 +7,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -124,26 +124,27 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		ToolContractVersion: toolContractVersion, DraftSchema: map[string]any{},
 	}
 	if conv.ScopeType == "global" {
-		var version int
-		_ = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT COALESCE(r.version, 0)
-			FROM library_organization_drafts d
-			LEFT JOIN library_organization_draft_revisions r ON r.id = d.current_revision_id
-			WHERE d.conversation_id = $1
-		`, conversationID).Scan(&version)
-		var schema map[string]any
-		_ = json.Unmarshal(globalDraftSchemaJSON, &schema)
-		out.CurrentDraftVersion = version
+		var draft struct {
+			Version int `gorm:"column:version"`
+		}
+		_ = pgxTx.Model(&schema.LibraryOrganizationDrafts{}).
+			Select("COALESCE(library_organization_draft_revisions.version, 0) AS version").
+			Joins("LEFT JOIN library_organization_draft_revisions ON library_organization_draft_revisions.id = library_organization_drafts.current_revision_id").
+			Where("library_organization_drafts.conversation_id = ?", conversationID).
+			Take(&draft).Error
+		var schemaDoc map[string]any
+		_ = json.Unmarshal(globalDraftSchemaJSON, &schemaDoc)
+		out.CurrentDraftVersion = draft.Version
 		out.SystemPrompt = globalAgentSystemPrompt
 		out.DraftKind = ptr("global")
-		out.DraftSchema = schema
+		out.DraftSchema = schemaDoc
 		out.HasLiveGraph = false
 	} else {
 		if conv.ProductID == nil {
 			return ContractResponse{}, apperr.Conflict("商品工作流 Agent conversation 缺少商品")
 		}
-		var exists int
-		err := pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM workflow_graphs WHERE product_id = $1 AND active = TRUE LIMIT 1`, *conv.ProductID).Scan(&exists)
+		var graph schema.WorkflowGraphs
+		err := pgxTx.Select("id").Where("product_id = ? AND active = TRUE", *conv.ProductID).Take(&graph).Error
 		out.SystemPrompt = workflowAgentLiveGraphPrompt
 		out.DraftKind = ptr("workflow")
 		out.HasLiveGraph = err == nil

@@ -1,13 +1,17 @@
 package graph_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime/multipart"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
@@ -301,7 +305,7 @@ func TestExecuteMissingGraphRunConsumes(t *testing.T) {
 	}
 }
 
-func TestExecuteWaitingGraphRunDoesNotConsume(t *testing.T) {
+func TestExecuteWaitingGraphRunConsumesUntilRecovery(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
 	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
@@ -323,9 +327,8 @@ func TestExecuteWaitingGraphRunDoesNotConsume(t *testing.T) {
 			Assets: product.Service{DB: gs.db, Media: gs.media},
 		},
 	}
-	err := executor.ExecuteRun(context.Background(), run.ID)
-	if !errors.Is(err, queue.ErrLater) {
-		t.Fatalf("in-flight graph run with no ready nodes must retry later, got %v", err)
+	if err := executor.ExecuteRun(context.Background(), run.ID); err != nil {
+		t.Fatalf("orphaned running nodes must consume this dispatch, got %v", err)
 	}
 }
 
@@ -378,5 +381,111 @@ func TestBlockedDownstreamReasonMatchesPython(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected blocked reason, nodes %+v", finished.NodeRuns)
+	}
+}
+
+type timingPrompt struct {
+	graph.MockPromptProvider
+	mu           sync.Mutex
+	promptStarts []time.Time
+	promptDones  []time.Time
+}
+
+func (p *timingPrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p.mu.Lock()
+	n := len(p.promptStarts)
+	p.promptStarts = append(p.promptStarts, time.Now())
+	p.mu.Unlock()
+	delay := 80 * time.Millisecond
+	if n >= 1 {
+		delay = 400 * time.Millisecond
+	}
+	time.Sleep(delay)
+	p.mu.Lock()
+	p.promptDones = append(p.promptDones, time.Now())
+	p.mu.Unlock()
+	return p.MockPromptProvider.GeneratePrompt(ctx, req)
+}
+
+type timingImage struct {
+	graph.MockImageProvider
+	mu      sync.Mutex
+	started []time.Time
+}
+
+func (p *timingImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
+	p.mu.Lock()
+	p.started = append(p.started, time.Now())
+	p.mu.Unlock()
+	return p.MockImageProvider.GenerateImage(ctx, req)
+}
+
+func TestExecuteGraphRunPipelinesImageAfterFirstPrompt(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("name", "流水重叠跑图")
+	_ = w.WriteField("image_types", `[{"key":"hero","quantity":1},{"key":"scene","quantity":1}]`)
+	part, err := w.CreateFormFile("images", "hero.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(pngBytes(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := gs.do(t, "POST", "/api/v3/products", &buf, w.FormDataContentType())
+	gs.mustStatus(t, resp, 201)
+	raw, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Product struct {
+			ID string `json:"id"`
+		} `json:"product"`
+		Graph struct {
+			ID string `json:"id"`
+		} `json:"graph"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	productID, graphID := payload.Product.ID, payload.Graph.ID
+	runResp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, runResp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, runResp, &run)
+	prompt := &timingPrompt{}
+	image := &timingImage{}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: prompt,
+			Image:  image,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	if len(prompt.promptDones) < 2 || len(image.started) < 1 {
+		t.Fatalf("prompts %d images %d", len(prompt.promptDones), len(image.started))
+	}
+	lastPrompt := prompt.promptDones[0]
+	for _, done := range prompt.promptDones[1:] {
+		if done.After(lastPrompt) {
+			lastPrompt = done
+		}
+	}
+	firstImage := image.started[0]
+	for _, started := range image.started[1:] {
+		if started.Before(firstImage) {
+			firstImage = started
+		}
+	}
+	if !firstImage.Before(lastPrompt) {
+		t.Fatalf("image started at %s after last prompt %s; expected overlap", firstImage, lastPrompt)
 	}
 }

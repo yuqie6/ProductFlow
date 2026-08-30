@@ -93,10 +93,10 @@ type GeneratedImageInput struct {
 	ImageTypeKey *string
 }
 
-// GeneratedImageWriter 把生成图写成商品图片身份，并按资产 ID 读回参考图字节。实现放在 product，避免 graph import product。
+// GeneratedImageWriter 把生成图写成商品图片身份，并按商品收口读回参考图字节。实现放在 product，避免 graph import product。
 type GeneratedImageWriter interface {
 	Write(ctx context.Context, tx *gorm.DB, in GeneratedImageInput) (assetID string, err error)
-	ReadAssetBytes(ctx context.Context, tx *gorm.DB, assetID string) (data []byte, mime, filename string, err error)
+	ReadAssetBytes(ctx context.Context, tx *gorm.DB, productID, assetID string) (data []byte, mime, filename string, err error)
 }
 
 // DeliveryQueuer 在图片节点成功后排队确定性交付派生。实现放在 delivery，避免 graph import delivery。

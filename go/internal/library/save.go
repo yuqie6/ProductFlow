@@ -8,12 +8,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
@@ -303,16 +301,14 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 				return err
 			}
 			requestHash = hashed
-			var existingHash, assetIDsJSON string
-			scanErr := pfdb.QueryRow(ctx, pgxTx, `
-				SELECT request_hash, asset_ids_json FROM media_library_upload_keys WHERE idempotency_key = $1
-			`, key).Scan(&existingHash, &assetIDsJSON)
+			var rec schema.MediaLibraryUploadKeys
+			scanErr := pgxTx.WithContext(ctx).Where("idempotency_key = ?", key).Take(&rec).Error
 			if scanErr == nil {
-				if existingHash != requestHash {
+				if rec.RequestHash != requestHash {
 					return apperr.Conflict("相同 idempotency key 不能用于不同的上传参数")
 				}
 				var ids []string
-				if err := json.Unmarshal([]byte(assetIDsJSON), &ids); err != nil {
+				if err := json.Unmarshal([]byte(rec.AssetIdsJSON), &ids); err != nil {
 					return err
 				}
 				for _, id := range ids {
@@ -324,7 +320,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 				}
 				return nil
 			}
-			if !errors.Is(scanErr, sqldb.ErrNoRows) {
+			if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
 				return scanErr
 			}
 		}
@@ -354,10 +350,13 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 		}
 		if key != "" {
 			raw, _ := json.Marshal(createdIDs)
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO media_library_upload_keys (id, idempotency_key, request_hash, asset_ids_json, created_at)
-				VALUES ($1, $2, $3, $4, NOW())
-			`, clockid.New(), key, requestHash, string(raw)); err != nil {
+			if err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryUploadKeys{
+				ID:             clockid.New(),
+				IdempotencyKey: key,
+				RequestHash:    requestHash,
+				AssetIdsJSON:   string(raw),
+				CreatedAt:      time.Now().UTC(),
+			}).Error; err != nil {
 				compensation.Rollback()
 				return err
 			}
@@ -398,14 +397,12 @@ func (s Service) setArchive(ctx context.Context, assetID string, archived bool, 
 			return apperr.Conflict("素材库资产 revision 已变化")
 		}
 		if archived {
-			var workflowID string
-			scanErr := pfdb.QueryRow(ctx, pgxTx, `
-				SELECT workflow_id FROM workflow_media_library_assets WHERE media_library_asset_id = $1 LIMIT 1
-			`, asset.ID).Scan(&workflowID)
+			var rec schema.WorkflowMediaLibraryAssets
+			scanErr := pgxTx.WithContext(ctx).Select("workflow_id").Where("media_library_asset_id = ?", asset.ID).Take(&rec).Error
 			if scanErr == nil {
 				return apperr.Conflict("素材仍被工作流素材库使用，解除关联后才能归档")
 			}
-			if !errors.Is(scanErr, sqldb.ErrNoRows) {
+			if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
 				return scanErr
 			}
 		}
@@ -418,15 +415,18 @@ func (s Service) setArchive(ctx context.Context, assetID string, archived bool, 
 		if archived {
 			archivedAt = now
 		}
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE media_library_assets
-			SET is_archived = $1, archived_at = $2, revision = revision + 1, updated_at = $3
-			WHERE id = $4 AND revision = $5 AND is_archived = $6
-		`, archived, archivedAt, now, asset.ID, asset.Revision, !archived)
-		if err != nil {
-			return err
+		res := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).
+			Where("id = ? AND revision = ? AND is_archived = ?", asset.ID, asset.Revision, !archived).
+			Updates(map[string]any{
+				"is_archived": archived,
+				"archived_at": archivedAt,
+				"revision":    gorm.Expr("revision + 1"),
+				"updated_at":  now,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n != 1 {
+		if res.RowsAffected != 1 {
 			return apperr.Conflict("素材库资产 revision 已变化")
 		}
 		out, err = s.loadAsset(ctx, pgxTx, asset.ID)

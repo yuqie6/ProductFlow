@@ -638,11 +638,6 @@ func incomingVisualVersionID(graph AppliedGraph, nodeID string, sources map[stri
 	return nil
 }
 
-func incomingPromptPayload(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, error) {
-	payload, _, err := incomingPromptArtifact(graph, nodeID, sources)
-	return payload, err
-}
-
 func incomingPromptArtifact(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
 	for _, edge := range incomingSorted(graph, nodeID) {
 		if edge.Role != RolePrompt {

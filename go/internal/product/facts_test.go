@@ -27,6 +27,21 @@ func TestNormalizeFactPayloadAndDuplicates(t *testing.T) {
 	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "status": "maybe"}); err == nil {
 		t.Fatal("invalid status")
 	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "source_type": nil}); err == nil {
+		t.Fatal("explicit null source_type")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "status": nil}); err == nil {
+		t.Fatal("explicit null status")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "requires_confirmation": nil}); err == nil {
+		t.Fatal("explicit null requires_confirmation")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "evidence_asset_ids": nil}); err == nil {
+		t.Fatal("explicit null evidence_asset_ids")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "conflicts": nil}); err == nil {
+		t.Fatal("explicit null conflicts")
+	}
 	_, err = normalizeFactMaps([]map[string]any{
 		{"key": "Material", "value": "1"},
 		{"key": "material", "value": "2"},
@@ -137,6 +152,36 @@ func TestFactsHTTPCreatesImmutableVersions(t *testing.T) {
 	if latestPayload.Facts[0].Value != "不锈钢" {
 		t.Fatalf("%+v", latestPayload.Facts[0].Value)
 	}
+}
+
+func TestFactsHTTPRejectsExplicitNullOnNonNullableFields(t *testing.T) {
+	ps := newProductServer(t)
+	created := ps.createV2(t, "空值事实", map[string]string{"category": "收纳", "price": "12.00"}, 1)
+	path := "/api/v3/products/" + created.Product.ID + "/facts"
+	for _, fact := range []map[string]any{
+		{"key": "material", "value": "钢", "source_type": nil},
+		{"key": "material", "value": "钢", "status": nil},
+		{"key": "material", "value": "钢", "requires_confirmation": nil},
+		{"key": "material", "value": "钢", "evidence_asset_ids": nil},
+		{"key": "material", "value": "钢", "conflicts": nil},
+	} {
+		resp := ps.doJSON(t, http.MethodPut, path, map[string]any{"facts": []map[string]any{fact}})
+		if resp.StatusCode != http.StatusBadRequest {
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("fact %+v got %d %s", fact, resp.StatusCode, raw)
+		}
+		resp.Body.Close()
+	}
+	ok := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"facts": []map[string]any{{"key": "material", "value": "钢"}},
+	})
+	if ok.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(ok.Body)
+		ok.Body.Close()
+		t.Fatalf("absent defaults %d %s", ok.StatusCode, raw)
+	}
+	ok.Body.Close()
 }
 
 func TestProductListUsesSnakeCaseJSON(t *testing.T) {

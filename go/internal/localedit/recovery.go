@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -29,28 +30,13 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	}
 	var summary RecoverySummary
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id FROM local_image_edit_tasks WHERE status IN ('queued', 'running')
-		`)
-		if err != nil {
-			return err
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var tasks []schema.LocalImageEditTasks
+		if err := pgxTx.Where("status IN ?", []string{"queued", "running"}).Find(&tasks).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		for _, id := range ids {
-			outcome, err := recoverOne(ctx, pgxTx, id, true, staleAfter, now)
+		for _, task := range tasks {
+			outcome, err := recoverOne(ctx, pgxTx, task.ID, true, staleAfter, now)
 			if err != nil {
 				return err
 			}

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
@@ -71,10 +69,7 @@ func turnNeedsSync(row turnRow) bool {
 	if row.ID == "" || row.ResumeRequired {
 		return false
 	}
-	if inSet(inFlightTurn, row.Status) {
-		return true
-	}
-	return row.Status == "awaiting_confirmation" && row.LibraryOrgDraftRevisionID == nil && row.WorkflowRunRequestID == nil
+	return inSet(inFlightTurn, row.Status)
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -206,10 +201,6 @@ func decodeCursor(value string, dest any, invalid string) error {
 	return nil
 }
 
-func isNoRows(err error) bool {
-	return errors.Is(err, sqldb.ErrNoRows)
-}
-
 func mapGateway(err error) error {
 	var ge GatewayError
 	if !errors.As(err, &ge) {
@@ -228,4 +219,14 @@ func mapGateway(err error) error {
 	default:
 		return apperr.Unavailable("Agent 服务暂时不可用")
 	}
+}
+
+// gatewayQuestionNotLive 表示 Pi 进程内已经没有这个问题的 waiter，
+// 同一 Turn 无法 resume，只能取消后改走 continuation。
+func gatewayQuestionNotLive(err error) bool {
+	var ge GatewayError
+	if !errors.As(err, &ge) || ge.Status != 409 {
+		return false
+	}
+	return ge.Code == "not_resumable" || ge.Code == "question_expired"
 }

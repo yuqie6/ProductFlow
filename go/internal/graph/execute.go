@@ -12,7 +12,7 @@ import (
 	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"go.uber.org/zap"
@@ -100,7 +100,48 @@ func (e Executor) logger() *zap.Logger {
 }
 
 func (e Executor) executeLoop(ctx context.Context, runID string) error {
+	const capacityWait = 250 * time.Millisecond
+	type nodeOutcome struct{ err error }
+	outcomes := make(chan nodeOutcome, 64)
+	inflight := 0
+	stopClaiming := false
+	defer func() {
+		for inflight > 0 {
+			<-outcomes
+			inflight--
+		}
+	}()
+
+	waitOne := func(block bool) error {
+		if inflight == 0 {
+			return nil
+		}
+		if block {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case item := <-outcomes:
+				inflight--
+				return noteNodeOutcome(item.err, &stopClaiming)
+			}
+		}
+		timer := time.NewTimer(capacityWait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case item := <-outcomes:
+			inflight--
+			return noteNodeOutcome(item.err, &stopClaiming)
+		case <-timer.C:
+			return nil
+		}
+	}
+
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var stop bool
 		err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 			run, err := loadGraphRunByID(ctx, pgxTx, runID)
@@ -115,6 +156,13 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 				stop = true
 				return nil
 			}
+			applied, err := appliedGraphFromSnapshot(run.Snapshot)
+			if err != nil {
+				return err
+			}
+			if err := failBlockedQueuedNodes(ctx, pgxTx, applied, run.NodeRuns); err != nil {
+				return err
+			}
 			done, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
 			if err != nil {
 				return err
@@ -122,13 +170,6 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			if done {
 				stop = true
 				return nil
-			}
-			applied, err := appliedGraphFromSnapshot(run.Snapshot)
-			if err != nil {
-				return err
-			}
-			if err := failBlockedQueuedNodes(ctx, pgxTx, applied, run.NodeRuns); err != nil {
-				return err
 			}
 			return nil
 		})
@@ -156,80 +197,61 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 				ready = append(ready, item)
 			}
 		}
-		if len(ready) == 0 {
-			var stillRunning bool
-			err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-				done, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		if (stopClaiming || len(ready) == 0) && inflight == 0 {
+			return e.finishOrLater(ctx, runID)
+		}
+
+		claimed := 0
+		waitingCapacity := false
+		if !stopClaiming {
+			for _, nodeRun := range ready {
+				ok, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
+				if errors.Is(err, errWaitingCapacity) {
+					waitingCapacity = true
+					continue
+				}
 				if err != nil {
 					return err
 				}
-				if done {
-					return nil
+				if !ok {
+					continue
 				}
-				loaded, err := loadGraphRunByID(ctx, pgxTx, runID)
-				if isMissingGraphRun(err) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				stillRunning = loaded.Status == RunStatusRunning
-				return nil
-			})
-			if err != nil {
+				claimed++
+				inflight++
+				go func(nodeRunID string) {
+					outcomes <- nodeOutcome{err: e.executeClaimedNode(ctx, runID, nodeRunID)}
+				}(nodeRun.ID)
+			}
+		}
+		if inflight > 0 {
+			block := claimed > 0 || !waitingCapacity
+			if err := waitOne(block); err != nil {
 				return err
 			}
-			if stillRunning {
-				return queue.ErrLater
-			}
-			return nil
+			continue
 		}
-		var wg sync.WaitGroup
-		var claimed int
-		errCh := make(chan error, len(ready))
-		var waitingCapacity bool
-		for _, nodeRun := range ready {
-			ok, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
-			if errors.Is(err, errWaitingCapacity) {
-				waitingCapacity = true
-				continue
+		if waitingCapacity {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(capacityWait):
 			}
-			if err != nil {
-				return err
-			}
-			if !ok {
-				continue
-			}
-			claimed++
-			wg.Add(1)
-			go func(nodeRunID string) {
-				defer wg.Done()
-				if err := e.executeClaimedNode(ctx, runID, nodeRunID); err != nil {
-					errCh <- err
-				}
-			}(nodeRun.ID)
+			continue
 		}
-		if claimed == 0 {
-			if waitingCapacity {
-				return queue.ErrLater
-			}
-			return queue.ErrBusy
-		}
-		wg.Wait()
-		close(errCh)
-		for err := range errCh {
-			if isProviderUnknown(err) {
-				continue
-			}
-			if err != nil {
-				return err
-			}
-		}
+		return queue.ErrBusy
 	}
 }
 
+func noteNodeOutcome(err error, stopClaiming *bool) error {
+	if err == nil || isProviderUnknown(err) {
+		return nil
+	}
+	*stopClaiming = true
+	return err
+}
+
 func isMissingGraphRun(err error) bool {
-	return err != nil && (apperr.IsNotFound(err) || errors.Is(err, sqldb.ErrNoRows))
+	return err != nil && (apperr.IsNotFound(err) || errors.Is(err, gorm.ErrRecordNotFound))
 }
 
 func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error) {
@@ -247,23 +269,34 @@ func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error
 
 func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
 	now := time.Now().UTC()
-	for _, item := range nodeRuns {
-		if item.Status != NodeRunQueued {
-			continue
+	for {
+		progressed := false
+		for i := range nodeRuns {
+			item := nodeRuns[i]
+			if item.Status != NodeRunQueued {
+				continue
+			}
+			if processingUpstreamState(graph, nodeRuns, item) != "blocked" {
+				continue
+			}
+			if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+				Where("id = ? AND status = ?", item.ID, "queued").
+				Updates(map[string]any{
+					"status":              "failed",
+					"failure_reason":      "上游处理节点未成功",
+					"finished_at":         now,
+					"active_attempt_id":   nil,
+					"progress_updated_at": now,
+				}).Error; err != nil {
+				return err
+			}
+			nodeRuns[i].Status = NodeRunFailed
+			progressed = true
 		}
-		if processingUpstreamState(graph, nodeRuns, item) != "blocked" {
-			continue
-		}
-		if _, err := pfdb.Exec(ctx, tx, `
-			UPDATE workflow_graph_node_runs SET
-				status = 'failed', failure_reason = '上游处理节点未成功', finished_at = $2,
-				active_attempt_id = NULL, progress_updated_at = $2
-			WHERE id = $1 AND status = 'queued'
-		`, item.ID, now); err != nil {
-			return err
+		if !progressed {
+			return nil
 		}
 	}
-	return nil
 }
 
 func processingUpstreamState(graph AppliedGraph, nodeRuns []graphNodeRunRow, nodeRun graphNodeRunRow) string {
@@ -360,11 +393,38 @@ func releaseAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) er
 	return err
 }
 
+func (e Executor) finishOrLater(ctx context.Context, runID string) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		run, err := loadGraphRunByID(ctx, pgxTx, runID)
+		if isMissingGraphRun(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if run.Status != RunStatusRunning {
+			return nil
+		}
+		applied, err := appliedGraphFromSnapshot(run.Snapshot)
+		if err != nil {
+			return err
+		}
+		if err := failBlockedQueuedNodes(ctx, pgxTx, applied, run.NodeRuns); err != nil {
+			return err
+		}
+		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		return err
+	})
+}
+
 func loadProductIDForGraph(ctx context.Context, tx *gorm.DB, graphID string) (string, error) {
-	var productID string
-	err := pfdb.QueryRow(ctx, tx, `SELECT product_id FROM workflow_graphs WHERE id = $1`, graphID).Scan(&productID)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphs
+	err := tx.WithContext(ctx).Select("product_id").Where("id = ?", graphID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", apperr.NotFound("商品工作流不存在")
 	}
-	return productID, err
+	if err != nil {
+		return "", err
+	}
+	return rec.ProductID, nil
 }

@@ -1,6 +1,6 @@
 # Go Backend Guidelines
 
-Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (`just go-migrate`). AutoMigrate is not used. Command transactions use `tx.WithGorm` and `*gorm.DB`; raw SQL goes through `platform/db` Query/Exec. PostgreSQL pool remains for health checks, recovery entrypoints, and `FOR UPDATE` / advisory locks. Do not use GORM associations to replace existing delete paths.
+Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (`just go-migrate`). AutoMigrate is not used. Command transactions use `tx.WithGorm` and schema models (`Create` / `Updates` / `Take` plus `platform/db` locking clauses). Partial updates use `map[string]any` or `Select`, never a zero-value struct. Do not add `pfdb.Exec`/`Query`/`QueryRow` on command paths. PostgreSQL pool remains for health checks and recovery entrypoints. Do not use GORM associations to replace existing delete paths. See `docs/adr/0012-gorm-command-writes.md`.
 
 ## Layout
 
@@ -20,7 +20,7 @@ Terminal logs are readable lines (time, level, process, message, `key=value`). J
 ## Tests
 
 ```bash
-bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -count=1'
+bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -count=1 -p 1'
 ```
 
-Packages that touch PostgreSQL skip without `DATABASE_URL`. Test harnesses that hit admin routes must set `AdminAccessRequired: true` and overlay `app_settings.admin_access_required=true`.
+Packages that touch PostgreSQL skip without `DATABASE_URL`. `testdb.Pool` connects to `<dbname>_gotest_<package>` (created and migrated on first use), not the live just-dev database. `just go-test` still runs `go test -p 1` so packages do not race `CREATE DATABASE` / first migrate. Test harnesses that hit admin routes must set `AdminAccessRequired: true` and overlay `app_settings.admin_access_required=true`.

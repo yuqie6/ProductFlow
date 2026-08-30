@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -49,10 +48,17 @@ func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeS
 		actor = ActorUser
 	}
 	graphID := clockid.New()
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
-		VALUES ($1, $2, $3, TRUE, $4, $5, NOW(), NOW())
-	`, graphID, productID, title, SchemaVersion, applied.Revision)
+	now := time.Now().UTC()
+	err = tx.WithContext(ctx).Create(&schema.WorkflowGraphs{
+		ID:            graphID,
+		ProductID:     productID,
+		Title:         title,
+		Active:        true,
+		SchemaVersion: SchemaVersion,
+		Revision:      applied.Revision,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -67,7 +73,9 @@ func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeS
 	if err != nil {
 		return CommandResult{}, err
 	}
-	_, err = pfdb.Exec(ctx, tx, `UPDATE workflow_graphs SET updated_at = NOW() WHERE id = $1`, graphID)
+	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphs{}).Where("id = ?", graphID).Updates(map[string]any{
+		"updated_at": time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -106,12 +114,18 @@ func recordOperationGroup(
 		actor = ActorUser
 	}
 	id := clockid.New()
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_operation_groups (
-			id, graph_id, actor_type, history_kind, summary, base_revision, result_revision,
-			operations_json, inverse_operations_json, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-	`, id, graphID, actor, kind, changeSet.Summary, baseRevision, resultRevision, opsJSON, inverseJSON)
+	err = tx.WithContext(ctx).Create(&schema.WorkflowOperationGroups{
+		ID:                    id,
+		GraphID:               graphID,
+		ActorType:             string(actor),
+		Summary:               changeSet.Summary,
+		BaseRevision:          baseRevision,
+		ResultRevision:        resultRevision,
+		OperationsJSON:        string(opsJSON),
+		InverseOperationsJSON: string(inverseJSON),
+		CreatedAt:             time.Now().UTC(),
+		HistoryKind:           string(kind),
+	}).Error
 	if err != nil {
 		return "", err
 	}
@@ -127,9 +141,9 @@ func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
 }
 
 func activeGraphExists(ctx context.Context, tx *gorm.DB, productID string) (bool, error) {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM workflow_graphs WHERE product_id = $1 AND active = TRUE`, productID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphs
+	err := tx.WithContext(ctx).Select("id").Where("product_id = ? AND active = ?", productID, true).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -238,11 +252,16 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 }
 
 func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
+	now := time.Now().UTC()
 	for index, group := range applied.Groups {
-		_, err := pfdb.Exec(ctx, tx, `
-			INSERT INTO workflow_graph_groups (id, graph_id, title, sort_order, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, NOW(), NOW())
-		`, group.ID, graphID, group.Title, index)
+		err := tx.WithContext(ctx).Create(&schema.WorkflowGraphGroups{
+			ID:        group.ID,
+			GraphID:   graphID,
+			Title:     group.Title,
+			SortOrder: index,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}).Error
 		if err != nil {
 			return err
 		}
@@ -252,22 +271,34 @@ func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, appli
 		if err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, tx, `
-			INSERT INTO workflow_graph_nodes (
-				id, graph_id, node_type, title, position_x, position_y,
-				config_json, bound_image_asset_id, group_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-		`, node.ID, graphID, node.NodeType, node.Title, node.PositionX, node.PositionY, configJSON, node.BoundAssetID, node.GroupID)
+		err = tx.WithContext(ctx).Create(&schema.WorkflowGraphNodes{
+			ID:                node.ID,
+			GraphID:           graphID,
+			NodeType:          string(node.NodeType),
+			Title:             node.Title,
+			PositionX:         node.PositionX,
+			PositionY:         node.PositionY,
+			ConfigJSON:        string(configJSON),
+			BoundImageAssetID: node.BoundAssetID,
+			GroupID:           node.GroupID,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		}).Error
 		if err != nil {
 			return err
 		}
 	}
 	for _, edge := range applied.Edges {
-		_, err := pfdb.Exec(ctx, tx, `
-			INSERT INTO workflow_graph_edges (
-				id, graph_id, source_node_id, target_node_id, data_type, role, sort_order, created_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-		`, edge.ID, graphID, edge.SourceNodeID, edge.TargetNodeID, edge.DataType, edge.Role, edge.Order)
+		err := tx.WithContext(ctx).Create(&schema.WorkflowGraphEdges{
+			ID:           edge.ID,
+			GraphID:      graphID,
+			SourceNodeID: edge.SourceNodeID,
+			TargetNodeID: edge.TargetNodeID,
+			DataType:     string(edge.DataType),
+			Role:         string(edge.Role),
+			SortOrder:    edge.Order,
+			CreatedAt:    now,
+		}).Error
 		if err != nil {
 			return err
 		}

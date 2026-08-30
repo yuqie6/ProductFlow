@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -142,6 +143,75 @@ func TestExportWritesManifestLineageAndSha256(t *testing.T) {
 	}
 	if resultAsset["sha256"] != sha {
 		t.Fatalf("result_asset.sha256 %+v want %s", resultAsset["sha256"], sha)
+	}
+}
+
+func TestExportArchiveBytesAreDeterministic(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifactLineage(t, created.Product.ID, assetID)
+	submitted := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{
+		"width": 64, "height": 64, "format": "png", "fit": "contain",
+	})
+	ds.mustStatus(t, submitted, http.StatusAccepted)
+	var job JobResponse
+	ds.decode(t, submitted, &job)
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := Service{DB: ds.db, Media: ds.media}
+	first, err := svc.Export(context.Background(), created.Product.ID, []string{job.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(first.Path) })
+	second, err := svc.Export(context.Background(), created.Product.ID, []string{job.ID}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(second.Path) })
+
+	a, err := os.ReadFile(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(second.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a, b) {
+		t.Fatalf("export zip bytes drifted: %d vs %d", len(a), len(b))
+	}
+
+	zr, err := zip.OpenReader(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	if len(zr.File) < 2 {
+		t.Fatalf("zip entries %d", len(zr.File))
+	}
+	if zr.File[0].Name != "manifest.json" {
+		t.Fatalf("first entry %s want manifest.json", zr.File[0].Name)
+	}
+	for _, f := range zr.File {
+		if f.Method != zip.Deflate {
+			t.Fatalf("%s method %d", f.Name, f.Method)
+		}
+		if f.CreatorVersion>>8 != 3 {
+			t.Fatalf("%s create_system %d want 3", f.Name, f.CreatorVersion>>8)
+		}
+		if f.ExternalAttrs != 0o600<<16 {
+			t.Fatalf("%s external_attr %d want %d", f.Name, f.ExternalAttrs, 0o600<<16)
+		}
+		if len(f.Extra) != 0 {
+			t.Fatalf("%s extra %q", f.Name, f.Extra)
+		}
+		if f.Comment != "" {
+			t.Fatalf("%s comment %q", f.Name, f.Comment)
+		}
 	}
 }
 

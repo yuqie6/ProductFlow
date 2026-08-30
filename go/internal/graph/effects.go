@@ -8,11 +8,10 @@ import (
 	"errors"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -54,176 +53,131 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 		detail = detail[:1000]
 	}
 	now := time.Now().UTC()
-	var runStatus string
-	if err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
+	var run schema.WorkflowGraphRuns
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
 		return err
 	}
-	if runStatus == RunStatusSucceeded || runStatus == RunStatusCancelled {
+	if run.Status == RunStatusSucceeded || run.Status == RunStatusCancelled {
 		return nil
 	}
-	var status string
-	var activeAttempt *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT status, active_attempt_id FROM workflow_graph_node_runs
-		WHERE id = $1 AND graph_run_id = $2 FOR UPDATE
-	`, nodeRunID, runID).Scan(&status, &activeAttempt)
+	var node schema.WorkflowGraphNodeRuns
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+		Where("id = ? AND graph_run_id = ?", nodeRunID, runID).
+		Take(&node).Error
 	if err != nil {
 		return err
 	}
-	if status == NodeRunUnknown {
+	if node.Status == NodeRunUnknown {
 		return nil
 	}
-	if attemptID != nil && activeAttempt != nil && *activeAttempt != "" && *activeAttempt != *attemptID {
+	if attemptID != nil && node.ActiveAttemptID != nil && *node.ActiveAttemptID != "" && *node.ActiveAttemptID != *attemptID {
 		return nil
 	}
 	resolved := attemptID
 	if resolved == nil {
-		resolved = activeAttempt
+		resolved = node.ActiveAttemptID
 	}
 	if resolved != nil && *resolved != "" {
-		_, _ = pfdb.Exec(ctx, tx, `
-			UPDATE workflow_graph_provider_effects SET
-				effect_result = 'unknown', reconciliation_state = 'unknown', detail = $2, updated_at = $3
-			WHERE node_run_id = $1 AND attempt_id = $4
-			  AND effect_result NOT IN ('applied', 'failed')
-		`, nodeRunID, detail, now, *resolved)
+		_ = tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).
+			Where("node_run_id = ? AND attempt_id = ? AND effect_result NOT IN ?", nodeRunID, *resolved, []string{"applied", "failed"}).
+			Updates(map[string]any{
+				"effect_result":        "unknown",
+				"reconciliation_state": "unknown",
+				"detail":               detail,
+				"updated_at":           now,
+			}).Error
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_node_runs SET
-			status = 'unknown', failure_reason = $2, finished_at = $3,
-			progress_phase = 'unknown_provider_effect', progress_updated_at = $3,
-			active_attempt_id = NULL
-		WHERE id = $1
-	`, nodeRunID, detail, now)
-	return err
-}
-
-func markNodeFailed(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, attemptID *string, detail string) error {
-	if len(detail) > 1000 {
-		detail = detail[:1000]
-	}
-	now := time.Now().UTC()
-	var runStatus string
-	if err := pfdb.QueryRow(ctx, tx, `SELECT status FROM workflow_graph_runs WHERE id = $1 FOR UPDATE`, runID).Scan(&runStatus); err != nil {
-		return err
-	}
-	if runStatus == RunStatusSucceeded || runStatus == RunStatusCancelled {
-		return nil
-	}
-	var status string
-	var activeAttempt *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT status, active_attempt_id FROM workflow_graph_node_runs
-		WHERE id = $1 AND graph_run_id = $2 FOR UPDATE
-	`, nodeRunID, runID).Scan(&status, &activeAttempt)
-	if err != nil {
-		return err
-	}
-	if status == NodeRunFailed || status == NodeRunUnknown || status == NodeRunSucceeded {
-		return nil
-	}
-	if attemptID != nil && activeAttempt != nil && *activeAttempt != "" && *activeAttempt != *attemptID {
-		return nil
-	}
-	resolved := attemptID
-	if resolved == nil {
-		resolved = activeAttempt
-	}
-	if resolved != nil && *resolved != "" {
-		if _, err := pfdb.Exec(ctx, tx, `
-			UPDATE workflow_graph_provider_effects SET
-				effect_result = 'failed', reconciliation_state = 'not_applied', detail = $2, updated_at = $3
-			WHERE node_run_id = $1 AND attempt_id = $4
-			  AND effect_result NOT IN ('applied', 'unknown')
-		`, nodeRunID, detail, now, *resolved); err != nil {
-			return err
-		}
-	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_node_runs SET
-			status = 'failed', failure_reason = $2, finished_at = $3,
-			progress_phase = 'provider_result_received', progress_updated_at = $3,
-			active_attempt_id = NULL
-		WHERE id = $1
-	`, nodeRunID, detail, now)
-	return err
+	return tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ?", nodeRunID).Updates(map[string]any{
+		"status":              "unknown",
+		"failure_reason":      detail,
+		"finished_at":         now,
+		"progress_phase":      "unknown_provider_effect",
+		"progress_updated_at": now,
+		"active_attempt_id":   nil,
+	}).Error
 }
 
 func advanceNodePhase(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, phase string) (bool, error) {
 	now := time.Now().UTC()
-	n, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_node_runs SET progress_phase = $3, progress_updated_at = $4
-		WHERE id = $1 AND active_attempt_id = $2 AND status = 'running'
-	`, nodeRunID, attemptID, phase, now)
-	if err != nil {
-		return false, err
+	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+		Where("id = ? AND active_attempt_id = ? AND status = ?", nodeRunID, attemptID, "running").
+		Updates(map[string]any{
+			"progress_phase":      phase,
+			"progress_updated_at": now,
+		})
+	if res.Error != nil {
+		return false, res.Error
 	}
-	return n == 1, nil
+	return res.RowsAffected == 1, nil
 }
 
 func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, requestHash, providerName string, requestJSON []byte) (bool, error) {
-	var status string
-	var active *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT status, active_attempt_id FROM workflow_graph_node_runs WHERE id = $1 FOR UPDATE
-	`, nodeRunID).Scan(&status, &active)
+	var node schema.WorkflowGraphNodeRuns
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error
 	if err != nil {
 		return false, err
 	}
-	if status != NodeRunRunning || active == nil || *active != attemptID {
+	if node.Status != NodeRunRunning || node.ActiveAttemptID == nil || *node.ActiveAttemptID != attemptID {
 		return false, nil
 	}
-	var existingID *string
-	var existingHash, existingProvider, existingKey, existingResult string
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT id, request_hash, provider_name, operation_key, effect_result
-		FROM workflow_graph_provider_effects WHERE node_run_id = $1 FOR UPDATE
-	`, nodeRunID).Scan(&existingID, &existingHash, &existingProvider, &existingKey, &existingResult)
+	var existing schema.WorkflowGraphProviderEffects
+	err = tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("node_run_id = ?", nodeRunID).Take(&existing).Error
 	opKey := "graph-node-run:" + nodeRunID
-	if errors.Is(err, sqldb.ErrNoRows) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		id := clockid.New()
 		now := time.Now().UTC()
-		_, err = pfdb.Exec(ctx, tx, `
-			INSERT INTO workflow_graph_provider_effects (
-				id, node_run_id, operation_key, effect_kind, request_hash, provider_name,
-				attempt_id, effect_result, reconciliation_state, request_json, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 'not_requested', $8, $9, $9)
-		`, id, nodeRunID, opKey, graphProviderEffectKind, requestHash, providerName, attemptID, requestJSON, now)
+		req := string(requestJSON)
+		err = tx.WithContext(ctx).Create(&schema.WorkflowGraphProviderEffects{
+			ID:                  id,
+			NodeRunID:           nodeRunID,
+			OperationKey:        opKey,
+			EffectKind:          graphProviderEffectKind,
+			RequestHash:         requestHash,
+			ProviderName:        providerName,
+			AttemptID:           attemptID,
+			EffectResult:        "pending",
+			ReconciliationState: "not_requested",
+			RequestJSON:         &req,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}).Error
 		return err == nil, err
 	}
 	if err != nil {
 		return false, err
 	}
-	if existingKey != opKey || existingHash != requestHash || existingProvider != providerName {
+	if existing.OperationKey != opKey || existing.RequestHash != requestHash || existing.ProviderName != providerName {
 		return false, errors.New("图运行 provider effect operation identity 与请求不一致")
 	}
-	if existingResult != "failed" {
+	if existing.EffectResult != "failed" {
 		return false, nil
 	}
 	now := time.Now().UTC()
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_provider_effects SET
-			attempt_id = $2, effect_result = 'pending', reconciliation_state = 'not_requested',
-			provider_response_id = NULL, provider_status = NULL, request_json = $3,
-			result_json = NULL, detail = NULL, updated_at = $4
-		WHERE id = $1
-	`, *existingID, attemptID, requestJSON, now)
+	req := string(requestJSON)
+	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).Where("id = ?", existing.ID).Updates(map[string]any{
+		"attempt_id":           attemptID,
+		"effect_result":        "pending",
+		"reconciliation_state": "not_requested",
+		"provider_response_id": nil,
+		"provider_status":      nil,
+		"request_json":         req,
+		"result_json":          nil,
+		"detail":               nil,
+		"updated_at":           now,
+	}).Error
 	return err == nil, err
 }
 
 func recordProviderEffectResult(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
-	var effectResult, storedAttempt string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT effect_result, attempt_id FROM workflow_graph_provider_effects
-		WHERE node_run_id = $1 FOR UPDATE
-	`, nodeRunID).Scan(&effectResult, &storedAttempt)
-	if err != nil || storedAttempt != attemptID {
+	var existing schema.WorkflowGraphProviderEffects
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("node_run_id = ?", nodeRunID).Take(&existing).Error
+	if err != nil || existing.AttemptID != attemptID {
 		return false, err
 	}
-	if effectResult == "failed" {
+	if existing.EffectResult == "failed" {
 		return true, nil
 	}
-	if effectResult == "unknown" {
+	if existing.EffectResult == "unknown" {
 		return false, nil
 	}
 	raw, _ := json.Marshal(resultJSON)
@@ -235,12 +189,15 @@ func recordProviderEffectResult(ctx context.Context, tx *gorm.DB, nodeRunID, att
 	if v, ok := resultJSON["provider_status"].(string); ok {
 		providerStatus = &v
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_provider_effects SET
-			effect_result = 'applied', reconciliation_state = 'applied',
-			provider_response_id = $2, provider_status = $3, result_json = $4,
-			detail = NULL, updated_at = $5
-		WHERE node_run_id = $1
-	`, nodeRunID, responseID, providerStatus, raw, now)
+	rawStr := string(raw)
+	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).Where("node_run_id = ?", nodeRunID).Updates(map[string]any{
+		"effect_result":        "applied",
+		"reconciliation_state": "applied",
+		"provider_response_id": responseID,
+		"provider_status":      providerStatus,
+		"result_json":          rawStr,
+		"detail":               nil,
+		"updated_at":           now,
+	}).Error
 	return err == nil, err
 }

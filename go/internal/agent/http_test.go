@@ -79,6 +79,53 @@ func (mockGateway) AnswerQuestion(conversationID, turnID, questionID string, ans
 	return mockGateway{}.GetTurn(conversationID, turnID, taskID)
 }
 
+type questionGateway struct {
+	mockGateway
+	answerErr       error
+	resumeErr       error
+	startErr        error
+	calls           []string
+	startCount      int
+	lastStartAssets []string
+}
+
+func (g *questionGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
+	g.calls = append(g.calls, "answer:"+turnID)
+	if g.answerErr != nil {
+		return TurnState{}, g.answerErr
+	}
+	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	st.Status = "queued"
+	st.Question = nil
+	return st, nil
+}
+
+func (g *questionGateway) ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
+	g.calls = append(g.calls, "resume:"+turnID)
+	if g.resumeErr != nil {
+		return TurnState{}, g.resumeErr
+	}
+	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	st.Status = "running"
+	st.Question = nil
+	return st, nil
+}
+
+func (g *questionGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
+	g.calls = append(g.calls, "cancel:"+turnID)
+	return mockGateway{}.CancelTurn(conversationID, turnID, taskID)
+}
+
+func (g *questionGateway) StartTurn(conversationID string, taskID *string, inputText string, assetIDs []string, idempotencyKey string, pageContext any) (TurnState, error) {
+	g.calls = append(g.calls, "start")
+	g.startCount++
+	g.lastStartAssets = append([]string(nil), assetIDs...)
+	if g.startErr != nil {
+		return TurnState{}, g.startErr
+	}
+	return g.mockGateway.StartTurn(conversationID, taskID, inputText, assetIDs, idempotencyKey, pageContext)
+}
+
 type agentServer struct {
 	pool    *pgxpool.Pool
 	db      *gorm.DB
@@ -192,6 +239,16 @@ func (as *agentServer) mustStatus(t *testing.T, resp *http.Response, want int) {
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		t.Fatalf("status %d want %d %s", resp.StatusCode, want, raw)
+	}
+}
+
+func (as *agentServer) mustDetail(t *testing.T, resp *http.Response, wantStatus int, wantDetail string) {
+	t.Helper()
+	as.mustStatus(t, resp, wantStatus)
+	var body map[string]any
+	as.decode(t, resp, &body)
+	if body["detail"] != wantDetail {
+		t.Fatalf("detail %v want %s", body["detail"], wantDetail)
 	}
 }
 
@@ -471,6 +528,320 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	}
 	if dispatchCount != 1 {
 		t.Fatalf("dispatch rows %d", dispatchCount)
+	}
+}
+
+func (as *agentServer) submitAndParkQuestion(t *testing.T, questionID string) (convID, turnID, harnessID string) {
+	t.Helper()
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID = sess.Conversations[0].ConversationID
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "可以帮我创建商品工作流吗", "idempotency_key": clockid.New(),
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	if submitted.Turn.HarnessTurnID == nil {
+		t.Fatal("missing harness turn")
+	}
+	turnID = submitted.Turn.ID
+	harnessID = *submitted.Turn.HarnessTurnID
+	question := `{"id":"` + questionID + `","header":"商品名","question":"这个商品叫什么名字？","options":[{"label":"还没想好"},{"label":"稍后再说"}]}`
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET status = 'requires_input', question_json = $2::json, updated_at = NOW()
+		WHERE id = $1
+	`, turnID, question); err != nil {
+		t.Fatal(err)
+	}
+	return convID, turnID, harnessID
+}
+
+func (as *agentServer) conversationTurnCount(t *testing.T, convID string) int {
+	t.Helper()
+	var n int
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM agent_turn_projections WHERE conversation_id = $1
+	`, convID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAnswerQuestionResumesLiveWaiter(t *testing.T) {
+	gw := &questionGateway{}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-1")
+	gw.calls = nil
+	gw.startCount = 0
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-name-1/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusOK)
+	var body QuestionAnswerResponse
+	as.decode(t, resp, &body)
+	if body.AnsweredTurn.ID != turnID || body.ContinuationTurn.ID != turnID {
+		t.Fatalf("expected same-turn resume, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
+	}
+	if body.AnsweredTurn.Status != "running" || body.AnsweredTurn.ContinuationTurnID != nil {
+		t.Fatalf("answered %+v", body.AnsweredTurn)
+	}
+	if len(body.AnsweredTurn.Question) > 0 && string(body.AnsweredTurn.Question) != "null" {
+		t.Fatalf("question still set %s", body.AnsweredTurn.Question)
+	}
+	if as.conversationTurnCount(t, convID) != 1 {
+		t.Fatalf("created a continuation turn")
+	}
+	if gw.startCount != 0 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v want answer+resume %s", gw.calls, harnessID)
+	}
+}
+
+func TestAnswerQuestionFallsBackWhenWaiterGone(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-2")
+	gw.calls = nil
+	gw.startCount = 0
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-name-2/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusOK)
+	var body QuestionAnswerResponse
+	as.decode(t, resp, &body)
+	if body.ContinuationTurn.ID == turnID || body.ContinuationTurn.HarnessTurnID == nil {
+		t.Fatalf("continuation %+v", body.ContinuationTurn)
+	}
+	if body.AnsweredTurn.Status != "canceled" {
+		t.Fatalf("original status %s", body.AnsweredTurn.Status)
+	}
+	if as.conversationTurnCount(t, convID) != 2 {
+		t.Fatalf("turn count %d", as.conversationTurnCount(t, convID))
+	}
+	if gw.startCount != 1 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	foundCancel := false
+	for _, call := range gw.calls {
+		if call == "cancel:"+harnessID {
+			foundCancel = true
+		}
+	}
+	if !foundCancel {
+		t.Fatalf("expected cancel of original waiter %v", gw.calls)
+	}
+}
+
+func TestAnswerQuestionTaskBoundContinuationCopiesAssetsAndCancelsWaiter(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
+	as := newAgentServer(t, gw, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	createdTask := as.doJSON(t, http.MethodPost, "/api/v2/agent-tasks", map[string]any{
+		"session_id": sess.ID, "title": "提问续跑", "goal": "回答商品名后继续", "conversation_id": convID,
+	})
+	as.mustStatus(t, createdTask, http.StatusCreated)
+	var task TaskResponse
+	as.decode(t, createdTask, &task)
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "可以帮我创建商品工作流吗", "idempotency_key": clockid.New(), "task_id": task.ID,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	if submitted.Turn.HarnessTurnID == nil || submitted.Turn.TaskID == nil {
+		t.Fatal("task-bound turn missing harness or task")
+	}
+	turnID := submitted.Turn.ID
+	harnessID := *submitted.Turn.HarnessTurnID
+	questionID := "question-task-bound"
+	question := `{"id":"` + questionID + `","header":"商品名","question":"这个商品叫什么名字？","options":[{"label":"还没想好"},{"label":"稍后再说"}]}`
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET status = 'requires_input', question_json = $2::json, input_asset_ids_json = $3::json, updated_at = NOW()
+		WHERE id = $1
+	`, turnID, question, `["asset-copy-1"]`); err != nil {
+		t.Fatal(err)
+	}
+	gw.calls = nil
+	gw.startCount = 0
+	gw.lastStartAssets = nil
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/"+questionID+"/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusOK)
+	var body QuestionAnswerResponse
+	as.decode(t, resp, &body)
+	if body.ContinuationTurn.ID == turnID {
+		t.Fatal("task-bound dead waiter must create a continuation")
+	}
+	if body.AnsweredTurn.Status != "canceled" {
+		t.Fatalf("original status %s", body.AnsweredTurn.Status)
+	}
+	if as.conversationTurnCount(t, convID) != 2 {
+		t.Fatalf("turn count %d", as.conversationTurnCount(t, convID))
+	}
+	if gw.startCount != 1 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	foundCancel := false
+	for _, call := range gw.calls {
+		if call == "cancel:"+harnessID {
+			foundCancel = true
+		}
+	}
+	if !foundCancel {
+		t.Fatalf("expected cancel of original waiter %v", gw.calls)
+	}
+	if len(body.ContinuationTurn.InputAssetIDs) != 1 || body.ContinuationTurn.InputAssetIDs[0] != "asset-copy-1" {
+		t.Fatalf("continuation assets %+v", body.ContinuationTurn.InputAssetIDs)
+	}
+	if len(gw.lastStartAssets) != 1 || gw.lastStartAssets[0] != "asset-copy-1" {
+		t.Fatalf("StartTurn assets %+v", gw.lastStartAssets)
+	}
+	if body.ContinuationTurn.TaskID == nil || *body.ContinuationTurn.TaskID != task.ID {
+		t.Fatalf("continuation task %+v", body.ContinuationTurn.TaskID)
+	}
+}
+
+func TestAnswerQuestionUnavailableDoesNotCreateContinuation(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 503, Code: "unavailable", Detail: "Agent 服务暂时不可用"}}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, _ := as.submitAndParkQuestion(t, "question-name-3")
+	gw.startCount = 0
+
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-name-3/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusServiceUnavailable)
+	resp.Body.Close()
+	if as.conversationTurnCount(t, convID) != 1 {
+		t.Fatalf("continuation created during 503")
+	}
+	var status string
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "requires_input" {
+		t.Fatalf("status %s", status)
+	}
+}
+
+func TestSyncTurnResumesParentInsteadOfStartingOrphanContinuation(t *testing.T) {
+	gw := &questionGateway{}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-4")
+	childID := clockid.New()
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO agent_turn_projections (
+			id, conversation_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
+			status, resume_required, tool_steps_json, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, '[]', 'queued', false, '[]', NOW(), NOW()
+		)
+	`, childID, convID, "question-continuation-orphan", strings.Repeat("a", 64), "继续当前 Agent 任务。用户回答：筋膜枪。"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET question_answer_json = $2::json, continuation_turn_id = $3, updated_at = NOW()
+		WHERE id = $1
+	`, turnID, `{"text":"筋膜枪"}`, childID); err != nil {
+		t.Fatal(err)
+	}
+	gw.calls = nil
+	gw.startCount = 0
+	if err := as.svc.SyncTurn(context.Background(), childID); err != nil {
+		t.Fatal(err)
+	}
+	if gw.startCount != 0 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v", gw.calls)
+	}
+	var parentStatus, childStatus string
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&parentStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, childID).Scan(&childStatus); err != nil {
+		t.Fatal(err)
+	}
+	if parentStatus != "running" {
+		t.Fatalf("parent status %s", parentStatus)
+	}
+	if childStatus != "canceled" {
+		t.Fatalf("child status %s", childStatus)
+	}
+}
+
+func TestSyncTurnCancelsBoundOrphanContinuation(t *testing.T) {
+	gw := &questionGateway{}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-5")
+	childID := clockid.New()
+	childHarness := "ht-orphan-" + clockid.New()
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO agent_turn_projections (
+			id, conversation_id, harness_turn_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
+			status, resume_required, tool_steps_json, created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, '[]', 'queued', false, '[]', NOW(), NOW()
+		)
+	`, childID, convID, childHarness, "question-continuation-bound", strings.Repeat("b", 64), "继续当前 Agent 任务。用户回答：筋膜枪。"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET question_answer_json = $2::json, continuation_turn_id = $3, updated_at = NOW()
+		WHERE id = $1
+	`, turnID, `{"text":"筋膜枪"}`, childID); err != nil {
+		t.Fatal(err)
+	}
+	gw.calls = nil
+	gw.startCount = 0
+	if err := as.svc.SyncTurn(context.Background(), childID); err != nil {
+		t.Fatal(err)
+	}
+	if gw.startCount != 0 {
+		t.Fatalf("StartTurn calls %d", gw.startCount)
+	}
+	foundCancelChild := false
+	if len(gw.calls) < 3 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v", gw.calls)
+	}
+	for _, call := range gw.calls {
+		if call == "cancel:"+childHarness {
+			foundCancelChild = true
+		}
+	}
+	if !foundCancelChild {
+		t.Fatalf("expected cancel of bound continuation %v", gw.calls)
+	}
+	var parentStatus, childStatus string
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&parentStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, childID).Scan(&childStatus); err != nil {
+		t.Fatal(err)
+	}
+	if parentStatus != "running" {
+		t.Fatalf("parent status %s", parentStatus)
+	}
+	if childStatus != "canceled" {
+		t.Fatalf("child status %s", childStatus)
 	}
 }
 
@@ -810,11 +1181,15 @@ func TestInternalProductIntakeReconcileAcceptsTaskID(t *testing.T) {
 	var sess SessionResponse
 	as.decode(t, session, &sess)
 	convID := sess.Conversations[0].ConversationID
-	selection := map[string]any{"schema_version": 1, "image_types": []any{}}
+	selection := map[string]any{
+		"schema_version": 1,
+		"image_types":    []any{map[string]any{"key": "hero", "quantity": 1, "order": 0}},
+	}
+	refIDs := []string{clockid.New()}
 
 	nullAuth := http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
 	nullResp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake/reconcile", map[string]any{
-		"selection": selection, "reference_asset_ids": []string{}, "task_id": nil,
+		"selection": selection, "reference_asset_ids": refIDs, "task_id": nil,
 	}, nullAuth)
 	as.mustStatus(t, nullResp, http.StatusOK)
 	var nullOut ReconcileResponse
@@ -825,13 +1200,93 @@ func TestInternalProductIntakeReconcileAcceptsTaskID(t *testing.T) {
 
 	strAuth := http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
 	strResp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/product-intake/reconcile", map[string]any{
-		"selection": selection, "reference_asset_ids": []string{}, "task_id": clockid.New(),
+		"selection": selection, "reference_asset_ids": refIDs, "task_id": clockid.New(),
 	}, strAuth)
 	as.mustStatus(t, strResp, http.StatusOK)
 	var strOut ReconcileResponse
 	as.decode(t, strResp, &strOut)
 	if strOut.State != "not_applied" {
 		t.Fatalf("string task_id state %s", strOut.State)
+	}
+}
+
+func TestInternalProductIntakeRejectsInvalidBody(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	validSelection := map[string]any{
+		"schema_version": 1,
+		"image_types":    []any{map[string]any{"key": "hero", "quantity": 1, "order": 0}},
+	}
+	intakePath := "/api/internal/v1/agent-conversations/" + convID + "/product-intake"
+	reconcilePath := intakePath + "/reconcile"
+	auth := func() http.Header {
+		return http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
+	}
+
+	emptyRefs := as.doJSONAuth(t, http.MethodPost, reconcilePath, map[string]any{
+		"selection": validSelection, "reference_asset_ids": []string{},
+	}, auth())
+	as.mustDetail(t, emptyRefs, http.StatusBadRequest, "至少选择一张参考图")
+
+	emptyApply := as.doJSONAuth(t, http.MethodPost, intakePath, map[string]any{
+		"selection": validSelection, "reference_asset_ids": []string{},
+	}, auth())
+	as.mustDetail(t, emptyApply, http.StatusBadRequest, "至少选择一张参考图")
+
+	invalidSel := as.doJSONAuth(t, http.MethodPost, reconcilePath, map[string]any{
+		"selection": map[string]any{"schema_version": 1, "image_types": []any{}}, "reference_asset_ids": []string{clockid.New()},
+	}, auth())
+	as.mustDetail(t, invalidSel, http.StatusBadRequest, "图片类型选择不符合 AgentProductSelectionV1")
+}
+
+func TestInternalAssetMoveReconcileRejectsInvalidBody(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	path := "/api/internal/v1/agent-conversations/" + convID + "/asset-moves/reconcile"
+	auth := func() http.Header {
+		return http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
+	}
+
+	emptyObj := as.doJSONAuth(t, http.MethodPost, path, map[string]any{}, auth())
+	as.mustDetail(t, emptyObj, http.StatusBadRequest, "单次必须移动 1 到 100 张图片")
+
+	emptyMoves := as.doJSONAuth(t, http.MethodPost, path, map[string]any{"moves": []any{}}, auth())
+	as.mustDetail(t, emptyMoves, http.StatusBadRequest, "单次必须移动 1 到 100 张图片")
+
+	valid := as.doJSONAuth(t, http.MethodPost, path, map[string]any{
+		"moves": []any{map[string]any{"asset_id": clockid.New(), "expected_folder_id": nil}},
+	}, auth())
+	as.mustStatus(t, valid, http.StatusOK)
+	var out ReconcileResponse
+	as.decode(t, valid, &out)
+	if out.State != "not_applied" {
+		t.Fatalf("valid-shaped unknown mutation state %s", out.State)
+	}
+
+	unknownConv := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+clockid.New()+"/asset-moves/reconcile", map[string]any{
+		"moves": []any{map[string]any{"asset_id": clockid.New()}},
+	}, auth())
+	if unknownConv.StatusCode != http.StatusOK && unknownConv.StatusCode != http.StatusNotFound && unknownConv.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(unknownConv.Body)
+		unknownConv.Body.Close()
+		t.Fatalf("unknown conversation status %d %s", unknownConv.StatusCode, raw)
+	}
+	if unknownConv.StatusCode == http.StatusOK {
+		var unknownOut ReconcileResponse
+		as.decode(t, unknownConv, &unknownOut)
+		if unknownOut.State != "not_applied" {
+			t.Fatalf("unknown conversation state %s", unknownOut.State)
+		}
+	} else {
+		unknownConv.Body.Close()
 	}
 }
 

@@ -3,10 +3,12 @@ package delivery
 import (
 	"archive/zip"
 	"bytes"
+	"compress/flate"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,7 +19,7 @@ import (
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
@@ -48,17 +50,23 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	}
 
 	type fileItem struct {
-		name string
-		data []byte
+		name             string
+		rel              string
+		expectedByteSize int
+		expectedMIME     string
+		expectedWidth    int
+		expectedHeight   int
+		expectedSHA      string
 	}
 	var files []fileItem
 	var filename string
 	var manifest map[string]any
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var productName string
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT name FROM products WHERE id = $1`, productID).Scan(&productName); err != nil {
+		var productRow schema.Products
+		if err := pgxTx.Where("id = ?", productID).Take(&productRow).Error; err != nil {
 			return apperr.NotFound("商品不存在")
 		}
+		productName := productRow.Name
 		safeProduct := safeName(productName, "product")
 		missingItems := []map[string]any{}
 		successItems := []map[string]any{}
@@ -96,7 +104,7 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if source.ProductID != productID {
 				return apperr.Conflict("交付图原图不属于当前商品")
 			}
-			data, meta, resultSHA, err := readVerifiedResultMedia(ctx, pgxTx, s.Media.Files, asset)
+			_, meta, resultSHA, err := readVerifiedResultMedia(ctx, pgxTx, s.Media.Files, asset)
 			if err != nil {
 				return err
 			}
@@ -114,7 +122,11 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if err != nil {
 				return err
 			}
-			files = append(files, fileItem{name: name, data: data})
+			files = append(files, fileItem{
+				name: name, rel: asset.StoragePath, expectedByteSize: meta.ByteSize,
+				expectedMIME: meta.MIMEType, expectedWidth: meta.Width, expectedHeight: meta.Height,
+				expectedSHA: meta.SHA256,
+			})
 			finishedAt = append(finishedAt, *row.FinishedAt)
 			var spec any
 			_ = json.Unmarshal(row.SpecJSON, &spec)
@@ -175,20 +187,28 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		return ExportArchive{}, err
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	epoch := time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+	packed := make([]struct {
+		name string
+		data []byte
+	}, 0, len(files))
 	for _, f := range files {
-		header := &zip.FileHeader{Name: f.name, Method: zip.Deflate}
-		header.SetModTime(epoch)
-		w, err := zw.CreateHeader(header)
+		data, err := readExactBoundedFile(s.Media.Files, f.rel, f.expectedByteSize)
 		if err != nil {
-			return ExportArchive{}, err
+			return ExportArchive{}, apperr.Conflict("交付图结果文件在打包时发生变化")
 		}
-		if _, err := w.Write(f.data); err != nil {
-			return ExportArchive{}, err
+		meta, err := media.Inspect(data, f.expectedMIME)
+		if err != nil {
+			return ExportArchive{}, apperr.Conflict("交付图结果文件在打包时发生变化")
 		}
+		if meta.MIMEType != f.expectedMIME || meta.ByteSize != f.expectedByteSize || meta.Width != f.expectedWidth || meta.Height != f.expectedHeight || meta.SHA256 != f.expectedSHA {
+			return ExportArchive{}, apperr.Conflict("交付图结果在打包时发生变化")
+		}
+		packed = append(packed, struct {
+			name string
+			data []byte
+		}{name: f.name, data: data})
 	}
+
 	if manifest == nil {
 		manifest = map[string]any{}
 	}
@@ -197,14 +217,19 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		return ExportArchive{}, err
 	}
 	manifestBytes = append(manifestBytes, '\n')
-	mh := &zip.FileHeader{Name: "manifest.json", Method: zip.Deflate}
-	mh.SetModTime(epoch)
-	mw, err := zw.CreateHeader(mh)
-	if err != nil {
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, 9)
+	})
+	if err := writeZipEntry(zw, "manifest.json", manifestBytes); err != nil {
 		return ExportArchive{}, err
 	}
-	if _, err := mw.Write(manifestBytes); err != nil {
-		return ExportArchive{}, err
+	for _, f := range packed {
+		if err := writeZipEntry(zw, f.name, f.data); err != nil {
+			return ExportArchive{}, err
+		}
 	}
 	if err := zw.Close(); err != nil {
 		return ExportArchive{}, err
@@ -225,36 +250,78 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	return ExportArchive{Path: tmp.Name(), Filename: filename}, nil
 }
 
+func writeZipEntry(zw *zip.Writer, name string, data []byte) error {
+	var compressed bytes.Buffer
+	fw, err := flate.NewWriter(&compressed, 9)
+	if err != nil {
+		return err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return err
+	}
+	if err := fw.Close(); err != nil {
+		return err
+	}
+	header := &zip.FileHeader{
+		Name:               name,
+		Method:             zip.Deflate,
+		CreatorVersion:     (3 << 8) | 20,
+		ReaderVersion:      20,
+		ExternalAttrs:      0o600 << 16,
+		ModifiedTime:       0,
+		ModifiedDate:       0x0021, // 1980-01-01
+		CRC32:              crc32.ChecksumIEEE(data),
+		CompressedSize64:   uint64(compressed.Len()),
+		UncompressedSize64: uint64(len(data)),
+	}
+	if zipNameNeedsUTF8(name) {
+		header.Flags |= 0x800
+	}
+	w, err := zw.CreateRaw(header)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(compressed.Bytes())
+	return err
+}
+
+func zipNameNeedsUTF8(name string) bool {
+	for i := 0; i < len(name); i++ {
+		if name[i] >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+
 func exportImageFilename(productName, imageType string, index, width, height int, ext string) string {
 	return fmt.Sprintf("%s-%s-%02d-%dx%d%s", productName, imageType, index, width, height, ext)
 }
 
 func sourceLineage(ctx context.Context, tx *gorm.DB, sourceAssetID, productID string) map[string]any {
-	var graphID *string
-	var graphRev *int
-	var nodeRunID *string
-	var runID *string
-	var runRev *int
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.graph_id, a.graph_revision, a.node_run_id, r.id, r.graph_revision
-		FROM workflow_graph_artifacts a
-		JOIN workflow_graphs g ON g.id = a.graph_id
-		LEFT JOIN workflow_graph_node_runs nr ON nr.id = a.node_run_id
-		LEFT JOIN workflow_graph_runs r ON r.id = nr.graph_run_id
-		WHERE a.product_image_asset_id = $1 AND a.artifact_type = 'image' AND g.product_id = $2
-		ORDER BY a.created_at DESC, a.id DESC
-		LIMIT 1
-	`, sourceAssetID, productID).Scan(&graphID, &graphRev, &nodeRunID, &runID, &runRev)
+	var art schema.WorkflowGraphArtifacts
+	err := tx.WithContext(ctx).Model(&schema.WorkflowGraphArtifacts{}).
+		Select("workflow_graph_artifacts.*").
+		Joins("JOIN workflow_graphs g ON g.id = workflow_graph_artifacts.graph_id").
+		Where("workflow_graph_artifacts.product_image_asset_id = ? AND workflow_graph_artifacts.artifact_type = ? AND g.product_id = ?", sourceAssetID, "image", productID).
+		Order("workflow_graph_artifacts.created_at DESC, workflow_graph_artifacts.id DESC").
+		Take(&art).Error
 	if err != nil {
 		return map[string]any{"graph": nil, "run": nil, "node_run_id": nil}
 	}
 	var graph any
-	if graphID != nil {
-		graph = map[string]any{"id": *graphID, "revision": graphRev}
-	}
+	graph = map[string]any{"id": art.GraphID, "revision": art.GraphRevision}
+	var nodeRunID *string
 	var run any
-	if runID != nil {
-		run = map[string]any{"id": *runID, "revision": runRev}
+	if art.NodeRunID != nil {
+		nodeRunID = art.NodeRunID
+		var nodeRun schema.WorkflowGraphNodeRuns
+		if err := tx.Where("id = ?", *art.NodeRunID).Take(&nodeRun).Error; err == nil {
+			var graphRun schema.WorkflowGraphRuns
+			if err := tx.Where("id = ?", nodeRun.GraphRunID).Take(&graphRun).Error; err == nil {
+				run = map[string]any{"id": graphRun.ID, "revision": graphRun.GraphRevision}
+			}
+		}
 	}
 	return map[string]any{"graph": graph, "run": run, "node_run_id": nodeRunID}
 }
@@ -366,16 +433,4 @@ func safeName(value, fallback string) string {
 		out = string(runes[:80])
 	}
 	return out
-}
-
-func itoaCount(n int) string {
-	if n <= 1 {
-		return "1"
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	return s
 }

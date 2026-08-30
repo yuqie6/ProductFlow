@@ -5,10 +5,9 @@ import (
 	"errors"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -34,30 +33,16 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	}
 	var summary RecoverySummary
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id FROM workflow_graph_runs WHERE status = 'running'
-		`)
-		if err != nil {
-			return err
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var running []schema.WorkflowGraphRuns
+		if err := pgxTx.WithContext(ctx).Select("id").Where("status = ?", "running").Find(&running).Error; err != nil {
 			return err
 		}
 		cutoff := time.Now().UTC().Add(-staleAfter)
-		for _, runID := range ids {
+		for _, item := range running {
+			runID := item.ID
 			run, err := loadGraphRunByIDLocked(ctx, pgxTx, runID)
 			if err != nil {
-				if errors.Is(err, sqldb.ErrNoRows) {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
 					continue
 				}
 				return err
@@ -98,20 +83,23 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			}
 			markedUnknown := false
 			requeued := false
+			now := time.Now().UTC()
 			for _, node := range stale {
 				if nodeSafeToRequeue(node) {
-					if _, err := pfdb.Exec(ctx, pgxTx, `
-						UPDATE workflow_graph_node_runs SET
-							status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
-							finished_at = NULL, progress_phase = 'requeued_after_idle', progress_updated_at = NOW()
-						WHERE id = $1 AND status = 'running'
-					`, node.ID); err != nil {
+					if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+						Where("id = ? AND status = ?", node.ID, "running").
+						Updates(map[string]any{
+							"status":              "queued",
+							"active_attempt_id":   nil,
+							"failure_reason":      nil,
+							"finished_at":         nil,
+							"progress_phase":      "requeued_after_idle",
+							"progress_updated_at": now,
+						}).Error; err != nil {
 						return err
 					}
-					_, _ = pfdb.Exec(ctx, pgxTx, `
-						DELETE FROM workflow_graph_provider_effects
-						WHERE node_run_id = $1 AND effect_result = 'pending'
-					`, node.ID)
+					_ = pgxTx.WithContext(ctx).Where("node_run_id = ? AND effect_result = ?", node.ID, "pending").
+						Delete(&schema.WorkflowGraphProviderEffects{}).Error
 					requeued = true
 					continue
 				}
@@ -123,11 +111,11 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
 				return err
 			}
-			var status string
-			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM workflow_graph_runs WHERE id = $1`, run.ID).Scan(&status); err != nil {
+			var statusRec schema.WorkflowGraphRuns
+			if err := pgxTx.WithContext(ctx).Select("status").Where("id = ?", run.ID).Take(&statusRec).Error; err != nil {
 				return err
 			}
-			if isTerminalRun(status) {
+			if isTerminalRun(statusRec.Status) {
 				if markedUnknown {
 					summary.UnknownRuns++
 				}

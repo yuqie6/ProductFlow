@@ -7,8 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/graph"
@@ -16,6 +15,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -68,13 +68,13 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 		if err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO delivery_rendition_jobs (
-				id, product_id, source_asset_id, spec_schema_version, spec_json, spec_hash,
-				status, attempts, is_retryable, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0, TRUE, NOW(), NOW())
-		`, id, source.ProductID, source.ID, specSchemaVersion, specJSON, normalized.Hash)
-		if err != nil {
+		now := time.Now().UTC()
+		row := schema.DeliveryRenditionJobs{
+			ID: id, ProductID: source.ProductID, SourceAssetID: source.ID,
+			SpecSchemaVersion: specSchemaVersion, SpecJSON: string(specJSON), SpecHash: normalized.Hash,
+			Status: "queued", Attempts: 0, IsRetryable: true, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := pgxTx.Create(&row).Error; err != nil {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 				dup, loadErr := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
@@ -130,31 +130,13 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 			}
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT `+jobSelectColumns+`
-			FROM delivery_rendition_jobs
-			WHERE source_asset_id = $1
-			ORDER BY created_at DESC, id DESC
-		`, sourceAssetID)
-		if err != nil {
-			return err
-		}
-		var collected []jobRow
-		for rows.Next() {
-			row, err := scanJob(rows)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			collected = append(collected, row)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var collected []schema.DeliveryRenditionJobs
+		if err := pgxTx.Where("source_asset_id = ?", sourceAssetID).Order("created_at DESC, id DESC").Find(&collected).Error; err != nil {
 			return err
 		}
 		items := make([]JobResponse, 0, len(collected))
-		for _, row := range collected {
-			item, err := s.serialize(ctx, pgxTx, row)
+		for _, model := range collected {
+			item, err := s.serialize(ctx, pgxTx, jobFromModel(model))
 			if err != nil {
 				return err
 			}
@@ -178,12 +160,15 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 		if !row.IsRetryable {
 			return apperr.Conflict("该交付派生任务不可重试")
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE delivery_rendition_jobs SET
-				status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
-				started_at = NULL, finished_at = NULL, is_retryable = TRUE, updated_at = NOW()
-			WHERE id = $1
-		`, jobID); err != nil {
+		if err := pgxTx.Model(&schema.DeliveryRenditionJobs{}).Where("id = ?", jobID).Updates(map[string]any{
+			"status":            "queued",
+			"active_attempt_id": nil,
+			"failure_reason":    nil,
+			"started_at":        nil,
+			"finished_at":       nil,
+			"is_retryable":      true,
+			"updated_at":        time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorDelivery, jobID), queue.ActorDelivery, jobID, nil, nil, false)
@@ -233,12 +218,13 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 	if err != nil {
 		return err
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO delivery_rendition_jobs (
-			id, product_id, source_asset_id, spec_schema_version, spec_json, spec_hash,
-			status, attempts, is_retryable, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0, TRUE, NOW(), NOW())
-	`, id, source.ProductID, source.ID, specSchemaVersion, specJSON, normalized.Hash); err != nil {
+	now := time.Now().UTC()
+	row := schema.DeliveryRenditionJobs{
+		ID: id, ProductID: source.ProductID, SourceAssetID: source.ID,
+		SpecSchemaVersion: specSchemaVersion, SpecJSON: string(specJSON), SpecHash: normalized.Hash,
+		Status: "queued", Attempts: 0, IsRetryable: true, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := pgxTx.Create(&row).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			dup, loadErr := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
@@ -298,69 +284,66 @@ func validateSource(ctx context.Context, tx *gorm.DB, source product.ImageAsset)
 	return nil
 }
 
-const jobSelectColumns = `id, product_id, source_asset_id, result_asset_id, spec_schema_version, spec_json, spec_hash, status, attempts, is_retryable, failure_reason, created_at, started_at, finished_at, updated_at, active_attempt_id`
-
 func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, q, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE id = $1`, jobID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.DeliveryRenditionJobs
+	err := q.WithContext(ctx).Where("id = ?", jobID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
-	return row, err
+	if err != nil {
+		return jobRow{}, err
+	}
+	return jobFromModel(row), nil
 }
 
 func loadJobForUpdate(ctx context.Context, tx *gorm.DB, jobID string) (jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE id = $1 FOR UPDATE`, jobID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.DeliveryRenditionJobs
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", jobID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return jobRow{}, apperr.NotFound("交付派生任务不存在")
 	}
-	return row, err
+	if err != nil {
+		return jobRow{}, err
+	}
+	return jobFromModel(row), nil
 }
 
 func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (*jobRow, error) {
-	row, err := scanJobRow(pfdb.QueryRow(ctx, tx, `SELECT `+jobSelectColumns+` FROM delivery_rendition_jobs WHERE source_asset_id = $1 AND spec_hash = $2`, sourceID, hash))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.DeliveryRenditionJobs
+	err := tx.WithContext(ctx).Where("source_asset_id = ? AND spec_hash = ?", sourceID, hash).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &row, nil
+	out := jobFromModel(row)
+	return &out, nil
 }
 
 func loadMediaSHA256(ctx context.Context, q *gorm.DB, mediaObjectID string) (string, error) {
-	var sha sqldb.NullString
-	err := pfdb.QueryRow(ctx, q, `SELECT sha256 FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&sha)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.MediaObjects
+	err := q.WithContext(ctx).Where("id = ?", mediaObjectID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", nil
 	}
 	if err != nil {
 		return "", err
 	}
-	if !sha.Valid {
+	if row.SHA256 == nil {
 		return "", nil
 	}
-	return sha.String, nil
+	return *row.SHA256, nil
 }
 
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanJob(rows *sqldb.Rows) (jobRow, error) {
-	return scanJobRow(rows)
-}
-
-func scanJobRow(row rowScanner) (jobRow, error) {
-	var j jobRow
-	err := row.Scan(
-		&j.ID, &j.ProductID, &j.SourceAssetID, &j.ResultAssetID, &j.SpecSchemaVersion, &j.SpecJSON, &j.SpecHash, &j.Status,
-		&j.Attempts, &j.IsRetryable, &j.FailureReason, &j.CreatedAt, &j.StartedAt, &j.FinishedAt, &j.UpdatedAt, &j.ActiveAttempt,
-	)
-	return j, err
-}
-
-func (s Service) files() storage.Local {
-	return s.Media.Files
+func jobFromModel(m schema.DeliveryRenditionJobs) jobRow {
+	return jobRow{
+		ID: m.ID, ProductID: m.ProductID, SourceAssetID: m.SourceAssetID, ResultAssetID: m.ResultAssetID,
+		SpecSchemaVersion: m.SpecSchemaVersion, SpecJSON: []byte(m.SpecJSON), SpecHash: m.SpecHash,
+		Status: m.Status, Attempts: m.Attempts, IsRetryable: m.IsRetryable, FailureReason: m.FailureReason,
+		CreatedAt: m.CreatedAt, StartedAt: m.StartedAt, FinishedAt: m.FinishedAt, UpdatedAt: m.UpdatedAt,
+		ActiveAttempt: m.ActiveAttemptID,
+	}
 }
 
 func readStorage(files storage.Local, rel string) ([]byte, error) {

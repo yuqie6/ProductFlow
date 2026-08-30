@@ -3,32 +3,29 @@ package imagesession
 import (
 	"context"
 	"encoding/json"
-	"time"
 
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
 func (s Service) serializeSummary(ctx context.Context, tx *gorm.DB, sess sessionRow) (SummaryResponse, error) {
-	var rounds int
-	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_rounds WHERE session_id = $1`, sess.ID).Scan(&rounds)
+	tx = tx.WithContext(ctx)
+	var rounds int64
+	if err := tx.Model(&schema.ImageSessionRounds{}).Where("session_id = ?", sess.ID).Count(&rounds).Error; err != nil {
+		return SummaryResponse{}, err
+	}
 	var latest *AssetResponse
-	var asset assetRow
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, a.created_at
-		FROM image_session_rounds r
-		JOIN image_session_assets a ON a.id = r.generated_asset_id
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE r.session_id = $1
-		ORDER BY r.created_at DESC, r.id DESC
-		LIMIT 1
-	`, sess.ID).Scan(&asset.ID, &asset.SessionID, &asset.Kind, &asset.OriginalFilename, &asset.MIMEType, &asset.StoragePath, &asset.MediaObjectID, &asset.CreatedAt)
+	var round schema.ImageSessionRounds
+	err := tx.Where("session_id = ?", sess.ID).Order("created_at DESC, id DESC").Take(&round).Error
 	if err == nil {
-		resp := serializeAsset(asset)
-		latest = &resp
+		asset, loadErr := loadAsset(ctx, tx, sess.ID, round.GeneratedAssetID)
+		if loadErr == nil {
+			resp := serializeAsset(asset)
+			latest = &resp
+		}
 	}
 	return SummaryResponse{
-		ID: sess.ID, Title: sess.Title, RoundsCount: rounds,
+		ID: sess.ID, Title: sess.Title, RoundsCount: int(rounds),
 		LatestGeneratedAsset: latest, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 	}, nil
 }
@@ -48,98 +45,47 @@ func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) 
 		assetByID[a.ID] = a
 		assetResp = append(assetResp, serializeAsset(a))
 	}
-	roundRows, err := pfdb.Query(ctx, tx, `
-		SELECT id, prompt, assistant_message, size, model_name, provider_name, prompt_version,
-		       provider_response_id, previous_response_id, image_generation_call_id, generation_group_id,
-		       candidate_index, candidate_count, base_asset_id, selected_reference_asset_ids,
-		       provider_output_json, generated_asset_id, created_at
-		FROM image_session_rounds WHERE session_id = $1
-		ORDER BY created_at ASC, candidate_index ASC, id ASC
-	`, sessionID)
-	if err != nil {
-		return DetailResponse{}, err
-	}
-	type roundScan struct {
-		id, prompt, assistant, size, model, provider, version, generatedID string
-		respID, prevID, callID, groupID, baseID                            *string
-		candIndex, candCount                                               int
-		refsJSON, outputJSON                                               []byte
-		createdAt                                                          time.Time
-	}
-	var scannedRounds []roundScan
-	for roundRows.Next() {
-		var item roundScan
-		if err := roundRows.Scan(
-			&item.id, &item.prompt, &item.assistant, &item.size, &item.model, &item.provider, &item.version,
-			&item.respID, &item.prevID, &item.callID, &item.groupID, &item.candIndex, &item.candCount, &item.baseID, &item.refsJSON,
-			&item.outputJSON, &item.generatedID, &item.createdAt,
-		); err != nil {
-			roundRows.Close()
-			return DetailResponse{}, err
-		}
-		scannedRounds = append(scannedRounds, item)
-	}
-	roundRows.Close()
-	if err := roundRows.Err(); err != nil {
+	var scannedRounds []schema.ImageSessionRounds
+	if err := tx.Where("session_id = ?", sessionID).Order("created_at ASC, candidate_index ASC, id ASC").Find(&scannedRounds).Error; err != nil {
 		return DetailResponse{}, err
 	}
 	rounds := make([]RoundResponse, 0, len(scannedRounds))
 	notesByGroup := map[string][]string{}
 	for _, item := range scannedRounds {
-		gen, ok := assetByID[item.generatedID]
+		gen, ok := assetByID[item.GeneratedAssetID]
 		if !ok {
-			loaded, err := loadAsset(ctx, tx, sessionID, item.generatedID)
+			loaded, err := loadAsset(ctx, tx, sessionID, item.GeneratedAssetID)
 			if err != nil {
 				return DetailResponse{}, err
 			}
 			gen = loaded
-			assetByID[item.generatedID] = gen
+			assetByID[item.GeneratedAssetID] = gen
 		}
-		notes := extractNotes(item.outputJSON)
-		if item.groupID != nil && len(notes) > 0 {
-			notesByGroup[*item.groupID] = notes
+		outputJSON := ptrBytes(item.ProviderOutputJSON)
+		notes := extractNotes(outputJSON)
+		if item.GenerationGroupID != nil && len(notes) > 0 {
+			notesByGroup[*item.GenerationGroupID] = notes
 		}
-		actual := extractActualSize(item.outputJSON)
+		actual := extractActualSize(outputJSON)
 		rounds = append(rounds, RoundResponse{
-			ID: item.id, Prompt: item.prompt, AssistantMessage: item.assistant, Size: item.size,
-			ModelName: item.model, ProviderName: item.provider, PromptVersion: item.version,
-			ProviderResponseID: item.respID, PreviousResponseID: item.prevID, ImageGenerationCallID: item.callID,
-			GenerationGroupID: item.groupID, CandidateIndex: item.candIndex, CandidateCount: item.candCount,
-			BaseAssetID: item.baseID, SelectedReferenceAssetIDs: decodeStringSlice(item.refsJSON),
-			ActualSize: actual, ProviderNotes: notes, GeneratedAsset: serializeAsset(gen), CreatedAt: item.createdAt,
+			ID: item.ID, Prompt: item.Prompt, AssistantMessage: item.AssistantMessage, Size: item.Size,
+			ModelName: item.ModelName, ProviderName: item.ProviderName, PromptVersion: item.PromptVersion,
+			ProviderResponseID: item.ProviderResponseID, PreviousResponseID: item.PreviousResponseID, ImageGenerationCallID: item.ImageGenerationCallID,
+			GenerationGroupID: item.GenerationGroupID, CandidateIndex: item.CandidateIndex, CandidateCount: item.CandidateCount,
+			BaseAssetID: item.BaseAssetID, SelectedReferenceAssetIDs: decodeStringSlice(ptrBytes(item.SelectedReferenceAssetIds)),
+			ActualSize: actual, ProviderNotes: notes, GeneratedAsset: serializeAsset(gen), CreatedAt: item.CreatedAt,
 		})
 	}
 
 	overview := s.queueOverview(ctx, tx)
 	positions := queuedPositions(ctx, tx)
-	taskRows, err := pfdb.Query(ctx, tx, `
-		SELECT id, session_id, status, prompt, size, base_asset_id, selected_reference_asset_ids, tool_options,
-		       generation_count, completed_candidates, active_candidate_index, progress_phase, progress_updated_at,
-		       provider_response_id, provider_response_status, progress_metadata, failure_reason, result_generation_group_id,
-		       created_at, started_at, finished_at, attempts, active_attempt_id, is_retryable
-		FROM image_session_generation_tasks WHERE session_id = $1
-		ORDER BY created_at DESC, id DESC
-	`, sessionID)
-	if err != nil {
+	var scannedTaskModels []schema.ImageSessionGenerationTasks
+	if err := tx.Where("session_id = ?", sessionID).Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
 		return DetailResponse{}, err
 	}
-	var scannedTasks []taskRow
-	for taskRows.Next() {
-		var row taskRow
-		if err := taskRows.Scan(
-			&row.ID, &row.SessionID, &row.Status, &row.Prompt, &row.Size, &row.BaseAssetID, &row.SelectedRefs, &row.ToolOptions,
-			&row.GenerationCount, &row.CompletedCandidates, &row.ActiveCandidateIndex, &row.ProgressPhase, &row.ProgressUpdatedAt,
-			&row.ProviderResponseID, &row.ProviderResponseStatus, &row.ProgressMetadata, &row.FailureReason, &row.ResultGenerationGroupID,
-			&row.CreatedAt, &row.StartedAt, &row.FinishedAt, &row.Attempts, &row.ActiveAttemptID, &row.IsRetryable,
-		); err != nil {
-			taskRows.Close()
-			return DetailResponse{}, err
-		}
-		scannedTasks = append(scannedTasks, row)
-	}
-	taskRows.Close()
-	if err := taskRows.Err(); err != nil {
-		return DetailResponse{}, err
+	scannedTasks := make([]taskRow, 0, len(scannedTaskModels))
+	for _, m := range scannedTaskModels {
+		scannedTasks = append(scannedTasks, taskFromModel(m))
 	}
 	tasks := make([]TaskResponse, 0, len(scannedTasks))
 	for _, row := range scannedTasks {
@@ -169,34 +115,18 @@ func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) 
 }
 
 func listEffects(ctx context.Context, tx *gorm.DB, taskID string) ([]EffectResponse, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id, generation_task_id, candidate_start_index, candidate_count, operation_key, effect_kind,
-		       request_hash, provider_name, effect_result, reconciliation_state, provider_response_id, provider_status,
-		       detail, created_at, updated_at
-		FROM image_session_provider_effects
-		WHERE generation_task_id = $1
-		ORDER BY candidate_start_index ASC, id ASC
-	`, taskID)
-	if err != nil {
+	var rows []schema.ImageSessionProviderEffects
+	if err := tx.WithContext(ctx).Where("generation_task_id = ?", taskID).Order("candidate_start_index ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []EffectResponse
-	for rows.Next() {
-		var item EffectResponse
-		if err := rows.Scan(
-			&item.ID, &item.GenerationTaskID, &item.CandidateStartIndex, &item.CandidateCount, &item.OperationKey, &item.EffectKind,
-			&item.RequestHash, &item.ProviderName, &item.EffectResult, &item.ReconciliationState, &item.ProviderResponseID, &item.ProviderStatus,
-			&item.Detail, &item.CreatedAt, &item.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
+	out := make([]EffectResponse, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, effectFromModel(row))
 	}
 	if out == nil {
 		out = []EffectResponse{}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 type queueOverview struct {
@@ -210,12 +140,10 @@ func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
 			// 容量上限来自 app_settings generation_max_concurrent_tasks，这里读 graph 共用函数的默认。
 		}
 	}
-	_ = pfdb.QueryRow(ctx, tx, `SELECT COALESCE((SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'), '3')`).Scan(new(string))
-	var raw *string
-	_ = pfdb.QueryRow(ctx, tx, `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&raw)
-	if raw != nil && *raw != "" {
+	var setting schema.AppSettings
+	if err := tx.Where("key = ?", "generation_max_concurrent_tasks").Take(&setting).Error; err == nil && setting.Value != "" {
 		n := 0
-		for _, ch := range *raw {
+		for _, ch := range setting.Value {
 			if ch < '0' || ch > '9' {
 				n = 0
 				break
@@ -226,43 +154,53 @@ func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
 			max = n
 		}
 	}
-	var sessionRunning, sessionQueued int
-	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running'`).Scan(&sessionRunning)
-	_ = pfdb.QueryRow(ctx, tx, `SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'queued'`).Scan(&sessionQueued)
-	var graphRunning, graphQueued int
-	_ = pfdb.QueryRow(ctx, tx, `
-		SELECT COUNT(*) FROM workflow_graph_runs r
-		WHERE r.status = 'running'
-		  AND EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = r.id AND n.status = 'running')
-	`).Scan(&graphRunning)
-	_ = pfdb.QueryRow(ctx, tx, `
-		SELECT COUNT(*) FROM workflow_graph_runs r
-		WHERE r.status = 'running'
-		  AND NOT EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = r.id AND n.status = 'running')
-		  AND EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = r.id AND n.status = 'queued')
-	`).Scan(&graphQueued)
-	running := sessionRunning + graphRunning
-	queued := sessionQueued + graphQueued
+	var sessionRunning, sessionQueued int64
+	_ = tx.Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "running").Count(&sessionRunning).Error
+	_ = tx.Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "queued").Count(&sessionQueued).Error
+	var runs []schema.WorkflowGraphRuns
+	_ = tx.Where("status = ?", "running").Find(&runs).Error
+	runIDs := make([]string, 0, len(runs))
+	for _, r := range runs {
+		runIDs = append(runIDs, r.ID)
+	}
+	byRun := map[string][]string{}
+	if len(runIDs) > 0 {
+		var nodes []schema.WorkflowGraphNodeRuns
+		_ = tx.Where("graph_run_id IN ?", runIDs).Find(&nodes).Error
+		for _, n := range nodes {
+			byRun[n.GraphRunID] = append(byRun[n.GraphRunID], n.Status)
+		}
+	}
+	graphRunning, graphQueued := 0, 0
+	for _, r := range runs {
+		hasRunning, hasQueued := false, false
+		for _, st := range byRun[r.ID] {
+			if st == "running" {
+				hasRunning = true
+			}
+			if st == "queued" {
+				hasQueued = true
+			}
+		}
+		if hasRunning {
+			graphRunning++
+		} else if hasQueued {
+			graphQueued++
+		}
+	}
+	running := int(sessionRunning) + graphRunning
+	queued := int(sessionQueued) + graphQueued
 	return queueOverview{Active: running + queued, Running: running, Queued: queued, Max: max}
 }
 
 func queuedPositions(ctx context.Context, tx *gorm.DB) map[string]int {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id FROM image_session_generation_tasks WHERE status = 'queued' ORDER BY created_at ASC, id ASC
-	`)
-	if err != nil {
+	var tasks []schema.ImageSessionGenerationTasks
+	if err := tx.WithContext(ctx).Where("status = ?", "queued").Order("created_at ASC, id ASC").Find(&tasks).Error; err != nil {
 		return map[string]int{}
 	}
-	defer rows.Close()
 	out := map[string]int{}
-	i := 1
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return out
-		}
-		out[id] = i
-		i++
+	for i, task := range tasks {
+		out[task.ID] = i + 1
 	}
 	return out
 }

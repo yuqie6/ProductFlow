@@ -1,6 +1,7 @@
 package media
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,7 +48,7 @@ func OriginalMissing(files storage.Local, storagePath string) bool {
 		return true
 	}
 	_, err = os.Stat(abs)
-	return err != nil
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func ServeExistingVariant(

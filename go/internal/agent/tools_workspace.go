@@ -8,10 +8,8 @@ import (
 	"strings"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -48,10 +46,8 @@ func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConvers
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
-	var convID string
-	err = pfdb.QueryRow(ctx, s.DB, `
-		SELECT id FROM agent_conversations WHERE creation_idempotency_key = $1
-	`, key).Scan(&convID)
+	var rec schema.AgentConversations
+	err = s.DB.WithContext(ctx).Select("id").Where("creation_idempotency_key = ?", key).Take(&rec).Error
 	if err != nil {
 		return ReconcileResponse{State: "not_applied", Detail: ptr("商品工作区尚未创建")}, nil
 	}
@@ -115,12 +111,9 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 	if len([]rune(normalized)) > 255 {
 		return GlobalProductListResponse{}, apperr.Validation("商品搜索词不能超过 255 个字符")
 	}
-	q := `
-		SELECT id, name, category, updated_at FROM products
-		WHERE ($1 = '' OR name ILIKE '%' || $1 || '%')
-	`
-	args := []any{normalized}
-	n := 2
+	q := s.DB.WithContext(ctx).Model(&schema.Products{}).
+		Select("id, name, category, updated_at").
+		Where("? = '' OR name ILIKE '%' || ? || '%'", normalized, normalized)
 	if cursor != "" {
 		var decoded struct {
 			UpdatedAt string `json:"updated_at"`
@@ -140,29 +133,18 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 				return GlobalProductListResponse{}, apperr.Validation("商品分页 cursor 无效或与当前查询条件不匹配")
 			}
 		}
-		q += ` AND (updated_at < $2 OR (updated_at = $2 AND id < $3))`
-		args = append(args, updated, decoded.ProductID)
-		n = 4
+		q = q.Where("updated_at < ? OR (updated_at = ? AND id < ?)", updated, updated, decoded.ProductID)
 	}
-	q += ` ORDER BY updated_at DESC, id DESC LIMIT $` + itoaN(n)
-	args = append(args, limit+1)
-	rows, err := pfdb.Query(ctx, s.DB, q, args...)
-	if err != nil {
+	var rows []schema.Products
+	if err := q.Order("updated_at DESC, id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
 		return GlobalProductListResponse{}, err
 	}
-	defer rows.Close()
 	var products []GlobalProductResponse
-	for rows.Next() {
-		var item GlobalProductResponse
-		var updated time.Time
-		if err := rows.Scan(&item.ID, &item.Name, &item.Category, &updated); err != nil {
-			return GlobalProductListResponse{}, err
-		}
-		item.UpdatedAt = updated.UTC().Format(time.RFC3339Nano)
-		products = append(products, item)
-	}
-	if err := rows.Err(); err != nil {
-		return GlobalProductListResponse{}, err
+	for _, row := range rows {
+		products = append(products, GlobalProductResponse{
+			ID: row.ID, Name: row.Name, Category: row.Category,
+			UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		})
 	}
 	hasMore := len(products) > limit
 	if hasMore {
@@ -245,18 +227,18 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 	if _, err := s.Product.Get(ctx, productID); err != nil {
 		return nil, err
 	}
-	var targetID string
-	err = pfdb.QueryRow(ctx, s.DB, `
-		SELECT id FROM agent_conversations
-		WHERE scope_type = 'product_workflow' AND product_id = $1
-		ORDER BY updated_at DESC, id DESC LIMIT 1
-	`, productID).Scan(&targetID)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var target schema.AgentConversations
+	err = s.DB.WithContext(ctx).Select("id").
+		Where("scope_type = ? AND product_id = ?", "product_workflow", productID).
+		Order("updated_at DESC, id DESC").
+		Take(&target).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, apperr.NotFound("商品没有 Agent 工作区")
 	}
 	if err != nil {
 		return nil, err
 	}
+	targetID := target.ID
 	payload, err := s.ProductContext(ctx, targetID)
 	if err != nil {
 		return nil, err

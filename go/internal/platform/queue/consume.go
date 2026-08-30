@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -15,7 +16,6 @@ func gormFrom(pool *pgxpool.Pool) (*gorm.DB, error) {
 	return pfdb.OpenGorm(pool)
 }
 
-// ClaimForConsumption 从 SENT 抢消费 lease。抢不到说明另一 worker 正在跑或行已不是 SENT。
 func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, leaseSeconds int) (string, bool, error) {
 	if leaseSeconds <= 0 {
 		leaseSeconds = DefaultConsumerLeaseSeconds
@@ -26,51 +26,43 @@ func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, ag
 	}
 	now := time.Now().UTC()
 	token := clockid.New()
-	n, err := pfdb.Exec(ctx, gdb, `
-		UPDATE async_dispatches SET
-			lease_token = $3,
-			lease_expires_at = $4,
-			updated_at = $5
-		WHERE id = $1
-		  AND aggregate_id = $2
-		  AND status = 'sent'
-		  AND lease_token IS NULL
-	`, dispatchID, aggregateID, token, now.Add(time.Duration(leaseSeconds)*time.Second), now)
-	if err != nil {
-		return "", false, err
+	res := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token IS NULL", dispatchID, aggregateID, StatusSent).
+		Updates(map[string]any{
+			"lease_token":      token,
+			"lease_expires_at": now.Add(time.Duration(leaseSeconds) * time.Second),
+			"updated_at":       now,
+		})
+	if res.Error != nil {
+		return "", false, res.Error
 	}
-	if n != 1 {
+	if res.RowsAffected != 1 {
 		return "", false, nil
 	}
 	return token, true, nil
 }
 
-// MarkConsumed 把 SENT 标 CONSUMED。SENT 只表示已交给 broker。
 func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string) (bool, error) {
 	gdb, err := gormFrom(pool)
 	if err != nil {
 		return false, err
 	}
 	now := time.Now().UTC()
-	n, err := pfdb.Exec(ctx, gdb, `
-		UPDATE async_dispatches SET
-			status = 'consumed',
-			lease_token = NULL,
-			lease_expires_at = NULL,
-			consumed_at = $4,
-			updated_at = $4
-		WHERE id = $1
-		  AND aggregate_id = $2
-		  AND status = 'sent'
-		  AND lease_token = $3
-	`, dispatchID, aggregateID, leaseToken, now)
-	if err != nil {
-		return false, err
+	res := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).
+		Updates(map[string]any{
+			"status":           StatusConsumed,
+			"lease_token":      nil,
+			"lease_expires_at": nil,
+			"consumed_at":      now,
+			"updated_at":       now,
+		})
+	if res.Error != nil {
+		return false, res.Error
 	}
-	return n == 1, nil
+	return res.RowsAffected == 1, nil
 }
 
-// MarkFailed 目标失败后释放消费 lease，走有界重试或死信。
 func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken, errMsg string, maxAttempts, backoffSeconds int) (bool, error) {
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxAttempts
@@ -86,65 +78,68 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 	if len(errMsg) > 1000 {
 		errMsg = errMsg[:1000]
 	}
-	var attempts int
-	err = pfdb.QueryRow(ctx, gdb, `
-		SELECT attempts FROM async_dispatches
-		WHERE id = $1 AND aggregate_id = $2 AND status = 'sent' AND lease_token = $3
-	`, dispatchID, aggregateID, leaseToken).Scan(&attempts)
+	ok := false
+	err = gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row schema.AsyncDispatches
+		takeErr := tx.Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).Take(&row).Error
+		if errors.Is(takeErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if takeErr != nil {
+			return takeErr
+		}
+		updates := map[string]any{
+			"lease_token":      nil,
+			"lease_expires_at": nil,
+			"sent_at":          nil,
+			"consumed_at":      nil,
+			"last_error":       errMsg,
+			"updated_at":       now,
+		}
+		if row.Attempts >= maxAttempts {
+			updates["status"] = StatusDead
+		} else {
+			updates["status"] = StatusPending
+			updates["available_at"] = now.Add(time.Duration(backoffSeconds) * time.Second)
+		}
+		res := tx.Model(&schema.AsyncDispatches{}).
+			Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		ok = res.RowsAffected == 1
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	nextStatus := StatusPending
-	var availableAt any
-	if attempts >= maxAttempts {
-		nextStatus = StatusDead
-		availableAt = nil
-	} else {
-		availableAt = now.Add(time.Duration(backoffSeconds) * time.Second)
-	}
-	n, err := pfdb.Exec(ctx, gdb, `
-		UPDATE async_dispatches SET
-			status = $4,
-			lease_token = NULL,
-			lease_expires_at = NULL,
-			sent_at = NULL,
-			consumed_at = NULL,
-			last_error = $5,
-			available_at = COALESCE($6, available_at),
-			updated_at = $7
-		WHERE id = $1 AND aggregate_id = $2 AND status = 'sent' AND lease_token = $3
-	`, dispatchID, aggregateID, leaseToken, nextStatus, errMsg, availableAt, now)
-	if err != nil {
-		return false, err
-	}
-	return n == 1, nil
+	return ok, nil
 }
 
-// Consume 领取 SENT 行、跑 actor、成功才 CONSUMED。claim 失败安静退出。
 func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, actors map[string]ActorFunc) error {
 	gdb, err := gormFrom(pool)
 	if err != nil {
 		return err
 	}
-	var actorName string
-	var status string
-	var storedAggregate string
-	err = pfdb.QueryRow(ctx, gdb, `
-		SELECT actor_name, status, aggregate_id FROM async_dispatches WHERE id = $1
-	`, dispatchID).Scan(&actorName, &status, &storedAggregate)
-	if err != nil {
+	var row schema.AsyncDispatches
+	err = gdb.WithContext(ctx).Where("id = ?", dispatchID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
-	if storedAggregate != aggregateID || status != StatusSent {
+	if err != nil {
+		return err
+	}
+	if row.AggregateID != aggregateID || row.Status != StatusSent {
 		return nil
 	}
 	token, ok, err := ClaimForConsumption(ctx, pool, dispatchID, aggregateID, DefaultConsumerLeaseSeconds)
 	if err != nil || !ok {
 		return err
 	}
-	fn := actors[actorName]
+	fn := actors[row.ActorName]
 	if fn == nil {
-		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, "unknown async dispatch actor: "+actorName, DefaultMaxAttempts, DefaultBackoffSeconds)
+		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, "unknown async dispatch actor: "+row.ActorName, DefaultMaxAttempts, DefaultBackoffSeconds)
 		return nil
 	}
 	if err := fn(ctx, aggregateID); err != nil {
@@ -163,7 +158,6 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 	return err
 }
 
-// ReleaseForRetry 放下消费 lease，信封回到 PENDING，attempts 不变。
 func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string, delay time.Duration) (bool, error) {
 	if delay < 0 {
 		delay = 0
@@ -173,19 +167,19 @@ func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggreg
 		return false, err
 	}
 	now := time.Now().UTC()
-	n, err := pfdb.Exec(ctx, gdb, `
-		UPDATE async_dispatches SET
-			status = 'pending',
-			lease_token = NULL,
-			lease_expires_at = NULL,
-			sent_at = NULL,
-			consumed_at = NULL,
-			available_at = $4,
-			updated_at = $5
-		WHERE id = $1 AND aggregate_id = $2 AND status = 'sent' AND lease_token = $3
-	`, dispatchID, aggregateID, leaseToken, now.Add(delay), now)
-	if err != nil {
-		return false, err
+	res := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).
+		Updates(map[string]any{
+			"status":           StatusPending,
+			"lease_token":      nil,
+			"lease_expires_at": nil,
+			"sent_at":          nil,
+			"consumed_at":      nil,
+			"available_at":     now.Add(delay),
+			"updated_at":       now,
+		})
+	if res.Error != nil {
+		return false, res.Error
 	}
-	return n == 1, nil
+	return res.RowsAffected == 1, nil
 }

@@ -259,13 +259,14 @@ func seedPromptFromRuntime(
 		}
 	}
 	return map[string]any{
-		"schema_version":    1,
-		"shared_rules":      stringListToAny(sharedRules),
-		"design_goal":       designGoal,
-		"product_fidelity":  fidelity,
-		"creative_boundary": stringListToAny(creativeBoundary),
-		"composition":       composition,
-		"content":           content,
+		"schema_version":     1,
+		"visual_variant_key": nil,
+		"shared_rules":       stringListToAny(sharedRules),
+		"design_goal":        designGoal,
+		"product_fidelity":   fidelity,
+		"creative_boundary":  stringListToAny(creativeBoundary),
+		"composition":        composition,
+		"content":            content,
 		"text": map[string]any{
 			"headline": nullableText(text["headline"]),
 			"subtitle": nullableText(text["subtitle"]),

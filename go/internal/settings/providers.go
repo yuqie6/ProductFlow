@@ -2,7 +2,6 @@ package settings
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -89,19 +89,21 @@ func (s *Store) ensureBindings(ctx context.Context) error {
 			return err
 		}
 		for _, item := range defaults {
-			var exists int
-			if err := pfdb.QueryRow(ctx, dbTx, `SELECT COUNT(1) FROM provider_bindings WHERE purpose = $1`, item.purpose).Scan(&exists); err != nil {
+			var n int64
+			if err := dbTx.Model(&schema.ProviderBindings{}).Where("purpose = ?", item.purpose).Count(&n).Error; err != nil {
 				return err
 			}
-			if exists > 0 {
+			if n > 0 {
 				continue
 			}
 			settingsJSON, _ := json.Marshal(map[string]any{"model": item.model})
-			empty := []byte("{}")
-			if _, err := pfdb.Exec(ctx, dbTx, `
-				INSERT INTO provider_bindings (id, purpose, provider_kind, model_settings_json, config_json, created_at, updated_at)
-				VALUES ($1, $2, 'mock', $3, $4, NOW(), NOW())
-			`, clockid.New(), item.purpose, settingsJSON, empty); err != nil {
+			now := time.Now().UTC()
+			row := schema.ProviderBindings{
+				ID: clockid.New(), Purpose: item.purpose, ProviderKind: "mock",
+				ModelSettingsJSON: string(settingsJSON), ConfigJSON: "{}",
+				CreatedAt: now, UpdatedAt: now,
+			}
+			if err := dbTx.Create(&row).Error; err != nil {
 				return err
 			}
 		}
@@ -118,18 +120,21 @@ type legacyBinding struct {
 }
 
 func loadBindingByPurpose(ctx context.Context, dbTx *gorm.DB, purpose string) (*legacyBinding, error) {
-	var row legacyBinding
-	err := pfdb.QueryRow(ctx, dbTx, `
-		SELECT id, provider_kind, provider_profile_id, model_settings_json, config_json
-		FROM provider_bindings WHERE purpose = $1
-	`, purpose).Scan(&row.id, &row.kind, &row.profileID, &row.modelSettings, &row.configJSON)
-	if errors.Is(err, sql.ErrNoRows) {
+	var row schema.ProviderBindings
+	err := dbTx.WithContext(ctx).Where("purpose = ?", purpose).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &row, nil
+	return &legacyBinding{
+		id:            row.ID,
+		kind:          row.ProviderKind,
+		profileID:     row.ProviderProfileID,
+		modelSettings: []byte(row.ModelSettingsJSON),
+		configJSON:    []byte(row.ConfigJSON),
+	}, nil
 }
 
 // migrateLegacyTextBinding 把 cutover 前残留的 purpose=text 拆成 prompt 与 agent，避免已部署库上的真实 Key 落到 mock。
@@ -156,24 +161,25 @@ func migrateLegacyTextBinding(ctx context.Context, dbTx *gorm.DB) error {
 		return err
 	}
 	if prompt == nil {
-		if _, err := pfdb.Exec(ctx, dbTx, `
-			UPDATE provider_bindings SET purpose = 'prompt', model_settings_json = $2, updated_at = NOW()
-			WHERE id = $1
-		`, text.id, promptSettings); err != nil {
+		if err := dbTx.Model(&schema.ProviderBindings{}).Where("id = ?", text.id).Updates(map[string]any{
+			"purpose": "prompt", "model_settings_json": string(promptSettings), "updated_at": time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 	} else if prompt.kind == "mock" && text.kind != "mock" {
-		if _, err := pfdb.Exec(ctx, dbTx, `
-			UPDATE provider_bindings SET
-				provider_kind = $2, provider_profile_id = $3, model_settings_json = $4, config_json = $5, updated_at = NOW()
-			WHERE id = $1
-		`, prompt.id, text.kind, text.profileID, promptSettings, text.configJSON); err != nil {
+		if err := dbTx.Model(&schema.ProviderBindings{}).Where("id = ?", prompt.id).Updates(map[string]any{
+			"provider_kind":       text.kind,
+			"provider_profile_id": text.profileID,
+			"model_settings_json": string(promptSettings),
+			"config_json":         string(text.configJSON),
+			"updated_at":          time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings WHERE id = $1`, text.id); err != nil {
+		if err := dbTx.Where("id = ?", text.id).Delete(&schema.ProviderBindings{}).Error; err != nil {
 			return err
 		}
-	} else if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM provider_bindings WHERE id = $1`, text.id); err != nil {
+	} else if err := dbTx.Where("id = ?", text.id).Delete(&schema.ProviderBindings{}).Error; err != nil {
 		return err
 	}
 
@@ -188,15 +194,19 @@ func migrateLegacyTextBinding(ctx context.Context, dbTx *gorm.DB) error {
 	if err != nil || source == nil {
 		return err
 	}
-	empty := []byte("{}")
+	empty := "{}"
+	agentConfigStr := string(agentConfig)
 	if len(agentConfig) == 0 {
-		agentConfig = empty
+		agentConfigStr = empty
 	}
-	_, err = pfdb.Exec(ctx, dbTx, `
-		INSERT INTO provider_bindings (id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at)
-		VALUES ($1, 'agent', $2, $3, $4, $5, NOW(), NOW())
-	`, clockid.New(), source.kind, source.profileID, agentSettings, agentConfig)
-	return err
+	now := time.Now().UTC()
+	row := schema.ProviderBindings{
+		ID: clockid.New(), Purpose: "agent", ProviderKind: source.kind,
+		ProviderProfileID: source.profileID,
+		ModelSettingsJSON: string(agentSettings), ConfigJSON: agentConfigStr,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	return dbTx.Create(&row).Error
 }
 
 func legacyAgentConfig(raw []byte) map[string]any {
@@ -228,77 +238,56 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (s *Store) listProfiles(ctx context.Context) ([]ProviderProfile, error) {
-	rows, err := pfdb.Query(ctx, s.db, `
-		SELECT id, name, provider_type, base_url, capabilities_json, default_models_json, config_json,
-		       enabled, archived_at, api_key, created_at, updated_at
-		FROM provider_profiles ORDER BY created_at, name
-	`)
-	if err != nil {
+	var rows []schema.ProviderProfiles
+	if err := s.db.WithContext(ctx).Order("created_at, name").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []ProviderProfile{}
-	for rows.Next() {
-		profile, err := scanProfile(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, profile)
+	out := make([]ProviderProfile, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, profileFromModel(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) listBindings(ctx context.Context) ([]ProviderBindingView, error) {
-	rows, err := pfdb.Query(ctx, s.db, `
-		SELECT id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at
-		FROM provider_bindings ORDER BY purpose
-	`)
-	if err != nil {
+	var rows []schema.ProviderBindings
+	if err := s.db.WithContext(ctx).Order("purpose").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []ProviderBindingView{}
-	for rows.Next() {
-		var row ProviderBindingView
-		var modelRaw, configRaw []byte
-		var created, updated time.Time
-		if err := rows.Scan(&row.ID, &row.Purpose, &row.ProviderKind, &row.ProviderProfileID, &modelRaw, &configRaw, &created, &updated); err != nil {
-			return nil, err
-		}
-		row.ModelSettings = decodeMap(modelRaw)
-		row.Config = decodeMap(configRaw)
-		row.CreatedAt = created.UTC().Format(time.RFC3339Nano)
-		row.UpdatedAt = updated.UTC().Format(time.RFC3339Nano)
-		out = append(out, row)
+	out := make([]ProviderBindingView, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, bindingFromModel(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-type profileScanner interface {
-	Scan(dest ...any) error
+func profileFromModel(p schema.ProviderProfiles) ProviderProfile {
+	out := ProviderProfile{
+		ID: p.ID, Name: p.Name, ProviderType: p.ProviderType, Enabled: p.Enabled,
+		BaseURL:       emptyToNil(p.BaseURL),
+		Capabilities:  decodeStringSlice([]byte(p.CapabilitiesJSON)),
+		DefaultModels: decodeMap([]byte(p.DefaultModelsJSON)),
+		Config:        decodeMap([]byte(p.ConfigJSON)),
+		HasAPIKey:     p.APIKey != nil && strings.TrimSpace(*p.APIKey) != "",
+		CreatedAt:     p.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:     p.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if p.ArchivedAt != nil {
+		stamp := p.ArchivedAt.UTC().Format(time.RFC3339Nano)
+		out.ArchivedAt = &stamp
+	}
+	return out
 }
 
-func scanProfile(row profileScanner) (ProviderProfile, error) {
-	var p ProviderProfile
-	var baseURL, apiKey *string
-	var archived *time.Time
-	var caps, models, cfg []byte
-	var created, updated time.Time
-	if err := row.Scan(&p.ID, &p.Name, &p.ProviderType, &baseURL, &caps, &models, &cfg, &p.Enabled, &archived, &apiKey, &created, &updated); err != nil {
-		return ProviderProfile{}, err
+func bindingFromModel(row schema.ProviderBindings) ProviderBindingView {
+	return ProviderBindingView{
+		ID: row.ID, Purpose: row.Purpose, ProviderKind: row.ProviderKind,
+		ProviderProfileID: row.ProviderProfileID,
+		ModelSettings:     decodeMap([]byte(row.ModelSettingsJSON)),
+		Config:            decodeMap([]byte(row.ConfigJSON)),
+		CreatedAt:         row.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:         row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
-	p.BaseURL = emptyToNil(baseURL)
-	p.Capabilities = decodeStringSlice(caps)
-	p.DefaultModels = decodeMap(models)
-	p.Config = decodeMap(cfg)
-	p.HasAPIKey = apiKey != nil && strings.TrimSpace(*apiKey) != ""
-	if archived != nil {
-		stamp := archived.UTC().Format(time.RFC3339Nano)
-		p.ArchivedAt = &stamp
-	}
-	p.CreatedAt = created.UTC().Format(time.RFC3339Nano)
-	p.UpdatedAt = updated.UTC().Format(time.RFC3339Nano)
-	return p, nil
 }
 
 func (s *Store) CreateProfile(ctx context.Context, name, providerType string, baseURL, apiKey *string, caps []string, defaults, cfg map[string]any, enabled bool) (ProviderProfile, error) {
@@ -322,12 +311,14 @@ func (s *Store) CreateProfile(ctx context.Context, name, providerType string, ba
 	capsJSON, _ := json.Marshal(caps)
 	modelsJSON, _ := json.Marshal(orEmptyMap(defaults))
 	cfgJSON, _ := json.Marshal(orEmptyMap(cfg))
-	_, err = pfdb.Exec(ctx, s.db, `
-		INSERT INTO provider_profiles (
-			id, name, provider_type, base_url, api_key, capabilities_json, default_models_json, config_json, enabled, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
-	`, id, name, providerType, normalizedURL, trimPtr(apiKey), capsJSON, modelsJSON, cfgJSON, enabled)
-	if err != nil {
+	now := time.Now().UTC()
+	row := schema.ProviderProfiles{
+		ID: id, Name: name, ProviderType: providerType,
+		BaseURL: normalizedURL, APIKey: trimPtr(apiKey),
+		CapabilitiesJSON: string(capsJSON), DefaultModelsJSON: string(modelsJSON), ConfigJSON: string(cfgJSON),
+		Enabled: enabled, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
 		return ProviderProfile{}, err
 	}
 	return s.getProfile(ctx, id)
@@ -421,12 +412,20 @@ func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]
 		capsJSON, _ := json.Marshal(current.Capabilities)
 		modelsJSON, _ := json.Marshal(current.DefaultModels)
 		cfgJSON, _ := json.Marshal(current.Config)
-		if _, err := pfdb.Exec(ctx, dbTx, `
-			UPDATE provider_profiles SET
-				name=$2, provider_type=$3, base_url=$4, api_key=COALESCE($5, api_key),
-				capabilities_json=$6, default_models_json=$7, config_json=$8, enabled=$9, updated_at=NOW()
-			WHERE id=$1
-		`, id, current.Name, current.ProviderType, current.BaseURL, current.apiKey, capsJSON, modelsJSON, cfgJSON, current.Enabled); err != nil {
+		updates := map[string]any{
+			"name":                current.Name,
+			"provider_type":       current.ProviderType,
+			"base_url":            current.BaseURL,
+			"capabilities_json":   string(capsJSON),
+			"default_models_json": string(modelsJSON),
+			"config_json":         string(cfgJSON),
+			"enabled":             current.Enabled,
+			"updated_at":          time.Now().UTC(),
+		}
+		if current.apiKey != nil {
+			updates["api_key"] = current.apiKey
+		}
+		if err := dbTx.Model(&schema.ProviderProfiles{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			return err
 		}
 		updated, err := s.getProfileRow(ctx, dbTx, id)
@@ -443,21 +442,21 @@ func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]
 }
 
 func (s *Store) ArchiveProfile(ctx context.Context, id string) (ProviderProfile, error) {
-	var n int
-	if err := pfdb.QueryRow(ctx, s.db, `SELECT COUNT(1) FROM provider_bindings WHERE provider_profile_id = $1`, id).Scan(&n); err != nil {
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&schema.ProviderBindings{}).Where("provider_profile_id = ?", id).Count(&n).Error; err != nil {
 		return ProviderProfile{}, err
 	}
 	if n > 0 {
 		return ProviderProfile{}, apperr.Validation("供应商仍被提示词、图片或 Agent 配置使用，不能归档")
 	}
-	affected, err := pfdb.Exec(ctx, s.db, `
-		UPDATE provider_profiles SET archived_at = NOW(), enabled = FALSE, updated_at = NOW()
-		WHERE id = $1 AND archived_at IS NULL
-	`, id)
-	if err != nil {
-		return ProviderProfile{}, err
+	now := time.Now().UTC()
+	res := s.db.WithContext(ctx).Model(&schema.ProviderProfiles{}).
+		Where("id = ? AND archived_at IS NULL", id).
+		Updates(map[string]any{"archived_at": now, "enabled": false, "updated_at": now})
+	if res.Error != nil {
+		return ProviderProfile{}, res.Error
 	}
-	if affected == 0 {
+	if res.RowsAffected == 0 {
 		return ProviderProfile{}, apperr.Validation("供应商不存在")
 	}
 	return s.getProfile(ctx, id)
@@ -500,12 +499,13 @@ func (s *Store) UpdateBinding(ctx context.Context, purpose, kind string, profile
 	}
 	modelJSON, _ := json.Marshal(normalizeModelSettings(purpose, modelSettings))
 	cfgJSON, _ := json.Marshal(normalizeBindingConfig(purpose, kind, cfg))
-	_, err := pfdb.Exec(ctx, s.db, `
-		UPDATE provider_bindings SET
-			provider_kind=$2, provider_profile_id=$3, model_settings_json=$4, config_json=$5, updated_at=NOW()
-		WHERE purpose=$1
-	`, purpose, kind, profileID, modelJSON, cfgJSON)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Model(&schema.ProviderBindings{}).Where("purpose = ?", purpose).Updates(map[string]any{
+		"provider_kind":       kind,
+		"provider_profile_id": profileID,
+		"model_settings_json": string(modelJSON),
+		"config_json":         string(cfgJSON),
+		"updated_at":          time.Now().UTC(),
+	}).Error; err != nil {
 		return ProviderBindingView{}, err
 	}
 	return s.getBinding(ctx, purpose)
@@ -525,67 +525,41 @@ func (s *Store) getProfile(ctx context.Context, id string) (ProviderProfile, err
 }
 
 func (s *Store) getProfileRow(ctx context.Context, dbTx *gorm.DB, id string) (profileRow, error) {
-	row := pfdb.QueryRow(ctx, dbTx, `
-		SELECT id, name, provider_type, base_url, capabilities_json, default_models_json, config_json,
-		       enabled, archived_at, api_key, created_at, updated_at
-		FROM provider_profiles WHERE id = $1
-		FOR UPDATE
-	`, id)
-	profile, err := scanProfile(row)
+	var row schema.ProviderProfiles
+	err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return profileRow{}, apperr.Validation("供应商不存在")
+	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return profileRow{}, apperr.Validation("供应商不存在")
-		}
 		return profileRow{}, err
 	}
-	var apiKey *string
-	_ = pfdb.QueryRow(ctx, dbTx, `SELECT api_key FROM provider_profiles WHERE id = $1`, id).Scan(&apiKey)
-	return profileRow{ProviderProfile: profile, apiKey: apiKey}, nil
+	return profileRow{ProviderProfile: profileFromModel(row), apiKey: row.APIKey}, nil
 }
 
 func (s *Store) getBinding(ctx context.Context, purpose string) (ProviderBindingView, error) {
-	var row ProviderBindingView
-	var modelRaw, configRaw []byte
-	var created, updated time.Time
-	err := pfdb.QueryRow(ctx, s.db, `
-		SELECT id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at
-		FROM provider_bindings WHERE purpose = $1
-	`, purpose).Scan(&row.ID, &row.Purpose, &row.ProviderKind, &row.ProviderProfileID, &modelRaw, &configRaw, &created, &updated)
-	if err != nil {
+	var row schema.ProviderBindings
+	if err := s.db.WithContext(ctx).Where("purpose = ?", purpose).Take(&row).Error; err != nil {
 		return ProviderBindingView{}, err
 	}
-	row.ModelSettings = decodeMap(modelRaw)
-	row.Config = decodeMap(configRaw)
-	row.CreatedAt = created.UTC().Format(time.RFC3339Nano)
-	row.UpdatedAt = updated.UTC().Format(time.RFC3339Nano)
-	return row, nil
+	return bindingFromModel(row), nil
 }
 
 func (s *Store) validateProfileKeepsBindings(ctx context.Context, dbTx *gorm.DB, profile profileRow) error {
-	rows, err := pfdb.Query(ctx, dbTx, `SELECT provider_kind FROM provider_bindings WHERE provider_profile_id = $1`, profile.ID)
-	if err != nil {
+	var bindings []schema.ProviderBindings
+	if err := dbTx.WithContext(ctx).Where("provider_profile_id = ?", profile.ID).Find(&bindings).Error; err != nil {
 		return err
 	}
-	defer rows.Close()
-	kinds := []string{}
-	for rows.Next() {
-		var kind string
-		if err := rows.Scan(&kind); err != nil {
-			return err
-		}
-		kinds = append(kinds, kind)
-	}
-	if len(kinds) == 0 {
+	if len(bindings) == 0 {
 		return nil
 	}
 	if !profile.Enabled {
 		return apperr.Validation("供应商仍被提示词、图片或 Agent 配置使用，不能停用")
 	}
-	for _, kind := range kinds {
-		if kind == "mock" {
+	for _, binding := range bindings {
+		if binding.ProviderKind == "mock" {
 			continue
 		}
-		need := capabilityByKind[kind]
+		need := capabilityByKind[binding.ProviderKind]
 		if !contains(profile.Capabilities, need) {
 			return apperr.Validation("供应商仍被提示词、图片或 Agent 配置使用，不能移除当前接口能力")
 		}

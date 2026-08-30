@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -34,6 +33,20 @@ func toolRequestHash(toolName string, prepared map[string]any) (string, error) {
 	return canonjson.SHA256Hex(map[string]any{"tool_name": toolName, "prepared": prepared})
 }
 
+func mutationResultBytes(row schema.AgentToolMutations) []byte {
+	if row.ResultJSON == nil {
+		return nil
+	}
+	return []byte(*row.ResultJSON)
+}
+
+func emptyToNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // lookupToolMutation 只读账本，不插入。未命中时 found=false。
 func lookupToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey, operation string, before, target map[string]any) (map[string]any, bool, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
@@ -44,22 +57,19 @@ func lookupToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, too
 	if err != nil {
 		return nil, false, err
 	}
-	var existingHash, status string
-	var resultJSON []byte
-	err = pfdb.QueryRow(ctx, pgxTx, `
-		SELECT request_hash, status, result_json FROM agent_tool_mutations
-		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
-	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.AgentToolMutations
+	err = pgxTx.WithContext(ctx).Where("conversation_id = ? AND tool_name = ? AND idempotency_key = ?", conversationID, toolName, key).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	if existingHash != hash {
+	if row.RequestHash != hash {
 		return nil, false, apperr.Conflict("同一工具 idempotency key 不能提交不同请求")
 	}
-	if status != "applied" || len(resultJSON) == 0 {
+	resultJSON := mutationResultBytes(row)
+	if row.Status != "applied" || len(resultJSON) == 0 {
 		return nil, false, apperr.Conflict("工具副作用账本未处于 applied 状态")
 	}
 	var replay map[string]any
@@ -77,38 +87,46 @@ func applyToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, tool
 	if err != nil {
 		return nil, err
 	}
-	var existingHash, status string
-	var resultJSON []byte
-	err = pfdb.QueryRow(ctx, pgxTx, `
-		SELECT request_hash, status, result_json FROM agent_tool_mutations
-		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
-	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
+	var existing schema.AgentToolMutations
+	err = pgxTx.WithContext(ctx).Where("conversation_id = ? AND tool_name = ? AND idempotency_key = ?", conversationID, toolName, key).Take(&existing).Error
 	if err == nil {
-		if existingHash != hash {
+		if existing.RequestHash != hash {
 			return nil, apperr.Conflict("同一工具 idempotency key 不能提交不同请求")
 		}
-		if status != "applied" || len(resultJSON) == 0 {
+		resultJSON := mutationResultBytes(existing)
+		if existing.Status != "applied" || len(resultJSON) == 0 {
 			return nil, apperr.Conflict("工具副作用账本未处于 applied 状态")
 		}
 		var replay map[string]any
 		_ = json.Unmarshal(resultJSON, &replay)
 		return replay, nil
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	preparedJSON, _ := json.Marshal(prepared)
 	resultBytes, _ := json.Marshal(result)
-	id := newID()
+	resultStr := string(resultBytes)
 	assetID, _ := extra["asset_id"].(string)
 	expectedName, _ := extra["expected_display_name"].(string)
 	targetName, _ := extra["target_display_name"].(string)
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO agent_tool_mutations (
-			id, conversation_id, tool_name, idempotency_key, request_hash, asset_id,
-			expected_display_name, target_display_name, prepared_json, status, result_json, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'applied', $10, NOW(), NOW())
-	`, id, conversationID, toolName, key, hash, nullable(assetID), nullable(expectedName), nullable(targetName), preparedJSON, resultBytes); err != nil {
+	now := time.Now().UTC()
+	row := schema.AgentToolMutations{
+		ID:                  newID(),
+		ConversationID:      conversationID,
+		ToolName:            toolName,
+		IdempotencyKey:      key,
+		RequestHash:         hash,
+		AssetID:             emptyToNil(assetID),
+		ExpectedDisplayName: emptyToNil(expectedName),
+		TargetDisplayName:   emptyToNil(targetName),
+		PreparedJSON:        string(preparedJSON),
+		Status:              "applied",
+		ResultJSON:          &resultStr,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	if err := pgxTx.Create(&row).Error; err != nil {
 		if uniqueViolation(err) {
 			return applyToolMutation(ctx, pgxTx, conversationID, toolName, idempotencyKey, operation, before, target, result, extra)
 		}
@@ -126,22 +144,19 @@ func reconcileToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, 
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
-	var existingHash, status string
-	var resultJSON []byte
-	err = pfdb.QueryRow(ctx, pgxTx, `
-		SELECT request_hash, status, result_json FROM agent_tool_mutations
-		WHERE conversation_id = $1 AND tool_name = $2 AND idempotency_key = $3
-	`, conversationID, toolName, key).Scan(&existingHash, &status, &resultJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.AgentToolMutations
+	err = pgxTx.WithContext(ctx).Where("conversation_id = ? AND tool_name = ? AND idempotency_key = ?", conversationID, toolName, key).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ReconcileResponse{State: "not_applied", Detail: ptr("工具副作用尚未提交")}, nil
 	}
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
-	if existingHash != hash {
+	if row.RequestHash != hash {
 		return ReconcileResponse{State: "conflict", Detail: ptr("工具幂等键已绑定其他请求")}, nil
 	}
-	if status == "applied" && len(resultJSON) > 0 {
+	resultJSON := mutationResultBytes(row)
+	if row.Status == "applied" && len(resultJSON) > 0 {
 		detail := "工具副作用已提交"
 		return ReconcileResponse{State: "applied", Result: json.RawMessage(resultJSON), Detail: &detail}, nil
 	}

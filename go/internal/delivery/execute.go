@@ -2,17 +2,17 @@ package delivery
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -68,15 +68,15 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 
 // releaseIdle 在 claim 不到 queued 行时决定信封命运：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil，让 Consume 标 CONSUMED，避免 dispatcher 无限重投。
 func (e Executor) releaseIdle(ctx context.Context, jobID string) error {
-	var status string
-	err := pfdb.QueryRow(ctx, e.DB, `SELECT status FROM delivery_rendition_jobs WHERE id = $1`, jobID).Scan(&status)
-	if errors.Is(err, sql.ErrNoRows) {
+	var row schema.DeliveryRenditionJobs
+	err := e.DB.WithContext(ctx).Where("id = ?", jobID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if status == "queued" || status == "running" {
+	if row.Status == "queued" || row.Status == "running" {
 		return queue.ErrBusy
 	}
 	return nil
@@ -100,16 +100,22 @@ type claim struct {
 func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, error) {
 	var out claim
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE delivery_rendition_jobs SET
-				status = 'running', attempts = attempts + 1, active_attempt_id = $2,
-				failure_reason = NULL, started_at = NOW(), finished_at = NULL, updated_at = NOW()
-			WHERE id = $1 AND status = 'queued'
-		`, jobID, attemptID)
-		if err != nil {
-			return err
+		now := time.Now().UTC()
+		res := pgxTx.Model(&schema.DeliveryRenditionJobs{}).
+			Where("id = ? AND status = ?", jobID, "queued").
+			Updates(map[string]any{
+				"status":            "running",
+				"attempts":          gorm.Expr("attempts + 1"),
+				"active_attempt_id": attemptID,
+				"failure_reason":    nil,
+				"started_at":        now,
+				"finished_at":       nil,
+				"updated_at":        now,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n != 1 {
+		if res.RowsAffected != 1 {
 			return nil
 		}
 		row, err := loadJob(ctx, pgxTx, jobID)
@@ -179,19 +185,25 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 		if err != nil {
 			return err
 		}
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE delivery_rendition_jobs SET
-				result_asset_id = $2, status = 'succeeded', active_attempt_id = NULL,
-				failure_reason = NULL, finished_at = NOW(), is_retryable = FALSE, updated_at = NOW()
-			WHERE id = $1 AND status = 'running' AND active_attempt_id = $3
-		`, claimed.jobID, asset.ID, claimed.attemptID)
-		if err != nil {
-			return err
+		now := time.Now().UTC()
+		res := pgxTx.Model(&schema.DeliveryRenditionJobs{}).
+			Where("id = ? AND status = ? AND active_attempt_id = ?", claimed.jobID, "running", claimed.attemptID).
+			Updates(map[string]any{
+				"result_asset_id":   asset.ID,
+				"status":            "succeeded",
+				"active_attempt_id": nil,
+				"failure_reason":    nil,
+				"finished_at":       now,
+				"is_retryable":      false,
+				"updated_at":        now,
+			})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n != 1 {
+		if res.RowsAffected != 1 {
 			return nil
 		}
-		_, _ = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, claimed.productID)
+		_ = pgxTx.Model(&schema.Products{}).Where("id = ?", claimed.productID).Updates(map[string]any{"updated_at": now}).Error
 		return nil
 	})
 	if err != nil {
@@ -227,11 +239,15 @@ func failJob(ctx context.Context, pgxTx *gorm.DB, jobID, attemptID string, reaso
 			detail = detail[:1000]
 		}
 	}
-	_, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE delivery_rendition_jobs SET
-			status = 'failed', active_attempt_id = NULL, is_retryable = $3,
-			failure_reason = $4, finished_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status = 'running' AND active_attempt_id = $2
-	`, jobID, attemptID, retryable, detail)
-	return err
+	now := time.Now().UTC()
+	return pgxTx.WithContext(ctx).Model(&schema.DeliveryRenditionJobs{}).
+		Where("id = ? AND status = ? AND active_attempt_id = ?", jobID, "running", attemptID).
+		Updates(map[string]any{
+			"status":            "failed",
+			"active_attempt_id": nil,
+			"is_retryable":      retryable,
+			"failure_reason":    detail,
+			"finished_at":       now,
+			"updated_at":        now,
+		}).Error
 }

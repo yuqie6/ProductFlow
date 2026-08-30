@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/product"
 )
@@ -622,7 +623,7 @@ func (h HTTP) reconcileGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
+	out, err := h.Service.ReconcileGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -774,21 +775,88 @@ func (h HTTP) reconcileWorkspace(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+type productIntakeBody struct {
+	Selection         json.RawMessage `json:"selection"`
+	ReferenceAssetIDs []string        `json:"reference_asset_ids"`
+	TaskID            *string         `json:"task_id"`
+}
+
+type assetMoveBody struct {
+	Moves []struct {
+		AssetID          string  `json:"asset_id"`
+		ExpectedFolderID *string `json:"expected_folder_id"`
+	} `json:"moves"`
+	TargetFolderID *string `json:"target_folder_id"`
+}
+
+func validateProductIntakeBody(req productIntakeBody) ([]string, error) {
+	if _, err := product.ParseSelection(string(req.Selection)); err != nil {
+		return nil, err
+	}
+	if len(req.ReferenceAssetIDs) == 0 {
+		return nil, apperr.Validation("至少选择一张参考图")
+	}
+	if len(req.ReferenceAssetIDs) > 6 {
+		return nil, apperr.Validation("参考图最多上传 6 张")
+	}
+	ids := make([]string, 0, len(req.ReferenceAssetIDs))
+	for _, raw := range req.ReferenceAssetIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return nil, apperr.Validation("参考图片 ID 不能为空")
+		}
+		if len(id) > 36 {
+			return nil, apperr.Validation("参考图片 ID 无效")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func galleryMovesFromRequest(req assetMoveBody) ([]product.GalleryAssetMove, *string, error) {
+	moves := make([]product.GalleryAssetMove, 0, len(req.Moves))
+	for _, move := range req.Moves {
+		moves = append(moves, product.GalleryAssetMove{AssetID: move.AssetID, ExpectedFolderID: move.ExpectedFolderID})
+	}
+	normalized, err := product.NormalizeMoves(moves)
+	if err != nil {
+		return nil, nil, err
+	}
+	var target *string
+	if req.TargetFolderID != nil {
+		trimmed := strings.TrimSpace(*req.TargetFolderID)
+		if trimmed == "" || len(trimmed) > 36 {
+			return nil, nil, apperr.Validation("目标文件夹 ID 无效")
+		}
+		target = &trimmed
+	}
+	return normalized, target, nil
+}
+
+func preparedAssetMoves(moves []product.GalleryAssetMove) []map[string]any {
+	raw := make([]map[string]any, 0, len(moves))
+	for _, move := range moves {
+		raw = append(raw, map[string]any{"asset_id": move.AssetID, "expected_folder_id": move.ExpectedFolderID})
+	}
+	return raw
+}
+
 func (h HTTP) finalizeIntake(c *gin.Context) {
 	key, ok := requireIdempotency(c)
 	if !ok {
 		return
 	}
-	var req struct {
-		Selection         json.RawMessage `json:"selection"`
-		ReferenceAssetIDs []string        `json:"reference_asset_ids"`
-		TaskID            *string         `json:"task_id"`
-	}
+	var req productIntakeBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.FinalizeProductIntake(c.Request.Context(), c.Param("conversation_id"), key, req.Selection, req.ReferenceAssetIDs)
+	ids, err := validateProductIntakeBody(req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.FinalizeProductIntake(c.Request.Context(), c.Param("conversation_id"), key, req.Selection, ids)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -801,20 +869,19 @@ func (h HTTP) reconcileIntake(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Selection         json.RawMessage `json:"selection"`
-		ReferenceAssetIDs []string        `json:"reference_asset_ids"`
-		TaskID            *string         `json:"task_id"`
-	}
+	var req productIntakeBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
+	ids, err := validateProductIntakeBody(req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
 	_ = req.TaskID
-	var target map[string]any
-	_ = json.Unmarshal(req.Selection, &target)
 	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), "finalize_product_intake_v1", key, toolPrepared(c.Param("conversation_id"), "finalize_product_intake_v1", map[string]any{}, map[string]any{
-		"selection": req.Selection, "reference_asset_ids": req.ReferenceAssetIDs,
+		"selection": req.Selection, "reference_asset_ids": ids,
 	}))
 	if err != nil {
 		httpx.AbortErr(c, err)
@@ -1034,22 +1101,17 @@ func (h HTTP) applyMove(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req struct {
-		Moves []struct {
-			AssetID          string  `json:"asset_id"`
-			ExpectedFolderID *string `json:"expected_folder_id"`
-		} `json:"moves"`
-		TargetFolderID *string `json:"target_folder_id"`
-	}
+	var req assetMoveBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	moves := make([]product.GalleryAssetMove, 0, len(req.Moves))
-	for _, move := range req.Moves {
-		moves = append(moves, product.GalleryAssetMove{AssetID: move.AssetID, ExpectedFolderID: move.ExpectedFolderID})
+	moves, target, err := galleryMovesFromRequest(req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
 	}
-	out, err := h.Service.ApplyAssetMove(c.Request.Context(), c.Param("conversation_id"), key, moves, req.TargetFolderID)
+	out, err := h.Service.ApplyAssetMove(c.Request.Context(), c.Param("conversation_id"), key, moves, target)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -1062,12 +1124,18 @@ func (h HTTP) reconcileMove(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var req map[string]any
+	var req assetMoveBody
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), moveAssetsTool, key, toolPrepared(c.Param("conversation_id"), "move_assets", map[string]any{"moves": req["moves"]}, req))
+	moves, target, err := galleryMovesFromRequest(req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	rawMoves := preparedAssetMoves(moves)
+	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), moveAssetsTool, key, toolPrepared(c.Param("conversation_id"), "move_assets", map[string]any{"moves": rawMoves}, map[string]any{"moves": rawMoves, "target_folder_id": target}))
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

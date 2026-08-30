@@ -396,6 +396,15 @@ func TestImageSessionGenerateRejectsLongPromptAndInvalidToolOptions(t *testing.T
 	})
 	ss.mustStatus(t, badTool, http.StatusBadRequest)
 	badTool.Body.Close()
+	withN := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "杯子", "size": "1024x1024", "tool_options": map[string]any{"n": 2},
+	})
+	ss.mustStatus(t, withN, http.StatusAccepted)
+	var generated DetailResponse
+	ss.decode(t, withN, &generated)
+	if len(generated.GenerationTasks) != 1 || generated.GenerationTasks[0].GenerationCount != 1 {
+		t.Fatalf("tool_options.n must not become generation_count: %+v", generated.GenerationTasks)
+	}
 }
 
 func TestImageSessionCreateRejectsUnknownFields(t *testing.T) {

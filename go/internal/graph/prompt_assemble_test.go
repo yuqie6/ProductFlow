@@ -32,6 +32,12 @@ func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 	if !strings.Contains(req.ImageTypeJob, "详情卖点图") {
 		t.Fatalf("job %q", req.ImageTypeJob)
 	}
+	if _, ok := req.CurrentPrompt["visual_variant_key"]; !ok {
+		t.Fatal("seed must include visual_variant_key")
+	}
+	if req.CurrentPrompt["visual_variant_key"] != nil {
+		t.Fatalf("visual_variant_key %+v", req.CurrentPrompt["visual_variant_key"])
+	}
 	if req.CurrentPrompt["design_goal"] == nil {
 		t.Fatal("seed must have design_goal")
 	}

@@ -5,26 +5,14 @@ import (
 	"errors"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
-
-const taskSelect = `
-	id, product_id, source_asset_id, source_media_sha256, mask_media_object_id,
-	target_graph_id, target_node_id, target_graph_revision,
-	source_artifact_id, source_artifact_asset_id, source_artifact_input_digest,
-	operation, instruction, source_text, replacement_text, mask_geometry_json,
-	requested_provider_name, requested_local_edit_mode, status, revision,
-	idempotency_key, request_hash, attempts, active_attempt_id, progress_phase,
-	failure_reason, is_retryable, provider_name, provider_model, provider_response_id,
-	provider_status, result_asset_id, created_at, updated_at, queued_at, started_at, finished_at
-`
 
 type taskRow struct {
 	ID                    string
@@ -76,107 +64,102 @@ type targetSnapshot struct {
 	InputDigest *string
 }
 
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanTask(row rowScanner) (taskRow, error) {
-	var t taskRow
-	err := row.Scan(
-		&t.ID, &t.ProductID, &t.SourceAssetID, &t.SourceSHA, &t.MaskMediaID,
-		&t.TargetGraphID, &t.TargetNodeID, &t.TargetRevision,
-		&t.SourceArtifactID, &t.SourceArtifactAssetID, &t.SourceArtifactDigest,
-		&t.Operation, &t.Instruction, &t.SourceText, &t.ReplacementText, &t.GeometryJSON,
-		&t.RequestedProvider, &t.RequestedMode, &t.Status, &t.Revision,
-		&t.IdempotencyKey, &t.RequestHash, &t.Attempts, &t.ActiveAttemptID, &t.ProgressPhase,
-		&t.FailureReason, &t.IsRetryable, &t.ProviderName, &t.ProviderModel, &t.ProviderResponseID,
-		&t.ProviderStatus, &t.ResultAssetID, &t.CreatedAt, &t.UpdatedAt, &t.QueuedAt, &t.StartedAt, &t.FinishedAt,
-	)
-	return t, err
+func taskFromModel(m schema.LocalImageEditTasks) taskRow {
+	return taskRow{
+		ID: m.ID, ProductID: m.ProductID, SourceAssetID: m.SourceAssetID, SourceSHA: m.SourceMediaSHA256,
+		MaskMediaID: m.MaskMediaObjectID, TargetGraphID: m.TargetGraphID, TargetNodeID: m.TargetNodeID,
+		TargetRevision: m.TargetGraphRevision, SourceArtifactID: m.SourceArtifactID,
+		SourceArtifactAssetID: m.SourceArtifactAssetID, SourceArtifactDigest: m.SourceArtifactInputDigest,
+		Operation: m.Operation, Instruction: m.Instruction, SourceText: m.SourceText, ReplacementText: m.ReplacementText,
+		GeometryJSON: []byte(m.MaskGeometryJSON), RequestedProvider: m.RequestedProviderName, RequestedMode: m.RequestedLocalEditMode,
+		Status: m.Status, Revision: m.Revision, IdempotencyKey: m.IdempotencyKey, RequestHash: m.RequestHash,
+		Attempts: m.Attempts, ActiveAttemptID: m.ActiveAttemptID, ProgressPhase: m.ProgressPhase,
+		FailureReason: m.FailureReason, IsRetryable: m.IsRetryable, ProviderName: m.ProviderName,
+		ProviderModel: m.ProviderModel, ProviderResponseID: m.ProviderResponseID, ProviderStatus: m.ProviderStatus,
+		ResultAssetID: m.ResultAssetID, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt,
+		QueuedAt: m.QueuedAt, StartedAt: m.StartedAt, FinishedAt: m.FinishedAt,
+	}
 }
 
 func loadTask(ctx context.Context, tx *gorm.DB, productID, taskID string) (taskRow, error) {
-	row, err := scanTask(pfdb.QueryRow(ctx, tx, `SELECT `+taskSelect+` FROM local_image_edit_tasks WHERE id = $1 AND product_id = $2`, taskID, productID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.LocalImageEditTasks
+	err := tx.Where("id = ? AND product_id = ?", taskID, productID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return taskRow{}, apperr.NotFound("局部编辑任务不存在")
 	}
 	if err != nil {
 		return taskRow{}, err
 	}
-	ids, err := listReferenceIDs(ctx, tx, row.ID)
+	out := taskFromModel(row)
+	ids, err := listReferenceIDs(ctx, tx, out.ID)
 	if err != nil {
 		return taskRow{}, err
 	}
-	row.ReferenceIDs = ids
-	return row, nil
+	out.ReferenceIDs = ids
+	return out, nil
 }
 
 func loadTaskForUpdate(ctx context.Context, tx *gorm.DB, productID, taskID string) (taskRow, error) {
-	row, err := scanTask(pfdb.QueryRow(ctx, tx, `SELECT `+taskSelect+` FROM local_image_edit_tasks WHERE id = $1 AND product_id = $2 FOR UPDATE`, taskID, productID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.LocalImageEditTasks
+	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", taskID, productID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return taskRow{}, apperr.NotFound("局部编辑任务不存在")
 	}
 	if err != nil {
 		return taskRow{}, err
 	}
-	ids, err := listReferenceIDs(ctx, tx, row.ID)
+	out := taskFromModel(row)
+	ids, err := listReferenceIDs(ctx, tx, out.ID)
 	if err != nil {
 		return taskRow{}, err
 	}
-	row.ReferenceIDs = ids
-	return row, nil
+	out.ReferenceIDs = ids
+	return out, nil
 }
 
 func loadTaskByID(ctx context.Context, tx *gorm.DB, taskID string) (taskRow, error) {
-	row, err := scanTask(pfdb.QueryRow(ctx, tx, `SELECT `+taskSelect+` FROM local_image_edit_tasks WHERE id = $1 FOR UPDATE`, taskID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.LocalImageEditTasks
+	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return taskRow{}, apperr.NotFound("局部编辑任务不存在")
 	}
 	if err != nil {
 		return taskRow{}, err
 	}
-	ids, err := listReferenceIDs(ctx, tx, row.ID)
+	out := taskFromModel(row)
+	ids, err := listReferenceIDs(ctx, tx, out.ID)
 	if err != nil {
 		return taskRow{}, err
 	}
-	row.ReferenceIDs = ids
-	return row, nil
+	out.ReferenceIDs = ids
+	return out, nil
 }
 
 func listReferenceIDs(ctx context.Context, tx *gorm.DB, taskID string) ([]string, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT asset_id FROM local_image_edit_task_references WHERE task_id = $1 ORDER BY sort_order ASC, asset_id ASC
-	`, taskID)
-	if err != nil {
+	var refs []schema.LocalImageEditTaskReferences
+	if err := tx.WithContext(ctx).Where("task_id = ?", taskID).Order("sort_order ASC, asset_id ASC").Find(&refs).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
+	ids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		ids = append(ids, r.AssetID)
 	}
-	return ids, rows.Err()
+	return ids, nil
 }
 
 func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row schema.Products
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", productID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return apperr.NotFound("商品不存在")
 	}
 	return err
 }
 
 func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (product.ImageAsset, string, error) {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id FROM product_image_assets WHERE id = $1 AND product_id = $2 FOR UPDATE
-	`, assetID, productID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var locked schema.ProductImageAssets
+	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", assetID, productID).Take(&locked).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return product.ImageAsset{}, "", apperr.NotFound("商品图片不存在")
 	}
 	if err != nil {
@@ -186,13 +169,16 @@ func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (pr
 	if err != nil {
 		return product.ImageAsset{}, "", err
 	}
-	var sha string
-	var status string
-	if err := pfdb.QueryRow(ctx, tx, `SELECT sha256, verification_status FROM media_objects WHERE id = $1`, asset.MediaObjectID).Scan(&sha, &status); err != nil {
+	var mediaObj schema.MediaObjects
+	if err := tx.Where("id = ?", asset.MediaObjectID).Take(&mediaObj).Error; err != nil {
 		return product.ImageAsset{}, "", apperr.Validation("局部编辑源图片必须是已核验图片")
 	}
-	if status != media.StatusVerified {
+	if mediaObj.VerificationStatus != media.StatusVerified {
 		return product.ImageAsset{}, "", apperr.Validation("局部编辑源图片必须是已核验图片")
+	}
+	sha := ""
+	if mediaObj.SHA256 != nil {
+		sha = *mediaObj.SHA256
 	}
 	if sha == "" || asset.Width == nil || asset.Height == nil {
 		return product.ImageAsset{}, "", apperr.Validation("局部编辑源图片缺少不可变媒体快照")
@@ -237,29 +223,11 @@ func lockReferences(ctx context.Context, tx *gorm.DB, productID string, ids []st
 		}
 		seen[id] = struct{}{}
 	}
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT a.id FROM product_image_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.product_id = $1 AND a.id = ANY($2)
-		FOR UPDATE OF a
-	`, productID, ids)
-	if err != nil {
+	var assets []schema.ProductImageAssets
+	if err := tx.Clauses(pfdb.ForUpdate()).Where("product_id = ? AND id IN ?", productID, ids).Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	found := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		found[id] = struct{}{}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(found) != len(ids) {
+	if len(assets) != len(ids) {
 		return nil, apperr.NotFound("局部编辑参考图不存在")
 	}
 	for _, id := range ids {
@@ -267,11 +235,9 @@ func lockReferences(ctx context.Context, tx *gorm.DB, productID string, ids []st
 		if err != nil {
 			return nil, apperr.NotFound("局部编辑参考图不存在")
 		}
-		var sha string
-		err = pfdb.QueryRow(ctx, tx, `
-			SELECT sha256 FROM media_objects
-			WHERE id = $1 AND verification_status = 'verified' AND byte_size > 0 AND width > 0 AND height > 0 AND length(sha256) = 64
-		`, asset.MediaObjectID).Scan(&sha)
+		var mediaObj schema.MediaObjects
+		err = tx.Where("id = ? AND verification_status = ? AND byte_size > 0 AND width > 0 AND height > 0 AND length(sha256) = 64", asset.MediaObjectID, "verified").
+			Take(&mediaObj).Error
 		if err != nil {
 			return nil, apperr.Validation("局部编辑参考图必须是有完整核验元数据的图片")
 		}
@@ -280,13 +246,12 @@ func lockReferences(ctx context.Context, tx *gorm.DB, productID string, ids []st
 }
 
 func replaceReferences(ctx context.Context, tx *gorm.DB, taskID string, ids []string) error {
-	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM local_image_edit_task_references WHERE task_id = $1`, taskID); err != nil {
+	if err := tx.WithContext(ctx).Where("task_id = ?", taskID).Delete(&schema.LocalImageEditTaskReferences{}).Error; err != nil {
 		return err
 	}
 	for i, id := range ids {
-		if _, err := pfdb.Exec(ctx, tx, `
-			INSERT INTO local_image_edit_task_references (task_id, asset_id, sort_order) VALUES ($1, $2, $3)
-		`, taskID, id, i); err != nil {
+		row := schema.LocalImageEditTaskReferences{TaskID: taskID, AssetID: id, SortOrder: i}
+		if err := tx.Create(&row).Error; err != nil {
 			return err
 		}
 	}

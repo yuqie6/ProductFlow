@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strings"
 
-	sqldb "database/sql"
-
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/agentsession"
@@ -358,7 +356,7 @@ func (s Service) upsertWorkspace(
 			snap = loaded
 			return nil
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		creation, conversation, err := create(pgxTx)

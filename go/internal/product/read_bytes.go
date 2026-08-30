@@ -9,12 +9,12 @@ import (
 )
 
 // ReadAssetBytes 按商品图片身份读回媒体字节，供图运行把参考图交给 provider。
-func (s Service) ReadAssetBytes(ctx context.Context, tx *gorm.DB, assetID string) ([]byte, string, string, error) {
+func (s Service) ReadAssetBytes(ctx context.Context, tx *gorm.DB, productID, assetID string) ([]byte, string, string, error) {
 	q := tx
 	if q == nil {
 		q = s.DB
 	}
-	asset, err := LoadAssetRow(ctx, q, assetID)
+	asset, err := loadAssetForProduct(ctx, q, productID, assetID)
 	if err != nil {
 		return nil, "", "", err
 	}

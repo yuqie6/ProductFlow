@@ -8,8 +8,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// Query runs raw SQL on a GORM session or transaction. []string args become
-// PostgreSQL text[] so existing ANY($n) call sites keep working through stdlib.
+// Query, QueryRow, and Exec are test-fixture helpers. Command paths must use
+// schema models (Create / Updates / Take). []string args become PostgreSQL
+// text[] so existing ANY($n) fixtures keep working through stdlib.
 func Query(ctx context.Context, tx *gorm.DB, q string, args ...any) (*sql.Rows, error) {
 	return tx.WithContext(ctx).Raw(q, normalizeArgs(args)...).Rows()
 }

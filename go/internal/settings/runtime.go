@@ -9,6 +9,7 @@ import (
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -164,20 +165,15 @@ func parseOverrideInt(overrides map[string]string, key string) (int, bool) {
 }
 
 func (s *Store) overrides(ctx context.Context) (map[string]string, error) {
-	rows, err := pfdb.Query(ctx, s.db, `SELECT key, value FROM app_settings`)
-	if err != nil {
+	var rows []schema.AppSettings
+	if err := s.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string]string{}
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return nil, err
-		}
-		out[key] = value
+	for _, row := range rows {
+		out[row.Key] = row.Value
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) ImageChatPromptTemplate(ctx context.Context) (string, error) {

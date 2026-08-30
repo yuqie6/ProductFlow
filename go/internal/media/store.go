@@ -5,11 +5,9 @@ import (
 	"errors"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"gorm.io/gorm"
 )
@@ -34,6 +32,32 @@ type Store struct {
 	Files storage.Local
 }
 
+func objectFromSchema(rec schema.MediaObjects) Object {
+	obj := Object{
+		ID:                 rec.ID,
+		StoragePath:        rec.StoragePath,
+		MIMEType:           rec.MIMEType,
+		VerificationStatus: rec.VerificationStatus,
+		CreatedAt:          rec.CreatedAt,
+	}
+	if rec.ByteSize != nil {
+		obj.ByteSize = int(*rec.ByteSize)
+	}
+	if rec.Width != nil {
+		obj.Width = *rec.Width
+	}
+	if rec.Height != nil {
+		obj.Height = *rec.Height
+	}
+	if rec.SHA256 != nil {
+		obj.SHA256 = *rec.SHA256
+	}
+	if rec.VerifiedAt != nil {
+		obj.VerifiedAt = *rec.VerifiedAt
+	}
+	return obj
+}
+
 func (s Store) Stage(ctx context.Context, tx *gorm.DB, content []byte, expectedMIME string, compensation *storage.Compensation) (Object, error) {
 	verified, err := Inspect(content, expectedMIME)
 	if err != nil {
@@ -44,60 +68,46 @@ func (s Store) Stage(ctx context.Context, tx *gorm.DB, content []byte, expectedM
 	if err != nil {
 		return Object{}, apperr.Internal("写入媒体文件失败")
 	}
-	var createdAt, verifiedAt time.Time
-	err = pfdb.QueryRow(ctx, tx, `
-		INSERT INTO media_objects (
-			id, storage_path, mime_type, byte_size, width, height, sha256,
-			verification_status, created_at, verified_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, 'verified', NOW(), NOW())
-		RETURNING created_at, verified_at
-	`, id, path, verified.MIMEType, verified.ByteSize, verified.Width, verified.Height, verified.SHA256).Scan(&createdAt, &verifiedAt)
-	if err != nil {
-		return Object{}, err
-	}
-	return Object{
+	now := time.Now().UTC()
+	byteSize := int64(verified.ByteSize)
+	width := verified.Width
+	height := verified.Height
+	sha := verified.SHA256
+	rec := schema.MediaObjects{
 		ID:                 id,
 		StoragePath:        path,
 		MIMEType:           verified.MIMEType,
-		ByteSize:           verified.ByteSize,
-		Width:              verified.Width,
-		Height:             verified.Height,
-		SHA256:             verified.SHA256,
+		ByteSize:           &byteSize,
+		Width:              &width,
+		Height:             &height,
+		SHA256:             &sha,
 		VerificationStatus: StatusVerified,
-		CreatedAt:          createdAt,
-		VerifiedAt:         verifiedAt,
-	}, nil
+		CreatedAt:          now,
+		VerifiedAt:         &now,
+	}
+	if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
+		return Object{}, err
+	}
+	return objectFromSchema(rec), nil
 }
 
 func (s Store) Get(ctx context.Context, q *gorm.DB, id string) (Object, error) {
-	var obj Object
-	var verifiedAt *time.Time
-	err := pfdb.QueryRow(ctx, q, `
-		SELECT id, storage_path, mime_type, byte_size, width, height, sha256,
-		       verification_status, created_at, verified_at
-		FROM media_objects WHERE id = $1
-	`, id).Scan(
-		&obj.ID, &obj.StoragePath, &obj.MIMEType, &obj.ByteSize, &obj.Width, &obj.Height, &obj.SHA256,
-		&obj.VerificationStatus, &obj.CreatedAt, &verifiedAt,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.MediaObjects
+	err := q.WithContext(ctx).Where("id = ?", id).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Object{}, apperr.NotFound("媒体对象不存在")
 	}
 	if err != nil {
 		return Object{}, err
 	}
-	if verifiedAt != nil {
-		obj.VerifiedAt = *verifiedAt
-	}
-	return obj, nil
+	return objectFromSchema(rec), nil
 }
 
 func (s Store) MarkMissingByStoragePath(ctx context.Context, db *gorm.DB, storagePath string) {
 	if db == nil || storagePath == "" {
 		return
 	}
-	_, _ = pfdb.Exec(ctx, db, `
-		UPDATE media_objects SET verification_status = 'missing'
-		WHERE storage_path = $1 AND verification_status <> 'missing'
-	`, storagePath)
+	_ = db.WithContext(ctx).Model(&schema.MediaObjects{}).
+		Where("storage_path = ? AND verification_status <> ?", storagePath, StatusMissing).
+		Updates(map[string]any{"verification_status": StatusMissing}).Error
 }

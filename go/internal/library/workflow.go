@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -30,41 +30,30 @@ func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string,
 	return out, err
 }
 
+type workflowLinkScan struct {
+	ID        string    `gorm:"column:media_library_asset_id"`
+	LinkedAt  time.Time `gorm:"column:created_at"`
+	CollectID *string   `gorm:"column:collect_id"`
+	SourceID  *string   `gorm:"column:source_id"`
+}
+
 func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, limit int) (WorkflowList, error) {
-	rows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT w.media_library_asset_id, w.created_at, lib.id, src.id
-		FROM workflow_media_library_assets w
-		JOIN media_library_assets a ON a.id = w.media_library_asset_id
-		LEFT JOIN product_image_assets lib
-			ON lib.source_library_asset_id = a.id AND lib.product_id = $2
-		LEFT JOIN product_image_assets src
-			ON src.id = a.source_product_asset_id AND src.product_id = $2
-		WHERE w.workflow_id = $1
-		ORDER BY w.created_at DESC, w.media_library_asset_id DESC
-		LIMIT $3
-	`, workflowID, productID, limit)
+	var rows []workflowLinkScan
+	err := pgxTx.WithContext(ctx).Table("workflow_media_library_assets AS w").
+		Select("w.media_library_asset_id, w.created_at, lib.id AS collect_id, src.id AS source_id").
+		Joins("JOIN media_library_assets a ON a.id = w.media_library_asset_id").
+		Joins("LEFT JOIN product_image_assets lib ON lib.source_library_asset_id = a.id AND lib.product_id = ?", productID).
+		Joins("LEFT JOIN product_image_assets src ON src.id = a.source_product_asset_id AND src.product_id = ?", productID).
+		Where("w.workflow_id = ?", workflowID).
+		Order("w.created_at DESC, w.media_library_asset_id DESC").
+		Limit(limit).
+		Scan(&rows).Error
 	if err != nil {
 		return WorkflowList{}, err
 	}
-	defer rows.Close()
-	type item struct {
-		id        string
-		linkedAt  time.Time
-		collectID *string
-		sourceID  *string
-	}
-	var items []item
-	ids := []string{}
-	for rows.Next() {
-		var it item
-		if err := rows.Scan(&it.id, &it.linkedAt, &it.collectID, &it.sourceID); err != nil {
-			return WorkflowList{}, err
-		}
-		items = append(items, it)
-		ids = append(ids, it.id)
-	}
-	if err := rows.Err(); err != nil {
-		return WorkflowList{}, err
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
 	}
 	assets, err := reloadInOrder(ctx, pgxTx, uniqueKeepOrder(ids))
 	if err != nil {
@@ -75,19 +64,19 @@ func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, 
 		byID[asset.ID] = asset
 	}
 	out := WorkflowList{WorkflowID: workflowID, Items: []WorkflowItem{}}
-	for _, it := range items {
-		serialized, err := serializeAsset(byID[it.id])
+	for _, it := range rows {
+		serialized, err := serializeAsset(byID[it.ID])
 		if err != nil {
 			return WorkflowList{}, err
 		}
-		productAssetID := it.collectID
+		productAssetID := it.CollectID
 		if productAssetID == nil {
-			productAssetID = it.sourceID
+			productAssetID = it.SourceID
 		}
 		out.Items = append(out.Items, WorkflowItem{
 			Asset:               serialized,
 			ProductImageAssetID: productAssetID,
-			LinkedAt:            it.linkedAt,
+			LinkedAt:            it.LinkedAt,
 		})
 	}
 	return out, nil
@@ -117,7 +106,7 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
-		assets, err := loadAssets(ctx, pgxTx, assetSelect+` WHERE a.id = ANY($1)`, uniqueIDs)
+		assets, err := loadAssets(ctx, pgxTx, libraryAssetQuery(pgxTx).Where("a.id IN ?", uniqueIDs))
 		if err != nil {
 			return err
 		}
@@ -150,33 +139,25 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 			return err
 		}
 		existing := map[string]struct{}{}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT media_library_asset_id FROM workflow_media_library_assets
-			WHERE workflow_id = $1 AND media_library_asset_id = ANY($2)
-		`, workflowID, uniqueIDs)
-		if err != nil {
+		var linked []schema.WorkflowMediaLibraryAssets
+		if err := pgxTx.WithContext(ctx).Select("media_library_asset_id").
+			Where("workflow_id = ? AND media_library_asset_id IN ?", workflowID, uniqueIDs).
+			Find(&linked).Error; err != nil {
 			return err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			existing[id] = struct{}{}
+		for _, row := range linked {
+			existing[row.MediaLibraryAssetID] = struct{}{}
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
+		now := time.Now().UTC()
 		for _, id := range uniqueIDs {
 			if _, ok := existing[id]; ok {
 				continue
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO workflow_media_library_assets (workflow_id, media_library_asset_id, created_at)
-				VALUES ($1, $2, NOW())
-			`, workflowID, id); err != nil {
+			if err := pgxTx.WithContext(ctx).Create(&schema.WorkflowMediaLibraryAssets{
+				WorkflowID:          workflowID,
+				MediaLibraryAssetID: id,
+				CreatedAt:           now,
+			}).Error; err != nil {
 				return err
 			}
 		}
@@ -191,14 +172,13 @@ func (s Service) RemoveWorkflow(ctx context.Context, productID, workflowID, libr
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
-		n, err := pfdb.Exec(ctx, pgxTx, `
-			DELETE FROM workflow_media_library_assets
-			WHERE workflow_id = $1 AND media_library_asset_id = $2
-		`, workflowID, libraryAssetID)
-		if err != nil {
-			return err
+		res := pgxTx.WithContext(ctx).
+			Where("workflow_id = ? AND media_library_asset_id = ?", workflowID, libraryAssetID).
+			Delete(&schema.WorkflowMediaLibraryAssets{})
+		if res.Error != nil {
+			return res.Error
 		}
-		if n == 0 {
+		if res.RowsAffected == 0 {
 			return apperr.NotFound("工作流素材关联不存在")
 		}
 		return nil

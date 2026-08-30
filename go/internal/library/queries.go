@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -27,61 +26,57 @@ func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var out Bootstrap
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_assets`).Scan(&out.TotalCount); err != nil {
+		var total, active, unorganized int64
+		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Count(&total).Error; err != nil {
 			return err
 		}
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT COUNT(*) FROM media_library_assets WHERE is_archived = FALSE`).Scan(&out.ActiveCount); err != nil {
+		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("is_archived = ?", false).Count(&active).Error; err != nil {
 			return err
 		}
+		out.TotalCount = int(total)
+		out.ActiveCount = int(active)
 		out.ArchivedCount = out.TotalCount - out.ActiveCount
-		if err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT COUNT(*) FROM media_library_assets WHERE is_archived = FALSE AND folder_id IS NULL
-		`).Scan(&out.UnorganizedCount); err != nil {
+		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).
+			Where("is_archived = ? AND folder_id IS NULL", false).Count(&unorganized).Error; err != nil {
 			return err
 		}
-		folderRows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT f.id, f.name, COUNT(a.id)
-			FROM media_library_folders f
-			LEFT JOIN media_library_assets a ON a.folder_id = f.id AND a.is_archived = FALSE
-			GROUP BY f.id
-			ORDER BY f.name, f.id
-		`)
-		if err != nil {
+		out.UnorganizedCount = int(unorganized)
+		var folders []struct {
+			ID    string `gorm:"column:id"`
+			Name  string `gorm:"column:name"`
+			Count int64  `gorm:"column:count"`
+		}
+		if err := pgxTx.WithContext(ctx).Table("media_library_folders AS f").
+			Select("f.id, f.name, COUNT(a.id) AS count").
+			Joins("LEFT JOIN media_library_assets a ON a.folder_id = f.id AND a.is_archived = FALSE").
+			Group("f.id").
+			Order("f.name, f.id").
+			Scan(&folders).Error; err != nil {
 			return err
 		}
-		defer folderRows.Close()
-		out.Folders = []Folder{}
-		for folderRows.Next() {
-			var folder Folder
-			if err := folderRows.Scan(&folder.ID, &folder.Name, &folder.Count); err != nil {
-				return err
-			}
-			out.Folders = append(out.Folders, folder)
+		out.Folders = make([]Folder, 0, len(folders))
+		for _, folder := range folders {
+			out.Folders = append(out.Folders, Folder{ID: folder.ID, Name: folder.Name, Count: int(folder.Count)})
 		}
-		if err := folderRows.Err(); err != nil {
+		var tags []struct {
+			ID    string `gorm:"column:id"`
+			Name  string `gorm:"column:name"`
+			Count int64  `gorm:"column:count"`
+		}
+		if err := pgxTx.WithContext(ctx).Table("media_library_tags AS t").
+			Select("t.id, t.name, COUNT(a.id) AS count").
+			Joins("LEFT JOIN media_library_asset_tags at ON at.tag_id = t.id").
+			Joins("LEFT JOIN media_library_assets a ON a.id = at.asset_id AND a.is_archived = FALSE").
+			Group("t.id").
+			Order("t.name, t.id").
+			Scan(&tags).Error; err != nil {
 			return err
 		}
-		tagRows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT t.id, t.name, COUNT(a.id)
-			FROM media_library_tags t
-			LEFT JOIN media_library_asset_tags at ON at.tag_id = t.id
-			LEFT JOIN media_library_assets a ON a.id = at.asset_id AND a.is_archived = FALSE
-			GROUP BY t.id
-			ORDER BY t.name, t.id
-		`)
-		if err != nil {
-			return err
+		out.Tags = make([]Tag, 0, len(tags))
+		for _, tag := range tags {
+			out.Tags = append(out.Tags, Tag{ID: tag.ID, Name: tag.Name, Count: int(tag.Count)})
 		}
-		defer tagRows.Close()
-		out.Tags = []Tag{}
-		for tagRows.Next() {
-			var tag Tag
-			if err := tagRows.Scan(&tag.ID, &tag.Name, &tag.Count); err != nil {
-				return err
-			}
-			out.Tags = append(out.Tags, tag)
-		}
-		return tagRows.Err()
+		return nil
 	})
 	return out, err
 }
@@ -115,42 +110,30 @@ func (s Service) List(ctx context.Context, in ListFilter) (ListResponse, error) 
 	}
 	var page ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		sql := assetSelect
-		args := []any{}
-		where := []string{}
+		q := libraryAssetQuery(pgxTx.WithContext(ctx))
 		if !in.IncludeArchived {
-			where = append(where, "a.is_archived = FALSE")
+			q = q.Where("a.is_archived = ?", false)
 		}
 		if search != "" {
-			args = append(args, "%"+search+"%")
-			where = append(where, fmt.Sprintf("(a.display_name ILIKE $%d OR a.original_filename ILIKE $%d)", len(args), len(args)))
+			pattern := "%" + search + "%"
+			q = q.Where("(a.display_name ILIKE ? OR a.original_filename ILIKE ?)", pattern, pattern)
 		}
 		if sourceType != "" {
-			args = append(args, sourceType)
-			where = append(where, fmt.Sprintf("a.source_type = $%d", len(args)))
+			q = q.Where("a.source_type = ?", sourceType)
 		}
 		if folderID != "" {
-			args = append(args, folderID)
-			where = append(where, fmt.Sprintf("a.folder_id = $%d", len(args)))
+			q = q.Where("a.folder_id = ?", folderID)
 		}
 		if tag != "" {
-			sql += `
-				JOIN media_library_asset_tags at ON at.asset_id = a.id
-				JOIN media_library_tags tg ON tg.id = at.tag_id`
-			args = append(args, tag)
-			where = append(where, fmt.Sprintf("tg.normalized_name = $%d", len(args)))
+			q = q.Joins("JOIN media_library_asset_tags at ON at.asset_id = a.id").
+				Joins("JOIN media_library_tags tg ON tg.id = at.tag_id").
+				Where("tg.normalized_name = ?", tag)
 		}
 		if cursorCreated != nil {
-			args = append(args, *cursorCreated, cursorID)
-			where = append(where, fmt.Sprintf("(a.created_at < $%d OR (a.created_at = $%d AND a.id < $%d))", len(args)-1, len(args)-1, len(args)))
+			q = q.Where("(a.created_at < ? OR (a.created_at = ? AND a.id < ?))", *cursorCreated, *cursorCreated, cursorID)
 		}
-		if len(where) > 0 {
-			sql += " WHERE " + strings.Join(where, " AND ")
-		}
-		sql += " ORDER BY a.created_at DESC, a.id DESC"
-		args = append(args, in.Limit+1)
-		sql += fmt.Sprintf(" LIMIT $%d", len(args))
-		items, err := loadAssets(ctx, pgxTx, sql, args...)
+		q = q.Order("a.created_at DESC, a.id DESC").Limit(in.Limit + 1)
+		items, err := loadAssets(ctx, pgxTx, q)
 		if err != nil {
 			return err
 		}

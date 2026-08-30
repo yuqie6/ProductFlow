@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -32,28 +33,11 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 		if _, err := recoverExpiredExecutions(ctx, pgxTx); err != nil {
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id FROM agent_turn_projections
-			WHERE resume_required = FALSE AND (
-				status IN ('queued','running','cancel_requested')
-				OR (status = 'awaiting_confirmation' AND library_organization_draft_revision_id IS NULL AND workflow_run_request_id IS NULL)
-			)
-			ORDER BY created_at, id
-		`)
-		if err != nil {
-			return err
-		}
 		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := pgxTx.Model(&schema.AgentTurnProjections{}).
+			Where("resume_required = FALSE AND status IN ('queued','running','cancel_requested')").
+			Order("created_at, id").
+			Pluck("id", &ids).Error; err != nil {
 			return err
 		}
 		taskIDs, recovered, err := recoverQueuedTaskTurns(ctx, pgxTx)
@@ -78,42 +62,31 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 }
 
 func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int, error) {
-	rows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT t.id, t.goal, t.conversation_id, c.scope_type, c.product_id
-		FROM agent_tasks t
-		JOIN agent_conversations c ON c.id = t.conversation_id
-		WHERE t.status = 'queued' AND t.current_turn_id IS NULL AND t.conversation_id IS NOT NULL
-		ORDER BY t.created_at, t.id
-	`)
-	if err != nil {
-		return nil, 0, err
-	}
 	type item struct {
-		id, goal, convID, scope string
-		productID               *string
+		ID        string  `gorm:"column:id"`
+		Goal      string  `gorm:"column:goal"`
+		ConvID    string  `gorm:"column:conversation_id"`
+		Scope     string  `gorm:"column:scope_type"`
+		ProductID *string `gorm:"column:product_id"`
 	}
 	var tasks []item
-	for rows.Next() {
-		var it item
-		if err := rows.Scan(&it.id, &it.goal, &it.convID, &it.scope, &it.productID); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		tasks = append(tasks, it)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	if err := pgxTx.Model(&schema.AgentTasks{}).
+		Select("agent_tasks.id, agent_tasks.goal, agent_tasks.conversation_id, agent_conversations.scope_type, agent_conversations.product_id").
+		Joins("JOIN agent_conversations ON agent_conversations.id = agent_tasks.conversation_id").
+		Where("agent_tasks.status = ? AND agent_tasks.current_turn_id IS NULL AND agent_tasks.conversation_id IS NOT NULL", "queued").
+		Order("agent_tasks.created_at, agent_tasks.id").
+		Scan(&tasks).Error; err != nil {
 		return nil, 0, err
 	}
 	var ids []string
 	created := 0
 	for _, task := range tasks {
 		var productID *string
-		if task.scope == "product_workflow" {
-			productID = task.productID
+		if task.Scope == "product_workflow" {
+			productID = task.ProductID
 		}
-		key := "initial:" + task.convID + ":" + task.id
-		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, task.convID, task.goal, nil, key, &task.id, nil)
+		key := "initial:" + task.ConvID + ":" + task.ID
+		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, task.ConvID, task.Goal, nil, key, &task.ID, "", nil)
 		if err != nil {
 			continue
 		}
@@ -126,52 +99,46 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 }
 
 func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) {
-	rows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT e.id, e.turn_projection_id, e.phase, t.status
-		FROM agent_turn_executions e
-		JOIN agent_turn_projections t ON t.id = e.turn_projection_id
-		WHERE e.owner_id IS NOT NULL AND e.lease_expires_at IS NOT NULL AND e.lease_expires_at <= NOW()
-		FOR UPDATE OF e
-	`)
-	if err != nil {
-		return 0, err
-	}
 	type exec struct {
-		id, projectionID, phase, status string
+		ID           string `gorm:"column:id"`
+		ProjectionID string `gorm:"column:turn_projection_id"`
+		Phase        string `gorm:"column:phase"`
+		Status       string `gorm:"column:status"`
 	}
 	var items []exec
-	for rows.Next() {
-		var it exec
-		if err := rows.Scan(&it.id, &it.projectionID, &it.phase, &it.status); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		items = append(items, it)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentTurnExecutions{}).
+		Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id, agent_turn_executions.phase, t.status").
+		Joins("JOIN agent_turn_projections t ON t.id = agent_turn_executions.turn_projection_id").
+		Where("agent_turn_executions.owner_id IS NOT NULL AND agent_turn_executions.lease_expires_at IS NOT NULL AND agent_turn_executions.lease_expires_at <= NOW()").
+		Clauses(pfdb.ForUpdateOf("agent_turn_executions")).
+		Scan(&items).Error; err != nil {
 		return 0, err
 	}
 	unknown := 0
 	now := time.Now().UTC()
-	_ = now
 	for _, item := range items {
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_turn_executions
-			SET fencing_token = fencing_token + 1, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, released_at = NOW()
-			WHERE id = $1
-		`, item.id); err != nil {
+		if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
+			"fencing_token":    gorm.Expr("fencing_token + 1"),
+			"owner_id":         nil,
+			"lease_token":      nil,
+			"lease_expires_at": nil,
+			"released_at":      now,
+		}).Error; err != nil {
 			return 0, err
 		}
-		if inSet(activeTurn, item.status) && !(item.status == "queued" && item.phase == "claimed") {
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE agent_turn_projections
-				SET status = 'unknown', error_text = $2, finished_at = NOW(), updated_at = NOW(), resume_required = FALSE
-				WHERE id = $1
-			`, item.projectionID, "Agent execution lease expired before this Turn reached a provable terminal state"); err != nil {
+		if inSet(activeTurn, item.Status) && !(item.Status == "queued" && item.Phase == "claimed") {
+			if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", item.ProjectionID).Updates(map[string]any{
+				"status":          "unknown",
+				"error_text":      "Agent execution lease expired before this Turn reached a provable terminal state",
+				"finished_at":     now,
+				"updated_at":      now,
+				"resume_required": false,
+			}).Error; err != nil {
 				return 0, err
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_turn_executions SET phase = 'terminal' WHERE id = $1`, item.id); err != nil {
+			if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
+				"phase": "terminal",
+			}).Error; err != nil {
 				return 0, err
 			}
 			unknown++

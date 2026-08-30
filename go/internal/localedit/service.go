@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
@@ -14,6 +13,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -73,28 +73,23 @@ func (s Service) Create(ctx context.Context, productID, sourceAssetID, targetNod
 		if err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO local_image_edit_tasks (
-				id, product_id, source_asset_id, source_media_sha256, mask_media_object_id,
-				target_graph_id, target_node_id, target_graph_revision,
-				source_artifact_id, source_artifact_asset_id, source_artifact_input_digest,
-				operation, instruction, source_text, replacement_text, mask_geometry_json,
-				status, revision, attempts, is_retryable, created_at, updated_at
-			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-				'draft', 1, 0, TRUE, NOW(), NOW()
-			)
-		`, taskID, productID, source.ID, sha, obj.ID,
-			target.GraphID, target.NodeID, target.Revision,
-			target.ArtifactID, target.AssetID, target.InputDigest,
-			draft.Operation, draft.Instruction, draft.SourceText, draft.ReplacementText, geoJSON); err != nil {
+		now := time.Now().UTC()
+		row := schema.LocalImageEditTasks{
+			ID: taskID, ProductID: productID, SourceAssetID: source.ID, SourceMediaSHA256: sha,
+			MaskMediaObjectID: obj.ID, TargetGraphID: target.GraphID, TargetNodeID: target.NodeID,
+			TargetGraphRevision: target.Revision, SourceArtifactID: target.ArtifactID,
+			SourceArtifactAssetID: target.AssetID, SourceArtifactInputDigest: target.InputDigest,
+			Operation: draft.Operation, Instruction: draft.Instruction, SourceText: draft.SourceText,
+			ReplacementText: draft.ReplacementText, MaskGeometryJSON: string(geoJSON),
+			Status: "draft", Revision: 1, Attempts: 0, IsRetryable: true, CreatedAt: now, UpdatedAt: now,
+		}
+		if err := pgxTx.Create(&row).Error; err != nil {
 			return err
 		}
 		if err := replaceReferences(ctx, pgxTx, taskID, refs); err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
-		return err
+		return pgxTx.Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{"updated_at": now}).Error
 	})
 	if err != nil {
 		compensation.Rollback()
@@ -147,19 +142,22 @@ func (s Service) Update(ctx context.Context, productID, taskID string, expectedR
 			}
 			maskID = obj.ID
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE local_image_edit_tasks SET
-				operation = $2, instruction = $3, source_text = $4, replacement_text = $5,
-				mask_geometry_json = $6, mask_media_object_id = $7, revision = revision + 1, updated_at = NOW()
-			WHERE id = $1
-		`, taskID, draft.Operation, draft.Instruction, draft.SourceText, draft.ReplacementText, geoJSON, maskID); err != nil {
+		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"operation":            draft.Operation,
+			"instruction":          draft.Instruction,
+			"source_text":          draft.SourceText,
+			"replacement_text":     draft.ReplacementText,
+			"mask_geometry_json":   string(geoJSON),
+			"mask_media_object_id": maskID,
+			"revision":             gorm.Expr("revision + 1"),
+			"updated_at":           time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		if err := replaceReferences(ctx, pgxTx, taskID, refs); err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
-		return err
+		return pgxTx.Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{"updated_at": time.Now().UTC()}).Error
 	})
 	if err != nil {
 		compensation.Rollback()
@@ -188,39 +186,21 @@ func (s Service) List(ctx context.Context, productID string, limit int) (TaskLis
 	}
 	var out TaskListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var exists string
-		err := pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM products WHERE id = $1`, productID).Scan(&exists)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var productRow schema.Products
+		err := pgxTx.Where("id = ?", productID).Take(&productRow).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return apperr.NotFound("商品不存在")
 		}
 		if err != nil {
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT `+taskSelect+`
-			FROM local_image_edit_tasks
-			WHERE product_id = $1
-			ORDER BY created_at DESC, id DESC
-			LIMIT $2
-		`, productID, limit)
-		if err != nil {
-			return err
-		}
-		var collected []taskRow
-		for rows.Next() {
-			row, err := scanTask(rows)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			collected = append(collected, row)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var collected []schema.LocalImageEditTasks
+		if err := pgxTx.Where("product_id = ?", productID).Order("created_at DESC, id DESC").Limit(limit).Find(&collected).Error; err != nil {
 			return err
 		}
 		items := make([]TaskResponse, 0, len(collected))
-		for _, row := range collected {
+		for _, model := range collected {
+			row := taskFromModel(model)
 			ids, err := listReferenceIDs(ctx, pgxTx, row.ID)
 			if err != nil {
 				return err
@@ -277,39 +257,40 @@ func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey s
 		if err != nil {
 			return err
 		}
-		var existingID string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id FROM local_image_edit_tasks
-			WHERE product_id = $1 AND idempotency_key = $2
-			FOR UPDATE
-		`, productID, key).Scan(&existingID)
+		var existing schema.LocalImageEditTasks
+		err = pgxTx.Clauses(pfdb.ForUpdate()).Where("product_id = ? AND idempotency_key = ?", productID, key).Take(&existing).Error
 		if err == nil {
-			existing, err := loadTask(ctx, pgxTx, productID, existingID)
+			loaded, err := loadTask(ctx, pgxTx, productID, existing.ID)
 			if err != nil {
 				return err
 			}
-			if existing.RequestHash == nil || *existing.RequestHash != hash {
+			if loaded.RequestHash == nil || *loaded.RequestHash != hash {
 				return apperr.Conflict("相同 idempotency key 不能提交不同的局部编辑请求")
 			}
-			_, err = queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, existing.ID), queue.ActorLocalEdit, existing.ID, map[string]any{
-				"task_id": existing.ID, "request_hash": hash,
+			_, err = queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, loaded.ID), queue.ActorLocalEdit, loaded.ID, map[string]any{
+				"task_id": loaded.ID, "request_hash": hash,
 			}, nil)
 			return err
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		if task.Status != "draft" {
 			return apperr.Conflict("局部编辑任务已提交，不能重复提交新的 idempotency key")
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE local_image_edit_tasks SET
-				status = 'queued', idempotency_key = $2, request_hash = $3,
-				requested_provider_name = $4, requested_local_edit_mode = $5,
-				progress_phase = 'queued', queued_at = NOW(), failure_reason = NULL,
-				is_retryable = TRUE, updated_at = NOW()
-			WHERE id = $1
-		`, taskID, key, hash, providerName, mode); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":                    "queued",
+			"idempotency_key":           key,
+			"request_hash":              hash,
+			"requested_provider_name":   providerName,
+			"requested_local_edit_mode": mode,
+			"progress_phase":            "queued",
+			"queued_at":                 now,
+			"failure_reason":            nil,
+			"is_retryable":              true,
+			"updated_at":                now,
+		}).Error; err != nil {
 			return err
 		}
 		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, taskID), queue.ActorLocalEdit, taskID, map[string]any{
@@ -317,8 +298,7 @@ func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey s
 		}, nil); err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
-		return err
+		return pgxTx.Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{"updated_at": now}).Error
 	})
 	if err != nil {
 		return TaskResponse{}, err
@@ -341,13 +321,17 @@ func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRe
 		if task.RequestHash == nil || task.IdempotencyKey == nil {
 			return apperr.Conflict("局部编辑任务缺少不可变请求身份，不能重试")
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE local_image_edit_tasks SET
-				status = 'queued', active_attempt_id = NULL, progress_phase = 'queued',
-				failure_reason = NULL, is_retryable = TRUE, queued_at = NOW(),
-				started_at = NULL, finished_at = NULL, updated_at = NOW()
-			WHERE id = $1
-		`, taskID); err != nil {
+		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":            "queued",
+			"active_attempt_id": nil,
+			"progress_phase":    "queued",
+			"failure_reason":    nil,
+			"is_retryable":      true,
+			"queued_at":         time.Now().UTC(),
+			"started_at":        nil,
+			"finished_at":       nil,
+			"updated_at":        time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, taskID), queue.ActorLocalEdit, taskID, map[string]any{
@@ -384,18 +368,22 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 				result = "unknown"
 			}
 			detail := "局部编辑任务已取消；provider boundary 之后的结果只能作为审计"
-			_, _ = pfdb.Exec(ctx, pgxTx, `
-				UPDATE local_image_edit_provider_attempts SET
-					phase = $3, effect_result = $4, detail = $5, updated_at = NOW()
-				WHERE task_id = $1 AND attempt_id = $2
-			`, taskID, *task.ActiveAttemptID, phase, result, detail)
+			_ = pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
+				Where("task_id = ? AND attempt_id = ?", taskID, *task.ActiveAttemptID).
+				Updates(map[string]any{
+					"phase": phase, "effect_result": result, "detail": detail, "updated_at": time.Now().UTC(),
+				}).Error
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			UPDATE local_image_edit_tasks SET
-				status = 'cancelled', active_attempt_id = NULL, progress_phase = 'cancelled',
-				failure_reason = $2, is_retryable = FALSE, finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, taskID, cancelReason)
+		now := time.Now().UTC()
+		err = pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":            "cancelled",
+			"active_attempt_id": nil,
+			"progress_phase":    "cancelled",
+			"failure_reason":    cancelReason,
+			"is_retryable":      false,
+			"finished_at":       now,
+			"updated_at":        now,
+		}).Error
 		return err
 	})
 	if err != nil {
@@ -466,13 +454,12 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 		if err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO local_image_edit_adoption_events (
-				id, product_id, task_id, graph_id, node_id, event_type,
-				from_artifact_id, to_artifact_id, created_at
-			) VALUES ($1, $2, $3, $4, $5, 'adopt', $6, $7, NOW())
-		`, clockid.New(), productID, task.ID, *task.TargetGraphID, *task.TargetNodeID, *task.SourceArtifactID, artifactID)
-		return err
+		event := schema.LocalImageEditAdoptionEvents{
+			ID: clockid.New(), ProductID: productID, TaskID: task.ID,
+			GraphID: *task.TargetGraphID, NodeID: *task.TargetNodeID, EventType: "adopt",
+			FromArtifactID: *task.SourceArtifactID, ToArtifactID: artifactID, CreatedAt: time.Now().UTC(),
+		}
+		return pgxTx.Create(&event).Error
 	})
 	if err != nil {
 		return TaskResponse{}, err
@@ -482,33 +469,30 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 
 func (s Service) Revert(ctx context.Context, productID, taskID, eventID, expectedArtifactID string) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var eventTask, eventType, graphID, nodeID, fromID, toID, eventProduct string
-		err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT product_id, task_id, event_type, graph_id, node_id, from_artifact_id, to_artifact_id
-			FROM local_image_edit_adoption_events WHERE id = $1 AND task_id = $2 FOR UPDATE
-		`, eventID, taskID).Scan(&eventProduct, &eventTask, &eventType, &graphID, &nodeID, &fromID, &toID)
-		if errors.Is(err, sqldb.ErrNoRows) || eventType != "adopt" {
+		var event schema.LocalImageEditAdoptionEvents
+		err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ? AND task_id = ?", eventID, taskID).Take(&event).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) || event.EventType != "adopt" {
 			return apperr.NotFound("局部编辑 adoption 事件不存在")
 		}
 		if err != nil {
 			return err
 		}
-		if eventProduct != productID {
+		if event.ProductID != productID {
 			return apperr.NotFound("局部编辑 adoption 事件不存在")
 		}
 		if err := lockProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		if err := graph.RevertNodeCurrentArtifact(ctx, pgxTx, productID, graphID, nodeID, expectedArtifactID, toID, fromID); err != nil {
+		if err := graph.RevertNodeCurrentArtifact(ctx, pgxTx, productID, event.GraphID, event.NodeID, expectedArtifactID, event.ToArtifactID, event.FromArtifactID); err != nil {
 			return err
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO local_image_edit_adoption_events (
-				id, product_id, task_id, graph_id, node_id, event_type,
-				from_artifact_id, to_artifact_id, related_event_id, created_at
-			) VALUES ($1, $2, $3, $4, $5, 'revert', $6, $7, $8, NOW())
-		`, clockid.New(), productID, taskID, graphID, nodeID, toID, fromID, eventID)
-		return err
+		revert := schema.LocalImageEditAdoptionEvents{
+			ID: clockid.New(), ProductID: productID, TaskID: taskID,
+			GraphID: event.GraphID, NodeID: event.NodeID, EventType: "revert",
+			FromArtifactID: event.ToArtifactID, ToArtifactID: event.FromArtifactID,
+			RelatedEventID: &eventID, CreatedAt: time.Now().UTC(),
+		}
+		return pgxTx.Create(&revert).Error
 	})
 	if err != nil {
 		return TaskResponse{}, err
@@ -560,8 +544,12 @@ func normalizeIntent(value, label string) (string, error) {
 }
 
 func requestHash(ctx context.Context, tx *gorm.DB, task taskRow, providerName, mode string) (string, error) {
-	var maskSHA string
-	err := pfdb.QueryRow(ctx, tx, `SELECT sha256 FROM media_objects WHERE id = $1`, task.MaskMediaID).Scan(&maskSHA)
+	var mask schema.MediaObjects
+	err := tx.WithContext(ctx).Where("id = ?", task.MaskMediaID).Take(&mask).Error
+	maskSHA := ""
+	if mask.SHA256 != nil {
+		maskSHA = *mask.SHA256
+	}
 	if err != nil || maskSHA == "" {
 		return "", apperr.Conflict("局部编辑 mask 媒体快照不存在")
 	}

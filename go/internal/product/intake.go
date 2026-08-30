@@ -78,6 +78,11 @@ func selectionDeliverySpec(selection Selection) (map[string]any, error) {
 	return deliveryPresetSpec(*selection.DeliveryPresetKey)
 }
 
+// ParseSelection 校验 AgentProductSelectionV1；非法输入返回 Validation。
+func ParseSelection(raw string) (Selection, error) {
+	return parseSelection(raw)
+}
+
 func parseSelection(raw string) (Selection, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()

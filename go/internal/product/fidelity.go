@@ -7,12 +7,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -65,6 +64,24 @@ type FidelityCheckList struct {
 	Items         []FidelityCheck `json:"items"`
 }
 
+func fidelityFromSchema(rec schema.ProductImageFidelityChecks) FidelityCheck {
+	return FidelityCheck{
+		ID:                    rec.ID,
+		ProductID:             rec.ProductID,
+		AssetID:               rec.AssetID,
+		Version:               rec.Version,
+		ShapeFidelity:         rec.ShapeFidelity,
+		ColorMaterialFidelity: rec.ColorMaterialFidelity,
+		LogoTextLegibility:    rec.LogoTextLegibility,
+		TextPolicyCompliance:  rec.TextPolicyCompliance,
+		Notes:                 rec.Notes,
+		CheckedBy:             rec.CheckedBy,
+		IdempotencyKey:        rec.IdempotencyKey,
+		RequestHash:           rec.RequestHash,
+		CreatedAt:             rec.CreatedAt,
+	}
+}
+
 func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID string, limit int) (FidelityCheckList, error) {
 	if limit < 1 || limit > fidelityCheckMaxLimit {
 		return FidelityCheckList{}, apperr.Validationf("人工保真检查列表最多返回 %d 条", fidelityCheckMaxLimit)
@@ -74,26 +91,17 @@ func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID stri
 		if err := requireProductAndAsset(ctx, pgxTx, productID, assetID, false); err != nil {
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT `+fidelitySelect+`
-			FROM product_image_fidelity_checks
-			WHERE product_id = $1 AND asset_id = $2
-			ORDER BY version DESC, created_at DESC, id DESC
-			LIMIT $3
-		`, productID, assetID, limit)
+		var rows []schema.ProductImageFidelityChecks
+		err := pgxTx.WithContext(ctx).
+			Where("product_id = ? AND asset_id = ?", productID, assetID).
+			Order("version DESC, created_at DESC, id DESC").
+			Limit(limit).
+			Find(&rows).Error
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			item, err := scanFidelity(rows)
-			if err != nil {
-				return err
-			}
-			out.Items = append(out.Items, item)
-		}
-		if err := rows.Err(); err != nil {
-			return err
+		for _, rec := range rows {
+			out.Items = append(out.Items, fidelityFromSchema(rec))
 		}
 		latest, err := latestFidelityVersion(ctx, pgxTx, assetID)
 		if err != nil {
@@ -181,9 +189,9 @@ func insertFidelityCheck(
 	if expectedLatestVersion != latest {
 		return FidelityCheck{}, apperr.Conflict(fidelityVersionConflict)
 	}
-	id := clockid.New()
-	row := FidelityCheck{
-		ID:                    id,
+	now := time.Now().UTC()
+	rec := schema.ProductImageFidelityChecks{
+		ID:                    clockid.New(),
 		ProductID:             productID,
 		AssetID:               assetID,
 		Version:               latest + 1,
@@ -195,16 +203,12 @@ func insertFidelityCheck(
 		CheckedBy:             fidelityCheckActor,
 		IdempotencyKey:        key,
 		RequestHash:           requestHash,
+		CreatedAt:             now,
 	}
-	err = pfdb.QueryRow(ctx, tx, `
-		INSERT INTO product_image_fidelity_checks (
-			id, product_id, asset_id, version,
-			shape_fidelity, color_material_fidelity, logo_text_legibility, text_policy_compliance,
-			notes, checked_by, idempotency_key, request_hash, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-		RETURNING created_at
-	`, id, productID, assetID, row.Version, shape, color, logo, text, notes, fidelityCheckActor, key, requestHash).Scan(&row.CreatedAt)
-	return row, err
+	if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
+		return FidelityCheck{}, err
+	}
+	return fidelityFromSchema(rec), nil
 }
 
 func (s Service) resolveFidelityUniqueConflict(ctx context.Context, assetID, key, requestHash string) (FidelityCheck, error) {
@@ -234,71 +238,44 @@ func requireProductAndAsset(ctx context.Context, tx *gorm.DB, productID, assetID
 	} else if _, err := loadProduct(ctx, tx, productID); err != nil {
 		return err
 	}
-	sql := `SELECT id FROM product_image_assets WHERE id = $1 AND product_id = $2`
+	q := tx.WithContext(ctx).Select("id").Where("id = ? AND product_id = ?", assetID, productID)
 	if forUpdate {
-		sql += ` FOR UPDATE`
+		q = q.Clauses(pfdb.ForUpdate())
 	}
-	var id string
-	err := pfdb.QueryRow(ctx, tx, sql, assetID, productID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductImageAssets
+	err := q.Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return apperr.NotFound("商品图片不存在")
 	}
 	return err
 }
 
-const fidelitySelect = `
-	id, product_id, asset_id, version,
-	shape_fidelity, color_material_fidelity, logo_text_legibility, text_policy_compliance,
-	notes, checked_by, idempotency_key, request_hash, created_at`
-
-type fidelityScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanFidelity(row fidelityScanner) (FidelityCheck, error) {
-	var item FidelityCheck
-	var notes sqldb.NullString
-	err := row.Scan(
-		&item.ID, &item.ProductID, &item.AssetID, &item.Version,
-		&item.ShapeFidelity, &item.ColorMaterialFidelity, &item.LogoTextLegibility, &item.TextPolicyCompliance,
-		&notes, &item.CheckedBy, &item.IdempotencyKey, &item.RequestHash, &item.CreatedAt,
-	)
-	if err != nil {
-		return FidelityCheck{}, err
-	}
-	if notes.Valid {
-		item.Notes = &notes.String
-	}
-	return item, nil
-}
-
 func findFidelityByIdempotency(ctx context.Context, tx *gorm.DB, assetID, key string) (*FidelityCheck, error) {
-	item, err := scanFidelity(pfdb.QueryRow(ctx, tx, `
-		SELECT `+fidelitySelect+`
-		FROM product_image_fidelity_checks
-		WHERE asset_id = $1 AND idempotency_key = $2
-	`, assetID, key))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductImageFidelityChecks
+	err := tx.WithContext(ctx).Where("asset_id = ? AND idempotency_key = ?", assetID, key).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	item := fidelityFromSchema(rec)
 	return &item, nil
 }
 
 func latestFidelityVersion(ctx context.Context, tx *gorm.DB, assetID string) (int, error) {
-	var latest sqldb.NullInt64
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT MAX(version) FROM product_image_fidelity_checks WHERE asset_id = $1
-	`, assetID).Scan(&latest)
+	var latest *int
+	err := tx.WithContext(ctx).Model(&schema.ProductImageFidelityChecks{}).
+		Where("asset_id = ?", assetID).
+		Select("MAX(version)").
+		Scan(&latest).Error
 	if err != nil {
 		return 0, err
 	}
-	if !latest.Valid {
+	if latest == nil {
 		return 0, nil
 	}
-	return int(latest.Int64), nil
+	return *latest, nil
 }
 
 func normalizeFidelityIdempotencyKey(value string) (string, error) {

@@ -1,9 +1,11 @@
 package schema
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
@@ -35,7 +37,7 @@ func createMissing(db *gorm.DB) error {
 	migrator := db.Migrator()
 	for _, model := range AllModels() {
 		if !migrator.HasTable(model) {
-			if err := migrator.CreateTable(model); err != nil {
+			if err := migrator.CreateTable(model); err != nil && !alreadyExists(err) {
 				return err
 			}
 			continue
@@ -51,7 +53,7 @@ func createMissing(db *gorm.DB) error {
 			if migrator.HasColumn(model, field.DBName) {
 				continue
 			}
-			if err := migrator.AddColumn(model, field.Name); err != nil {
+			if err := migrator.AddColumn(model, field.Name); err != nil && !alreadyExists(err) {
 				return fmt.Errorf("%s.%s: %w", stmt.Schema.Table, field.DBName, err)
 			}
 		}
@@ -67,6 +69,15 @@ func skipColumn(field *schema.Field) bool {
 		return true
 	}
 	return false
+}
+
+func alreadyExists(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && (pgErr.Code == "42P07" || pgErr.Code == "42701") {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "already exists")
 }
 
 func applyPrefix(db *gorm.DB, stmts []string) error {

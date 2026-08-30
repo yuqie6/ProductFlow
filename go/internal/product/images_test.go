@@ -3,11 +3,14 @@ package product
 import (
 	"archive/zip"
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
 func TestCoverAddImagesAndDelete(t *testing.T) {
@@ -260,4 +263,25 @@ func namesOf(zr *zip.Reader) []string {
 		out = append(out, f.Name)
 	}
 	return out
+}
+
+func TestReadAssetBytesRequiresProductMatch(t *testing.T) {
+	ps := newProductServer(t)
+	owned := ps.createV2(t, "参考图所属商品", nil, 1)
+	other := ps.createV2(t, "另一件商品", nil, 1)
+	_, _, _, err := ps.svc.ReadAssetBytes(context.Background(), nil, owned.Product.ID, other.CreatedAssets[0].ID)
+	if err == nil {
+		t.Fatal("cross-product asset must be rejected")
+	}
+	var ae apperr.Error
+	if !errors.As(err, &ae) || ae.Detail != "参考图不属于该商品" {
+		t.Fatalf("got %v", err)
+	}
+	data, mime, _, err := ps.svc.ReadAssetBytes(context.Background(), nil, owned.Product.ID, owned.CreatedAssets[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 || mime == "" {
+		t.Fatalf("owned asset mime %s bytes %d", mime, len(data))
+	}
 }

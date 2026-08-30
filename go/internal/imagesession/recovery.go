@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -30,45 +31,18 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	var summary RecoverySummary
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id, status, active_attempt_id, progress_phase, completed_candidates,
-			       active_candidate_index,
-			       COALESCE(progress_updated_at, started_at)
-			FROM image_session_generation_tasks
-			WHERE is_retryable = TRUE
-			  AND (
-			    status = 'queued'
-			    OR (status = 'running' AND COALESCE(progress_updated_at, started_at) <= $1)
-			  )
-		`, cutoff)
-		if err != nil {
+		var tasks []schema.ImageSessionGenerationTasks
+		if err := pgxTx.Where(
+			"is_retryable = ? AND (status = ? OR (status = ? AND COALESCE(progress_updated_at, started_at) <= ?))",
+			true, "queued", "running", cutoff,
+		).Find(&tasks).Error; err != nil {
 			return err
 		}
-		type item struct {
-			id, status string
-			attempt    *string
-			phase      *string
-			completed  int
-			activeIdx  *int
-			stamp      *time.Time
-		}
-		var tasks []item
-		for rows.Next() {
-			var it item
-			if err := rows.Scan(&it.id, &it.status, &it.attempt, &it.phase, &it.completed, &it.activeIdx, &it.stamp); err != nil {
-				rows.Close()
-				return err
-			}
-			tasks = append(tasks, it)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
+		now := time.Now().UTC()
 		for _, task := range tasks {
-			if task.status == "queued" {
+			if task.Status == "queued" {
 				summary.QueuedTasks++
-				changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.id, nil)
+				changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.ID, nil)
 				if err != nil {
 					return err
 				}
@@ -77,62 +51,71 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				}
 				continue
 			}
-			if task.attempt == nil {
+			if task.ActiveAttemptID == nil {
 				continue
 			}
 			phase := ""
-			if task.phase != nil {
-				phase = *task.phase
+			if task.ProgressPhase != nil {
+				phase = *task.ProgressPhase
 			}
 			safe := phase == "running" || phase == "candidate_saved"
-			nextCandidate := task.completed + 1
-			var coveringEffect bool
-			_ = pfdb.QueryRow(ctx, pgxTx, `
-				SELECT EXISTS (
-					SELECT 1 FROM image_session_provider_effects
-					WHERE generation_task_id = $1
-					  AND effect_result IN ('pending', 'applied', 'unknown')
-					  AND candidate_start_index <= $2
-					  AND (candidate_start_index + candidate_count - 1) >= $2
-				)
-			`, task.id, nextCandidate).Scan(&coveringEffect)
-			unknown := task.activeIdx != nil || !safe || coveringEffect
+			nextCandidate := task.CompletedCandidates + 1
+			var covering int64
+			if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+				Where("generation_task_id = ? AND effect_result IN ? AND candidate_start_index <= ? AND (candidate_start_index + candidate_count - 1) >= ?",
+					task.ID, []string{"pending", "applied", "unknown"}, nextCandidate, nextCandidate).
+				Count(&covering).Error; err != nil {
+				return err
+			}
+			unknown := task.ActiveCandidateIndex != nil || !safe || covering > 0
 			if unknown {
-				_, err := pfdb.Exec(ctx, pgxTx, `
-					UPDATE image_session_generation_tasks SET
-						status = 'unknown', active_attempt_id = NULL, finished_at = NOW(),
-						is_retryable = FALSE, failure_reason = $2, progress_phase = $3,
-						progress_updated_at = NOW(), active_candidate_index = NULL
-					WHERE id = $1 AND status = 'running'
-				`, task.id, unknownDetail, unknownPhase)
-				if err != nil {
+				if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
+					Where("id = ? AND status = ?", task.ID, "running").
+					Updates(map[string]any{
+						"status":                 "unknown",
+						"active_attempt_id":      nil,
+						"finished_at":            now,
+						"is_retryable":           false,
+						"failure_reason":         unknownDetail,
+						"progress_phase":         unknownPhase,
+						"progress_updated_at":    now,
+						"active_candidate_index": nil,
+					}).Error; err != nil {
 					return err
 				}
-				_, _ = pfdb.Exec(ctx, pgxTx, `
-					UPDATE image_session_provider_effects SET
-						effect_result = 'unknown', reconciliation_state = 'unknown', detail = $2, updated_at = NOW()
-					WHERE generation_task_id = $1 AND attempt_id = $3 AND effect_result = 'pending'
-				`, task.id, unknownDetail, *task.attempt)
+				_ = pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+					Where("generation_task_id = ? AND attempt_id = ? AND effect_result = ?", task.ID, *task.ActiveAttemptID, "pending").
+					Updates(map[string]any{
+						"effect_result":        "unknown",
+						"reconciliation_state": "unknown",
+						"detail":               unknownDetail,
+						"updated_at":           now,
+					}).Error
 				summary.UnknownTasks++
 				continue
 			}
-			n, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE image_session_generation_tasks SET
-					status = 'queued', active_attempt_id = NULL, started_at = NULL, finished_at = NULL,
-					active_candidate_index = NULL, provider_response_id = NULL, provider_response_status = NULL,
-					progress_phase = 'requeued_after_idle', progress_updated_at = NOW()
-				WHERE id = $1 AND status = 'running'
-			`, task.id)
-			if err != nil {
-				return err
+			res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
+				Where("id = ? AND status = ?", task.ID, "running").
+				Updates(map[string]any{
+					"status":                   "queued",
+					"active_attempt_id":        nil,
+					"started_at":               nil,
+					"finished_at":              nil,
+					"active_candidate_index":   nil,
+					"provider_response_id":     nil,
+					"provider_response_status": nil,
+					"progress_phase":           "requeued_after_idle",
+					"progress_updated_at":      now,
+				})
+			if res.Error != nil {
+				return res.Error
 			}
-			if n != 1 {
+			if res.RowsAffected != 1 {
 				continue
 			}
-			_, _ = pfdb.Exec(ctx, pgxTx, `
-				DELETE FROM image_session_provider_effects WHERE generation_task_id = $1 AND effect_result = 'pending'
-			`, task.id)
-			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.id, nil)
+			_ = pgxTx.Where("generation_task_id = ? AND effect_result = ?", task.ID, "pending").
+				Delete(&schema.ImageSessionProviderEffects{}).Error
+			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, task.ID, nil)
 			if err != nil {
 				return err
 			}

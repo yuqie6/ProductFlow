@@ -328,30 +328,44 @@ func TestExecuteRateLimitIsFailedRetryable(t *testing.T) {
 	}
 }
 
-func TestExecuteProvider5xxIsFailedRetryable(t *testing.T) {
+func TestExecuteProvider5xxIsUnknown(t *testing.T) {
 	ss := newSessionServer(t)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{
 		"prompt": "供应商 5xx", "size": "1024x1024", "generation_count": 1,
 	})
 	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrProvider5xx}}
-	for i := 0; i < maxAttempts; i++ {
-		if err := exec.Execute(context.Background(), taskID); err != nil {
-			t.Fatal(err)
-		}
+	if err := exec.Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
 	}
 	got := loadSessionDetail(t, ss, session.ID)
 	task := got.GenerationTasks[0]
-	if task.Status != "failed" {
+	if task.Status != "unknown" {
 		t.Fatalf("status %s", task.Status)
 	}
-	if !task.IsRetryable {
-		t.Fatal("5xx must stay retryable")
+	if task.IsRetryable {
+		t.Fatal("5xx must stay unknown without auto-retry")
 	}
-	if task.Attempts != maxAttempts {
+	if task.Attempts != 1 {
 		t.Fatalf("attempts %d", task.Attempts)
 	}
-	if len(task.ProviderEffects) == 0 || task.ProviderEffects[0].EffectResult != "failed" {
+	if len(task.ProviderEffects) == 0 || task.ProviderEffects[0].EffectResult != "unknown" {
 		t.Fatalf("effects %+v", task.ProviderEffects)
+	}
+}
+
+func TestExecuteTimeoutIsUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "供应商超时", "size": "1024x1024", "generation_count": 1,
+	})
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrTimeout}}
+	if err := exec.Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	task := got.GenerationTasks[0]
+	if task.Status != "unknown" || task.IsRetryable {
+		t.Fatalf("timeout %+v", task)
 	}
 }
 
@@ -388,6 +402,16 @@ func TestExecutePersistsImagesBatchCandidateCount(t *testing.T) {
 	if effectCount != 3 {
 		t.Fatalf("effect candidate_count %d", effectCount)
 	}
+	var effectResult, recon string
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT effect_result, reconciliation_state FROM image_session_provider_effects
+		WHERE generation_task_id = $1 AND candidate_start_index = 1
+	`, taskID).Scan(&effectResult, &recon); err != nil {
+		t.Fatal(err)
+	}
+	if effectResult != "applied" || recon != "applied" {
+		t.Fatalf("effect %s recon %s", effectResult, recon)
+	}
 	var req map[string]any
 	if err := json.Unmarshal(requestJSON, &req); err != nil {
 		t.Fatal(err)
@@ -410,8 +434,8 @@ func TestIsNonRetryableGenerationError(t *testing.T) {
 	if !isNonRetryableGenerationError(ErrTextOutput) {
 		t.Fatal("text output")
 	}
-	if !isNonRetryableGenerationError(ErrMissingOutput) {
-		t.Fatal("missing output")
+	if isNonRetryableGenerationError(ErrMissingOutput) {
+		t.Fatal("missing output must stay unknown, not confirmed failure")
 	}
 	if isNonRetryableGenerationError(errors.New("provider crashed")) {
 		t.Fatal("unknown crash should retry/unknown path, not this helper")
@@ -427,5 +451,177 @@ func TestIsNonRetryableGenerationError(t *testing.T) {
 	}
 	if isNonRetryableGenerationError(ErrProvider5xx) {
 		t.Fatal("provider 5xx")
+	}
+}
+
+type scriptedImagesProvider struct {
+	name   string
+	images [][]byte
+	calls  int
+}
+
+func (p *scriptedImagesProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "openai-images"
+}
+
+func (p *scriptedImagesProvider) Generate(ctx context.Context, req ChatRequest) (ChatResult, error) {
+	p.calls++
+	out := ChatResult{
+		Images:         p.images,
+		MIME:           "image/png",
+		Model:          "mock-image",
+		PromptVersion:  "mock-image-v1",
+		ProviderStatus: "completed",
+		OutputJSON:     map[string]any{"status": "completed"},
+	}
+	if len(p.images) > 0 {
+		out.Bytes = p.images[0]
+	}
+	return out, nil
+}
+
+func loadEffectAt(t *testing.T, ss *sessionServer, taskID string, start int) (result string, count int, recon string) {
+	t.Helper()
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT effect_result, candidate_count, reconciliation_state
+		FROM image_session_provider_effects
+		WHERE generation_task_id = $1 AND candidate_start_index = $2
+	`, taskID, start).Scan(&result, &count, &recon); err != nil {
+		t.Fatal(err)
+	}
+	return result, count, recon
+}
+
+func TestExecuteEmptyImagesBatchIsUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "空批次", "size": "1024x1024", "generation_count": 3,
+	})
+	prov := &scriptedImagesProvider{name: "openai-images"}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "unknown" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d", len(got.Rounds))
+	}
+	result, _, _ := loadEffectAt(t, ss, taskID, 1)
+	if result != "unknown" {
+		t.Fatalf("effect %s", result)
+	}
+}
+
+func TestExecuteFewerImagesThanBatchIsUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "少返回", "size": "1024x1024", "generation_count": 3,
+	})
+	png := grayPNG(32, 32)
+	prov := &scriptedImagesProvider{name: "openai-images", images: [][]byte{png}}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "unknown" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d want 0", len(got.Rounds))
+	}
+	result, _, _ := loadEffectAt(t, ss, taskID, 1)
+	if result != "unknown" {
+		t.Fatalf("effect %s", result)
+	}
+}
+
+func TestExecuteMoreImagesThanBatchIsUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "多返回", "size": "1024x1024", "generation_count": 3,
+	})
+	png := grayPNG(32, 32)
+	prov := &scriptedImagesProvider{name: "openai-images", images: [][]byte{png, png, png, png}}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "unknown" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d want 0", len(got.Rounds))
+	}
+	result, _, _ := loadEffectAt(t, ss, taskID, 1)
+	if result != "unknown" {
+		t.Fatalf("effect %s", result)
+	}
+}
+
+func TestExecuteSecondBatchMaterializeFailureIsUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "第二张落库失败", "size": "1024x1024", "generation_count": 2,
+	})
+	png := grayPNG(32, 32)
+	prov := &scriptedImagesProvider{
+		name:   "openai-images",
+		images: [][]byte{png, []byte("not-an-image")},
+	}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "unknown" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) > 1 {
+		t.Fatalf("rounds %d want at most 1", len(got.Rounds))
+	}
+	result, _, recon := loadEffectAt(t, ss, taskID, 1)
+	if result == "applied" || recon == "applied" {
+		t.Fatalf("effect %s recon %s must not be applied", result, recon)
+	}
+	if result != "unknown" {
+		t.Fatalf("effect %s", result)
+	}
+}
+
+func TestExecuteSkipsAppliedImagesBatchByCandidateCount(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "跳过整批 applied", "size": "1024x1024", "generation_count": 3,
+	})
+	insertAppliedEffect(t, ss, taskID, 1, 3)
+	prov := &countingProvider{MockChatProvider: MockChatProvider{ProviderName: "openai-images"}}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 0 {
+		t.Fatalf("generate calls %d want 0", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "succeeded" {
+		t.Fatalf("status %s", got.GenerationTasks[0].Status)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d", len(got.Rounds))
 	}
 }

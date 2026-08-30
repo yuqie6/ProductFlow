@@ -5,42 +5,39 @@ import (
 	"encoding/json"
 	"errors"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/graph"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
 func (GraphGuard) LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*graph.SourceProduct, error) {
-	var out graph.SourceProduct
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, name, category, price::text, source_note, current_fact_set_version_id
-		FROM products WHERE id = $1
-	`, productID).Scan(&out.ID, &out.Name, &out.Category, &out.Price, &out.SourceNote, &out.CurrentFactSetID)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.Products
+	err := tx.WithContext(ctx).Select("id, name, category, price, source_note, current_fact_set_version_id").
+		Where("id = ?", productID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &graph.SourceProduct{
+		ID:               rec.ID,
+		Name:             rec.Name,
+		Category:         rec.Category,
+		Price:            rec.Price,
+		SourceNote:       rec.SourceNote,
+		CurrentFactSetID: rec.CurrentFactSetVersionID,
+	}, nil
 }
 
 func (GraphGuard) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, productID string) (*graph.FactSet, error) {
-	q := `
-		SELECT id, product_id, version, payload_json
-		FROM product_fact_set_versions WHERE id = $1
-	`
-	args := []any{factSetID}
+	q := tx.WithContext(ctx).Where("id = ?", factSetID)
 	if productID != "" {
-		q += ` AND product_id = $2`
-		args = append(args, productID)
+		q = q.Where("product_id = ?", productID)
 	}
-	var out graph.FactSet
-	var payloadJSON []byte
-	err := pfdb.QueryRow(ctx, tx, q, args...).Scan(&out.ID, &out.ProductID, &out.Version, &payloadJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.ProductFactSetVersions
+	err := q.Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -49,26 +46,32 @@ func (GraphGuard) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, produ
 	var parsed struct {
 		Facts []map[string]any `json:"facts"`
 	}
-	if len(payloadJSON) > 0 {
-		_ = json.Unmarshal(payloadJSON, &parsed)
+	if rec.PayloadJSON != "" {
+		_ = json.Unmarshal([]byte(rec.PayloadJSON), &parsed)
 	}
 	if parsed.Facts == nil {
 		parsed.Facts = []map[string]any{}
 	}
-	out.Facts = parsed.Facts
-	return &out, nil
+	return &graph.FactSet{
+		ID:        rec.ID,
+		ProductID: rec.ProductID,
+		Version:   rec.Version,
+		Facts:     parsed.Facts,
+	}, nil
 }
 
 func (GraphGuard) BoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (string, string, error) {
-	var display, mime string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.display_name, COALESCE(m.mime_type, '')
-		FROM product_image_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.product_id = $1 AND a.id = $2
-	`, productID, assetID).Scan(&display, &mime)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var row struct {
+		DisplayName string `gorm:"column:display_name"`
+		MIMEType    string `gorm:"column:mime_type"`
+	}
+	err := tx.WithContext(ctx).Table("product_image_assets AS a").
+		Select("a.display_name, COALESCE(m.mime_type, '') AS mime_type").
+		Joins("JOIN media_objects m ON m.id = a.media_object_id").
+		Where("a.product_id = ? AND a.id = ?", productID, assetID).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", "", nil
 	}
-	return display, mime, err
+	return row.DisplayName, row.MIMEType, err
 }

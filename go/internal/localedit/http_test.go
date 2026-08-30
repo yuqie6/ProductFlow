@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/platform/queue"
@@ -315,6 +316,27 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	es.decode(t, got3, &task3)
 	if task3.Status != "unknown" || task3.IsRetryable {
 		t.Fatalf("unknown %+v", task3)
+	}
+
+	form4 := createForm(t, sourceID, false)
+	draft4resp := es.do(t, http.MethodPost, "/api/v3/products/"+productID+"/image-edits", form4.body, form4.contentType)
+	es.mustStatus(t, draft4resp, http.StatusCreated)
+	var task4 TaskResponse
+	es.decode(t, draft4resp, &task4)
+	queued400 := es.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/image-edits/"+task4.ID+"/submit", map[string]any{
+		"idempotency_key": "k-http-400",
+	})
+	es.mustStatus(t, queued400, http.StatusAccepted)
+	http400 := Executor{DB: es.db, Media: es.media, Provider: MockProvider{
+		Cap: SupportedCapability("mock-local"),
+		Err: apperr.Validation("供应商拒绝请求（HTTP 400）"),
+	}}
+	es.executeLocally(t, task4.ID, http400)
+	got4 := es.do(t, http.MethodGet, "/api/v3/products/"+productID+"/image-edits/"+task4.ID, nil, "")
+	es.mustStatus(t, got4, http.StatusOK)
+	es.decode(t, got4, &task4)
+	if task4.Status != "unknown" || task4.IsRetryable {
+		t.Fatalf("provider HTTP 400 must be unknown %+v", task4)
 	}
 }
 

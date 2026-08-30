@@ -5,12 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -20,6 +20,16 @@ type proposalRow struct {
 	Status            string
 	BaseGraphRevision int
 	ChangeSetJSON     []byte
+}
+
+func proposalFromSchema(rec schema.WorkflowGraphProposals) proposalRow {
+	return proposalRow{
+		ID:                rec.ID,
+		Summary:           rec.Summary,
+		Status:            rec.Status,
+		BaseGraphRevision: rec.BaseGraphRevision,
+		ChangeSetJSON:     []byte(rec.ChangeSetJSON),
+	}
 }
 
 // CreateProposal 校验后写入 PENDING 提案，不改 live 图。
@@ -35,14 +45,12 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 	if changeSet.BaseGraphRevision != row.Revision {
 		return AgentProposalResult{}, apperr.Conflict("图 revision 已变化，请刷新后重试")
 	}
-	var pendingID *string
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT id FROM workflow_graph_proposals WHERE graph_id = $1 AND status = 'pending' LIMIT 1
-	`, row.ID).Scan(&pendingID)
-	if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+	var pending schema.WorkflowGraphProposals
+	err = tx.WithContext(ctx).Where("graph_id = ? AND status = ?", row.ID, "pending").Take(&pending).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return AgentProposalResult{}, err
 	}
-	if pendingID != nil {
+	if err == nil {
 		return AgentProposalResult{}, apperr.Conflict("已有未应用的图提案，请先确认或取消")
 	}
 	applied, err := loadAppliedGraph(ctx, tx, *row)
@@ -61,17 +69,20 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 		return AgentProposalResult{}, err
 	}
 	id := clockid.New()
-	var conversation any
-	if strings.TrimSpace(conversationID) == "" {
-		conversation = nil
-	} else {
-		conversation = conversationID
+	var conversation *string
+	if trimmed := strings.TrimSpace(conversationID); trimmed != "" {
+		conversation = &trimmed
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_graph_proposals (
-			id, graph_id, conversation_id, status, summary, base_graph_revision, change_set_json, created_at
-		) VALUES ($1, $2, $3, 'pending', $4, $5, $6, NOW())
-	`, id, row.ID, conversation, changeSet.Summary, row.Revision, raw)
+	err = tx.WithContext(ctx).Create(&schema.WorkflowGraphProposals{
+		ID:                id,
+		GraphID:           row.ID,
+		ConversationID:    conversation,
+		Status:            "pending",
+		Summary:           changeSet.Summary,
+		BaseGraphRevision: row.Revision,
+		ChangeSetJSON:     string(raw),
+		CreatedAt:         time.Now().UTC(),
+	}).Error
 	if err != nil {
 		return AgentProposalResult{}, err
 	}
@@ -108,11 +119,11 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	if err != nil {
 		return graphRow{}, err
 	}
-	if _, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_proposals
-		SET status = 'confirmed', resolved_at = NOW(), operation_group_id = $2
-		WHERE id = $1
-	`, proposal.ID, result.OperationGroupID); err != nil {
+	if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphProposals{}).Where("id = ?", proposal.ID).Updates(map[string]any{
+		"status":             "confirmed",
+		"resolved_at":        time.Now().UTC(),
+		"operation_group_id": result.OperationGroupID,
+	}).Error; err != nil {
 		return graphRow{}, err
 	}
 	row.Revision = result.Revision
@@ -131,27 +142,22 @@ func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	if proposal.Status != "pending" {
 		return apperr.Conflict("图提案已经结束")
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		UPDATE workflow_graph_proposals
-		SET status = 'discarded', resolved_at = NOW()
-		WHERE id = $1
-	`, proposal.ID)
-	return err
+	return tx.WithContext(ctx).Model(&schema.WorkflowGraphProposals{}).Where("id = ?", proposal.ID).Updates(map[string]any{
+		"status":      "discarded",
+		"resolved_at": time.Now().UTC(),
+	}).Error
 }
 
 func pendingProposalView(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (*ProposalView, error) {
-	var proposal proposalRow
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, summary, status, base_graph_revision, change_set_json
-		FROM workflow_graph_proposals
-		WHERE graph_id = $1 AND status = 'pending'
-	`, row.ID).Scan(&proposal.ID, &proposal.Summary, &proposal.Status, &proposal.BaseGraphRevision, &proposal.ChangeSetJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphProposals
+	err := tx.WithContext(ctx).Where("graph_id = ? AND status = ?", row.ID, "pending").Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	proposal := proposalFromSchema(rec)
 	view := &ProposalView{
 		ID:                proposal.ID,
 		Summary:           proposal.Summary,
@@ -230,15 +236,15 @@ func pendingProposalView(ctx context.Context, tx *gorm.DB, row graphRow, applied
 }
 
 func loadProposalForUpdate(ctx context.Context, tx *gorm.DB, graphID, proposalID string) (proposalRow, error) {
-	var row proposalRow
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id, summary, status, base_graph_revision, change_set_json
-		FROM workflow_graph_proposals
-		WHERE id = $1 AND graph_id = $2
-		FOR UPDATE
-	`, proposalID, graphID).Scan(&row.ID, &row.Summary, &row.Status, &row.BaseGraphRevision, &row.ChangeSetJSON)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphProposals
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+		Where("id = ? AND graph_id = ?", proposalID, graphID).
+		Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return proposalRow{}, apperr.NotFound("图提案不存在")
 	}
-	return row, err
+	if err != nil {
+		return proposalRow{}, err
+	}
+	return proposalFromSchema(rec), nil
 }

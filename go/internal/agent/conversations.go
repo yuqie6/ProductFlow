@@ -3,11 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -25,55 +25,60 @@ func (s Service) GetConversation(ctx context.Context, productID *string, convers
 	return out, err
 }
 
+func conversationFromSchema(rec schema.AgentConversations) conversationRow {
+	return conversationRow{
+		ID: rec.ID, ScopeType: rec.ScopeType, SessionID: rec.SessionID, ProductID: rec.ProductID,
+		HarnessRunID: rec.HarnessRunID, Status: rec.Status, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
+	}
+}
+
 func loadConversation(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID string) (conversationRow, error) {
-	var row conversationRow
+	var rec schema.AgentConversations
 	var err error
 	if productID == nil {
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-			FROM agent_conversations WHERE id = $1 AND scope_type = 'global'
-		`, conversationID).Scan(&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt)
+		err = pgxTx.WithContext(ctx).Where("id = ? AND scope_type = ?", conversationID, "global").Take(&rec).Error
 	} else {
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-			FROM agent_conversations
-			WHERE id = $1 AND scope_type = 'product_workflow' AND product_id = $2
-		`, conversationID, *productID).Scan(&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt)
+		err = pgxTx.WithContext(ctx).
+			Where("id = ? AND scope_type = ? AND product_id = ?", conversationID, "product_workflow", *productID).
+			Take(&rec).Error
 	}
-	if errors.Is(err, sqldb.ErrNoRows) {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if productID != nil {
-			var exists int
-			if scanErr := pfdb.QueryRow(ctx, pgxTx, `SELECT 1 FROM products WHERE id = $1`, *productID).Scan(&exists); errors.Is(scanErr, sqldb.ErrNoRows) {
+			var product schema.Products
+			if scanErr := pgxTx.WithContext(ctx).Select("id").Where("id = ?", *productID).Take(&product).Error; errors.Is(scanErr, gorm.ErrRecordNotFound) {
 				return conversationRow{}, apperr.NotFound("商品不存在")
 			}
 		}
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
-	return row, err
+	if err != nil {
+		return conversationRow{}, err
+	}
+	return conversationFromSchema(rec), nil
 }
 
 func loadConversationByID(ctx context.Context, pgxTx *gorm.DB, conversationID string) (conversationRow, error) {
-	var row conversationRow
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-		FROM agent_conversations WHERE id = $1
-	`, conversationID).Scan(&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.AgentConversations
+	err := pgxTx.WithContext(ctx).Where("id = ?", conversationID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
-	return row, err
+	if err != nil {
+		return conversationRow{}, err
+	}
+	return conversationFromSchema(rec), nil
 }
 
 func lockConversation(ctx context.Context, pgxTx *gorm.DB, conversationID string) (conversationRow, error) {
-	var row conversationRow
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, scope_type, session_id, product_id, harness_run_id, status, created_at, updated_at
-		FROM agent_conversations WHERE id = $1 FOR UPDATE
-	`, conversationID).Scan(&row.ID, &row.ScopeType, &row.SessionID, &row.ProductID, &row.HarnessRunID, &row.Status, &row.CreatedAt, &row.UpdatedAt)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.AgentConversations
+	err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", conversationID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
-	return row, err
+	if err != nil {
+		return conversationRow{}, err
+	}
+	return conversationFromSchema(rec), nil
 }
 
 func applyConversationStatus(ctx context.Context, pgxTx *gorm.DB, conversationID, turnStatus string) error {
@@ -82,15 +87,16 @@ func applyConversationStatus(ctx context.Context, pgxTx *gorm.DB, conversationID
 	case "awaiting_confirmation":
 		status = "awaiting_confirmation"
 	case "succeeded":
-		var scope string
-		var draftStatus *string
-		_ = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT c.scope_type, d.status
-			FROM agent_conversations c
-			LEFT JOIN library_organization_drafts d ON d.conversation_id = c.id
-			WHERE c.id = $1
-		`, conversationID).Scan(&scope, &draftStatus)
-		if scope == "global" && draftStatus != nil && *draftStatus == "awaiting_confirmation" {
+		var result struct {
+			ScopeType   string  `gorm:"column:scope_type"`
+			DraftStatus *string `gorm:"column:draft_status"`
+		}
+		_ = pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
+			Select("agent_conversations.scope_type, library_organization_drafts.status AS draft_status").
+			Joins("LEFT JOIN library_organization_drafts ON library_organization_drafts.conversation_id = agent_conversations.id").
+			Where("agent_conversations.id = ?", conversationID).
+			Take(&result).Error
+		if result.ScopeType == "global" && result.DraftStatus != nil && *result.DraftStatus == "awaiting_confirmation" {
 			status = "awaiting_confirmation"
 		} else {
 			status = "completed"
@@ -102,10 +108,10 @@ func applyConversationStatus(ctx context.Context, pgxTx *gorm.DB, conversationID
 	case "unknown":
 		status = "unknown"
 	}
-	_, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_conversations SET status = $2, updated_at = NOW() WHERE id = $1
-	`, conversationID, status)
-	return err
+	return pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
+		"status":     status,
+		"updated_at": time.Now().UTC(),
+	}).Error
 }
 
 func serializeConversation(row conversationRow) ConversationResponse {

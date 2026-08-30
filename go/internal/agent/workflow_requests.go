@@ -4,16 +4,46 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	sqldb "database/sql"
+	"strings"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
+
+type runRequestScan struct {
+	schema.AgentWorkflowRunRequests
+	ProductName       string  `gorm:"column:product_name"`
+	WorkflowTitle     string  `gorm:"column:workflow_title"`
+	WorkflowRunStatus *string `gorm:"column:workflow_run_status"`
+}
+
+func runRequestFromScan(row runRequestScan) WorkflowRunRequestResponse {
+	return WorkflowRunRequestResponse{
+		ID: row.ID, ConversationID: row.ConversationID, TaskID: row.TaskID,
+		ProductID: row.ProductID, ProductName: row.ProductName, WorkflowID: row.GraphID,
+		WorkflowTitle: row.WorkflowTitle, ExpectedWorkflowRevision: row.ExpectedWorkflowRevision,
+		Status: row.Status, SourceRunID: row.SourceGraphRunID, WorkflowRunID: row.GraphRunID,
+		WorkflowRunStatus: row.WorkflowRunStatus, SourceStepID: row.SourceStepID,
+		FailureReason: row.FailureReason, ConfirmedAt: row.ConfirmedAt, FinishedAt: row.FinishedAt,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+}
+
+func runRequestBaseQuery(pgxTx *gorm.DB) *gorm.DB {
+	return pgxTx.Model(&schema.AgentWorkflowRunRequests{}).
+		Select(`agent_workflow_run_requests.*,
+			products.name AS product_name,
+			COALESCE(workflow_graphs.title, '') AS workflow_title,
+			workflow_graph_runs.status AS workflow_run_status`).
+		Joins("JOIN products ON products.id = agent_workflow_run_requests.product_id").
+		Joins("LEFT JOIN workflow_graphs ON workflow_graphs.id = agent_workflow_run_requests.graph_id").
+		Joins("LEFT JOIN workflow_graph_runs ON workflow_graph_runs.id = agent_workflow_run_requests.graph_run_id")
+}
 
 func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, conversationID string, taskID *string) (*WorkflowRunRequestResponse, error) {
 	var out *WorkflowRunRequestResponse
@@ -21,24 +51,12 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 		if _, err := loadConversation(ctx, pgxTx, productID, conversationID); err != nil {
 			return err
 		}
-		q := `
-			SELECT r.id, r.conversation_id, r.task_id, r.product_id, p.name, r.graph_id, COALESCE(g.title, ''),
-				r.expected_workflow_revision, r.status, r.source_graph_run_id, r.graph_run_id, run.status,
-				r.source_step_id, r.failure_reason, r.confirmed_at, r.finished_at, r.created_at, r.updated_at
-			FROM agent_workflow_run_requests r
-			JOIN products p ON p.id = r.product_id
-			LEFT JOIN workflow_graphs g ON g.id = r.graph_id
-			LEFT JOIN workflow_graph_runs run ON run.id = r.graph_run_id
-			WHERE r.conversation_id = $1
-		`
-		args := []any{conversationID}
+		q := runRequestBaseQuery(pgxTx).Where("agent_workflow_run_requests.conversation_id = ?", conversationID)
 		if taskID != nil {
-			q += ` AND r.task_id = $2`
-			args = append(args, *taskID)
+			q = q.Where("agent_workflow_run_requests.task_id = ?", *taskID)
 		}
-		q += ` ORDER BY r.created_at DESC, r.id DESC LIMIT 1`
-		item, err := scanRunRequest(ctx, pgxTx, q, args...)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		item, err := scanRunRequest(q.Order("agent_workflow_run_requests.created_at DESC, agent_workflow_run_requests.id DESC"))
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		if err != nil {
@@ -92,11 +110,13 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 		if err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_workflow_run_requests
-			SET status = 'confirmed', graph_run_id = $2, confirmed_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, requestID, run.ID); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.AgentWorkflowRunRequests{}).Where("id = ?", requestID).Updates(map[string]any{
+			"status":       "confirmed",
+			"graph_run_id": run.ID,
+			"confirmed_at": now,
+			"updated_at":   now,
+		}).Error; err != nil {
 			return err
 		}
 		if err := markTurnSucceededForRequest(ctx, pgxTx, requestID, conversationID); err != nil {
@@ -132,20 +152,19 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 	}
 	if item.WorkflowRunID != nil {
 		if _, err := s.Graph.CancelRunTx(ctx, pgxTx, item.ProductID, item.WorkflowID, *item.WorkflowRunID); err != nil {
-			var app apperr.Error
-			if !errors.As(err, &app) || app.Status != 409 {
-				return WorkflowRunRequestResponse{}, err
-			}
+			return WorkflowRunRequestResponse{}, err
 		}
 		if err := SyncGraphRunToTasks(ctx, pgxTx, *item.WorkflowRunID); err != nil {
 			return WorkflowRunRequestResponse{}, err
 		}
 	} else {
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_workflow_run_requests
-			SET status = 'cancelled', failure_reason = COALESCE(failure_reason, $2), finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, requestID, graph.GraphCancelledReason); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.AgentWorkflowRunRequests{}).Where("id = ?", requestID).Updates(map[string]any{
+			"status":         "cancelled",
+			"failure_reason": gorm.Expr("COALESCE(failure_reason, ?)", graph.GraphCancelledReason),
+			"finished_at":    now,
+			"updated_at":     now,
+		}).Error; err != nil {
 			return WorkflowRunRequestResponse{}, err
 		}
 		if err := parkTaskAfterCancelledRunRequest(ctx, pgxTx, item.TaskID); err != nil {
@@ -163,7 +182,11 @@ func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID s
 	if err := requireProductWorkflow(conv); err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
-	return s.prepareGraphRequest(ctx, *conv.ProductID, "", expectedRevision, sourceRunID, taskID)
+	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	return s.prepareProductGraphRequest(ctx, s.DB, conv, expectedRevision, sourceRunID, taskID)
 }
 
 func (s Service) PrepareGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
@@ -171,26 +194,65 @@ func (s Service) PrepareGlobalWorkflowRunRequest(ctx context.Context, conversati
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
-	if err := requireGlobalScope(conv); err != nil {
-		return PreparedWorkflowRunRequest{}, apperr.Conflict("只有全局 Agent conversation 可以请求跨商品执行工作流")
+	if err := requireGlobalWorkflowConversation(conv); err != nil {
+		return PreparedWorkflowRunRequest{}, err
 	}
-	return s.prepareGraphRequest(ctx, productID, workflowID, expectedRevision, sourceRunID, taskID)
+	productID, err = normalizeRequiredID(productID, "product_id")
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	workflowID, err = normalizeRequiredID(workflowID, "workflow_id")
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	return s.prepareGlobalGraphRequest(ctx, s.DB, conv, productID, workflowID, expectedRevision, sourceRunID, taskID)
 }
 
-func (s Service) prepareGraphRequest(ctx context.Context, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
+func (s Service) prepareProductGraphRequest(ctx context.Context, db *gorm.DB, conv conversationRow, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
+	prep, err := s.resolveGraphRunnable(ctx, db, *conv.ProductID, "", true, expectedRevision, sourceRunID)
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	if err := validateTaskScope(ctx, db, conv, taskID); err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	prep.TaskID = taskID
+	return prep, nil
+}
+
+func (s Service) prepareGlobalGraphRequest(ctx context.Context, db *gorm.DB, conv conversationRow, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
+	if err := validateTaskScope(ctx, db, conv, taskID); err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	prep, err := s.resolveGraphRunnable(ctx, db, productID, workflowID, false, expectedRevision, sourceRunID)
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	prep.TaskID = taskID
+	return prep, nil
+}
+
+func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productID, workflowID string, requireActive bool, expectedRevision int, sourceRunID *string) (PreparedWorkflowRunRequest, error) {
 	if err := requireExpectedWorkflowRevision(expectedRevision); err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
-	var graphID, title string
-	var revision, runnable int
-	q := `SELECT id, title, revision FROM workflow_graphs WHERE product_id = $1 AND active = TRUE`
-	args := []any{productID}
-	if workflowID != "" {
-		q += ` AND id = $2`
-		args = append(args, workflowID)
+	q := db.WithContext(ctx).Model(&schema.WorkflowGraphs{}).Where("product_id = ?", productID)
+	if requireActive {
+		q = q.Where("active = TRUE")
 	}
-	err := pfdb.QueryRow(ctx, s.DB, q, args...).Scan(&graphID, &title, &revision)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	if workflowID != "" {
+		q = q.Where("id = ?", workflowID)
+	}
+	var g schema.WorkflowGraphs
+	err := q.Select("id, title, revision").Take(&g).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if workflowID != "" && !requireActive {
+			return PreparedWorkflowRunRequest{}, apperr.NotFound("工作流不存在")
+		}
 		if workflowID != "" {
 			return PreparedWorkflowRunRequest{}, apperr.NotFound("工作流不存在")
 		}
@@ -199,28 +261,32 @@ func (s Service) prepareGraphRequest(ctx context.Context, productID, workflowID 
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
-	if revision != expectedRevision {
+	if g.Revision != expectedRevision {
 		return PreparedWorkflowRunRequest{}, apperr.Conflict(workflowRevisionChangedDetail)
 	}
-	runnable, err = requireRunnableWorkflow(ctx, s.DB, productID, graphID)
+	runnable, err := requireRunnableWorkflow(ctx, db, productID, g.ID)
+	if err != nil {
+		return PreparedWorkflowRunRequest{}, err
+	}
+	normalizedSource, err := validateSourceRun(ctx, db, productID, g.ID, sourceRunID)
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
 	return PreparedWorkflowRunRequest{
-		ProductID: productID, WorkflowID: graphID, WorkflowTitle: title,
-		WorkflowRevision: revision, RunnableNodeCount: runnable, TaskID: taskID, SourceRunID: sourceRunID,
+		ProductID: productID, WorkflowID: g.ID, WorkflowTitle: g.Title,
+		WorkflowRevision: g.Revision, RunnableNodeCount: runnable, SourceRunID: normalizedSource,
 	}, nil
 }
 
 func (s Service) CreateWorkflowRunRequest(ctx context.Context, conversationID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (WorkflowRunRequestResponse, error) {
-	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID)
+	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, false)
 }
 
 func (s Service) CreateGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (WorkflowRunRequestResponse, error) {
-	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID)
+	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, true)
 }
 
-func (s Service) createRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (WorkflowRunRequestResponse, error) {
+func (s Service) createRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool) (WorkflowRunRequestResponse, error) {
 	if err := requireExpectedWorkflowRevision(expectedRevision); err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
@@ -228,49 +294,96 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 	if err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
+	sourceStepID, err = normalizeSourceStepID(sourceStepID)
+	if err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
+	workflowID, err = normalizeRequiredID(workflowID, "workflow_id")
+	if err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
+	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
+	if global {
+		productID, err = normalizeRequiredID(productID, "product_id")
+		if err != nil {
+			return WorkflowRunRequestResponse{}, err
+		}
+	}
 	var out WorkflowRunRequestResponse
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		conv, err := loadConversationByID(ctx, pgxTx, conversationID)
 		if err != nil {
 			return err
 		}
+		var hashProductID *string
 		targetProduct := productID
-		if targetProduct == "" {
-			if conv.ProductID == nil {
-				return apperr.Conflict("商品工作流 Agent conversation 缺少商品")
+		if global {
+			if err := requireGlobalWorkflowConversation(conv); err != nil {
+				return err
 			}
-			targetProduct = *conv.ProductID
+			hashProductID = &targetProduct
+		} else {
+			if err := requireProductWorkflow(conv); err != nil {
+				return err
+			}
+			targetProduct, err = normalizeRequiredID(*conv.ProductID, "product_id")
+			if err != nil {
+				return err
+			}
 		}
-		hash, err := hashWorkflowRunRequest(conversationID, targetProduct, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
+		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
 		if err != nil {
 			return err
 		}
-		var existing, existingHash string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, request_hash FROM agent_workflow_run_requests WHERE conversation_id = $1 AND idempotency_key = $2
-		`, conversationID, key).Scan(&existing, &existingHash)
+		var existing schema.AgentWorkflowRunRequests
+		err = pgxTx.Select("id, request_hash").Where("conversation_id = ? AND idempotency_key = ?", conversationID, key).Take(&existing).Error
 		if err == nil {
-			if existingHash != hash {
+			if existing.RequestHash != hash {
 				return apperr.Conflict("同一 idempotency key 不能提交不同的工作流执行请求")
 			}
-			item, err := loadRunRequest(ctx, pgxTx, &targetProduct, conversationID, existing)
+			item, err := loadRunRequest(ctx, pgxTx, &targetProduct, conversationID, existing.ID)
 			out = item
 			return err
 		}
-		graphID, err := resolveActiveWorkflow(ctx, pgxTx, targetProduct, workflowID, expectedRevision)
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var prep PreparedWorkflowRunRequest
+		if global {
+			prep, err = s.prepareGlobalGraphRequest(ctx, pgxTx, conv, targetProduct, workflowID, expectedRevision, sourceRunID, taskID)
+		} else {
+			prep, err = s.prepareProductGraphRequest(ctx, pgxTx, conv, expectedRevision, sourceRunID, taskID)
+		}
 		if err != nil {
 			return err
 		}
-		if _, err := requireRunnableWorkflow(ctx, pgxTx, targetProduct, graphID); err != nil {
-			return err
+		if prep.ProductID != targetProduct {
+			return apperr.Conflict("工作流执行请求的 product_id 与当前目标不一致")
+		}
+		if prep.WorkflowID != workflowID {
+			return apperr.Conflict("工作流执行请求的 workflow_id 与当前 active 工作流不一致")
 		}
 		id := newID()
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO agent_workflow_run_requests (
-				id, conversation_id, task_id, product_id, graph_id, expected_workflow_revision, status,
-				source_graph_run_id, source_step_id, idempotency_key, request_hash, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_confirmation', $7, $8, $9, $10, NOW(), NOW())
-		`, id, conversationID, taskID, targetProduct, graphID, expectedRevision, sourceRunID, sourceStepID, key, hash); err != nil {
+		now := time.Now().UTC()
+		rec := schema.AgentWorkflowRunRequests{
+			ID:                       id,
+			ConversationID:           conversationID,
+			TaskID:                   taskID,
+			ProductID:                targetProduct,
+			GraphID:                  prep.WorkflowID,
+			ExpectedWorkflowRevision: expectedRevision,
+			Status:                   "awaiting_confirmation",
+			SourceGraphRunID:         prep.SourceRunID,
+			SourceStepID:             sourceStepID,
+			IdempotencyKey:           key,
+			RequestHash:              hash,
+			CreatedAt:                now,
+			UpdatedAt:                now,
+		}
+		if err := pgxTx.Create(&rec).Error; err != nil {
 			return err
 		}
 		if err := markRequestWaiting(ctx, pgxTx, conversationID, taskID); err != nil {
@@ -284,9 +397,37 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 }
 
 func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (ReconcileResponse, error) {
+	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, false)
+}
+
+func (s Service) ReconcileGlobalWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (ReconcileResponse, error) {
+	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, true)
+}
+
+func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool) (ReconcileResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
 		return ReconcileResponse{}, err
+	}
+	sourceStepID, err = normalizeSourceStepID(sourceStepID)
+	if err != nil {
+		return ReconcileResponse{}, err
+	}
+	workflowID, err = normalizeRequiredID(workflowID, "workflow_id")
+	if err != nil {
+		return ReconcileResponse{}, err
+	}
+	sourceRunID, err = normalizeOptionalID(sourceRunID, "source_run_id")
+	if err != nil {
+		return ReconcileResponse{}, err
+	}
+	var hashProductID *string
+	if global {
+		productID, err = normalizeRequiredID(productID, "product_id")
+		if err != nil {
+			return ReconcileResponse{}, err
+		}
+		hashProductID = &productID
 	}
 	var out ReconcileResponse
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -295,32 +436,37 @@ func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID
 			return err
 		}
 		targetProduct := productID
-		if targetProduct == "" {
-			if conv.ProductID == nil {
-				return apperr.Conflict("商品工作流 Agent conversation 缺少商品")
+		if global {
+			if err := requireGlobalWorkflowConversation(conv); err != nil {
+				return err
 			}
-			targetProduct = *conv.ProductID
+		} else {
+			if err := requireProductWorkflow(conv); err != nil {
+				return err
+			}
+			targetProduct, err = normalizeRequiredID(*conv.ProductID, "product_id")
+			if err != nil {
+				return err
+			}
 		}
-		hash, err := hashWorkflowRunRequest(conversationID, targetProduct, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
+		hash, err := hashWorkflowRunRequest(conversationID, hashProductID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID)
 		if err != nil {
 			return err
 		}
-		var existing, existingHash string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, request_hash FROM agent_workflow_run_requests WHERE conversation_id = $1 AND idempotency_key = $2
-		`, conversationID, key).Scan(&existing, &existingHash)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var existing schema.AgentWorkflowRunRequests
+		err = pgxTx.Select("id, request_hash").Where("conversation_id = ? AND idempotency_key = ?", conversationID, key).Take(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			out = ReconcileResponse{State: "not_applied", Detail: ptr("工作流执行请求尚未提交")}
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if existingHash != hash {
+		if existing.RequestHash != hash {
 			out = ReconcileResponse{State: "conflict", Detail: ptr("同一 idempotency key 已对应其他工作流执行请求")}
 			return nil
 		}
-		loaded, err := loadRunRequest(ctx, pgxTx, &targetProduct, conversationID, existing)
+		loaded, err := loadRunRequest(ctx, pgxTx, &targetProduct, conversationID, existing.ID)
 		if err != nil {
 			out = ReconcileResponse{State: "unknown", Detail: ptr("工作流执行请求对账结果仍不明确")}
 			return nil
@@ -332,7 +478,15 @@ func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID
 	return out, err
 }
 
-const workflowRevisionChangedDetail = "工作流 revision 已变化，请重新读取当前工作流"
+const (
+	workflowRevisionChangedDetail      = "工作流 revision 已变化，请重新读取当前工作流"
+	workflowRunRequestMaxStepIDLength  = 120
+	workflowRunRequestMaxIDLength      = 64
+	sourceRunNotRetryableDetail        = "只有失败且可重试的工作流运行可以再次请求执行"
+	globalWorkflowConversationConflict = "只有全局 Agent conversation 可以请求跨商品执行工作流"
+	taskConversationMismatchDetail     = "Agent Task 与当前 Agent conversation 不匹配"
+	finishedGraphRunCannotCancelDetail = "已结束的工作流运行不能取消"
+)
 
 func requireExpectedWorkflowRevision(expected int) error {
 	if expected <= 0 {
@@ -341,12 +495,111 @@ func requireExpectedWorkflowRevision(expected int) error {
 	return nil
 }
 
-func hashWorkflowRunRequest(conversationID, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (string, error) {
-	return canonjson.SHA256Hex(map[string]any{
-		"conversation_id": conversationID, "expected_workflow_revision": expectedRevision,
-		"source_step_id": sourceStepID, "task_id": taskID, "source_run_id": sourceRunID,
-		"product_id": productID, "workflow_id": workflowID,
-	})
+func requireGlobalWorkflowConversation(conv conversationRow) error {
+	if conv.ScopeType != "global" {
+		return apperr.Conflict(globalWorkflowConversationConflict)
+	}
+	return nil
+}
+
+func workflowRunRequestHashPayload(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) map[string]any {
+	payload := map[string]any{
+		"schema_version":             1,
+		"conversation_id":            strings.TrimSpace(conversationID),
+		"task_id":                    taskID,
+		"workflow_id":                strings.TrimSpace(workflowID),
+		"expected_workflow_revision": expectedRevision,
+		"source_step_id":             strings.TrimSpace(sourceStepID),
+	}
+	if productID != nil {
+		payload["product_id"] = strings.TrimSpace(*productID)
+	}
+	if sourceRunID != nil {
+		if trimmed := strings.TrimSpace(*sourceRunID); trimmed != "" {
+			payload["source_run_id"] = trimmed
+		}
+	}
+	return payload
+}
+
+func hashWorkflowRunRequest(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string) (string, error) {
+	return canonjson.SHA256Hex(workflowRunRequestHashPayload(conversationID, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID))
+}
+
+func normalizeRequiredID(value, field string) (string, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" || len(normalized) > workflowRunRequestMaxIDLength {
+		return "", apperr.Validation(field + " 无效")
+	}
+	return normalized, nil
+}
+
+func normalizeOptionalID(value *string, field string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	normalized, err := normalizeRequiredID(*value, field)
+	if err != nil {
+		return nil, err
+	}
+	return &normalized, nil
+}
+
+func normalizeSourceStepID(value string) (string, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" || len(normalized) > workflowRunRequestMaxStepIDLength {
+		return "", apperr.Validation("工作流执行请求 source_step_id 无效")
+	}
+	return normalized, nil
+}
+
+func validateTaskScope(ctx context.Context, db *gorm.DB, conv conversationRow, taskID *string) error {
+	if taskID == nil || strings.TrimSpace(*taskID) == "" {
+		return nil
+	}
+	var task schema.AgentTasks
+	err := db.WithContext(ctx).Where("id = ?", strings.TrimSpace(*taskID)).Take(&task).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return apperr.NotFound("Agent Task 不存在")
+	}
+	if err != nil {
+		return err
+	}
+	if conv.SessionID == nil || task.SessionID != *conv.SessionID {
+		return apperr.Conflict(taskConversationMismatchDetail)
+	}
+	if task.ConversationID == nil || *task.ConversationID != conv.ID {
+		return apperr.Conflict(taskConversationMismatchDetail)
+	}
+	if (task.ProductID == nil) != (conv.ProductID == nil) {
+		return apperr.Conflict(taskConversationMismatchDetail)
+	}
+	if task.ProductID != nil && *task.ProductID != *conv.ProductID {
+		return apperr.Conflict(taskConversationMismatchDetail)
+	}
+	return nil
+}
+
+func validateSourceRun(ctx context.Context, db *gorm.DB, productID, graphID string, sourceRunID *string) (*string, error) {
+	if sourceRunID == nil {
+		return nil, nil
+	}
+	var run schema.WorkflowGraphRuns
+	err := db.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+		Joins("JOIN workflow_graphs ON workflow_graphs.id = workflow_graph_runs.graph_id").
+		Where("workflow_graph_runs.id = ? AND workflow_graphs.id = ? AND workflow_graphs.product_id = ?", *sourceRunID, graphID, productID).
+		Select("workflow_graph_runs.status, workflow_graph_runs.is_retryable").
+		Take(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperr.NotFound("工作流运行不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if run.Status != "failed" || !run.IsRetryable {
+		return nil, apperr.Validation(sourceRunNotRetryableDetail)
+	}
+	return sourceRunID, nil
 }
 
 func requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
@@ -386,88 +639,50 @@ func markRequestWaiting(ctx context.Context, pgxTx *gorm.DB, conversationID stri
 	if inSet(terminalTask, task.Status) || task.Status == "paused" {
 		return nil
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_tasks SET
-			status = 'awaiting_confirmation',
-			waiting_reason = 'workflow_run_confirmation',
-			failure_reason = NULL,
-			finished_at = NULL,
-			updated_at = NOW()
-		WHERE id = $1
-	`, task.ID); err != nil {
+	now := time.Now().UTC()
+	if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(map[string]any{
+		"status":         "awaiting_confirmation",
+		"waiting_reason": "workflow_run_confirmation",
+		"failure_reason": nil,
+		"finished_at":    nil,
+		"updated_at":     now,
+	}).Error; err != nil {
 		return err
 	}
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 }
 
-func resolveActiveWorkflow(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, expectedRevision int) (string, error) {
-	var graphID string
-	var revision int
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, revision FROM workflow_graphs WHERE product_id = $1 AND active = TRUE
-	`, productID).Scan(&graphID, &revision)
-	if errors.Is(err, sqldb.ErrNoRows) {
-		return "", apperr.Conflict("当前商品没有可执行的 schema-v3 工作流")
-	}
-	if err != nil {
-		return "", err
-	}
-	if workflowID != "" && workflowID != graphID {
-		return "", apperr.Conflict("工作流执行请求的 workflow_id 与当前 active 工作流不一致")
-	}
-	if revision != expectedRevision {
-		return "", apperr.Conflict(workflowRevisionChangedDetail)
-	}
-	return graphID, nil
-}
-
 func requireLiveWorkflowRevision(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, expectedRevision int) error {
-	var revision int
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT revision FROM workflow_graphs WHERE id = $1 AND product_id = $2
-	`, workflowID, productID).Scan(&revision)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var g schema.WorkflowGraphs
+	err := pgxTx.WithContext(ctx).Select("revision").Where("id = ? AND product_id = ?", workflowID, productID).Take(&g).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return apperr.Conflict(workflowRevisionChangedDetail)
 	}
 	if err != nil {
 		return err
 	}
-	if revision != expectedRevision {
+	if g.Revision != expectedRevision {
 		return apperr.Conflict(workflowRevisionChangedDetail)
 	}
 	return nil
 }
 
 func loadRunRequest(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
-	q := `
-		SELECT r.id, r.conversation_id, r.task_id, r.product_id, p.name, r.graph_id, COALESCE(g.title, ''),
-			r.expected_workflow_revision, r.status, r.source_graph_run_id, r.graph_run_id, run.status,
-			r.source_step_id, r.failure_reason, r.confirmed_at, r.finished_at, r.created_at, r.updated_at
-		FROM agent_workflow_run_requests r
-		JOIN products p ON p.id = r.product_id
-		LEFT JOIN workflow_graphs g ON g.id = r.graph_id
-		LEFT JOIN workflow_graph_runs run ON run.id = r.graph_run_id
-		WHERE r.id = $1 AND r.conversation_id = $2
-	`
-	args := []any{requestID, conversationID}
+	q := runRequestBaseQuery(pgxTx.WithContext(ctx)).Where("agent_workflow_run_requests.id = ? AND agent_workflow_run_requests.conversation_id = ?", requestID, conversationID)
 	if productID != nil {
-		q += ` AND r.product_id = $3`
-		args = append(args, *productID)
+		q = q.Where("agent_workflow_run_requests.product_id = ?", *productID)
 	}
-	item, err := scanRunRequest(ctx, pgxTx, q, args...)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	item, err := scanRunRequest(q)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return WorkflowRunRequestResponse{}, apperr.NotFound("Agent workflow run request 不存在")
 	}
 	return item, err
 }
 
-func scanRunRequest(ctx context.Context, pgxTx *gorm.DB, q string, args ...any) (WorkflowRunRequestResponse, error) {
-	var item WorkflowRunRequestResponse
-	err := pfdb.QueryRow(ctx, pgxTx, q, args...).Scan(
-		&item.ID, &item.ConversationID, &item.TaskID, &item.ProductID, &item.ProductName,
-		&item.WorkflowID, &item.WorkflowTitle, &item.ExpectedWorkflowRevision, &item.Status,
-		&item.SourceRunID, &item.WorkflowRunID, &item.WorkflowRunStatus, &item.SourceStepID,
-		&item.FailureReason, &item.ConfirmedAt, &item.FinishedAt, &item.CreatedAt, &item.UpdatedAt,
-	)
-	return item, err
+func scanRunRequest(q *gorm.DB) (WorkflowRunRequestResponse, error) {
+	var row runRequestScan
+	if err := q.Take(&row).Error; err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
+	return runRequestFromScan(row), nil
 }

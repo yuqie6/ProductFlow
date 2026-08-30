@@ -8,7 +8,7 @@ import (
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
@@ -93,8 +93,6 @@ func (s Service) InspectProductAssets(ctx context.Context, conversationID string
 		if asset.ProductID != *conv.ProductID {
 			return nil, apperr.NotFound("商品图片不存在")
 		}
-		page, err := s.Product.ListGalleryAssets(ctx, *conv.ProductID, product.GalleryListInput{Limit: 1, Query: asset.DisplayName})
-		_ = page
 		out = append(out, AssetMetadata{
 			ID: asset.ID, DisplayName: asset.DisplayName, OriginalFilename: asset.OriginalFilename,
 			OriginType: asset.OriginType, ImageTypeKey: asset.ImageTypeKey, UserFolderID: asset.UserFolderID,
@@ -292,12 +290,12 @@ func (s Service) PrepareFolderCreate(ctx context.Context, conversationID, name s
 	if err := requireProductWorkflow(conv); err != nil {
 		return nil, err
 	}
-	var folderID, existingName string
-	err = pfdb.QueryRow(ctx, s.DB, `
-		SELECT id, name FROM product_asset_folders WHERE product_id = $1 AND name = $2 LIMIT 1
-	`, *conv.ProductID, name).Scan(&folderID, &existingName)
+	var folder schema.ProductAssetFolders
+	err = s.DB.WithContext(ctx).Select("id, name").
+		Where("product_id = ? AND name = ?", *conv.ProductID, name).
+		Take(&folder).Error
 	if err == nil {
-		return map[string]any{"folder_id": folderID, "name": existingName}, nil
+		return map[string]any{"folder_id": folder.ID, "name": folder.Name}, nil
 	}
 	return map[string]any{"folder_id": newID(), "name": name}, nil
 }
@@ -338,13 +336,14 @@ func (s Service) PrepareFolderRename(ctx context.Context, conversationID, folder
 	if err := requireProductWorkflow(conv); err != nil {
 		return nil, err
 	}
-	var expected string
-	err = pfdb.QueryRow(ctx, s.DB, `
-		SELECT name FROM product_asset_folders WHERE product_id = $1 AND id = $2
-	`, *conv.ProductID, folderID).Scan(&expected)
+	var folder schema.ProductAssetFolders
+	err = s.DB.WithContext(ctx).Select("name").
+		Where("product_id = ? AND id = ?", *conv.ProductID, folderID).
+		Take(&folder).Error
 	if err != nil {
 		return nil, apperr.NotFound("文件夹不存在")
 	}
+	expected := folder.Name
 	return map[string]any{"folder_id": folderID, "expected_name": expected, "target_name": targetName}, nil
 }
 

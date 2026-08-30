@@ -229,7 +229,7 @@ func TestConsumerLeaseExceedsTaskTimeout(t *testing.T) {
 	}
 }
 
-func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
+func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 	pool, gdb := testdb.Open(t)
 	ctx := context.Background()
 	agg := uniqueID(t)
@@ -247,6 +247,25 @@ func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
 		}
 		if changed {
 			t.Fatal("pending dispatch must not restage")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE async_dispatches SET status = $1, sent_at = NOW(), updated_at = NOW()
+		WHERE aggregate_id = $2
+	`, queue.StatusSent, agg); err != nil {
+		t.Fatal(err)
+	}
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		if err != nil {
+			return err
+		}
+		if changed {
+			t.Fatal("sent dispatch must not restage")
 		}
 		return nil
 	})
@@ -273,7 +292,7 @@ func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE async_dispatches SET status = $1, updated_at = NOW() WHERE aggregate_id = $2
+		UPDATE async_dispatches SET status = $1, attempts = 10, updated_at = NOW() WHERE aggregate_id = $2
 	`, queue.StatusDead, agg); err != nil {
 		t.Fatal(err)
 	}
@@ -282,8 +301,8 @@ func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if !changed {
-			t.Fatal("dead unfinished dispatch must restage")
+		if changed {
+			t.Fatal("dead dispatch must stay dead-lettered")
 		}
 		return nil
 	})
@@ -291,10 +310,34 @@ func TestRestageIfIdleSkipsPendingAndRestagesConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status string
-	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE aggregate_id = $1`, agg).Scan(&status); err != nil {
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT status, attempts FROM async_dispatches WHERE aggregate_id = $1`, agg).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != queue.StatusDead {
+		t.Fatalf("status %s", status)
+	}
+	if attempts != 10 {
+		t.Fatalf("attempts %d", attempts)
+	}
+	missing := uniqueID(t)
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, missing, nil)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			t.Fatal("missing envelope must be created")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE aggregate_id = $1`, missing).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != queue.StatusPending {
-		t.Fatalf("status %s", status)
+		t.Fatalf("missing restage status %s", status)
 	}
 }

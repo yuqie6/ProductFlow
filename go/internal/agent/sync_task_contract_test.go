@@ -180,6 +180,39 @@ func TestUpdateTaskFromTurnWritesSummary(t *testing.T) {
 	}
 }
 
+func TestUpdateTaskFromTurnKeepsWorkflowRunConfirmation(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	task := seedProductGoalTask(t, as)
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_tasks SET status = 'awaiting_confirmation', waiting_reason = 'workflow_run_confirmation' WHERE id = $1
+	`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
+		return updateTaskFromTurn(context.Background(), pgxTx, task.ID, "running", "", "工具进行中")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mustGetTask(t, as, task.ID)
+	if got.Status != "awaiting_confirmation" {
+		t.Fatalf("in-flight turn overwrote confirmation status %s", got.Status)
+	}
+	if got.WaitingReason == nil || *got.WaitingReason != "workflow_run_confirmation" {
+		t.Fatalf("waiting %+v", got.WaitingReason)
+	}
+	err = tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
+		return updateTaskFromTurn(context.Background(), pgxTx, task.ID, "awaiting_confirmation", "", "")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = mustGetTask(t, as, task.ID)
+	if got.WaitingReason == nil || *got.WaitingReason != "workflow_run_confirmation" {
+		t.Fatalf("awaiting turn dropped workflow confirmation %+v", got.WaitingReason)
+	}
+}
+
 func TestGetTaskAndListTasksSynchronizeGraphRun(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	task := seedProductGoalTask(t, as)

@@ -3,14 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
-	"strconv"
 	"time"
-
-	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/agentsession"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -45,18 +43,12 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 	}
 	var out TaskListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		q := `
-			SELECT t.id FROM agent_tasks t WHERE 1=1
-		`
-		args := []any{}
-		n := 1
+		q := pgxTx.Model(&schema.AgentTasks{})
 		if sessionID != nil {
-			q += ` AND t.session_id = $` + strconv.Itoa(n)
-			args = append(args, *sessionID)
-			n++
+			q = q.Where("session_id = ?", *sessionID)
 		}
 		if !includeTerminal {
-			q += ` AND t.status NOT IN ('succeeded','failed','canceled','unknown')`
+			q = q.Where("status NOT IN ('succeeded','failed','canceled','unknown')")
 		}
 		if cursor != nil {
 			updated, err := time.Parse(time.RFC3339Nano, cursor.UpdatedAt)
@@ -66,27 +58,10 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 					return apperr.Validation("Agent Task 分页 cursor 无效")
 				}
 			}
-			q += ` AND (t.updated_at < $` + strconv.Itoa(n) + ` OR (t.updated_at = $` + strconv.Itoa(n) + ` AND t.id < $` + strconv.Itoa(n+1) + `))`
-			args = append(args, updated, cursor.ID)
-			n += 2
-		}
-		q += ` ORDER BY t.updated_at DESC, t.id DESC LIMIT $` + strconv.Itoa(n)
-		args = append(args, limit+1)
-		rows, err := pfdb.Query(ctx, pgxTx, q, args...)
-		if err != nil {
-			return err
+			q = q.Where("(updated_at < ? OR (updated_at = ? AND id < ?))", updated, updated, cursor.ID)
 		}
 		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := q.Order("updated_at DESC, id DESC").Limit(limit+1).Pluck("id", &ids).Error; err != nil {
 			return err
 		}
 		hasMore := len(ids) > limit
@@ -132,30 +107,38 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
+		var productID *string
 		if conversationID != nil {
-			var convSession *string
-			err := pfdb.QueryRow(ctx, pgxTx, `SELECT session_id FROM agent_conversations WHERE id = $1`, *conversationID).Scan(&convSession)
-			if errors.Is(err, sqldb.ErrNoRows) {
+			var conv schema.AgentConversations
+			err := pgxTx.Where("id = ?", *conversationID).Take(&conv).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return apperr.NotFound("Agent conversation 不存在")
 			}
 			if err != nil {
 				return err
 			}
-			if convSession == nil || *convSession != sessionID {
+			if conv.SessionID == nil || *conv.SessionID != sessionID {
 				return apperr.Conflict("Agent conversation 不属于当前 Session")
 			}
+			productID = conv.ProductID
 		}
 		id := newID()
 		summary := boundedSummary(normalizedGoal)
-		var productID *string
-		if conversationID != nil {
-			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT product_id FROM agent_conversations WHERE id = $1`, *conversationID).Scan(&productID)
+		now := time.Now().UTC()
+		row := schema.AgentTasks{
+			ID:             id,
+			SessionID:      sessionID,
+			ConversationID: conversationID,
+			ProductID:      productID,
+			HarnessRunID:   id,
+			Title:          normalizedTitle,
+			Goal:           normalizedGoal,
+			Summary:        &summary,
+			Status:         "queued",
+			CreatedAt:      now,
+			UpdatedAt:      now,
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO agent_tasks (
-				id, session_id, conversation_id, product_id, harness_run_id, title, goal, summary, status, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $1, $5, $6, $7, 'queued', NOW(), NOW())
-		`, id, sessionID, conversationID, productID, normalizedTitle, normalizedGoal, summary); err != nil {
+		if err := pgxTx.Create(&row).Error; err != nil {
 			return err
 		}
 		if err := refreshSessionSummary(ctx, pgxTx, sessionID); err != nil {
@@ -195,7 +178,10 @@ func (s Service) RenameTask(ctx context.Context, taskID, title string) (TaskResp
 		if err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_tasks SET title = $2, updated_at = NOW() WHERE id = $1`, taskID, normalized); err != nil {
+		if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"title":      normalized,
+			"updated_at": time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		if err := refreshSessionSummary(ctx, pgxTx, task.SessionID); err != nil {
@@ -225,10 +211,15 @@ func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse,
 			return apperr.Conflict("运行中的 Agent Task 需要先等待结束或取消，才能标记 Goal 完成")
 		}
 		summary := boundedSummary(task.Goal)
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_tasks SET status = 'succeeded', waiting_reason = NULL, failure_reason = NULL,
-				finished_at = NOW(), updated_at = NOW(), summary = $2 WHERE id = $1
-		`, taskID, summary); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":         "succeeded",
+			"waiting_reason": nil,
+			"failure_reason": nil,
+			"finished_at":    now,
+			"updated_at":     now,
+			"summary":        summary,
+		}).Error; err != nil {
 			return err
 		}
 		if err := refreshSessionSummary(ctx, pgxTx, task.SessionID); err != nil {
@@ -265,9 +256,11 @@ func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, er
 		if task.Status != "queued" && task.Status != "waiting_user" && task.Status != "awaiting_confirmation" {
 			return apperr.Conflict("当前 Agent Task 状态不允许暂停")
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_tasks SET status = 'paused', waiting_reason = 'user_paused', updated_at = NOW() WHERE id = $1
-		`, taskID); err != nil {
+		if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":         "paused",
+			"waiting_reason": "user_paused",
+			"updated_at":     time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		if err := refreshSessionSummary(ctx, pgxTx, task.SessionID); err != nil {
@@ -300,8 +293,12 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 		}
 		if task.CurrentTurnID != nil {
 			var status string
-			if err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&status); err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+			var proj schema.AgentTurnProjections
+			if err := pgxTx.Where("id = ?", *task.CurrentTurnID).Take(&proj).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 				return err
+			}
+			if proj.ID != "" {
+				status = proj.Status
 			}
 			nextStatus := ""
 			reason := ""
@@ -313,9 +310,11 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 			default:
 				return apperr.Conflict("暂停的 Agent Task 当前 Turn 状态已变化，请刷新后处理")
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE agent_tasks SET status = $2, waiting_reason = $3, updated_at = NOW() WHERE id = $1
-			`, taskID, nextStatus, reason); err != nil {
+			if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+				"status":         nextStatus,
+				"waiting_reason": reason,
+				"updated_at":     time.Now().UTC(),
+			}).Error; err != nil {
 				return err
 			}
 		} else {
@@ -326,10 +325,14 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 			if err != nil {
 				return apperr.Conflict("Agent Task 绑定的 conversation 不存在")
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE agent_tasks SET status = 'queued', waiting_reason = NULL, failure_reason = NULL,
-					finished_at = NULL, canceled_at = NULL, updated_at = NOW() WHERE id = $1
-			`, taskID); err != nil {
+			if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+				"status":         "queued",
+				"waiting_reason": nil,
+				"failure_reason": nil,
+				"finished_at":    nil,
+				"canceled_at":    nil,
+				"updated_at":     time.Now().UTC(),
+			}).Error; err != nil {
 				return err
 			}
 			var productID *string
@@ -337,7 +340,7 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 				productID = conv.ProductID
 			}
 			key := "initial:" + conv.ID + ":" + taskID
-			reservation, _, err := reserveTurn(ctx, pgxTx, productID, conv.ID, task.Goal, nil, key, &taskID, nil)
+			reservation, _, err := reserveTurn(ctx, pgxTx, productID, conv.ID, task.Goal, nil, key, &taskID, "", nil)
 			if err != nil {
 				return err
 			}
@@ -403,25 +406,29 @@ func cancelTaskLocal(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskRe
 		return TaskResponse{}, err
 	}
 	if !inSet(terminalTask, task.Status) {
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_tasks SET status = 'canceled', waiting_reason = NULL, canceled_at = NOW(), finished_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, taskID); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":         "canceled",
+			"waiting_reason": nil,
+			"canceled_at":    now,
+			"finished_at":    now,
+			"updated_at":     now,
+		}).Error; err != nil {
 			return TaskResponse{}, err
 		}
 		if task.CurrentTurnID != nil {
-			var status string
-			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&status)
-			if inSet(blockingTurn, status) {
-				if _, err := pfdb.Exec(ctx, pgxTx, `
-					UPDATE agent_turn_projections SET status = 'canceled', finished_at = NOW(), updated_at = NOW() WHERE id = $1
-				`, *task.CurrentTurnID); err != nil {
+			var proj schema.AgentTurnProjections
+			_ = pgxTx.Where("id = ?", *task.CurrentTurnID).Take(&proj).Error
+			if inSet(blockingTurn, proj.Status) {
+				if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", *task.CurrentTurnID).Updates(map[string]any{
+					"status":      "canceled",
+					"finished_at": now,
+					"updated_at":  now,
+				}).Error; err != nil {
 					return TaskResponse{}, err
 				}
-				var convID string
-				_ = pfdb.QueryRow(ctx, pgxTx, `SELECT conversation_id FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&convID)
-				if convID != "" {
-					_ = applyConversationStatus(ctx, pgxTx, convID, "canceled")
+				if proj.ConversationID != "" {
+					_ = applyConversationStatus(ctx, pgxTx, proj.ConversationID, "canceled")
 				}
 			}
 		}
@@ -433,18 +440,15 @@ func cancelTaskLocal(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskRe
 }
 
 func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
-	var runID string
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT graph_run_id FROM agent_workflow_run_requests
-		WHERE task_id = $1 AND graph_run_id IS NOT NULL
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1
-	`, taskID).Scan(&runID)
-	if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+	var req schema.AgentWorkflowRunRequests
+	err := pgxTx.Where("task_id = ? AND graph_run_id IS NOT NULL", taskID).
+		Order("created_at DESC, id DESC").
+		Take(&req).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return TaskResponse{}, err
 	}
-	if runID != "" {
-		if err := SyncGraphRunToTasks(ctx, pgxTx, runID); err != nil {
+	if req.GraphRunID != nil && *req.GraphRunID != "" {
+		if err := SyncGraphRunToTasks(ctx, pgxTx, *req.GraphRunID); err != nil {
 			return TaskResponse{}, err
 		}
 	}
@@ -452,62 +456,62 @@ func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID strin
 }
 
 func loadTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
-	var row taskRow
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT t.id, t.session_id, t.conversation_id, t.product_id, t.harness_run_id, t.title, t.goal, t.summary,
-			t.status, t.waiting_reason, t.failure_reason, t.current_turn_id, t.created_at, t.updated_at,
-			t.started_at, t.finished_at, t.canceled_at,
-			(SELECT r.graph_id FROM agent_workflow_run_requests r WHERE r.task_id = t.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1)
-		FROM agent_tasks t WHERE t.id = $1
-	`, taskID).Scan(
-		&row.ID, &row.SessionID, &row.ConversationID, &row.ProductID, &row.HarnessRunID, &row.Title, &row.Goal, &row.Summary,
-		&row.Status, &row.WaitingReason, &row.FailureReason, &row.CurrentTurnID, &row.CreatedAt, &row.UpdatedAt,
-		&row.StartedAt, &row.FinishedAt, &row.CanceledAt, &row.WorkflowID,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var t schema.AgentTasks
+	err := pgxTx.WithContext(ctx).Where("id = ?", taskID).Take(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return TaskResponse{}, apperr.NotFound("Agent Task 不存在")
 	}
 	if err != nil {
 		return TaskResponse{}, err
 	}
+	var workflowID *string
+	var req schema.AgentWorkflowRunRequests
+	reqErr := pgxTx.Where("task_id = ?", taskID).Order("created_at DESC, id DESC").Take(&req).Error
+	if reqErr == nil {
+		workflowID = &req.GraphID
+	} else if !errors.Is(reqErr, gorm.ErrRecordNotFound) {
+		return TaskResponse{}, reqErr
+	}
 	return TaskResponse{
-		ID: row.ID, SessionID: row.SessionID, ConversationID: row.ConversationID, ProductID: row.ProductID,
-		WorkflowID: row.WorkflowID, Title: row.Title, Goal: row.Goal, Summary: row.Summary, Status: row.Status,
-		WaitingReason: row.WaitingReason, FailureReason: row.FailureReason, CurrentTurnID: row.CurrentTurnID,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt,
-		CanceledAt: row.CanceledAt,
+		ID: t.ID, SessionID: t.SessionID, ConversationID: t.ConversationID, ProductID: t.ProductID,
+		WorkflowID: workflowID, Title: t.Title, Goal: t.Goal, Summary: t.Summary, Status: t.Status,
+		WaitingReason: t.WaitingReason, FailureReason: t.FailureReason, CurrentTurnID: t.CurrentTurnID,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, StartedAt: t.StartedAt, FinishedAt: t.FinishedAt,
+		CanceledAt: t.CanceledAt,
 	}, nil
 }
 
 func lockTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (taskRow, error) {
-	var row taskRow
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, session_id, conversation_id, product_id, harness_run_id, title, goal, summary, status,
-			waiting_reason, failure_reason, current_turn_id, created_at, updated_at, started_at, finished_at, canceled_at
-		FROM agent_tasks WHERE id = $1 FOR UPDATE
-	`, taskID).Scan(
-		&row.ID, &row.SessionID, &row.ConversationID, &row.ProductID, &row.HarnessRunID, &row.Title, &row.Goal, &row.Summary, &row.Status,
-		&row.WaitingReason, &row.FailureReason, &row.CurrentTurnID, &row.CreatedAt, &row.UpdatedAt, &row.StartedAt, &row.FinishedAt, &row.CanceledAt,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var t schema.AgentTasks
+	err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return taskRow{}, apperr.NotFound("Agent Task 不存在")
 	}
-	return row, err
+	if err != nil {
+		return taskRow{}, err
+	}
+	return taskRow{
+		ID: t.ID, SessionID: t.SessionID, ConversationID: t.ConversationID, ProductID: t.ProductID,
+		HarnessRunID: t.HarnessRunID, Title: t.Title, Goal: t.Goal, Summary: t.Summary, Status: t.Status,
+		WaitingReason: t.WaitingReason, FailureReason: t.FailureReason, CurrentTurnID: t.CurrentTurnID,
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, StartedAt: t.StartedAt, FinishedAt: t.FinishedAt,
+		CanceledAt: t.CanceledAt,
+	}, nil
 }
 
 func requireNoBusyTurn(ctx context.Context, pgxTx *gorm.DB, task taskRow) error {
 	if task.CurrentTurnID == nil {
 		return nil
 	}
-	var status string
-	err := pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&status)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var proj schema.AgentTurnProjections
+	err := pgxTx.WithContext(ctx).Where("id = ?", *task.CurrentTurnID).Take(&proj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if inSet(busyHarnessTurn, status) {
+	if inSet(busyHarnessTurn, proj.Status) {
 		return errors.New("busy")
 	}
 	return nil

@@ -56,6 +56,7 @@ func TestConfirmWorkflowRunRequestKeepsProductGoalOpen(t *testing.T) {
 	auth := http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
 	req := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/workflow-run-requests", map[string]any{
 		"expected_workflow_revision": 1,
+		"workflow_id":                graphID,
 		"source_step_id":             "run-1",
 		"task_id":                    task.ID,
 	}, auth)

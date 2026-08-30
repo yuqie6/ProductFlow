@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -51,21 +52,42 @@ func serializeTurn(row turnRow, focus *CanvasFocus) TurnResponse {
 	}
 }
 
+type turnJoinDest struct {
+	schema.AgentTurnProjections
+	ConversationHarnessRunID string  `gorm:"column:conversation_harness_run_id"`
+	TaskHarnessRunID         *string `gorm:"column:task_harness_run_id"`
+	ConversationScope        string  `gorm:"column:conversation_scope"`
+	ConversationProductID    *string `gorm:"column:conversation_product_id"`
+}
+
+func jsonPtrBytes(s *string) []byte {
+	if s == nil {
+		return nil
+	}
+	return []byte(*s)
+}
+
+func turnFromModels(proj schema.AgentTurnProjections, convHarness string, taskHarness *string, scope string, productID *string) turnRow {
+	return turnRow{
+		ID: proj.ID, ConversationID: proj.ConversationID, TaskID: proj.TaskID,
+		HarnessTurnID: proj.HarnessTurnID, IdempotencyKey: proj.IdempotencyKey, RequestHash: proj.RequestHash,
+		InputText: proj.InputText, InputAssetIDs: []byte(proj.InputAssetIdsJSON), Status: proj.Status,
+		ResumeRequired: proj.ResumeRequired, OutputText: proj.OutputText, ErrorText: proj.ErrorText,
+		QuestionJSON: jsonPtrBytes(proj.QuestionJSON), QuestionAnswerJSON: jsonPtrBytes(proj.QuestionAnswerJSON),
+		ContinuationTurnID: proj.ContinuationTurnID, ToolStepsJSON: []byte(proj.ToolStepsJSON),
+		ArtifactName: proj.ArtifactName, ArtifactStepID: proj.ArtifactStepID,
+		LibraryOrgDraftRevisionID: proj.LibraryOrganizationDraftRevisionID,
+		WorkflowRunRequestID:      proj.WorkflowRunRequestID, PageContextSnapshotID: proj.PageContextSnapshotID,
+		SyncError: proj.SyncError, FinishedAt: proj.FinishedAt, CreatedAt: proj.CreatedAt, UpdatedAt: proj.UpdatedAt,
+		ConversationHarnessRunID: convHarness, TaskHarnessRunID: taskHarness,
+		ConversationScope: scope, ConversationProductID: productID,
+	}
+}
+
 func loadTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string) (turnRow, error) {
-	row, err := scanTurn(ctx, pgxTx, `
-		SELECT t.id, t.conversation_id, t.task_id, t.harness_turn_id, t.idempotency_key, t.request_hash,
-			t.input_text, t.input_asset_ids_json, t.status, t.resume_required, t.output_text, t.error_text,
-			t.question_json, t.question_answer_json, t.continuation_turn_id, t.tool_steps_json,
-			t.artifact_name, t.artifact_step_id, t.library_organization_draft_revision_id,
-			t.workflow_run_request_id, t.page_context_snapshot_id, t.sync_error, t.finished_at,
-			t.created_at, t.updated_at, c.harness_run_id, tk.harness_run_id, c.scope_type, c.product_id
-		FROM agent_turn_projections t
-		JOIN agent_conversations c ON c.id = t.conversation_id
-		LEFT JOIN agent_tasks tk ON tk.id = t.task_id
-		WHERE t.id = $1 AND t.conversation_id = $2
-	`, projectionID, conversationID)
+	row, err := scanTurn(ctx, pgxTx, projectionID, &conversationID)
 	if err != nil {
-		if isNoRows(err) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if _, convErr := loadConversation(ctx, pgxTx, productID, conversationID); convErr != nil {
 				return turnRow{}, convErr
 			}
@@ -86,20 +108,9 @@ func loadTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversati
 }
 
 func loadTurnByID(ctx context.Context, pgxTx *gorm.DB, projectionID string) (turnRow, error) {
-	row, err := scanTurn(ctx, pgxTx, `
-		SELECT t.id, t.conversation_id, t.task_id, t.harness_turn_id, t.idempotency_key, t.request_hash,
-			t.input_text, t.input_asset_ids_json, t.status, t.resume_required, t.output_text, t.error_text,
-			t.question_json, t.question_answer_json, t.continuation_turn_id, t.tool_steps_json,
-			t.artifact_name, t.artifact_step_id, t.library_organization_draft_revision_id,
-			t.workflow_run_request_id, t.page_context_snapshot_id, t.sync_error, t.finished_at,
-			t.created_at, t.updated_at, c.harness_run_id, tk.harness_run_id, c.scope_type, c.product_id
-		FROM agent_turn_projections t
-		JOIN agent_conversations c ON c.id = t.conversation_id
-		LEFT JOIN agent_tasks tk ON tk.id = t.task_id
-		WHERE t.id = $1
-	`, projectionID)
+	row, err := scanTurn(ctx, pgxTx, projectionID, nil)
 	if err != nil {
-		if isNoRows(err) {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return turnRow{}, apperr.NotFound("Agent turn 不存在")
 		}
 		return turnRow{}, err
@@ -107,18 +118,24 @@ func loadTurnByID(ctx context.Context, pgxTx *gorm.DB, projectionID string) (tur
 	return row, nil
 }
 
-func scanTurn(ctx context.Context, pgxTx *gorm.DB, query string, args ...any) (turnRow, error) {
-	var row turnRow
-	err := pfdb.QueryRow(ctx, pgxTx, query, args...).Scan(
-		&row.ID, &row.ConversationID, &row.TaskID, &row.HarnessTurnID, &row.IdempotencyKey, &row.RequestHash,
-		&row.InputText, &row.InputAssetIDs, &row.Status, &row.ResumeRequired, &row.OutputText, &row.ErrorText,
-		&row.QuestionJSON, &row.QuestionAnswerJSON, &row.ContinuationTurnID, &row.ToolStepsJSON,
-		&row.ArtifactName, &row.ArtifactStepID, &row.LibraryOrgDraftRevisionID,
-		&row.WorkflowRunRequestID, &row.PageContextSnapshotID, &row.SyncError, &row.FinishedAt,
-		&row.CreatedAt, &row.UpdatedAt, &row.ConversationHarnessRunID, &row.TaskHarnessRunID,
-		&row.ConversationScope, &row.ConversationProductID,
-	)
-	return row, err
+func scanTurn(ctx context.Context, pgxTx *gorm.DB, projectionID string, conversationID *string) (turnRow, error) {
+	var dest turnJoinDest
+	q := pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
+		Select(`agent_turn_projections.*,
+			agent_conversations.harness_run_id AS conversation_harness_run_id,
+			agent_tasks.harness_run_id AS task_harness_run_id,
+			agent_conversations.scope_type AS conversation_scope,
+			agent_conversations.product_id AS conversation_product_id`).
+		Joins("JOIN agent_conversations ON agent_conversations.id = agent_turn_projections.conversation_id").
+		Joins("LEFT JOIN agent_tasks ON agent_tasks.id = agent_turn_projections.task_id").
+		Where("agent_turn_projections.id = ?", projectionID)
+	if conversationID != nil {
+		q = q.Where("agent_turn_projections.conversation_id = ?", *conversationID)
+	}
+	if err := q.Take(&dest).Error; err != nil {
+		return turnRow{}, err
+	}
+	return turnFromModels(dest.AgentTurnProjections, dest.ConversationHarnessRunID, dest.TaskHarnessRunID, dest.ConversationScope, dest.ConversationProductID), nil
 }
 
 func canvasFocusForTurns(ctx context.Context, pgxTx *gorm.DB, turns []turnRow) (map[string]*CanvasFocus, error) {
@@ -133,13 +150,12 @@ func canvasFocusForTurns(ctx context.Context, pgxTx *gorm.DB, turns []turnRow) (
 			earliest = turn.CreatedAt
 		}
 	}
-	rows, err := pfdb.Query(ctx, pgxTx, `
-		SELECT id, result_json, created_at
-		FROM agent_tool_mutations
-		WHERE conversation_id = $1 AND tool_name = 'focus_canvas_items_v1' AND status = 'applied' AND created_at >= $2
-		ORDER BY created_at DESC, id DESC
-		LIMIT 200
-	`, conversationID, earliest)
+	var records []schema.AgentToolMutations
+	err := pgxTx.WithContext(ctx).
+		Where("conversation_id = ? AND tool_name = ? AND status = ? AND created_at >= ?", conversationID, "focus_canvas_items_v1", "applied", earliest).
+		Order("created_at DESC, id DESC").
+		Limit(200).
+		Find(&records).Error
 	if err != nil {
 		return nil, err
 	}
@@ -148,18 +164,13 @@ func canvasFocusForTurns(ctx context.Context, pgxTx *gorm.DB, turns []turnRow) (
 		result    []byte
 		createdAt time.Time
 	}
-	var mutations []mut
-	for rows.Next() {
-		var item mut
-		if err := rows.Scan(&item.id, &item.result, &item.createdAt); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		mutations = append(mutations, item)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
+	mutations := make([]mut, 0, len(records))
+	for _, item := range records {
+		mutations = append(mutations, mut{
+			id:        item.ID,
+			result:    jsonPtrBytes(item.ResultJSON),
+			createdAt: item.CreatedAt,
+		})
 	}
 	for _, turn := range turns {
 		for _, mutation := range mutations {

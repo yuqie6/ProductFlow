@@ -6,10 +6,9 @@ import (
 	"errors"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -61,66 +60,79 @@ type applicationRecord struct {
 	RequiredBindings     []string
 }
 
-func scanRecipe(row interface{ Scan(dest ...any) error }) (recipeRecord, error) {
-	var rec recipeRecord
-	err := row.Scan(
-		&rec.ID, &rec.Kind, &rec.Origin, &rec.OfficialKey, &rec.CurrentVersionID,
-		&rec.ArchivedAt, &rec.CreatedAt, &rec.UpdatedAt,
-	)
-	return rec, err
+func recipeFromSchema(rec schema.WorkflowRecipes) recipeRecord {
+	return recipeRecord{
+		ID:               rec.ID,
+		Kind:             rec.Kind,
+		Origin:           rec.Origin,
+		OfficialKey:      rec.OfficialKey,
+		CurrentVersionID: rec.CurrentVersionID,
+		ArchivedAt:       rec.ArchivedAt,
+		CreatedAt:        rec.CreatedAt,
+		UpdatedAt:        rec.UpdatedAt,
+	}
+}
+
+func versionFromSchema(rec schema.WorkflowRecipeVersions) versionRecord {
+	ver := versionRecord{
+		ID:                             rec.ID,
+		RecipeID:                       rec.RecipeID,
+		Version:                        rec.Version,
+		SchemaVersion:                  rec.SchemaVersion,
+		CatalogVersion:                 rec.CatalogVersion,
+		CreationSource:                 rec.CreationSource,
+		Title:                          rec.Title,
+		Description:                    rec.Description,
+		PayloadJSON:                    []byte(rec.PayloadJSON),
+		PayloadHash:                    rec.PayloadHash,
+		PreferredVisualSystemVersionID: rec.PreferredVisualSystemVersionID,
+		CreatedAt:                      rec.CreatedAt,
+	}
+	if rec.GovernanceJSON != nil {
+		ver.GovernanceJSON = []byte(*rec.GovernanceJSON)
+	}
+	return ver
 }
 
 func getProductTarget(ctx context.Context, tx *gorm.DB, productID string, forUpdate bool) (productTarget, error) {
-	q := `SELECT id, current_fact_set_version_id FROM products WHERE id = $1`
+	q := tx.WithContext(ctx).Select("id, current_fact_set_version_id").Where("id = ?", productID)
 	if forUpdate {
-		q += ` FOR UPDATE`
+		q = q.Clauses(pfdb.ForUpdate())
 	}
-	var target productTarget
-	err := pfdb.QueryRow(ctx, tx, q, productID).Scan(&target.ID, &target.FactSetVersionID)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.Products
+	err := q.Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return productTarget{}, apperr.NotFound("商品不存在")
 	}
-	return target, err
+	return productTarget{ID: rec.ID, FactSetVersionID: rec.CurrentFactSetVersionID}, err
 }
 
 func visualSystemVersionExists(ctx context.Context, tx *gorm.DB, id string) error {
-	var found string
-	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM visual_system_versions WHERE id = $1`, id).Scan(&found)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.VisualSystemVersions
+	err := tx.WithContext(ctx).Select("id").Where("id = ?", id).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return apperr.NotFound("视觉系统版本不存在")
 	}
 	return err
 }
 
 func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]recipeRecord, error) {
-	q := `
-		SELECT id, kind, origin, official_key, current_version_id, archived_at, created_at, updated_at
-		FROM workflow_recipes
-		WHERE origin = 'user'
-	`
+	q := tx.WithContext(ctx).Where("origin = ?", "user")
 	if !includeArchived {
-		q += ` AND archived_at IS NULL`
+		q = q.Where("archived_at IS NULL")
 	}
-	q += ` ORDER BY updated_at DESC, id`
-	rows, err := pfdb.Query(ctx, tx, q)
-	if err != nil {
+	var rows []schema.WorkflowRecipes
+	if err := q.Order("updated_at DESC, id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []recipeRecord{}
+	out := make([]recipeRecord, 0, len(rows))
 	ids := []string{}
-	for rows.Next() {
-		rec, err := scanRecipe(rows)
-		if err != nil {
-			return nil, err
+	for _, rec := range rows {
+		item := recipeFromSchema(rec)
+		out = append(out, item)
+		if item.CurrentVersionID != nil {
+			ids = append(ids, *item.CurrentVersionID)
 		}
-		out = append(out, rec)
-		if rec.CurrentVersionID != nil {
-			ids = append(ids, *rec.CurrentVersionID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	versions, err := loadVersionsByIDs(ctx, tx, ids)
 	if err != nil {
@@ -139,63 +151,50 @@ func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]reci
 }
 
 func loadRecipe(ctx context.Context, tx *gorm.DB, recipeID string, forUpdate bool) (recipeRecord, error) {
-	q := `
-		SELECT id, kind, origin, official_key, current_version_id, archived_at, created_at, updated_at
-		FROM workflow_recipes
-		WHERE id = $1
-	`
+	q := tx.WithContext(ctx).Where("id = ?", recipeID)
 	if forUpdate {
-		q += ` FOR UPDATE`
+		q = q.Clauses(pfdb.ForUpdate())
 	}
-	rec, err := scanRecipe(pfdb.QueryRow(ctx, tx, q, recipeID))
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowRecipes
+	err := q.Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return recipeRecord{}, apperr.NotFound("工作流配方不存在")
 	}
 	if err != nil {
 		return recipeRecord{}, err
 	}
-	if rec.Origin == originOfficial {
+	out := recipeFromSchema(rec)
+	if out.Origin == originOfficial {
 		return recipeRecord{}, apperr.NotFound("工作流配方不存在")
 	}
-	versions, err := loadRecipeVersions(ctx, tx, rec.ID)
+	versions, err := loadRecipeVersions(ctx, tx, out.ID)
 	if err != nil {
 		return recipeRecord{}, err
 	}
-	rec.Versions = versions
-	if rec.CurrentVersionID != nil {
+	out.Versions = versions
+	if out.CurrentVersionID != nil {
 		for i := range versions {
-			if versions[i].ID == *rec.CurrentVersionID {
+			if versions[i].ID == *out.CurrentVersionID {
 				copied := versions[i]
-				rec.Current = &copied
+				out.Current = &copied
 				break
 			}
 		}
 	}
-	return rec, nil
+	return out, nil
 }
 
 func loadRecipeVersions(ctx context.Context, tx *gorm.DB, recipeID string) ([]versionRecord, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id, recipe_id, version, schema_version, catalog_version, creation_source,
-			title, description, payload_json, payload_hash, governance_json,
-			preferred_visual_system_version_id, created_at
-		FROM workflow_recipe_versions
-		WHERE recipe_id = $1
-		ORDER BY version
-	`, recipeID)
+	var rows []schema.WorkflowRecipeVersions
+	err := tx.WithContext(ctx).Where("recipe_id = ?", recipeID).Order("version").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []versionRecord{}
-	for rows.Next() {
-		ver, err := scanVersion(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ver)
+	out := make([]versionRecord, 0, len(rows))
+	for _, rec := range rows {
+		out = append(out, versionFromSchema(rec))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func loadVersionsByIDs(ctx context.Context, tx *gorm.DB, ids []string) (map[string]versionRecord, error) {
@@ -203,104 +202,123 @@ func loadVersionsByIDs(ctx context.Context, tx *gorm.DB, ids []string) (map[stri
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id, recipe_id, version, schema_version, catalog_version, creation_source,
-			title, description, payload_json, payload_hash, governance_json,
-			preferred_visual_system_version_id, created_at
-		FROM workflow_recipe_versions
-		WHERE id = ANY($1::text[])
-	`, ids)
-	if err != nil {
+	var rows []schema.WorkflowRecipeVersions
+	if err := tx.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		ver, err := scanVersion(rows)
-		if err != nil {
-			return nil, err
-		}
-		out[ver.ID] = ver
+	for _, rec := range rows {
+		out[rec.ID] = versionFromSchema(rec)
 	}
-	return out, rows.Err()
-}
-
-func scanVersion(row interface{ Scan(dest ...any) error }) (versionRecord, error) {
-	var ver versionRecord
-	err := row.Scan(
-		&ver.ID, &ver.RecipeID, &ver.Version, &ver.SchemaVersion, &ver.CatalogVersion, &ver.CreationSource,
-		&ver.Title, &ver.Description, &ver.PayloadJSON, &ver.PayloadHash, &ver.GovernanceJSON,
-		&ver.PreferredVisualSystemVersionID, &ver.CreatedAt,
-	)
-	return ver, err
+	return out, nil
 }
 
 func insertRecipe(ctx context.Context, tx *gorm.DB, rec recipeRecord) error {
-	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_recipes (id, kind, origin, official_key, current_version_id, archived_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, NULL, NULL, NOW(), NOW())
-	`, rec.ID, rec.Kind, rec.Origin, rec.OfficialKey)
-	return err
+	now := time.Now().UTC()
+	return tx.WithContext(ctx).Create(&schema.WorkflowRecipes{
+		ID:          rec.ID,
+		Kind:        rec.Kind,
+		Origin:      rec.Origin,
+		OfficialKey: rec.OfficialKey,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}).Error
 }
 
 func insertVersion(ctx context.Context, tx *gorm.DB, ver versionRecord) error {
-	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_recipe_versions (
-			id, recipe_id, version, schema_version, catalog_version, creation_source,
-			title, description, payload_json, payload_hash, governance_json,
-			preferred_visual_system_version_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, NOW())
-	`, ver.ID, ver.RecipeID, ver.Version, ver.SchemaVersion, ver.CatalogVersion, ver.CreationSource,
-		ver.Title, ver.Description, ver.PayloadJSON, ver.PayloadHash, nullableJSON(ver.GovernanceJSON),
-		ver.PreferredVisualSystemVersionID)
-	return err
+	row := schema.WorkflowRecipeVersions{
+		ID:                             ver.ID,
+		RecipeID:                       ver.RecipeID,
+		Version:                        ver.Version,
+		SchemaVersion:                  ver.SchemaVersion,
+		CatalogVersion:                 ver.CatalogVersion,
+		CreationSource:                 ver.CreationSource,
+		Title:                          ver.Title,
+		Description:                    ver.Description,
+		PayloadJSON:                    string(ver.PayloadJSON),
+		PayloadHash:                    ver.PayloadHash,
+		PreferredVisualSystemVersionID: ver.PreferredVisualSystemVersionID,
+		CreatedAt:                      time.Now().UTC(),
+	}
+	if len(ver.GovernanceJSON) > 0 {
+		s := string(ver.GovernanceJSON)
+		row.GovernanceJSON = &s
+	}
+	return tx.WithContext(ctx).Create(&row).Error
 }
 
 func setCurrentVersion(ctx context.Context, tx *gorm.DB, recipeID, versionID string) error {
-	_, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_recipes SET current_version_id = $2, updated_at = NOW() WHERE id = $1
-	`, recipeID, versionID)
-	return err
+	return tx.WithContext(ctx).Model(&schema.WorkflowRecipes{}).Where("id = ?", recipeID).Updates(map[string]any{
+		"current_version_id": versionID,
+		"updated_at":         time.Now().UTC(),
+	}).Error
 }
 
 func archiveRecipeRow(ctx context.Context, tx *gorm.DB, recipeID string) error {
-	_, err := pfdb.Exec(ctx, tx, `
-		UPDATE workflow_recipes SET archived_at = NOW(), updated_at = NOW() WHERE id = $1
-	`, recipeID)
-	return err
+	now := time.Now().UTC()
+	return tx.WithContext(ctx).Model(&schema.WorkflowRecipes{}).Where("id = ?", recipeID).Updates(map[string]any{
+		"archived_at": now,
+		"updated_at":  now,
+	}).Error
 }
 
-func nullableJSON(raw []byte) any {
-	if len(raw) == 0 {
-		return nil
-	}
-	return raw
+type applicationScan struct {
+	ID                   string  `gorm:"column:id"`
+	ProductID            string  `gorm:"column:product_id"`
+	RecipeVersionID      string  `gorm:"column:recipe_version_id"`
+	RecipeID             string  `gorm:"column:recipe_id"`
+	RecipeVersion        int     `gorm:"column:version"`
+	GraphID              string  `gorm:"column:graph_id"`
+	Mode                 string  `gorm:"column:mode"`
+	IdempotencyKey       string  `gorm:"column:idempotency_key"`
+	RequestHash          string  `gorm:"column:request_hash"`
+	AddedNodeIdsJSON     string  `gorm:"column:added_node_ids_json"`
+	AddedEdgeIdsJSON     string  `gorm:"column:added_edge_ids_json"`
+	PreviewGraphRevision *int    `gorm:"column:preview_graph_revision"`
+	PreviewDigest        *string `gorm:"column:preview_digest"`
+	UpdatedNodeIdsJSON   *string `gorm:"column:updated_node_ids_json"`
+	RequiredBindingsJSON *string `gorm:"column:required_bindings_json"`
 }
 
 func applicationByKey(ctx context.Context, tx *gorm.DB, productID, key string) (*applicationRecord, error) {
-	var rec applicationRecord
-	var addedNodes, addedEdges, updatedNodes, bindings []byte
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT a.id, a.product_id, a.recipe_version_id, v.recipe_id, v.version, a.graph_id, a.mode,
+	var row applicationScan
+	err := tx.WithContext(ctx).Table("workflow_recipe_applications AS a").
+		Select(`a.id, a.product_id, a.recipe_version_id, v.recipe_id, v.version, a.graph_id, a.mode,
 			a.idempotency_key, a.request_hash, a.added_node_ids_json, a.added_edge_ids_json,
-			a.preview_graph_revision, a.preview_digest, a.updated_node_ids_json, a.required_bindings_json
-		FROM workflow_recipe_applications a
-		JOIN workflow_recipe_versions v ON v.id = a.recipe_version_id
-		WHERE a.product_id = $1 AND a.idempotency_key = $2
-	`, productID, key).Scan(
-		&rec.ID, &rec.ProductID, &rec.RecipeVersionID, &rec.RecipeID, &rec.RecipeVersion, &rec.GraphID, &rec.Mode,
-		&rec.IdempotencyKey, &rec.RequestHash, &addedNodes, &addedEdges,
-		&rec.PreviewGraphRevision, &rec.PreviewDigest, &updatedNodes, &bindings,
-	)
-	if errors.Is(err, sqldb.ErrNoRows) {
+			a.preview_graph_revision, a.preview_digest, a.updated_node_ids_json, a.required_bindings_json`).
+		Joins("JOIN workflow_recipe_versions v ON v.id = a.recipe_version_id").
+		Where("a.product_id = ? AND a.idempotency_key = ?", productID, key).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	rec.AddedNodeIDs = decodeStringList(addedNodes)
-	rec.AddedEdgeIDs = decodeStringList(addedEdges)
-	rec.UpdatedNodeIDs = decodeStringList(updatedNodes)
-	rec.RequiredBindings = decodeStringList(bindings)
+	rec := applicationRecord{
+		ID:                   row.ID,
+		ProductID:            row.ProductID,
+		RecipeVersionID:      row.RecipeVersionID,
+		RecipeID:             row.RecipeID,
+		RecipeVersion:        row.RecipeVersion,
+		GraphID:              row.GraphID,
+		Mode:                 row.Mode,
+		IdempotencyKey:       row.IdempotencyKey,
+		RequestHash:          row.RequestHash,
+		PreviewGraphRevision: row.PreviewGraphRevision,
+		PreviewDigest:        row.PreviewDigest,
+	}
+	rec.AddedNodeIDs = decodeStringList([]byte(row.AddedNodeIdsJSON))
+	rec.AddedEdgeIDs = decodeStringList([]byte(row.AddedEdgeIdsJSON))
+	if row.UpdatedNodeIdsJSON != nil {
+		rec.UpdatedNodeIDs = decodeStringList([]byte(*row.UpdatedNodeIdsJSON))
+	} else {
+		rec.UpdatedNodeIDs = decodeStringList(nil)
+	}
+	if row.RequiredBindingsJSON != nil {
+		rec.RequiredBindings = decodeStringList([]byte(*row.RequiredBindingsJSON))
+	} else {
+		rec.RequiredBindings = decodeStringList(nil)
+	}
 	return &rec, nil
 }
 
@@ -321,16 +339,26 @@ func insertApplication(ctx context.Context, tx *gorm.DB, rec applicationRecord) 
 	if err != nil {
 		return err
 	}
-	_, err = pfdb.Exec(ctx, tx, `
-		INSERT INTO workflow_recipe_applications (
-			id, product_id, recipe_version_id, graph_id, operation_group_id, mode, schema_version,
-			idempotency_key, request_hash, added_node_ids_json, added_edge_ids_json,
-			preview_graph_revision, preview_digest, updated_node_ids_json, required_bindings_json, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 2, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13::jsonb, $14::jsonb, NOW())
-	`, rec.ID, rec.ProductID, rec.RecipeVersionID, rec.GraphID, rec.OperationGroupID, rec.Mode,
-		rec.IdempotencyKey, rec.RequestHash, addedNodes, addedEdges,
-		rec.PreviewGraphRevision, rec.PreviewDigest, updated, bindings)
-	return err
+	updatedStr := string(updated)
+	bindingsStr := string(bindings)
+	return tx.WithContext(ctx).Create(&schema.WorkflowRecipeApplications{
+		ID:                   rec.ID,
+		ProductID:            rec.ProductID,
+		RecipeVersionID:      rec.RecipeVersionID,
+		GraphID:              rec.GraphID,
+		OperationGroupID:     rec.OperationGroupID,
+		Mode:                 rec.Mode,
+		SchemaVersion:        2,
+		IdempotencyKey:       rec.IdempotencyKey,
+		RequestHash:          rec.RequestHash,
+		AddedNodeIdsJSON:     string(addedNodes),
+		AddedEdgeIdsJSON:     string(addedEdges),
+		PreviewGraphRevision: rec.PreviewGraphRevision,
+		PreviewDigest:        rec.PreviewDigest,
+		UpdatedNodeIdsJSON:   &updatedStr,
+		RequiredBindingsJSON: &bindingsStr,
+		CreatedAt:            time.Now().UTC(),
+	}).Error
 }
 
 func decodeStringList(raw []byte) []string {

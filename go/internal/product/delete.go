@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -20,35 +18,25 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 		if _, err := loadProductForUpdate(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		var running int
-		err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT 1 FROM workflow_graph_runs r
-			JOIN workflow_graphs g ON g.id = r.graph_id
-			WHERE g.product_id = $1 AND r.status = 'running'
-			LIMIT 1
-		`, productID).Scan(&running)
+		var running schema.WorkflowGraphRuns
+		err := pgxTx.WithContext(ctx).Table("workflow_graph_runs AS r").
+			Select("r.id").
+			Joins("JOIN workflow_graphs g ON g.id = r.graph_id").
+			Where("g.product_id = ? AND r.status = ?", productID, "running").
+			Take(&running).Error
 		if err == nil {
 			return apperr.Validation("商品工作流运行中，稍后删除")
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `SELECT media_object_id FROM product_image_assets WHERE product_id = $1`, productID)
-		if err != nil {
+		var assets []schema.ProductImageAssets
+		if err := pgxTx.WithContext(ctx).Select("media_object_id").Where("product_id = ?", productID).Find(&assets).Error; err != nil {
 			return err
 		}
-		var mediaIDs []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			mediaIDs = append(mediaIDs, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
+		mediaIDs := make([]string, 0, len(assets))
+		for _, asset := range assets {
+			mediaIDs = append(mediaIDs, asset.MediaObjectID)
 		}
 		removable, err := prepareVisualSystemCleanup(ctx, pgxTx, productID)
 		if err != nil {
@@ -57,7 +45,7 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 		if err := deleteRestrictChildren(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM products WHERE id = $1`, productID); err != nil {
+		if err := pgxTx.WithContext(ctx).Where("id = ?", productID).Delete(&schema.Products{}).Error; err != nil {
 			return err
 		}
 		if err := deleteOwnedVisualVersions(ctx, pgxTx, removable); err != nil {
@@ -77,13 +65,13 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 }
 
 func deleteRestrictChildren(ctx context.Context, tx *gorm.DB, productID string) error {
-	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM product_image_fidelity_checks WHERE product_id = $1`, productID); err != nil {
+	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.ProductImageFidelityChecks{}).Error; err != nil {
 		return err
 	}
-	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM delivery_rendition_jobs WHERE product_id = $1`, productID); err != nil {
+	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.DeliveryRenditionJobs{}).Error; err != nil {
 		return err
 	}
-	if _, err := pfdb.Exec(ctx, tx, `DELETE FROM local_image_edit_adoption_events WHERE product_id = $1`, productID); err != nil {
+	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.LocalImageEditAdoptionEvents{}).Error; err != nil {
 		return err
 	}
 	return nil
@@ -110,9 +98,9 @@ func prepareVisualSystemCleanup(ctx context.Context, tx *gorm.DB, productID stri
 	}
 	removable := make([]visualVersionRef, 0)
 	for versionID := range owned {
-		var visualSystemID string
-		err := pfdb.QueryRow(ctx, tx, `SELECT visual_system_id FROM visual_system_versions WHERE id = $1`, versionID).Scan(&visualSystemID)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var rec schema.VisualSystemVersions
+		err := tx.WithContext(ctx).Select("visual_system_id").Where("id = ?", versionID).Take(&rec).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
 		if err != nil {
@@ -128,10 +116,10 @@ func prepareVisualSystemCleanup(ctx context.Context, tx *gorm.DB, productID stri
 			}
 			continue
 		}
-		if _, err := pfdb.Exec(ctx, tx, `DELETE FROM visual_system_version_references WHERE visual_system_version_id = $1`, versionID); err != nil {
+		if err := tx.WithContext(ctx).Where("visual_system_version_id = ?", versionID).Delete(&schema.VisualSystemVersionReferences{}).Error; err != nil {
 			return nil, err
 		}
-		removable = append(removable, visualVersionRef{versionID: versionID, visualSystemID: visualSystemID})
+		removable = append(removable, visualVersionRef{versionID: versionID, visualSystemID: rec.VisualSystemID})
 	}
 	return removable, nil
 }
@@ -139,16 +127,16 @@ func prepareVisualSystemCleanup(ctx context.Context, tx *gorm.DB, productID stri
 func deleteOwnedVisualVersions(ctx context.Context, tx *gorm.DB, versions []visualVersionRef) error {
 	systemIDs := map[string]struct{}{}
 	for _, version := range versions {
-		if _, err := pfdb.Exec(ctx, tx, `DELETE FROM visual_system_versions WHERE id = $1`, version.versionID); err != nil {
+		if err := tx.WithContext(ctx).Where("id = ?", version.versionID).Delete(&schema.VisualSystemVersions{}).Error; err != nil {
 			return err
 		}
 		systemIDs[version.visualSystemID] = struct{}{}
 	}
 	for systemID := range systemIDs {
-		var remaining string
-		err := pfdb.QueryRow(ctx, tx, `SELECT id FROM visual_system_versions WHERE visual_system_id = $1 LIMIT 1`, systemID).Scan(&remaining)
-		if errors.Is(err, sqldb.ErrNoRows) {
-			if _, err := pfdb.Exec(ctx, tx, `DELETE FROM visual_systems WHERE id = $1`, systemID); err != nil {
+		var remaining schema.VisualSystemVersions
+		err := tx.WithContext(ctx).Select("id").Where("visual_system_id = ?", systemID).Take(&remaining).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := tx.WithContext(ctx).Where("id = ?", systemID).Delete(&schema.VisualSystems{}).Error; err != nil {
 				return err
 			}
 			continue
@@ -162,94 +150,85 @@ func deleteOwnedVisualVersions(ctx context.Context, tx *gorm.DB, versions []visu
 
 func collectOwnedVisualVersionIDs(ctx context.Context, tx *gorm.DB, productID string) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
-	queries := []string{
-		`SELECT DISTINCT n.config_json->>'visual_system_version_id'
-		 FROM workflow_graph_nodes n
-		 JOIN workflow_graphs g ON g.id = n.graph_id
-		 WHERE g.product_id = $1 AND NULLIF(n.config_json->>'visual_system_version_id', '') IS NOT NULL`,
-		`SELECT DISTINCT a.payload_json->>'visual_system_version_id'
-		 FROM workflow_graph_artifacts a
-		 JOIN workflow_graphs g ON g.id = a.graph_id
-		 WHERE g.product_id = $1 AND NULLIF(a.payload_json->>'visual_system_version_id', '') IS NOT NULL`,
+	var nodeIDs []string
+	err := tx.WithContext(ctx).Table("workflow_graph_nodes AS n").
+		Select("DISTINCT n.config_json->>'visual_system_version_id'").
+		Joins("JOIN workflow_graphs g ON g.id = n.graph_id").
+		Where("g.product_id = ? AND NULLIF(n.config_json->>'visual_system_version_id', '') IS NOT NULL", productID).
+		Scan(&nodeIDs).Error
+	if err != nil {
+		return nil, err
 	}
-	for _, sql := range queries {
-		rows, err := pfdb.Query(ctx, tx, sql, productID)
-		if err != nil {
-			return nil, err
+	for _, id := range nodeIDs {
+		if id != "" {
+			out[id] = struct{}{}
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			if id != "" {
-				out[id] = struct{}{}
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return nil, err
+	}
+	var artifactIDs []string
+	err = tx.WithContext(ctx).Table("workflow_graph_artifacts AS a").
+		Select("DISTINCT a.payload_json->>'visual_system_version_id'").
+		Joins("JOIN workflow_graphs g ON g.id = a.graph_id").
+		Where("g.product_id = ? AND NULLIF(a.payload_json->>'visual_system_version_id', '') IS NOT NULL", productID).
+		Scan(&artifactIDs).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range artifactIDs {
+		if id != "" {
+			out[id] = struct{}{}
 		}
 	}
 	return out, nil
 }
 
 func collectReferencedVisualVersionIDs(ctx context.Context, tx *gorm.DB, productID string) (map[string]struct{}, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT DISTINCT r.visual_system_version_id
-		FROM visual_system_version_references r
-		JOIN product_image_assets a ON a.id = r.asset_id
-		WHERE a.product_id = $1
-	`, productID)
+	var ids []string
+	err := tx.WithContext(ctx).Table("visual_system_version_references AS r").
+		Select("DISTINCT r.visual_system_version_id").
+		Joins("JOIN product_image_assets a ON a.id = r.asset_id").
+		Where("a.product_id = ?", productID).
+		Scan(&ids).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := map[string]struct{}{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
+	for _, id := range ids {
 		out[id] = struct{}{}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func visualVersionHasExternalConsumer(ctx context.Context, tx *gorm.DB, productID, versionID string) (bool, error) {
-	var one int
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT 1 FROM workflow_graph_nodes n
-		JOIN workflow_graphs g ON g.id = n.graph_id
-		WHERE n.config_json->>'visual_system_version_id' = $1 AND g.product_id <> $2
-		LIMIT 1
-	`, versionID, productID).Scan(&one)
+	var node schema.WorkflowGraphNodes
+	err := tx.WithContext(ctx).Table("workflow_graph_nodes AS n").
+		Select("n.id").
+		Joins("JOIN workflow_graphs g ON g.id = n.graph_id").
+		Where("n.config_json->>'visual_system_version_id' = ? AND g.product_id <> ?", versionID, productID).
+		Take(&node).Error
 	if err == nil {
 		return true, nil
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
 	}
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT 1 FROM workflow_graph_artifacts a
-		JOIN workflow_graphs g ON g.id = a.graph_id
-		WHERE a.payload_json->>'visual_system_version_id' = $1 AND g.product_id <> $2
-		LIMIT 1
-	`, versionID, productID).Scan(&one)
+	var artifact schema.WorkflowGraphArtifacts
+	err = tx.WithContext(ctx).Table("workflow_graph_artifacts AS a").
+		Select("a.id").
+		Joins("JOIN workflow_graphs g ON g.id = a.graph_id").
+		Where("a.payload_json->>'visual_system_version_id' = ? AND g.product_id <> ?", versionID, productID).
+		Take(&artifact).Error
 	if err == nil {
 		return true, nil
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
 	}
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT 1 FROM workflow_recipe_versions WHERE preferred_visual_system_version_id = $1 LIMIT 1
-	`, versionID).Scan(&one)
+	var recipe schema.WorkflowRecipeVersions
+	err = tx.WithContext(ctx).Select("id").Where("preferred_visual_system_version_id = ?", versionID).Take(&recipe).Error
 	if err == nil {
 		return true, nil
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, err
 	}
 	return false, nil

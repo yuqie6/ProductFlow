@@ -18,9 +18,7 @@
 
 ## 还没做成
 
-[`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。
-
-`specs/` 只放尚未落地的临时合同，必须标注 `文档状态：Draft` 或 `文档状态：Approved`。落地后并入当前产品文档并删除规格。当前没有未并入的规格。
+[`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
 ## 已接受决策
 
@@ -39,6 +37,7 @@
 | `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
 | `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库不保兼容、不写旧数据迁移 |
 | `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成 | 业务后端按垂直切片迁 Go |
+| `adr/0012-gorm-command-writes.md` | Accepted | 命令路径用 GORM 模型写库，不用手写 INSERT |
 
 ## 协作元数据
 
@@ -53,4 +52,4 @@
 5. 实现敏感声明指向当前代码所有者或测试。
 6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md)。
 
-`just docs-check` 校验索引、前端路由、code owner 路径、规格状态标注和仓库内链接。它不检查「同一句话是否写了六遍」。
+`just docs-check` 校验索引、前端路由、code owner 路径和仓库内链接。规格目录若重新出现才检查状态标注。它不检查「同一句话是否写了六遍」。

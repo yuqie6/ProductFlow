@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
@@ -70,74 +70,43 @@ func serializeTask(ctx context.Context, tx *gorm.DB, row taskRow, includeAudit b
 }
 
 func listAttempts(ctx context.Context, tx *gorm.DB, taskID string) ([]AttemptResponse, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id, attempt_id, attempt_number, operation_key, phase, effect_result, provider_name,
-		       provider_model, provider_response_id, provider_status, late_result_asset_id, detail, created_at, updated_at
-		FROM local_image_edit_provider_attempts
-		WHERE task_id = $1
-		ORDER BY attempt_number DESC, id DESC
-		LIMIT 50
-	`, taskID)
-	if err != nil {
+	var rows []schema.LocalImageEditProviderAttempts
+	if err := tx.Where("task_id = ?", taskID).Order("attempt_number DESC, id DESC").Limit(50).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	type attemptScan struct {
-		item   AttemptResponse
-		lateID *string
-	}
-	var scanned []attemptScan
-	for rows.Next() {
-		var item attemptScan
-		if err := rows.Scan(
-			&item.item.ID, &item.item.AttemptID, &item.item.AttemptNumber, &item.item.OperationKey, &item.item.Phase, &item.item.EffectResult, &item.item.ProviderName,
-			&item.item.ProviderModel, &item.item.ProviderResponseID, &item.item.ProviderStatus, &item.lateID, &item.item.Detail, &item.item.CreatedAt, &item.item.UpdatedAt,
-		); err != nil {
-			rows.Close()
-			return nil, err
+	out := make([]AttemptResponse, 0, len(rows))
+	for _, row := range rows {
+		item := AttemptResponse{
+			ID: row.ID, AttemptID: row.AttemptID, AttemptNumber: row.AttemptNumber, OperationKey: row.OperationKey,
+			Phase: row.Phase, EffectResult: row.EffectResult, ProviderName: row.ProviderName,
+			ProviderModel: row.ProviderModel, ProviderResponseID: row.ProviderResponseID, ProviderStatus: row.ProviderStatus,
+			Detail: row.Detail, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		}
-		scanned = append(scanned, item)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]AttemptResponse, 0, len(scanned))
-	for _, item := range scanned {
-		if item.lateID != nil {
-			asset, err := product.LoadAssetRow(ctx, tx, *item.lateID)
+		if row.LateResultAssetID != nil {
+			asset, err := product.LoadAssetRow(ctx, tx, *row.LateResultAssetID)
 			if err != nil {
 				return nil, err
 			}
 			resp := product.SerializeAsset(asset)
-			item.item.LateResultAsset = &resp
+			item.LateResultAsset = &resp
 		}
-		out = append(out, item.item)
+		out = append(out, item)
 	}
 	return out, nil
 }
 
 func listEvents(ctx context.Context, tx *gorm.DB, taskID string) ([]AdoptionEventResponse, error) {
-	rows, err := pfdb.Query(ctx, tx, `
-		SELECT id, task_id, graph_id, node_id, event_type, from_artifact_id, to_artifact_id, related_event_id, created_at
-		FROM local_image_edit_adoption_events
-		WHERE task_id = $1
-		ORDER BY created_at DESC, id DESC
-		LIMIT 50
-	`, taskID)
-	if err != nil {
+	var rows []schema.LocalImageEditAdoptionEvents
+	if err := tx.WithContext(ctx).Where("task_id = ?", taskID).Order("created_at DESC, id DESC").Limit(50).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []AdoptionEventResponse{}
-	for rows.Next() {
-		var item AdoptionEventResponse
-		if err := rows.Scan(
-			&item.ID, &item.TaskID, &item.GraphID, &item.NodeID, &item.EventType,
-			&item.FromArtifactID, &item.ToArtifactID, &item.RelatedEventID, &item.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
+	out := make([]AdoptionEventResponse, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, AdoptionEventResponse{
+			ID: row.ID, TaskID: row.TaskID, GraphID: row.GraphID, NodeID: row.NodeID, EventType: row.EventType,
+			FromArtifactID: row.FromArtifactID, ToArtifactID: row.ToArtifactID, RelatedEventID: row.RelatedEventID,
+			CreatedAt: row.CreatedAt,
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }

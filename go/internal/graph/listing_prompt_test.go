@@ -30,6 +30,21 @@ func TestCompileImageModelPromptIsListingText(t *testing.T) {
 	}
 }
 
+func TestCompileImageModelPromptUnknownTypeKeepsKey(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{
+		NodeTitle:    "节点自定义名",
+		ImageTypeKey: "custom_type_xyz",
+		Prompt:       map[string]any{"design_goal": "自定义图种"},
+	})
+	first := strings.SplitN(strings.TrimSpace(got), "\n", 2)[0]
+	if !strings.Contains(first, "custom_type_xyz") {
+		t.Fatalf("unknown type must use key in title line: %s", first)
+	}
+	if strings.Contains(first, "节点自定义名") {
+		t.Fatalf("unknown type must not use node title: %s", first)
+	}
+}
+
 func TestCompileImageModelPromptIncludesVisualVariationAndEdges(t *testing.T) {
 	got := CompileImageModelPrompt(ImageRequest{
 		NodeTitle:            "核心卖点图",

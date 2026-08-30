@@ -4,32 +4,32 @@ import (
 	"context"
 	"errors"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
 // NodeConfigJSON 供交付排队读取节点 config，避免 delivery 直接查 workflow_graph_nodes。
 func NodeConfigJSON(ctx context.Context, tx *gorm.DB, nodeID string) ([]byte, error) {
-	var raw []byte
-	err := pfdb.QueryRow(ctx, tx, `SELECT config_json FROM workflow_graph_nodes WHERE id = $1`, nodeID).Scan(&raw)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphNodes
+	err := tx.WithContext(ctx).Select("config_json").Where("id = ?", nodeID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	return raw, err
+	if err != nil {
+		return nil, err
+	}
+	return []byte(rec.ConfigJSON), nil
 }
 
 // HasImageArtifactForAsset 判断该商品图是否来自成功的工作流 image artifact。
 func HasImageArtifactForAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
-	var id string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT id FROM workflow_graph_artifacts
-		WHERE product_image_asset_id = $1 AND artifact_type = 'image'
-		LIMIT 1
-	`, assetID).Scan(&id)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var rec schema.WorkflowGraphArtifacts
+	err := tx.WithContext(ctx).Select("id").
+		Where("product_image_asset_id = ? AND artifact_type = ?", assetID, "image").
+		Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	if err != nil {
@@ -50,43 +50,38 @@ type ImageNodeTarget struct {
 
 // LockImageNodeTarget 锁住商品 active 图上的 image_generation 节点及其当前 artifact。
 func LockImageNodeTarget(ctx context.Context, tx *gorm.DB, productID, nodeID string) (ImageNodeTarget, error) {
-	var graphID, nodeType string
-	var artifactID *string
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT n.graph_id, n.node_type, n.current_artifact_id
-		FROM workflow_graph_nodes n
-		JOIN workflow_graphs g ON g.id = n.graph_id
-		WHERE n.id = $1 AND g.product_id = $2 AND g.active = TRUE
-		FOR UPDATE OF n
-	`, nodeID, productID).Scan(&graphID, &nodeType, &artifactID)
-	if errors.Is(err, sqldb.ErrNoRows) || nodeType != "image_generation" {
+	var node schema.WorkflowGraphNodes
+	err := tx.WithContext(ctx).
+		Model(&schema.WorkflowGraphNodes{}).
+		Select("workflow_graph_nodes.*").
+		Clauses(pfdb.ForUpdateOf("workflow_graph_nodes")).
+		Joins("JOIN workflow_graphs g ON g.id = workflow_graph_nodes.graph_id").
+		Where("workflow_graph_nodes.id = ? AND g.product_id = ? AND g.active = ?", nodeID, productID, true).
+		Take(&node).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) || node.NodeType != "image_generation" {
 		return ImageNodeTarget{}, apperr.Conflict("局部编辑 target 必须是当前商品 active graph 的 image_generation 节点")
 	}
 	if err != nil {
 		return ImageNodeTarget{}, err
 	}
-	if artifactID == nil {
+	if node.CurrentArtifactID == nil {
 		return ImageNodeTarget{}, apperr.Conflict("局部编辑 target 必须有当前 image artifact")
 	}
-	var artifactType string
-	var assetID *string
-	var digest *string
-	err = pfdb.QueryRow(ctx, tx, `
-		SELECT artifact_type, product_image_asset_id, input_digest FROM workflow_graph_artifacts WHERE id = $1
-	`, *artifactID).Scan(&artifactType, &assetID, &digest)
-	if err != nil || artifactType != "image" || assetID == nil {
+	var artifact schema.WorkflowGraphArtifacts
+	err = tx.WithContext(ctx).Where("id = ?", *node.CurrentArtifactID).Take(&artifact).Error
+	if err != nil || artifact.ArtifactType != "image" || artifact.ProductImageAssetID == nil {
 		return ImageNodeTarget{}, apperr.Conflict("局部编辑 target 必须有当前 image artifact")
 	}
-	if digest == nil || len(*digest) != 64 {
+	if len(artifact.InputDigest) != 64 {
 		return ImageNodeTarget{}, apperr.Conflict("局部编辑 target 当前 artifact 缺少 input digest")
 	}
-	var revision int
-	if err := pfdb.QueryRow(ctx, tx, `SELECT revision FROM workflow_graphs WHERE id = $1`, graphID).Scan(&revision); err != nil {
+	var graph schema.WorkflowGraphs
+	if err := tx.WithContext(ctx).Select("revision").Where("id = ?", node.GraphID).Take(&graph).Error; err != nil {
 		return ImageNodeTarget{}, apperr.Conflict("局部编辑 target graph 不存在")
 	}
 	return ImageNodeTarget{
-		GraphID: graphID, NodeID: nodeID, Revision: revision,
-		ArtifactID: *artifactID, AssetID: *assetID, InputDigest: *digest,
+		GraphID: node.GraphID, NodeID: nodeID, Revision: graph.Revision,
+		ArtifactID: *node.CurrentArtifactID, AssetID: *artifact.ProductImageAssetID, InputDigest: artifact.InputDigest,
 	}, nil
 }
 
@@ -98,12 +93,11 @@ type ArtifactLineage struct {
 
 // LoadArtifactLineage 读取 artifact 的 input_digest 与 graph_revision。
 func LoadArtifactLineage(ctx context.Context, tx *gorm.DB, artifactID string) (ArtifactLineage, error) {
-	var out ArtifactLineage
-	err := pfdb.QueryRow(ctx, tx, `
-		SELECT input_digest, graph_revision FROM workflow_graph_artifacts WHERE id = $1
-	`, artifactID).Scan(&out.InputDigest, &out.GraphRevision)
+	var rec schema.WorkflowGraphArtifacts
+	err := tx.WithContext(ctx).Select("input_digest", "graph_revision").Where("id = ?", artifactID).Take(&rec).Error
 	if err != nil {
 		return ArtifactLineage{}, apperr.Conflict("局部编辑 lineage 记录不完整")
 	}
-	return out, nil
+	digest := rec.InputDigest
+	return ArtifactLineage{InputDigest: &digest, GraphRevision: rec.GraphRevision}, nil
 }

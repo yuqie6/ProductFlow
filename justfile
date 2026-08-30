@@ -46,7 +46,7 @@ docs-check:
     python3 scripts/check_docs.py
 
 go-test:
-    bash scripts/with_dev_env.sh bash -lc 'go test -C go ./...'
+    bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -p 1'
 
 go-test-live-providers:
     PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'

@@ -9,10 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -54,25 +52,18 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 			return err
 		}
 		if taskID != "" {
-			var conv *string
-			err := pfdb.QueryRow(ctx, pgxTx, `SELECT conversation_id FROM agent_tasks WHERE id = $1`, taskID).Scan(&conv)
-			if errors.Is(err, sqldb.ErrNoRows) || conv == nil || *conv != conversationID {
+			var task schema.AgentTasks
+			err := pgxTx.Where("id = ?", taskID).Take(&task).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) || task.ConversationID == nil || *task.ConversationID != conversationID {
 				return apperr.Conflict("Agent Task 与当前 conversation 不匹配")
 			}
 			if err != nil {
 				return err
 			}
 		}
-		q := `
-			SELECT t.id FROM agent_turn_projections t
-			WHERE t.conversation_id = $1
-		`
-		args := []any{conversationID}
-		n := 2
+		q := pgxTx.Model(&schema.AgentTurnProjections{}).Where("conversation_id = ?", conversationID)
 		if taskID != "" {
-			q += ` AND t.task_id = $2`
-			args = append(args, taskID)
-			n = 3
+			q = q.Where("task_id = ?", taskID)
 		}
 		if cursor != nil {
 			created, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
@@ -82,27 +73,10 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 					return apperr.Validation("Agent Turn 分页 cursor 无效")
 				}
 			}
-			q += ` AND (t.created_at < $` + strconv.Itoa(n) + ` OR (t.created_at = $` + strconv.Itoa(n) + ` AND t.id < $` + strconv.Itoa(n+1) + `))`
-			args = append(args, created, cursor.ID)
-			n += 2
-		}
-		q += ` ORDER BY t.created_at DESC, t.id DESC LIMIT $` + strconv.Itoa(n)
-		args = append(args, limit+1)
-		rows, err := pfdb.Query(ctx, pgxTx, q, args...)
-		if err != nil {
-			return err
+			q = q.Where("(created_at < ? OR (created_at = ? AND id < ?))", created, created, cursor.ID)
 		}
 		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := q.Order("created_at DESC, id DESC").Limit(limit+1).Pluck("id", &ids).Error; err != nil {
 			return err
 		}
 		hasMore := len(ids) > limit
@@ -151,8 +125,6 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 	return out, err
 }
 
-func itoaN(n int) string { return strconv.Itoa(n) }
-
 func (s Service) SubmitTurn(ctx context.Context, productID *string, conversationID string, in startTurnInput) (SubmitTurnResponse, error) {
 	if s.Gateway == nil {
 		return SubmitTurnResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
@@ -160,7 +132,7 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	var created bool
 	var projectionID string
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, conversationID, in.InputText, in.AssetIDs, in.IdempotencyKey, in.TaskID, in.PageContext)
+		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, conversationID, in.InputText, in.AssetIDs, in.IdempotencyKey, in.TaskID, "", in.PageContext)
 		if err != nil {
 			return err
 		}
@@ -247,12 +219,21 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 	}
 	if row.HarnessTurnID == nil {
 		if command == "cancel" {
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				UPDATE agent_turn_projections SET status = 'canceled', finished_at = NOW(), updated_at = NOW() WHERE id = $1
-			`, projectionID); err != nil {
+			if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+				"status":      "canceled",
+				"finished_at": time.Now().UTC(),
+				"updated_at":  time.Now().UTC(),
+			}).Error; err != nil {
 				return TurnResponse{}, err
 			}
-			_ = applyConversationStatus(ctx, pgxTx, conversationID, "canceled")
+			if err := applyConversationStatus(ctx, pgxTx, conversationID, "canceled"); err != nil {
+				return TurnResponse{}, err
+			}
+			if row.TaskID != nil {
+				if err := updateTaskFromTurn(ctx, pgxTx, *row.TaskID, "canceled", "", ""); err != nil {
+					return TurnResponse{}, err
+				}
+			}
 		}
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
@@ -290,85 +271,318 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 }
 
 func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
-	var out QuestionAnswerResponse
+	row, err := s.persistQuestionAnswer(ctx, productID, conversationID, projectionID, questionID, answer)
+	if err != nil {
+		return QuestionAnswerResponse{}, err
+	}
+	if row.HarnessTurnID != nil && s.Gateway != nil {
+		resumed, rerr := s.resumeLiveQuestion(ctx, productID, conversationID, projectionID, questionID, answer)
+		if rerr == nil {
+			if row.ContinuationTurnID != nil {
+				_ = s.cancelUnusedContinuation(ctx, productID, turnRow{
+					ID:             *row.ContinuationTurnID,
+					ConversationID: conversationID,
+				})
+			}
+			return questionAnswerResult(resumed, resumed), nil
+		}
+		if !gatewayQuestionNotLive(rerr) {
+			return QuestionAnswerResponse{}, mapGateway(rerr)
+		}
+	} else if s.Gateway == nil {
+		return QuestionAnswerResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
+	}
+	return s.continueAfterDeadWaiter(ctx, productID, conversationID, projectionID, questionID, answer)
+}
+
+func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (turnRow, error) {
+	var row turnRow
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
+		if err != nil {
+			return err
+		}
+		if loaded.Status != "requires_input" {
+			return apperr.Conflict("当前 Agent Turn 不在等待回答状态")
+		}
+		question := questionMap(loaded)
+		if question == nil || question["id"] != questionID {
+			return apperr.Conflict("当前 Agent 问题不存在或已经过期")
+		}
+		if err := validateQuestionAnswer(question, answer); err != nil {
+			return err
+		}
+		if loaded.ContinuationTurnID != nil && len(loaded.QuestionAnswerJSON) > 0 && !sameQuestionAnswer(loaded.QuestionAnswerJSON, answer) {
+			return apperr.Conflict("当前问题已经使用其他答案创建 continuation Turn")
+		}
+		answerJSON, err := json.Marshal(answer)
+		if err != nil {
+			return err
+		}
+		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+			"question_answer_json": string(answerJSON),
+			"resume_required":      false,
+			"sync_error":           gorm.Expr("NULL"),
+			"updated_at":           time.Now().UTC(),
+		}).Error; err != nil {
+			return err
+		}
+		row, err = loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
+		return err
+	})
+	return row, err
+}
+
+func validateQuestionAnswer(question, answer map[string]any) error {
+	if _, hasOption := answer["option"]; hasOption {
+		option, ok := intAnswerOption(answer["option"])
+		options, _ := question["options"].([]any)
+		if !ok || option < 0 || option >= len(options) {
+			return apperr.Validation("Agent 问题选项无效")
+		}
+		return nil
+	}
+	text, _ := answer["text"].(string)
+	if stringsTrim(text) == "" {
+		return apperr.Validation("Agent 问题文本回答不能为空")
+	}
+	return nil
+}
+
+func intAnswerOption(value any) (int, bool) {
+	switch v := value.(type) {
+	case float64:
+		return int(v), float64(int(v)) == v
+	case int:
+		return v, true
+	case json.Number:
+		n, err := v.Int64()
+		return int(n), err == nil
+	default:
+		return 0, false
+	}
+}
+
+func sameQuestionAnswer(stored []byte, answer map[string]any) bool {
+	var existing map[string]any
+	if json.Unmarshal(stored, &existing) != nil {
+		return false
+	}
+	left, err := json.Marshal(existing)
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(answer)
+	if err != nil {
+		return false
+	}
+	return string(left) == string(right)
+}
+
+func questionAnswerResult(answered, continuation TurnResponse) QuestionAnswerResponse {
+	return QuestionAnswerResponse{
+		TurnResponse:     continuation,
+		AnsweredTurn:     answered,
+		ContinuationTurn: continuation,
+	}
+}
+
+func (s Service) resumeLiveQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (TurnResponse, error) {
+	var harnessTurnID string
+	var taskID *string
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
 		}
-		if row.Status != "requires_input" {
-			return apperr.Conflict("当前 Agent Turn 不在等待回答状态")
+		if row.HarnessTurnID == nil {
+			return apperr.Conflict("Agent Turn 尚未绑定 runtime Turn")
 		}
-		var question map[string]any
-		if len(row.QuestionJSON) > 0 {
-			_ = json.Unmarshal(row.QuestionJSON, &question)
-		}
-		if question == nil || question["id"] != questionID {
-			return apperr.Conflict("当前 Agent 问题不存在或已经过期")
-		}
-		if _, hasOption := answer["option"]; hasOption {
-			option, ok := answer["option"].(float64)
-			options, _ := question["options"].([]any)
-			if !ok || int(option) < 0 || int(option) >= len(options) {
-				return apperr.Validation("Agent 问题选项无效")
-			}
-		} else {
-			text, _ := answer["text"].(string)
-			if stringsTrim(text) == "" {
-				return apperr.Validation("Agent 问题文本回答不能为空")
-			}
-		}
-		answerJSON, _ := json.Marshal(answer)
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_turn_projections SET question_answer_json = $2, updated_at = NOW() WHERE id = $1
-		`, projectionID, answerJSON); err != nil {
-			return err
-		}
-		key := "question-continuation:" + projectionID + ":" + sha256hex(questionID)
-		input := continuationInput(question, answer)
-		cont, _, err := reserveTurn(ctx, pgxTx, productID, conversationID, input, nil, key, row.TaskID, nil)
-		if err != nil {
-			return err
-		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_turn_projections SET continuation_turn_id = $2, updated_at = NOW() WHERE id = $1
-		`, projectionID, cont.ID); err != nil {
-			return err
-		}
-		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, cont.ID, 0); err != nil {
-			return err
-		}
-		answered, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
-		if err != nil {
-			return err
-		}
-		continuation, err := loadTurn(ctx, pgxTx, productID, conversationID, cont.ID)
-		if err != nil {
-			return err
-		}
-		answeredResp := serializeTurn(answered, nil)
-		contResp := serializeTurn(continuation, nil)
-		out = QuestionAnswerResponse{
-			TurnResponse:     contResp,
-			AnsweredTurn:     answeredResp,
-			ContinuationTurn: contResp,
-		}
+		harnessTurnID = *row.HarnessTurnID
+		taskID = row.TaskID
 		return nil
 	})
-	if s.Gateway != nil {
-		row := out.AnsweredTurn
-		if row.HarnessTurnID != nil {
-			_, _ = s.Gateway.AnswerQuestion(conversationID, *row.HarnessTurnID, questionID, answer, row.TaskID)
+	if err != nil {
+		return TurnResponse{}, err
+	}
+	if s.Gateway == nil {
+		return TurnResponse{}, GatewayError{Status: 503, Code: "unavailable", Detail: "Agent 服务暂时不可用"}
+	}
+	if _, err := s.Gateway.AnswerQuestion(conversationID, harnessTurnID, questionID, answer, taskID); err != nil {
+		return TurnResponse{}, err
+	}
+	state, err := s.Gateway.ResumeTurn(conversationID, harnessTurnID, taskID)
+	if err != nil {
+		return TurnResponse{}, err
+	}
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
+			return err
 		}
-		if out.ContinuationTurn.HarnessTurnID == nil {
-			bound, err := s.bindGatewayTurn(ctx, productID, conversationID, out.ContinuationTurn.ID, true)
-			if err == nil {
-				out.ContinuationTurn = bound
-				out.TurnResponse = bound
+		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+			"resume_required": false,
+			"sync_error":      gorm.Expr("NULL"),
+			"updated_at":      time.Now().UTC(),
+		}).Error; err != nil {
+			return err
+		}
+		_, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0)
+		return err
+	})
+	if err != nil {
+		return TurnResponse{}, err
+	}
+	return s.serializedTurn(ctx, productID, conversationID, projectionID)
+}
+
+func (s Service) continueAfterDeadWaiter(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
+	var answeredID string
+	var continuationID string
+	var originalHarness *string
+	var originalTaskID *string
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
+		if err != nil {
+			return err
+		}
+		answeredID = row.ID
+		originalHarness = row.HarnessTurnID
+		originalTaskID = row.TaskID
+		if row.ContinuationTurnID != nil {
+			continuationID = *row.ContinuationTurnID
+			return nil
+		}
+		key := "question-continuation:" + projectionID + ":" + sha256hex(questionID)
+		cont, _, err := reserveTurn(ctx, pgxTx, productID, conversationID, continuationInput(questionMap(row), answer), inputAssetIDs(row), key, row.TaskID, row.ID, nil)
+		if err != nil {
+			return err
+		}
+		continuationID = cont.ID
+		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+			"continuation_turn_id": cont.ID,
+			"updated_at":           time.Now().UTC(),
+		}).Error; err != nil {
+			return err
+		}
+		_, err = queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, cont.ID, 0)
+		return err
+	})
+	if err != nil {
+		return QuestionAnswerResponse{}, err
+	}
+	if s.Gateway != nil && originalHarness != nil {
+		state, ge := s.Gateway.CancelTurn(conversationID, *originalHarness, originalTaskID)
+		if ge == nil {
+			if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+				return s.applyTurnState(ctx, pgxTx, productID, conversationID, answeredID, state)
+			}); err != nil {
+				return QuestionAnswerResponse{}, err
 			}
 		}
 	}
+	continuation, err := s.serializedTurn(ctx, productID, conversationID, continuationID)
+	if err != nil {
+		return QuestionAnswerResponse{}, err
+	}
+	if continuation.HarnessTurnID == nil {
+		bound, bindErr := s.bindGatewayTurn(ctx, productID, conversationID, continuationID, true)
+		if bindErr == nil {
+			continuation = bound
+		}
+	}
+	answered, err := s.serializedTurn(ctx, productID, conversationID, answeredID)
+	if err != nil {
+		return QuestionAnswerResponse{}, err
+	}
+	return questionAnswerResult(answered, continuation), nil
+}
+
+func (s Service) serializedTurn(ctx context.Context, productID *string, conversationID, projectionID string) (TurnResponse, error) {
+	var out TurnResponse
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
+		if err != nil {
+			return err
+		}
+		out = serializeTurn(row, nil)
+		return nil
+	})
 	return out, err
+}
+
+func (s Service) cancelUnusedContinuation(ctx context.Context, productID *string, child turnRow) error {
+	if child.ID == "" {
+		return nil
+	}
+	if child.HarnessTurnID == nil || child.ConversationID == "" {
+		var loaded turnRow
+		err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+			row, err := loadTurnByID(ctx, pgxTx, child.ID)
+			loaded = row
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		child = loaded
+	}
+	if child.HarnessTurnID != nil && s.Gateway != nil {
+		_, _ = s.Gateway.CancelTurn(child.ConversationID, *child.HarnessTurnID, child.TaskID)
+	}
+	return s.abandonUnusedContinuation(ctx, productID, child.ConversationID, child.ID)
+}
+
+func (s Service) abandonUnusedContinuation(ctx context.Context, productID *string, conversationID, continuationID string) error {
+	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if conversationID != "" {
+			if _, err := loadTurn(ctx, pgxTx, productID, conversationID, continuationID); err != nil {
+				return err
+			}
+		}
+		now := time.Now().UTC()
+		return pgxTx.Model(&schema.AgentTurnProjections{}).
+			Where("id = ? AND status IN ?", continuationID, []string{"queued", "running", "cancel_requested"}).
+			Updates(map[string]any{
+				"status":      "canceled",
+				"finished_at": now,
+				"sync_error":  "问题已在原 Turn 内恢复，continuation 不再执行",
+				"updated_at":  now,
+			}).Error
+	})
+}
+
+func (s Service) resumeAnsweredParent(ctx context.Context, productID *string, parent turnRow) error {
+	question := questionMap(parent)
+	questionID, _ := question["id"].(string)
+	var answer map[string]any
+	if len(parent.QuestionAnswerJSON) > 0 {
+		_ = json.Unmarshal(parent.QuestionAnswerJSON, &answer)
+	}
+	if questionID == "" || answer == nil {
+		return apperr.Conflict("原问题答案不完整，无法在原 Turn 内恢复")
+	}
+	_, err := s.resumeLiveQuestion(ctx, productID, parent.ConversationID, parent.ID, questionID, answer)
+	return err
+}
+
+func questionMap(row turnRow) map[string]any {
+	if len(row.QuestionJSON) == 0 {
+		return nil
+	}
+	var question map[string]any
+	_ = json.Unmarshal(row.QuestionJSON, &question)
+	return question
+}
+
+func inputAssetIDs(row turnRow) []string {
+	assets := []string{}
+	if len(row.InputAssetIDs) > 0 {
+		_ = json.Unmarshal(row.InputAssetIDs, &assets)
+	}
+	if assets == nil {
+		return []string{}
+	}
+	return assets
 }
 
 func stringsTrim(s string) string {
@@ -407,7 +621,7 @@ func continuationInput(question, answer map[string]any) string {
 	return "继续当前 Agent 任务。针对问题“" + qtext + "”，用户回答：" + answerText + "。请基于这个回答继续执行，并再次通过 ProductFlow 工具确认业务事实。"
 }
 
-func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, pageContext map[string]any) (turnRow, bool, error) {
+func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, ignoreTurnID string, pageContext map[string]any) (turnRow, bool, error) {
 	text, err := normalizeInputText(inputText)
 	if err != nil {
 		return turnRow{}, false, err
@@ -437,19 +651,16 @@ func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, convers
 	if !inSet(startableConversation, conv.Status) {
 		return turnRow{}, false, apperr.Conflict("当前 Agent conversation 状态不允许创建 Turn")
 	}
-	var existingID string
-	var existingHash string
-	err = pfdb.QueryRow(ctx, pgxTx, `
-		SELECT id, request_hash FROM agent_turn_projections WHERE conversation_id = $1 AND idempotency_key = $2
-	`, conversationID, key).Scan(&existingID, &existingHash)
+	var existing schema.AgentTurnProjections
+	err = pgxTx.Where("conversation_id = ? AND idempotency_key = ?", conversationID, key).Take(&existing).Error
 	if err == nil {
-		if existingHash != hash {
+		if existing.RequestHash != hash {
 			return turnRow{}, false, apperr.Conflict("同一 idempotency key 不能提交不同的 Agent Turn 请求")
 		}
-		row, err := loadTurnByID(ctx, pgxTx, existingID)
+		row, err := loadTurnByID(ctx, pgxTx, existing.ID)
 		return row, false, err
 	}
-	if !errors.Is(err, sqldb.ErrNoRows) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return turnRow{}, false, err
 	}
 	if conv.ScopeType == "global" && conv.SessionID != nil {
@@ -469,59 +680,73 @@ func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, convers
 		if task.Status == "paused" {
 			return turnRow{}, false, apperr.Conflict("已暂停的 Agent Task 需要恢复后才能提交 Turn")
 		}
-		if task.CurrentTurnID != nil {
-			var st string
-			_ = pfdb.QueryRow(ctx, pgxTx, `SELECT status FROM agent_turn_projections WHERE id = $1`, *task.CurrentTurnID).Scan(&st)
-			if inSet(blockingTurn, st) {
+		if task.CurrentTurnID != nil && *task.CurrentTurnID != ignoreTurnID {
+			var current schema.AgentTurnProjections
+			if err := pgxTx.Where("id = ?", *task.CurrentTurnID).Take(&current).Error; err == nil && inSet(blockingTurn, current.Status) {
 				return turnRow{}, false, apperr.Conflict("当前 Agent Task 仍有未结束的 Turn")
 			}
 		}
 	}
 	if conv.ScopeType == "product_workflow" && len(assets) > 0 && conv.ProductID != nil {
 		for _, assetID := range assets {
-			var pid string
-			var status string
-			err := pfdb.QueryRow(ctx, pgxTx, `SELECT product_id, verification_status FROM product_image_assets WHERE id = $1`, assetID).Scan(&pid, &status)
-			if errors.Is(err, sqldb.ErrNoRows) || pid != *conv.ProductID {
+			var asset schema.ProductImageAssets
+			err := pgxTx.Where("id = ?", assetID).Take(&asset).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) || asset.ProductID != *conv.ProductID {
 				return turnRow{}, false, apperr.Validation("参考图片不属于当前商品")
 			}
 			if err != nil {
 				return turnRow{}, false, err
 			}
-			if status != "verified" {
+			var media schema.MediaObjects
+			if err := pgxTx.Where("id = ?", asset.MediaObjectID).Take(&media).Error; err != nil {
+				return turnRow{}, false, err
+			}
+			if media.VerificationStatus != "verified" {
 				return turnRow{}, false, apperr.Validation("参考图片尚未通过核验")
 			}
 		}
 	}
 	id := newID()
 	assetJSON, _ := json.Marshal(assets)
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		INSERT INTO agent_turn_projections (
-			id, conversation_id, task_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
-			status, resume_required, tool_steps_json, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', FALSE, '[]'::jsonb, NOW(), NOW())
-	`, id, conversationID, taskID, key, hash, text, assetJSON); err != nil {
+	now := time.Now().UTC()
+	proj := schema.AgentTurnProjections{
+		ID:                id,
+		ConversationID:    conversationID,
+		TaskID:            taskID,
+		IdempotencyKey:    key,
+		RequestHash:       hash,
+		InputText:         text,
+		InputAssetIdsJSON: string(assetJSON),
+		Status:            "queued",
+		ResumeRequired:    false,
+		ToolStepsJSON:     "[]",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := pgxTx.Create(&proj).Error; err != nil {
 		if uniqueViolation(err) {
-			var replayID, replayHash string
-			if scanErr := pfdb.QueryRow(ctx, pgxTx, `
-				SELECT id, request_hash FROM agent_turn_projections WHERE conversation_id = $1 AND idempotency_key = $2
-			`, conversationID, key).Scan(&replayID, &replayHash); scanErr == nil {
-				if replayHash != hash {
+			var replay schema.AgentTurnProjections
+			if scanErr := pgxTx.Where("conversation_id = ? AND idempotency_key = ?", conversationID, key).Take(&replay).Error; scanErr == nil {
+				if replay.RequestHash != hash {
 					return turnRow{}, false, apperr.Conflict("同一 idempotency key 不能提交不同的 Agent Turn 请求")
 				}
-				row, err := loadTurnByID(ctx, pgxTx, replayID)
+				row, err := loadTurnByID(ctx, pgxTx, replay.ID)
 				return row, false, err
 			}
 		}
 		return turnRow{}, false, err
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_conversations SET status = 'collecting', updated_at = NOW() WHERE id = $1
-	`, conversationID); err != nil {
+	if err := pgxTx.Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
+		"status":     "collecting",
+		"updated_at": now,
+	}).Error; err != nil {
 		return turnRow{}, false, err
 	}
 	if taskID != nil {
-		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_tasks SET current_turn_id = $2, updated_at = NOW() WHERE id = $1`, *taskID, id); err != nil {
+		if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", *taskID).Updates(map[string]any{
+			"current_turn_id": id,
+			"updated_at":      now,
+		}).Error; err != nil {
 			return turnRow{}, false, err
 		}
 	}
@@ -534,16 +759,15 @@ func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, convers
 	return row, true, err
 }
 
-
 func (s Service) recordStartError(ctx context.Context, productID *string, conversationID, projectionID, message string) error {
 	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID); err != nil {
 			return err
 		}
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_turn_projections SET sync_error = $2, updated_at = NOW() WHERE id = $1
-		`, projectionID, message)
-		return err
+		return pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+			"sync_error": message,
+			"updated_at": time.Now().UTC(),
+		}).Error
 	})
 }
 

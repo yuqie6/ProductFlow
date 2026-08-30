@@ -3,12 +3,11 @@ package product
 import (
 	"context"
 	"errors"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -51,7 +50,10 @@ func (s Service) ClearCover(ctx context.Context, productID string) (Detail, erro
 		if _, err := loadProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
-		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE products SET cover_image_asset_id = NULL, updated_at = NOW() WHERE id = $1`, productID)
+		err := pgxTx.WithContext(ctx).Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{
+			"cover_image_asset_id": nil,
+			"updated_at":           time.Now().UTC(),
+		}).Error
 		if err != nil {
 			return err
 		}
@@ -97,7 +99,9 @@ func (s Service) AddImages(ctx context.Context, productID string, uploads []Uplo
 				return err
 			}
 		} else {
-			_, err = pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, productID)
+			err = pgxTx.WithContext(ctx).Model(&schema.Products{}).Where("id = ?", productID).Updates(map[string]any{
+				"updated_at": time.Now().UTC(),
+			}).Error
 			if err != nil {
 				return err
 			}
@@ -128,10 +132,12 @@ func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 		if err := ensureAssetNotReferenced(ctx, pgxTx, assetID); err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM product_image_assets WHERE id = $1`, assetID); err != nil {
+		if err := pgxTx.WithContext(ctx).Where("id = ?", assetID).Delete(&schema.ProductImageAssets{}).Error; err != nil {
 			return err
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE products SET updated_at = NOW() WHERE id = $1`, asset.ProductID); err != nil {
+		if err := pgxTx.WithContext(ctx).Model(&schema.Products{}).Where("id = ?", asset.ProductID).Updates(map[string]any{
+			"updated_at": time.Now().UTC(),
+		}).Error; err != nil {
 			return err
 		}
 		files, err = media.PruneUnreferenced(ctx, pgxTx, []string{asset.MediaObjectID})
@@ -147,28 +153,58 @@ func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 }
 
 func ensureAssetNotReferenced(ctx context.Context, tx *gorm.DB, assetID string) error {
-	checks := []struct {
-		sql    string
+	type check struct {
+		run    func() error
 		detail string
-	}{
-		{`SELECT 1 FROM products WHERE cover_image_asset_id = $1 LIMIT 1`, "商品图片仍被设为封面，不能删除"},
-		{`SELECT 1 FROM product_image_assets WHERE parent_asset_id = $1 LIMIT 1`, "商品图片仍有派生图片，不能删除"},
-		{`SELECT 1 FROM workflow_graph_nodes WHERE bound_image_asset_id = $1 LIMIT 1`, "商品图片仍被工作流节点绑定，不能删除"},
-		{`SELECT 1 FROM visual_system_version_references WHERE asset_id = $1 LIMIT 1`, "商品图片仍被视觉体系版本引用，不能删除"},
-		{`SELECT 1 FROM workflow_graph_artifacts WHERE product_image_asset_id = $1 LIMIT 1`, "商品图片仍被工作流生成历史作为结果引用，不能删除"},
-		{`SELECT 1 FROM delivery_rendition_jobs WHERE source_asset_id = $1 OR result_asset_id = $1 LIMIT 1`, "商品图片仍被交付派生任务引用，不能删除"},
-		{`SELECT 1 FROM local_image_edit_tasks WHERE source_asset_id = $1 OR source_artifact_asset_id = $1 OR result_asset_id = $1 LIMIT 1`, "商品图片仍被局部编辑任务的源图或结果引用，不能删除"},
-		{`SELECT 1 FROM local_image_edit_task_references WHERE asset_id = $1 LIMIT 1`, "商品图片仍被局部编辑任务作为参考图引用，不能删除"},
-		{`SELECT 1 FROM local_image_edit_provider_attempts WHERE late_result_asset_id = $1 LIMIT 1`, "商品图片仍被局部编辑迟到结果审计引用，不能删除"},
-		{`SELECT 1 FROM product_image_fidelity_checks WHERE asset_id = $1 LIMIT 1`, "商品图片仍有人工保真检查历史，不能删除"},
 	}
-	for _, check := range checks {
-		var one int
-		err := pfdb.QueryRow(ctx, tx, check.sql, assetID).Scan(&one)
+	checks := []check{
+		{func() error {
+			var rec schema.Products
+			return tx.WithContext(ctx).Select("id").Where("cover_image_asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被设为封面，不能删除"},
+		{func() error {
+			var rec schema.ProductImageAssets
+			return tx.WithContext(ctx).Select("id").Where("parent_asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍有派生图片，不能删除"},
+		{func() error {
+			var rec schema.WorkflowGraphNodes
+			return tx.WithContext(ctx).Select("id").Where("bound_image_asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被工作流节点绑定，不能删除"},
+		{func() error {
+			var rec schema.VisualSystemVersionReferences
+			return tx.WithContext(ctx).Select("id").Where("asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被视觉体系版本引用，不能删除"},
+		{func() error {
+			var rec schema.WorkflowGraphArtifacts
+			return tx.WithContext(ctx).Select("id").Where("product_image_asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被工作流生成历史作为结果引用，不能删除"},
+		{func() error {
+			var rec schema.DeliveryRenditionJobs
+			return tx.WithContext(ctx).Select("id").Where("source_asset_id = ? OR result_asset_id = ?", assetID, assetID).Take(&rec).Error
+		}, "商品图片仍被交付派生任务引用，不能删除"},
+		{func() error {
+			var rec schema.LocalImageEditTasks
+			return tx.WithContext(ctx).Select("id").Where("source_asset_id = ? OR source_artifact_asset_id = ? OR result_asset_id = ?", assetID, assetID, assetID).Take(&rec).Error
+		}, "商品图片仍被局部编辑任务的源图或结果引用，不能删除"},
+		{func() error {
+			var rec schema.LocalImageEditTaskReferences
+			return tx.WithContext(ctx).Select("task_id").Where("asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被局部编辑任务作为参考图引用，不能删除"},
+		{func() error {
+			var rec schema.LocalImageEditProviderAttempts
+			return tx.WithContext(ctx).Select("id").Where("late_result_asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍被局部编辑迟到结果审计引用，不能删除"},
+		{func() error {
+			var rec schema.ProductImageFidelityChecks
+			return tx.WithContext(ctx).Select("id").Where("asset_id = ?", assetID).Take(&rec).Error
+		}, "商品图片仍有人工保真检查历史，不能删除"},
+	}
+	for _, item := range checks {
+		err := item.run()
 		if err == nil {
-			return apperr.Conflict(check.detail)
+			return apperr.Conflict(item.detail)
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 	}

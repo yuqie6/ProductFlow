@@ -156,6 +156,12 @@ func TestBirthCommands(t *testing.T) {
 	if direct.Graph["schema_version"] != float64(3) && direct.Graph["schema_version"] != 3 {
 		t.Fatalf("graph %+v", direct.Graph)
 	}
+	if _, ok := direct.Graph["source_draft_revision_id"]; !ok {
+		t.Fatalf("missing source_draft_revision_id: %+v", direct.Graph)
+	}
+	if direct.Graph["source_draft_revision_id"] != nil {
+		t.Fatalf("source_draft_revision_id %+v", direct.Graph["source_draft_revision_id"])
+	}
 	if direct.Product.CoverImageAssetID == nil {
 		t.Fatal("v3 missing cover")
 	}

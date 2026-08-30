@@ -2,10 +2,10 @@ package media
 
 import (
 	"context"
-	sqldb "database/sql"
 	"errors"
 
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
@@ -28,38 +28,61 @@ func PruneUnreferenced(ctx context.Context, tx *gorm.DB, mediaIDs []string) ([]D
 			continue
 		}
 		seen[mediaID] = struct{}{}
-		var referenced bool
-		err := pfdb.QueryRow(ctx, tx, `
-			SELECT EXISTS (
-				SELECT 1 FROM product_image_assets WHERE media_object_id = $1
-				UNION ALL
-				SELECT 1 FROM image_session_assets WHERE media_object_id = $1
-				UNION ALL
-				SELECT 1 FROM media_library_assets WHERE media_object_id = $1
-				UNION ALL
-				SELECT 1 FROM local_image_edit_tasks WHERE mask_media_object_id = $1
-			)
-		`, mediaID).Scan(&referenced)
+		referenced, err := mediaObjectReferenced(ctx, tx, mediaID)
 		if err != nil {
 			return nil, err
 		}
 		if referenced {
 			continue
 		}
-		var path string
-		err = pfdb.QueryRow(ctx, tx, `
-			SELECT storage_path FROM media_objects WHERE id = $1 FOR UPDATE
-		`, mediaID).Scan(&path)
+		var rec schema.MediaObjects
+		err = tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, storage_path").Where("id = ?", mediaID).Take(&rec).Error
 		if err != nil {
-			if errors.Is(err, sqldb.ErrNoRows) {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
 			return nil, err
 		}
-		if _, err := pfdb.Exec(ctx, tx, `DELETE FROM media_objects WHERE id = $1`, mediaID); err != nil {
+		if err := tx.WithContext(ctx).Where("id = ?", mediaID).Delete(&schema.MediaObjects{}).Error; err != nil {
 			return nil, err
 		}
-		deleted = append(deleted, Deleted{ID: mediaID, StoragePath: path})
+		deleted = append(deleted, Deleted{ID: mediaID, StoragePath: rec.StoragePath})
 	}
 	return deleted, nil
+}
+
+func mediaObjectReferenced(ctx context.Context, tx *gorm.DB, mediaID string) (bool, error) {
+	var asset schema.ProductImageAssets
+	err := tx.WithContext(ctx).Select("id").Where("media_object_id = ?", mediaID).Take(&asset).Error
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	var session schema.ImageSessionAssets
+	err = tx.WithContext(ctx).Select("id").Where("media_object_id = ?", mediaID).Take(&session).Error
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	var library schema.MediaLibraryAssets
+	err = tx.WithContext(ctx).Select("id").Where("media_object_id = ?", mediaID).Take(&library).Error
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	var task schema.LocalImageEditTasks
+	err = tx.WithContext(ctx).Select("id").Where("mask_media_object_id = ?", mediaID).Take(&task).Error
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	return false, nil
 }

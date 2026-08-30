@@ -771,6 +771,11 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 		if _, ok := presence["value"]; !ok {
 			return nil, apperr.Validation("请求体无效")
 		}
+		for _, key := range []string{"source_type", "status", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
+			if raw, ok := presence[key]; ok && string(raw) == "null" {
+				return nil, apperr.Validation("请求体无效")
+			}
+		}
 		row := map[string]any{"key": wire.Key}
 		if string(presence["value"]) == "null" {
 			row["value"] = nil

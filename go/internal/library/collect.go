@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
-
-	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
@@ -72,14 +72,12 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 	}
 
 	if key != "" {
-		var existingHash string
-		scanErr := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT request_hash FROM media_library_collection_keys
-			WHERE product_id = $1 AND idempotency_key = $2
-			FOR UPDATE
-		`, productID, key).Scan(&existingHash)
+		var rec schema.MediaLibraryCollectionKeys
+		scanErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Where("product_id = ? AND idempotency_key = ?", productID, key).
+			Take(&rec).Error
 		if scanErr == nil {
-			if existingHash != requestHash {
+			if rec.RequestHash != requestHash {
 				return nil, apperr.Conflict("相同 idempotency key 不能用于不同的素材收录参数")
 			}
 			replayed, err := product.LoadByLibrarySources(ctx, pgxTx, productID, uniqueIDs)
@@ -95,7 +93,7 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 			}
 			return out, nil
 		}
-		if !errors.Is(scanErr, sqldb.ErrNoRows) {
+		if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
 			return nil, scanErr
 		}
 	}
@@ -158,19 +156,21 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 		}
 	}
 	if key != "" {
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO media_library_collection_keys (id, product_id, idempotency_key, request_hash, created_at)
-			VALUES ($1, $2, $3, $4, NOW())
-		`, clockid.New(), productID, key, requestHash)
+		err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryCollectionKeys{
+			ID:             clockid.New(),
+			ProductID:      productID,
+			IdempotencyKey: key,
+			RequestHash:    requestHash,
+			CreatedAt:      time.Now().UTC(),
+		}).Error
 		if product.UniqueViolation(err) || uniqueViolation(err) {
-			var existingHash string
-			if scanErr := pfdb.QueryRow(ctx, pgxTx, `
-				SELECT request_hash FROM media_library_collection_keys
-				WHERE product_id = $1 AND idempotency_key = $2
-			`, productID, key).Scan(&existingHash); scanErr != nil {
+			var rec schema.MediaLibraryCollectionKeys
+			if scanErr := pgxTx.WithContext(ctx).Select("request_hash").
+				Where("product_id = ? AND idempotency_key = ?", productID, key).
+				Take(&rec).Error; scanErr != nil {
 				return nil, err
 			}
-			if existingHash != requestHash {
+			if rec.RequestHash != requestHash {
 				return nil, apperr.Conflict("相同 idempotency key 不能用于不同的素材收录参数")
 			}
 		} else if err != nil {

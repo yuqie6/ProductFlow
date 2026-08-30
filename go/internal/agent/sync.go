@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -48,6 +48,13 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 		productID = nil
 	}
 	if s.Gateway != nil {
+		handled, err := s.syncQuestionContinuation(ctx, productID, row)
+		if err != nil {
+			return err
+		}
+		if handled {
+			return s.syncOutcome(ctx, projectionID)
+		}
 		if row.HarnessTurnID == nil {
 			if _, err := s.bindGatewayTurn(ctx, productID, row.ConversationID, projectionID, true); err != nil {
 				return s.syncOutcome(ctx, projectionID)
@@ -58,9 +65,11 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 				_ = s.recordStartError(ctx, productID, row.ConversationID, projectionID, "Agent 服务暂时不可用")
 				return s.syncOutcome(ctx, projectionID)
 			}
-			_ = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+			if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 				return s.applyTurnState(ctx, pgxTx, productID, row.ConversationID, projectionID, state)
-			})
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return s.syncOutcome(ctx, projectionID)
@@ -86,6 +95,71 @@ func (s Service) syncOutcome(ctx context.Context, projectionID string) error {
 		return queue.ErrLater
 	}
 	return nil
+}
+
+func (s Service) syncQuestionContinuation(ctx context.Context, productID *string, child turnRow) (bool, error) {
+	if !inSet(inFlightTurn, child.Status) {
+		return false, nil
+	}
+	var parent turnRow
+	var found bool
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		loaded, ok, loadErr := loadQuestionParent(ctx, pgxTx, child.ID)
+		parent = loaded
+		found = ok
+		return loadErr
+	})
+	if err != nil || !found {
+		return false, err
+	}
+	if parent.Status == "requires_input" && len(parent.QuestionAnswerJSON) > 0 && parent.HarnessTurnID != nil {
+		if err := s.resumeAnsweredParent(ctx, productID, parent); err != nil {
+			if gatewayQuestionNotLive(err) {
+				if cerr := s.cancelDeadQuestionTurn(ctx, productID, parent); cerr != nil {
+					return true, cerr
+				}
+				return false, nil
+			}
+			return true, mapGateway(err)
+		}
+		if err := s.cancelUnusedContinuation(ctx, productID, child); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	if parent.Status != "requires_input" {
+		if err := s.cancelUnusedContinuation(ctx, productID, child); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s Service) cancelDeadQuestionTurn(ctx context.Context, productID *string, parent turnRow) error {
+	if parent.HarnessTurnID == nil || s.Gateway == nil {
+		return nil
+	}
+	state, err := s.Gateway.CancelTurn(parent.ConversationID, *parent.HarnessTurnID, parent.TaskID)
+	if err != nil {
+		return nil
+	}
+	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		return s.applyTurnState(ctx, pgxTx, productID, parent.ConversationID, parent.ID, state)
+	})
+}
+
+func loadQuestionParent(ctx context.Context, pgxTx *gorm.DB, continuationID string) (turnRow, bool, error) {
+	var rec schema.AgentTurnProjections
+	err := pgxTx.WithContext(ctx).Where("continuation_turn_id = ?", continuationID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return turnRow{}, false, nil
+	}
+	if err != nil {
+		return turnRow{}, false, err
+	}
+	row, err := loadTurnByID(ctx, pgxTx, rec.ID)
+	return row, true, err
 }
 
 func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string, state TurnState) error {
@@ -118,9 +192,9 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 	}
 	output := nullableString(state.Output)
 	errText := nullableString(state.Error)
-	var questionJSON []byte
+	var questionJSON any = gorm.Expr("NULL")
 	if len(state.Question) > 0 && string(state.Question) != "null" {
-		questionJSON = state.Question
+		questionJSON = string(state.Question)
 	}
 	var stepsJSON []byte
 	if state.ToolSteps != nil {
@@ -128,13 +202,16 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 	} else {
 		stepsJSON = []byte("[]")
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_turn_projections SET
-			harness_turn_id = COALESCE(harness_turn_id, $2),
-			status = $3, output_text = $4, error_text = $5, question_json = $6,
-			tool_steps_json = $7, finished_at = $8, updated_at = NOW()
-		WHERE id = $1
-	`, projectionID, state.TurnID, status, output, errText, questionJSON, stepsJSON, state.FinishedAt); err != nil {
+	if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+		"harness_turn_id": gorm.Expr("COALESCE(harness_turn_id, ?)", state.TurnID),
+		"status":          status,
+		"output_text":     output,
+		"error_text":      errText,
+		"question_json":   questionJSON,
+		"tool_steps_json": string(stepsJSON),
+		"finished_at":     state.FinishedAt,
+		"updated_at":      time.Now().UTC(),
+	}).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "uq_agent_turn_projections_harness_turn_id" {
 			return apperr.Conflict("Agent Turn projection 已绑定其他 harness Turn")
@@ -150,7 +227,6 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 		}
 	}
 	if status == "awaiting_confirmation" && state.Artifact != nil && row.ConversationScope == "global" {
-		payload, _ := json.Marshal(state.Artifact.Value)
 		if state.Artifact.Name == "propose_global_draft" || state.Artifact.Name == "propose_library_organization_draft" {
 			inner := state.Artifact.Value
 			if state.Artifact.Name == "propose_global_draft" {
@@ -159,17 +235,20 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 					inner = raw
 				}
 			}
-			payload, _ = json.Marshal(inner)
+			payload, _ := json.Marshal(inner)
 			revID, err := s.Library.AppendOrganizationDraftRevisionTx(ctx, pgxTx, conversationID, payload, projectionID, state.Artifact.StepID)
 			if err != nil {
 				return err
 			}
 			if revID != "" {
-				_, _ = pfdb.Exec(ctx, pgxTx, `
-					UPDATE agent_turn_projections
-					SET artifact_name = $2, artifact_step_id = $3, library_organization_draft_revision_id = $4, updated_at = NOW()
-					WHERE id = $1
-				`, projectionID, state.Artifact.Name, state.Artifact.StepID, revID)
+				if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+					"artifact_name":                          state.Artifact.Name,
+					"artifact_step_id":                       state.Artifact.StepID,
+					"library_organization_draft_revision_id": revID,
+					"updated_at":                             time.Now().UTC(),
+				}).Error; err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -198,12 +277,9 @@ func nullableString(s string) any {
 }
 
 func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, state TurnState) error {
-	var attempt, fencing int
-	var phase string
-	err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT attempt, fencing_token, phase FROM agent_turn_executions WHERE turn_projection_id = $1
-	`, projectionID).Scan(&attempt, &fencing, &phase)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var exec schema.AgentTurnExecutions
+	err := pgxTx.WithContext(ctx).Where("turn_projection_id = ?", projectionID).Take(&exec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if state.ExecutionAttempt != nil || state.ExecutionFence != nil {
 			return apperr.Conflict("Agent Turn 返回了不存在的 execution lease")
 		}
@@ -212,7 +288,7 @@ func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, sta
 	if err != nil {
 		return err
 	}
-	if phase == "terminal" && !inSet(terminalTurn, state.Status) {
+	if exec.Phase == "terminal" && !inSet(terminalTurn, state.Status) {
 		return apperr.Conflict("Agent execution 已进入终态，不能回写活动状态")
 	}
 	if state.ExecutionAttempt == nil || state.ExecutionFence == nil {
@@ -221,7 +297,7 @@ func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, sta
 		}
 		return apperr.Conflict("Agent Turn 缺少 execution fencing 信息")
 	}
-	if *state.ExecutionAttempt != attempt || *state.ExecutionFence != fencing {
+	if *state.ExecutionAttempt != exec.Attempt || *state.ExecutionFence != exec.FencingToken {
 		return apperr.Conflict("Agent Turn execution fencing token 已过期")
 	}
 	return nil
@@ -234,15 +310,15 @@ func isStaleQueued(ctx context.Context, pgxTx *gorm.DB, row turnRow, state TurnS
 	if state.ExecutionAttempt != nil || state.ExecutionFence != nil {
 		return false, nil
 	}
-	var phase string
-	err := pfdb.QueryRow(ctx, pgxTx, `SELECT phase FROM agent_turn_executions WHERE turn_projection_id = $1`, row.ID).Scan(&phase)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var exec schema.AgentTurnExecutions
+	err := pgxTx.WithContext(ctx).Where("turn_projection_id = ?", row.ID).Take(&exec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	return row.Status != "queued" || phase != "claimed", nil
+	return row.Status != "queued" || exec.Phase != "claimed", nil
 }
 
 func pendingWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, conversationID string, taskID *string, state TurnState) string {
@@ -254,41 +330,33 @@ func pendingWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, conversationID 
 			continue
 		}
 		stepID, _ := step["step_id"].(string)
-		q := `
-			SELECT id FROM agent_workflow_run_requests
-			WHERE conversation_id = $1 AND source_step_id = $2
-		`
-		args := []any{conversationID, stepID}
+		q := pgxTx.WithContext(ctx).Model(&schema.AgentWorkflowRunRequests{}).
+			Where("conversation_id = ? AND source_step_id = ?", conversationID, stepID)
 		if taskID != nil && *taskID != "" {
-			q += ` AND task_id = $3`
-			args = append(args, *taskID)
+			q = q.Where("(task_id IS NULL OR task_id = ?)", *taskID)
 		}
-		q += ` ORDER BY created_at DESC LIMIT 1`
-		var id string
-		if err := pfdb.QueryRow(ctx, pgxTx, q, args...).Scan(&id); err != nil || strings.TrimSpace(id) == "" {
+		var req schema.AgentWorkflowRunRequests
+		if err := q.Order("created_at DESC").Take(&req).Error; err != nil || strings.TrimSpace(req.ID) == "" {
 			continue
 		}
-		return id
+		return req.ID
 	}
 	return ""
 }
 
 func attachWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, projectionID, requestID string) error {
-	var existing *string
-	if err := pfdb.QueryRow(ctx, pgxTx, `
-		SELECT workflow_run_request_id FROM agent_turn_projections WHERE id = $1 FOR UPDATE
-	`, projectionID).Scan(&existing); err != nil {
+	var proj schema.AgentTurnProjections
+	if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", projectionID).Take(&proj).Error; err != nil {
 		return err
 	}
-	if existing != nil && *existing != "" && *existing != requestID {
+	if proj.WorkflowRunRequestID != nil && *proj.WorkflowRunRequestID != "" && *proj.WorkflowRunRequestID != requestID {
 		return apperr.Conflict("Agent Turn 已关联其他工作流执行请求")
 	}
-	_, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_turn_projections
-		SET workflow_run_request_id = $2, status = 'awaiting_confirmation', updated_at = NOW()
-		WHERE id = $1
-	`, projectionID, requestID)
-	return err
+	return pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+		"workflow_run_request_id": requestID,
+		"status":                  "awaiting_confirmation",
+		"updated_at":              time.Now().UTC(),
+	}).Error
 }
 
 func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus, errorText, summary string) error {
@@ -301,16 +369,31 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 	}
 	keepGoal := false
 	if task.ConversationID != nil {
-		var scope string
-		err := pfdb.QueryRow(ctx, pgxTx, `SELECT scope_type FROM agent_conversations WHERE id = $1`, *task.ConversationID).Scan(&scope)
-		if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+		var conv schema.AgentConversations
+		err := pgxTx.Where("id = ?", *task.ConversationID).Take(&conv).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		keepGoal = scope == "product_workflow"
+		keepGoal = conv.ScopeType == "product_workflow"
 	}
 	if task.Status == "paused" && (turnStatus == "requires_input" || turnStatus == "awaiting_confirmation") {
 		if summary != "" {
-			if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE agent_tasks SET summary = $2, updated_at = NOW() WHERE id = $1`, task.ID, summary); err != nil {
+			if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(map[string]any{
+				"summary":    summary,
+				"updated_at": time.Now().UTC(),
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return refreshSessionSummary(ctx, pgxTx, task.SessionID)
+	}
+	parkedWorkflowConfirm := task.WaitingReason != nil && *task.WaitingReason == "workflow_run_confirmation"
+	if parkedWorkflowConfirm && inSet(inFlightTurn, turnStatus) {
+		if summary != "" {
+			if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(map[string]any{
+				"summary":    summary,
+				"updated_at": time.Now().UTC(),
+			}).Error; err != nil {
 				return err
 			}
 		}
@@ -333,6 +416,9 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 	case "awaiting_confirmation":
 		status = "awaiting_confirmation"
 		waiting = "awaiting_confirmation"
+		if parkedWorkflowConfirm {
+			waiting = "workflow_run_confirmation"
+		}
 	case "succeeded", "failed", "canceled", "unknown":
 		if keepGoal {
 			status = "waiting_user"
@@ -364,22 +450,26 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 	default:
 		return nil
 	}
-	if _, err := pfdb.Exec(ctx, pgxTx, `
-		UPDATE agent_tasks SET
-			status = $2,
-			waiting_reason = $3,
-			failure_reason = $4,
-			summary = CASE WHEN $8 <> '' THEN $8 ELSE summary END,
-			started_at = COALESCE(started_at, NOW()),
-			finished_at = CASE
-				WHEN $5 THEN NOW()
-				WHEN $6 THEN NULL
-				ELSE finished_at
-			END,
-			canceled_at = CASE WHEN $7 THEN NOW() ELSE canceled_at END,
-			updated_at = NOW()
-		WHERE id = $1
-	`, task.ID, status, waiting, failure, setFinished, clearFinished, setCanceledAt, summary); err != nil {
+	now := time.Now().UTC()
+	updates := map[string]any{
+		"status":         status,
+		"waiting_reason": waiting,
+		"failure_reason": failure,
+		"started_at":     gorm.Expr("COALESCE(started_at, ?)", now),
+		"updated_at":     now,
+	}
+	if summary != "" {
+		updates["summary"] = summary
+	}
+	if setFinished {
+		updates["finished_at"] = now
+	} else if clearFinished {
+		updates["finished_at"] = nil
+	}
+	if setCanceledAt {
+		updates["canceled_at"] = now
+	}
+	if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 		return err
 	}
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)

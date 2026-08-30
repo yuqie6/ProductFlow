@@ -8,9 +8,10 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ConfigItem struct {
@@ -68,21 +69,24 @@ func (s *Store) ConfigView(ctx context.Context) (ConfigResponse, error) {
 }
 
 func (s *Store) configRows(ctx context.Context) (map[string]configRow, error) {
-	query, err := pfdb.Query(ctx, s.db, `SELECT key, value, updated_at FROM app_settings`)
-	if err != nil {
+	var rows []schema.AppSettings
+	if err := s.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	defer query.Close()
 	out := map[string]configRow{}
-	for query.Next() {
-		var key, value string
-		var updated time.Time
-		if err := query.Scan(&key, &value, &updated); err != nil {
-			return nil, err
-		}
-		out[key] = configRow{value: value, updatedAt: updated}
+	for _, row := range rows {
+		out[row.Key] = configRow{value: row.Value, updatedAt: row.UpdatedAt}
 	}
-	return out, query.Err()
+	return out, nil
+}
+
+func upsertAppSetting(dbTx *gorm.DB, key, value string) error {
+	now := time.Now().UTC()
+	row := schema.AppSettings{Key: key, Value: value, CreatedAt: now, UpdatedAt: now}
+	return dbTx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "key"}},
+		DoUpdates: clause.Assignments(map[string]any{"value": value, "updated_at": now}),
+	}).Create(&row).Error
 }
 
 func publicValue(def configDefinition, raw string) any {
@@ -165,16 +169,12 @@ func (s *Store) UpdateConfig(ctx context.Context, values map[string]any, resetKe
 	}
 	err = tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
 		for key := range reset {
-			if _, err := pfdb.Exec(ctx, dbTx, `DELETE FROM app_settings WHERE key = $1`, key); err != nil {
+			if err := dbTx.Where("key = ?", key).Delete(&schema.AppSettings{}).Error; err != nil {
 				return err
 			}
 		}
 		for key, value := range normalized {
-			if _, err := pfdb.Exec(ctx, dbTx, `
-				INSERT INTO app_settings (key, value, created_at, updated_at)
-				VALUES ($1, $2, NOW(), NOW())
-				ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-			`, key, value); err != nil {
+			if err := upsertAppSetting(dbTx, key, value); err != nil {
 				return err
 			}
 		}

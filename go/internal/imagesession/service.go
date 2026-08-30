@@ -9,13 +9,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -64,28 +62,13 @@ func (s Service) allowedToolFields(ctx context.Context) []string {
 func (s Service) List(ctx context.Context) (ListResponse, error) {
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		rows, err := pfdb.Query(ctx, pgxTx, `
-			SELECT id, title, created_at, updated_at FROM image_sessions ORDER BY updated_at DESC, id DESC
-		`)
-		if err != nil {
-			return err
-		}
-		var sessions []sessionRow
-		for rows.Next() {
-			var sess sessionRow
-			if err := rows.Scan(&sess.ID, &sess.Title, &sess.CreatedAt, &sess.UpdatedAt); err != nil {
-				rows.Close()
-				return err
-			}
-			sessions = append(sessions, sess)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		var sessions []schema.ImageSessions
+		if err := pgxTx.Order("updated_at DESC, id DESC").Find(&sessions).Error; err != nil {
 			return err
 		}
 		items := make([]SummaryResponse, 0, len(sessions))
 		for _, sess := range sessions {
-			item, err := s.serializeSummary(ctx, pgxTx, sess)
+			item, err := s.serializeSummary(ctx, pgxTx, sessionFromModel(sess))
 			if err != nil {
 				return err
 			}
@@ -110,10 +93,9 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 	}
 	id := clockid.New()
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		_, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())
-		`, id, normalized)
-		return err
+		now := time.Now().UTC()
+		row := schema.ImageSessions{ID: id, Title: normalized, CreatedAt: now, UpdatedAt: now}
+		return pgxTx.Create(&row).Error
 	})
 	if err != nil {
 		return DetailResponse{}, err
@@ -175,8 +157,9 @@ func (s Service) Update(ctx context.Context, sessionID, title string) (DetailRes
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET title = $2, updated_at = NOW() WHERE id = $1`, sessionID, trimmed)
-		return err
+		return pgxTx.Model(&schema.ImageSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+			"title": trimmed, "updated_at": time.Now().UTC(),
+		}).Error
 	})
 	if err != nil {
 		return DetailResponse{}, err
@@ -190,32 +173,26 @@ func (s Service) Delete(ctx context.Context, sessionID string) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		rows, err := pfdb.Query(ctx, pgxTx, `SELECT id, media_object_id FROM image_session_assets WHERE session_id = $1`, sessionID)
-		if err != nil {
+		var assets []schema.ImageSessionAssets
+		if err := pgxTx.Where("session_id = ?", sessionID).Find(&assets).Error; err != nil {
 			return err
 		}
 		var assetIDs, mediaIDs []string
-		for rows.Next() {
-			var assetID, mediaID string
-			if err := rows.Scan(&assetID, &mediaID); err != nil {
-				rows.Close()
-				return err
-			}
-			assetIDs = append(assetIDs, assetID)
-			mediaIDs = append(mediaIDs, mediaID)
+		for _, a := range assets {
+			assetIDs = append(assetIDs, a.ID)
+			mediaIDs = append(mediaIDs, a.MediaObjectID)
 		}
-		rows.Close()
 		if len(assetIDs) > 0 {
-			_, _ = pfdb.Exec(ctx, pgxTx, `
-				UPDATE product_image_assets SET source_image_session_asset_id = NULL
-				WHERE source_image_session_asset_id = ANY($1)
-			`, assetIDs)
+			_ = pgxTx.Model(&schema.ProductImageAssets{}).
+				Where("source_image_session_asset_id IN ?", assetIDs).
+				Updates(map[string]any{"source_image_session_asset_id": nil}).Error
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM image_sessions WHERE id = $1`, sessionID); err != nil {
+		if err := pgxTx.Where("id = ?", sessionID).Delete(&schema.ImageSessions{}).Error; err != nil {
 			return err
 		}
-		deleted, err = media.PruneUnreferenced(ctx, pgxTx, mediaIDs)
-		return err
+		var pruneErr error
+		deleted, pruneErr = media.PruneUnreferenced(ctx, pgxTx, mediaIDs)
+		return pruneErr
 	})
 	if err != nil {
 		return err
@@ -237,16 +214,19 @@ func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []
 			if err != nil {
 				return err
 			}
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO image_session_assets (
-					id, session_id, kind, original_filename, mime_type, storage_path, media_object_id, created_at
-				) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-			`, clockid.New(), sessionID, kindReference, up.Filename, obj.MIMEType, obj.StoragePath, obj.ID); err != nil {
+			now := time.Now().UTC()
+			row := schema.ImageSessionAssets{
+				ID: clockid.New(), SessionID: sessionID, Kind: kindReference,
+				OriginalFilename: up.Filename, MIMEType: obj.MIMEType, StoragePath: obj.StoragePath,
+				MediaObjectID: obj.ID, CreatedAt: now,
+			}
+			if err := pgxTx.Create(&row).Error; err != nil {
 				return err
 			}
 		}
-		_, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
-		return err
+		return pgxTx.Model(&schema.ImageSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+			"updated_at": time.Now().UTC(),
+		}).Error
 	})
 	if err != nil {
 		compensation.Rollback()
@@ -262,27 +242,25 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
-		var kind, mediaID string
-		err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT kind, media_object_id FROM image_session_assets WHERE id = $1 AND session_id = $2
-		`, assetID, sessionID).Scan(&kind, &mediaID)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var asset schema.ImageSessionAssets
+		err := pgxTx.Where("id = ? AND session_id = ?", assetID, sessionID).Take(&asset).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return apperr.NotFound("会话参考图不存在")
 		}
 		if err != nil {
 			return err
 		}
-		if kind != kindReference {
+		if asset.Kind != kindReference {
 			return apperr.Validation("只能删除会话参考图")
 		}
-		_, _ = pfdb.Exec(ctx, pgxTx, `
-			UPDATE product_image_assets SET source_image_session_asset_id = NULL WHERE source_image_session_asset_id = $1
-		`, assetID)
-		if _, err := pfdb.Exec(ctx, pgxTx, `DELETE FROM image_session_assets WHERE id = $1`, assetID); err != nil {
+		_ = pgxTx.Model(&schema.ProductImageAssets{}).
+			Where("source_image_session_asset_id = ?", assetID).
+			Updates(map[string]any{"source_image_session_asset_id": nil}).Error
+		if err := pgxTx.Where("id = ?", assetID).Delete(&schema.ImageSessionAssets{}).Error; err != nil {
 			return err
 		}
-		_, _ = pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID)
-		deleted, err = media.PruneUnreferenced(ctx, pgxTx, []string{mediaID})
+		_ = pgxTx.Model(&schema.ImageSessions{}).Where("id = ?", sessionID).Updates(map[string]any{"updated_at": time.Now().UTC()}).Error
+		deleted, err = media.PruneUnreferenced(ctx, pgxTx, []string{asset.MediaObjectID})
 		return err
 	})
 	if err != nil {
@@ -352,15 +330,24 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 			}
 			toolJSON = raw
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO image_session_generation_tasks (
-				id, session_id, status, prompt, size, base_asset_id, selected_reference_asset_ids,
-				tool_options, generation_count, completed_candidates, attempts, is_retryable, created_at
-			) VALUES ($1, $2, 'queued', $3, $4, $5, $6, $7, $8, 0, 0, TRUE, NOW())
-		`, taskID, sessionID, prompt, normalizedSize, baseID, refJSON, toolJSON, count); err != nil {
+		now := time.Now().UTC()
+		refsStr := string(refJSON)
+		var toolPtr *string
+		if toolJSON != nil {
+			s := string(toolJSON.([]byte))
+			toolPtr = &s
+		}
+		row := schema.ImageSessionGenerationTasks{
+			ID: taskID, SessionID: sessionID, Status: "queued", Prompt: prompt, Size: normalizedSize,
+			BaseAssetID: baseID, SelectedReferenceAssetIds: &refsStr, ToolOptions: toolPtr,
+			GenerationCount: count, CompletedCandidates: 0, Attempts: 0, IsRetryable: true, CreatedAt: now,
+		}
+		if err := pgxTx.Create(&row).Error; err != nil {
 			return fmt.Errorf("insert generation task: %w", err)
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `UPDATE image_sessions SET updated_at = NOW() WHERE id = $1`, sessionID); err != nil {
+		if err := pgxTx.Model(&schema.ImageSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+			"updated_at": now,
+		}).Error; err != nil {
 			return fmt.Errorf("touch session: %w", err)
 		}
 		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
@@ -389,15 +376,21 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		if !task.IsRetryable {
 			return apperr.Validation("该生成任务不可重试")
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE image_session_generation_tasks SET
-				status = 'queued', active_attempt_id = NULL, failure_reason = NULL,
-				started_at = NULL, finished_at = NULL, active_candidate_index = NULL,
-				progress_phase = 'manual_retry_queued', progress_updated_at = NOW(),
-				provider_response_id = NULL, provider_response_status = NULL,
-				progress_metadata = NULL, is_retryable = TRUE
-			WHERE id = $1
-		`, taskID); err != nil {
+		now := time.Now().UTC()
+		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":                   "queued",
+			"active_attempt_id":        nil,
+			"failure_reason":           nil,
+			"started_at":               nil,
+			"finished_at":              nil,
+			"active_candidate_index":   nil,
+			"progress_phase":           "manual_retry_queued",
+			"progress_updated_at":      now,
+			"provider_response_id":     nil,
+			"provider_response_status": nil,
+			"progress_metadata":        nil,
+			"is_retryable":             true,
+		}).Error; err != nil {
 			return err
 		}
 		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false)
@@ -424,13 +417,16 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 		if task.Status == "succeeded" || task.Status == "failed" || task.Status == "unknown" {
 			return apperr.Validation("已结束的生成任务不能取消")
 		}
-		_, err = pfdb.Exec(ctx, pgxTx, `
-			UPDATE image_session_generation_tasks SET
-				status = 'cancelled', active_attempt_id = NULL, failure_reason = $2,
-				finished_at = NOW(), progress_phase = 'cancelled', progress_updated_at = NOW(),
-				is_retryable = FALSE
-			WHERE id = $1
-		`, taskID, cancelledReason)
+		now := time.Now().UTC()
+		err = pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"status":              "cancelled",
+			"active_attempt_id":   nil,
+			"failure_reason":      cancelledReason,
+			"finished_at":         now,
+			"progress_phase":      "cancelled",
+			"progress_updated_at": now,
+			"is_retryable":        false,
+		}).Error
 		return err
 	})
 	if err != nil {
@@ -452,35 +448,32 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 		if asset.Kind != kindGenerated {
 			return apperr.Validation("只有生成结果可以附加到商品")
 		}
-		var exists string
-		err = pfdb.QueryRow(ctx, pgxTx, `SELECT id FROM products WHERE id = $1`, productID).Scan(&exists)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var productRow schema.Products
+		err = pgxTx.Where("id = ?", productID).Take(&productRow).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return apperr.NotFound("商品不存在")
 		}
 		if err != nil {
 			return err
 		}
-		var verification string
-		if err := pfdb.QueryRow(ctx, pgxTx, `SELECT verification_status FROM media_objects WHERE id = $1`, asset.MediaObjectID).Scan(&verification); err != nil {
+		var mediaObj schema.MediaObjects
+		if err := pgxTx.Where("id = ?", asset.MediaObjectID).Take(&mediaObj).Error; err != nil {
 			return apperr.Conflict("会话图片引用的媒体对象不存在")
 		}
-		if verification == media.StatusMissing {
+		if mediaObj.VerificationStatus == media.StatusMissing {
 			return apperr.Validation("会话图片文件缺失，不能附加到商品")
 		}
-		var existingID string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id FROM product_image_assets
-			WHERE product_id = $1 AND source_image_session_asset_id = $2
-		`, productID, asset.ID).Scan(&existingID)
+		var existing schema.ProductImageAssets
+		err = pgxTx.Where("product_id = ? AND source_image_session_asset_id = ?", productID, asset.ID).Take(&existing).Error
 		if err == nil {
-			loaded, err := product.LoadAssetRow(ctx, pgxTx, existingID)
+			loaded, err := product.LoadAssetRow(ctx, pgxTx, existing.ID)
 			if err != nil {
 				return err
 			}
 			out = product.SerializeAsset(loaded)
 			return nil
 		}
-		if !errors.Is(err, sqldb.ErrNoRows) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
 		created, err := product.InsertAssetIdentity(ctx, pgxTx, product.AssetIdentityInput{
@@ -504,17 +497,15 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 }
 
 func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, error) {
-	var row assetRow
-	err := pfdb.QueryRow(ctx, s.DB, `
-		SELECT a.id, a.session_id, a.kind, a.original_filename, a.mime_type, m.storage_path, a.media_object_id, m.verification_status, a.created_at
-		FROM image_session_assets a
-		JOIN media_objects m ON m.id = a.media_object_id
-		WHERE a.id = $1
-	`, assetID).Scan(&row.ID, &row.SessionID, &row.Kind, &row.OriginalFilename, &row.MIMEType, &row.StoragePath, &row.MediaObjectID, &row.VerificationStatus, &row.CreatedAt)
-	if errors.Is(err, sqldb.ErrNoRows) {
+	var asset schema.ImageSessionAssets
+	err := s.DB.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return assetRow{}, apperr.NotFound("会话图片不存在")
 	}
-	return row, err
+	if err != nil {
+		return assetRow{}, err
+	}
+	return assetFromModels(s.DB.WithContext(ctx), asset)
 }
 
 func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candidateStart int) (EffectResponse, error) {
@@ -569,11 +560,16 @@ func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candid
 		if state == "not_applied" {
 			effectResult = "failed"
 		}
-		if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE image_session_provider_effects SET
-				reconciliation_state = $2, effect_result = $3, detail = NULLIF($4, ''), updated_at = $5
-			WHERE id = $1
-		`, effect.ID, state, effectResult, detail, now); err != nil {
+		var detailPtr *string
+		if detail != "" {
+			detailPtr = &detail
+		}
+		if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).Where("id = ?", effect.ID).Updates(map[string]any{
+			"reconciliation_state": state,
+			"effect_result":        effectResult,
+			"detail":               detailPtr,
+			"updated_at":           now,
+		}).Error; err != nil {
 			return err
 		}
 		effect.ReconciliationState = state

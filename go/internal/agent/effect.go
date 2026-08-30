@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-
-	sqldb "database/sql"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -27,48 +27,42 @@ func (s Service) ReconcileTurnEffect(ctx context.Context, productID *string, con
 		if row.Status != "unknown" {
 			return apperr.Conflict("只有 unknown Agent Turn 才能执行副作用对账")
 		}
-		var existingID, existingTool, existingKey, effectResult, reconState string
-		var resultJSON []byte
-		var detail *string
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT id, tool_name, idempotency_key, effect_result, reconciliation_state, result_json, detail, created_at, updated_at
-			FROM agent_turn_effect_reconciliations
-			WHERE turn_projection_id = $1 AND tool_call_id = $2
-			FOR UPDATE
-		`, projectionID, normalized).Scan(
-			&existingID, &existingTool, &existingKey, &effectResult, &reconState, &resultJSON, &detail, &out.CreatedAt, &out.UpdatedAt,
-		)
-		if err == nil && effectResult != "unknown" {
+		var existing schema.AgentTurnEffectReconciliations
+		err = pgxTx.Clauses(pfdb.ForUpdate()).
+			Where("turn_projection_id = ? AND tool_call_id = ?", projectionID, normalized).
+			Take(&existing).Error
+		if err == nil && existing.EffectResult != "unknown" {
 			out.SchemaVersion = 1
-			out.ID = existingID
+			out.ID = existing.ID
 			out.ProjectionID = projectionID
 			out.ToolCallID = normalized
-			out.ToolName = existingTool
-			out.IdempotencyKey = existingKey
-			out.EffectResult = effectResult
-			out.ReconciliationState = reconState
-			out.Result = resultJSON
-			out.Detail = detail
+			out.ToolName = existing.ToolName
+			out.IdempotencyKey = existing.IdempotencyKey
+			out.EffectResult = existing.EffectResult
+			out.ReconciliationState = existing.ReconciliationState
+			if existing.ResultJSON != nil {
+				out.Result = json.RawMessage(*existing.ResultJSON)
+			}
+			out.Detail = existing.Detail
+			out.CreatedAt = existing.CreatedAt
+			out.UpdatedAt = existing.UpdatedAt
 			return nil
 		}
-		if err != nil && !errors.Is(err, sqldb.ErrNoRows) {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		var payload []byte
-		err = pfdb.QueryRow(ctx, pgxTx, `
-			SELECT payload_json FROM agent_turn_checkpoints
-			WHERE turn_projection_id = $1 AND kind = 'tool_effect_intent'
-			  AND payload_json->>'tool_call_id' = $2
-			ORDER BY sequence DESC LIMIT 1
-		`, projectionID, normalized).Scan(&payload)
-		if errors.Is(err, sqldb.ErrNoRows) {
+		var checkpoint schema.AgentTurnCheckpoints
+		err = pgxTx.Where("turn_projection_id = ? AND kind = ? AND payload_json->>'tool_call_id' = ?", projectionID, "tool_effect_intent", normalized).
+			Order("sequence DESC").
+			Take(&checkpoint).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return apperr.Conflict("找不到该 tool call 的副作用 intent checkpoint")
 		}
 		if err != nil {
 			return err
 		}
 		var intent map[string]any
-		_ = json.Unmarshal(payload, &intent)
+		_ = json.Unmarshal([]byte(checkpoint.PayloadJSON), &intent)
 		toolName, _ := intent["tool_name"].(string)
 		key, _ := intent["idempotency_key"].(string)
 		if _, ok := map[string]struct{}{
@@ -88,27 +82,42 @@ func (s Service) ReconcileTurnEffect(ctx context.Context, productID *string, con
 		case "not_applied", "conflict":
 			effect = "failed"
 		}
-		id := existingID
+		id := existing.ID
+		var resultJSON *string
+		if len(reconciled.Result) > 0 {
+			s := string(reconciled.Result)
+			resultJSON = &s
+		}
+		now := time.Now().UTC()
 		if id == "" {
 			id = newID()
-			if _, err := pfdb.Exec(ctx, pgxTx, `
-				INSERT INTO agent_turn_effect_reconciliations (
-					id, turn_projection_id, tool_call_id, tool_name, idempotency_key,
-					effect_result, reconciliation_state, result_json, detail, created_at, updated_at
-				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-			`, id, projectionID, normalized, toolName, key, effect, reconciled.State, reconciled.Result, reconciled.Detail); err != nil {
+			rec := schema.AgentTurnEffectReconciliations{
+				ID:                  id,
+				TurnProjectionID:    projectionID,
+				ToolCallID:          normalized,
+				ToolName:            toolName,
+				IdempotencyKey:      key,
+				EffectResult:        effect,
+				ReconciliationState: reconciled.State,
+				ResultJSON:          resultJSON,
+				Detail:              reconciled.Detail,
+				CreatedAt:           now,
+				UpdatedAt:           now,
+			}
+			if err := pgxTx.Create(&rec).Error; err != nil {
 				return err
 			}
-		} else if _, err := pfdb.Exec(ctx, pgxTx, `
-			UPDATE agent_turn_effect_reconciliations
-			SET effect_result = $2, reconciliation_state = $3, result_json = $4, detail = $5, updated_at = NOW()
-			WHERE id = $1
-		`, id, effect, reconciled.State, reconciled.Result, reconciled.Detail); err != nil {
+		} else if err := pgxTx.Model(&schema.AgentTurnEffectReconciliations{}).Where("id = ?", id).Updates(map[string]any{
+			"effect_result":        effect,
+			"reconciliation_state": reconciled.State,
+			"result_json":          resultJSON,
+			"detail":               reconciled.Detail,
+			"updated_at":           now,
+		}).Error; err != nil {
 			return err
 		}
-		if err := pfdb.QueryRow(ctx, pgxTx, `
-			SELECT created_at, updated_at FROM agent_turn_effect_reconciliations WHERE id = $1
-		`, id).Scan(&out.CreatedAt, &out.UpdatedAt); err != nil {
+		var saved schema.AgentTurnEffectReconciliations
+		if err := pgxTx.Where("id = ?", id).Take(&saved).Error; err != nil {
 			return err
 		}
 		out.SchemaVersion = 1
@@ -121,6 +130,8 @@ func (s Service) ReconcileTurnEffect(ctx context.Context, productID *string, con
 		out.ReconciliationState = reconciled.State
 		out.Result = reconciled.Result
 		out.Detail = reconciled.Detail
+		out.CreatedAt = saved.CreatedAt
+		out.UpdatedAt = saved.UpdatedAt
 		return nil
 	})
 	return out, err

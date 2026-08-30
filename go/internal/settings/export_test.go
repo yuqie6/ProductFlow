@@ -45,6 +45,9 @@ func testImportDoc(profiles, bindings []any) map[string]any {
 	return map[string]any{
 		"metadata": map[string]any{
 			"schema_version": exportSchemaVersion,
+			"exported_at":    "2024-01-01T00:00:00Z",
+			"app":            "productflow",
+			"app_version":    exportAppVersion,
 			"compatibility":  exportCompatibility,
 		},
 		"runtime_config":    testImportRuntime(),
@@ -186,4 +189,79 @@ func TestPreviewImportNormalizesAndApplyImportRevalidates(t *testing.T) {
 		mockImportBindings(""),
 	))
 	requireErrContains(t, err, "供应商档案不能重复")
+}
+
+func TestPreviewImportRejectsMalformedJSONTypes(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	tests := []struct {
+		name string
+		doc  map[string]any
+	}{
+		{
+			name: "numeric profile id",
+			doc: testImportDoc(
+				[]any{map[string]any{
+					"id": 123, "name": "A", "provider_type": "openai_compatible",
+					"capabilities": []string{"text_responses"}, "enabled": true,
+				}},
+				mockImportBindings(""),
+			),
+		},
+		{
+			name: "explicit null profile id",
+			doc: testImportDoc(
+				[]any{map[string]any{
+					"id": nil, "name": "A", "provider_type": "openai_compatible",
+					"capabilities": []string{"text_responses"}, "enabled": true,
+				}},
+				mockImportBindings(""),
+			),
+		},
+		{
+			name: "non-bool enabled",
+			doc: testImportDoc(
+				[]any{map[string]any{
+					"id": "p1", "name": "A", "provider_type": "openai_compatible",
+					"capabilities": []string{"text_responses"}, "enabled": "yes",
+				}},
+				mockImportBindings(""),
+			),
+		},
+		{
+			name: "non-string capability",
+			doc: testImportDoc(
+				[]any{map[string]any{
+					"id": "p1", "name": "A", "provider_type": "openai_compatible",
+					"capabilities": []any{1}, "enabled": true,
+				}},
+				mockImportBindings(""),
+			),
+		},
+		{
+			name: "string schema_version",
+			doc: func() map[string]any {
+				doc := testImportDoc(nil, mockImportBindings(""))
+				meta := doc["metadata"].(map[string]any)
+				meta["schema_version"] = "3"
+				return doc
+			}(),
+		},
+		{
+			name: "explicit null metadata exported_at",
+			doc: func() map[string]any {
+				doc := testImportDoc(nil, mockImportBindings(""))
+				meta := doc["metadata"].(map[string]any)
+				meta["exported_at"] = nil
+				return doc
+			}(),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, _, err := store.PreviewImport(tc.doc)
+			requireErrContains(t, err, "请求体无效")
+		})
+	}
 }
