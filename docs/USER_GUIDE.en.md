@@ -81,9 +81,10 @@ On the create page, enter a product brief plus on-image copy and language, then 
 Closing the Agent conversation leaves the same canvas as never opening it: add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn does not lock the canvas. Nodes the Agent just changed can be edited and undone immediately.
 
 - The add panel can add a shot: one group, one prompt, and one image node, connected to existing product facts, visual system, and creative brief. Selected identity references are connected too.
-- Running a shot uses run-to-node on the first image in the group, then run-node on the remaining images.
+- Running a shot submits one run for the group's image nodes. Independent images in the group run in parallel, using the current prompt document, and do not rewrite authored content nodes.
 - Adding a single node from the add panel places it near the current viewport center and selects it.
-- Drag from an output handle to a target input handle to create an edge. Legal targets turn green; illegal targets turn red. An illegal drop writes the reason on the canvas.
+- Drag from an output handle to a matching input port to create an edge. Processing nodes expose one input port per Catalog role. Compatible ports highlight; incompatible ports do not snap. Existing edges can be reconnected by dragging an endpoint. Missing required inputs turn the port red and disable Run.
+- Hovering the canvas Run control colors nodes that will generate, reuse, freeze, or block; a click submits immediately. A new request while a run is active joins the queue; the top-right chip shows running and queued counts.
 - If the product has no workflow yet, blank-canvas create writes an empty graph, then you can add all six node types.
 - With two or more nodes selected, the node toolbar can duplicate, group, save as recipe, and delete.
 - Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
@@ -91,19 +92,19 @@ Closing the Agent conversation leaves the same canvas as never opening it: add, 
 - Copy then paste selects the new nodes and keeps edges inside the selection.
 - Deleting nodes asks for confirmation; deleting an edge can be undone immediately.
 - Ctrl/Cmd+Z undoes the last graph edit; Ctrl/Cmd+Shift+Z redoes it unless a newer edit landed.
-- Node cards keep type color; running uses a glow; failures appear on the card and in the open inspector.
+- Node cards keep type color; running uses a glow; run failures appear on the card and in the open inspector. Missing edges are not shown as failure reasons.
 - The node toolbar can run, run up to here, duplicate, focus, save as recipe, and delete; image assets also have bind.
 - Maximize hides the top navigation so the canvas fills the main area.
 - Use automatic layout to improve routing.
 - Put a local flow in a canvas group. Double-click the group or use the enter control to see only its members; the breadcrumb returns to the full graph. In-group and full-graph viewports are remembered separately. A group changes visual organization only, not DAG execution order. Cross-group edges stay visible on the full graph.
 - While a graph save is in progress, add, inspect, bind, and recipes lock so unsaved prompts are not eaten by a run.
-- Dropping an asset onto blank canvas creates a bound unused image node; dropping onto an aggregate input creates or reuses a node, then connects a reference edge.
+- Dropping an asset onto blank canvas creates a bound unused image node; dropping onto a reference port creates or reuses a node, then connects a reference edge.
 
 Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 
 ### 3.3 Inspector
 
-With nothing selected, Details offers add-node, open-library, and run-graph. With a node selected, Details and Runs explain actual inputs with source titles and edge roles on the first screen; they do not put internal ids on that screen. Processing nodes show missing required inputs on the card. A selected edge keeps a visible delete control. On a narrow screen the inspector is a bottom drawer and a strip of canvas nodes stays visible.
+With nothing selected, Details offers add-node, open-library, and run-graph. With a node selected, Details and Runs explain actual inputs with source titles and edge roles on the first screen; they do not put internal ids on that screen. Missing required inputs are explained in the inspector; missing edges are not written into the card failure slot. A selected edge keeps a visible delete control. On a narrow screen the inspector is a bottom drawer and a strip of canvas nodes stays visible.
 
 With a node selected:
 
@@ -115,34 +116,35 @@ Reference nodes:
 
 Creative brief nodes:
 
-- Run the node to generate the goal, design goals, and prohibitions from photos and product facts.
-- The result is written into the inspector and can be edited, then rerun.
+- A template seed can run to generate the goal, design goals, and prohibitions from photos and product facts.
+- The result is adopted through a ChangeSet into the inspector. After you edit visible fields, graph or run-to-here will not overwrite those four keys. Use refine or regenerate when the model should write again.
 
 Visual system nodes:
 
-- Run the node to generate style keywords and background from photos and product facts.
-- The result is written into the inspector; without a version those values are used as-is.
+- An empty overlay seed can run to generate style keywords and background from photos and product facts.
+- A published overlay is not overwritten on fill; without a version those values are used as-is.
 
 Prompt nodes:
 
-- Run the node to write a prompt into the inspector. This does not render images.
-- Edit image goal, composition, content, text, and atmosphere.
-- New executions retain artifact versions.
+- A seed can run to write a prompt into the inspector. This does not render images.
+- Edit image goal, composition, content, text, and atmosphere. A hand-filled composition can feed downstream image nodes immediately.
+- Authored documents are not overwritten on fill. Regenerate replaces the whole document and can be undone.
 
 Image nodes:
 
 - Choose aspect ratio and resolution tier.
 - Set quality intent, reference fidelity, background, and text policy.
 - Text policy constrains prompt generation and rendering. Direct create defaults to required on-image copy with a language; a new image node added on the canvas defaults to no copy. Switch to allow or required and set a language when the image needs letters.
-- Connect a reference image before running. Direct create wires uploads to visual, brief, prompt, and image nodes.
-- Running this node only renders an image. Empty visual, brief, and prompt nodes need their own runs, or use run-to-node on the image node.
+- A reference edge is optional. Text-only generation is allowed; an unbound reference edge fails and points at that asset node. Direct create wires uploads to visual, brief, prompt, and image nodes.
+- Running this node only renders an image from the live prompt document. A prompt artifact is not required. A seed prompt with only the template design goal can still render; the inspector warns that you may want to generate or fill composition first.
 - Inspect output both on the node and in the library.
 
 ### 3.4 Runs
 
-- Run this node executes only the selected processing node: visual, brief, and prompt write content; image generation renders.
-- Run to this node runs upstream processing nodes, then the selected node.
-- Run the whole graph follows DAG order: visual system, creative brief, prompt generation, then image generation. Independent nodes call providers at the same time, limited by the generation concurrency setting; one failed image does not stop sibling shots.
+- Run this node executes only the selected processing node. Visual, brief, and prompt write content when they are seed; authored documents skip. Image generation renders.
+- Run to this node runs ancestors that fill would actually work (seed content, missing or stale images), then the selected node. Authored content nodes are not queued.
+- Run the whole graph considers every processing node with its required inputs in DAG order. Seed content and stale images generate; authored documents and unchanged images are recorded as skipped with frozen or reused status. Nodes missing required inputs are excluded, and a graph with no enqueueable node returns a validation error.
+- When an authored document needs another model pass, the inspector offers refine (fill empty fields) and regenerate (replace all, undoable).
 - The Runs panel shows state, node results, and failure reasons. Compiler keys stay out of the first screen.
 - Active runs can be cancelled. Retry is available for retryable failures.
 

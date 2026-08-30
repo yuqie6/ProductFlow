@@ -10,7 +10,7 @@
 | [`PRD.md`](PRD.md) | 用户现在能做什么、非目标、成功标准 | 模块路径、部署命令 |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 运行单元、代码所有权、数据流、测试锚点 | 未实现设想、操作教程 |
 | [`USER_GUIDE.md`](USER_GUIDE.md) | 页面怎么操作、故障怎么处理 | 内部事务、模型表 |
-| [`../AGENTS.md`](../AGENTS.md)、[`../go/AGENTS.md`](../go/AGENTS.md)、[`../backend/AGENTS.md`](../backend/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
+| [`../AGENTS.md`](../AGENTS.md)、[`../go/AGENTS.md`](../go/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
 
 `web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影，同一提交更新。
 
@@ -36,9 +36,10 @@
 | `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | 为什么是 live graph 与 Graph Command |
 | `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
 | `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库不保兼容、不写旧数据迁移 |
-| `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成 | 业务后端按垂直切片迁 Go |
+| `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成；封印树见 0016 | 业务后端按垂直切片迁 Go |
 | `adr/0012-gorm-command-writes.md` | Accepted | 命令路径用 GORM 模型写库，不用手写 INSERT |
 | `adr/0013-agent-live-journal-bff.md` | Accepted | Go 是浏览器 BFF；live UI journal 在 agent-service |
+| `adr/0016-retire-python-backend.md` | Accepted | Python 业务后端离开主线，树在 `retired/python` |
 
 ## 协作元数据
 
