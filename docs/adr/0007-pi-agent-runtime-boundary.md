@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted; main interactive Pi adapter and startup recovery guard implemented, live rollout gates pending. 商品图写入以 ADR 0008 / 0009 为准，不再产出商品 WorkflowDraft。
+Accepted; main interactive Pi adapter and startup recovery guard implemented, live rollout gates pending. 商品图写入以 ADR 0008 / 0009 为准，不再产出商品 WorkflowDraft。提问续跑后继见 `docs/ARCHITECTURE.md`：答案走原 Turn 的 Pi `answer` + `resume`，进入 `ask_user` toolResult。
 
 Decision owner：ProductFlow repository owner。本文记录主线运行底座的选择和边界；当前 `main` checkout 使用 Node.js 22 + Pi SDK ProductFlow adapter。真实 provider、PostgreSQL/Redis、浏览器和长时间恢复验收仍需单独完成，不能把未验证能力描述成已支持。
 

@@ -53,6 +53,8 @@ Common follow-up questions cover:
 - Aspect ratio, quality, reference fidelity, and background.
 - Whether multiple images of one type are candidates or distinct angles/content.
 
+Answer in the same-turn composer: pick an option, type, or skip. The timeline does not add a second user bubble.
+
 ### 2.4 Confirm canvas proposals
 
 Multi-node edits preview on the canvas and write into the live graph on confirm. Closing the conversation does not block add, connect, run, or undo.
@@ -274,7 +276,7 @@ Check that a product name was entered. Upload references in the workbench compos
 
 ### The Agent Replied but No Workflow Appeared
 
-Check whether the Turn requires input. Answer the question and continue. Graph edits use canvas ChangeSets / proposals, not WorkflowDraft confirmation.
+Check whether the Turn requires input. Answer in the composer; the original turn continues and does not add another user message. Graph edits use canvas ChangeSets / proposals, not WorkflowDraft confirmation.
 
 ### A Reference Node Is Empty
 

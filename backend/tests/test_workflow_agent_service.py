@@ -759,7 +759,7 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert contract["conversation_id"] == conversation.id
     assert contract["product_id"] == product.id
     assert contract["current_draft_version"] == 0
-    assert contract["tool_contract_version"] == 15
+    assert contract["tool_contract_version"] == 16
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
@@ -1071,7 +1071,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 15
+    assert contract.json()["tool_contract_version"] == 16
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})

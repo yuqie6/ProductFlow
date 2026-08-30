@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Accepted。直播 journal 与 Go BFF 边界见 ADR 0013。
 
 ## 背景
 
@@ -24,9 +24,9 @@ Agent 商品工作台（`pages/workbench/agent/`）目前是"能用的功能拼�
 
 保留 `ProductWorkbenchInspector` 为唯一 inspector 所有者，不新建并行的布局壳。核心变化是把 canvas padding 的 JS 计算收敛为 CSS grid track，让列宽由单一 owner 决定，响应式断点退化为"是否渲染对话为独立视图"这一个决策，避免 `canvasPaddingRight` 这类派生值在两个地方漂移。
 
-#### 1.2 工具调用降噪：新增有界工具步骤投影（跨层）
+#### 1.2 工具调用降噪与交错时间线（跨层）
 
-这是唯一跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）通过有界投影对用户可见。
+这是跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step`、`thinking.delta` 与 `text.delta`；浏览器直播走 agent-service `waitForEvents`（Go 鉴权转发），`text.delta` / `thinking.delta` 不进 PostgreSQL。前端 `agentEventReducer.ts` 按 sequence 增量维护 thinking / text / tool 块。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）和有界思考通过 web projection 对用户可见。
 
 决策：在 Agent service 侧维护**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。投影使用四个必填字段和两个可选字段：
 
@@ -49,6 +49,8 @@ ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网�
 | `organize_assets` | 整理商品图片资产 |
 | `request_workflow_run` | 创建待用户确认的 WorkflowRun 请求 |
 | `create_product` | 创建用户明确要求的空商品工作区 |
+| `apply_graph` | 立即写入 live graph ChangeSet |
+| `propose_graph` | 提交未应用的图提案 |
 | `propose_draft` | 提出/修订 WorkflowDraft |
 | `load_skill` | 加载版本化 Skill 指令 |
 | `inject_context` | 注入本轮 Agent contract、Skill catalog 和页面摘要 |
@@ -57,6 +59,8 @@ ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网�
 当前没有真实 `generate_image` Agent tool，不加入投影。`ask_question` 不复制完整 Question owner；完整问题仍由 `question.required` 事件和 Question 状态提供，tool step 只展示动作、选项摘要和状态。
 
 工具步骤投影是**可选能力**：Turn 快照缺失 `tool_steps` 时保留现有快照并兼容旧服务，显式 `[]` 才清空。前端在投影事件缺失时优雅降级为纯 prose 渲染。
+
+思考是另一条有界投影，不是模型 transcript。Pi 把 `thinking_start` / `thinking_delta` / `thinking_end` 转成 `thinking.delta`（含 `content_index`），**禁止**写入 `output` / `output_text`。`redacted` 或仅 signature 的块不投影。累计思考超过约 16KB 后截断。Turn 快照可选 `thinking_text` 供刷新后降级成一条思考行；交错位置只存在于事件日志，刷新后不保证思考夹在工具中间。不要从 `text.delta` 里用启发式拆思考分隔符。
 
 #### 1.3 状态节点化：收敛散弹枪式错误横幅
 
@@ -79,9 +83,11 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 
 但这不是永久取消。当 Agent 升级到需要在一条消息里引用多个对象（某张图、某段草稿 revision、某段历史 turn）时，chip token 就有明确用途。届时语义对象应是 ProductFlow 自有实体（`ProductImageAsset`、`WorkflowDraftRevision`、历史 turn），chip 的删除/undo/命中语义要与现有 asset rail 和 draft 引用对齐，而非照搬 Harness 的 `@subagent`。引入时机由 agent 能力升级触发，不在当前阶段实现。
 
-#### 1.5 详情面板：第二阅读面
+#### 1.5 详情面板与 Compact 过程组
 
-`AgentToolStepList` 提供行内可展开的详情阅读面。默认保持紧凑；失败的结构化校验步骤自动展开，成功步骤保留 Skill、上下文、实际 tool 名称和结果摘要。详情继续遵守 web projection 边界，不从 Agent service 重建完整 transcript。Skill 正文摘要只用于解释“加载了什么指令”，完整正文仍只进入模型上下文；原始工具参数、业务草案和内部资源路径不进入 Web。
+对话按块时间线渲染（思考 Disclosure、正文、工具行），而不是「一整段 markdown + 下方工具列表」。思考行进行中跟最后一行、结束后收成首行，展开为纯文本。Turn 已结束且有终答正文时，终答之前的思考、中间话和工具默认 Compact 折叠；终答留在折叠外。复制只复制 `output_text`。无终答（失败、取消、只跑工具）不折叠。
+
+`AgentToolStepList` / `AgentToolStepRow` 提供行内可展开的详情阅读面。默认保持紧凑；失败的结构化校验步骤自动展开，成功步骤保留 Skill、上下文、实际 tool 名称和结果摘要。详情继续遵守 web projection 边界，不从 Agent service 重建完整 transcript。Skill 正文摘要只用于解释“加载了什么指令”，完整正文仍只进入模型上下文；原始工具参数、业务草案和内部资源路径不进入 Web。
 
 #### 1.6 Turn 尾结构
 
@@ -98,6 +104,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 ## 后果
 
 - 工具步骤投影是 wire 契约的新增，需要 Agent service 与 ProductFlow 双向同步，且前端要对缺失事件降级。
+- `thinking.delta` 与 `thinking_text` 是有界思考投影，不是模型 transcript；思考不得进入 `output_text` 或复制。
 - `tool.step` 的新增详情字段需要 Agent service、ProductFlow 和 Web 同步升级；旧四字段步骤仍可读取，未知详情字段在后端和前端都被拒绝或过滤。
 - 布局改造有回归风险（画布拖拽/缩放/选择/edge 编辑/inspector/run history 必须保留，见 `web/AGENTS.md` 的 Canvas And Image Workflows）。
 - token 体系改造面大（现有组件散落硬编码），需分阶段，先建 token 再逐组件迁移，避免一次大爆炸。

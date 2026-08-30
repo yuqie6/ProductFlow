@@ -39,6 +39,7 @@ Current code ownership:
 | Iterative image generation | `go/internal/imagesession` | `productflow-api`, `productflow-worker` | `go/internal/imagesession` |
 | Local image edits | `go/internal/localedit` | `productflow-api`, `productflow-worker` | `go/internal/localedit` |
 | Settings and providers | `go/internal/settings`, `go/internal/providers` | `productflow-api`; worker resolves bindings | `go/internal/settings`, `go/internal/providers` |
+| Fixed model prompt copy | `go/prompts` | API/worker embed; agent-service reads `runtime-policy.md` | `go/prompts`, graph listing/prompt tests, `go/internal/providers`, `go/internal/agent`, agent-service |
 | Async dispatch | `go/internal/platform/queue` | `productflow-dispatcher`, `productflow-worker` | `go/internal/platform/queue`, graph/image-session delivery tests |
 | Schema evolution | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
 | Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
@@ -74,7 +75,7 @@ Current frontend ownership:
 | Capability | Owner | Primary tests |
 |---|---|---|
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent conversation, SSE, Goal | `pages/workbench/agent/` | reducer, event, conversation, Goal, and proposal tests |
+| Agent conversation, SSE, Goal | `pages/workbench/agent/` | reducer, conversation assembler, event, Goal, and proposal tests |
 | Graph canvas and inspector | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs, and rendition tests |
 | Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
@@ -89,23 +90,23 @@ product name (+ optional types and 1..6 uploads)
   -> user first message
   -> ProductFlow submits Agent Turn
   -> agent-service / Pi SDK ProductFlow adapter
-  -> apply / propose ChangeSet on the live graph
+  -> finalize_product_intake_v1 expands a name-only birth graph, or apply / propose Graph Command
   -> product workbench
 ```
 
-ProductFlow owns products, graph-proposal confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, `LibraryOrganizationDraft` revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use the harness-run rules in `go/internal/agent`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
+ProductFlow owns products, graph-proposal confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, `LibraryOrganizationDraft` revisions, and low-frequency control events in `agent_turn_events`. Browser conversation SSE is authenticated by Go and proxied to agent-service `waitForEvents`; `text.delta` / `thinking.delta` are not written to PostgreSQL. Event `run_id` and the Turn projection `harness_run_id` use the harness-run rules in `go/internal/agent`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
 
-Product creation writes one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`. A complete Agent form uses the same graph template as direct create (`graph.BuildDirectCreateTemplate`) but a different persist set: Agent form-complete writes Product intake and does not set cover; direct create (`POST /api/v3/products`) writes no intake, sets cover to the first image, and creates no Session. `POST /api/v2/products` can still create a covered product without a live graph; an empty graph can be added later with `POST /api/v3/products/{id}/workflows`. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
+Product creation writes one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`. A complete Agent form uses the same graph template as direct create (`graph.BuildDirectCreateTemplate`) but a different persist set: Agent form-complete writes Product intake and does not set cover; direct create (`POST /api/v3/products`) writes no intake, sets cover to the first image, and creates no Session. Conversation `finalize_product_intake_v1` uses `Product.ApplyIntake`: the same transaction writes intake and calls `expandBirthGraphFromIntake` when the live graph is missing or is exactly one `product_source`. A graph that already has other nodes only updates intake. The tool returns `graph_expanded`, `revision`, and node/group counts. `get_product_workflow_context_v1` includes `birth_expandable` (intake is present and the graph is still birth). Later single-op `apply_graph_change_set_v1` / multi-op `propose_graph_change_set_v1` require Graph Command `operations[].op` names that match `go/internal/graph` `ops_parse` and the agent-service TypeBox schema. `tool_contract_version` is 16. `POST /api/v2/products` can still create a covered product without a live graph; an empty graph can be added later with `POST /api/v3/products/{id}/workflows`. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
 `GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowGraphRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
 
-Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. Question answers are continuation Turns on the ProductFlow side; they do not call Pi `answer_question`. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `go/internal/agent`, `agent-service/src/pi-runtime.ts`, and the `go/internal/agent` tests.
+Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. Question answers call Pi `answer` + `resume` on the original Turn and complete `ask_user` as a toolResult. They do not open a continuation Turn. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, the `tool_steps` allowlist, and effect reconciliation are defined by `go/internal/agent`, `agent-service/src/pi-runtime.ts`, and the `go/internal/agent` tests.
 
 Implementation path: `go/internal/product` and `go/internal/agent`; Turn control goes through Go Agent HTTP → agent-service `src/pi-runtime.ts`; projection and sync live in `go/internal/agent`; global media Drafts live in `go/internal/library`. Product `WorkflowDraft` HTTP is gone; those URLs return 404. A product Goal is an explicit `AgentTask`: a finished Turn or `WorkflowGraphRun` does not complete the Goal; the user completes it with `POST /api/v2/agent-tasks/{id}/complete`.
 
 ## 5. Product intake and retired WorkflowDraft topology
 
-Image types, quantities, and reference asset ids live on Product intake. Create does not insert `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist do not exist; those URLs return 404. The `workflow_drafts` table is dropped.
+Image types, quantities, and reference asset ids live on Product intake. Create does not insert `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist do not exist; those URLs return 404. The `workflow_drafts` table is dropped. Agent intake persist expands a birth graph from the template; an already expanded graph is edited only through Graph Command, not a second complete DAG.
 
 Global library organize still uses `LibraryOrganizationDraft`. Multi-node graph confirmation uses `WorkflowGraphProposal`.
 
@@ -178,7 +179,7 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and the business API SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md`.
+- Agent service uses Pi sessions and local event files for runtime recovery; low-frequency control events with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`. Browser live SSE proxies agent-service `waitForEvents`; settled replay uses the Turn snapshot. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md`. Live-journal boundary: [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md).
 - ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security

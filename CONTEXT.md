@@ -15,7 +15,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 5. Agent-first create can start from a product name.
    - Persist the Product, a live schema-v3 graph, one product-owned `AgentSession`, and one product-scoped `AgentConversation`. Name-only graphs contain a `product_source` node; form-complete graphs use the same template as direct create.
    - Do not create a `WorkflowDraft`, an onboarding `AgentTask`, or an automatic Turn. Product intake (image types, quantities, reference asset ids) lives on the Product.
-   - The user uploads 1 to 6 verified references in that conversation and names the image types in text. The Agent writes them as product intake and applies ChangeSets onto the live graph.
+   - The user uploads 1 to 6 verified references in that conversation and names the image types in text. The Agent persists them with `finalize_product_intake_v1`. That write expands a name-only birth graph from the same photography/infographic template as form-complete create (one group + prompt + N image nodes per generating type). Later graph edits use Graph Command operation names from the Agent tool schema and `go/internal/graph` `ops_parse` (`create_node`, `connect_nodes`, and the rest of the closed op table).
    - The create form can still collect types and files first as a shortcut, and remains the required path for direct create. Direct create persists the product, references, and schema-v3 graph without a conversation.
    - Opening the canvas Agent sidebar with none present attaches a product-owned session. Missing image types or references do not block Agent Turns.
    - `AgentSession` is the longer-lived conversation container. Canvas sessions belong to one product; global Dock sessions do not. The current Turn runtime still uses the conversation projection.
@@ -37,7 +37,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 ## Workflow Invariants
 
 - The only online workflow schema is version 3, stored on `workflow_graphs`.
-- Node Catalog owns connection rules and editable config keys. ChangeSet `config` cannot introduce unregistered keys or retired plan keys.
+- Node Catalog owns connection rules and editable config keys. ChangeSet `config` cannot introduce unregistered keys or retired plan keys. Topology verbs (`create_node`, `connect_nodes`, and the other Graph Command ops) are owned by the Agent tool JSON Schema and `ops_parse`; they are not restated as a third matrix in Skill or Context prose.
 - Node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
 - `creative_brief`, `visual_system`, and `prompt_generation` call the prompt provider when run and write the result into that node's config. `image_generation` calls the image provider. Running a content node does not run downstream image nodes.
 - An `image_asset` node binds exactly one product image asset. Binding is not the same as a downstream `reference` edge.
@@ -69,7 +69,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。关闭或从未打开 Agent 对话时，添加节点、连线、检查器、绑定、运行、取消、重试、撤销和配方必须保持可用。Turn 的 running / unknown / failed 不得锁整张画布。Agent 写入与人写入走同一套 Graph Command；人可以立刻继续改刚被 Agent 改过的节点。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
 - Agent Session、Agent Task、WorkflowGraphRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
-- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
+- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。浏览器对话直播走 agent-service `waitForEvents`，由 Go 鉴权转发；PostgreSQL 保存 Turn 快照和低频控制事件，不是每条 token。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
 
 ## Mainline Scope
 

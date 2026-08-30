@@ -30,7 +30,7 @@ from productflow_backend.infrastructure.db.models import (
     ProductImageAsset,
 )
 
-AGENT_TOOL_CONTRACT_VERSION = 15
+AGENT_TOOL_CONTRACT_VERSION = 16
 AGENT_CONTEXT_MAX_BYTES = 512 * 1024
 
 WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协作 Agent。
