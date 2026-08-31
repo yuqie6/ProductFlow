@@ -75,6 +75,7 @@ type CreateInput struct {
 }
 
 // CreateWithoutGraph 是 v2 无图出生：写商品与参考图，不创建 workflow_graphs。至少一张、最多六张参考图。
+// 名称、资料或参考图数量非法返回 Validation。
 func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (CreateResponse, error) {
 	creation, err := s.createCanonical(ctx, in, true, false, nil)
 	if err != nil {
@@ -87,6 +88,7 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 }
 
 // CreateDirect 是 v3 直连创建：同一事务写商品、参考图与 schema-v3 模板图，不创建 Agent 对话。
+// 名称、资料、图种或参考图非法返回 Validation；已有 active 图时 StageNew 返回 Conflict。
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	var result DirectCreateResponse
@@ -136,6 +138,7 @@ func (s Service) Get(ctx context.Context, id string) (Detail, error) {
 }
 
 // List 分页列出商品。sort 为 updated_desc、created_desc 或 name_asc。
+// 库查询失败原样返回。
 func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (ListResponse, error) {
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -156,6 +159,7 @@ func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (
 }
 
 // AssetForDownload 按 ProductImageAsset id 读取身份供下载；缺失文件由 HTTP 层再判 verification_status。
+// 找不到图片返回 NotFound。
 func (s Service) AssetForDownload(ctx context.Context, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, s.DB, assetID)
 }

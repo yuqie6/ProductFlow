@@ -20,7 +20,7 @@ import (
 //go:embed global_draft_schema.json
 var globalDraftSchemaJSON []byte
 
-// ConversationContract 读取 conversation 的 system prompt、工具合同与 Draft schema。
+// ConversationContract 读取 conversation 的 system prompt、工具合同与 Draft schema。conversation 不存在返回 NotFound。商品工作流缺少商品返回 Conflict。
 func (s Service) ConversationContract(ctx context.Context, conversationID string) (ContractResponse, error) {
 	var out ContractResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -58,7 +58,7 @@ func (s Service) TaskContract(ctx context.Context, taskID string) (ContractRespo
 	return out, err
 }
 
-// RuntimeContext 读取 Session / Task 的有界 operational summary。
+// RuntimeContext 读取 Session / Task 的有界 operational summary。conversation 未绑定 Session 或 Task 不匹配返回 Conflict。找不到 conversation / Session / Task 返回 NotFound。
 func (s Service) RuntimeContext(ctx context.Context, conversationID string, taskID *string) (RuntimeContextResponse, error) {
 	var out RuntimeContextResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -144,7 +144,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 	return out, nil
 }
 
-// ProductContext 读取商品工作流 conversation 的 facts、intake 与 live 图摘要。
+// ProductContext 读取商品工作流 conversation 的 facts、intake 与 live 图摘要。非商品工作流 conversation 返回 Conflict。商品或 conversation 不存在返回 NotFound。
 func (s Service) ProductContext(ctx context.Context, conversationID, responseFormat string) (map[string]any, error) {
 	var conv conversationRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

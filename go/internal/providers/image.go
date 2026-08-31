@@ -56,6 +56,7 @@ func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest)
 }
 
 // Generate 实现 imagesession.ChatProvider。有参考图走 edits；否则走 generations。
+// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	size := req.Size
 	if size == "" {
@@ -96,6 +97,7 @@ func (p OpenAIImages) Capability() localedit.Capability {
 }
 
 // Edit 实现 localedit.Provider，走 /v1/images/edits；未声明 mask 能力时拒绝且不打网。
+// 未声明 mask 或缺少遮罩返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	if !p.MaskEdit {
 		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
@@ -286,6 +288,7 @@ type OpenAIResponses struct {
 func (p OpenAIResponses) Name() string { return "openai-responses" }
 
 // ReconcileResponse 查询 /v1/responses/{id}。空 id 返回 "unsupported"；4xx/5xx 或证据不足返回 "unknown"。
+// 无法证明时返回 unknown 且不带 error，调用方不得当失败自动重试。
 func (p OpenAIResponses) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
@@ -338,6 +341,7 @@ func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageReque
 }
 
 // Generate 实现 imagesession.ChatProvider，只用 /v1/responses。
+// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	size := req.Size
 	if size == "" {
@@ -356,6 +360,7 @@ func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequ
 }
 
 // Edit 实现 localedit.Provider，走 Responses image tool；未声明 mask 能力时拒绝且不打网。
+// 未声明 mask、缺遮罩或原图返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p OpenAIResponses) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	if !p.MaskEdit {
 		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")

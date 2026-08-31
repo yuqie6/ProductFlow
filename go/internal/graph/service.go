@@ -84,6 +84,7 @@ func (s Service) ApplyChangeSet(ctx context.Context, productID, graphID string, 
 }
 
 // ApplyAgentChangeSet 立即写入一条 Agent 可逆命令；actor 固定为 agent。多步改图须走提案。
+// operations 不是恰好一条返回 Validation；Mutate 失败原样返回。
 func (s Service) ApplyAgentChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet) (Projection, error) {
 	if len(changeSet.Operations) != 1 {
 		return Projection{}, apperr.Validation("立即写入只接受一条可逆改图命令；多步改图请提交提案")
@@ -119,6 +120,7 @@ type AgentProposalResult struct {
 }
 
 // CreateAgentProposal 只存 PENDING 提案，不改 live 图。
+// CreateProposal 的 Conflict / 库错误原样返回。
 func (s Service) CreateAgentProposal(ctx context.Context, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
 	var out AgentProposalResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -355,6 +357,7 @@ func (s Service) DiscardDocumentCandidate(ctx context.Context, productID, graphI
 }
 
 // ParseChangeSetReader 从 HTTP 请求体解析 ChangeSet；多余字段按 extra=forbid 拒绝。
+// 读体失败原样返回；非法 JSON 或未知字段返回 Validation。
 func ParseChangeSetReader(r io.Reader) (ChangeSet, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
@@ -364,6 +367,7 @@ func ParseChangeSetReader(r io.Reader) (ChangeSet, error) {
 }
 
 // SubmitRun 提交 GraphRun。一图同时只能有一个 running；其余 FIFO queued。同范围同目标请求合并。force 仅 node|to_node|selection 且须有显式目标。
+// 图不存在返回 NotFound；非 active 或并发抢跑返回 Conflict；请求非法返回 Validation。
 func (s Service) SubmitRun(ctx context.Context, productID, graphID string, req GraphRunRequest) (GraphRunResponse, error) {
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -375,6 +379,7 @@ func (s Service) SubmitRun(ctx context.Context, productID, graphID string, req G
 }
 
 // SubmitRunTx 在调用方已有的事务里提交 GraphRun。语义与 [Service.SubmitRun] 相同。
+// 失败条件与 SubmitRun 相同。
 func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID string, req GraphRunRequest) (GraphRunResponse, error) {
 	ctx = s.guardCtx(ctx)
 	if req.Scope == "" {
@@ -388,6 +393,7 @@ func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, gra
 }
 
 // PreviewRun 返回将入队节点的 planned_action，不写库、不入队。
+// 请求非法返回 Validation；缺图返回 NotFound。
 func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req GraphRunRequest) (GraphRunPreviewResponse, error) {
 	if req.Scope == "" {
 		req.Scope = RunScopeGraph
@@ -461,6 +467,7 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 }
 
 // GetRunForProduct 按 run id 读取运行，并校验属于该商品。workflowID 非空时还须匹配 graph_id。
+// run 不存在、不属于该商品或 graph_id 不匹配返回 NotFound。
 func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflowID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -492,6 +499,7 @@ func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string
 }
 
 // CancelRunTx 在调用方已有的事务里取消 GraphRun。语义与 [Service.CancelRun] 相同。
+// 缺图或缺 run 返回 NotFound；已结束（含 unknown）返回 Conflict。
 func (s Service) CancelRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, runID string) (GraphRunResponse, error) {
 	ctx = s.guardCtx(ctx)
 	run, err := cancelGraphRun(ctx, pgxTx, productID, graphID, runID)
@@ -507,6 +515,7 @@ func (s Service) CancelRunTx(ctx context.Context, pgxTx *gorm.DB, productID, gra
 }
 
 // RetryRun 仅对 failed 且 is_retryable 的运行再提交一次相同范围。unknown 不可经此重试。
+// 非 failed 或不可重试返回 Validation；无法证明的 unknown 不得当失败自动重试。
 func (s Service) RetryRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -518,6 +527,7 @@ func (s Service) RetryRun(ctx context.Context, productID, graphID, runID string)
 }
 
 // RetryRunTx 在调用方已有的事务里重试 failed 且 is_retryable 的 GraphRun。unknown 不可重试。
+// 非 failed 或不可重试返回 Validation；无法证明的 unknown 不得当失败自动重试。
 func (s Service) RetryRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, runID string) (GraphRunResponse, error) {
 	ctx = s.guardCtx(ctx)
 	submission, err := retryGraphRun(ctx, pgxTx, productID, graphID, runID)

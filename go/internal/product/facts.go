@@ -29,6 +29,7 @@ type UpdateFactsInput struct {
 }
 
 // GetFacts 返回当前选中的 fact 版本；v2 无图出生尚未写 fact 时 id 为 null。
+// 找不到商品返回 NotFound。
 func (s Service) GetFacts(ctx context.Context, productID string) (FactsResponse, error) {
 	var out FactsResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -43,6 +44,7 @@ func (s Service) GetFacts(ctx context.Context, productID string) (FactsResponse,
 }
 
 // UpdateFacts 先锁商品再校验 expected version，然后写入新的不可变 fact 版本。
+// 缺商品返回 NotFound；expected version 不匹配返回 Conflict；字段非法返回 Validation。
 func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFactsInput) (FactsResponse, error) {
 	var out FactsResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

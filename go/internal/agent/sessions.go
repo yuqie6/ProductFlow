@@ -61,7 +61,7 @@ func (s Service) ListSessions(ctx context.Context, includeArchived bool, product
 	return out, err
 }
 
-// CreateSession 创建全局 Dock Session 及其 global conversation。
+// CreateSession 创建全局 Dock Session 及其 global conversation。数据库失败返回 error。
 func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -139,7 +139,7 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 	return out, nil
 }
 
-// ArchiveSession 归档 Session；已归档则幂等返回当前行。
+// ArchiveSession 归档 Session；已归档则幂等返回当前行。Session 不存在返回 NotFound。数据库失败返回 error。
 func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

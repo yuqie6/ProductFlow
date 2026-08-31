@@ -31,6 +31,7 @@ var turnSSEHeartbeatInterval = 15 * time.Second
 //
 // 对话历史接口调用（pageProductEvents / pageGlobalEvents）。权威是 PG journal，不是 Pi session files。after 是 sequence 游标不是页码。
 // stream_state 由投影状态决定：等待确认/回答为 parked，终态为 terminal，其余 live。不延长 lease，不改 Goal。
+// Turn 不存在返回 NotFound。after/limit 越界返回 Validation。
 func (s Service) ListProjectedEventPage(ctx context.Context, productID *string, conversationID, projectionID string, after, limit int) (projectedEventPage, error) {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {

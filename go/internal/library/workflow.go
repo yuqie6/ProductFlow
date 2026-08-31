@@ -12,6 +12,7 @@ import (
 )
 
 // ListWorkflow 列出工作流子图库关联；关联行不复制媒体 bytes。
+// 工作流不存在返回 NotFound。
 func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string, limit int) (WorkflowList, error) {
 	if limit < 1 {
 		limit = maxWorkflow
@@ -85,6 +86,7 @@ func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, 
 }
 
 // SyncWorkflow 重写工作流子图库关联集合，不复制媒体 bytes。
+// 未选素材、ID 无效或重复返回 Validation；工作流或素材不存在返回 NotFound。
 func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string, libraryIDs []string) (WorkflowList, error) {
 	if len(libraryIDs) == 0 {
 		return WorkflowList{}, apperr.Validation("至少选择一个素材")

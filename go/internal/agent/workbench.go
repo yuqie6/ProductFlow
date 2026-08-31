@@ -17,7 +17,7 @@ func (s Service) GetWorkbench(ctx context.Context, productID string, sessionID, 
 	return s.loadWorkbench(ctx, productID, sessionID, taskID)
 }
 
-// EnsureWorkbench 按幂等键确保商品拥有 Agent 工作区；已存在且未 forceNew 则复用。
+// EnsureWorkbench 按幂等键确保商品拥有 Agent 工作区；已存在且未 forceNew 则复用。幂等键无效返回 Validation。商品或 Session 不存在返回 NotFound；无 live 图、Session 已归档/不属于当前商品或同键冲突返回 Conflict。
 func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey string, sessionID *string, forceNew bool) (WorkbenchResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "Idempotency-Key")
 	if err != nil {

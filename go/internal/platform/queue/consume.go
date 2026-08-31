@@ -44,6 +44,7 @@ func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, ag
 }
 
 // MarkConsumed 仅在 lease_token 匹配时把 SENT 标 CONSUMED。返回是否更新到一行。
+// pool 为 nil 或写库失败、ctx 取消时返回 error。
 func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string) (bool, error) {
 	gdb, err := gormFrom(pool)
 	if err != nil {

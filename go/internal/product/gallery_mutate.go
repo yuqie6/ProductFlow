@@ -69,6 +69,7 @@ func folderMaxSort(ctx context.Context, tx *gorm.DB, productID string) (int, err
 }
 
 // CreateGalleryFolder 创建一层用户文件夹；不移动资产，也不改商品 updated_at。
+// 同名已存在返回 Conflict；名称为空返回 Validation。
 func (s Service) CreateGalleryFolder(ctx context.Context, productID, name string) (GalleryFolderMutation, error) {
 	var out GalleryFolderMutation
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -194,6 +195,7 @@ func (s Service) RenameGalleryFolder(ctx context.Context, productID, folderID, e
 }
 
 // DeleteGalleryFolder 删文件夹并把其中资产移回未整理；不删 MediaObject。
+// expected 名称已变返回 Conflict；文件夹不存在返回 NotFound。
 func (s Service) DeleteGalleryFolder(ctx context.Context, productID, folderID, expectedName string) (DeleteGalleryFolderResponse, error) {
 	var out DeleteGalleryFolderResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -230,6 +232,7 @@ func (s Service) DeleteGalleryFolder(ctx context.Context, productID, folderID, e
 }
 
 // RenameGalleryAsset 只改 display_name，不改 original_filename 或商品 updated_at。
+// expected 显示名已变返回 Conflict；名称为空返回 Validation。
 func (s Service) RenameGalleryAsset(ctx context.Context, productID, assetID, expectedDisplayName, displayName string) (GalleryAssetResponse, error) {
 	var out GalleryAssetResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -397,6 +400,7 @@ func loadAssetForUpdate(ctx context.Context, tx *gorm.DB, productID, assetID str
 }
 
 // NormalizeMoves 校验 1–100 条移动项：asset_id 去空白、非空、最长 36、不重复；expected_folder_id 可选且同样最长 36。
+// 条数或 id 非法返回 Validation。
 func NormalizeMoves(moves []GalleryAssetMove) ([]GalleryAssetMove, error) {
 	if len(moves) < 1 || len(moves) > galleryMoveMaxAssets {
 		return nil, apperr.Validationf("单次必须移动 1 到 %d 张图片", galleryMoveMaxAssets)

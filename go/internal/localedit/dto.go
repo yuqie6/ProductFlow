@@ -212,6 +212,7 @@ func (m MockProvider) Capability() Capability {
 }
 
 // Edit 实现 Provider，不打网；默认回显源图或返回注入的 PNG。
+// 注入 Err 则直接返回该 error，视为调用失败。
 func (m MockProvider) Edit(ctx context.Context, req EditRequest) (EditResult, error) {
 	_ = ctx
 	if m.Err != nil {

@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// LaunchWorkspaceFromGlobal 从全局 conversation 按幂等键创建商品工作区。
+// LaunchWorkspaceFromGlobal 从全局 conversation 按幂等键创建商品工作区。conversation 不存在返回 NotFound。非全局作用域、工作区缺少 Session 或同键冲突返回 Conflict；名称/幂等键无效返回 Validation。
 func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (WorkspaceLaunchResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, globalConversationID)
 	if err != nil {
@@ -39,7 +39,7 @@ func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversati
 	}, nil
 }
 
-// ReconcileWorkspaceFromGlobal 按幂等键对账商品工作区创建；证据不足返回 unknown。
+// ReconcileWorkspaceFromGlobal 按幂等键对账商品工作区创建；证据不足返回 unknown。conversation 不存在返回 NotFound。幂等键无效返回 Validation。
 func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (ReconcileResponse, error) {
 	if _, err := s.loadScopedConversation(ctx, globalConversationID); err != nil {
 		return ReconcileResponse{}, err
@@ -68,7 +68,7 @@ func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConvers
 	return ReconcileResponse{State: "applied", Result: raw, Detail: ptr("商品工作区已创建")}, nil
 }
 
-// FinalizeProductIntake 经 product 包写入图类型与参考图，并可能展开 name-only 出生图。
+// FinalizeProductIntake 经 product 包写入图类型与参考图，并可能展开 name-only 出生图。参考图 ID 或 selection 无效返回 Validation。conversation 不存在返回 NotFound；非商品工作流或同键不同请求返回 Conflict。
 func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idempotencyKey string, selection json.RawMessage, assetIDs []string) (map[string]any, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
@@ -183,7 +183,7 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 	return out, nil
 }
 
-// InspectGlobalProducts 按明确 id 检查商品摘要。
+// InspectGlobalProducts 按明确 id 检查商品摘要。product_ids 数量非法、空值或重复返回 Validation。部分商品不存在返回 NotFound；非全局 conversation 返回 Conflict。
 func (s Service) InspectGlobalProducts(ctx context.Context, conversationID string, productIDs []string) ([]GlobalProductResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -229,7 +229,7 @@ func (s Service) activeWorkflowSummary(ctx context.Context, productID string) *m
 	return &summary
 }
 
-// GlobalWorkflowContext 读取指定商品工作区的 ProductContext。
+// GlobalWorkflowContext 读取指定商品工作区的 ProductContext。product_id 为空返回 Validation。商品或工作区不存在返回 NotFound；非全局 conversation 返回 Conflict。
 func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, productID, responseFormat string) (map[string]any, error) {
 	productID = stringsTrim(productID)
 	if productID == "" {
@@ -314,7 +314,7 @@ func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string,
 	return s.ValidateLibraryDraft(ctx, conversationID, payload)
 }
 
-// ConfirmLibraryDraftHTTP 按幂等键确认素材整理 Draft。
+// ConfirmLibraryDraftHTTP 按幂等键确认素材整理 Draft。idempotency key 为空返回 Validation。conversation 或 Draft 不存在返回 NotFound；非全局、版本变化或不在待确认状态返回 Conflict/NotPending。
 func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID string, expectedVersion int, idempotencyKey string) (any, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
@@ -342,7 +342,7 @@ func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID str
 	return out, err
 }
 
-// GetLibraryDraftHTTP 读取全局 conversation 的素材整理 Draft。
+// GetLibraryDraftHTTP 读取全局 conversation 的素材整理 Draft。conversation 或 Draft 不存在返回 NotFound。
 func (s Service) GetLibraryDraftHTTP(ctx context.Context, conversationID string) (any, error) {
 	if _, err := s.loadScopedConversation(ctx, conversationID); err != nil {
 		return nil, err

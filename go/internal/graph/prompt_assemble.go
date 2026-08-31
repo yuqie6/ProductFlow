@@ -14,6 +14,7 @@ var overlayColorSlugClean = regexp.MustCompile(`[^a-z0-9_-]+`)
 
 // AssemblePromptRequest 对齐 Python _to_prompt_request / _to_context_request。
 // 出站 user JSON 要用图种 job、listing_look、seed prompt，不能把节点 config 原样 dump 给模型。
+// 内联 visual overlay 抽不出有效字段时返回 Validation。
 func AssemblePromptRequest(
 	node AppliedNode,
 	facts []map[string]any,

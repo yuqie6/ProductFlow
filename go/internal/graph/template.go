@@ -147,6 +147,7 @@ func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 }
 
 // BuildProductSourceCreateGraph 生成仅含 product_source 的名称-only 出生 ChangeSet。
+// 封闭 op 表校验失败返回 Validation。
 func BuildProductSourceCreateGraph(productTitle, sourceProductID string, factSetVersionID *string) (ChangeSet, error) {
 	var fact any
 	if factSetVersionID != nil {
@@ -174,6 +175,7 @@ func BuildProductSourceCreateGraph(productTitle, sourceProductID string, factSet
 }
 
 // BuildDirectCreateTemplate 按图种与参考图生成完整 schema-v3 模板 ChangeSet。证据类图种是未绑定 image_asset 占位。
+// 未选图种、缺参考图、重复或超量返回 Validation。
 func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 	if len(in.ImageTypes) == 0 {
 		return ChangeSet{}, apperr.Validation("至少选择一种图片类型")
@@ -455,6 +457,7 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 }
 
 // TemplateForExistingProductSource 把名称-only 出生图扩成与直接创建相同的模板，复用已有商品资料节点。
+// BuildDirectCreateTemplate 或封闭 op 校验失败返回 Validation。
 func TemplateForExistingProductSource(productSourceNodeID string, baseRevision int, in DirectCreateInput) (ChangeSet, error) {
 	changeSet, err := BuildDirectCreateTemplate(in)
 	if err != nil {

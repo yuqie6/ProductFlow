@@ -68,6 +68,7 @@ func Publish(ctx context.Context, db *gorm.DB, channel, payload string) error {
 }
 
 // Listen 占用一条池连接直到 ctx 取消。channel 必须是本包常量。
+// pool 为 nil、LISTEN channel 非法或 Acquire 失败时返回 error；ctx 取消后退出循环。
 func Listen(ctx context.Context, pool *pgxpool.Pool, channels ...string) (<-chan Notification, error) {
 	if pool == nil {
 		return nil, ErrNoPool

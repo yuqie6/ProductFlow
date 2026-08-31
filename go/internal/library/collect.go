@@ -17,6 +17,7 @@ import (
 )
 
 // Collect 按幂等键把全局素材收录为商品图片身份，复用 MediaObject，不复制 bytes。
+// ID 无效、重复或超限返回 Validation；商品或素材不存在返回 NotFound；幂等键参数冲突返回 Conflict。
 func (s Service) Collect(ctx context.Context, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
 	var out []product.ImageAsset
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

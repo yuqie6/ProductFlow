@@ -26,6 +26,7 @@ type ModelBinding struct {
 }
 
 // ResolvePrompt 解析提示词用途绑定；mock 时 Kind=mock 且没有 API Key。
+// 档案禁用、没 Key、缺模型或能力返回 Unavailable；无绑定行时 Kind=mock，不是错误。
 func (s *Store) ResolvePrompt(ctx context.Context) (ModelBinding, error) {
 	return s.resolvePurpose(ctx, "prompt", "text_responses", "prompt_model", []string{"openai", "mock"})
 }

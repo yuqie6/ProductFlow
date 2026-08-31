@@ -43,6 +43,7 @@ func (g AppliedGraph) Incoming(nodeID string) []AppliedEdge {
 }
 
 // ConfigStatus 按 Catalog 必填项与当前产物 digest 计算 incomplete/ready/stale。
+// 找不到节点返回 Validation。
 func (g AppliedGraph) ConfigStatus(nodeID string) (ConfigStatus, error) {
 	node, err := g.Node(nodeID)
 	if err != nil {
@@ -57,6 +58,7 @@ func (g AppliedGraph) ConfigStatus(nodeID string) (ConfigStatus, error) {
 }
 
 // Apply 把 ops 打到当前图上并跑 catalog/规则校验；不碰数据库。
+// base_graph_revision 不匹配返回 Conflict；非法 op、引用缺失或 Catalog 校验失败返回 Validation。
 func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 	if err := validateChangeSet(changeSet); err != nil {
 		return AppliedGraph{}, err

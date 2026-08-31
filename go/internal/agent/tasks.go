@@ -98,7 +98,7 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 	return out, err
 }
 
-// CreateTask 创建用户显式 Goal；不会因后续 Turn 成功自动完成。
+// CreateTask 创建用户显式 Goal；不会因后续 Turn 成功自动完成。标题或目标无效返回 Validation。Session/conversation 不存在返回 NotFound；conversation 不属于当前 Session 返回 Conflict。
 func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, conversationID *string) (TaskResponse, error) {
 	normalizedTitle, err := normalizeTaskTitle(title)
 	if err != nil {
@@ -164,7 +164,7 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 	return out, nil
 }
 
-// GetTask 读取 Task；关联 GraphRun 同步不得覆盖 waiting_reason=goal_loop。
+// GetTask 读取 Task；关联 GraphRun 同步不得覆盖 waiting_reason=goal_loop。Task 不存在返回 NotFound。数据库失败返回 error。
 func (s Service) GetTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -215,7 +215,7 @@ func (s Service) RenameTask(ctx context.Context, taskID, title string) (TaskResp
 	return out, nil
 }
 
-// CompleteTask 由用户把 Goal 标为 succeeded；Turn 成功不能代替本调用。
+// CompleteTask 由用户把 Goal 标为 succeeded；Turn 成功不能代替本调用。Task 不存在返回 NotFound。已终态或仍有忙碌 Turn 返回 Conflict。
 func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -258,7 +258,7 @@ func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse,
 	return out, nil
 }
 
-// PauseTask 在无忙碌 Turn 时暂停 Goal；已暂停或已终态则幂等返回。
+// PauseTask 在无忙碌 Turn 时暂停 Goal；已暂停或已终态则幂等返回。Task 不存在返回 NotFound。有忙碌 Turn 或当前状态不允许暂停返回 Conflict。
 func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -304,7 +304,7 @@ func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, er
 	return out, nil
 }
 
-// ResumeTask 恢复已暂停的 Goal；非 paused 则幂等返回当前行。
+// ResumeTask 恢复已暂停的 Goal；非 paused 则幂等返回当前行。Task 不存在返回 NotFound。暂停 Task 的当前 Turn 状态已变、未绑定 conversation 或无法恢复返回 Conflict。
 func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

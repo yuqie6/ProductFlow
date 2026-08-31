@@ -169,7 +169,7 @@ func reconcileToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, 
 	return ReconcileResponse{State: "unknown", Detail: ptr("副作用结果仍不明确")}, nil
 }
 
-// ReconcileTool 按幂等键查询工具账本：已 applied 回放，未提交返回 not_applied，证据不足返回 unknown。
+// ReconcileTool 按幂等键查询工具账本：已 applied 回放，未提交返回 not_applied，证据不足返回 unknown。幂等键无效返回 Validation。数据库失败返回 error。
 func (s Service) ReconcileTool(ctx context.Context, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
 	var out ReconcileResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

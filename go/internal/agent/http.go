@@ -18,10 +18,12 @@ import (
 //
 // InternalToken 空则内部路由 503。Settings 给管理员 session 门闩。handler 只做绑定与状态码，改图必须走 Service → graph 包。
 type HTTP struct {
-	Service  Service     // 浏览器与内部工具面共用的 Agent 用例
-	Settings interface { // 读 AdminAccessRequired；nil 则不要求管理员口令
+	Service Service // 浏览器与内部工具面共用的 Agent 用例
+	// Settings 读 AdminAccessRequired；nil 则不要求管理员口令。
+	Settings interface {
 		settings.RuntimeReader
 	}
+	// InternalToken 是内部 /api/internal/v1 的 Bearer，不是管理员 cookie。空则内部路由 503。
 	InternalToken string
 }
 

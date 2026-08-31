@@ -14,6 +14,7 @@ import (
 
 // RunDispatcherOnce 对账过期 lease 与陈旧 SENT，再 SKIP LOCKED claim PENDING、标 SENT 并 enqueue。
 // HTTP 不得调用本函数入队。
+// pool 为 nil 或对账/claim 写库失败、ctx 取消时返回 error。
 func RunDispatcherOnce(ctx context.Context, pool *pgxpool.Pool, enqueue EnqueueFunc, limit int) (Summary, error) {
 	if limit < 1 {
 		limit = DefaultClaimLimit

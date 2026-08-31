@@ -88,7 +88,8 @@ func fidelityFromSchema(rec schema.ProductImageFidelityChecks) FidelityCheck {
 	}
 }
 
-// ListFidelityChecks 按 version 降序列出保真检查。limit 须在 1–100。
+// ListFidelityChecks 按 version 降序列出保真检查。limit 须在 1–100，否则返回 Validation。
+// 缺商品或缺图返回 NotFound。
 func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID string, limit int) (FidelityCheckList, error) {
 	if limit < 1 || limit > fidelityCheckMaxLimit {
 		return FidelityCheckList{}, apperr.Validationf("人工保真检查列表最多返回 %d 条", fidelityCheckMaxLimit)
@@ -121,6 +122,7 @@ func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID stri
 }
 
 // CreateFidelityCheck 在 expected_latest_version 匹配时追加新版本。资产须属于该商品。
+// 结论/键非法返回 Validation；版本落后或同 IdempotencyKey 内容不同返回 Conflict。
 func (s Service) CreateFidelityCheck(ctx context.Context, productID, assetID string, in CreateFidelityInput) (FidelityCheck, error) {
 	if in.ExpectedLatestVersion < 0 {
 		return FidelityCheck{}, apperr.Validation("expected_latest_version 不能小于 0")

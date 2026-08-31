@@ -158,6 +158,7 @@ func galleryRowFromScan(row galleryScanRow) galleryRow {
 }
 
 // GalleryBootstrap 返回系统目录计数与用户文件夹；cover_image_asset_id 只是展示元数据。
+// 找不到商品返回 NotFound。
 func (s Service) GalleryBootstrap(ctx context.Context, productID string) (GalleryBootstrap, error) {
 	var out GalleryBootstrap
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -234,6 +235,7 @@ type GalleryListInput struct {
 }
 
 // ListGalleryAssets 按系统目录或用户文件夹分页列出商品图，cursor 绑定筛选条件。
+// limit / 目录 / cursor 非法返回 Validation；缺商品或缺文件夹返回 NotFound。
 func (s Service) ListGalleryAssets(ctx context.Context, productID string, in GalleryListInput) (GalleryAssetPage, error) {
 	var page GalleryAssetPage
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

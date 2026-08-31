@@ -15,6 +15,7 @@ import (
 )
 
 // CreateFolder 创建一层用户文件夹；同名已存在时返回已有行且 Created=false。
+// 名称为空或超长返回 Validation。
 func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation, error) {
 	display, err := normalizeName(name, kindFolder)
 	if err != nil {
@@ -104,6 +105,7 @@ func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name 
 }
 
 // DeleteFolder 只删除文件夹组织，不删除素材，也不打断节点或 lineage 引用。
+// 找不到文件夹返回 NotFound。
 func (s Service) DeleteFolder(ctx context.Context, folderID string) (int, error) {
 	var moved int
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -128,6 +130,7 @@ func (s Service) DeleteFolder(ctx context.Context, folderID string) (int, error)
 }
 
 // CreateTag 创建标签；同名已存在时返回已有行且 Created=false。
+// 名称为空或超长返回 Validation。
 func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error) {
 	display, err := normalizeName(name, kindTag)
 	if err != nil {
@@ -279,6 +282,7 @@ func (s Service) MoveAssets(ctx context.Context, assetIDs []string, folderID *st
 }
 
 // RenameAsset 按 expected revision 改素材显示名。
+// 名称为空或超长返回 Validation；素材不存在返回 NotFound；名称或 revision 已变返回 Conflict。
 func (s Service) RenameAsset(ctx context.Context, assetID, expectedName string, expectedRevision int, name string) (Asset, error) {
 	display := whitespace.ReplaceAllString(strings.TrimSpace(name), " ")
 	if display == "" {

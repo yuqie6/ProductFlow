@@ -28,7 +28,7 @@ type startTurnInput struct {
 	PageContext    map[string]any
 }
 
-// ListTurns 按时间正序分页列出 Conversation 的 Turn 投影。
+// ListTurns 按时间正序分页列出 Conversation 的 Turn 投影。limit 或 cursor 无效返回 Validation。conversation 不存在返回 NotFound；Task 不匹配返回 Conflict。
 func (s Service) ListTurns(ctx context.Context, productID *string, conversationID, taskID, after string, limit int) (TurnPageResponse, error) {
 	if limit < 1 || limit > turnMaxPageSize {
 		return TurnPageResponse{}, apperr.Validationf("Agent Turn 分页 limit 必须在 1 到 %d 之间", turnMaxPageSize)
@@ -123,7 +123,7 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 	return out, err
 }
 
-// SubmitTurn 按幂等键预留 projection 并交给 Gateway；HTTP 只写 PENDING dispatch。
+// SubmitTurn 按幂等键预留 projection 并交给 Gateway；HTTP 只写 PENDING dispatch。Gateway 未配置或同步入队失败返回 Unavailable。输入非法返回 Validation；conversation 不存在返回 NotFound；状态不允许或幂等键冲突返回 Conflict。
 func (s Service) SubmitTurn(ctx context.Context, productID *string, conversationID string, in startTurnInput) (SubmitTurnResponse, error) {
 	if s.Gateway == nil {
 		return SubmitTurnResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
@@ -199,7 +199,7 @@ func (s Service) GetTurn(ctx context.Context, productID *string, conversationID,
 	return out, err
 }
 
-// ControlTurn 执行 cancel 或 resume。尚未绑定 harness Turn 的 cancel 只改 PostgreSQL 投影。
+// ControlTurn 执行 cancel 或 resume。尚未绑定 harness Turn 的 cancel 只改 PostgreSQL 投影。Turn 不存在返回 NotFound。Gateway 未配置返回 Unavailable；终态不能 resume 返回 Conflict。
 func (s Service) ControlTurn(ctx context.Context, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
 	var out TurnResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -274,7 +274,7 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 	return serializeTurn(loaded, nil), nil
 }
 
-// AnswerQuestion 把用户答案写入投影并尝试 resume Gateway 中仍活着的问题。
+// AnswerQuestion 把用户答案写入投影并尝试 resume Gateway 中仍活着的问题。Gateway 未配置返回 Unavailable。Turn 不在等待回答返回 NotPending；答案校验失败返回 Validation。
 func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
 	row, err := s.persistQuestionAnswer(ctx, productID, conversationID, projectionID, questionID, answer)
 	if err != nil {

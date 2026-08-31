@@ -17,6 +17,7 @@ var changeSetKnownKeys = map[string]struct{}{
 }
 
 // ParseChangeSet 解 HTTP / 提案里的 WorkflowChangeSet；多余字段按 extra=forbid 拒绝。
+// 非法 JSON、未知字段或封闭 op 表校验失败返回 Validation。
 func ParseChangeSet(raw []byte) (ChangeSet, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -81,6 +82,7 @@ func ParseChangeSet(raw []byte) (ChangeSet, error) {
 }
 
 // UnmarshalOperations 解析公开 ChangeSet 的 operations 数组，不允许内部 DocumentOrigin。
+// 空数组、未知 op 或未知字段返回 Validation。
 func UnmarshalOperations(raw []byte) ([]Operation, error) {
 	return unmarshalOperations(raw, false)
 }

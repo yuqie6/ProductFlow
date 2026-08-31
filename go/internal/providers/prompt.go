@@ -27,6 +27,7 @@ type OpenAIPrompt struct {
 func (p OpenAIPrompt) Name() string { return "openai" }
 
 // GenerateCreativeBrief 实现 graph.PromptProvider，走 Responses structured outputs。
+// 已证明 4xx 可为失败；超时/断流/对不上 schema 走 unknown，调用方不得当失败自动重试。
 func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.BriefInstructions(), "generated_creative_brief", briefJSONSchema, req, "brief")
 	if err != nil {
@@ -39,6 +40,7 @@ func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.Promp
 }
 
 // GenerateVisualOverlay 实现 graph.PromptProvider，走 Responses structured outputs。
+// 已证明 4xx 可为失败；超时/断流/对不上 schema 走 unknown，调用方不得当失败自动重试。
 func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.OverlayInstructions(), "generated_visual_overlay", overlayJSONSchema, req, "overlay")
 	if err != nil {
@@ -48,6 +50,7 @@ func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.Promp
 }
 
 // GeneratePrompt 实现 graph.PromptProvider，走 Responses structured outputs。
+// 已证明 4xx 可为失败；超时/断流/对不上 schema 走 unknown，调用方不得当失败自动重试。
 func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.PromptInstructions(), "listing_prompt_payload", listingPromptJSONSchema, req, "prompt")
 	if err != nil {
@@ -57,6 +60,7 @@ func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptReques
 }
 
 // GenerateSourceNote 实现 graph.PromptProvider，走 Responses structured outputs。
+// 已证明 4xx 可为失败；超时/断流/对不上 schema 走 unknown，调用方不得当失败自动重试。
 func (p OpenAIPrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.SourceNoteInstructions(), "generated_source_note", sourceNoteJSONSchema, req, "source_note")
 	if err != nil {
@@ -103,6 +107,7 @@ func (p OpenAIPrompt) post(ctx context.Context, url string, body []byte) (int, [
 }
 
 // BuildPromptResponsesBody 是 prompt 出站请求的纯函数，测试直接断言 path/字段而不打真实模型。
+// 上下文 JSON 无法编码时失败并返回 error。
 func BuildPromptResponsesBody(model, instructions, schemaName string, schema map[string]any, req graph.PromptRequest, kind string) (map[string]any, error) {
 	content, err := promptRequestContent(req, kind)
 	if err != nil {

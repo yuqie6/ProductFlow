@@ -18,6 +18,7 @@ type Deleted struct {
 
 // PruneUnreferenced 删除已无商品图/会话图/全局素材/局部编辑 mask 引用的 MediaObject 行。
 // 文件删除发生在调用方 commit 之后。
+// 查引用或删行失败、ctx 取消时返回 error；找不到行则跳过。
 func PruneUnreferenced(ctx context.Context, tx *gorm.DB, mediaIDs []string) ([]Deleted, error) {
 	deleted := make([]Deleted, 0)
 	seen := map[string]struct{}{}

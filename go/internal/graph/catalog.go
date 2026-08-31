@@ -559,6 +559,7 @@ func rejectForbiddenKeys(config map[string]any) error {
 }
 
 // NormalizeNodeConfig 拒绝未登记 key 与退役 plan key，并规范化 generation_spec / delivery_spec。
+// 未知节点类型、未登记 key 或 spec 非法返回 Validation。
 func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]any, error) {
 	payload := cloneMap(config)
 	if payload == nil {

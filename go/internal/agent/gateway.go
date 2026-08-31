@@ -27,7 +27,7 @@ func (g HTTPGateway) configured() bool {
 	return g.Configured()
 }
 
-// StartTurn 实现 Gateway，向 agent-service POST 一轮 Turn。
+// StartTurn 实现 Gateway，向 agent-service POST 一轮 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) StartTurn(conversationID string, taskID *string, inputText string, assetIDs []string, idempotencyKey string, pageContext any) (TurnState, error) {
 	body := map[string]any{
 		"input_text":      inputText,
@@ -38,22 +38,22 @@ func (g HTTPGateway) StartTurn(conversationID string, taskID *string, inputText 
 	return g.request("POST", g.executionPath(conversationID, taskID)+"/turns", body)
 }
 
-// GetTurn 实现 Gateway，读取 agent-service 当前 Turn。
+// GetTurn 实现 Gateway，读取 agent-service 当前 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("GET", g.turnPath(conversationID, turnID, taskID), nil)
 }
 
-// CancelTurn 实现 Gateway，请求 agent-service 取消 Turn。
+// CancelTurn 实现 Gateway，请求 agent-service 取消 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/cancel", map[string]any{})
 }
 
-// ResumeTurn 实现 Gateway，请求 agent-service 恢复 Turn。
+// ResumeTurn 实现 Gateway，请求 agent-service 恢复 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/resume", map[string]any{})
 }
 
-// AnswerQuestion 实现 Gateway，把答案交给 agent-service。
+// AnswerQuestion 实现 Gateway，把答案交给 agent-service。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/questions/"+url.PathEscape(questionID)+"/answer", map[string]any{"answer": answer})
 }

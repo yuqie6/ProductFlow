@@ -61,6 +61,7 @@ func NewStore(pool *pgxpool.Pool, env config.Config) *Store {
 }
 
 // Runtime 实现 RuntimeReader：env 提供启动默认值，app_settings 覆盖所选键。
+// 读 app_settings 失败或 ctx 取消时返回 error。
 func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
@@ -98,6 +99,7 @@ type ImageToolRuntime struct {
 }
 
 // ImageToolRuntime 读取 image tool 允许字段与默认选项。
+// 读 app_settings 失败或 ctx 取消时返回 error；Store 为 nil 时走内置默认且不失败。
 func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) {
 	if s == nil {
 		return ImageToolRuntime{Allowed: append([]string{}, defaultImageToolAllowedFields...)}, nil
@@ -136,6 +138,7 @@ func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) 
 }
 
 // UploadLimits 实现 LimitsReader：env 启动值可被 app_settings 覆盖。
+// 读 app_settings 失败或 ctx 取消时返回 error。
 func (s *Store) UploadLimits(ctx context.Context) (media.Limits, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
@@ -197,6 +200,7 @@ func (s *Store) overrides(ctx context.Context) (map[string]string, error) {
 // ImageChatPromptTemplate 读取连续生图提示词模板。
 // 调用时机：imagesession 拼 prompt。app_settings 缺键或空白时回退内置 defaultPromptTemplate。
 // 不要把返回值当 listing 图类 compile 模板。
+// 读库失败或 ctx 取消时返回 error。
 func (s *Store) ImageChatPromptTemplate(ctx context.Context) (string, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {

@@ -18,8 +18,9 @@ import (
 // HTTP 是局部编辑的 Gin 处理器集合，不是画布 GraphRun。
 // 路由前缀 /api/v3；提交只写 PENDING dispatch。未 adopt 前结果不是节点当前图。
 type HTTP struct {
-	Service  Service     // 必须注入；拥有草稿/提交/adopt
-	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌
+	Service Service // 必须注入；拥有草稿/提交/adopt
+	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。
+	Settings interface {
 		settings.RuntimeReader
 		settings.LimitsReader
 	}

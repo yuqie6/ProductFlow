@@ -135,6 +135,7 @@ func originForLibrary(asset Asset) string {
 }
 
 // SaveFromSession 把连续生图结果写入全局素材身份，复用 MediaObject。
+// 非生成结果或媒体未核验返回 Validation；会话图片不存在返回 NotFound；媒体元数据不全返回 Conflict。
 func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string) (SaveResult, error) {
 	var result SaveResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -198,6 +199,7 @@ func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string
 }
 
 // SaveFromProduct 把商品图片写入全局素材身份，复用 MediaObject。
+// 商品图不存在时冒泡 NotFound；媒体未核验返回 Validation；缺少 MediaObject 或核验元数据不全返回 Conflict。
 func (s Service) SaveFromProduct(ctx context.Context, productImageAssetID string) (SaveResult, error) {
 	var result SaveResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -388,6 +390,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 }
 
 // Archive 归档全局素材；不删除 MediaObject 或工作流引用。
+// 素材不存在返回 NotFound；revision 已变或仍被工作流子图库引用返回 Conflict。
 func (s Service) Archive(ctx context.Context, assetID string, expectedRevision *int) (Asset, error) {
 	return s.setArchive(ctx, assetID, true, expectedRevision)
 }

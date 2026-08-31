@@ -17,7 +17,8 @@ import (
 // SettingsExport 是可再导入的设置导出文档 HTTP 体。
 // 含 API Key 明文（导出给管理员备份）。schema_version 必须对上才能导入。不要当 ConfigResponse 用。
 type SettingsExport struct {
-	Metadata struct { // 含 schema_version；对不上不能导入
+	// Metadata 含 schema_version；对不上不能导入。
+	Metadata struct {
 		SchemaVersion int       `json:"schema_version"`
 		ExportedAt    time.Time `json:"exported_at"`
 		App           string    `json:"app"`
@@ -44,6 +45,7 @@ type ImportPreview struct {
 
 // Export 导出运行时配置、未归档供应商档案与绑定（含 API Key）。
 // 调用时机：GET /api/settings/export。已归档档案跳过。无写入。
+// 读配置或档案失败、ctx 取消时返回 error。
 func (s *Store) Export(ctx context.Context) (SettingsExport, error) {
 	view, err := s.ConfigView(ctx)
 	if err != nil {

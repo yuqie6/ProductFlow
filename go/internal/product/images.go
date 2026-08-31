@@ -14,6 +14,7 @@ import (
 )
 
 // SetCover 把展示封面指向一张属于该商品的已核验图片，不改 facts 或节点绑定。
+// 图片不属于该商品或文件缺失返回 Validation；缺行返回 NotFound。
 func (s Service) SetCover(ctx context.Context, productID, assetID string) (Detail, error) {
 	var detail Detail
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -69,6 +70,7 @@ func (s Service) ClearCover(ctx context.Context, productID string) (Detail, erro
 }
 
 // AddImages 追加上传到商品图片身份；尚无封面时写入第一张为展示图。
+// 数量不在 1–6 返回 Validation；缺商品返回 NotFound。
 func (s Service) AddImages(ctx context.Context, productID string, uploads []Upload) ([]ImageAsset, error) {
 	if len(uploads) == 0 {
 		return nil, apperr.Validation("至少上传一张商品图片")

@@ -16,6 +16,7 @@ import (
 )
 
 // CreateAgentDraft 是名称-only 出生：写 product_source 图、空 intake、不设封面。
+// 商品名或 Idempotency-Key 非法返回 Validation；同 key 哈希不同返回 Conflict。缺 Canvas 写入器返回 Internal。
 func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey string, agentSessionID *string) (WorkspaceSnapshotResponse, error) {
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)

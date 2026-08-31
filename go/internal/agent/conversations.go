@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// GetConversation 按商品作用域读取 Agent Conversation。
+// GetConversation 按商品作用域读取 Agent Conversation。商品或 conversation 不存在返回 NotFound。数据库失败返回 error。
 func (s Service) GetConversation(ctx context.Context, productID *string, conversationID string) (ConversationResponse, error) {
 	var out ConversationResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

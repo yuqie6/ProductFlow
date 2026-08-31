@@ -32,6 +32,7 @@ type AgentProviderConfig struct {
 const agentAdapterBackgroundResumable = false
 
 // ResolveAgentProvider 给 Pi 内部服务解析当前工作流 Agent 绑定。
+// 无绑定、mock、档案禁用/没 Key 或缺 text_responses 返回 Unavailable。
 func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, error) {
 	var binding schema.ProviderBindings
 	err := s.db.WithContext(ctx).Where("purpose = ?", "agent").Take(&binding).Error

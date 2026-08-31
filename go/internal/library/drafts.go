@@ -44,6 +44,7 @@ type OrganizationDraft struct {
 }
 
 // GetOrganizationDraft 按全局 conversation 读取素材整理 Draft。
+// 找不到 Draft 返回 NotFound。
 func (s Service) GetOrganizationDraft(ctx context.Context, conversationID string) (OrganizationDraft, error) {
 	var out OrganizationDraft
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -58,6 +59,7 @@ func (s Service) GetOrganizationDraft(ctx context.Context, conversationID string
 }
 
 // AppendOrganizationDraftRevision 追加一条整理 artifact。没有 Draft 时创建。
+// payload 无效返回 Validation；已确认 Draft 返回 Conflict。
 func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversationID string, payload json.RawMessage, sourceTurnID, sourceStepID string) (OrganizationDraft, error) {
 	var out OrganizationDraft
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -73,6 +75,7 @@ func (s Service) AppendOrganizationDraftRevision(ctx context.Context, conversati
 }
 
 // AppendOrganizationDraftRevisionTx 在调用方事务里追加 revision，返回 revision id。
+// payload 无法 canonjson 时返回 Validation；已确认 Draft 返回 Conflict。
 func (s Service) AppendOrganizationDraftRevisionTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, payload json.RawMessage, sourceTurnID, sourceStepID string) (string, error) {
 	hash, err := canonjson.SHA256Hex(json.RawMessage(payload))
 	if err != nil {
@@ -141,6 +144,7 @@ func (s Service) AppendOrganizationDraftRevisionTx(ctx context.Context, pgxTx *g
 }
 
 // ConfirmOrganizationDraft 应用当前 revision 的组织变更，不复制媒体 bytes。
+// idempotency key 为空或过长返回 Validation。
 func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID string, expectedVersion int, idempotencyKey string) (OrganizationDraft, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
@@ -159,6 +163,7 @@ func (s Service) ConfirmOrganizationDraft(ctx context.Context, conversationID st
 }
 
 // ConfirmOrganizationDraftTx 在调用方事务里确认 Draft。
+// 找不到 Draft 返回 NotFound；无 current revision 或 version 已变返回 Conflict；非待确认或幂等键对不上返回 NotPending。
 func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB, conversationID string, expectedVersion int, key string) (OrganizationDraft, error) {
 	draft, err := loadOrganizationDraftForUpdate(ctx, pgxTx, conversationID)
 	if err != nil {

@@ -166,6 +166,7 @@ func (m MockPromptProvider) GenerateCreativeBrief(ctx context.Context, req Promp
 }
 
 // GenerateVisualOverlay 返回 Overlay 或内置默认 visual_overlay。
+// Err 非空时直接返回该错误。
 func (m MockPromptProvider) GenerateVisualOverlay(ctx context.Context, req PromptRequest) (PromptResult, error) {
 	if m.Err != nil {
 		return PromptResult{}, m.Err
@@ -186,6 +187,7 @@ func (m MockPromptProvider) GenerateVisualOverlay(ctx context.Context, req Promp
 }
 
 // GeneratePrompt 返回 Prompt 或内置 listing 骨架。
+// Err 非空时直接返回该错误。
 func (m MockPromptProvider) GeneratePrompt(ctx context.Context, req PromptRequest) (PromptResult, error) {
 	if m.Err != nil {
 		return PromptResult{}, m.Err
@@ -205,6 +207,7 @@ func (m MockPromptProvider) GeneratePrompt(ctx context.Context, req PromptReques
 }
 
 // GenerateSourceNote 供创建页看图起草，不走画布 cook。
+// Err 非空时直接返回该错误。
 func (m MockPromptProvider) GenerateSourceNote(ctx context.Context, req PromptRequest) (PromptResult, error) {
 	if m.Err != nil {
 		return PromptResult{}, m.Err
@@ -240,6 +243,7 @@ func (m MockImageProvider) Name() string {
 }
 
 // GenerateImage 返回 1×1 PNG。ProviderStatus 为 completed。
+// Err 非空时直接返回该错误。
 func (m MockImageProvider) GenerateImage(ctx context.Context, req ImageRequest) (ImageResult, error) {
 	if m.Err != nil {
 		return ImageResult{}, m.Err

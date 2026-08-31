@@ -45,6 +45,7 @@ type configRow struct {
 
 // ConfigView 读取运行时配置 HTTP 投影，无写入。
 // 调用时机：GET /api/settings。Secret 项不回明文。缺 app_settings 行时用环境默认，Source=env_default。
+// 读库失败或 ctx 取消时返回 error。
 func (s *Store) ConfigView(ctx context.Context) (ConfigResponse, error) {
 	rows, err := s.configRows(ctx)
 	if err != nil {

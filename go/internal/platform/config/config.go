@@ -135,6 +135,7 @@ func (c Config) Addr() string {
 
 // ResolveStorageRoot 把 STORAGE_ROOT 收到仓库根（含 go/go.mod 时取其父目录），不跟进程 cwd。
 // 空串当作 ./storage-dev。绝对路径只做 Clean。
+// 读 cwd 失败或无法拼出绝对路径时返回 error。
 func ResolveStorageRoot(raw string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {

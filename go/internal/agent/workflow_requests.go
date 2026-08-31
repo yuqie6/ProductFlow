@@ -80,7 +80,7 @@ func runRequestBaseQuery(pgxTx *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN workflow_graph_runs ON workflow_graph_runs.id = agent_workflow_run_requests.graph_run_id")
 }
 
-// GetWorkflowRunRequest 读取 conversation 上最新的执行请求；有 GraphRun 时同步但不覆盖 goal_loop。
+// GetWorkflowRunRequest 读取 conversation 上最新的执行请求；有 GraphRun 时同步但不覆盖 goal_loop。conversation 不存在返回 NotFound。数据库失败返回 error。
 func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, conversationID string, taskID *string) (*WorkflowRunRequestResponse, error) {
 	var out *WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -113,7 +113,7 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 	return out, err
 }
 
-// ConfirmWorkflowRunRequest 经 graph 包提交或重试 GraphRun；已确认则回放。
+// ConfirmWorkflowRunRequest 经 graph 包提交或重试 GraphRun；已确认则回放。已取消或不在待确认状态返回 NotPending。请求不存在返回 NotFound；revision 已变返回 Conflict。
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -169,7 +169,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 	return out, err
 }
 
-// CancelWorkflowRunRequestHTTP 取消待确认请求，或经 graph 包取消已提交的 GraphRun。
+// CancelWorkflowRunRequestHTTP 取消待确认请求，或经 graph 包取消已提交的 GraphRun。请求不存在返回 NotFound。已结束的 GraphRun 不能取消返回 Conflict。
 func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -221,7 +221,7 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 	return loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 }
 
-// PrepareWorkflowRunRequest 检查商品工作流 conversation 当前 live 图是否可提交执行。
+// PrepareWorkflowRunRequest 检查商品工作流 conversation 当前 live 图是否可提交执行。conversation 不存在返回 NotFound。非商品工作流、无 live 图或 revision 已变返回 Conflict；revision/source_run 非法返回 Validation。
 func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID string, expectedRevision int, sourceRunID *string, taskID *string) (PreparedWorkflowRunRequest, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -237,7 +237,7 @@ func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID s
 	return s.prepareProductGraphRequest(ctx, s.DB, conv, expectedRevision, sourceRunID, taskID)
 }
 
-// PrepareGlobalWorkflowRunRequest 检查全局 Agent 指定的商品 live 图是否可提交执行。
+// PrepareGlobalWorkflowRunRequest 检查全局 Agent 指定的商品 live 图是否可提交执行。conversation 不存在返回 NotFound。非全局 conversation 返回 Conflict。product_id/workflow_id 无效或 source_run 不可重试返回 Validation。
 func (s Service) PrepareGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -330,12 +330,12 @@ func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productI
 	}, nil
 }
 
-// CreateWorkflowRunRequest 按幂等键创建商品工作流执行确认单。
+// CreateWorkflowRunRequest 按幂等键创建商品工作流执行确认单。幂等键、revision 或运行范围无效返回 Validation。conversation 不存在返回 NotFound；同键不同请求或 workflow 不匹配返回 Conflict。
 func (s Service) CreateWorkflowRunRequest(ctx context.Context, conversationID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
-// CreateGlobalWorkflowRunRequest 按幂等键从全局 Agent 创建执行确认单。
+// CreateGlobalWorkflowRunRequest 按幂等键从全局 Agent 创建执行确认单。幂等键、product_id 或运行范围无效返回 Validation。conversation 不存在返回 NotFound；非全局或同键不同请求返回 Conflict。
 func (s Service) CreateGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }
@@ -462,12 +462,12 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 	return out, err
 }
 
-// ReconcileWorkflowRunRequest 按幂等键对账商品工作流执行请求。
+// ReconcileWorkflowRunRequest 按幂等键对账商品工作流执行请求。幂等键或运行参数无效返回 Validation。conversation 不存在返回 NotFound；非商品工作流返回 Conflict。
 func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
 	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
-// ReconcileGlobalWorkflowRunRequest 按幂等键对账全局 Agent 的执行请求。
+// ReconcileGlobalWorkflowRunRequest 按幂等键对账全局 Agent 的执行请求。幂等键、product_id 或运行参数无效返回 Validation。conversation 不存在返回 NotFound；非全局 conversation 返回 Conflict。
 func (s Service) ReconcileGlobalWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
 	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }

@@ -149,6 +149,7 @@ func nonemptyMap(m map[string]any) map[string]any {
 }
 
 // MarshalChangeSet 把内存 ChangeSet 编成提案/账本用的 JSON。
+// operations 或外壳 JSON 编码失败原样返回。
 func MarshalChangeSet(cs ChangeSet) ([]byte, error) {
 	ops, err := marshalOperations(cs.Operations)
 	if err != nil {

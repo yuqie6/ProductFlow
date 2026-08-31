@@ -26,6 +26,7 @@ type Rendered struct {
 }
 
 // Render 按 DeliverySpec 缩放编码已有原图，不调用图像模型。
+// 原图为空、无法解码、编码失败或尺寸/字节限制对不上返回 Validation。
 func Render(source []byte, spec Spec) (Rendered, error) {
 	if len(source) == 0 {
 		return Rendered{}, apperr.Validation("交付派生原图内容为空")

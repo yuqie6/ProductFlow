@@ -71,6 +71,7 @@ type ProviderConfigResponse struct {
 
 // ProviderConfig 列出档案与绑定；缺的 prompt/agent/image 用途行会补 mock。
 // 调用时机：GET /provider-config。有写入（ensureBindings），不是纯只读。
+// ensureBindings 或列档案失败时返回 error。
 func (s *Store) ProviderConfig(ctx context.Context) (ProviderConfigResponse, error) {
 	if err := s.ensureBindings(ctx); err != nil {
 		return ProviderConfigResponse{}, err

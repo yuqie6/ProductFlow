@@ -25,6 +25,7 @@ type RecoverySummary struct {
 }
 
 // RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
+// GORM 打开或写库失败原样返回。无法证明的供应商结果标 unknown，不得当失败自动重试。
 func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, products ProductGuard) (RecoverySummary, error) {
 	if staleAfter <= 0 {
 		staleAfter = defaultStaleRunningAfter

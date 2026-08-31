@@ -33,6 +33,7 @@ func proposalFromSchema(rec schema.WorkflowGraphProposals) proposalRow {
 }
 
 // CreateProposal 校验后写入 PENDING 提案，不改 live 图。
+// 无 active 图、revision 已变或已有 pending 提案返回 Conflict；Apply 的 Validation 也升成 Conflict。
 func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
 	row, err := loadActiveGraphForUpdate(ctx, tx, productID)
 	if err != nil {

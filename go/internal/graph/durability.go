@@ -61,6 +61,7 @@ func runningGenerationCount(ctx context.Context, tx *gorm.DB) (int, error) {
 }
 
 // GenerationCapacityAvailable 与连续生图共用同一把容量锁。
+// advisory lock 或计数查询失败原样返回；容量满返回 false, nil，不当错误。
 func GenerationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error) {
 	return generationCapacityAvailable(ctx, tx)
 }

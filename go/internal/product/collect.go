@@ -24,6 +24,7 @@ type CollectedInput struct {
 }
 
 // Lock 以 FOR UPDATE 锁住商品行，供 graph 与图库命令串行化。
+// 商品不存在返回 NotFound。
 func Lock(ctx context.Context, tx *gorm.DB, productID string) (Product, error) {
 	return loadProductForUpdate(ctx, tx, productID)
 }
@@ -104,6 +105,7 @@ func LoadImageForUpdate(ctx context.Context, tx *gorm.DB, assetID string) (Image
 }
 
 // LookupByLibrarySource 按全局素材 id 查找本商品已收藏的身份。未收藏时 found=false。
+// 未收藏返回 false, nil；库错误原样返回。
 func LookupByLibrarySource(ctx context.Context, tx *gorm.DB, productID, libraryAssetID string) (ImageAsset, bool, error) {
 	var rec schema.ProductImageAssets
 	err := tx.WithContext(ctx).Select("id").
@@ -120,6 +122,7 @@ func LookupByLibrarySource(ctx context.Context, tx *gorm.DB, productID, libraryA
 }
 
 // LoadByLibrarySources 批量按全局素材 id 映射到本商品图片身份。
+// 库查询失败原样返回；未命中的 id 不写入 map。
 func LoadByLibrarySources(ctx context.Context, tx *gorm.DB, productID string, libraryIDs []string) (map[string]ImageAsset, error) {
 	out := map[string]ImageAsset{}
 	if len(libraryIDs) == 0 {
@@ -142,6 +145,7 @@ func LoadByLibrarySources(ctx context.Context, tx *gorm.DB, productID string, li
 }
 
 // InsertCollected 登记一条共享 MediaObject 的商品图片身份，不复制 bytes。
+// 插入或回读失败原样返回。
 func InsertCollected(ctx context.Context, tx *gorm.DB, in CollectedInput) (ImageAsset, error) {
 	id := clockid.New()
 	original := strings.TrimSpace(in.OriginalFilename)

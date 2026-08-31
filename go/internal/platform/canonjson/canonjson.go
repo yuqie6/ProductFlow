@@ -10,6 +10,7 @@ import (
 )
 
 // Compact 对齐 Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)。
+// JSON 无法 compact（不可序列化的值）时失败并返回 error。
 func Compact(v any) ([]byte, error) {
 	raw, err := marshalUnescaped(v)
 	if err != nil {

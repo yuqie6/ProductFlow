@@ -11,6 +11,7 @@ import (
 )
 
 // NodeConfigJSON 供交付排队读取节点 config，避免 delivery 直接查 workflow_graph_nodes。
+// 找不到节点返回 RecordNotFound；其余库错误原样返回。
 func NodeConfigJSON(ctx context.Context, tx *gorm.DB, nodeID string) ([]byte, error) {
 	var rec schema.WorkflowGraphNodes
 	err := tx.WithContext(ctx).Select("config_json").Where("id = ?", nodeID).Take(&rec).Error
@@ -24,6 +25,7 @@ func NodeConfigJSON(ctx context.Context, tx *gorm.DB, nodeID string) ([]byte, er
 }
 
 // HasImageArtifactForAsset 判断该商品图是否来自成功的工作流 image artifact。
+// 找不到 artifact 返回 false, nil；库查询失败原样返回。
 func HasImageArtifactForAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
 	var rec schema.WorkflowGraphArtifacts
 	err := tx.WithContext(ctx).Select("id").
@@ -50,6 +52,7 @@ type ImageNodeTarget struct {
 }
 
 // LockImageNodeTarget 锁住商品 active 图上的 image_generation 节点及其当前 artifact。
+// 节点不是当前 active 图的 image_generation、缺当前 image artifact 或 digest 返回 Conflict。
 func LockImageNodeTarget(ctx context.Context, tx *gorm.DB, productID, nodeID string) (ImageNodeTarget, error) {
 	var node schema.WorkflowGraphNodes
 	err := tx.WithContext(ctx).
@@ -94,6 +97,7 @@ type ArtifactLineage struct {
 }
 
 // LoadArtifactLineage 读取 artifact 的 input_digest 与 graph_revision。
+// 找不到记录返回 Conflict。
 func LoadArtifactLineage(ctx context.Context, tx *gorm.DB, artifactID string) (ArtifactLineage, error) {
 	var rec schema.WorkflowGraphArtifacts
 	err := tx.WithContext(ctx).Select("input_digest", "graph_revision").Where("id = ?", artifactID).Take(&rec).Error

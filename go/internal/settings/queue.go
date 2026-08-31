@@ -16,6 +16,7 @@ type GenerationQueueOverview struct {
 
 // GenerationQueue 读取当前生成队列占用（图运行 + 连续生图任务）。
 // 调用时机：GET /api/generation-queue。无写入。不含交付/局部编辑任务。
+// 读库失败或 ctx 取消时返回 error。
 func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, error) {
 	type nodeRow struct {
 		runID  string

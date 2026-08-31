@@ -28,6 +28,7 @@ func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 
 // Bootstrap 读图库首页计数、一层文件夹与标签，无写入。
 // 调用时机：HTTP GET /bootstrap。文件夹 Count 只含未归档素材。
+// 读库失败或 ctx 取消时返回 error。
 func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var out Bootstrap
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// WriteProductCanvas 在商品出生事务里写入 product_workflow 会话与 conversation。
+// WriteProductCanvas 在商品出生事务里写入 product_workflow 会话与 conversation。Session 不存在返回 NotFound；已归档或不属于当前商品返回 Conflict。
 func WriteProductCanvas(ctx context.Context, tx *gorm.DB, productID, title, key, hash string, agentSessionID *string) (string, product.Conversation, error) {
 	sessionID := ""
 	if agentSessionID != nil && *agentSessionID != "" {

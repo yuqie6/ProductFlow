@@ -30,6 +30,7 @@ type AdoptImageArtifactInput struct {
 }
 
 // AdoptImageArtifact 锁定 active 图与节点，写入 image artifact 并切换 current_artifact_id。
+// graph 不再 active、节点类型不对或当前 artifact 已变返回 Conflict。
 func AdoptImageArtifact(ctx context.Context, tx *gorm.DB, in AdoptImageArtifactInput) (string, error) {
 	var graph schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).

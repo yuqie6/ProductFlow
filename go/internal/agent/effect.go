@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// ReconcileTurnEffect 只对 status=unknown 的 Turn 按 tool_call_id 对账副作用。
+// ReconcileTurnEffect 只对 status=unknown 的 Turn 按 tool_call_id 对账副作用。tool_call_id 无效返回 Validation。Turn 非 unknown、找不到 intent 或不支持该工具返回 Conflict。
 func (s Service) ReconcileTurnEffect(ctx context.Context, productID *string, conversationID, projectionID, toolCallID string) (EffectReconciliationResponse, error) {
 	normalized := stringsTrim(toolCallID)
 	if normalized == "" || len(normalized) > 120 {

@@ -37,6 +37,7 @@ type GalleryArchive struct {
 }
 
 // BuildGalleryArchive 按资产 id 打包已核验原图；ZIP 条目名来自显示名。
+// 数量非法或未核验返回 Validation；缺图或缺文件返回 NotFound。
 func (s Service) BuildGalleryArchive(ctx context.Context, productID string, assetIDs []string) (GalleryArchive, error) {
 	normalized, err := normalizeArchiveIDs(assetIDs)
 	if err != nil {

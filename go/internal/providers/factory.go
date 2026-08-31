@@ -19,7 +19,10 @@ import (
 )
 
 // LivePrompt 每次调用按当前 PostgreSQL 绑定解析提示词供应商。
-type LivePrompt struct{ Store *settings.Store }
+type LivePrompt struct {
+	// Store 每次调用重新 Resolve，不要缓存过期 Key；nil 时回落 MockPromptProvider，不报错。
+	Store *settings.Store
+}
 
 func (l LivePrompt) resolve(ctx context.Context) (graph.PromptProvider, error) {
 	return Prompt(ctx, l.Store)
@@ -35,6 +38,7 @@ func (l LivePrompt) Name() string {
 }
 
 // GenerateCreativeBrief 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流走 unknown，调用方不得当失败自动重试。
 func (l LivePrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -44,6 +48,7 @@ func (l LivePrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptR
 }
 
 // GenerateVisualOverlay 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流走 unknown，调用方不得当失败自动重试。
 func (l LivePrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -53,6 +58,7 @@ func (l LivePrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptR
 }
 
 // GeneratePrompt 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流走 unknown，调用方不得当失败自动重试。
 func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -62,6 +68,7 @@ func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest)
 }
 
 // GenerateSourceNote 实现 graph.PromptProvider。底层没有该方法时回退 MockSourceNotePayload，不打网。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流走 unknown，调用方不得当失败自动重试。
 func (l LivePrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -76,7 +83,10 @@ func (l LivePrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequ
 }
 
 // LiveImage 每次调用按当前 image 绑定解析生图 / 连续生图 / 局部编辑。
-type LiveImage struct{ Store *settings.Store }
+type LiveImage struct {
+	// Store 每次调用重新 Resolve，不要缓存过期 Key；nil 时回落 mock 适配器，不报错。
+	Store *settings.Store
+}
 
 func (l LiveImage) resolve(ctx context.Context) (imageAdapterSet, error) {
 	return imageAdapter(ctx, l.Store)
@@ -92,6 +102,7 @@ func (l LiveImage) Name() string {
 }
 
 // GenerateImage 实现 graph.ImageProvider，按当前 settings 绑定调用底层供应商。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (l LiveImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -130,6 +141,7 @@ func (l LiveImage) Capability() localedit.Capability {
 }
 
 // Edit 实现 localedit.Provider，按当前 settings 绑定调用底层供应商。
+// 绑定无法 Resolve 时返回 error；已证明 4xx 可为失败，超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (l LiveImage) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -139,6 +151,7 @@ func (l LiveImage) Edit(ctx context.Context, req localedit.EditRequest) (localed
 }
 
 // ReconcileResponse 查询供应商原请求状态；底层不支持时返回 "unsupported"，不可证明时返回 "unknown"。
+// 绑定无法 Resolve 时返回 error；无法证明时走 unknown，调用方不得当失败自动重试。
 func (l LiveImage) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {

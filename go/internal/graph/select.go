@@ -64,11 +64,13 @@ const (
 
 // SelectRunNodeIDs GRAPH 入队所有具备必需输入的处理节点，由执行器把无需重算的节点落成 skipped。
 // NODE 只入队目标。TO_NODE 入队目标及仍需生成的祖先。SELECTION 入队显式节点集合。
+// 范围或目标非法时返回 Validation。
 func SelectRunNodeIDs(graph AppliedGraph, scope, targetNodeID string, sources map[string]SourceRecord) ([]string, error) {
 	return SelectRunNodeIDsWithMode(graph, scope, targetNodeID, nil, sources, false, DocumentActionComplete)
 }
 
 // SelectRunNodeIDsWithMode 按范围选出处理节点。force 只对 node|to_node|selection 的显式目标生效；graph 范围忽略 force。
+// 缺目标、非处理节点、缺必连边或无可运行节点返回 Validation。
 func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]string, error) {
 	mode = validDocumentAction(mode)
 	var processingIDs []string
@@ -185,6 +187,7 @@ type RunPreviewNode struct {
 }
 
 // PlanRun 为范围内每个处理节点计算 planned_action，不入队。force 仅作用于显式目标。
+// 范围或目标非法时返回 Validation。
 func PlanRun(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]RunPreviewNode, error) {
 	mode = validDocumentAction(mode)
 	forceTargets := forceTargetSet(scope, targetNodeID, nodeIDs, force)

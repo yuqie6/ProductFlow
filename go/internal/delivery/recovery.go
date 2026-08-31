@@ -20,6 +20,7 @@ type RecoverySummary struct {
 }
 
 // RecoverUnfinished 把 queued / 过期 running 的交付任务补回 PENDING dispatch。交付没有 unknown。
+// pool 为 nil 或写库失败、ctx 取消时返回 error。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
 	if staleAfter <= 0 {
 		staleAfter = 30 * time.Minute

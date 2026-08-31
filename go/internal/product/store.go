@@ -199,6 +199,7 @@ func insertAssetOrigin(ctx context.Context, tx *gorm.DB, productID, mediaID, fil
 }
 
 // InsertAssetIdentity 写入一条商品图片身份，可带 parent / 会话来源。
+// 插入失败原样返回。
 func InsertAssetIdentity(ctx context.Context, tx *gorm.DB, in AssetIdentityInput) (ImageAsset, error) {
 	id := clockid.New()
 	display := strings.TrimSpace(in.DisplayName)
@@ -319,6 +320,7 @@ func loadAssetForProduct(ctx context.Context, q *gorm.DB, productID, assetID str
 }
 
 // LoadAssetRow 供 delivery / localedit 读取商品图片身份。
+// 找不到返回 NotFound。
 func LoadAssetRow(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, q, assetID)
 }

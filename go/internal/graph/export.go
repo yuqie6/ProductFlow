@@ -18,12 +18,14 @@ func LoadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (Ide
 }
 
 // LoadGraphForUpdate 在保存配方时锁住指定 live 图。
+// 对不上返回 NotFound。
 func LoadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (Identity, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	return row.Identity, err
 }
 
 // LoadAppliedGraph 把图身份展开成节点 / 边 / 分组。
+// config JSON 损坏或查库失败原样返回。
 func LoadAppliedGraph(ctx context.Context, tx *gorm.DB, id Identity) (AppliedGraph, error) {
 	return loadAppliedGraph(ctx, tx, graphRow{Identity: id})
 }
@@ -43,6 +45,7 @@ func TryLoadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (*Id
 }
 
 // LoadActiveGraphForUpdate 锁住商品当前 active 图；没有则 nil。
+// 找不到 active 图返回 nil, nil，不报 NotFound；锁行查询失败原样返回。
 func LoadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*Identity, error) {
 	row, err := loadActiveGraphForUpdate(ctx, tx, productID)
 	if err != nil || row == nil {

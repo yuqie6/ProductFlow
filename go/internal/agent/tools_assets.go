@@ -41,7 +41,7 @@ func libraryMeta(item library.AssetResponse) AssetMetadata {
 	}
 }
 
-// ListProductAssets 列出商品图库有界元数据，不把整库交给 Turn。
+// ListProductAssets 列出商品图库有界元数据，不把整库交给 Turn。conversation 不存在返回 NotFound。非商品工作流返回 Conflict；图库筛选非法返回 Validation。
 func (s Service) ListProductAssets(ctx context.Context, conversationID, directoryKind, directoryKey, query, sort, after string, limit int) (AssetListResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -63,7 +63,7 @@ func (s Service) ListProductAssets(ctx context.Context, conversationID, director
 	return AssetListResponse{Items: items, NextCursor: page.NextCursor}, nil
 }
 
-// InspectProductAssets 按明确 id 检查商品图片元数据。
+// InspectProductAssets 按明确 id 检查商品图片元数据。asset id 非法或为空返回 Validation。图片不存在或不属于当前商品返回 NotFound；非商品工作流返回 Conflict。
 func (s Service) InspectProductAssets(ctx context.Context, conversationID string, assetIDs []string) ([]AssetMetadata, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
@@ -108,7 +108,7 @@ type AssetContent struct {
 	DisplayName string // 展示名，随 bytes 返回
 }
 
-// ReadProductAssetContent 读取商品图片 bytes；超过上限或与核验元数据不一致时拒绝。
+// ReadProductAssetContent 读取商品图片 bytes；超过上限或与核验元数据不一致时拒绝。超过单张上限返回 Validation。文件不存在返回 NotFound；与核验元数据不一致返回 Conflict。
 func (s Service) ReadProductAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -153,7 +153,7 @@ func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, c
 	return AssetListResponse{Items: items, NextCursor: page.NextCursor}, nil
 }
 
-// InspectLibraryAssets 按明确 id 检查未归档全局素材元数据。
+// InspectLibraryAssets 按明确 id 检查未归档全局素材元数据。asset id 非法或为空返回 Validation。素材不存在或已归档返回 NotFound；非全局 conversation 返回 Conflict。
 func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string, assetIDs []string) ([]AssetMetadata, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {

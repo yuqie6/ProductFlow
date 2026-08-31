@@ -113,6 +113,7 @@ func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 }
 
 // Create 从当前 live schema-v3 显式提取并保存配方。
+// 图不存在返回 NotFound；非 active 或 revision 已变返回 Conflict；选区非法或标题为空返回 Validation。
 func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error) {
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -270,6 +271,7 @@ func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion i
 }
 
 // Preview 计算应用到目标商品时将出现的节点与边；完整配方不能 merge 进已有 live 图。
+// 商品或配方不存在返回 NotFound；已归档、版本已变或完整配方遇上已有图返回 Conflict。
 func (s Service) Preview(ctx context.Context, productID, recipeID string, expectedVersion int) (Preview, error) {
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out Preview

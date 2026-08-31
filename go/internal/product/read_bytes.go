@@ -9,6 +9,7 @@ import (
 )
 
 // ReadAssetBytes 按商品图片身份读回媒体字节，供图运行把参考图交给 provider。
+// 图不属于该商品或文件不可读返回 Validation；媒体对象不存在返回 NotFound。
 func (s Service) ReadAssetBytes(ctx context.Context, tx *gorm.DB, productID, assetID string) ([]byte, string, string, error) {
 	q := tx
 	if q == nil {

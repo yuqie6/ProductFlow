@@ -14,6 +14,7 @@ import (
 )
 
 // StageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
+// base_graph_revision 非 0 或商品已有 active 图返回 Conflict；Apply / 绑定校验失败原样返回。
 func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
 	if changeSet.BaseGraphRevision != 0 {
 		return CommandResult{}, apperr.Conflict("新建图的 base_graph_revision 必须为 0")

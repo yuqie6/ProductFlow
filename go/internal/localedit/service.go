@@ -114,6 +114,7 @@ func (s Service) Create(ctx context.Context, productID, sourceAssetID, targetNod
 }
 
 // Update 按 expectedRevision 更新草稿任务与 mask。
+// 已提交或 revision 已变返回 Conflict；源图缺尺寸或 mask 对不齐返回 Validation；任务不存在返回 NotFound。
 func (s Service) Update(ctx context.Context, productID, taskID string, expectedRevision int, draft Draft, maskPNG []byte) (TaskResponse, error) {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -183,6 +184,7 @@ func (s Service) Update(ctx context.Context, productID, taskID string, expectedR
 }
 
 // Get 读取局部编辑任务；includeAudit 为 true 时带上 provider attempts 与 adoption 事件。
+// 任务不存在返回 NotFound。
 func (s Service) Get(ctx context.Context, productID, taskID string, includeAudit bool) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -237,6 +239,7 @@ func (s Service) List(ctx context.Context, productID string, limit int) (TaskLis
 }
 
 // Submit 按幂等键把草稿任务标 queued 并写入 PENDING dispatch。
+// 供应商不支持或幂等键非法返回 Validation；已提交或同一 key 不同请求返回 Conflict。
 func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey string) (TaskResponse, error) {
 	cap := s.provider().Capability()
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -418,6 +421,7 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 }
 
 // Adopt 把成功结果写入目标 image_generation 节点的当前 artifact。
+// 任务未成功、目标/源 artifact 对不上或节点当前结果已变返回 Conflict。
 func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactID string) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
@@ -494,6 +498,7 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 }
 
 // Revert 按 adoption 事件把节点当前 artifact 恢复到 adopt 之前。
+// adoption 事件不存在返回 NotFound；节点当前 artifact 已变返回 Conflict。
 func (s Service) Revert(ctx context.Context, productID, taskID, eventID, expectedArtifactID string) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var event schema.LocalImageEditAdoptionEvents

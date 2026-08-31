@@ -44,6 +44,7 @@ type Options struct {
 
 // New 组装 zap.Logger：stderr 按 Format 输出；Dir 非空时再挂 Debug 级滚动 JSON 文件。
 // Process 必须是小写字母、数字或连字符。
+// Process 非法或无法创建日志目录时返回 error。
 func New(opts Options) (*zap.Logger, error) {
 	process, err := sanitizeProcess(opts.Process)
 	if err != nil {
@@ -107,6 +108,7 @@ func FilePath(dir, process string) string {
 }
 
 // CleanupOldLogs 删除目录里超过保留天数的 productflow-*.log* 滚动文件。
+// Glob 失败时返回 error；单文件删除失败则跳过。
 func CleanupOldLogs(dir string, retentionDays int) (int, error) {
 	if retentionDays <= 0 {
 		return 0, nil

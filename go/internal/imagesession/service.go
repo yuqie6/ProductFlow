@@ -35,13 +35,15 @@ import (
 // Pool 给 SSE LISTEN；Media 写 bytes。Settings 为 nil 时上限走内置默认。
 // 不要在这里写 workflow_graphs 或 AgentTask。
 type Service struct {
-	DB       *gorm.DB      // 命令事务
-	Pool     *pgxpool.Pool // SSE LISTEN；会话状态推送
-	Media    media.Store   // 写会话素材 bytes
-	Settings interface {   // nil 时生图上限与 tool 字段走内置默认
+	DB    *gorm.DB      // 命令事务
+	Pool  *pgxpool.Pool // SSE LISTEN；会话状态推送
+	Media media.Store   // 写会话素材 bytes
+	// Settings 为 nil 时生图上限与 tool 字段走内置默认。
+	Settings interface {
 		settings.RuntimeReader
 		settings.LimitsReader
 	}
+	// Reconciler 对账供应商原请求；nil 则跳过 ReconcileResponse，不可证明时保持 unknown。
 	Reconciler interface {
 		ReconcileResponse(ctx context.Context, responseID string) (string, error)
 	}
@@ -306,6 +308,7 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 }
 
 // Generate 创建 queued 生成任务并写入 PENDING dispatch；HTTP 不直接入队 broker。
+// 提示词空/超长、尺寸或 tool 非法返回 Validation；会话或图片不存在返回 NotFound。
 func (s Service) Generate(ctx context.Context, sessionID string, req GenerateRequest) (DetailResponse, error) {
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
@@ -479,6 +482,7 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 }
 
 // Attach 把生成结果作为商品图片身份写入商品图库，复用同一 MediaObject，不复制 bytes。
+// 非生成结果或文件缺失返回 Validation；会话/商品/图片不存在返回 NotFound；媒体行缺失返回 Conflict。
 func (s Service) Attach(ctx context.Context, sessionID, assetID, productID string) (product.AssetResponse, error) {
 	var out product.AssetResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -554,6 +558,7 @@ func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, e
 }
 
 // Reconcile 对 unknown 生成任务查询供应商原请求；不可证明时保持 unknown。
+// 任务不存在或 effect 找不到返回 Conflict；非 unknown 状态也 Conflict。无法证明时保持 unknown，不得当失败自动重试。
 func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candidateStart int) (EffectResponse, error) {
 	var out EffectResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

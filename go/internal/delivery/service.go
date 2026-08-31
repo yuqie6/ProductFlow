@@ -46,6 +46,7 @@ type SubmitResult struct {
 }
 
 // Submit 按规范化 DeliverySpec 创建或复用交付任务，并写入 PENDING dispatch。
+// 规格不合法或源图未核验返回 Validation；找不到源图返回 NotFound。
 func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[string]any) (SubmitResult, error) {
 	normalized, err := NormalizeSpec(specRaw)
 	if err != nil {

@@ -19,8 +19,9 @@ import (
 // 应用走 Graph Command（actor_type=recipe），不直接写 workflow_graphs 行。
 // 配方库 ≠ 全局图库 ≠ 收藏画廊；配方不存商品身份或媒体 bytes。
 type HTTP struct {
-	Service  Service     // 必须注入；应用走 Graph Command
-	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌
+	Service Service // 必须注入；应用走 Graph Command
+	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。
+	Settings interface {
 		settings.RuntimeReader
 	}
 }

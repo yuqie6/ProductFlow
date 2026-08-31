@@ -12,6 +12,7 @@ import (
 const TaskTimeout = 30 * time.Minute
 
 // ParseRedis 把 REDIS_URL 交给 asynq。asynq 不是 Run 状态源。
+// REDIS_URL 为空或非法时返回 error。
 func ParseRedis(redisURL string) (asynq.RedisConnOpt, error) {
 	if redisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL is required")
@@ -30,6 +31,7 @@ type TaskPayload struct {
 }
 
 // NewTask 构造 HTTP 默认信封。MaxRetry=0，broker 重试不是业务状态机。
+// payload JSON 无法 marshal 时失败并返回 error。
 func NewTask(dispatchID, aggregateID string) (*asynq.Task, error) {
 	body, err := json.Marshal(TaskPayload{DispatchID: dispatchID, AggregateID: aggregateID})
 	if err != nil {

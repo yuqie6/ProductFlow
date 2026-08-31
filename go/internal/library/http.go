@@ -21,8 +21,9 @@ import (
 // 路由前缀 /api/media-library；工作流子图库关联也挂在这里，但不复制 MediaObject bytes。
 // 不要和 product 商品图库、imagesession 连续生图、recipe 配方库搞混。
 type HTTP struct {
-	Service  Service     // 必须注入；拥有全局素材命令
-	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌
+	Service Service // 必须注入；拥有全局素材命令
+	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。
+	Settings interface {
 		settings.RuntimeReader
 		settings.LimitsReader
 	}

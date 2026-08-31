@@ -41,7 +41,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, limit int) (Reco
 
 // RecoverUnfinishedTurns 用调用方已构造的 Service 跑同一套崩溃恢复（测试与 dispatcher 共用）。
 //
-// Service 必须带 Graph/Product，才能在 lease 过期时 reconcile 副作用并按原幂等键重试。不要传入只读的空依赖。
+// Service 必须带 Graph/Product，才能在 lease 过期时 reconcile 副作用并按原幂等键重试。不要传入只读的空依赖。数据库失败返回 error。
 func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, error) {
 	return recoverUnfinishedTurns(ctx, s, expiredExecutionBatchLimit)
 }

@@ -20,6 +20,7 @@ const streamCompactAfter = 7 * 24 * time.Hour
 // 仅处理 finished_at 早于 7 天且已有完整 assistant/message 的终态（含 awaiting_confirmation）。projectTurnEvent 对 compacted 行发 agent.ignored。
 //
 // 禁区：不要 DELETE 事件行；不要改 agent_tasks 或 Goal；不要把 compact 当成「journal 可以不连续」的借口。
+// 数据库失败返回 error。
 func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (int, error) {
 	cutoff := now.Add(-streamCompactAfter)
 	var ids []string

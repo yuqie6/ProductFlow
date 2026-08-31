@@ -65,11 +65,13 @@ func (p GeminiImage) Capability() localedit.Capability {
 }
 
 // Edit 实现 localedit.Provider，拒绝 masked local edit，不打网。
+// 未声明 mask 能力时返回 Validation。
 func (p GeminiImage) Edit(context.Context, localedit.EditRequest) (localedit.EditResult, error) {
 	return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
 }
 
 // GenerateImage 实现 graph.ImageProvider，调用 Google generateContent。
+// 已证明 4xx 可为失败；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p GeminiImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	size := pixelSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
@@ -81,6 +83,7 @@ func (p GeminiImage) GenerateImage(ctx context.Context, req graph.ImageRequest) 
 }
 
 // Generate 实现 imagesession.ChatProvider，调用 Google generateContent。
+// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
 func (p GeminiImage) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	size := req.Size
 	if size == "" {

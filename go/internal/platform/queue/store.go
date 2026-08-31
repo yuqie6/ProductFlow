@@ -97,6 +97,7 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 }
 
 // RestageIfIdle 仅在无 PENDING/SENT/DEAD 行时重新入队。返回是否新建或重置了信封。
+// 查行或写库失败时返回 error；同一 key 身份冲突返回 Conflict。
 func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, payload any) (bool, error) {
 	key := DeliveryKey(actorName, aggregateID)
 	existing, err := loadByDeliveryKey(ctx, tx, key)
@@ -113,6 +114,7 @@ func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 }
 
 // StageForActor 用 [DeliveryKey] 调用 [Stage]；delay>0 时设置 available_at。
+// 同一 key 绑到不同 actor/aggregate 返回 Conflict。
 func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
 	var availableAt *time.Time
 	if delay > 0 {
@@ -123,6 +125,7 @@ func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 }
 
 // Requeue 把已有信封拉回 PENDING。SENT 且 lease 仍有效时，除非 allowActiveLease，否则原样返回。
+// payload JSON 无法 marshal 时返回 error；同一 key 身份冲突返回 Conflict。
 func Requeue(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time, allowActiveLease bool) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
