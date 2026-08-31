@@ -1,4 +1,6 @@
 import type { TurnEvent } from "./contracts.js";
+import { ProductFlowError } from "./contracts.js";
+import { recordEventBatch, recordEventBatchConflict } from "./metrics.js";
 
 export const JOURNAL_BATCH_FLUSH_MS = 20;
 export const JOURNAL_BATCH_MAX_EVENTS = 64;
@@ -75,7 +77,13 @@ export class JournalEventBatcher {
   private async flushLoop(): Promise<void> {
     while (this.pending.length > 0) {
       const batch = this.nextBatch();
-      await this.appendBatch(batch);
+      try {
+        await this.appendBatch(batch);
+        recordEventBatch();
+      } catch (error: unknown) {
+        if (error instanceof ProductFlowError && error.status === 409) recordEventBatchConflict();
+        throw error;
+      }
       this.pending.splice(0, batch.length);
     }
   }

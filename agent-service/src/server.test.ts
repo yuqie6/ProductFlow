@@ -64,6 +64,59 @@ describe("ProductFlow Pi HTTP contract", () => {
       );
       expect(events.status).toBe(404);
       expect(await events.json()).toMatchObject({ error: { code: "not_found" } });
+
+      const metricsUnauthorized = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+      expect(metricsUnauthorized.status).toBe(401);
+      const metrics = await fetch(`http://127.0.0.1:${address.port}/metrics`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(metrics.status).toBe(200);
+      const body = await metrics.text();
+      expect(body).toContain("productflow_agent_service_active_turns");
+      expect(body).toContain("productflow_agent_service_background_resumable 0");
+      expect(body).not.toContain("conversation_id");
+    } finally {
+      await manager.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("does not register /metrics when the internal token is unset", async () => {
+    const store = new TurnStore("/tmp/productflow-pi-metrics-unconfigured");
+    await store.init();
+    const manager = new PiRuntimeManager(
+      {
+        listenAddress: "127.0.0.1:0",
+        dataRoot: "/tmp/productflow-pi-metrics-unconfigured",
+        productFlowBaseURL: "http://127.0.0.1:29282",
+        internalToken: "",
+        requestTimeoutMS: 1000,
+        providerRequestTimeoutMS: 5_000,
+        maxBodyBytes: 1024 * 1024,
+        maxIterations: 4,
+        modelContextWindow: 128_000,
+        autoCompactTokenLimit: 96_000,
+        maxConcurrentTurns: 1,
+        providerAPIKey: "",
+        providerBaseURL: null,
+        providerModel: null,
+        providerReasoningEffort: null,
+        providerReasoningSummary: null,
+        providerTextVerbosity: null,
+        providerServiceTier: null,
+        questionTimeoutMS: 900_000,
+      },
+      store,
+      new ProductFlowClient("http://127.0.0.1:29282", "unused", 1000),
+      await loadSkillCatalog(),
+    );
+    const server = createHTTPServer(manager, manager.config);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind");
+    try {
+      const metrics = await fetch(`http://127.0.0.1:${address.port}/metrics`);
+      expect(metrics.status).toBe(404);
     } finally {
       await manager.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));

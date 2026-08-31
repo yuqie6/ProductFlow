@@ -10,6 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { byteLength, PageContext, StartTurnInput, TurnAnswer, validatePageContext } from "./contracts.js";
 import { Config } from "./config.js";
 import { ProductFlowError } from "./contracts.js";
+import { renderMetrics } from "./metrics.js";
 import { PiRuntimeManager, RuntimeLookup } from "./pi-runtime.js";
 import { RuntimeError } from "./store.js";
 
@@ -34,6 +35,25 @@ async function handleRequest(
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   if (url.pathname === "/healthz" && request.method === "GET") {
     writeJSON(response, 200, manager.health());
+    return;
+  }
+  if (url.pathname === "/metrics" && request.method === "GET") {
+    if (!config.internalToken) {
+      writeJSON(response, 404, { error: { code: "not_found", message: "Agent route does not exist" } });
+      return;
+    }
+    if (!authorized(request, config.internalToken)) {
+      writeJSON(response, 401, { error: { code: "unauthorized", message: "invalid internal Agent token" } });
+      return;
+    }
+    const health = manager.health();
+    response.statusCode = 200;
+    response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+    response.end(renderMetrics({
+      activeTurns: health.active_turns,
+      queuedTurns: health.queued_turns,
+      backgroundResumable: false,
+    }));
     return;
   }
   if (!authorized(request, config.internalToken)) {
