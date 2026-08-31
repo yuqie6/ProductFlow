@@ -552,25 +552,25 @@ export function validateSkillEvalFixture(fixture: SkillEvalFixture, catalog: Ski
 }
 
 export function assertSkillEvalGuardsTools(fixture: SkillEvalFixture, catalog: SkillEvalCatalogView): void {
-  const guarded = new Set(guardsToolsFromCatalogPrompt(catalog.prompt, fixture.skillName));
+  const owned = new Set(ownedToolsFromCatalogPrompt(catalog.prompt, fixture.skillName));
   for (const call of fixture.scriptedCalls) {
     if (call.name === PRODUCTFLOW_SKILL_TOOL_NAME) continue;
-    if (!guarded.has(call.name)) {
+    if (!owned.has(call.name)) {
       throw new Error(
-        `Skill eval ${fixture.skillName} expected tool ${call.name} is not in that skill's guards_tools`,
+        `Skill eval ${fixture.skillName} expected tool ${call.name} is not in that skill's owns_tools`,
       );
     }
   }
 }
 
-function guardsToolsFromCatalogPrompt(prompt: string, skillName: string): string[] {
+function ownedToolsFromCatalogPrompt(prompt: string, skillName: string): string[] {
   const escapedName = skillName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const match = new RegExp(
-    `<skill><name>${escapedName}</name>[\\s\\S]*?<guards_tools>([^<]*)</guards_tools>`,
+    `<skill><name>${escapedName}</name>[\\s\\S]*?<owns_tools>([^<]*)</owns_tools>`,
     "u",
   ).exec(prompt);
   if (!match) {
-    throw new Error(`Skill catalog is missing guards_tools for ${skillName}`);
+    throw new Error(`Skill catalog is missing owns_tools for ${skillName}`);
   }
   return match[1]
     .split(",")

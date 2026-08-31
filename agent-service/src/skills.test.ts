@@ -27,7 +27,7 @@ function exampleSkillMarkdown(frontmatter: string, body = EXAMPLE_BODY): string 
 const VALID_EXAMPLE_FRONTMATTER = `name: example-skill
 description: Example skill for testing.
 triggers: ["test skill"]
-guards_tools: ["ask_user"]
+owns_tools: ["ask_user"]
 scope: any
 version: 1`;
 
@@ -44,14 +44,14 @@ describe("ProductFlow Skill catalog", () => {
     ]);
     expect(catalog.prompt).toContain("<name>graph-editing</name>");
     expect(catalog.prompt).toContain("<triggers>edit graph");
-    expect(catalog.prompt).toContain("<guards_tools>");
+    expect(catalog.prompt).toContain("<owns_tools>");
     expect(catalog.prompt).not.toContain("productflow-core");
     expect(catalog.prompt).not.toContain("load it before other skills");
     expect(catalog.prompt).not.toContain("一次可逆编辑");
     await expect(catalog.load("graph-editing")).resolves.toContain("只有零匹配或多匹配时才提问");
     await expect(catalog.load("graph-editing")).resolves.toContain("一张生成图作为有界默认值");
     await expect(catalog.load("media-library-organization")).resolves.toContain("检查完成后继续原请求");
-    await expect(catalog.load("product-intake")).resolves.toContain("不得只在普通回复里列问题");
+    await expect(catalog.load("product-intake")).resolves.toContain("不要用普通回复代替结构化问题");
     await expect(catalog.load("product-intake")).resolves.toContain("finalize_product_intake_v1");
     await expect(catalog.load("product-intake")).resolves.toContain("birth_expandable");
     await expect(catalog.load("graph-editing", "references/add-shot.md")).resolves.toContain("create_group");
@@ -104,7 +104,7 @@ describe("ProductFlow Skill catalog", () => {
         exampleSkillMarkdown(`name: wrong-name
 description: Example skill for testing.
 triggers: ["test skill"]
-guards_tools: ["ask_user"]
+owns_tools: ["ask_user"]
 scope: any
 version: 1`),
       );
@@ -124,7 +124,7 @@ version: 1`),
         join(skillDir, "SKILL.md"),
         exampleSkillMarkdown(`description: Example skill for testing.
 triggers: ["test skill"]
-guards_tools: ["ask_user"]
+owns_tools: ["ask_user"]
 scope: any
 version: 1`),
       );
@@ -135,7 +135,7 @@ version: 1`),
     }
   });
 
-  it("requires scope, version, guards_tools, and the five body headings", async () => {
+  it("requires scope, version, owns_tools, and the five body headings", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-skills-"));
     try {
       const skillDir = join(root, "example-skill");
@@ -146,7 +146,7 @@ version: 1`),
         exampleSkillMarkdown(`name: example-skill
 description: Example skill for testing.
 triggers: ["test skill"]
-guards_tools: ["ask_user"]
+owns_tools: ["ask_user"]
 version: 1`),
       );
       await expect(loadSkillCatalog(root)).rejects.toThrow("must include scope");
@@ -156,7 +156,7 @@ version: 1`),
         exampleSkillMarkdown(`name: example-skill
 description: Example skill for testing.
 triggers: ["test skill"]
-guards_tools: ["ask_user"]
+owns_tools: ["ask_user"]
 scope: any`),
       );
       await expect(loadSkillCatalog(root)).rejects.toThrow("must include version");
@@ -166,11 +166,11 @@ scope: any`),
         exampleSkillMarkdown(`name: example-skill
 description: Example skill for testing.
 triggers: ["test skill"]
-owns_tools: ["ask_user"]
+guards_tools: ["ask_user"]
 scope: any
 version: 1`),
       );
-      await expect(loadSkillCatalog(root)).rejects.toThrow("must include guards_tools");
+      await expect(loadSkillCatalog(root)).rejects.toThrow("must include owns_tools");
 
       await writeFile(
         join(skillDir, "SKILL.md"),

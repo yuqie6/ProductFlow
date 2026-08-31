@@ -6,7 +6,7 @@ triggers:
   - why did generation fail
   - inspect run
   - node error
-guards_tools:
+owns_tools:
   - get_product_workflow_context_v1
   - inspect_workflow_runs_v1
   - inspect_global_workflow_runs_v1

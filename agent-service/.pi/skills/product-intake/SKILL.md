@@ -6,9 +6,10 @@ triggers:
   - complete intake
   - reference images
   - image types
-guards_tools:
+owns_tools:
   - ask_user
   - get_product_workflow_context_v1
+  - list_product_image_assets_v2
   - inspect_product_image_assets_v1
   - finalize_product_intake_v1
 scope: product_workflow
@@ -23,7 +24,9 @@ version: 2
 
 ## 前置事实
 
-先读 `get_product_workflow_context_v1`。已上传的 reference asset ID 和用户点名的图片类型是权威。只在缺了会改变计划产出的事实时用 `ask_user`；不得只在普通回复里列问题后结束 Turn。需要看图时用 `inspect_product_image_assets_v1` 检查明确选中的资产。
+先读 `get_product_workflow_context_v1`。已上传的 reference asset ID 和用户点名的图片类型是权威；需要确认可用资产时读 `list_product_image_assets_v2`，需要看图时用 `inspect_product_image_assets_v1` 检查明确选中的资产。
+
+若上下文仍缺图片类型、每类数量或 reference selection，必须在完成必要读取后的同一 Turn 调用 `ask_user`。不要输出“我先读取”“稍后补齐”一类计划后结束 Turn，也不要用普通回复代替结构化问题。
 
 ## 工作循环
 

@@ -35,7 +35,7 @@ describe("ProductFlow scripted skill evals", () => {
     }
   });
 
-  it("rejects fixtures whose domain tools are missing from guards_tools", async () => {
+  it("rejects fixtures whose domain tools are missing from owns_tools", async () => {
     const catalog = await loadSkillCatalog();
     const base = SKILL_EVAL_FIXTURES.find((item) => item.skillName === "product-intake");
     expect(base).toBeDefined();
@@ -50,7 +50,7 @@ describe("ProductFlow scripted skill evals", () => {
         },
         catalog,
       ),
-    ).toThrow(/propose_global_draft is not in that skill's guards_tools/);
+    ).toThrow(/propose_global_draft is not in that skill's owns_tools/);
   });
 
   it("rejects an illegal payload and accepts a repaired legal payload within two attempts", () => {

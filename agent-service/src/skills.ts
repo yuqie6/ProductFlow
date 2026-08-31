@@ -22,7 +22,7 @@ interface SkillDescriptor {
   name: string;
   description: string;
   triggers: string[];
-  guardsTools: string[];
+  ownsTools: string[];
   scope: SkillScope;
   version: number;
   filePath: string;
@@ -57,7 +57,7 @@ export async function loadSkillCatalog(skillRoot?: string): Promise<SkillCatalog
       name: skill.name,
       description: skill.description.trim(),
       triggers: [],
-      guardsTools: [],
+      ownsTools: [],
       scope: "any",
       version: 1,
       filePath: resolve(skill.filePath),
@@ -79,7 +79,7 @@ export async function loadSkillCatalog(skillRoot?: string): Promise<SkillCatalog
       throw new Error(`ProductFlow Skill frontmatter name must match its directory: ${descriptor.name}`);
     }
     descriptor.triggers = readFrontmatterList(source, "triggers");
-    descriptor.guardsTools = readFrontmatterList(source, "guards_tools");
+    descriptor.ownsTools = readFrontmatterList(source, "owns_tools");
     descriptor.scope = readSkillScope(source, descriptor.name);
     descriptor.version = readSkillVersion(source, descriptor.name);
     assertSkillBodyStructure(source, descriptor.name);
@@ -148,10 +148,10 @@ function validateDescriptor(root: string, descriptor: SkillDescriptor, names: Se
   if (descriptor.triggers.length === 0) {
     throw new Error(`ProductFlow Skill frontmatter must include triggers: ${descriptor.name}`);
   }
-  if (descriptor.guardsTools.length === 0) {
-    throw new Error(`ProductFlow Skill frontmatter must include guards_tools: ${descriptor.name}`);
+  if (descriptor.ownsTools.length === 0) {
+    throw new Error(`ProductFlow Skill frontmatter must include owns_tools: ${descriptor.name}`);
   }
-  for (const toolName of descriptor.guardsTools) {
+  for (const toolName of descriptor.ownsTools) {
     if (!toolManifestEntry(toolName)) {
       throw new Error(`ProductFlow Skill owns unknown tool ${toolName}: ${descriptor.name}`);
     }
@@ -253,7 +253,7 @@ function formatSkillCatalogPrompt(descriptors: SkillDescriptor[]): string {
   ];
   for (const descriptor of descriptors) {
     lines.push(
-      `  <skill><name>${escapeXML(descriptor.name)}</name><description>${escapeXML(descriptor.description)}</description><triggers>${descriptor.triggers.map(escapeXML).join(" | ")}</triggers><guards_tools>${descriptor.guardsTools.map(escapeXML).join(", ")}</guards_tools><scope>${descriptor.scope}</scope></skill>`,
+      `  <skill><name>${escapeXML(descriptor.name)}</name><description>${escapeXML(descriptor.description)}</description><triggers>${descriptor.triggers.map(escapeXML).join(" | ")}</triggers><owns_tools>${descriptor.ownsTools.map(escapeXML).join(", ")}</owns_tools><scope>${descriptor.scope}</scope></skill>`,
     );
   }
   lines.push("</available_productflow_skills>");

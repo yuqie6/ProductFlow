@@ -6,7 +6,7 @@ triggers:
   - retry workflow
   - generate images
   - run existing graph
-guards_tools:
+owns_tools:
   - ask_user
   - get_product_workflow_context_v1
   - inspect_workflow_runs_v1

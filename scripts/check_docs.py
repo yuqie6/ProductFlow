@@ -277,12 +277,12 @@ def _check_skill_tool_names(errors: list[str]) -> None:
     for skill_md in sorted(skills_root.glob("*/SKILL.md")):
         content = skill_md.read_text(encoding="utf-8")
         relative = skill_md.relative_to(ROOT).as_posix()
-        guards = _frontmatter_list(content, "guards_tools")
-        if not guards:
-            errors.append(f"{relative} is missing guards_tools")
-        for tool in guards:
+        owned_tools = _frontmatter_list(content, "owns_tools")
+        if not owned_tools:
+            errors.append(f"{relative} is missing owns_tools")
+        for tool in owned_tools:
             if tool not in names:
-                errors.append(f"{relative} guards_tools references unknown tool {tool}")
+                errors.append(f"{relative} owns_tools references unknown tool {tool}")
         markdown_files = [skill_md, *sorted((skill_md.parent / "references").glob("*.md"))]
         for path in markdown_files:
             if not path.exists():

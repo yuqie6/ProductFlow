@@ -6,7 +6,7 @@ triggers:
   - rename assets
   - folders
   - archive media
-guards_tools:
+owns_tools:
   - ask_user
   - list_global_media_library_assets_v1
   - inspect_global_media_library_assets_v1

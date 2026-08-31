@@ -7,7 +7,7 @@ triggers:
   - connect nodes
   - rename node
   - propose overlay
-guards_tools:
+owns_tools:
   - get_product_workflow_context_v1
   - get_node_detail_v1
   - apply_graph_change_set_v1
