@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Check,
@@ -47,25 +47,30 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
   const [editor, setEditor] = useState<SessionEditor>(null);
   const [archiveTarget, setArchiveTarget] = useState<AgentSession | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const sessionsQuery = useQuery({
+  const sessionsQuery = useInfiniteQuery({
     queryKey: ["agent-sessions", true, conversation.product_id],
-    queryFn: () => api.listAgentSessions(true, conversation.product_id),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.listAgentSessions(true, conversation.product_id, { after: pageParam }),
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     staleTime: 30_000,
   });
-  const currentSession = sessionsQuery.data?.items.find(
+  const sessionItems = useMemo(
+    () => sessionsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [sessionsQuery.data?.pages],
+  );
+  const currentSession = sessionItems.find(
     (agentSession) => agentSession.id === conversation.session_id,
   ) ?? null;
   const visibleSessions = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase();
-    const sessions = sessionsQuery.data?.items ?? [];
     if (!normalizedSearch) {
-      return sessions;
+      return sessionItems;
     }
-    return sessions.filter((agentSession) => {
+    return sessionItems.filter((agentSession) => {
       const workspaceNames = agentSession.conversations.map((item) => item.product_name).join(" ");
       return `${agentSession.title} ${workspaceNames}`.toLocaleLowerCase().includes(normalizedSearch);
     });
-  }, [search, sessionsQuery.data?.items]);
+  }, [search, sessionItems]);
   const activeSessions = visibleSessions.filter((agentSession) => agentSession.status === "active");
   const archivedSessions = visibleSessions.filter((agentSession) => agentSession.status === "archived");
 
@@ -180,7 +185,7 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
       setOpen(false);
       return;
     }
-    const target = sessionsQuery.data?.items.find((agentSession) => agentSession.id === sessionId);
+    const target = sessionItems.find((agentSession) => agentSession.id === sessionId);
     const targetConversation = target ? selectAgentSessionConversation(target) : null;
     if (!targetConversation?.product_id) {
       setNotice(t("agentWorkbench.session.noConversation"));
@@ -295,7 +300,7 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
                   {t("agentWorkbench.session.label")}
                 </h3>
                 <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
-                  {sessionsQuery.data?.items.length ?? 0}
+                  {sessionItems.length}
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-0.5">
@@ -438,6 +443,16 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
                       </p>
                       {archivedSessions.map(renderSessionRow)}
                     </div>
+                  ) : null}
+                  {sessionsQuery.hasNextPage ? (
+                    <button
+                      type="button"
+                      onClick={() => void sessionsQuery.fetchNextPage()}
+                      disabled={sessionsQuery.isFetchingNextPage}
+                      className="mt-1 flex h-9 w-full items-center justify-center rounded-lg text-xs font-medium text-text-secondary hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-60"
+                    >
+                      {t("agentWorkbench.session.loadMore")}
+                    </button>
                   ) : null}
                 </>
               )}

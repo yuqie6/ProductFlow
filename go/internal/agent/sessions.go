@@ -17,7 +17,27 @@ import (
 var sentenceSplit = regexp.MustCompile(`[\r\n。！？!?；;]`)
 var headingPrefix = regexp.MustCompile(`^#+\s*`)
 
-func (s Service) ListSessions(ctx context.Context, includeArchived bool, productID *string) (SessionListResponse, error) {
+type sessionCursor struct {
+	V      int    `json:"v"`
+	RankAt string `json:"rank_at"`
+	ID     string `json:"id"`
+}
+
+func (s Service) ListSessions(ctx context.Context, includeArchived bool, productID *string, after string, limit int) (SessionListResponse, error) {
+	if limit < 1 || limit > sessionListMax {
+		return SessionListResponse{}, apperr.Validationf("Agent Session 分页 limit 必须在 1 到 %d 之间", sessionListMax)
+	}
+	var cursor *sessionCursor
+	if after != "" {
+		var decoded sessionCursor
+		if err := decodeCursor(after, &decoded, "Agent Session 分页 cursor 无效"); err != nil {
+			return SessionListResponse{}, err
+		}
+		if decoded.V != sessionCursorVersion {
+			return SessionListResponse{}, apperr.Validation("Agent Session 分页 cursor 无效")
+		}
+		cursor = &decoded
+	}
 	var out SessionListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if productID == nil {
@@ -25,11 +45,12 @@ func (s Service) ListSessions(ctx context.Context, includeArchived bool, product
 				return err
 			}
 		}
-		items, err := listSessions(ctx, pgxTx, includeArchived, productID)
+		items, next, err := listSessions(ctx, pgxTx, includeArchived, productID, cursor, limit)
 		if err != nil {
 			return err
 		}
 		out.Items = items
+		out.NextCursor = next
 		return nil
 	})
 	return out, err
@@ -167,7 +188,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 	return nil
 }
 
-func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string) ([]SessionResponse, error) {
+func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string, cursor *sessionCursor, limit int) ([]SessionResponse, *string, error) {
 	q := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{})
 	if productID == nil {
 		q = q.Where("product_id IS NULL")
@@ -177,26 +198,60 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 	if !includeArchived {
 		q = q.Where("status = ?", "active")
 	}
+	rankSQL := sessionRankSQL
+	if cursor != nil {
+		rankAt, err := time.Parse(time.RFC3339Nano, cursor.RankAt)
+		if err != nil {
+			rankAt, err = time.Parse(time.RFC3339, cursor.RankAt)
+			if err != nil {
+				return nil, nil, apperr.Validation("Agent Session 分页 cursor 无效")
+			}
+		}
+		q = q.Where("("+rankSQL+" < ? OR ("+rankSQL+" = ? AND agent_sessions.id < ?))", rankAt, rankAt, cursor.ID)
+	}
 	var ids []string
-	err := q.Order(`GREATEST(
-			agent_sessions.updated_at,
-			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
-		) DESC, agent_sessions.id DESC`).
-		Limit(sessionListMax).
+	err := q.Order(rankSQL+` DESC, agent_sessions.id DESC`).
+		Limit(limit+1).
 		Pluck("id", &ids).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
 	}
 	out := make([]SessionResponse, 0, len(ids))
 	for _, id := range ids {
 		item, err := loadSession(ctx, pgxTx, id)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, item)
 	}
-	return out, nil
+	var next *string
+	if hasMore && len(out) > 0 {
+		oldest := out[len(out)-1]
+		rankAt := oldest.UpdatedAt
+		for _, conv := range oldest.Conversations {
+			if conv.UpdatedAt.After(rankAt) {
+				rankAt = conv.UpdatedAt
+			}
+		}
+		encoded, err := encodeCursor(sessionCursor{
+			V: sessionCursorVersion, RankAt: rankAt.UTC().Format(time.RFC3339Nano), ID: oldest.ID,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		next = &encoded
+	}
+	return out, next, nil
 }
+
+const sessionRankSQL = `GREATEST(
+			agent_sessions.updated_at,
+			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
+		)`
 
 func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
 	var row schema.AgentSessions

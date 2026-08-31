@@ -91,7 +91,12 @@ func (h HTTP) listSessions(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("product_id")); raw != "" {
 		productID = &raw
 	}
-	out, err := h.Service.ListSessions(c.Request.Context(), queryBool(c, "include_archived", false), productID)
+	limit, err := queryInt(c, "limit", sessionListDefaultLimit, 1, sessionListMax)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ListSessions(c.Request.Context(), queryBool(c, "include_archived", false), productID, c.Query("after"), limit)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

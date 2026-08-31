@@ -772,6 +772,7 @@ export interface AgentSession {
 
 export interface AgentSessionListResponse {
   items: AgentSession[];
+  next_cursor: string | null;
 }
 
 export type AgentTaskStatus =

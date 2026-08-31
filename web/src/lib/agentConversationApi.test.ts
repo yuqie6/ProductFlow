@@ -9,7 +9,7 @@ describe("Agent conversation API", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ items: [] }),
+      json: async () => ({ items: [], next_cursor: null }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -18,7 +18,7 @@ describe("Agent conversation API", () => {
     await api.ensureAgentWorkbench("product/1", "session/1");
 
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
-      ["/api/v2/agent-sessions?include_archived=true", "GET"],
+      ["/api/v2/agent-sessions?include_archived=true&limit=20", "GET"],
       ["/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1", "GET"],
       ["/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1", "POST"],
     ]);

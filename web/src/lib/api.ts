@@ -378,10 +378,20 @@ export const api = {
       headers: { "Idempotency-Key": idempotencyKey },
     });
   },
-  listAgentSessions(includeArchived = false, productId?: string | null): Promise<AgentSessionListResponse> {
-    const params = new URLSearchParams({ include_archived: String(includeArchived) });
+  listAgentSessions(
+    includeArchived = false,
+    productId?: string | null,
+    options?: { after?: string | null; limit?: number },
+  ): Promise<AgentSessionListResponse> {
+    const params = new URLSearchParams({
+      include_archived: String(includeArchived),
+      limit: String(options?.limit ?? 20),
+    });
     if (productId) {
       params.set("product_id", productId);
+    }
+    if (options?.after) {
+      params.set("after", options.after);
     }
     return request(`/api/v2/agent-sessions?${params}`);
   },

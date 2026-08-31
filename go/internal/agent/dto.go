@@ -9,32 +9,34 @@ import (
 )
 
 const (
-	sessionTitleMax       = 160
-	sessionListMax        = 100
-	sessionDefaultTitle   = "新会话"
-	taskTitleMax          = 160
-	taskGoalMax           = 20_000
-	taskSummaryMax        = 2_000
-	taskListDefaultLimit  = 50
-	taskListMaxLimit      = 100
-	taskCursorVersion     = 1
-	turnDefaultPageSize   = 20
-	turnMaxPageSize       = 50
-	turnCursorVersion     = 1
-	maxInputText          = 20_000
-	maxInputAssets        = 6
-	maxIdempotencyBytes   = 200
-	maxEventSequence      = 10_000
-	maxCheckpointSequence = 10_000
-	maxEventPayloadBytes  = 128 * 1024
-	maxCheckpointPayload  = 64 * 1024
-	maxTurnsPerSession    = 1_000
-	maxSSEConnections     = 100
-	leaseSeconds          = 60
-	toolContractVersion   = ToolManifestVersion
-	assetListDefaultLimit = 50
-	assetListMaxLimit     = 100
-	globalProductListMax  = 100
+	sessionTitleMax         = 160
+	sessionListDefaultLimit = 20
+	sessionListMax          = 100
+	sessionCursorVersion    = 1
+	sessionDefaultTitle     = "新会话"
+	taskTitleMax            = 160
+	taskGoalMax             = 20_000
+	taskSummaryMax          = 2_000
+	taskListDefaultLimit    = 50
+	taskListMaxLimit        = 100
+	taskCursorVersion       = 1
+	turnDefaultPageSize     = 20
+	turnMaxPageSize         = 50
+	turnCursorVersion       = 1
+	maxInputText            = 20_000
+	maxInputAssets          = 6
+	maxIdempotencyBytes     = 200
+	maxEventSequence        = 10_000
+	maxCheckpointSequence   = 10_000
+	maxEventPayloadBytes    = 128 * 1024
+	maxCheckpointPayload    = 64 * 1024
+	maxTurnsPerSession      = 1_000
+	maxSSEConnections       = 100
+	leaseSeconds            = 60
+	toolContractVersion     = ToolManifestVersion
+	assetListDefaultLimit   = 50
+	assetListMaxLimit       = 100
+	globalProductListMax    = 100
 )
 
 type SessionConversation struct {
@@ -60,7 +62,8 @@ type SessionResponse struct {
 }
 
 type SessionListResponse struct {
-	Items []SessionResponse `json:"items"`
+	Items      []SessionResponse `json:"items"`
+	NextCursor *string           `json:"next_cursor"`
 }
 
 type TaskResponse struct {

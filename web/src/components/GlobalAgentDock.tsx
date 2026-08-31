@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Bot,
@@ -427,9 +427,11 @@ export function GlobalAgentDock() {
     return () => window.removeEventListener("productflow:open-agent", handleOpenAgent);
   }, []);
 
-  const sessionsQuery = useQuery({
+  const sessionsQuery = useInfiniteQuery({
     queryKey: ["agent-sessions", true],
-    queryFn: () => api.listAgentSessions(true),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.listAgentSessions(true, undefined, { after: pageParam }),
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
     staleTime: 15_000,
     refetchInterval: agentDockListRefetchInterval(open, controlEventsFallback),
   });
@@ -539,7 +541,10 @@ export function GlobalAgentDock() {
     };
   }, [open]);
 
-  const sessions = sessionsQuery.data?.items ?? [];
+  const sessions = useMemo(
+    () => sessionsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [sessionsQuery.data?.pages],
+  );
   const tasks = tasksQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const activeTaskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
   const workspaceByConversationId = useMemo(() => {
@@ -1203,6 +1208,7 @@ export function GlobalAgentDock() {
                       ) : null}
                     </>
                   ) : (
+                    <>
                     <SessionList
                       loading={sessionsQuery.isLoading}
                       sessions={visibleSessions}
@@ -1234,6 +1240,18 @@ export function GlobalAgentDock() {
                       onArchive={setArchiveTarget}
                       emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noSessions")}
                     />
+                    {sessionsQuery.hasNextPage ? (
+                      <button
+                        type="button"
+                        onClick={() => void sessionsQuery.fetchNextPage()}
+                        disabled={sessionsQuery.isFetchingNextPage}
+                        className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-border-l2 bg-surface-raised text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {sessionsQuery.isFetchingNextPage ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : null}
+                        {t("agentWorkbench.session.loadMore")}
+                      </button>
+                    ) : null}
+                    </>
                   )}
                 </div>
               </>

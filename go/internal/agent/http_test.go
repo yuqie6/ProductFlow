@@ -286,6 +286,27 @@ func TestAgentSessionCRUD(t *testing.T) {
 		t.Fatal("empty list")
 	}
 
+	second := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, second, http.StatusCreated)
+	second.Body.Close()
+	third := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, third, http.StatusCreated)
+	third.Body.Close()
+	firstPage := as.do(t, http.MethodGet, "/api/v2/agent-sessions?limit=1", nil, "", nil)
+	as.mustStatus(t, firstPage, http.StatusOK)
+	var latest SessionListResponse
+	as.decode(t, firstPage, &latest)
+	if len(latest.Items) != 1 || latest.NextCursor == nil || *latest.NextCursor == "" {
+		t.Fatalf("latest page %+v", latest)
+	}
+	older := as.do(t, http.MethodGet, "/api/v2/agent-sessions?limit=1&after="+*latest.NextCursor, nil, "", nil)
+	as.mustStatus(t, older, http.StatusOK)
+	var olderPage SessionListResponse
+	as.decode(t, older, &olderPage)
+	if len(olderPage.Items) != 1 || olderPage.Items[0].ID == latest.Items[0].ID {
+		t.Fatalf("older page %+v latest %+v", olderPage, latest)
+	}
+
 	renamed := as.doJSON(t, http.MethodPatch, "/api/v2/agent-sessions/"+session.ID, map[string]any{"title": "工作会话"})
 	as.mustStatus(t, renamed, http.StatusOK)
 	as.decode(t, renamed, &session)
