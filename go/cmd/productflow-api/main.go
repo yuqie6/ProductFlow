@@ -20,6 +20,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
+	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/providers"
@@ -66,6 +67,7 @@ func main() {
 	})
 	engine.Use(httpx.Session(cookieStore))
 	httpx.RegisterHealth(engine, pool)
+	pfmetrics.Register(engine, gdb, cfg.MetricsBearerToken)
 	settingsStore := settings.NewStore(pool, cfg)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	graphService := graph.Service{DB: gdb, AfterRunStatus: agent.SyncGraphRunToTasks, Products: product.GraphGuard{}}

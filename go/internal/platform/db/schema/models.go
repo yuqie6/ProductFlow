@@ -109,6 +109,33 @@ type AgentTurnCheckpoints struct {
 
 func (AgentTurnCheckpoints) TableName() string { return "agent_turn_checkpoints" }
 
+type AgentModelInvocations struct {
+	ID                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	TurnProjectionID   string     `gorm:"column:turn_projection_id;type:varchar(36);not null"`
+	ExecutionID        string     `gorm:"column:execution_id;type:varchar(36);not null"`
+	ModelRequestID     string     `gorm:"column:model_request_id;type:varchar(120);not null"`
+	Attempt            int        `gorm:"column:attempt;type:integer;not null"`
+	FencingToken       int        `gorm:"column:fencing_token;type:integer;not null"`
+	Provider           string     `gorm:"column:provider;type:varchar(80);not null"`
+	Model              string     `gorm:"column:model;type:varchar(160);not null"`
+	ExecutionMode      string     `gorm:"column:execution_mode;type:varchar(24);not null"`
+	ProviderResponseID *string    `gorm:"column:provider_response_id;type:varchar(200)"`
+	ProviderCursor     *string    `gorm:"column:provider_cursor;type:text"`
+	Status             string     `gorm:"column:status;type:varchar(24);not null"`
+	DurationMS         *int64     `gorm:"column:duration_ms;type:bigint"`
+	InputTokens        *int64     `gorm:"column:input_tokens;type:bigint"`
+	OutputTokens       *int64     `gorm:"column:output_tokens;type:bigint"`
+	TotalTokens        *int64     `gorm:"column:total_tokens;type:bigint"`
+	UsageSource        string     `gorm:"column:usage_source;type:varchar(24);not null"`
+	ErrorCode          *string    `gorm:"column:error_code;type:varchar(80)"`
+	StartedAt          time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
+	FinishedAt         *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	CreatedAt          time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt          time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (AgentModelInvocations) TableName() string { return "agent_model_invocations" }
+
 type AgentTurnEffectReconciliations struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID    string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -954,6 +981,7 @@ func AllModels() []any {
 		&AgentTasks{},
 		&AgentToolMutations{},
 		&AgentTurnCheckpoints{},
+		&AgentModelInvocations{},
 		&AgentTurnEffectReconciliations{},
 		&AgentTurnEvents{},
 		&AgentTurnExecutions{},

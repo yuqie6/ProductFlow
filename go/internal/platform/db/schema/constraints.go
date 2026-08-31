@@ -147,6 +147,26 @@ END $enum$;`,
 
 var ExtraDDL = []string{
 	`DO $c$ BEGIN
+ALTER TABLE agent_model_invocations ADD CONSTRAINT fk_agent_model_invocations_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_model_invocations ADD CONSTRAINT fk_agent_model_invocations_execution_id FOREIGN KEY (execution_id) REFERENCES agent_turn_executions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_model_invocations ADD CONSTRAINT uq_agent_model_invocations_request UNIQUE (turn_projection_id, model_request_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_model_invocations ADD CONSTRAINT ck_agent_model_invocations_values CHECK (execution_mode IN ('foreground', 'background') AND status IN ('started', 'completed', 'failed', 'interrupted') AND usage_source IN ('provider', 'estimated', 'unavailable') AND (duration_ms IS NULL OR duration_ms >= 0) AND (input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0) AND (total_tokens IS NULL OR total_tokens >= 0));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
 ALTER TABLE agent_conversations ADD CONSTRAINT ck_agent_conversations_creation_idempotency_pair CHECK (creation_idempotency_key IS NULL AND creation_request_hash IS NULL OR creation_idempotency_key IS NOT NULL AND length(creation_idempotency_key::text) > 0 AND creation_request_hash IS NOT NULL AND length(creation_request_hash::text) = 64);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;

@@ -39,6 +39,7 @@ type Config struct {
 	AgentServiceConnectTimeoutSeconds float64
 	AgentServiceReadTimeoutSeconds    float64
 	AgentTurnSyncPollSeconds          float64
+	MetricsBearerToken                string
 }
 
 func Load() (Config, error) {
@@ -102,6 +103,7 @@ func Load() (Config, error) {
 		AgentServiceConnectTimeoutSeconds: v.GetFloat64("AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS"),
 		AgentServiceReadTimeoutSeconds:    v.GetFloat64("AGENT_SERVICE_READ_TIMEOUT_SECONDS"),
 		AgentTurnSyncPollSeconds:          v.GetFloat64("AGENT_TURN_SYNC_POLL_SECONDS"),
+		MetricsBearerToken:                strings.TrimSpace(v.GetString("METRICS_BEARER_TOKEN")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
