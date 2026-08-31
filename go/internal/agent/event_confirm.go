@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -112,7 +113,8 @@ func (s Service) ConfirmEvents(ctx context.Context, conversationID, executionID 
 			}
 			kind := stringsTrim(input.Kind)
 			if event.SchemaVersion != input.SchemaVersion || event.RunID != stringsTrim(input.RunID) || event.TurnID != stringsTrim(input.TurnID) || event.Kind != kind || event.Ignorable != input.Ignorable || !sameJSON(event.PayloadJSON, input.Payload) {
-				return apperr.Conflict("Agent event sequence 已绑定不同内容")
+				metrics.AgentEventSequenceConflicts.Add(1)
+				return apperr.ConflictCode(apperr.CodeEventSequenceConflict, "Agent event sequence 已绑定不同内容")
 			}
 			out.Items = append(out.Items, EventReceipt{
 				ID: event.ID, ProjectionID: event.TurnProjectionID, ExecutionID: executionID,

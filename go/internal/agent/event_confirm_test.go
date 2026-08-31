@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
@@ -172,7 +173,11 @@ func TestConfirmEventsReadsActiveAndReleasedJournalWithoutMutation(t *testing.T)
 	conflicting[1].Payload = json.RawMessage(`{"delta":"different","attempt_id":"a","step_id":"s","content_index":0}`)
 	conflictResp := as.doJSONAuth(t, http.MethodPost, path, map[string]any{"events": conflicting}, auth)
 	as.mustStatus(t, conflictResp, http.StatusConflict)
-	conflictResp.Body.Close()
+	var conflictBody map[string]any
+	as.decode(t, conflictResp, &conflictBody)
+	if conflictBody["detail"] != "Agent event sequence 已绑定不同内容" || conflictBody["code"] != apperr.CodeEventSequenceConflict {
+		t.Fatalf("conflict body=%+v", conflictBody)
+	}
 
 	strictResp := as.doJSONAuth(t, http.MethodPost, path, map[string]any{
 		"events": requests, "owner_id": "worker-1",

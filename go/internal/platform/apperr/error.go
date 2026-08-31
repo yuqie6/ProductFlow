@@ -7,6 +7,8 @@ import (
 
 const CodeNotPending = "not_pending"
 
+const CodeEventSequenceConflict = "event_sequence_conflict"
+
 // Error 是面向用户的失败，HTTP 状态码固定，文案进 {"detail": "..."}。
 // Code 非空时同时写入 {"code": "..."}，给协议竞争使用稳定机器码。
 type Error struct {

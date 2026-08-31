@@ -1,0 +1,66 @@
+groups:
+  - name: productflow-agent
+    rules:
+      - alert: ProductFlowAgentUnknownTurns
+        expr: productflow_agent_turns{status="unknown"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent Turn 进入 unknown 且未在 10 分钟内清零
+      - alert: ProductFlowAgentProjectionMismatch
+        expr: productflow_agent_turns{status="unknown"} > 0 and productflow_agent_effect_reconciliations{status="unknown"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: unknown Turn 与 effect unknown 同时存在
+      - alert: ProductFlowAgentExpiredLeases
+        expr: productflow_agent_expired_leases > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 活动 execution lease 已过期但未恢复
+      - alert: ProductFlowAgentEffectUnknown
+        expr: productflow_agent_effect_reconciliations{status="unknown"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 工具副作用对账停留在 unknown
+      - alert: ProductFlowAgentSequenceConflicts
+        expr: increase(productflow_agent_event_sequence_conflicts[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent 事件 sequence 出现冲突
+      - alert: ProductFlowAgentUsageMissing
+        expr: productflow_agent_model_usage_missing > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: 模型调用 usage 持续记为 unavailable
+      - alert: ProductFlowAgentDispatcherBacklog
+        expr: productflow_async_dispatches{status="queued"} > 25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: dispatcher backlog 超过有界批次
+      - alert: ProductFlowAgentProviderHTTP5xx
+        expr: increase(productflow_agent_service_provider_errors{status="5xx"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Agent Service 观察到 provider 5xx
+      - alert: ProductFlowAgentActiveTimeout
+        expr: productflow_agent_turns{status="running"} > 0 and productflow_agent_expired_leases > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 仍有 running Turn 且 lease 已过期
