@@ -25,7 +25,7 @@ interface SessionMessage {
 export function storedAnswerFromEvents(events: readonly TurnEvent[]): TurnAnswer | null {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
-    if (event.kind !== "question.answered") continue;
+    if (event.kind !== "question/answered" && event.kind !== "question.answered") continue;
     return parseStoredAnswer(event.payload.answer);
   }
   return null;

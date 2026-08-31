@@ -25,7 +25,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ### 工作流画布
 
-- 当前节点类型是 `product_source`、`image_asset`、`creative_brief`、`visual_system`、`prompt_generation`、`image_generation`。
+- 当前节点类型是 `product_source`、`image_asset`、`creative_brief`、`visual_system`、`image_prompt`、`image_generation`。
 - 画布保留节点拖动、自由添加、连线、删除、多选、缩放、平移、自动布局和快捷键。
 - 文件夹用于收纳局部流程，降低大型 DAG 的排线和浏览压力。
 - 节点详情可编辑提示词、参考图绑定、视觉体系覆盖、生图比例、分辨率、质量、文字策略和交付规格。

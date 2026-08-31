@@ -1,20 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, Flag, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
+import { Bot, Flag, Maximize2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { GalleryImagePreviewDialog } from "../../../components/GalleryImagePreviewDialog";
-import { api, ApiError } from "../../../lib/api";
-import type { DownloadableImage } from "../../../lib/image-downloads";
+import { Dialog, DialogContent } from "../../../components/ui/dialog";
+import { IconButton } from "../../../components/ui/icon-button";
+import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
-  AgentAttachment,
   AgentCanvasFocus,
   AgentConversation,
   AgentPageContextSnapshotInput,
-  AgentQuestionAnswer,
   AgentTaskStatus,
   AgentTurn,
   AgentWorkflowRunRequest,
@@ -26,15 +24,25 @@ import {
   ProductImageExplorer,
   type ImageExplorerSelectionTarget,
 } from "../chrome/image-explorer/ProductImageExplorer";
-import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
-import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
-import { AgentMessageList } from "./AgentMessageList";
+import { AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
-import { echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
+import {
+  ConversationWorkbench,
+  PanelError,
+} from "./ConversationPanel";
+import {
+  agentConversationSubmitTaskId,
+  canSubmitAgentConversationMessage,
+  errorDetailOrNull,
+  mergeWorkflowRunRequest,
+  resolveAgentCanvasFocusNodeIds,
+  workflowRequestFromTurn,
+} from "./conversation/helpers";
+import { useConversationChrome } from "./conversation/useConversationChrome";
 import { agentProductWorkbenchPath } from "./productWorkbenchRoute";
 import { useAgentConversation } from "./useAgentConversation";
-import { useAgentTurnEvents } from "./useAgentTurnEvents";
+import { useAgentTurnEventMap, useAgentTurnEvents } from "./useAgentTurnEvents";
 
 interface AgentConversationPanelProps {
   productId: string;
@@ -47,6 +55,7 @@ interface AgentConversationPanelProps {
   onOpenRuns?: () => void;
   onExpandGlobalAgent?: () => void;
   onCanvasFocus?: (nodeIds: string[]) => void;
+  onAgentPresenceChange?: (editing: boolean) => void;
 }
 
 export function AgentConversationPanel({
@@ -60,6 +69,7 @@ export function AgentConversationPanel({
   onOpenRuns,
   onExpandGlobalAgent,
   onCanvasFocus,
+  onAgentPresenceChange,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -72,18 +82,7 @@ export function AgentConversationPanel({
   const workflowRunRequestQuery = useQuery({
     queryKey: workflowRunRequestQueryKey,
     queryFn: () => api.getAgentWorkflowRunRequest(productId, conversation.id),
-    refetchInterval: (query) => workflowRunRequestRefetchIntervalMs(query.state.data),
   });
-  const [composerText, setComposerText] = useState("");
-  const [composerAssets, setComposerAssets] = useState<GalleryAsset[]>([]);
-  const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
-  const [preview, setPreview] = useState<DownloadableImage | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
-  const composerKeyRef = useRef(globalThis.crypto.randomUUID());
-  const retryKeysRef = useRef(new Map<string, string>());
-  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
-  const [pendingEcho, setPendingEcho] = useState<PendingUserEcho | null>(null);
   const appliedCanvasFocusRef = useRef<string | null>(null);
 
   const cacheWorkflowRunRequest = (request: AgentWorkflowRunRequest) => {
@@ -101,59 +100,110 @@ export function AgentConversationPanel({
       queryClient.invalidateQueries({ queryKey: ["products"] }),
     ]);
   };
-  const confirmWorkflowRunRequestMutation = useMutation({
-    mutationFn: () => {
-      const request = workflowRunRequestQuery.data;
-      if (!request) {
-        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
-      }
-      return api.confirmAgentWorkflowRunRequest(productId, conversation.id, request.id);
-    },
-    onSuccess: cacheWorkflowRunRequest,
-  });
-  const cancelWorkflowRunRequestMutation = useMutation({
-    mutationFn: () => {
-      const request = workflowRunRequestQuery.data;
-      if (!request) {
-        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
-      }
-      return api.cancelAgentWorkflowRunRequest(productId, conversation.id, request.id);
-    },
-    onSuccess: cacheWorkflowRunRequest,
-  });
 
   const events = useAgentTurnEvents({
     getEventsUrl: (turnId, after) => api.getAgentTurnEventsUrl(productId, conversation.id, turnId, after),
     runId: agent.activeTurn?.harness_run_id ?? null,
     turn: agent.activeTurn,
     onEvent: (event) => {
-      if (event.kind !== "tool.step") return;
-      const kind = typeof event.payload.kind === "string" ? event.payload.kind : "";
+      if (taskId && [
+        "turn.started",
+        "item.started",
+        "item.completed",
+        "approval.requested",
+        "approval.resolved",
+        "turn.completed",
+        "turn.awaiting_confirmation",
+        "turn.failed",
+        "turn.canceled",
+        "turn.unknown",
+      ].includes(event.kind)) {
+        void queryClient.invalidateQueries({ queryKey: ["agent-task", taskId] });
+      }
+      if (event.kind !== "item.started" && event.kind !== "item.completed") return;
+      const kind = typeof event.payload.kind === "string"
+        ? event.payload.kind
+        : typeof event.payload.tool_name === "string"
+          ? event.payload.tool_name
+          : "";
+      const graphTool = kind === "apply_graph"
+        || kind === "propose_graph"
+        || kind === "apply_graph_change_set_v1"
+        || kind === "propose_graph_change_set_v1";
+      if (graphTool) {
+        onAgentPresenceChange?.(
+          event.kind === "item.started",
+        );
+      }
       if (kind === "apply_graph" || kind === "propose_graph") {
         void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
       }
     },
+    onArtifactProposed: () => {
+      void queryClient.invalidateQueries({ queryKey: workflowRunRequestQueryKey });
+    },
     onTerminal: () => {
+      onAgentPresenceChange?.(false);
       void agent.refreshLatestTurn();
+      if (taskId) void queryClient.invalidateQueries({ queryKey: ["agent-task", taskId] });
+      void queryClient.invalidateQueries({ queryKey: workflowRunRequestQueryKey });
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
     },
   });
-  const activeQuestion =
-    events.state.turn_key === agent.activeTurn?.id && events.state.question
-      ? events.state.question
-      : agent.activeTurn?.question ?? null;
+  const eventStates = useAgentTurnEventMap({
+    getEventsUrl: (turnId, after) => api.getAgentTurnEventsUrl(productId, conversation.id, turnId, after),
+    turns: agent.turns,
+  });
+  const chrome = useConversationChrome<GalleryAsset>({
+    conversationKey: conversation.id,
+    agent,
+    events,
+    pageContext,
+    submitTaskId: agentConversationSubmitTaskId(taskId),
+    loadPreviewAsset: (assetId) => api.getGalleryAsset(productId, assetId),
+    previewFailedLabel: t("agentWorkbench.previewFailed"),
+  });
+  const pendingRequestId = () =>
+    mergeWorkflowRunRequest(
+      workflowRunRequestQuery.data,
+      workflowRequestFromTurn(agent.latestTurn, eventStates),
+    )?.id;
+  const confirmWorkflowRunRequestMutation = useMutation({
+    mutationFn: () => {
+      const requestId = pendingRequestId();
+      if (!requestId) {
+        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
+      }
+      return api.confirmAgentWorkflowRunRequest(productId, conversation.id, requestId);
+    },
+    onSuccess: cacheWorkflowRunRequest,
+  });
+  const cancelWorkflowRunRequestMutation = useMutation({
+    mutationFn: () => {
+      const requestId = pendingRequestId();
+      if (!requestId) {
+        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
+      }
+      return api.cancelAgentWorkflowRunRequest(productId, conversation.id, requestId);
+    },
+    onSuccess: cacheWorkflowRunRequest,
+  });
+  const uploadAssetsMutation = useMutation({
+    mutationFn: (files: File[]) => api.addCanonicalProductImages(productId, files),
+    onSuccess: (result) => {
+      chrome.setComposerAssets((current) => mergeUploadedComposerAssets(current, result.items));
+      chrome.rotateComposerKey();
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product", productId] }),
+      ]);
+    },
+  });
 
-  useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
-    setPendingEcho(null);
-  }, [conversation.id]);
-  useEffect(() => {
-    if (!pendingEcho) return;
-    const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
-    if (turns.some((item) => echoMatchesTurn(pendingEcho, item))) {
-      setPendingEcho(null);
-    }
-  }, [agent.latestTurn, agent.turns, pendingEcho]);
+    if (!agent.activeTurn) onAgentPresenceChange?.(false);
+  }, [agent.activeTurn, onAgentPresenceChange]);
   useEffect(() => {
     if (!onCanvasFocus) return;
     const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
@@ -188,19 +238,6 @@ export function AgentConversationPanel({
     }
   }, [agent.latestTurn?.id, agent.latestTurn?.status, agent.latestTurn?.workflow_run_request_id, conversation.id, productId, queryClient]);
   useEffect(() => {
-    const live = Boolean(agent.activeTurn);
-    const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId] });
-    };
-    if (!live) return;
-    refresh();
-    const timer = window.setInterval(refresh, 1_500);
-    return () => {
-      window.clearInterval(timer);
-      refresh();
-    };
-  }, [agent.activeTurn?.id, agent.activeTurn?.status, productId, queryClient]);
-  useEffect(() => {
     const request = workflowRunRequestQuery.data;
     if (!request) return;
     if (request.status === "succeeded" || request.status === "failed" || request.status === "cancelled" || request.workflow_run_status === "unknown") {
@@ -209,175 +246,36 @@ export function AgentConversationPanel({
       void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
     }
   }, [productId, queryClient, workflowRunRequestQuery.data?.status, workflowRunRequestQuery.data?.workflow_id, workflowRunRequestQuery.data?.workflow_run_status]);
-  useEffect(() => {
-    if (!assetSelectorOpen && !preview) {
-      return;
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (preview) {
-          setPreview(null);
-        } else {
-          setAssetSelectorOpen(false);
-        }
-      }
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [assetSelectorOpen, preview]);
-
-  const rotateComposerKey = () => {
-    composerKeyRef.current = globalThis.crypto.randomUUID();
-  };
-  const uploadAssetsMutation = useMutation({
-    mutationFn: (files: File[]) => api.addCanonicalProductImages(productId, files),
-    onSuccess: (result) => {
-      setComposerAssets((current) => mergeUploadedComposerAssets(current, result.items));
-      rotateComposerKey();
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
-        queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
-        queryClient.invalidateQueries({ queryKey: ["product", productId] }),
-      ]);
-    },
-  });
-  const canSubmitMessage = canSubmitAgentConversationMessage({ activeTurn: agent.activeTurn }) && !pendingEcho;
-  const submitMessage = async () => {
-    const normalized = composerText.trim();
-    if (!normalized || !canSubmitMessage || agent.submitTurnMutation.isPending) {
-      return;
-    }
-    const assets = composerAssets.map((asset) => asset.id);
-    const selected = composerAssets;
-    setPendingEcho({
-      text: normalized,
-      assetIds: assets,
-      createdAt: new Date().toISOString(),
-    });
-    setComposerText("");
-    setComposerAssets([]);
-    try {
-      await agent.submitTurnMutation.mutateAsync({
-        input_text: normalized,
-        asset_ids: assets,
-        idempotency_key: composerKeyRef.current,
-        task_id: agentConversationSubmitTaskId(taskId),
-        page_context: pageContext
-          ? {
-            ...pageContext,
-            selected_asset_ids: assets,
-            captured_at: new Date().toISOString(),
-          }
-          : null,
-      });
-      rotateComposerKey();
-    } catch {
-      setPendingEcho(null);
-      setComposerText(normalized);
-      setComposerAssets(selected);
-    }
-  };
-  const answerQuestion = async (answer: AgentQuestionAnswer) => {
-    if (!agent.activeTurn || !activeQuestion || agent.answerQuestionMutation.isPending) {
-      return;
-    }
-    try {
-      await agent.answerQuestionMutation.mutateAsync({
-        projectionId: agent.activeTurn.id,
-        questionId: activeQuestion.id,
-        answer,
-      });
-      setAnsweredQuestionId(activeQuestion.id);
-    } catch {
-      // 已持久化的答案和续跑仍可通过同一 question key 重试
-    }
-  };
-  const retryTurn = async (turn: AgentTurn) => {
-    if (
-      !canRetryAgentTurn({ turn }) ||
-      Boolean(agent.activeTurn) ||
-      agent.submitTurnMutation.isPending
-    ) {
-      return;
-    }
-    let key = retryKeysRef.current.get(turn.id);
-    if (!key) {
-      key = retryIdempotencyKey(turn.id);
-      retryKeysRef.current.set(turn.id, key);
-    }
-    setRetryingTurnId(turn.id);
-    try {
-      await agent.submitTurnMutation.mutateAsync(
-        agentTurnRetrySubmitInput(turn, {
-          idempotencyKey: key,
-          taskId: turn.task_id ?? agentConversationSubmitTaskId(taskId),
-          pageContext: pageContext
-            ? {
-              ...pageContext,
-              selected_asset_ids: turn.input_asset_ids,
-              captured_at: new Date().toISOString(),
-            }
-            : null,
-        }),
-      );
-      retryKeysRef.current.delete(turn.id);
-    } catch {
-      // 失败请求沿用同一续跑键
-    } finally {
-      setRetryingTurnId(null);
-    }
-  };
-  const previewSelectedAsset = (asset: AgentAttachment) => {
-    setPreviewError(null);
-    setPreview({
-      previewUrl: api.toApiUrl(asset.preview_url),
-      downloadUrl: api.toApiUrl(asset.download_url),
-      filename: asset.original_filename,
-      alt: asset.display_name,
-    });
-  };
-  const previewTurnAsset = async (assetId: string) => {
-    setPreviewError(null);
-    try {
-      const asset = await api.getGalleryAsset(productId, assetId);
-      previewSelectedAsset(asset);
-    } catch (error) {
-      setPreviewError(errorDetail(error, t("agentWorkbench.previewFailed")));
-    }
-  };
 
   const selectorTarget: ImageExplorerSelectionTarget = {
-    selectedAssets: composerAssets,
+    selectedAssets: chrome.composerAssets,
     maxSelected: AGENT_COMPOSER_MAX_ASSETS,
     confirmLabel: t("agentWorkbench.attachSelected"),
     selectionLabel: (count, maximum) =>
       t("agentWorkbench.assetsSelected", { count, maximum }),
     limitMessage: t("agentWorkbench.assetLimit", { maximum: AGENT_COMPOSER_MAX_ASSETS }),
     onConfirm: (assets) => {
-      setComposerAssets(assets);
-      rotateComposerKey();
-      setAssetSelectorOpen(false);
+      chrome.setComposerAssets(assets);
+      chrome.rotateComposerKey();
+      chrome.setAssetPickerOpen(false);
     },
   };
-  const questionAnswered = Boolean(
-    activeQuestion &&
-    (answeredQuestionId === activeQuestion.id ||
-      events.state.question_answered ||
-      agent.activeTurn?.resume_required),
-  );
-  const questionError = errorDetailOrNull(agent.answerQuestionMutation.error);
-  const composerError =
-    errorDetailOrNull(agent.submitTurnMutation.error) ?? errorDetailOrNull(uploadAssetsMutation.error);
   const listError = errorDetailOrNull(agent.turnsQuery.error);
   const controlError =
     errorDetailOrNull(agent.cancelTurnMutation.error) ??
     errorDetailOrNull(agent.resumeTurnMutation.error) ??
-    (!activeQuestion ? questionError : null) ??
+    (!chrome.activeQuestion ? errorDetailOrNull(agent.answerQuestionMutation.error) : null) ??
     events.streamError ??
-    previewError;
+    chrome.previewError;
   const workflowRunRequestError = errorDetailOrNull(workflowRunRequestQuery.error)
     ?? errorDetailOrNull(confirmWorkflowRunRequestMutation.error)
     ?? errorDetailOrNull(cancelWorkflowRunRequestMutation.error);
+  const composerError =
+    errorDetailOrNull(agent.submitTurnMutation.error) ?? errorDetailOrNull(uploadAssetsMutation.error);
+  const pendingRequest = mergeWorkflowRunRequest(
+    workflowRunRequestQuery.data,
+    workflowRequestFromTurn(agent.latestTurn, eventStates),
+  );
   const connectionLabel = events.state.terminal_kind
     ? t("agentWorkbench.connection.syncing")
     : events.connectionState === "open"
@@ -388,206 +286,140 @@ export function AgentConversationPanel({
 
   const dialogs = (
     <>
-      {assetSelectorOpen ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("agentWorkbench.assetSelector")}
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-zinc-950/70 p-2 backdrop-blur-sm sm:p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setAssetSelectorOpen(false);
-            }
-          }}
-        >
-          <div className="flex h-[min(780px,calc(100dvh-1rem))] w-full max-w-6xl min-h-0 flex-col overflow-hidden rounded-md bg-white shadow-2xl dark:bg-[#090d13] sm:h-[min(780px,calc(100dvh-2rem))]">
-            <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-zinc-200 px-4 dark:border-slate-800">
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{t("agentWorkbench.assetSelector")}</h2>
-                <p className="mt-0.5 text-xs text-zinc-500 dark:text-slate-400">{productName}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAssetSelectorOpen(false)}
-                aria-label={t("agentWorkbench.closeAssetSelector")}
-                title={t("agentWorkbench.closeAssetSelector")}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-slate-400 dark:hover:bg-slate-800"
-              >
-                <X size={18} />
-              </button>
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-              <ProductImageExplorer
-                productId={productId}
-                productName={productName}
-                onPreviewImage={setPreview}
-                selectionTarget={selectorTarget}
-              />
-            </div>
-          </div>
-        </div>
+      {chrome.assetPickerOpen ? (
+        <Dialog open onOpenChange={(open) => { if (!open) chrome.setAssetPickerOpen(false); }}>
+          <DialogContent
+            title={t("agentWorkbench.assetSelector")}
+            description={productName}
+            size="xl"
+            className="flex h-[min(780px,calc(100dvh-1rem))] max-w-6xl flex-col"
+            bodyClassName="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4"
+            closeLabel={t("agentWorkbench.closeAssetSelector")}
+          >
+            <ProductImageExplorer
+              productId={productId}
+              productName={productName}
+              onPreviewImage={chrome.setPreview}
+              selectionTarget={selectorTarget}
+            />
+          </DialogContent>
+        </Dialog>
       ) : null}
-      {preview ? (
+      {chrome.preview ? (
         <GalleryImagePreviewDialog
-          ariaLabel={t("agentWorkbench.previewAsset", { name: preview.alt })}
-          imageUrl={preview.previewUrl}
-          imageAlt={preview.alt}
-          title={preview.alt}
-          subtitle={preview.filename}
-          body={preview.filename}
+          ariaLabel={t("agentWorkbench.previewAsset", { name: chrome.preview.alt })}
+          imageUrl={chrome.preview.previewUrl}
+          imageAlt={chrome.preview.alt}
+          title={chrome.preview.alt}
+          subtitle={chrome.preview.filename}
+          body={chrome.preview.filename}
           providerNotesTitle={t("agentWorkbench.assetDetails")}
-          downloadUrl={preview.downloadUrl}
+          downloadUrl={chrome.preview.downloadUrl}
           downloadLabel={t("agentWorkbench.downloadAsset")}
           closeLabel={t("agentWorkbench.closePreview")}
-          onClose={() => setPreview(null)}
+          onClose={() => chrome.setPreview(null)}
         />
       ) : null}
     </>
   );
 
   return (
-    <section
-      data-agent-conversation-panel
-      className={`flex min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary ${className}`}
-    >
-      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5 backdrop-blur">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-          <Bot size={18} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
-          <p className="truncate text-xs text-text-secondary">{productName}</p>
-        </div>
-        {onExpandGlobalAgent ? (
-          <button
-            type="button"
-            onClick={onExpandGlobalAgent}
-            aria-label={t("agentWorkbench.expandGlobalAgent")}
-            title={t("agentWorkbench.expandGlobalAgent")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-700 dark:border-slate-800 dark:bg-[#0c121e] dark:text-slate-300 dark:hover:border-violet-500/40 dark:hover:text-violet-200 transition-colors"
-          >
-            <Maximize2 size={15} />
-          </button>
-        ) : null}
-        {agent.activeTurn ? (
-          <>
+    <ConversationWorkbench
+      variant="product"
+      className={className}
+      header={(
+        <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5 backdrop-blur">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+            <Bot size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
+            <p className="truncate text-xs text-text-secondary">{productName}</p>
+          </div>
+          {onExpandGlobalAgent ? (
+            <IconButton
+              label={t("agentWorkbench.expandGlobalAgent")}
+              variant="secondary"
+              size="toolbar"
+              onClick={onExpandGlobalAgent}
+            >
+              <Maximize2 size={15} />
+            </IconButton>
+          ) : null}
+          {agent.activeTurn ? (
             <span
               role="status"
               aria-label={connectionLabel}
-              title={connectionLabel}
               className={`h-2.5 w-2.5 shrink-0 rounded-full ${events.state.terminal_kind
-                ? "animate-pulse bg-blue-600 dark:bg-cyan-400"
+                ? "animate-pulse bg-accent"
                 : events.connectionState === "open"
-                  ? "bg-emerald-500"
+                  ? "bg-state-success"
                   : events.connectionState === "reconnecting"
-                    ? "animate-pulse bg-amber-500"
-                    : "animate-pulse bg-zinc-400 dark:bg-slate-500"
+                    ? "animate-pulse bg-state-warning"
+                    : "animate-pulse bg-text-muted"
                 }`}
             />
-
-          </>
-        ) : null}
-      </header>
-
-      <AgentSessionSwitcher conversation={conversation} productName={productName} />
-      <AgentGoalLoopBar
-        productId={productId}
-        conversation={conversation}
-        taskId={taskId ?? null}
-      />
-
-      {listError ? (
-        <PanelError
-          message={listError}
-          action={t("agentWorkbench.retry")}
-          onAction={() => void agent.turnsQuery.refetch()}
+          ) : null}
+        </header>
+      )}
+      top={(
+        <>
+          <AgentSessionSwitcher conversation={conversation} productName={productName} />
+          <AgentGoalLoopBar
+            productId={productId}
+            conversation={conversation}
+            taskId={taskId ?? null}
+          />
+        </>
+      )}
+      notices={(
+        <>
+          {listError ? (
+            <PanelError
+              message={listError}
+              action={t("agentWorkbench.retry")}
+              onAction={() => void agent.turnsQuery.refetch()}
+            />
+          ) : null}
+          {controlError ? <PanelError message={controlError} /> : null}
+        </>
+      )}
+      approval={(
+        <AgentWorkflowRunRequestCard
+          request={pendingRequest}
+          loading={workflowRunRequestQuery.isLoading}
+          busy={confirmWorkflowRunRequestMutation.isPending || cancelWorkflowRunRequestMutation.isPending}
+          error={workflowRunRequestError}
+          onConfirm={() => confirmWorkflowRunRequestMutation.mutate()}
+          onCancel={() => cancelWorkflowRunRequestMutation.mutate()}
+          onOpenRuns={onOpenRuns}
         />
-      ) : null}
-      {controlError ? <PanelError message={controlError} /> : null}
-
-      <AgentMessageList
-        turns={agent.turns}
-        activeTurnId={agent.activeTurn?.id ?? null}
-        eventState={events.state}
-        initialTurnPending={agent.turnsQuery.isLoading}
-        pendingEcho={pendingEcho}
-        hasOlder={Boolean(agent.turnsQuery.hasNextPage)}
-        loadingOlder={agent.turnsQuery.isFetchingNextPage}
-        onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
-        onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
-        onRetryTurn={(turn) => void retryTurn(turn)}
-        retryingTurnId={retryingTurnId}
-      />
-
-      <AgentWorkflowRunRequestCard
-        request={workflowRunRequestQuery.data ?? null}
-        loading={workflowRunRequestQuery.isLoading}
-        busy={confirmWorkflowRunRequestMutation.isPending || cancelWorkflowRunRequestMutation.isPending}
-        error={workflowRunRequestError}
-        onConfirm={() => confirmWorkflowRunRequestMutation.mutate()}
-        onCancel={() => cancelWorkflowRunRequestMutation.mutate()}
-        onOpenRuns={onOpenRuns}
-      />
-
-      {agent.activeTurn?.resume_required && !activeQuestion ? (
-        <div className="flex items-center gap-3 border-t border-zinc-200 bg-blue-50 px-4 py-3 dark:border-slate-800 dark:bg-cyan-400/5">
-          <CircleAlert size={16} className="shrink-0 text-blue-700 dark:text-cyan-300" />
-          <span className="min-w-0 flex-1 text-xs text-blue-900 dark:text-cyan-100">{t("agentWorkbench.resumeRequired")}</span>
-          <button
-            type="button"
-            onClick={() => agent.resumeTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-            disabled={agent.resumeTurnMutation.isPending}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-cyan-400 dark:text-[#071018]"
-          >
-            {agent.resumeTurnMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-            {t("agentWorkbench.resume")}
-          </button>
-        </div>
-      ) : null}
-
-      <AgentComposer
-        value={composerText}
-        selectedAssets={composerAssets}
-        isSubmitting={agent.submitTurnMutation.isPending}
-        canSubmit={canSubmitMessage}
-        stopAvailable={Boolean(agent.activeTurn)}
-        isStopping={
-          agent.cancelTurnMutation.isPending ||
-          agent.activeTurn?.status === "cancel_requested" ||
-          Boolean(events.state.terminal_kind)
-        }
-        error={composerError}
-        placeholder={
-          agent.turns.length === 0 && graphHasCreateTemplate(graph)
-            ? t("agentWorkbench.composerPlaceholder.intakeLanded")
+      )}
+      chrome={chrome}
+      agent={agent}
+      eventStates={eventStates}
+      onCanvasFocus={onCanvasFocus}
+      showOlder
+      composerPlaceholder={
+        agent.turns.length === 0 && graphHasCreateTemplate(graph)
+          ? t("agentWorkbench.composerPlaceholder.intakeLanded")
+          : agent.latestTurn?.status === "awaiting_confirmation"
+            ? t("agentWorkbench.composer.blockedConfirmation")
             : undefined
-        }
-        question={activeQuestion && !questionAnswered ? activeQuestion : null}
-        questionBusy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
-        questionError={questionError}
-        onAnswerQuestion={(answer) => void answerQuestion(answer)}
-        onChange={setComposerText}
-        onOpenAssets={() => setAssetSelectorOpen(true)}
-        onRemoveAsset={(assetId) => {
-          setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
-          rotateComposerKey();
-        }}
-        onPreviewAsset={previewSelectedAsset}
-        onSubmit={() => void submitMessage()}
-        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-        onUploadFiles={(files) => uploadAssetsMutation.mutate(files)}
-        isUploading={uploadAssetsMutation.isPending}
-      />
-
-      {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
-    </section>
+      }
+      composerError={composerError}
+      onOpenAssets={() => chrome.setAssetPickerOpen(true)}
+      onUploadFiles={(files) => uploadAssetsMutation.mutate(files)}
+      isUploading={uploadAssetsMutation.isPending}
+      dialogs={dialogs}
+    />
   );
 }
 
 function graphHasCreateTemplate(graph: GraphProjection | null | undefined): boolean {
   return Boolean(
     graph?.nodes.some(
-      (node) => node.node_type === "image_generation" || node.node_type === "prompt_generation",
+      (node) => node.node_type === "image_generation" || node.node_type === "image_prompt",
     ),
   );
 }
@@ -618,57 +450,11 @@ function mergeUploadedComposerAssets(
   return next;
 }
 
-export function resolveAgentCanvasFocusNodeIds(
-  focus: Pick<AgentCanvasFocus, "node_ids" | "edge_ids" | "group_ids">,
-  graph: GraphProjection | null | undefined,
-): string[] {
-  const collected = [...focus.node_ids];
-  if (graph) {
-    for (const edge of graph.edges) {
-      if (focus.edge_ids.includes(edge.id)) {
-        collected.push(edge.source_node_id, edge.target_node_id);
-      }
-    }
-    for (const group of graph.groups) {
-      if (focus.group_ids.includes(group.id)) {
-        collected.push(...group.member_ids);
-      }
-    }
-  }
-  const known = graph ? new Set(graph.nodes.map((node) => node.id)) : null;
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const id of collected) {
-    if (seen.has(id) || (known && !known.has(id))) continue;
-    seen.add(id);
-    unique.push(id);
-  }
-  return unique;
-}
-
-
-export function workflowRunRequestRefetchIntervalMs(
-  request: Pick<AgentWorkflowRunRequest, "status" | "workflow_run_status"> | null | undefined,
-): number | false {
-  if (!request) return false;
-  if (request.status === "awaiting_confirmation") return 1_500;
-  if (request.status !== "confirmed") return false;
-  const runStatus = request.workflow_run_status;
-  if (runStatus === "succeeded" || runStatus === "failed" || runStatus === "cancelled" || runStatus === "unknown") {
-    return false;
-  }
-  return 1_200;
-}
-
-export function canSubmitAgentConversationMessage(input: {
-  activeTurn: AgentTurn | null | undefined;
-}): boolean {
-  return input.activeTurn == null;
-}
-
-export function agentConversationSubmitTaskId(routeTaskId: string | null | undefined): string | null {
-  return routeTaskId ?? null;
-}
+export {
+  agentConversationSubmitTaskId,
+  canSubmitAgentConversationMessage,
+  resolveAgentCanvasFocusNodeIds,
+};
 
 const GOAL_LOOP_ACTIVE: ReadonlySet<AgentTaskStatus> = new Set([
   "queued",
@@ -718,15 +504,6 @@ function AgentGoalLoopBar({
     queryKey: ["agent-task", taskId],
     queryFn: () => api.getAgentTask(taskId as string),
     enabled: Boolean(taskId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      return status === "running"
-        || status === "queued"
-        || status === "awaiting_confirmation"
-        || status === "waiting_user"
-        ? 1_500
-        : false;
-    },
   });
   const invalidateTasks = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
@@ -912,41 +689,7 @@ function AgentGoalLoopBar({
           {sessionId ? t("agentWorkbench.goal.openForm") : t("agentWorkbench.goal.sessionRequired")}
         </button>
       )}
-      {error ? <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-300">{error}</p> : null}
+      {error ? <p className="mt-1.5 text-[11px] text-state-error">{error}</p> : null}
     </div>
   );
-}
-
-function PanelError({
-  message,
-  action,
-  onAction,
-}: {
-  message: string;
-  action?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div role="alert" className="flex items-start gap-2 border-b border-red-200 bg-red-50 px-4 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-200">
-      <CircleAlert size={15} className="mt-0.5 shrink-0" />
-      <span className="min-w-0 flex-1">{message}</span>
-      {action && onAction ? (
-        <button type="button" onClick={onAction} className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 font-semibold hover:bg-red-100 dark:hover:bg-red-500/15">
-          <RotateCw size={13} />
-          {action}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function errorDetail(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    return error.detail;
-  }
-  return error instanceof Error ? error.message : fallback;
-}
-
-function errorDetailOrNull(error: unknown): string | null {
-  return error ? errorDetail(error, "Agent 请求失败") : null;
 }

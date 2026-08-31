@@ -209,7 +209,6 @@ function liveConfig(dataRoot: string): Config {
     internalToken: "0123456789abcdef0123456789abcdef",
     requestTimeoutMS: 5_000,
     providerRequestTimeoutMS: 180_000,
-    heartbeatIntervalMS: 15_000,
     maxBodyBytes: 96 << 20,
     maxIterations: 12,
     modelContextWindow: 128_000,
@@ -376,7 +375,7 @@ function stubProductFlow(
     assetContent: async () => ({ data: PIXEL_PNG.toString("base64"), mediaType: "image/png", sizeBytes: PIXEL_PNG.length }),
     getNodeDetail: async () => ({
       id: EVAL_NODE_ID,
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "主图提示词",
       config_status: "ready",
     }),

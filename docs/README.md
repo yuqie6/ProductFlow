@@ -26,11 +26,11 @@
 
 | 文档 | 状态 | 何时读 |
 |---|---|---|
-| `adr/0001-agent-draft-authority.md` | Accepted；直播 journal 见 0013 | PostgreSQL 权威、unknown、全局库 Draft |
+| `adr/0001-agent-draft-authority.md` | Accepted；直播 journal 见 0017 | PostgreSQL 权威、unknown、全局库 Draft |
 | `adr/0002-canonical-product-images.md` | Accepted | 媒体身份、商品图片、封面、lineage |
 | `adr/0003-schema-v2-workflow.md` | Historical；在线图见 0008 | GenerationSpec / DeliverySpec / 一层分组仍有效 |
 | `adr/0004-legacy-v1-cutover.md` | Superseded by 0010 | 原 V1 归档闸门；主线不再执行 |
-| `adr/0005-agent-workbench-ui.md` | Accepted；直播路径见 0013 | 工作台交互与工具步骤投影 |
+| `adr/0005-agent-workbench-ui.md` | Accepted；直播路径见 0017 | 工作台交互与工具步骤投影 |
 | `adr/0006-media-library-authority.md` | Accepted；§7 superseded by 0010 | 全局图库、子图库、来源生命周期 |
 | `adr/0007-pi-agent-runtime-boundary.md` | Accepted；耐久 gate 见 ROADMAP | Pi adapter、Skill、Tool |
 | `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | 为什么是 live graph 与 Graph Command |
@@ -38,10 +38,11 @@
 | `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库不保兼容、不写旧数据迁移 |
 | `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成；封印树见 0016 | 业务后端按垂直切片迁 Go |
 | `adr/0012-gorm-command-writes.md` | Accepted | 命令路径用 GORM 模型写库，不用手写 INSERT |
-| `adr/0013-agent-live-journal-bff.md` | Accepted | Go 是浏览器 BFF；live UI journal 在 agent-service |
+| `adr/0013-agent-live-journal-bff.md` | Accepted；全量 journal 见 0017 | Go 是浏览器 BFF；浏览器不直连 agent-service |
 | `adr/0014-canvas-document-cook.md` | Accepted；端口/队列/origin 列见 0015 | 文稿 vs 产物、cook 范围、`delivery_spec` 不进 digest |
 | `adr/0015-canvas-ports-run-queue.md` | Accepted | 按角色分端口、selection scope、运行队列、skipped |
 | `adr/0016-retire-python-backend.md` | Accepted | Python 业务后端离开主线，树在 `retired/python` |
+| `adr/0017-agent-full-journal-ui-protocol.md` | Accepted；取代 0013 的 live-only journal | 全量事件落 PG、Turn/Item 协议、控制流 SSE |
 
 ## 协作元数据
 

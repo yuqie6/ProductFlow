@@ -4,8 +4,7 @@
  * mutate：intent checkpoint → 执行 → 4xx=failed / 5xx=对账 → applied/not_applied/conflict/unknown。
  * ui_effect：执行且写 checkpoint，不对账、不把 5xx 标成 unknown。
  * approval 只是清单上的效果等级。本函数不根据 effect 自动 requestApproval：
- * 需要中止 Turn 的调用方在 onApplied 里显式 requestApproval（工作流执行、全局草案）。
- * propose_graph_change_set_v1 是 approval，但走画布确认，不在这里 abort。
+ * 需要中止 Turn 的调用方在 onApplied 里显式 requestApproval。
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
@@ -15,14 +14,13 @@ import {
   ProductFlowError,
 } from "./contracts.js";
 import { ReconcileResult } from "./productflow.js";
-import { toolManifestEntry, type ToolName } from "./tool-manifest.js";
+import { toolManifestEntry, toolRecoveryPolicy, type ToolName } from "./tool-manifest.js";
 import { encodeToolResult } from "./tool-result.js";
 
 export interface EffectRuntime {
   checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void>;
   markEffectUnknown(toolCallID: string, reason?: string): void;
   requestApproval(approval: JsonObject): void;
-  emitApproval(approval: JsonObject): void;
   idempotencyKey(toolCallID: string): string;
 }
 
@@ -50,6 +48,8 @@ export async function withEffect(
     tool_name: toolName,
     tool_call_id: toolCallID,
     idempotency_key: idempotencyKey,
+    recovery_policy: toolRecoveryPolicy(toolName),
+    request: options.intentPayload ?? {},
     ...(options.intentPayload ?? {}),
   };
   await runtime.checkpoint("tool_effect_intent", intent);
@@ -137,6 +137,58 @@ export async function withEffect(
         throw new ProductFlowError(502, "reconciliation_invalid", "ProductFlow reconciliation returned an incomplete result");
       }
       return await finishApplied(reconciled.result, { reconciliation_state: "applied" });
+    }
+    if (reconciled.state === "not_applied" && toolRecoveryPolicy(toolName) === "reconcile_then_retry") {
+      try {
+        return await finishApplied(await options.mutate(idempotencyKey), {
+          reconciliation_state: "not_applied_then_retried",
+        });
+      } catch (retryError) {
+        if (!(retryError instanceof ProductFlowError) || retryError.status < 500) {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: toolName,
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+            reconciliation_state: "not_applied",
+          });
+          throw retryError;
+        }
+        let retriedReconciliation: ReconcileResult;
+        try {
+          retriedReconciliation = await options.reconcile!(idempotencyKey);
+        } catch {
+          await recordUnknown(runtime, toolCallID, {
+            tool_name: toolName,
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "unknown",
+            reconciliation_state: "unavailable",
+          }, options.unknownReason);
+          throw retryError;
+        }
+        if (retriedReconciliation.state === "applied" && retriedReconciliation.result !== undefined) {
+          return await finishApplied(retriedReconciliation.result, { reconciliation_state: "applied" });
+        }
+        if (retriedReconciliation.state === "not_applied" || retriedReconciliation.state === "conflict") {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: toolName,
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+            reconciliation_state: retriedReconciliation.state,
+          });
+          throw retryError;
+        }
+        await recordUnknown(runtime, toolCallID, {
+          tool_name: toolName,
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "unknown",
+          reconciliation_state: "unknown",
+        }, options.unknownReason);
+        throw retryError;
+      }
     }
     if (reconciled.state === "not_applied" || reconciled.state === "conflict") {
       await runtime.checkpoint("tool_effect_result", {

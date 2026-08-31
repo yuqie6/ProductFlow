@@ -193,6 +193,7 @@ func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *stri
 	if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 		return err
 	}
+	publishTaskChanged(pgxTx, task.ID, task.SessionID)
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 }
 
@@ -205,10 +206,46 @@ func markTurnSucceededForRequest(ctx context.Context, pgxTx *gorm.DB, requestID,
 	}).Error; err != nil {
 		return err
 	}
+	if err := resolveWorkflowRequestApproval(ctx, pgxTx, requestID, "confirmed"); err != nil {
+		return err
+	}
 	return pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
 		"status":     "completed",
 		"updated_at": now,
 	}).Error
+}
+
+func markTurnCanceledForRequest(ctx context.Context, pgxTx *gorm.DB, requestID, conversationID string) error {
+	now := time.Now().UTC()
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("workflow_run_request_id = ?", requestID).Updates(map[string]any{
+		"status":      "canceled",
+		"finished_at": gorm.Expr("COALESCE(finished_at, ?)", now),
+		"updated_at":  now,
+	}).Error; err != nil {
+		return err
+	}
+	return pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
+		"status":     "canceled",
+		"updated_at": now,
+	}).Error
+}
+
+func resolveWorkflowRequestApproval(ctx context.Context, pgxTx *gorm.DB, requestID, decision string) error {
+	projectionID, err := projectionIDForWorkflowRequest(ctx, pgxTx, requestID)
+	if err != nil || projectionID == "" {
+		return err
+	}
+	approvalID, kind, err := latestApprovalRequest(ctx, pgxTx, projectionID, "workflow_run")
+	if err != nil {
+		return err
+	}
+	if approvalID == "" {
+		approvalID = requestID
+		kind = "workflow_run"
+	}
+	return appendApprovalResolved(ctx, pgxTx, projectionID, approvalID, kind, decision, map[string]any{
+		"request_id": requestID,
+	})
 }
 
 func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft library.OrganizationDraft) error {
@@ -246,6 +283,41 @@ func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft li
 	}).Error; err != nil {
 		return err
 	}
+	projectionID, err := projectionIDForLibraryRevision(ctx, pgxTx, draft.CurrentRevision.ID)
+	if err != nil {
+		return err
+	}
+	if projectionID != "" {
+		approvalID, kind, err := latestApprovalRequest(ctx, pgxTx, projectionID, "artifact")
+		if err != nil {
+			return err
+		}
+		if approvalID == "" {
+			approvalID = draft.CurrentRevision.ID
+			kind = "artifact"
+		}
+		if err := appendApprovalResolved(ctx, pgxTx, projectionID, approvalID, kind, "confirmed", map[string]any{
+			"revision_id": draft.CurrentRevision.ID,
+		}); err != nil {
+			return err
+		}
+		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
+			"status":      "succeeded",
+			"finished_at": gorm.Expr("COALESCE(finished_at, ?)", now),
+			"updated_at":  now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	if task.ConversationID != nil {
+		if err := pgxTx.Model(&schema.AgentConversations{}).Where("id = ?", *task.ConversationID).Updates(map[string]any{
+			"status":     "completed",
+			"updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	publishTaskChanged(pgxTx, task.ID, task.SessionID)
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 }
 

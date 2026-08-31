@@ -134,7 +134,7 @@ func TestApplyTurnStateAttachesWorkflowRunRequestID(t *testing.T) {
 			APIVersion: "1",
 			RunID:      task.ID,
 			TurnID:     "ht-" + clockid.New(),
-			Status:     "succeeded",
+			Status:     "awaiting_confirmation",
 			ToolSteps: []map[string]any{
 				{"kind": "request_workflow_run", "status": "succeeded", "step_id": "run-1"},
 			},

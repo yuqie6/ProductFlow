@@ -29,7 +29,6 @@
 通过下列 gate 之前，不扩大默认能力，也不把 Pi session 文件当作 durable 证明。边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md)。旧 Go Agent 留在 `exp`，不是 main 的隐式 fallback。
 
 - 真实 provider、PostgreSQL / Redis、浏览器。
-- SSE 断线恢复的生产声明。
 - 后台 durable Task、跨进程 claim、全量 effect reconciliation。
 - 独立的 Fresh Observation harness（副作用前后端重读已是规则）。
 

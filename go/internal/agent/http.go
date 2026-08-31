@@ -47,6 +47,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v2.POST("/agent-tasks/:task_id/pause", h.pauseTask)
 	v2.POST("/agent-tasks/:task_id/complete", h.completeTask)
 	v2.POST("/agent-tasks/:task_id/resume", h.resumeTask)
+	v2.GET("/agent-control/events", h.streamControlEvents)
 
 	v2.GET("/products/:product_id/agent-workbench", h.getWorkbench)
 	v2.POST("/products/:product_id/agent-workbench", h.ensureWorkbench)
@@ -64,6 +65,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	productConv.POST("/:conversation_id/turns/:projection_id/questions/:question_id/answer", h.answerProductQuestion)
 	productConv.POST("/:conversation_id/turns/:projection_id/effect-reconciliation", h.reconcileProductEffect)
 	productConv.GET("/:conversation_id/turns/:projection_id/events", h.streamProductEvents)
+	productConv.GET("/:conversation_id/turns/:projection_id/events/page", h.pageProductEvents)
 
 	global := v2.Group("/agent-conversations")
 	global.GET("/:conversation_id/library-organization-draft", h.getLibraryDraft)
@@ -79,6 +81,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	global.POST("/:conversation_id/turns/:projection_id/questions/:question_id/answer", h.answerGlobalQuestion)
 	global.POST("/:conversation_id/turns/:projection_id/effect-reconciliation", h.reconcileGlobalEffect)
 	global.GET("/:conversation_id/turns/:projection_id/events", h.streamGlobalEvents)
+	global.GET("/:conversation_id/turns/:projection_id/events/page", h.pageGlobalEvents)
 
 	h.registerInternal(engine)
 }
@@ -526,6 +529,10 @@ func (h HTTP) reconcileEffect(c *gin.Context, productID *string) {
 	c.JSON(http.StatusOK, out)
 }
 
+func (h HTTP) streamControlEvents(c *gin.Context) {
+	h.Service.StreamControlEvents(c)
+}
+
 func (h HTTP) streamEvents(c *gin.Context, productID *string) {
 	after := 0
 	if raw := strings.TrimSpace(c.Query("after")); raw != "" {
@@ -537,6 +544,32 @@ func (h HTTP) streamEvents(c *gin.Context, productID *string) {
 		after = parsed
 	}
 	h.Service.StreamTurnEvents(c, productID, c.Param("conversation_id"), c.Param("projection_id"), after, c.GetHeader("Last-Event-ID"))
+}
+
+func (h HTTP) pageProductEvents(c *gin.Context) {
+	productID := c.Param("product_id")
+	h.pageEvents(c, &productID)
+}
+
+func (h HTTP) pageGlobalEvents(c *gin.Context) { h.pageEvents(c, nil) }
+
+func (h HTTP) pageEvents(c *gin.Context, productID *string) {
+	after, err := queryInt(c, "after", 0, 0, maxEventSequence)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	limit, err := queryInt(c, "limit", 250, 1, 250)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ListProjectedEventPage(c.Request.Context(), productID, c.Param("conversation_id"), c.Param("projection_id"), after, limit)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func queryBool(c *gin.Context, key string, def bool) bool {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTask } from "../lib/types";
 import {
+  agentDockListRefetchInterval,
   agentTaskWorkspaceTarget,
   isGlobalAgentDockModalTarget,
   isProductWorkbenchPath,
@@ -213,5 +214,12 @@ describe("GlobalAgentDock Task Views", () => {
     expect(shouldRenderGlobalAgentLauncher("/products/product-1", true)).toBe(true);
     expect(shouldRenderGlobalAgentLauncher("/products", false)).toBe(true);
     expect(shouldRenderGlobalAgentLauncher("/settings", false)).toBe(true);
+  });
+
+  it("polls Session/Task lists only after control SSE fallback", () => {
+    expect(agentDockListRefetchInterval(false, false)).toBe(false);
+    expect(agentDockListRefetchInterval(false, true)).toBe(false);
+    expect(agentDockListRefetchInterval(true, false)).toBe(false);
+    expect(agentDockListRefetchInterval(true, true)).toBe(2_000);
   });
 });

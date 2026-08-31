@@ -39,7 +39,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 连续生图 | `go/internal/imagesession` | `productflow-api`、`productflow-worker` | `go/internal/imagesession` |
 | 局部修 | `go/internal/localedit` | `productflow-api`、`productflow-worker` | `go/internal/localedit` |
 | 设置与 provider | `go/internal/settings`、`go/internal/providers` | `productflow-api`、worker 解析绑定 | `go/internal/settings`、`go/internal/providers` |
-| 发给模型的固定文案 | `go/prompts` | API/worker embed；agent-service 读 `runtime-policy.md` | `go/prompts`、graph listing/prompt 测试、`go/internal/providers`、`go/internal/agent`、agent-service |
+| 发给模型的固定文案 | `go/prompts` | API/worker embed；agent-service 构建时把 `runtime-policy.md` 打包进产物 | `go/prompts`、graph listing/prompt 测试、`go/internal/providers`、`go/internal/agent`、agent-service |
 | 异步投递 | `go/internal/platform/queue` | `productflow-dispatcher`、`productflow-worker` | `go/internal/platform/queue`、graph/imagesession 投递测试 |
 | schema 演进 | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
 | 错误与日志 | `go/internal/platform/apperr`、`httpx`、`log` | 中间件与 worker | platform 与各包 HTTP 测试 |
@@ -94,13 +94,13 @@ product name (+ optional types and 1..6 uploads)
   -> product workbench
 ```
 
-ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、`LibraryOrganizationDraft` revision，以及低频控制事件 `agent_turn_events`。浏览器对话 SSE 由 Go 鉴权后转发 agent-service `waitForEvents`；`text.delta` / `thinking.delta` 不进 PostgreSQL。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `go/internal/agent` 的 harness run 规则：绑 Task 用 Task run，否则用 Conversation run。
+ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、`LibraryOrganizationDraft` revision，以及全量 Turn journal `agent_turn_events`（合帧后的 `text.chunk` / `thinking.chunk` 也写入，连续 seq）。浏览器对话 SSE 由 Go 鉴权，只读取 PG journal，并由 `projectTurnEvent` 译成 Turn / Item / approval 通知；agent-service 没有本地事件流端点。运行中和终态 Turn 都从同一 PG 游标回放。`awaiting_confirmation` 停在 PG 日志上等待 `approval/resolved`。Dock 列表与 lease 健康走 `GET /api/v2/agent-control/events`（跨进程用 PostgreSQL LISTEN/NOTIFY）。图运行节点事件走 `GET /api/v3/products/:id/workflows/:id/runs/:id/events`。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `go/internal/agent` 的 harness run 规则：绑 Task 用 Task run，否则用 Conversation run。
 
-商品创建在一个业务事务中写入。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了与直接创建使用同一套图模板（`graph.BuildDirectCreateTemplate`），落库集合不同：Agent 表单齐写入 Product intake、不设封面；直接创建（`POST /api/v3/products`）不写 intake、封面为第一张图、不建 Session。Agent 对话里的 `finalize_product_intake_v1` 走 `Product.ApplyIntake`：同一事务写 intake，并在 live 图不存在或恰好一个 `product_source` 时调用 `expandBirthGraphFromIntake`。已有其它节点则只更新 intake。工具返回 `graph_expanded`、`revision`、节点/组数量。`get_product_workflow_context_v1` 带 `birth_expandable`（intake 已写且图仍是 birth）。后续单步 `apply_graph_change_set_v1` / 多步 `propose_graph_change_set_v1` 的 `operations[].op` 必须是 Graph Command 封闭表，与 `go/internal/graph` `ops_parse` 和 agent-service TypeBox schema 对齐。`tool_contract_version` 为 16。`POST /api/v2/products` 仍可创建带封面的商品而不写 live graph，空图稍后由 `POST /api/v3/products/{id}/workflows` 补。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
+商品创建在一个业务事务中写入。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了与直接创建使用同一套图模板（`graph.BuildDirectCreateTemplate`），落库集合不同：Agent 表单齐写入 Product intake、不设封面；直接创建（`POST /api/v3/products`）不写 intake、封面为第一张图、不建 Session。Agent 对话里的 `finalize_product_intake_v1` 走 `Product.ApplyIntake`：同一事务写 intake，并在 live 图不存在或恰好一个 `product_source` 时调用 `expandBirthGraphFromIntake`。已有其它节点则只更新 intake。工具返回 `graph_expanded`、`revision`、节点/组数量。`get_product_workflow_context_v1` 带 `birth_expandable`（intake 已写且图仍是 birth）。后续单步 `apply_graph_change_set_v1` / 多步 `propose_graph_change_set_v1` 的 `operations[].op` 必须是 Graph Command 封闭表，与 `go/internal/graph` `ops_parse` 和 agent-service TypeBox schema 对齐。`tool_contract_version` 是工具清单内容哈希（`TOOL_MANIFEST_VERSION`）。`POST /api/v2/products` 仍可创建带封面的商品而不写 live graph，空图稍后由 `POST /api/v3/products/{id}/workflows` 补。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
 
 `GlobalAgentDock` 负责 Session/Task 列表、搜索、跳转和待确认整理 Draft，不拥有画布或 WorkflowGraphRun。全局素材整理只发布 `LibraryOrganizationDraft`；用户确认后由 ProductFlow 重新观察事实并应用。
 
-主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。问题答案走原 Turn 的 Pi `answer` + `resume`，进入 `ask_user` toolResult；不新开 continuation Turn。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、`tool_steps` 白名单和 effect reconciliation 以 `go/internal/agent`、`agent-service/src/pi-runtime.ts` 与 `go/internal/agent` 测试为准。
+主线承诺交互式 Turn、取消、问题回答、SSE 游标重连与分页补洞，以及 Pi session 上下文的跨进程加载。问题答案走原 Turn 的 Pi `answer` + `resume`，进入 `ask_user` toolResult；不新开 continuation Turn。每次模型请求写入 `agent_model_invocations`，最终 `assistant/message` 按 `model_request_id` 闭合状态、时延和 usage；Turn 终态原因写 `terminal_reason_code`。活动进程内的 `reconcile_then_retry` 工具在首次对账确认 `not_applied` 后只用同一幂等键重试一次。主线不承诺模型请求原地恢复、后台 durable Task、完整多实例调度、跨进程 `not_applied` 自动重试或全量副作用对账。lease、fencing、`tool_steps` 白名单和 effect reconciliation 以 `go/internal/agent`、`agent-service/src/pi-runtime.ts` 与 `go/internal/agent` 测试为准。
 
 实现入口：`go/internal/product` 与 `go/internal/agent`；Turn 控制走 Go Agent HTTP → agent-service `src/pi-runtime.ts`；投影与同步在 `go/internal/agent`；全局素材 Draft 在 `go/internal/library`。商品 `WorkflowDraft` HTTP 已删除，对应 URL 返回 404。商品 Goal 是显式 `AgentTask`：Turn 或 `WorkflowGraphRun` 结束不会把 Goal 标成完成；用户通过 `POST /api/v2/agent-tasks/{id}/complete` 完成。
 
@@ -114,7 +114,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 在线工作流保存在 `workflow_graphs`，schema 固定为 3。为什么是 live graph 而不是第二份 Draft 拓扑，见 `adr/0008-free-canvas-agent-graph-authority.md`。
 
-图上只有三类权威对象：Node（配置与当前输出引用）、Edge（类型、角色、顺序、依赖）、Artifact（一次 cook 的不可变产物）。用户、Agent 和配方都通过 `apply_graph_change_set` 写入。ChangeSet 操作：`create_node`、`update_node_config`、`rename_node`、`delete_node`、`connect_nodes`、`disconnect_edge`、`reorder_edges`、`move_nodes`、`create_group`、`move_nodes_to_group`、`rename_group`、`dissolve_group`。不完整 DAG 可以保存；运行前再查完整性。处理节点左侧按 Catalog `accepts` 渲染具名输入端口，handle id 等于边 `role`。运行时上下文只读目标节点的 incoming edges，见 `go/internal/graph` 的 catalog 与 rules，以及 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
+图上只有三类权威对象：Node（配置、效果输出引用、文稿候选引用）、Edge（类型、角色、顺序、依赖）、Artifact（一次生成的不可变产物）。节点 Catalog 把节点标为 `source`、`document` 或 `effect`。正式文稿只存在 `config_json`；文稿候选通过 `pending_candidate_artifact_id` 引用；`current_artifact_id` 只表示效果输出。用户、Agent 和配方都通过 `apply_graph_change_set` 写入正式配置。ChangeSet 操作：`create_node`、`update_node_config`、`rename_node`、`delete_node`、`connect_nodes`、`disconnect_edge`、`reorder_edges`、`move_nodes`、`create_group`、`move_nodes_to_group`、`rename_group`、`dissolve_group`。不完整 DAG 可以保存；运行前再查完整性。文稿候选的读取、按 section 应用与放弃由专用 API 管理。运行时上下文只读目标节点的 incoming edges，见 `go/internal/graph` 的 catalog 与 rules，以及 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
 
 节点类型为：
 
@@ -122,12 +122,12 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 - `image_asset`：一对一绑定 ProductImageAsset。
 - `creative_brief`：运行时根据商品资料和参考图生成创作要求，结果写入节点并可以再编辑。
 - `visual_system`：运行时根据商品资料和参考图生成风格与背景约束，结果写入节点并可以再编辑。
-- `prompt_generation`：运行时根据上游上下文生成提示词，结果写入节点并可以再编辑。
-- `image_generation`：根据已生成的提示词和 GenerationSpec 生成图片。运行此节点（`scope=node`）只入队目标；需要连带 fill 仍会干活的上游时使用“运行到此节点”。跑内容节点不会自动跑下游生图。文稿、`document_origin` 与 cook 范围见 [`adr/0014-canvas-document-cook.md`](adr/0014-canvas-document-cook.md)。端口、`selection` 运行、运行队列与 `skipped` 见 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
+- `image_prompt`：运行时根据上游上下文生成提示词，结果写入节点并可以再编辑。
+- `image_generation`：根据正式提示词文稿和 GenerationSpec 生成图片。运行此节点（`scope=node`）只入队目标；需要连带仍需生成的上游时使用“运行到此节点”。跑文稿节点不会自动跑下游生图。文稿、候选、`document_origin` 与生成范围见 [`adr/0014-canvas-document-cook.md`](adr/0014-canvas-document-cook.md)。端口、`selection` 运行、运行队列与 `skipped` 见 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
 
 画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。
 
-摄影和信息图每种图片类型落成一层 Group：1 个 `prompt_generation` 加 N 个 `image_generation`（N 为该镜头张数）。证据类型（资质、工厂）是未绑定的 `image_asset`，`role=evidence`。创建上传的参考图 `role=product_identity`，接到视觉规范、创作要求和会生图镜头，不接到证据占位。添加面板「添加场景」一次 ChangeSet 创建组 + prompt + 1 张生图。实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`，模板 `go/internal/graph`。
+摄影和信息图每种图片类型落成一层 Group：1 个 `image_prompt` 加 N 个 `image_generation`（N 为该镜头张数）。证据类型（资质、工厂）是未绑定的 `image_asset`，`role=evidence`。创建上传的参考图 `role=product_identity`，接到视觉规范、创作要求和会生图镜头，不接到证据占位。添加面板「添加场景」一次 ChangeSet 创建组 + prompt + 1 张生图。实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`，模板 `go/internal/graph`。
 
 `WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 runtime `generation_max_concurrent_tasks`。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。证据：`go/internal/graph` 执行与耐久测试。
 
@@ -177,7 +177,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - Redis 承担 broker 和并发 admission。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
-- Agent service 使用 Pi session 和本地事件文件做 runtime 恢复；低频控制事件带当前 lease/fencing 写入 PostgreSQL `agent_turn_events`。浏览器 live SSE 转发 agent-service `waitForEvents`，结束后用 Turn 快照 fold。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。直播边界见 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)。
+- Agent service 使用 Pi session 文件做模型 loop 恢复；Turn journal 带当前 lease/fencing 写入 PostgreSQL `agent_turn_events`。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
 - ProductFlow 的 Turn sync 只信任符合 Agent service wire contract 的状态；无法证明的外部结果继续保留 `unknown` 语义。
 
 ## 10. 配置与安全
@@ -187,13 +187,14 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - database、Redis、storage
 - admin/session/settings token
 - Agent service 地址和内部 token
+- 可选的 `METRICS_BEARER_TOKEN`；未配置时不注册 `/metrics`
 - 上传限制、日志和 worker 基础参数
 
 Provider profile、purpose binding 和业务运行时设置由 `/settings` 写入数据库。设置页需要管理员 session 和独立 `SETTINGS_ACCESS_TOKEN`。
 
 上传在持久化前校验 MIME、真实图片格式、字节数、像素数和数量。下载接口按数据库资产定位 storage，不接受任意文件路径。
 
-API / worker / dispatcher 终端默认打可读行（时间、级别、进程、消息、`key=value`）；滚动 JSON 文件落在 `STORAGE_ROOT/logs/`（默认 `storage-dev/logs/` 或 Compose 的 `/app/storage/logs`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`，含 caller 与 error stack。`LOG_DIR` 覆盖目录，`LOG_FORMAT=json` 让 stderr 也输出 JSON。空闲 dispatcher 周期、`/healthz` 和 Agent heartbeat 只写文件。实现与测试：`go/internal/platform/log`。
+API / worker / dispatcher 终端默认打可读行（时间、级别、进程、消息、`key=value`）；滚动 JSON 文件落在 `STORAGE_ROOT/logs/`（默认 `storage-dev/logs/` 或 Compose 的 `/app/storage/logs`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`，含 caller 与 error stack。`LOG_DIR` 覆盖目录，`LOG_FORMAT=json` 让 stderr 也输出 JSON。空闲 dispatcher 周期、`/healthz` 和 Agent heartbeat 只写文件。配置 metrics token 后，`/metrics` 以 bearer 鉴权输出低基数的 Turn、Graph run、dispatch、模型调用、副作用对账和 SSE 连接指标。实现与测试：`go/internal/platform/log`、`go/internal/platform/metrics`。
 
 ## 11. Schema 演进
 
@@ -203,7 +204,7 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 
 - Backend：Go `go test ./...`、`productflow-migrate`，以及 opt-in PostgreSQL/Redis live tests。
 - Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。
-- Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`，以及真实 provider/依赖的显式 live gate。
+- Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`。脚本化工具/技能评测（`agent-service/evals/`：schema、guards、禁令、两次内修复）在 `just agent-service-test` 内；真实模型档是 opt-in：`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`）。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 
 代码与文档同步规则：

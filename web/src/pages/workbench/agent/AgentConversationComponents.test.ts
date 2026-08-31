@@ -9,12 +9,12 @@ import {
   agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
   resolveAgentCanvasFocusNodeIds,
-  workflowRunRequestRefetchIntervalMs,
 } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { selectAgentSessionConversation } from "./AgentSessionSwitcher";
 import { AgentToolStepList } from "./AgentToolStepList";
+import { AgentTurnTimeline } from "./AgentTurnTimeline";
 import { agentEventReducer, createAgentTurnEventState } from "./agentEventReducer";
 
 function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
@@ -105,30 +105,7 @@ describe("Agent conversation components", () => {
     expect(canSubmitAgentConversationMessage({ activeTurn: undefined })).toBe(true);
     expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "running" }) })).toBe(false);
     expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "requires_input" }) })).toBe(false);
-  });
-
-  it("polls a workflow run request while it is awaiting confirmation or the graph is live", () => {
-    expect(workflowRunRequestRefetchIntervalMs(null)).toBe(false);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "awaiting_confirmation",
-      workflow_run_status: null,
-    })).toBe(1_500);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "confirmed",
-      workflow_run_status: "running",
-    })).toBe(1_200);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "confirmed",
-      workflow_run_status: null,
-    })).toBe(1_200);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "confirmed",
-      workflow_run_status: "unknown",
-    })).toBe(false);
-    expect(workflowRunRequestRefetchIntervalMs({
-      status: "succeeded",
-      workflow_run_status: "succeeded",
-    })).toBe(false);
+    expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "awaiting_confirmation" }) })).toBe(false);
   });
 
   it("binds a chat Turn to a Task only when the workbench route has one", () => {
@@ -376,8 +353,8 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 1,
         created_at: "2026-08-14T00:00:01Z",
-        kind: "text.delta",
-        payload: { delta: "流式回答", step_id: "step-1", attempt_id: "attempt-1" },
+        kind: "item.delta",
+        payload: { item_id: "attempt-1", item_kind: "assistant_text", delta: "流式回答", step_id: "step-1", attempt_id: "attempt-1" },
       },
     });
     const activeMarkup = renderToStaticMarkup(
@@ -470,8 +447,8 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 1,
         created_at: "2026-08-14T00:00:01Z",
-        kind: "thinking.delta",
-        payload: { delta: "内部推理", step_id: "step-1", attempt_id: "attempt-1", content_index: 0 },
+        kind: "item.delta",
+        payload: { item_id: "attempt-1", item_kind: "thinking", delta: "内部推理", step_id: "step-1", attempt_id: "attempt-1", content_index: 0 },
       },
     });
     const thinkingMarkup = renderToStaticMarkup(
@@ -499,8 +476,10 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 2,
         created_at: "2026-08-14T00:00:02Z",
-        kind: "tool.step",
+        kind: "item.completed",
         payload: {
+          item_id: "step-tool",
+          item_kind: "tool_call",
           step_id: "step-tool",
           kind: "inspect_context",
           summary: "读取商品上下文",
@@ -516,8 +495,8 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 3,
         created_at: "2026-08-14T00:00:03Z",
-        kind: "text.delta",
-        payload: { delta: "流式终答", step_id: "step-1", attempt_id: "attempt-1" },
+        kind: "item.delta",
+        payload: { item_id: "attempt-1", item_kind: "assistant_text", delta: "流式终答", step_id: "step-1", attempt_id: "attempt-1" },
       },
     });
     const liveMarkup = renderToStaticMarkup(
@@ -538,6 +517,7 @@ describe("Agent conversation components", () => {
     expect(thinkingIndex).toBeGreaterThan(-1);
     expect(toolIndex).toBeGreaterThan(thinkingIndex);
     expect(textIndex).toBeGreaterThan(toolIndex);
+    expect(liveMarkup).toContain("data-agent-item-card");
     expect(liveMarkup).not.toContain("data-agent-turn-process");
 
     const compactMarkup = renderToStaticMarkup(
@@ -613,6 +593,38 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("失败");
     expect(markup).toContain("motion-reduce:animate-none");
     expect(markup).not.toContain("button");
+  });
+
+  it("renders a graph proposal card from tool meta and focuses the canvas", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentTurnTimeline, {
+        blocks: [{ type: "tool", key: "tool:propose-1", step_id: "propose-1" }],
+        toolSteps: [
+          {
+            step_id: "propose-1",
+            kind: "propose_graph",
+            summary: "提交未应用的图提案",
+            status: "succeeded",
+            tool_name: "propose_graph_change_set_v1",
+            meta: {
+              pending_confirmation: true,
+              proposal_id: "proposal-1",
+              summary: "加一个镜头",
+              operation_summaries: ["add_node"],
+              affected_node_ids: ["node-1"],
+            },
+          },
+        ],
+        live: false,
+        fold: false,
+        onCanvasFocus: () => undefined,
+      }),
+    );
+    expect(markup).toContain("data-agent-graph-proposal-card");
+    expect(markup).toContain("proposal-1");
+    expect(markup).toContain("加一个镜头");
+    expect(markup).toContain("data-agent-graph-proposal-focus");
+    expect(markup).toContain("等待你在画布上确认");
   });
 
   it("renders apply_graph and propose_graph tool rows without crashing", () => {
@@ -712,6 +724,19 @@ describe("Agent conversation components", () => {
               output_summary: "已读取当前商品事实、参考资产和提交前校验指导。",
             },
           },
+          {
+            step_id: "apply-1",
+            kind: "apply_graph",
+            summary: "立即写入 live graph ChangeSet",
+            status: "succeeded",
+            tool_name: "apply_graph_change_set_v1",
+            details: {
+              phase: "tool_result",
+              operation_summaries: ["rename_node"],
+              affected_node_ids: ["n1"],
+              truncated: true,
+            },
+          },
         ],
       }),
     );
@@ -727,6 +752,8 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("library_organization_draft_validation_failed");
     expect(markup).not.toContain("image_types.0.images.0.delivery_spec.crop_anchor");
     expect(markup).not.toContain("draft_guidance");
+    expect(markup).not.toContain("rename_node");
+    expect(markup).not.toContain("n1");
   });
 
   it("renders historical snapshot steps and merges live statuses without duplicating actions", () => {
@@ -763,7 +790,7 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 1,
         created_at: "2026-08-14T00:00:01Z",
-        kind: "tool.step",
+        kind: "item.completed",
         payload: {
           step_id: "step-1",
           kind: "inspect_context",
@@ -780,7 +807,7 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 2,
         created_at: "2026-08-14T00:00:02Z",
-        kind: "tool.step",
+        kind: "item.completed",
         payload: {
           step_id: "step-2",
           kind: "read_history",
@@ -844,7 +871,7 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 1,
         created_at: "2026-08-14T00:00:01Z",
-        kind: "tool.step",
+        kind: "item.completed",
         payload: {
           step_id: "step-final",
           kind: "propose_draft",
@@ -861,7 +888,7 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 2,
         created_at: "2026-08-14T00:00:02Z",
-        kind: "turn.succeeded",
+        kind: "turn.completed",
         payload: {},
       },
     });
@@ -912,7 +939,7 @@ describe("Agent conversation components", () => {
         turn_id: "harness-turn-1",
         sequence: 1,
         created_at: "2026-08-14T00:00:01Z",
-        kind: "tool.step",
+        kind: "item.completed",
         payload: {
           step_id: "stale-step",
           kind: "inspect_context",
@@ -936,6 +963,93 @@ describe("Agent conversation components", () => {
 
     expect(markup).not.toContain("stale-step");
     expect(markup).not.toContain("上一轮步骤");
+  });
+
+  it("renders each displayed turn from its own event journal instead of snapshot fold", () => {
+    let first = createAgentTurnEventState("projection-1");
+    first = agentEventReducer(first, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 1,
+        created_at: "2026-08-14T00:00:01Z",
+        kind: "item.delta",
+        payload: { item_id: "attempt-1", item_kind: "assistant_text", delta: "中间说明", step_id: "step-1", attempt_id: "attempt-1" },
+      },
+    });
+    first = agentEventReducer(first, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 2,
+        created_at: "2026-08-14T00:00:02Z",
+        kind: "item.completed",
+        payload: {
+          item_id: "step-mid",
+          item_kind: "tool_call",
+          step_id: "step-mid",
+          kind: "inspect_context",
+          summary: "读取商品上下文",
+          status: "succeeded",
+        },
+      },
+    });
+    first = agentEventReducer(first, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 3,
+        created_at: "2026-08-14T00:00:03Z",
+        kind: "item.delta",
+        payload: { item_id: "attempt-1", item_kind: "assistant_text", delta: "终答", step_id: "step-1", attempt_id: "attempt-1" },
+      },
+    });
+    const journalMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "succeeded",
+          thinking_text: "快照思考",
+          output_text: "终答",
+          tool_steps: [{
+            step_id: "step-mid",
+            kind: "inspect_context",
+            summary: "读取商品上下文",
+            status: "succeeded",
+          }],
+        })],
+        activeTurnId: null,
+        eventStates: { "projection-1": first },
+        initialTurnPending: false,
+      }),
+    );
+    const emptyLogMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "succeeded",
+          thinking_text: "快照思考",
+          output_text: "终答",
+        })],
+        activeTurnId: null,
+        eventStates: { "projection-1": createAgentTurnEventState("projection-1") },
+        initialTurnPending: false,
+      }),
+    );
+
+    const midText = journalMarkup.indexOf("中间说明");
+    const tool = journalMarkup.indexOf("data-agent-tool-step-id=\"step-mid\"");
+    const answer = journalMarkup.indexOf("终答");
+    expect(midText).toBeGreaterThan(-1);
+    expect(tool).toBeGreaterThan(midText);
+    expect(answer).toBeGreaterThan(tool);
+    expect(journalMarkup).not.toContain("快照思考");
+    expect(emptyLogMarkup).toContain("快照思考");
+    expect(emptyLogMarkup).toContain("终答");
   });
 
   it("adds copy and retry actions to settled user and assistant messages", () => {
@@ -1041,7 +1155,7 @@ describe("Agent conversation components", () => {
     expect(retryableMarkup).toContain("aria-label=\"重试\"");
     expect(retryableMarkup).not.toMatch(/role="alert"[^]*data-agent-turn-retry/);
     expect(blockedMarkup).toContain("data-agent-turn-retry");
-    expect(blockedMarkup).toMatch(/data-agent-turn-retry[^>]*disabled/);
+    expect(blockedMarkup).toMatch(/<button(?=[^>]*data-agent-turn-retry)(?=[^>]*disabled)[^>]*>/);
   });
 
   it("keeps one user bubble when a failed Turn is retried", () => {
@@ -1076,7 +1190,7 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("Agent 生成失败");
     expect(markup).toContain("Agent 正在处理");
     expect(markup).toContain("data-agent-turn-retry");
-    expect(markup).toMatch(/data-agent-turn-retry[^>]*disabled/);
+    expect(markup).toMatch(/<button(?=[^>]*data-agent-turn-retry)(?=[^>]*disabled)[^>]*>/);
   });
 
   it("renders a sync diagnostic as a warning while the Turn remains active", () => {
@@ -1127,7 +1241,7 @@ describe("Agent conversation components", () => {
       can_undo: false,
       can_redo: false,
       nodes: [
-        { id: "prompt", node_type: "prompt_generation", title: "提示词", position_x: 0, position_y: 0, config: {}, bound_asset_id: null, group_id: "group-1", preview_asset_id: null, config_status: "ready", unused: false, incoming: [], outgoing: [] },
+        { id: "prompt", node_type: "image_prompt", title: "提示词", position_x: 0, position_y: 0, config: {}, bound_asset_id: null, group_id: "group-1", preview_asset_id: null, config_status: "ready", unused: false, incoming: [], outgoing: [] },
         { id: "image", node_type: "image_generation", title: "生图", position_x: 0, position_y: 0, config: {}, bound_asset_id: null, group_id: "group-1", preview_asset_id: null, config_status: "ready", unused: false, incoming: [], outgoing: [] },
       ],
       edges: [{ id: "e1", source_node_id: "prompt", target_node_id: "image", data_type: "prompt", role: "prompt", order: 0 }],

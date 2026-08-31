@@ -33,8 +33,6 @@ const config = {
   internalToken: "0123456789abcdef0123456789abcdef",
   requestTimeoutMS: 1000,
   providerRequestTimeoutMS: 5_000,
-  eventPollIntervalMS: 10,
-  heartbeatIntervalMS: 100,
   maxBodyBytes: 1024 * 1024,
   maxIterations: 4,
   modelContextWindow: 128_000,
@@ -184,6 +182,21 @@ describe("PiRuntimeManager turn state", () => {
     expect(toolStepDetailsForResult("get_product_workflow_context_v1", {}, false)?.output_summary).toContain(
       "唯一来源",
     );
+    expect(
+      toolStepDetailsForResult("apply_graph_change_set_v1", {
+        details: {
+          truncated: true,
+          operation_summaries: ["rename_node", "rename_node"],
+          affected_node_ids: ["n1"],
+          pending_confirmation: false,
+        },
+      }, false),
+    ).toMatchObject({
+      phase: "tool_result",
+      truncated: true,
+      operation_summaries: ["rename_node", "rename_node"],
+      affected_node_ids: ["n1"],
+    });
   });
 
   it("starts each Turn with a fresh checkpoint sequence", async () => {
@@ -257,17 +270,17 @@ describe("PiRuntimeManager turn state", () => {
           phase: "terminal" as const,
           lease_expires_at: "2099-01-01T00:00:00.000Z",
         }),
-        appendTurnEvent: async (_conversationID: string, _executionID: string, args: { sequence: number; kind: string }) => {
-          durableEvents.push({ sequence: args.sequence, kind: args.kind });
-          return {
-            id: `event-${args.sequence}`,
+        appendTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number; kind: string }> }) => {
+          durableEvents.push(...args.events.map((event) => ({ sequence: event.sequence, kind: event.kind })));
+          return args.events.map((event) => ({
+            id: `event-${event.sequence}`,
             projection_id: "projection-cancel",
             execution_id: "execution-cancel",
-            sequence: args.sequence,
+            sequence: event.sequence,
             schema_version: 1 as const,
-            kind: args.kind,
+            kind: event.kind,
             created_at: "2026-08-20T00:00:00.000Z",
-          };
+          }));
         },
         appendTurnCheckpoint: async (
           _conversationID: string,
@@ -313,10 +326,7 @@ describe("PiRuntimeManager turn state", () => {
       const canceled = await manager.cancel({ conversationID: scope.conversation_id }, createdTurnID);
 
       expect(canceled).toMatchObject({ status: "canceled", turn_id: createdTurnID });
-      expect(durableEvents).toEqual([
-        { sequence: 1, kind: "turn.queued" },
-        { sequence: 2, kind: "turn.canceled" },
-      ]);
+      expect(durableEvents).toEqual([{ sequence: 1, kind: "turn/end" }]);
       expect(checkpoints).toHaveLength(1);
       expect(checkpoints[0]).toMatchObject({ kind: "terminal", payload: { status: "canceled" } });
       expect(released).toBe(true);
@@ -468,9 +478,9 @@ describe("PiRuntimeManager turn state", () => {
       expect(canceled.status).toBe("cancel_requested");
       expect(published).toEqual([]);
       expect((await store.events(scope.run_id, queued.state.turn_id, 0)).map((event) => event.kind)).toEqual([
-        "turn.queued",
-        "turn.cancel_requested",
+        "turn/cancel_requested",
       ]);
+      expect((await store.events(scope.run_id, queued.state.turn_id, 0))[0]?.ignorable).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -521,10 +531,7 @@ describe("PiRuntimeManager turn state", () => {
         status: "requires_input",
         question,
       });
-      await store.appendEvent(scope.run_id, created.state.turn_id, "turn.requires_input", {
-        status: "requires_input",
-        question,
-      });
+      await store.appendEvent(scope.run_id, created.state.turn_id, "question/requested", question);
 
       const canceled = await manager.cancel({ conversationID: scope.conversation_id }, created.state.turn_id);
 
@@ -533,9 +540,8 @@ describe("PiRuntimeManager turn state", () => {
         error: "",
       });
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toEqual([
-        "turn.queued",
-        "turn.requires_input",
-        "turn.canceled",
+        "question/requested",
+        "turn/end",
       ]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -548,7 +554,7 @@ describe("PiRuntimeManager turn state", () => {
       const store = new TurnStore(root);
       await store.init();
       const productFlow = {
-        appendTurnEvent: async () => {
+        appendTurnEvents: async () => {
           throw new Error("event store unavailable");
         },
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
@@ -604,6 +610,7 @@ describe("PiRuntimeManager turn state", () => {
         status: "unknown",
         error: "event store unavailable",
       });
+      expect((internal as unknown as { pendingPublishedEvents: unknown[] }).pendingPublishedEvents.length).toBeGreaterThan(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -671,7 +678,7 @@ describe("PiRuntimeManager turn state", () => {
         error: "terminal checkpoint unavailable",
       });
       const events = await store.events(scope.run_id, created.state.turn_id, 0);
-      expect(events.at(-1)?.kind).toBe("turn.unknown");
+      expect(events.at(-1)?.kind).toBe("turn/end");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -714,6 +721,40 @@ describe("PiRuntimeManager turn state", () => {
       expect(sessionAborted).toBe(true);
       expect(internal.effectUnknownError).toBe("reconciliation unavailable");
       expect(internal.unknownToolStepIDs.has("tool-unknown")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the execution signal live while pausing the Pi session for approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-approval-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root },
+        store,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[2],
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      const runtime = await (manager as unknown as {
+        runtimeFor(input: Scope): Promise<unknown>;
+      }).runtimeFor(scope);
+      const execution = new AbortController();
+      let sessionAborted = false;
+      const internal = runtime as {
+        abortController: AbortController;
+        session: { abort(): Promise<void> };
+        requestApproval(approval: Record<string, unknown>): void;
+      };
+      internal.abortController = execution;
+      internal.session = { abort: async () => { sessionAborted = true; } };
+
+      internal.requestApproval({ approval_kind: "workflow_run", approval_id: "approval-1" });
+      await Promise.resolve();
+
+      expect(sessionAborted).toBe(true);
+      expect(execution.signal.aborted).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -775,7 +816,7 @@ describe("PiRuntimeManager turn state", () => {
       expect(answered.status).toBe("queued");
       expect(answered.question).toBeUndefined();
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toContain(
-        "question.answered",
+        "question/answered",
       );
     } finally {
       await managerHolder.manager?.close();
@@ -872,7 +913,7 @@ describe("PiRuntimeManager turn state", () => {
       expect(answer).toEqual({ skip: true });
       expect((await store.getState(scope.run_id, created.state.turn_id)).status).toBe("running");
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).at(-1)).toMatchObject({
-        kind: "question.answered",
+        kind: "question/answered",
         payload: { answer: { skip: true }, status: "no_answer" },
       });
     } finally {
@@ -881,4 +922,3 @@ describe("PiRuntimeManager turn state", () => {
     }
   });
 });
-

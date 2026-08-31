@@ -151,7 +151,11 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func (s Service) GetTask(ctx context.Context, taskID string) (TaskResponse, error) {
@@ -194,7 +198,11 @@ func (s Service) RenameTask(ctx context.Context, taskID, title string) (TaskResp
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse, error) {
@@ -232,7 +240,11 @@ func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse,
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, error) {
@@ -273,7 +285,11 @@ func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, er
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, error) {
@@ -358,7 +374,11 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func (s Service) CancelTask(ctx context.Context, taskID string) (TaskResponse, error) {
@@ -371,7 +391,11 @@ func (s Service) CancelTask(ctx context.Context, taskID string) (TaskResponse, e
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return TaskResponse{}, err
+	}
+	publishTaskChanged(s.DB, out.ID, out.SessionID)
+	return out, nil
 }
 
 func cancelTaskRun(ctx context.Context, pgxTx *gorm.DB, s Service, taskID string) (TaskResponse, error) {

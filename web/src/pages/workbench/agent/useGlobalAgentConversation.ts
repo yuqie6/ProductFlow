@@ -18,8 +18,7 @@ import type {
   LibraryOrganizationDraft,
   SubmitAgentTurnInput,
 } from "../../../lib/types";
-import { workflowRunRequestRefetchIntervalMs } from "./AgentConversationPanel";
-import { isAgentTurnTerminal } from "./agentEventReducer";
+import { isAgentTurnSettled } from "./agentEventReducer";
 import {
   flattenAgentTurnPages,
   selectNewestAgentTurnProjection,
@@ -27,7 +26,6 @@ import {
 } from "./useAgentConversation";
 
 const PAGE_SIZE = 20;
-const PROJECTION_POLL_MS = 1_500;
 
 interface UseGlobalAgentConversationInput {
   conversationId: string;
@@ -129,11 +127,7 @@ export function useGlobalAgentConversation({
   const latestProjectionQuery = useQuery({
     queryKey: globalAgentTurnQueryKey(conversationId, latestPageTurn?.id ?? "none"),
     queryFn: () => api.getGlobalAgentTurn(conversationId, latestPageTurn?.id ?? ""),
-    enabled: Boolean(enabled && conversationId && latestPageTurn && !isAgentTurnTerminal(latestPageTurn.status)),
-    refetchInterval: (query) => {
-      const projection = query.state.data;
-      return projection && isAgentTurnTerminal(projection.status) ? false : PROJECTION_POLL_MS;
-    },
+    enabled: Boolean(enabled && conversationId && latestPageTurn && !isAgentTurnSettled(latestPageTurn.status)),
   });
   const latestTurn = selectNewestAgentTurnProjection(latestPageTurn, latestProjectionQuery.data);
   const libraryOrganizationDraftQuery = useQuery({
@@ -150,8 +144,11 @@ export function useGlobalAgentConversation({
   const workflowRunRequestQuery = useQuery({
     queryKey: globalWorkflowRunRequestQueryKey(conversationId, taskId),
     queryFn: () => api.getGlobalWorkflowRunRequest(conversationId, taskId),
-    enabled: Boolean(enabled && conversationId && workflowRunRequestId),
-    refetchInterval: (query) => workflowRunRequestRefetchIntervalMs(query.state.data),
+    enabled: Boolean(
+      enabled &&
+      conversationId &&
+      (workflowRunRequestId || latestTurn?.status === "awaiting_confirmation"),
+    ),
   });
   const turns = useMemo(
     () =>
@@ -285,7 +282,7 @@ export function useGlobalAgentConversation({
   return {
     turns,
     latestTurn,
-    activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
+    activeTurn: latestTurn && !isAgentTurnSettled(latestTurn.status) ? latestTurn : null,
     turnsQuery,
     latestProjectionQuery,
     refreshLatestTurn: latestProjectionQuery.refetch,

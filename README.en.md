@@ -25,7 +25,7 @@ The public instance is a personal live demo with one administrator and one merch
 
 ### Workflow Canvas
 
-- The current node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
+- The current node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `image_prompt`, and `image_generation`.
 - The canvas supports adding nodes, drawing edges, moving, deleting, multi-selecting, zooming, panning, automatic layout, and keyboard shortcuts.
 - Folders organize local workflow sections and reduce visual complexity in larger DAGs.
 - The inspector edits prompts, reference bindings, visual-system overrides, aspect ratio, resolution, quality, text policy, and delivery specifications.

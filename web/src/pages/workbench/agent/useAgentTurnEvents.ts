@@ -1,50 +1,25 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { AgentTurn, AgentTurnEvent } from "../../../lib/types";
 import {
   AGENT_TERMINAL_EVENT_KINDS,
   agentTurnNeedsEventStream,
-  parseAgentTurnEvent,
+  isAgentTurnSettled,
   type AgentTurnEventScope,
   type AgentTurnEventState,
 } from "./agentEventReducer";
-import { ConversationAssembler } from "./conversation/assembler";
+import {
+  getConversationRuntime,
+  releaseConversationRuntime,
+  type ConversationConnectionState,
+  type ConversationEventSourceLike,
+  type ConversationEventSourceFactory,
+  type ConversationRuntime,
+} from "./conversation/runtime";
 
-const AGENT_EVENT_TYPES = [
-  "turn.queued",
-  "turn.started",
-  "text.delta",
-  "thinking.delta",
-  "assistant.finish",
-  "tool.step",
-  "question.required",
-  "question.answered",
-  "turn.resume_requested",
-  "turn.cancel_requested",
-  "turn.requires_input",
-  "artifact.proposed",
-  ...AGENT_TERMINAL_EVENT_KINDS,
-] as const;
-
-export type AgentEventConnectionState = "idle" | "connecting" | "open" | "reconnecting" | "closed";
-
-export interface AgentEventSourceLike {
-  addEventListener(type: string, listener: EventListener): void;
-  close(): void;
-}
-
-export type AgentEventSourceFactory = (url: string) => AgentEventSourceLike;
-
-interface AgentEventSubscriptionInput {
-  url: string;
-  scope: AgentTurnEventScope;
-  after?: number;
-  createEventSource?: AgentEventSourceFactory;
-  onEvent: (event: AgentTurnEvent) => void;
-  onConnectionState?: (state: AgentEventConnectionState) => void;
-  onProtocolError?: (error: Error) => void;
-  onStreamError?: (message: string | null) => void;
-}
+export type AgentEventConnectionState = ConversationConnectionState;
+export type AgentEventSourceLike = ConversationEventSourceLike;
+export type AgentEventSourceFactory = ConversationEventSourceFactory;
 
 interface UseAgentTurnEventsInput {
   getEventsUrl: (turnId: string, after: number) => string;
@@ -62,87 +37,43 @@ export interface UseAgentTurnEventsResult {
   streamError: string | null;
 }
 
-export function subscribeToAgentTurnEvents(input: AgentEventSubscriptionInput): () => void {
-  const createEventSource = input.createEventSource ?? createBrowserEventSource;
-  let closed = false;
-  let source: AgentEventSourceLike | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-  let reconnectAttempt = 0;
-  let cursor = input.after ?? 0;
-  let reconnectScheduled = false;
+export interface AgentTurnEventStreamSpec {
+  turnId: string;
+  key: string;
+  url: string;
+  finite: boolean;
+  scope: AgentTurnEventScope;
+}
 
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
-    reconnectTimer = undefined;
-    source?.close();
-    source = null;
-    input.onConnectionState?.("closed");
-  };
+interface HeldTurnRuntime {
+  turnId: string;
+  runtime: ConversationRuntime;
+  unsubscribe: () => void;
+  release: () => void;
+}
 
-  const scheduleReconnect = () => {
-    if (closed || reconnectScheduled) return;
-    reconnectScheduled = true;
-    source?.close();
-    source = null;
-    input.onConnectionState?.("reconnecting");
-    const delay = Math.min(5_000, 250 * 2 ** Math.min(reconnectAttempt, 5));
-    reconnectAttempt += 1;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = undefined;
-      reconnectScheduled = false;
-      connect();
-    }, delay);
-  };
+export { subscribeToConversationEvents as subscribeToAgentTurnEvents } from "./conversation/runtime";
 
-  const connect = () => {
-    if (closed) return;
-    input.onConnectionState?.("connecting");
-    let nextSource: AgentEventSourceLike;
-    try {
-      nextSource = createEventSource(withEventCursor(input.url, cursor));
-    } catch (error) {
-      input.onStreamError?.(error instanceof Error ? error.message : "Agent SSE 连接失败");
-      scheduleReconnect();
-      return;
-    }
-    source = nextSource;
-    nextSource.addEventListener("open", () => {
-      if (closed || source !== nextSource) return;
-      reconnectAttempt = 0;
-      input.onConnectionState?.("open");
-      input.onStreamError?.(null);
+export function listAgentTurnEventStreams(
+  turns: readonly AgentTurn[],
+  getEventsUrl: (turnId: string, after: number) => string,
+): AgentTurnEventStreamSpec[] {
+  const specs: AgentTurnEventStreamSpec[] = [];
+  const seen = new Set<string>();
+  for (const turn of turns) {
+    if (!agentTurnNeedsEventStream(turn) || seen.has(turn.id)) continue;
+    seen.add(turn.id);
+    const url = getEventsUrl(turn.id, 0);
+    if (!url) continue;
+    specs.push({
+      turnId: turn.id,
+      key: turn.id,
+      url,
+      finite: isAgentTurnSettled(turn.status),
+      scope: { run_id: turn.harness_run_id, turn_id: turn.harness_turn_id ?? "" },
     });
-    nextSource.addEventListener("error", (event) => {
-      if (closed || source !== nextSource) return;
-      const data = readEventData(event);
-      if (data !== null) input.onStreamError?.(readStreamError(data));
-      scheduleReconnect();
-    });
-    AGENT_EVENT_TYPES.forEach((eventType) => {
-      nextSource.addEventListener(eventType, (event) => {
-        if (closed || source !== nextSource) return;
-        const data = readEventData(event);
-        if (data === null) {
-          input.onProtocolError?.(new Error(`Agent SSE ${eventType} 缺少 data`));
-          return;
-        }
-        try {
-          const parsed = parseAgentTurnEvent(data, eventType, input.scope);
-          if (parsed.sequence <= cursor) return;
-          cursor = parsed.sequence;
-          input.onEvent(parsed);
-          if (AGENT_TERMINAL_EVENT_KINDS.some((kind) => kind === parsed.kind)) close();
-        } catch (error) {
-          input.onProtocolError?.(error instanceof Error ? error : new Error("Agent SSE 事件无效"));
-        }
-      });
-    });
-  };
-
-  connect();
-  return close;
+  }
+  return specs;
 }
 
 export function useAgentTurnEvents({
@@ -156,47 +87,39 @@ export function useAgentTurnEvents({
 }: UseAgentTurnEventsInput): UseAgentTurnEventsResult {
   const turnKey = turn?.id ?? "";
   const harnessTurnId = turn?.harness_turn_id ?? "";
-  const shouldSubscribe = Boolean(enabled && turn && agentTurnNeedsEventStream(turn) && harnessTurnId);
+  const shouldSubscribe = Boolean(enabled && agentTurnNeedsEventStream(turn));
+  const finite = Boolean(turn && isAgentTurnSettled(turn.status));
   const eventURL = getEventsUrl(turnKey, 0);
-  const assemblerRef = useRef<ConversationAssembler | null>(null);
-  if (!assemblerRef.current) {
-    assemblerRef.current = new ConversationAssembler(turnKey);
-  }
-  const assembler = assemblerRef.current;
-  const state = useSyncExternalStore(assembler.subscribe, assembler.getSnapshot, assembler.getSnapshot);
+  const runtime = useMemo(
+    () => getConversationRuntime({
+      key: turnKey,
+      url: eventURL,
+      scope: { run_id: runId, turn_id: harnessTurnId },
+      finite,
+    }),
+    [eventURL, finite, harnessTurnId, runId, turnKey],
+  );
+  const state = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
   const [connectionState, setConnectionState] = useState<AgentEventConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
   const callbacksRef = useRef({ onEvent, onArtifactProposed, onTerminal });
   callbacksRef.current = { onEvent, onArtifactProposed, onTerminal };
   useEffect(() => {
-    return () => assembler.dispose();
-  }, [assembler]);
-
-  useEffect(() => {
-    if (!turnKey) return;
-    assembler.reset(turnKey);
-    setStreamError(null);
-  }, [assembler, turnKey]);
-
-  useEffect(() => {
     if (!shouldSubscribe) {
       setConnectionState("idle");
       return;
     }
-    const url = eventURL;
     try {
-      return subscribeToAgentTurnEvents({
-        url,
-        scope: { run_id: runId, turn_id: harnessTurnId },
+      const key = turnKey;
+      const release = runtime.acquire({
         onConnectionState: setConnectionState,
         onProtocolError: (error) => setStreamError(error.message),
         onStreamError: (message) => {
           setStreamError(message);
         },
         onEvent: (event) => {
-          assembler.apply(event);
           callbacksRef.current.onEvent?.(event);
-          if (event.kind === "artifact.proposed") {
+          if (event.kind === "approval.requested") {
             callbacksRef.current.onArtifactProposed?.();
           }
           if (AGENT_TERMINAL_EVENT_KINDS.some((kind) => kind === event.kind)) {
@@ -204,11 +127,15 @@ export function useAgentTurnEvents({
           }
         },
       });
+      return () => {
+        release();
+        releaseConversationRuntime(key, runtime);
+      };
     } catch (error) {
       setConnectionState("closed");
       setStreamError(error instanceof Error ? error.message : "Agent SSE 连接失败");
     }
-  }, [assembler, eventURL, harnessTurnId, runId, shouldSubscribe, turnKey]);
+  }, [eventURL, harnessTurnId, runId, runtime, shouldSubscribe, turnKey]);
 
   return {
     state,
@@ -217,30 +144,75 @@ export function useAgentTurnEvents({
   };
 }
 
-function createBrowserEventSource(url: string): AgentEventSourceLike {
-  if (typeof EventSource === "undefined") {
-    throw new Error("当前浏览器不支持 Agent 事件流");
+export function useAgentTurnEventMap({
+  getEventsUrl,
+  turns,
+  enabled = true,
+}: {
+  getEventsUrl: (turnId: string, after: number) => string;
+  turns: readonly AgentTurn[];
+  enabled?: boolean;
+}): Record<string, AgentTurnEventState> {
+  const getEventsUrlRef = useRef(getEventsUrl);
+  getEventsUrlRef.current = getEventsUrl;
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  const heldRef = useRef(new Map<string, HeldTurnRuntime>());
+  const [states, setStates] = useState<Record<string, AgentTurnEventState>>({});
+  const streamIdentity = enabled
+    ? listAgentTurnEventStreams(turns, getEventsUrl)
+      .map((spec) => `${spec.key}\0${spec.scope.turn_id}\0${spec.scope.run_id ?? ""}`)
+      .join("\n")
+    : "";
+
+  useEffect(() => {
+    const held = heldRef.current;
+    const specs = enabled ? listAgentTurnEventStreams(turnsRef.current, getEventsUrlRef.current) : [];
+    const nextKeys = new Set(specs.map((spec) => spec.key));
+    const publish = () => {
+      setStates(snapshotHeldRuntimes(heldRef.current));
+    };
+
+    for (const spec of specs) {
+      if (held.has(spec.key)) continue;
+      const runtime = getConversationRuntime({
+        key: spec.key,
+        url: spec.url,
+        scope: spec.scope,
+        finite: spec.finite,
+      });
+      const unsubscribe = runtime.subscribe(publish);
+      const release = runtime.acquire();
+      held.set(spec.key, { turnId: spec.turnId, runtime, unsubscribe, release });
+    }
+
+    for (const [key, item] of [...held.entries()]) {
+      if (nextKeys.has(key)) continue;
+      item.unsubscribe();
+      item.release();
+      releaseConversationRuntime(key, item.runtime);
+      held.delete(key);
+    }
+
+    publish();
+  }, [enabled, streamIdentity]);
+
+  useEffect(() => () => {
+    for (const [key, item] of heldRef.current) {
+      item.unsubscribe();
+      item.release();
+      releaseConversationRuntime(key, item.runtime);
+    }
+    heldRef.current.clear();
+  }, []);
+
+  return states;
+}
+
+function snapshotHeldRuntimes(held: Map<string, HeldTurnRuntime>): Record<string, AgentTurnEventState> {
+  const states: Record<string, AgentTurnEventState> = {};
+  for (const item of held.values()) {
+    states[item.turnId] = item.runtime.getSnapshot();
   }
-  return new EventSource(url, { withCredentials: true });
-}
-
-function withEventCursor(url: string, cursor: number): string {
-  const isAbsolute = /^[a-z][a-z\d+.-]*:\/\//i.test(url);
-  const parsed = new URL(url, "http://agent-events.local");
-  parsed.searchParams.set("after", String(cursor));
-  return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
-}
-
-function readEventData(event: Event): string | null {
-  const data = (event as Event & { data?: unknown }).data;
-  return typeof data === "string" ? data : null;
-}
-
-function readStreamError(data: string): string {
-  try {
-    const parsed = JSON.parse(data) as { error?: { message?: unknown } };
-    return typeof parsed.error?.message === "string" ? parsed.error.message : "Agent 事件流返回错误";
-  } catch {
-    return "Agent 事件流返回错误";
-  }
+  return states;
 }

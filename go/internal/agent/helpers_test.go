@@ -23,15 +23,15 @@ func TestTurnNeedsSyncOnlyInFlight(t *testing.T) {
 	}
 }
 
-func TestEventKindsRejectLiveDeltas(t *testing.T) {
-	if inSet(eventKinds, "text.delta") || inSet(eventKinds, "thinking.delta") || inSet(eventKinds, "assistant.finish") {
-		t.Fatal("live token events must not be durable Agent event kinds")
-	}
-	if !inSet(liveOnlyEventKinds, "text.delta") || !inSet(liveOnlyEventKinds, "thinking.delta") {
-		t.Fatal("text.delta and thinking.delta stay live-only")
-	}
-	if inSet(eventKinds, "thinking_delta") {
-		t.Fatal("Pi thinking_delta must be forwarded as thinking.delta")
+func TestEventKindsUseTheJournalVocabulary(t *testing.T) {
+	for _, kind := range []string{
+		"turn/start", "text.chunk", "thinking.chunk", "assistant/message",
+		"tool/call", "tool/result", "approval/requested", "approval/resolved",
+		"turn/cancel_requested", "turn/resume_requested", "turn/end",
+	} {
+		if !inSet(eventKinds, kind) {
+			t.Fatalf("journal kind %q is missing", kind)
+		}
 	}
 }
 

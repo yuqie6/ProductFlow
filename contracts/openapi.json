@@ -17797,7 +17797,8 @@
             "type": "string",
             "enum": [
               "source",
-              "processing"
+              "document",
+              "effect"
             ],
             "title": "Kind"
           },
@@ -17814,6 +17815,14 @@
             },
             "type": "array",
             "title": "Config Fields"
+          },
+          "document_actions": {
+            "items": {
+              "type": "string",
+              "enum": ["complete", "rewrite", "replace"]
+            },
+            "type": "array",
+            "title": "Document Actions"
           }
         },
         "additionalProperties": false,
@@ -18158,6 +18167,13 @@
             ],
             "title": "Current Artifact Payload"
           },
+          "pending_candidate_artifact_id": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "null" }
+            ],
+            "title": "Pending Candidate Artifact Id"
+          },
           "incoming": {
             "items": {
               "$ref": "#/components/schemas/GraphEdgeSummaryResponse"
@@ -18205,6 +18221,23 @@
               }
             ],
             "title": "Node Id"
+          },
+          "node_ids": {
+            "items": { "type": "string" },
+            "type": "array",
+            "title": "Node Ids"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "title": "Force"
+          },
+          "document_action": {
+            "anyOf": [
+              { "type": "string", "enum": ["complete", "rewrite", "replace"] },
+              { "type": "null" }
+            ],
+            "title": "Document Action"
           },
           "node_title": {
             "anyOf": [
@@ -18301,7 +18334,7 @@
           "image_asset",
           "creative_brief",
           "visual_system",
-          "prompt_generation",
+          "image_prompt",
           "image_generation"
         ],
         "title": "GraphNodeType",

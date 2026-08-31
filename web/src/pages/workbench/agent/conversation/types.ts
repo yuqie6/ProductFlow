@@ -74,7 +74,7 @@ export function echoMatchesTurn(echo: PendingUserEcho, turn: Pick<AgentTurn, "in
 }
 
 export function isStreamPublicationKind(kind: string): boolean {
-  return kind === "text.delta" || kind === "thinking.delta";
+  return kind === "item.delta";
 }
 
 export function assembleTurnNodes(input: {

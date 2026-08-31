@@ -17,10 +17,9 @@ import type {
   GraphProjection,
   SubmitAgentTurnInput,
 } from "../../../lib/types";
-import { isAgentTurnTerminal } from "./agentEventReducer";
+import { isAgentTurnSettled, isAgentTurnTerminal } from "./agentEventReducer";
 
 const AGENT_TURN_PAGE_SIZE = 20;
-const AGENT_TURN_PROJECTION_POLL_MS = 1_500;
 
 interface UseAgentConversationInput {
   productId: string;
@@ -150,13 +149,7 @@ export function useAgentConversation({
   const latestProjectionQuery = useQuery({
     queryKey: agentTurnQueryKey(productId, conversation.id, latestPageTurn?.id ?? "none"),
     queryFn: () => api.getAgentTurn(productId, conversation.id, latestPageTurn?.id ?? ""),
-    enabled: Boolean(enabled && latestPageTurn && !isAgentTurnTerminal(latestPageTurn.status)),
-    refetchInterval: (query) => {
-      const projection = query.state.data;
-      return projection && isAgentTurnTerminal(projection.status)
-        ? false
-        : AGENT_TURN_PROJECTION_POLL_MS;
-    },
+    enabled: Boolean(enabled && latestPageTurn && !isAgentTurnSettled(latestPageTurn.status)),
   });
   const latestTurn = selectNewestAgentTurnProjection(
     latestPageTurn,
@@ -251,7 +244,7 @@ export function useAgentConversation({
   return {
     turns,
     latestTurn,
-    activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
+    activeTurn: latestTurn && !isAgentTurnSettled(latestTurn.status) ? latestTurn : null,
     turnsQuery,
     latestProjectionQuery,
     submitTurnMutation,

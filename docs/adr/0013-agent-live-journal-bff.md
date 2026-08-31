@@ -6,7 +6,7 @@ Pi session 文件仍只服务模型 loop。ADR 0001「不能拼第二份供模�
 
 ## 状态
 
-Accepted
+Superseded。浏览器 BFF 边界仍成立；本 ADR 的 local live journal、稀疏 PG 日志和 agent-service `/events` 路由已退役。当前全量 journal、连续 seq、Turn/Item 投影与回放合同见 [ADR 0017](0017-agent-full-journal-ui-protocol.md)。以下内容只记录历史决策。
 
 ## 背景
 

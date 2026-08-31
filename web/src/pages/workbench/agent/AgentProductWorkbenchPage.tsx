@@ -92,6 +92,7 @@ export function AgentProductWorkbenchPage({
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
+  const [agentEditing, setAgentEditing] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(false);
   const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
   const [agentOpenRequest, setAgentOpenRequest] = useState(preferConversation ? 1 : 0);
@@ -104,6 +105,7 @@ export function AgentProductWorkbenchPage({
     flushInspectorRef.current = flush;
   }, []);
   const beforeRun = useCallback(() => flushInspectorRef.current(), []);
+  const onAgentPresenceChange = useCallback((editing: boolean) => setAgentEditing(editing), []);
 
   const catalogQuery = useQuery({
     queryKey: ["graph-node-catalog"],
@@ -451,6 +453,7 @@ export function AgentProductWorkbenchPage({
             onRegisterActions={setActions}
             onBusyChange={setCanvasBusy}
             onBeforeRun={beforeRun}
+            agentEditing={agentEditing}
             onOpenLocalEdit={localEdit.openLocalImageEdit}
             chromeCollapsed={chromeCollapsed}
             onToggleChrome={() => setChromeCollapsed((current) => !current)}
@@ -506,6 +509,7 @@ export function AgentProductWorkbenchPage({
             onCanvasFocus={(nodeIds) => {
               void selectCanvasNodes(nodeIds);
             }}
+            onAgentPresenceChange={onAgentPresenceChange}
             onExpandGlobalAgent={() => {
               openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });
             }}

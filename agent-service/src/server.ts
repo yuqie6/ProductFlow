@@ -74,10 +74,6 @@ async function handleRequest(
     writeJSON(response, 200, await manager.answerQuestion(lookup, route.turnID, route.questionID, body));
     return;
   }
-  if (route.action === "events" && request.method === "GET") {
-    await streamEvents(manager, request, response, lookup, route.turnID, parseAfter(url.searchParams.get("after")));
-    return;
-  }
   writeJSON(response, 405, { error: { code: "method_not_allowed", message: "method not allowed" } });
 }
 
@@ -94,7 +90,7 @@ function parseRoute(pathname: string): Route | null {
   const turnID = decodeSegment(segments[5]);
   if (!turnID) return null;
   if (segments.length === 6) return { kind: kind === "conversations" ? "conversation" : "task", scopeID, turnID, action: "get" };
-  if (segments.length === 7 && ["cancel", "resume", "events"].includes(segments[6])) {
+  if (segments.length === 7 && ["cancel", "resume"].includes(segments[6])) {
     return { kind: kind === "conversations" ? "conversation" : "task", scopeID, turnID, action: segments[6] as RouteAction };
   }
   if (segments.length === 9 && segments[6] === "questions" && segments[8] === "answer") {
@@ -105,53 +101,13 @@ function parseRoute(pathname: string): Route | null {
   return null;
 }
 
-type RouteAction = "start" | "get" | "cancel" | "resume" | "answer" | "events";
+type RouteAction = "start" | "get" | "cancel" | "resume" | "answer";
 interface Route {
   kind: "conversation" | "task";
   scopeID: string;
   turnID?: string;
   questionID?: string;
   action: RouteAction;
-}
-
-/** SSE：心跳注释维持代理连接；空唤醒不是事件。 */
-async function streamEvents(
-  manager: PiRuntimeManager,
-  request: IncomingMessage,
-  response: ServerResponse,
-  lookup: RuntimeLookup,
-  turnID: string,
-  after: number,
-): Promise<void> {
-  response.statusCode = 200;
-  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-  response.setHeader("Cache-Control", "no-cache, no-transform");
-  response.setHeader("Connection", "keep-alive");
-  response.flushHeaders();
-  const abortController = new AbortController();
-  let closed = false;
-  let cursor = after;
-  const onRequestClose = () => {
-    closed = true;
-    abortController.abort();
-  };
-  request.once("close", onRequestClose);
-  try {
-    for await (const item of manager.streamEvents(lookup, turnID, cursor, abortController.signal)) {
-      if (closed || response.destroyed) return;
-      if (item === null) {
-        response.write(": heartbeat\n\n");
-        continue;
-      }
-      const event = item;
-      response.write(`id: ${event.sequence}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`);
-      cursor = Math.max(cursor, event.sequence);
-    }
-    if (!response.destroyed && !response.writableEnded) response.end();
-  } finally {
-    request.off("close", onRequestClose);
-    abortController.abort();
-  }
 }
 
 function parseStartInput(value: unknown): { input: StartTurnInput; turnID?: string } {
@@ -309,13 +265,6 @@ function nullableInteger(value: unknown, name: string): number | null {
 function stringMap(value: unknown, name: string): Record<string, string> {
   const record = object(value, name);
   return Object.fromEntries(Object.entries(record).map(([key, item]) => [key, stringValue(item, `${name}.${key}`)]));
-}
-
-function parseAfter(value: string | null): number {
-  if (value === null || value === "") return 0;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new RuntimeError(400, "invalid_argument", "after must be a non-negative integer");
-  return parsed;
 }
 
 function decodeSegment(value: string): string | null {

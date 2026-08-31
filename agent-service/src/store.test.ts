@@ -90,10 +90,7 @@ describe("TurnStore", () => {
         options: [{ label: "Chinese" }],
       };
       await store.updateState(waitingScope.run_id, waiting.state.turn_id, { status: "requires_input", question });
-      await store.appendEvent(waitingScope.run_id, waiting.state.turn_id, "turn.requires_input", {
-        status: "requires_input",
-        question,
-      });
+      await store.appendEvent(waitingScope.run_id, waiting.state.turn_id, "question/requested", question);
 
       const result = await store.recoverAfterRestart();
 
@@ -104,7 +101,7 @@ describe("TurnStore", () => {
       expect(recoveredRunning.status).toBe("unknown");
       expect(recoveredRunning.tool_steps?.[0]?.status).toBe("unknown");
       expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("requires_input");
-      expect((await store.events(runningScope.run_id, running.state.turn_id, 0)).at(-1)?.kind).toBe("turn.unknown");
+      expect((await store.events(runningScope.run_id, running.state.turn_id, 0)).at(-1)?.kind).toBe("turn/end");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -131,7 +128,7 @@ describe("TurnStore", () => {
         execution_attempt: 1,
         execution_fencing_token: 1,
       });
-      expect((await store.events("deferred-run", turn.state.turn_id, 0)).map((event) => event.kind)).toEqual(["turn.queued"]);
+      expect((await store.events("deferred-run", turn.state.turn_id, 0)).map((event) => event.kind)).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -164,7 +161,8 @@ describe("TurnStore", () => {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn(scope, input);
-      await store.appendEvent(scope.run_id, turn.state.turn_id, "turn.awaiting_confirmation", {
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "turn/end", {
+        reason: "awaiting_confirmation",
         status: "awaiting_confirmation",
         output: "recovered",
         error: "",
@@ -204,25 +202,23 @@ describe("TurnStore", () => {
         ),
       );
       const events = await store.events(scope.run_id, turn.state.turn_id, 0);
-      expect(events.map((event) => event.sequence)).toEqual(Array.from({ length: 21 }, (_, index) => index + 1));
+      expect(events.map((event) => event.sequence)).toEqual(Array.from({ length: 20 }, (_, index) => index + 1));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("publishes terminal events before terminal state and wakes event subscribers", async () => {
+  it("persists terminal events before terminal state", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-terminal-events-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn(scope, input);
-      const waiting = store.waitForEvents(scope.run_id, turn.state.turn_id, 1, { timeoutMS: 1_000 });
       const terminal = await store.terminal(scope.run_id, turn.state.turn_id, "canceled", { output: "partial" });
 
       expect(terminal.status).toBe("canceled");
-      expect((await waiting)).toBe(true);
-      expect((await store.events(scope.run_id, turn.state.turn_id, 1)).map((event) => event.kind)).toEqual([
-        "turn.canceled",
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.kind)).toEqual([
+        "turn/end",
       ]);
       expect((await store.getState(scope.run_id, turn.state.turn_id)).status).toBe("canceled");
     } finally {
@@ -230,31 +226,62 @@ describe("TurnStore", () => {
     }
   });
 
-  it("keeps live deltas in the local journal without publishing them to ProductFlow", async () => {
+  it("publishes all journal events to ProductFlow", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-live-events-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const published: string[] = [];
+      const persistedBeforePublish: boolean[] = [];
       store.setEventPublisher(async (_scope, event) => {
+        persistedBeforePublish.push((await store.events(scope.run_id, event.turn_id, event.sequence - 1))[0]?.sequence === event.sequence);
         published.push(event.kind);
       });
       const turn = await store.createTurn(scope, input);
-      const waiting = store.waitForEvents(scope.run_id, turn.state.turn_id, 1, { timeoutMS: 1_000 });
-      await store.appendEvent(scope.run_id, turn.state.turn_id, "text.delta", {
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
         delta: "hi",
         step_id: "step-1",
         attempt_id: "attempt-1",
       });
-      expect(await waiting).toBe(true);
-      expect((await store.events(scope.run_id, turn.state.turn_id, 1)).map((event) => event.kind)).toEqual(["text.delta"]);
-      await store.appendEvent(scope.run_id, turn.state.turn_id, "tool.step", {
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.kind)).toEqual(["text.chunk"]);
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "tool/result", {
         step_id: "step-1",
         kind: "inspect_context",
         summary: "读取上下文",
         status: "succeeded",
       });
-      expect(published).toEqual(["turn.queued", "tool.step"]);
+      expect(published).toEqual(["text.chunk", "tool/result"]);
+      expect(persistedBeforePublish).toEqual([true, true]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not acknowledge an appended event before ProductFlow persistence acknowledges it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-ack-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, input);
+      let releasePublisher!: () => void;
+      const publisherGate = new Promise<void>((resolve) => {
+        releasePublisher = resolve;
+      });
+      store.setEventPublisher(async () => publisherGate);
+
+      let acknowledged = false;
+      const append = store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+        delta: "durable",
+      }).then(() => {
+        acknowledged = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(acknowledged).toBe(false);
+
+      releasePublisher();
+      await append;
+      expect(acknowledged).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

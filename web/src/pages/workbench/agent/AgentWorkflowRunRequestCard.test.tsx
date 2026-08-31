@@ -46,6 +46,25 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).toContain("基于工作流版本 v7");
     expect(markup).toContain("确认并执行");
     expect(markup).toContain("取消请求");
+    expect(markup).toContain("bg-accent");
+    expect(markup).not.toContain("bg-blue-");
+    expect(markup).not.toContain("bg-cyan-");
+    expect(markup).not.toContain("border-zinc-");
+  });
+
+  it("omits the revision line when the journal has not recorded one", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentWorkflowRunRequestCard, {
+        request: { ...request("awaiting_confirmation"), expected_workflow_revision: null },
+        loading: false,
+        busy: false,
+        error: null,
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+      }),
+    );
+    expect(markup).toContain("确认并执行");
+    expect(markup).not.toContain("基于工作流版本");
   });
 
   it("keeps a submitted request observable and offers the existing run history", () => {

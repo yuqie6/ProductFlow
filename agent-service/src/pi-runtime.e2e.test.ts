@@ -30,8 +30,6 @@ const config = {
   internalToken: "0123456789abcdef0123456789abcdef",
   requestTimeoutMS: 5_000,
   providerRequestTimeoutMS: 5_000,
-  eventPollIntervalMS: 10,
-  heartbeatIntervalMS: 100,
   maxBodyBytes: 1024 * 1024,
   maxIterations: 4,
   modelContextWindow: 128_000,
@@ -101,23 +99,26 @@ describe("Pi runtime fake provider E2E", () => {
         "terminal",
       ]);
       expect(events.map((event) => event.kind)).toEqual([
-        "turn.queued",
-        "turn.started",
-        "tool.step",
-        "tool.step",
-        "turn.succeeded",
+        "turn/start",
+        "tool/call",
+        "tool/result",
+        "text.chunk",
+        "assistant/message",
+        "turn/end",
       ]);
-      expect(events.some((event) => event.kind === "text.delta")).toBe(false);
+      expect(events.some((event) => event.kind === "text.chunk")).toBe(true);
       const local = await store.events(scope.run_id, started.turn_id, 0);
-      expect(local.filter((event) => event.kind === "text.delta").map((event) => event.payload.delta).join("")).toBe(
+      expect(local.filter((event) => event.kind === "text.chunk").map((event) => event.payload.delta).join("")).toBe(
         "fake provider response",
       );
-      expect(events[2]?.payload).toMatchObject({
+      const contextStarted = events.find((event) => event.kind === "tool/call");
+      const contextCompleted = events.find((event) => event.kind === "tool/result");
+      expect(contextStarted?.payload).toMatchObject({
         kind: "inject_context",
         tool_name: "productflow_context_injection",
         status: "running",
       });
-      expect(events[3]?.payload).toMatchObject({
+      expect(contextCompleted?.payload).toMatchObject({
         kind: "inject_context",
         tool_name: "productflow_context_injection",
         status: "succeeded",
@@ -172,8 +173,8 @@ describe("Pi runtime fake provider E2E", () => {
       });
       const terminal = await waitForTerminal(store, scope.run_id, started.turn_id);
       const local = await store.events(scope.run_id, started.turn_id, 0);
-      const thinkingEvents = local.filter((item) => item.kind === "thinking.delta");
-      const textEvents = local.filter((item) => item.kind === "text.delta");
+      const thinkingEvents = local.filter((item) => item.kind === "thinking.chunk");
+      const textEvents = local.filter((item) => item.kind === "text.chunk");
 
       expect(terminal).toMatchObject({
         status: "succeeded",
@@ -185,13 +186,16 @@ describe("Pi runtime fake provider E2E", () => {
       expect(thinkingEvents.every((item) => item.payload.truncated !== true)).toBe(true);
       expect(textEvents.map((item) => item.payload.delta).join("")).toBe("fake provider response");
       expect(events.map((item) => item.kind)).toEqual([
-        "turn.queued",
-        "turn.started",
-        "tool.step",
-        "tool.step",
-        "turn.succeeded",
+        "turn/start",
+        "tool/call",
+        "tool/result",
+        "thinking.chunk",
+        "thinking.chunk",
+        "text.chunk",
+        "assistant/message",
+        "turn/end",
       ]);
-      expect(events.some((item) => item.kind === "thinking.delta" || item.kind === "text.delta")).toBe(false);
+      expect(events.some((item) => item.kind === "thinking.chunk" || item.kind === "text.chunk")).toBe(true);
     } finally {
       await manager?.close();
       await provider.close();
@@ -242,7 +246,7 @@ describe("Pi runtime fake provider E2E", () => {
       ]);
       expect(checkpoints[1].payload).toMatchObject({ status: "failed" });
       expect(events.map((event) => event.kind)).toEqual(
-        expect.arrayContaining(["turn.queued", "turn.started", "turn.failed"]),
+        expect.arrayContaining(["turn/start", "turn/end"]),
       );
       expect(releasedPhases).toEqual(["terminal"]);
     } finally {
@@ -264,7 +268,7 @@ describe("Pi runtime fake provider E2E", () => {
     ]);
     expect(result.checkpoints[1].payload).toMatchObject({ status: "failed" });
     expect(result.events.map((event) => event.kind)).toEqual(
-      expect.arrayContaining(["turn.queued", "turn.started", "turn.failed"]),
+      expect.arrayContaining(["turn/start", "turn/end"]),
     );
     expect(result.releasedPhases).toEqual(["terminal"]);
   });
@@ -281,7 +285,7 @@ describe("Pi runtime fake provider E2E", () => {
     ]);
     expect(result.checkpoints[1].payload).toMatchObject({ status: "failed" });
     expect(result.events.map((event) => event.kind)).toEqual(
-      expect.arrayContaining(["turn.queued", "turn.started", "turn.failed"]),
+      expect.arrayContaining(["turn/start", "turn/end"]),
     );
     expect(result.releasedPhases).toEqual(["terminal"]);
   });
@@ -366,9 +370,9 @@ describe("Pi runtime fake provider E2E", () => {
         result: "applied",
       });
       expect(events.map((event) => event.kind)).toEqual(
-        expect.arrayContaining(["turn.queued", "turn.started", "tool.step", "turn.succeeded"]),
+        expect.arrayContaining(["turn/start", "tool/call", "tool/result", "turn/end"]),
       );
-      expect(events.some((event) => event.kind === "text.delta")).toBe(false);
+      expect(events.some((event) => event.kind === "text.chunk")).toBe(true);
     } finally {
       await manager?.close();
       await provider.close();
@@ -526,21 +530,21 @@ function createFakeProductFlow(
         created_at: "2026-08-20T00:00:00.000Z",
       };
     },
-    appendTurnEvent: async (
+    appendTurnEvents: async (
       _conversationID: string,
       _executionID: string,
-      args: { sequence: number; kind: string; payload: Record<string, unknown> },
+      args: { events: Array<{ sequence: number; kind: string; payload: Record<string, unknown> }> },
     ) => {
-      events.push(args);
-      return {
-        id: `event-${args.sequence}`,
+      events.push(...args.events);
+      return args.events.map((event) => ({
+        id: `event-${event.sequence}`,
         projection_id: "projection-fake-provider-e2e",
         execution_id: "execution-fake-provider-e2e",
-        sequence: args.sequence,
+        sequence: event.sequence,
         schema_version: 1 as const,
-        kind: args.kind,
+        kind: event.kind,
         created_at: "2026-08-20T00:00:00.000Z",
-      };
+      }));
     },
     createProductWorkspace: async (_conversationID: string, name: string, idempotencyKey: string) => ({
       product_id: "product-fake-provider-e2e",

@@ -183,13 +183,7 @@ func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *
 		return nil
 	}
 	status := state.Status
-	if row.ConversationScope == "global" && state.Status == "succeeded" && state.Artifact != nil {
-		status = "awaiting_confirmation"
-	}
 	pendingID := pendingWorkflowRequest(ctx, pgxTx, conversationID, row.TaskID, state)
-	if pendingID != "" && (state.Status == "succeeded" || state.Status == "awaiting_confirmation") {
-		status = "awaiting_confirmation"
-	}
 	output := nullableString(state.Output)
 	errText := nullableString(state.Error)
 	var questionJSON any = gorm.Expr("NULL")
@@ -390,6 +384,7 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 			}).Error; err != nil {
 				return err
 			}
+			publishTaskChanged(pgxTx, task.ID, task.SessionID)
 		}
 		return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 	}
@@ -402,6 +397,7 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 			}).Error; err != nil {
 				return err
 			}
+			publishTaskChanged(pgxTx, task.ID, task.SessionID)
 		}
 		return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 	}
@@ -478,7 +474,42 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 	if err := pgxTx.Model(&schema.AgentTasks{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 		return err
 	}
-	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
+	if err := refreshSessionSummary(ctx, pgxTx, task.SessionID); err != nil {
+		return err
+	}
+	if taskListChangedFromTurn(task, status, waiting, failure, summary) {
+		publishTaskChanged(pgxTx, task.ID, task.SessionID)
+	}
+	return nil
+}
+
+func taskListChangedFromTurn(task taskRow, status string, waiting, failure any, summary string) bool {
+	if task.Status != status {
+		return true
+	}
+	if summary != "" && (task.Summary == nil || *task.Summary != summary) {
+		return true
+	}
+	prevWaiting := ""
+	if task.WaitingReason != nil {
+		prevWaiting = *task.WaitingReason
+	}
+	nextWaiting := ""
+	if value, ok := waiting.(string); ok {
+		nextWaiting = value
+	}
+	if prevWaiting != nextWaiting {
+		return true
+	}
+	prevFailure := ""
+	if task.FailureReason != nil {
+		prevFailure = *task.FailureReason
+	}
+	nextFailure := ""
+	if value, ok := failure.(string); ok {
+		nextFailure = value
+	}
+	return prevFailure != nextFailure
 }
 
 func taskTurnSummary(status string, state TurnState) string {

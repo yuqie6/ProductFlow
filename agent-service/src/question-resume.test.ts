@@ -20,10 +20,10 @@ describe("question-resume helpers", () => {
   it("reads the latest stored question answer from events", () => {
     expect(
       storedAnswerFromEvents([
-        { sequence: 1, kind: "question.required", payload: {}, created_at: "", run_id: "", turn_id: "", schema_version: 1 },
+        { sequence: 1, kind: "question/requested", payload: {}, created_at: "", run_id: "", turn_id: "", schema_version: 1 },
         {
           sequence: 2,
-          kind: "question.answered",
+          kind: "question/answered",
           payload: { answer: { text: "筋膜枪" } },
           created_at: "",
           run_id: "",
@@ -32,6 +32,19 @@ describe("question-resume helpers", () => {
         },
       ]),
     ).toEqual({ text: "筋膜枪" });
+    expect(
+      storedAnswerFromEvents([
+        {
+          sequence: 1,
+          kind: "question.answered",
+          payload: { answer: { option: 0 } },
+          created_at: "",
+          run_id: "",
+          turn_id: "",
+          schema_version: 1,
+        },
+      ]),
+    ).toEqual({ option: 0 });
   });
 
   it("finds an unanswered ask_user tool call and ignores completed ones", () => {

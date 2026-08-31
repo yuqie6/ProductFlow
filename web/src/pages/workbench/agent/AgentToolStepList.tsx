@@ -37,6 +37,9 @@ const KIND_KEYS: Record<AgentToolStepKind, TranslationKey> = {
   apply_graph: "agentWorkbench.toolStep.kind.applyGraph",
   propose_graph: "agentWorkbench.toolStep.kind.proposeGraph",
   focus_canvas: "agentWorkbench.toolStep.kind.focusCanvas",
+  expand_intake: "agentWorkbench.toolStep.kind.expandIntake",
+  discard_proposal: "agentWorkbench.toolStep.kind.discardProposal",
+  cancel_run: "agentWorkbench.toolStep.kind.cancelRun",
 };
 
 const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; className?: string }>> = {
@@ -53,6 +56,9 @@ const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; class
   apply_graph: GitBranch,
   propose_graph: FilePen,
   focus_canvas: ScanEye,
+  expand_intake: Layers3,
+  discard_proposal: CircleX,
+  cancel_run: CircleX,
 };
 
 const STATUS_KEYS: Record<AgentToolStepStatus, TranslationKey> = {
@@ -189,6 +195,25 @@ function ToolStepDetailsView({ details }: { details?: AgentToolStepDetails }) {
       data-agent-tool-step-details
       className="ml-8 grid gap-1 border-l border-border-l2 py-2 pl-3 text-[11px] leading-5 text-text-muted"
     >
+      {details.pending_confirmation ? (
+        <span>{t("agentWorkbench.toolStep.detail.pending")}</span>
+      ) : null}
+      {details.reconciled ? <span>{t("agentWorkbench.toolStep.detail.reconciled")}</span> : null}
+      {details.workflow_title ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.workflow")} value={details.workflow_title} />
+      ) : null}
+      {details.node_count !== undefined ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.nodeCount")} value={String(details.node_count)} />
+      ) : null}
+      {details.group_count !== undefined ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.groupCount")} value={String(details.group_count)} />
+      ) : null}
+      {details.item_count !== undefined ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.itemCount")} value={String(details.item_count)} />
+      ) : null}
+      {details.asset_count !== undefined ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.assetCount")} value={String(details.asset_count)} />
+      ) : null}
       {details.question_text ? (
         <DetailLine label={t("agentWorkbench.toolStep.detail.question")} value={details.question_text} />
       ) : null}
@@ -215,7 +240,14 @@ function ToolStepDetailsView({ details }: { details?: AgentToolStepDetails }) {
 function hasUserVisibleDetails(details?: AgentToolStepDetails): boolean {
   if (!details) return false;
   return Boolean(
-    details.question_text
+    details.pending_confirmation
+      || details.reconciled
+      || details.workflow_title
+      || details.node_count !== undefined
+      || details.group_count !== undefined
+      || details.item_count !== undefined
+      || details.asset_count !== undefined
+      || details.question_text
       || details.option_labels?.length
       || details.error_code
       || details.error_message

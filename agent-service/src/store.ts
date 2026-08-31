@@ -25,7 +25,6 @@ import {
   nowISO,
   sameRuntimeScope,
 } from "./contracts.js";
-import { isDurableTurnEventKind, LIVE_EVENT_FLUSH_MS } from "./pi-chunks.js";
 
 export class RuntimeError extends Error {
   readonly status: number;
@@ -51,15 +50,6 @@ interface PersistedEvents {
   items: TurnEvent[];
 }
 
-interface EventWaiter {
-  after: number;
-  resolve: (hasEvents: boolean) => void;
-  reject: (error: unknown) => void;
-  timer: ReturnType<typeof setTimeout> | undefined;
-  signal: AbortSignal | undefined;
-  onAbort: (() => void) | undefined;
-}
-
 export interface TurnRecoveryCandidate {
   scope: Scope;
   turnID: string;
@@ -80,10 +70,8 @@ const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached 
 /** 本进程的 Turn 文件。不是第二份业务 transcript。 */
 export class TurnStore {
   private readonly locks = new Map<string, Promise<void>>();
-  private readonly eventWaiters = new Map<string, Set<EventWaiter>>();
   private readonly eventCache = new Map<string, PersistedEvents>();
   private readonly dirtyEvents = new Set<string>();
-  private readonly flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private eventPublisher?: DurableEventPublisher;
 
   constructor(readonly root: string) {}
@@ -220,7 +208,6 @@ export class TurnStore {
       record.last_turn_id = turnID;
       await this.writeJSON(this.runPath(scope.run_id), record);
       await this.writeJSON(this.statePath(scope.run_id, turnID), state);
-      await this.appendEvent(scope.run_id, turnID, "turn.queued", { status: "queued" });
       return { state, created: true };
     });
   }
@@ -273,27 +260,33 @@ export class TurnStore {
       if (
         current.status === "requires_input" &&
         current.question &&
-        events.some((event) => event.kind === "turn.requires_input" || event.kind === "question.required")
+        events.some((event) => event.kind === "question/requested")
       ) {
         return "waiting_input";
       }
       if (current.status === "queued") {
         const hasQuestionContinuation = events.some(
-          (event) => event.kind === "question.answered" || event.kind === "turn.requires_input",
+          (event) => event.kind === "question/answered",
         );
         if (!hasQuestionContinuation) return "queued";
       }
       const recoveredToolSteps = unknownRunningToolSteps(current.tool_steps);
       for (const step of recoveredToolSteps ?? []) {
         if (current.tool_steps?.some((candidate) => candidate.step_id === step.step_id && candidate.status !== step.status)) {
-          await this.appendEventUnlocked(scope.run_id, state.turn_id, "tool.step", step as unknown as JsonObject);
+          await this.appendEventUnlocked(
+            scope.run_id,
+            state.turn_id,
+            "tool/result",
+            step as unknown as JsonObject,
+          );
         }
       }
-      await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn.unknown", {
-        status: "unknown",
-        output: current.output,
-        error: RESTART_UNKNOWN_ERROR,
-      });
+				await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn/end", {
+					reason: "unknown",
+					status: "unknown",
+				output: current.output,
+				error: RESTART_UNKNOWN_ERROR,
+			});
       await this.updateStateUnlocked(scope.run_id, state.turn_id, {
         status: "unknown",
         error: RESTART_UNKNOWN_ERROR,
@@ -313,59 +306,18 @@ export class TurnStore {
     return this.serial(runID + ":" + turnID, () => this.updateStateUnlocked(runID, turnID, patch));
   }
 
-  async appendEvent(runID: string, turnID: string, kind: string, payload: JsonObject): Promise<TurnEvent> {
-    return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload));
+  async appendEvent(runID: string, turnID: string, kind: string, payload: JsonObject, ignorable = false): Promise<TurnEvent> {
+    return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload, ignorable));
+  }
+
+  /** PG publisher 已失败时仍要在本地留下诚实的 unknown 终态，且不能再次调用同一失败 publisher。 */
+  async appendLocalEvent(runID: string, turnID: string, kind: string, payload: JsonObject): Promise<TurnEvent> {
+    return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload, false, false));
   }
 
   async events(runID: string, turnID: string, after: number): Promise<TurnEvent[]> {
     const events = await this.loadEventsRecord(runID, turnID);
     return events.items.filter((event) => event.sequence > after);
-  }
-
-  async waitForEvents(
-    runID: string,
-    turnID: string,
-    after: number,
-    options: { signal?: AbortSignal; timeoutMS?: number } = {},
-  ): Promise<boolean> {
-    if ((await this.events(runID, turnID, after)).length > 0) return true;
-    if (options.signal?.aborted) return false;
-
-    const key = this.eventKey(runID, turnID);
-    return new Promise<boolean>((resolve, reject) => {
-      let settled = false;
-      const waiters = this.eventWaiters.get(key) ?? new Set<EventWaiter>();
-      const waiter: EventWaiter = {
-        after,
-        resolve: (hasEvents) => finish(hasEvents),
-        reject: (error) => finish(undefined, error),
-        timer: undefined,
-        signal: options.signal,
-        onAbort: undefined,
-      };
-      const finish = (hasEvents?: boolean, error?: unknown) => {
-        if (settled) return;
-        settled = true;
-        waiters.delete(waiter);
-        if (waiters.size === 0) this.eventWaiters.delete(key);
-        if (waiter.timer !== undefined) clearTimeout(waiter.timer);
-        if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
-        if (error !== undefined) reject(error);
-        else resolve(Boolean(hasEvents));
-      };
-      waiter.onAbort = () => finish(false);
-      waiters.add(waiter);
-      this.eventWaiters.set(key, waiters);
-      if (options.signal) options.signal.addEventListener("abort", waiter.onAbort, { once: true });
-      if (options.timeoutMS !== undefined && options.timeoutMS > 0) {
-        waiter.timer = setTimeout(() => finish(false), options.timeoutMS);
-      }
-      void this.events(runID, turnID, after)
-        .then((items) => {
-          if (items.length > 0) finish(true);
-        })
-        .catch((error: unknown) => finish(undefined, error));
-    });
   }
 
   async setToolStep(runID: string, turnID: string, step: ToolStep): Promise<TurnState> {
@@ -375,7 +327,12 @@ export class TurnStore {
       const index = steps.findIndex((candidate) => candidate.step_id === step.step_id);
       if (index >= 0) steps[index] = step;
       else steps.push(step);
-      await this.appendEventUnlocked(runID, turnID, "tool.step", step as unknown as JsonObject);
+      await this.appendEventUnlocked(
+        runID,
+        turnID,
+        step.status === "running" ? "tool/call" : "tool/result",
+        step as unknown as JsonObject,
+      );
       return this.updateStateUnlocked(runID, turnID, { tool_steps: steps });
     });
   }
@@ -385,23 +342,44 @@ export class TurnStore {
     runID: string,
     turnID: string,
     status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
-    details: { output?: string; error?: string; question?: TurnQuestion; artifact?: TurnArtifact; thinking?: string },
+    details: {
+      output?: string;
+      error?: string;
+      question?: TurnQuestion;
+      artifact?: TurnArtifact;
+      approval?: JsonObject;
+      thinking?: string;
+      reason_code?: "provider_failed" | "execution_interrupted" | "effect_unknown" | "persistence_failed";
+    },
   ): Promise<TurnState> {
     return this.serial(this.eventKey(runID, turnID), async () => {
       const current = await this.getState(runID, turnID);
       const output = details.output ?? stateOutput(current);
       const thinking = details.thinking ?? current.thinking ?? "";
       const error = details.error ?? "";
-      await this.appendEventUnlocked(runID, turnID, `turn.${status}`, {
-        status,
-        output,
-        error,
-        ...(details.question ? { question: details.question as unknown as JsonObject } : {}),
-        ...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
-      });
-      if (details.question) await this.appendEventUnlocked(runID, turnID, "question.required", details.question as unknown as JsonObject);
-      if (details.artifact) await this.appendEventUnlocked(runID, turnID, "artifact.proposed", details.artifact as unknown as JsonObject);
-      return this.updateStateUnlocked(runID, turnID, {
+			if (details.question) {
+				await this.appendEventUnlocked(runID, turnID, "question/requested", details.question as unknown as JsonObject);
+			}
+			if (details.artifact) {
+				await this.appendEventUnlocked(runID, turnID, "approval/requested", {
+					approval_id: details.artifact.step_id,
+					approval_kind: "artifact",
+					artifact: details.artifact as unknown as JsonObject,
+				});
+			}
+			if (details.approval) {
+				await this.appendEventUnlocked(runID, turnID, "approval/requested", details.approval);
+			}
+			await this.appendEventUnlocked(runID, turnID, "turn/end", {
+				reason: status === "succeeded" ? "completed" : status,
+				...(details.reason_code ? { reason_code: details.reason_code } : {}),
+				status,
+				output,
+				error,
+				...(details.question ? { question: details.question as unknown as JsonObject } : {}),
+				...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
+			});
+		return this.updateStateUnlocked(runID, turnID, {
         status,
         output,
         thinking,
@@ -458,7 +436,14 @@ export class TurnStore {
     return next;
   }
 
-  private async appendEventUnlocked(runID: string, turnID: string, kind: string, payload: JsonObject): Promise<TurnEvent> {
+  private async appendEventUnlocked(
+    runID: string,
+    turnID: string,
+    kind: string,
+    payload: JsonObject,
+    ignorable = false,
+    publish = true,
+  ): Promise<TurnEvent> {
     const key = this.eventKey(runID, turnID);
     const events = await this.loadEventsRecord(runID, turnID);
     const event: TurnEvent = {
@@ -466,25 +451,20 @@ export class TurnStore {
       run_id: runID,
       turn_id: turnID,
       sequence: events.sequence + 1,
-      created_at: nowISO(),
-      kind,
-      payload,
+		created_at: nowISO(),
+		kind,
+		...(ignorable ? { ignorable: true } : {}),
+		payload,
     };
     events.sequence = event.sequence;
     events.items.push(event);
     this.eventCache.set(key, events);
     this.dirtyEvents.add(key);
-    this.notifyEventWaiters(runID, turnID, event.sequence);
-    const durable = isDurableTurnEventKind(kind);
-    if (durable) {
-      await this.flushEventsUnlocked(runID, turnID);
-      if (this.eventPublisher) {
-        const record = await this.loadRun(runID);
-        await this.eventPublisher(record.scope, event);
-      }
-    } else {
-      this.scheduleEventFlush(runID, turnID);
-    }
+		await this.flushEventsUnlocked(runID, turnID);
+		if (publish && this.eventPublisher) {
+			const record = await this.loadRun(runID);
+			await this.eventPublisher(record.scope, event);
+		}
     return event;
   }
 
@@ -504,23 +484,8 @@ export class TurnStore {
     }
   }
 
-  private scheduleEventFlush(runID: string, turnID: string): void {
-    const key = this.eventKey(runID, turnID);
-    if (this.flushTimers.has(key)) return;
-    const timer = setTimeout(() => {
-      this.flushTimers.delete(key);
-      void this.serial(key, () => this.flushEventsUnlocked(runID, turnID));
-    }, LIVE_EVENT_FLUSH_MS);
-    this.flushTimers.set(key, timer);
-  }
-
   private async flushEventsUnlocked(runID: string, turnID: string): Promise<void> {
     const key = this.eventKey(runID, turnID);
-    const timer = this.flushTimers.get(key);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      this.flushTimers.delete(key);
-    }
     if (!this.dirtyEvents.has(key)) return;
     const events = this.eventCache.get(key);
     if (!events) {
@@ -529,14 +494,6 @@ export class TurnStore {
     }
     await this.writeJSON(this.eventsPath(runID, turnID), events);
     this.dirtyEvents.delete(key);
-  }
-
-  private notifyEventWaiters(runID: string, turnID: string, sequence: number): void {
-    const waiters = this.eventWaiters.get(this.eventKey(runID, turnID));
-    if (!waiters) return;
-    for (const waiter of [...waiters]) {
-      if (sequence > waiter.after) waiter.resolve(true);
-    }
   }
 
   private eventKey(runID: string, turnID: string): string {
@@ -567,18 +524,20 @@ function stateOutput(state: TurnState): string {
 }
 
 function terminalStatusFromEvent(event: TurnEvent): Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation"> | null {
-  if (!event.kind.startsWith("turn.")) return null;
-  const candidate = event.kind.slice("turn.".length);
-  if (!isTerminalStatus(candidate as TurnStatus)) return null;
-  if (event.payload.status !== candidate) return null;
+	if (event.kind !== "turn/end") return null;
+	const reason = typeof event.payload.reason === "string" ? event.payload.reason : event.payload.status;
+	const candidate = reason === "completed" ? "succeeded" : reason;
+	if (!isTerminalStatus(candidate as TurnStatus)) return null;
+	if (typeof candidate !== "string") return null;
   return candidate as Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">;
 }
 
 function artifactFromTerminalEvents(events: TurnEvent[], terminalEvent: TurnEvent): TurnArtifact | undefined {
   const nested = parseArtifact(terminalEvent.payload.artifact);
   if (nested) return nested;
-  const proposed = [...events].reverse().find((event) => event.kind === "artifact.proposed");
-  return proposed ? parseArtifact(proposed.payload) : undefined;
+	const proposed = [...events].reverse().find((event) => event.kind === "approval/requested");
+	if (!proposed) return undefined;
+	return parseArtifact(proposed.payload.artifact) ?? parseArtifact(proposed.payload);
 }
 
 function parseArtifact(value: JsonValue | undefined): TurnArtifact | undefined {

@@ -71,7 +71,11 @@ func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return SessionResponse{}, err
+	}
+	publishSessionChanged(s.DB, out.ID)
+	return out, nil
 }
 
 func (s Service) RenameSession(ctx context.Context, sessionID, title string) (SessionResponse, error) {
@@ -98,7 +102,11 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return SessionResponse{}, err
+	}
+	publishSessionChanged(s.DB, out.ID)
+	return out, nil
 }
 
 func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionResponse, error) {
@@ -123,7 +131,11 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 		out = item
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return SessionResponse{}, err
+	}
+	publishSessionChanged(s.DB, out.ID)
+	return out, nil
 }
 
 func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
@@ -253,8 +265,12 @@ func autoNameSession(ctx context.Context, pgxTx *gorm.DB, sessionID, inputText s
 	if next == sessionDefaultTitle {
 		return nil
 	}
-	return pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
 		"title":      next,
 		"updated_at": time.Now().UTC(),
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	publishSessionChanged(pgxTx, sessionID)
+	return nil
 }

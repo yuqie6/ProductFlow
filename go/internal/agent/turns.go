@@ -514,17 +514,6 @@ func questionMap(row turnRow) map[string]any {
 	return question
 }
 
-func inputAssetIDs(row turnRow) []string {
-	assets := []string{}
-	if len(row.InputAssetIDs) > 0 {
-		_ = json.Unmarshal(row.InputAssetIDs, &assets)
-	}
-	if assets == nil {
-		return []string{}
-	}
-	return assets
-}
-
 func stringsTrim(s string) string {
 	for len(s) > 0 && (s[0] == ' ' || s[0] == '\n' || s[0] == '\t') {
 		s = s[1:]
@@ -576,6 +565,20 @@ func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, convers
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return turnRow{}, false, err
+	}
+	var turnCount int64
+	countQuery := pgxTx.Model(&schema.AgentTurnProjections{}).
+		Joins("JOIN agent_conversations turn_conversations ON turn_conversations.id = agent_turn_projections.conversation_id")
+	if conv.SessionID != nil {
+		countQuery = countQuery.Where("turn_conversations.session_id = ?", *conv.SessionID)
+	} else {
+		countQuery = countQuery.Where("agent_turn_projections.conversation_id = ?", conversationID)
+	}
+	if err := countQuery.Count(&turnCount).Error; err != nil {
+		return turnRow{}, false, err
+	}
+	if turnCount >= maxTurnsPerSession {
+		return turnRow{}, false, apperr.Conflict("当前 Agent Session 已达到 Turn 数量上限")
 	}
 	if conv.ScopeType == "global" && conv.SessionID != nil {
 		_ = autoNameSession(ctx, pgxTx, *conv.SessionID, text)

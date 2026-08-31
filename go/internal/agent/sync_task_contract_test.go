@@ -298,7 +298,7 @@ func TestProductContextConfirmedFactsAndLiveGraphRoles(t *testing.T) {
 			id, graph_id, node_type, title, position_x, position_y, config_json, document_origin, created_at, updated_at
 		) VALUES
 			($1, $3, 'creative_brief', '创作要求', 0, 0, '{}', 'seed', NOW(), NOW()),
-			($2, $3, 'prompt_generation', '提示词', 240, 0, '{}', 'seed', NOW(), NOW())
+			($2, $3, 'image_prompt', '提示词', 240, 0, '{}', 'seed', NOW(), NOW())
 	`, sourceID, targetID, graphID); err != nil {
 		t.Fatal(err)
 	}

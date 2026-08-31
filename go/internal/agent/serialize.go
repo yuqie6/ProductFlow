@@ -41,7 +41,7 @@ func serializeTurn(row turnRow, focus *CanvasFocus) TurnResponse {
 	return TurnResponse{
 		ID: row.ID, ConversationID: row.ConversationID, TaskID: row.TaskID,
 		HarnessRunID: runID, HarnessTurnID: row.HarnessTurnID, IdempotencyKey: row.IdempotencyKey,
-		InputText: row.InputText, InputAssetIDs: assetIDs, Status: row.Status,
+		InputText: row.InputText, InputAssetIDs: assetIDs, Status: row.Status, TerminalReasonCode: row.TerminalReasonCode,
 		ResumeRequired: row.ResumeRequired, OutputText: row.OutputText, ThinkingText: row.ThinkingText, ErrorText: row.ErrorText,
 		Question: question, QuestionAnswer: answer, ContinuationTurnID: row.ContinuationTurnID,
 		ToolSteps: steps, ArtifactName: row.ArtifactName, ArtifactStepID: row.ArtifactStepID,
@@ -71,7 +71,7 @@ func turnFromModels(proj schema.AgentTurnProjections, convHarness string, taskHa
 	return turnRow{
 		ID: proj.ID, ConversationID: proj.ConversationID, TaskID: proj.TaskID,
 		HarnessTurnID: proj.HarnessTurnID, IdempotencyKey: proj.IdempotencyKey, RequestHash: proj.RequestHash,
-		InputText: proj.InputText, InputAssetIDs: []byte(proj.InputAssetIdsJSON), Status: proj.Status,
+		InputText: proj.InputText, InputAssetIDs: []byte(proj.InputAssetIdsJSON), Status: proj.Status, TerminalReasonCode: proj.TerminalReasonCode,
 		ResumeRequired: proj.ResumeRequired, OutputText: proj.OutputText, ThinkingText: proj.ThinkingText, ErrorText: proj.ErrorText,
 		QuestionJSON: jsonPtrBytes(proj.QuestionJSON), QuestionAnswerJSON: jsonPtrBytes(proj.QuestionAnswerJSON),
 		ContinuationTurnID: proj.ContinuationTurnID, ToolStepsJSON: []byte(proj.ToolStepsJSON),

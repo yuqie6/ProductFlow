@@ -2,6 +2,8 @@ import { ImagePlus, Loader2, Send, Sparkles, Square, Trash2, Upload, X } from "l
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
+import { Tooltip } from "../../../components/ui/tooltip";
 import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentAttachment, AgentQuestion, AgentQuestionAnswer } from "../../../lib/types";
@@ -184,9 +186,8 @@ export function AgentComposer({
         ) : null}
 
         <div
-          className={`overflow-hidden rounded-[22px] border bg-surface-raised shadow-[0_8px_24px_rgb(15_23_42_/_0.07)] transition-shadow focus-within:border-accent/70 focus-within:shadow-[0_8px_28px_rgb(99_102_241_/_0.14)] dark:shadow-[0_12px_30px_rgb(0_0_0_/_0.22)] dark:focus-within:shadow-[0_12px_34px_rgb(99_102_241_/_0.16)] ${
-            dragging ? "border-accent/80" : "border-border-l3"
-          }`}
+          className={`overflow-hidden rounded-surface border bg-surface-raised shadow-elev-2 transition-[border-color,box-shadow] duration-fast focus-within:border-accent/70 focus-within:shadow-elev-3 ${dragging ? "border-accent/80" : "border-border-l3"
+            }`}
           onDragOver={(event) => {
             if (!onUploadFiles) {
               return;
@@ -201,16 +202,14 @@ export function AgentComposer({
             <div className="border-b border-border-l1 px-3 pb-3 pt-3">
               <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-medium text-text-secondary">
                 <span>{selectedAssetsCountLabel ?? t("agentWorkbench.composer.selectedAssetsCount", { count: selectedAssets.length })}</span>
-                <button
-                  type="button"
-                  onClick={handleClearAllAssets}
+                <IconButton
+                  label={t("agentWorkbench.composer.clearAssets")}
+                  size="toolbar"
                   disabled={isSubmitting}
-                  aria-label={t("agentWorkbench.composer.clearAssets")}
-                  title={t("agentWorkbench.composer.clearAssets")}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error disabled:opacity-40"
+                  onClick={handleClearAllAssets}
                 >
                   <Trash2 size={13} />
-                </button>
+                </IconButton>
               </div>
               <div className="flex gap-2 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden">
                 {selectedAssets.map((asset) => (
@@ -230,15 +229,14 @@ export function AgentComposer({
                         className="h-full w-full object-cover"
                       />
                     </button>
-                    <button
-                      type="button"
+                    <IconButton
+                      label={t("agentWorkbench.removeAsset", { name: asset.display_name })}
+                      size="sm"
+                      className="absolute right-0.5 top-0.5 bg-surface-inverse/80 text-surface-raised opacity-100 hover:bg-state-error sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                       onClick={() => onRemoveAsset(asset.id)}
-                      aria-label={t("agentWorkbench.removeAsset", { name: asset.display_name })}
-                      title={t("agentWorkbench.removeAsset", { name: asset.display_name })}
-                      className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/80 text-white opacity-100 backdrop-blur transition-opacity hover:bg-state-error sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                     >
                       <X size={11} />
-                    </button>
+                    </IconButton>
                   </div>
                 ))}
               </div>
@@ -284,59 +282,47 @@ export function AgentComposer({
                       event.target.value = "";
                     }}
                   />
-                  <label
-                    htmlFor={uploadInputId}
-                    title={t("agentWorkbench.uploadAssets")}
-                    aria-disabled={isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS}
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
-                      isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS
-                        ? "pointer-events-none cursor-not-allowed opacity-40"
-                        : "cursor-pointer text-text-muted hover:bg-surface-subtle hover:text-text-primary"
-                    }`}
-                  >
-                    {isUploading ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" /> : <Upload size={16} />}
-                    <span className="sr-only">{t("agentWorkbench.uploadAssets")}</span>
-                  </label>
+                  <Tooltip content={t("agentWorkbench.uploadAssets")}>
+                    <label
+                      htmlFor={uploadInputId}
+                      aria-disabled={isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS}
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors lg:h-9 lg:w-9 ${isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS
+                          ? "pointer-events-none cursor-not-allowed opacity-40"
+                          : "cursor-pointer text-text-muted hover:bg-surface-subtle hover:text-text-primary"
+                        }`}
+                    >
+                      {isUploading ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" /> : <Upload size={16} />}
+                      <span className="sr-only">{t("agentWorkbench.uploadAssets")}</span>
+                    </label>
+                  </Tooltip>
                 </>
               ) : null}
               {!question && showAssetPicker ? (
-                <button
-                  type="button"
+                <IconButton
+                  label={assetPickerLabel ?? t("agentWorkbench.selectAssets")}
+                  size="toolbar"
+                  className={selectedAssets.length > 0 ? "bg-accent/10 text-accent hover:bg-accent/20" : ""}
                   onClick={onOpenAssets}
                   disabled={isSubmitting}
-                  aria-label={assetPickerLabel ?? t("agentWorkbench.selectAssets")}
-                  title={assetPickerLabel ?? t("agentWorkbench.selectAssets")}
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40 ${
-                    selectedAssets.length > 0
-                      ? "bg-accent/10 text-accent hover:bg-accent/20"
-                      : "text-text-muted hover:bg-surface-subtle hover:text-text-primary"
-                  }`}
                 >
                   <ImagePlus size={17} />
-                </button>
+                </IconButton>
               ) : null}
               {!question && value.length > 30 ? (
                 <span className="truncate text-[10px] tabular-nums text-text-muted">{value.length} / 20000</span>
               ) : null}
             </div>
-            <button
-              type="button"
+            <IconButton
+              label={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
+              size="toolbar"
+              variant={stopAvailable ? "danger" : "primary"}
+              className="rounded-full"
               onClick={stopAvailable ? onStop : onSubmit}
               disabled={question ? !stopAvailable || isStopping : stopAvailable ? isStopping : !submitReady}
-              aria-label={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
-              title={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-colors focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-40 ${
-                stopAvailable
-                  ? "bg-state-error hover:bg-state-error/90 focus-visible:ring-state-error"
-                  : "bg-accent hover:bg-accent-strong focus-visible:ring-accent"
-              }`}
+              busy={stopAvailable && isStopping}
             >
-              {stopAvailable ? (
-                isStopping ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <Square size={14} fill="currentColor" />
-              ) : (
-                <Send size={15} />
-              )}
-            </button>
+              {stopAvailable ? <Square size={14} fill="currentColor" /> : <Send size={15} />}
+            </IconButton>
           </div>
         </div>
 

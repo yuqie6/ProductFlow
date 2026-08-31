@@ -335,6 +335,8 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
       const scope = params.scope;
       const nodeID = params.node_id;
       const nodeIDs = params.node_ids;
+      const force = params.force;
+      const documentAction = params.document_action;
       let prepared: PreparedWorkflowRunRequest = global
         ? await runtime.client.prepareGlobalWorkflowRunRequest(
           runtime.scope.conversation_id,
@@ -352,7 +354,7 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
           { expected_workflow_revision: expectedRevision, task_id: taskID, source_run_id: sourceRunID },
           runtime.signal,
         );
-      prepared = { ...prepared, scope, node_id: nodeID, node_ids: nodeIDs };
+      prepared = { ...prepared, scope, node_id: nodeID, node_ids: nodeIDs, force, document_action: documentAction };
       return withEffect(runtime, name, toolCallID, {
         intentPayload: {
           product_id: prepared.product_id,
@@ -505,7 +507,7 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
           const proposalID = typeof record.proposal_id === "string" ? record.proposal_id.trim() : "";
           if (!proposalID) return;
           const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, 240) : "";
-          runtime.emitApproval({
+          runtime.requestApproval({
             approval_id: proposalID,
             approval_kind: "graph_proposal",
             proposal_id: proposalID,

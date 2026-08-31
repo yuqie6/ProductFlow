@@ -38,6 +38,8 @@ export interface PreparedWorkflowRunRequest {
   scope?: string;
   node_id?: string;
   node_ids?: string[];
+  force?: boolean;
+  document_action?: "complete" | "rewrite" | "replace";
 }
 
 /** ProductFlow 对一次变更的证明。unknown 表示副作用无法证明。 */
@@ -45,6 +47,17 @@ export interface ReconcileResult {
   state: "applied" | "not_applied" | "conflict" | "unknown" | string;
   result?: unknown;
   detail?: string;
+}
+
+export interface AgentEventInput {
+  sequence: number;
+  schema_version: 1;
+  run_id: string;
+  turn_id: string;
+  kind: string;
+  ignorable?: boolean;
+  payload: JsonObject;
+  created_at: string;
 }
 
 export class ProductFlowClient {
@@ -101,26 +114,20 @@ export class ProductFlowClient {
     );
   }
 
-  async appendTurnEvent(
+  async appendTurnEvents(
     conversationID: string,
     executionID: string,
     args: {
       owner_id: string;
       lease_token: string;
-      sequence: number;
-      schema_version: 1;
-      run_id: string;
-      turn_id: string;
-      kind: string;
-      payload: JsonObject;
-      created_at: string;
+      events: AgentEventInput[];
     },
     signal?: AbortSignal,
-  ): Promise<AgentEventReceipt> {
-    return this.json<AgentEventReceipt>(
-      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/events`,
+  ): Promise<AgentEventReceipt[]> {
+    return this.json<{ items: AgentEventReceipt[] }>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/events/batch`,
       { method: "POST", body: args, signal },
-    );
+    ).then((response) => response.items);
   }
 
   async heartbeatTurnExecution(
@@ -398,10 +405,6 @@ export class ProductFlowClient {
     await this.json(this.conversationPath(conversationID) + "/global-draft/validate", { method: "POST", body: { value }, signal });
   }
 
-  async validateLibraryOrganizationDraft(conversationID: string, value: unknown, signal?: AbortSignal): Promise<void> {
-    await this.json(this.conversationPath(conversationID) + "/library-organization-draft/validate", { method: "POST", body: { value }, signal });
-  }
-
   async finalizeProductIntake(
     conversationID: string,
     args: { selection: Record<string, unknown>; reference_asset_ids: string[]; task_id: string | null },
@@ -600,6 +603,8 @@ function workflowRunRequestPayload(prepared: PreparedWorkflowRunRequest, sourceS
     scope: prepared.scope ?? "graph",
     node_id: prepared.node_id ?? null,
     node_ids: prepared.node_ids ?? [],
+    force: prepared.force ?? false,
+    document_action: prepared.document_action ?? null,
   };
 }
 

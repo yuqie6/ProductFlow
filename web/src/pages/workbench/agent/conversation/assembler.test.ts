@@ -6,6 +6,7 @@ import { ConversationAssembler, type FrameScheduler } from "./assembler";
 import { assembleTurnNodes, echoMatchesTurn, isStreamPublicationKind } from "./types";
 
 function event(sequence: number, kind: string, payload: Record<string, unknown> = {}): AgentTurnEvent {
+  const stablePayload = normalizeStablePayload(kind, payload);
   return {
     schema_version: 1,
     run_id: "run-1",
@@ -13,8 +14,21 @@ function event(sequence: number, kind: string, payload: Record<string, unknown> 
     sequence,
     created_at: "2026-08-30T00:00:00Z",
     kind,
-    payload,
+    payload: stablePayload,
   };
+}
+
+function normalizeStablePayload(kind: string, payload: Record<string, unknown>): Record<string, unknown> {
+  if (kind === "item.delta" && typeof payload.attempt_id === "string") {
+    return { item_id: payload.attempt_id, item_kind: "truncated" in payload ? "thinking" : "assistant_text", ...payload };
+  }
+  if ((kind === "item.started" || kind === "item.completed") && typeof payload.step_id === "string" && "status" in payload) {
+    return { item_id: payload.step_id, item_kind: "tool_call", ...payload };
+  }
+  if (kind === "item.completed" && typeof payload.attempt_id === "string") {
+    return { item_id: payload.attempt_id, item_kind: "assistant_text", ...payload };
+  }
+  return payload;
 }
 
 function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
@@ -70,11 +84,11 @@ describe("ConversationAssembler", () => {
     const snapshots: number[] = [];
     assembler.subscribe(() => snapshots.push(assembler.getSnapshot().last_sequence));
 
-    assembler.apply(event(1, "text.delta", { delta: "你", step_id: "s", attempt_id: "a" }));
+    assembler.apply(event(1, "item.delta", { delta: "你", step_id: "s", attempt_id: "a" }));
     expect(assembler.getSnapshot().last_sequence).toBe(0);
     expect(scheduler.queued).toHaveLength(1);
 
-    assembler.apply(event(2, "text.delta", { delta: "好", step_id: "s", attempt_id: "a" }));
+    assembler.apply(event(2, "item.delta", { delta: "好", step_id: "s", attempt_id: "a" }));
     expect(scheduler.queued).toHaveLength(1);
     scheduler.flush();
     expect(assembler.getSnapshot().last_sequence).toBe(2);
@@ -82,7 +96,7 @@ describe("ConversationAssembler", () => {
       expect.objectContaining({ type: "text", text: "你好" }),
     ]);
 
-    assembler.apply(event(3, "tool.step", {
+    assembler.apply(event(3, "item.completed", {
       step_id: "tool-1",
       kind: "inspect_context",
       summary: "读取上下文",
@@ -93,12 +107,12 @@ describe("ConversationAssembler", () => {
     expect(snapshots.at(-1)).toBe(3);
   });
 
-  it("settles assistant text on assistant.finish", () => {
+  it("settles assistant text on item.completed", () => {
     const scheduler = new QueueScheduler();
     const assembler = new ConversationAssembler("projection-1", scheduler);
-    assembler.apply(event(1, "text.delta", { delta: "终答", step_id: "s", attempt_id: "a" }));
+    assembler.apply(event(1, "item.delta", { delta: "终答", step_id: "s", attempt_id: "a" }));
     scheduler.flush();
-    assembler.apply(event(2, "assistant.finish", { reason: "stop", attempt_id: "a" }));
+    assembler.apply(event(2, "item.completed", { reason: "stop", attempt_id: "a" }));
     expect(assembler.getSnapshot().text_settled).toBe(true);
   });
 });
@@ -108,7 +122,8 @@ describe("assembleTurnNodes", () => {
     let state = createAgentTurnEventState("projection-1");
     state = agentEventReducer(state, {
       type: "event",
-      event: event(1, "thinking.delta", {
+      event: event(1, "item.delta", {
+        item_kind: "thinking",
         delta: "先看约束",
         step_id: "s",
         attempt_id: "a",
@@ -117,11 +132,11 @@ describe("assembleTurnNodes", () => {
     });
     state = agentEventReducer(state, {
       type: "event",
-      event: event(2, "text.delta", { delta: "建议", step_id: "s", attempt_id: "a" }),
+      event: event(2, "item.delta", { delta: "建议", step_id: "s", attempt_id: "a" }),
     });
     state = agentEventReducer(state, {
       type: "event",
-      event: event(3, "tool.step", {
+      event: event(3, "item.completed", {
         step_id: "tool-1",
         kind: "ask_question",
         summary: "提问",
@@ -208,7 +223,7 @@ describe("assembleTurnNodes", () => {
       { text: "请整理商品信息", assetIds: [], createdAt: "2026-08-30T00:00:00Z" },
       turn(),
     )).toBe(false);
-    expect(isStreamPublicationKind("text.delta")).toBe(true);
-    expect(isStreamPublicationKind("tool.step")).toBe(false);
+    expect(isStreamPublicationKind("item.delta")).toBe(true);
+    expect(isStreamPublicationKind("item.completed")).toBe(false);
   });
 });

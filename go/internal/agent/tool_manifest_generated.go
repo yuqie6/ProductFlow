@@ -2,4 +2,32 @@
 
 package agent
 
-const ToolManifestVersion = "7d98bff708c690658749d26daedbb3fbf6c0e47babd86f8de88bd197ad1e2c9d"
+const ToolManifestVersion = "ed0ece0cd54f0ed57da895949557823889c032e33303819def5f61e0e4883e01"
+
+var toolRecoveryPolicies = map[string]string{
+	"load_productflow_skill": "none",
+	"ask_user": "none",
+	"productflow_context_injection": "none",
+	"get_product_workflow_context_v1": "none",
+	"inspect_workflow_runs_v1": "none",
+	"list_product_image_assets_v2": "none",
+	"inspect_product_image_assets_v1": "none",
+	"request_workflow_run_v1": "reconcile_then_retry",
+	"request_global_workflow_run_v1": "reconcile_then_retry",
+	"finalize_product_intake_v1": "reconcile_then_retry",
+	"list_products_v1": "none",
+	"inspect_products_v1": "none",
+	"inspect_global_workflow_context_v1": "none",
+	"inspect_global_workflow_runs_v1": "none",
+	"list_global_media_library_assets_v1": "none",
+	"inspect_global_media_library_assets_v1": "none",
+	"create_product_workspace_v1": "reconcile_then_retry",
+	"propose_global_draft": "none",
+	"get_node_detail_v1": "none",
+	"get_workflow_run_detail_v1": "none",
+	"apply_graph_change_set_v1": "reconcile_then_retry",
+	"propose_graph_change_set_v1": "reconcile_then_retry",
+	"discard_workflow_proposal_v1": "reconcile_then_retry",
+	"cancel_workflow_run_v1": "reconcile_then_retry",
+	"focus_canvas_items_v1": "none",
+}

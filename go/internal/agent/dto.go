@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
-	"io"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -26,10 +24,12 @@ const (
 	maxInputText          = 20_000
 	maxInputAssets        = 6
 	maxIdempotencyBytes   = 200
-	maxEventSequence      = 100_000
+	maxEventSequence      = 10_000
 	maxCheckpointSequence = 10_000
 	maxEventPayloadBytes  = 128 * 1024
 	maxCheckpointPayload  = 64 * 1024
+	maxTurnsPerSession    = 1_000
+	maxSSEConnections     = 100
 	leaseSeconds          = 60
 	toolContractVersion   = ToolManifestVersion
 	assetListDefaultLimit = 50
@@ -116,6 +116,7 @@ type TurnResponse struct {
 	InputText                          string           `json:"input_text"`
 	InputAssetIDs                      []string         `json:"input_asset_ids"`
 	Status                             string           `json:"status"`
+	TerminalReasonCode                 *string          `json:"terminal_reason_code"`
 	ResumeRequired                     bool             `json:"resume_required"`
 	OutputText                         *string          `json:"output_text"`
 	ThinkingText                       *string          `json:"thinking_text"`
@@ -182,6 +183,8 @@ type WorkflowRunRequestResponse struct {
 	RunScope                 string     `json:"run_scope"`
 	TargetNodeID             *string    `json:"target_node_id"`
 	TargetNodeIDs            []string   `json:"target_node_ids"`
+	Force                    bool       `json:"force"`
+	DocumentAction           *string    `json:"document_action"`
 }
 
 type ReconcileResponse struct {
@@ -260,6 +263,7 @@ type EventReceipt struct {
 	Sequence      int       `json:"sequence"`
 	SchemaVersion int       `json:"schema_version"`
 	Kind          string    `json:"kind"`
+	Ignorable     bool      `json:"ignorable"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -390,6 +394,7 @@ type turnRow struct {
 	InputText                 string
 	InputAssetIDs             []byte
 	Status                    string
+	TerminalReasonCode        *string
 	ResumeRequired            bool
 	OutputText                *string
 	ThinkingText              *string
@@ -427,5 +432,4 @@ type Gateway interface {
 	CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error)
-	StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error
 }

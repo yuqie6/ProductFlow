@@ -170,7 +170,7 @@ const EXPANDED_GRAPH: EvalWorld["liveGraph"] = {
   group_count: 1,
   nodes: [
     { id: "source-1", node_type: "product_source", title: "商品资料" },
-    { id: EVAL_NODE_ID, node_type: "prompt_generation", title: "主图提示词" },
+    { id: EVAL_NODE_ID, node_type: "image_prompt", title: "主图提示词" },
     { id: "node-image-1", node_type: "image_generation", title: "主图 1" },
   ],
 };
@@ -233,7 +233,7 @@ function addShotOperations(): unknown[] {
     {
       op: "create_node",
       client_ref: "p-scene",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "场景提示词",
       group_ref: "g-scene",
       config: { image_type_key: "scene", prompt: { design_goal: "场景镜头" } },

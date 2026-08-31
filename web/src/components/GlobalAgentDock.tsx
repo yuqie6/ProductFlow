@@ -162,6 +162,10 @@ export function shouldRenderGlobalAgentLauncher(pathname: string, open: boolean)
   return !isProductWorkbenchPath(pathname) || open;
 }
 
+export function agentDockListRefetchInterval(open: boolean, sseFallback: boolean): number | false {
+  return open && sseFallback ? 2_000 : false;
+}
+
 export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -225,6 +229,8 @@ export function GlobalAgentDock() {
   const [isDraggingWindow, setIsDraggingWindow] = useState(false);
   const [isResizingWindow, setIsResizingWindow] = useState(false);
   const [isDraggingBubble, setIsDraggingBubble] = useState(false);
+  const [controlEventsFallback, setControlEventsFallback] = useState(false);
+  const [leaseHealth, setLeaseHealth] = useState<{ phase: string; executionId: string; at: number } | null>(null);
 
   const changeDockMode = (nextMode: GlobalAgentDockMode) => {
     setDockMode(nextMode);
@@ -416,7 +422,7 @@ export function GlobalAgentDock() {
     queryKey: ["agent-sessions", true],
     queryFn: () => api.listAgentSessions(true),
     staleTime: 15_000,
-    refetchInterval: open ? 2_000 : false,
+    refetchInterval: agentDockListRefetchInterval(open, controlEventsFallback),
   });
   const tasksQuery = useInfiniteQuery({
     queryKey: ["agent-tasks", null, true],
@@ -428,7 +434,7 @@ export function GlobalAgentDock() {
     }),
     getNextPageParam: (lastPage) => lastPage.next_cursor,
     staleTime: 8_000,
-    refetchInterval: open ? 2_000 : false,
+    refetchInterval: agentDockListRefetchInterval(open, controlEventsFallback),
   });
 
   useEffect(() => {
@@ -438,6 +444,61 @@ export function GlobalAgentDock() {
     void sessionsQuery.refetch();
     void tasksQuery.refetch();
   }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setControlEventsFallback(false);
+      return;
+    }
+    if (typeof EventSource === "undefined") {
+      setControlEventsFallback(true);
+      return;
+    }
+    let active = true;
+    const source = new EventSource(api.agentControlEventsUrl(), { withCredentials: true });
+    const invalidateLists = () => {
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+    };
+    const handleOpen = () => {
+      if (active) {
+        setControlEventsFallback(false);
+      }
+    };
+    const handleError = () => {
+      if (active) {
+        setControlEventsFallback(true);
+      }
+    };
+    source.addEventListener("open", handleOpen);
+    source.addEventListener("error", handleError);
+    const handleLeaseChanged = (event: Event) => {
+      const data = "data" in event && typeof event.data === "string" ? event.data : "";
+      if (!data || !active) return;
+      try {
+        const payload = JSON.parse(data) as { phase?: string; execution_id?: string };
+        setLeaseHealth({
+          phase: payload.phase ?? "",
+          executionId: payload.execution_id ?? "",
+          at: Date.now(),
+        });
+      } catch {
+        // 控制流心跳损坏时保持上次健康快照
+      }
+    };
+    source.addEventListener("session.changed", invalidateLists);
+    source.addEventListener("task.changed", invalidateLists);
+    source.addEventListener("lease.changed", handleLeaseChanged);
+    return () => {
+      active = false;
+      source.removeEventListener("open", handleOpen);
+      source.removeEventListener("error", handleError);
+      source.removeEventListener("session.changed", invalidateLists);
+      source.removeEventListener("task.changed", invalidateLists);
+      source.removeEventListener("lease.changed", handleLeaseChanged);
+      source.close();
+    };
+  }, [open, queryClient]);
 
   useEffect(() => {
     if (!open) {
@@ -728,33 +789,37 @@ export function GlobalAgentDock() {
 
   const panelClass = dockMode === "fullscreen"
     ? "pointer-events-auto fixed inset-2 sm:inset-4 z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_25px_80px_rgb(0_0_0_/_0.5)] backdrop-blur"
-    : `pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.25)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.55)] ${
-        isDraggingWindow || isResizingWindow ? "select-none transition-none" : "transition-[width,height,transform] duration-150"
-      }`;
+    : `pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.25)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.55)] ${isDraggingWindow || isResizingWindow ? "select-none transition-none" : "transition-[width,height,transform] duration-150"
+    }`;
 
   const panelStyle = dockMode === "fullscreen"
     ? undefined
     : isMobile
       ? {
-          left: "12px",
-          right: "12px",
-          bottom: "calc(4.5rem + env(safe-area-inset-bottom))",
-          maxHeight: "calc(100dvh - 5.5rem)",
-          height: "75dvh",
-        }
+        left: "12px",
+        right: "12px",
+        bottom: "calc(4.5rem + env(safe-area-inset-bottom))",
+        maxHeight: "calc(100dvh - 5.5rem)",
+        height: "75dvh",
+      }
       : {
-          width: `${windowSize.width}px`,
-          height: `${windowSize.height}px`,
-          maxWidth: "calc(100vw - 24px)",
-          maxHeight: "calc(100vh - 24px)",
-          left: windowPos ? `${windowPos.x}px` : undefined,
-          top: windowPos ? `${windowPos.y}px` : undefined,
-          right: windowPos ? undefined : "20px",
-          bottom: windowPos ? undefined : "20px",
-        };
+        width: `${windowSize.width}px`,
+        height: `${windowSize.height}px`,
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: "calc(100vh - 24px)",
+        left: windowPos ? `${windowPos.x}px` : undefined,
+        top: windowPos ? `${windowPos.y}px` : undefined,
+        right: windowPos ? undefined : "20px",
+        bottom: windowPos ? undefined : "20px",
+      };
 
   return (
-    <div ref={rootRef} data-global-agent-dock className="pointer-events-none">
+    <div
+      ref={rootRef}
+      data-global-agent-dock
+      data-agent-lease-health={leaseHealth?.phase || undefined}
+      className="pointer-events-none"
+    >
       {open ? (
         <section
           id="global-agent-dock-panel"
@@ -825,9 +890,8 @@ export function GlobalAgentDock() {
           {/* 可拖拽移动的顶部 Header */}
           <header
             onPointerDown={handleHeaderPointerDown}
-            className={`flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-2.5 bg-surface-raised/80 select-none ${
-              dockMode !== "fullscreen" && !isMobile ? "cursor-grab active:cursor-grabbing" : ""
-            }`}
+            className={`flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-2.5 bg-surface-raised/80 select-none ${dockMode !== "fullscreen" && !isMobile ? "cursor-grab active:cursor-grabbing" : ""
+              }`}
             title={dockMode !== "fullscreen" && !isMobile ? "按住可拖动窗口位置" : undefined}
           >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-sm">
@@ -1031,11 +1095,10 @@ export function GlobalAgentDock() {
                       <button
                         type="button"
                         onClick={() => setTaskViewMode("list")}
-                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${
-                          taskViewMode === "list"
+                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${taskViewMode === "list"
                             ? "bg-surface-raised text-text-primary shadow-sm"
                             : "text-text-muted hover:text-text-secondary"
-                        }`}
+                          }`}
                         title={t("globalAgent.taskView.list")}
                         aria-pressed={taskViewMode === "list"}
                       >
@@ -1045,11 +1108,10 @@ export function GlobalAgentDock() {
                       <button
                         type="button"
                         onClick={() => setTaskViewMode("board")}
-                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${
-                          taskViewMode === "board"
+                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${taskViewMode === "board"
                             ? "bg-surface-raised text-text-primary shadow-sm"
                             : "text-text-muted hover:text-text-secondary"
-                        }`}
+                          }`}
                         title={t("globalAgent.taskView.board")}
                         aria-pressed={taskViewMode === "board"}
                       >
@@ -1179,9 +1241,8 @@ export function GlobalAgentDock() {
             right: "auto",
             bottom: "auto",
           } : undefined}
-          className={`pointer-events-auto fixed z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-[0_10px_28px_rgb(15_23_42_/_0.25)] dark:shadow-[0_12px_32px_rgb(0_0_0_/_0.45)] transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-            bubblePos ? "" : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 sm:bottom-5 sm:right-5"
-          } ${isDraggingBubble ? "cursor-grabbing select-none transition-none" : "cursor-grab"}`}
+          className={`pointer-events-auto fixed z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-[0_10px_28px_rgb(15_23_42_/_0.25)] dark:shadow-[0_12px_32px_rgb(0_0_0_/_0.45)] transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${bubblePos ? "" : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 sm:bottom-5 sm:right-5"
+            } ${isDraggingBubble ? "cursor-grabbing select-none transition-none" : "cursor-grab"}`}
         >
           <Bot size={20} aria-hidden="true" />
           {activeTaskCount > 0 ? (
@@ -1229,9 +1290,8 @@ function DockTab({
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
-        active ? "bg-surface-raised text-accent shadow-sm" : "text-text-secondary hover:bg-surface-raised/70 hover:text-text-primary"
-      }`}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${active ? "bg-surface-raised text-accent shadow-sm" : "text-text-secondary hover:bg-surface-raised/70 hover:text-text-primary"
+        }`}
     >
       {icon}
       {label}
@@ -1373,34 +1433,34 @@ export function TaskList({
               onClick={() => onOpen(task, target)}
               className="flex min-w-0 flex-1 items-start gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-default"
             >
-            <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TASK_STATUS_CLASSES[task.status]}`} aria-hidden="true" />
-            <span className="min-w-0 flex-1">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={task.title}>
-                  {task.title}
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TASK_STATUS_CLASSES[task.status]}`} aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={task.title}>
+                    {task.title}
+                  </span>
+                  <span className="shrink-0 text-[10px] font-medium text-text-muted">
+                    {statusLabel(task.status)}
+                  </span>
                 </span>
-                <span className="shrink-0 text-[10px] font-medium text-text-muted">
-                  {statusLabel(task.status)}
+                <span className="mt-0.5 block truncate text-xs text-text-secondary" title={task.goal}>
+                  {task.goal}
+                </span>
+                {task.summary && task.summary !== task.goal ? (
+                  <span className="mt-0.5 block truncate text-[11px] text-text-muted" title={task.summary}>
+                    {task.summary}
+                  </span>
+                ) : null}
+                {task.status === "awaiting_confirmation" ? (
+                  <span className="mt-1 block text-[11px] leading-4 text-state-warning">
+                    {target ? t("globalAgent.taskConfirm.workbench") : t("globalAgent.taskConfirm.chat")}
+                  </span>
+                ) : null}
+                <span className="mt-1 block truncate text-[11px] text-text-muted">
+                  {conversation?.productName ?? workspace?.productName ?? (task.product_id ? t("globalAgent.taskProductWorkspace") : t("globalAgent.noWorkspace"))}
                 </span>
               </span>
-              <span className="mt-0.5 block truncate text-xs text-text-secondary" title={task.goal}>
-                {task.goal}
-              </span>
-              {task.summary && task.summary !== task.goal ? (
-                <span className="mt-0.5 block truncate text-[11px] text-text-muted" title={task.summary}>
-                  {task.summary}
-                </span>
-              ) : null}
-              {task.status === "awaiting_confirmation" ? (
-                <span className="mt-1 block text-[11px] leading-4 text-state-warning">
-                  {target ? t("globalAgent.taskConfirm.workbench") : t("globalAgent.taskConfirm.chat")}
-                </span>
-              ) : null}
-              <span className="mt-1 block truncate text-[11px] text-text-muted">
-                {conversation?.productName ?? workspace?.productName ?? (task.product_id ? t("globalAgent.taskProductWorkspace") : t("globalAgent.noWorkspace"))}
-              </span>
-            </span>
-            {openable ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
+              {openable ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
             </button>
             <button
               type="button"
@@ -1527,7 +1587,7 @@ export function TaskBoard({
       id: "running",
       title: t("globalAgent.taskBoard.colRunning"),
       tasks: tasks.filter((task) => task.status === "running"),
-      headerTone: "border-accent/30 bg-accent/5 dark:bg-cyan-950/20",
+      headerTone: "border-accent/30 bg-accent-soft",
       badgeTone: "bg-accent text-accent-fg font-semibold",
     },
     {
@@ -1535,7 +1595,7 @@ export function TaskBoard({
       title: t("globalAgent.taskBoard.colAwaiting"),
       tasks: tasks.filter((task) => task.status === "waiting_user" || task.status === "awaiting_confirmation"),
       headerTone: "border-state-warning/30 bg-state-warning/10",
-      badgeTone: "bg-state-warning text-zinc-950 font-bold",
+      badgeTone: "bg-state-warning-soft text-state-warning font-bold",
     },
     {
       id: "succeeded",

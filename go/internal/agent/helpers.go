@@ -15,7 +15,7 @@ import (
 
 var (
 	startableConversation = map[string]struct{}{
-		"collecting": {}, "awaiting_confirmation": {}, "failed": {},
+		"collecting": {}, "failed": {},
 		"canceled": {}, "unknown": {}, "completed": {},
 	}
 	terminalTask = map[string]struct{}{
@@ -37,15 +37,14 @@ var (
 	terminalTurn = map[string]struct{}{
 		"awaiting_confirmation": {}, "succeeded": {}, "failed": {}, "canceled": {}, "unknown": {},
 	}
+	// Agent service owns the journal vocabulary. These are raw events; the
+	// browser receives the smaller UI vocabulary emitted by sse.go.
 	eventKinds = map[string]struct{}{
-		"turn.queued": {}, "turn.started": {}, "tool.step": {},
-		"question.required": {}, "question.answered": {}, "turn.resume_requested": {},
-		"turn.cancel_requested": {}, "turn.requires_input": {}, "artifact.proposed": {},
-		"turn.awaiting_confirmation": {}, "turn.succeeded": {}, "turn.failed": {},
-		"turn.canceled": {}, "turn.unknown": {},
-	}
-	liveOnlyEventKinds = map[string]struct{}{
-		"text.delta": {}, "thinking.delta": {}, "assistant.finish": {},
+		"turn/start": {}, "step/start": {}, "text.chunk": {}, "thinking.chunk": {},
+		"assistant/message": {}, "tool/call": {}, "tool/result": {},
+		"question/requested": {}, "question/answered": {},
+		"approval/requested": {}, "approval/resolved": {},
+		"turn/cancel_requested": {}, "turn/resume_requested": {}, "turn/end": {},
 	}
 	checkpointKinds = map[string]struct{}{
 		"before_model_request": {}, "tool_effect_intent": {}, "tool_effect_result": {},

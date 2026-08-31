@@ -19,7 +19,6 @@ function runtime(
     recordToolFailure: () => undefined,
     askUser: async () => ({ text: "answer" }),
     requestApproval: () => undefined,
-    emitApproval: () => undefined,
     checkpoint,
     markEffectUnknown,
     idempotencyKey: (id) => `pi-test-${id}`,
@@ -623,6 +622,7 @@ describe("ProductFlow Pi tools", () => {
 
   it("records a failed workflow request when reconciliation proves it was not applied", async () => {
     const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    let executeCalls = 0;
     const client = {
       prepareWorkflowRunRequest: async () => ({
         product_id: baseScope.product_id!,
@@ -634,6 +634,7 @@ describe("ProductFlow Pi tools", () => {
         source_run_id: null,
       }),
       executeWorkflowRunRequest: async () => {
+        executeCalls += 1;
         throw new ProductFlowError(504, "timeout", "request timed out");
       },
       reconcileWorkflowRunRequest: async () => ({ state: "not_applied" }),
@@ -653,6 +654,7 @@ describe("ProductFlow Pi tools", () => {
       kind: "tool_effect_result",
       payload: { result: "failed", reconciliation_state: "not_applied" },
     });
+    expect(executeCalls).toBe(2);
   });
 
   it("records an unknown workflow request result and stops continuation", async () => {
@@ -698,6 +700,7 @@ describe("ProductFlow Pi tools", () => {
 
   it("sends Idempotency-Key derived from toolCallID for graph mutations", async () => {
     const keys: string[] = [];
+    const approvals: Array<Record<string, unknown>> = [];
     const client = {
       applyGraphChangeSet: async (_conversationID: string, _changeSet: object, idempotencyKey: string) => {
         keys.push(idempotencyKey);
@@ -708,7 +711,9 @@ describe("ProductFlow Pi tools", () => {
         return { accepted: true, applied: false, pending_confirmation: true, proposal_id: "p1" };
       },
     } as unknown as ProductFlowClient;
-    const tools = createProductFlowTools(runtime({ ...baseScope, has_live_graph: true }, client));
+    const toolRuntime = runtime({ ...baseScope, has_live_graph: true }, client);
+    toolRuntime.requestApproval = (approval) => approvals.push(approval);
+    const tools = createProductFlowTools(toolRuntime);
     const apply = tools.find((candidate) => candidate.name === "apply_graph_change_set_v1");
     const propose = tools.find((candidate) => candidate.name === "propose_graph_change_set_v1");
     if (!apply || !propose) throw new Error("graph mutation tools were not registered");
@@ -720,6 +725,12 @@ describe("ProductFlow Pi tools", () => {
     const applyResult = await apply.execute("tool-apply-1", params, undefined, undefined, {} as never);
     await propose.execute("tool-propose-1", { ...params, operations: [params.operations[0], params.operations[0]] }, undefined, undefined, {} as never);
     expect(keys).toEqual(["pi-test-tool-apply-1", "pi-test-tool-propose-1"]);
+    expect(approvals).toEqual([expect.objectContaining({
+      approval_id: "p1",
+      approval_kind: "graph_proposal",
+      proposal_id: "p1",
+      pending_confirmation: true,
+    })]);
     expect(applyResult.details).toMatchObject({
       operation_summaries: ["rename_node"],
       item_count: 1,

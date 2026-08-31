@@ -854,7 +854,10 @@ export type AgentToolStepKind =
   | "create_product"
   | "apply_graph"
   | "propose_graph"
-  | "focus_canvas";
+  | "focus_canvas"
+  | "expand_intake"
+  | "discard_proposal"
+  | "cancel_run";
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 
@@ -889,6 +892,28 @@ export interface AgentToolStepDetails {
   question_header?: string;
   question_text?: string;
   option_labels?: string[];
+  truncated?: boolean;
+  pending_confirmation?: boolean;
+  reconciled?: boolean;
+  response_format?: "concise" | "detailed";
+  item_count?: number;
+  node_count?: number;
+  group_count?: number;
+  asset_count?: number;
+  operation_summaries?: string[];
+  affected_node_ids?: string[];
+  affected_edge_ids?: string[];
+  affected_group_ids?: string[];
+  workflow_id?: string;
+  workflow_title?: string;
+  run_id?: string;
+  proposal_id?: string;
+  product_id?: string;
+  request_id?: string;
+  expected_workflow_revision?: number;
+  summary?: string;
+  artifact_name?: string;
+  product_workspace_created?: boolean;
 }
 
 export interface AgentToolStep {
@@ -898,6 +923,7 @@ export interface AgentToolStep {
   status: AgentToolStepStatus;
   tool_name?: string;
   details?: AgentToolStepDetails;
+  meta?: AgentToolStepDetails;
 }
 
 export interface AgentQuestionOption {
@@ -929,6 +955,14 @@ export interface AgentTurn {
   input_text: string;
   input_asset_ids: string[];
   status: AgentTurnStatus;
+  terminal_reason_code?:
+    | "provider_failed"
+    | "execution_interrupted"
+    | "effect_reconciled"
+    | "effect_conflict"
+    | "effect_unknown"
+    | "persistence_failed"
+    | null;
   resume_required: boolean;
   output_text: string | null;
   thinking_text: string | null;
@@ -1462,14 +1496,14 @@ export type GraphNodeType =
   | "image_asset"
   | "creative_brief"
   | "visual_system"
-  | "prompt_generation"
+  | "image_prompt"
   | "image_generation";
 export type GraphEdgeDataType = "product_facts" | "image_asset" | "creative_brief" | "visual_system" | "prompt";
 export type GraphEdgeRole = "facts" | "reference" | "brief" | "visual_guidance" | "prompt";
 export type GraphConfigStatus = "incomplete" | "ready" | "stale";
 export type GraphRunScope = "node" | "to_node" | "graph" | "selection";
-export type GraphRegenerateMode = "fill" | "refine" | "replace";
-export type GraphDocumentOrigin = "seed" | "generated" | "authored";
+export type GraphDocumentAction = "complete" | "rewrite" | "replace";
+export type GraphDocumentOrigin = "seed" | "generated" | "authored" | "collaborative";
 export type GraphPlannedAction = "generate" | "reuse" | "frozen" | "blocked";
 export type GraphBindingStatus = "bound" | "unbound";
 
@@ -1478,10 +1512,15 @@ export interface GraphRunSubmitInput {
   node_id?: string | null;
   node_ids?: string[] | null;
   force?: boolean;
-  regenerate_mode?: GraphRegenerateMode;
+  document_action?: GraphDocumentAction;
 }
 
-export type GraphNodeKind = "source" | "processing";
+export type GraphNodeKind = "source" | "document" | "effect";
+
+export interface GraphDocumentSectionDefinition {
+  key: string;
+  fields: string[];
+}
 
 export interface GraphCatalogInputContract {
   data_type: GraphEdgeDataType;
@@ -1544,6 +1583,8 @@ export interface GraphCatalogNode {
   kind: GraphNodeKind;
   accepts: GraphCatalogInputContract[];
   config_fields?: GraphCatalogConfigField[];
+  document_actions?: GraphDocumentAction[];
+  document_sections?: GraphDocumentSectionDefinition[];
 }
 
 export interface GraphNodeCatalog {
@@ -1576,10 +1617,31 @@ export interface GraphNode {
   current_artifact_id?: string | null;
   current_artifact_type?: "creative_brief" | "visual_system" | "prompt" | "image" | null;
   current_artifact_payload?: Record<string, unknown> | null;
+  pending_candidate_artifact_id?: string | null;
   source_product?: GraphSourceProduct | null;
   product_fact_set?: GraphProductFactSet | null;
   incoming: GraphEdgeSummary[];
   outgoing: GraphEdgeSummary[];
+}
+
+export interface GraphDocumentCandidateSection {
+  key: string;
+  changed: boolean;
+  current: Record<string, unknown>;
+  candidate: Record<string, unknown>;
+}
+
+export interface GraphDocumentCandidate {
+  artifact_id: string;
+  node_id: string;
+  document_action: GraphDocumentAction;
+  status: "ready" | "outdated";
+  base_document_hash: string;
+  input_digest: string;
+  current_document: Record<string, unknown>;
+  candidate_document: Record<string, unknown>;
+  sections: GraphDocumentCandidateSection[];
+  created_at: string;
 }
 
 export interface GraphEdge {
@@ -1707,7 +1769,7 @@ export interface GraphRunPreviewResponse {
   requested_node_id: string | null;
   requested_node_ids: string[];
   force: boolean;
-  regenerate_mode: GraphRegenerateMode;
+  document_action: GraphDocumentAction;
   nodes: GraphRunPreviewNode[];
 }
 

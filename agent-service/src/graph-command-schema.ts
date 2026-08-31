@@ -27,7 +27,7 @@ const nodeType = Type.Union([
   Type.Literal("image_asset"),
   Type.Literal("creative_brief"),
   Type.Literal("visual_system"),
-  Type.Literal("prompt_generation"),
+  Type.Literal("image_prompt"),
   Type.Literal("image_generation"),
 ]);
 

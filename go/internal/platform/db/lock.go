@@ -12,6 +12,10 @@ func ForUpdateOf(table string) clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: table}}
 }
 
+func ForUpdateOfSkipLocked(table string) clause.Expression {
+	return clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: table}, Options: "SKIP LOCKED"}
+}
+
 // SkipLocked is FOR UPDATE SKIP LOCKED，给 dispatcher claim 用.
 func SkipLocked() clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}

@@ -29,7 +29,6 @@ Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe lib
 Until these gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md). The old Go Agent on `exp` is not an implicit fallback on main.
 
 - Real provider, PostgreSQL / Redis, and browser.
-- A production claim for SSE reconnect.
 - Background durable Tasks, cross-process claim, and full effect reconciliation.
 - An independent Fresh Observation harness (re-read before/after side effects is already a rule).
 

@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  isDurableTurnEventKind,
   isKnownPiAssistantEventType,
-  LIVE_ONLY_EVENT_KINDS,
+  JOURNAL_STREAM_EVENT_KINDS,
   normalizeAssistantMessageEvent,
   PI_ASSISTANT_EVENT_TYPES,
 } from "./pi-chunks.js";
@@ -27,7 +26,7 @@ describe("Pi assistantMessageEvent inventory", () => {
 
   it("maps text and thinking into ProductFlow UI chunks", () => {
     expect(normalizeAssistantMessageEvent({ type: "text_delta", delta: "你好", contentIndex: 1 })).toEqual({
-      action: "text.delta",
+      action: "text.chunk",
       delta: "你好",
       contentIndex: 1,
     });
@@ -45,6 +44,17 @@ describe("Pi assistantMessageEvent inventory", () => {
         type: "done",
         reason: "stop",
         message: { usage: { input: 3, output: 8, totalTokens: 11 } },
+      }),
+    ).toEqual({
+      action: "finish",
+      reason: "stop",
+      usage: { input: 3, output: 8, total_tokens: 11 },
+    });
+    expect(
+      normalizeAssistantMessageEvent({
+        type: "done",
+        reason: "stop",
+        message: { usage: { input: 3, output: 8 } },
       }),
     ).toEqual({
       action: "finish",
@@ -70,13 +80,7 @@ describe("Pi assistantMessageEvent inventory", () => {
     expect(normalizeAssistantMessageEvent({ type: "" })).toEqual({ action: "unknown", type: "" });
   });
 
-  it("keeps high-frequency chunks out of the durable PostgreSQL journal", () => {
-    expect(LIVE_ONLY_EVENT_KINDS).toEqual(["text.delta", "thinking.delta", "assistant.finish"]);
-    expect(isDurableTurnEventKind("text.delta")).toBe(false);
-    expect(isDurableTurnEventKind("thinking.delta")).toBe(false);
-    expect(isDurableTurnEventKind("assistant.finish")).toBe(false);
-    expect(isDurableTurnEventKind("tool.step")).toBe(true);
-    expect(isDurableTurnEventKind("turn.succeeded")).toBe(true);
-    expect(isDurableTurnEventKind("question.required")).toBe(true);
+  it("records stream chunks as journal event kinds", () => {
+    expect(JOURNAL_STREAM_EVENT_KINDS).toEqual(["text.chunk", "thinking.chunk", "assistant/message"]);
   });
 });

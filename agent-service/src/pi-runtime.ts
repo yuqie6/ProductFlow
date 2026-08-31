@@ -60,7 +60,7 @@ import {
   validateScope,
 } from "./contracts.js";
 import { Config } from "./config.js";
-import { ProductFlowClient } from "./productflow.js";
+import { ProductFlowClient, type AgentEventInput } from "./productflow.js";
 import { loadRuntimePolicy } from "./runtime-policy.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME, SkillCatalog } from "./skills.js";
 import { RuntimeError, TurnStore } from "./store.js";
@@ -73,7 +73,7 @@ import {
   QUESTION_WAIT_EXPIRED_MESSAGE,
 } from "./question-resume.js";
 import {
-  isDurableTurnEventKind,
+  boundedUsage,
   normalizeAssistantMessageEvent,
   reportUnknownPiAssistantEvent,
   type AssistantFinishPayload,
@@ -116,6 +116,7 @@ export class PiRuntimeManager {
   private readonly runs = new Map<string, RunRuntime>();
   private readonly pending: Array<{ runtime: RunRuntime; turnID: string }> = [];
   private readonly scheduled = new Set<string>();
+  private readonly activeExecutions = new Set<Promise<void>>();
   readonly instanceID = randomUUID();
   private running = 0;
   private closed = false;
@@ -184,7 +185,7 @@ export class PiRuntimeManager {
       return this.cancelQueuedTurn(runtime, turnID);
     }
     await this.store.updateState(runtime.scope.run_id, turnID, { status: "cancel_requested" });
-    await this.store.appendEvent(runtime.scope.run_id, turnID, "turn.cancel_requested", { status: "cancel_requested" });
+    await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/cancel_requested", { status: "cancel_requested" }, true);
     if (state.status === "queued") this.enqueue(runtime, turnID);
     runtime.cancel(turnID);
     return this.store.getState(runtime.scope.run_id, turnID);
@@ -200,7 +201,7 @@ export class PiRuntimeManager {
       return this.store.getState(runtime.scope.run_id, turnID);
     }
     if (state.status === "queued") {
-      await this.store.appendEvent(runtime.scope.run_id, turnID, "turn.resume_requested", { status: "queued" });
+      await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" }, true);
       this.enqueue(runtime, turnID);
       return state;
     }
@@ -216,41 +217,6 @@ export class PiRuntimeManager {
   async answerQuestion(request: RuntimeLookup, turnID: string, questionID: string, answer: TurnAnswer): Promise<TurnState> {
     const runtime = await this.runtimeForLookup(request);
     return runtime.answerQuestion(turnID, questionID, answer);
-  }
-
-  async events(request: RuntimeLookup, turnID: string, after: number): Promise<TurnStateAndEvents> {
-    const runtime = await this.runtimeForLookup(request);
-    return {
-      state: await this.store.getState(runtime.scope.run_id, turnID),
-      events: await this.store.events(runtime.scope.run_id, turnID, after),
-    };
-  }
-
-  async *streamEvents(
-    request: RuntimeLookup,
-    turnID: string,
-    after: number,
-    signal: AbortSignal,
-  ): AsyncGenerator<TurnEvent | null> {
-    const runtime = await this.runtimeForLookup(request);
-    const runID = runtime.scope.run_id;
-    let cursor = after;
-    while (!signal.aborted) {
-      const events = await this.store.events(runID, turnID, cursor);
-      for (const event of events) {
-        cursor = Math.max(cursor, event.sequence);
-        yield event;
-        const kindStatus = event.kind.startsWith("turn.") ? event.kind.slice("turn.".length) : "";
-        if (kindStatus && isTerminalStatus(kindStatus as TurnStatus)) return;
-      }
-      const state = await this.store.getState(runID, turnID);
-      if (isTerminalStatus(state.status)) return;
-      const woke = await this.store.waitForEvents(runID, turnID, cursor, {
-        signal,
-        timeoutMS: this.config.heartbeatIntervalMS,
-      });
-      if (!woke && !signal.aborted) yield null;
-    }
   }
 
   /** `background_durable_tasks` 固定为 false：本进程只做交互式 Turn。 */
@@ -274,6 +240,7 @@ export class PiRuntimeManager {
     this.closed = true;
     for (const runtime of this.runs.values()) runtime.close();
     this.pending.length = 0;
+    await Promise.allSettled([...this.activeExecutions]);
   }
 
   private async runtimeForLookup(lookup: RuntimeLookup): Promise<RunRuntime> {
@@ -318,7 +285,7 @@ export class PiRuntimeManager {
       const [next] = this.pending.splice(index, 1);
       next.runtime.beginTurn(next.turnID);
       this.running += 1;
-      void next.runtime
+      const execution = next.runtime
         .execute(next.turnID)
         .catch(() => undefined)
         .finally(() => {
@@ -327,6 +294,8 @@ export class PiRuntimeManager {
           this.scheduled.delete(`${next.runtime.scope.run_id}:${next.turnID}`);
           void this.drain();
         });
+      this.activeExecutions.add(execution);
+      void execution.finally(() => this.activeExecutions.delete(execution));
     }
   }
 
@@ -358,11 +327,6 @@ export class PiRuntimeManager {
   }
 }
 
-export interface TurnStateAndEvents {
-  state: TurnState;
-  events: Awaited<ReturnType<TurnStore["events"]>>;
-}
-
 export interface RuntimeRecoverySummary {
   queued_turns: number;
   deferred_turns: number;
@@ -387,6 +351,8 @@ class RunRuntime implements ToolRuntime {
   private artifact?: TurnArtifact;
   private workflowRunRequested = false;
   private workflowApproval?: JsonObject;
+  private readonly pendingPublishedEvents: TurnEvent[] = [];
+  private publishedFlushPromise?: Promise<void>;
   private output = "";
   private thinkingProjection: ThinkingProjectionState = createThinkingProjectionState();
   private unknownPiEventTypes = new Set<string>();
@@ -409,6 +375,7 @@ class RunRuntime implements ToolRuntime {
   private checkpointSequence = 0;
   private modelRequestSequence = 0;
   private currentModelRequestID?: string;
+  private readonly completedModelRequestIDs = new Set<string>();
   private currentPageType: string | null = null;
   private providerRequestOptions: ProviderRequestOptions = {
     reasoningSummary: null,
@@ -488,7 +455,10 @@ class RunRuntime implements ToolRuntime {
         execution_fencing_token: this.executionLease.fencing_token,
         started_at: nowISO(),
       });
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.started", { status: "running" });
+      await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/start", {
+        status: "running",
+        attempt_id: this.attemptID,
+      });
       const runtimeContext = await this.client.runtimeContext(this.scope.conversation_id, this.scope.task_id, this.signal);
       const images = await this.loadInputImages(initial.input);
       const { session, model } = await this.createSession(turnID, runtimeContext, initial.input.page_context, images);
@@ -664,9 +634,9 @@ class RunRuntime implements ToolRuntime {
   private async syncDurableEvents(turnID: string): Promise<void> {
     const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
     for (const event of events) {
-      if (!isDurableTurnEventKind(event.kind)) continue;
       await this.publishDurableEvent(event);
     }
+    await this.flushPublishedEvents();
     if (this.persistenceError) throw this.persistenceError;
   }
 
@@ -714,10 +684,27 @@ class RunRuntime implements ToolRuntime {
       approval?: JsonObject;
     },
   ): Promise<void> {
-    await this.manager.store.terminal(this.scope.run_id, turnID, status, {
-      ...details,
-      thinking: this.thinkingProjection.text,
-    });
+    const reasonCode = status === "failed"
+      ? "provider_failed"
+      : status === "unknown" && this.effectUnknownError
+        ? "effect_unknown"
+        : status === "unknown"
+          ? "execution_interrupted"
+          : undefined;
+    try {
+      await this.manager.store.terminal(this.scope.run_id, turnID, status, {
+        ...details,
+        thinking: this.thinkingProjection.text,
+        ...(reasonCode ? { reason_code: reasonCode } : {}),
+      });
+    } catch (error) {
+      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
+    }
+    try {
+      await this.flushPublishedEvents();
+    } catch (error) {
+      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
+    }
     let terminalStatus = status;
     let terminalError = details.error;
     if (this.persistenceError && status !== "unknown") {
@@ -743,7 +730,9 @@ class RunRuntime implements ToolRuntime {
   }
 
   private async recordLocalUnknownTerminal(turnID: string, output: string, error: string): Promise<void> {
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.unknown", {
+    await this.manager.store.appendLocalEvent(this.scope.run_id, turnID, "turn/end", {
+      reason: "unknown",
+      reason_code: "persistence_failed",
       status: "unknown",
       output,
       error,
@@ -856,7 +845,7 @@ class RunRuntime implements ToolRuntime {
     this.pendingQuestionAnswer = undefined;
     this.clearQuestionTimeout();
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.resume_requested", { status: "running" });
+    await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/resume_requested", { status: "running" }, true);
     this.questionWaiter = undefined;
     waiter.resolve(answer);
   }
@@ -876,14 +865,14 @@ class RunRuntime implements ToolRuntime {
       };
       this.questionWaiter.timeout?.unref?.();
     });
+    // Pi may attach its tool-result continuation on a later microtask. Keep the
+    // shutdown rejection observed immediately while preserving rejection for
+    // the actual caller awaiting this same promise.
+    void answerPromise.catch(() => undefined);
     await this.updateExecutionPhase("waiting_input");
     await this.checkpoint("question_required", { question: question as unknown as JsonObject });
     await this.manager.store.updateState(this.scope.run_id, state.turn_id, { status: "requires_input", question });
-    await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "turn.requires_input", {
-      status: "requires_input",
-      question: question as never,
-    });
-    await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "question.required", question as never);
+    await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "question/requested", question as never);
     if (this.persistenceError) throw this.persistenceError;
     return answerPromise;
   }
@@ -923,7 +912,7 @@ class RunRuntime implements ToolRuntime {
     this.clearQuestionTimeout();
     if (waiter) this.pendingQuestionAnswer = answer;
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "queued", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question.answered", {
+    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", {
       question_id: questionID,
       answer: answer as never,
     });
@@ -958,14 +947,6 @@ class RunRuntime implements ToolRuntime {
     void this.session?.abort();
   }
 
-  emitApproval(approval: JsonObject): void {
-    const turnID = this.activeTurnID;
-    if (!turnID) return;
-    this.enqueue(() =>
-      this.manager.store.appendEvent(this.scope.run_id, turnID, "approval/requested", approval),
-    );
-  }
-
   /** ProductFlow 副作用无法证明时，把 Turn 中止为 unknown。 */
   markEffectUnknown(toolCallID: string, reason = "ProductFlow side effect result is unknown"): void {
     this.effectUnknownError = reason;
@@ -984,32 +965,51 @@ class RunRuntime implements ToolRuntime {
     // 那个 queued 事件等自己 claim 后再回放；用当前租约发布会把活动执行 fence 掉。
     if (lease && lease.harness_turn_id !== event.turn_id) return;
     if (!lease) {
-      if (event.kind === "turn.queued" || event.kind === "turn.resume_requested" || event.kind === "turn.cancel_requested") {
+      if (event.kind === "turn/resume_requested" || event.kind === "turn/cancel_requested") {
         return;
       }
       this.persistenceError ??= new Error("Agent event was emitted without an execution lease");
       return;
     }
-    try {
-      await this.client.appendTurnEvent(
-        this.scope.conversation_id,
-        lease.execution_id,
-        {
-          owner_id: lease.owner_id,
-          lease_token: lease.lease_token,
+    this.pendingPublishedEvents.push(event);
+    await this.flushPublishedEvents();
+  }
+
+  private async flushPublishedEvents(): Promise<void> {
+    if (this.publishedFlushPromise) return this.publishedFlushPromise;
+    const lease = this.executionLease;
+    if (!lease || this.pendingPublishedEvents.length === 0) return;
+    this.publishedFlushPromise = (async () => {
+      while (this.pendingPublishedEvents.length > 0) {
+        const events = this.pendingPublishedEvents.splice(0, 250);
+        const inputs: AgentEventInput[] = events.map((event) => ({
           sequence: event.sequence,
           schema_version: event.schema_version,
           run_id: event.run_id,
           turn_id: event.turn_id,
           kind: event.kind,
+          ...(event.ignorable ? { ignorable: true } : {}),
           payload: event.payload,
           created_at: event.created_at,
-        },
-        this.signal,
-      );
-    } catch (error) {
-      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
-    }
+        }));
+        try {
+          await this.client.appendTurnEvents(
+            this.scope.conversation_id,
+            lease.execution_id,
+            { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
+            this.signal,
+          );
+        } catch (error) {
+          // The batch endpoint is transactional. Keep the exact batch at the
+          // head so an explicit cleanup/retry cannot silently skip a prefix.
+          this.pendingPublishedEvents.unshift(...events);
+          throw error;
+        }
+      }
+    })().finally(() => {
+      this.publishedFlushPromise = undefined;
+    });
+    return this.publishedFlushPromise;
   }
 
   /** 与 ProductFlow prepare/apply/reconcile 共用的单次工具调用幂等键。 */
@@ -1151,7 +1151,12 @@ class RunRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
+        this.recordAssistantMessage(turnID, "error", boundedUsage(event.message.usage));
         this.modelError = new Error(event.message.errorMessage || "Pi provider request failed");
+        return;
+      }
+      if (event.type === "message_end" && event.message.role === "assistant") {
+        this.recordAssistantMessage(turnID, event.message.stopReason || "stop", boundedUsage(event.message.usage));
         return;
       }
       if (event.type === "tool_execution_start") {
@@ -1292,6 +1297,9 @@ class RunRuntime implements ToolRuntime {
       fencing_token: lease.fencing_token,
       model_request_id: requestID,
       model_request_sequence: sequence,
+      provider: this.model?.provider ?? "unknown",
+      model: this.model?.id ?? "unknown",
+      execution_mode: "foreground",
     });
     this.modelRequestSequence = sequence;
     this.currentModelRequestID = requestID;
@@ -1345,7 +1353,7 @@ class RunRuntime implements ToolRuntime {
     this.pendingQuestionAnswer = undefined;
     await this.updateExecutionPhase("model");
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question.answered", {
+    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", {
       question_id: questionID,
       answer: { skip: true },
       status: "no_answer",
@@ -1364,7 +1372,7 @@ class RunRuntime implements ToolRuntime {
     answer: TurnAnswer,
   ): Promise<void> {
     const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
-    const answered = [...events].reverse().find((event) => event.kind === "question.answered");
+    const answered = [...events].reverse().find((event) => event.kind === "question/answered");
     const questionID = typeof answered?.payload.question_id === "string"
       ? answered.payload.question_id
       : "";
@@ -1398,10 +1406,10 @@ class RunRuntime implements ToolRuntime {
       this.projectThinking(turnID, mapped.event);
       return;
     }
-    if (mapped.action === "text.delta") {
+    if (mapped.action === "text.chunk") {
       this.output += mapped.delta;
       this.enqueue(async () => {
-        await this.manager.store.appendEvent(this.scope.run_id, turnID, "text.delta", {
+        await this.manager.store.appendEvent(this.scope.run_id, turnID, "text.chunk", {
           delta: mapped.delta,
           step_id: `pi_${turnID}`,
           attempt_id: this.attemptID,
@@ -1411,12 +1419,25 @@ class RunRuntime implements ToolRuntime {
       });
       return;
     }
+    this.recordAssistantMessage(turnID, mapped.reason, mapped.usage);
+  }
+
+  private recordAssistantMessage(turnID: string, reason: string, usage?: AssistantFinishPayload["usage"]): void {
+    const modelRequestID = this.currentModelRequestID;
+    if (modelRequestID && this.completedModelRequestIDs.has(modelRequestID)) return;
+    if (modelRequestID) this.completedModelRequestIDs.add(modelRequestID);
     const finish: AssistantFinishPayload = {
-      reason: mapped.reason,
+      reason,
       attempt_id: this.attemptID,
-      ...(mapped.usage ? { usage: mapped.usage } : {}),
+      ...(modelRequestID ? { model_request_id: modelRequestID } : {}),
+      ...(usage ? { usage } : {}),
     };
-    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant.finish", finish as never));
+    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant/message", {
+      ...finish,
+      text: this.output,
+      thinking: this.thinkingProjection.text,
+      interrupted: finish.reason === "aborted",
+    } as never));
   }
 
   private projectThinking(turnID: string, event: ThinkingAssistantEvent): void {
@@ -1424,7 +1445,7 @@ class RunRuntime implements ToolRuntime {
     this.thinkingProjection = state;
     if (!emit) return;
     this.enqueue(async () => {
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "thinking.delta", {
+      await this.manager.store.appendEvent(this.scope.run_id, turnID, "thinking.chunk", {
         delta: emit.delta,
         step_id: `pi_${turnID}`,
         attempt_id: this.attemptID,
@@ -1444,6 +1465,7 @@ class RunRuntime implements ToolRuntime {
     this.checkpointSequence = 0;
     this.modelRequestSequence = 0;
     this.currentModelRequestID = undefined;
+    this.completedModelRequestIDs.clear();
     this.executionPhase = "claimed";
     this.executionStopping = false;
     this.executionLeaseError = undefined;
@@ -1464,9 +1486,13 @@ class RunRuntime implements ToolRuntime {
     this.iterationError = undefined;
     this.modelError = undefined;
     this.eventChain = Promise.resolve();
+    this.pendingPublishedEvents.length = 0;
   }
 
   private async cleanupAfterTurn(): Promise<void> {
+    await this.flushPublishedEvents().catch((error: unknown) => {
+      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
+    });
     await this.stopExecutionHeartbeat();
     this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
     this.clearQuestionTimeout();

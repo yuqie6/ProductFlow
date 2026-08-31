@@ -27,8 +27,8 @@ The current repository is a personal live demo and a rapid-development mainline.
 ## Authorities
 
 - PostgreSQL is authoritative for products, facts, assets, library-organization Draft revisions, workflows, recipes, provider configuration, and business job state.
-- ProductFlow PostgreSQL remains authoritative for business state. The main Node.js/Pi adapter owns its session and event files for interactive Agent Turn execution; those files are not a durable business authority and do not prove background recovery, effect reconciliation, or multi-instance claims.
-- ProductFlow stores a web projection of Agent state but does not reconstruct a second model transcript.
+- ProductFlow PostgreSQL remains authoritative for business state and for the Agent Turn event journal (`agent_turn_events`). The Node.js/Pi adapter owns its session files for the model loop; those files are not a durable business authority and do not prove background recovery, effect reconciliation, or multi-instance claims.
+- ProductFlow stores a web projection of Agent state. Conversation rendering replays the Turn journal; `output_text` / `thinking_text` / `tool_steps` are list summaries and empty-log fallbacks. PostgreSQL does not reconstruct a second model transcript.
 - `AgentTask` stores one business goal and one task-specific run under an `AgentSession`. The persisted run-identity column is `harness_run_id`. On a product-workflow conversation, Turn or graph-run success, failure, cancel, or unknown leaves the task `waiting_user` with `waiting_reason=goal_loop`; only the user complete/cancel endpoints finish the Goal. Read-path graph-run sync must not overwrite those user-owned statuses. `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
 - `MediaObject` identifies immutable media bytes. `MediaLibraryAsset` identifies one global library asset and its provenance. `ProductImageAsset` identifies one image inside a product namespace. `WorkflowMediaLibraryAsset` records a workflow usage association without owning another media copy.
 - Workflow nodes and covers reference `ProductImageAsset` ids, never storage paths or parallel-array positions.
@@ -38,9 +38,9 @@ The current repository is a personal live demo and a rapid-development mainline.
 
 - The only online workflow schema is version 3, stored on `workflow_graphs`.
 - Node Catalog owns connection rules and editable config keys. ChangeSet `config` cannot introduce unregistered keys or retired plan keys. Catalog fields declare `affects_digest` and `required`. Image digest omits `delivery_spec`. Topology verbs (`create_node`, `connect_nodes`, and the other Graph Command ops) are owned by the Agent tool JSON Schema and `ops_parse`; they are not restated as a third matrix in Skill or Context prose.
-- Node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
+- Node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `image_prompt`, and `image_generation`.
 - Processing nodes expose one named input port per Catalog `accepts` role; the React Flow handle id equals the persisted edge `role`. Connection checks type, cardinality, and cycles only; readiness is a run-time check.
-- `creative_brief`, `visual_system`, and `prompt_generation` keep a published document in `config_json`. Content-node `document_origin` (`seed` | `generated` | `authored`) is a column on `workflow_graph_nodes`. Template create is seed. Inspector visible-field saves become authored. Successful generate adopt writes through a ChangeSet as generated. Fill cook calls the prompt provider only for seed documents. `image_generation` consumes the live `config.prompt` document; artifacts are run lineage, not a compile gate. Running a content node does not run downstream image nodes.
+- `creative_brief`, `visual_system`, and `image_prompt` keep a published document in `config_json`. Content-node `document_origin` (`seed` | `generated` | `authored`) is a column on `workflow_graph_nodes`. Template create is seed. Inspector visible-field saves become authored. Successful generate adopt writes through a ChangeSet as generated. Fill cook calls the prompt provider only for seed documents. `image_generation` consumes the live `config.prompt` document; artifacts are run lineage, not a compile gate. Running a content node does not run downstream image nodes.
 - An `image_asset` node binds exactly one product image asset. Binding is not the same as a downstream `reference` edge.
 - One planned output image is represented by one runnable image node. A rerun updates its current asset while previous results remain in the library and run history.
 - Product facts, visual systems, prompts, recipes, and execution inputs preserve immutable versions used by prior runs.
@@ -73,7 +73,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。关闭或从未打开 Agent 对话时，添加节点、连线、检查器、绑定、运行、取消、重试、撤销和配方必须保持可用。Turn 的 running / unknown / failed 不得锁整张画布。Agent 写入与人写入走同一套 Graph Command；人可以立刻继续改刚被 Agent 改过的节点。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
 - Agent Session、Agent Task、WorkflowGraphRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
-- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。浏览器对话直播走 agent-service `waitForEvents`，由 Go 鉴权转发；PostgreSQL 保存 Turn 快照和低频控制事件，不是每条 token。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
+- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session files 保存模型 loop 与 compaction 所需 runtime state。合帧后的 journal（含 `text.chunk`）先写入 PostgreSQL `agent_turn_events`，浏览器对话 SSE 由 Go 鉴权并只读取该表；agent-service 不提供本地事件流端点。终态和断线重连都从同一 PG 游标回放。控制面走 `GET /api/v2/agent-control/events`。后台 durable Task、跨进程 claim 和全量 effect reconciliation 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
 
 ## Mainline Scope
 

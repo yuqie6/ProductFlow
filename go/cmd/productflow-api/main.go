@@ -71,7 +71,10 @@ func main() {
 	settingsStore := settings.NewStore(pool, cfg)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
 	liveImage := providers.LiveImage{Store: settingsStore}
-	graphService := graph.Service{DB: gdb, AfterRunStatus: agent.SyncGraphRunToTasks, Products: product.GraphGuard{}}
+	graphService := graph.Service{
+		DB: gdb, Pool: pool, AfterRunStatus: agent.SyncGraphRunToTasks,
+		AfterProposalDecision: agent.SyncGraphProposalDecision, Products: product.GraphGuard{},
+	}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
 		poll = time.Millisecond
@@ -112,7 +115,7 @@ func main() {
 		},
 		Agent: agent.HTTP{
 			Service: agent.Service{
-				DB: gdb, Graph: graphService,
+				DB: gdb, Pool: pool, Graph: graphService,
 				Product:  product.Service{DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas},
 				Library:  library.Service{DB: gdb, Media: mediaStore},
 				Media:    mediaStore,

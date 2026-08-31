@@ -12,8 +12,6 @@ export interface Config {
   internalToken: string;
   requestTimeoutMS: number;
   providerRequestTimeoutMS: number;
-  eventPollIntervalMS: number;
-  heartbeatIntervalMS: number;
   maxBodyBytes: number;
   maxIterations: number;
   modelContextWindow: number;
@@ -66,9 +64,6 @@ export function loadConfig(): Config {
   if (autoCompactTokenLimit >= modelContextWindow) {
     throw new Error("AGENT_AUTO_COMPACT_TOKEN_LIMIT must be below AGENT_MODEL_CONTEXT_WINDOW");
   }
-  const eventPollIntervalMS = durationMS("AGENT_EVENT_POLL_INTERVAL", 100);
-  const heartbeatIntervalMS = durationMS("AGENT_HEARTBEAT_INTERVAL", 15_000);
-  if (heartbeatIntervalMS < eventPollIntervalMS) throw new Error("AGENT_HEARTBEAT_INTERVAL must not be shorter than poll interval");
   const dataRoot = resolve(env("AGENT_DATA_ROOT", "./data"));
   return {
     listenAddress: env("AGENT_LISTEN_ADDRESS", "127.0.0.1:29284"),
@@ -77,8 +72,6 @@ export function loadConfig(): Config {
     internalToken,
     requestTimeoutMS: durationMS("PRODUCTFLOW_REQUEST_TIMEOUT", 30_000),
     providerRequestTimeoutMS: durationMS("AGENT_PROVIDER_REQUEST_TIMEOUT", 300_000),
-    eventPollIntervalMS,
-    heartbeatIntervalMS,
     maxBodyBytes: positiveInt("AGENT_MAX_BODY_BYTES", 96 << 20),
     maxIterations: positiveInt("AGENT_MAX_ITERATIONS", 40),
     modelContextWindow,

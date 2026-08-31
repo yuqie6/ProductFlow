@@ -31,9 +31,11 @@ func runRequestFromScan(row runRequestScan) WorkflowRunRequestResponse {
 		WorkflowRunStatus: row.WorkflowRunStatus, SourceStepID: row.SourceStepID,
 		FailureReason: row.FailureReason, ConfirmedAt: row.ConfirmedAt, FinishedAt: row.FinishedAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-		RunScope:      agentRunScope(row.RunScope),
-		TargetNodeID:  row.TargetNodeID,
-		TargetNodeIDs: parseAgentRunNodeIDs(row.TargetNodeIDsJSON),
+		RunScope:       agentRunScope(row.RunScope),
+		TargetNodeID:   row.TargetNodeID,
+		TargetNodeIDs:  parseAgentRunNodeIDs(row.TargetNodeIDsJSON),
+		Force:          row.Force,
+		DocumentAction: row.DocumentAction,
 	}
 }
 
@@ -60,7 +62,11 @@ func graphRunRequestFromAgent(item WorkflowRunRequestResponse) graph.GraphRunReq
 	if scope == "" {
 		scope = "graph"
 	}
-	return graph.GraphRunRequest{Scope: scope, NodeID: item.TargetNodeID, NodeIDs: item.TargetNodeIDs}
+	action := ""
+	if item.DocumentAction != nil {
+		action = *item.DocumentAction
+	}
+	return graph.GraphRunRequest{Scope: scope, NodeID: item.TargetNodeID, NodeIDs: item.TargetNodeIDs, Force: item.Force, DocumentAction: action}
 }
 
 func runRequestBaseQuery(pgxTx *gorm.DB) *gorm.DB {
@@ -194,6 +200,12 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 			"finished_at":    now,
 			"updated_at":     now,
 		}).Error; err != nil {
+			return WorkflowRunRequestResponse{}, err
+		}
+		if err := resolveWorkflowRequestApproval(ctx, pgxTx, requestID, "denied"); err != nil {
+			return WorkflowRunRequestResponse{}, err
+		}
+		if err := markTurnCanceledForRequest(ctx, pgxTx, requestID, conversationID); err != nil {
 			return WorkflowRunRequestResponse{}, err
 		}
 		if err := parkTaskAfterCancelledRunRequest(ctx, pgxTx, item.TaskID); err != nil {
@@ -335,7 +347,7 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 	if err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
-	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs)
+	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs, spec.Force, spec.DocumentAction)
 	if err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
@@ -416,6 +428,8 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 			RunScope:                 spec.columnScope(),
 			TargetNodeID:             spec.NodeID,
 			TargetNodeIDsJSON:        spec.nodeIDsJSON(),
+			Force:                    spec.Force,
+			DocumentAction:           stringPtrOrNil(spec.DocumentAction),
 			CreatedAt:                now,
 			UpdatedAt:                now,
 		}
@@ -457,7 +471,7 @@ func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempo
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
-	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs)
+	spec, err = parseRunScopeSpec(spec.Scope, spec.NodeID, spec.NodeIDs, spec.Force, spec.DocumentAction)
 	if err != nil {
 		return ReconcileResponse{}, err
 	}
@@ -543,25 +557,34 @@ func requireGlobalWorkflowConversation(conv conversationRow) error {
 }
 
 type runScopeSpec struct {
-	Scope   string
-	NodeID  *string
-	NodeIDs []string
+	Scope          string
+	NodeID         *string
+	NodeIDs        []string
+	Force          bool
+	DocumentAction string
 }
 
-func parseRunScopeSpec(scope string, nodeID *string, nodeIDs []string) (runScopeSpec, error) {
+func parseRunScopeSpec(scope string, nodeID *string, nodeIDs []string, force bool, documentAction string) (runScopeSpec, error) {
 	normalized := strings.TrimSpace(scope)
+	documentAction = strings.TrimSpace(documentAction)
+	if documentAction != "" && documentAction != "complete" && documentAction != "rewrite" && documentAction != "replace" {
+		return runScopeSpec{}, apperr.Validation("document_action 无效")
+	}
+	if documentAction != "" && (!force || normalized != "node") {
+		return runScopeSpec{}, apperr.Validation("document_action 只支持强制运行单个文稿节点")
+	}
 	if normalized == "" {
 		normalized = "graph"
 	}
 	switch normalized {
 	case "graph":
-		return runScopeSpec{Scope: "graph"}, nil
+		return runScopeSpec{Scope: "graph", Force: force, DocumentAction: documentAction}, nil
 	case "node", "to_node":
 		if nodeID == nil || strings.TrimSpace(*nodeID) == "" {
 			return runScopeSpec{}, apperr.Validation("node_id 不能为空")
 		}
 		id := strings.TrimSpace(*nodeID)
-		return runScopeSpec{Scope: normalized, NodeID: &id}, nil
+		return runScopeSpec{Scope: normalized, NodeID: &id, Force: force, DocumentAction: documentAction}, nil
 	case "selection":
 		cleaned := make([]string, 0, len(nodeIDs))
 		for _, id := range nodeIDs {
@@ -572,7 +595,7 @@ func parseRunScopeSpec(scope string, nodeID *string, nodeIDs []string) (runScope
 		if len(cleaned) == 0 {
 			return runScopeSpec{}, apperr.Validation("node_ids 不能为空")
 		}
-		return runScopeSpec{Scope: normalized, NodeIDs: cleaned}, nil
+		return runScopeSpec{Scope: normalized, NodeIDs: cleaned, Force: force, DocumentAction: documentAction}, nil
 	default:
 		return runScopeSpec{}, apperr.Validation("scope 无效")
 	}
@@ -624,7 +647,21 @@ func workflowRunRequestHashPayload(conversationID string, productID *string, wor
 			payload["node_ids"] = spec.NodeIDs
 		}
 	}
+	if spec.Force {
+		payload["force"] = true
+	}
+	if spec.DocumentAction != "" {
+		payload["document_action"] = spec.DocumentAction
+	}
 	return payload
+}
+
+func stringPtrOrNil(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func hashWorkflowRunRequest(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (string, error) {

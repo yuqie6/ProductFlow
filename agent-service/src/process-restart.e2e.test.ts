@@ -38,7 +38,7 @@ describe("ProductFlow Pi Agent process recovery", () => {
       const started = (await start.json()) as { turn_id: string };
       expect(started.turn_id).toBe("process-restart-turn-id");
       await provider.received;
-      await waitFor(() => productFlow.events.some((event) => event.kind === "turn.started"));
+      await waitFor(() => productFlow.events.some((event) => event.kind === "turn/start"));
 
       first.child.kill("SIGKILL");
       await waitForExit(first.child);
@@ -121,8 +121,6 @@ function spawnAgentProcess(
       AGENT_PROVIDER_API_KEY: "fake-provider-key",
       AGENT_PROVIDER_BASE_URL: providerBaseURL,
       AGENT_PROVIDER_MODEL: "fake-model",
-      AGENT_EVENT_POLL_INTERVAL: "10ms",
-      AGENT_HEARTBEAT_INTERVAL: "100ms",
       PRODUCTFLOW_REQUEST_TIMEOUT: "5s",
       AGENT_MAX_CONCURRENT_TURNS: "1",
       AGENT_MODEL_CONTEXT_WINDOW: "128000",
@@ -308,17 +306,19 @@ async function handleFakeProductFlowRequest(
     });
     return;
   }
-  if (url.pathname.endsWith("/events")) {
-    const value = body as { kind: string; sequence: number; payload: Record<string, unknown> };
-    events.push({ kind: value.kind, sequence: value.sequence, payload: value.payload });
+  if (url.pathname.endsWith("/events/batch")) {
+    const value = body as { events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> };
+    events.push(...value.events);
     sendJSON(response, 200, {
-      id: `event-${value.sequence}`,
-      projection_id: "projection-process-restart",
-      execution_id: "execution-process-restart",
-      sequence: value.sequence,
-      schema_version: 1,
-      kind: value.kind,
-      created_at: new Date().toISOString(),
+      items: value.events.map((event) => ({
+        id: `event-${event.sequence}`,
+        projection_id: "projection-process-restart",
+        execution_id: "execution-process-restart",
+        sequence: event.sequence,
+        schema_version: 1,
+        kind: event.kind,
+        created_at: new Date().toISOString(),
+      })),
     });
     return;
   }

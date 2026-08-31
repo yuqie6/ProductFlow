@@ -43,6 +43,8 @@ describe("ProductFlowClient", () => {
         scope: "graph",
         node_id: null,
         node_ids: [],
+        force: false,
+        document_action: null,
       });
       expect(requests[1].body).toEqual({
         expected_workflow_revision: 7,
@@ -54,6 +56,8 @@ describe("ProductFlowClient", () => {
         scope: "graph",
         node_id: null,
         node_ids: [],
+        force: false,
+        document_action: null,
       });
     } finally {
       server.closeAllConnections();
@@ -118,15 +122,17 @@ describe("ProductFlowClient", () => {
                 kind: body.kind ?? "before_model_request",
                 created_at: "2026-08-20T00:00:00.000Z",
               }
-            : request.url?.endsWith("/events")
+            : request.url?.endsWith("/events/batch")
               ? {
-                  id: "event-1",
-                  projection_id: "projection-1",
-                  execution_id: "execution-1",
-                  sequence: body.sequence ?? 1,
-                  schema_version: 1,
-                  kind: body.kind ?? "turn.started",
-                  created_at: "2026-08-20T00:00:00.000Z",
+                  items: [{
+                    id: "event-1",
+                    projection_id: "projection-1",
+                    execution_id: "execution-1",
+                    sequence: 1,
+                    schema_version: 1,
+                    kind: "turn/start",
+                    created_at: "2026-08-20T00:00:00.000Z",
+                  }],
                 }
             : {
               execution_id: "execution-1",
@@ -165,16 +171,18 @@ describe("ProductFlowClient", () => {
         kind: "tool_effect_intent",
         payload: { operation: "workflow_run_request" },
       });
-      await client.appendTurnEvent("conversation-1", lease.execution_id, {
+      await client.appendTurnEvents("conversation-1", lease.execution_id, {
         owner_id: lease.owner_id,
         lease_token: lease.lease_token,
-        sequence: 1,
-        schema_version: 1,
-        run_id: "run-1",
-        turn_id: "turn-1",
-        kind: "turn.started",
-        payload: { status: "running" },
-        created_at: "2026-08-20T00:00:00.000Z",
+        events: [{
+          sequence: 1,
+          schema_version: 1,
+          run_id: "run-1",
+          turn_id: "turn-1",
+          kind: "turn/start",
+          payload: { status: "running" },
+          created_at: "2026-08-20T00:00:00.000Z",
+        }],
       });
       await client.releaseTurnExecution("conversation-1", lease.execution_id, {
         owner_id: lease.owner_id,
@@ -186,7 +194,7 @@ describe("ProductFlowClient", () => {
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/claim",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/heartbeat",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/checkpoints",
-        "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/events",
+        "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/events/batch",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/release",
       ]);
       expect(requests[1].body).toMatchObject({ owner_id: "agent-1", lease_token: "lease-1", phase: "tool" });

@@ -53,6 +53,9 @@ describe("ProductFlow tool manifest", () => {
     expect(product).not.toContain("\"product_id\"");
     expect(global).toContain("\"product_id\"");
     expect(global).toContain("\"workflow_id\"");
+    expect(product).toContain("\"document_action\"");
+    expect(product).toContain("\"rewrite\"");
+    expect(product).toContain("\"force\"");
   });
 
   it("marks propose_global_draft as a contract draft schema", () => {

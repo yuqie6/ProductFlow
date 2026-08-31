@@ -40,9 +40,33 @@ var sealedDocsOnly = map[string]bool{
 var goOpsExtras = map[string]bool{
 	"GET /healthz/ready":                                                           true,
 	"GET /api/v2/agent-control/events":                                             true,
+	"GET /api/v2/agent-conversations/{}/turns/{}/events/page":                      true,
+	"GET /api/v2/products/{}/agent-conversations/{}/turns/{}/events/page":          true,
 	"GET /api/internal/v1/agent-conversations/{}/workflow-runs/{}":                 true,
 	"GET /api/v3/products/{}/workflows/{}/runs/{}/events":                          true,
+	"GET /api/v3/products/{}/workflows/{}/nodes/{}/candidate":                      true,
+	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/batch": true,
+	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/apply":               true,
+	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/discard":             true,
 	"POST /api/v3/products/{}/workflows/{}/runs/preview":                           true,
+}
+
+// Historical snapshot still lists retired Agent library-effect and single-event routes.
+var sealedRetired = map[string]bool{
+	"POST /api/internal/v1/agent-conversations/{}/asset-moves":                         true,
+	"POST /api/internal/v1/agent-conversations/{}/asset-moves/prepare":                 true,
+	"POST /api/internal/v1/agent-conversations/{}/asset-moves/reconcile":               true,
+	"POST /api/internal/v1/agent-conversations/{}/asset-renames":                       true,
+	"POST /api/internal/v1/agent-conversations/{}/asset-renames/prepare":               true,
+	"POST /api/internal/v1/agent-conversations/{}/asset-renames/reconcile":             true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-creates":                      true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-creates/prepare":              true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-creates/reconcile":            true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-renames":                      true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-renames/prepare":              true,
+	"POST /api/internal/v1/agent-conversations/{}/folder-renames/reconcile":            true,
+	"POST /api/internal/v1/agent-conversations/{}/library-organization-draft/validate": true,
+	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events":           true,
 }
 
 type sealedRoute struct {
@@ -97,7 +121,7 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 
 	var missing []string
 	for key := range sealedKeys {
-		if sealedDocsOnly[key] {
+		if sealedDocsOnly[key] || sealedRetired[key] {
 			continue
 		}
 		if !goKeys[key] {

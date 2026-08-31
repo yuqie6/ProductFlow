@@ -8,21 +8,9 @@ import type {
   AgentTurnEvent,
   AgentTurnStatus,
 } from "../../../lib/types";
+import { AGENT_TOOL_STEP_KINDS } from "./toolManifest.generated";
 
-const AGENT_TOOL_STEP_KINDS = new Set<AgentToolStepKind>([
-  "load_skill",
-  "inject_context",
-  "ask_question",
-  "inspect_image",
-  "propose_draft",
-  "inspect_context",
-  "read_history",
-  "organize_assets",
-  "request_workflow_run",
-  "create_product",
-  "apply_graph",
-  "propose_graph",
-]);
+const AGENT_TOOL_STEP_KIND_SET = new Set<AgentToolStepKind>(AGENT_TOOL_STEP_KINDS);
 const AGENT_TOOL_STEP_STATUSES = new Set<AgentToolStepStatus>([
   "running",
   "succeeded",
@@ -32,14 +20,26 @@ const AGENT_TOOL_STEP_STATUSES = new Set<AgentToolStepStatus>([
 const UTF8_ENCODER = new TextEncoder();
 
 export const AGENT_TERMINAL_EVENT_KINDS = [
+  "turn.completed",
   "turn.awaiting_confirmation",
-  "turn.succeeded",
   "turn.failed",
   "turn.canceled",
   "turn.unknown",
 ] as const;
 
 export type AgentTerminalEventKind = (typeof AGENT_TERMINAL_EVENT_KINDS)[number];
+
+export const AGENT_UI_EVENT_KINDS = [
+  "turn.started",
+  "item.started",
+  "item.delta",
+  "item.completed",
+  "approval.requested",
+  "approval.resolved",
+  "agent.ignored",
+  ...AGENT_TERMINAL_EVENT_KINDS,
+] as const;
+const AGENT_UI_EVENT_KIND_SET = new Set<string>(AGENT_UI_EVENT_KINDS);
 
 export interface AgentAttemptBuffer {
   attempt_id: string;
@@ -87,12 +87,11 @@ export interface AgentTurnEventState {
   current_attempt_id: string | null;
   question: AgentQuestion | null;
   question_answered: boolean;
-  resume_requested: boolean;
-  cancel_requested: boolean;
-  artifact_sequence: number | null;
   terminal_kind: AgentTerminalEventKind | null;
   text_settled: boolean;
   protocol_error: string | null;
+  approval: Record<string, unknown> | null;
+  approval_resolved: boolean;
 }
 
 export type AgentTurnEventAction =
@@ -118,12 +117,11 @@ export function createAgentTurnEventState(turnKey: string): AgentTurnEventState 
     current_attempt_id: null,
     question: null,
     question_answered: false,
-    resume_requested: false,
-    cancel_requested: false,
-    artifact_sequence: null,
     terminal_kind: null,
     text_settled: false,
     protocol_error: null,
+    approval: null,
+    approval_resolved: false,
   };
 }
 
@@ -161,23 +159,32 @@ export function parseAgentTurnEvent(
   if (typeof value.kind !== "string" || value.kind !== eventKind) {
     throw new AgentEventProtocolError("Agent 事件 kind 与 SSE 类型不匹配");
   }
+  if (!AGENT_UI_EVENT_KIND_SET.has(value.kind)) {
+    throw new AgentEventProtocolError("Agent UI 事件 kind 不受支持");
+  }
   if (!isRecord(value.payload)) {
     throw new AgentEventProtocolError("Agent 事件 payload 必须是对象");
   }
-  if (value.kind === "text.delta") {
-    parseTextDeltaPayload(value.payload);
+  if (value.kind === "item.delta") {
+    const item = parseItemDeltaPayload(value.payload);
+    if (item.item_kind === "assistant_text") {
+      parseAssistantItemDeltaPayload(value.payload);
+    } else if (item.item_kind === "thinking") {
+      parseThinkingItemDeltaPayload(value.payload);
+    } else {
+      throw new AgentEventProtocolError("item.delta item_kind 无效");
+    }
   }
-  if (value.kind === "thinking.delta") {
-    parseThinkingDeltaPayload(value.payload);
-  }
-  if (value.kind === "question.required") {
+  if (value.kind === "approval.requested" && value.payload.approval_kind === "question") {
     parseAgentQuestion(value.payload);
   }
-  if (value.kind === "tool.step") {
+  if (value.kind === "item.started" && value.payload.item_kind === "step") {
+    parseStableStepStartedPayload(value.payload);
+  } else if ((value.kind === "item.started" || value.kind === "item.completed") && hasToolStepPayload(value.payload)) {
     parseAgentToolStep(value.payload);
   }
-  if (value.kind === "assistant.finish") {
-    parseAssistantFinishPayload(value.payload);
+  if (value.kind === "item.completed" && !hasToolStepPayload(value.payload)) {
+    parseStableAssistantCompletedPayload(value.payload);
   }
   return value as unknown as AgentTurnEvent;
 }
@@ -197,53 +204,41 @@ export function agentEventReducer(
   }
   const next = { ...state, last_sequence: event.sequence };
   switch (event.kind) {
-    case "text.delta": {
-      const payload = parseTextDeltaPayload(event.payload);
-      const existing = state.attempts[payload.attempt_id];
-      if (existing && existing.step_id !== payload.step_id) {
+    case "item.delta": {
+      const payload = parseItemDeltaPayload(event.payload);
+      if (payload.item_kind === "assistant_text") {
+        return appendTextPayload(next, state, payload, event.sequence);
+      }
+      if (payload.item_kind === "thinking") {
         return {
           ...next,
-          protocol_error: "同一 Agent attempt 返回了不一致的 step_id",
+          blocks: appendStreamBlock(
+            state.blocks,
+            "thinking",
+            payload.attempt_id,
+            payload.content_index,
+            payload.delta,
+            payload.truncated,
+          ),
         };
       }
-      const attempt: AgentAttemptBuffer = existing
-        ? {
-          ...existing,
-          text: existing.text + payload.delta,
-          last_sequence: event.sequence,
-        }
-        : {
-          attempt_id: payload.attempt_id,
-          step_id: payload.step_id,
-          text: payload.delta,
-          first_sequence: event.sequence,
-          last_sequence: event.sequence,
+      return next;
+    }
+    case "item.started":
+    case "item.completed": {
+      if (event.kind === "item.started" && event.payload.item_kind === "step") {
+        return next;
+      }
+      if (!hasToolStepPayload(event.payload)) {
+        const completed = parseStableAssistantCompletedPayload(event.payload);
+        return {
+          ...next,
+          text_settled: true,
+          blocks: completed.text === undefined
+            ? state.blocks
+            : settleAssistantText(state.blocks, completed),
         };
-      return {
-        ...next,
-        attempts: { ...state.attempts, [payload.attempt_id]: attempt },
-        attempt_order: existing
-          ? state.attempt_order
-          : [...state.attempt_order, payload.attempt_id],
-        current_attempt_id: payload.attempt_id,
-        blocks: appendStreamBlock(state.blocks, "text", payload.attempt_id, payload.content_index, payload.delta),
-      };
-    }
-    case "thinking.delta": {
-      const payload = parseThinkingDeltaPayload(event.payload);
-      return {
-        ...next,
-        blocks: appendStreamBlock(
-          state.blocks,
-          "thinking",
-          payload.attempt_id,
-          payload.content_index,
-          payload.delta,
-          payload.truncated,
-        ),
-      };
-    }
-    case "tool.step": {
+      }
       const step = parseAgentToolStep(event.payload);
       const existing = state.tool_steps[step.step_id];
       return {
@@ -256,30 +251,27 @@ export function agentEventReducer(
           ? state.tool_step_order
           : [...state.tool_step_order, step.step_id],
         blocks: existing
-          ? state.blocks
+          ? replaceToolBlock(state.blocks, step.step_id)
           : [...state.blocks, { type: "tool", key: `tool:${step.step_id}`, step_id: step.step_id }],
       };
     }
-    case "question.required":
-      return {
-        ...next,
-        question: parseAgentQuestion(event.payload),
-        question_answered: false,
-        resume_requested: false,
-      };
-    case "question.answered":
-      return { ...next, question: null, question_answered: true };
-    case "turn.resume_requested":
-      return { ...next, resume_requested: true };
-    case "turn.cancel_requested":
-      return { ...next, cancel_requested: true };
-    case "artifact.proposed":
-      return { ...next, artifact_sequence: event.sequence };
-    case "assistant.finish":
-      parseAssistantFinishPayload(event.payload);
-      return { ...next, text_settled: true };
+    case "approval.requested": {
+      const approval = event.payload;
+      if (approval.approval_kind === "question") {
+        return {
+          ...next,
+          approval,
+          approval_resolved: false,
+          question: parseAgentQuestion(approval),
+          question_answered: false,
+        };
+      }
+      return { ...next, approval, approval_resolved: false };
+    }
+    case "approval.resolved":
+      return { ...next, approval: event.payload, approval_resolved: true, question: null, question_answered: true };
+    case "turn.completed":
     case "turn.awaiting_confirmation":
-    case "turn.succeeded":
     case "turn.failed":
     case "turn.canceled":
     case "turn.unknown":
@@ -293,6 +285,13 @@ export function currentAgentAttempt(state: AgentTurnEventState): AgentAttemptBuf
   return state.current_attempt_id ? state.attempts[state.current_attempt_id] ?? null : null;
 }
 
+export const AGENT_SETTLED_EVENT_KINDS = [
+  "turn.completed",
+  "turn.failed",
+  "turn.canceled",
+  "turn.unknown",
+] as const;
+
 export function isAgentTurnTerminal(status: AgentTurnStatus): boolean {
   return (
     status === "awaiting_confirmation" ||
@@ -303,8 +302,12 @@ export function isAgentTurnTerminal(status: AgentTurnStatus): boolean {
   );
 }
 
+export function isAgentTurnSettled(status: AgentTurnStatus): boolean {
+  return status === "succeeded" || status === "failed" || status === "canceled" || status === "unknown";
+}
+
 export function agentTurnNeedsEventStream(turn: AgentTurn | null): boolean {
-  return Boolean(turn?.harness_turn_id && !isAgentTurnTerminal(turn.status));
+  return Boolean(turn?.harness_turn_id);
 }
 
 export function selectAgentAssistantText(
@@ -382,7 +385,7 @@ export function selectAgentToolSteps(
   return merged;
 }
 
-function parseTextDeltaPayload(payload: Record<string, unknown>): {
+function parseAssistantItemDeltaPayload(payload: Record<string, unknown>): {
   delta: string;
   step_id: string;
   attempt_id: string;
@@ -395,17 +398,129 @@ function parseTextDeltaPayload(payload: Record<string, unknown>): {
     typeof payload.attempt_id !== "string" ||
     !payload.attempt_id
   ) {
-    throw new AgentEventProtocolError("text.delta payload 无效");
+    throw new AgentEventProtocolError("item.delta assistant payload 无效");
   }
   return {
     delta: payload.delta,
     step_id: payload.step_id,
     attempt_id: payload.attempt_id,
-    content_index: parseContentIndex(payload.content_index, "text.delta"),
+    content_index: parseContentIndex(payload.content_index, "item.delta"),
   };
 }
 
-function parseThinkingDeltaPayload(payload: Record<string, unknown>): {
+function parseItemDeltaPayload(payload: Record<string, unknown>): {
+  item_id: string;
+  item_kind: string;
+  delta: string;
+  attempt_id: string;
+  step_id: string;
+  content_index: number;
+  truncated: boolean;
+} {
+  if (
+    typeof payload.item_id !== "string" || !payload.item_id ||
+    typeof payload.item_kind !== "string" || !payload.item_kind ||
+    typeof payload.delta !== "string"
+  ) {
+    throw new AgentEventProtocolError("item.delta payload 无效");
+  }
+  return {
+    item_id: payload.item_id,
+    item_kind: payload.item_kind,
+    delta: payload.delta,
+    attempt_id: typeof payload.attempt_id === "string" && payload.attempt_id ? payload.attempt_id : payload.item_id,
+    step_id: typeof payload.step_id === "string" && payload.step_id ? payload.step_id : payload.item_id,
+    content_index: parseContentIndex(payload.content_index, "item.delta"),
+    truncated: payload.truncated === true,
+  };
+}
+
+function hasToolStepPayload(payload: Record<string, unknown>): boolean {
+  return typeof payload.step_id === "string" && typeof payload.summary === "string" && typeof payload.status === "string";
+}
+
+function parseStableAssistantCompletedPayload(payload: Record<string, unknown>): {
+  item_id: string;
+  text?: string;
+  attempt_id: string;
+  content_index: number;
+} {
+  if (payload.item_kind !== "assistant_text" || typeof payload.item_id !== "string" || !payload.item_id) {
+    throw new AgentEventProtocolError("item.completed payload 无效");
+  }
+  if (payload.text !== undefined && typeof payload.text !== "string") {
+    throw new AgentEventProtocolError("item.completed assistant payload 无效");
+  }
+  return {
+    item_id: payload.item_id,
+    ...(payload.text !== undefined ? { text: payload.text } : {}),
+    attempt_id: typeof payload.attempt_id === "string" && payload.attempt_id ? payload.attempt_id : payload.item_id,
+    content_index: parseContentIndex(payload.content_index, "item.completed"),
+  };
+}
+
+function settleAssistantText(
+  blocks: AgentTurnBlock[],
+  completed: { item_id: string; text?: string; attempt_id: string; content_index: number },
+): AgentTurnBlock[] {
+  if (completed.text === undefined) return blocks;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block.type !== "text") continue;
+    if (block.attempt_id === completed.attempt_id || block.content_index === completed.content_index) {
+      if (block.text === completed.text) return blocks;
+      const next = blocks.slice();
+      next[index] = { ...block, text: completed.text };
+      return next;
+    }
+  }
+  if (!completed.text) return blocks;
+  return [
+    ...blocks,
+    {
+      type: "text",
+      key: `text:${completed.item_id}`,
+      attempt_id: completed.attempt_id,
+      content_index: completed.content_index,
+      text: completed.text,
+    },
+  ];
+}
+
+function appendTextPayload(
+  next: AgentTurnEventState,
+  state: AgentTurnEventState,
+  payload: { delta: string; attempt_id: string; step_id: string; content_index: number },
+  sequence: number,
+): AgentTurnEventState {
+  const existing = state.attempts[payload.attempt_id];
+  if (existing && existing.step_id !== payload.step_id) {
+    return { ...next, protocol_error: "同一 Agent attempt 返回了不一致的 step_id" };
+  }
+  const attempt: AgentAttemptBuffer = existing
+    ? { ...existing, text: existing.text + payload.delta, last_sequence: sequence }
+    : {
+      attempt_id: payload.attempt_id,
+      step_id: payload.step_id,
+      text: payload.delta,
+      first_sequence: sequence,
+      last_sequence: sequence,
+    };
+  return {
+    ...next,
+    attempts: { ...state.attempts, [payload.attempt_id]: attempt },
+    attempt_order: existing ? state.attempt_order : [...state.attempt_order, payload.attempt_id],
+    current_attempt_id: payload.attempt_id,
+    blocks: appendStreamBlock(state.blocks, "text", payload.attempt_id, payload.content_index, payload.delta),
+  };
+}
+
+function replaceToolBlock(blocks: AgentTurnBlock[], stepID: string): AgentTurnBlock[] {
+  if (blocks.some((block) => block.type === "tool" && block.step_id === stepID)) return blocks;
+  return [...blocks, { type: "tool", key: `tool:${stepID}`, step_id: stepID }];
+}
+
+function parseThinkingItemDeltaPayload(payload: Record<string, unknown>): {
   delta: string;
   step_id: string;
   attempt_id: string;
@@ -419,24 +534,18 @@ function parseThinkingDeltaPayload(payload: Record<string, unknown>): {
     typeof payload.attempt_id !== "string" ||
     !payload.attempt_id
   ) {
-    throw new AgentEventProtocolError("thinking.delta payload 无效");
+    throw new AgentEventProtocolError("item.delta thinking payload 无效");
   }
   if (payload.truncated !== undefined && typeof payload.truncated !== "boolean") {
-    throw new AgentEventProtocolError("thinking.delta payload 无效");
+    throw new AgentEventProtocolError("item.delta thinking payload 无效");
   }
   return {
     delta: payload.delta,
     step_id: payload.step_id,
     attempt_id: payload.attempt_id,
-    content_index: parseContentIndex(payload.content_index, "thinking.delta"),
+    content_index: parseContentIndex(payload.content_index, "item.delta"),
     truncated: payload.truncated === true,
   };
-}
-
-function parseAssistantFinishPayload(payload: Record<string, unknown>): void {
-  if (typeof payload.reason !== "string" || !payload.reason || typeof payload.attempt_id !== "string" || !payload.attempt_id) {
-    throw new AgentEventProtocolError("assistant.finish payload 无效");
-  }
 }
 
 function parseContentIndex(value: unknown, kind: string): number {
@@ -569,7 +678,7 @@ function lastNonEmptyTextIndex(blocks: readonly AgentTurnBlock[]): number {
 
 function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
   const keys = Object.keys(payload);
-  const allowedKeys = new Set(["step_id", "kind", "summary", "status", "tool_name", "details"]);
+  const allowedKeys = new Set(["item_id", "item_kind", "step_id", "kind", "summary", "status", "tool_name", "details", "meta"]);
   if (
     keys.length < 4 ||
     !keys.every((key) => allowedKeys.has(key)) ||
@@ -577,7 +686,7 @@ function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
     !payload.step_id.trim() ||
     UTF8_ENCODER.encode(payload.step_id).byteLength > 200 ||
     typeof payload.kind !== "string" ||
-    !AGENT_TOOL_STEP_KINDS.has(payload.kind as AgentToolStepKind) ||
+    !AGENT_TOOL_STEP_KIND_SET.has(payload.kind as AgentToolStepKind) ||
     typeof payload.summary !== "string" ||
     !payload.summary.trim() ||
     /[\r\n]/u.test(payload.summary) ||
@@ -585,10 +694,11 @@ function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
     typeof payload.status !== "string" ||
     !AGENT_TOOL_STEP_STATUSES.has(payload.status as AgentToolStepStatus)
   ) {
-    throw new AgentEventProtocolError("tool.step payload 无效");
+    throw new AgentEventProtocolError("tool_call item payload 无效");
   }
   const toolName = readOptionalDetailString(payload.tool_name, 120, false, "tool_name");
   const details = parseAgentToolStepDetails(payload.details);
+  const meta = parseAgentToolMeta(payload.meta);
   return {
     step_id: payload.step_id,
     kind: payload.kind as AgentToolStepKind,
@@ -596,13 +706,46 @@ function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
     status: payload.status as AgentToolStepStatus,
     ...(toolName ? { tool_name: toolName } : {}),
     ...(details ? { details } : {}),
+    ...(meta ? { meta } : {}),
   };
+}
+
+function parseStableStepStartedPayload(payload: Record<string, unknown>): void {
+  if (
+    Object.keys(payload).some((key) => !["item_id", "item_kind", "step_id"].includes(key)) ||
+    payload.item_kind !== "step" ||
+    typeof payload.item_id !== "string" ||
+    !payload.item_id.trim() ||
+    typeof payload.step_id !== "string" ||
+    !payload.step_id.trim()
+  ) {
+    throw new AgentEventProtocolError("item.started step payload 无效");
+  }
+}
+
+function parseAgentToolMeta(value: unknown): AgentToolStepDetails | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || UTF8_ENCODER.encode(JSON.stringify(value)).byteLength > 16 * 1024) {
+    throw new AgentEventProtocolError("tool_call item meta 无效");
+  }
+  const rest: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "schema_version" || key === "kind") continue;
+    rest[key] = item;
+  }
+  if (value.schema_version !== undefined && value.schema_version !== 1) {
+    throw new AgentEventProtocolError("tool_call item meta schema_version 无效");
+  }
+  if (value.kind !== undefined && (typeof value.kind !== "string" || !value.kind.trim() || value.kind.length > 80)) {
+    throw new AgentEventProtocolError("tool_call item meta kind 无效");
+  }
+  return parseAgentToolStepDetails(Object.keys(rest).length ? rest : undefined);
 }
 
 function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || UTF8_ENCODER.encode(JSON.stringify(value)).byteLength > 16 * 1024) {
-    throw new AgentEventProtocolError("tool.step details 无效");
+    throw new AgentEventProtocolError("tool_call item details 无效");
   }
   const allowedKeys = new Set([
     "phase",
@@ -628,14 +771,36 @@ function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undef
     "question_header",
     "question_text",
     "option_labels",
+    "truncated",
+    "pending_confirmation",
+    "reconciled",
+    "response_format",
+    "item_count",
+    "node_count",
+    "group_count",
+    "asset_count",
+    "operation_summaries",
+    "affected_node_ids",
+    "affected_edge_ids",
+    "affected_group_ids",
+    "workflow_id",
+    "workflow_title",
+    "run_id",
+    "proposal_id",
+    "product_id",
+    "request_id",
+    "expected_workflow_revision",
+    "product_workspace_created",
+    "summary",
+    "artifact_name",
   ]);
   if (!Object.keys(value).every((key) => allowedKeys.has(key))) {
-    throw new AgentEventProtocolError("tool.step details 无效");
+    throw new AgentEventProtocolError("tool_call item details 无效");
   }
 
   const phase = readOptionalDetailString(value.phase, 32, false, "phase");
   if (phase !== undefined && !new Set(["skill_load", "context_injection", "question", "tool_result"]).has(phase)) {
-    throw new AgentEventProtocolError("tool.step details phase 无效");
+    throw new AgentEventProtocolError("tool_call item details phase 无效");
   }
   const details: AgentToolStepDetails = phase
     ? { phase: phase as AgentToolStepDetails["phase"] }
@@ -653,6 +818,14 @@ function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undef
     ["question_id", 120, false],
     ["question_header", 32, false],
     ["question_text", 2000, true],
+    ["workflow_id", 64, false],
+    ["workflow_title", 240, false],
+    ["run_id", 64, false],
+    ["proposal_id", 64, false],
+    ["product_id", 64, false],
+    ["request_id", 64, false],
+    ["summary", 240, false],
+    ["artifact_name", 120, false],
   ] as const;
   for (const [key, maximum, allowNewline] of stringFields) {
     const field = readOptionalDetailString(value[key], maximum, allowNewline, key);
@@ -664,31 +837,62 @@ function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undef
     ["runtime_context_keys", 32],
     ["contract_fields", 16],
     ["option_labels", 5],
+    ["affected_node_ids", 20],
+    ["affected_edge_ids", 20],
+    ["affected_group_ids", 20],
   ] as const) {
     const field = readOptionalDetailStringList(value[key], maximum, key);
     if (field !== undefined) details[key] = field;
   }
+  const operationSummaries = readOptionalDetailStringList(value.operation_summaries, 16, "operation_summaries", false);
+  if (operationSummaries !== undefined) details.operation_summaries = operationSummaries;
   for (const [key, maximum] of [
     ["selected_asset_count", 100],
     ["visible_asset_count", 100],
     ["context_bytes", 64 * 1024],
+    ["item_count", 128],
+    ["node_count", 10_000],
+    ["group_count", 10_000],
+    ["asset_count", 100],
   ] as const) {
     const field = readOptionalDetailInteger(value[key], maximum, key);
     if (field !== undefined) details[key] = field;
   }
+  if (value.expected_workflow_revision !== undefined) {
+    const field = readOptionalDetailInteger(
+      value.expected_workflow_revision,
+      1_000_000,
+      "expected_workflow_revision",
+    );
+    if (field === undefined || field < 1) {
+      throw new AgentEventProtocolError("tool_call item details expected_workflow_revision 无效");
+    }
+    details.expected_workflow_revision = field;
+  }
+  if (value.response_format !== undefined) {
+    if (value.response_format !== "concise" && value.response_format !== "detailed") {
+      throw new AgentEventProtocolError("tool_call item details response_format 无效");
+    }
+    details.response_format = value.response_format;
+  }
+  for (const key of ["truncated", "pending_confirmation", "reconciled", "product_workspace_created"] as const) {
+    if (value[key] === undefined) continue;
+    if (typeof value[key] !== "boolean") throw new AgentEventProtocolError(`tool_call item details ${key} 无效`);
+    details[key] = value[key];
+  }
   if (value.retryable !== undefined) {
-    if (typeof value.retryable !== "boolean") throw new AgentEventProtocolError("tool.step details retryable 无效");
+    if (typeof value.retryable !== "boolean") throw new AgentEventProtocolError("tool_call item details retryable 无效");
     details.retryable = value.retryable;
   }
   if (value.instruction_truncated !== undefined) {
     if (typeof value.instruction_truncated !== "boolean") {
-      throw new AgentEventProtocolError("tool.step details instruction_truncated 无效");
+      throw new AgentEventProtocolError("tool_call item details instruction_truncated 无效");
     }
     details.instruction_truncated = value.instruction_truncated;
   }
   if (value.validation_issues !== undefined) {
     if (!Array.isArray(value.validation_issues) || value.validation_issues.length > 8) {
-      throw new AgentEventProtocolError("tool.step validation_issues 无效");
+      throw new AgentEventProtocolError("tool_call item validation_issues 无效");
     }
     details.validation_issues = value.validation_issues.map((issue) => {
       if (
@@ -704,7 +908,7 @@ function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undef
         issue.message.length > 500 ||
         /[\r\n]/u.test(issue.message)
       ) {
-        throw new AgentEventProtocolError("tool.step validation_issues 无效");
+        throw new AgentEventProtocolError("tool_call item validation_issues 无效");
       }
       return { path: issue.path, message: issue.message };
     });
@@ -725,24 +929,29 @@ function readOptionalDetailString(
     value.length > maximum ||
     (!allowNewline && /[\r\n]/u.test(value))
   ) {
-    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+    throw new AgentEventProtocolError(`tool_call item details ${fieldName} 无效`);
   }
   return value;
 }
 
-function readOptionalDetailStringList(value: unknown, maximum: number, fieldName: string): string[] | undefined {
+function readOptionalDetailStringList(
+  value: unknown,
+  maximum: number,
+  fieldName: string,
+  unique = true,
+): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length > maximum) {
-    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+    throw new AgentEventProtocolError(`tool_call item details ${fieldName} 无效`);
   }
   const values = value.map((item) => {
     if (typeof item !== "string" || !item.trim() || item.length > 160 || /[\r\n]/u.test(item)) {
-      throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+      throw new AgentEventProtocolError(`tool_call item details ${fieldName} 无效`);
     }
     return item;
   });
-  if (new Set(values).size !== values.length) {
-    throw new AgentEventProtocolError(`tool.step details ${fieldName} 不能重复`);
+  if (unique && new Set(values).size !== values.length) {
+    throw new AgentEventProtocolError(`tool_call item details ${fieldName} 不能重复`);
   }
   return values;
 }
@@ -750,7 +959,7 @@ function readOptionalDetailStringList(value: unknown, maximum: number, fieldName
 function readOptionalDetailInteger(value: unknown, maximum: number, fieldName: string): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > maximum) {
-    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+    throw new AgentEventProtocolError(`tool_call item details ${fieldName} 无效`);
   }
   return value as number;
 }
@@ -765,7 +974,7 @@ function parseAgentQuestion(payload: Record<string, unknown>): AgentQuestion {
     !payload.question ||
     !Array.isArray(optionsValue)
   ) {
-    throw new AgentEventProtocolError("question.required payload 无效");
+    throw new AgentEventProtocolError("approval question payload 无效");
   }
   const options = optionsValue.map((option) => {
     if (
@@ -774,7 +983,7 @@ function parseAgentQuestion(payload: Record<string, unknown>): AgentQuestion {
       !option.label ||
       (option.description !== undefined && typeof option.description !== "string")
     ) {
-      throw new AgentEventProtocolError("question.required option 无效");
+      throw new AgentEventProtocolError("approval question option 无效");
     }
     return {
       label: option.label,

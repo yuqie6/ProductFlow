@@ -163,12 +163,16 @@ func newAgentServer(t *testing.T, gw Gateway, internalToken string) *agentServer
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore, Canvas: WriteProductCanvas}, Settings: settingsStore}.Register(engine)
 	svc := Service{
-		DB: gdb, Graph: graph.Service{DB: gdb, AfterRunStatus: SyncGraphRunToTasks, Products: product.GraphGuard{}},
+		DB: gdb, Pool: pool, Graph: graph.Service{
+			DB: gdb, Pool: pool, AfterRunStatus: SyncGraphRunToTasks,
+			AfterProposalDecision: SyncGraphProposalDecision, Products: product.GraphGuard{},
+		},
 		Product: product.Service{DB: gdb, Media: mediaStore, Canvas: WriteProductCanvas},
 		Library: library.Service{DB: gdb, Media: mediaStore},
 		Media:   mediaStore, Settings: settingsStore, Gateway: gw, Poll: time.Millisecond,
 	}
 	HTTP{Service: svc, Settings: settingsStore, InternalToken: internalToken}.Register(engine)
+	graph.HTTP{Service: svc.Graph, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	as := &agentServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
@@ -1026,6 +1030,9 @@ func TestAgentUnknownJSONRejected(t *testing.T) {
 }
 
 func TestAgentTurnSSEHeartbeat(t *testing.T) {
+	previousHeartbeat := turnSSEHeartbeatInterval
+	turnSSEHeartbeatInterval = 20 * time.Millisecond
+	t.Cleanup(func() { turnSSEHeartbeatInterval = previousHeartbeat })
 	as := newAgentServer(t, mockGateway{}, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -1072,28 +1079,102 @@ func TestAgentTurnSSEHeartbeat(t *testing.T) {
 	cancel()
 }
 
-func TestAgentTurnSSEProxiesRuntimeCursor(t *testing.T) {
+func TestAgentControlEventsSSE(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+
+	unauth, err := http.NewRequest(http.MethodGet, as.srv.URL+"/api/v2/agent-control/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp, err := as.client.Do(unauth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp.Body.Close()
+	as.mustStatus(t, unauthResp, http.StatusUnauthorized)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+"/api/v2/agent-control/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range as.cookies {
+		req.AddCookie(c)
+	}
+	sseClient := &http.Client{}
+	resp, err := sseClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("sse %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content-type %s", resp.Header.Get("Content-Type"))
+	}
+
+	created := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, created, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, created, &sess)
+
+	buf := make([]byte, 512)
+	var body strings.Builder
+	for body.Len() < 4096 {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			body.Write(buf[:n])
+		}
+		got := body.String()
+		if strings.Contains(got, ": heartbeat") && strings.Contains(got, "event: session.changed") && strings.Contains(got, sess.ID) {
+			if strings.Contains(got, "event: item.delta") || strings.Contains(got, "event: turn.started") {
+				t.Fatalf("control stream mixed turn content %q", got)
+			}
+			cancel()
+			return
+		}
+		if err != nil {
+			t.Fatalf("read sse: %v body %q", err, got)
+		}
+	}
+	t.Fatalf("sse body %q", body.String())
+}
+
+func TestAgentTurnSSEStreamsOnlyPersistedJournalEvents(t *testing.T) {
 	gw := &scriptedStreamGateway{}
-	as := newAgentServer(t, gw, "")
+	as := newAgentServer(t, gw, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
 	var sess SessionResponse
 	as.decode(t, session, &sess)
 	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
 	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
-		"input_text": "转发直播", "idempotency_key": clockid.New(),
+		"input_text": "数据库日志直播", "idempotency_key": key,
 	})
 	as.mustStatus(t, turn, http.StatusAccepted)
 	var submitted SubmitTurnResponse
 	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+"/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events?after=4", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+"/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Last-Event-ID", "7")
 	for _, c := range as.cookies {
 		req.AddCookie(c)
 	}
@@ -1106,16 +1187,30 @@ func TestAgentTurnSSEProxiesRuntimeCursor(t *testing.T) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("sse %d %s", resp.StatusCode, raw)
 	}
+	persisted := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{
+			map[string]any{
+				"sequence": 1, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+				"kind": "turn/start", "payload": json.RawMessage(`{"status":"running"}`), "created_at": time.Now().UTC(),
+			},
+			map[string]any{
+				"sequence": 2, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+				"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded","output":"ok"}`), "created_at": time.Now().UTC(),
+			},
+		},
+	}, auth)
+	as.mustStatus(t, persisted, http.StatusOK)
+	persisted.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	if !strings.Contains(body, "event: text.delta") || !strings.Contains(body, `"sequence":8`) {
-		t.Fatalf("proxied sse %q", body)
+	if !strings.Contains(body, "event: turn.started") || !strings.Contains(body, "event: turn.completed") || !strings.Contains(body, "event: stream.complete") {
+		t.Fatalf("persisted sse %q", body)
 	}
-	if gw.after != 7 {
-		t.Fatalf("runtime cursor %d", gw.after)
+	if gw.after != 0 {
+		t.Fatalf("runtime gateway was called with cursor %d", gw.after)
 	}
 }
 
@@ -1126,8 +1221,8 @@ type scriptedStreamGateway struct {
 
 func (g *scriptedStreamGateway) StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error {
 	g.after = after
-	event := `{"schema_version":1,"run_id":"` + conversationID + `","turn_id":"` + turnID + `","sequence":` + strconv.Itoa(after+1) + `,"created_at":"2026-08-30T00:00:00.000Z","kind":"text.delta","payload":{"delta":"hi","step_id":"s","attempt_id":"a"}}`
-	_, err := io.WriteString(w, "id: "+strconv.Itoa(after+1)+"\nevent: text.delta\ndata: "+event+"\n\n")
+	event := `{"schema_version":1,"run_id":"` + conversationID + `","turn_id":"` + turnID + `","sequence":` + strconv.Itoa(after+1) + `,"created_at":"2026-08-30T00:00:00.000Z","kind":"text.chunk","payload":{"delta":"hi","step_id":"s","attempt_id":"a","content_index":0}}`
+	_, err := io.WriteString(w, "id: "+strconv.Itoa(after+1)+"\nevent: text.chunk\ndata: "+event+"\n\n")
 	return err
 }
 
@@ -1213,7 +1308,7 @@ func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 	}
 }
 
-func TestAppendEventRejectsLiveDeltasAndAllowsGaps(t *testing.T) {
+func TestAppendEventsRejectsUIKindsAndSequenceGaps(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -1238,33 +1333,36 @@ func TestAppendEventRejectsLiveDeltasAndAllowsGaps(t *testing.T) {
 	var lease ExecutionLeaseResponse
 	as.decode(t, claim, &lease)
 
-	live := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-		"kind": "text.delta", "payload": json.RawMessage(`{"delta":"no"}`), "created_at": time.Now().UTC(),
+	live := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 1, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "text.delta", "payload": json.RawMessage(`{"delta":"no"}`), "created_at": time.Now().UTC(),
+		}},
 	}, auth)
 	as.mustStatus(t, live, http.StatusBadRequest)
 	live.Body.Close()
 
-	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-		"kind": "turn.started", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 1, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "turn/start", "payload": json.RawMessage(`{"status":"running"}`), "created_at": time.Now().UTC(),
+		}},
 	}, auth)
 	as.mustStatus(t, started, http.StatusOK)
 	started.Body.Close()
 
-	gapped := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 5,
-		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-		"kind": "tool.step", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
-		"created_at": time.Now().UTC(),
+	gapped := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 5, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "tool/result", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
+			"created_at": time.Now().UTC(),
+		}},
 	}, auth)
-	as.mustStatus(t, gapped, http.StatusOK)
+	as.mustStatus(t, gapped, http.StatusConflict)
 	gapped.Body.Close()
 }
 
-func TestSettledTurnSSEReplaysGappedControlEvents(t *testing.T) {
+func TestSettledTurnSSEReplaysPersistedJournal(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -1289,28 +1387,40 @@ func TestSettledTurnSSEReplaysGappedControlEvents(t *testing.T) {
 	var lease ExecutionLeaseResponse
 	as.decode(t, claim, &lease)
 
-	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-		"kind": "turn.started", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+	started := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 1, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "turn/start", "payload": json.RawMessage(`{"status":"running"}`), "created_at": time.Now().UTC(),
+		}},
 	}, auth)
 	as.mustStatus(t, started, http.StatusOK)
 	started.Body.Close()
-	gapped := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 5,
-		"schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-		"kind": "tool.step", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
-		"created_at": time.Now().UTC(),
+	result := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 2, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "tool/result", "payload": json.RawMessage(`{"step_id":"s1","kind":"inspect_context","summary":"读取上下文","status":"succeeded"}`),
+			"created_at": time.Now().UTC(),
+		}},
 	}, auth)
-	as.mustStatus(t, gapped, http.StatusOK)
-	gapped.Body.Close()
+	as.mustStatus(t, result, http.StatusOK)
+	result.Body.Close()
 
-	if _, err := as.pool.Exec(context.Background(), `
-		UPDATE agent_turn_projections
-		SET status = 'succeeded', output_text = 'ok', updated_at = NOW()
-		WHERE id = $1
-	`, submitted.Turn.ID); err != nil {
-		t.Fatal(err)
+	terminal := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 3, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+			"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded","output":"ok"}`),
+			"created_at": time.Now().UTC(),
+		}},
+	}, auth)
+	as.mustStatus(t, terminal, http.StatusOK)
+	terminal.Body.Close()
+
+	settled := as.do(t, http.MethodGet, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID, nil, "", nil)
+	as.mustStatus(t, settled, http.StatusOK)
+	var settledTurn TurnResponse
+	as.decode(t, settled, &settledTurn)
+	if settledTurn.Status != "succeeded" || settledTurn.OutputText == nil || *settledTurn.OutputText != "ok" {
+		t.Fatalf("terminal event projection %#v", settledTurn)
 	}
 
 	resp := as.do(t, http.MethodGet, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events", nil, "", nil)
@@ -1320,8 +1430,21 @@ func TestSettledTurnSSEReplaysGappedControlEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	if !strings.Contains(body, "event: turn.started") || !strings.Contains(body, "event: tool.step") {
+	pageResp := as.do(t, http.MethodGet, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/events/page?after=1&limit=1", nil, "", nil)
+	as.mustStatus(t, pageResp, http.StatusOK)
+	var page projectedEventPage
+	as.decode(t, pageResp, &page)
+	if len(page.Items) != 1 || page.NextAfter != 2 || !page.HasMore || page.StreamState != "terminal" {
+		t.Fatalf("event page %#v", page)
+	}
+	if sequence, ok := page.Items[0]["sequence"].(float64); !ok || sequence != 2 {
+		t.Fatalf("event page item %#v", page.Items[0])
+	}
+	if !strings.Contains(body, "event: turn.started") || !strings.Contains(body, "event: item.completed") {
 		t.Fatalf("settled sse %q", body)
+	}
+	if !strings.Contains(body, "event: stream.complete") {
+		t.Fatalf("settled sse missing stream.complete %q", body)
 	}
 }
 
@@ -1571,53 +1694,6 @@ func TestInternalProductIntakeRejectsInvalidBody(t *testing.T) {
 	as.mustDetail(t, invalidSel, http.StatusBadRequest, "图片类型选择不符合 AgentProductSelectionV1")
 }
 
-func TestInternalAssetMoveReconcileRejectsInvalidBody(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
-	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
-	as.mustStatus(t, session, http.StatusCreated)
-	var sess SessionResponse
-	as.decode(t, session, &sess)
-	convID := sess.Conversations[0].ConversationID
-	path := "/api/internal/v1/agent-conversations/" + convID + "/asset-moves/reconcile"
-	auth := func() http.Header {
-		return http.Header{"Authorization": []string{"Bearer tok"}, "Idempotency-Key": []string{clockid.New()}}
-	}
-
-	emptyObj := as.doJSONAuth(t, http.MethodPost, path, map[string]any{}, auth())
-	as.mustDetail(t, emptyObj, http.StatusBadRequest, "单次必须移动 1 到 100 张图片")
-
-	emptyMoves := as.doJSONAuth(t, http.MethodPost, path, map[string]any{"moves": []any{}}, auth())
-	as.mustDetail(t, emptyMoves, http.StatusBadRequest, "单次必须移动 1 到 100 张图片")
-
-	valid := as.doJSONAuth(t, http.MethodPost, path, map[string]any{
-		"moves": []any{map[string]any{"asset_id": clockid.New(), "expected_folder_id": nil}},
-	}, auth())
-	as.mustStatus(t, valid, http.StatusOK)
-	var out ReconcileResponse
-	as.decode(t, valid, &out)
-	if out.State != "not_applied" {
-		t.Fatalf("valid-shaped unknown mutation state %s", out.State)
-	}
-
-	unknownConv := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+clockid.New()+"/asset-moves/reconcile", map[string]any{
-		"moves": []any{map[string]any{"asset_id": clockid.New()}},
-	}, auth())
-	if unknownConv.StatusCode != http.StatusOK && unknownConv.StatusCode != http.StatusNotFound && unknownConv.StatusCode != http.StatusBadRequest {
-		raw, _ := io.ReadAll(unknownConv.Body)
-		unknownConv.Body.Close()
-		t.Fatalf("unknown conversation status %d %s", unknownConv.StatusCode, raw)
-	}
-	if unknownConv.StatusCode == http.StatusOK {
-		var unknownOut ReconcileResponse
-		as.decode(t, unknownConv, &unknownOut)
-		if unknownOut.State != "not_applied" {
-			t.Fatalf("unknown conversation state %s", unknownOut.State)
-		}
-	} else {
-		unknownConv.Body.Close()
-	}
-}
-
 func TestAgentFinalizeIntakeExpandsBirthGraph(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	draft := as.do(t, http.MethodPost, "/api/v2/agent-product-workspaces/drafts", strings.NewReader(`{"name":"名称草稿"}`), "application/json", http.Header{
@@ -1717,7 +1793,7 @@ func TestAgentFinalizeIntakeExpandsBirthGraph(t *testing.T) {
 		counts[key]++
 	}
 	if counts["product_source"] != 1 || counts["visual_system"] != 1 || counts["creative_brief"] != 1 ||
-		counts["image_asset"] != 1 || counts["prompt_generation"] != 6 || counts["image_generation"] != 9 {
+		counts["image_asset"] != 1 || counts["image_prompt"] != 6 || counts["image_generation"] != 9 {
 		t.Fatalf("nodes %+v", counts)
 	}
 	if groups, _ := live["groups"].([]any); len(groups) != 6 {

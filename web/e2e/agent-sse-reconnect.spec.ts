@@ -84,7 +84,7 @@ test("browser EventSource reconnects Agent SSE from the persisted cursor", async
   expect(turnResponse.ok(), await turnResponse.text()).toBeTruthy();
   const submitted = (await turnResponse.json()) as SubmitTurnPayload;
   expect(submitted.turn.id).toBeTruthy();
-  expect(submitted.turn.harness_turn_id).toBeTruthy();
+  const harnessTurnId = submitted.turn.harness_turn_id ?? crypto.randomUUID();
 
   const eventsURL = `/api/v2/agent-conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(submitted.turn.id)}/events`;
   const auth = { Authorization: `Bearer ${internalToken}` };
@@ -94,7 +94,7 @@ test("browser EventSource reconnects Agent SSE from the persisted cursor", async
       headers: auth,
       data: {
         idempotency_key: idempotencyKey,
-        harness_turn_id: submitted.turn.harness_turn_id,
+        harness_turn_id: harnessTurnId,
         owner_id: "e2e-sse-reconnect",
       },
     },
@@ -102,40 +102,63 @@ test("browser EventSource reconnects Agent SSE from the persisted cursor", async
 
   if (claim.ok()) {
     const lease = (await claim.json()) as LeasePayload;
-    const append = async (sequence: number, kind: string) => {
+    const append = async (sequence: number, kind: string, payload: Record<string, unknown>) => {
       const posted = await page.request.post(
-        `/api/internal/v1/agent-conversations/${encodeURIComponent(conversationId)}/turn-executions/${encodeURIComponent(lease.execution_id)}/events`,
+        `/api/internal/v1/agent-conversations/${encodeURIComponent(conversationId)}/turn-executions/${encodeURIComponent(lease.execution_id)}/events/batch`,
         {
           headers: auth,
           data: {
             owner_id: "e2e-sse-reconnect",
             lease_token: lease.lease_token,
-            sequence,
-            schema_version: 1,
-            run_id: submitted.turn.harness_run_id,
-            turn_id: submitted.turn.harness_turn_id,
-            kind,
-            payload: { status: kind },
-            created_at: new Date().toISOString(),
+            events: [{
+              sequence,
+              schema_version: 1,
+              run_id: submitted.turn.harness_run_id,
+              turn_id: harnessTurnId,
+              kind,
+              payload,
+              created_at: new Date().toISOString(),
+            }],
           },
         },
       );
       expect(posted.ok(), await posted.text()).toBeTruthy();
     };
 
-    await append(1, "turn.queued");
-    const first = await waitForNamedEvent(page, eventsURL, "turn.queued", 15_000);
+    await append(1, "turn/start", { status: "running", attempt_id: "e2e-attempt" });
+    const first = await waitForNamedEvent(page, eventsURL, "turn.started", 15_000);
     expect(first.lastEventId).toBe("1");
 
-    await append(2, "turn.started");
-    const replay = await waitForNamedEvent(page, `${eventsURL}?after=1`, "turn.started", 15_000);
+    await append(2, "text.chunk", {
+      delta: "cursor replay",
+      step_id: "e2e-step",
+      attempt_id: "e2e-attempt",
+      content_index: 0,
+    });
+    const replay = await waitForNamedEvent(page, `${eventsURL}?after=1`, "item.delta", 15_000);
     expect(replay.lastEventId).toBe("2");
+
+    await append(3, "turn/end", { reason: "completed", status: "succeeded", output: "cursor replay" });
+    const completed = await waitForNamedEvent(page, `${eventsURL}?after=2`, "turn.completed", 15_000);
+    expect(completed.lastEventId).toBe("3");
+    const released = await page.request.post(
+      `/api/internal/v1/agent-conversations/${encodeURIComponent(conversationId)}/turn-executions/${encodeURIComponent(lease.execution_id)}/release`,
+      {
+        headers: auth,
+        data: {
+          owner_id: "e2e-sse-reconnect",
+          lease_token: lease.lease_token,
+          phase: "terminal",
+        },
+      },
+    );
+    expect(released.ok(), await released.text()).toBeTruthy();
     return;
   }
 
-  const first = await waitForNamedEvent(page, eventsURL, "turn.queued", 60_000);
+  const first = await waitForNamedEvent(page, eventsURL, "turn.started", 60_000);
   expect(Number(first.lastEventId)).toBeGreaterThan(0);
   const after = first.lastEventId;
-  const replay = await waitForNamedEvent(page, `${eventsURL}?after=${encodeURIComponent(after)}`, "turn.started", 60_000);
+  const replay = await waitForNamedEvent(page, `${eventsURL}?after=${encodeURIComponent(after)}`, "item.delta", 60_000);
   expect(Number(replay.lastEventId)).toBeGreaterThan(Number(after));
 });

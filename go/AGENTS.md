@@ -4,7 +4,7 @@ Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema a
 
 ## Layout
 
-Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `db/schema`, `config`, `tx`, `storage`, `canonjson`, `log`). Fixed model prompt copy lives in `prompts/` (markdown, `go:embed`); graph, providers, and agent load it. Agent-service reads `prompts/agent/runtime-policy.md` from the same tree. Do not put Skill bodies, JSON schemas, or seed-assembly branches in `prompts/`.
+Vertical slices under `internal/`: `auth`, `settings`, `product`, `graph`, `library`, `recipe`, `imagesession`, `delivery`, `localedit`, `agent`, `providers`. Shared primitives live in `internal/platform/` (`apperr`, `httpx`, `queue`, `db`, `db/schema`, `config`, `tx`, `storage`, `canonjson`, `log`). Fixed model prompt copy lives in `prompts/` (markdown, `go:embed`); graph, providers, and agent load it. Agent-service packs `prompts/agent/runtime-policy.md` at generate/build time. Do not put Skill bodies, JSON schemas, or seed-assembly branches in `prompts/`.
 
 `graph` must not import `product`, `recipe`, or `delivery` (use `graph.DeliveryQueuer`). Agent must not write graph tables directly; call `graph` package functions.
 

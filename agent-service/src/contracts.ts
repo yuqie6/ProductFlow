@@ -80,6 +80,7 @@ export interface AgentEventReceipt {
   sequence: number;
   schema_version: 1;
   kind: string;
+  ignorable: boolean;
   created_at: string;
 }
 
@@ -314,6 +315,7 @@ export interface TurnEvent {
   sequence: number;
   created_at: string;
   kind: string;
+  ignorable?: boolean;
   payload: JsonObject;
 }
 

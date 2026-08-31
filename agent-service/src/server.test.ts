@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ProductFlowClient } from "./productflow.js";
 import { PiRuntimeManager } from "./pi-runtime.js";
 import { createHTTPServer } from "./server.js";
@@ -18,8 +18,6 @@ describe("ProductFlow Pi HTTP contract", () => {
         internalToken: token,
         requestTimeoutMS: 1000,
         providerRequestTimeoutMS: 5_000,
-        eventPollIntervalMS: 10,
-        heartbeatIntervalMS: 100,
         maxBodyBytes: 1024 * 1024,
         maxIterations: 4,
         modelContextWindow: 128_000,
@@ -60,65 +58,12 @@ describe("ProductFlow Pi HTTP contract", () => {
       });
       expect(invalid.status).toBe(400);
 
-      const event = {
-        schema_version: 1 as const,
-        run_id: "run-1",
-        turn_id: "turn-1",
-        sequence: 6,
-        created_at: "2026-08-19T00:00:00.000Z",
-        kind: "text.delta",
-        payload: { delta: "ok" },
-      };
-      const stream = vi.spyOn(manager, "streamEvents").mockImplementation(async function* (_lookup, _turnID, after) {
-        expect(after).toBe(5);
-        yield event;
-      });
       const events = await fetch(
         `http://127.0.0.1:${address.port}/internal/v1/conversations/test/turns/turn-1/events?after=5`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      expect(events.status).toBe(200);
-      expect(events.headers.get("content-type")).toContain("text/event-stream");
-      expect(await events.text()).toBe(
-        `id: 6\nevent: text.delta\ndata: ${JSON.stringify(event)}\n\n`,
-      );
-      expect(stream).toHaveBeenCalledOnce();
-
-      let observedSignal: AbortSignal | undefined;
-      let resolveStreamStopped!: () => void;
-      const streamStopped = new Promise<void>((resolve) => {
-        resolveStreamStopped = resolve;
-      });
-      stream.mockImplementation(async function* (_lookup, _turnID, after, signal) {
-        expect(after).toBe(5);
-        observedSignal = signal;
-        yield event;
-        if (signal.aborted) {
-          resolveStreamStopped();
-          return;
-        }
-        await new Promise<void>((resolve) => {
-          signal.addEventListener("abort", () => {
-            resolveStreamStopped();
-            resolve();
-          }, { once: true });
-        });
-      });
-      const cancel = vi.spyOn(manager, "cancel");
-      const disconnect = new AbortController();
-      const liveEvents = await fetch(
-        `http://127.0.0.1:${address.port}/internal/v1/conversations/test/turns/turn-1/events?after=5`,
-        { headers: { Authorization: `Bearer ${token}` }, signal: disconnect.signal },
-      );
-      const reader = liveEvents.body?.getReader();
-      expect(reader).toBeDefined();
-      await reader?.read();
-      disconnect.abort();
-      await streamStopped;
-      expect(observedSignal?.aborted).toBe(true);
-      expect(cancel).not.toHaveBeenCalled();
-      cancel.mockRestore();
-      await reader?.cancel().catch(() => undefined);
+      expect(events.status).toBe(404);
+      expect(await events.json()).toMatchObject({ error: { code: "not_found" } });
     } finally {
       await manager.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));

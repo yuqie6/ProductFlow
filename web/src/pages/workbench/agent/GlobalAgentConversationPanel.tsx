@@ -1,29 +1,29 @@
 import { Bot } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { GalleryImagePreviewDialog } from "../../../components/GalleryImagePreviewDialog";
-import { ApiError, api } from "../../../lib/api";
-import type { DownloadableImage } from "../../../lib/image-downloads";
+import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type {
-  AgentAttachment,
   AgentPageContextSnapshotInput,
-  AgentQuestionAnswer,
   AgentTaskStatus,
   AgentTurn,
   MediaLibraryAsset,
 } from "../../../lib/types";
-import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
+import { AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMediaLibraryPicker } from "./AgentMediaLibraryPicker";
-import { AgentMessageList } from "./AgentMessageList";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
-import { agentTurnRetrySubmitInput, canRetryAgentTurn, retryIdempotencyKey } from "./agentTurnRetry";
-import { echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
+import { ConversationWorkbench } from "./ConversationPanel";
+import {
+  errorDetailOrNull,
+  mergeWorkflowRunRequest,
+  workflowRequestFromTurn,
+} from "./conversation/helpers";
+import { useConversationChrome } from "./conversation/useConversationChrome";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
-import { useAgentTurnEvents } from "./useAgentTurnEvents";
+import { useAgentTurnEventMap, useAgentTurnEvents } from "./useAgentTurnEvents";
 
 interface GlobalAgentConversationPanelProps {
   conversationId: string | null;
@@ -46,16 +46,6 @@ export function GlobalAgentConversationPanel({
 }: GlobalAgentConversationPanelProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [composerText, setComposerText] = useState("");
-  const [composerAssets, setComposerAssets] = useState<MediaLibraryAsset[]>([]);
-  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-  const [preview, setPreview] = useState<DownloadableImage | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
-  const composerKeyRef = useRef(globalThis.crypto.randomUUID());
-  const retryKeysRef = useRef(new Map<string, string>());
-  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
-  const [pendingEcho, setPendingEcho] = useState<PendingUserEcho | null>(null);
   const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
   const agent = useGlobalAgentConversation({
     conversationId: conversationId ?? "",
@@ -70,173 +60,53 @@ export function GlobalAgentConversationPanel({
     runId: agent.activeTurn?.harness_run_id ?? null,
     turn: agent.activeTurn,
     enabled: Boolean(conversationId),
-    onTerminal: () => void agent.refreshLatestTurn(),
+    onArtifactProposed: () => void agent.workflowRunRequestQuery.refetch(),
+    onTerminal: () => {
+      void agent.refreshLatestTurn();
+      void agent.workflowRunRequestQuery.refetch();
+    },
   });
-  const activeQuestion =
-    events.state.turn_key === agent.activeTurn?.id && events.state.question
-      ? events.state.question
-      : agent.activeTurn?.question ?? null;
-
+  const eventStates = useAgentTurnEventMap({
+    getEventsUrl: (turnId, after) => api.getGlobalAgentTurnEventsUrl(conversationId ?? "", turnId, after),
+    turns: agent.turns,
+    enabled: Boolean(conversationId),
+  });
+  const chrome = useConversationChrome<MediaLibraryAsset>({
+    conversationKey: `${conversationId ?? ""}:${taskId ?? ""}`,
+    resetComposerOnKeyChange: true,
+    agent,
+    events,
+    pageContext,
+    submitTaskId: taskId,
+    loadPreviewAsset: (assetId) => api.getMediaLibraryAsset(assetId),
+    previewFailedLabel: t("agentWorkbench.previewFailed"),
+  });
   useEffect(() => {
-    setComposerText("");
-    setComposerAssets([]);
-    setAssetPickerOpen(false);
-    setPreview(null);
-    setPreviewError(null);
-    setAnsweredQuestionId(null);
-    setRetryingTurnId(null);
-    setPendingEcho(null);
-    composerKeyRef.current = globalThis.crypto.randomUUID();
-    retryKeysRef.current = new Map();
     confirmationKeyRef.current = null;
   }, [conversationId, taskId]);
-  useEffect(() => {
-    if (!pendingEcho) return;
-    if (agent.turns.some((item) => echoMatchesTurn(pendingEcho, item))) {
-      setPendingEcho(null);
-    }
-  }, [agent.turns, pendingEcho]);
-  useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
-  useEffect(() => {
-    if (!assetPickerOpen && !preview) {
-      return;
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (preview) {
-          setPreview(null);
-        } else {
-          setAssetPickerOpen(false);
-        }
-      }
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [assetPickerOpen, preview]);
 
-  const rotateComposerKey = () => {
-    composerKeyRef.current = globalThis.crypto.randomUUID();
-  };
-  const previewSelectedAsset = (asset: AgentAttachment) => {
-    setPreviewError(null);
-    setPreview({
-      previewUrl: api.toApiUrl(asset.preview_url),
-      downloadUrl: api.toApiUrl(asset.download_url),
-      filename: asset.original_filename,
-      alt: asset.display_name,
-    });
-  };
-  const previewTurnAsset = async (assetId: string) => {
-    setPreviewError(null);
-    try {
-      previewSelectedAsset(await api.getMediaLibraryAsset(assetId));
-    } catch (error) {
-      setPreviewError(errorDetail(error, t("agentWorkbench.previewFailed")));
-    }
-  };
-
-  const canSubmit = Boolean(conversationId && composerText.trim() && !agent.activeTurn && !pendingEcho);
-  const submit = async () => {
-    const input = composerText.trim();
-    if (!input || !canSubmit || agent.submitTurnMutation.isPending) {
-      return;
-    }
-    const assets = composerAssets.map((asset) => asset.id);
-    const selected = composerAssets;
-    setPendingEcho({
-      text: input,
-      assetIds: assets,
-      createdAt: new Date().toISOString(),
-    });
-    setComposerText("");
-    setComposerAssets([]);
-    try {
-      await agent.submitTurnMutation.mutateAsync({
-        input_text: input,
-        asset_ids: assets,
-        idempotency_key: composerKeyRef.current,
-        task_id: taskId,
-        page_context: {
-          ...pageContext,
-          selected_asset_ids: assets,
-          captured_at: new Date().toISOString(),
-        },
-      });
-      rotateComposerKey();
-    } catch {
-      setPendingEcho(null);
-      setComposerText(input);
-      setComposerAssets(selected);
-    }
-  };
-  const answerQuestion = async (answer: AgentQuestionAnswer) => {
-    if (!agent.activeTurn || !activeQuestion || agent.answerQuestionMutation.isPending) {
-      return;
-    }
-    try {
-      await agent.answerQuestionMutation.mutateAsync({
-        projectionId: agent.activeTurn.id,
-        questionId: activeQuestion.id,
-        answer,
-      });
-      setAnsweredQuestionId(activeQuestion.id);
-    } catch {
-      // mutation 界面仍可通过同一答案与续跑键重试
-    }
-  };
-  const retryTurn = async (turn: AgentTurn) => {
-    if (
-      !conversationId ||
-      !canRetryAgentTurn({ turn }) ||
-      Boolean(agent.activeTurn) ||
-      agent.submitTurnMutation.isPending
-    ) {
-      return;
-    }
-    let key = retryKeysRef.current.get(turn.id);
-    if (!key) {
-      key = retryIdempotencyKey(turn.id);
-      retryKeysRef.current.set(turn.id, key);
-    }
-    setRetryingTurnId(turn.id);
-    try {
-      await agent.submitTurnMutation.mutateAsync(
-        agentTurnRetrySubmitInput(turn, {
-          idempotencyKey: key,
-          taskId: turn.task_id ?? taskId,
-          pageContext: {
-            ...pageContext,
-            selected_asset_ids: turn.input_asset_ids,
-            captured_at: new Date().toISOString(),
-          },
-        }),
-      );
-      retryKeysRef.current.delete(turn.id);
-    } catch {
-      // 失败请求沿用同一续跑键
-    } finally {
-      setRetryingTurnId(null);
-    }
-  };
-  const error = errorDetail(
-    agent.turnsQuery.error ??
-    agent.submitTurnMutation.error ??
-    agent.cancelTurnMutation.error ??
-    agent.resumeTurnMutation.error ??
-    agent.answerQuestionMutation.error ??
-    agent.workflowRunRequestQuery.error ??
-    agent.confirmWorkflowRunRequestMutation.error ??
-    agent.cancelWorkflowRunRequestMutation.error ??
-    events.streamError ??
-    previewError,
-    t("globalAgent.requestFailed"),
+  const pendingRequest = mergeWorkflowRunRequest(
+    agent.workflowRunRequestQuery.data,
+    workflowRequestFromTurn(agent.latestTurn, eventStates),
   );
-  const questionAnswered = Boolean(
-    activeQuestion &&
-    (answeredQuestionId === activeQuestion.id ||
-      events.state.question_answered ||
-      agent.activeTurn?.resume_required),
-  );
+  const confirmWorkflowRunRequest = () => {
+    const requestId = mergeWorkflowRunRequest(
+      agent.workflowRunRequestQuery.data,
+      workflowRequestFromTurn(agent.latestTurn, eventStates),
+    )?.id;
+    if (requestId) {
+      agent.confirmWorkflowRunRequestMutation.mutate(requestId);
+    }
+  };
+  const cancelWorkflowRunRequest = () => {
+    const requestId = mergeWorkflowRunRequest(
+      agent.workflowRunRequestQuery.data,
+      workflowRequestFromTurn(agent.latestTurn, eventStates),
+    )?.id;
+    if (requestId) {
+      agent.cancelWorkflowRunRequestMutation.mutate(requestId);
+    }
+  };
   const confirmDraft = () => {
     const draft = agent.libraryOrganizationDraftQuery.data;
     const revision = draft?.current_revision;
@@ -254,18 +124,6 @@ export function GlobalAgentConversationPanel({
       idempotencyKey: key,
     });
   };
-  const confirmWorkflowRunRequest = () => {
-    const request = agent.workflowRunRequestQuery.data;
-    if (request) {
-      agent.confirmWorkflowRunRequestMutation.mutate(request.id);
-    }
-  };
-  const cancelWorkflowRunRequest = () => {
-    const request = agent.workflowRunRequestQuery.data;
-    if (request) {
-      agent.cancelWorkflowRunRequestMutation.mutate(request.id);
-    }
-  };
   const renderTurnExtras = (turn: AgentTurn) => (
     <>
       {turn.library_organization_draft_revision_id &&
@@ -274,7 +132,7 @@ export function GlobalAgentConversationPanel({
         <GlobalLibraryOrganizationDraftCard
           draft={agent.libraryOrganizationDraftQuery.data ?? null}
           loading={agent.libraryOrganizationDraftQuery.isLoading}
-          error={errorDetail(
+          error={errorDetailOrNull(
             agent.libraryOrganizationDraftQuery.error ??
             agent.confirmLibraryOrganizationDraftMutation.error,
             t("globalAgent.draft.loadFailed"),
@@ -285,34 +143,47 @@ export function GlobalAgentConversationPanel({
       ) : null}
     </>
   );
+  const error = errorDetailOrNull(
+    agent.turnsQuery.error ??
+    agent.submitTurnMutation.error ??
+    agent.cancelTurnMutation.error ??
+    agent.resumeTurnMutation.error ??
+    agent.answerQuestionMutation.error ??
+    agent.workflowRunRequestQuery.error ??
+    agent.confirmWorkflowRunRequestMutation.error ??
+    agent.cancelWorkflowRunRequestMutation.error ??
+    events.streamError ??
+    chrome.previewError,
+    t("globalAgent.requestFailed"),
+  );
 
   const dialogs = (
     <>
-      {assetPickerOpen ? (
+      {chrome.assetPickerOpen ? (
         <AgentMediaLibraryPicker
-          selectedAssets={composerAssets}
-          onClose={() => setAssetPickerOpen(false)}
+          selectedAssets={chrome.composerAssets}
+          onClose={() => chrome.setAssetPickerOpen(false)}
           onConfirm={(assets) => {
-            setComposerAssets(assets);
-            rotateComposerKey();
-            setAssetPickerOpen(false);
+            chrome.setComposerAssets(assets);
+            chrome.rotateComposerKey();
+            chrome.setAssetPickerOpen(false);
           }}
-          onPreview={previewSelectedAsset}
+          onPreview={chrome.previewSelectedAsset}
         />
       ) : null}
-      {preview ? (
+      {chrome.preview ? (
         <GalleryImagePreviewDialog
-          ariaLabel={t("agentWorkbench.previewAsset", { name: preview.alt })}
-          imageUrl={preview.previewUrl}
-          imageAlt={preview.alt}
-          title={preview.alt}
-          subtitle={preview.filename}
-          body={preview.filename}
+          ariaLabel={t("agentWorkbench.previewAsset", { name: chrome.preview.alt })}
+          imageUrl={chrome.preview.previewUrl}
+          imageAlt={chrome.preview.alt}
+          title={chrome.preview.alt}
+          subtitle={chrome.preview.filename}
+          body={chrome.preview.filename}
           providerNotesTitle={t("agentWorkbench.assetDetails")}
-          downloadUrl={preview.downloadUrl}
+          downloadUrl={chrome.preview.downloadUrl}
           downloadLabel={t("agentWorkbench.downloadAsset")}
           closeLabel={t("agentWorkbench.closePreview")}
-          onClose={() => setPreview(null)}
+          onClose={() => chrome.setPreview(null)}
         />
       ) : null}
     </>
@@ -328,125 +199,88 @@ export function GlobalAgentConversationPanel({
   }
 
   return (
-    <section data-global-agent-conversation className="flex min-h-0 flex-1 flex-col bg-surface-base text-text-primary">
-      <header className="shrink-0 border-b border-border-l1 bg-surface-raised/90 px-4 py-3 backdrop-blur">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-            <Bot size={16} aria-hidden="true" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold">{taskTitle ?? sessionTitle}</h3>
-            <p className="truncate text-[11px] text-text-secondary" title={taskGoal ?? undefined}>
-              {taskGoal ? `${t("globalAgent.taskContext")}: ${taskGoal}` : t("globalAgent.globalScope")}
-            </p>
+    <ConversationWorkbench
+      variant="global"
+      className="flex-1"
+      header={(
+        <header className="shrink-0 border-b border-border-l1 bg-surface-raised/90 px-4 py-3 backdrop-blur">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+              <Bot size={16} aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-semibold">{taskTitle ?? sessionTitle}</h3>
+              <p className="truncate text-[11px] text-text-secondary" title={taskGoal ?? undefined}>
+                {taskGoal ? `${t("globalAgent.taskContext")}: ${taskGoal}` : t("globalAgent.globalScope")}
+              </p>
+            </div>
+            <span
+              role="status"
+              aria-label={agent.activeTurn
+                ? (events.connectionState === "open"
+                  ? t("agentWorkbench.connection.open")
+                  : t("agentWorkbench.connection.reconnecting"))
+                : t("agentWorkbench.status.succeeded")}
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${agent.activeTurn
+                ? events.connectionState === "open"
+                  ? "animate-pulse bg-accent"
+                  : "animate-pulse bg-state-warning"
+                : "bg-state-success"}`}
+            />
           </div>
-          <span
-            role="status"
-            aria-label={agent.activeTurn
-              ? (events.connectionState === "open"
-                ? t("agentWorkbench.connection.open")
-                : t("agentWorkbench.connection.reconnecting"))
-              : t("agentWorkbench.status.succeeded")}
-            className={`h-2.5 w-2.5 shrink-0 rounded-full ${agent.activeTurn
-              ? events.connectionState === "open"
-                ? "animate-pulse bg-accent"
-                : "animate-pulse bg-amber-500"
-              : "bg-state-success"}`}
-          />
-        </div>
-        <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted">
-          <span className="shrink-0">{t("globalAgent.currentPage")}</span>
-          <span className="truncate" title={pageContext.route}>{pageContext.route}</span>
-        </div>
-      </header>
-
-      {error ? <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-4 py-2 text-xs leading-5 text-state-error">{error}</p> : null}
-
-      <AgentMessageList
-        turns={agent.turns}
-        activeTurnId={agent.activeTurn?.id ?? null}
-        eventState={events.state}
-        initialTurnPending={agent.turnsQuery.isLoading}
-        pendingEcho={pendingEcho}
-        onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
-        getAssetThumbnailUrl={(assetId) => api.getMediaLibraryAssetMediaUrl(assetId, "thumbnail")}
-        onRetryTurn={(turn) => void retryTurn(turn)}
-        retryingTurnId={retryingTurnId}
-        renderTurnExtras={renderTurnExtras}
-        emptyLabel={t("globalAgent.emptyChat")}
-      />
-
-      <AgentWorkflowRunRequestCard
-        request={agent.workflowRunRequestQuery.data ?? null}
-        loading={agent.workflowRunRequestQuery.isLoading}
-        busy={
-          agent.confirmWorkflowRunRequestMutation.isPending ||
-          agent.cancelWorkflowRunRequestMutation.isPending
-        }
-        error={errorDetail(
-          agent.workflowRunRequestQuery.error ??
-          agent.confirmWorkflowRunRequestMutation.error ??
-          agent.cancelWorkflowRunRequestMutation.error,
-          t("globalAgent.requestFailed"),
-        )}
-        targetLabel={
-          agent.workflowRunRequestQuery.data?.product_name ??
-          agent.workflowRunRequestQuery.data?.product_id
-        }
-        onConfirm={confirmWorkflowRunRequest}
-        onCancel={cancelWorkflowRunRequest}
-        onOpenRuns={() => {
-          const request = agent.workflowRunRequestQuery.data;
-          if (request) {
-            navigate(`/products/${encodeURIComponent(request.product_id)}`);
+          <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted">
+            <span className="shrink-0">{t("globalAgent.currentPage")}</span>
+            <span className="truncate" title={pageContext.route}>{pageContext.route}</span>
+          </div>
+        </header>
+      )}
+      notices={error ? <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-4 py-2 text-xs leading-5 text-state-error">{error}</p> : null}
+      approval={(
+        <AgentWorkflowRunRequestCard
+          request={pendingRequest}
+          loading={agent.workflowRunRequestQuery.isLoading}
+          busy={
+            agent.confirmWorkflowRunRequestMutation.isPending ||
+            agent.cancelWorkflowRunRequestMutation.isPending
           }
-        }}
-      />
-
-      <AgentComposer
-        value={composerText}
-        selectedAssets={composerAssets}
-        isSubmitting={agent.submitTurnMutation.isPending}
-        canSubmit={canSubmit}
-        stopAvailable={Boolean(agent.activeTurn)}
-        isStopping={
-          agent.cancelTurnMutation.isPending ||
-          agent.activeTurn?.status === "cancel_requested" ||
-          Boolean(events.state.terminal_kind)
-        }
-        error={errorDetail(agent.submitTurnMutation.error, t("globalAgent.requestFailed"))}
-        placeholder={t("globalAgent.chatPlaceholder")}
-        assetPickerLabel={t("globalAgent.attachImage")}
-        selectedAssetsCountLabel={t("globalAgent.assetPicker.selected", {
-          count: composerAssets.length,
-          maximum: AGENT_COMPOSER_MAX_ASSETS,
-        })}
-        question={activeQuestion && !questionAnswered ? activeQuestion : null}
-        questionBusy={agent.answerQuestionMutation.isPending || agent.resumeTurnMutation.isPending}
-        questionError={errorDetail(agent.answerQuestionMutation.error, t("globalAgent.requestFailed"))}
-        onAnswerQuestion={(answer) => void answerQuestion(answer)}
-        onChange={setComposerText}
-        onOpenAssets={() => setAssetPickerOpen(true)}
-        onRemoveAsset={(assetId) => {
-          setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
-          rotateComposerKey();
-        }}
-        onPreviewAsset={previewSelectedAsset}
-        onSubmit={() => void submit()}
-        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-      />
-
-      {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
-    </section>
+          error={errorDetailOrNull(
+            agent.workflowRunRequestQuery.error ??
+            agent.confirmWorkflowRunRequestMutation.error ??
+            agent.cancelWorkflowRunRequestMutation.error,
+            t("globalAgent.requestFailed"),
+          )}
+          targetLabel={
+            pendingRequest?.product_name || pendingRequest?.product_id || null
+          }
+          onConfirm={confirmWorkflowRunRequest}
+          onCancel={cancelWorkflowRunRequest}
+          onOpenRuns={() => {
+            const request = pendingRequest;
+            if (request?.product_id) {
+              navigate(`/products/${encodeURIComponent(request.product_id)}`);
+            }
+          }}
+        />
+      )}
+      chrome={chrome}
+      agent={agent}
+      eventStates={eventStates}
+      renderTurnExtras={renderTurnExtras}
+      emptyLabel={t("globalAgent.emptyChat")}
+      getAssetThumbnailUrl={(assetId) => api.getMediaLibraryAssetMediaUrl(assetId, "thumbnail")}
+      composerPlaceholder={
+        agent.activeTurn?.status === "awaiting_confirmation"
+          ? t("agentWorkbench.composer.blockedConfirmation")
+          : t("globalAgent.chatPlaceholder")
+      }
+      assetPickerLabel={t("globalAgent.attachImage")}
+      selectedAssetsCountLabel={t("globalAgent.assetPicker.selected", {
+        count: chrome.composerAssets.length,
+        maximum: AGENT_COMPOSER_MAX_ASSETS,
+      })}
+      composerError={errorDetailOrNull(agent.submitTurnMutation.error, t("globalAgent.requestFailed"))}
+      onOpenAssets={() => chrome.setAssetPickerOpen(true)}
+      dialogs={dialogs}
+    />
   );
-}
-
-function errorDetail(error: unknown, fallback: string): string | null {
-  if (!error) {
-    return null;
-  }
-  if (error instanceof ApiError) {
-    return error.detail;
-  }
-  return error instanceof Error ? error.message : fallback;
 }

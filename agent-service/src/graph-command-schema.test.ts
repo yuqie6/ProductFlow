@@ -13,7 +13,7 @@ const createAndConnect = {
     {
       op: "create_node",
       client_ref: "n1",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "提示词",
     },
     {

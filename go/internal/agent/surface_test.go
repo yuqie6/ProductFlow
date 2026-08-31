@@ -55,18 +55,6 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 	as.mustStatus(t, library, http.StatusOK)
 	library.Body.Close()
 
-	valid := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/library-organization-draft/validate", map[string]any{
-		"value": map[string]any{"operations": []any{}},
-	}, auth)
-	as.mustStatus(t, valid, http.StatusOK)
-	valid.Body.Close()
-
-	invalid := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/library-organization-draft/validate", map[string]any{
-		"value": map[string]any{"oops": true},
-	}, auth)
-	as.mustStatus(t, invalid, http.StatusBadRequest)
-	invalid.Body.Close()
-
 	globalDraft := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/global-draft/validate", map[string]any{
 		"value": map[string]any{"draft_kind": "library_organization", "library_payload": map[string]any{"operations": []any{}}},
 	}, auth)
@@ -139,15 +127,16 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 
 	cp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"ok":true}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:test-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
 	}, auth)
 	as.mustStatus(t, cp, http.StatusOK)
 	cp.Body.Close()
 
-	ev := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"schema_version": 1, "run_id": open.Turn.HarnessRunID, "turn_id": *open.Turn.HarnessTurnID,
-		"kind": "turn.started", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+	ev := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
+			"sequence": 1, "schema_version": 1, "run_id": open.Turn.HarnessRunID, "turn_id": *open.Turn.HarnessTurnID,
+			"kind": "turn/start", "payload": json.RawMessage(`{}`), "created_at": time.Now().UTC(),
+		}},
 	}, auth)
 	as.mustStatus(t, ev, http.StatusOK)
 	ev.Body.Close()

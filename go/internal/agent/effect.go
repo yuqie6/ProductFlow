@@ -65,15 +65,27 @@ func (s Service) ReconcileTurnEffect(ctx context.Context, productID *string, con
 		_ = json.Unmarshal([]byte(checkpoint.PayloadJSON), &intent)
 		toolName, _ := intent["tool_name"].(string)
 		key, _ := intent["idempotency_key"].(string)
-		if _, ok := map[string]struct{}{
-			"request_workflow_run_v1": {}, "create_product_workspace_v1": {}, "finalize_product_intake_v1": {},
-		}[toolName]; !ok {
+		if toolRecoveryPolicies[toolName] == "" || toolRecoveryPolicies[toolName] == "none" {
 			return apperr.Conflict("该工具不支持副作用对账")
 		}
-		prepared := toolPrepared(conversationID, toolName, map[string]any{}, intent)
-		reconciled, err := reconcileToolMutation(ctx, pgxTx, conversationID, toolName, key, prepared)
-		if err != nil {
-			return err
+		reconciled := ReconcileResponse{State: "not_applied", Detail: ptr("工具副作用尚未提交")}
+		var mutation schema.AgentToolMutations
+		mutationErr := pgxTx.WithContext(ctx).
+			Where("conversation_id = ? AND tool_name = ? AND idempotency_key = ?", conversationID, toolName, key).
+			Take(&mutation).Error
+		if mutationErr == nil {
+			switch mutation.Status {
+			case "applied":
+				if mutation.ResultJSON == nil {
+					reconciled = ReconcileResponse{State: "unknown", Detail: ptr("工具账本缺少已提交结果")}
+				} else {
+					reconciled = ReconcileResponse{State: "applied", Result: json.RawMessage(*mutation.ResultJSON), Detail: ptr("工具副作用已提交")}
+				}
+			default:
+				reconciled = ReconcileResponse{State: "unknown", Detail: ptr("副作用结果仍不明确")}
+			}
+		} else if !errors.Is(mutationErr, gorm.ErrRecordNotFound) {
+			return mutationErr
 		}
 		effect := "unknown"
 		switch reconciled.State {

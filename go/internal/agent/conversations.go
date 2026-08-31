@@ -108,10 +108,18 @@ func applyConversationStatus(ctx context.Context, pgxTx *gorm.DB, conversationID
 	case "unknown":
 		status = "unknown"
 	}
-	return pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
+	var previous schema.AgentConversations
+	loadErr := pgxTx.WithContext(ctx).Select("session_id", "status").Where("id = ?", conversationID).Take(&previous).Error
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
 		"status":     status,
 		"updated_at": time.Now().UTC(),
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	if loadErr == nil && previous.Status != status && previous.SessionID != nil {
+		publishSessionChanged(pgxTx, *previous.SessionID)
+	}
+	return nil
 }
 
 func serializeConversation(row conversationRow) ConversationResponse {

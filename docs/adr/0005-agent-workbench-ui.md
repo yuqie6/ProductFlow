@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。直播 journal 与 Go BFF 边界见 ADR 0013。
+Accepted。直播 journal 与 Go BFF 边界见 ADR 0013；全量 journal 与 UI 协议见 ADR 0017。
 
 ## 背景
 
@@ -26,7 +26,7 @@ Agent 商品工作台（`pages/workbench/agent/`）目前是"能用的功能拼�
 
 #### 1.2 工具调用降噪与交错时间线（跨层）
 
-这是跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step`、`thinking.delta` 与 `text.delta`；浏览器直播走 agent-service `waitForEvents`（Go 鉴权转发），`text.delta` / `thinking.delta` 不进 PostgreSQL。前端 `agentEventReducer.ts` 按 sequence 增量维护 thinking / text / tool 块。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）和有界思考通过 web projection 对用户可见。
+这是跨层的一项。`agent-service/src/store.ts` 和 `pi-runtime.ts` 产生 `tool/call`、`tool/result`、`thinking.chunk` 与 `text.chunk` journal 事件；全部事件先写入 PostgreSQL。Go `projectTurnEvent` 投影为 `item.started`、`item.delta`、`item.completed`，前端 `ConversationRuntime` 按 sequence 增量维护 thinking / text / tool item。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）和有界思考通过 web projection 对用户可见。
 
 决策：在 Agent service 侧维护**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。投影使用四个必填字段和两个可选字段：
 
@@ -56,11 +56,11 @@ ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网�
 | `inject_context` | 注入本轮 Agent contract、Skill catalog 和页面摘要 |
 | `ask_question` | 提出结构化问题并等待回答 |
 
-当前没有真实 `generate_image` Agent tool，不加入投影。`ask_question` 不复制完整 Question owner；完整问题仍由 `question.required` 事件和 Question 状态提供，tool step 只展示动作、选项摘要和状态。
+当前没有真实 `generate_image` Agent tool，不加入投影。`ask_user` 不复制完整 Question owner；完整问题由 `approval.requested(approval_kind=question)` 和 Question 状态提供，tool item 只展示动作、选项摘要和状态。
 
-工具步骤投影是**可选能力**：Turn 快照缺失 `tool_steps` 时保留现有快照并兼容旧服务，显式 `[]` 才清空。前端在投影事件缺失时优雅降级为纯 prose 渲染。
+工具步骤投影是当前稳定 UI 协议的一部分。前端不读取已退役的 `tool.step` 或旧快照形状；未知 journal kind 只有显式 `ignorable` 才能跳过。
 
-思考是另一条有界投影，不是模型 transcript。Pi 把 `thinking_start` / `thinking_delta` / `thinking_end` 转成 `thinking.delta`（含 `content_index`），**禁止**写入 `output` / `output_text`。`redacted` 或仅 signature 的块不投影。累计思考超过约 16KB 后截断。Turn 快照可选 `thinking_text` 供刷新后降级成一条思考行；交错位置只存在于事件日志，刷新后不保证思考夹在工具中间。不要从 `text.delta` 里用启发式拆思考分隔符。
+思考是另一条有界投影，不是模型 transcript。Pi 把 provider thinking chunk 转成 `thinking.chunk` journal，再由 Go 投影为 `item.delta(item_kind=thinking)`，**禁止**写入 `output` / `output_text`。`redacted` 或仅 signature 的块不投影。累计思考超过约 16KB 后截断。刷新按 PG journal 的 sequence 重建真实交错位置，不从正文 chunk 里用启发式拆思考分隔符。
 
 #### 1.3 状态节点化：收敛散弹枪式错误横幅
 
@@ -103,9 +103,9 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 
 ## 后果
 
-- 工具步骤投影是 wire 契约的新增，需要 Agent service 与 ProductFlow 双向同步，且前端要对缺失事件降级。
-- `thinking.delta` 与 `thinking_text` 是有界思考投影，不是模型 transcript；思考不得进入 `output_text` 或复制。
-- `tool.step` 的新增详情字段需要 Agent service、ProductFlow 和 Web 同步升级；旧四字段步骤仍可读取，未知详情字段在后端和前端都被拒绝或过滤。
+- 工具步骤投影由 Agent journal、Go UI 投影和 Web Item renderer 共同实现；工具 meta 形状来自单一 tool manifest。
+- `thinking.chunk` / thinking item 是有界思考投影，不是模型 transcript；思考不得进入 `output_text` 或复制。
+- 工具详情字段需要 Agent service、ProductFlow 和 Web 同步升级；未知且不可忽略的类型会终止该 UI 流并报告协议错误。
 - 布局改造有回归风险（画布拖拽/缩放/选择/edge 编辑/inspector/run history 必须保留，见 `web/AGENTS.md` 的 Canvas And Image Workflows）。
 - token 体系改造面大（现有组件散落硬编码），需分阶段，先建 token 再逐组件迁移，避免一次大爆炸。
 - 这些决策不改变 Agent 的权威边界（ADR 0001）、canonical 图片身份（ADR 0002）、GenerationSpec/DeliverySpec（ADR 0003）、V1 cutover（ADR 0004）。在线图权威见 ADR 0008。

@@ -17,6 +17,7 @@ export type ToolEffect = "read" | "ui_effect" | "mutate" | "approval";
 export type ToolScope = "both" | "product" | "global" | "synthetic";
 export type ToolResultReducer = "none" | "list" | "context" | "detail";
 export type ToolInputSchemaSource = "static" | "contract:draft_schema";
+export type ToolRecoveryPolicy = "none" | "reconcile_only" | "reconcile_then_retry";
 
 export const TOOL_EFFECTS = ["read", "ui_effect", "mutate", "approval"] as const;
 
@@ -90,6 +91,12 @@ const workflowRunFields = {
   scope: Type.Optional(Type.Union([Type.Literal("graph"), Type.Literal("node"), Type.Literal("to_node"), Type.Literal("selection")])),
   node_id: Type.Optional(idSchema),
   node_ids: Type.Optional(Type.Array(idSchema, { minItems: 1, maxItems: 64 })),
+  force: Type.Optional(Type.Boolean()),
+  document_action: Type.Optional(Type.Union([
+    Type.Literal("complete"),
+    Type.Literal("rewrite"),
+    Type.Literal("replace"),
+  ])),
 };
 
 const productWorkflowRunInputSchema = Type.Object(workflowRunFields, { additionalProperties: false });
@@ -224,6 +231,34 @@ export const TOOL_PARAMETER_SCHEMAS = {
 
 export type ToolName = keyof typeof TOOL_PARAMETER_SCHEMAS;
 export type ToolParams<Name extends ToolName> = Static<(typeof TOOL_PARAMETER_SCHEMAS)[Name]>;
+
+export const TOOL_RECOVERY_POLICIES = {
+  load_productflow_skill: "none",
+  ask_user: "none",
+  productflow_context_injection: "none",
+  get_product_workflow_context_v1: "none",
+  inspect_workflow_runs_v1: "none",
+  list_product_image_assets_v2: "none",
+  inspect_product_image_assets_v1: "none",
+  request_workflow_run_v1: "reconcile_then_retry",
+  request_global_workflow_run_v1: "reconcile_then_retry",
+  finalize_product_intake_v1: "reconcile_then_retry",
+  list_products_v1: "none",
+  inspect_products_v1: "none",
+  inspect_global_workflow_context_v1: "none",
+  inspect_global_workflow_runs_v1: "none",
+  list_global_media_library_assets_v1: "none",
+  inspect_global_media_library_assets_v1: "none",
+  create_product_workspace_v1: "reconcile_then_retry",
+  propose_global_draft: "none",
+  get_node_detail_v1: "none",
+  get_workflow_run_detail_v1: "none",
+  apply_graph_change_set_v1: "reconcile_then_retry",
+  propose_graph_change_set_v1: "reconcile_then_retry",
+  discard_workflow_proposal_v1: "reconcile_then_retry",
+  cancel_workflow_run_v1: "reconcile_then_retry",
+  focus_canvas_items_v1: "none",
+} as const satisfies Record<ToolName, ToolRecoveryPolicy>;
 
 export const LIVE_GRAPH_TOOL_NAMES = [
   "get_node_detail_v1",
@@ -643,6 +678,7 @@ const TOOL_BY_NAME = new Map<string, ToolManifestEntry>(TOOL_MANIFEST.map((entry
 function manifestPayload(dynamicSchemas: Readonly<Partial<Record<ToolName, TSchema>>> = {}): unknown {
   return TOOL_MANIFEST.map((entry) => ({
     ...entry,
+    recovery_policy: TOOL_RECOVERY_POLICIES[entry.name],
     input_schema: dynamicSchemas[entry.name] ?? entry.input_schema,
   }));
 }
@@ -691,6 +727,10 @@ export function toolKind(name: string): ToolStepKind {
 
 export function toolManifestEntry(name: string): ToolManifestEntry | undefined {
   return TOOL_BY_NAME.get(name);
+}
+
+export function toolRecoveryPolicy(name: ToolName): ToolRecoveryPolicy {
+  return TOOL_RECOVERY_POLICIES[name];
 }
 
 export function toolDescription<Name extends ToolName>(name: Name): string {

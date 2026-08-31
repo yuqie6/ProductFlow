@@ -24,7 +24,6 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.GET("/runtime-context", h.runtimeContext)
 	conv.GET("/product-context", h.productContext)
 	conv.GET("/global-workflow-context", h.globalWorkflowContext)
-	conv.POST("/library-organization-draft/validate", h.validateLibraryDraft)
 	conv.POST("/global-draft/validate", h.validateGlobalDraft)
 
 	conv.POST("/graph/apply-change-set", h.applyGraph)
@@ -46,7 +45,7 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.POST("/turn-executions/:execution_id/heartbeat", h.heartbeatExecution)
 	conv.POST("/turn-executions/:execution_id/checkpoints", h.appendCheckpoint)
 	conv.POST("/turn-executions/:execution_id/release", h.releaseExecution)
-	conv.POST("/turn-executions/:execution_id/events", h.appendEvent)
+	conv.POST("/turn-executions/:execution_id/events/batch", h.appendEvents)
 
 	conv.POST("/workflow-run-requests/prepare", h.prepareRunRequest)
 	conv.POST("/global-workflow-run-requests/prepare", h.prepareGlobalRunRequest)
@@ -68,18 +67,6 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.POST("/product-intake", h.finalizeIntake)
 	conv.POST("/product-intake/reconcile", h.reconcileIntake)
 
-	conv.POST("/asset-renames/prepare", h.prepareRename)
-	conv.POST("/asset-renames", h.applyRename)
-	conv.POST("/asset-renames/reconcile", h.reconcileRename)
-	conv.POST("/folder-creates/prepare", h.prepareFolderCreate)
-	conv.POST("/folder-creates", h.applyFolderCreate)
-	conv.POST("/folder-creates/reconcile", h.reconcileFolderCreate)
-	conv.POST("/folder-renames/prepare", h.prepareFolderRename)
-	conv.POST("/folder-renames", h.applyFolderRename)
-	conv.POST("/folder-renames/reconcile", h.reconcileFolderRename)
-	conv.POST("/asset-moves/prepare", h.prepareMove)
-	conv.POST("/asset-moves", h.applyMove)
-	conv.POST("/asset-moves/reconcile", h.reconcileMove)
 }
 
 func (h HTTP) requireInternal(c *gin.Context) {
@@ -151,21 +138,6 @@ func (h HTTP) globalWorkflowContext(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) validateLibraryDraft(c *gin.Context) {
-	var req struct {
-		Value json.RawMessage `json:"value"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	if err := h.Service.ValidateLibraryDraft(c.Request.Context(), c.Param("conversation_id"), req.Value); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"accepted": true})
 }
 
 func (h HTTP) validateGlobalDraft(c *gin.Context) {
@@ -494,28 +466,43 @@ func (h HTTP) releaseExecution(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-func (h HTTP) appendEvent(c *gin.Context) {
-	var req struct {
-		OwnerID       string          `json:"owner_id"`
-		LeaseToken    string          `json:"lease_token"`
-		Sequence      int             `json:"sequence"`
-		SchemaVersion int             `json:"schema_version"`
-		RunID         string          `json:"run_id"`
-		TurnID        string          `json:"turn_id"`
-		Kind          string          `json:"kind"`
-		Payload       json.RawMessage `json:"payload"`
-		CreatedAt     time.Time       `json:"created_at"`
-	}
+type appendEventRequest struct {
+	Sequence      int             `json:"sequence"`
+	SchemaVersion int             `json:"schema_version"`
+	RunID         string          `json:"run_id"`
+	TurnID        string          `json:"turn_id"`
+	Kind          string          `json:"kind"`
+	Ignorable     bool            `json:"ignorable"`
+	Payload       json.RawMessage `json:"payload"`
+	CreatedAt     time.Time       `json:"created_at"`
+}
+
+type appendEventBatchRequest struct {
+	OwnerID    string               `json:"owner_id"`
+	LeaseToken string               `json:"lease_token"`
+	Events     []appendEventRequest `json:"events"`
+}
+
+func (h HTTP) appendEvents(c *gin.Context) {
+	var req appendEventBatchRequest
 	if err := bindJSONStrict(c, &req); err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.AppendEvent(c.Request.Context(), c.Param("conversation_id"), c.Param("execution_id"), req.OwnerID, req.LeaseToken, req.Sequence, req.SchemaVersion, req.RunID, req.TurnID, req.Kind, req.Payload, req.CreatedAt)
+	inputs := make([]EventAppendInput, 0, len(req.Events))
+	for _, event := range req.Events {
+		inputs = append(inputs, EventAppendInput{
+			Sequence: event.Sequence, SchemaVersion: event.SchemaVersion, RunID: event.RunID,
+			TurnID: event.TurnID, Kind: event.Kind, Ignorable: event.Ignorable,
+			Payload: event.Payload, CreatedAt: event.CreatedAt,
+		})
+	}
+	out, err := h.Service.AppendEvents(c.Request.Context(), c.Param("conversation_id"), c.Param("execution_id"), req.OwnerID, req.LeaseToken, inputs)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
 type workflowRunRequestBody struct {
@@ -527,6 +514,8 @@ type workflowRunRequestBody struct {
 	Scope                    string   `json:"scope"`
 	NodeID                   *string  `json:"node_id"`
 	NodeIDs                  []string `json:"node_ids"`
+	Force                    bool     `json:"force"`
+	DocumentAction           string   `json:"document_action"`
 }
 
 type globalWorkflowRunRequestBody struct {
@@ -539,6 +528,8 @@ type globalWorkflowRunRequestBody struct {
 	Scope                    string   `json:"scope"`
 	NodeID                   *string  `json:"node_id"`
 	NodeIDs                  []string `json:"node_ids"`
+	Force                    bool     `json:"force"`
+	DocumentAction           string   `json:"document_action"`
 }
 
 func (h HTTP) prepareRunRequest(c *gin.Context) {
@@ -589,7 +580,7 @@ func (h HTTP) createRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
+	out, err := h.Service.CreateWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs, Force: req.Force, DocumentAction: req.DocumentAction})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -607,7 +598,7 @@ func (h HTTP) createGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.CreateGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
+	out, err := h.Service.CreateGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), req.ProductID, req.WorkflowID, key, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs, Force: req.Force, DocumentAction: req.DocumentAction})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -625,7 +616,7 @@ func (h HTTP) reconcileRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, "", req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
+	out, err := h.Service.ReconcileWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, "", req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs, Force: req.Force, DocumentAction: req.DocumentAction})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -643,7 +634,7 @@ func (h HTTP) reconcileGlobalRunRequest(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	out, err := h.Service.ReconcileGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs})
+	out, err := h.Service.ReconcileGlobalWorkflowRunRequest(c.Request.Context(), c.Param("conversation_id"), key, req.ProductID, req.WorkflowID, req.SourceStepID, req.ExpectedWorkflowRevision, req.TaskID, req.SourceRunID, runScopeSpec{Scope: req.Scope, NodeID: req.NodeID, NodeIDs: req.NodeIDs, Force: req.Force, DocumentAction: req.DocumentAction})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -801,14 +792,6 @@ type productIntakeBody struct {
 	TaskID            *string         `json:"task_id"`
 }
 
-type assetMoveBody struct {
-	Moves []struct {
-		AssetID          string  `json:"asset_id"`
-		ExpectedFolderID *string `json:"expected_folder_id"`
-	} `json:"moves"`
-	TargetFolderID *string `json:"target_folder_id"`
-}
-
 func validateProductIntakeBody(req productIntakeBody) ([]string, error) {
 	if _, err := product.ParseSelection(string(req.Selection)); err != nil {
 		return nil, err
@@ -831,34 +814,6 @@ func validateProductIntakeBody(req productIntakeBody) ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, nil
-}
-
-func galleryMovesFromRequest(req assetMoveBody) ([]product.GalleryAssetMove, *string, error) {
-	moves := make([]product.GalleryAssetMove, 0, len(req.Moves))
-	for _, move := range req.Moves {
-		moves = append(moves, product.GalleryAssetMove{AssetID: move.AssetID, ExpectedFolderID: move.ExpectedFolderID})
-	}
-	normalized, err := product.NormalizeMoves(moves)
-	if err != nil {
-		return nil, nil, err
-	}
-	var target *string
-	if req.TargetFolderID != nil {
-		trimmed := strings.TrimSpace(*req.TargetFolderID)
-		if trimmed == "" || len(trimmed) > 36 {
-			return nil, nil, apperr.Validation("目标文件夹 ID 无效")
-		}
-		target = &trimmed
-	}
-	return normalized, target, nil
-}
-
-func preparedAssetMoves(moves []product.GalleryAssetMove) []map[string]any {
-	raw := make([]map[string]any, 0, len(moves))
-	for _, move := range moves {
-		raw = append(raw, map[string]any{"asset_id": move.AssetID, "expected_folder_id": move.ExpectedFolderID})
-	}
-	return raw
 }
 
 func (h HTTP) finalizeIntake(c *gin.Context) {
@@ -903,259 +858,6 @@ func (h HTTP) reconcileIntake(c *gin.Context) {
 	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), "finalize_product_intake_v1", key, toolPrepared(c.Param("conversation_id"), "finalize_product_intake_v1", map[string]any{}, map[string]any{
 		"selection": req.Selection, "reference_asset_ids": ids,
 	}))
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) prepareRename(c *gin.Context) {
-	var req struct {
-		AssetID           string `json:"asset_id"`
-		TargetDisplayName string `json:"target_display_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.PrepareAssetRename(c.Request.Context(), c.Param("conversation_id"), req.AssetID, req.TargetDisplayName)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) applyRename(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		AssetID             string `json:"asset_id"`
-		ExpectedDisplayName string `json:"expected_display_name"`
-		TargetDisplayName   string `json:"target_display_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ApplyAssetRename(c.Request.Context(), c.Param("conversation_id"), key, req.AssetID, req.ExpectedDisplayName, req.TargetDisplayName)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) reconcileRename(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		AssetID             string `json:"asset_id"`
-		ExpectedDisplayName string `json:"expected_display_name"`
-		TargetDisplayName   string `json:"target_display_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), renameAssetTool, key, toolPrepared(c.Param("conversation_id"), "rename_asset",
-		map[string]any{"asset_id": req.AssetID, "display_name": req.ExpectedDisplayName},
-		map[string]any{"asset_id": req.AssetID, "display_name": req.TargetDisplayName},
-	))
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) prepareFolderCreate(c *gin.Context) {
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.PrepareFolderCreate(c.Request.Context(), c.Param("conversation_id"), req.Name)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) applyFolderCreate(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		FolderID string `json:"folder_id"`
-		Name     string `json:"name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ApplyFolderCreate(c.Request.Context(), c.Param("conversation_id"), key, req.FolderID, req.Name)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) reconcileFolderCreate(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		FolderID string `json:"folder_id"`
-		Name     string `json:"name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), createFolderTool, key, toolPrepared(c.Param("conversation_id"), "create_folder",
-		map[string]any{"folder_id": req.FolderID, "exists": false},
-		map[string]any{"folder_id": req.FolderID, "name": req.Name},
-	))
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) prepareFolderRename(c *gin.Context) {
-	var req struct {
-		FolderID   string `json:"folder_id"`
-		TargetName string `json:"target_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.PrepareFolderRename(c.Request.Context(), c.Param("conversation_id"), req.FolderID, req.TargetName)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) applyFolderRename(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		FolderID     string `json:"folder_id"`
-		ExpectedName string `json:"expected_name"`
-		TargetName   string `json:"target_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ApplyFolderRename(c.Request.Context(), c.Param("conversation_id"), key, req.FolderID, req.ExpectedName, req.TargetName)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) reconcileFolderRename(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req struct {
-		FolderID     string `json:"folder_id"`
-		ExpectedName string `json:"expected_name"`
-		TargetName   string `json:"target_name"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), renameFolderTool, key, toolPrepared(c.Param("conversation_id"), "rename_folder",
-		map[string]any{"folder_id": req.FolderID, "name": req.ExpectedName},
-		map[string]any{"folder_id": req.FolderID, "name": req.TargetName},
-	))
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) prepareMove(c *gin.Context) {
-	var req struct {
-		AssetIDs       []string `json:"asset_ids"`
-		TargetFolderID *string  `json:"target_folder_id"`
-	}
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.PrepareAssetMove(c.Request.Context(), c.Param("conversation_id"), req.AssetIDs, req.TargetFolderID)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) applyMove(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req assetMoveBody
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	moves, target, err := galleryMovesFromRequest(req)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	out, err := h.Service.ApplyAssetMove(c.Request.Context(), c.Param("conversation_id"), key, moves, target)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-func (h HTTP) reconcileMove(c *gin.Context) {
-	key, ok := requireIdempotency(c)
-	if !ok {
-		return
-	}
-	var req assetMoveBody
-	if err := bindJSONStrict(c, &req); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	moves, target, err := galleryMovesFromRequest(req)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	rawMoves := preparedAssetMoves(moves)
-	out, err := h.Service.ReconcileTool(c.Request.Context(), c.Param("conversation_id"), moveAssetsTool, key, toolPrepared(c.Param("conversation_id"), "move_assets", map[string]any{"moves": rawMoves}, map[string]any{"moves": rawMoves, "target_folder_id": target}))
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

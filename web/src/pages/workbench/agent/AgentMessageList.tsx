@@ -1,6 +1,7 @@
 import { Check, ChevronDown, ChevronUp, Copy, Loader2, MessagesSquare, RotateCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
 import { api } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
 import { useI18n } from "../../../lib/preferences";
@@ -21,7 +22,8 @@ import { toolStepSignature } from "./toolStepSignature";
 interface AgentMessageListProps {
   turns: readonly AgentTurn[];
   activeTurnId: string | null;
-  eventState: AgentTurnEventState | null;
+  eventState?: AgentTurnEventState | null;
+  eventStates?: Readonly<Record<string, AgentTurnEventState>>;
   initialTurnPending: boolean;
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -35,12 +37,14 @@ interface AgentMessageListProps {
   pendingEcho?: PendingUserEcho | null;
   renderTurnExtras?: (turn: AgentTurn) => ReactNode;
   emptyLabel?: string;
+  onCanvasFocus?: (nodeIds: string[]) => void;
 }
 
 export function AgentMessageList({
   turns,
   activeTurnId,
-  eventState,
+  eventState = null,
+  eventStates,
   initialTurnPending,
   hasOlder = false,
   loadingOlder = false,
@@ -54,6 +58,7 @@ export function AgentMessageList({
   pendingEcho = null,
   renderTurnExtras,
   emptyLabel,
+  onCanvasFocus,
 }: AgentMessageListProps) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -64,19 +69,17 @@ export function AgentMessageList({
     [turns],
   );
   const latestLiveSignature = useMemo(() => {
-    const eventTurnId = activeTurnId ?? eventState?.turn_key ?? null;
-    const eventTurn = turns.find((turn) => turn.id === eventTurnId);
-    if (!eventTurn) {
-      return "";
-    }
-    const text = selectAgentAssistantText(eventTurn, eventState);
-    const blocks = selectAgentTurnBlocks(eventTurn, eventState);
-    const thinking = blocks
-      .flatMap((block) => (block.type === "thinking" ? [block.text] : []))
-      .join("\u0001");
-    const tools = toolStepSignature(selectAgentToolSteps(eventTurn, eventState));
-    return `${text}\u0000${thinking}\u0000${tools}`;
-  }, [activeTurnId, eventState, turns]);
+    return groups.map(({ latest }) => {
+      const matching = eventStateForTurn(latest.id, eventStates, eventState);
+      const text = selectAgentAssistantText(latest, matching);
+      const blocks = selectAgentTurnBlocks(latest, matching);
+      const thinking = blocks
+        .flatMap((block) => (block.type === "thinking" ? [block.text] : []))
+        .join("\u0001");
+      const tools = toolStepSignature(selectAgentToolSteps(latest, matching));
+      return `${latest.id}\u0000${text}\u0000${thinking}\u0000${tools}`;
+    }).join("\u0002");
+  }, [eventState, eventStates, groups]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -139,7 +142,7 @@ export function AgentMessageList({
           const active = latest.id === activeTurnId;
           const retryPending = Boolean(retryingTurnId) && attempts.some((turn) => turn.id === retryingTurnId);
           const hideFailedTail = retryPending && !active;
-          const matchingEventState = eventState?.turn_key === latest.id ? eventState : null;
+          const matchingEventState = eventStateForTurn(latest.id, eventStates, eventState);
           const assistantText = hideFailedTail ? "" : selectAgentAssistantText(latest, matchingEventState);
           const toolSteps = hideFailedTail ? [] : selectAgentToolSteps(latest, matchingEventState);
           const blocks = hideFailedTail ? [] : selectAgentTurnBlocks(latest, matchingEventState);
@@ -191,6 +194,7 @@ export function AgentMessageList({
                         live={active}
                         fold={foldProcess}
                         textSettled={Boolean(matchingEventState?.text_settled) || isAgentTurnTerminal(latest.status)}
+                        onCanvasFocus={onCanvasFocus}
                       />
                     ) : null}
                     {questionNode && questionNode.type === "question" ? (
@@ -212,21 +216,16 @@ export function AgentMessageList({
                       <CopyAction text={assistantText} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
                     ) : null}
                     {canRetry ? (
-                      <button
-                        type="button"
+                      <IconButton
+                        label={t("agentWorkbench.retryStart")}
+                        size="toolbar"
                         data-agent-turn-retry
-                        onClick={() => onRetryTurn?.(latest)}
                         disabled={retryBusy}
-                        aria-label={t("agentWorkbench.retryStart")}
-                        title={t("agentWorkbench.retryStart")}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+                        busy={retryPending}
+                        onClick={() => onRetryTurn?.(latest)}
                       >
-                        {retryPending ? (
-                          <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />
-                        ) : (
-                          <RotateCw size={14} />
-                        )}
-                      </button>
+                        <RotateCw size={14} />
+                      </IconButton>
                     ) : null}
                   </div>
                 ) : null}
@@ -277,15 +276,15 @@ export function AgentMessageList({
       </div>
 
       {!atLatest && (turns.length || pendingEcho) ? (
-        <button
-          type="button"
+        <IconButton
+          label={t("agentWorkbench.scrollToLatest")}
+          variant="secondary"
+          size="toolbar"
+          className="sticky bottom-3 ml-auto mt-3 rounded-full shadow-lg"
           onClick={scrollToLatest}
-          aria-label={t("agentWorkbench.scrollToLatest")}
-          title={t("agentWorkbench.scrollToLatest")}
-          className="sticky bottom-3 ml-auto mt-3 flex h-9 w-9 items-center justify-center rounded-full border border-border-l2 bg-surface-raised text-text-secondary shadow-lg transition-colors hover:border-accent/50 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <ChevronDown size={17} />
-        </button>
+        </IconButton>
       ) : null}
     </div>
   );
@@ -330,7 +329,7 @@ function UserTurnBubble({
           ))}
         </div>
       ) : null}
-      <div className="rounded-[20px] border border-blue-200/80 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-slate-100">
+      <div className="rounded-[20px] border border-accent/25 bg-accent-soft px-4 py-3 text-sm leading-6 text-text-primary shadow-sm">
         <div className="whitespace-pre-wrap break-words">{text}</div>
       </div>
       <div className="mt-1.5 flex min-h-7 items-center justify-end gap-1 text-[11px] text-text-muted">
@@ -405,14 +404,20 @@ function CopyAction({
   };
 
   return (
-    <button
-      type="button"
+    <IconButton
+      label={copied ? copiedLabel : label}
+      size="toolbar"
       onClick={() => void copy()}
-      aria-label={copied ? copiedLabel : label}
-      title={copied ? copiedLabel : label}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
-    </button>
+    </IconButton>
   );
+}
+
+function eventStateForTurn(
+  turnId: string,
+  eventStates: Readonly<Record<string, AgentTurnEventState>> | undefined,
+  eventState: AgentTurnEventState | null,
+): AgentTurnEventState | null {
+  return eventStates?.[turnId] ?? (eventState?.turn_key === turnId ? eventState : null);
 }

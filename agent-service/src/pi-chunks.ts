@@ -2,17 +2,14 @@
  * Pi 0.83 `assistantMessageEvent` → ProductFlow UI chunk 归一。
  *
  * 对照 `@earendil-works/pi-ai` AssistantMessageEvent。
- * UI 只认本表列出的 ProductFlow kind；未知 type 丢掉并记诊断。
- * toolcall_* 的原始 arguments 不进 UI；工具卡仍走 `tool_execution_*` → `tool.step`。
+ * Pi 原始流在这里归一，随后由 RunRuntime 写入 append-only journal。
+ * toolcall_* 的原始 arguments 不进日志；工具卡使用有界的 call/result meta。
  */
 
 import type { ThinkingAssistantEvent } from "./thinking-projection.js";
 
-/** 直播 token / finish：写 agent-service 本地 journal，不进 PostgreSQL。 */
-export const LIVE_ONLY_EVENT_KINDS = ["text.delta", "thinking.delta", "assistant.finish"] as const;
-
-/** 合批写入本地 events 文件的间隔。waitForEvents 仍按每条内存事件唤醒。 */
-export const LIVE_EVENT_FLUSH_MS = 40;
+/** 高频内容也属于 journal；仅在浏览器装配层按 animation frame 发布。 */
+export const JOURNAL_STREAM_EVENT_KINDS = ["text.chunk", "thinking.chunk", "assistant/message"] as const;
 
 export const PI_ASSISTANT_EVENT_TYPES = [
   "start",
@@ -59,6 +56,7 @@ export interface PiUsage {
 export interface AssistantFinishPayload {
   reason: string;
   attempt_id: string;
+  model_request_id?: string;
   usage?: {
     input: number;
     output: number;
@@ -67,7 +65,7 @@ export interface AssistantFinishPayload {
 }
 
 export type NormalizedAssistantEvent =
-  | { action: "text.delta"; delta: string; contentIndex: number }
+  | { action: "text.chunk"; delta: string; contentIndex: number }
   | { action: "thinking"; event: ThinkingAssistantEvent }
   | { action: "finish"; reason: string; usage: AssistantFinishPayload["usage"] }
   | { action: "ignore"; type: string }
@@ -82,10 +80,6 @@ const IGNORED_ASSISTANT_TYPES = new Set<string>([
   "toolcall_end",
 ]);
 
-export function isDurableTurnEventKind(kind: string): boolean {
-  return !(LIVE_ONLY_EVENT_KINDS as readonly string[]).includes(kind);
-}
-
 export function isKnownPiAssistantEventType(type: string): type is PiAssistantEventType {
   return PI_ASSISTANT_EVENT_TYPE_SET.has(type);
 }
@@ -99,7 +93,7 @@ export function normalizeAssistantMessageEvent(event: PiAssistantMessageEvent): 
   if (!type) return { action: "unknown", type: "" };
   if (type === "text_delta") {
     return {
-      action: "text.delta",
+      action: "text.chunk",
       delta: typeof event.delta === "string" ? event.delta : "",
       contentIndex: numberOrZero(event.contentIndex),
     };
@@ -135,11 +129,11 @@ export function reportUnknownPiAssistantEvent(type: string): void {
   process.stderr.write(`[productflow-pi] dropping unknown assistantMessageEvent type=${type || "<empty>"}\n`);
 }
 
-function boundedUsage(usage: PiUsage | undefined): AssistantFinishPayload["usage"] {
+export function boundedUsage(usage: PiUsage | undefined): AssistantFinishPayload["usage"] {
   if (!usage) return undefined;
   const input = integerOrZero(usage.input);
   const output = integerOrZero(usage.output);
-  const total = integerOrZero(usage.totalTokens);
+  const total = integerOrZero(usage.totalTokens) || input + output;
   if (input === 0 && output === 0 && total === 0) return undefined;
   return { input, output, total_tokens: total };
 }

@@ -1,6 +1,7 @@
-import { Loader2, Send } from "lucide-react";
+import { Send } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentQuestion, AgentQuestionAnswer } from "../../../lib/types";
 
@@ -57,16 +58,16 @@ export function AgentQuestionPrompt({
           aria-label={t("agentWorkbench.questionTextLabel")}
           className="min-h-11 resize-none rounded-xl border border-border-l2 bg-surface-base px-3 py-2 text-sm leading-5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/15 disabled:opacity-50"
         />
-        <button
-          type="button"
+        <IconButton
+          label={t("agentWorkbench.answer")}
+          variant="primary"
+          size="toolbar"
           disabled={busy || !text.trim()}
+          busy={busy}
           onClick={() => onAnswer({ text: text.trim() })}
-          aria-label={t("agentWorkbench.answer")}
-          title={t("agentWorkbench.answer")}
-          className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-white hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
         >
-          {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-        </button>
+          <Send size={16} />
+        </IconButton>
       </div>
       <div className="mt-2 flex items-center justify-between gap-3">
         <button

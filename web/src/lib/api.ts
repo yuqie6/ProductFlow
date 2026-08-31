@@ -54,6 +54,7 @@ import type {
   ProviderProfileUpdateRequest,
   DirectCreateProductResponse,
   GraphChangeSet,
+  GraphDocumentCandidate,
   WorkflowGenerationSpec,
   GraphNodeCatalog,
   GraphProjection,
@@ -399,6 +400,9 @@ export const api = {
     return request(`/api/v2/agent-sessions/${encodeURIComponent(sessionId)}/archive`, {
       method: "POST",
     });
+  },
+  agentControlEventsUrl(): string {
+    return toApiUrl("/api/v2/agent-control/events");
   },
   listAgentTasks(input: {
     sessionId?: string | null;
@@ -1097,6 +1101,28 @@ export const api = {
   getWorkflowGraph(productId: string, workflowId: string): Promise<GraphProjection> {
     return request(
       `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}`,
+    );
+  },
+  getGraphDocumentCandidate(productId: string, workflowId: string, nodeId: string): Promise<GraphDocumentCandidate> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/candidate`,
+    );
+  },
+  applyGraphDocumentCandidate(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+    input: { artifact_id: string; base_graph_revision: number; section_keys?: string[] },
+  ): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/candidate/apply`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+  discardGraphDocumentCandidate(productId: string, workflowId: string, nodeId: string, artifactId: string): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/candidate/discard`,
+      { method: "POST", body: JSON.stringify({ artifact_id: artifactId }) },
     );
   },
   applyWorkflowChangeSet(
