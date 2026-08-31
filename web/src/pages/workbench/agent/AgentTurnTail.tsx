@@ -58,6 +58,22 @@ interface AgentTurnTailProps {
   onReviewDraft?: () => void;
 }
 
+export function shouldShowAgentTurnTail({
+  turn,
+  reviewDraft,
+}: {
+  turn: Pick<AgentTurn, "status" | "error_text" | "sync_error">;
+  reviewDraft: boolean;
+}): boolean {
+  if (turn.error_text || turn.sync_error || reviewDraft) {
+    return true;
+  }
+  return turn.status !== "succeeded"
+    && turn.status !== "queued"
+    && turn.status !== "running"
+    && turn.status !== "cancel_requested";
+}
+
 export function AgentTurnTail({
   turn,
   active,
@@ -68,12 +84,21 @@ export function AgentTurnTail({
   const error = turn.error_text;
   const syncWarning = turn.sync_error;
   const animate = active && (turn.status === "running" || turn.status === "cancel_requested");
+  const terminalReason = turn.status === "unknown" ? turn.terminal_reason_code : undefined;
+  const statusLabelKey = terminalReason
+    ? (`agentWorkbench.terminal.${terminalReason}` as TranslationKey)
+    : STATUS_KEYS[turn.status];
+
+  if (!shouldShowAgentTurnTail({ turn, reviewDraft })) {
+    return null;
+  }
 
   return (
     <div
       data-agent-turn-tail
       data-agent-turn-status={turn.status}
-      className="mt-4 border-t border-dashed border-border-l1 pt-2"
+      data-agent-turn-reason={terminalReason ?? ""}
+      className="mt-1.5"
     >
       <div className="flex min-h-8 items-center gap-2">
         <span
@@ -86,7 +111,7 @@ export function AgentTurnTail({
           role={active ? "status" : undefined}
           className="min-w-0 flex-1 text-xs font-medium text-text-secondary"
         >
-          {t(STATUS_KEYS[turn.status])}
+          {t(statusLabelKey)}
         </span>
         {reviewDraft && onReviewDraft ? (
           <button

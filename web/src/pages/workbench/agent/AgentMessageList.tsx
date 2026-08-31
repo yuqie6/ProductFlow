@@ -14,7 +14,7 @@ import {
   type AgentTurnEventState,
 } from "./agentEventReducer";
 import { assembleTurnNodes, echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
-import { AgentTurnTail } from "./AgentTurnTail";
+import { AgentTurnTail, shouldShowAgentTurnTail } from "./AgentTurnTail";
 import { AgentTurnTimeline } from "./AgentTurnTimeline";
 import { canRetryAgentTurn, excludeQuestionContinuationTurns, groupAgentTurnAttempts } from "./agentTurnRetry";
 import { toolStepSignature } from "./toolStepSignature";
@@ -122,9 +122,9 @@ export function AgentMessageList({
         nearBottomRef.current = nextAtLatest;
         setAtLatest((current) => (current === nextAtLatest ? current : nextAtLatest));
       }}
-      className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-base px-4 py-7 sm:px-6 sm:py-9"
+      className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-base px-3 py-4 sm:px-5 sm:py-5"
     >
-      <div className="mx-auto w-full max-w-[47rem] space-y-10">
+      <div className="mx-auto w-full max-w-[47rem] space-y-6">
         {hasOlder && onLoadOlder ? (
           <button
             type="button"
@@ -172,7 +172,7 @@ export function AgentMessageList({
           const showAssistantActions = canRetry || Boolean(assistantText);
 
           return (
-            <article key={root.id} data-agent-turn-id={latest.id} className="group/turn space-y-5">
+            <article key={root.id} data-agent-turn-id={latest.id} className="group/turn space-y-2.5">
               <div className="flex justify-end" data-agent-conversation-node="user">
                 <UserTurnBubble
                   text={root.input_text}
@@ -186,7 +186,7 @@ export function AgentMessageList({
 
               <div className="min-w-0">
                 {blocks.length || showWaitingSpinner ? (
-                  <div aria-live={active || hideFailedTail ? "polite" : undefined} className="min-w-0 text-[15px] leading-7 text-text-primary">
+                  <div aria-live={active || hideFailedTail ? "polite" : undefined} className="min-w-0">
                     {blocks.length ? (
                       <AgentTurnTimeline
                         blocks={blocks}
@@ -198,20 +198,17 @@ export function AgentMessageList({
                       />
                     ) : null}
                     {questionNode && questionNode.type === "question" ? (
-                      <TurnQuestionNode question={questionNode.question} />
+                      <div className="mt-2">
+                        <TurnQuestionNode question={questionNode.question} />
+                      </div>
                     ) : null}
                     {showWaitingSpinner ? (
-                      <div className="flex h-8 items-center gap-2 text-sm text-text-secondary">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-accent">
-                          <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
-                        </span>
-                        {t("agentWorkbench.waitingForAgent")}
-                      </div>
+                      <TypingIndicator label={t("agentWorkbench.waitingForAgent")} />
                     ) : null}
                   </div>
                 ) : null}
                 {showAssistantActions ? (
-                  <div data-agent-message-actions className="mt-2 flex min-h-7 items-center gap-1 text-text-muted">
+                  <div data-agent-message-actions className="mt-1 flex min-h-7 items-center gap-0.5 text-text-muted">
                     {assistantText ? (
                       <CopyAction text={assistantText} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
                     ) : null}
@@ -229,7 +226,7 @@ export function AgentMessageList({
                     ) : null}
                   </div>
                 ) : null}
-                {hideFailedTail ? null : (
+                {hideFailedTail || !shouldShowAgentTurnTail({ turn: latest, reviewDraft }) ? null : (
                   <div data-agent-conversation-node="turn-tail">
                     <AgentTurnTail
                       turn={latest}
@@ -329,14 +326,30 @@ function UserTurnBubble({
           ))}
         </div>
       ) : null}
-      <div className="rounded-[20px] border border-accent/25 bg-accent-soft px-4 py-3 text-sm leading-6 text-text-primary shadow-sm">
+      <div className="rounded-[20px] bg-accent-soft px-4 py-3 text-sm leading-6 text-text-primary">
         <div className="whitespace-pre-wrap break-words">{text}</div>
       </div>
-      <div className="mt-1.5 flex min-h-7 items-center justify-end gap-1 text-[11px] text-text-muted">
+      <div className="mt-1 flex min-h-6 items-center justify-end gap-0.5 text-[11px] text-text-muted">
         <time dateTime={createdAt}>{formatDateTime(createdAt, t.locale)}</time>
         {pending ? <span>{t("agentWorkbench.starting")}</span> : null}
         <CopyAction text={text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
       </div>
+    </div>
+  );
+}
+
+function TypingIndicator({ label }: { label: string }) {
+  return (
+    <div
+      data-agent-typing
+      role="status"
+      aria-label={label}
+      className="agent-assistant-reply agent-typing-bubble"
+    >
+      <span className="agent-typing-dot" />
+      <span className="agent-typing-dot" />
+      <span className="agent-typing-dot" />
+      <span className="sr-only">{label}</span>
     </div>
   );
 }

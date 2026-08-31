@@ -1,4 +1,5 @@
 import { ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { useI18n } from "../../../lib/preferences";
 import type { AgentToolStep } from "../../../lib/types";
@@ -36,10 +37,12 @@ export function AgentTurnTimeline({ blocks, toolSteps, live, fold, textSettled =
         >
           <summary
             aria-label={t("agentWorkbench.process.listLabel")}
-            className="flex list-none cursor-pointer items-center gap-1.5 text-xs font-medium text-text-muted transition-colors hover:text-text-secondary [&::-webkit-details-marker]:hidden"
+            className="inline-flex list-none cursor-pointer items-center gap-1 py-0.5 text-[13px] leading-5 text-text-muted transition-colors hover:text-text-secondary [&::-webkit-details-marker]:hidden"
           >
-            <ChevronDown size={13} className="shrink-0 transition-transform group-open/process:rotate-180" aria-hidden="true" />
-            <span>{processLabel}</span>
+            <ChevronDown size={12} className="shrink-0 opacity-70 transition-transform duration-fast group-open/process:rotate-180" aria-hidden="true" />
+            <span className="underline decoration-border-l3 decoration-dotted underline-offset-[5px] group-hover/process:decoration-text-muted">
+              {processLabel}
+            </span>
           </summary>
           <div className="mt-2 space-y-3">
             {process.map((block) => (
@@ -104,9 +107,24 @@ function TurnBlockView({
   const step = block.type === "tool" ? stepsById.get(block.step_id) : undefined;
   const rendered = renderConversationItem({ block, step, live, runningThinking, streamingText, onCanvasFocus });
   const nodeKind = block.type === "thinking" ? "thinking" : block.type === "text" ? "assistant" : "tool";
+  const inner = block.type === "text"
+    ? <AssistantReply streaming={streamingText}>{rendered}</AssistantReply>
+    : rendered;
   return (
     <div data-agent-turn-block-kind={block.type} data-agent-conversation-node={nodeKind}>
-      {rendered}
+      {inner}
+    </div>
+  );
+}
+
+function AssistantReply({ children, streaming = false }: { children: ReactNode; streaming?: boolean }) {
+  return (
+    <div
+      data-agent-assistant-reply
+      data-streaming={streaming || undefined}
+      className="agent-assistant-reply"
+    >
+      {children}
     </div>
   );
 }

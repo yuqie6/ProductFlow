@@ -16,6 +16,7 @@ export function AgentAssistantMarkdown({ text, streaming = false }: AgentAssista
     return (
       <div className="agent-markdown whitespace-pre-wrap break-words" data-streaming="true">
         {text}
+        <span data-agent-stream-caret className="agent-stream-caret" aria-hidden="true" />
       </div>
     );
   }

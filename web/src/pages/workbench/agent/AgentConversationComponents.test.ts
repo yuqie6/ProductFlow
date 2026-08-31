@@ -96,6 +96,7 @@ describe("Agent conversation components", () => {
       }),
     );
     expect(markup).toContain("data-streaming");
+    expect(markup).toContain("data-agent-stream-caret");
     expect(markup).toContain("# 还在写");
     expect(markup).not.toContain("<h1>");
   });
@@ -344,6 +345,23 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("继续当前 Agent 任务");
   });
 
+  it("distinguishes an applied effect from an interrupted reply on unknown Turns", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "unknown",
+          terminal_reason_code: "effect_reconciled",
+          output_text: "已创建工作区",
+        })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain('data-agent-turn-reason="effect_reconciled"');
+    expect(markup).toContain("操作已完成，回复在中断前未写完");
+  });
+
   it("renders live delta for an active Turn and canonical output after terminal projection sync", () => {
     let eventState = createAgentTurnEventState("projection-1");
     eventState = agentEventReducer(eventState, {
@@ -488,6 +506,23 @@ describe("Agent conversation components", () => {
         },
       },
     });
+    const thinkingWithToolMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn()],
+        activeTurnId: "projection-1",
+        eventState,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onPreviewAsset: () => undefined,
+      }),
+    );
+    expect(thinkingWithToolMarkup).toContain("data-agent-thinking-running");
+    expect(thinkingWithToolMarkup).toContain("读取商品信息");
+    expect(thinkingWithToolMarkup).toContain("data-agent-item-card");
+    expect(thinkingWithToolMarkup).not.toContain("data-agent-typing");
+
     eventState = agentEventReducer(eventState, {
       type: "event",
       event: {
@@ -519,6 +554,8 @@ describe("Agent conversation components", () => {
     expect(toolIndex).toBeGreaterThan(thinkingIndex);
     expect(textIndex).toBeGreaterThan(toolIndex);
     expect(liveMarkup).toContain("data-agent-item-card");
+    expect(liveMarkup).toContain("data-streaming");
+    expect(liveMarkup).toContain("data-agent-thinking-running");
     expect(liveMarkup).not.toContain("data-agent-turn-process");
 
     const compactMarkup = renderToStaticMarkup(
@@ -535,10 +572,12 @@ describe("Agent conversation components", () => {
     );
     expect(compactMarkup).toContain("data-agent-turn-process");
     expect(compactMarkup).not.toMatch(/data-agent-turn-process[^>]*open/);
-    expect(compactMarkup).toContain("已处理 1 步");
+    expect(compactMarkup).toContain("过程 · 1");
     expect(compactMarkup).toContain("内部推理");
+    expect(compactMarkup).toContain("data-agent-assistant-reply");
     expect(compactMarkup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
     expect(compactMarkup).not.toContain("流式终答");
+    expect(compactMarkup).not.toContain("data-agent-turn-tail");
   });
 
   it("lets a historical thinking snapshot expand inside the folded process", () => {
@@ -559,11 +598,157 @@ describe("Agent conversation components", () => {
       }),
     );
     expect(markup).toContain("data-agent-turn-process");
-    expect(markup).toContain("已思考");
+    expect(markup).toContain("思考");
     expect(markup).toContain("data-agent-thinking-row");
     expect(markup).toContain("刷新后的思考");
     expect(markup).toContain("data-agent-thinking-text");
     expect(markup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
+  });
+
+  it("keeps context injection inspectable inside the folded process after the reply settles", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "succeeded",
+          output_text: "你好，需要处理哪一项？",
+          tool_steps: [{
+            step_id: "step-ctx",
+            kind: "inject_context",
+            summary: "注入本轮上下文",
+            status: "succeeded",
+          }],
+        })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain("data-agent-assistant-reply");
+    expect(markup).toContain("你好，需要处理哪一项？");
+    expect(markup).toContain("data-agent-turn-process");
+    expect(markup).not.toMatch(/data-agent-turn-process[^>]*open/);
+    expect(markup).toContain("过程 · 1");
+    expect(markup).toContain("读取商品信息");
+    expect(markup).toContain("data-agent-item-card");
+    expect(markup).not.toContain("data-agent-turn-tail");
+    expect(markup).not.toContain('data-agent-turn-status="succeeded"');
+  });
+
+  it("shows a typing indicator before the first assistant token", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ status: "running", output_text: null })],
+        activeTurnId: "projection-1",
+        eventState: null,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain("data-agent-typing");
+    expect(markup).toContain("Agent 正在处理");
+  });
+
+  it("shows skill and context tools while the turn is live", () => {
+    let eventState = createAgentTurnEventState("projection-1");
+    eventState = agentEventReducer(eventState, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 1,
+        created_at: "2026-08-14T00:00:01Z",
+        kind: "item.completed",
+        payload: {
+          item_id: "step-ctx",
+          item_kind: "tool_call",
+          step_id: "step-ctx",
+          kind: "inject_context",
+          summary: "注入本轮上下文",
+          status: "succeeded",
+        },
+      },
+    });
+    eventState = agentEventReducer(eventState, {
+      type: "event",
+      event: {
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "harness-turn-1",
+        sequence: 2,
+        created_at: "2026-08-14T00:00:02Z",
+        kind: "item.completed",
+        payload: {
+          item_id: "step-skill",
+          item_kind: "tool_call",
+          step_id: "step-skill",
+          kind: "load_skill",
+          summary: "加载指令",
+          status: "succeeded",
+        },
+      },
+    });
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ status: "running", output_text: null })],
+        activeTurnId: "projection-1",
+        eventState,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain("data-agent-item-card");
+    expect(markup).toContain("准备任务");
+    expect(markup).toContain("读取商品信息");
+    expect(markup).toContain("data-agent-tool-step-id=\"step-ctx\"");
+    expect(markup).toContain("data-agent-tool-step-id=\"step-skill\"");
+  });
+
+  it("keeps skill, tools, and thinking inspectable on an interrupted turn with partial text", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({
+          status: "unknown",
+          terminal_reason_code: "execution_interrupted",
+          error_text: "Agent execution lease was lost before this Turn reached a provable terminal state",
+          output_text: "可以。我先读取当前画布的节点和连线概况，再根据现状整理布局。",
+          thinking_text: "先看画布再决定要不要提案",
+          tool_steps: [
+            {
+              step_id: "step-ctx",
+              kind: "inject_context",
+              summary: "注入本轮上下文",
+              status: "succeeded",
+            },
+            {
+              step_id: "step-skill",
+              kind: "load_skill",
+              summary: "加载指令",
+              status: "succeeded",
+            },
+            {
+              step_id: "step-inspect",
+              kind: "inspect_context",
+              summary: "读取商品上下文",
+              status: "succeeded",
+            },
+          ],
+        })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+      }),
+    );
+    expect(markup).toContain("data-agent-turn-process");
+    expect(markup).not.toMatch(/data-agent-turn-process[^>]*open/);
+    expect(markup).toContain("过程 · 3");
+    expect(markup).toContain("准备任务");
+    expect(markup).toContain("data-agent-tool-step-id=\"step-ctx\"");
+    expect(markup).toContain("data-agent-tool-step-id=\"step-skill\"");
+    expect(markup).toContain("data-agent-tool-step-id=\"step-inspect\"");
+    expect(markup).toContain("data-agent-item-card");
+    expect(markup).toContain("data-agent-thinking-row");
+    expect(markup).toContain("先看画布再决定要不要提案");
+    expect(markup).toContain("可以。我先读取当前画布的节点和连线概况");
+    expect(markup).toContain("回复在中断前未写完");
   });
 
   it("renders compact localized tool step rows with textual statuses", () => {
@@ -626,6 +811,45 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("加一个镜头");
     expect(markup).toContain("data-agent-graph-proposal-focus");
     expect(markup).toContain("等待你在画布上确认");
+  });
+
+  it("renders focus_canvas and apply_graph results in the conversation with a canvas jump", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentTurnTimeline, {
+        blocks: [
+          { type: "tool", key: "tool:focus-1", step_id: "focus-1" },
+          { type: "tool", key: "tool:apply-1", step_id: "apply-1" },
+        ],
+        toolSteps: [
+          {
+            step_id: "focus-1",
+            kind: "focus_canvas",
+            summary: "聚焦 live graph 画布选区",
+            status: "succeeded",
+            tool_name: "focus_canvas_items_v1",
+            meta: { affected_node_ids: ["node-1"] },
+          },
+          {
+            step_id: "apply-1",
+            kind: "apply_graph",
+            summary: "立即写入 live graph ChangeSet",
+            status: "succeeded",
+            tool_name: "apply_graph_change_set_v1",
+            meta: {
+              operation_summaries: ["update_node"],
+              affected_node_ids: ["node-1"],
+            },
+          },
+        ],
+        live: false,
+        fold: false,
+        onCanvasFocus: () => undefined,
+      }),
+    );
+    expect(markup).toContain("data-agent-canvas-focus-card");
+    expect(markup).toContain("data-agent-graph-apply-card");
+    expect(markup).toContain("在画布上查看");
+    expect(markup).toContain("update_node");
   });
 
   it("renders apply_graph and propose_graph tool rows without crashing", () => {
@@ -743,7 +967,10 @@ describe("Agent conversation components", () => {
     );
 
     expect(markup).toContain("准备任务");
+    expect(markup).toContain("全局素材整理");
+    expect(markup).toContain("已加载版本化 Skill 指令；完整内容已提供给模型。");
     expect(markup).toContain("读取商品信息");
+    expect(markup).toContain("已读取当前商品事实、参考资产和提交前校验指导。");
     expect(markup).toContain("部分设置需要调整后才能继续");
     expect(markup).toContain("data-agent-tool-step-details");
     expect(markup).toContain("open=\"\"");
@@ -755,6 +982,73 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("draft_guidance");
     expect(markup).not.toContain("rename_node");
     expect(markup).not.toContain("n1");
+  });
+
+  it("shows which Skill was loaded using the merchant label, not the slug or excerpt", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentToolStepList, {
+        steps: [
+          {
+            step_id: "skill-graph",
+            kind: "load_skill",
+            summary: "加载版本化 ProductFlow Skill 指令",
+            status: "succeeded",
+            tool_name: "load_productflow_skill",
+            details: {
+              phase: "skill_load",
+              skill_name: "graph-editing",
+              instruction_excerpt: "# 图编辑\n\n先读 get_product_workflow_context_v1。",
+              instruction_truncated: false,
+              output_summary: "已加载版本化 Skill 指令；完整内容已提供给模型。",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(markup).toContain("准备任务");
+    expect(markup).toContain("图编辑");
+    expect(markup).toContain("指令");
+    expect(markup).toContain("已加载版本化 Skill 指令；完整内容已提供给模型。");
+    expect(markup).toContain("data-agent-tool-step-details");
+    expect(markup).not.toContain("graph-editing");
+    expect(markup).not.toContain("load_productflow_skill");
+    expect(markup).not.toContain("get_product_workflow_context_v1");
+  });
+
+  it("keeps a finished workflow run request in the matching turn after the process folds", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [
+          turn({
+            status: "succeeded",
+            output_text: "工作流已经跑完",
+            workflow_run_request_id: "request-1",
+            tool_steps: [
+              {
+                step_id: "step-run",
+                kind: "request_workflow_run",
+                summary: "请求执行工作流",
+                status: "succeeded",
+              },
+            ],
+          }),
+        ],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        renderTurnExtras: (item) => item.workflow_run_request_id === "request-1"
+          ? createElement("div", { "data-agent-turn-workflow-run-request": "" }, "工作流运行已完成")
+          : null,
+      }),
+    );
+    expect(markup).toContain("data-agent-turn-process");
+    expect(markup).toContain("data-agent-turn-workflow-run-request");
+    expect(markup).toContain("工作流运行已完成");
+    expect(markup).toContain("工作流已经跑完");
   });
 
   it("renders historical snapshot steps and merges live statuses without duplicating actions", () => {
@@ -858,7 +1152,7 @@ describe("Agent conversation components", () => {
     expect(activeMarkup.match(/data-agent-tool-step-id=/g)).toHaveLength(2);
     expect(activeMarkup).toContain("data-agent-tool-step-status=\"succeeded\"");
     expect(activeMarkup).toContain("读取历史");
-    expect(activeMarkup).toContain("data-agent-turn-tail");
+    expect(activeMarkup).not.toContain("data-agent-turn-tail");
     expect(omittedMarkup).not.toContain("data-agent-tool-step-id");
   });
 

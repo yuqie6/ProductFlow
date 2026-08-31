@@ -23,6 +23,20 @@ import type { TranslationKey } from "../../../lib/i18n";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentToolStep, AgentToolStepDetails, AgentToolStepKind, AgentToolStepStatus } from "../../../lib/types";
 
+const SKILL_LABEL_KEYS: Record<string, TranslationKey> = {
+  "graph-editing": "agentWorkbench.toolStep.skill.graphEditing",
+  "media-library-organization": "agentWorkbench.toolStep.skill.mediaLibraryOrganization",
+  "library-organization": "agentWorkbench.toolStep.skill.mediaLibraryOrganization",
+  "product-intake": "agentWorkbench.toolStep.skill.productIntake",
+  "run-diagnosis": "agentWorkbench.toolStep.skill.runDiagnosis",
+  "workflow-run-request": "agentWorkbench.toolStep.skill.workflowRunRequest",
+};
+
+function skillLabelKey(name?: string): TranslationKey | undefined {
+  if (!name) return undefined;
+  return SKILL_LABEL_KEYS[name];
+}
+
 const KIND_KEYS: Record<AgentToolStepKind, TranslationKey> = {
   load_skill: "agentWorkbench.toolStep.kind.loadSkill",
   inject_context: "agentWorkbench.toolStep.kind.injectContext",
@@ -117,15 +131,21 @@ export function AgentToolStepRow({ step }: { step: AgentToolStep }) {
   const StatusIcon = STATUS_ICONS[step.status] ?? CircleHelp;
   const kindLabel = kindKey ? t(kindKey) : t("agentWorkbench.toolStep.kind.unknown");
   const statusLabel = statusKey ? t(statusKey) : t("agentWorkbench.status.unknown");
-  const title = `${kindLabel} · ${statusLabel}`;
+  const mappedSkillKey = skillLabelKey(step.details?.skill_name);
+  const skillLabel = mappedSkillKey ? t(mappedSkillKey) : null;
+  const title = skillLabel ? `${kindLabel} · ${skillLabel} · ${statusLabel}` : `${kindLabel} · ${statusLabel}`;
   const tone = STATUS_TONES[step.status] ?? "text-text-muted";
   const hasDetails = hasUserVisibleDetails(step.details);
+  const questionPreview =
+    step.kind === "ask_question" && step.status !== "running" && step.details?.output_summary
+      ? step.details.output_summary
+      : null;
   const row = (
     <div className="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-surface-subtle">
       <KindIcon size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate font-medium text-text-secondary">{kindLabel}</span>
-      {step.kind === "ask_question" && step.status !== "running" && step.details?.output_summary ? (
-        <span className="max-w-[45%] truncate leading-5 text-text-secondary">{step.details.output_summary}</span>
+      {skillLabel || questionPreview ? (
+        <span className="max-w-[45%] truncate leading-5 text-text-secondary">{skillLabel ?? questionPreview}</span>
       ) : null}
       <span className={`inline-flex shrink-0 items-center gap-1 text-[10px] font-medium ${tone}`}>
         <StatusIcon
@@ -190,11 +210,18 @@ function ToolStepDisclosure({
 function ToolStepDetailsView({ details }: { details?: AgentToolStepDetails }) {
   const { t } = useI18n();
   if (!details) return null;
+  const mappedSkillKey = skillLabelKey(details.skill_name);
   return (
     <div
       data-agent-tool-step-details
       className="ml-8 grid gap-1 border-l border-border-l2 py-2 pl-3 text-[11px] leading-5 text-text-muted"
     >
+      {mappedSkillKey ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.skill")} value={t(mappedSkillKey)} />
+      ) : null}
+      {details.output_summary ? (
+        <DetailLine label={t("agentWorkbench.toolStep.detail.output")} value={details.output_summary} />
+      ) : null}
       {details.pending_confirmation ? (
         <span>{t("agentWorkbench.toolStep.detail.pending")}</span>
       ) : null}
@@ -240,19 +267,21 @@ function ToolStepDetailsView({ details }: { details?: AgentToolStepDetails }) {
 function hasUserVisibleDetails(details?: AgentToolStepDetails): boolean {
   if (!details) return false;
   return Boolean(
-    details.pending_confirmation
-      || details.reconciled
-      || details.workflow_title
-      || details.node_count !== undefined
-      || details.group_count !== undefined
-      || details.item_count !== undefined
-      || details.asset_count !== undefined
-      || details.question_text
-      || details.option_labels?.length
-      || details.error_code
-      || details.error_message
-      || details.validation_issues?.length
-      || details.retryable,
+    skillLabelKey(details.skill_name)
+    || details.output_summary
+    || details.pending_confirmation
+    || details.reconciled
+    || details.workflow_title
+    || details.node_count !== undefined
+    || details.group_count !== undefined
+    || details.item_count !== undefined
+    || details.asset_count !== undefined
+    || details.question_text
+    || details.option_labels?.length
+    || details.error_code
+    || details.error_message
+    || details.validation_issues?.length
+    || details.retryable,
   );
 }
 

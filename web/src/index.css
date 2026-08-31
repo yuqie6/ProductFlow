@@ -669,6 +669,131 @@ textarea {
 
 /* Assistant transcript typography: quiet prose, explicit code surfaces, and
    predictable wrapping for model output in both the workbench and Agent dock. */
+.agent-assistant-reply {
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 20px;
+  padding: 0.85rem 1.05rem;
+  background: color-mix(in srgb, var(--color-surface-subtle) 62%, var(--color-border-l1));
+  color: var(--color-text-primary);
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.agent-typing-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.5rem;
+  padding: 0.65rem 0.95rem;
+}
+
+.agent-live-process {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.05rem 0 0.15rem 0.85rem;
+  border-left: 1.5px solid color-mix(in srgb, var(--color-accent) 36%, var(--color-border-l2));
+}
+
+.agent-thinking-live {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.agent-live-dot {
+  display: block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 16%, transparent);
+  animation: agent-live-dot 1.2s var(--ease-in-out) infinite;
+}
+
+@keyframes agent-live-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.55;
+    transform: scale(0.82);
+  }
+}
+
+.agent-thinking-stream {
+  max-height: 9.75rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.7;
+  color: var(--color-text-muted);
+  mask-image: linear-gradient(to bottom, transparent, rgb(0 0 0) 0.7rem, rgb(0 0 0) calc(100% - 0.7rem), transparent);
+}
+
+.agent-process-tool {
+  min-width: 0;
+  color: var(--color-text-muted);
+}
+
+.agent-stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  margin-left: 0.12em;
+  vertical-align: -0.08em;
+  border-radius: 1px;
+  background: var(--color-accent);
+  animation: agent-caret 1s steps(1, end) infinite;
+}
+
+@keyframes agent-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes agent-typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.28;
+    transform: translate3d(0, 0, 0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translate3d(0, -2px, 0);
+  }
+}
+
+.agent-typing-dot {
+  display: block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 999px;
+  background: var(--color-text-muted);
+  animation: agent-typing 1.05s var(--ease-in-out) infinite;
+}
+
+.agent-typing-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.agent-typing-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
 .agent-markdown {
   min-width: 0;
   overflow-wrap: anywhere;
