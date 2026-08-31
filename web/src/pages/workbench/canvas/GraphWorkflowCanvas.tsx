@@ -1299,7 +1299,6 @@ export function GraphWorkflowCanvas({
           onAutoLayout={onAutoLayout}
           onViewportCommit={persistViewport}
           normalizeZoom={(zoom) => Math.min(2, Math.max(0.12, zoom))}
-          topInset={compact ? 68 : undefined}
         />
         <MiniMap
           position="bottom-right"

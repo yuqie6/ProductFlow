@@ -1040,99 +1040,6 @@ export function GraphCanvasPanel({
       data-graph-canvas-panel
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary"
     >
-      <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border-l1 bg-surface-raised px-2 py-1.5 sm:px-4">
-        <div className="min-w-0 flex-1">
-          {enteredGroup ? (
-            <nav data-graph-group-breadcrumb aria-label={t("workbench.breadcrumb")} className="flex min-w-0 items-center gap-1 text-xs">
-              <button
-                type="button"
-                aria-label={t("workbench.canvas.back")}
-                onClick={exitGroup}
-                className="min-h-11 shrink-0 rounded-control px-2 font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary lg:min-h-9"
-              >
-                {t("workbench.breadcrumb")}
-              </button>
-              <ChevronRight size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
-              <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
-            </nav>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1" data-graph-canvas-toolbar>
-        <IconButton
-          label={t("graph.canvas.undo")}
-          tooltipContent={(
-            <span className="inline-flex items-center gap-1.5">
-              {t("graph.canvas.undo")}
-              <Kbd>⌘Z</Kbd>
-            </span>
-          )}
-          disabled={structureBusy || !graph.can_undo}
-          onClick={() => void runHistoryMutation("undo")}
-        >
-          <Undo2 size={16} aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          label={t("graph.canvas.redo")}
-          tooltipContent={(
-            <span className="inline-flex items-center gap-1.5">
-              {t("graph.canvas.redo")}
-              <Kbd>⌘⇧Z</Kbd>
-            </span>
-          )}
-          disabled={structureBusy || !graph.can_redo}
-          onClick={() => void runHistoryMutation("redo")}
-        >
-          <Redo2 size={16} aria-hidden="true" />
-        </IconButton>
-        <IconButton
-          label={graphRunBlocked ? (graphRunBlockedReason ?? t("graph.canvas.run")) : t("graph.canvas.run")}
-          disabled={structureBusy || graphRunBlocked}
-          variant="primary"
-          busy={runBusy}
-          data-graph-run-all
-          onClick={() => {
-            hideRunPreview();
-            void submitRun({ scope: "graph" }).catch(() => undefined);
-          }}
-          onMouseEnter={() => showRunPreview({ scope: "graph" })}
-          onMouseLeave={hideRunPreview}
-          onFocus={() => showRunPreview({ scope: "graph" })}
-          onBlur={hideRunPreview}
-        >
-          <Play size={16} aria-hidden="true" />
-        </IconButton>
-        {runningRuns.length || queuedRuns.length ? (
-          <Tooltip content={t("graph.runs.queue", { running: runningRuns.length, queued: queuedRuns.length })}>
-            <div data-graph-run-queue className="flex h-9 items-center gap-0.5 rounded-control border border-border-l1 bg-surface-subtle px-1 text-[10px] font-semibold text-text-secondary">
-              <ListChecks size={14} aria-hidden="true" />
-              <span className="min-w-4 text-center">{runningRuns.length + queuedRuns.length}</span>
-            {queuedRuns.map((run) => (
-              <IconButton key={run.id} label={t("graph.runs.cancelQueued")} size="sm" variant="danger" disabled={cancelRunMutation.isPending} onClick={() => cancelRunMutation.mutate(run.id)}>
-                <X size={12} aria-hidden="true" />
-              </IconButton>
-            ))}
-            </div>
-          </Tooltip>
-        ) : null}
-        {agentEditing ? (
-          <Tooltip content={t("graph.canvas.agentEditing")}>
-            <span role="status" data-agent-canvas-presence className="relative flex h-9 w-9 items-center justify-center rounded-control text-accent-strong">
-              <Bot size={16} aria-hidden="true" />
-              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-state-success ring-2 ring-surface-raised" aria-hidden="true" />
-              <span className="sr-only">{t("graph.canvas.agentEditing")}</span>
-            </span>
-          </Tooltip>
-        ) : null}
-        {hasShotGroups ? (
-          <IconButton label={t("graph.canvas.shotsView")} aria-pressed={filmstripVisible} variant={filmstripVisible ? "secondary" : "ghost"} onClick={() => setFilmstripVisible((visible) => !visible)}>
-            <Images size={16} aria-hidden="true" />
-          </IconButton>
-        ) : null}
-        {onToggleChrome ? (
-          <ProductWorkbenchCanvasChromeToggle embedded collapsed={chromeCollapsed} maximizeLabel={t("detail.maximizeCanvas")} restoreLabel={t("detail.restoreCanvas")} onToggle={onToggleChrome} />
-        ) : null}
-        </div>
-      </div>
       {graph.pending_proposal ? (
         <div
           data-graph-proposal-banner
@@ -1176,6 +1083,105 @@ export function GraphCanvasPanel({
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div
+          data-graph-canvas-toolbar
+          data-canvas-overlay="top-right"
+          role="toolbar"
+          aria-label={t("graph.canvas.actions")}
+          className={`workflow-canvas-controls pointer-events-auto absolute right-3 z-30 flex items-center ${compact ? "top-[4.25rem]" : "top-3 lg:right-4 lg:top-4"}`}
+        >
+          <IconButton
+            label={t("graph.canvas.undo")}
+            tooltipContent={(
+              <span className="inline-flex items-center gap-1.5">
+                {t("graph.canvas.undo")}
+                <Kbd>⌘Z</Kbd>
+              </span>
+            )}
+            disabled={structureBusy || !graph.can_undo}
+            onClick={() => void runHistoryMutation("undo")}
+          >
+            <Undo2 size={16} aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            label={t("graph.canvas.redo")}
+            tooltipContent={(
+              <span className="inline-flex items-center gap-1.5">
+                {t("graph.canvas.redo")}
+                <Kbd>⌘⇧Z</Kbd>
+              </span>
+            )}
+            disabled={structureBusy || !graph.can_redo}
+            onClick={() => void runHistoryMutation("redo")}
+          >
+            <Redo2 size={16} aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            label={graphRunBlocked ? (graphRunBlockedReason ?? t("graph.canvas.run")) : t("graph.canvas.run")}
+            disabled={structureBusy || graphRunBlocked}
+            variant="primary"
+            busy={runBusy}
+            data-graph-run-all
+            onClick={() => {
+              hideRunPreview();
+              void submitRun({ scope: "graph" }).catch(() => undefined);
+            }}
+            onMouseEnter={() => showRunPreview({ scope: "graph" })}
+            onMouseLeave={hideRunPreview}
+            onFocus={() => showRunPreview({ scope: "graph" })}
+            onBlur={hideRunPreview}
+          >
+            <Play size={16} aria-hidden="true" />
+          </IconButton>
+          {runningRuns.length || queuedRuns.length ? (
+            <Tooltip content={t("graph.runs.queue", { running: runningRuns.length, queued: queuedRuns.length })}>
+              <div data-graph-run-queue className="flex h-9 items-center gap-0.5 px-1 text-[10px] font-semibold text-text-secondary">
+                <ListChecks size={14} aria-hidden="true" />
+                <span className="min-w-4 text-center">{runningRuns.length + queuedRuns.length}</span>
+                {queuedRuns.map((run) => (
+                  <IconButton key={run.id} label={t("graph.runs.cancelQueued")} size="sm" variant="danger" disabled={cancelRunMutation.isPending} onClick={() => cancelRunMutation.mutate(run.id)}>
+                    <X size={12} aria-hidden="true" />
+                  </IconButton>
+                ))}
+              </div>
+            </Tooltip>
+          ) : null}
+          {agentEditing ? (
+            <Tooltip content={t("graph.canvas.agentEditing")}>
+              <span role="status" data-agent-canvas-presence className="relative flex h-9 w-9 items-center justify-center text-accent-strong">
+                <Bot size={16} aria-hidden="true" />
+                <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-state-success ring-2 ring-surface-raised" aria-hidden="true" />
+                <span className="sr-only">{t("graph.canvas.agentEditing")}</span>
+              </span>
+            </Tooltip>
+          ) : null}
+          {hasShotGroups ? (
+            <IconButton label={t("graph.canvas.shotsView")} aria-pressed={filmstripVisible} variant={filmstripVisible ? "secondary" : "ghost"} onClick={() => setFilmstripVisible((visible) => !visible)}>
+              <Images size={16} aria-hidden="true" />
+            </IconButton>
+          ) : null}
+          {onToggleChrome ? (
+            <ProductWorkbenchCanvasChromeToggle embedded collapsed={chromeCollapsed} maximizeLabel={t("detail.maximizeCanvas")} restoreLabel={t("detail.restoreCanvas")} onToggle={onToggleChrome} />
+          ) : null}
+        </div>
+        {enteredGroup ? (
+          <nav
+            data-graph-group-breadcrumb
+            aria-label={t("workbench.breadcrumb")}
+            className={`workflow-canvas-controls pointer-events-auto absolute left-3 z-30 flex min-w-0 max-w-[calc(100%_-_1.5rem)] items-center gap-1 px-1 text-xs ${compact ? "top-[7.75rem]" : "top-16 lg:left-4"}`}
+          >
+            <button
+              type="button"
+              aria-label={t("workbench.canvas.back")}
+              onClick={exitGroup}
+              className="min-h-11 shrink-0 rounded-control px-2 font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary lg:min-h-9"
+            >
+              {t("workbench.breadcrumb")}
+            </button>
+            <ChevronRight size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+            <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
+          </nav>
+        ) : null}
         <div className="absolute inset-0 min-h-0 overflow-hidden">
           <GraphWorkflowCanvas
             graph={graph}

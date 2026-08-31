@@ -5,7 +5,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Boxes, CircleDot, Eye, Images, Plus, RotateCw } from "lucide-react";
+import { Bot, Boxes, CircleDot, Eye, Images, Plus, RotateCw, Sparkles } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -481,24 +481,88 @@ export function GraphAgentPanel({
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
-          <p className="truncate text-xs text-text-secondary">{t("graph.workbench.agentOptional")}</p>
+          <p className="truncate text-xs text-text-secondary">
+            {t(missingWorkspace ? "graph.workbench.agentStartHeader" : "graph.workbench.agentOptional")}
+          </p>
         </div>
       </header>
-      <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 p-4">
-        <p role="status" className="text-sm leading-6 text-text-secondary">{message}</p>
-        {missingWorkspace && onOpenConversation ? (
-          <Button variant="primary" size="lg" data-open-canvas-conversation onClick={onOpenConversation}>
-            <Bot size={15} />
-            {t("graph.workbench.openConversation")}
-          </Button>
-        ) : onRetry ? (
-          <Button variant="secondary" size="lg" onClick={onRetry}>
-            <RotateCw size={15} />
-            {t("graph.workbench.agentRetry")}
-          </Button>
-        ) : null}
-      </div>
+      {missingWorkspace && onOpenConversation ? (
+        <div className="agent-start-state min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-6 sm:py-8">
+          <div className="mx-auto flex min-h-full w-full max-w-[30rem] flex-col justify-center">
+            <AgentStartPreview />
+            <div className="agent-start-copy mt-7">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold text-accent">
+                <Sparkles size={13} aria-hidden="true" />
+                {t("graph.workbench.agentStartEyebrow")}
+              </p>
+              <h3 className="mt-2 max-w-[22rem] text-xl font-semibold leading-7 text-text-primary">
+                {t("graph.workbench.agentStartTitle")}
+              </h3>
+              <p role="status" className="mt-2 max-w-[26rem] text-sm leading-6 text-text-secondary">
+                {t("graph.workbench.agentStartDescription")}
+              </p>
+              <Button
+                variant="primary"
+                size="lg"
+                data-open-canvas-conversation
+                onClick={onOpenConversation}
+                className="mt-5 shadow-elev-2"
+              >
+                <Bot size={15} aria-hidden="true" />
+                {t("graph.workbench.openConversation")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 p-4">
+          <p role="status" className="text-sm leading-6 text-text-secondary">{message}</p>
+          {onRetry ? (
+            <Button variant="secondary" size="lg" onClick={onRetry}>
+              <RotateCw size={15} />
+              {t("graph.workbench.agentRetry")}
+            </Button>
+          ) : null}
+        </div>
+      )}
     </section>
+  );
+}
+
+function AgentStartPreview() {
+  const previewImages = [
+    {
+      src: "/agent-onboarding/ceramic-detail.jpg",
+      className: "agent-start-image agent-start-image-left",
+    },
+    {
+      src: "/agent-onboarding/ceramic-feature.jpg",
+      className: "agent-start-image agent-start-image-center",
+    },
+    {
+      src: "/agent-onboarding/ceramic-craft.jpg",
+      className: "agent-start-image agent-start-image-right",
+    },
+  ];
+
+  return (
+    <figure
+      data-agent-start-preview
+      aria-hidden="true"
+      className="agent-start-preview relative mx-auto h-52 w-full max-w-[27rem] overflow-hidden rounded-lg border border-border-l1 bg-surface-subtle"
+    >
+      <div className="agent-start-grid absolute inset-0" />
+      <div className="agent-start-beam absolute inset-y-0 left-0 w-1/3" />
+      <div className="absolute inset-x-[12%] top-1/2 h-px bg-border-l3/80" />
+      {previewImages.map((image) => (
+        <div key={image.src} className={image.className}>
+          <img src={image.src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        </div>
+      ))}
+      <div className="agent-start-node absolute bottom-4 left-1/2 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-accent/30 bg-surface-raised text-accent shadow-elev-2">
+        <Bot size={17} />
+      </div>
+    </figure>
   );
 }
 

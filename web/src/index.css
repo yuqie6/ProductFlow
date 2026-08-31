@@ -441,6 +441,131 @@ textarea {
   animation: node-reveal var(--duration-slow) var(--ease-in-out) forwards;
 }
 
+@keyframes agent-start-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes agent-start-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(var(--agent-start-rotate));
+  }
+
+  50% {
+    transform: translate3d(0, -5px, 0) rotate(var(--agent-start-rotate));
+  }
+}
+
+@keyframes agent-start-scan {
+  0% {
+    opacity: 0;
+    transform: translateX(-140%);
+  }
+
+  25%,
+  65% {
+    opacity: 0.5;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(430%);
+  }
+}
+
+.agent-start-preview {
+  animation: agent-start-enter 420ms var(--ease-in-out) both;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-surface-raised) 80%, transparent);
+}
+
+.agent-start-grid {
+  opacity: 0.55;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--color-border-l1) 72%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-border-l1) 72%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.78), transparent 92%);
+}
+
+.agent-start-beam {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 18%, transparent), transparent);
+  animation: agent-start-scan 5s ease-in-out 900ms infinite;
+}
+
+.agent-start-image {
+  --agent-start-rotate: 0deg;
+  position: absolute;
+  top: 24px;
+  width: clamp(5.25rem, 27%, 7rem);
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border: 3px solid var(--color-surface-raised);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-elev-2);
+  animation: agent-start-float 5.4s ease-in-out infinite;
+}
+
+.agent-start-image-left {
+  --agent-start-rotate: -5deg;
+  left: 9%;
+  animation-delay: -1.2s;
+}
+
+.agent-start-image-center {
+  left: 50%;
+  z-index: 2;
+  width: clamp(6rem, 31%, 8rem);
+  transform: translateX(-50%);
+  animation-name: agent-start-center-float;
+  animation-delay: -2.8s;
+}
+
+@keyframes agent-start-center-float {
+  0%,
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+
+  50% {
+    transform: translate3d(-50%, -6px, 0);
+  }
+}
+
+.agent-start-image-right {
+  --agent-start-rotate: 5deg;
+  right: 9%;
+  animation-delay: -4s;
+}
+
+.agent-start-node::before,
+.agent-start-node::after {
+  position: absolute;
+  inset: -7px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  border-radius: 999px;
+  content: "";
+  animation: status-pulse 2.4s var(--ease-in-out) infinite;
+}
+
+.agent-start-node::after {
+  inset: -13px;
+  opacity: 0.45;
+  animation-delay: -1.2s;
+}
+
+.agent-start-copy {
+  animation: agent-start-enter 420ms var(--ease-in-out) 100ms both;
+}
+
 .glass-inspector {
   color: var(--color-text-primary);
   background-color: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);

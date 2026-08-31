@@ -44,7 +44,21 @@ describe("GraphAgentPanel", () => {
     }));
 
     expect(markup).toContain("data-open-canvas-conversation");
-    expect(markup).toContain("打开对话");
+    expect(markup).toContain("data-agent-start-preview");
+    expect(markup).toContain("让 Agent 参与这次商品创作");
+    expect(markup).toContain("创建并打开对话");
+    expect(markup).toContain("/agent-onboarding/ceramic-feature.jpg");
+  });
+
+  it("keeps the visual onboarding out of recoverable Agent failures", () => {
+    const markup = renderToStaticMarkup(createElement(GraphAgentPanel, {
+      error: new ApiError(500, "Agent 服务暂时不可用"),
+      onRetry: () => undefined,
+    }));
+
+    expect(markup).not.toContain("data-agent-start-preview");
+    expect(markup).toContain("Agent 服务暂时不可用");
+    expect(markup).toContain("重试连接 Agent");
   });
 
   it("exposes recipe preview and apply on the graph-only workbench", () => {
@@ -74,6 +88,8 @@ describe("GraphAgentPanel", () => {
         initialGraph: graph,
       })),
     ));
+    expect(markup).toContain('data-graph-canvas-toolbar="true"');
+    expect(markup).toContain('data-canvas-overlay="top-right"');
     expect(markup).toContain('data-sidebar-tool="recipes"');
     expect(markup).toContain("工作流预设");
   });
