@@ -336,7 +336,7 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("操作已完成，回复在中断前未写完");
   });
 
-  it("renders live delta for an active Turn and canonical output after terminal projection sync", () => {
+  it("keeps the streamed assistant item after terminal projection sync", () => {
     let eventState = createAgentTurnEventState("projection-1");
     eventState = agentEventReducer(eventState, {
       type: "event",
@@ -387,8 +387,8 @@ describe("Agent conversation components", () => {
 
     expect(activeMarkup).toContain("流式回答");
     expect(activeMarkup).toContain("/api/v2/product-image-assets/asset%2F1/download?variant=thumbnail");
-    expect(terminalMarkup).toContain("最终回答");
-    expect(terminalMarkup).not.toContain("流式回答");
+    expect(terminalMarkup).toContain("流式回答");
+    expect(terminalMarkup).not.toContain("最终回答");
     expect(globalMarkup).toContain("/api/media-library/media%2F1/download?variant=thumbnail");
   });
 
@@ -430,7 +430,7 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("还在提交");
   });
 
-  it("renders a live thinking row before tools and folds process after the final answer", () => {
+  it("renders a live thinking row and folds process without moving assistant text", () => {
     let eventState = createAgentTurnEventState("projection-1");
     eventState = agentEventReducer(eventState, {
       type: "event",
@@ -549,8 +549,8 @@ describe("Agent conversation components", () => {
     expect(compactMarkup).toContain("过程 · 1");
     expect(compactMarkup).toContain("内部推理");
     expect(compactMarkup).toContain("data-agent-assistant-reply");
-    expect(compactMarkup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
-    expect(compactMarkup).not.toContain("流式终答");
+    expect(compactMarkup).toContain("流式终答");
+    expect(compactMarkup).not.toContain("最终回答");
     expect(compactMarkup).not.toContain("data-agent-turn-tail");
   });
 
@@ -576,7 +576,7 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("data-agent-thinking-row");
     expect(markup).toContain("刷新后的思考");
     expect(markup).toContain("data-agent-thinking-text");
-    expect(markup).toMatch(/data-agent-turn-body[\s\S]*最终回答/);
+    expect(markup).toContain("最终回答");
   });
 
   it("keeps context injection inspectable inside the folded process after the reply settles", () => {
@@ -1284,7 +1284,7 @@ describe("Agent conversation components", () => {
         turns: [turn({
           status: "succeeded",
           thinking_text: "快照思考",
-          output_text: "终答",
+          output_text: "中间说明终答",
           tool_steps: [{
             step_id: "step-mid",
             kind: "inspect_context",
@@ -1317,6 +1317,8 @@ describe("Agent conversation components", () => {
     expect(tool).toBeGreaterThan(midText);
     expect(answer).toBeGreaterThan(tool);
     expect(journalMarkup).not.toContain("快照思考");
+    expect(journalMarkup.match(/中间说明/g)).toHaveLength(1);
+    expect(journalMarkup.match(/data-agent-assistant-reply/g)).toHaveLength(2);
     expect(emptyLogMarkup).toContain("快照思考");
     expect(emptyLogMarkup).toContain("终答");
   });

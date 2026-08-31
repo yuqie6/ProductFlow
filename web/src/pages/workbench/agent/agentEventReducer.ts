@@ -328,31 +328,9 @@ export function selectAgentTurnBlocks(
   eventState: AgentTurnEventState | null,
 ): AgentTurnBlock[] {
   if (eventState?.turn_key === turn.id && eventState.blocks.length > 0) {
-    return canonicalizeTerminalBlocks(turn, eventState.blocks);
+    return appendSnapshotTextWhenMissing(turn, eventState.blocks);
   }
   return snapshotTurnBlocks(turn);
-}
-
-export function splitAgentTurnProcess(blocks: readonly AgentTurnBlock[]): {
-  process: AgentTurnBlock[];
-  body: Extract<AgentTurnBlock, { type: "text" }> | null;
-} {
-  let lastTextIndex = -1;
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index];
-    if (block.type === "text" && block.text.trim()) {
-      lastTextIndex = index;
-      break;
-    }
-  }
-  if (lastTextIndex === -1) {
-    return { process: [...blocks], body: null };
-  }
-  const body = blocks[lastTextIndex];
-  if (body.type !== "text") {
-    return { process: [...blocks], body: null };
-  }
-  return { process: blocks.slice(0, lastTextIndex), body };
 }
 
 export function selectAgentToolSteps(
@@ -511,6 +489,7 @@ function appendTextPayload(
     attempts: { ...state.attempts, [payload.attempt_id]: attempt },
     attempt_order: existing ? state.attempt_order : [...state.attempt_order, payload.attempt_id],
     current_attempt_id: payload.attempt_id,
+    text_settled: false,
     blocks: appendStreamBlock(state.blocks, "text", payload.attempt_id, payload.content_index, payload.delta),
   };
 }
@@ -609,21 +588,11 @@ function appendStreamBlock(
   ];
 }
 
-function canonicalizeTerminalBlocks(turn: AgentTurn, blocks: AgentTurnBlock[]): AgentTurnBlock[] {
-  if (!isAgentTurnTerminal(turn.status)) {
+function appendSnapshotTextWhenMissing(turn: AgentTurn, blocks: AgentTurnBlock[]): AgentTurnBlock[] {
+  if (!isAgentTurnTerminal(turn.status) || blocks.some((block) => block.type === "text")) {
     return blocks;
   }
   const output = turn.output_text ?? "";
-  const lastTextIndex = lastNonEmptyTextIndex(blocks);
-  if (lastTextIndex >= 0) {
-    const last = blocks[lastTextIndex];
-    if (last.type !== "text" || last.text === output) {
-      return blocks;
-    }
-    const next = blocks.slice();
-    next[lastTextIndex] = { ...last, text: output };
-    return next;
-  }
   if (!output) {
     return blocks;
   }
@@ -664,16 +633,6 @@ function snapshotTurnBlocks(turn: AgentTurn): AgentTurnBlock[] {
     });
   }
   return blocks;
-}
-
-function lastNonEmptyTextIndex(blocks: readonly AgentTurnBlock[]): number {
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index];
-    if (block.type === "text" && block.text.trim()) {
-      return index;
-    }
-  }
-  return -1;
 }
 
 function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {

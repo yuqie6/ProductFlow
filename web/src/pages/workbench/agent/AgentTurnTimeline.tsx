@@ -3,10 +3,7 @@ import type { ReactNode } from "react";
 
 import { useI18n } from "../../../lib/preferences";
 import type { AgentToolStep } from "../../../lib/types";
-import {
-  splitAgentTurnProcess,
-  type AgentTurnBlock,
-} from "./agentEventReducer";
+import type { AgentTurnBlock } from "./agentEventReducer";
 import { renderConversationItem } from "./conversation/itemRenderers";
 
 interface AgentTurnTimelineProps {
@@ -18,56 +15,35 @@ interface AgentTurnTimelineProps {
   onCanvasFocus?: (nodeIds: string[]) => void;
 }
 
-export function AgentTurnTimeline({ blocks, toolSteps, live, fold, textSettled = false, onCanvasFocus }: AgentTurnTimelineProps) {
-  const { t } = useI18n();
-  const stepsById = new Map(toolSteps.map((step) => [step.step_id, step]));
-  const { process, body } = splitAgentTurnProcess(blocks);
-  const shouldFold = fold && body !== null && process.length > 0;
-  const toolCount = process.filter((block) => block.type === "tool").length;
-  const processLabel = toolCount > 0
-    ? t("agentWorkbench.process.steps", { count: toolCount })
-    : t("agentWorkbench.process.thought");
+type AssistantTextBlock = Extract<AgentTurnBlock, { type: "text" }>;
+type TimelineSegment =
+  | { type: "process"; blocks: AgentTurnBlock[] }
+  | { type: "text"; block: AssistantTextBlock };
 
-  if (shouldFold && body) {
+export function AgentTurnTimeline({ blocks, toolSteps, live, fold, textSettled = false, onCanvasFocus }: AgentTurnTimelineProps) {
+  const stepsById = new Map(toolSteps.map((step) => [step.step_id, step]));
+
+  if (fold) {
     return (
       <div className="space-y-3">
-        <details
-          data-agent-turn-process
-          className="group/process min-w-0"
-        >
-          <summary
-            aria-label={t("agentWorkbench.process.listLabel")}
-            className="inline-flex list-none cursor-pointer items-center gap-1 py-0.5 text-[13px] leading-5 text-text-muted transition-colors hover:text-text-secondary [&::-webkit-details-marker]:hidden"
-          >
-            <ChevronDown size={12} className="shrink-0 opacity-70 transition-transform duration-fast group-open/process:rotate-180" aria-hidden="true" />
-            <span className="underline decoration-border-l3 decoration-dotted underline-offset-[5px] group-hover/process:decoration-text-muted">
-              {processLabel}
-            </span>
-          </summary>
-          <div className="mt-2 space-y-3">
-            {process.map((block) => (
-              <TurnBlockView
-                key={block.key}
-                block={block}
-                stepsById={stepsById}
-                live={false}
-                runningThinking={false}
-                streamingText={false}
-                onCanvasFocus={onCanvasFocus}
-              />
-            ))}
-          </div>
-        </details>
-        <div data-agent-turn-body>
+        {groupTimelineSegments(blocks).map((segment, index) => segment.type === "process" ? (
+          <ProcessDisclosure
+            key={`process:${index}:${segment.blocks[0]?.key ?? ""}`}
+            blocks={segment.blocks}
+            stepsById={stepsById}
+            onCanvasFocus={onCanvasFocus}
+          />
+        ) : (
           <TurnBlockView
-            block={body}
+            key={segment.block.key}
+            block={segment.block}
             stepsById={stepsById}
             live={false}
             runningThinking={false}
             streamingText={false}
             onCanvasFocus={onCanvasFocus}
           />
-        </div>
+        ))}
       </div>
     );
   }
@@ -86,6 +62,49 @@ export function AgentTurnTimeline({ blocks, toolSteps, live, fold, textSettled =
         />
       ))}
     </div>
+  );
+}
+
+function ProcessDisclosure({
+  blocks,
+  stepsById,
+  onCanvasFocus,
+}: {
+  blocks: readonly AgentTurnBlock[];
+  stepsById: Map<string, AgentToolStep>;
+  onCanvasFocus?: (nodeIds: string[]) => void;
+}) {
+  const { t } = useI18n();
+  const toolCount = blocks.filter((block) => block.type === "tool").length;
+  const processLabel = toolCount > 0
+    ? t("agentWorkbench.process.steps", { count: toolCount })
+    : t("agentWorkbench.process.thought");
+
+  return (
+    <details data-agent-turn-process className="group/process min-w-0">
+      <summary
+        aria-label={t("agentWorkbench.process.listLabel")}
+        className="inline-flex list-none cursor-pointer items-center gap-1 py-0.5 text-[13px] leading-5 text-text-muted transition-colors hover:text-text-secondary [&::-webkit-details-marker]:hidden"
+      >
+        <ChevronDown size={12} className="shrink-0 opacity-70 transition-transform duration-fast group-open/process:rotate-180" aria-hidden="true" />
+        <span className="underline decoration-border-l3 decoration-dotted underline-offset-[5px] group-hover/process:decoration-text-muted">
+          {processLabel}
+        </span>
+      </summary>
+      <div className="mt-2 space-y-3">
+        {blocks.map((block) => (
+          <TurnBlockView
+            key={block.key}
+            block={block}
+            stepsById={stepsById}
+            live={false}
+            runningThinking={false}
+            streamingText={false}
+            onCanvasFocus={onCanvasFocus}
+          />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -127,6 +146,23 @@ function AssistantReply({ children, streaming = false }: { children: ReactNode; 
       {children}
     </div>
   );
+}
+
+function groupTimelineSegments(blocks: readonly AgentTurnBlock[]): TimelineSegment[] {
+  const segments: TimelineSegment[] = [];
+  for (const block of blocks) {
+    if (block.type === "text") {
+      segments.push({ type: "text", block });
+      continue;
+    }
+    const last = segments[segments.length - 1];
+    if (last?.type === "process") {
+      last.blocks.push(block);
+    } else {
+      segments.push({ type: "process", blocks: [block] });
+    }
+  }
+  return segments;
 }
 
 function lastThinkingIndex(blocks: readonly AgentTurnBlock[]): number {

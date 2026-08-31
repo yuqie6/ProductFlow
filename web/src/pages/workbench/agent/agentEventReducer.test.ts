@@ -11,7 +11,6 @@ import {
   selectAgentAssistantText,
   selectAgentToolSteps,
   selectAgentTurnBlocks,
-  splitAgentTurnProcess,
 } from "./agentEventReducer";
 
 function event(
@@ -140,6 +139,38 @@ describe("agentEventReducer", () => {
     });
     expect(state.text_settled).toBe(true);
     expect(currentAgentAttempt(state)?.text).toBe("终答");
+  });
+
+  it("starts streaming again after a previous assistant item completes", () => {
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "item.delta", { delta: "第一段", step_id: "step-1", attempt_id: "attempt-1" }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "item.completed", { reason: "stop", attempt_id: "attempt-1" }),
+    });
+    expect(state.text_settled).toBe(true);
+
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(3, "item.completed", {
+        step_id: "tool-1",
+        kind: "inspect_context",
+        summary: "读取商品上下文",
+        status: "succeeded",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(4, "item.delta", { delta: "第二段", step_id: "step-1", attempt_id: "attempt-1" }),
+    });
+
+    expect(state.text_settled).toBe(false);
+    expect(state.blocks.map((block) => block.type)).toEqual(["text", "tool", "text"]);
+    expect(state.blocks[0]).toMatchObject({ type: "text", text: "第一段" });
+    expect(state.blocks[2]).toMatchObject({ type: "text", text: "第二段" });
   });
 
   it("assembles interleaved blocks from Go-projected journal events instead of snapshot fold", () => {
@@ -295,16 +326,16 @@ describe("agentEventReducer", () => {
     expect(state.terminal_kind).toBe("turn.awaiting_confirmation");
   });
 
-  it("uses the canonical terminal projection instead of replayed deltas", () => {
+  it("keeps journal text blocks separate from the aggregated terminal snapshot", () => {
     let state = createAgentTurnEventState("projection-1");
     state = agentEventReducer(state, {
       type: "event",
       event: event(1, "item.delta", { delta: "partial", step_id: "step-1", attempt_id: "attempt-1" }),
     });
 
-    expect(
-      selectAgentAssistantText(turn({ status: "succeeded", output_text: "canonical final" }), state),
-    ).toBe("canonical final");
+    expect(selectAgentTurnBlocks(turn({ status: "succeeded", output_text: "partial plus later answer" }), state))
+      .toMatchObject([{ type: "text", text: "partial" }]);
+    expect(selectAgentAssistantText(turn({ status: "succeeded", output_text: "canonical final" }), state)).toBe("canonical final");
   });
 
   it("rejects malformed, mismatched-scope, and mismatched-kind SSE data", () => {
@@ -674,13 +705,10 @@ describe("agentEventReducer", () => {
     expect(blocks[3]).toMatchObject({ type: "thinking", text: "再给结论" });
     expect(selectAgentAssistantText(turn(), state)).toBe("中间说明终答");
 
-    const compact = splitAgentTurnProcess(
-      selectAgentTurnBlocks(turn({ status: "succeeded", output_text: "终答" }), state),
-    );
-    expect(compact.body?.text).toBe("终答");
-    expect(compact.process.map((block) => block.type)).toEqual(["thinking", "text", "tool", "thinking"]);
-    expect(compact.body?.text).not.toContain("先看约束");
-    expect(compact.body?.text).not.toContain("再给结论");
+    const settledBlocks = selectAgentTurnBlocks(turn({ status: "succeeded", output_text: "终答" }), state);
+    expect(settledBlocks.map((block) => block.type)).toEqual(["thinking", "text", "tool", "thinking", "text"]);
+    expect(settledBlocks[1]).toMatchObject({ type: "text", text: "中间说明" });
+    expect(settledBlocks[4]).toMatchObject({ type: "text", text: "终答" });
   });
 
   it("projects historical thinking_text before tools and output when events are gone", () => {
