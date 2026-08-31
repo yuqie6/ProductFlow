@@ -39,6 +39,7 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.POST("/canvas/focus", h.focusCanvas)
 	conv.POST("/canvas/focus/reconcile", h.reconcileFocusCanvas)
 	conv.GET("/workflow-runs", h.listRuns)
+	conv.GET("/workflow-runs/:run_id", h.workflowRunDetail)
 	conv.POST("/workflow-runs/inspect", h.inspectRuns)
 
 	conv.POST("/turn-executions/claim", h.claimExecution)
@@ -135,7 +136,7 @@ func (h HTTP) runtimeContext(c *gin.Context) {
 }
 
 func (h HTTP) productContext(c *gin.Context) {
-	out, err := h.Service.ProductContext(c.Request.Context(), c.Param("conversation_id"))
+	out, err := h.Service.ProductContext(c.Request.Context(), c.Param("conversation_id"), c.Query("response_format"))
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -144,7 +145,7 @@ func (h HTTP) productContext(c *gin.Context) {
 }
 
 func (h HTTP) globalWorkflowContext(c *gin.Context) {
-	out, err := h.Service.GlobalWorkflowContext(c.Request.Context(), c.Param("conversation_id"), c.Query("product_id"))
+	out, err := h.Service.GlobalWorkflowContext(c.Request.Context(), c.Param("conversation_id"), c.Query("product_id"), c.Query("response_format"))
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -398,6 +399,19 @@ func (h HTTP) inspectRuns(c *gin.Context) {
 		return
 	}
 	out, err := h.Service.InspectWorkflowRuns(c.Request.Context(), c.Param("conversation_id"), req.WorkflowIDs, req.Limit)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) workflowRunDetail(c *gin.Context) {
+	out, err := h.Service.WorkflowRunDetail(
+		c.Request.Context(),
+		c.Param("conversation_id"),
+		c.Param("run_id"),
+	)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

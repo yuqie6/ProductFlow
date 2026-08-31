@@ -1,8 +1,11 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 
@@ -123,6 +126,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		out.DraftKind = ptr("workflow")
 		out.HasLiveGraph = err == nil
 	}
+	out.ToolContractVersion = resolvedToolContractVersion(out.DraftSchema)
 	if task != nil {
 		out.TaskID = &task.ID
 		out.TaskGoal = &task.Goal
@@ -134,7 +138,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 	return out, nil
 }
 
-func (s Service) ProductContext(ctx context.Context, conversationID string) (map[string]any, error) {
+func (s Service) ProductContext(ctx context.Context, conversationID, responseFormat string) (map[string]any, error) {
 	var conv conversationRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadConversationByID(ctx, pgxTx, conversationID)
@@ -169,9 +173,14 @@ func (s Service) ProductContext(ctx context.Context, conversationID string) (map
 	if err != nil {
 		return nil, err
 	}
+	format := boundedResponseFormat(responseFormat)
 	var liveSummary any
 	if live != nil {
-		liveSummary = liveGraphSummary(*live)
+		liveSummary = liveGraphSummary(*live, format)
+	}
+	catalog := graph.CatalogJSON()
+	if format != "detailed" {
+		catalog = graph.CatalogIndexJSON()
 	}
 	return map[string]any{
 		"schema_version": 1,
@@ -182,10 +191,18 @@ func (s Service) ProductContext(ctx context.Context, conversationID string) (map
 		"confirmed_fact_set": confirmed,
 		"intake":             json.RawMessage(orEmptyJSON(product.Intake)),
 		"birth_expandable":   birthExpandable(product.Intake, live),
-		"node_catalog":       graph.CatalogJSON(),
+		"node_catalog":       catalog,
 		"image_type_catalog": graph.ImageTypeCatalogJSON(),
 		"live_graph":         liveSummary,
+		"response_format":    format,
 	}, nil
+}
+
+func boundedResponseFormat(raw string) string {
+	if strings.TrimSpace(raw) == "detailed" {
+		return "detailed"
+	}
+	return "concise"
 }
 
 func orEmptyJSON(raw json.RawMessage) json.RawMessage {
@@ -222,7 +239,51 @@ func birthExpandable(intake json.RawMessage, live *graph.Projection) bool {
 	return isBirthGraph(*live)
 }
 
-func liveGraphSummary(proj graph.Projection) map[string]any {
+func resolvedToolContractVersion(draft any) string {
+	if draft == nil {
+		draft = map[string]any{}
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(draft); err != nil {
+		return ToolManifestVersion
+	}
+	raw := bytes.TrimSuffix(buf.Bytes(), []byte{'\n'})
+	sum := sha256.Sum256(append(append([]byte(ToolManifestVersion), '\n'), raw...))
+	return hex.EncodeToString(sum[:])
+}
+
+func liveGraphSummary(proj graph.Projection, format string) map[string]any {
+	if format == "detailed" {
+		return liveGraphDetailed(proj)
+	}
+	return liveGraphConcise(proj)
+}
+
+func liveGraphConcise(proj graph.Projection) map[string]any {
+	nodes := make([]map[string]any, 0, len(proj.Nodes))
+	for _, node := range proj.Nodes {
+		nodes = append(nodes, map[string]any{
+			"id": node.ID, "node_type": node.NodeType, "title": node.Title,
+			"config_status": node.ConfigStatus, "unused": node.Unused,
+			"group_id": node.GroupID, "has_current_artifact": node.CurrentArtifactID != nil,
+		})
+	}
+	groups := make([]map[string]any, 0, len(proj.Groups))
+	for _, group := range proj.Groups {
+		groups = append(groups, map[string]any{
+			"id": group.ID, "title": group.Title, "member_count": len(group.MemberIDs),
+		})
+	}
+	return map[string]any{
+		"id": proj.ID, "title": proj.Title, "schema_version": proj.SchemaVersion, "revision": proj.Revision,
+		"node_count": len(proj.Nodes), "edge_count": len(proj.Edges), "group_count": len(proj.Groups),
+		"nodes": nodes, "groups": groups,
+	}
+}
+
+func liveGraphDetailed(proj graph.Projection) map[string]any {
 	nodes := make([]map[string]any, 0, len(proj.Nodes))
 	for _, node := range proj.Nodes {
 		incoming := make([]map[string]any, 0, len(node.Incoming))

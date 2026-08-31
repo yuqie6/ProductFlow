@@ -10,9 +10,11 @@ describe("ProductFlow runtime policy", () => {
     expect(policy).toContain("ProductFlow runtime policy:");
     expect(policy).toContain("business authority");
     expect(policy).toContain("Pi has no operating-system tools");
+    expect(policy).toContain("text enclosed in quotation marks as the user's literal value");
+    expect(policy).toContain("Never end a Turn with a question only in assistant prose");
   });
 
-  it("fails when the file is missing", () => {
-    expect(() => loadRuntimePolicy("/tmp/productflow-missing-policy/runtime-policy.ts")).toThrow();
+  it("uses the bundled policy even when the source path is unavailable", () => {
+    expect(loadRuntimePolicy("/tmp/productflow-missing-policy/runtime-policy.ts")).toContain("business authority");
   });
 });

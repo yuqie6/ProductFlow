@@ -214,7 +214,7 @@ func (s Service) activeWorkflowSummary(ctx context.Context, productID string) *m
 	return &summary
 }
 
-func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, productID string) (map[string]any, error) {
+func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, productID, responseFormat string) (map[string]any, error) {
 	productID = stringsTrim(productID)
 	if productID == "" {
 		return nil, apperr.Validation("请求参数无效")
@@ -241,7 +241,7 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 		return nil, err
 	}
 	targetID := target.ID
-	payload, err := s.ProductContext(ctx, targetID)
+	payload, err := s.ProductContext(ctx, targetID, responseFormat)
 	if err != nil {
 		return nil, err
 	}

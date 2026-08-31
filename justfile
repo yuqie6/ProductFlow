@@ -9,6 +9,11 @@ agent-service-run:
 agent-service-test:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service test'
 
+# Opt-in real-model skill/tool evals. Requires AGENT_PROVIDER_API_KEY.
+# Scripted fixtures always run in agent-service-test.
+agent-evals-live:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_EVALS=1 pnpm --dir agent-service exec vitest run evals/live.test.ts'
+
 go-migrate:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
 
@@ -64,7 +69,7 @@ web-build:
     pnpm --dir web build
 
 web-e2e-live-graph:
-    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test --config playwright.config.ts'
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/direct-create-full-graph.spec.ts --config playwright.config.ts'
 
 release:
     bash scripts/release.sh

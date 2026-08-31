@@ -9,6 +9,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { sha256 } from "./contracts.js";
+import { toolManifestEntry } from "./tool-manifest.js";
 
 const MAX_SKILL_BODY_BYTES = 64 << 10;
 const MAX_SKILL_RESOURCE_BYTES = 2 << 20;
@@ -20,29 +21,45 @@ export const PRODUCTFLOW_SKILL_TOOL_NAME = "load_productflow_skill" as const;
 interface SkillDescriptor {
   name: string;
   description: string;
+  triggers: string[];
+  guardsTools: string[];
+  scope: SkillScope;
+  version: number;
   filePath: string;
   baseDir: string;
 }
+
+export type SkillScope = "global" | "product_workflow" | "any";
 
 export interface SkillCatalog {
   root: string;
   hash: string;
   names: string[];
   prompt: string;
+  promptForScope(scope: "global" | "product_workflow"): string;
   load(name: string, resourcePath?: string): Promise<string>;
 }
 
 export async function loadSkillCatalog(skillRoot?: string): Promise<SkillCatalog> {
   const root = resolve(skillRoot ?? join(dirname(fileURLToPath(import.meta.url)), "../.pi/skills"));
   const discovered = loadSkillsFromDir({ dir: root, source: "productflow" });
-  if (discovered.diagnostics.length > 0) {
-    throw new Error(formatDiagnostics(discovered.diagnostics));
+  const diagnostics = discovered.diagnostics.filter((diagnostic) => {
+    const path = diagnostic.path ?? "";
+    return path === "" || basename(path) === "SKILL.md";
+  });
+  if (diagnostics.length > 0) {
+    throw new Error(formatDiagnostics(diagnostics));
   }
 
   const descriptors = discovered.skills
+    .filter((skill) => basename(skill.filePath) === "SKILL.md")
     .map((skill): SkillDescriptor => ({
       name: skill.name,
       description: skill.description.trim(),
+      triggers: [],
+      guardsTools: [],
+      scope: "any",
+      version: 1,
       filePath: resolve(skill.filePath),
       baseDir: resolve(skill.baseDir),
     }))
@@ -61,6 +78,11 @@ export async function loadSkillCatalog(skillRoot?: string): Promise<SkillCatalog
     if (frontmatterName !== descriptor.name) {
       throw new Error(`ProductFlow Skill frontmatter name must match its directory: ${descriptor.name}`);
     }
+    descriptor.triggers = readFrontmatterList(source, "triggers");
+    descriptor.guardsTools = readFrontmatterList(source, "guards_tools");
+    descriptor.scope = readSkillScope(source, descriptor.name);
+    descriptor.version = readSkillVersion(source, descriptor.name);
+    assertSkillBodyStructure(source, descriptor.name);
     validateDescriptor(root, descriptor, names);
     const files = await collectFiles(descriptor.baseDir, descriptor.baseDir, root);
     for (const file of files) {
@@ -78,6 +100,7 @@ export async function loadSkillCatalog(skillRoot?: string): Promise<SkillCatalog
     hash: sha256(canonicalParts.sort().join("\n\n")),
     names: descriptors.map((descriptor) => descriptor.name),
     prompt: formatSkillCatalogPrompt(descriptors),
+    promptForScope: (scope) => formatSkillCatalogPrompt(descriptors.filter((descriptor) => descriptor.scope === "any" || descriptor.scope === scope)),
     load: async (name, resourcePath) => loadSkill(byName, name, resourcePath),
   };
 }
@@ -121,6 +144,17 @@ function validateDescriptor(root: string, descriptor: SkillDescriptor, names: Se
   }
   if (descriptor.description.length < 1 || descriptor.description.length > 1024) {
     throw new Error(`ProductFlow Skill description is invalid: ${descriptor.name}`);
+  }
+  if (descriptor.triggers.length === 0) {
+    throw new Error(`ProductFlow Skill frontmatter must include triggers: ${descriptor.name}`);
+  }
+  if (descriptor.guardsTools.length === 0) {
+    throw new Error(`ProductFlow Skill frontmatter must include guards_tools: ${descriptor.name}`);
+  }
+  for (const toolName of descriptor.guardsTools) {
+    if (!toolManifestEntry(toolName)) {
+      throw new Error(`ProductFlow Skill owns unknown tool ${toolName}: ${descriptor.name}`);
+    }
   }
   if (!isWithin(root, descriptor.baseDir) || !isWithin(root, descriptor.filePath)) {
     throw new Error(`ProductFlow Skill path escapes the catalog root: ${descriptor.name}`);
@@ -183,18 +217,79 @@ function readFrontmatterField(content: string, field: string): string | null {
   return value;
 }
 
+function readFrontmatterList(content: string, field: string): string[] {
+  const normalized = content.replace(/\r\n?/gu, "\n");
+  const match = /^---\n([\s\S]*?)\n---(?:\n|$)/u.exec(normalized);
+  if (!match) return [];
+  const lines = match[1].split("\n");
+  const fieldIndex = lines.findIndex((line) => new RegExp(`^${field}\\s*:`).test(line));
+  if (fieldIndex < 0) return [];
+  const value = lines[fieldIndex].replace(new RegExp(`^${field}\\s*:`), "").trim();
+  if (value) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (Array.isArray(parsed) && parsed.every((item): item is string => typeof item === "string" && item.trim() !== "")) {
+        return parsed.map((item) => item.trim());
+      }
+    } catch {
+      return [];
+    }
+    return [];
+  }
+  const values: string[] = [];
+  for (const line of lines.slice(fieldIndex + 1)) {
+    if (!/^\s+-\s+/u.test(line)) break;
+    const item = line.replace(/^\s+-\s+/u, "").trim();
+    if (item) values.push(item.replace(/^(["'])(.*)\1$/u, "$2"));
+  }
+  return values;
+}
+
 function formatSkillCatalogPrompt(descriptors: SkillDescriptor[]): string {
   const lines = [
     "ProductFlow Skills use the Agent Skills progressive-disclosure contract.",
-    `Use ${PRODUCTFLOW_SKILL_TOOL_NAME} with an exact skill_name before using a domain-specific ProductFlow tool when the task matches a skill description. The tool returns trusted versioned instructions only; it cannot access ProductFlow data, storage, providers, databases, or execute code. If the loaded skill references references/, load that static text with resource_path when needed.`,
-    "productflow-core applies to every ProductFlow conversation; load it before other skills when the task needs ProductFlow business rules.",
+    `Use ${PRODUCTFLOW_SKILL_TOOL_NAME} with an exact skill_name when the task matches a skill description and its triggers. The tool returns trusted versioned instructions only; it cannot access ProductFlow data, storage, providers, databases, or execute code. If the loaded skill references references/, load that static text with resource_path when needed.`,
     "<available_productflow_skills>",
   ];
   for (const descriptor of descriptors) {
-    lines.push(`  <skill><name>${escapeXML(descriptor.name)}</name><description>${escapeXML(descriptor.description)}</description></skill>`);
+    lines.push(
+      `  <skill><name>${escapeXML(descriptor.name)}</name><description>${escapeXML(descriptor.description)}</description><triggers>${descriptor.triggers.map(escapeXML).join(" | ")}</triggers><guards_tools>${descriptor.guardsTools.map(escapeXML).join(", ")}</guards_tools><scope>${descriptor.scope}</scope></skill>`,
+    );
   }
   lines.push("</available_productflow_skills>");
   return lines.join("\n");
+}
+
+const REQUIRED_SKILL_HEADINGS = ["## 何时使用", "## 前置事实", "## 工作循环", "## 禁止行为", "## 完成判据"] as const;
+
+function assertSkillBodyStructure(content: string, name: string): void {
+  const body = stripFrontmatter(content);
+  for (const heading of REQUIRED_SKILL_HEADINGS) {
+    if (!body.includes(heading)) {
+      throw new Error(`ProductFlow Skill body must include ${heading}: ${name}`);
+    }
+  }
+}
+
+function readSkillScope(content: string, name: string): SkillScope {
+  const value = readFrontmatterField(content, "scope");
+  if (value === null) {
+    throw new Error(`ProductFlow Skill frontmatter must include scope: ${name}`);
+  }
+  if (value === "global" || value === "product_workflow" || value === "any") return value;
+  throw new Error(`ProductFlow Skill scope is invalid: ${value}`);
+}
+
+function readSkillVersion(content: string, name: string): number {
+  const raw = readFrontmatterField(content, "version");
+  if (raw === null) {
+    throw new Error(`ProductFlow Skill frontmatter must include version: ${name}`);
+  }
+  const version = Number(raw);
+  if (!Number.isInteger(version) || version < 1) {
+    throw new Error(`ProductFlow Skill version is invalid: ${raw}`);
+  }
+  return version;
 }
 
 function escapeXML(value: string): string {

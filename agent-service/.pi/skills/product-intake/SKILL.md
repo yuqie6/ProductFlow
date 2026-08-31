@@ -1,18 +1,40 @@
 ---
 name: product-intake
-description: Collect missing product facts and reference-image requirements for a ProductFlow live graph.
+description: Persist missing image types and already-uploaded reference assets, then expand a name-only live graph.
+triggers:
+  - create product
+  - complete intake
+  - reference images
+  - image types
+guards_tools:
+  - ask_user
+  - get_product_workflow_context_v1
+  - inspect_product_image_assets_v1
+  - finalize_product_intake_v1
+scope: product_workflow
+version: 2
 ---
 
-# Product Intake
+# 商品 Intake
 
-Use when the user is creating or completing a product workspace.
+## 何时使用
 
-Read product context before asking questions. Treat uploaded reference asset IDs and user choices as authoritative. Ask only for missing facts that change the planned output. Inspect explicitly selected images when visual evidence is needed.
+用户在创建或补全商品工作区，intake 为空，或 intake 已在而图仍是 name-only `product_source`（`birth_expandable` 为真）。
 
-If intake is empty and the live graph is birth (`product_source` only, or `birth_expandable` will become true after persist): persist intake from this conversation. Use the attached or listed product asset IDs plus the image types the user named. Call `finalize_product_intake_v1`, then reread `get_product_workflow_context_v1`. That tool writes intake and expands the photography/infographic template (one group + prompt + N image nodes per generating type). Do not `propose_graph_change_set_v1` a first complete topology. Do not send the user to a create form.
+## 前置事实
 
-If intake is already present and the graph is still only `product_source` (`birth_expandable` is true): call `finalize_product_intake_v1` again with the same selection so the template expands. Do not invent `add_node` or `connect`.
+先读 `get_product_workflow_context_v1`。已上传的 reference asset ID 和用户点名的图片类型是权威。只在缺了会改变计划产出的事实时用 `ask_user`；不得只在普通回复里列问题后结束 Turn。需要看图时用 `inspect_product_image_assets_v1` 检查明确选中的资产。
 
-When intake is present and the graph is already expanded: edit with Graph Command names from the apply/propose tool schema. One reversible change uses `apply_graph_change_set_v1`. A multi-node overlay uses `propose_graph_change_set_v1`. Do not submit a second complete topology on an already expanded graph.
+## 工作循环
 
-Do not infer brand, material, dimensions, color, or product features from a filename. Do not edit storage, confirm a proposal, or start a run.
+1. 收集图片类型与 `reference_asset_ids`。
+2. 调用 `finalize_product_intake_v1`，再重读上下文。该工具写入 intake 并展开摄影/信息图模板（每种生成类型一组 + prompt + N 个 image 节点）。
+3. 若 intake 已在且 `birth_expandable` 仍为真：用同一 selection 再调用一次以展开模板。
+
+## 禁止行为
+
+不要用 `propose_graph_change_set_v1` 发明第一份完整拓扑。不要从文件名推断品牌、材质、尺寸、颜色。不要去确认提案或启动运行。不要把用户打发回创建表单。
+
+## 完成判据
+
+intake 已写入，图已从 name-only 展开为模板。之后的图编辑交给 `graph-editing`。

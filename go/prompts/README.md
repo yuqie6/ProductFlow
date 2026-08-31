@@ -1,6 +1,6 @@
 # 发给模型的固定文案
 
-改画风、图种任务、Provider 指令或 Agent 口吻时只改这里的 markdown。Go 用 `go:embed` 编译进去；agent-service 读 `agent/runtime-policy.md`。
+改画风、图种任务、Provider 指令或 Agent 口吻时只改这里的 markdown。Go 用 `go:embed` 编译进去；agent-service 在构建期把 `agent/runtime-policy.md` 打进 `runtime-policy.generated.ts`。
 
 不要把 JSON schema、图种 family 映射、seed 组装分支、工具 description 或 Skill 正文放进本目录。Skill 仍在 `agent-service/.pi/skills`。文/图生图模板是设置项 `prompt_image_chat_template`。
 

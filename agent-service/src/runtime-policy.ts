@@ -1,20 +1,17 @@
 /**
- * ProductFlow Pi 运行时政策。正文在 go/prompts/agent/runtime-policy.md。
+ * ProductFlow Pi 运行时政策。构建时从 go/prompts/agent/runtime-policy.md 打包。
  */
 
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { RUNTIME_POLICY } from "./runtime-policy.generated.js";
 
 export function runtimePolicyPath(fromFile = fileURLToPath(import.meta.url)): string {
   return join(dirname(fromFile), "../../go/prompts/agent/runtime-policy.md");
 }
 
 export function loadRuntimePolicy(fromFile?: string): string {
-  const path = runtimePolicyPath(fromFile);
-  const text = readFileSync(path, "utf8").trim();
-  if (!text) {
-    throw new Error(`ProductFlow runtime policy is empty: ${path}`);
-  }
-  return text;
+  void fromFile;
+  if (!RUNTIME_POLICY) throw new Error("ProductFlow runtime policy is empty");
+  return RUNTIME_POLICY;
 }

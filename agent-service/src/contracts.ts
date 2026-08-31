@@ -7,12 +7,14 @@
  */
 
 import { createHash } from "node:crypto";
+import { assertToolManifestCoverage, resolvedToolContractVersion, TOOL_MANIFEST_VERSION, TOOL_STEP_KINDS, toolKind, type ToolStepKind } from "./tool-manifest.js";
 
 export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 16 as const;
+export const TOOL_CONTRACT_VERSION = TOOL_MANIFEST_VERSION;
+export { resolvedToolContractVersion };
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
@@ -81,21 +83,15 @@ export interface AgentEventReceipt {
   created_at: string;
 }
 
-export const TOOL_STEP_KINDS = [
-  "load_skill",
-  "inject_context",
-  "ask_question",
-  "inspect_image",
-  "propose_draft",
-  "inspect_context",
-  "read_history",
-  "organize_assets",
-  "request_workflow_run",
-  "create_product",
-  "apply_graph",
-  "propose_graph",
-] as const;
-export type ToolStepKind = (typeof TOOL_STEP_KINDS)[number];
+export {
+  assertToolManifestCoverage,
+  expectedToolNamesForScope,
+  TOOL_STEP_KINDS,
+  toolDescription,
+  toolKind,
+  toolParameters,
+} from "./tool-manifest.js";
+export type { ToolName, ToolParams, ToolStepKind } from "./tool-manifest.js";
 
 export const TOOL_STEP_STATUSES = ["running", "succeeded", "failed", "unknown"] as const;
 export type ToolStepStatus = (typeof TOOL_STEP_STATUSES)[number];
@@ -153,7 +149,7 @@ export interface ProductFlowContract {
   system_prompt: string;
   draft_kind: string;
   draft_schema: JsonObject;
-  tool_contract_version: number;
+  tool_contract_version: string;
   has_live_graph?: boolean;
 }
 
@@ -256,6 +252,28 @@ export interface ToolStepDetails {
   question_header?: string;
   question_text?: string;
   option_labels?: string[];
+  truncated?: boolean;
+  pending_confirmation?: boolean;
+  reconciled?: boolean;
+  response_format?: "concise" | "detailed";
+  item_count?: number;
+  node_count?: number;
+  group_count?: number;
+  asset_count?: number;
+  operation_summaries?: string[];
+  affected_node_ids?: string[];
+  affected_edge_ids?: string[];
+  affected_group_ids?: string[];
+  workflow_id?: string;
+  workflow_title?: string;
+  run_id?: string;
+  proposal_id?: string;
+  product_id?: string;
+  request_id?: string;
+  expected_workflow_revision?: number;
+  summary?: string;
+  artifact_name?: string;
+  product_workspace_created?: boolean;
 }
 
 export interface ToolStep {
@@ -265,6 +283,7 @@ export interface ToolStep {
   status: ToolStepStatus;
   tool_name?: string;
   details?: ToolStepDetails;
+  meta?: JsonObject;
 }
 
 export interface TurnState {
@@ -413,19 +432,4 @@ export class ProductFlowError extends Error {
 /** 对本交互运行时，unknown 和 awaiting_confirmation 都是终态。 */
 export function isTerminalStatus(status: TurnStatus): boolean {
   return ["succeeded", "failed", "canceled", "unknown", "awaiting_confirmation"].includes(status);
-}
-
-export function toolKind(name: string): ToolStepKind {
-  if (name === "load_productflow_skill") return "load_skill";
-  if (name === "ask_user") return "ask_question";
-  if (name === "apply_graph_change_set_v1") return "apply_graph";
-  if (name === "propose_graph_change_set_v1" || name === "discard_workflow_proposal_v1" || name.includes("graph_proposal")) return "propose_graph";
-  if (name === "cancel_workflow_run_v1") return "request_workflow_run";
-  if (name.includes("draft")) return "propose_draft";
-  if (name.includes("request_workflow_run")) return "request_workflow_run";
-  if (name.includes("workspace")) return "create_product";
-  if (name.includes("asset") || name.includes("media")) return name.includes("inspect") ? "inspect_image" : "organize_assets";
-  if (name.includes("context") || name.includes("product") || name.includes("workflow")) return "inspect_context";
-  if (name.includes("run")) return "read_history";
-  return "inspect_context";
 }

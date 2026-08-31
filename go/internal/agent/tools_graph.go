@@ -3,6 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sort"
+	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -298,4 +301,105 @@ func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string,
 		})
 	}
 	return map[string]any{"items": items}, nil
+}
+
+func (s Service) WorkflowRunDetail(ctx context.Context, conversationID, runID string) (map[string]any, error) {
+	conv, err := s.loadScopedConversation(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, apperr.Validation("请求参数无效")
+	}
+	var ownerProduct, wantWorkflow string
+	switch conv.ScopeType {
+	case "product_workflow":
+		if err := requireProductWorkflow(conv); err != nil {
+			return nil, err
+		}
+		ownerProduct = *conv.ProductID
+	default:
+		if err := requireGlobalScope(conv); err != nil {
+			return nil, err
+		}
+		var owner struct {
+			ProductID  string
+			WorkflowID string
+		}
+		err := s.DB.WithContext(ctx).
+			Table("workflow_graph_runs AS run").
+			Select("graph.product_id AS product_id, graph.id AS workflow_id").
+			Joins("JOIN workflow_graphs AS graph ON graph.id = run.graph_id").
+			Where("run.id = ?", runID).
+			Take(&owner).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperr.NotFound("工作流运行不存在")
+		}
+		if err != nil {
+			return nil, err
+		}
+		ownerProduct, wantWorkflow = owner.ProductID, owner.WorkflowID
+	}
+	run, err := s.Graph.GetRunForProduct(ctx, ownerProduct, runID, wantWorkflow)
+	if err != nil {
+		return nil, err
+	}
+	return boundedWorkflowRunDetail(run), nil
+}
+
+func boundedWorkflowRunDetail(run graph.GraphRunResponse) map[string]any {
+	nodes := make([]map[string]any, 0, len(run.NodeRuns))
+	for _, node := range run.NodeRuns {
+		item := map[string]any{
+			"node_id":        node.NodeID,
+			"node_title":     node.NodeTitle,
+			"status":         node.Status,
+			"failure_reason": node.FailureReason,
+			"planned_action": node.PlannedAction,
+			"progress_phase": node.ProgressPhase,
+			"attempt_count":  node.AttemptCount,
+		}
+		if summary := boundedNodeArtifact(node.Output); summary != nil {
+			item["artifact"] = summary
+		}
+		nodes = append(nodes, item)
+	}
+	return map[string]any{
+		"schema_version": 1,
+		"run_id":         run.ID,
+		"workflow_id":    run.GraphID,
+		"status":         run.Status,
+		"scope":          run.Scope,
+		"graph_revision": run.GraphRevision,
+		"failure_reason": run.FailureReason,
+		"is_retryable":   run.IsRetryable,
+		"started_at":     run.StartedAt,
+		"finished_at":    run.FinishedAt,
+		"nodes":          nodes,
+	}
+}
+
+func boundedNodeArtifact(output map[string]any) map[string]any {
+	if len(output) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for _, key := range []string{"asset_id", "artifact_id", "artifact_type", "status"} {
+		if value, ok := output[key]; ok {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		keys := make([]string, 0, len(output))
+		for key := range output {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if len(keys) > 8 {
+			keys = keys[:8]
+		}
+		out["keys"] = keys
+	}
+	return out
 }

@@ -5,3 +5,4 @@
 不得提交第二份完整拓扑。不得编造商品事实或资产。
 不得输出 base64、data URL、存储路径或内部 URL。
 提案、跑图和素材整理的确认只在 ProductFlow UI 完成。
+图编辑加载 graph-editing；运行失败解读加载 run-diagnosis。

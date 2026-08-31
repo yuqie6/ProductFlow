@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TOOL_CONTRACT_VERSION, type Scope, type TurnState } from "./contracts.js";
+import { resolvedToolContractVersion, type Scope, type TurnState } from "./contracts.js";
 import { PiRuntimeManager } from "./pi-runtime.js";
 import type { SkillCatalog } from "./skills.js";
 import { TurnStore } from "./store.js";
@@ -69,6 +69,7 @@ describe("Pi runtime fake provider E2E", () => {
         hash: "fake-skill-catalog",
         names: [],
         prompt: "",
+        promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
@@ -154,6 +155,7 @@ describe("Pi runtime fake provider E2E", () => {
         hash: "fake-skill-catalog",
         names: [],
         prompt: "",
+        promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
@@ -214,6 +216,7 @@ describe("Pi runtime fake provider E2E", () => {
         hash: "fake-skill-catalog",
         names: [],
         prompt: "",
+        promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
@@ -313,6 +316,7 @@ describe("Pi runtime fake provider E2E", () => {
         hash: "fake-skill-catalog",
         names: [],
         prompt: "",
+        promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
@@ -384,6 +388,7 @@ describe("Pi runtime fake provider E2E", () => {
         hash: "fake-skill-catalog",
         names: [],
         prompt: "",
+        promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
       const firstStore = new TurnStore(root);
@@ -454,7 +459,7 @@ function createFakeProductFlow(
       system_prompt: scope.system_prompt,
       draft_kind: "global",
       draft_schema: scope.draft_schema,
-      tool_contract_version: TOOL_CONTRACT_VERSION,
+      tool_contract_version: resolvedToolContractVersion(scope.draft_schema),
     }),
     runtimeContext: async () => ({
       schema_version: 1,
@@ -579,6 +584,7 @@ async function runProviderFailureScenario(
       hash: "fake-skill-catalog",
       names: [],
       prompt: "",
+      promptForScope: () => "",
       load: async () => "",
     } satisfies SkillCatalog;
     manager = new PiRuntimeManager(

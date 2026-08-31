@@ -35,6 +35,9 @@ export interface PreparedWorkflowRunRequest {
   runnable_node_count: number;
   task_id: string | null;
   source_run_id?: string | null;
+  scope?: string;
+  node_id?: string;
+  node_ids?: string[];
 }
 
 /** ProductFlow 对一次变更的证明。unknown 表示副作用无法证明。 */
@@ -148,12 +151,37 @@ export class ProductFlowClient {
     return this.json<ProviderConfig>("/api/internal/v1/agent-runtime/provider-config", { signal });
   }
 
-  async productContext(conversationID: string, signal?: AbortSignal): Promise<unknown> {
-    return this.json(this.conversationPath(conversationID) + "/product-context", { signal });
+  async productContext(conversationID: string, signal?: AbortSignal, responseFormat = "concise"): Promise<unknown> {
+    return this.json(
+      this.conversationPath(conversationID) + "/product-context?" + new URLSearchParams({ response_format: responseFormat }),
+      { signal },
+    );
   }
 
-  async globalWorkflowContext(conversationID: string, productID: string, signal?: AbortSignal): Promise<unknown> {
-    return this.json(this.conversationPath(conversationID) + "/global-workflow-context?" + new URLSearchParams({ product_id: productID }), { signal });
+  async globalWorkflowContext(
+    conversationID: string,
+    productID: string,
+    signal?: AbortSignal,
+    responseFormat = "concise",
+  ): Promise<unknown> {
+    return this.json(
+      this.conversationPath(conversationID) + "/global-workflow-context?" + new URLSearchParams({
+        product_id: productID,
+        response_format: responseFormat,
+      }),
+      { signal },
+    );
+  }
+
+  async workflowRunDetail(
+    conversationID: string,
+    runID: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.json(
+      this.conversationPath(conversationID) + `/workflow-runs/${encodeURIComponent(runID)}`,
+      { signal },
+    );
   }
 
   async workflowRuns(conversationID: string, limit: number, signal?: AbortSignal): Promise<unknown> {
@@ -569,6 +597,9 @@ function workflowRunRequestPayload(prepared: PreparedWorkflowRunRequest, sourceS
     source_step_id: sourceStepID,
     task_id: prepared.task_id,
     source_run_id: prepared.source_run_id ?? null,
+    scope: prepared.scope ?? "graph",
+    node_id: prepared.node_id ?? null,
+    node_ids: prepared.node_ids ?? [],
   };
 }
 

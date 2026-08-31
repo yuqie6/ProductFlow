@@ -44,6 +44,31 @@ func CatalogJSON() map[string]any {
 	}
 }
 
+func CatalogIndexJSON() map[string]any {
+	full := CatalogJSON()
+	rawNodes, _ := full["nodes"].([]map[string]any)
+	nodes := make([]map[string]any, 0, len(rawNodes))
+	for _, node := range rawNodes {
+		item := map[string]any{}
+		for key, value := range node {
+			if key != "config_fields" {
+				item[key] = value
+			}
+		}
+		keys := make([]string, 0)
+		if fields, ok := node["config_fields"].([]map[string]any); ok {
+			for _, field := range fields {
+				if key, ok := field["key"].(string); ok && key != "" {
+					keys = append(keys, key)
+				}
+			}
+		}
+		item["config_field_keys"] = keys
+		nodes = append(nodes, item)
+	}
+	return map[string]any{"version": full["version"], "nodes": nodes}
+}
+
 func configFieldJSON(item configField) map[string]any {
 	choices := item.choices
 	if choices == nil {

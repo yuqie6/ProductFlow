@@ -38,7 +38,11 @@ var sealedDocsOnly = map[string]bool{
 }
 
 var goOpsExtras = map[string]bool{
-	"GET /healthz/ready": true,
+	"GET /healthz/ready":                                                           true,
+	"GET /api/v2/agent-control/events":                                             true,
+	"GET /api/internal/v1/agent-conversations/{}/workflow-runs/{}":                 true,
+	"GET /api/v3/products/{}/workflows/{}/runs/{}/events":                          true,
+	"POST /api/v3/products/{}/workflows/{}/runs/preview":                           true,
 }
 
 type sealedRoute struct {

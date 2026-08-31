@@ -40,6 +40,9 @@ describe("ProductFlowClient", () => {
         source_step_id: "step-1",
         task_id: null,
         source_run_id: null,
+        scope: "graph",
+        node_id: null,
+        node_ids: [],
       });
       expect(requests[1].body).toEqual({
         expected_workflow_revision: 7,
@@ -48,6 +51,9 @@ describe("ProductFlowClient", () => {
         task_id: null,
         source_run_id: null,
         product_id: "product-1",
+        scope: "graph",
+        node_id: null,
+        node_ids: [],
       });
     } finally {
       server.closeAllConnections();

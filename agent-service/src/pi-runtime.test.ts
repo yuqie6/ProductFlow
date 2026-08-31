@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   isTerminalStatus,
   ProductFlowError,
-  TOOL_CONTRACT_VERSION,
+  resolvedToolContractVersion,
   type Scope,
   type TurnState,
 } from "./contracts.js";
@@ -78,7 +78,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: {},
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({}),
           has_live_graph: true,
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
@@ -125,7 +125,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: {},
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({}),
           has_live_graph: true,
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
@@ -233,7 +233,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
         claimTurnExecution: async (_conversationID: string, args: { harness_turn_id: string }) => ({
           execution_id: "execution-cancel",
@@ -342,7 +342,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
         claimTurnExecution: async () => {
           throw new ProductFlowError(404, "not_found", "Agent Turn projection does not exist");
@@ -427,10 +427,10 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
-        appendTurnEvent: async (_conversationID: string, _executionID: string, args: { turn_id: string }) => {
-          published.push(args.turn_id);
+        appendTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ turn_id: string }> }) => {
+          published.push(...args.events.map((event) => event.turn_id));
           throw new Error("the active execution lease must not publish another Turn");
         },
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
@@ -494,7 +494,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
       const manager = new PiRuntimeManager(
@@ -736,7 +736,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
       const store = new TurnStore(root);
@@ -800,7 +800,7 @@ describe("PiRuntimeManager turn state", () => {
           system_prompt: "ProductFlow",
           draft_kind: "workflow",
           draft_schema: { type: "object" },
-          tool_contract_version: TOOL_CONTRACT_VERSION,
+          tool_contract_version: resolvedToolContractVersion({ type: "object" }),
         }),
         appendTurnCheckpoint: async () => ({
           id: "checkpoint-timeout",

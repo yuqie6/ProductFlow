@@ -306,6 +306,25 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 	return out, err
 }
 
+func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflowID string) (GraphRunResponse, error) {
+	var out GraphRunResponse
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		run, err := loadGraphRunByID(ctx, pgxTx, runID)
+		if err != nil {
+			return err
+		}
+		if workflowID != "" && run.GraphID != workflowID {
+			return apperr.NotFound("工作流运行不存在")
+		}
+		if _, err := loadGraph(ctx, pgxTx, productID, run.GraphID); err != nil {
+			return err
+		}
+		out = serializeGraphRun(run)
+		return nil
+	})
+	return out, err
+}
+
 func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

@@ -31,7 +31,7 @@ const (
 	maxEventPayloadBytes  = 128 * 1024
 	maxCheckpointPayload  = 64 * 1024
 	leaseSeconds          = 60
-	toolContractVersion   = 16
+	toolContractVersion   = ToolManifestVersion
 	assetListDefaultLimit = 50
 	assetListMaxLimit     = 100
 	globalProductListMax  = 100
@@ -215,7 +215,7 @@ type ContractResponse struct {
 	HarnessRunID        string         `json:"harness_run_id"`
 	CurrentDraftVersion int            `json:"current_draft_version"`
 	SystemPrompt        string         `json:"system_prompt"`
-	ToolContractVersion int            `json:"tool_contract_version"`
+	ToolContractVersion string         `json:"tool_contract_version"`
 	DraftKind           *string        `json:"draft_kind"`
 	DraftSchema         map[string]any `json:"draft_schema"`
 	HasLiveGraph        bool           `json:"has_live_graph"`

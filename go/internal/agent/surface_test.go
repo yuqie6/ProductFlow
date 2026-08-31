@@ -195,6 +195,10 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 	as.mustStatus(t, runs, http.StatusOK)
 	runs.Body.Close()
 
+	missingRun := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+pConv+"/workflow-runs/"+clockid.New(), nil, "", auth)
+	as.mustStatus(t, missingRun, http.StatusNotFound)
+	missingRun.Body.Close()
+
 	inspect := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/workflow-runs/inspect", map[string]any{
 		"workflow_ids": []string{graphID},
 	}, auth)

@@ -89,6 +89,7 @@ def main() -> int:
     _check_workbench_boundaries(errors)
     _check_spec_status(errors)
     _check_live_aegis_path(errors)
+    _check_skill_tool_names(errors)
     if errors:
         print("Documentation contract check failed:")
         for error in errors:
@@ -228,6 +229,70 @@ def _check_live_aegis_path(errors: list[str]) -> None:
     live = ROOT / "docs/aegis"
     if live.exists():
         errors.append("docs/aegis/ is not a live documentation path; keep method-pack records out of the default tree")
+
+
+MANIFEST_SCHEMA_RE = re.compile(
+    r"export const TOOL_PARAMETER_SCHEMAS = \{([\s\S]*?)\n\} as const",
+)
+MANIFEST_KEY_RE = re.compile(r"^\s{2}([a-z][a-z0-9_]*)\s*:", re.M)
+SKILL_TOOL_TICK_RE = re.compile(r"`([a-z][a-z0-9_]*(?:_v\d+)?)`")
+KNOWN_UNTICKED_TOOLS = {"ask_user", "propose_global_draft", "load_productflow_skill"}
+
+
+def _manifest_tool_names() -> set[str]:
+    text = (ROOT / "agent-service/src/tool-manifest.ts").read_text(encoding="utf-8")
+    match = MANIFEST_SCHEMA_RE.search(text)
+    if match is None:
+        return set()
+    return set(MANIFEST_KEY_RE.findall(match.group(1)))
+
+
+def _frontmatter_list(content: str, field: str) -> list[str]:
+    match = re.match(r"^---\n([\s\S]*?)\n---(?:\n|$)", content)
+    if match is None:
+        return []
+    lines = match.group(1).splitlines()
+    field_index = next((index for index, line in enumerate(lines) if re.match(rf"^{field}\s*:", line)), -1)
+    if field_index < 0:
+        return []
+    inline = re.sub(rf"^{field}\s*:", "", lines[field_index]).strip()
+    if inline:
+        return []
+    values: list[str] = []
+    for line in lines[field_index + 1 :]:
+        if not re.match(r"^\s+-\s+", line):
+            break
+        item = re.sub(r"^\s+-\s+", "", line).strip()
+        if item:
+            values.append(re.sub(r"^(['\"])(.*)\1$", r"\2", item))
+    return values
+
+
+def _check_skill_tool_names(errors: list[str]) -> None:
+    names = _manifest_tool_names()
+    if not names:
+        errors.append("could not parse tool names from agent-service/src/tool-manifest.ts")
+        return
+    skills_root = ROOT / "agent-service/.pi/skills"
+    for skill_md in sorted(skills_root.glob("*/SKILL.md")):
+        content = skill_md.read_text(encoding="utf-8")
+        relative = skill_md.relative_to(ROOT).as_posix()
+        guards = _frontmatter_list(content, "guards_tools")
+        if not guards:
+            errors.append(f"{relative} is missing guards_tools")
+        for tool in guards:
+            if tool not in names:
+                errors.append(f"{relative} guards_tools references unknown tool {tool}")
+        markdown_files = [skill_md, *sorted((skill_md.parent / "references").glob("*.md"))]
+        for path in markdown_files:
+            if not path.exists():
+                continue
+            body = re.sub(r"^---\n[\s\S]*?\n---\n?", "", path.read_text(encoding="utf-8"), count=1)
+            for tool in SKILL_TOOL_TICK_RE.findall(body):
+                if tool in names:
+                    continue
+                if re.search(r"_v\d+$", tool) or tool in KNOWN_UNTICKED_TOOLS:
+                    errors.append(f"{path.relative_to(ROOT).as_posix()} references unknown tool `{tool}`")
 
 
 if __name__ == "__main__":

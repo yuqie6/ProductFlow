@@ -43,10 +43,11 @@ import {
   TurnEvent,
   TurnQuestion,
   TurnState,
-  ToolStepKind,
   type ToolStepDetails,
+  type ToolStepKind,
   TurnStatus,
   TOOL_CONTRACT_VERSION,
+  resolvedToolContractVersion,
   byteLength,
   isTerminalStatus,
   nowISO,
@@ -54,6 +55,7 @@ import {
   safeErrorMessage,
   sameRuntimeScope,
   sha256,
+  toolKind,
   validatePageContext,
   validateScope,
 } from "./contracts.js";
@@ -384,6 +386,7 @@ class RunRuntime implements ToolRuntime {
   private pendingQuestionAnswer?: TurnAnswer;
   private artifact?: TurnArtifact;
   private workflowRunRequested = false;
+  private workflowApproval?: JsonObject;
   private output = "";
   private thinkingProjection: ThinkingProjectionState = createThinkingProjectionState();
   private unknownPiEventTypes = new Set<string>();
@@ -509,10 +512,14 @@ class RunRuntime implements ToolRuntime {
       if (this.iterationError) throw this.iterationError;
       if (this.modelError) throw this.modelError;
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
-      if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
+      if (current.status === "cancel_requested" || (this.abortController.signal.aborted && !this.workflowRunRequested && !this.artifact)) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
-      } else if (this.artifact && this.scope.scope_type === "global") {
-        await this.finishTurn(turnID, "succeeded", { output: this.output, artifact: this.artifact });
+      } else if (this.workflowRunRequested || (this.artifact && this.scope.scope_type === "global")) {
+        await this.finishTurn(turnID, "awaiting_confirmation", {
+          output: this.output,
+          ...(this.artifact ? { artifact: this.artifact } : {}),
+          ...(this.workflowApproval ? { approval: this.workflowApproval } : {}),
+        });
       } else {
         await this.finishTurn(turnID, "succeeded", { output: this.output });
       }
@@ -558,8 +565,14 @@ class RunRuntime implements ToolRuntime {
           output: this.output,
           error: safeErrorMessage(this.persistenceError),
         });
-      } else if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
+      } else if (current.status === "cancel_requested" || (this.abortController.signal.aborted && !this.workflowRunRequested && !this.artifact)) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
+      } else if (this.workflowRunRequested || (this.artifact && this.scope.scope_type === "global")) {
+        await this.finishTurn(turnID, "awaiting_confirmation", {
+          output: this.output,
+          ...(this.artifact ? { artifact: this.artifact } : {}),
+          ...(this.workflowApproval ? { approval: this.workflowApproval } : {}),
+        });
       } else {
         await this.finishTurn(turnID, "failed", {
           output: this.output,
@@ -693,7 +706,13 @@ class RunRuntime implements ToolRuntime {
   private async finishTurn(
     turnID: string,
     status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
-    details: { output?: string; error?: string; question?: TurnQuestion; artifact?: TurnArtifact },
+    details: {
+      output?: string;
+      error?: string;
+      question?: TurnQuestion;
+      artifact?: TurnArtifact;
+      approval?: JsonObject;
+    },
   ): Promise<void> {
     await this.manager.store.terminal(this.scope.run_id, turnID, status, {
       ...details,
@@ -911,14 +930,40 @@ class RunRuntime implements ToolRuntime {
     return this.manager.store.getState(this.scope.run_id, turnID);
   }
 
-  async proposeArtifact(artifact: TurnArtifact): Promise<void> {
-    if (this.artifact) throw new Error("Pi proposed more than one ProductFlow artifact in one turn");
-    this.artifact = artifact;
+  requestApproval(approval: JsonObject): void {
+    const kind = typeof approval.approval_kind === "string" ? approval.approval_kind : "";
+    if (kind === "artifact") {
+      if (this.artifact) throw new Error("Pi proposed more than one ProductFlow artifact in one turn");
+      const artifact = approval.artifact;
+      if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+        throw new Error("ProductFlow artifact approval is missing artifact payload");
+      }
+      const record = artifact as JsonObject;
+      const value = record.value;
+      this.artifact = {
+        name: String(record.name ?? ""),
+        value: value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : {},
+        step_id: String(record.step_id ?? approval.approval_id ?? ""),
+      };
+      if (!this.artifact.name || !this.artifact.step_id) {
+        throw new Error("ProductFlow artifact approval is incomplete");
+      }
+    } else {
+      this.workflowRunRequested = true;
+      this.workflowApproval = approval;
+      void this.updateExecutionPhase("external_job").catch(() => undefined);
+    }
+    // Approval pauses model generation, while the execution signal must remain live
+    // long enough to persist tool/result, approval/requested and turn/end.
+    void this.session?.abort();
   }
 
-  markWorkflowRunRequested(): void {
-    this.workflowRunRequested = true;
-    void this.updateExecutionPhase("external_job").catch(() => undefined);
+  emitApproval(approval: JsonObject): void {
+    const turnID = this.activeTurnID;
+    if (!turnID) return;
+    this.enqueue(() =>
+      this.manager.store.appendEvent(this.scope.run_id, turnID, "approval/requested", approval),
+    );
   }
 
   /** ProductFlow 副作用无法证明时，把 Turn 中止为 unknown。 */
@@ -1003,7 +1048,7 @@ class RunRuntime implements ToolRuntime {
       RUNTIME_POLICY,
       this.scope.task_goal?.trim() ? `Authoritative ProductFlow Task goal:\n${this.scope.task_goal.trim()}` : "",
       `Runtime: ${RUNTIME_NAME}; API contract: ${API_VERSION}; context schema: ${CONTEXT_SCHEMA_VERSION}; skill catalog: ${this.manager.skills.hash}.`,
-      this.manager.skills.prompt,
+      this.manager.skills.promptForScope(this.scope.scope_type),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -1123,7 +1168,7 @@ class RunRuntime implements ToolRuntime {
         this.enqueue(() =>
           this.manager.store.setToolStep(this.scope.run_id, turnID, {
             step_id: event.toolCallId,
-            kind: toolStepKind(event.toolName),
+            kind: toolKind(event.toolName),
             summary: toolStepSummary(event.toolName),
             status: "running",
             tool_name: event.toolName,
@@ -1145,10 +1190,11 @@ class RunRuntime implements ToolRuntime {
         }
         this.activeToolStepDetails.delete(event.toolCallId);
         this.toolStepFailureDetails.delete(event.toolCallId);
+        const meta = resultMetaFromToolResult(event.result);
         this.enqueue(() =>
           this.manager.store.setToolStep(this.scope.run_id, turnID, {
             step_id: event.toolCallId,
-            kind: toolStepKind(event.toolName),
+            kind: toolKind(event.toolName),
             summary: event.toolName === "ask_user" && details?.output_summary
               ? details.output_summary
               : toolStepSummary(event.toolName),
@@ -1159,6 +1205,7 @@ class RunRuntime implements ToolRuntime {
                 : "succeeded",
             tool_name: event.toolName,
             ...(details ? { details } : {}),
+            ...(meta ? { meta } : {}),
           }),
         );
       }
@@ -1328,7 +1375,7 @@ class RunRuntime implements ToolRuntime {
     if (toolCallId) {
       await this.manager.store.setToolStep(this.scope.run_id, turnID, {
         step_id: toolCallId,
-        kind: toolStepKind("ask_user"),
+        kind: toolKind("ask_user"),
         summary: compactAskUserSummary(questionAnswerToolPayload(answer), []),
         status: "succeeded",
         tool_name: "ask_user",
@@ -1409,6 +1456,7 @@ class RunRuntime implements ToolRuntime {
       this.executionHeartbeat = undefined;
     }
     this.workflowRunRequested = false;
+    this.workflowApproval = undefined;
     this.currentPageType = null;
     this.attemptID = randomUUID();
     this.toolCount = 0;
@@ -1434,7 +1482,8 @@ class RunRuntime implements ToolRuntime {
 }
 
 function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup): Scope {
-  if (contract.schema_version !== 1 || contract.tool_contract_version !== TOOL_CONTRACT_VERSION) {
+  const expectedVersion = resolvedToolContractVersion(contract.draft_schema);
+  if (contract.schema_version !== 1 || contract.tool_contract_version !== expectedVersion) {
     throw new RuntimeError(
       502,
       "contract_mismatch",
@@ -1581,48 +1630,27 @@ function thinkingLevel(value: string | null | undefined): "off" | "minimal" | "l
   }
 }
 
-function toolStepKind(name: string): ToolStepKind {
-  if (name === PRODUCTFLOW_SKILL_TOOL_NAME) return "load_skill";
-  if (name === "ask_user") return "ask_question";
-  if (name === "propose_global_draft") return "propose_draft";
-  if (name === "apply_graph_change_set_v1") return "apply_graph";
-  if (name === "propose_graph_change_set_v1" || name === "discard_workflow_proposal_v1" || name.includes("graph_proposal")) return "propose_graph";
-  if (name === "cancel_workflow_run_v1" || name === "request_workflow_run_v1") return "request_workflow_run";
-  if (name === "create_product_workspace_v1") return "create_product";
-  if (name === "finalize_product_intake_v1") return "inspect_context";
-  if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
-  if (name.includes("rename") || name.includes("folder") || name.includes("move")) return "organize_assets";
-  return "inspect_context";
-}
+const TOOL_STEP_SUMMARIES: Record<ToolStepKind, string> = {
+  load_skill: "加载版本化 ProductFlow Skill 指令",
+  inject_context: "注入本轮 ProductFlow 上下文",
+  ask_question: "等待用户回答结构化问题",
+  inspect_image: "检查选中的商品图片",
+  propose_draft: "提交完整 ProductFlow 草案",
+  inspect_context: "读取 ProductFlow 当前上下文",
+  read_history: "读取有界历史信息",
+  organize_assets: "整理 ProductFlow 素材",
+  request_workflow_run: "请求执行工作流并等待确认",
+  create_product: "创建商品工作区",
+  apply_graph: "立即写入 live graph ChangeSet",
+  propose_graph: "提交未应用的图提案",
+  focus_canvas: "聚焦 live graph 画布选区",
+  expand_intake: "写入商品 intake 并展开出生图",
+  discard_proposal: "丢弃未应用的图提案",
+  cancel_run: "取消进行中的工作流运行",
+};
 
 function toolStepSummary(name: string): string {
-  switch (toolStepKind(name)) {
-    case "load_skill":
-      return "加载版本化 ProductFlow Skill 指令";
-    case "inject_context":
-      return "注入本轮 ProductFlow 上下文";
-    case "ask_question":
-      return "等待用户回答结构化问题";
-    case "inspect_image":
-      return "检查选中的商品图片";
-    case "propose_draft":
-      return "提交完整 ProductFlow 草案";
-    case "inspect_context":
-      return "读取 ProductFlow 当前上下文";
-    case "read_history":
-      return "读取有界历史信息";
-    case "organize_assets":
-      return "整理 ProductFlow 素材";
-    case "request_workflow_run":
-      return "请求执行工作流并等待确认";
-    case "create_product":
-      return "创建商品工作区";
-    case "apply_graph":
-      return "立即写入 live graph ChangeSet";
-    case "propose_graph":
-      return "提交未应用的图提案";
-  }
-  throw new Error(`unhandled ProductFlow tool step kind for ${name}`);
+  return TOOL_STEP_SUMMARIES[toolKind(name)];
 }
 
 function buildContextStepDetails(
@@ -1653,7 +1681,7 @@ function buildContextStepDetails(
 
 function toolStepDetailsForStart(name: string, args: unknown): ToolStepDetails {
   const argumentsObject = isRecord(args) ? args : {};
-  switch (toolStepKind(name)) {
+  switch (toolKind(name)) {
     case "load_skill":
       return {
         phase: "skill_load",
@@ -1690,30 +1718,42 @@ function toolStepDetailsForStart(name: string, args: unknown): ToolStepDetails {
     case "request_workflow_run":
       return { phase: "tool_result", input_summary: "准备工作流执行请求，等待用户确认。" };
     case "create_product":
-      return { phase: "tool_result", input_summary: "创建商品 onboarding 工作区。" };
+      return { phase: "tool_result", input_summary: "创建商品工作区。" };
     case "apply_graph":
       return { phase: "tool_result", input_summary: "立即把 Graph Command 写入 live graph。" };
     case "propose_graph":
       return { phase: "tool_result", input_summary: "提交未应用的图提案，等待确认。" };
+    case "focus_canvas":
+      return { phase: "tool_result", input_summary: "请求画布聚焦到指定节点、边或分组。" };
+    case "expand_intake":
+      return { phase: "tool_result", input_summary: "写入商品 intake 并展开摄影/信息图模板。" };
+    case "discard_proposal":
+      return { phase: "tool_result", input_summary: "丢弃当前未应用的图提案。" };
+    case "cancel_run":
+      return { phase: "tool_result", input_summary: "取消仍在运行的工作流。" };
     case "inject_context":
       return { phase: "context_injection" };
+    default:
+      return { phase: "tool_result", input_summary: `执行 ProductFlow 工具 ${name}。` };
   }
 }
 
 export function toolStepDetailsForResult(name: string, result: unknown, isError: boolean): ToolStepDetails | undefined {
   const resultObject = isRecord(result) ? result : {};
   const resultDetails = isRecord(resultObject.details) ? resultObject.details : {};
-  const kind = toolStepKind(name);
+  const kind = toolKind(name);
   if (isError) {
     return {
       phase: kind === "ask_question" ? "question" : kind === "load_skill" ? "skill_load" : "tool_result",
       output_summary: "工具调用失败，详情见错误信息。",
     };
   }
+  const journalMeta = projectJournalMeta(resultDetails);
   switch (kind) {
     case "load_skill": {
       const instructionExcerpt = safeDetailString(resultDetails.instruction_excerpt, 12_000, true);
       return {
+        ...journalMeta,
         phase: "skill_load",
         ...(safeDetailString(resultDetails.skill_name, 64) ? { skill_name: safeDetailString(resultDetails.skill_name, 64) } : {}),
         ...(safeDetailString(resultDetails.resource_path, 256)
@@ -1728,6 +1768,7 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
     }
     case "ask_question":
       return {
+        ...journalMeta,
         phase: "question",
         ...(safeDetailString(resultDetails.question_id, 120)
           ? { question_id: safeDetailString(resultDetails.question_id, 120) }
@@ -1738,6 +1779,7 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
       const includesNodeCatalog =
         name === "get_product_workflow_context_v1" || name === "inspect_global_workflow_context_v1";
       return {
+        ...journalMeta,
         phase: "tool_result",
         ...(includesNodeCatalog
           ? {
@@ -1756,24 +1798,111 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
       };
     }
     case "inspect_image":
-      return { phase: "tool_result", output_summary: "已读取选中图片的有界检查结果。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "已读取选中图片的有界检查结果。" };
     case "propose_draft":
-      return { phase: "tool_result", output_summary: "后端已接受完整草案，当前等待用户确认。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "后端已接受完整草案，当前等待用户确认。" };
     case "read_history":
-      return { phase: "tool_result", output_summary: "已读取有界历史摘要。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "已读取有界历史摘要。" };
     case "organize_assets":
-      return { phase: "tool_result", output_summary: "素材操作已返回 ProductFlow 结果。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "素材操作已返回 ProductFlow 结果。" };
     case "request_workflow_run":
-      return { phase: "tool_result", output_summary: "执行请求已准备，当前等待用户确认。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "执行请求已准备，当前等待用户确认。" };
     case "create_product":
-      return { phase: "tool_result", output_summary: "商品工作区创建结果已返回。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "商品工作区创建结果已返回。" };
     case "apply_graph":
-      return { phase: "tool_result", output_summary: "Graph Command 已写入 live graph。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "Graph Command 已写入 live graph。" };
     case "propose_graph":
-      return { phase: "tool_result", output_summary: "图提案已作为未应用幽灵预览提交。" };
+      return { ...journalMeta, phase: "tool_result", output_summary: "图提案已作为未应用幽灵预览提交。" };
+    case "focus_canvas":
+      return { ...journalMeta, phase: "tool_result", output_summary: "画布聚焦请求已记录。" };
+    case "expand_intake":
+      return { ...journalMeta, phase: "tool_result", output_summary: "商品 intake 已写入，出生图已展开。" };
+    case "discard_proposal":
+      return { ...journalMeta, phase: "tool_result", output_summary: "未应用的图提案已丢弃。" };
+    case "cancel_run":
+      return { ...journalMeta, phase: "tool_result", output_summary: "工作流取消请求已提交。" };
     case "inject_context":
-      return { phase: "context_injection", output_summary: "上下文已注入模型会话。" };
+      return { ...journalMeta, phase: "context_injection", output_summary: "上下文已注入模型会话。" };
   }
+}
+
+function projectJournalMeta(details: Record<string, unknown>): ToolStepDetails {
+  const projected: ToolStepDetails = {};
+  if (typeof details.truncated === "boolean") projected.truncated = details.truncated;
+  if (typeof details.pending_confirmation === "boolean") projected.pending_confirmation = details.pending_confirmation;
+  if (typeof details.reconciled === "boolean") projected.reconciled = details.reconciled;
+  if (details.response_format === "concise" || details.response_format === "detailed") {
+    projected.response_format = details.response_format;
+  }
+  copyJournalInteger(projected, details, "item_count", 128);
+  copyJournalInteger(projected, details, "node_count", 10_000);
+  copyJournalInteger(projected, details, "group_count", 10_000);
+  copyJournalInteger(projected, details, "asset_count", 100);
+  copyJournalInteger(projected, details, "expected_workflow_revision", 1_000_000, 1);
+  const workflowID = safeDetailString(details.workflow_id, 64);
+  if (workflowID) projected.workflow_id = workflowID;
+  const workflowTitle = safeDetailString(details.workflow_title, 240);
+  if (workflowTitle) projected.workflow_title = workflowTitle;
+  const summary = safeDetailString(details.summary, 240);
+  if (summary) projected.summary = summary;
+  const runID = safeDetailString(details.run_id, 64);
+  if (runID) projected.run_id = runID;
+  const proposalID = safeDetailString(details.proposal_id, 64);
+  if (proposalID) projected.proposal_id = proposalID;
+  const productID = safeDetailString(details.product_id, 64);
+  if (productID) projected.product_id = productID;
+  const requestID = safeDetailString(details.request_id, 64);
+  if (requestID) projected.request_id = requestID;
+  const artifactName = safeDetailString(details.artifact_name, 120);
+  if (artifactName) projected.artifact_name = artifactName;
+  if (typeof details.product_workspace_created === "boolean") {
+    projected.product_workspace_created = details.product_workspace_created;
+  }
+  const operations = journalStringList(details.operation_summaries, 16, 160, false);
+  if (operations) projected.operation_summaries = operations;
+  const nodes = journalStringList(details.affected_node_ids, 20, 80, true);
+  if (nodes) projected.affected_node_ids = nodes;
+  const edges = journalStringList(details.affected_edge_ids, 20, 80, true);
+  if (edges) projected.affected_edge_ids = edges;
+  const groups = journalStringList(details.affected_group_ids, 20, 80, true);
+  if (groups) projected.affected_group_ids = groups;
+  return projected;
+}
+
+function copyJournalInteger(
+  target: ToolStepDetails,
+  details: Record<string, unknown>,
+  key: "item_count" | "node_count" | "group_count" | "asset_count" | "expected_workflow_revision",
+  maximum: number,
+  minimum = 0,
+): void {
+  const value = details[key];
+  if (typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum) {
+    target[key] = value;
+  }
+}
+
+function journalStringList(
+  value: unknown,
+  maxItems: number,
+  maxLength: number,
+  unique: boolean,
+): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const items = value.flatMap((item) => {
+    if (typeof item !== "string") return [];
+    const trimmed = item.trim();
+    if (!trimmed || trimmed.length > maxLength || /[\r\n]/u.test(trimmed)) return [];
+    return [trimmed];
+  }).slice(0, maxItems);
+  const result = unique ? [...new Set(items)] : items;
+  return result.length ? result : undefined;
+}
+
+function resultMetaFromToolResult(result: unknown): JsonObject | undefined {
+  if (!isRecord(result) || !isRecord(result.details)) return undefined;
+  const projected = projectJournalMeta(result.details);
+  return Object.keys(projected).length ? projected as JsonObject : undefined;
 }
 
 function mergeToolStepDetails(

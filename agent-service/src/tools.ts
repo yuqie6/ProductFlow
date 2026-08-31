@@ -1,8 +1,8 @@
 /**
  * 暴露给 Pi 的 ProductFlow 工具。
  *
- * 业务变更走 ProductFlow HTTP，并写 intent/result checkpoint。
- * 无法对账的 5xx 记 unknown，不能猜成 failed。
+ * 名称、描述、schema、效果等级来自 tool-manifest.ts。
+ * 业务变更走 ProductFlow HTTP；mutate 经 withEffect 统一对账。
  * `load_productflow_skill` 只读打包好的说明，不碰业务数据。
  */
 
@@ -11,53 +11,43 @@ import {
   type AgentToolResult,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import type { TSchema } from "typebox";
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import {
   CheckpointKind,
   JsonObject,
-  MAX_PRODUCT_CONTEXT_BYTES,
   ProductFlowError,
   questionAnswerToolPayload,
   Scope,
   TurnAnswer,
-  TurnArtifact,
   TurnQuestion,
   ToolStepDetails,
-  toolKind,
+  assertToolManifestCoverage,
 } from "./contracts.js";
 import {
   PreparedWorkflowRunRequest,
   ProductFlowClient,
-  ReconcileResult,
 } from "./productflow.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME } from "./skills.js";
-import { applyGraphChangeSetParameters, proposeGraphChangeSetParameters } from "./graph-command-schema.js";
+import {
+  expectedToolNamesForScope,
+  toolDescription,
+  toolParameters,
+  type ToolName,
+  type ToolParams,
+} from "./tool-manifest.js";
+import { withEffect, type EffectRuntime } from "./tool-effect.js";
+import { encodeSkillResult, encodeToolResult } from "./tool-result.js";
 
 const MAX_INSPECTED_ASSETS = 6;
 const MAX_TOTAL_IMAGE_BYTES = 20 << 20;
-const MAX_TOOL_TEXT_BYTES = 96 << 10;
 const MAX_SKILL_INSTRUCTION_EXCERPT_BYTES = 12 << 10;
-const MAX_LISTED_ASSETS = 100;
-const MAX_LISTED_WORKFLOW_RUNS = 20;
-const MAX_GLOBAL_PRODUCTS = 100;
 const MAX_GLOBAL_PRODUCT_INSPECTION = 20;
 const MAX_GLOBAL_WORKFLOW_INSPECTION = 20;
-const MAX_GLOBAL_WORKFLOW_RUNS = 10;
-
-const EMPTY_OBJECT = Type.Object({}, { additionalProperties: false });
-const pagination = (maximum: number) =>
-  Type.Object(
-    {
-      query: Type.String({ maxLength: 255 }),
-      cursor: Type.String({ maxLength: 4096 }),
-      limit: Type.Integer({ minimum: 1, maximum }),
-    },
-    { additionalProperties: false },
-  );
+const MAX_CANVAS_FOCUS_ITEMS = 20;
 
 /** 工具层用来写 checkpoint、等待用户、以及标记无法证明副作用的回调。 */
-export interface ToolRuntime {
+export interface ToolRuntime extends EffectRuntime {
   readonly client: ProductFlowClient;
   readonly scope: Scope;
   readonly pageType?: string | null;
@@ -65,357 +55,185 @@ export interface ToolRuntime {
   loadSkill(name: string, resourcePath?: string): Promise<string>;
   recordToolFailure(toolCallID: string, details: ToolStepDetails): void;
   askUser(question: TurnQuestion): Promise<TurnAnswer>;
-  proposeArtifact(artifact: TurnArtifact): Promise<void>;
-  markWorkflowRunRequested(): void;
-  checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void>;
-  markEffectUnknown(toolCallID: string, reason?: string): void;
-  idempotencyKey(toolCallID: string): string;
 }
 
 type Result = AgentToolResult<JsonObject>;
 
 /** 为当前 Turn 组装 Pi 工具列表；工具只能看见本 runtime 的 scope。 */
 export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
-  const tools: ToolDefinition[] = [
-    defineTool({
-      name: PRODUCTFLOW_SKILL_TOOL_NAME,
-      label: "Load ProductFlow skill",
-      description:
-        "Load one exact, versioned ProductFlow Skill when its description matches the task. This reads only packaged instructions or static references; it cannot access business data, storage, providers, databases, or execute scripts.",
-      promptSnippet: "Load matching ProductFlow Skill instructions",
-      parameters: Type.Object(
-        {
-          skill_name: Type.String({ minLength: 1, maxLength: 64 }),
-          resource_path: Type.Optional(Type.String({ maxLength: 256 })),
-        },
-        { additionalProperties: false },
-      ),
-      execute: async (
-        _toolCallID: string,
-        params: { skill_name: string; resource_path?: string },
-      ): Promise<Result> => {
-        const name = params.skill_name.trim();
-        const resourcePath = params.resource_path?.trim() || undefined;
-        const content = await runtime.loadSkill(name, resourcePath);
-        const instructionDetails = buildSkillInstructionDetails(content);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `ProductFlow Skill: ${name}${resourcePath ? `\nResource: ${resourcePath}` : ""}\n\n${content}`,
-            },
-          ],
-          details: {
-            skill_name: name,
-            ...(resourcePath ? { resource_path: resourcePath } : {}),
-            ...instructionDetails,
-          },
-        };
-      },
-    }),
-    defineTool({
-      name: "ask_user",
-      label: "Ask user",
-      description:
-        "Ask one focused clarification question when a missing product fact or explicit choice changes the result. Stop and wait for the user's answer.",
-      promptSnippet: "Ask one bounded clarification question",
-      parameters: Type.Object(
-        {
-          header: Type.String({ minLength: 1, maxLength: 32 }),
-          question: Type.String({ minLength: 1, maxLength: 2000 }),
-          options: Type.Array(
-            Type.Object(
-              {
-                label: Type.String({ minLength: 1, maxLength: 80 }),
-                description: Type.Optional(Type.String({ maxLength: 240 })),
-              },
-              { additionalProperties: false },
-            ),
-            { minItems: 2, maxItems: 5 },
-          ),
-        },
-        { additionalProperties: false },
-      ),
-      execute: async (
-        _toolCallID: string,
-        params: { header: string; question: string; options: Array<{ label: string; description?: string }> },
-      ): Promise<Result> => {
-        const question: TurnQuestion = {
-          id: `question_${crypto.randomUUID()}`,
-          header: params.header.trim(),
-          question: params.question.trim(),
-          options: params.options.map((option) => ({
-            label: option.label.trim(),
-            ...(option.description?.trim() ? { description: option.description.trim() } : {}),
-          })),
-        };
-        const answer = await runtime.askUser(question);
-        return textResult(questionAnswerToolPayload(answer), { question_id: question.id });
-      },
-    }),
-    defineTool({
-      name: "get_product_workflow_context_v1",
-      label: "Read product context",
-      description:
-        "Read current bounded product facts, intake, live graph summary, birth_expandable, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
-      promptSnippet: "Read current product, workflow facts, and node catalog",
-      parameters: EMPTY_OBJECT,
-      execute: async (): Promise<Result> =>
-        productContextResult(await runtime.client.productContext(runtime.scope.conversation_id, runtime.signal)),
-    }),
-    defineTool({
-      name: "inspect_workflow_runs_v1",
-      label: "Inspect workflow runs",
-      description:
-        "Read a bounded list of recent WorkflowRun and WorkflowNodeRun statuses for the current product workflow. This never starts, cancels, or retries a run.",
-      parameters: Type.Object(
-        { limit: Type.Integer({ minimum: 1, maximum: MAX_LISTED_WORKFLOW_RUNS }) },
-        { additionalProperties: false },
-      ),
-      execute: async (_toolCallID: string, params: { limit: number }): Promise<Result> =>
-        textResult(await runtime.client.workflowRuns(runtime.scope.conversation_id, params.limit, runtime.signal)),
-    }),
-    defineTool({
-      name: "list_product_image_assets_v2",
-      label: "List product images",
-      description:
-        "List one bounded page of image metadata from the current product. This never returns image bytes or URLs.",
-      promptSnippet: "List bounded product image metadata",
-      parameters: Type.Object(
-        {
-          directory_kind: Type.Union([
-            Type.Literal("all"),
-            Type.Literal("recent_generated"),
-            Type.Literal("uploads"),
-            Type.Literal("generated"),
-            Type.Literal("image_type"),
-            Type.Literal("source"),
-            Type.Literal("unorganized"),
-            Type.Literal("user_folder"),
-          ]),
-          directory_key: Type.Union([Type.String({ maxLength: 120 }), Type.Null()]),
-          query: Type.String({ maxLength: 255 }),
-          sort: Type.Union([
-            Type.Literal("created_desc"),
-            Type.Literal("created_asc"),
-            Type.Literal("name_asc"),
-            Type.Literal("name_desc"),
-          ]),
-          after: Type.String({ maxLength: 1024 }),
-          limit: Type.Integer({ minimum: 1, maximum: MAX_LISTED_ASSETS }),
-        },
-        { additionalProperties: false },
-      ),
-      execute: async (
-        _toolCallID: string,
-        params: { directory_kind: string; directory_key: string | null; query: string; sort: string; after: string; limit: number },
-      ): Promise<Result> =>
-        textResult(
-          await runtime.client.listAssets(
-            runtime.scope.conversation_id,
-            { ...params, directory_key: params.directory_key },
-            runtime.signal,
-          ),
-        ),
-    }),
-    createImageInspectionTool(runtime, false),
-    createWorkflowRunRequestTool(runtime, false),
-    createProductIntakeTool(runtime),
-  ];
+  const shared: ToolDefinition[] = [createSkillTool(runtime), createAskUserTool(runtime)];
+  const tools: ToolDefinition[] = runtime.scope.scope_type === "product_workflow"
+    ? [
+      ...shared,
+      createProductContextTool(runtime),
+      createWorkflowRunsTool(runtime),
+      createWorkflowRunDetailTool(runtime),
+      createProductImageListTool(runtime),
+      createImageInspectionTool(runtime, false),
+      createWorkflowRunRequestTool(runtime, false),
+      createProductIntakeTool(runtime),
+      ...(runtime.scope.has_live_graph
+        ? [
+          createGetNodeDetailTool(runtime),
+          createApplyGraphChangeSetTool(runtime),
+          createProposeGraphChangeSetTool(runtime),
+          createDiscardWorkflowProposalTool(runtime),
+          createCancelWorkflowRunTool(runtime),
+          createFocusCanvasItemsTool(runtime),
+        ]
+        : []),
+    ]
+    : [
+      ...shared,
+      createGlobalProductListTool(runtime),
+      createGlobalProductInspectTool(runtime),
+      createGlobalWorkflowContextTool(runtime),
+      createGlobalWorkflowRunsTool(runtime),
+      createWorkflowRunDetailTool(runtime),
+      createGlobalMediaListTool(runtime),
+      createImageInspectionTool(runtime, true),
+      createGlobalWorkspaceTool(runtime),
+      createWorkflowRunRequestTool(runtime, true),
+      createDraftTool(runtime, runtime.scope.draft_schema),
+    ];
+  assertToolManifestCoverage(
+    tools.map((tool) => tool.name),
+    expectedToolNamesForScope(runtime.scope.scope_type, runtime.scope.has_live_graph),
+  );
+  return tools;
+}
 
-  if (runtime.scope.scope_type === "product_workflow") {
-    if (runtime.scope.has_live_graph) {
-      tools.push(
-        createGetNodeDetailTool(runtime),
-        createApplyGraphChangeSetTool(runtime),
-        createProposeGraphChangeSetTool(runtime),
-        createDiscardWorkflowProposalTool(runtime),
-        createCancelWorkflowRunTool(runtime),
-        createFocusCanvasItemsTool(runtime),
+function createSkillTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("load_productflow_skill", {
+    label: "Load ProductFlow skill",
+    promptSnippet: "Load matching ProductFlow Skill instructions",
+    execute: async (_toolCallID, params: ToolParams<"load_productflow_skill">): Promise<Result> => {
+      const name = params.skill_name.trim();
+      const resourcePath = params.resource_path?.trim() || undefined;
+      const content = await runtime.loadSkill(name, resourcePath);
+      return encodeSkillResult("load_productflow_skill", `ProductFlow Skill: ${name}${resourcePath ? `\nResource: ${resourcePath}` : ""}\n\n${content}`, {
+        skill_name: name,
+        ...(resourcePath ? { resource_path: resourcePath } : {}),
+        ...buildSkillInstructionDetails(content),
+      });
+    },
+  });
+}
+
+function createAskUserTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("ask_user", {
+    label: "Ask user",
+    promptSnippet: "Ask one bounded clarification question",
+    execute: async (_toolCallID, params: ToolParams<"ask_user">): Promise<Result> => {
+      const question: TurnQuestion = {
+        id: `question_${crypto.randomUUID()}`,
+        header: params.header.trim(),
+        question: params.question.trim(),
+        options: params.options.map((option) => ({
+          label: option.label.trim(),
+          ...(option.description?.trim() ? { description: option.description.trim() } : {}),
+        })),
+      };
+      const answer = await runtime.askUser(question);
+      return encodeToolResult("ask_user", questionAnswerToolPayload(answer), { question_id: question.id });
+    },
+  });
+}
+
+function createProductContextTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("get_product_workflow_context_v1", {
+    label: "Read product context",
+    promptSnippet: "Read current product, workflow facts, and node catalog",
+    execute: async (_toolCallID, params: ToolParams<"get_product_workflow_context_v1"> = {}): Promise<Result> => {
+      const responseFormat = params.response_format ?? "concise";
+      return encodeToolResult(
+        "get_product_workflow_context_v1",
+        await runtime.client.productContext(runtime.scope.conversation_id, runtime.signal, responseFormat),
+        { response_format: responseFormat },
       );
-    }
-    return tools.filter((tool) => !tool.name.startsWith("global_"));
-  }
+    },
+  });
+}
 
-  const globalTools: ToolDefinition[] = [
-    createGlobalProductListTool(runtime),
-    createGlobalProductInspectTool(runtime),
-    createGlobalWorkflowContextTool(runtime),
-    createGlobalWorkflowRunsTool(runtime),
-    createGlobalMediaListTool(runtime),
-    createImageInspectionTool(runtime, true),
-    createGlobalWorkspaceTool(runtime),
-    createWorkflowRunRequestTool(runtime, true),
-    createDraftTool(runtime, "propose_global_draft", "Propose global draft", runtime.scope.draft_schema),
-    tools.find((tool) => tool.name === PRODUCTFLOW_SKILL_TOOL_NAME)!,
-    tools.find((tool) => tool.name === "ask_user")!,
-  ];
-  return globalTools;
+function createWorkflowRunsTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("inspect_workflow_runs_v1", {
+    label: "Inspect workflow runs",
+    execute: async (_toolCallID, params: ToolParams<"inspect_workflow_runs_v1">): Promise<Result> =>
+      encodeToolResult(
+        "inspect_workflow_runs_v1",
+        await runtime.client.workflowRuns(runtime.scope.conversation_id, params.limit, runtime.signal),
+      ),
+  });
+}
+
+function createProductImageListTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("list_product_image_assets_v2", {
+    label: "List product images",
+    promptSnippet: "List bounded product image metadata",
+    execute: async (_toolCallID, params: ToolParams<"list_product_image_assets_v2">): Promise<Result> =>
+      encodeToolResult(
+        "list_product_image_assets_v2",
+        await runtime.client.listAssets(
+          runtime.scope.conversation_id,
+          {
+            directory_kind: params.directory_kind,
+            directory_key: params.directory_key ?? null,
+            query: params.query ?? "",
+            sort: params.sort ?? "created_desc",
+            after: params.after ?? "",
+            limit: params.limit,
+          },
+          runtime.signal,
+        ),
+      ),
+  });
 }
 
 function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "finalize_product_intake_v1",
+  return productFlowTool("finalize_product_intake_v1", {
     label: "Save product intake",
-    description:
-      "Persist image types and already-uploaded reference asset IDs as this product's intake, then expand a name-only live graph into the photography/infographic template (one group + prompt + N image nodes per generating type). Do not use propose_graph_change_set_v1 to invent a first complete topology. This does not start a run.",
-    parameters: Type.Object(
-      {
-        selection: Type.Object(
-          {
-            schema_version: Type.Literal(1),
-            delivery_preset_key: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
-            image_types: Type.Array(
-              Type.Object(
-                {
-                  key: Type.String({ minLength: 1, maxLength: 64 }),
-                  quantity: Type.Integer({ minimum: 1, maximum: 6 }),
-                  order: Type.Integer({ minimum: 0 }),
-                },
-                { additionalProperties: false },
-              ),
-              { minItems: 1, maxItems: 15 },
-            ),
-          },
-          { additionalProperties: false },
-        ),
-        reference_asset_ids: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { minItems: 1, maxItems: 6 }),
-      },
-      { additionalProperties: false },
-    ),
-    execute: async (
-      toolCallID: string,
-      params: {
-        selection: {
-          schema_version: 1;
-          delivery_preset_key?: string;
-          image_types: Array<{ key: string; quantity: number; order: number }>;
-        };
-        reference_asset_ids: string[];
-      },
-    ): Promise<Result> => {
-      const idempotencyKey = runtime.idempotencyKey(toolCallID);
+    execute: async (toolCallID, params: ToolParams<"finalize_product_intake_v1">): Promise<Result> => {
       const body = {
         selection: params.selection,
         reference_asset_ids: uniqueIDs(params.reference_asset_ids, 6),
         task_id: runtime.scope.task_id,
       };
-      await runtime.checkpoint("tool_effect_intent", {
-        tool_name: "finalize_product_intake_v1",
-        tool_call_id: toolCallID,
-        idempotency_key: idempotencyKey,
-        selection: body.selection,
-        reference_asset_ids: body.reference_asset_ids,
+      return withEffect(runtime, "finalize_product_intake_v1", toolCallID, {
+        intentPayload: jsonObject({ selection: body.selection, reference_asset_ids: body.reference_asset_ids }),
+        mutate: (idempotencyKey) =>
+          runtime.client.finalizeProductIntake(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileProductIntake(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
+        unknownReason: "Product intake result is unknown",
+        resultMeta: intakeResultMeta,
       });
-      try {
-        const result = await runtime.client.finalizeProductIntake(
-          runtime.scope.conversation_id,
-          body,
-          idempotencyKey,
-          runtime.signal,
-        );
-        await runtime.checkpoint("tool_effect_result", {
-          tool_name: "finalize_product_intake_v1",
-          tool_call_id: toolCallID,
-          idempotency_key: idempotencyKey,
-          result: "applied",
-        });
-        return textResult(result);
-      } catch (error) {
-        // 客户端 4xx 是已证明的失败。5xx 可能已经生效，必须先对账再决定 failed 还是 unknown。
-        if (!(error instanceof ProductFlowError) || error.status < 500) {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "finalize_product_intake_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "failed",
-          });
-          throw error;
-        }
-        let reconciled: ReconcileResult;
-        try {
-          reconciled = await runtime.client.reconcileProductIntake(
-            runtime.scope.conversation_id,
-            body,
-            idempotencyKey,
-            runtime.signal,
-          );
-        } catch (reconcileError) {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "finalize_product_intake_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "unavailable",
-            },
-            "Product intake result is unknown",
-          );
-          throw reconcileError;
-        }
-        if (reconciled.state === "applied") {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "finalize_product_intake_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "applied",
-          });
-          return textResult(reconciled.result ?? { accepted: true, intake_finalized: true });
-        }
-        if (reconciled.state === "not_applied" || reconciled.state === "conflict") {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "finalize_product_intake_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "failed",
-            reconciliation_state: reconciled.state,
-          });
-          throw error;
-        }
-        await recordUnknownEffect(
-          runtime,
-          toolCallID,
-          {
-            tool_name: "finalize_product_intake_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "unknown",
-            reconciliation_state: reconciled.state,
-          },
-          "Product intake result is unknown",
-        );
-        throw error;
-      }
     },
   });
 }
 
 function createGlobalProductListTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "list_products_v1",
+  return productFlowTool("list_products_v1", {
     label: "List products",
-    description:
-      "List one bounded page of ProductFlow products and active workflow summaries. This is read-only and excludes image URLs and node configuration.",
-    parameters: pagination(MAX_GLOBAL_PRODUCTS),
-    execute: async (_toolCallID: string, params: { query: string; cursor: string; limit: number }): Promise<Result> =>
-      textResult(await runtime.client.listProducts(runtime.scope.conversation_id, params.query, params.cursor, params.limit, runtime.signal)),
+    execute: async (_toolCallID, params: ToolParams<"list_products_v1">): Promise<Result> =>
+      encodeToolResult(
+        "list_products_v1",
+        await runtime.client.listProducts(
+          runtime.scope.conversation_id,
+          params.query ?? "",
+          params.cursor ?? "",
+          params.limit,
+          runtime.signal,
+        ),
+      ),
   });
 }
 
 function createGlobalProductInspectTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "inspect_products_v1",
+  return productFlowTool("inspect_products_v1", {
     label: "Inspect products",
-    description:
-      "Inspect up to twenty explicitly selected products and their current active workflow summaries. This is read-only.",
-    parameters: Type.Object(
-      { product_ids: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { minItems: 1, maxItems: MAX_GLOBAL_PRODUCT_INSPECTION }) },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallID: string, params: { product_ids: string[] }): Promise<Result> =>
-      textResult(
+    execute: async (_toolCallID, params: ToolParams<"inspect_products_v1">): Promise<Result> =>
+      encodeToolResult(
+        "inspect_products_v1",
         await runtime.client.inspectProducts(
           runtime.scope.conversation_id,
           uniqueIDs(params.product_ids, MAX_GLOBAL_PRODUCT_INSPECTION),
@@ -426,37 +244,30 @@ function createGlobalProductInspectTool(runtime: ToolRuntime): ToolDefinition {
 }
 
 function createGlobalWorkflowContextTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "inspect_global_workflow_context_v1",
+  return productFlowTool("inspect_global_workflow_context_v1", {
     label: "Inspect product workflow",
-    description:
-      "Read the bounded live-graph context for one explicit product, including intake, reference assets, and Node Catalog config_fields. Inspector forms and node config writes use this same catalog. This is read-only.",
-    parameters: Type.Object(
-      { product_id: Type.String({ minLength: 1, maxLength: 64 }) },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallID: string, params: { product_id: string }): Promise<Result> =>
-      productContextResult(
-        await runtime.client.globalWorkflowContext(runtime.scope.conversation_id, params.product_id.trim(), runtime.signal),
-      ),
+    execute: async (_toolCallID, params: ToolParams<"inspect_global_workflow_context_v1">): Promise<Result> => {
+      const responseFormat = params.response_format ?? "concise";
+      return encodeToolResult(
+        "inspect_global_workflow_context_v1",
+        await runtime.client.globalWorkflowContext(
+          runtime.scope.conversation_id,
+          params.product_id.trim(),
+          runtime.signal,
+          responseFormat,
+        ),
+        { response_format: responseFormat },
+      );
+    },
   });
 }
 
 function createGlobalWorkflowRunsTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "inspect_global_workflow_runs_v1",
+  return productFlowTool("inspect_global_workflow_runs_v1", {
     label: "Inspect workflow history",
-    description:
-      "Inspect recent WorkflowRun status summaries for explicitly selected workflows. This never starts, cancels, or retries a run.",
-    parameters: Type.Object(
-      {
-        workflow_ids: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { minItems: 1, maxItems: MAX_GLOBAL_WORKFLOW_INSPECTION }),
-        limit: Type.Integer({ minimum: 1, maximum: MAX_GLOBAL_WORKFLOW_RUNS }),
-      },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallID: string, params: { workflow_ids: string[]; limit: number }): Promise<Result> =>
-      textResult(
+    execute: async (_toolCallID, params: ToolParams<"inspect_global_workflow_runs_v1">): Promise<Result> =>
+      encodeToolResult(
+        "inspect_global_workflow_runs_v1",
         await runtime.client.inspectGlobalWorkflowRuns(
           runtime.scope.conversation_id,
           uniqueIDs(params.workflow_ids, MAX_GLOBAL_WORKFLOW_INSPECTION),
@@ -468,18 +279,15 @@ function createGlobalWorkflowRunsTool(runtime: ToolRuntime): ToolDefinition {
 }
 
 function createGlobalMediaListTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "list_global_media_library_assets_v1",
+  return productFlowTool("list_global_media_library_assets_v1", {
     label: "List media assets",
-    description:
-      "List one bounded page of canonical global media-library metadata. This never returns image bytes or URLs.",
-    parameters: pagination(MAX_LISTED_ASSETS),
-    execute: async (_toolCallID: string, params: { query: string; cursor: string; limit: number }): Promise<Result> =>
-      textResult(
+    execute: async (_toolCallID, params: ToolParams<"list_global_media_library_assets_v1">): Promise<Result> =>
+      encodeToolResult(
+        "list_global_media_library_assets_v1",
         await runtime.client.listGlobalMediaAssets(
           runtime.scope.conversation_id,
-          params.query,
-          params.cursor,
+          params.query ?? "",
+          params.cursor ?? "",
           params.limit,
           runtime.signal,
         ),
@@ -488,17 +296,10 @@ function createGlobalMediaListTool(runtime: ToolRuntime): ToolDefinition {
 }
 
 function createImageInspectionTool(runtime: ToolRuntime, global: boolean): ToolDefinition {
-  return defineTool({
-    name: global ? "inspect_global_media_library_assets_v1" : "inspect_product_image_assets_v1",
+  const name = global ? "inspect_global_media_library_assets_v1" : "inspect_product_image_assets_v1";
+  return productFlowTool(name, {
     label: global ? "Inspect media images" : "Inspect product images",
-    description: global
-      ? "Inspect up to six explicitly selected global media assets as bounded native multimodal content."
-      : "Inspect up to six explicitly selected product image assets as bounded native multimodal content.",
-    parameters: Type.Object(
-      { asset_ids: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { minItems: 1, maxItems: MAX_INSPECTED_ASSETS }) },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallID: string, params: { asset_ids: string[] }): Promise<Result> => {
+    execute: async (_toolCallID, params: ToolParams<"inspect_product_image_assets_v1">): Promise<Result> => {
       const assetIDs = uniqueIDs(params.asset_ids, MAX_INSPECTED_ASSETS);
       const metadata = global
         ? await runtime.client.inspectGlobalMediaAssets(runtime.scope.conversation_id, assetIDs, runtime.signal)
@@ -507,414 +308,223 @@ function createImageInspectionTool(runtime: ToolRuntime, global: boolean): ToolD
       if (byID.size !== assetIDs.length || assetIDs.some((assetID) => !byID.has(assetID))) {
         throw new Error("ProductFlow returned an incomplete asset inspection result");
       }
-      const contents: Array<{ type: "text"; text: string } | ImageContent> = [
-        { type: "text", text: boundedJSON(metadata) },
-      ];
+      const images: ImageContent[] = [];
       let totalBytes = 0;
       for (const assetID of assetIDs) {
-        const image = global
-          ? await runtime.client.assetContent(runtime.scope.conversation_id, assetID, true, runtime.signal)
-          : await runtime.client.assetContent(runtime.scope.conversation_id, assetID, false, runtime.signal);
+        const image = await runtime.client.assetContent(runtime.scope.conversation_id, assetID, global, runtime.signal);
         totalBytes += image.sizeBytes;
         if (totalBytes > MAX_TOTAL_IMAGE_BYTES) throw new Error("selected asset bytes exceed the tool result limit");
-        contents.push({ type: "image", data: image.data, mimeType: image.mediaType });
+        images.push({ type: "image", data: image.data, mimeType: image.mediaType });
       }
-      return { content: contents, details: { kind: toolKind(global ? "media" : "asset"), asset_count: assetIDs.length } };
+      return encodeToolResult(name, metadata, { asset_count: assetIDs.length }, { images });
     },
   });
 }
 
 function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): ToolDefinition {
-  const parameters = global
-    ? Type.Object(
-      {
-        product_id: Type.String({ minLength: 1, maxLength: 64 }),
-        workflow_id: Type.String({ minLength: 1, maxLength: 64 }),
-        expected_workflow_revision: Type.Integer({ minimum: 1 }),
-        source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
-      },
-      { additionalProperties: false },
-    )
-    : Type.Object(
-      {
-        expected_workflow_revision: Type.Integer({ minimum: 1 }),
-        source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
-      },
-      { additionalProperties: false },
-    );
-  return defineTool({
-    name: "request_workflow_run_v1",
+  const name = global ? "request_global_workflow_run_v1" : "request_workflow_run_v1";
+  return productFlowTool(name, {
     label: "Request workflow run",
-    description: global
-      ? "Create a pending request for one explicit product workflow. ProductFlow requires human confirmation; this never starts a WorkflowRun."
-      : "Create a pending request for the current workflow. ProductFlow requires human confirmation; this never starts a WorkflowRun.",
-    parameters,
-    execute: async (toolCallID: string, params: Record<string, unknown>): Promise<Result> => {
+    execute: async (
+      toolCallID,
+      params: ToolParams<"request_workflow_run_v1"> | ToolParams<"request_global_workflow_run_v1">,
+    ): Promise<Result> => {
       const taskID = runtime.scope.task_id;
-      const sourceRunID = typeof params.source_run_id === "string" ? params.source_run_id : null;
-      const expectedRevision = Number(params.expected_workflow_revision);
-      let prepared: PreparedWorkflowRunRequest;
-      if (global) {
-        prepared = await runtime.client.prepareGlobalWorkflowRunRequest(
+      const sourceRunID = params.source_run_id ?? null;
+      const expectedRevision = params.expected_workflow_revision;
+      const scope = params.scope;
+      const nodeID = params.node_id;
+      const nodeIDs = params.node_ids;
+      let prepared: PreparedWorkflowRunRequest = global
+        ? await runtime.client.prepareGlobalWorkflowRunRequest(
           runtime.scope.conversation_id,
           {
-            product_id: String(params.product_id),
-            workflow_id: String(params.workflow_id),
+            product_id: "product_id" in params ? params.product_id : "",
+            workflow_id: "workflow_id" in params ? params.workflow_id : "",
             expected_workflow_revision: expectedRevision,
             task_id: taskID,
             source_run_id: sourceRunID,
           },
           runtime.signal,
-        );
-      } else {
-        prepared = await runtime.client.prepareWorkflowRunRequest(
+        )
+        : await runtime.client.prepareWorkflowRunRequest(
           runtime.scope.conversation_id,
           { expected_workflow_revision: expectedRevision, task_id: taskID, source_run_id: sourceRunID },
           runtime.signal,
         );
-      }
-      const idempotencyKey = runtime.idempotencyKey(toolCallID);
-      await runtime.checkpoint("tool_effect_intent", {
-        tool_name: "request_workflow_run_v1",
-        tool_call_id: toolCallID,
-        idempotency_key: idempotencyKey,
-        product_id: prepared.product_id,
-        task_id: prepared.task_id,
-        workflow_id: prepared.workflow_id,
-        workflow_revision: prepared.workflow_revision,
-        source_run_id: prepared.source_run_id ?? null,
-      });
-      try {
-        const result = global
-          ? await runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
-          : await runtime.client.executeWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal);
-        await runtime.checkpoint("external_job_submitted", {
-          tool_name: "request_workflow_run_v1",
-          tool_call_id: toolCallID,
-          idempotency_key: idempotencyKey,
+      prepared = { ...prepared, scope, node_id: nodeID, node_ids: nodeIDs };
+      return withEffect(runtime, name, toolCallID, {
+        intentPayload: {
+          product_id: prepared.product_id,
+          task_id: prepared.task_id,
           workflow_id: prepared.workflow_id,
-        });
-        await runtime.checkpoint("tool_effect_result", {
-          tool_name: "request_workflow_run_v1",
-          tool_call_id: toolCallID,
-          idempotency_key: idempotencyKey,
-          result: "applied",
-        });
-        runtime.markWorkflowRunRequested();
-        return { ...textResult(result, { pending_confirmation: true, request_idempotency_key: idempotencyKey }), terminate: true };
-      } catch (error) {
-        let reconciled: ReconcileResult;
-        try {
-          reconciled = global
-            ? await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, true, runtime.signal)
-            : await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, false, runtime.signal);
-        } catch (reconcileError) {
-          await recordUnknownEffect(
-            runtime,
+          workflow_revision: prepared.workflow_revision,
+          source_run_id: prepared.source_run_id ?? null,
+        },
+        mutate: (idempotencyKey) =>
+          global
+            ? runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
+            : runtime.client.executeWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileWorkflowRunRequest(
+            runtime.scope.conversation_id,
+            prepared,
             toolCallID,
-            {
-              tool_name: "request_workflow_run_v1",
+            idempotencyKey,
+            global,
+            runtime.signal,
+          ),
+        unknownReason: "WorkflowRun request result is unknown",
+        afterAppliedCheckpoints: [
+          {
+            kind: "external_job_submitted",
+            payload: {
+              tool_name: name,
               tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "unavailable",
+              idempotency_key: runtime.idempotencyKey(toolCallID),
+              workflow_id: prepared.workflow_id,
             },
-            "WorkflowRun request reconciliation failed",
-          );
-          throw reconcileError;
-        }
-        if (reconciled.state === "applied") {
-          if (reconciled.result === undefined) {
-            await recordUnknownEffect(
-              runtime,
-              toolCallID,
-              {
-                tool_name: "request_workflow_run_v1",
-                tool_call_id: toolCallID,
-                idempotency_key: idempotencyKey,
-                result: "unknown",
-                reconciliation_state: "invalid_applied_result",
-              },
-              "WorkflowRun request reconciliation returned an incomplete applied result",
-            );
-            throw new ProductFlowError(502, "reconciliation_invalid", "WorkflowRun request reconciliation returned an incomplete result");
-          }
-          await runtime.checkpoint("external_job_submitted", {
-            tool_name: "request_workflow_run_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
+          },
+        ],
+        onApplied: (_result, idempotencyKey) => {
+          runtime.requestApproval({
+            approval_id: idempotencyKey,
+            approval_kind: "workflow_run",
+            request_idempotency_key: idempotencyKey,
             workflow_id: prepared.workflow_id,
+            task_id: prepared.task_id,
           });
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "request_workflow_run_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "applied",
-          });
-          runtime.markWorkflowRunRequested();
-          return { ...textResult(reconciled.result, { pending_confirmation: true, reconciled: true }), terminate: true };
-        }
-        if (reconciled.state === "unknown") {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "request_workflow_run_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "unknown",
-            },
-            "WorkflowRun request result is unknown",
-          );
-        } else if (!isReconcileState(reconciled.state)) {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "request_workflow_run_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "invalid",
-            },
-            "WorkflowRun request reconciliation returned an unsupported state",
-          );
-        } else {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "request_workflow_run_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "failed",
-            reconciliation_state: reconciled.state,
-          });
-        }
-        throw error;
-      }
+        },
+        meta: {
+          pending_confirmation: true,
+          product_id: prepared.product_id,
+          workflow_id: prepared.workflow_id,
+          ...(prepared.workflow_title.trim()
+            ? { workflow_title: prepared.workflow_title.trim().slice(0, 240) }
+            : {}),
+          ...(params.scope ? { summary: `${prepared.workflow_title.trim()} · ${params.scope}`.slice(0, 240) } : {}),
+        },
+        resultMeta: (result) => ({
+          ...requestIdMeta(result),
+          expected_workflow_revision: expectedRevision,
+        }),
+      });
     },
   });
 }
 
 function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "create_product_workspace_v1",
+  return productFlowTool("create_product_workspace_v1", {
     label: "Create product workspace",
-    description:
-      "Create one ProductFlow product with a live canvas session. This does not upload images, write intake, or start a run. After success, send the user to that product workbench conversation to upload references and state requirements there.",
-    parameters: Type.Object(
-      { name: Type.String({ minLength: 1, maxLength: 255 }) },
-      { additionalProperties: false },
-    ),
-    execute: async (toolCallID: string, params: { name: string }): Promise<Result> => {
-      const idempotencyKey = runtime.idempotencyKey(toolCallID);
-      await runtime.checkpoint("tool_effect_intent", {
-        tool_name: "create_product_workspace_v1",
-        tool_call_id: toolCallID,
-        idempotency_key: idempotencyKey,
-        product_name: params.name.trim(),
-      });
-      let result: unknown;
-      try {
-        result = await runtime.client.createProductWorkspace(
+    execute: async (toolCallID, params: ToolParams<"create_product_workspace_v1">): Promise<Result> =>
+      withEffect(runtime, "create_product_workspace_v1", toolCallID, {
+        intentPayload: { product_name: params.name.trim() },
+        mutate: (idempotencyKey) =>
+          runtime.client.createProductWorkspace(runtime.scope.conversation_id, params.name.trim(), idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileProductWorkspace(runtime.scope.conversation_id, params.name.trim(), idempotencyKey, runtime.signal),
+        unknownReason: "Product workspace creation result is unknown",
+        meta: { product_workspace_created: true },
+      }),
+  });
+}
+
+function createGetNodeDetailTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("get_node_detail_v1", {
+    label: "Get node detail",
+    execute: async (_toolCallID, params: ToolParams<"get_node_detail_v1">): Promise<Result> =>
+      encodeToolResult(
+        "get_node_detail_v1",
+        await runtime.client.getNodeDetail(runtime.scope.conversation_id, params.node_id, runtime.signal),
+      ),
+  });
+}
+
+function createWorkflowRunDetailTool(runtime: ToolRuntime): ToolDefinition {
+  return productFlowTool("get_workflow_run_detail_v1", {
+    label: "Get workflow run detail",
+    execute: async (_toolCallID, params: ToolParams<"get_workflow_run_detail_v1">): Promise<Result> => {
+      return encodeToolResult(
+        "get_workflow_run_detail_v1",
+        await runtime.client.workflowRunDetail(
           runtime.scope.conversation_id,
-          params.name.trim(),
-          idempotencyKey,
+          params.run_id.trim(),
           runtime.signal,
-        );
-      } catch (error) {
-        if (!(error instanceof ProductFlowError) || error.status < 500) {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: "create_product_workspace_v1",
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "failed",
-          });
-          throw error;
-        }
-        let reconciled: ReconcileResult;
-        try {
-          reconciled = await runtime.client.reconcileProductWorkspace(
-            runtime.scope.conversation_id,
-            params.name.trim(),
-            idempotencyKey,
-            runtime.signal,
-          );
-        } catch (reconcileError) {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "create_product_workspace_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "unavailable",
-            },
-            "Product workspace creation result is unknown",
-          );
-          throw reconcileError;
-        }
-        if (reconciled.state === "unknown") {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "create_product_workspace_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "unknown",
-            },
-            "Product workspace creation result is unknown",
-          );
-          throw error;
-        } else if (!isReconcileState(reconciled.state)) {
-          await recordUnknownEffect(
-            runtime,
-            toolCallID,
-            {
-              tool_name: "create_product_workspace_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "unknown",
-              reconciliation_state: "invalid",
-            },
-            "Product workspace reconciliation returned an unsupported state",
-          );
-          throw error;
-        }
-        if (reconciled.state !== "applied" || reconciled.result === undefined) {
-          if (reconciled.state === "applied") {
-            await recordUnknownEffect(
-              runtime,
-              toolCallID,
-              {
-                tool_name: "create_product_workspace_v1",
-                tool_call_id: toolCallID,
-                idempotency_key: idempotencyKey,
-                result: "unknown",
-                reconciliation_state: "invalid_applied_result",
-              },
-              "Product workspace reconciliation returned an incomplete applied result",
-            );
-            throw new ProductFlowError(502, "reconciliation_invalid", "Product workspace reconciliation returned an incomplete result");
-          }
-          if (isReconcileState(reconciled.state)) {
-            await runtime.checkpoint("tool_effect_result", {
-              tool_name: "create_product_workspace_v1",
-              tool_call_id: toolCallID,
-              idempotency_key: idempotencyKey,
-              result: "failed",
-              reconciliation_state: reconciled.state,
-            });
-          }
-          throw error;
-        }
-        await runtime.checkpoint("tool_effect_result", {
-          tool_name: "create_product_workspace_v1",
-          tool_call_id: toolCallID,
-          idempotency_key: idempotencyKey,
-          result: "applied",
-          reconciliation_state: "applied",
-        });
-        return textResult(reconciled.result, { product_workspace_created: true, reconciled: true });
-      }
-      await runtime.checkpoint("tool_effect_result", {
-        tool_name: "create_product_workspace_v1",
-        tool_call_id: toolCallID,
-        idempotency_key: idempotencyKey,
-        result: "applied",
-      });
-      return textResult(result, { product_workspace_created: true });
+        ),
+      );
     },
   });
 }
 
-const MAX_CANVAS_FOCUS_ITEMS = 20;
-
-function createGetNodeDetailTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "get_node_detail_v1",
-    label: "Get node detail",
-    description:
-      "Read one live-graph node's config, incoming and outgoing edges, and a bounded current artifact summary. Use this before editing or explaining a specific node.",
-    parameters: Type.Object(
-      { node_id: Type.String({ minLength: 1, maxLength: 80 }) },
-      { additionalProperties: false },
-    ),
-    execute: async (_toolCallID: string, params: { node_id: string }): Promise<Result> =>
-      textResult(await runtime.client.getNodeDetail(runtime.scope.conversation_id, params.node_id, runtime.signal)),
-  });
-}
-
 function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "apply_graph_change_set_v1",
+  return productFlowTool("apply_graph_change_set_v1", {
     label: "Apply graph change",
-    description:
-      "Apply one reversible Graph Command to the live schema-v3 graph. operations must contain exactly one object whose op is a Graph Command name (create_node, update_node_config, rename_node, delete_node, connect_nodes, disconnect_edge, move_nodes, create_group, move_nodes_to_group, rename_group, dissolve_group). Do not invent names such as add_node or connect. Do not use this for multi-node reconstructs or bulk deletes.",
-    parameters: applyGraphChangeSetParameters,
-    execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
-      executeGraphMutationTool(runtime, {
-        toolCallID,
-        toolName: "apply_graph_change_set_v1",
-        params: params as JsonObject,
+    execute: async (toolCallID, params: ToolParams<"apply_graph_change_set_v1">): Promise<Result> => {
+      const body = jsonObject(params);
+      return withEffect(runtime, "apply_graph_change_set_v1", toolCallID, {
+        intentPayload: { change_set: body },
         mutate: (idempotencyKey) =>
-          runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, idempotencyKey, runtime.signal),
+          runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
-          runtime.client.reconcileApplyGraphChangeSet(
-            runtime.scope.conversation_id,
-            params as JsonObject,
-            idempotencyKey,
-            runtime.signal,
-          ),
+          runtime.client.reconcileApplyGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Graph apply result is unknown",
-      }),
+        meta: operationMeta(params.operations),
+      });
+    },
   });
 }
 
 function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "propose_graph_change_set_v1",
+  return productFlowTool("propose_graph_change_set_v1", {
     label: "Propose graph change",
-    description:
-      "Store an unapplied GraphProposal overlay. Use for multi-node reconstructs, adding a shot (create_group + prompt_generation + N image_generation + connect_nodes), or bulk deletes. operations[].op must be a Graph Command name from the tool schema, never add_node or connect. Do not propose a second complete topology on an already expanded graph. The proposal cannot run. The user confirms or discards it on the canvas.",
-    parameters: proposeGraphChangeSetParameters,
-    execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
-      executeGraphMutationTool(runtime, {
-        toolCallID,
-        toolName: "propose_graph_change_set_v1",
-        params: params as JsonObject,
+    execute: async (toolCallID, params: ToolParams<"propose_graph_change_set_v1">): Promise<Result> => {
+      const body = jsonObject(params);
+      return withEffect(runtime, "propose_graph_change_set_v1", toolCallID, {
+        intentPayload: { change_set: body },
         mutate: (idempotencyKey) =>
-          runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, idempotencyKey, runtime.signal),
+          runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
-          runtime.client.reconcileProposeGraphChangeSet(
-            runtime.scope.conversation_id,
-            params as JsonObject,
-            idempotencyKey,
-            runtime.signal,
-          ),
+          runtime.client.reconcileProposeGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Graph proposal result is unknown",
-        extraDetails: { pending_confirmation: true },
-      }),
+        meta: { pending_confirmation: true, ...operationMeta(params.operations) },
+        resultMeta: (result) => {
+          const record = result && typeof result === "object" && !Array.isArray(result)
+            ? result as Record<string, unknown>
+            : {};
+          const proposalID = typeof record.proposal_id === "string" ? record.proposal_id.trim() : "";
+          const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, 240) : "";
+          return {
+            ...(proposalID ? { proposal_id: proposalID } : {}),
+            ...(summary ? { summary } : {}),
+          };
+        },
+        onApplied: (result) => {
+          const record = result && typeof result === "object" && !Array.isArray(result)
+            ? result as Record<string, unknown>
+            : {};
+          const proposalID = typeof record.proposal_id === "string" ? record.proposal_id.trim() : "";
+          if (!proposalID) return;
+          const summary = typeof record.summary === "string" ? record.summary.trim().slice(0, 240) : "";
+          runtime.emitApproval({
+            approval_id: proposalID,
+            approval_kind: "graph_proposal",
+            proposal_id: proposalID,
+            pending_confirmation: true,
+            ...(summary ? { summary } : {}),
+            ...operationMeta(params.operations),
+          });
+        },
+      });
+    },
   });
 }
 
 function createDiscardWorkflowProposalTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "discard_workflow_proposal_v1",
+  return productFlowTool("discard_workflow_proposal_v1", {
     label: "Discard graph proposal",
-    description:
-      "Discard the pending GraphProposal overlay on the live canvas. Does not write the live graph. Omit proposal_id to discard the current pending proposal.",
-    parameters: Type.Object(
-      { proposal_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })) },
-      { additionalProperties: false },
-    ),
-    execute: async (toolCallID: string, params: { proposal_id?: string }): Promise<Result> =>
-      executeGraphMutationTool(runtime, {
-        toolCallID,
-        toolName: "discard_workflow_proposal_v1",
-        params: params as JsonObject,
+    execute: async (toolCallID, params: ToolParams<"discard_workflow_proposal_v1">): Promise<Result> =>
+      withEffect(runtime, "discard_workflow_proposal_v1", toolCallID, {
+        intentPayload: jsonObject(params),
         mutate: (idempotencyKey) =>
           runtime.client.discardGraphProposal(runtime.scope.conversation_id, params.proposal_id ?? null, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
@@ -925,25 +535,17 @@ function createDiscardWorkflowProposalTool(runtime: ToolRuntime): ToolDefinition
             runtime.signal,
           ),
         unknownReason: "Graph proposal discard result is unknown",
+        meta: params.proposal_id ? { proposal_id: params.proposal_id } : {},
       }),
   });
 }
 
 function createCancelWorkflowRunTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "cancel_workflow_run_v1",
+  return productFlowTool("cancel_workflow_run_v1", {
     label: "Cancel workflow run",
-    description:
-      "Cancel one live-graph WorkflowGraphRun that is still running. Already cancelled runs succeed idempotently. Terminal succeeded or failed runs cannot be cancelled.",
-    parameters: Type.Object(
-      { run_id: Type.String({ minLength: 1, maxLength: 64 }) },
-      { additionalProperties: false },
-    ),
-    execute: async (toolCallID: string, params: { run_id: string }): Promise<Result> =>
-      executeGraphMutationTool(runtime, {
-        toolCallID,
-        toolName: "cancel_workflow_run_v1",
-        params: params as JsonObject,
+    execute: async (toolCallID, params: ToolParams<"cancel_workflow_run_v1">): Promise<Result> =>
+      withEffect(runtime, "cancel_workflow_run_v1", toolCallID, {
+        intentPayload: { run_id: params.run_id },
         mutate: (idempotencyKey) =>
           runtime.client.cancelWorkflowRun(runtime.scope.conversation_id, params.run_id, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
@@ -954,221 +556,190 @@ function createCancelWorkflowRunTool(runtime: ToolRuntime): ToolDefinition {
             runtime.signal,
           ),
         unknownReason: "Workflow run cancel result is unknown",
+        meta: { run_id: params.run_id },
       }),
   });
 }
 
 function createFocusCanvasItemsTool(runtime: ToolRuntime): ToolDefinition {
-  return defineTool({
-    name: "focus_canvas_items_v1",
+  return productFlowTool("focus_canvas_items_v1", {
     label: "Focus canvas items",
-    description:
-      "Record a bounded canvas focus request. The workbench selects those live-graph nodes, edges, or groups. At least one id is required. Do not invent a second graph.",
-    parameters: Type.Object(
-      {
-        node_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
-        edge_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
-        group_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { maxItems: MAX_CANVAS_FOCUS_ITEMS })),
-      },
-      { additionalProperties: false },
-    ),
-    execute: async (
-      toolCallID: string,
-      params: { node_ids?: string[]; edge_ids?: string[]; group_ids?: string[] },
-    ): Promise<Result> => {
+    execute: async (toolCallID, params: ToolParams<"focus_canvas_items_v1">): Promise<Result> => {
       const body = {
         node_ids: uniqueIDs(params.node_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
         edge_ids: uniqueIDs(params.edge_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
         group_ids: uniqueIDs(params.group_ids ?? [], MAX_CANVAS_FOCUS_ITEMS),
       };
-      return executeGraphMutationTool(runtime, {
-        toolCallID,
-        toolName: "focus_canvas_items_v1",
-        params: body,
+      return withEffect(runtime, "focus_canvas_items_v1", toolCallID, {
+        intentPayload: jsonObject(body),
         mutate: (idempotencyKey) =>
           runtime.client.focusCanvasItems(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileFocusCanvasItems(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Canvas focus result is unknown",
+        meta: {
+          affected_node_ids: body.node_ids,
+          affected_edge_ids: body.edge_ids,
+          affected_group_ids: body.group_ids,
+        },
       });
     },
   });
 }
 
-async function executeGraphMutationTool(
-  runtime: ToolRuntime,
-  args: {
-    toolCallID: string;
-    toolName: string;
-    params: JsonObject;
-    mutate: (idempotencyKey: string) => Promise<JsonObject>;
-    reconcile: (idempotencyKey: string) => Promise<ReconcileResult>;
-    unknownReason: string;
-    extraDetails?: JsonObject;
-  },
-): Promise<Result> {
-  const idempotencyKey = runtime.idempotencyKey(args.toolCallID);
-  await runtime.checkpoint("tool_effect_intent", {
-    tool_name: args.toolName,
-    tool_call_id: args.toolCallID,
-    idempotency_key: idempotencyKey,
-    change_set: args.params,
-  });
-  try {
-    const result = await args.mutate(idempotencyKey);
-    await runtime.checkpoint("tool_effect_result", {
-      tool_name: args.toolName,
-      tool_call_id: args.toolCallID,
-      idempotency_key: idempotencyKey,
-      result: "applied",
-    });
-    return textResult(result, args.extraDetails);
-  } catch (error) {
-    if (!(error instanceof ProductFlowError) || error.status < 500) {
-      await runtime.checkpoint("tool_effect_result", {
-        tool_name: args.toolName,
-        tool_call_id: args.toolCallID,
-        idempotency_key: idempotencyKey,
-        result: "failed",
-      });
-      throw error;
-    }
-    let reconciled: ReconcileResult;
-    try {
-      reconciled = await args.reconcile(idempotencyKey);
-    } catch (reconcileError) {
-      await recordUnknownEffect(
-        runtime,
-        args.toolCallID,
-        {
-          tool_name: args.toolName,
-          tool_call_id: args.toolCallID,
-          idempotency_key: idempotencyKey,
-          result: "unknown",
-          reconciliation_state: "unavailable",
-        },
-        args.unknownReason,
-      );
-      throw reconcileError;
-    }
-    if (reconciled.state === "applied") {
-      await runtime.checkpoint("tool_effect_result", {
-        tool_name: args.toolName,
-        tool_call_id: args.toolCallID,
-        idempotency_key: idempotencyKey,
-        result: "applied",
-      });
-      return textResult((reconciled.result as JsonObject) ?? { accepted: true }, args.extraDetails);
-    }
-    if (reconciled.state === "not_applied") {
-      await runtime.checkpoint("tool_effect_result", {
-        tool_name: args.toolName,
-        tool_call_id: args.toolCallID,
-        idempotency_key: idempotencyKey,
-        result: "failed",
-        reconciliation_state: reconciled.state,
-      });
-      throw error;
-    }
-    await recordUnknownEffect(
-      runtime,
-      args.toolCallID,
-      {
-        tool_name: args.toolName,
-        tool_call_id: args.toolCallID,
-        idempotency_key: idempotencyKey,
-        result: "unknown",
-        reconciliation_state: reconciled.state,
-      },
-      args.unknownReason,
-    );
-    throw error;
-  }
-}
-
-function createDraftTool(
-  runtime: ToolRuntime,
-  name: "propose_global_draft",
-  label: string,
-  schema: JsonObject,
-): ToolDefinition {
-  return defineTool({
-    name,
-    label,
-    description:
-      "Submit one complete schema-valid library-organization draft for review. The backend validates it and the user must confirm it. Product workflow topology is not accepted.",
-    parameters: schema as TSchema,
-    execute: async (toolCallID: string, params: JsonObject): Promise<Result> => {
+function createDraftTool(runtime: ToolRuntime, schema: JsonObject): ToolDefinition {
+  return productFlowTool("propose_global_draft", {
+    label: "Propose global draft",
+    parameters: toolParameters("propose_global_draft", schema as TSchema),
+    execute: async (toolCallID, params: ToolParams<"propose_global_draft">): Promise<Result> => {
       try {
         await runtime.client.validateGlobalDraft(runtime.scope.conversation_id, params, runtime.signal);
       } catch (error) {
         runtime.recordToolFailure(toolCallID, toolFailureDetails(error));
         throw error;
       }
-      await runtime.proposeArtifact({ name, value: params, step_id: toolCallID });
-      return { ...textResult({ accepted: true, pending_confirmation: true }, { artifact_name: name }), terminate: true };
+      runtime.requestApproval({
+        approval_id: toolCallID,
+        approval_kind: "artifact",
+        artifact: { name: "propose_global_draft", value: params as JsonObject, step_id: toolCallID },
+      });
+      return encodeToolResult("propose_global_draft", { accepted: true, pending_confirmation: true }, {
+        artifact_name: "propose_global_draft",
+        pending_confirmation: true,
+      });
     },
   });
 }
 
-function textResult(value: unknown, details: JsonObject = {}): Result {
-  return {
-    content: [{ type: "text", text: boundedJSON(value) }],
-    details,
-  };
-}
-
-function productContextResult(value: unknown): Result {
-  return {
-    content: [{ type: "text", text: boundedProductContextJSON(value) }],
-    details: {},
-  };
-}
-
-function boundedJSON(value: unknown): string {
-  const encoded = encodeJSON(value);
-  if (Buffer.byteLength(encoded, "utf8") <= MAX_TOOL_TEXT_BYTES) return encoded;
-  return truncatedJSON(Buffer.byteLength(encoded, "utf8"), MAX_TOOL_TEXT_BYTES);
-}
-
-function boundedProductContextJSON(value: unknown): string {
-  const encoded = encodeJSON(value);
-  const originalBytes = Buffer.byteLength(encoded, "utf8");
-  if (originalBytes <= MAX_PRODUCT_CONTEXT_BYTES) return encoded;
-
-  const nodeCatalog = isRecord(value) ? value.node_catalog : undefined;
-  if (nodeCatalog !== undefined) {
-    const reduced = {
-      schema_version: isRecord(value) && typeof value.schema_version === "number" ? value.schema_version : 1,
-      truncated: true,
-      original_bytes: originalBytes,
-      max_bytes: MAX_PRODUCT_CONTEXT_BYTES,
-      node_catalog: nodeCatalog,
-    };
-    const reducedEncoded = encodeJSON(reduced);
-    if (Buffer.byteLength(reducedEncoded, "utf8") <= MAX_PRODUCT_CONTEXT_BYTES) return reducedEncoded;
-  }
-  return truncatedJSON(originalBytes, MAX_PRODUCT_CONTEXT_BYTES);
-}
-
-function encodeJSON(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? "null";
-  } catch {
-    return JSON.stringify({
-      schema_version: 1,
-      error: "unserializable ProductFlow result",
-    });
-  }
-}
-
-function truncatedJSON(originalBytes: number, maximumBytes: number): string {
-  return JSON.stringify({
-    schema_version: 1,
-    truncated: true,
-    original_bytes: originalBytes,
-    max_bytes: maximumBytes,
+function productFlowTool(
+  name: ToolName,
+  args: {
+    label: string;
+    promptSnippet?: string;
+    parameters?: TSchema;
+    execute: ToolDefinition["execute"];
+  },
+): ToolDefinition {
+  return defineTool({
+    name,
+    label: args.label,
+    description: toolDescription(name),
+    ...(args.promptSnippet ? { promptSnippet: args.promptSnippet } : {}),
+    parameters: args.parameters ?? toolParameters(name),
+    execute: args.execute,
   });
+}
+
+function operationMeta(operations: ReadonlyArray<{ op: string }>): JsonObject {
+  const summaries = operations.map((operation) => operation.op).slice(0, 128);
+  const nodes: string[] = [];
+  const edges: string[] = [];
+  const groups: string[] = [];
+  for (const operation of operations) {
+    collectOperationRefs(operation as { op: string } & Record<string, unknown>, nodes, edges, groups);
+  }
+  return {
+    operation_summaries: summaries,
+    item_count: summaries.length,
+    ...optionalRefList("affected_node_ids", nodes),
+    ...optionalRefList("affected_edge_ids", edges),
+    ...optionalRefList("affected_group_ids", groups),
+  };
+}
+
+function collectOperationRefs(
+  operation: { op: string } & Record<string, unknown>,
+  nodes: string[],
+  edges: string[],
+  groups: string[],
+): void {
+  switch (operation.op) {
+    case "create_node":
+      pushRef(nodes, operation.client_ref);
+      pushRef(groups, operation.group_ref);
+      break;
+    case "update_node_config":
+    case "rename_node":
+    case "delete_node":
+      pushRef(nodes, operation.node_ref);
+      break;
+    case "connect_nodes":
+      pushRef(edges, operation.client_ref);
+      pushRef(nodes, operation.source_ref);
+      pushRef(nodes, operation.target_ref);
+      break;
+    case "disconnect_edge":
+      pushRef(edges, operation.edge_ref);
+      break;
+    case "move_nodes":
+      if (Array.isArray(operation.nodes)) {
+        for (const item of operation.nodes) {
+          if (Array.isArray(item)) pushRef(nodes, item[0]);
+        }
+      }
+      break;
+    case "create_group":
+      pushRef(groups, operation.client_ref);
+      if (Array.isArray(operation.member_refs)) {
+        for (const member of operation.member_refs) pushRef(nodes, member);
+      }
+      break;
+    case "move_nodes_to_group":
+      if (Array.isArray(operation.node_refs)) {
+        for (const nodeRef of operation.node_refs) pushRef(nodes, nodeRef);
+      }
+      pushRef(groups, operation.group_ref);
+      break;
+    case "rename_group":
+    case "dissolve_group":
+      pushRef(groups, operation.group_ref);
+      break;
+    case "reorder_edges":
+      pushRef(nodes, operation.node_ref);
+      if (Array.isArray(operation.edge_refs)) {
+        for (const edgeRef of operation.edge_refs) pushRef(edges, edgeRef);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+function pushRef(target: string[], value: unknown): void {
+  if (typeof value !== "string") return;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80) return;
+  target.push(trimmed);
+}
+
+function optionalRefList(key: string, values: readonly string[]): JsonObject {
+  const unique = [...new Set(values)].slice(0, 128);
+  return unique.length ? { [key]: unique } : {};
+}
+
+function intakeResultMeta(result: unknown): JsonObject {
+  return {
+    ...optionalCount(result, "node_count", 10_000),
+    ...optionalCount(result, "group_count", 10_000),
+  };
+}
+
+function requestIdMeta(result: unknown): JsonObject {
+  if (!result || typeof result !== "object") return {};
+  const requestID = (result as Record<string, unknown>).request_id;
+  if (typeof requestID !== "string") return {};
+  const trimmed = requestID.trim();
+  if (!trimmed || trimmed.length > 64) return {};
+  return { request_id: trimmed };
+}
+
+function optionalCount(result: unknown, key: string, maximum: number): JsonObject {
+  if (!result || typeof result !== "object") return {};
+  const value = (result as Record<string, unknown>)[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > maximum) return {};
+  return { [key]: value };
+}
+
+function jsonObject(value: object): JsonObject {
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
 function buildSkillInstructionDetails(content: string): Pick<ToolStepDetails, "instruction_excerpt" | "instruction_truncated"> {
@@ -1233,26 +804,6 @@ function boundedDetailText(value: string, maximum: number, fallback: string): st
   return (normalized || fallback).slice(0, maximum);
 }
 
-function isReconcileState(value: string): value is "applied" | "not_applied" | "conflict" | "unknown" {
-  return value === "applied" || value === "not_applied" || value === "conflict" || value === "unknown";
-}
-
-/** 先写 unknown checkpoint 再中止；checkpoint 写失败也仍然中止。 */
-async function recordUnknownEffect(
-  runtime: ToolRuntime,
-  toolCallID: string,
-  payload: JsonObject,
-  reason: string,
-): Promise<void> {
-  try {
-    await runtime.checkpoint("tool_effect_result", payload);
-  } catch {
-    // checkpoint 写不进去时，unknown 标记本身仍是权威。
-  } finally {
-    runtime.markEffectUnknown(toolCallID, reason);
-  }
-}
-
 function uniqueIDs(values: string[], maximum: number): string[] {
   const result = [...new Set(values.map((value) => value.trim()).filter(Boolean))];
   if (result.length !== values.length || result.length > maximum) throw new Error("asset or product IDs must be unique and within the limit");
@@ -1269,8 +820,4 @@ function metadataIDs(value: unknown): string[] {
     if (!item || typeof item !== "object" || typeof (item as { id?: unknown }).id !== "string") return [];
     return [(item as { id: string }).id];
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

@@ -1151,7 +1151,7 @@ func TestAgentClaimHeartbeatAndContract(t *testing.T) {
 	as.mustStatus(t, contract, http.StatusOK)
 	var contractBody ContractResponse
 	as.decode(t, contract, &contractBody)
-	if contractBody.ToolContractVersion != toolContractVersion || contractBody.ScopeType != "global" {
+	if contractBody.ToolContractVersion != resolvedToolContractVersion(contractBody.DraftSchema) || contractBody.ScopeType != "global" {
 		t.Fatalf("contract %+v", contractBody)
 	}
 

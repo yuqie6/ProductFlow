@@ -18,8 +18,8 @@ function runtime(
     loadSkill: async (name, resourcePath) => `loaded:${name}:${resourcePath ?? "body"}`,
     recordToolFailure: () => undefined,
     askUser: async () => ({ text: "answer" }),
-    proposeArtifact: async () => undefined,
-    markWorkflowRunRequested: () => undefined,
+    requestApproval: () => undefined,
+    emitApproval: () => undefined,
     checkpoint,
     markEffectUnknown,
     idempotencyKey: (id) => `pi-test-${id}`,
@@ -47,6 +47,8 @@ describe("ProductFlow Pi tools", () => {
     expect(names).not.toContain("propose_workflow_draft");
     expect(names).toContain("request_workflow_run_v1");
     expect(names).toContain("finalize_product_intake_v1");
+    expect(names).toContain("get_workflow_run_detail_v1");
+    expect(names).not.toContain("request_global_workflow_run_v1");
     expect(names).not.toContain("apply_graph_change_set_v1");
     expect(names).not.toContain("get_node_detail_v1");
     expect(names).not.toContain("discard_workflow_proposal_v1");
@@ -82,7 +84,7 @@ describe("ProductFlow Pi tools", () => {
       finalizeProductIntake: async (_conversationID: string, args: { selection: Record<string, unknown> }) => {
         calls.push("finalize");
         forwardedSelection = args.selection;
-        return { accepted: true, intake_finalized: true, product_id: "product-1" };
+        return { accepted: true, intake_finalized: true, product_id: "product-1", node_count: 19, group_count: 4 };
       },
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(runtime(baseScope, client)).find(
@@ -113,6 +115,7 @@ describe("ProductFlow Pi tools", () => {
     });
     expect(result.content[0]).toMatchObject({ type: "text" });
     expect(String((result.content[0] as { text: string }).text)).toContain("intake_finalized");
+    expect(result.details).toMatchObject({ node_count: 19, group_count: 4 });
   });
 
   it("uses the global draft envelope and does not expose product-only context", () => {
@@ -127,6 +130,9 @@ describe("ProductFlow Pi tools", () => {
     expect(names).toContain("propose_global_draft");
     expect(names).toContain("list_products_v1");
     expect(names).toContain("create_product_workspace_v1");
+    expect(names).toContain("request_global_workflow_run_v1");
+    expect(names).toContain("get_workflow_run_detail_v1");
+    expect(names).not.toContain("request_workflow_run_v1");
     expect(names).not.toContain("get_product_workflow_context_v1");
     expect(names).not.toContain("propose_workflow_draft");
     expect(names).not.toContain("finalize_product_intake_v1");
@@ -160,11 +166,11 @@ describe("ProductFlow Pi tools", () => {
     const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "load_productflow_skill");
     if (!tool) throw new Error("Skill tool was not registered");
 
-    const result = await tool.execute("skill-evidence", { skill_name: "productflow-core" }, undefined, undefined, {} as never);
+    const result = await tool.execute("skill-evidence", { skill_name: "product-intake" }, undefined, undefined, {} as never);
     const excerpt = (result.details as { instruction_excerpt?: string } | undefined)?.instruction_excerpt;
     expect(typeof excerpt).toBe("string");
     expect(Buffer.byteLength(excerpt ?? "", "utf8")).toBeLessThanOrEqual(12 << 10);
-    expect(result.details).toMatchObject({ skill_name: "productflow-core", instruction_truncated: true });
+    expect(result.details).toMatchObject({ skill_name: "product-intake", instruction_truncated: true });
     expect(result.content[0]).toMatchObject({ type: "text" });
     expect((result.content[0] as { text: string }).text).toContain(instruction.slice(0, 64));
   });
@@ -195,7 +201,7 @@ describe("ProductFlow Pi tools", () => {
       },
       confirmed_fact_set: null,
       intake: null,
-      live_graph: { revision: 1, nodes: [], edges: [], groups: [] },
+      live_graph: { revision: 1, node_count: 4, edge_count: 7, group_count: 2, nodes: [{ id: "n1" }] },
       node_catalog: nodeCatalog,
     };
     const client = {
@@ -208,11 +214,16 @@ describe("ProductFlow Pi tools", () => {
 
     const result = await tool.execute("large-context", {}, undefined, undefined, {} as never);
     const text = (result.content[0] as { text: string }).text;
-
-    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(96 << 10);
-    expect(text).not.toContain("...[truncated]");
-    expect(JSON.parse(text)).toEqual(context);
-    expect(JSON.parse(text).node_catalog).toEqual(nodeCatalog);
+    const parsed = JSON.parse(text) as {
+      schema_version: number;
+      data: { truncated?: boolean; node_catalog?: unknown; live_graph?: { edge_count?: number; node_count?: number } };
+      guidance?: string;
+    };
+    expect(parsed.schema_version).toBe(1);
+    expect(parsed.data.node_catalog).toEqual(nodeCatalog);
+    expect(parsed.data.live_graph?.edge_count).toBe(7);
+    expect(parsed.data.live_graph?.node_count).toBe(4);
+    expect(JSON.stringify(parsed.data)).toContain("大上下文商品");
   });
 
   it("keeps the complete Node Catalog in a defensive product context overflow envelope", async () => {
@@ -240,13 +251,16 @@ describe("ProductFlow Pi tools", () => {
     const result = await tool.execute("overflowing-context", {}, undefined, undefined, {} as never);
     const text = (result.content[0] as { text: string }).text;
     const parsed = JSON.parse(text) as {
-      truncated: boolean;
-      node_catalog: unknown;
+      schema_version: number;
+      data: { truncated?: boolean; node_catalog?: unknown };
+      guidance?: string;
     };
 
-    expect(parsed.truncated).toBe(true);
-    expect(parsed.node_catalog).toEqual(nodeCatalog);
-    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(512 << 10);
+    expect(parsed.schema_version).toBe(1);
+    expect(parsed.guidance).toMatch(/截断/);
+    expect(parsed.data.node_catalog).toEqual(nodeCatalog);
+    expect(result.details).toMatchObject({ truncated: true });
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(96 << 10);
   });
 
   it("returns a legal bounded JSON contract for oversized generic results", async () => {
@@ -262,17 +276,14 @@ describe("ProductFlow Pi tools", () => {
     const text = (result.content[0] as { text: string }).text;
     const parsed = JSON.parse(text) as {
       schema_version: number;
-      truncated: boolean;
-      original_bytes: number;
-      max_bytes: number;
+      data: { items?: unknown[]; total_count?: number };
+      guidance?: string;
     };
 
-    expect(parsed).toMatchObject({
-      schema_version: 1,
-      truncated: true,
-      max_bytes: 96 << 10,
-    });
-    expect(parsed.original_bytes).toBeGreaterThan(parsed.max_bytes);
+    expect(parsed.schema_version).toBe(1);
+    expect(parsed.guidance).toMatch(/截断/);
+    expect(parsed.data.total_count).toBe(1);
+    expect(result.details).toMatchObject({ truncated: true, max_bytes: 96 << 10 });
     expect(text).not.toContain("...[truncated]");
     expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(96 << 10);
   });
@@ -512,7 +523,14 @@ describe("ProductFlow Pi tools", () => {
 
     const result = await tool.execute("tool-run-applied", { expected_workflow_revision: 3 }, undefined, undefined, {} as never);
 
-    expect(result.terminate).toBe(true);
+    expect(result.terminate).toBeUndefined();
+    expect(result.details).toMatchObject({
+      pending_confirmation: true,
+      workflow_id: "workflow-1",
+      workflow_title: "工作流",
+      request_id: "request-1",
+      expected_workflow_revision: 3,
+    });
     expect(checkpoints.map((entry) => [entry.kind, entry.payload.result])).toEqual([
       ["tool_effect_intent", undefined],
       ["external_job_submitted", undefined],
@@ -587,7 +605,7 @@ describe("ProductFlow Pi tools", () => {
       expect(reconcileCount).toBe(1);
       expect(executeIdempotencyKey).toBe("pi-test-tool-workflow-network-loss");
       expect(reconcileIdempotencyKey).toBe(executeIdempotencyKey);
-      expect(result.terminate).toBe(true);
+      expect(result.terminate).toBeUndefined();
       expect(result.details).toMatchObject({ pending_confirmation: true, reconciled: true });
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
         "tool_effect_intent",
@@ -699,9 +717,14 @@ describe("ProductFlow Pi tools", () => {
       summary: "改名",
       operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
     };
-    await apply.execute("tool-apply-1", params, undefined, undefined, {} as never);
+    const applyResult = await apply.execute("tool-apply-1", params, undefined, undefined, {} as never);
     await propose.execute("tool-propose-1", { ...params, operations: [params.operations[0], params.operations[0]] }, undefined, undefined, {} as never);
     expect(keys).toEqual(["pi-test-tool-apply-1", "pi-test-tool-propose-1"]);
+    expect(applyResult.details).toMatchObject({
+      operation_summaries: ["rename_node"],
+      item_count: 1,
+      affected_node_ids: ["n1"],
+    });
   });
 
   it("reconciles unknown graph apply results by idempotency key", async () => {
@@ -730,5 +753,84 @@ describe("ProductFlow Pi tools", () => {
       ),
     ).rejects.toMatchObject({ code: "timeout" });
     expect(unknownReasons).toEqual(["Graph apply result is unknown"]);
+  });
+
+  it("treats a reconciled graph conflict as a failed effect", async () => {
+    const unknownReasons: string[] = [];
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const client = {
+      applyGraphChangeSet: async () => {
+        throw new ProductFlowError(503, "timeout", "timeout");
+      },
+      reconcileApplyGraphChangeSet: async () => ({ state: "conflict", detail: "revision mismatch" }),
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(
+      runtime(
+        { ...baseScope, has_live_graph: true },
+        client,
+        (_id, reason) => unknownReasons.push(reason ?? ""),
+        async (kind, payload) => {
+          checkpoints.push({ kind, payload });
+        },
+      ),
+    ).find((candidate) => candidate.name === "apply_graph_change_set_v1");
+    if (!tool) throw new Error("apply tool was not registered");
+    await expect(
+      tool.execute(
+        "tool-apply-conflict",
+        {
+          base_graph_revision: 1,
+          summary: "改名",
+          operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
+        },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toMatchObject({ code: "timeout" });
+    expect(unknownReasons).toEqual([]);
+    expect(checkpoints.at(-1)).toMatchObject({
+      kind: "tool_effect_result",
+      payload: { result: "failed", reconciliation_state: "conflict" },
+    });
+  });
+
+  it("does not reconcile a ui_effect canvas focus after a 5xx", async () => {
+    const calls: string[] = [];
+    const client = {
+      focusCanvasItems: async () => {
+        calls.push("focus");
+        throw new ProductFlowError(503, "timeout", "timeout");
+      },
+      reconcileFocusCanvasItems: async () => {
+        calls.push("reconcile");
+        return { state: "applied", result: { accepted: true } };
+      },
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(
+      runtime({ ...baseScope, has_live_graph: true }, client),
+    ).find((candidate) => candidate.name === "focus_canvas_items_v1");
+    if (!tool) throw new Error("focus tool was not registered");
+    await expect(
+      tool.execute("tool-focus", { node_ids: ["n1"] }, undefined, undefined, {} as never),
+    ).rejects.toMatchObject({ code: "timeout" });
+    expect(calls).toEqual(["focus"]);
+  });
+
+  it("reads a bounded workflow run detail", async () => {
+    const client = {
+      workflowRunDetail: async () => ({
+        run_id: "run-1",
+        status: "failed",
+        nodes: [{ node_id: "n1", status: "failed", failure_reason: "provider timeout" }],
+      }),
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(runtime(baseScope, client)).find(
+      (candidate) => candidate.name === "get_workflow_run_detail_v1",
+    );
+    if (!tool) throw new Error("run detail tool was not registered");
+    const result = await tool.execute("tool-run-detail", { run_id: "run-1" }, undefined, undefined, {} as never);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text) as { data: { status: string } };
+    expect(parsed.data.status).toBe("failed");
   });
 });

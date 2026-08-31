@@ -12,8 +12,8 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(AgentWorkflow(), "不得提交第二份完整拓扑") {
 		t.Fatal("workflow prompt missing topology rule")
 	}
-	if !strings.Contains(AgentGoalLoop(), "不得自行宣布 Goal 完成") {
-		t.Fatal("goal loop prompt missing completion rule")
+	if !strings.Contains(AgentGoalLoop(), "request_workflow_run_v1") || !strings.Contains(AgentGoalLoop(), "apply_graph_change_set_v1") {
+		t.Fatal("goal loop must use manifest tool names")
 	}
 	if !strings.Contains(AgentGlobal(), "不能在全局会话上改某个商品的 live graph") {
 		t.Fatal("global prompt missing live-graph rule")

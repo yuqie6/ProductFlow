@@ -338,19 +338,56 @@ func TestProductContextConfirmedFactsAndLiveGraphRoles(t *testing.T) {
 		t.Fatalf("fact row %+v", row)
 	}
 
-	if payload["birth_expandable"] != false {
-		t.Fatalf("birth_expandable %+v", payload["birth_expandable"])
+	if payload["response_format"] != "concise" {
+		t.Fatalf("default response_format %+v", payload["response_format"])
+	}
+	catalog, _ := payload["node_catalog"].(map[string]any)
+	nodes, _ := catalog["nodes"].([]any)
+	if len(nodes) == 0 {
+		t.Fatal("missing node catalog index")
+	}
+	first, _ := nodes[0].(map[string]any)
+	if _, ok := first["config_fields"]; ok {
+		t.Fatalf("concise catalog still has config_fields %+v", first)
+	}
+	if _, ok := first["config_field_keys"]; !ok {
+		t.Fatalf("concise catalog missing config_field_keys %+v", first)
+	}
+
+	detailed := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+bench.Conversation.ID+"/product-context?response_format=detailed", nil, "", auth)
+	as.mustStatus(t, detailed, http.StatusOK)
+	var detailedPayload map[string]any
+	as.decode(t, detailed, &detailedPayload)
+	if detailedPayload["response_format"] != "detailed" {
+		t.Fatalf("detailed response_format %+v", detailedPayload["response_format"])
+	}
+	detailedCatalog, _ := detailedPayload["node_catalog"].(map[string]any)
+	detailedNodes, _ := detailedCatalog["nodes"].([]any)
+	detailedFirst, _ := detailedNodes[0].(map[string]any)
+	if _, ok := detailedFirst["config_fields"]; !ok {
+		t.Fatalf("detailed catalog missing config_fields %+v", detailedFirst)
 	}
 
 	live, _ := payload["live_graph"].(map[string]any)
 	if live == nil {
 		t.Fatal("missing live_graph")
 	}
-	edges, _ := live["edges"].([]any)
-	if len(edges) != 1 {
-		t.Fatalf("flat edges %+v", live["edges"])
+	if _, ok := live["edges"]; ok {
+		t.Fatalf("concise live_graph still has edges %+v", live["edges"])
 	}
-	nodes, _ := live["nodes"].([]any)
+	if _, ok := live["node_count"]; !ok {
+		t.Fatalf("concise live_graph missing node_count %+v", live)
+	}
+
+	detailedLive, _ := detailedPayload["live_graph"].(map[string]any)
+	if detailedLive == nil {
+		t.Fatal("missing detailed live_graph")
+	}
+	edges, _ := detailedLive["edges"].([]any)
+	if len(edges) != 1 {
+		t.Fatalf("flat edges %+v", detailedLive["edges"])
+	}
+	nodes, _ = detailedLive["nodes"].([]any)
 	var sourceNode, targetNode map[string]any
 	for _, item := range nodes {
 		node, _ := item.(map[string]any)
