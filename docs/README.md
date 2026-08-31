@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 保存进行中的逐项验收账本。账本可以同时记录目标合同、当前证据和缺口，但不是当前能力声明；完成项仍回到 PRD / ARCHITECTURE / USER_GUIDE，未完成项仍由 ROADMAP 索引。Agent 生产就绪的唯一验收指标见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
+[`audits/`](audits/) 保存进行中的逐项验收账本。账本可以同时记录目标合同、当前证据和缺口，但不是当前能力声明；完成项仍回到 PRD / ARCHITECTURE / USER_GUIDE，未完成项仍由 ROADMAP 索引。Agent 生产就绪的唯一验收指标见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)；运行时职责迁移和分刀证据见 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)。所有权重构账本不改变或缩小生产就绪范围。
 
 ## 已接受决策
 
@@ -45,6 +45,7 @@
 | `adr/0015-canvas-ports-run-queue.md` | Accepted | 按角色分端口、selection scope、运行队列、skipped |
 | `adr/0016-retire-python-backend.md` | Accepted | Python 业务后端离开主线，树在 `retired/python` |
 | `adr/0017-agent-full-journal-ui-protocol.md` | Accepted；取代 0013 的 live-only journal | 全量事件落 PG、Turn/Item 协议、控制流 SSE |
+| `adr/0018-agent-turn-write-ownership.md` | Accepted；收紧 0007 的运行时职责 | Go Turn 写权威、Node Pi loop 适配边界 |
 
 ## 协作元数据
 

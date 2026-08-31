@@ -35,6 +35,10 @@
 
 Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
+### Agent 运行时所有权
+
+Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正在按 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md) 分刀收口。该账本记录所有权目标、S0～S6 checkpoint 和每刀证据；生产可靠性状态仍只由 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md) 裁定。
+
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
