@@ -303,6 +303,37 @@ describe("TurnStore", () => {
     }
   });
 
+  it("keeps a parked question as waiting_input even after a durable execution identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-waiting-attempt-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const waitingScope = { ...scope, run_id: "waiting-attempt-run" };
+      const waiting = await store.createTurn(waitingScope, input);
+      const question = {
+        id: "question-restart-attempt",
+        header: "Missing context",
+        question: "Which language should the image use?",
+        options: [{ label: "Chinese" }],
+      };
+      await store.updateState(waitingScope.run_id, waiting.state.turn_id, {
+        status: "requires_input",
+        question,
+        execution_attempt: 1,
+        execution_fencing_token: 3,
+      });
+      await store.appendEvent(waitingScope.run_id, waiting.state.turn_id, "question/requested", question);
+
+      const result = await store.recoverAfterRestart();
+
+      expect(result.waitingInput).toBe(1);
+      expect(result.deferred).toBe(0);
+      expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("requires_input");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("defers a queued snapshot that already has a durable execution identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-deferred-recovery-"));
     try {

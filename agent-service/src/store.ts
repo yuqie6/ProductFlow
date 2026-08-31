@@ -100,7 +100,7 @@ export class TurnStore {
   private readonly initializedEventAcks = new Set<string>();
   private eventPublisher?: DurableEventPublisher;
 
-  constructor(readonly root: string) {}
+  constructor(readonly root: string) { }
 
   setEventPublisher(publisher: DurableEventPublisher): void {
     this.eventPublisher = publisher;
@@ -394,18 +394,18 @@ export class TurnStore {
         }
         return "queued";
       }
-      if (current.execution_attempt !== undefined || current.execution_fencing_token !== undefined) {
-        // claim 之后执行阶段归 ProductFlow。本地 queued 快照可能落后于 durable 阶段，
-        // 只有从未被碰过的 queued Turn 才可以在 Agent 本地重新入队。其余恢复由 PG lease/fencing 决定，
-        // 本地不得追加一个无法发布的第二终态。
-        return "deferred";
-      }
       if (
         current.status === "requires_input" &&
         current.question &&
         events.some((event) => event.kind === "question/requested")
       ) {
         return "waiting_input";
+      }
+      if (current.execution_attempt !== undefined || current.execution_fencing_token !== undefined) {
+        // claim 之后执行阶段归 ProductFlow。本地 queued 快照可能落后于 durable 阶段，
+        // 只有从未被碰过的 queued Turn 才可以在 Agent 本地重新入队。其余恢复由 PG lease/fencing 决定，
+        // 本地不得追加一个无法发布的第二终态。
+        return "deferred";
       }
       if (current.status === "queued") {
         return "queued";
@@ -569,6 +569,10 @@ export class TurnStore {
       if (isENOENT(error)) return undefined;
       throw error;
     }
+  }
+
+  async publishedThrough(runID: string, turnID: string): Promise<number> {
+    return this.publishedSequence(runID, turnID);
   }
 
   async markEventsPublished(runID: string, turnID: string, sequence: number): Promise<void> {
@@ -859,24 +863,24 @@ function stateOutput(state: TurnState): string {
 }
 
 function terminalStatusFromEvent(event: TurnEvent): Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation"> | null {
-	if (event.kind !== "turn/end") return null;
-	return terminalStatusFromPayload(event.payload);
+  if (event.kind !== "turn/end") return null;
+  return terminalStatusFromPayload(event.payload);
 }
 
 function terminalStatusFromPayload(payload: JsonObject): Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation"> | null {
-	const reason = typeof payload.reason === "string" ? payload.reason : payload.status;
-	const candidate = reason === "completed" ? "succeeded" : reason;
-	if (!isTerminalStatus(candidate as TurnStatus)) return null;
-	if (typeof candidate !== "string") return null;
+  const reason = typeof payload.reason === "string" ? payload.reason : payload.status;
+  const candidate = reason === "completed" ? "succeeded" : reason;
+  if (!isTerminalStatus(candidate as TurnStatus)) return null;
+  if (typeof candidate !== "string") return null;
   return candidate as Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">;
 }
 
 function artifactFromTerminalEvents(events: TurnEvent[], terminalEvent: TurnEvent): TurnArtifact | undefined {
   const nested = parseArtifact(terminalEvent.payload.artifact);
   if (nested) return nested;
-	const proposed = [...events].reverse().find((event) => event.kind === "approval/requested");
-	if (!proposed) return undefined;
-	return parseArtifact(proposed.payload.artifact) ?? parseArtifact(proposed.payload);
+  const proposed = [...events].reverse().find((event) => event.kind === "approval/requested");
+  if (!proposed) return undefined;
+  return parseArtifact(proposed.payload.artifact) ?? parseArtifact(proposed.payload);
 }
 
 function parseArtifact(value: JsonValue | undefined): TurnArtifact | undefined {
