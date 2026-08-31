@@ -20,6 +20,8 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
+[`audits/`](audits/) 保存进行中的逐项验收账本。账本可以同时记录目标合同、当前证据和缺口，但不是当前能力声明；完成项仍回到 PRD / ARCHITECTURE / USER_GUIDE，未完成项仍由 ROADMAP 索引。Agent 生产就绪的唯一验收指标见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
+
 ## 已接受决策
 
 [`adr/`](adr/) 正文冻结。被取代的部分在状态行标明后继 ADR，不把旧 ADR 改写成今天的实现。
