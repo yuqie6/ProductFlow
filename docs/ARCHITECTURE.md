@@ -83,6 +83,7 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
 | 共享工作台与图片库 | `pages/workbench/chrome/` | shortcuts, interaction and image-explorer tests |
 | HTTP 和 wire DTO | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
+| 文/图生图 | `ImageChatPage.tsx`, `pages/image-chat/` | branching, sessionEvents tests |
 
 ## 4. Agent 创建链路
 
@@ -96,7 +97,7 @@ product name (+ optional types and 1..6 uploads)
   -> product workbench
 ```
 
-ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、`LibraryOrganizationDraft` revision，以及全量 Turn journal `agent_turn_events`（合帧后的 `text.chunk` / `thinking.chunk` 也写入，连续 seq）。浏览器对话 SSE 由 Go 鉴权，只读取 PG journal，并由 `projectTurnEvent` 译成 Turn / Item / approval 通知；agent-service 没有本地事件流端点。运行中和终态 Turn 都从同一 PG 游标回放。`awaiting_confirmation` 停在 PG 日志上等待 `approval/resolved`。Dock 列表与 lease 健康走 `GET /api/v2/agent-control/events`（跨进程用 PostgreSQL LISTEN/NOTIFY）。图运行节点事件走 `GET /api/v3/products/:id/workflows/:id/runs/:id/events`。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `go/internal/agent` 的 harness run 规则：绑 Task 用 Task run，否则用 Conversation run。
+ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、`LibraryOrganizationDraft` revision，以及全量 Turn journal `agent_turn_events`（合帧后的 `text.chunk` / `thinking.chunk` 也写入，连续 seq）。浏览器对话 SSE 由 Go 鉴权，只读取 PG journal，并由 `projectTurnEvent` 译成 Turn / Item / approval 通知；agent-service 没有本地事件流端点。运行中和终态 Turn 都从同一 PG 游标回放。`awaiting_confirmation` 停在 PG 日志上等待 `approval/resolved`。Dock 列表与 lease 健康走 `GET /api/v2/agent-control/events`（跨进程用 PostgreSQL LISTEN/NOTIFY）。图运行节点事件走 `GET /api/v3/products/:id/workflows/:id/runs/:id/events`。文/图生图进度走 `GET /api/image-sessions/:id/events`。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `go/internal/agent` 的 harness run 规则：绑 Task 用 Task run，否则用 Conversation run。
 
 商品创建在一个业务事务中写入。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了与直接创建使用同一套图模板（`graph.BuildDirectCreateTemplate`），落库集合不同：Agent 表单齐写入 Product intake、不设封面；直接创建（`POST /api/v3/products`）不写 intake、封面为第一张图、不建 Session。Agent 对话里的 `finalize_product_intake_v1` 走 `Product.ApplyIntake`：同一事务写 intake，并在 live 图不存在或恰好一个 `product_source` 时调用 `expandBirthGraphFromIntake`。已有其它节点则只更新 intake。工具返回 `graph_expanded`、`revision`、节点/组数量。`get_product_workflow_context_v1` 带 `birth_expandable`（intake 已写且图仍是 birth）。后续单步 `apply_graph_change_set_v1` / 多步 `propose_graph_change_set_v1` 的 `operations[].op` 必须是 Graph Command 封闭表，与 `go/internal/graph` `ops_parse` 和 agent-service TypeBox schema 对齐。`tool_contract_version` 是工具清单内容哈希（`TOOL_MANIFEST_VERSION`）。`POST /api/v2/products` 仍可创建带封面的商品而不写 live graph，空图稍后由 `POST /api/v3/products/{id}/workflows` 补。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
 
@@ -179,7 +180,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - Redis 承担 broker 和并发 admission。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
-- Agent service 使用 Pi session 文件做模型 loop 恢复；Turn journal 带当前 lease/fencing 写入 PostgreSQL `agent_turn_events`。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
+- Agent service 使用 Pi session 文件做模型 loop 恢复；Turn journal 带当前 lease/fencing 写入 PostgreSQL `agent_turn_events`。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 与文/图生图会话 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
 - ProductFlow 的 Turn sync 只信任符合 Agent service wire contract 的状态；无法证明的外部结果继续保留 `unknown` 语义。
 
 ## 10. 配置与安全

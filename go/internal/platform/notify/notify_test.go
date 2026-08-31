@@ -30,6 +30,27 @@ func TestPublishListenRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPublishImageSessionChannel(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	notes, err := Listen(ctx, pool, ChannelImageSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Publish(ctx, gdb, ChannelImageSession, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-notes:
+		if n.Channel != ChannelImageSession || n.Payload != "session-1" {
+			t.Fatalf("note %+v", n)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive image-session notify")
+	}
+}
+
 func TestPublishRejectsUnknownChannel(t *testing.T) {
 	_, gdb := testdb.Open(t)
 	if err := Publish(context.Background(), gdb, "not_a_channel", "x"); err == nil {

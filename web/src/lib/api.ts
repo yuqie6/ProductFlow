@@ -846,6 +846,9 @@ export const api = {
   getImageSessionStatus(sessionId: string): Promise<ImageSessionStatus> {
     return request(`/api/image-sessions/${sessionId}/status`);
   },
+  imageSessionEventsUrl(sessionId: string): string {
+    return `/api/image-sessions/${encodeURIComponent(sessionId)}/events`;
+  },
   updateImageSession(sessionId: string, input: { title: string }): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}`, {
       method: "PATCH",

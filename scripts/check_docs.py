@@ -61,6 +61,8 @@ CODE_OWNERS = (
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",
     "web/src/pages/AgentProductCreatePage.tsx",
+    "web/src/pages/ImageChatPage.tsx",
+    "web/src/pages/image-chat",
     "web/src/pages/MediaLibraryPage.tsx",
     "web/src/pages/HelpPage.tsx",
     "web/src/components/GlobalAgentDock.tsx",

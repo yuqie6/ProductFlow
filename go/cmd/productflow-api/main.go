@@ -100,7 +100,7 @@ func main() {
 		},
 		ImageSession: imagesession.HTTP{
 			Service: imagesession.Service{
-				DB: gdb, Media: mediaStore, Settings: settingsStore,
+				DB: gdb, Pool: pool, Media: mediaStore, Settings: settingsStore,
 				Reconciler: liveImage,
 			},
 			Settings: settingsStore,

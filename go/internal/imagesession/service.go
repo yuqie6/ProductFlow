@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -24,6 +25,7 @@ import (
 
 type Service struct {
 	DB       *gorm.DB
+	Pool     *pgxpool.Pool
 	Media    media.Store
 	Settings interface {
 		settings.RuntimeReader
@@ -353,7 +355,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
 			return fmt.Errorf("stage dispatch: %w", err)
 		}
-		return nil
+		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
 		return DetailResponse{}, err
@@ -393,8 +395,10 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		}).Error; err != nil {
 			return err
 		}
-		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false)
-		return err
+		if _, err := queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false); err != nil {
+			return err
+		}
+		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
 		return DetailResponse{}, err
@@ -427,7 +431,10 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 			"progress_updated_at": now,
 			"is_retryable":        false,
 		}).Error
-		return err
+		if err != nil {
+			return err
+		}
+		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
 		return DetailResponse{}, err

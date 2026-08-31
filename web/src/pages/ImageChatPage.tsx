@@ -71,6 +71,7 @@ import {
   shouldBlockDuplicateGenerationSubmit,
   shouldRefreshImageSessionDetailFromStatus,
 } from "./image-chat/branching";
+import { subscribeImageSessionEvents } from "./image-chat/sessionEvents";
 import type {
   ImageGenerationSubmitGuard,
   ImageGenerationSubmitPayload,
@@ -81,7 +82,6 @@ import type {
   ImageSessionRound,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
-  ImageSessionStatus,
   ImageToolOptions,
 } from "../lib/types";
 
@@ -188,6 +188,7 @@ export function ImageChatPage() {
     useState<PendingDeleteAction | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [sessionEventsFallback, setSessionEventsFallback] = useState(false);
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
   const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
   const [historyPanelHeight, setHistoryPanelHeight] = useState(HISTORY_PANEL_DEFAULT_HEIGHT);
@@ -376,11 +377,24 @@ export function ImageChatPage() {
     queryKey: ["image-session-status", selectedSessionId],
     queryFn: () => api.getImageSessionStatus(selectedSessionId!),
     enabled: Boolean(selectedSessionId && hasActiveGenerationTask),
-    refetchInterval: (query) => {
-      const data = query.state.data as ImageSessionStatus | undefined;
-      return data?.has_active_generation_task ? 1500 : false;
-    },
+    refetchInterval: sessionEventsFallback && hasActiveGenerationTask ? 1500 : false,
   });
+
+  useEffect(() => {
+    if (!selectedSessionId || !hasActiveGenerationTask) {
+      setSessionEventsFallback(false);
+      return;
+    }
+    return subscribeImageSessionEvents(api.imageSessionEventsUrl(selectedSessionId), (status) => {
+      queryClient.setQueryData(["image-session-status", status.id], status);
+    }, {
+      onOpen: () => setSessionEventsFallback(false),
+      onError: () => {
+        setSessionEventsFallback(true);
+        setErrorMessage(t("chat.liveConnectionFailed"));
+      },
+    });
+  }, [hasActiveGenerationTask, queryClient, selectedSessionId, t]);
 
   useEffect(() => {
     const status = sessionStatusQuery.data;
@@ -584,6 +598,7 @@ export function ImageChatPage() {
     mutationFn: (payload: ImageGenerationSubmitPayload) => api.generateImageSessionRound(selectedSessionId!, payload),
     onSuccess: (updated, variables) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
       void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       const placeholderId = selectSubmittedImageGenerationTaskPlaceholderId(updated.generation_tasks, variables);
       const submittedTask = placeholderId
@@ -618,6 +633,7 @@ export function ImageChatPage() {
       api.retryImageSessionGenerationTask(input.sessionId, input.taskId),
     onSuccess: (updated, input) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
       void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       const retriedTask = updated.generation_tasks.find((task) => task.id === input.taskId);
       if (retriedTask) {
@@ -980,7 +996,7 @@ export function ImageChatPage() {
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 dark:bg-[#060a12] dark:text-slate-100 lg:h-screen lg:overflow-hidden">
       <TopNav
         breadcrumbs={t("chat.breadcrumb")}
-        onHome={() => navigate("/products")}
+        onHome={() => navigate("/home")}
         onLogout={() => logoutMutation.mutate()}
       />
 

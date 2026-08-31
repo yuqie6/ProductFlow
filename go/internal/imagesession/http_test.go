@@ -1,6 +1,7 @@
 package imagesession
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
@@ -55,7 +57,7 @@ func newSessionServer(t *testing.T) *sessionServer {
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
-	svc := Service{DB: gdb, Media: mediaStore, Settings: settingsStore}
+	svc := Service{DB: gdb, Pool: pool, Media: mediaStore, Settings: settingsStore}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	HTTP{Service: svc, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
@@ -430,6 +432,124 @@ func productMultipart(t *testing.T) (*bytes.Buffer, string) {
 		t.Fatal(err)
 	}
 	return &buf, w.FormDataContentType()
+}
+
+func TestImageSessionEventsStreamTerminalStatus(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+
+	gen := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "一只杯子", "size": "1024x1024", "generation_count": 1,
+	})
+	ss.mustStatus(t, gen, http.StatusAccepted)
+	ss.decode(t, gen, &session)
+	if len(session.GenerationTasks) != 1 {
+		t.Fatalf("tasks %d", len(session.GenerationTasks))
+	}
+	taskID := session.GenerationTasks[0].ID
+	ss.dropDispatch(t, taskID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ss.srv.URL+"/api/image-sessions/"+session.ID+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range ss.cookies {
+		req.AddCookie(cookie)
+	}
+	resp, err := ss.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("events status %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("content-type %s", resp.Header.Get("Content-Type"))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	first, err := readSessionStatusEvent(scanner)
+	if err != nil {
+		t.Fatalf("first status event: %v", err)
+	}
+	if first.ID != session.ID || !first.HasActiveGenerationTask {
+		t.Fatalf("first status %+v", first)
+	}
+
+	execErr := make(chan error, 1)
+	go func() {
+		exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{}}
+		execErr <- exec.Execute(context.Background(), taskID)
+	}()
+
+	for {
+		status, err := readSessionStatusEvent(scanner)
+		if err != nil {
+			select {
+			case exec := <-execErr:
+				if exec != nil {
+					t.Fatalf("execute: %v", exec)
+				}
+			default:
+			}
+			t.Fatalf("terminal status event: %v", err)
+		}
+		if status.HasActiveGenerationTask {
+			continue
+		}
+		if status.RoundsCount < 1 {
+			t.Fatalf("terminal rounds %d", status.RoundsCount)
+		}
+		found := false
+		for _, task := range status.GenerationTasks {
+			if task.ID == taskID && task.Status == "succeeded" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("terminal tasks %+v", status.GenerationTasks)
+		}
+		break
+	}
+	if err := <-execErr; err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+}
+
+func readSessionStatusEvent(scanner *bufio.Scanner) (StatusResponse, error) {
+	var event, data string
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, "event:"):
+			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		case strings.HasPrefix(line, "data:"):
+			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		case line == "":
+			if event != "session.status" || data == "" {
+				event, data = "", ""
+				continue
+			}
+			var status StatusResponse
+			if err := json.Unmarshal([]byte(data), &status); err != nil {
+				return StatusResponse{}, err
+			}
+			return status, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return StatusResponse{}, err
+	}
+	return StatusResponse{}, io.EOF
 }
 
 func pngBytes(t *testing.T, w, h int) []byte {

@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	ChannelControl = "productflow_control"
-	ChannelRun     = "productflow_run"
-	ChannelTurn    = "productflow_turn"
-	maxPayload     = 7900
+	ChannelControl      = "productflow_control"
+	ChannelRun          = "productflow_run"
+	ChannelTurn         = "productflow_turn"
+	ChannelImageSession = "productflow_image_session"
+	maxPayload          = 7900
 )
 
 var ErrNoPool = errors.New("notify: pgx pool is nil")
@@ -29,7 +30,7 @@ type Notification struct {
 
 func ValidChannel(name string) bool {
 	switch name {
-	case ChannelControl, ChannelRun, ChannelTurn:
+	case ChannelControl, ChannelRun, ChannelTurn, ChannelImageSession:
 		return true
 	default:
 		return false

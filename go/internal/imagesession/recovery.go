@@ -29,6 +29,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 		return RecoverySummary{}, err
 	}
 	var summary RecoverySummary
+	touched := map[string]struct{}{}
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		var tasks []schema.ImageSessionGenerationTasks
@@ -48,6 +49,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 				}
 				if changed {
 					summary.EnqueuedTasks++
+					touched[task.SessionID] = struct{}{}
 				}
 				continue
 			}
@@ -92,6 +94,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 						"updated_at":           now,
 					}).Error
 				summary.UnknownTasks++
+				touched[task.SessionID] = struct{}{}
 				continue
 			}
 			res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
@@ -122,6 +125,12 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			summary.StaleRunningTasks++
 			if changed {
 				summary.EnqueuedTasks++
+			}
+			touched[task.SessionID] = struct{}{}
+		}
+		for sessionID := range touched {
+			if err := publishSession(ctx, pgxTx, sessionID); err != nil {
+				return err
 			}
 		}
 		return nil

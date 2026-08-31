@@ -40,6 +40,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.POST("/image-sessions", h.create)
 	api.GET("/image-session-assets/:asset_id/download", h.download)
 	api.GET("/image-sessions/:image_session_id/status", h.status)
+	api.GET("/image-sessions/:image_session_id/events", h.streamEvents)
 	api.GET("/image-sessions/:image_session_id", h.get)
 	api.PATCH("/image-sessions/:image_session_id", h.update)
 	api.DELETE("/image-sessions/:image_session_id", h.requireDeletion, h.delete)
