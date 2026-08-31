@@ -104,7 +104,7 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 		return graphRow{}, err
 	}
 	if proposal.Status != "pending" {
-		return graphRow{}, apperr.Conflict("图提案已经结束")
+		return graphRow{}, apperr.NotPending("图提案已经结束")
 	}
 	if proposal.BaseGraphRevision != row.Revision {
 		return graphRow{}, apperr.Conflict("图 revision 已变化，请刷新后重试")
@@ -140,7 +140,7 @@ func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 		return err
 	}
 	if proposal.Status != "pending" {
-		return apperr.Conflict("图提案已经结束")
+		return apperr.NotPending("图提案已经结束")
 	}
 	return tx.WithContext(ctx).Model(&schema.WorkflowGraphProposals{}).Where("id = ?", proposal.ID).Updates(map[string]any{
 		"status":      "discarded",

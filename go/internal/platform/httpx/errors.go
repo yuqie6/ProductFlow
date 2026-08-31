@@ -26,7 +26,11 @@ func AbortErr(c *gin.Context, err error) {
 		if e.Status >= 500 {
 			_ = c.Error(err)
 		}
-		AbortDetail(c, e.Status, e.Detail)
+		body := gin.H{"detail": e.Detail}
+		if e.Code != "" {
+			body["code"] = e.Code
+		}
+		c.AbortWithStatusJSON(e.Status, body)
 		return
 	}
 	_ = c.Error(err)

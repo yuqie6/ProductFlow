@@ -174,18 +174,18 @@ func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB,
 	}
 	if draft.Status == "confirmed" {
 		if draft.ConfirmedRevisionID == nil || *draft.ConfirmedRevisionID != draft.CurrentRevision.ID {
-			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
+			return OrganizationDraft{}, apperr.NotPending("素材整理 Draft 已使用其他确认请求完成")
 		}
 		var rec schema.LibraryOrganizationDrafts
 		_ = pgxTx.WithContext(ctx).Select("confirmation_idempotency_key, confirmation_request_hash").
 			Where("id = ?", draft.ID).Take(&rec).Error
 		if rec.ConfirmationIdempotencyKey == nil || *rec.ConfirmationIdempotencyKey != key || rec.ConfirmationRequestHash == nil || *rec.ConfirmationRequestHash != requestHash {
-			return OrganizationDraft{}, apperr.Conflict("素材整理 Draft 已使用其他确认请求完成")
+			return OrganizationDraft{}, apperr.NotPending("素材整理 Draft 已使用其他确认请求完成")
 		}
 		return draft, nil
 	}
 	if draft.Status != "awaiting_confirmation" {
-		return OrganizationDraft{}, apperr.Conflict("当前素材整理 Draft 不在待确认状态")
+		return OrganizationDraft{}, apperr.NotPending("当前素材整理 Draft 不在待确认状态")
 	}
 	if draft.CurrentRevision.Version != expectedVersion {
 		return OrganizationDraft{}, apperr.Conflict("素材整理 Draft version 已变化，请确认最新 revision")
