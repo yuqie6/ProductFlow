@@ -296,17 +296,17 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 			return err
 		}
 		if loaded.Status != "requires_input" {
-			return apperr.Conflict("当前 Agent Turn 不在等待回答状态")
+			return apperr.NotPending("当前 Agent Turn 不在等待回答状态")
 		}
 		question := questionMap(loaded)
 		if question == nil || question["id"] != questionID {
-			return apperr.Conflict("当前 Agent 问题不存在或已经过期")
+			return apperr.NotPending("当前 Agent 问题不存在或已经过期")
 		}
 		if err := validateQuestionAnswer(question, answer); err != nil {
 			return err
 		}
 		if loaded.ContinuationTurnID != nil && len(loaded.QuestionAnswerJSON) > 0 && !sameQuestionAnswer(loaded.QuestionAnswerJSON, answer) {
-			return apperr.Conflict("当前问题已经使用其他答案")
+			return apperr.NotPending("当前问题已经使用其他答案")
 		}
 		answerJSON, err := json.Marshal(answer)
 		if err != nil {
@@ -318,6 +318,9 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 			"sync_error":           gorm.Expr("NULL"),
 			"updated_at":           time.Now().UTC(),
 		}).Error; err != nil {
+			return err
+		}
+		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
 			return err
 		}
 		row, err = loadTurn(ctx, pgxTx, productID, conversationID, projectionID)

@@ -120,7 +120,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 			return err
 		}
 		if item.Status == "cancelled" {
-			return apperr.Conflict("已取消的工作流执行请求不能确认")
+			return apperr.NotPending("已取消的工作流执行请求不能确认")
 		}
 		if item.WorkflowRunID != nil {
 			if err := SyncGraphRunToTasks(ctx, pgxTx, *item.WorkflowRunID); err != nil {
@@ -131,7 +131,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 			return err
 		}
 		if item.Status != "awaiting_confirmation" {
-			return apperr.Conflict("当前工作流执行请求不在待确认状态")
+			return apperr.NotPending("当前工作流执行请求不在待确认状态")
 		}
 		if err := requireLiveWorkflowRevision(ctx, pgxTx, item.ProductID, item.WorkflowID, item.ExpectedWorkflowRevision); err != nil {
 			return err

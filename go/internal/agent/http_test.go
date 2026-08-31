@@ -93,6 +93,7 @@ type questionGateway struct {
 	answerErr       error
 	resumeErr       error
 	startErr        error
+	resumeStatus    string
 	calls           []string
 	startCount      int
 	lastStartAssets []string
@@ -115,7 +116,11 @@ func (g *questionGateway) ResumeTurn(conversationID, turnID string, taskID *stri
 		return TurnState{}, g.resumeErr
 	}
 	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
-	st.Status = "running"
+	if g.resumeStatus != "" {
+		st.Status = g.resumeStatus
+	} else {
+		st.Status = "running"
+	}
 	st.Question = nil
 	return st, nil
 }
@@ -776,12 +781,96 @@ func TestAnswerQuestionUnavailableDoesNotCreateContinuation(t *testing.T) {
 	if as.conversationTurnCount(t, convID) != 1 {
 		t.Fatalf("continuation created during 503")
 	}
-	var status string
-	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&status); err != nil {
+	var status, answerJSON string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status, COALESCE(question_answer_json::text, '') FROM agent_turn_projections WHERE id = $1
+	`, turnID).Scan(&status, &answerJSON); err != nil {
 		t.Fatal(err)
 	}
 	if status != "requires_input" {
 		t.Fatalf("status %s", status)
+	}
+	if !strings.Contains(answerJSON, "筋膜枪") {
+		t.Fatalf("durable answer missing: %s", answerJSON)
+	}
+}
+
+func TestSyncTurnRetriesAnsweredQuestionAfterGatewayUnavailable(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 503, Code: "unavailable", Detail: "Agent 服务暂时不可用"}}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-retry-1")
+	resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+turnID+"/questions/question-retry-1/answer", map[string]any{
+		"text": "筋膜枪",
+	})
+	as.mustStatus(t, resp, http.StatusServiceUnavailable)
+	resp.Body.Close()
+
+	if err := as.svc.SyncTurn(context.Background(), turnID); !errors.Is(err, queue.ErrLater) {
+		t.Fatalf("answered requires_input should retry, got %v", err)
+	}
+
+	gw.answerErr = nil
+	gw.calls = nil
+	if err := as.svc.SyncTurn(context.Background(), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
+		t.Fatal(err)
+	}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v", gw.calls)
+	}
+	var status string
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" {
+		t.Fatalf("status %s", status)
+	}
+}
+
+func TestSyncTurnAppliesQueuedResumeAfterDurableAnswer(t *testing.T) {
+	gw := &questionGateway{resumeStatus: "queued"}
+	as := newAgentServer(t, gw, "tok")
+	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-queued-resume")
+	var key string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT idempotency_key FROM agent_turn_projections WHERE id = $1
+	`, turnID).Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": harnessID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "model",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+	heartbeat.Body.Close()
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET question_answer_json = '{"option":0}'::json, updated_at = NOW()
+		WHERE id = $1
+	`, turnID); err != nil {
+		t.Fatal(err)
+	}
+	gw.calls = nil
+	if err := as.svc.SyncTurn(context.Background(), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
+		t.Fatal(err)
+	}
+	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
+		t.Fatalf("gateway calls %v", gw.calls)
+	}
+	var status string
+	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == "requires_input" {
+		t.Fatal("queued resume after durable answer must not be treated as a stale snapshot")
 	}
 }
 
@@ -1532,6 +1621,166 @@ func TestAgentClaimAllowsExpiredWaitingInput(t *testing.T) {
 	}
 }
 
+func TestClaimAllowsExpiredRequiresInputWhenPhaseIsModel(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "提问后续跑", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "model",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+	heartbeat.Body.Close()
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections SET status = 'requires_input', updated_at = NOW() WHERE id = $1
+	`, submitted.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET lease_expires_at = NOW() - INTERVAL '1 second', updated_at = NOW()
+		WHERE id = $1
+	`, lease.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
+		t.Fatal(err)
+	}
+	reclaim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-2",
+		})), "application/json", auth)
+	as.mustStatus(t, reclaim, http.StatusOK)
+	var next ExecutionLeaseResponse
+	as.decode(t, reclaim, &next)
+	if next.OwnerID != "worker-2" || next.Phase != "claimed" {
+		t.Fatalf("reclaim %+v", next)
+	}
+}
+
+func TestClaimNewAttemptResetsCheckpointSequence(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "提问后续跑", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	first := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+	}, auth)
+	as.mustStatus(t, first, http.StatusOK)
+	first.Body.Close()
+	question := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 2,
+		"kind": "question_required", "payload": json.RawMessage(`{"question":{"id":"q1","header":"确认","question":"是否继续？","options":[{"label":"继续"}]}}`),
+	}, auth)
+	as.mustStatus(t, question, http.StatusOK)
+	question.Body.Close()
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "waiting_input",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+	heartbeat.Body.Close()
+
+	var checkpointSeq int
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT last_checkpoint_sequence FROM agent_turn_executions WHERE id = $1
+	`, lease.ExecutionID).Scan(&checkpointSeq); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointSeq != 2 {
+		t.Fatalf("last_checkpoint_sequence after question_required %d", checkpointSeq)
+	}
+
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET lease_expires_at = NOW() - INTERVAL '1 second', updated_at = NOW()
+		WHERE id = $1
+	`, lease.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+
+	reclaim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-2",
+		})), "application/json", auth)
+	as.mustStatus(t, reclaim, http.StatusOK)
+	var next ExecutionLeaseResponse
+	as.decode(t, reclaim, &next)
+	if next.Attempt <= lease.Attempt {
+		t.Fatalf("new claim must increment attempt: old=%d new=%d", lease.Attempt, next.Attempt)
+	}
+
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT last_checkpoint_sequence FROM agent_turn_executions WHERE id = $1
+	`, lease.ExecutionID).Scan(&checkpointSeq); err != nil {
+		t.Fatal(err)
+	}
+	if checkpointSeq != 0 {
+		t.Fatalf("new attempt must reset last_checkpoint_sequence, got %d", checkpointSeq)
+	}
+
+	stale := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
+		"owner_id": "worker-2", "lease_token": next.LeaseToken, "sequence": 3,
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2-stale","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+	}, auth)
+	if stale.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(stale.Body)
+		stale.Body.Close()
+		t.Fatalf("sequence 3 after reset want 409, got %d %s", stale.StatusCode, body)
+	}
+	stale.Body.Close()
+
+	fresh := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
+		"owner_id": "worker-2", "lease_token": next.LeaseToken, "sequence": 1,
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+	}, auth)
+	as.mustStatus(t, fresh, http.StatusOK)
+	fresh.Body.Close()
+}
+
 func TestRecoverUnfinishedTurnsLeavesExpiredWaitingInput(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
@@ -1598,6 +1847,66 @@ func TestRecoverUnfinishedTurnsLeavesExpiredWaitingInput(t *testing.T) {
 			"owner_id":        "worker-2",
 		})), "application/json", auth)
 	as.mustStatus(t, reclaim, http.StatusOK)
+}
+
+func TestRecoverUnfinishedTurnsLeavesExpiredRequiresInputWhenPhaseIsModel(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var sess SessionResponse
+	as.decode(t, session, &sess)
+	convID := sess.Conversations[0].ConversationID
+	key := clockid.New()
+	turn := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns", map[string]any{
+		"input_text": "提问后续跑", "idempotency_key": key,
+	})
+	as.mustStatus(t, turn, http.StatusAccepted)
+	var submitted SubmitTurnResponse
+	as.decode(t, turn, &submitted)
+	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
+		strings.NewReader(mustJSON(t, map[string]any{
+			"idempotency_key": key,
+			"harness_turn_id": *submitted.Turn.HarnessTurnID,
+			"owner_id":        "worker-1",
+		})), "application/json", auth)
+	as.mustStatus(t, claim, http.StatusOK)
+	var lease ExecutionLeaseResponse
+	as.decode(t, claim, &lease)
+
+	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "model",
+	}, auth)
+	as.mustStatus(t, heartbeat, http.StatusOK)
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections SET status = 'requires_input', updated_at = NOW() WHERE id = $1
+	`, submitted.Turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET lease_expires_at = NOW() - INTERVAL '1 second', updated_at = NOW()
+		WHERE id = $1
+	`, lease.ExecutionID); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UnknownExecutions != 0 {
+		t.Fatalf("parked question marked unknown: %+v", summary)
+	}
+	var status string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT status FROM agent_turn_projections WHERE id = $1
+	`, submitted.Turn.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "requires_input" {
+		t.Fatalf("status %s", status)
+	}
 }
 
 func TestAgentWorkbenchEnsureWithGraph(t *testing.T) {

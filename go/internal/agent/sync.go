@@ -55,6 +55,12 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 		if handled {
 			return s.syncOutcome(ctx, projectionID)
 		}
+		if row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0 && row.HarnessTurnID != nil {
+			if err := s.resumeAnsweredParent(ctx, productID, row); err != nil {
+				return s.syncOutcome(ctx, projectionID)
+			}
+			return s.syncOutcome(ctx, projectionID)
+		}
 		if row.HarnessTurnID == nil {
 			if _, err := s.bindGatewayTurn(ctx, productID, row.ConversationID, projectionID, true); err != nil {
 				return s.syncOutcome(ctx, projectionID)
@@ -317,6 +323,9 @@ func isStaleQueued(ctx context.Context, pgxTx *gorm.DB, row turnRow, state TurnS
 	}
 	if err != nil {
 		return false, err
+	}
+	if row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0 {
+		return false, nil
 	}
 	return row.Status != "queued" || exec.Phase != "claimed", nil
 }
