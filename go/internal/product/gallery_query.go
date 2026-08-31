@@ -174,8 +174,14 @@ func (s Service) GalleryBootstrap(ctx context.Context, productID string) (Galler
 			return err
 		}
 		if err := pgxTx.WithContext(ctx).Model(&schema.ProductImageAssets{}).
-			Where("product_id = ? AND origin_type IN ? AND created_at >= ?", productID, generatedOrigins, asOf.Add(-galleryRecentDays*24*time.Hour)).
+			Where("product_id = ? AND origin_type IN ? AND parent_asset_id IS NULL AND created_at >= ?", productID, generatedOrigins, asOf.Add(-galleryRecentDays*24*time.Hour)).
 			Count(&recent).Error; err != nil {
+			return err
+		}
+		var generated int64
+		if err := pgxTx.WithContext(ctx).Model(&schema.ProductImageAssets{}).
+			Where("product_id = ? AND origin_type IN ? AND parent_asset_id IS NULL", productID, generatedOrigins).
+			Count(&generated).Error; err != nil {
 			return err
 		}
 		originCounts, err := loadOriginCounts(ctx, pgxTx, productID)
@@ -190,7 +196,6 @@ func (s Service) GalleryBootstrap(ctx context.Context, productID string) (Galler
 		if err != nil {
 			return err
 		}
-		generated := originCounts["workflow_generation"] + originCounts["image_session_attach"]
 		origins := make([]GalleryOrigin, 0)
 		for _, origin := range originTypeOrder {
 			if originCounts[origin] > 0 {
@@ -204,7 +209,7 @@ func (s Service) GalleryBootstrap(ctx context.Context, productID string) (Galler
 				{Kind: "all", Count: int(allCount)},
 				{Kind: "recent_generated", Count: int(recent)},
 				{Kind: "uploads", Count: originCounts["upload"]},
-				{Kind: "generated", Count: generated},
+				{Kind: "generated", Count: int(generated)},
 				{Kind: "unorganized", Count: int(unorganized)},
 			},
 			ImageTypes:       imageTypes,
@@ -497,11 +502,11 @@ func applyGalleryListFilters(q *gorm.DB, productID, kind string, key *string, qu
 	q = q.Where("a.product_id = ?", productID)
 	switch kind {
 	case "recent_generated":
-		q = q.Where("a.origin_type IN ? AND a.created_at >= ?", generatedOrigins, asOf.Add(-galleryRecentDays*24*time.Hour))
+		q = q.Where("a.origin_type IN ? AND a.parent_asset_id IS NULL AND a.created_at >= ?", generatedOrigins, asOf.Add(-galleryRecentDays*24*time.Hour))
 	case "uploads":
 		q = q.Where("a.origin_type = ?", "upload")
 	case "generated":
-		q = q.Where("a.origin_type IN ?", generatedOrigins)
+		q = q.Where("a.origin_type IN ? AND a.parent_asset_id IS NULL", generatedOrigins)
 	case "image_type":
 		if key != nil && *key == galleryUnclassifiedTypeKey {
 			q = q.Where("a.image_type_key IS NULL")

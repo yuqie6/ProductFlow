@@ -308,3 +308,62 @@ func isAppErr(err error, status int, detail string) bool {
 	got, ok := err.(apperr.Error)
 	return ok && got.Status == status && strings.Contains(got.Detail, detail)
 }
+
+func TestGalleryGeneratedDirectoryOmitsDeliveryChildren(t *testing.T) {
+	ps := newProductServer(t)
+	seed := seedGallery(t, ps)
+	ctx := context.Background()
+	parentID := seed.assets[1]
+	childID := clockid.New()
+	mediaID := clockid.New()
+	err := tx.WithGorm(ctx, ps.db, func(pgxTx *gorm.DB) error {
+		if _, err := pfdb.Exec(ctx, pgxTx, `
+			INSERT INTO media_objects (
+				id, storage_path, mime_type, byte_size, width, height, sha256,
+				verification_status, created_at, verified_at
+			) VALUES ($1, $2, 'image/png', 1024, 1200, 1200, $3, 'verified', $4, $4)
+		`, mediaID, "gallery/"+seed.productID+"/child.png", strings.Repeat("b", 64), seed.now); err != nil {
+			return err
+		}
+		_, err := pfdb.Exec(ctx, pgxTx, `
+			INSERT INTO product_image_assets (
+				id, product_id, media_object_id, origin_type, display_name, original_filename,
+				parent_asset_id, created_at, updated_at
+			) VALUES ($1, $2, $3, 'workflow_generation', '主图 Alpha 1200x1200 PNG', 'hero-1200.png', $4, $5, $5)
+		`, childID, seed.productID, mediaID, parentID, seed.now)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boot, err := ps.svc.GalleryBootstrap(ctx, seed.productID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, item := range boot.SystemDirectories {
+		counts[item.Kind] = item.Count
+	}
+	if counts["all"] != 6 {
+		t.Fatalf("all %d", counts["all"])
+	}
+	if counts["generated"] != 3 || counts["recent_generated"] != 3 {
+		t.Fatalf("generated directories %+v", counts)
+	}
+	generated, err := ps.svc.ListGalleryAssets(ctx, seed.productID, GalleryListInput{DirectoryKind: "generated", Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(generated.Items) != 3 {
+		t.Fatalf("generated items %d", len(generated.Items))
+	}
+	for _, item := range generated.Items {
+		if item.ID == childID || item.ParentAssetID != nil {
+			t.Fatalf("delivery child listed as generated: %+v", item)
+		}
+	}
+	all, err := ps.svc.ListGalleryAssets(ctx, seed.productID, GalleryListInput{DirectoryKind: "all", Limit: 50})
+	if err != nil || len(all.Items) != 6 {
+		t.Fatalf("all %+v %v", all, err)
+	}
+}
