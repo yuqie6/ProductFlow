@@ -261,7 +261,7 @@ func openaiSizeFromSpec(spec map[string]any) string {
 	if ratio > 1.25 {
 		return "1536x1024"
 	}
-	if ratio < 0.8 {
+	if ratio <= 0.8 {
 		return "1024x1536"
 	}
 	return "1024x1024"
