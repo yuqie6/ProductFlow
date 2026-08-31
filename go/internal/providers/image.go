@@ -313,6 +313,8 @@ var (
 	}
 )
 
+const imageToolInputMaskKey = "input_image_mask"
+
 func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	size := openaiSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
@@ -342,6 +344,42 @@ func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequ
 	}, nil
 }
 
+func (p OpenAIResponses) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
+	if !p.MaskEdit {
+		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
+	}
+	if len(req.MaskPNG) == 0 {
+		return localedit.EditResult{}, apperr.Validation("局部编辑缺少遮罩")
+	}
+	if len(req.SourceBytes) == 0 {
+		return localedit.EditResult{}, apperr.Validation("局部编辑缺少原图")
+	}
+	size := openaiSizeFromPixels(req.Size)
+	if size == "" {
+		size = "1024x1024"
+	}
+	refs := []graph.ReferenceImage{{Bytes: req.SourceBytes, MIME: req.SourceMIME, Filename: "source.png"}}
+	for i, value := range req.ReferenceBytes {
+		refs = append(refs, graph.ReferenceImage{
+			Bytes: value, MIME: sniffMIME(value), Filename: fmt.Sprintf("reference-%d.png", i+1),
+		})
+	}
+	opts := filterImageToolOptions(p.ToolRuntime, p.AllowedFields)
+	required := map[string]any{
+		"action":              "edit",
+		imageToolInputMaskKey: map[string]any{"image_url": dataURL("image/png", req.MaskPNG)},
+	}
+	bytesData, mime, model, id, err := p.generateResponsesRequired(
+		ctx, req.Instruction, size, opts, refs, nil, mapChatStatus, required,
+	)
+	if err != nil {
+		return localedit.EditResult{}, err
+	}
+	return localedit.EditResult{
+		Bytes: bytesData, MIME: mime, Model: model, ResponseID: id, ProviderStatus: "completed",
+	}, nil
+}
+
 func imageGenerationTool(size string, opts map[string]any) map[string]any {
 	tool := map[string]any{"type": "image_generation", "size": size}
 	for _, key := range imageToolOptionalKeys {
@@ -354,11 +392,18 @@ func imageGenerationTool(size string, opts map[string]any) map[string]any {
 		}
 		tool[key] = value
 	}
+	if mask, ok := opts[imageToolInputMaskKey]; ok && mask != nil {
+		tool[imageToolInputMaskKey] = mask
+	}
 	return tool
 }
 
 func (p OpenAIResponses) createResponses(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string) (int, []byte, error) {
-	tool := imageGenerationTool(size, toolOptions)
+	return p.createResponsesRequired(ctx, input, size, toolOptions, previousID, nil)
+}
+
+func (p OpenAIResponses) createResponsesRequired(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string, requiredToolOptions map[string]any) (int, []byte, error) {
+	tool := imageGenerationTool(size, mergeToolOptions(toolOptions, requiredToolOptions))
 	payload := map[string]any{
 		"model": p.Model,
 		"input": input,
@@ -387,13 +432,25 @@ func (p OpenAIResponses) createResponses(ctx context.Context, input any, size st
 			delete(payload, "background")
 			continue
 		}
-		if tools, ok := payload["tools"].([]map[string]any); ok && len(tools) > 0 && hasOptionalImageToolFields(tools[0]) {
-			payload["tools"] = []map[string]any{imageGenerationTool(size, nil)}
+		if tools, ok := payload["tools"].([]map[string]any); ok && len(tools) > 0 && hasRemovableImageToolFields(tools[0], requiredToolOptions) {
+			payload["tools"] = []map[string]any{imageGenerationTool(size, requiredToolOptions)}
 			continue
 		}
 		return status, raw, nil
 	}
 	return status, raw, nil
+}
+
+func hasRemovableImageToolFields(tool map[string]any, required map[string]any) bool {
+	for _, key := range imageToolOptionalKeys {
+		if _, protected := required[key]; protected {
+			continue
+		}
+		if _, ok := tool[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func isBackgroundUnsupported(status int, body []byte) bool {
@@ -412,18 +469,13 @@ func isBackgroundUnsupported(status int, body []byte) bool {
 	return false
 }
 
-func hasOptionalImageToolFields(tool map[string]any) bool {
-	for _, key := range imageToolOptionalKeys {
-		if _, ok := tool[key]; ok {
-			return true
-		}
-	}
-	return false
+func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+	return p.generateResponsesRequired(ctx, prompt, size, toolOptions, refs, previousID, classify, nil)
 }
 
-func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+func (p OpenAIResponses) generateResponsesRequired(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error, requiredToolOptions map[string]any) ([]byte, string, string, string, error) {
 	input := responsesInput(prompt, refs)
-	status, raw, err := p.createResponses(ctx, input, size, toolOptions, previousID)
+	status, raw, err := p.createResponsesRequired(ctx, input, size, toolOptions, previousID, requiredToolOptions)
 	if err != nil {
 		return nil, "", "", "", err
 	}

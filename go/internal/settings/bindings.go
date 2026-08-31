@@ -55,8 +55,8 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 	if binding.Kind == "openai_images" {
 		binding.ImagesQuality = lookupJSONString(configJSON, "images_quality")
 		binding.ImagesStyle = lookupJSONString(configJSON, "images_style")
-		binding.MaskEdit = contains(caps, "image_mask_edit")
 	}
+	binding.MaskEdit = imageMaskEditForKind(binding.Kind, caps)
 	if binding.Kind == "openai_responses" {
 		if v, ok := cfg["responses_background_enabled"].(bool); ok {
 			binding.ResponsesBackground = v
@@ -73,6 +73,10 @@ func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 		return ModelBinding{}, apperr.Unavailable("供应商档案不支持当前接口能力")
 	}
 	return binding, nil
+}
+
+func imageMaskEditForKind(kind string, capabilities []string) bool {
+	return (kind == "openai_images" || kind == "openai_responses") && contains(capabilities, "image_mask_edit")
 }
 
 func imageCapabilityForKind(kind string) string {

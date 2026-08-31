@@ -165,7 +165,7 @@ func imageAdapter(ctx context.Context, store *settings.Store) (imageAdapterSet, 
 		return OpenAIResponses{
 			OpenAIImages: OpenAIImages{
 				Kind: "openai_responses", APIKey: binding.APIKey, BaseURL: binding.BaseURL,
-				Model: binding.Model,
+				Model: binding.Model, MaskEdit: binding.MaskEdit,
 			},
 			Background:    binding.ResponsesBackground,
 			ToolRuntime:   tool.Options,

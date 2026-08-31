@@ -480,6 +480,67 @@ func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
 	}
 }
 
+func TestResponsesMaskedEditSendsSourceAndProtectedMaskContract(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := completedResponsesImage()
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, payload)
+		tools, _ := payload["tools"].([]any)
+		tool, _ := tools[0].(map[string]any)
+		if tool["quality"] != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"message":"Unknown parameter: tools[0].quality"}}`)
+			return
+		}
+		_, _ = w.Write(completed)
+	}))
+	defer srv.Close()
+	img := OpenAIResponses{
+		OpenAIImages: OpenAIImages{
+			Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "reasoning-model", MaskEdit: true,
+		},
+		ToolRuntime: map[string]any{"model": "gpt-image-1", "quality": "high"},
+	}
+	got, err := img.Edit(context.Background(), localedit.EditRequest{
+		SourceBytes: png, SourceMIME: "image/png", MaskPNG: png,
+		Instruction: "replace only the masked area", Operation: "inpaint", Size: "1024x1024",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bytes) == 0 || len(bodies) != 2 {
+		t.Fatalf("bytes=%d requests=%d", len(got.Bytes), len(bodies))
+	}
+	for i, payload := range bodies {
+		tools, _ := payload["tools"].([]any)
+		tool, _ := tools[0].(map[string]any)
+		if tool["action"] != "edit" {
+			t.Fatalf("request %d lost edit action: %+v", i, tool)
+		}
+		mask, _ := tool[imageToolInputMaskKey].(map[string]any)
+		if !strings.HasPrefix(fmt.Sprint(mask["image_url"]), "data:image/png;base64,") {
+			t.Fatalf("request %d lost mask: %+v", i, tool)
+		}
+		input, _ := payload["input"].([]any)
+		if len(input) != 1 {
+			t.Fatalf("request %d input=%+v", i, payload["input"])
+		}
+	}
+	lastTools, _ := bodies[1]["tools"].([]any)
+	last, _ := lastTools[0].(map[string]any)
+	if _, ok := last["quality"]; ok {
+		t.Fatalf("retry retained removable quality: %+v", last)
+	}
+}
+
 func TestResponsesSellingPointSendsLowFidelityOnWire(t *testing.T) {
 	png, err := decodeB64(onePixelPNGB64())
 	if err != nil {
