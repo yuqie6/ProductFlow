@@ -64,11 +64,11 @@ export function GenericToolCard({ step }: { step: AgentToolStep }): ReactNode {
   );
 }
 
-function renderProposeGraph(context: ConversationItemRenderContext): ReactNode {
-  return context.step ? <GraphProposalCard step={context.step} onCanvasFocus={context.onCanvasFocus} /> : null;
+function renderGraphChange(context: ConversationItemRenderContext): ReactNode {
+  return context.step ? <GraphChangeCard step={context.step} onCanvasFocus={context.onCanvasFocus} /> : null;
 }
 
-function GraphProposalCard({
+function GraphChangeCard({
   step,
   onCanvasFocus,
 }: {
@@ -80,9 +80,20 @@ function GraphProposalCard({
   const nodeIds = meta?.affected_node_ids ?? [];
   const summaries = meta?.operation_summaries ?? [];
   const pending = Boolean(meta?.pending_confirmation);
+  const cardKind = step.kind === "focus_canvas"
+    ? "canvas-focus"
+    : step.kind === "apply_graph"
+      ? "graph-apply"
+      : "graph-proposal";
   return (
     <ItemCard>
-      <div data-agent-graph-proposal-card data-proposal-id={meta?.proposal_id ?? undefined}>
+      <div
+        data-agent-graph-proposal-card={step.kind === "propose_graph" ? "" : undefined}
+        data-agent-canvas-focus-card={step.kind === "focus_canvas" ? "" : undefined}
+        data-agent-graph-apply-card={step.kind === "apply_graph" ? "" : undefined}
+        data-agent-graph-change-card={cardKind}
+        data-proposal-id={meta?.proposal_id ?? undefined}
+      >
         <AgentToolStepRow step={step} />
         {meta?.summary ? (
           <p className="mt-2 text-[12px] leading-5 text-text-secondary">{meta.summary}</p>
@@ -94,21 +105,23 @@ function GraphProposalCard({
             ))}
           </ul>
         ) : null}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {pending ? (
-            <span className="text-[11px] text-state-warning">{t("agentWorkbench.graphProposal.pending")}</span>
-          ) : null}
-          {nodeIds.length > 0 && onCanvasFocus ? (
-            <button
-              type="button"
-              data-agent-graph-proposal-focus
-              className="inline-flex h-8 items-center rounded-md border border-border-l2 bg-surface-raised px-2.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent"
-              onClick={() => onCanvasFocus(nodeIds)}
-            >
-              {t("agentWorkbench.graphProposal.focus")}
-            </button>
-          ) : null}
-        </div>
+        {pending || (nodeIds.length > 0 && onCanvasFocus) ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {pending ? (
+              <span className="text-[11px] text-state-warning">{t("agentWorkbench.graphProposal.pending")}</span>
+            ) : null}
+            {nodeIds.length > 0 && onCanvasFocus ? (
+              <button
+                type="button"
+                data-agent-graph-proposal-focus
+                className="inline-flex h-8 items-center rounded-md border border-border-l2 bg-surface-raised px-2.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft hover:text-accent"
+                onClick={() => onCanvasFocus(nodeIds)}
+              >
+                {t("agentWorkbench.graphProposal.focus")}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </ItemCard>
   );
@@ -152,8 +165,6 @@ for (const key of [
   "organize_assets",
   "request_workflow_run",
   "create_product",
-  "apply_graph",
-  "focus_canvas",
   "expand_intake",
   "discard_proposal",
   "cancel_run",
@@ -161,7 +172,9 @@ for (const key of [
   registerConversationItemRenderer(key, renderToolCard);
 }
 
-registerConversationItemRenderer("propose_graph", renderProposeGraph);
+registerConversationItemRenderer("propose_graph", renderGraphChange);
+registerConversationItemRenderer("apply_graph", renderGraphChange);
+registerConversationItemRenderer("focus_canvas", renderGraphChange);
 registerConversationItemRenderer("generic_tool", ({ step }) => (step ? <GenericToolCard step={step} /> : null));
 
 function AgentThinkingItem({
