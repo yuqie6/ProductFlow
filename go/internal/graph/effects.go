@@ -85,14 +85,9 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	if err := effectRes.Error; err != nil {
 		return err
 	}
-	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ? AND active_attempt_id = ?", nodeRunID, NodeRunRunning, resolved).Updates(map[string]any{
-		"status":              "unknown",
-		"failure_reason":      detail,
-		"finished_at":         now,
-		"progress_phase":      "unknown_provider_effect",
-		"progress_updated_at": now,
-		"active_attempt_id":   nil,
-	})
+	updates := terminalNodeRunUpdates(NodeRunUnknown, now)
+	updates["failure_reason"] = detail
+	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ? AND active_attempt_id = ?", nodeRunID, NodeRunRunning, resolved).Updates(updates)
 	if err := res.Error; err != nil {
 		return err
 	}

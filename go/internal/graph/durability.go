@@ -176,6 +176,52 @@ func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]stri
 	return statuses, reasons, nil
 }
 
+func terminalNodeRunUpdates(status string, now time.Time) map[string]any {
+	return map[string]any{
+		"status":              status,
+		"finished_at":         now,
+		"active_attempt_id":   nil,
+		"progress_phase":      nil,
+		"progress_updated_at": now,
+	}
+}
+
+func aggregateGraphRunTerminalStatus(statuses, reasons []string) (string, *string, bool) {
+	for i, status := range statuses {
+		if status != NodeRunUnknown {
+			continue
+		}
+		msg := reasons[i]
+		if msg == "" {
+			msg = ProviderUnknownDetail
+		}
+		if len(msg) > 1000 {
+			msg = msg[:1000]
+		}
+		return RunStatusUnknown, &msg, false
+	}
+	for i, status := range statuses {
+		if status != NodeRunFailed {
+			continue
+		}
+		msg := reasons[i]
+		if msg == "" {
+			msg = "节点运行失败"
+		}
+		if len(msg) > 1000 {
+			msg = msg[:1000]
+		}
+		return RunStatusFailed, &msg, true
+	}
+	for _, status := range statuses {
+		if status == NodeRunCancelled {
+			msg := GraphCancelledReason
+			return RunStatusCancelled, &msg, false
+		}
+	}
+	return RunStatusSucceeded, nil, false
+}
+
 func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
 	var run schema.WorkflowGraphRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status").Where("id = ?", runID).Take(&run).Error
@@ -195,51 +241,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 		}
 	}
 	now := time.Now().UTC()
-	runStatus := RunStatusSucceeded
-	var failure *string
-	retryable := false
-	cancelledOnly := true
-	for i, st := range statuses {
-		if st == NodeRunUnknown {
-			runStatus = RunStatusUnknown
-			msg := reasons[i]
-			if msg == "" {
-				msg = ProviderUnknownDetail
-			}
-			if len(msg) > 1000 {
-				msg = msg[:1000]
-			}
-			failure = &msg
-			retryable = false
-			cancelledOnly = false
-			break
-		}
-		if st != NodeRunCancelled {
-			cancelledOnly = false
-		}
-	}
-	if runStatus == RunStatusSucceeded {
-		for i, st := range statuses {
-			if st == NodeRunFailed {
-				runStatus = RunStatusFailed
-				msg := reasons[i]
-				if msg == "" {
-					msg = "节点运行失败"
-				}
-				if len(msg) > 1000 {
-					msg = msg[:1000]
-				}
-				failure = &msg
-				retryable = true
-				break
-			}
-		}
-	}
-	if runStatus == RunStatusSucceeded && cancelledOnly {
-		runStatus = RunStatusCancelled
-		msg := GraphCancelledReason
-		failure = &msg
-	}
+	runStatus, failure, retryable := aggregateGraphRunTerminalStatus(statuses, reasons)
 	result := tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
 		Where("id = ? AND status = ?", runID, "running").
 		Updates(map[string]any{
@@ -284,15 +286,11 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 		return err
 	}
 	for _, node := range nodeRuns {
+		updates := terminalNodeRunUpdates(NodeRunFailed, now)
+		updates["failure_reason"] = reason
 		result := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 			Where("id = ? AND status IN ?", node.ID, []string{"queued", "running"}).
-			Updates(map[string]any{
-				"status":              "failed",
-				"failure_reason":      reason,
-				"finished_at":         now,
-				"active_attempt_id":   nil,
-				"progress_updated_at": now,
-			})
+			Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -387,13 +385,9 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 		if len(reason) > 1000 {
 			reason = reason[:1000]
 		}
-		result := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{"queued", "running"}, expectedAttemptID).Updates(map[string]any{
-			"status":              "failed",
-			"failure_reason":      reason,
-			"finished_at":         now,
-			"active_attempt_id":   nil,
-			"progress_updated_at": now,
-		})
+		updates := terminalNodeRunUpdates(NodeRunFailed, now)
+		updates["failure_reason"] = reason
+		result := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{"queued", "running"}, expectedAttemptID).Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}

@@ -274,14 +274,11 @@ func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, 
 			return nil
 		}
 		outputStr := string(output)
+		updates := terminalNodeRunUpdates(NodeRunSkipped, now)
+		updates["output_json"] = outputStr
 		res := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 			Where("id = ? AND status = ? AND active_attempt_id = ?", nodeRunID, NodeRunRunning, *attemptID).
-			Updates(map[string]any{
-				"status":            NodeRunSkipped,
-				"finished_at":       now,
-				"active_attempt_id": nil,
-				"output_json":       outputStr,
-			})
+			Updates(updates)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -527,12 +524,9 @@ func (e Executor) persistContentArtifact(
 		}
 		output, _ := json.Marshal(outputPayload)
 		outputStr := string(output)
-		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(map[string]any{
-			"status":            "succeeded",
-			"finished_at":       now,
-			"active_attempt_id": nil,
-			"output_json":       outputStr,
-		})
+		updates := terminalNodeRunUpdates(NodeRunSucceeded, now)
+		updates["output_json"] = outputStr
+		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -672,12 +666,9 @@ func (e Executor) persistImageArtifact(
 			"product_image_asset_id": assetID,
 		})
 		outputStr := string(output)
-		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(map[string]any{
-			"status":            "succeeded",
-			"finished_at":       now,
-			"active_attempt_id": nil,
-			"output_json":       outputStr,
-		})
+		updates := terminalNodeRunUpdates(NodeRunSucceeded, now)
+		updates["output_json"] = outputStr
+		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).Where("id = ? AND status = ?", nodeRun.ID, NodeRunRunning).Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -951,13 +942,11 @@ func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRun
 	if !promotable {
 		return nil
 	}
+	updates := terminalNodeRunUpdates(NodeRunCancelled, now)
+	updates["failure_reason"] = reason
 	res := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
-		Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{NodeRunQueued, NodeRunRunning}, *attemptID).Updates(map[string]any{
-		"status":            NodeRunCancelled,
-		"failure_reason":    reason,
-		"finished_at":       now,
-		"active_attempt_id": nil,
-	})
+		Where("id = ? AND status IN ? AND active_attempt_id = ?", nodeRunID, []string{NodeRunQueued, NodeRunRunning}, *attemptID).
+		Updates(updates)
 	if res.Error != nil {
 		return res.Error
 	}

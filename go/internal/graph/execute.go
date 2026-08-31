@@ -281,15 +281,11 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 			if processingUpstreamState(graph, nodeRuns, item) != "blocked" {
 				continue
 			}
+			updates := terminalNodeRunUpdates(NodeRunFailed, now)
+			updates["failure_reason"] = "上游处理节点未成功"
 			result := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 				Where("id = ? AND status = ?", item.ID, "queued").
-				Updates(map[string]any{
-					"status":              "failed",
-					"failure_reason":      "上游处理节点未成功",
-					"finished_at":         now,
-					"active_attempt_id":   nil,
-					"progress_updated_at": now,
-				})
+				Updates(updates)
 			if result.Error != nil {
 				return result.Error
 			}

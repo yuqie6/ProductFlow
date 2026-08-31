@@ -320,15 +320,17 @@ func TestSubmitRunQueuesWhenAnotherRunIsActive(t *testing.T) {
 	gs.mustStatus(t, current, http.StatusOK)
 	var graphView graph.Projection
 	gs.decode(t, current, &graphView)
-	var imageID string
+	var imageID, promptID string
 	for _, node := range graphView.Nodes {
 		if node.NodeType == graph.NodeImageGeneration {
 			imageID = node.ID
-			break
+		}
+		if node.NodeType == graph.NodePromptGeneration {
+			promptID = node.ID
 		}
 	}
-	if imageID == "" {
-		t.Fatal("missing image_generation")
+	if imageID == "" || promptID == "" {
+		t.Fatal("missing image_generation or prompt_generation")
 	}
 	second := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
 		"scope": "node", "node_id": imageID,
@@ -354,6 +356,26 @@ func TestSubmitRunQueuesWhenAnotherRunIsActive(t *testing.T) {
 	if again.ID != queued.ID {
 		t.Fatalf("duplicate queued %s vs %s", again.ID, queued.ID)
 	}
+	const updatedTitle = "排队期间改名"
+	renamed := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
+		"base_graph_revision": graphView.Revision,
+		"summary":             "排队期间修改节点",
+		"operations": []map[string]any{
+			{"op": "rename_node", "node_ref": imageID, "title": updatedTitle},
+		},
+	})
+	gs.mustStatus(t, renamed, http.StatusOK)
+	var renamedGraph graph.Projection
+	gs.decode(t, renamed, &renamedGraph)
+	third := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": promptID,
+	})
+	gs.mustStatus(t, third, http.StatusCreated)
+	var laterQueued graph.GraphRunResponse
+	gs.decode(t, third, &laterQueued)
+	if laterQueued.Status != "queued" || laterQueued.ID == queued.ID {
+		t.Fatalf("later queue item %+v", laterQueued)
+	}
 	cancelled := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+running.ID+"/cancel", nil, "")
 	gs.mustStatus(t, cancelled, http.StatusOK)
 	promoted := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+queued.ID, nil, "")
@@ -364,6 +386,24 @@ func TestSubmitRunQueuesWhenAnotherRunIsActive(t *testing.T) {
 	}
 	if len(queued.NodeRuns) == 0 {
 		t.Fatal("dequeue must snapshot node runs")
+	}
+	if queued.GraphRevision != renamedGraph.Revision {
+		t.Fatalf("dequeue revision %d, want latest %d", queued.GraphRevision, renamedGraph.Revision)
+	}
+	if queued.NodeRuns[0].NodeTitle == nil || *queued.NodeRuns[0].NodeTitle != updatedTitle {
+		t.Fatalf("dequeue node title %+v, want %q", queued.NodeRuns[0].NodeTitle, updatedTitle)
+	}
+	stillQueued := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+laterQueued.ID, nil, "")
+	gs.mustStatus(t, stillQueued, http.StatusOK)
+	gs.decode(t, stillQueued, &laterQueued)
+	if laterQueued.Status != "queued" {
+		t.Fatalf("FIFO promoted later item early: %s", laterQueued.Status)
+	}
+	cancelledQueued := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+laterQueued.ID+"/cancel", nil, "")
+	gs.mustStatus(t, cancelledQueued, http.StatusOK)
+	gs.decode(t, cancelledQueued, &laterQueued)
+	if laterQueued.Status != "cancelled" {
+		t.Fatalf("cancel queued status %s", laterQueued.Status)
 	}
 }
 

@@ -144,6 +144,7 @@ interface GraphNodeData extends Record<string, unknown> {
   selectionPrimary: boolean;
   missingRunLabels: string[];
   plannedAction?: GraphPlannedAction | null;
+  latestPlannedAction?: GraphPlannedAction | null;
   progressPhase?: string | null;
   elapsedLabel?: string | null;
   attemptCount?: number;
@@ -280,6 +281,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   const proposalState = data.proposalState ?? null;
   const multi = data.selectedCount >= 2 && data.selectionPrimary;
   const plannedClass = plannedActionClass(data.plannedAction);
+  const displayPlannedAction = data.plannedAction ?? data.latestPlannedAction ?? null;
   return (
     <div
       className={`relative w-[248px] overflow-visible ${proposalState === "deleted"
@@ -470,7 +472,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           node.node_type === "image_asset" && !node.bound_asset_id
             ? t("graph.inspector.unbound")
             : data.status === "skipped"
-              ? (data.plannedAction === "frozen" ? t("graph.node.skippedFrozen") : t("graph.node.skippedReuse"))
+              ? (displayPlannedAction === "frozen" ? t("graph.node.skippedFrozen") : t("graph.node.skippedReuse"))
               : data.status !== "idle"
                 ? nodeStatusLabel(data.status, t)
                 : node.unused
@@ -502,7 +504,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           data.onSelectNode(node.id, event);
         }}
       />
-      {data.plannedAction === "frozen" ? (
+      {displayPlannedAction === "frozen" ? (
         <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-surface-inverse p-1 text-surface-raised" aria-hidden="true">
           <Lock size={10} />
         </span>
@@ -659,6 +661,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
   selected,
   data,
 }: EdgeProps<GraphCanvasEdge>) {
+  const connectionInProgress = useConnection((connection) => connection.inProgress);
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -694,33 +697,35 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         stroke="transparent"
         strokeWidth={15}
         data-edge-emphasis={emphasis}
-        className="cursor-pointer"
+        className={selected ? "pointer-events-none" : "cursor-pointer"}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       />
-      <EdgeToolbar
-        edgeId={id}
-        x={labelX}
-        y={labelY}
-        isVisible
-        className={`nodrag nowheel nopan transition-all duration-200 ${graphEdgeDeleteClassName(Boolean(selected), hovered)}`}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <button
-          type="button"
-          className="nodrag nowheel nopan flex h-8 w-8 items-center justify-center rounded-full border border-border-l1 bg-surface-raised text-text-muted shadow-elev-1 hover:border-state-error/40 hover:bg-state-error-soft hover:text-state-error disabled:opacity-45"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (!data?.structureBusy) data?.onDelete(id);
-          }}
-          disabled={data?.structureBusy}
-          title={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
-          aria-label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
+      {!connectionInProgress ? (
+        <EdgeToolbar
+          edgeId={id}
+          x={labelX}
+          y={labelY}
+          isVisible
+          className={`nodrag nowheel nopan transition-all duration-200 ${graphEdgeDeleteClassName(Boolean(selected), hovered)}`}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
         >
-          <Trash2 size={13} strokeWidth={2.2} aria-hidden="true" />
-        </button>
-      </EdgeToolbar>
+          <button
+            type="button"
+            className="nodrag nowheel nopan flex h-8 w-8 items-center justify-center rounded-full border border-border-l1 bg-surface-raised text-text-muted shadow-elev-1 hover:border-state-error/40 hover:bg-state-error-soft hover:text-state-error disabled:opacity-45"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!data?.structureBusy) data?.onDelete(id);
+            }}
+            disabled={data?.structureBusy}
+            title={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
+            aria-label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
+          >
+            <Trash2 size={13} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </EdgeToolbar>
+      ) : null}
     </>
   );
 });
@@ -822,6 +827,7 @@ export function GraphWorkflowCanvas({
     height: typeof window === "undefined" ? 900 : window.innerHeight,
   }));
   const [snapToGrid, setSnapToGrid] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const publishSelection = useCallback((nodeIds: string[]) => {
     if (
       selectedNodeIds.length !== nodeIds.length
@@ -943,7 +949,8 @@ export function GraphWorkflowCanvas({
           const key = graphEdgeRoleLabelKey(role);
           return t("graph.missingRunInput", { role: key ? t(key) : role });
         }),
-        plannedAction: plannedActions[node.id] ?? nodePresentations[node.id]?.plannedAction ?? null,
+        plannedAction: plannedActions[node.id] ?? null,
+        latestPlannedAction: nodePresentations[node.id]?.lastPlannedAction ?? null,
         progressPhase: nodePresentations[node.id]?.progressPhase ?? null,
         elapsedLabel: nodePresentations[node.id]?.elapsedLabel ?? null,
         attemptCount: nodePresentations[node.id]?.attemptCount ?? 0,
@@ -964,6 +971,7 @@ export function GraphWorkflowCanvas({
       sourceHandle: "output",
       targetHandle: edge.role,
       type: "graph-edge" as const,
+      selected: selectedEdgeId === edge.id,
       data: {
         role: edge.role,
         roleLabel: (() => {
@@ -973,7 +981,7 @@ export function GraphWorkflowCanvas({
         structureBusy: busy,
         deleteLabel: t("detail.deleteEdge"),
         emphasis: graphEdgeEmphasis({
-          edgeSelected: false,
+          edgeSelected: selectedEdgeId === edge.id,
           sourceSelected: selectedNodeIdSet.has(edge.source_node_id),
           targetSelected: selectedNodeIdSet.has(edge.target_node_id),
         }),
@@ -981,7 +989,7 @@ export function GraphWorkflowCanvas({
         proposalState: proposalEdgeStates[edge.id] ?? null,
       },
     })),
-    [busy, onDeleteEdge, selectedNodeIdSet, t, viewGraph.edges],
+    [busy, onDeleteEdge, proposalEdgeStates, selectedEdgeId, selectedNodeIdSet, t, viewGraph.edges],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphCanvasNode>(graphNodes);
   const previousIdentityRef = useRef(graphIdentity);
@@ -1000,6 +1008,12 @@ export function GraphWorkflowCanvas({
       });
     });
   }, [graphIdentity, graphNodes, setNodes]);
+
+  useEffect(() => {
+    if (selectedEdgeId && !viewGraph.edges.some((edge) => edge.id === selectedEdgeId)) {
+      setSelectedEdgeId(null);
+    }
+  }, [selectedEdgeId, viewGraph.edges]);
 
   const handleNodeDragStart = useCallback<OnNodeDrag<GraphCanvasNode>>((_event, activeNode, selectedNodes) => {
     const dragged = selectedNodes.length ? selectedNodes : [activeNode];
@@ -1054,6 +1068,7 @@ export function GraphWorkflowCanvas({
   );
   const handleNodeClick = useCallback<NodeMouseHandler<GraphCanvasNode>>((event, node) => {
     if (!isRealNode(node)) return;
+    setSelectedEdgeId(null);
     selectNodeFromPointer(node.data.node.id, event);
   }, [selectNodeFromPointer]);
   const handleNodeDoubleClick = useCallback<NodeMouseHandler<GraphCanvasNode>>((event, node) => {
@@ -1170,6 +1185,11 @@ export function GraphWorkflowCanvas({
         onNodeDragStop={handleNodeDragStop}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
+        onEdgeClick={(event, edge) => {
+          event.stopPropagation();
+          publishSelection([]);
+          setSelectedEdgeId(edge.id);
+        }}
         onSelectionChange={handleSelectionChange}
         onSelectionStart={() => {
           selectionBoxNodeIdsRef.current = interactionPolicy.canSelectByBox ? [] : null;
@@ -1179,7 +1199,10 @@ export function GraphWorkflowCanvas({
           selectionBoxNodeIdsRef.current = null;
           if (nodeIds !== null) publishSelection(nodeIds);
         }}
-        onPaneClick={() => publishSelection([])}
+        onPaneClick={() => {
+          setSelectedEdgeId(null);
+          publishSelection([]);
+        }}
         onMoveEnd={((_event, nextViewport) => persistViewport(nextViewport)) as OnMoveEnd}
         defaultViewport={restoredViewport ?? undefined}
         fitView={!restoredViewport}
@@ -1189,6 +1212,7 @@ export function GraphWorkflowCanvas({
         nodesDraggable={interactionPolicy.nodesDraggable}
         nodesConnectable={interactionPolicy.nodesConnectable}
         edgesReconnectable
+        elevateEdgesOnSelect
         onReconnect={handleReconnect}
         elementsSelectable
         selectNodesOnDrag={interactionPolicy.selectNodesOnDrag}

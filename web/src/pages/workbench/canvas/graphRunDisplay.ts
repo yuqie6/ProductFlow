@@ -21,7 +21,7 @@ export interface GraphNodeRunPresentation {
   lastRunAt: string | null;
   retryable: boolean;
   runId: string | null;
-  plannedAction: GraphPlannedAction | null;
+  lastPlannedAction: GraphPlannedAction | null;
   progressPhase: string | null;
   elapsedLabel: string | null;
   attemptCount: number;
@@ -75,8 +75,8 @@ function presentationFromNodeRun(
     lastRunAt: nodeRun.finished_at ?? nodeRun.started_at,
     retryable: failed && run.is_retryable,
     runId: run.id,
-    plannedAction: nodeRun.planned_action ?? null,
-    progressPhase: nodeRun.progress_phase ?? null,
+    lastPlannedAction: nodeRun.planned_action ?? null,
+    progressPhase: LIVE_RUN_STATUSES.has(nodeRun.status) ? nodeRun.progress_phase ?? null : null,
     elapsedLabel: formatElapsed(nodeRun.started_at, nodeRun.finished_at, nodeRun.status),
     attemptCount: nodeRun.attempt_count,
   };

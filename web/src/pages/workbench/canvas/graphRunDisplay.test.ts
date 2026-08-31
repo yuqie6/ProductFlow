@@ -225,7 +225,7 @@ describe("graph run display", () => {
       lastRunAt: "2026-08-21T00:00:02Z",
       retryable: true,
       runId: "run-1",
-      plannedAction: null,
+      lastPlannedAction: null,
       progressPhase: null,
       elapsedLabel: "2.0s",
       attemptCount: 1,
@@ -254,6 +254,43 @@ describe("graph run display", () => {
       finished_at: "2026-08-20T00:00:02Z",
     };
     expect(graphNodeRunPresentations([latest, older]).image.attemptCount).toBe(3);
+  });
+
+  it.each(["succeeded", "skipped", "failed", "cancelled", "unknown"] as const)(
+    "does not project stale progress for terminal %s nodes",
+    (status) => {
+      const terminal: GraphRun = {
+        id: `run-${status}`,
+        graph_id: "g1",
+        status: status === "skipped" ? "succeeded" : status,
+        scope: "node",
+        requested_node_id: "image",
+        graph_revision: 2,
+        failure_reason: null,
+        is_retryable: false,
+        node_runs: [nodeRun({ status, progress_phase: "claimed" })],
+        started_at: "2026-08-21T00:00:00Z",
+        finished_at: "2026-08-21T00:00:01Z",
+      };
+      expect(graphNodeRunPresentations([terminal]).image.progressPhase).toBeNull();
+    },
+  );
+
+  it("keeps progress for live nodes", () => {
+    const running: GraphRun = {
+      id: "run-running-phase",
+      graph_id: "g1",
+      status: "running",
+      scope: "node",
+      requested_node_id: "image",
+      graph_revision: 2,
+      failure_reason: null,
+      is_retryable: false,
+      node_runs: [nodeRun({ status: "running", progress_phase: "provider_call", finished_at: null })],
+      started_at: "2026-08-21T00:00:00Z",
+      finished_at: null,
+    };
+    expect(graphNodeRunPresentations([running]).image.progressPhase).toBe("provider_call");
   });
 
   it("polls queued and running graph runs, not terminal ones", () => {

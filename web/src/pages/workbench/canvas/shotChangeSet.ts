@@ -21,10 +21,6 @@ export function shotGenerationSpec(imageTypeKey: AgentProductImageTypeKey): Reco
   const infographic = imageTypeFamily(imageTypeKey) === "infographic";
   return {
     aspect_ratio: defaultAspectRatioForType(imageTypeKey),
-    resolution_tier: "high",
-    quality_intent: "high",
-    reference_fidelity: "high",
-    background_intent: "auto",
     text_policy: infographic ? "required" : "none",
     ...(infographic ? { text_language: "zh-CN" } : {}),
   };

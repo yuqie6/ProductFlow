@@ -647,15 +647,11 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 		return loadGraphRun(ctx, tx, productID, graphID, runID)
 	}
 	for _, node := range nodeRuns {
+		updates := terminalNodeRunUpdates(NodeRunCancelled, now)
+		updates["failure_reason"] = reason
 		result := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 			Where("id = ? AND status IN ?", node.ID, []string{"queued", "running"}).
-			Updates(map[string]any{
-				"status":              NodeRunCancelled,
-				"failure_reason":      reason,
-				"finished_at":         now,
-				"active_attempt_id":   nil,
-				"progress_updated_at": now,
-			})
+			Updates(updates)
 		if result.Error != nil {
 			return graphRunRow{}, result.Error
 		}

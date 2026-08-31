@@ -12,6 +12,7 @@ class FakeEventSource {
   url: string;
   withCredentials: boolean;
   listeners = new Map<string, EventListener>();
+  closed = false;
 
   constructor(url: string, init?: EventSourceInit) {
     this.url = url;
@@ -32,6 +33,7 @@ class FakeEventSource {
   }
 
   close() {
+    this.closed = true;
     this.listeners.clear();
   }
 }
@@ -109,6 +111,23 @@ describe("subscribeGraphRunEvents", () => {
     stop();
     vi.unstubAllGlobals();
   });
+
+  it("closes cleanly after a terminal event without reporting a disconnect", () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const stop = subscribeGraphRunEvents("/events", onEvent, { onError });
+    const source = FakeEventSource.last;
+    source?.emit("run.event", {
+      data: JSON.stringify(event({ kind: "run.completed", node_run_id: null, payload: { status: "succeeded" } })),
+    } as MessageEvent<string> as Event);
+    source?.emit("error", new Event("error"));
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(source?.closed).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+    stop();
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("applyGraphRunEvent", () => {
@@ -137,6 +156,7 @@ describe("applyGraphRunEvent", () => {
     }));
     expect(runDone?.items[0].node_runs[0].status).toBe("succeeded");
     expect(runDone?.items[0].node_runs[0].output).toEqual({ artifact_id: "a1" });
+    expect(runDone?.items[0].node_runs[0].progress_phase).toBeNull();
     expect(runDone?.items[0].status).toBe("succeeded");
     expect(runDone?.items[0].finished_at).toBe("2026-08-31T00:00:03.000Z");
   });
@@ -147,5 +167,26 @@ describe("applyGraphRunEvent", () => {
       payload: { status: "running", attempt_count: 2 },
     }));
     expect(next?.items[0].node_runs[0].attempt_count).toBe(2);
+  });
+
+  it.each(["succeeded", "skipped", "failed", "cancelled", "unknown"] as const)(
+    "clears live progress when a node becomes %s",
+    (status) => {
+      const next = applyGraphRunEvent({ items: [run] }, event({
+        kind: `node.${status}`,
+        payload: { status },
+      }));
+      expect(next?.items[0].node_runs[0].status).toBe(status);
+      expect(next?.items[0].node_runs[0].progress_phase).toBeNull();
+      expect(next?.items[0].node_runs[0].finished_at).toBe("2026-08-31T00:00:01.000Z");
+    },
+  );
+
+  it("keeps progress while the node remains live", () => {
+    const next = applyGraphRunEvent({ items: [run] }, event({
+      payload: { status: "running", phase: "provider_result_received" },
+    }));
+    expect(next?.items[0].node_runs[0].progress_phase).toBe("provider_result_received");
+    expect(next?.items[0].node_runs[0].finished_at).toBeNull();
   });
 });

@@ -183,11 +183,18 @@ func serializeNodeRun(nodeRun graphNodeRunRow, snapshot map[string]any) GraphNod
 		Output:          output,
 		FailureReason:   nodeRun.FailureReason,
 		AttemptCount:    nodeRun.AttemptCount,
-		ProgressPhase:   nodeRun.ProgressPhase,
+		ProgressPhase:   serializedProgressPhase(nodeRun),
 		PlannedAction:   nodeRun.PlannedAction,
 		StartedAt:       nodeRun.StartedAt,
 		FinishedAt:      nodeRun.FinishedAt,
 	}
+}
+
+func serializedProgressPhase(nodeRun graphNodeRunRow) *string {
+	if nodeRun.Status != NodeRunQueued && nodeRun.Status != NodeRunRunning {
+		return nil
+	}
+	return nodeRun.ProgressPhase
 }
 
 func requestedNodeIDsOrEmpty(ids []string) []string {

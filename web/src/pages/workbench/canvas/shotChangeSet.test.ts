@@ -106,8 +106,15 @@ describe("shotChangeSet", () => {
     });
   });
 
-  it("defaults infographic shots to required on-image copy", () => {
-    expect(shotGenerationSpec("faq").text_policy).toBe("required");
-    expect(shotGenerationSpec("hero").text_policy).toBe("none");
+  it("only sends shot-specific generation settings and leaves Catalog defaults to the backend", () => {
+    expect(shotGenerationSpec("faq")).toEqual({
+      aspect_ratio: "3:4",
+      text_policy: "required",
+      text_language: "zh-CN",
+    });
+    expect(shotGenerationSpec("hero")).toEqual({
+      aspect_ratio: "3:4",
+      text_policy: "none",
+    });
   });
 });

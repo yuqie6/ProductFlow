@@ -36,8 +36,11 @@ export function subscribeGraphRunEvents(
   const factory = options.createEventSource ?? ((nextURL, init) => new EventSource(nextURL, init));
   const source = factory(withCursor(url, options.after ?? 0), { withCredentials: true });
   let cursor = options.after ?? 0;
+  let terminal = false;
   const handleOpen = () => options.onOpen?.();
-  const handleError = () => options.onError?.(new Error("图运行事件流连接失败"));
+  const handleError = () => {
+    if (!terminal) options.onError?.(new Error("图运行事件流连接失败"));
+  };
   const handle = (event: Event) => {
     const data = (event as Event & { data?: unknown }).data;
     if (typeof data !== "string") {
@@ -49,6 +52,10 @@ export function subscribeGraphRunEvents(
       if (parsed.sequence <= cursor) return;
       cursor = parsed.sequence;
       onEvent(parsed);
+      if (isTerminalRunEventKind(parsed.kind)) {
+        terminal = true;
+        source.close();
+      }
     } catch (error) {
       options.onError?.(error instanceof Error ? error : new Error("图运行事件无效"));
     }
@@ -62,6 +69,10 @@ export function subscribeGraphRunEvents(
     source.removeEventListener?.("run.event", handle);
     source.close();
   };
+}
+
+function isTerminalRunEventKind(kind: string): boolean {
+  return kind === "run.completed" || kind === "run.failed" || kind === "run.cancelled" || kind === "run.unknown";
 }
 
 export function applyGraphRunEvent(
@@ -105,7 +116,10 @@ export function applyGraphRunEventToRun(run: GraphRun, event: GraphRunEvent): Gr
     ? payload.attempt_count
     : current.attempt_count;
   const failureReason = nullableString(payload.reason ?? payload.failure_reason);
-  const progressPhase = typeof payload.phase === "string" ? payload.phase : current.progress_phase;
+  const terminal = isTerminalNodeStatus(status);
+  const progressPhase = terminal
+    ? null
+    : typeof payload.phase === "string" ? payload.phase : current.progress_phase;
   const output = isRecord(payload.output) ? payload.output : current.output;
   const next = {
     ...current,
@@ -114,7 +128,7 @@ export function applyGraphRunEventToRun(run: GraphRun, event: GraphRunEvent): Gr
     ...(failureReason !== undefined ? { failure_reason: failureReason } : {}),
     ...(progressPhase !== current.progress_phase ? { progress_phase: progressPhase } : {}),
     ...(output !== current.output ? { output } : {}),
-    ...(isTerminalNodeStatus(status) ? { finished_at: event.created_at } : {}),
+    ...(terminal ? { finished_at: event.created_at } : {}),
   };
   if (sameNodeRun(current, next)) return run;
   const nodeRuns = run.node_runs.slice();

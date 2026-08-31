@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import path from "node:path";
 
 import {
@@ -156,6 +156,16 @@ function visibleSidebarTool(page: Page, tool: string) {
 }
 
 async function openSidebarTool(page: Page, tool: string): Promise<void> {
+  if ((page.viewportSize()?.width ?? 1440) <= 1023) {
+    const expand = page.locator("[data-product-workbench-drawer-handle]");
+    if (await expand.isVisible()) {
+      await expand.click({ force: true });
+    }
+    const inspector = page.locator("[data-product-workbench-inspector]");
+    await expect(inspector).toBeVisible();
+    await inspector.locator(`[data-sidebar-tool="${tool}"]`).click();
+    return;
+  }
   if (await visibleSidebarTool(page, tool).count() === 0) {
     const expand = page.locator("[data-product-workbench-drawer-handle]");
     if (await expand.isVisible()) {
@@ -165,7 +175,32 @@ async function openSidebarTool(page: Page, tool: string): Promise<void> {
   await visibleSidebarTool(page, tool).click();
 }
 
+async function closeMobileInspector(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 1440) > 1023) return;
+  const inspector = page.locator("[data-product-workbench-inspector]");
+  if (await inspector.isVisible()) {
+    await inspector.getByRole("button", { name: "折叠右侧栏" }).click();
+  }
+  await expect(page.locator("[data-product-workbench-drawer-handle]")).toBeVisible();
+}
+
+async function enableMobileEditMode(page: Page): Promise<void> {
+  if ((page.viewportSize()?.width ?? 1440) > 1023) return;
+  const edit = page.getByRole("button", { name: "编辑模式：拖动节点、连接节点" });
+  await expect(edit).toBeVisible();
+  if (await edit.getAttribute("aria-pressed") !== "true") {
+    await edit.click();
+  }
+  await expect(edit).toHaveAttribute("aria-pressed", "true");
+}
+
 async function openAddPanel(page: Page) {
+  const canvasTab = page.locator('[data-graph-view="canvas"]');
+  if (await canvasTab.getAttribute("aria-selected") !== "true") {
+    await canvasTab.click({ force: true });
+    await expect(canvasTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator('[aria-hidden="false"] [aria-label="工作流画布"]')).toBeVisible();
+  }
   await openSidebarTool(page, "add");
   const panel = page.locator("[data-graph-add-node-panel]");
   await expect(panel).toBeVisible();
@@ -246,6 +281,21 @@ async function fitCanvas(page: Page): Promise<void> {
   await fit.evaluate((button: HTMLButtonElement) => button.click());
 }
 
+async function dragPointerConnection(page: Page, source: Locator, target: Locator): Promise<void> {
+  const sourceBox = await source.boundingBox();
+  const targetBox = await target.boundingBox();
+  expect(sourceBox).toBeTruthy();
+  expect(targetBox).toBeTruthy();
+  const start = { x: sourceBox!.x + sourceBox!.width / 2, y: sourceBox!.y + sourceBox!.height / 2 };
+  const end = { x: targetBox!.x + targetBox!.width / 2, y: targetBox!.y + targetBox!.height / 2 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 6 });
+  await page.waitForTimeout(50);
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  await page.mouse.up();
+}
+
 for (const preset of PRESETS) {
   test.describe(`v3 workbench actions ${preset.name}`, () => {
     test.use({
@@ -283,6 +333,12 @@ for (const preset of PRESETS) {
       });
       expect(addedImage).toBeTruthy();
       await selectNode(page, addedImage!.id);
+      const blockedToolbar = page.locator(`.react-flow__node-toolbar[data-id="${addedImage!.id}"]`);
+      const blockedRunButtons = blockedToolbar.getByRole("button", { name: /还缺提示词，先连上再运行/ });
+      await expect(blockedRunButtons).toHaveCount(2);
+      for (const button of await blockedRunButtons.all()) {
+        await expect(button).toBeDisabled();
+      }
       await openSidebarTool(page, "details");
       await expect(page.locator("[data-graph-node-inspector]")).toContainText("还缺提示词，先连上再运行");
 
@@ -581,18 +637,115 @@ for (const preset of PRESETS) {
       assertClean();
     });
 
-    test("illegal connect shows a reason on the canvas", async ({ page }) => {
+    test("role ports reject invalid links, reconnect atomically, and preview a run", async ({ page }) => {
       const assertClean = attachWorkbenchGuards(page);
       await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
       await openDirectCreateWorkbench(page, `e2e-actions-connect ${preset.name} ${Date.now()}`);
+      await closeMobileInspector(page);
+      await enableMobileEditMode(page);
       const graph = await currentGraph(page);
       const source = graph.nodes.find((node) => node.node_type === "product_source");
       const image = graph.nodes.find((node) => node.node_type === "image_generation");
       expect(source && image).toBeTruthy();
+      await enableMobileEditMode(page);
       const sourceHandle = page.locator(`[data-id="${source!.id}"] .react-flow__handle-right`).first();
       const targetHandle = page.locator(`[data-id="${image!.id}"] .react-flow__handle-left`).first();
       await sourceHandle.dragTo(targetHandle);
-      await expect(page.locator("[data-graph-canvas-notice]")).toContainText(/这两种节点不能相连|这个输入已经满了|这两点已经连过了/);
+      await expect.poll(async () => {
+        const latest = await currentGraph(page);
+        return {
+          edgeCount: latest.edges.length,
+          invalidEdgeExists: latest.edges.some((edge) => {
+            return edge.source_node_id === source!.id && edge.target_node_id === image!.id;
+          }),
+        };
+      }).toEqual({ edgeCount: graph.edges.length, invalidEdgeExists: false });
+
+      const withAsset = await addPaletteNode(page, "图片素材");
+      await closeMobileInspector(page);
+      await enableMobileEditMode(page);
+      const asset = withAsset.nodes.find((node) => {
+        return node.node_type === "image_asset" && !graph.nodes.some((existing) => existing.id === node.id);
+      });
+      const prompt = withAsset.nodes.find((node) => node.node_type === "prompt_generation");
+      const visual = withAsset.nodes.find((node) => node.node_type === "visual_system");
+      expect(asset && prompt && visual).toBeTruthy();
+      await fitCanvas(page);
+      await page.locator(".react-flow__pane").click({ position: { x: 20, y: 20 }, force: true });
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(300);
+      await enableMobileEditMode(page);
+      const assetOutput = page.locator(`[data-id="${asset!.id}"] [data-handleid="output"]`);
+      const promptReference = page.locator(`[data-id="${prompt!.id}"] [data-handleid="reference"]`);
+      const connected = page.waitForResponse((response) => {
+        if (response.request().method() !== "POST" || !response.url().includes("/changesets")) return false;
+        const body = response.request().postDataJSON() as { summary?: unknown } | null;
+        return body?.summary === "连接节点";
+      });
+      await dragPointerConnection(page, assetOutput, promptReference);
+      expect((await connected).ok()).toBeTruthy();
+      let connectedEdge: GraphPayload["edges"][number] | undefined;
+      await expect.poll(async () => {
+        connectedEdge = (await currentGraph(page)).edges.find((edge) => {
+          return edge.source_node_id === asset!.id && edge.target_node_id === prompt!.id && edge.role === "reference";
+        });
+        return connectedEdge?.id ?? null;
+      }).not.toBeNull();
+      expect(connectedEdge).toBeTruthy();
+      await fitCanvas(page);
+      const mobile = (page.viewportSize()?.width ?? 1440) <= 1023;
+      if (mobile) {
+        await page.locator(".react-flow__pane").click({ position: { x: 300, y: 400 }, force: true });
+      } else {
+        await page.locator(".react-flow__pane").dispatchEvent("click");
+      }
+      await enableMobileEditMode(page);
+      const edge = page.locator(`.react-flow__edge[data-id="${connectedEdge!.id}"]`);
+      await edge.locator("[data-edge-emphasis]").click();
+      await expect(edge).toHaveClass(/selected/);
+      const targetUpdater = edge.locator(".react-flow__edgeupdater-target");
+      const visualReference = page.locator(`[data-id="${visual!.id}"] [data-handleid="reference"]`);
+      await expect(targetUpdater).toBeAttached();
+      const updaterHitClass = await targetUpdater.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.getAttribute("class") ?? "";
+      });
+      expect(updaterHitClass).toContain("react-flow__edgeupdater-target");
+      const reconnected = page.waitForResponse((response) => {
+        if (response.request().method() !== "POST" || !response.url().includes("/changesets")) return false;
+        const body = response.request().postDataJSON() as { summary?: unknown } | null;
+        return body?.summary === "重连";
+      });
+      await dragPointerConnection(page, targetUpdater, visualReference);
+      expect((await reconnected).ok()).toBeTruthy();
+      await expect.poll(async () => {
+        const latest = await currentGraph(page);
+        return {
+          oldEdgeExists: latest.edges.some((item) => item.id === connectedEdge!.id),
+          replacementCount: latest.edges.filter((item) => {
+            return item.source_node_id === asset!.id && item.target_node_id === visual!.id && item.role === "reference";
+          }).length,
+        };
+      }).toEqual({ oldEdgeExists: false, replacementCount: 1 });
+
+      const runAll = page.locator("[data-graph-run-all]");
+      await expect(runAll).toBeEnabled();
+      const previewed = page.waitForResponse((response) => {
+        return response.request().method() === "POST" && response.url().includes("/runs/preview");
+      });
+      if ((page.viewportSize()?.width ?? 1440) <= 1023) {
+        await runAll.focus();
+      } else {
+        await runAll.hover();
+      }
+      expect((await previewed).ok()).toBeTruthy();
+      await expect(page.locator("[data-graph-planned-action]").first()).toBeVisible();
+      if ((page.viewportSize()?.width ?? 1440) <= 1023) {
+        await runAll.blur();
+      } else {
+        await page.mouse.move(0, 0);
+      }
+      await expect(page.locator("[data-graph-planned-action]")).toHaveCount(0);
       assertClean();
     });
 
