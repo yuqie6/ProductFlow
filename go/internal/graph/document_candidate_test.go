@@ -90,3 +90,59 @@ func TestDocumentSectionsExposeStableBusinessKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentSectionsCoverLivePromptFields(t *testing.T) {
+	covered := map[string]struct{}{}
+	for _, section := range documentSections(NodeImagePrompt) {
+		for _, field := range section.Fields {
+			covered[field] = struct{}{}
+		}
+	}
+	for _, field := range []string{
+		"design_goal", "shared_rules", "creative_boundary", "product_fidelity",
+		"composition", "content", "text", "atmosphere",
+	} {
+		if _, ok := covered[field]; !ok {
+			t.Fatalf("prompt field %s is not in any document section", field)
+		}
+	}
+	for _, field := range []string{"subject", "visual_style", "copy_overlay", "constraints"} {
+		if _, ok := covered[field]; ok {
+			t.Fatalf("retired prompt field %s should not be a document section field", field)
+		}
+	}
+}
+
+func TestApplyDocumentSectionsPromptCompositionKeepsContent(t *testing.T) {
+	node := AppliedNode{
+		ID: "prompt", NodeType: NodeImagePrompt, DocumentOrigin: OriginAuthored,
+		Config: map[string]any{
+			"prompt": map[string]any{
+				"design_goal": "人工目标",
+				"composition": map[string]any{"layout": "居中", "product_share_percent": 70.0},
+				"content":     map[string]any{"background": "白底"},
+			},
+		},
+	}
+	proposed := proposedDocumentConfig(node, map[string]any{
+		"design_goal": "AI 目标",
+		"composition": map[string]any{"layout": "左侧主体", "product_share_percent": 58.0, "viewpoint": "平视"},
+		"content":     map[string]any{"background": "木桌"},
+	}, DocumentActionRewrite)
+	applied, err := applyDocumentSections(node, proposed, []string{"composition"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt, _ := applied["prompt"].(map[string]any)
+	if prompt["design_goal"] != "人工目标" {
+		t.Fatalf("unselected objective changed: %+v", prompt)
+	}
+	content, _ := prompt["content"].(map[string]any)
+	if content["background"] != "白底" {
+		t.Fatalf("unselected content changed: %+v", prompt)
+	}
+	composition, _ := prompt["composition"].(map[string]any)
+	if composition["layout"] != "左侧主体" {
+		t.Fatalf("selected composition not applied: %+v", prompt)
+	}
+}

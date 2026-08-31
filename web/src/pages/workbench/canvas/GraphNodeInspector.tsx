@@ -53,6 +53,7 @@ import { DownloadLink } from "../chrome/ImageDownloadComponents";
 import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { CatalogConfigFields } from "./CatalogConfigFields";
+import { DocumentCandidateReview } from "./DocumentCandidateReview";
 import {
   catalogConfigForSave,
   catalogNodeDraft,
@@ -60,6 +61,7 @@ import {
   validateCatalogDraft,
   type CatalogNodeDraft,
 } from "./catalogConfig";
+import { documentCandidateCatalogFields } from "./documentCandidateView";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
 import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles, missingRunNodesSummary } from "./graphCatalog";
@@ -566,6 +568,7 @@ export function GraphNodeInspector({
             candidate={candidateQuery.data ?? null}
             loading={candidateQuery.isLoading}
             error={candidateQuery.error ? errorMessage(candidateQuery.error, t("graph.candidate.loadFailed")) : null}
+            fields={documentCandidateCatalogFields(catalog, node.node_type)}
             selectedKeys={selectedCandidateSections}
             busy={busy || candidateMutation.isPending}
             onToggle={(key) => setSelectedCandidateSections((current) => (
@@ -691,139 +694,6 @@ export function GraphNodeInspector({
       />
     </InspectorFlushContext.Provider>
   );
-}
-
-function DocumentCandidateReview({
-  candidate,
-  loading,
-  error,
-  selectedKeys,
-  busy,
-  onToggle,
-  onApplySelected,
-  onApplyAll,
-  onDiscard,
-  onRetry,
-}: {
-  candidate: import("../../../lib/types").GraphDocumentCandidate | null;
-  loading: boolean;
-  error: string | null;
-  selectedKeys: string[];
-  busy: boolean;
-  onToggle: (key: string) => void;
-  onApplySelected: () => void;
-  onApplyAll: () => void;
-  onDiscard: () => void;
-  onRetry: () => void;
-}) {
-  const { t } = useI18n();
-  if (error) {
-    return (
-      <section className="border-b border-border-l1 pb-4" data-graph-document-candidate>
-        <div role="alert" className="text-xs leading-5 text-state-error">{error}</div>
-        <Button size="sm" variant="secondary" className="mt-2" onClick={onRetry} disabled={busy}>
-          <RotateCcw size={12} aria-hidden="true" />
-          {t("workbench.retry")}
-        </Button>
-      </section>
-    );
-  }
-  if (loading || !candidate) {
-    return (
-      <section className="border-b border-border-l1 pb-4" data-graph-document-candidate>
-        <div className="flex items-center gap-2 text-xs text-text-muted">
-          <Loader2 size={14} className="animate-spin" aria-hidden="true" />
-          {t("graph.candidate.loading")}
-        </div>
-      </section>
-    );
-  }
-  const outdated = candidate.status === "outdated";
-  const changedSections = candidate.sections.filter((section) => section.changed);
-  return (
-    <section className="border-b border-border-l1 pb-4" data-graph-document-candidate data-candidate-status={candidate.status}>
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-text-primary">{t("graph.candidate.title")}</h4>
-        <span className={`text-[10px] font-medium ${outdated ? "text-state-warning" : "text-accent"}`}>
-          {outdated ? t("graph.candidate.outdated") : t("graph.candidate.ready")}
-        </span>
-      </div>
-      {outdated ? (
-        <p className="mt-2 text-xs leading-5 text-state-warning">{t("graph.candidate.outdatedDetail")}</p>
-      ) : (
-        <div className="mt-3 space-y-2">
-          {changedSections.map((section) => (
-            <label key={section.key} className="block border-l-2 border-border-l1 pl-3">
-              <span className="flex items-center gap-2 text-xs font-medium text-text-primary">
-                <input
-                  type="checkbox"
-                  checked={selectedKeys.includes(section.key)}
-                  onChange={() => onToggle(section.key)}
-                  disabled={busy}
-                />
-                {t(candidateSectionLabelKey(section.key))}
-              </span>
-              <span className="mt-2 grid grid-cols-2 gap-2">
-                <CandidateValue label={t("graph.candidate.current")} value={section.current} />
-                <CandidateValue label={t("graph.candidate.proposed")} value={section.candidate} accent />
-              </span>
-            </label>
-          ))}
-          {changedSections.length === 0 ? (
-            <p className="text-xs leading-5 text-text-muted">{t("graph.candidate.noChanges")}</p>
-          ) : null}
-        </div>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {!outdated ? (
-          <>
-            <Button size="sm" variant="primary" onClick={onApplySelected} disabled={busy || selectedKeys.length === 0} busy={busy}>
-              {t("graph.candidate.applySelected")}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={onApplyAll} disabled={busy || changedSections.length === 0}>
-              {t("graph.candidate.applyAll")}
-            </Button>
-          </>
-        ) : null}
-        <Button size="sm" variant="ghost" onClick={onDiscard} disabled={busy}>
-          {t("graph.candidate.discard")}
-        </Button>
-      </div>
-    </section>
-  );
-}
-
-function CandidateValue({ label, value, accent = false }: { label: string; value: Record<string, unknown>; accent?: boolean }) {
-  return (
-    <span className={`min-w-0 border-t px-2 py-2 ${accent ? "border-accent/40 bg-accent-soft" : "border-border-l1 bg-surface-subtle"}`}>
-      <span className="block text-[10px] font-medium text-text-muted">{label}</span>
-      <span className="mt-1 block whitespace-pre-wrap break-words text-[11px] leading-4 text-text-secondary">
-        {formatCandidateValue(value)}
-      </span>
-    </span>
-  );
-}
-
-function formatCandidateValue(value: Record<string, unknown>): string {
-  return Object.entries(value).map(([key, item]) => {
-    const text = typeof item === "string" ? item : JSON.stringify(item, null, 2);
-    return `${key}: ${text ?? ""}`;
-  }).join("\n") || "-";
-}
-
-function candidateSectionLabelKey(key: string): TranslationKey {
-  const labels: Record<string, TranslationKey> = {
-    objective: "graph.candidate.section.objective",
-    copy: "graph.candidate.section.copy",
-    guardrails: "graph.candidate.section.guardrails",
-    style: "graph.candidate.section.style",
-    palette: "graph.candidate.section.palette",
-    subject: "graph.candidate.section.subject",
-    composition: "graph.candidate.section.composition",
-    visual_style: "graph.candidate.section.visualStyle",
-    constraints: "graph.candidate.section.constraints",
-  };
-  return labels[key] ?? "graph.candidate.section.other";
 }
 
 function PromptResult({ payload }: { payload: Record<string, unknown> | null | undefined }) {

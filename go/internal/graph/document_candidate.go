@@ -69,11 +69,11 @@ func documentSections(nodeType NodeType) []DocumentSectionDefinition {
 	case NodeImagePrompt:
 		return []DocumentSectionDefinition{
 			{Key: "objective", Fields: []string{"design_goal"}},
-			{Key: "subject", Fields: []string{"subject"}},
+			{Key: "subject", Fields: []string{"product_fidelity"}},
 			{Key: "composition", Fields: []string{"composition"}},
-			{Key: "visual_style", Fields: []string{"visual_style"}},
-			{Key: "copy", Fields: []string{"copy_overlay"}},
-			{Key: "constraints", Fields: []string{"constraints"}},
+			{Key: "visual_style", Fields: []string{"content", "atmosphere"}},
+			{Key: "copy", Fields: []string{"text"}},
+			{Key: "constraints", Fields: []string{"shared_rules", "creative_boundary"}},
 		}
 	default:
 		return nil

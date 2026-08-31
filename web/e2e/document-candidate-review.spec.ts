@@ -105,8 +105,17 @@ test("document candidate review stays bounded on desktop and mobile", async ({ p
   const review = page.locator("[data-graph-document-candidate]");
   await expect(review).toBeVisible();
   await expect(review).toContainText("AI 文稿建议");
+  await expect(review).toContainText("设计目标");
+  await expect(review).toContainText("布局");
+  await expect(review).toContainText("商品占比");
   await expect(review).toContainText("保留真实材质与产品结构");
   await expect(review).toContainText("突出杯身纹理与便携卖点");
+  await expect(review).toContainText("左侧主体，右侧留白");
+  await expect(review).not.toContainText("design_goal");
+  await expect(review).not.toContainText("product_share_percent");
+  await expect(review).not.toContainText('"layout"');
+  await expect(review.getByRole("button", { name: "目标" })).toHaveAttribute("aria-pressed", "true");
+  await expect(review.getByRole("button", { name: "构图" })).toHaveAttribute("aria-pressed", "true");
   await expect(review.getByRole("button", { name: "应用所选" })).toBeEnabled();
   await expect(review.getByRole("button", { name: "整份采用" })).toBeEnabled();
   await page.screenshot({ path: "/tmp/productflow-document-candidate-desktop.png", fullPage: false });
