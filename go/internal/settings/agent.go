@@ -12,16 +12,20 @@ import (
 )
 
 type AgentProviderConfig struct {
-	SchemaVersion    int     `json:"schema_version"`
-	ProviderKind     string  `json:"provider_kind"`
-	APIKey           string  `json:"api_key"`
-	BaseURL          *string `json:"base_url"`
-	Model            string  `json:"model"`
-	ReasoningEffort  *string `json:"reasoning_effort"`
-	ReasoningSummary *string `json:"reasoning_summary"`
-	TextVerbosity    *string `json:"text_verbosity"`
-	ServiceTier      *string `json:"service_tier"`
+	SchemaVersion       int     `json:"schema_version"`
+	ProviderKind        string  `json:"provider_kind"`
+	APIKey              string  `json:"api_key"`
+	BaseURL             *string `json:"base_url"`
+	Model               string  `json:"model"`
+	ReasoningEffort     *string `json:"reasoning_effort"`
+	ReasoningSummary    *string `json:"reasoning_summary"`
+	TextVerbosity       *string `json:"text_verbosity"`
+	ServiceTier         *string `json:"service_tier"`
+	BackgroundResumable bool    `json:"background_resumable"`
 }
+
+// Pi production adapter 当前不支持 background 恢复；有效能力是 profile AND adapter。
+const agentAdapterBackgroundResumable = false
 
 // ResolveAgentProvider 给 Pi 内部服务解析当前工作流 Agent 绑定。
 func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, error) {
@@ -59,10 +63,13 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 	caps := []string{}
 	_ = json.Unmarshal([]byte(profile.CapabilitiesJSON), &caps)
 	hasText := false
+	profileBackground := false
 	for _, cap := range caps {
 		if cap == "text_responses" {
 			hasText = true
-			break
+		}
+		if cap == "background_responses" || cap == "background_resumable" {
+			profileBackground = true
 		}
 	}
 	if !hasText {
@@ -76,15 +83,16 @@ func (s *Store) ResolveAgentProvider(ctx context.Context) (AgentProviderConfig, 
 		return AgentProviderConfig{}, apperr.Unavailable("工作流 Agent 模型未配置")
 	}
 	cfg := AgentProviderConfig{
-		SchemaVersion:    1,
-		ProviderKind:     "openai",
-		APIKey:           *profile.APIKey,
-		BaseURL:          emptyToNil(profile.BaseURL),
-		Model:            model,
-		ReasoningEffort:  lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_effort"),
-		ReasoningSummary: lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_summary"),
-		TextVerbosity:    lookupJSONStringPtr([]byte(binding.ConfigJSON), "text_verbosity"),
-		ServiceTier:      lookupJSONStringPtr([]byte(binding.ConfigJSON), "service_tier"),
+		SchemaVersion:       1,
+		ProviderKind:        "openai",
+		APIKey:              *profile.APIKey,
+		BaseURL:             emptyToNil(profile.BaseURL),
+		Model:               model,
+		ReasoningEffort:     lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_effort"),
+		ReasoningSummary:    lookupJSONStringPtr([]byte(binding.ConfigJSON), "reasoning_summary"),
+		TextVerbosity:       lookupJSONStringPtr([]byte(binding.ConfigJSON), "text_verbosity"),
+		ServiceTier:         lookupJSONStringPtr([]byte(binding.ConfigJSON), "service_tier"),
+		BackgroundResumable: profileBackground && agentAdapterBackgroundResumable,
 	}
 	return cfg, nil
 }
