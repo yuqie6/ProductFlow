@@ -290,6 +290,16 @@ export interface CanonicalProductDetail {
   updated_at: string;
 }
 
+export interface GeneratedSourceNoteField {
+  label: string;
+  value: string;
+}
+
+export interface GeneratedSourceNote {
+  visible: string;
+  fields: GeneratedSourceNoteField[];
+}
+
 /** schema-v3 商品源节点上挂的商品投影。 */
 export interface GraphSourceProduct {
   id: string;

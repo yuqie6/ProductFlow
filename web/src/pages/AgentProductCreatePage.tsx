@@ -39,6 +39,12 @@ import {
   resolveCreateSubmitAction,
   type CreateOutputDraft,
 } from "./product-create/createIntake";
+import {
+  defaultCreateSourceNoteDraft,
+  formatSourceNote,
+  sourceNoteDraftFromGenerated,
+  type CreateSourceNoteDraft,
+} from "./product-create/sourceNote";
 
 const PENDING_DRAFT_STORAGE_KEY = "productflow.agent-create.pending-draft.v1";
 const INTAKE_STORAGE_KEY_PREFIX = "productflow.agent-create.intake.v1:";
@@ -150,7 +156,8 @@ export function AgentProductCreatePage() {
   const queryClient = useQueryClient();
   const [pendingDraft] = useState(readPendingDraft);
   const [name, setName] = useState(pendingDraft?.name ?? "");
-  const [brief, setBrief] = useState("");
+  const [sourceNote, setSourceNote] = useState<CreateSourceNoteDraft>(defaultCreateSourceNoteDraft);
+  const [sourceNoteError, setSourceNoteError] = useState("");
   const [outputDraft, setOutputDraft] = useState<CreateOutputDraft>(defaultCreateOutputDraft);
   const [localWorkspace, setLocalWorkspace] = useState<AgentProductWorkspaceSnapshot | null>(null);
   const [selections, setSelections] = useState<AgentImageTypeSelectionDraft[]>([]);
@@ -283,7 +290,7 @@ export function AgentProductCreatePage() {
       images: referenceFiles,
       idempotency_key: idempotencyState.idempotencyKey,
       task_id: agentTaskId,
-      source_note: brief.trim() || null,
+      source_note: formatSourceNote(sourceNote).trim() || null,
     });
   };
 
@@ -466,6 +473,24 @@ export function AgentProductCreatePage() {
     setError("");
   };
 
+  const generateSourceNoteMutation = useMutation({
+    mutationFn: async () => {
+      return api.generateProductSourceNote({
+        images: [...referenceFiles],
+        productName: name.trim(),
+        currentNote: formatSourceNote(sourceNote),
+      });
+    },
+    onSuccess: (generated) => {
+      setSourceNote(sourceNoteDraftFromGenerated(generated));
+      setSourceNoteError("");
+      setError("");
+    },
+    onError: (mutationError) => {
+      setSourceNoteError(errorDetail(mutationError, t("agentCreate.error.briefGenerateFailed")));
+    },
+  });
+
   const directCreateMutation = useMutation({
     mutationFn: async () => {
       const trimmedName = name.trim();
@@ -477,7 +502,7 @@ export function AgentProductCreatePage() {
           quantity: item.quantity,
           aspect_ratio: aspectRatioForSelection(item),
         })),
-        sourceNote: brief.trim(),
+        sourceNote: formatSourceNote(sourceNote).trim(),
         generationSpec: buildCreateGenerationSpec(outputDraft) ?? undefined,
         ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       });
@@ -505,7 +530,7 @@ export function AgentProductCreatePage() {
       setError(validationMessage(t, issue));
       return;
     }
-    if (!isCreateBriefReady(brief)) {
+    if (!isCreateBriefReady(formatSourceNote(sourceNote))) {
       setError(t("agentCreate.error.briefRequired"));
       return;
     }
@@ -547,7 +572,7 @@ export function AgentProductCreatePage() {
     }
     const submitAction = resolveCreateSubmitAction({
       name: trimmedName,
-      brief,
+      brief: formatSourceNote(sourceNote),
       selections,
       referenceImageCount: referenceFiles.length,
       limits: options.limits,
@@ -569,7 +594,7 @@ export function AgentProductCreatePage() {
         setError(validationMessage(t, intakeIssue));
         return;
       }
-      if (!isCreateBriefReady(brief)) {
+      if (!isCreateBriefReady(formatSourceNote(sourceNote))) {
         setError(t("agentCreate.error.briefRequired"));
         return;
       }
@@ -803,12 +828,19 @@ export function AgentProductCreatePage() {
               onRemoveReferenceFile={handleRemoveReferenceFile}
               onDeliveryPresetChange={handleDeliveryPresetChange}
               onRetryDeliveryPresets={() => void deliveryPresetsQuery.refetch()}
-              brief={brief}
+              sourceNote={sourceNote}
               outputDraft={outputDraft}
-              onBriefChange={(value) => {
-                setBrief(value);
+              onSourceNoteChange={(value) => {
+                setSourceNote(value);
+                setSourceNoteError("");
                 setError("");
               }}
+              onGenerateSourceNote={() => {
+                if (generateSourceNoteMutation.isPending || referenceFiles.length < 1) return;
+                generateSourceNoteMutation.mutate();
+              }}
+              isGeneratingSourceNote={generateSourceNoteMutation.isPending}
+              sourceNoteError={sourceNoteError}
               onOutputChange={(value) => {
                 setOutputDraft(value);
                 setError("");

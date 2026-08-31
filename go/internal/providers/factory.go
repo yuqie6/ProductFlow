@@ -50,6 +50,19 @@ func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest)
 	return p.GeneratePrompt(ctx, req)
 }
 
+func (l LivePrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	if g, ok := p.(interface {
+		GenerateSourceNote(context.Context, graph.PromptRequest) (graph.PromptResult, error)
+	}); ok {
+		return g.GenerateSourceNote(ctx, req)
+	}
+	return graph.PromptResult{Payload: MockSourceNotePayload(), Model: "mock-source-note"}, nil
+}
+
 // LiveImage 每次调用按当前 image 绑定解析生图 / 连续生图 / 局部编辑。
 type LiveImage struct{ Store *settings.Store }
 

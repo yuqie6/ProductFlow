@@ -1058,6 +1058,90 @@ func TestPromptSendsReferenceImageURL(t *testing.T) {
 	}
 }
 
+func TestSourceNotePostsResponsesWithStrictSchema(t *testing.T) {
+	png, err := decodeB64(onePixelPNGB64())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&posted)
+		w.WriteHeader(200)
+		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"visible":"玻璃瓶","fields":[{"label":"材质","value":"玻璃"},{"label":"容量","value":""}]}}`)
+	}))
+	defer srv.Close()
+	p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
+	got, err := p.GenerateSourceNote(context.Background(), graph.PromptRequest{
+		NodeTitle: "密封瓶",
+		CurrentDocument: map[string]any{
+			"source_note": "手填",
+		},
+		References: []graph.ReferenceImage{{
+			AssetID: "a1", Bytes: png, MIME: "image/png", Label: "主体", Role: "product_identity",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Payload["visible"] != "玻璃瓶" {
+		t.Fatalf("payload %+v", got.Payload)
+	}
+	fields, _ := got.Payload["fields"].([]any)
+	if len(fields) != 2 {
+		t.Fatalf("fields %+v", got.Payload["fields"])
+	}
+	format, _ := posted["text"].(map[string]any)
+	inner, _ := format["format"].(map[string]any)
+	if inner["type"] != "json_schema" || inner["strict"] != true || inner["name"] != "generated_source_note" {
+		t.Fatalf("text.format %+v", posted["text"])
+	}
+	schema, _ := inner["schema"].(map[string]any)
+	required, _ := schema["required"].([]any)
+	joined := fmt.Sprint(required)
+	for _, key := range []string{"visible", "fields"} {
+		if !strings.Contains(joined, key) {
+			t.Fatalf("required %v missing %s", required, key)
+		}
+	}
+	if strings.Contains(joined, "material") || strings.Contains(joined, "certification") {
+		t.Fatalf("fixed checklist leaked into required %v", required)
+	}
+	instr := fmt.Sprint(posted["instructions"])
+	if posted["instructions"] == nil || !strings.Contains(instr, "merchant-editable product source note") {
+		t.Fatalf("instructions %+v", posted["instructions"])
+	}
+	if !strings.Contains(instr, "Do not add photography or listing direction") || !strings.Contains(instr, "可重点强调") {
+		t.Fatalf("instructions missing listing-direction ban: %v", posted["instructions"])
+	}
+	if !strings.Contains(instr, "2–4 selling points") {
+		t.Fatalf("instructions missing selling-point requirement: %v", posted["instructions"])
+	}
+	input, _ := posted["input"].([]any)
+	user, _ := input[0].(map[string]any)
+	content, _ := user["content"].([]any)
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	if first["type"] != "input_text" || !strings.Contains(text, `"task":"draft_product_source_note"`) || strings.Contains(text, "listing_look") {
+		t.Fatalf("first part %+v", first)
+	}
+	imagePart, _ := content[2].(map[string]any)
+	if imagePart["type"] != "input_image" {
+		t.Fatalf("image part %+v", imagePart)
+	}
+}
+
+func TestSourceNoteSchemaRejectsMissingField(t *testing.T) {
+	err := matchJSONSchema(sourceNoteJSONSchema, map[string]any{
+		"visible": "瓶",
+	})
+	if err == nil {
+		t.Fatal("expected missing fields")
+	}
+	if err := matchJSONSchema(sourceNoteJSONSchema, MockSourceNotePayload()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
 	body, err := BuildPromptResponsesBody("gpt", prompts.PromptInstructions(), "listing_prompt_payload", listingPromptJSONSchema, graph.PromptRequest{
 		ImageTypeKey:        "selling_point",

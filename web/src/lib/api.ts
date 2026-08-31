@@ -53,6 +53,7 @@ import type {
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
   DirectCreateProductResponse,
+  GeneratedSourceNote,
   GraphChangeSet,
   GraphDocumentCandidate,
   WorkflowGenerationSpec,
@@ -1097,6 +1098,19 @@ export const api = {
       body.append("images", image);
     }
     return request("/api/v3/products", { method: "POST", body });
+  },
+  generateProductSourceNote(input: {
+    images: File[];
+    productName?: string;
+    currentNote?: string;
+  }): Promise<GeneratedSourceNote> {
+    const body = new FormData();
+    if (input.productName) body.append("product_name", input.productName);
+    if (input.currentNote) body.append("current_note", input.currentNote);
+    for (const image of input.images) {
+      body.append("images", image);
+    }
+    return request("/api/v2/product-source-notes/generate", { method: "POST", body });
   },
   getGraphNodeCatalog(): Promise<GraphNodeCatalog> {
     return request("/api/v3/node-catalog");

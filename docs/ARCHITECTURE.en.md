@@ -167,7 +167,7 @@ Global media-library reads, folder/tag/archive organization, source saves, and w
 
 `ProviderProfile` stores endpoint, secret, capabilities, default models, and provider configuration. `ProviderBinding` maps one profile to a purpose:
 
-- `prompt`: visual system, creative brief, and prompt nodes.
+- `prompt`: visual system, creative brief, and prompt nodes; the create page also uses this purpose to draft `source_note` from photos. The purpose enum is unchanged.
 - `agent`: workflow Agent.
 - `image`: workflow and image-session generation.
 

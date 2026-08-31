@@ -21,6 +21,13 @@ type Service struct {
 	Now func() time.Time
 	// Canvas 写入 Agent 商品工作区会话；直连创建可以不设。
 	Canvas CanvasWriter
+	// SourceNote 创建页看图起草商品说明；直连测试可以不设。
+	SourceNote SourceNoteGenerator
+}
+
+// SourceNoteGenerator 用 prompt 供应商看参考图起草 source_note，不走画布 cook。
+type SourceNoteGenerator interface {
+	GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error)
 }
 
 // CanvasWriter 在商品出生事务里写入 agent_sessions / agent_conversations。

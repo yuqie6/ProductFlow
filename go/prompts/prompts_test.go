@@ -18,6 +18,21 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(AgentGlobal(), "不能在全局会话上改某个商品的 live graph") {
 		t.Fatal("global prompt missing live-graph rule")
 	}
+	if !strings.Contains(SourceNoteInstructions(), "merchant-editable product source note") {
+		t.Fatal("source-note instructions missing")
+	}
+	if !strings.Contains(SourceNoteInstructions(), "可重点强调") || !strings.Contains(SourceNoteInstructions(), "Do not add photography or listing direction") {
+		t.Fatal("source-note must forbid listing-direction tails")
+	}
+	if !strings.Contains(SourceNoteInstructions(), "2–4 selling points") || !strings.Contains(SourceNoteInstructions(), "Do not write a dry anatomy list") {
+		t.Fatal("source-note must extract buyer-facing selling points")
+	}
+	if !strings.Contains(SourceNoteInstructions(), "only a parts inventory") {
+		t.Fatal("source-note must rewrite a dry current note into selling points")
+	}
+	if strings.Contains(SourceNoteInstructions(), "and what to emphasize") {
+		t.Fatal("visible must not ask the model what to emphasize")
+	}
 	if !strings.Contains(BriefInstructions(), "You write one ecommerce listing brief") {
 		t.Fatal("brief instructions missing")
 	}

@@ -33,6 +33,10 @@ type productServer struct {
 }
 
 func newProductServer(t *testing.T) *productServer {
+	return newProductServerWith(t, Service{})
+}
+
+func newProductServerWith(t *testing.T, overlay Service) *productServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
 	root := t.TempDir()
@@ -50,6 +54,15 @@ func newProductServer(t *testing.T) *productServer {
 	})
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	svc := Service{DB: gdb, Media: media.Store{Files: storage.Local{Root: root}}}
+	if overlay.SourceNote != nil {
+		svc.SourceNote = overlay.SourceNote
+	}
+	if overlay.Now != nil {
+		svc.Now = overlay.Now
+	}
+	if overlay.Canvas != nil {
+		svc.Canvas = overlay.Canvas
+	}
 	HTTP{Service: svc, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)

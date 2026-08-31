@@ -15,6 +15,7 @@ import {
   Loader2,
   Minus,
   Package,
+  Palette,
   Plus,
   RotateCw,
   Ruler,
@@ -46,18 +47,18 @@ import {
   type AgentImageTypeSelectionDraft,
 } from "./imageTypeSelection";
 import { CreateAspectRatioChips } from "./CreateAspectRatioChips";
+import { CreateSourceNoteEditor } from "./CreateSourceNoteEditor";
 import {
-  CREATE_BRIEF_MAX_LENGTH,
   CREATE_DEFAULT_TEXT_LANGUAGE,
   CREATE_TEXT_LANGUAGE_OPTIONS,
   CREATE_TEXT_POLICIES,
   createOutputSummary,
   hasCreateImagePlan,
-  isCreateBriefReady,
   isCreateCanvasReady,
   isCreateOutputReady,
   type CreateOutputDraft,
 } from "./createIntake";
+import { formatSourceNote, isCreateSourceNoteReady, type CreateSourceNoteDraft } from "./sourceNote";
 
 interface AgentProductCreateFormProps {
   productName: string;
@@ -83,9 +84,12 @@ interface AgentProductCreateFormProps {
   onRemoveReferenceFile: (index: number) => void;
   onDeliveryPresetChange: (key: string | null) => void;
   onRetryDeliveryPresets: () => void;
-  brief: string;
+  sourceNote: CreateSourceNoteDraft;
   outputDraft: CreateOutputDraft;
-  onBriefChange: (value: string) => void;
+  onSourceNoteChange: (value: CreateSourceNoteDraft) => void;
+  onGenerateSourceNote: () => void;
+  isGeneratingSourceNote?: boolean;
+  sourceNoteError?: string;
   onOutputChange: (value: CreateOutputDraft) => void;
   onRetryOptions: () => void;
   onApplyRecommendedSet: () => void;
@@ -112,7 +116,13 @@ const IMAGE_TYPE_ICONS: Partial<Record<AgentProductImageTypeKey, LucideIcon>> = 
   shipping: Truck,
 };
 
-const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon, LucideIcon] = [Package, Images, ImagePlus, Type];
+const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon, LucideIcon, LucideIcon] = [
+  Package,
+  ImagePlus,
+  Type,
+  Images,
+  Palette,
+];
 
 const TEXT_POLICY_LABELS = {
   required: "agentCreate.textPolicy.required",
@@ -174,9 +184,12 @@ export function AgentProductCreateForm({
   onRemoveReferenceFile,
   onDeliveryPresetChange,
   onRetryDeliveryPresets,
-  brief,
+  sourceNote,
   outputDraft,
-  onBriefChange,
+  onSourceNoteChange,
+  onGenerateSourceNote,
+  isGeneratingSourceNote = false,
+  sourceNoteError = "",
   onOutputChange,
   onRetryOptions,
   onApplyRecommendedSet,
@@ -234,13 +247,13 @@ export function AgentProductCreateForm({
   const minReferences = options?.limits.min_reference_images ?? 0;
   const maxReferences = options?.limits.max_reference_images ?? 0;
   const nameReady = productName.trim().length > 0;
-  const briefReady = isCreateBriefReady(brief);
+  const briefReady = isCreateSourceNoteReady(sourceNote);
   const planReady = selections.length > 0;
   const referenceReady = referenceFiles.length >= minReferences;
   const outputReady = isCreateOutputReady(outputDraft);
   const canvasReady = isCreateCanvasReady({
     name: productName,
-    brief,
+    brief: formatSourceNote(sourceNote),
     selections,
     referenceImageCount: referenceFiles.length,
     limits: options?.limits ?? null,
@@ -262,10 +275,11 @@ export function AgentProductCreateForm({
     CREATE_TEXT_LANGUAGE_OPTIONS.find((option) => option.value === outputDraft.textLanguage)?.label
     ?? outputDraft.textLanguage;
 
-  const stageTitle = (stage: 1 | 2 | 3 | 4): string => {
+  const stageTitle = (stage: 1 | 2 | 3 | 4 | 5): string => {
     if (stage === 1) return t("agentCreate.productInfo");
-    if (stage === 2) return t("agentCreate.imageTypes");
-    if (stage === 3) return t("agentCreate.references");
+    if (stage === 2) return t("agentCreate.references");
+    if (stage === 3) return t("agentCreate.brief");
+    if (stage === 4) return t("agentCreate.imageTypes");
     return t("agentCreate.output");
   };
 
@@ -281,7 +295,7 @@ export function AgentProductCreateForm({
     });
   };
 
-  const stageCard = (stage: 1 | 2 | 3 | 4, meta: string, isActive: boolean, body: ReactNode) => {
+  const stageCard = (stage: 1 | 2 | 3 | 4 | 5, meta: string, isActive: boolean, body: ReactNode) => {
     const Icon = STAGE_ICONS[stage - 1];
     return (
       <section aria-labelledby={`agent-stage-${stage}-title`} className={cardShellClass(isActive)}>
@@ -369,7 +383,7 @@ export function AgentProductCreateForm({
       }}
       className="mt-6 min-w-0 space-y-4 pb-56"
     >
-      {stageCard(1, t("agentCreate.productInfoHint"), nameReady && briefReady, (
+      {stageCard(1, t("agentCreate.productInfoHint"), nameReady, (
         <div className="space-y-4">
           <label htmlFor="agent-product-name" className="block">
             <span className="sr-only">{t("agentCreate.productName")}</span>
@@ -383,18 +397,6 @@ export function AgentProductCreateForm({
               onChange={(event) => onProductNameChange(event.target.value)}
               placeholder={t("agentCreate.namePlaceholder")}
               className="input-premium h-12 w-full px-4 text-[15px] font-medium text-text-primary read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
-            />
-          </label>
-          <label htmlFor="agent-product-brief" className="block">
-            <span className="mb-1.5 block text-xs font-medium text-text-secondary">{t("agentCreate.brief")}</span>
-            <textarea
-              id="agent-product-brief"
-              value={brief}
-              maxLength={CREATE_BRIEF_MAX_LENGTH}
-              disabled={isSubmitting || editingLocked}
-              onChange={(event) => onBriefChange(event.target.value)}
-              placeholder={t("agentCreate.briefPlaceholder")}
-              className="textarea-premium min-h-28 w-full resize-y px-4 py-3 text-[15px] leading-6 text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
           <div data-delivery-preset-control className="border-t border-border-l2 pt-4">
@@ -445,7 +447,111 @@ export function AgentProductCreateForm({
         </div>
       ))}
 
-      {stageCard(2, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
+      {stageCard(2, t("agentCreate.referencesMeta", { count: referenceFiles.length, max: maxReferences }) || t("agentCreate.references"), referenceReady, (
+        <div className="space-y-3">
+          {options && referenceFiles.length < maxReferences ? (
+            <ImageDropZone
+              multiple
+              disabled={isSubmitting || editingLocked}
+              ariaLabel={t("agentCreate.uploadAria")}
+              onFiles={onAddReferenceFiles}
+              className="glass-empty-state flex min-h-27 cursor-pointer flex-col items-center justify-center gap-1 px-4 text-center"
+              activeClassName="!border-accent !bg-accent-soft text-accent-strong"
+            >
+              {({ isDragging }) => (
+                <>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
+                    <ImagePlus size={20} aria-hidden="true" />
+                  </span>
+                  <span className="mt-1 text-sm font-semibold text-text-primary">
+                    {isDragging ? t("agentCreate.uploadDrop") : t("agentCreate.uploadTitle")}
+                  </span>
+                  <span className="text-xs leading-4 text-text-muted">
+                    {t("agentCreate.uploadHint", { max: maxReferences })}
+                  </span>
+                </>
+              )}
+            </ImageDropZone>
+          ) : null}
+
+          {referenceFiles.length > 0 ? (
+            <div className="flex gap-2.5 overflow-x-auto pb-2">
+              {referenceFiles.map((file, index) => (
+                <article
+                  key={`${file.name}:${file.size}:${file.lastModified}:${index}`}
+                  className="group relative w-25 shrink-0 overflow-hidden rounded-xl border border-border-l1 bg-surface-raised shadow-sm"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setPreviewIndex(index)}
+                    aria-label={t("agentCreate.preview", { name: file.name })}
+                    className="relative block h-20 w-full overflow-hidden bg-surface-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                  >
+                    {previewUrls[index] ? (
+                      <img src={previewUrls[index]} alt="" className="h-full w-full object-contain" />
+                    ) : null}
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100 group-focus-within:bg-black/30 group-focus-within:opacity-100">
+                      <Eye size={18} />
+                    </span>
+                  </button>
+                  <div className="min-w-0 px-2 py-1.5">
+                    <div className="truncate text-[11px] font-medium text-text-primary">{file.name}</div>
+                    <div className="text-[10px] text-text-muted">{formatFileSize(file.size, locale)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    title={t("agentCreate.remove", { name: file.name })}
+                    aria-label={t("agentCreate.remove", { name: file.name })}
+                    disabled={isSubmitting || editingLocked}
+                    onClick={() => onRemoveReferenceFile(index)}
+                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-surface-inverse/70 text-surface-inverse-fg backdrop-blur-sm transition-opacity hover:bg-state-error hover:text-white focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 sm:opacity-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ))}
+
+      {stageCard(3, t("agentCreate.briefHint"), briefReady, (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-medium text-text-secondary">{t("agentCreate.brief")}</span>
+            <button
+              type="button"
+              data-create-generate-brief
+              disabled={
+                isSubmitting
+                || editingLocked
+                || isGeneratingSourceNote
+                || referenceFiles.length < 1
+              }
+              title={referenceFiles.length < 1 ? t("agentCreate.briefGenerateHint") : t("agentCreate.briefGenerate")}
+              onClick={onGenerateSourceNote}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-accent/35 bg-accent-soft/60 px-2.5 text-xs font-semibold text-accent-strong transition-colors hover:border-accent/60 hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {isGeneratingSourceNote ? (
+                <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Sparkles size={13} aria-hidden="true" />
+              )}
+              {isGeneratingSourceNote ? t("agentCreate.briefGenerating") : t("agentCreate.briefGenerate")}
+            </button>
+          </div>
+          {sourceNoteError ? (
+            <p role="alert" className="text-xs leading-5 text-state-error">{sourceNoteError}</p>
+          ) : null}
+          <CreateSourceNoteEditor
+            value={sourceNote}
+            disabled={isSubmitting || editingLocked || isGeneratingSourceNote}
+            onChange={onSourceNoteChange}
+          />
+        </div>
+      ))}
+
+      {stageCard(4, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
         <div className="space-y-3">
           {options ? (
             <div className="flex flex-col gap-2">
@@ -557,75 +663,7 @@ export function AgentProductCreateForm({
         </div>
       ))}
 
-      {stageCard(3, t("agentCreate.referencesMeta", { count: referenceFiles.length, max: maxReferences }) || t("agentCreate.references"), referenceReady, (
-        <div className="space-y-3">
-          {options && referenceFiles.length < maxReferences ? (
-            <ImageDropZone
-              multiple
-              disabled={isSubmitting || editingLocked}
-              ariaLabel={t("agentCreate.uploadAria")}
-              onFiles={onAddReferenceFiles}
-              className="glass-empty-state flex min-h-27 cursor-pointer flex-col items-center justify-center gap-1 px-4 text-center"
-              activeClassName="!border-accent !bg-accent-soft text-accent-strong"
-            >
-              {({ isDragging }) => (
-                <>
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
-                    <ImagePlus size={20} aria-hidden="true" />
-                  </span>
-                  <span className="mt-1 text-sm font-semibold text-text-primary">
-                    {isDragging ? t("agentCreate.uploadDrop") : t("agentCreate.uploadTitle")}
-                  </span>
-                  <span className="text-xs leading-4 text-text-muted">
-                    {t("agentCreate.uploadHint", { max: maxReferences })}
-                  </span>
-                </>
-              )}
-            </ImageDropZone>
-          ) : null}
-
-          {referenceFiles.length > 0 ? (
-            <div className="flex gap-2.5 overflow-x-auto pb-2">
-              {referenceFiles.map((file, index) => (
-                <article
-                  key={`${file.name}:${file.size}:${file.lastModified}:${index}`}
-                  className="group relative w-25 shrink-0 overflow-hidden rounded-xl border border-border-l1 bg-surface-raised shadow-sm"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setPreviewIndex(index)}
-                    aria-label={t("agentCreate.preview", { name: file.name })}
-                    className="relative block h-20 w-full overflow-hidden bg-surface-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
-                  >
-                    {previewUrls[index] ? (
-                      <img src={previewUrls[index]} alt="" className="h-full w-full object-contain" />
-                    ) : null}
-                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100 group-focus-within:bg-black/30 group-focus-within:opacity-100">
-                      <Eye size={18} />
-                    </span>
-                  </button>
-                  <div className="min-w-0 px-2 py-1.5">
-                    <div className="truncate text-[11px] font-medium text-text-primary">{file.name}</div>
-                    <div className="text-[10px] text-text-muted">{formatFileSize(file.size, locale)}</div>
-                  </div>
-                  <button
-                    type="button"
-                    title={t("agentCreate.remove", { name: file.name })}
-                    aria-label={t("agentCreate.remove", { name: file.name })}
-                    disabled={isSubmitting || editingLocked}
-                    onClick={() => onRemoveReferenceFile(index)}
-                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-surface-inverse/70 text-surface-inverse-fg backdrop-blur-sm transition-opacity hover:bg-state-error hover:text-white focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 sm:opacity-0"
-                  >
-                    <X size={13} />
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ))}
-
-      {stageCard(4, t("agentCreate.outputHint"), outputReady, (
+      {stageCard(5, t("agentCreate.outputHint"), outputReady, (
         <div className="space-y-4" data-create-output>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
             <div role="radiogroup" aria-label={t("agentCreate.textPolicy")} className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">

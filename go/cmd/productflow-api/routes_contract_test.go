@@ -51,6 +51,7 @@ var goOpsExtras = map[string]bool{
 	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/apply":                 true,
 	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/discard":               true,
 	"POST /api/v3/products/{}/workflows/{}/runs/preview":                             true,
+	"POST /api/v2/product-source-notes/generate":                                     true,
 }
 
 // Historical snapshot still lists retired Agent library-effect and single-event routes.

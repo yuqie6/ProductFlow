@@ -75,17 +75,18 @@ type CompileImage struct {
 }
 
 var (
-	agentWorkflow string
-	agentGlobal   string
-	agentGoalLoop string
-	briefInstr    string
-	overlayInstr  string
-	promptInstr   string
-	look          Look
-	imageTypes    []ImageType
-	imageTypeMap  map[string]ImageType
-	identity      Identity
-	compileImage  CompileImage
+	agentWorkflow   string
+	agentGlobal     string
+	agentGoalLoop   string
+	briefInstr      string
+	overlayInstr    string
+	promptInstr     string
+	sourceNoteInstr string
+	look            Look
+	imageTypes      []ImageType
+	imageTypeMap    map[string]ImageType
+	identity        Identity
+	compileImage    CompileImage
 )
 
 func init() {
@@ -101,6 +102,9 @@ func AgentGoalLoop() string { return agentGoalLoop }
 func BriefInstructions() string   { return briefInstr }
 func OverlayInstructions() string { return overlayInstr }
 func PromptInstructions() string  { return promptInstr }
+
+// SourceNoteInstructions 返回创建页看图起草商品说明的指令，正文在 providers/source-note.md。
+func SourceNoteInstructions() string { return sourceNoteInstr }
 
 func ListingLook() Look       { return look }
 func ImageTypes() []ImageType { return append([]ImageType(nil), imageTypes...) }
@@ -180,6 +184,9 @@ func load() error {
 		return err
 	}
 	if promptInstr, err = wholeFile("providers/prompt-generation.md"); err != nil {
+		return err
+	}
+	if sourceNoteInstr, err = wholeFile("providers/source-note.md"); err != nil {
 		return err
 	}
 	if look, err = parseLook(); err != nil {

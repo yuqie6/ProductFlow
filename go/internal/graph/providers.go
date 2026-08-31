@@ -119,6 +119,7 @@ type MockPromptProvider struct {
 	Brief        map[string]any
 	Overlay      map[string]any
 	Prompt       map[string]any
+	SourceNote   map[string]any
 	Err          error
 }
 
@@ -181,6 +182,24 @@ func (m MockPromptProvider) GeneratePrompt(ctx context.Context, req PromptReques
 		}
 	}
 	return PromptResult{Payload: payload, Model: "mock-prompt"}, nil
+}
+
+func (m MockPromptProvider) GenerateSourceNote(ctx context.Context, req PromptRequest) (PromptResult, error) {
+	if m.Err != nil {
+		return PromptResult{}, m.Err
+	}
+	payload := m.SourceNote
+	if payload == nil {
+		payload = map[string]any{
+			"visible": "厚壁玻璃密封瓶，球盖锁扣。瓶身通透能看见内容，厚壁更耐磕。",
+			"fields": []any{
+				map[string]any{"label": "材质", "value": "玻璃"},
+				map[string]any{"label": "容量", "value": ""},
+				map[string]any{"label": "价格", "value": ""},
+			},
+		}
+	}
+	return PromptResult{Payload: payload, Model: "mock-source-note"}, nil
 }
 
 // MockImageProvider 返回一张最小 PNG，供图运行测试走完整产物路径。

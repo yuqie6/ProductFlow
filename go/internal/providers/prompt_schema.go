@@ -123,12 +123,36 @@ var atmosphereSchema = map[string]any{
 	},
 }
 
+// sourceNoteJSONSchema 是创建页看图起草商品说明的 strict Responses schema。
+// fields 按商品动态出项；value 允许空串，留给商家补。不能改成 json_object。
+var sourceNoteJSONSchema = map[string]any{
+	"type":                 "object",
+	"additionalProperties": false,
+	"required":             []any{"visible", "fields"},
+	"properties": map[string]any{
+		"visible": emptyableTextSchema(2000),
+		"fields": map[string]any{
+			"type":     "array",
+			"maxItems": 12,
+			"items": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []any{"label", "value"},
+				"properties": map[string]any{
+					"label": map[string]any{"type": "string", "minLength": 1, "maxLength": 16},
+					"value": emptyableTextSchema(160),
+				},
+			},
+		},
+	},
+}
+
 func nonEmptyTextSchema() map[string]any {
 	return map[string]any{"type": "string", "minLength": 1, "maxLength": 4000}
 }
 
-func stringArraySchema() map[string]any {
-	return map[string]any{"type": "array", "items": nonEmptyTextSchema()}
+func emptyableTextSchema(maxLength int) map[string]any {
+	return map[string]any{"type": "string", "maxLength": maxLength}
 }
 
 func boundedStringArraySchema(minItems, maxItems int) map[string]any {

@@ -146,4 +146,40 @@ describe("v3 graph API helpers", () => {
     const formData = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData;
     expect(formData.get("delivery_preset_key")).toBe("jd_hero");
   });
+
+  it("posts create-page source-note generate as multipart images and optional drafts", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        visible: "厚壁玻璃密封瓶",
+        fields: [
+          { label: "材质", value: "玻璃" },
+          { label: "容量", value: "" },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const image = new File(["ref"], "ref.png", { type: "image/png" });
+
+    const got = await api.generateProductSourceNote({
+      images: [image],
+      productName: "密封瓶",
+      currentNote: "手填外形",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v2/product-source-notes/generate");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    const formData = init.body as FormData;
+    expect(formData.get("product_name")).toBe("密封瓶");
+    expect(formData.get("current_note")).toBe("手填外形");
+    expect(formData.getAll("images")).toEqual([image]);
+    expect(got.visible).toBe("厚壁玻璃密封瓶");
+    expect(got.fields).toEqual([
+      { label: "材质", value: "玻璃" },
+      { label: "容量", value: "" },
+    ]);
+  });
 });

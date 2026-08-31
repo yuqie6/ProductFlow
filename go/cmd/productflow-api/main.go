@@ -83,7 +83,10 @@ func main() {
 		Auth:     auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore},
 		Settings: settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken},
 		Product: product.HTTP{
-			Service:  product.Service{DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas},
+			Service: product.Service{
+				DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas,
+				SourceNote: providers.LivePrompt{Store: settingsStore},
+			},
 			Settings: settingsStore,
 		},
 		Library: library.HTTP{

@@ -165,7 +165,7 @@ GenerationSpec 保存模型生成意图；provider effective values 和解码后
 
 `ProviderProfile` 保存 endpoint、secret、能力、默认模型和 provider 级配置。`ProviderBinding` 把一个 profile 绑定到用途：
 
-- `prompt`：视觉规范、创作要求和提示词节点。
+- `prompt`：视觉规范、创作要求和提示词节点；创建页看图起草 `source_note` 也走同一用途。用途枚举仍是 `prompt`。
 - `agent`：workflow Agent。
 - `image`：工作流和图片会话生图。
 

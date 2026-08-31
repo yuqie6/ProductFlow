@@ -18,7 +18,7 @@ The current release serves a personal project and live demo. The main repository
 
 1. The user opens `/products/new` and enters a product name.
 2. Agent path: the system creates the Product, a live schema-v3 graph (name-only: a product-source node), a product-owned AgentSession, and AgentConversation. It does not create an onboarding Task or auto-submit a Turn. The user uploads one to six references in the composer and names the image types; the Agent writes intake and applies ChangeSets to the live graph. Types and files on the create form remain an optional shortcut before entering chat.
-3. Direct create: select image types, upload one to six references, fill the brief and output settings on the form, and write a runnable canvas immediately with no conversation. Opening the workbench Agent sidebar later attaches a canvas session.
+3. Direct create: upload one to six references, fill the brief (Help fill can draft it from photos; spec rows come from the returned JSON) and output settings, select image types, and write a runnable canvas immediately with no conversation. Opening the workbench Agent sidebar later attaches a canvas session.
 4. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
 5. The Agent applies one reversible ChangeSet or proposes a multi-node ChangeSet; the user confirms multi-node proposals on the canvas.
 6. Closing the conversation leaves add, connect, inspect, run, undo, and recipes available.

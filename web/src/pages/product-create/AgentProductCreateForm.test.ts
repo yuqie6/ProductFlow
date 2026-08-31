@@ -9,6 +9,7 @@ import type {
 } from "../../lib/types";
 import { AgentProductCreateForm } from "./AgentProductCreateForm";
 import { defaultCreateOutputDraft } from "./createIntake";
+import { defaultCreateSourceNoteDraft, type CreateSourceNoteDraft } from "./sourceNote";
 
 const imageTypeKeys: AgentProductImageTypeKey[] = [
   "hero",
@@ -85,9 +86,14 @@ function renderForm(
     isDeliveryPresetLoading?: boolean;
     isDeliveryPresetError?: boolean;
     referenceFiles?: File[];
+    sourceNote?: CreateSourceNoteDraft;
     onDirectCreate?: () => void;
   } = {},
 ): string {
+  const sourceNote = input.sourceNote ?? {
+    ...defaultCreateSourceNoteDraft(),
+    visible: "无线洗地机，面向都市白领",
+  };
   return renderToStaticMarkup(
     createElement(AgentProductCreateForm, {
       productName: input.productName ?? "Sample product",
@@ -113,9 +119,10 @@ function renderForm(
       onRemoveReferenceFile: () => undefined,
       onDeliveryPresetChange: () => undefined,
       onRetryDeliveryPresets: () => undefined,
-      brief: "无线洗地机，面向都市白领",
+      sourceNote,
       outputDraft: defaultCreateOutputDraft(),
-      onBriefChange: () => undefined,
+      onSourceNoteChange: () => undefined,
+      onGenerateSourceNote: () => undefined,
       onOutputChange: () => undefined,
       onRetryOptions: () => undefined,
       onApplyRecommendedSet: () => undefined,
@@ -164,6 +171,58 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("h-28");
     expect(markup).toContain('data-agent-apply-recommended-set="true"');
     expect(markup).toContain("应用推荐套图");
+    expect(markup).toContain("帮助生成");
+    expect(markup).toContain('data-create-generate-brief');
+    expect(markup).toContain('data-create-source-note-editor');
+    expect(markup).toContain("添加规格");
+    expect(markup).not.toContain('data-source-note-fields');
+    expect(markup).not.toContain("认证/资质");
+    expect(markup).not.toContain("从照片看到的外形");
+    const nameAt = markup.indexOf('id="agent-product-name"');
+    const refsAt = markup.indexOf("上传商品参考图");
+    const briefAt = markup.indexOf("商品说明");
+    const typesAt = markup.indexOf("摄影镜头");
+    const outputAt = markup.indexOf("出图设定");
+    expect(nameAt).toBeGreaterThan(-1);
+    expect(refsAt).toBeGreaterThan(nameAt);
+    expect(briefAt).toBeGreaterThan(refsAt);
+    expect(typesAt).toBeGreaterThan(briefAt);
+    expect(outputAt).toBeGreaterThan(typesAt);
+  });
+
+  it("disables help-fill until a reference photo is uploaded", () => {
+    const empty = renderForm();
+    const withRef = renderForm([], {
+      referenceFiles: [new File(["x"], "ref.png", { type: "image/png" })],
+    });
+    const emptyButton = empty.match(/<button[^>]+data-create-generate-brief[^>]*>/)?.[0] ?? "";
+    const filledButton = withRef.match(/<button[^>]+data-create-generate-brief[^>]*>/)?.[0] ?? "";
+
+    expect(empty).toContain("先上传参考图");
+    expect(emptyButton).toContain('disabled=""');
+    expect(withRef).not.toContain("先上传参考图");
+    expect(filledButton).not.toMatch(/\sdisabled(?:=|\s|>)/);
+  });
+
+  it("renders only the spec rows returned in the draft", () => {
+    const markup = renderForm([], {
+      sourceNote: {
+        ...defaultCreateSourceNoteDraft(),
+        visible: "厚壁玻璃密封瓶",
+        fields: [
+          { id: "f-material", label: "材质", value: "玻璃" },
+          { id: "f-capacity", label: "容量", value: "" },
+        ],
+      },
+    });
+
+    expect(markup).toContain("厚壁玻璃密封瓶");
+    expect(markup).toContain('data-source-note-fields');
+    expect(markup).toContain('data-source-note-field="材质"');
+    expect(markup).toContain('data-source-note-field="容量"');
+    expect(markup).toContain('value="玻璃"');
+    expect(markup).not.toContain("认证/资质");
+    expect(markup).not.toContain("适用人群");
   });
 
   it("makes the product name read-only after a workspace persists and disables it while submitting", () => {

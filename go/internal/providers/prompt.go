@@ -52,6 +52,14 @@ func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptReques
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
+func (p OpenAIPrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	payload, model, id, err := p.parseStructured(ctx, prompts.SourceNoteInstructions(), "generated_source_note", sourceNoteJSONSchema, req, "source_note")
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
+}
+
 func (p OpenAIPrompt) parseStructured(
 	ctx context.Context,
 	instructions, schemaName string,
@@ -118,7 +126,8 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 		})
 	}
 	var context map[string]any
-	if kind == "prompt" {
+	switch kind {
+	case "prompt":
 		current := req.CurrentPrompt
 		if current == nil {
 			current = asPromptMap(req.Config["prompt"])
@@ -148,7 +157,18 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 			"listing_look":           graph.ListingLookContext(),
 			"listing_look_rule":      graph.ListingLookRule(),
 		}
-	} else {
+	case "source_note":
+		current := req.CurrentDocument
+		if current == nil {
+			current = map[string]any{}
+		}
+		context = map[string]any{
+			"task":             "draft_product_source_note",
+			"product_name":     req.NodeTitle,
+			"current_document": current,
+			"reference_images": refMeta,
+		}
+	default:
 		imageTypes := req.ImageTypes
 		if imageTypes == nil {
 			imageTypes = []map[string]any{}

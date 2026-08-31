@@ -12,7 +12,7 @@ This document is the canonical user-operations source. The in-product `/help` pa
 
 All three purposes are required by the core flow:
 
-- Prompt: visual system, creative brief, and prompt-generation nodes.
+- Prompt: visual system, creative brief, prompt-generation nodes, and create-page source-note drafting from photos.
 - Agent: requirement clarification, library organization, and workflow creation.
 - Image: workflow and iterative image generation.
 
@@ -22,7 +22,7 @@ Open `/products/new`.
 
 ### 2.1 Product details and image plan
 
-- Enter the product name and a product brief (selling points, audience, style).
+- Enter the product name. Upload reference photos first, then write the product brief. Help fill drafts the brief from the photos; returned specs become an editable table, with blank cells for facts the photos do not show. Name-only Start conversation does not require generating first.
 - Select the required image types. Types are grouped as photography, infographic, and evidence.
 - Manual checks default to two images per type. Apply recommended set fills the listing minimum: cover 2, selling-point 4 (one hook per frame), specifications 1, SKU 1, scene 1, detail 1, without overwriting quantities already chosen.
 - Multiple images of one type share one prompt; each image node can carry a variation instruction (selling-point pages use it to split hooks).
@@ -64,7 +64,7 @@ Graph confirmation uses canvas proposals. The product path no longer confirms a 
 
 ### 2.5 Create the Canvas Directly
 
-On the create page, enter a product brief plus on-image copy and language, then set an aspect ratio for each image type. Skip the Agent to write a runnable workflow immediately. The brief is written into the creative-brief node. Photography defaults to no on-image copy; selling-point and spec pages always include copy, using the selected language (Simplified Chinese by default). Aspect ratio is written per type, such as 3:4 for cover and 1:1 for detail. After you upload references and choose image types, the graph includes product facts, identity references, visual system, creative brief, and one group per photography/infographic shot (one prompt plus N images; variation instructions when quantity is greater than one). Evidence types are unbound placeholders. Identity photos connect to visual, brief, and generating shots, not to evidence placeholders. You can talk to the Agent as soon as the workbench opens; the photos are already on the product, so you do not resubmit create-page image requirements. If something is missing, the Agent asks in chat. Edit nodes and edges on the canvas, or use Add a shot. The Agent can explain the graph, check configuration, and request a run; it cannot submit a Draft that replaces the live graph. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes, a shot, or the whole graph.
+On the create page, enter a product brief plus on-image copy and language, then set an aspect ratio for each image type. Skip the Agent to write a runnable workflow immediately. The brief is written into the creative-brief node. After uploading references, Help fill can draft the brief from the photos and open a spec table from the returned JSON. Photography defaults to no on-image copy; selling-point and spec pages always include copy, using the selected language (Simplified Chinese by default). Aspect ratio is written per type, such as 3:4 for cover and 1:1 for detail. After you upload references and choose image types, the graph includes product facts, identity references, visual system, creative brief, and one group per photography/infographic shot (one prompt plus N images; variation instructions when quantity is greater than one). Evidence types are unbound placeholders. Identity photos connect to visual, brief, and generating shots, not to evidence placeholders. You can talk to the Agent as soon as the workbench opens; the photos are already on the product, so you do not resubmit create-page image requirements. If something is missing, the Agent asks in chat. Edit nodes and edges on the canvas, or use Add a shot. The Agent can explain the graph, check configuration, and request a run; it cannot submit a Draft that replaces the live graph. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes, a shot, or the whole graph.
 
 ## 3. Product Workbench
 

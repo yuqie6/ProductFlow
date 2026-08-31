@@ -63,6 +63,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.POST("/v2/agent-product-workspaces", h.createWorkspace)
 	api.GET("/v2/agent-product-workspaces/:conversation_id", h.getWorkspace)
 	api.POST("/v2/agent-product-workspaces/:conversation_id/intake", h.finalizeWorkspaceIntake)
+	api.POST("/v2/product-source-notes/generate", h.generateSourceNote)
 }
 
 func (h HTTP) requireDeletion(c *gin.Context) {
