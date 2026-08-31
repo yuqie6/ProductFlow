@@ -82,6 +82,121 @@ func TestSessionTurnCapacity(t *testing.T) {
 	as.mustStatus(t, response, http.StatusConflict)
 }
 
+func TestLastFiftyTurnsQueryP95(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var created SessionResponse
+	as.decode(t, session, &created)
+	conversationID := created.Conversations[0].ConversationID
+	rowPrefix := clockid.New()[:20]
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO agent_turn_projections (
+			id, conversation_id, idempotency_key, request_hash, input_text,
+			input_asset_ids_json, status, resume_required, tool_steps_json, created_at, updated_at
+		)
+		SELECT
+			$3 || '-' || lpad(value::text, 4, '0'), $1,
+			'last50-key-' || value::text, repeat('b', 64), 'capacity',
+			'[]'::jsonb, 'succeeded', FALSE, '[]'::jsonb,
+			NOW() - (value || ' seconds')::interval, NOW()
+		FROM generate_series(1, $2) AS value
+	`, conversationID, maxTurnsPerSession, rowPrefix); err != nil {
+		t.Fatal(err)
+	}
+	samples := make([]time.Duration, 0, 40)
+	for range 40 {
+		started := time.Now()
+		page, err := as.svc.ListTurns(context.Background(), nil, conversationID, "", "", 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Items) != 50 {
+			t.Fatalf("last page size %d", len(page.Items))
+		}
+		samples = append(samples, time.Since(started))
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	p95 := samples[(len(samples)*95+99)/100-1]
+	if p95 > 500*time.Millisecond {
+		t.Fatalf("last 50 Turn query P95 %s exceeds 500ms", p95)
+	}
+
+	seen := map[string]struct{}{}
+	after := ""
+	for {
+		page, err := as.svc.ListTurns(context.Background(), nil, conversationID, "", after, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page.Items {
+			if _, dup := seen[item.ID]; dup {
+				t.Fatalf("duplicate turn %s in 1000-turn cursor read", item.ID)
+			}
+			seen[item.ID] = struct{}{}
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			break
+		}
+		after = *page.NextCursor
+	}
+	if len(seen) != maxTurnsPerSession {
+		t.Fatalf("1000-turn session cursor read %d want %d", len(seen), maxTurnsPerSession)
+	}
+}
+
+func TestAgentSSETimeToFirstEventP95(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	claimed := createClaimedJournalTurn(t, as)
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{
+		capacityJournalEvent(claimed, 1, 2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/v2/agent-conversations/%s/turns/%s/events", claimed.conversationID, claimed.turn.ID)
+	samples := make([]time.Duration, 0, 20)
+	for range 20 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		started := time.Now()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+path, nil)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		for _, cookie := range as.cookies {
+			req.AddCookie(cookie)
+		}
+		resp, err := as.client.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			cancel()
+			t.Fatalf("sse %d %s", resp.StatusCode, raw)
+		}
+		frame, err := readCapacitySSEFrame(resp.Body)
+		elapsed := time.Since(started)
+		resp.Body.Close()
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(frame, "id: 1\n") || !strings.Contains(frame, "event: turn.started\n") {
+			t.Fatalf("first SSE frame %q", frame)
+		}
+		samples = append(samples, elapsed)
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	p95 := samples[(len(samples)*95+99)/100-1]
+	t.Logf("Agent SSE time-to-first-event P95=%s n=%d", p95, len(samples))
+	if p95 > time.Second {
+		t.Fatalf("SSE P95 %s exceeds 1s", p95)
+	}
+}
+
 func TestAgentJournalCapacityGate(t *testing.T) {
 	if os.Getenv(agentJournalCapacityEnv) != "1" {
 		t.Skipf("set %s=1 to run the PostgreSQL Agent journal capacity gate", agentJournalCapacityEnv)
