@@ -71,7 +71,6 @@ describe("Pi runtime fake provider E2E", () => {
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -157,7 +156,6 @@ describe("Pi runtime fake provider E2E", () => {
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -220,7 +218,6 @@ describe("Pi runtime fake provider E2E", () => {
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -308,7 +305,6 @@ describe("Pi runtime fake provider E2E", () => {
         load: async () => "",
       } satisfies SkillCatalog;
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -381,7 +377,6 @@ describe("Pi runtime fake provider E2E", () => {
       const firstStore = new TurnStore(root);
       await firstStore.init();
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, firstStore, productFlow, skills);
-      firstStore.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const first = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -399,7 +394,6 @@ describe("Pi runtime fake provider E2E", () => {
       const restartedStore = new TurnStore(root);
       await restartedStore.init();
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, restartedStore, productFlow, skills);
-      restartedStore.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
       const second = await manager.start({
         lookup: { conversationID: scope.conversation_id },
         input: {
@@ -449,7 +443,6 @@ describe("Pi runtime fake provider E2E", () => {
       const store = new TurnStore(root);
       await store.init();
       manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const first = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -652,7 +645,6 @@ async function runProviderFailureScenario(
       productFlow,
       skills,
     );
-    store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
     const started = await manager.start({
       lookup: { conversationID: scope.conversation_id },

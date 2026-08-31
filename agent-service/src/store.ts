@@ -89,8 +89,6 @@ export interface TurnRecoverySummary {
   unknown: number;
 }
 
-export type DurableEventPublisher = (scope: Scope, event: TurnEvent) => Promise<void>;
-
 const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached a provable terminal state";
 
 /** 本进程的 Turn 文件。不是第二份业务 transcript。 */
@@ -98,13 +96,8 @@ export class TurnStore {
   private readonly locks = new Map<string, Promise<void>>();
   private readonly eventCache = new Map<string, PersistedEvents>();
   private readonly initializedEventAcks = new Set<string>();
-  private eventPublisher?: DurableEventPublisher;
 
   constructor(readonly root: string) { }
-
-  setEventPublisher(publisher: DurableEventPublisher): void {
-    this.eventPublisher = publisher;
-  }
 
   async init(): Promise<void> {
     await mkdir(join(this.root, "runs"), { recursive: true, mode: 0o700 });
@@ -388,8 +381,6 @@ export class TurnStore {
             state.turn_id,
             "turn/cancel_requested",
             { status: "cancel_requested" },
-            false,
-            false,
           );
         }
         return "queued";
@@ -418,8 +409,6 @@ export class TurnStore {
             state.turn_id,
             "tool/result",
             step as unknown as JsonObject,
-            false,
-            false,
           );
         }
       }
@@ -427,7 +416,7 @@ export class TurnStore {
         reason: "unknown",
         status: "unknown",
         error: RESTART_UNKNOWN_ERROR,
-      }, false, false);
+      });
       await this.updateStateUnlocked(scope.run_id, state.turn_id, {
         status: "unknown",
         error: RESTART_UNKNOWN_ERROR,
@@ -451,9 +440,9 @@ export class TurnStore {
     return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload, ignorable));
   }
 
-  /** PG publisher 已失败时仍要在本地留下诚实的 unknown 终态，且不能再次调用同一失败 publisher。 */
+  /** 只追加本地 WAL；是否提交 PG 始终由持有 lease 的 runtime 决定。 */
   async appendLocalEvent(runID: string, turnID: string, kind: string, payload: JsonObject): Promise<TurnEvent> {
-    return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload, false, false));
+    return this.serial(runID + ":" + turnID, () => this.appendEventUnlocked(runID, turnID, kind, payload));
   }
 
   async events(runID: string, turnID: string, after: number): Promise<TurnEvent[]> {
@@ -749,7 +738,6 @@ export class TurnStore {
     kind: string,
     payload: JsonObject,
     ignorable = false,
-    publish = true,
   ): Promise<TurnEvent> {
     const key = this.eventKey(runID, turnID);
     const events = await this.loadEventsRecord(runID, turnID);
@@ -776,10 +764,6 @@ export class TurnStore {
     events.sequence = event.sequence;
     events.items.push(event);
     this.eventCache.set(key, events);
-    if (publish && this.eventPublisher) {
-      const record = await this.loadRun(runID);
-      await this.eventPublisher(record.scope, event);
-    }
     return event;
   }
 

@@ -314,7 +314,6 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       const created = await store.createTurn(scope, {
         input_text: "取消尚未开始的 Turn",
@@ -452,7 +451,6 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       const queued = await store.createTurn(scope, {
         input_text: "取消另一个 queued Turn",
@@ -551,7 +549,6 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       const created = await store.createTurn(scope, {
         input_text: "等待用户回答",
@@ -621,7 +618,6 @@ describe("PiRuntimeManager turn state", () => {
           productFlow,
           {} as ConstructorParameters<typeof PiRuntimeManager>[3],
         );
-        store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
         const runtime = await (manager as unknown as {
           runtimeFor(input: Scope): Promise<unknown>;
         }).runtimeFor(scope);
@@ -774,7 +770,6 @@ describe("PiRuntimeManager turn state", () => {
           {} as ConstructorParameters<typeof PiRuntimeManager>[3], "stable-owner",
         );
         managerHolder.manager = manager;
-        store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
         const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
         const recovered = await (runtime as {
           recoverDurableHandoff(turnID: string, idempotencyKey: string, executionID: string, projectionID: string): Promise<boolean>;
@@ -853,7 +848,6 @@ describe("PiRuntimeManager turn state", () => {
         { ...config, dataRoot: root, maxConcurrentTurns: 0 }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], "stable-owner",
       );
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const summary = await manager.recoverAfterRestart();
       expect(summary).toMatchObject({ replayed_handoffs: 1, queued_turns: 1, unknown_turns: 0 });
@@ -1095,7 +1089,6 @@ describe("PiRuntimeManager turn state", () => {
         { ...config, dataRoot: root }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
       );
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       await expect((runtime as {
         recoverDurableHandoff(turnID: string, key: string, executionID: string, projectionID: string): Promise<boolean>;
@@ -1253,7 +1246,6 @@ describe("PiRuntimeManager turn state", () => {
         { ...config, dataRoot: root }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
       );
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
       await expect(manager.recoverAfterRestart()).resolves.toMatchObject({ replayed_handoffs: 1 });
       expect(confirmCalls).toContainEqual([]);
       expect(confirmCalls).toContainEqual([1, 2, 3, 4]);
@@ -1355,7 +1347,6 @@ describe("PiRuntimeManager turn state", () => {
         { ...config, dataRoot: root }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], brokenLease.owner_id,
       );
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
       await expect(manager.recoverAfterRestart()).resolves.toMatchObject({ replayed_handoffs: 1 });
       expect(await store.getState(scope.run_id, healthy.state.turn_id)).toMatchObject({ status: "requires_input" });
       expect((await store.durableHandoffCandidates()).map((candidate) => candidate.turnID)).toEqual([broken.state.turn_id]);
@@ -1414,7 +1405,6 @@ describe("PiRuntimeManager turn state", () => {
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
       );
       await store.appendLocalEvent(scope.run_id, created.state.turn_id, "text.chunk", { delta: "eventual result" });
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       const internal = runtime as {
         currentTurn: string;
@@ -1499,7 +1489,6 @@ describe("PiRuntimeManager turn state", () => {
         { ...config, dataRoot: root, maxConcurrentTurns: 1 }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
       );
-      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
 
       const summary = await manager.recoverAfterRestart();
       expect(summary.replayed_handoffs).toBe(0);
@@ -1549,7 +1538,6 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as {
         runtimeFor(input: Scope): Promise<unknown>;
       }).runtimeFor(scope);
@@ -1635,7 +1623,6 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
       const created = await store.createTurn(scope, {
         input_text: "测试长输出",

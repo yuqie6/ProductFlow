@@ -29,7 +29,6 @@ async function main(): Promise<void> {
     const productFlow = new ProductFlowClient(config.productFlowBaseURL, config.internalToken, config.requestTimeoutMS);
     const runtimeManager = new PiRuntimeManager(config, store, productFlow, skills, await store.publisherID());
     manager = runtimeManager;
-    store.setEventPublisher((scope, event) => runtimeManager.publishDurableEvent(scope, event));
     // 先恢复本地文件再接流量，避免 queued Turn 丢失。
     const recovery = await runtimeManager.recoverAfterRestart();
     if (

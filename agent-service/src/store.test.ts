@@ -485,63 +485,23 @@ describe("TurnStore", () => {
     }
   });
 
-  it("publishes all journal events to ProductFlow", async () => {
-    const root = await mkdtemp(join(tmpdir(), "productflow-pi-live-events-"));
-    try {
-      const store = new TurnStore(root);
-      await store.init();
-      const published: string[] = [];
-      const persistedBeforePublish: boolean[] = [];
-      store.setEventPublisher(async (_scope, event) => {
-        persistedBeforePublish.push((await store.events(scope.run_id, event.turn_id, event.sequence - 1))[0]?.sequence === event.sequence);
-        published.push(event.kind);
-      });
-      const turn = await store.createTurn(scope, input);
-      await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
-        delta: "hi",
-        step_id: "step-1",
-        attempt_id: "attempt-1",
-      });
-      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.kind)).toEqual(["text.chunk"]);
-      await store.appendEvent(scope.run_id, turn.state.turn_id, "tool/result", {
-        step_id: "step-1",
-        kind: "inspect_context",
-        summary: "读取上下文",
-        status: "succeeded",
-      });
-      expect(published).toEqual(["text.chunk", "tool/result"]);
-      expect(persistedBeforePublish).toEqual([true, true]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps the append-only local sequence when ProductFlow rejects persistence", async () => {
-    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-reject-"));
+  it("keeps the append-only WAL private until a runtime confirms its prefix", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-private-wal-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn(scope, input);
-      store.setEventPublisher(async () => {
-        throw new Error("ProductFlow unavailable");
+      const first = await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+        delta: "not confirmed",
+      });
+      const second = await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+        delta: "still local",
       });
 
-      await expect(store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
-        delta: "not durable",
-      })).rejects.toThrow("ProductFlow unavailable");
-      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.payload)).toEqual([
-        { delta: "not durable" },
-      ]);
-
-      store.setEventPublisher(async () => undefined);
-      const accepted = await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
-        delta: "durable",
-      });
-      expect(accepted.sequence).toBe(2);
-      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.payload)).toEqual([
-        { delta: "not durable" },
-        { delta: "durable" },
-      ]);
+      expect([first.sequence, second.sequence]).toEqual([1, 2]);
+      expect((await store.unpublishedEvents(scope.run_id, turn.state.turn_id)).map((event) => event.sequence)).toEqual([1, 2]);
+      await store.markEventsPublished(scope.run_id, turn.state.turn_id, 1);
+      expect((await store.unpublishedEvents(scope.run_id, turn.state.turn_id)).map((event) => event.sequence)).toEqual([2]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

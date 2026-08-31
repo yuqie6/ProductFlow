@@ -198,14 +198,6 @@ export class PiRuntimeManager {
     return result.state;
   }
 
-  async publishDurableEvent(scope: Scope, event: TurnEvent): Promise<void> {
-    const runtime = this.runs.get(scope.run_id);
-    if (!runtime) {
-      throw new RuntimeError(503, "runtime_unavailable", "Agent event cannot be published without an initialized runtime");
-    }
-    await runtime.publishDurableEvent(event);
-  }
-
   async get(request: RuntimeLookup, turnID: string): Promise<TurnState> {
     const runtime = await this.runtimeForLookup(request);
     return this.store.getState(runtime.scope.run_id, turnID);
@@ -235,7 +227,7 @@ export class PiRuntimeManager {
       return this.cancelQueuedTurn(runtime, turnID);
     }
     await this.store.updateState(runtime.scope.run_id, turnID, { status: "cancel_requested" });
-    await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/cancel_requested", { status: "cancel_requested" }, true);
+    await runtime.appendJournalEvent(turnID, "turn/cancel_requested", { status: "cancel_requested" }, true);
     if (state.status === "queued") this.enqueue(runtime, turnID);
     runtime.cancel(turnID);
     return this.store.getState(runtime.scope.run_id, turnID);
@@ -252,7 +244,7 @@ export class PiRuntimeManager {
     }
     if (state.status === "queued") {
       if (runtime.hasQuestionWaiter(turnID)) {
-        await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" }, true);
+        await runtime.appendJournalEvent(turnID, "turn/resume_requested", { status: "queued" }, true);
       } else {
         await this.store.appendLocalEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" });
       }
@@ -487,6 +479,7 @@ class RunRuntime implements ToolRuntime {
   private readonly toolStepFailureDetails = new Map<string, ToolStepDetails>();
   private checkpointSequence = 0;
   private modelRequestSequence = 0;
+  private queuedEventSequence = 0;
   private currentModelRequestID?: string;
   private modelRequestStartedAt?: number;
   private readonly completedModelRequestIDs = new Set<string>();
@@ -588,7 +581,7 @@ class RunRuntime implements ToolRuntime {
         await this.updateExecutionPhase("terminal");
         const artifact = artifactFromPendingApproval(events);
         const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
-        await this.manager.store.terminal(this.scope.run_id, turnID, "awaiting_confirmation", {
+        await this.writeJournalTerminal(turnID, "awaiting_confirmation", {
           ...summary,
           ...(artifact ? { artifact } : {}),
           approval_already_recorded: true,
@@ -596,7 +589,7 @@ class RunRuntime implements ToolRuntime {
       } else {
         await this.updateExecutionPhase("terminal");
         const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
-        await this.manager.store.terminal(this.scope.run_id, turnID, "unknown", {
+        await this.writeJournalTerminal(turnID, "unknown", {
           ...summary,
           error: "Agent service restarted before this Turn reached a provable terminal state",
           reason_code: "execution_interrupted",
@@ -840,7 +833,7 @@ class RunRuntime implements ToolRuntime {
         execution_fencing_token: this.executionLease.fencing_token,
         started_at: nowISO(),
       });
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/start", {
+      await this.appendJournalEvent(turnID, "turn/start", {
         status: "running",
         attempt_id: this.attemptID,
       });
@@ -890,7 +883,7 @@ class RunRuntime implements ToolRuntime {
     } catch (error) {
       if (!executionClaimed) {
         if (error instanceof ProductFlowError && error.status >= 400 && error.status < 500) {
-          await this.manager.store.terminal(this.scope.run_id, turnID, "failed", {
+          await this.writeJournalTerminal(turnID, "failed", {
             output: this.output,
             error: safeErrorMessage(error),
           });
@@ -1036,10 +1029,7 @@ class RunRuntime implements ToolRuntime {
   }
 
   private async syncDurableEvents(turnID: string): Promise<void> {
-    const events = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
-    for (const event of events) {
-      await this.publishDurableEvent(event);
-    }
+    await this.publishUnpublishedEvents(turnID);
     await this.flushPublishedEvents();
     if (this.persistenceError) throw this.persistenceError;
   }
@@ -1047,7 +1037,10 @@ class RunRuntime implements ToolRuntime {
   private async syncRecoveryEvents(turnID: string): Promise<boolean> {
     const events = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
     for (const event of events) {
-      await this.publishDurableEvent(event);
+      if (event.sequence > this.queuedEventSequence) {
+        this.queuedEventSequence = event.sequence;
+        await this.publishDurableEvent(event);
+      }
       if (event.kind !== "turn/end") continue;
       await this.flushPublishedEvents();
       if (await this.manager.store.reconcileConfirmedTerminal(this.scope.run_id, turnID)) return true;
@@ -1106,7 +1099,7 @@ class RunRuntime implements ToolRuntime {
           ? "execution_interrupted"
           : undefined;
     try {
-      await this.manager.store.terminal(this.scope.run_id, turnID, status, {
+      await this.writeJournalTerminal(turnID, status, {
         ...details,
         thinking: this.thinkingProjection.text,
         ...(reasonCode ? { reason_code: reasonCode } : {}),
@@ -1245,7 +1238,7 @@ class RunRuntime implements ToolRuntime {
     if (state.status !== "requires_input" || this.hasQuestionWaiter(turnID)) {
       throw new RuntimeError(409, "question_not_cancellable", "the question is attached to a live Pi turn");
     }
-    await this.manager.store.terminal(this.scope.run_id, turnID, "canceled", {
+    await this.writeJournalTerminal(turnID, "canceled", {
       output: state.output,
     });
     return this.manager.store.getState(this.scope.run_id, turnID);
@@ -1281,7 +1274,7 @@ class RunRuntime implements ToolRuntime {
     const answeredSequence = [...events].reverse().find((event) => event.kind === "question/answered")?.sequence ?? 0;
     const existingResume = events.some((event) => event.kind === "turn/resume_requested" && event.sequence > answeredSequence);
     if (!existingResume) {
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/resume_requested", { status: "running" }, true);
+      await this.appendJournalEvent(turnID, "turn/resume_requested", { status: "running" }, true);
     }
     await this.flushPublishedEvents();
     this.pendingQuestionAnswer = undefined;
@@ -1318,7 +1311,7 @@ class RunRuntime implements ToolRuntime {
       output: this.output,
       thinking: this.thinkingProjection.text,
     });
-    await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "question/requested", question as never);
+    await this.appendJournalEvent(state.turn_id, "question/requested", question as never);
     if (this.persistenceError) throw this.persistenceError;
     return answerPromise;
   }
@@ -1371,7 +1364,7 @@ class RunRuntime implements ToolRuntime {
       answer: answer as never,
     };
     if (waiter) {
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", answerPayload);
+      await this.appendJournalEvent(turnID, "question/answered", answerPayload);
       this.clearQuestionTimeout();
       this.pendingQuestionAnswer = answer;
     } else {
@@ -1423,6 +1416,44 @@ class RunRuntime implements ToolRuntime {
 
   recordToolFailure(toolCallID: string, details: ToolStepDetails): void {
     this.toolStepFailureDetails.set(toolCallID, details);
+  }
+
+  async appendJournalEvent(
+    turnID: string,
+    kind: string,
+    payload: JsonObject,
+    ignorable = false,
+  ): Promise<TurnEvent> {
+    const event = await this.manager.store.appendEvent(this.scope.run_id, turnID, kind, payload, ignorable);
+    await this.publishUnpublishedEvents(turnID);
+    return event;
+  }
+
+  private async setJournalToolStep(turnID: string, step: Parameters<TurnStore["setToolStep"]>[2]): Promise<TurnState> {
+    const state = await this.manager.store.setToolStep(this.scope.run_id, turnID, step);
+    await this.publishUnpublishedEvents(turnID);
+    return state;
+  }
+
+  private async writeJournalTerminal(
+    turnID: string,
+    status: Parameters<TurnStore["terminal"]>[2],
+    details: Parameters<TurnStore["terminal"]>[3],
+  ): Promise<TurnState> {
+    const state = await this.manager.store.terminal(this.scope.run_id, turnID, status, details);
+    await this.publishUnpublishedEvents(turnID);
+    return state;
+  }
+
+  private async publishUnpublishedEvents(turnID: string): Promise<void> {
+    const lease = this.executionLease;
+    if (!lease || lease.harness_turn_id !== turnID) return;
+    const events = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
+    for (const event of events) {
+      if (event.sequence <= this.queuedEventSequence) continue;
+      this.queuedEventSequence = event.sequence;
+      await this.publishDurableEvent(event);
+    }
   }
 
   private createEventBatcher(): JournalEventBatcher {
@@ -1496,7 +1527,7 @@ class RunRuntime implements ToolRuntime {
 
   private emitStreamChunk(chunk: JournalStreamChunk): void {
     const { kind, ...payload } = chunk;
-    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, this.currentTurnID(), kind, payload));
+    this.enqueue(() => this.appendJournalEvent(this.currentTurnID(), kind, payload));
   }
 
   private flushStreamChunks(): void {
@@ -1577,7 +1608,7 @@ class RunRuntime implements ToolRuntime {
         ...contextDetails,
         context_bytes: byteLength(dynamicContext),
       };
-      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+      await this.setJournalToolStep(turnID, {
         step_id: contextStepID,
         kind: "inject_context",
         summary: "注入本轮运行时、页面和选中图片上下文",
@@ -1630,7 +1661,7 @@ class RunRuntime implements ToolRuntime {
         sessionManager,
         settingsManager,
       });
-      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+      await this.setJournalToolStep(turnID, {
         step_id: contextStepID,
         kind: "inject_context",
         summary: "注入本轮运行时、页面和选中图片上下文",
@@ -1645,7 +1676,7 @@ class RunRuntime implements ToolRuntime {
       return { session: result.session, model };
     } catch (error) {
       try {
-        await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+        await this.setJournalToolStep(turnID, {
           step_id: contextStepID,
           kind: "inject_context",
           summary: "注入本轮运行时、页面和选中图片上下文",
@@ -1693,7 +1724,7 @@ class RunRuntime implements ToolRuntime {
         const details = toolStepDetailsForStart(event.toolName, event.args);
         this.activeToolStepDetails.set(event.toolCallId, details);
         this.enqueue(() =>
-          this.manager.store.setToolStep(this.scope.run_id, turnID, {
+          this.setJournalToolStep(turnID, {
             step_id: event.toolCallId,
             kind: toolKind(event.toolName),
             summary: toolStepSummary(event.toolName),
@@ -1720,7 +1751,7 @@ class RunRuntime implements ToolRuntime {
         this.toolStepFailureDetails.delete(event.toolCallId);
         const meta = resultMetaFromToolResult(event.result);
         this.enqueue(() =>
-          this.manager.store.setToolStep(this.scope.run_id, turnID, {
+          this.setJournalToolStep(turnID, {
             step_id: event.toolCallId,
             kind: toolKind(event.toolName),
             summary: event.toolName === "ask_user" && details?.output_summary
@@ -1880,7 +1911,7 @@ class RunRuntime implements ToolRuntime {
     this.pendingQuestionAnswer = undefined;
     await this.updateExecutionPhase("model");
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", {
+    await this.appendJournalEvent(turnID, "question/answered", {
       question_id: questionID,
       answer: { skip: true },
       status: "no_answer",
@@ -1912,7 +1943,7 @@ class RunRuntime implements ToolRuntime {
     }
     const toolCallId = await injectAskUserToolResult(session, questionID, answer);
     if (toolCallId) {
-      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+      await this.setJournalToolStep(turnID, {
         step_id: toolCallId,
         kind: toolKind("ask_user"),
         summary: compactAskUserSummary(questionAnswerToolPayload(answer), []),
@@ -1965,7 +1996,7 @@ class RunRuntime implements ToolRuntime {
       ...(usage ? { usage, usage_source: "provider" } : {}),
     };
     this.flushStreamChunks();
-    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant/message", {
+    this.enqueue(() => this.appendJournalEvent(turnID, "assistant/message", {
       ...finish,
       interrupted: finish.reason === "aborted",
     } as never));
@@ -1997,6 +2028,7 @@ class RunRuntime implements ToolRuntime {
     this.executionLease = undefined;
     this.checkpointSequence = 0;
     this.modelRequestSequence = 0;
+    this.queuedEventSequence = 0;
     this.currentModelRequestID = undefined;
     this.modelRequestStartedAt = undefined;
     this.completedModelRequestIDs.clear();

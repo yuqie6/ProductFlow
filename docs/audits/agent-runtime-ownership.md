@@ -54,7 +54,7 @@
 | ID | 决策 | 状态 | owner | 当前证据、日期与缺口 |
 |---|---|---|---|---|
 | D-R01 | PostgreSQL `agent_turn_events` 是浏览器与列表的 journal 权威；本地文件不得成为第二事实源。 | 完成 | Go `go/internal/agent/journal.go`、`sse.go`；ADR 0017 | 2026-09-01：生产就绪 C-07/C-08 已完成。S1 仍需收口写路径作者。 |
-| D-R02 | 本地磁盘只做有界 WAL 与 Pi session；ACK 失败原序重试或诚实终止，不跳 seq；保留批量提交，不退回每 token await PG。 | 部分完成 | `agent-service/src/store.ts`、`pi-runtime.ts` | 2026-09-01：20ms/64/768KiB 与 WAL/ACK 已有容量证据；`main.ts` 的 publisher 回环仍待 S1 删除。 |
+| D-R02 | 本地磁盘只做有界 WAL 与 Pi session；ACK 失败原序重试或诚实终止，不跳 seq；保留批量提交，不退回每 token await PG。 | 完成 | `agent-service/src/store.ts`、`pi-runtime.ts`、`journal-publisher.ts` | 2026-09-01：S1 删除 Store publisher；runtime 显式读取未入 batch 的 WAL 连续前缀，receipt 匹配后推进 ACK。阈值保持 20ms/64/768KiB；Agent 166 passed，10k WAL P95=0.98ms，PG batch P95=221.27ms。 |
 | D-R03 | 丢失的 in-flight 执行只由 Go lease 过期扫描写终态；Node 重启只 confirm 可证明前缀。 | 部分完成 | `go/internal/agent/recovery.go`；Agent handoff/drain | 2026-09-01：G-03 已完成；仍需 S2 搜索并删除 Node 终态竞争路径。 |
 | D-R04 | 工具副作用证明只在 `agent_tool_mutations`；TypeScript 与 Go 不各自运行 `recovery_policy` 解释器。 | 违背 | `go/internal/agent/effect_reconcile.go`、`agent-service/src/tool-effect.ts` | 2026-09-01：两侧仍解释策略；S5 收口到 Go。 |
 | D-R05 | 提问续跑保持同一 Turn 的 answer + Pi resume；删除 `ContinuationTurnID` 残留。 | 部分完成 | `go/internal/agent/turns.go`、Agent question resume | 2026-09-01：same-Turn 测试已存在；Go 残留待 S3 删除。 |
@@ -91,7 +91,7 @@ flowchart LR
 
 | 诊断 | 当前证据 | 目标 owner | 处理切片 |
 |---|---|---|---|
-| journal publisher 形成循环注入 | `agent-service/src/main.ts`、`store.ts`、`pi-runtime.ts` 的 `setEventPublisher`/durable publish 路径 | 单一 lease-aware batch/ACK writer；本地 WAL 私有 | S1 |
+| journal publisher 循环注入（已收口） | 2026-09-01：`setEventPublisher` 与 Store publisher 字段已删除；`pi-runtime.ts` 的显式 WAL handoff 是唯一 lease-aware batch/ACK writer | 单一 lease-aware batch/ACK writer；本地 WAL 私有 | S1 |
 | 丢失执行可能有双终态作者 | `go/internal/agent/recovery.go` 与 Agent startup/handoff 终止路径 | Go lease expiry scanner | S2 |
 | same-Turn 提问仍有 continuation 残留 | `go/internal/agent/turns.go` 的 `ContinuationTurnID`/cleanup | 原 Turn answer + Pi resume | S3 |
 | worker 读取 Node Turn 快照更新活投影 | `go/internal/agent/sync.go` 的 gateway `GetTurn` fold | PG journal fold；worker 只绑定 harness ID/重试 start | S4 |
@@ -116,7 +116,7 @@ flowchart LR
 | ID | 验收要求 | 代码 owner | 状态 | 测试/实测证据 | 缺口 |
 |---|---|---|---|---|---|
 | S0 | 建立本账本、索引、ADR 0018、ROADMAP 入口；0007 仅状态行指向后继。 | `docs/audits/`、`docs/adr/`、`docs/ROADMAP.md` | 完成 | 2026-09-01：`just docs-check` 通过；checkpoint-0 提交前 staged 范围核对。 | 无；代码切片仍按 S1-S6 保持缺失。 |
-| S1 | 删除 `store.setEventPublisher -> runtime.publishDurableEvent` 回环；WAL 私有；lease-aware batch/ACK 单一作者；保持 20ms/64/768KiB。 | `agent-service/src/main.ts`、`store.ts`、journal writer/runtime tests | 缺失 | 2026-09-01：尚未开始代码修改。 | 需实现、容量与回归证据。 |
+| S1 | 删除 `store.setEventPublisher -> runtime.publishDurableEvent` 回环；WAL 私有；lease-aware batch/ACK 单一作者；保持 20ms/64/768KiB。 | `agent-service/src/main.ts`、`store.ts`、`pi-runtime.ts`、journal/runtime tests | 完成 | 2026-09-01：`just agent-service-test` 20 files、166 passed/2 skipped；带 dev env 的 `go test -C go ./internal/agent -count=1` 通过（86.1s）；10k WAL P95=0.98ms；PG 10k/25 Turn/100 SSE 容量门通过，batch P95=221.27ms。 | 无；S2 继续收口 recovery 终态作者。 |
 | S2 | Go lease 过期扫描是丢失 in-flight 的唯一终态作者；Node 只 drain/confirm 证明前缀；parked 状态不误标 unknown。 | `go/internal/agent/recovery.go`、Agent startup/handoff | 缺失 | 2026-09-01：尚未开始代码修改。 | 需实现和 G-03 四点 SIGKILL。 |
 | S3 | 删除 `ContinuationTurnID`、`cancelUnusedContinuation` 及 schema 残留；same-Turn 行为不变。 | `go/internal/agent/turns.go`、schema、question tests | 缺失 | 2026-09-01：尚未开始代码修改。 | 需全树 residue scan；有列变更则 migrate。 |
 | S4 | `sync.go` 不再用 Node `GetTurn` 快照写活状态；三列摘要由 PG journal fold；worker 只绑定 harness ID、重试 start。 | `go/internal/agent/sync.go`、journal projection、Web SSE | 缺失 | 2026-09-01：尚未开始代码修改。 | 需 Go agent 与 Web 对话/SSE 证据。 |
@@ -161,6 +161,7 @@ flowchart LR
 | 日期 | checkpoint | 命令与结果 | 备注 |
 |---|---|---|---|
 | 2026-09-01 | checkpoint-0 | `just docs-check`：通过；目标文档 `git diff --check`：通过 | S0 仅修改账本、索引、ROADMAP、ADR 0007 状态行并新增 ADR 0018。 |
+| 2026-09-01 | checkpoint-1 | `just agent-service-test`：166 passed/2 skipped；Go agent（dev env）：通过，86.1s；local WAL 10k P95=0.98ms；PG batch 10k/25 Turn/100 SSE：通过，P95=221.27ms | Store publisher residue scan 为空；20ms/64/768KiB 常量未变。 |
 
 ## 明确不做
 
