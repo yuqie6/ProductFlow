@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -92,7 +93,7 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 			"owner_id":          owner,
 			"lease_token":       lease,
 			"lease_expires_at":  expiresAt,
-			"last_heartbeat_at": expiresAt,
+			"last_heartbeat_at": now,
 			"released_at":       nil,
 			"attempt":           gorm.Expr("attempt + 1"),
 			"fencing_token":     gorm.Expr("fencing_token + 1"),
@@ -309,6 +310,9 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 	}
 	var out []EventReceipt
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
+			return err
+		}
 		lease, err := requireLease(ctx, gdb, conversationID, executionID, ownerID, leaseToken)
 		if err != nil {
 			return err
@@ -350,7 +354,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 					Ignorable: existing.Ignorable, CreatedAt: existing.CreatedAt,
 				})
 				if kind == "turn/end" {
-					if err := s.projectTerminalEvent(ctx, gdb, row, lease, input.Payload, existing.CreatedAt); err != nil {
+					if err := s.projectTerminalEvent(ctx, gdb, row, lease, input.Sequence, input.Payload, existing.CreatedAt); err != nil {
 						return err
 					}
 				}
@@ -395,7 +399,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				Ignorable: ev.Ignorable, CreatedAt: ev.CreatedAt,
 			})
 			if kind == "turn/end" {
-				if err := s.projectTerminalEvent(ctx, gdb, row, lease, input.Payload, createdAt); err != nil {
+				if err := s.projectTerminalEvent(ctx, gdb, row, lease, input.Sequence, input.Payload, createdAt); err != nil {
 					return err
 				}
 			}
@@ -490,30 +494,17 @@ func (s Service) projectTerminalEvent(
 	gdb *gorm.DB,
 	row turnRow,
 	lease ExecutionLeaseResponse,
+	terminalSequence int,
 	payload json.RawMessage,
 	createdAt time.Time,
 ) error {
-	var terminal struct {
-		Status     string          `json:"status"`
-		ReasonCode string          `json:"reason_code"`
-		Output     string          `json:"output"`
-		Error      string          `json:"error"`
-		Question   json.RawMessage `json:"question"`
-		Artifact   *TurnArtifact   `json:"artifact"`
+	terminal, err := parseTerminalEventPayload(payload)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(payload, &terminal); err != nil {
-		return apperr.Validation("Agent turn/end payload 无效")
-	}
-	terminal.Status = stringsTrim(terminal.Status)
-	if !inSet(terminalTurn, terminal.Status) {
-		return apperr.Validation("Agent turn/end status 不是终态")
-	}
-	terminal.ReasonCode = stringsTrim(terminal.ReasonCode)
-	if terminal.ReasonCode != "" && !inSet(map[string]struct{}{
-		"provider_failed": {}, "execution_interrupted": {}, "effect_reconciled": {},
-		"effect_conflict": {}, "effect_unknown": {}, "persistence_failed": {},
-	}, terminal.ReasonCode) {
-		return apperr.Validation("Agent turn/end reason_code 无效")
+	output, err := rebuildJournalOutput(gdb.WithContext(ctx), row.ID, terminalSequence)
+	if err != nil {
+		return err
 	}
 	var toolSteps []map[string]any
 	if len(row.ToolStepsJSON) > 0 {
@@ -530,7 +521,7 @@ func (s Service) projectTerminalEvent(
 		Question:         terminal.Question,
 		Artifact:         terminal.Artifact,
 		ToolSteps:        toolSteps,
-		Output:           terminal.Output,
+		Output:           output,
 		Thinking:         stringValueOrEmpty(row.ThinkingText),
 		Error:            terminal.Error,
 		CreatedAt:        row.CreatedAt,
@@ -543,8 +534,87 @@ func (s Service) projectTerminalEvent(
 	if terminal.ReasonCode != "" {
 		reasonCode = &terminal.ReasonCode
 	}
-	return gdb.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("id = ?", row.ID).
-		Update("terminal_reason_code", reasonCode).Error
+	return gdb.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("id = ?", row.ID).Updates(map[string]any{
+		"terminal_reason_code": reasonCode,
+		"output_text":          nullableString(output),
+	}).Error
+}
+
+type terminalEventPayload struct {
+	Status     string          `json:"status"`
+	Reason     string          `json:"reason"`
+	ReasonCode string          `json:"reason_code"`
+	Error      string          `json:"error"`
+	Question   json.RawMessage `json:"question"`
+	Artifact   *TurnArtifact   `json:"artifact"`
+}
+
+func parseTerminalEventPayload(payload json.RawMessage) (terminalEventPayload, error) {
+	var terminal terminalEventPayload
+	if err := json.Unmarshal(payload, &terminal); err != nil {
+		return terminalEventPayload{}, apperr.Validation("Agent turn/end payload 无效")
+	}
+	terminal.Status = stringsTrim(terminal.Status)
+	terminal.Reason = stringsTrim(terminal.Reason)
+	if !inSet(terminalTurn, terminal.Status) {
+		return terminalEventPayload{}, apperr.Validation("Agent turn/end status 不是终态")
+	}
+	expectedReason := terminal.Status
+	if terminal.Status == "succeeded" {
+		expectedReason = "completed"
+	}
+	if terminal.Reason != expectedReason {
+		return terminalEventPayload{}, apperr.Validation("Agent turn/end status 与 reason 不一致")
+	}
+	terminal.ReasonCode = stringsTrim(terminal.ReasonCode)
+	if terminal.ReasonCode != "" && !inSet(map[string]struct{}{
+		"provider_failed": {}, "execution_interrupted": {}, "effect_reconciled": {},
+		"effect_conflict": {}, "effect_unknown": {}, "persistence_failed": {},
+	}, terminal.ReasonCode) {
+		return terminalEventPayload{}, apperr.Validation("Agent turn/end reason_code 无效")
+	}
+	return terminal, nil
+}
+
+// rebuildJournalOutput uses the latest complete assistant message as a snapshot,
+// then appends later chunks. Event payload and sequence limits bound the input;
+// output is never silently truncated.
+func rebuildJournalOutput(gdb *gorm.DB, projectionID string, terminalSequence int) (string, error) {
+	var events []schema.AgentTurnEvents
+	if err := gdb.Select("sequence", "kind", "payload_json").
+		Where("turn_projection_id = ? AND sequence < ? AND kind IN ?", projectionID, terminalSequence, []string{"text.chunk", "assistant/message"}).
+		Order("sequence").Find(&events).Error; err != nil {
+		return "", err
+	}
+	var output strings.Builder
+	for _, event := range events {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil || payload == nil {
+			return "", apperr.Validation("Agent assistant journal payload 无效")
+		}
+		if compacted, _ := payload["compacted"].(bool); compacted {
+			continue
+		}
+		if event.Kind == "assistant/message" {
+			value, present := payload["text"]
+			if !present {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok {
+				return "", apperr.Validation("Agent assistant journal text 无效")
+			}
+			output.Reset()
+			_, _ = output.WriteString(text)
+			continue
+		}
+		text, ok := payload["delta"].(string)
+		if !ok {
+			return "", apperr.Validation("Agent text chunk 缺少 delta")
+		}
+		_, _ = output.WriteString(text)
+	}
+	return output.String(), nil
 }
 
 func leaseHarnessRunID(row turnRow) string {
@@ -584,7 +654,26 @@ func validateEventInput(input EventAppendInput) error {
 	if err := json.Unmarshal(input.Payload, &payloadObject); err != nil || payloadObject == nil {
 		return apperr.Validation("Agent event payload 必须是 JSON object")
 	}
+	if stringsTrim(input.Kind) == "turn/end" {
+		_, err := parseTerminalEventPayload(input.Payload)
+		return err
+	}
 	return nil
+}
+
+// lockProjectionForExecution establishes the shared projection -> execution
+// lock order before requireLease takes the execution row lock.
+func lockProjectionForExecution(ctx context.Context, gdb *gorm.DB, conversationID, executionID string) error {
+	var projection schema.AgentTurnProjections
+	err := gdb.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
+		Clauses(pfdb.ForUpdateOf("agent_turn_projections")).
+		Joins("JOIN agent_turn_executions e ON e.turn_projection_id = agent_turn_projections.id").
+		Where("e.id = ? AND agent_turn_projections.conversation_id = ?", executionID, conversationID).
+		Take(&projection).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return apperr.NotFound("Agent execution 不存在")
+	}
+	return err
 }
 
 func requireLease(ctx context.Context, gdb *gorm.DB, conversationID, executionID, ownerID, leaseToken string) (ExecutionLeaseResponse, error) {

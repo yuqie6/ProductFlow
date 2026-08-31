@@ -151,7 +151,37 @@ func SyncGraphProposalDecision(ctx context.Context, gdb *gorm.DB, _, _, proposal
 	if err != nil {
 		return err
 	}
-	return appendApprovalResolved(ctx, gdb, row.TurnProjectionID, proposalID, "graph_proposal", decision, map[string]any{
+	if err := appendApprovalResolved(ctx, gdb, row.TurnProjectionID, proposalID, "graph_proposal", decision, map[string]any{
 		"proposal_id": proposalID,
-	})
+	}); err != nil {
+		return err
+	}
+	var projection schema.AgentTurnProjections
+	if err := gdb.WithContext(ctx).Where("id = ?", row.TurnProjectionID).Take(&projection).Error; err != nil {
+		return err
+	}
+	if projection.Status != "awaiting_confirmation" {
+		return nil
+	}
+	now := time.Now().UTC()
+	if err := gdb.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("id = ?", projection.ID).Updates(map[string]any{
+		"status":      "succeeded",
+		"finished_at": gorm.Expr("COALESCE(finished_at, ?)", now),
+		"updated_at":  now,
+	}).Error; err != nil {
+		return err
+	}
+	if err := applyConversationStatus(ctx, gdb, projection.ConversationID, "succeeded"); err != nil {
+		return err
+	}
+	if projection.TaskID != nil {
+		summary := "图提案已确认"
+		if decision == "discarded" {
+			summary = "图提案已丢弃"
+		}
+		if err := updateTaskFromTurn(ctx, gdb, *projection.TaskID, "succeeded", "", summary); err != nil {
+			return err
+		}
+	}
+	return nil
 }

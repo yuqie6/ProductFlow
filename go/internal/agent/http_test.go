@@ -1195,7 +1195,11 @@ func TestAgentTurnSSEStreamsOnlyPersistedJournalEvents(t *testing.T) {
 			},
 			map[string]any{
 				"sequence": 2, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-				"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded","output":"ok"}`), "created_at": time.Now().UTC(),
+				"kind": "text.chunk", "payload": json.RawMessage(`{"delta":"ok","attempt_id":"a","step_id":"s","content_index":0}`), "created_at": time.Now().UTC(),
+			},
+			map[string]any{
+				"sequence": 3, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+				"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded"}`), "created_at": time.Now().UTC(),
 			},
 		},
 	}, auth)
@@ -1406,11 +1410,18 @@ func TestSettledTurnSSEReplaysPersistedJournal(t *testing.T) {
 	result.Body.Close()
 
 	terminal := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/events/batch", map[string]any{
-		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{map[string]any{
-			"sequence": 3, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
-			"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded","output":"ok"}`),
-			"created_at": time.Now().UTC(),
-		}},
+		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "events": []any{
+			map[string]any{
+				"sequence": 3, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+				"kind": "text.chunk", "payload": json.RawMessage(`{"delta":"ok","attempt_id":"a","step_id":"s","content_index":0}`),
+				"created_at": time.Now().UTC(),
+			},
+			map[string]any{
+				"sequence": 4, "schema_version": 1, "run_id": submitted.Turn.HarnessRunID, "turn_id": *submitted.Turn.HarnessTurnID,
+				"kind": "turn/end", "payload": json.RawMessage(`{"reason":"completed","status":"succeeded"}`),
+				"created_at": time.Now().UTC(),
+			},
+		},
 	}, auth)
 	as.mustStatus(t, terminal, http.StatusOK)
 	terminal.Body.Close()

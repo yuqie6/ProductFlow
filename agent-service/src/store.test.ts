@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Scope, StartTurnInput } from "./contracts.js";
 import { TurnStore } from "./store.js";
+import { JOURNAL_EVENT_MAX_PAYLOAD_BYTES, JOURNAL_EVENT_MAX_SEQUENCE } from "./pi-chunks.js";
 
 const scope: Scope = {
   schema_version: 1,
@@ -161,10 +162,13 @@ describe("TurnStore", () => {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn(scope, input);
+      await store.updateState(scope.run_id, turn.state.turn_id, {
+        status: "running",
+        output: "recovered",
+      });
       await store.appendEvent(scope.run_id, turn.state.turn_id, "turn/end", {
         reason: "awaiting_confirmation",
         status: "awaiting_confirmation",
-        output: "recovered",
         error: "",
         artifact: {
           name: "propose_global_draft",
@@ -179,6 +183,7 @@ describe("TurnStore", () => {
       expect(result.restoredTerminal).toBe(1);
       expect(state.status).toBe("awaiting_confirmation");
       expect(state.output).toBe("recovered");
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).at(-1)?.payload).not.toHaveProperty("output");
       expect(state.artifact).toEqual({
         name: "propose_global_draft",
         value: { schema_version: 2 },
@@ -257,31 +262,32 @@ describe("TurnStore", () => {
     }
   });
 
-  it("does not acknowledge an appended event before ProductFlow persistence acknowledges it", async () => {
-    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-ack-"));
+  it("keeps the append-only local sequence when ProductFlow rejects persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-reject-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn(scope, input);
-      let releasePublisher!: () => void;
-      const publisherGate = new Promise<void>((resolve) => {
-        releasePublisher = resolve;
+      store.setEventPublisher(async () => {
+        throw new Error("ProductFlow unavailable");
       });
-      store.setEventPublisher(async () => publisherGate);
 
-      let acknowledged = false;
-      const append = store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+      await expect(store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+        delta: "not durable",
+      })).rejects.toThrow("ProductFlow unavailable");
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.payload)).toEqual([
+        { delta: "not durable" },
+      ]);
+
+      store.setEventPublisher(async () => undefined);
+      const accepted = await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
         delta: "durable",
-      }).then(() => {
-        acknowledged = true;
       });
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(acknowledged).toBe(false);
-
-      releasePublisher();
-      await append;
-      expect(acknowledged).toBe(true);
+      expect(accepted.sequence).toBe(2);
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.payload)).toEqual([
+        { delta: "not durable" },
+        { delta: "durable" },
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -296,6 +302,43 @@ describe("TurnStore", () => {
       expect(results.filter((result) => result.created)).toHaveLength(1);
       expect(new Set(results.map((result) => result.state.turn_id)).size).toBe(1);
       expect((await store.loadRun(scope.run_id)).turn_ids).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an oversized payload before consuming a journal sequence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-payload-limit-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, input);
+
+      await expect(store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+        delta: "x".repeat(JOURNAL_EVENT_MAX_PAYLOAD_BYTES),
+      })).rejects.toMatchObject({ code: "event_payload_too_large", status: 413 });
+      const accepted = await store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "ok" });
+
+      expect(accepted.sequence).toBe(1);
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0))).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a journal event after the PG sequence boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-sequence-limit-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, input);
+      const cache = (store as unknown as {
+        eventCache: Map<string, { sequence: number; items: unknown[] }>;
+      }).eventCache;
+      cache.set(`${scope.run_id}:${turn.state.turn_id}`, { sequence: JOURNAL_EVENT_MAX_SEQUENCE, items: [] });
+
+      await expect(store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "overflow" }))
+        .rejects.toMatchObject({ code: "event_sequence_exhausted", status: 409 });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

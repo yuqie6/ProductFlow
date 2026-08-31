@@ -74,10 +74,13 @@ import {
 } from "./question-resume.js";
 import {
   boundedUsage,
+  JournalStreamBuffer,
   normalizeAssistantMessageEvent,
   reportUnknownPiAssistantEvent,
   type AssistantFinishPayload,
+  type JournalStreamChunk,
 } from "./pi-chunks.js";
+import { isJournalFlushBarrier, JournalEventBatcher } from "./journal-publisher.js";
 import {
   applyThinkingEvent,
   createThinkingProjectionState,
@@ -161,7 +164,9 @@ export class PiRuntimeManager {
 
   async publishDurableEvent(scope: Scope, event: TurnEvent): Promise<void> {
     const runtime = this.runs.get(scope.run_id);
-    if (!runtime) return;
+    if (!runtime) {
+      throw new RuntimeError(503, "runtime_unavailable", "Agent event cannot be published without an initialized runtime");
+    }
     await runtime.publishDurableEvent(event);
   }
 
@@ -351,8 +356,8 @@ class RunRuntime implements ToolRuntime {
   private artifact?: TurnArtifact;
   private workflowRunRequested = false;
   private workflowApproval?: JsonObject;
-  private readonly pendingPublishedEvents: TurnEvent[] = [];
-  private publishedFlushPromise?: Promise<void>;
+  private eventBatcher: JournalEventBatcher;
+  private streamBuffer: JournalStreamBuffer;
   private output = "";
   private thinkingProjection: ThinkingProjectionState = createThinkingProjectionState();
   private unknownPiEventTypes = new Set<string>();
@@ -360,6 +365,8 @@ class RunRuntime implements ToolRuntime {
   private toolCount = 0;
   private eventChain = Promise.resolve();
   private persistenceError?: Error;
+  private streamCapacityError?: Error;
+  private terminalDrainFailed = false;
   private iterationError?: Error;
   private modelError?: Error;
   private activeTurnID?: string;
@@ -386,7 +393,10 @@ class RunRuntime implements ToolRuntime {
   constructor(
     private readonly manager: PiRuntimeManager,
     readonly scope: Scope,
-  ) { }
+  ) {
+    this.eventBatcher = this.createEventBatcher();
+    this.streamBuffer = this.createStreamBuffer();
+  }
 
   get client(): ProductFlowClient {
     return this.manager.productFlow;
@@ -477,8 +487,10 @@ class RunRuntime implements ToolRuntime {
         });
       }
       await session.waitForIdle();
+      this.flushStreamChunks();
       await this.eventChain;
       if (this.persistenceError) throw this.persistenceError;
+      if (this.streamCapacityError) throw this.streamCapacityError;
       if (this.iterationError) throw this.iterationError;
       if (this.modelError) throw this.modelError;
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
@@ -669,10 +681,7 @@ class RunRuntime implements ToolRuntime {
     }
   }
 
-  /**
-   * 先写本地终态快照，再写 ProductFlow checkpoint。
-   * checkpoint 或事件发布失败时，快照升级为 unknown。
-   */
+  /** PG 接受 turn/end 的事务就是唯一终态提交点；checkpoint 不再重复提交终态。 */
   private async finishTurn(
     turnID: string,
     status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
@@ -684,6 +693,8 @@ class RunRuntime implements ToolRuntime {
       approval?: JsonObject;
     },
   ): Promise<void> {
+    this.flushStreamChunks();
+    await this.eventChain;
     const reasonCode = status === "failed"
       ? "provider_failed"
       : status === "unknown" && this.effectUnknownError
@@ -699,46 +710,37 @@ class RunRuntime implements ToolRuntime {
       });
     } catch (error) {
       this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
-    }
-    try {
-      await this.flushPublishedEvents();
-    } catch (error) {
-      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
-    }
-    let terminalStatus = status;
-    let terminalError = details.error;
-    if (this.persistenceError && status !== "unknown") {
-      terminalStatus = "unknown";
-      terminalError = safeErrorMessage(this.persistenceError);
-      await this.recordLocalUnknownTerminal(turnID, details.output ?? "", terminalError);
-    }
-    this.executionPhase = "terminal";
-    try {
-      await this.checkpoint("terminal", {
-        status: terminalStatus,
-        ...(details.output ? { output: details.output } : {}),
-        ...(terminalError ? { error: terminalError } : {}),
-        ...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
-      });
-    } catch (error) {
-      if (terminalStatus !== "unknown") {
-        terminalStatus = "unknown";
-        terminalError = safeErrorMessage(error);
-        await this.recordLocalUnknownTerminal(turnID, details.output ?? "", terminalError);
+      this.terminalDrainFailed = true;
+      if (status !== "unknown") {
+        await this.recordLocalUnknownTerminal(
+          turnID,
+          safeErrorMessage(this.persistenceError),
+          details.output ?? "",
+        );
+      } else {
+        await this.manager.store.updateState(this.scope.run_id, turnID, {
+          status: "unknown",
+          output: details.output ?? "",
+          thinking: this.thinkingProjection.text,
+          error: safeErrorMessage(this.persistenceError),
+          finished_at: nowISO(),
+        });
       }
     }
+    this.executionPhase = "terminal";
   }
 
-  private async recordLocalUnknownTerminal(turnID: string, output: string, error: string): Promise<void> {
+  private async recordLocalUnknownTerminal(turnID: string, error: string, output: string): Promise<void> {
     await this.manager.store.appendLocalEvent(this.scope.run_id, turnID, "turn/end", {
       reason: "unknown",
       reason_code: "persistence_failed",
       status: "unknown",
-      output,
       error,
     });
     await this.manager.store.updateState(this.scope.run_id, turnID, {
       status: "unknown",
+      output,
+      thinking: this.thinkingProjection.text,
       error,
       finished_at: nowISO(),
     });
@@ -826,6 +828,8 @@ class RunRuntime implements ToolRuntime {
   close(): void {
     this.abortController?.abort();
     this.session?.dispose();
+    this.streamBuffer.dispose();
+    this.eventBatcher.dispose();
     this.clearQuestionTimeout();
     this.questionWaiter?.reject(new RuntimeError(503, "closed", "Agent runtime is shutting down"));
     this.questionWaiter = undefined;
@@ -959,6 +963,69 @@ class RunRuntime implements ToolRuntime {
     this.toolStepFailureDetails.set(toolCallID, details);
   }
 
+  private createEventBatcher(): JournalEventBatcher {
+    return new JournalEventBatcher(
+      (events) => this.appendPublishedBatch(events),
+      {
+        onBackgroundError: (error) => {
+          this.persistenceError ??= error;
+          this.abortController?.abort();
+          void this.session?.abort();
+        },
+      },
+    );
+  }
+
+  private async appendPublishedBatch(events: readonly TurnEvent[]): Promise<void> {
+    const lease = this.executionLease;
+    if (!lease) throw new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
+    const inputs: AgentEventInput[] = events.map((event) => ({
+      sequence: event.sequence,
+      schema_version: event.schema_version,
+      run_id: event.run_id,
+      turn_id: event.turn_id,
+      kind: event.kind,
+      ...(event.ignorable ? { ignorable: true } : {}),
+      payload: event.payload,
+      created_at: event.created_at,
+    }));
+    await this.client.appendTurnEvents(
+      this.scope.conversation_id,
+      lease.execution_id,
+      { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
+    );
+  }
+
+  private createStreamBuffer(): JournalStreamBuffer {
+    return new JournalStreamBuffer(
+      (chunk) => this.emitStreamChunk(chunk),
+      {
+        onError: (error) => {
+          this.streamCapacityError ??= error;
+          this.persistenceError ??= error;
+          this.abortController?.abort();
+          void this.session?.abort();
+        },
+      },
+    );
+  }
+
+  private emitStreamChunk(chunk: JournalStreamChunk): void {
+    const { kind, ...payload } = chunk;
+    this.enqueue(async () => {
+      await this.manager.store.appendEvent(this.scope.run_id, this.currentTurnID(), kind, payload);
+      await this.manager.store.updateState(
+        this.scope.run_id,
+        this.currentTurnID(),
+        kind === "text.chunk" ? { output: this.output } : { thinking: this.thinkingProjection.text },
+      );
+    });
+  }
+
+  private flushStreamChunks(): void {
+    this.streamBuffer.flush();
+  }
+
   async publishDurableEvent(event: TurnEvent): Promise<void> {
     const lease = this.executionLease;
     // 本 runtime 持有活动 Turn 租约时，run 上可能还有另一个 queued Turn。
@@ -971,45 +1038,11 @@ class RunRuntime implements ToolRuntime {
       this.persistenceError ??= new Error("Agent event was emitted without an execution lease");
       return;
     }
-    this.pendingPublishedEvents.push(event);
-    await this.flushPublishedEvents();
+    await this.eventBatcher.enqueue(event, isJournalFlushBarrier(event.kind));
   }
 
   private async flushPublishedEvents(): Promise<void> {
-    if (this.publishedFlushPromise) return this.publishedFlushPromise;
-    const lease = this.executionLease;
-    if (!lease || this.pendingPublishedEvents.length === 0) return;
-    this.publishedFlushPromise = (async () => {
-      while (this.pendingPublishedEvents.length > 0) {
-        const events = this.pendingPublishedEvents.splice(0, 250);
-        const inputs: AgentEventInput[] = events.map((event) => ({
-          sequence: event.sequence,
-          schema_version: event.schema_version,
-          run_id: event.run_id,
-          turn_id: event.turn_id,
-          kind: event.kind,
-          ...(event.ignorable ? { ignorable: true } : {}),
-          payload: event.payload,
-          created_at: event.created_at,
-        }));
-        try {
-          await this.client.appendTurnEvents(
-            this.scope.conversation_id,
-            lease.execution_id,
-            { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
-            this.signal,
-          );
-        } catch (error) {
-          // The batch endpoint is transactional. Keep the exact batch at the
-          // head so an explicit cleanup/retry cannot silently skip a prefix.
-          this.pendingPublishedEvents.unshift(...events);
-          throw error;
-        }
-      }
-    })().finally(() => {
-      this.publishedFlushPromise = undefined;
-    });
-    return this.publishedFlushPromise;
+    await this.eventBatcher.drain();
   }
 
   /** 与 ProductFlow prepare/apply/reconcile 共用的单次工具调用幂等键。 */
@@ -1160,6 +1193,7 @@ class RunRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "tool_execution_start") {
+        this.flushStreamChunks();
         void this.updateExecutionPhase("tool").catch(() => undefined);
         this.toolCount += 1;
         if (this.toolCount > this.manager.config.maxIterations) {
@@ -1183,6 +1217,7 @@ class RunRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "tool_execution_end") {
+        this.flushStreamChunks();
         void this.updateExecutionPhase("model").catch(() => undefined);
       }
       if (event.type === "tool_execution_end") {
@@ -1408,14 +1443,12 @@ class RunRuntime implements ToolRuntime {
     }
     if (mapped.action === "text.chunk") {
       this.output += mapped.delta;
-      this.enqueue(async () => {
-        await this.manager.store.appendEvent(this.scope.run_id, turnID, "text.chunk", {
-          delta: mapped.delta,
-          step_id: `pi_${turnID}`,
-          attempt_id: this.attemptID,
-          content_index: mapped.contentIndex,
-        });
-        await this.manager.store.updateState(this.scope.run_id, turnID, { output: this.output });
+      this.streamBuffer.append({
+        kind: "text.chunk",
+        delta: mapped.delta,
+        step_id: `pi_${turnID}`,
+        attempt_id: this.attemptID,
+        content_index: mapped.contentIndex,
       });
       return;
     }
@@ -1432,10 +1465,9 @@ class RunRuntime implements ToolRuntime {
       ...(modelRequestID ? { model_request_id: modelRequestID } : {}),
       ...(usage ? { usage } : {}),
     };
+    this.flushStreamChunks();
     this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant/message", {
       ...finish,
-      text: this.output,
-      thinking: this.thinkingProjection.text,
       interrupted: finish.reason === "aborted",
     } as never));
   }
@@ -1444,19 +1476,21 @@ class RunRuntime implements ToolRuntime {
     const { state, emit } = applyThinkingEvent(this.thinkingProjection, event);
     this.thinkingProjection = state;
     if (!emit) return;
-    this.enqueue(async () => {
-      await this.manager.store.appendEvent(this.scope.run_id, turnID, "thinking.chunk", {
-        delta: emit.delta,
-        step_id: `pi_${turnID}`,
-        attempt_id: this.attemptID,
-        content_index: emit.content_index,
-        ...(emit.truncated ? { truncated: true } : {}),
-      });
-      await this.manager.store.updateState(this.scope.run_id, turnID, { thinking: this.thinkingProjection.text });
+    this.streamBuffer.append({
+      kind: "thinking.chunk",
+      delta: emit.delta,
+      step_id: `pi_${turnID}`,
+      attempt_id: this.attemptID,
+      content_index: emit.content_index,
+      ...(emit.truncated ? { truncated: true } : {}),
     });
   }
 
   private resetTurnState(): void {
+    this.streamBuffer.dispose();
+    this.eventBatcher.dispose();
+    this.streamBuffer = this.createStreamBuffer();
+    this.eventBatcher = this.createEventBatcher();
     this.output = "";
     this.thinkingProjection = createThinkingProjectionState();
     this.unknownPiEventTypes.clear();
@@ -1483,16 +1517,23 @@ class RunRuntime implements ToolRuntime {
     this.attemptID = randomUUID();
     this.toolCount = 0;
     this.persistenceError = undefined;
+    this.streamCapacityError = undefined;
+    this.terminalDrainFailed = false;
     this.iterationError = undefined;
     this.modelError = undefined;
     this.eventChain = Promise.resolve();
-    this.pendingPublishedEvents.length = 0;
   }
 
   private async cleanupAfterTurn(): Promise<void> {
-    await this.flushPublishedEvents().catch((error: unknown) => {
-      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
-    });
+    this.flushStreamChunks();
+    await this.eventChain;
+    // terminal 失败后队首仍保留原批次；本地只更新状态快照，cleanup
+    // 不得静默重试并把一次未知提交改写成另一 PG 终态。
+    if (!this.terminalDrainFailed) {
+      await this.flushPublishedEvents().catch((error: unknown) => {
+        this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
+      });
+    }
     await this.stopExecutionHeartbeat();
     this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
     this.clearQuestionTimeout();

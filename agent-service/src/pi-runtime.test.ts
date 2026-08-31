@@ -10,6 +10,7 @@ import {
   type TurnState,
 } from "./contracts.js";
 import { PiRuntimeManager, toolStepDetailsForResult } from "./pi-runtime.js";
+import { JOURNAL_EVENT_MAX_PAYLOAD_BYTES } from "./pi-chunks.js";
 import { RuntimeError, TurnStore } from "./store.js";
 
 const scope: Scope = {
@@ -327,8 +328,7 @@ describe("PiRuntimeManager turn state", () => {
 
       expect(canceled).toMatchObject({ status: "canceled", turn_id: createdTurnID });
       expect(durableEvents).toEqual([{ sequence: 1, kind: "turn/end" }]);
-      expect(checkpoints).toHaveLength(1);
-      expect(checkpoints[0]).toMatchObject({ kind: "terminal", payload: { status: "canceled" } });
+      expect(checkpoints).toEqual([]);
       expect(released).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -548,81 +548,110 @@ describe("PiRuntimeManager turn state", () => {
     }
   });
 
-  it("downgrades a terminal Turn when its durable event cannot be published", async () => {
-    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-event-failure-"));
-    try {
-      const store = new TurnStore(root);
-      await store.init();
-      const productFlow = {
-        appendTurnEvents: async () => {
-          throw new Error("event store unavailable");
-        },
-      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
-      const manager = new PiRuntimeManager(
-        { ...config, dataRoot: root },
-        store,
-        productFlow,
-        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
-      );
-      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
-      const runtime = await (manager as unknown as {
-        runtimeFor(input: Scope): Promise<unknown>;
-      }).runtimeFor(scope);
-      const created = await store.createTurn(scope, {
-        input_text: "测试终态事件失败",
-        asset_ids: [],
-        idempotency_key: "durable-event-failure",
-        page_context: null,
-      });
-      const internal = runtime as {
-        executionLease: {
-          execution_id: string;
-          projection_id: string;
-          harness_turn_id: string;
-          owner_id: string;
-          lease_token: string;
-          attempt: number;
-          fencing_token: number;
-          phase: "claimed";
-          lease_expires_at: string;
+  it.each(["succeeded", "unknown"] as const)(
+    "keeps local state unknown when publishing the %s terminal event fails",
+    async (requestedStatus) => {
+      const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-event-failure-"));
+      try {
+        const store = new TurnStore(root);
+        await store.init();
+        let publishAttempts = 0;
+        const productFlow = {
+          appendTurnEvents: async () => {
+            publishAttempts += 1;
+            throw new Error("event store unavailable");
+          },
+        } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+        const manager = new PiRuntimeManager(
+          { ...config, dataRoot: root },
+          store,
+          productFlow,
+          {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+        );
+        store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
+        const runtime = await (manager as unknown as {
+          runtimeFor(input: Scope): Promise<unknown>;
+        }).runtimeFor(scope);
+        const created = await store.createTurn(scope, {
+          input_text: "测试终态事件失败",
+          asset_ids: [],
+          idempotency_key: "durable-event-failure",
+          page_context: null,
+        });
+        const internal = runtime as {
+          executionLease: {
+            execution_id: string;
+            projection_id: string;
+            harness_turn_id: string;
+            owner_id: string;
+            lease_token: string;
+            attempt: number;
+            fencing_token: number;
+            phase: "claimed";
+            lease_expires_at: string;
+          };
+          finishTurn(
+            turnID: string,
+            status: "succeeded" | "unknown",
+            details: { output?: string },
+          ): Promise<void>;
+          cleanupAfterTurn(): Promise<void>;
         };
-        finishTurn(
-          turnID: string,
-          status: "succeeded",
-          details: { output?: string },
-        ): Promise<void>;
-      };
-      internal.executionLease = {
-        execution_id: "execution-1",
-        projection_id: "projection-1",
-        harness_turn_id: created.state.turn_id,
-        owner_id: "agent-1",
-        lease_token: "lease-1",
-        attempt: 1,
-        fencing_token: 1,
-        phase: "claimed",
-        lease_expires_at: "2099-01-01T00:00:00.000Z",
-      };
+        internal.executionLease = {
+          execution_id: "execution-1",
+          projection_id: "projection-1",
+          harness_turn_id: created.state.turn_id,
+          owner_id: "agent-1",
+          lease_token: "lease-1",
+          attempt: 1,
+          fencing_token: 1,
+          phase: "claimed",
+          lease_expires_at: "2099-01-01T00:00:00.000Z",
+        };
 
-      await internal.finishTurn(created.state.turn_id, "succeeded", { output: "本地结果" });
+        await internal.finishTurn(created.state.turn_id, requestedStatus, { output: "本地结果" });
 
-      await expect(store.getState(scope.run_id, created.state.turn_id)).resolves.toMatchObject({
-        status: "unknown",
-        error: "event store unavailable",
-      });
-      expect((internal as unknown as { pendingPublishedEvents: unknown[] }).pendingPublishedEvents.length).toBeGreaterThan(0);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
+        await expect(store.getState(scope.run_id, created.state.turn_id)).resolves.toMatchObject({
+          status: "unknown",
+          output: "本地结果",
+          error: "event store unavailable",
+        });
+        const terminalEvents = (await store.events(scope.run_id, created.state.turn_id, 0))
+          .filter((event) => event.kind === "turn/end");
+        expect(terminalEvents).toHaveLength(requestedStatus === "succeeded" ? 2 : 1);
+        expect(terminalEvents.at(-1)?.payload.status).toBe("unknown");
+        expect((internal as unknown as { eventBatcher: { pendingCount: number } }).eventBatcher.pendingCount).toBeGreaterThan(0);
+        await internal.cleanupAfterTurn();
+        expect(publishAttempts).toBe(1);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 
-  it("downgrades a terminal Turn when its terminal checkpoint cannot be persisted", async () => {
+  it("keeps the PG-acknowledged terminal state without writing a second terminal checkpoint", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-checkpoint-failure-"));
     try {
       const store = new TurnStore(root);
       await store.init();
+      const durableEvents: string[] = [];
+      let checkpointCalls = 0;
       const productFlow = {
+        appendTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number; kind: string }> }) => {
+          durableEvents.push(...args.events.map((event) => event.kind));
+          return args.events.map((event) => ({
+            id: `event-${event.sequence}`,
+            projection_id: "projection-checkpoint-failure",
+            execution_id: "execution-checkpoint-failure",
+            sequence: event.sequence,
+            schema_version: 1 as const,
+            kind: event.kind,
+            ignorable: false,
+            created_at: "2026-08-31T00:00:00.000Z",
+          }));
+        },
         appendTurnCheckpoint: async () => {
+          checkpointCalls += 1;
           throw new Error("terminal checkpoint unavailable");
         },
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
@@ -632,6 +661,7 @@ describe("PiRuntimeManager turn state", () => {
         productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3],
       );
+      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
       const runtime = await (manager as unknown as {
         runtimeFor(input: Scope): Promise<unknown>;
       }).runtimeFor(scope);
@@ -674,11 +704,108 @@ describe("PiRuntimeManager turn state", () => {
       await internal.finishTurn(created.state.turn_id, "succeeded", { output: "本地结果" });
 
       await expect(store.getState(scope.run_id, created.state.turn_id)).resolves.toMatchObject({
-        status: "unknown",
-        error: "terminal checkpoint unavailable",
+        status: "succeeded",
+        error: "",
       });
       const events = await store.events(scope.run_id, created.state.turn_id, 0);
       expect(events.at(-1)?.kind).toBe("turn/end");
+      expect(durableEvents).toEqual(["turn/end"]);
+      expect(checkpointCalls).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("chunks a long assistant output under the PG payload and sequence limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-long-output-"));
+    try {
+      const batches: Array<Array<{ sequence: number; kind: string; payload: Record<string, unknown> }>> = [];
+      const productFlow = {
+        appendTurnEvents: async (
+          _conversationID: string,
+          _executionID: string,
+          args: { events: Array<{ sequence: number; kind: string; payload: Record<string, unknown> }> },
+        ) => {
+          batches.push(args.events);
+          return args.events.map((event) => ({
+            id: `event-${event.sequence}`,
+            projection_id: "projection-long-output",
+            execution_id: "execution-long-output",
+            sequence: event.sequence,
+            schema_version: 1 as const,
+            kind: event.kind,
+            ignorable: false,
+            created_at: "2026-08-31T00:00:00.000Z",
+          }));
+        },
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const store = new TurnStore(root);
+      await store.init();
+      const manager = new PiRuntimeManager(
+        { ...config, dataRoot: root },
+        store,
+        productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3],
+      );
+      store.setEventPublisher((eventScope, event) => manager.publishDurableEvent(eventScope, event));
+      const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
+      const created = await store.createTurn(scope, {
+        input_text: "测试长输出",
+        asset_ids: [],
+        idempotency_key: "long-output",
+        page_context: null,
+      });
+      const internal = runtime as {
+        currentTurn: string;
+        abortController: AbortController;
+        executionLease: {
+          execution_id: string;
+          projection_id: string;
+          harness_turn_id: string;
+          owner_id: string;
+          lease_token: string;
+          attempt: number;
+          fencing_token: number;
+          phase: "claimed";
+          lease_expires_at: string;
+        };
+        resetTurnState(): void;
+        projectAssistantMessageEvent(turnID: string, raw: { type: string; delta?: string; contentIndex?: number; reason?: string }): void;
+        finishTurn(turnID: string, status: "succeeded", details: { output: string }): Promise<void>;
+      };
+      internal.resetTurnState();
+      internal.currentTurn = created.state.turn_id;
+      internal.abortController = new AbortController();
+      internal.executionLease = {
+        execution_id: "execution-long-output",
+        projection_id: "projection-long-output",
+        harness_turn_id: created.state.turn_id,
+        owner_id: "agent-long-output",
+        lease_token: "lease-long-output",
+        attempt: 1,
+        fencing_token: 1,
+        phase: "claimed",
+        lease_expires_at: "2099-01-01T00:00:00.000Z",
+      };
+      const output = "长输出内容".repeat(16_000);
+
+      internal.projectAssistantMessageEvent(created.state.turn_id, { type: "text_delta", delta: output, contentIndex: 0 });
+      internal.projectAssistantMessageEvent(created.state.turn_id, { type: "done", reason: "stop" });
+      await internal.finishTurn(created.state.turn_id, "succeeded", { output });
+
+      const state = await store.getState(scope.run_id, created.state.turn_id);
+      const events = await store.events(scope.run_id, created.state.turn_id, 0);
+      expect(state).toMatchObject({ status: "succeeded", output });
+      expect(events.filter((event) => event.kind === "text.chunk").map((event) => String(event.payload.delta)).join("")).toBe(output);
+      expect(events.length).toBeLessThan(20);
+      expect(events.every((event) => Buffer.byteLength(JSON.stringify(event.payload), "utf8") <= JOURNAL_EVENT_MAX_PAYLOAD_BYTES)).toBe(true);
+      expect(events.find((event) => event.kind === "assistant/message")?.payload).not.toHaveProperty("text");
+      expect(events.find((event) => event.kind === "assistant/message")?.payload).not.toHaveProperty("thinking");
+      expect(events.at(-1)?.kind).toBe("turn/end");
+      expect(events.at(-1)?.payload).not.toHaveProperty("output");
+      expect(batches.flat().map((event) => event.sequence)).toEqual(events.map((event) => event.sequence));
+      expect(batches.every((batch) => batch.length >= 1)).toBe(true);
+      expect((internal as unknown as { eventBatcher: { pendingCount: number } }).eventBatcher.pendingCount).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -802,10 +929,7 @@ describe("PiRuntimeManager turn state", () => {
         options: [{ label: "还没想好" }, { label: "稍后再说" }],
       };
       await store.updateState(scope.run_id, created.state.turn_id, { status: "requires_input", question });
-      await store.appendEvent(scope.run_id, created.state.turn_id, "turn.requires_input", {
-        status: "requires_input",
-        question,
-      });
+      await store.appendEvent(scope.run_id, created.state.turn_id, "question/requested", question);
 
       const answered = await manager.answerQuestion(
         { conversationID: scope.conversation_id },

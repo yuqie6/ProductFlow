@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentTurn } from "../../../lib/types";
 import {
   initialGlobalTaskTurnInput,
+  selectGlobalAgentInteractionTurns,
   selectLatestGlobalAgentTurn,
 } from "./useGlobalAgentConversation";
 
@@ -72,5 +73,18 @@ describe("global Agent Task bootstrap input", () => {
 
     expect(selectLatestGlobalAgentTurn([directTurn, backgroundTurn], null)).toBe(directTurn);
     expect(selectLatestGlobalAgentTurn([directTurn, backgroundTurn], "task-1")).toBe(backgroundTurn);
+  });
+
+  it("returns only direct Turns for a direct global conversation", () => {
+    const directTurn = turn("direct-1", null, "succeeded");
+    const nextDirectTurn = turn("direct-2", null, "running");
+    const backgroundTurn = turn("task-1", "task-1", "running");
+
+    expect(
+      selectGlobalAgentInteractionTurns([directTurn, backgroundTurn, nextDirectTurn], null),
+    ).toEqual([directTurn, nextDirectTurn]);
+    expect(
+      selectGlobalAgentInteractionTurns([directTurn, backgroundTurn, nextDirectTurn], "task-1"),
+    ).toEqual([backgroundTurn]);
   });
 });

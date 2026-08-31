@@ -94,10 +94,7 @@ describe("Pi runtime fake provider E2E", () => {
       expect(provider.requestPaths).toEqual(["/v1/responses"]);
       expect(claimCount).toBe(1);
       expect(releasedPhases).toEqual(["terminal"]);
-      expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
-        "before_model_request",
-        "terminal",
-      ]);
+      expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
       expect(events.map((event) => event.kind)).toEqual([
         "turn/start",
         "tool/call",
@@ -190,7 +187,6 @@ describe("Pi runtime fake provider E2E", () => {
         "tool/call",
         "tool/result",
         "thinking.chunk",
-        "thinking.chunk",
         "text.chunk",
         "assistant/message",
         "turn/end",
@@ -240,11 +236,7 @@ describe("Pi runtime fake provider E2E", () => {
       expect(terminal.status).toBe("failed");
       expect(terminal.error).toBeTruthy();
       expect(provider.requestCount).toBe(1);
-      expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
-        "before_model_request",
-        "terminal",
-      ]);
-      expect(checkpoints[1].payload).toMatchObject({ status: "failed" });
+      expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
       expect(events.map((event) => event.kind)).toEqual(
         expect.arrayContaining(["turn/start", "turn/end"]),
       );
@@ -262,11 +254,7 @@ describe("Pi runtime fake provider E2E", () => {
     expect(result.terminal.status).toBe("failed");
     expect(result.terminal.error).toBeTruthy();
     expect(result.requestCount).toBe(1);
-    expect(result.checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
-      "before_model_request",
-      "terminal",
-    ]);
-    expect(result.checkpoints[1].payload).toMatchObject({ status: "failed" });
+    expect(result.checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
     expect(result.events.map((event) => event.kind)).toEqual(
       expect.arrayContaining(["turn/start", "turn/end"]),
     );
@@ -279,11 +267,7 @@ describe("Pi runtime fake provider E2E", () => {
     expect(result.terminal.status).toBe("failed");
     expect(result.terminal.error).toBeTruthy();
     expect(result.requestCount).toBe(1);
-    expect(result.checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
-      "before_model_request",
-      "terminal",
-    ]);
-    expect(result.checkpoints[1].payload).toMatchObject({ status: "failed" });
+    expect(result.checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
     expect(result.events.map((event) => event.kind)).toEqual(
       expect.arrayContaining(["turn/start", "turn/end"]),
     );
@@ -347,7 +331,6 @@ describe("Pi runtime fake provider E2E", () => {
         "tool_effect_intent",
         "tool_effect_result",
         "before_model_request",
-        "terminal",
       ]);
       const modelCheckpoints = checkpoints.filter((checkpoint) => checkpoint.kind === "before_model_request");
       expect(modelCheckpoints).toHaveLength(2);

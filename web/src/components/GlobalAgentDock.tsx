@@ -166,6 +166,15 @@ export function agentDockListRefetchInterval(open: boolean, sseFallback: boolean
   return open && sseFallback ? 2_000 : false;
 }
 
+export async function reconcileAgentDockListsOnControlOpen(
+  refetchSessions: () => Promise<unknown>,
+  refetchTasks: () => Promise<unknown>,
+  onReconciled: () => void,
+): Promise<void> {
+  await Promise.all([refetchSessions(), refetchTasks()]);
+  onReconciled();
+}
+
 export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -461,9 +470,16 @@ export function GlobalAgentDock() {
       void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
     };
     const handleOpen = () => {
-      if (active) {
-        setControlEventsFallback(false);
-      }
+      if (!active) return;
+      void reconcileAgentDockListsOnControlOpen(
+        () => sessionsQuery.refetch({ throwOnError: true }),
+        () => tasksQuery.refetch({ throwOnError: true }),
+        () => {
+          if (active) setControlEventsFallback(false);
+        },
+      ).catch(() => {
+        if (active) setControlEventsFallback(true);
+      });
     };
     const handleError = () => {
       if (active) {

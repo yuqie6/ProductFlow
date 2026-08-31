@@ -4,6 +4,7 @@ import type { AgentTurnEvent } from "../../../../lib/types";
 import {
   ConversationRuntime,
   subscribeToConversationEvents,
+  type ConversationEventPage,
   type ConversationEventSourceLike,
 } from "./runtime";
 
@@ -25,15 +26,21 @@ class FakeEventSource implements ConversationEventSourceLike {
   }
 }
 
-function event(sequence: number): string {
+function event(
+  sequence: number,
+  kind: AgentTurnEvent["kind"] = "turn.started",
+  payload: Record<string, unknown> = kind === "turn.completed"
+    ? { reason: "completed" }
+    : { status: "running" },
+): string {
   return JSON.stringify({
     schema_version: 1,
     run_id: "run-1",
     turn_id: "turn-1",
     sequence,
     created_at: "2026-08-31T00:00:00Z",
-    kind: "turn.started",
-    payload: { status: "running" },
+    kind,
+    payload,
   });
 }
 
@@ -69,6 +76,47 @@ describe("ConversationRuntime", () => {
       "/api/v2/agent-conversations/c/turns/t/events/page?after=1&limit=250",
     );
     expect(received).toEqual([1, 2, 3]);
+    expect(source.closed).toBe(false);
+    close();
+  });
+
+  it("follows has_more across multiple repair pages using the previous cursor", async () => {
+    const source = new FakeEventSource();
+    const received: number[] = [];
+    const firstPage = Array.from(
+      { length: 250 },
+      (_, index) => JSON.parse(event(index + 1)) as AgentTurnEvent,
+    );
+    const fetchEventPage = vi.fn(async (url: string): Promise<ConversationEventPage> => {
+      if (url.includes("after=0")) {
+        return {
+          items: firstPage,
+          next_after: 250,
+          has_more: true,
+          stream_state: "live",
+        };
+      }
+      return {
+        items: [JSON.parse(event(251)) as AgentTurnEvent],
+        next_after: 251,
+        has_more: false,
+        stream_state: "live",
+      };
+    });
+    const close = subscribeToConversationEvents({
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => source,
+      fetchEventPage,
+      onEvent: (value) => received.push(value.sequence),
+    });
+
+    source.emit("turn.started", event(252));
+    await flushAsyncWork();
+
+    expect(fetchEventPage).toHaveBeenNthCalledWith(1, "/events/page?after=0&limit=250");
+    expect(fetchEventPage).toHaveBeenNthCalledWith(2, "/events/page?after=250&limit=250");
+    expect(received).toEqual(Array.from({ length: 252 }, (_, index) => index + 1));
     expect(source.closed).toBe(false);
     close();
   });
@@ -206,9 +254,15 @@ describe("ConversationRuntime", () => {
     runtime.dispose();
   });
 
-  it("does not reconnect a finite stream after EventSource closes with no data", () => {
-    vi.useFakeTimers();
+  it("reconciles a finite stream from its current cursor before closing", async () => {
     const sources: FakeEventSource[] = [];
+    const received: number[] = [];
+    const states: string[] = [];
+    let resolvePage!: (page: ConversationEventPage) => void;
+    const pageResult = new Promise<ConversationEventPage>((resolve) => {
+      resolvePage = resolve;
+    });
+    const fetchEventPage = vi.fn(() => pageResult);
     const runtime = new ConversationRuntime({
       key: "turn-1:/events-finite",
       url: "/events-finite",
@@ -219,18 +273,33 @@ describe("ConversationRuntime", () => {
         sources.push(source);
         return source;
       },
+      fetchEventPage,
     });
 
-    runtime.acquire();
+    runtime.acquire({
+      onEvent: (value) => received.push(value.sequence),
+      onConnectionState: (state) => states.push(state),
+    });
     sources[0].emit("turn.started", event(1));
     sources[0].emit("error");
-    vi.advanceTimersByTime(10_000);
 
+    expect(fetchEventPage).toHaveBeenCalledWith("/events-finite/page?after=1&limit=250");
     expect(sources).toHaveLength(1);
     expect(sources[0].closed).toBe(true);
-    expect(runtime.getSnapshot().last_sequence).toBe(1);
+    expect(states).toEqual(["connecting", "reconnecting"]);
+
+    resolvePage({
+      items: [JSON.parse(event(2, "turn.completed")) as AgentTurnEvent],
+      next_after: 2,
+      has_more: false,
+      stream_state: "terminal",
+    });
+    await flushAsyncWork();
+
+    expect(received).toEqual([1, 2]);
+    expect(runtime.getSnapshot().last_sequence).toBe(2);
+    expect(states).toEqual(["connecting", "reconnecting", "closed"]);
     runtime.dispose();
-    vi.useRealTimers();
   });
 
   it("closes on stream.complete without reconnecting", () => {

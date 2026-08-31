@@ -9,6 +9,7 @@ import {
   isGlobalAgentDockModalTarget,
   isProductWorkbenchPath,
   openGlobalAgent,
+  reconcileAgentDockListsOnControlOpen,
   shouldRenderGlobalAgentLauncher,
   TaskBoard,
   TaskList,
@@ -221,5 +222,49 @@ describe("GlobalAgentDock Task Views", () => {
     expect(agentDockListRefetchInterval(false, true)).toBe(false);
     expect(agentDockListRefetchInterval(true, false)).toBe(false);
     expect(agentDockListRefetchInterval(true, true)).toBe(2_000);
+  });
+
+  it("keeps fallback polling until reopened control SSE reconciles changed lists", async () => {
+    let fallback: boolean;
+    let visibleSessions = "session-before-error";
+    let visibleTasks = "task-before-error";
+    let remoteSessions = visibleSessions;
+    let remoteTasks = visibleTasks;
+    let resolveSessions!: () => void;
+    let resolveTasks!: () => void;
+    const sessionsReady = new Promise<void>((resolve) => {
+      resolveSessions = resolve;
+    });
+    const tasksReady = new Promise<void>((resolve) => {
+      resolveTasks = resolve;
+    });
+
+    fallback = true;
+    remoteSessions = "session-after-error";
+    remoteTasks = "task-after-error";
+    const reopened = reconcileAgentDockListsOnControlOpen(
+      async () => {
+        await sessionsReady;
+        visibleSessions = remoteSessions;
+      },
+      async () => {
+        await tasksReady;
+        visibleTasks = remoteTasks;
+      },
+      () => {
+        fallback = false;
+      },
+    );
+
+    resolveSessions();
+    await Promise.resolve();
+    expect(visibleSessions).toBe("session-after-error");
+    expect(visibleTasks).toBe("task-before-error");
+    expect(fallback).toBe(true);
+
+    resolveTasks();
+    await reopened;
+    expect(visibleTasks).toBe("task-after-error");
+    expect(fallback).toBe(false);
   });
 });

@@ -25,6 +25,7 @@ import {
   nowISO,
   sameRuntimeScope,
 } from "./contracts.js";
+import { JOURNAL_EVENT_MAX_PAYLOAD_BYTES, JOURNAL_EVENT_MAX_SEQUENCE } from "./pi-chunks.js";
 
 export class RuntimeError extends Error {
   readonly status: number;
@@ -240,7 +241,7 @@ export class TurnStore {
         const artifact = artifactFromTerminalEvents(events, terminalEvent);
         await this.updateStateUnlocked(scope.run_id, state.turn_id, {
           status,
-          output: stringPayload(terminalEvent.payload.output) ?? current.output,
+          output: current.output,
           error: stringPayload(terminalEvent.payload.error) ?? "",
           artifact,
           finished_at: terminalEvent.created_at,
@@ -278,15 +279,16 @@ export class TurnStore {
             state.turn_id,
             "tool/result",
             step as unknown as JsonObject,
+            false,
+            false,
           );
         }
       }
-				await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn/end", {
-					reason: "unknown",
-					status: "unknown",
-				output: current.output,
-				error: RESTART_UNKNOWN_ERROR,
-			});
+      await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn/end", {
+        reason: "unknown",
+        status: "unknown",
+        error: RESTART_UNKNOWN_ERROR,
+      }, false, false);
       await this.updateStateUnlocked(scope.run_id, state.turn_id, {
         status: "unknown",
         error: RESTART_UNKNOWN_ERROR,
@@ -357,29 +359,28 @@ export class TurnStore {
       const output = details.output ?? stateOutput(current);
       const thinking = details.thinking ?? current.thinking ?? "";
       const error = details.error ?? "";
-			if (details.question) {
-				await this.appendEventUnlocked(runID, turnID, "question/requested", details.question as unknown as JsonObject);
-			}
-			if (details.artifact) {
-				await this.appendEventUnlocked(runID, turnID, "approval/requested", {
-					approval_id: details.artifact.step_id,
-					approval_kind: "artifact",
-					artifact: details.artifact as unknown as JsonObject,
-				});
-			}
-			if (details.approval) {
-				await this.appendEventUnlocked(runID, turnID, "approval/requested", details.approval);
-			}
-			await this.appendEventUnlocked(runID, turnID, "turn/end", {
-				reason: status === "succeeded" ? "completed" : status,
-				...(details.reason_code ? { reason_code: details.reason_code } : {}),
-				status,
-				output,
-				error,
-				...(details.question ? { question: details.question as unknown as JsonObject } : {}),
-				...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
-			});
-		return this.updateStateUnlocked(runID, turnID, {
+      if (details.question) {
+        await this.appendEventUnlocked(runID, turnID, "question/requested", details.question as unknown as JsonObject);
+      }
+      if (details.artifact) {
+        await this.appendEventUnlocked(runID, turnID, "approval/requested", {
+          approval_id: details.artifact.step_id,
+          approval_kind: "artifact",
+          artifact: details.artifact as unknown as JsonObject,
+        });
+      }
+      if (details.approval) {
+        await this.appendEventUnlocked(runID, turnID, "approval/requested", details.approval);
+      }
+      await this.appendEventUnlocked(runID, turnID, "turn/end", {
+        reason: status === "succeeded" ? "completed" : status,
+        ...(details.reason_code ? { reason_code: details.reason_code } : {}),
+        status,
+        error,
+        ...(details.question ? { question: details.question as unknown as JsonObject } : {}),
+        ...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
+      });
+      return this.updateStateUnlocked(runID, turnID, {
         status,
         output,
         thinking,
@@ -446,25 +447,31 @@ export class TurnStore {
   ): Promise<TurnEvent> {
     const key = this.eventKey(runID, turnID);
     const events = await this.loadEventsRecord(runID, turnID);
+    if (events.sequence >= JOURNAL_EVENT_MAX_SEQUENCE) {
+      throw new RuntimeError(409, "event_sequence_exhausted", "Agent Turn journal event budget is exhausted");
+    }
+    if (Buffer.byteLength(JSON.stringify(payload), "utf8") > JOURNAL_EVENT_MAX_PAYLOAD_BYTES) {
+      throw new RuntimeError(413, "event_payload_too_large", "Agent Turn journal event payload exceeds the limit");
+    }
     const event: TurnEvent = {
       schema_version: EVENT_SCHEMA_VERSION,
       run_id: runID,
       turn_id: turnID,
       sequence: events.sequence + 1,
-		created_at: nowISO(),
-		kind,
-		...(ignorable ? { ignorable: true } : {}),
-		payload,
+      created_at: nowISO(),
+      kind,
+      ...(ignorable ? { ignorable: true } : {}),
+      payload,
     };
     events.sequence = event.sequence;
     events.items.push(event);
     this.eventCache.set(key, events);
     this.dirtyEvents.add(key);
-		await this.flushEventsUnlocked(runID, turnID);
-		if (publish && this.eventPublisher) {
-			const record = await this.loadRun(runID);
-			await this.eventPublisher(record.scope, event);
-		}
+    await this.flushEventsUnlocked(runID, turnID);
+    if (publish && this.eventPublisher) {
+      const record = await this.loadRun(runID);
+      await this.eventPublisher(record.scope, event);
+    }
     return event;
   }
 

@@ -107,24 +107,39 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 }
 
 func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) {
-	type exec struct {
+	type candidate struct {
 		ID           string `gorm:"column:id"`
 		ProjectionID string `gorm:"column:turn_projection_id"`
-		Phase        string `gorm:"column:phase"`
-		Status       string `gorm:"column:status"`
 	}
-	var items []exec
+	var candidates []candidate
 	if err := pgxTx.WithContext(ctx).Model(&schema.AgentTurnExecutions{}).
-		Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id, agent_turn_executions.phase, t.status").
-		Joins("JOIN agent_turn_projections t ON t.id = agent_turn_executions.turn_projection_id").
+		Select("id, turn_projection_id").
 		Where("agent_turn_executions.owner_id IS NOT NULL AND agent_turn_executions.lease_expires_at IS NOT NULL AND agent_turn_executions.lease_expires_at <= NOW()").
-		Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_executions")).
-		Scan(&items).Error; err != nil {
+		Order("id").
+		Scan(&candidates).Error; err != nil {
 		return 0, err
 	}
 	unknown := 0
 	now := time.Now().UTC()
-	for _, item := range items {
+	for _, item := range candidates {
+		var projection schema.AgentTurnProjections
+		err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where("id = ?", item.ProjectionID).Take(&projection).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		var execution schema.AgentTurnExecutions
+		err = pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).
+			Where("id = ? AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= NOW()", item.ID).
+			Take(&execution).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
 		if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 			"fencing_token":    gorm.Expr("fencing_token + 1"),
 			"owner_id":         nil,
@@ -135,11 +150,12 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 			return 0, err
 		}
 		publishLeaseChanged(pgxTx, item.ID, "expired")
-		if item.Status == "requires_input" && item.Phase == "waiting_input" {
+		if projection.Status == "requires_input" && execution.Phase == "waiting_input" {
 			continue
 		}
-		if inSet(activeTurn, item.Status) && !(item.Status == "queued" && item.Phase == "claimed") {
-			if err := appendInterruptedTurnEvents(ctx, pgxTx, item.ProjectionID, item.ID, now); err != nil {
+		if inSet(activeTurn, projection.Status) && !(projection.Status == "queued" && execution.Phase == "claimed") {
+			output, err := appendInterruptedTurnEvents(ctx, pgxTx, item.ProjectionID, item.ID, now)
+			if err != nil {
 				return 0, err
 			}
 			if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", item.ProjectionID).Updates(map[string]any{
@@ -149,6 +165,7 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 				"finished_at":          now,
 				"updated_at":           now,
 				"resume_required":      false,
+				"output_text":          nullableString(output),
 			}).Error; err != nil {
 				return 0, err
 			}
@@ -168,27 +185,27 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 	return unknown, nil
 }
 
-func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID, executionID string, now time.Time) error {
+func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID, executionID string, now time.Time) (string, error) {
 	row, err := loadTurnByID(ctx, gdb, projectionID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if row.HarnessTurnID == nil {
-		return nil
+		return "", nil
 	}
-	var existingTerminal int64
-	if err := gdb.Model(&schema.AgentTurnEvents{}).Where("turn_projection_id = ? AND kind = ?", projectionID, "turn/end").Count(&existingTerminal).Error; err != nil {
-		return err
+	var existingTerminal schema.AgentTurnEvents
+	err = gdb.Where("turn_projection_id = ? AND kind = ?", projectionID, "turn/end").Order("sequence DESC").Take(&existingTerminal).Error
+	if err == nil {
+		return rebuildJournalOutput(gdb.WithContext(ctx), projectionID, existingTerminal.Sequence)
 	}
-	if existingTerminal > 0 {
-		return nil
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
 	}
 	var events []schema.AgentTurnEvents
 	if err := gdb.Where("turn_projection_id = ?", projectionID).Order("sequence").Find(&events).Error; err != nil {
-		return err
+		return "", err
 	}
 	last := 0
-	text := ""
 	sourceSeqs := make([]int, 0)
 	hasAssistantMessage := false
 	for _, event := range events {
@@ -205,13 +222,12 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 			Delta string `json:"delta"`
 		}
 		if json.Unmarshal([]byte(event.PayloadJSON), &payload) == nil && payload.Delta != "" {
-			text += payload.Delta
 			sourceSeqs = append(sourceSeqs, event.Sequence)
 		}
 	}
 	var exec schema.AgentTurnExecutions
 	if err := gdb.Where("id = ?", executionID).Take(&exec).Error; err != nil {
-		return err
+		return "", err
 	}
 	appendEvent := func(kind string, payload map[string]any) error {
 		last++
@@ -228,7 +244,7 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 	}
 	var checkpoints []schema.AgentTurnCheckpoints
 	if err := gdb.Where("turn_projection_id = ? AND kind IN ?", projectionID, []string{"tool_effect_intent", "tool_effect_result"}).Order("sequence").Find(&checkpoints).Error; err != nil {
-		return err
+		return "", err
 	}
 	resolvedCalls := map[string]bool{}
 	for _, checkpoint := range checkpoints {
@@ -277,10 +293,10 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 		var existing schema.AgentTurnEffectReconciliations
 		if scanErr := gdb.Where("turn_projection_id = ? AND tool_call_id = ?", projectionID, intent.ToolCallID).Take(&existing).Error; errors.Is(scanErr, gorm.ErrRecordNotFound) {
 			if err := gdb.Create(&reconciliation).Error; err != nil {
-				return err
+				return "", err
 			}
 		} else if scanErr != nil {
-			return scanErr
+			return "", scanErr
 		}
 		var result any
 		_ = json.Unmarshal([]byte(nowResult), &result)
@@ -288,18 +304,21 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 			"step_id": intent.ToolCallID, "tool_name": intent.ToolName, "status": "succeeded",
 			"result": result, "reconciled": true,
 		}); err != nil {
-			return err
+			return "", err
 		}
 	}
-	if !hasAssistantMessage && (text != "" || len(sourceSeqs) > 0) {
+	if !hasAssistantMessage && len(sourceSeqs) > 0 {
 		if err := appendEvent("assistant/message", map[string]any{
-			"text": text, "interrupted": true, "reason": "aborted", "sourceEventSeqs": sourceSeqs,
+			"interrupted": true, "reason": "aborted", "sourceEventSeqs": sourceSeqs,
 		}); err != nil {
-			return err
+			return "", err
 		}
 	}
-	return appendEvent("turn/end", map[string]any{
+	if err := appendEvent("turn/end", map[string]any{
 		"reason": "unknown", "reason_code": "execution_interrupted", "status": "unknown",
-		"output": text, "error": "Agent execution lease expired before this Turn reached a provable terminal state",
-	})
+		"error": "Agent execution lease expired before this Turn reached a provable terminal state",
+	}); err != nil {
+		return "", err
+	}
+	return rebuildJournalOutput(gdb.WithContext(ctx), projectionID, last)
 }

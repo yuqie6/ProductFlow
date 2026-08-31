@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isKnownPiAssistantEventType,
+  JOURNAL_EVENT_MAX_PAYLOAD_BYTES,
+  JournalStreamBuffer,
   JOURNAL_STREAM_EVENT_KINDS,
   normalizeAssistantMessageEvent,
   PI_ASSISTANT_EVENT_TYPES,
+  utf8Prefix,
 } from "./pi-chunks.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("Pi assistantMessageEvent inventory", () => {
   it("lists the Pi 0.83 assistant stream types", () => {
@@ -82,5 +89,126 @@ describe("Pi assistantMessageEvent inventory", () => {
 
   it("records stream chunks as journal event kinds", () => {
     expect(JOURNAL_STREAM_EVENT_KINDS).toEqual(["text.chunk", "thinking.chunk", "assistant/message"]);
+  });
+
+  it("splits a large multibyte delta into bounded chunks without losing text", () => {
+    const chunks: string[] = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), {
+      maxChunkBytes: 12,
+      flushMS: 1_000,
+    });
+    const text = "商品图像".repeat(20);
+
+    buffer.append({
+      kind: "text.chunk",
+      delta: text,
+      step_id: "step-1",
+      attempt_id: "attempt-1",
+      content_index: 0,
+    });
+    buffer.flush();
+
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => Buffer.byteLength(chunk, "utf8") <= 12)).toBe(true);
+    expect(utf8Prefix("商品A", 7)).toBe("商品A");
+    expect(utf8Prefix("商品A", 6)).toBe("商品");
+  });
+
+  it("coalesces many tiny provider deltas instead of consuming one journal sequence each", () => {
+    const chunks: string[] = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), {
+      maxChunkBytes: 128,
+      flushMS: 1_000,
+    });
+
+    for (let index = 0; index < 10_050; index += 1) {
+      buffer.append({
+        kind: "text.chunk",
+        delta: "x",
+        step_id: "step-1",
+        attempt_id: "attempt-1",
+        content_index: 0,
+      });
+    }
+    buffer.flush();
+
+    expect(chunks.join("")).toBe("x".repeat(10_050));
+    expect(chunks).toHaveLength(Math.ceil(10_050 / 128));
+  });
+
+  it("keeps escape-heavy chunk payloads below the actual JSON byte limit", () => {
+    const chunks: Array<{ delta: string; step_id: string; attempt_id: string; content_index: number }> = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk));
+    const text = "\u0000\"\\\n".repeat(20_000);
+
+    buffer.append({
+      kind: "text.chunk",
+      delta: text,
+      step_id: "step-escape",
+      attempt_id: "attempt-escape",
+      content_index: 0,
+    });
+    buffer.flush();
+
+    expect(chunks.map((chunk) => chunk.delta).join("")).toBe(text);
+    expect(chunks.every((chunk) => Buffer.byteLength(JSON.stringify(chunk), "utf8") <= JOURNAL_EVENT_MAX_PAYLOAD_BYTES)).toBe(true);
+  });
+
+  it("time-bounds a live chunk while merging deltas received in the same window", async () => {
+    const chunks: string[] = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), { flushMS: 5 });
+    const base = { kind: "text.chunk" as const, step_id: "step-1", attempt_id: "attempt-1", content_index: 0 };
+
+    buffer.append({ ...base, delta: "你" });
+    buffer.append({ ...base, delta: "好" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(chunks).toEqual(["你好"]);
+  });
+
+  it("coalesces a slow stream after its timed event budget is spent", () => {
+    vi.useFakeTimers();
+    const chunks: string[] = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), {
+      flushMS: 5,
+      maxChunkBytes: 128,
+      maxEvents: 10,
+      maxTimedEvents: 3,
+    });
+    const base = { kind: "text.chunk" as const, step_id: "step-1", attempt_id: "attempt-1", content_index: 0 };
+    const windows = 600;
+
+    for (let index = 0; index < windows; index += 1) {
+      buffer.append({ ...base, delta: "x" });
+      vi.advanceTimersByTime(5);
+    }
+    buffer.flush();
+
+    expect(chunks).toHaveLength(8);
+    expect(chunks.join("")).toBe("x".repeat(windows));
+    expect(chunks.length).toBeLessThanOrEqual(10);
+  });
+
+  it("enforces the hard event budget for size-triggered flushes", () => {
+    const chunks: string[] = [];
+    const errors: Error[] = [];
+    const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), {
+      flushMS: 1_000,
+      maxChunkBytes: 1,
+      maxEvents: 3,
+      maxTimedEvents: 1,
+      onError: (error) => errors.push(error),
+    });
+    const base = { kind: "text.chunk" as const, step_id: "step-1", attempt_id: "attempt-1", content_index: 0 };
+
+    for (let index = 0; index < 5; index += 1) {
+      buffer.append({ ...base, delta: "x" });
+    }
+
+    expect(chunks).toEqual(["x", "x", "x"]);
+    expect(chunks).toHaveLength(3);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toContain("journal event budget of 3");
   });
 });

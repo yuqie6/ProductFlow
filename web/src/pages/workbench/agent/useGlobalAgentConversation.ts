@@ -88,6 +88,13 @@ export function selectLatestGlobalAgentTurn(
   return null;
 }
 
+export function selectGlobalAgentInteractionTurns(
+  turns: readonly AgentTurn[],
+  taskId: string | null | undefined,
+): AgentTurn[] {
+  return turns.filter((turn) => turn.task_id === (taskId ?? null));
+}
+
 export function useGlobalAgentConversation({
   conversationId,
   taskId = null,
@@ -120,7 +127,7 @@ export function useGlobalAgentConversation({
     [turnsQuery.data?.pages],
   );
   const interactionTurns = useMemo(
-    () => pageTurns.filter((turn) => turn.task_id === (taskId ?? null)),
+    () => selectGlobalAgentInteractionTurns(pageTurns, taskId),
     [pageTurns, taskId],
   );
   const latestPageTurn = selectLatestGlobalAgentTurn(interactionTurns, taskId);
@@ -153,9 +160,9 @@ export function useGlobalAgentConversation({
   const turns = useMemo(
     () =>
       latestTurn && latestPageTurn && latestTurn.id === latestPageTurn.id
-        ? pageTurns.map((turn) => (turn.id === latestTurn.id ? latestTurn : turn))
-        : pageTurns,
-    [latestPageTurn, latestTurn, pageTurns],
+        ? interactionTurns.map((turn) => (turn.id === latestTurn.id ? latestTurn : turn))
+        : interactionTurns,
+    [interactionTurns, latestPageTurn, latestTurn],
   );
 
   const cacheTurn = useCallback(

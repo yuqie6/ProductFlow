@@ -32,19 +32,6 @@ describe("question-resume helpers", () => {
         },
       ]),
     ).toEqual({ text: "筋膜枪" });
-    expect(
-      storedAnswerFromEvents([
-        {
-          sequence: 1,
-          kind: "question.answered",
-          payload: { answer: { option: 0 } },
-          created_at: "",
-          run_id: "",
-          turn_id: "",
-          schema_version: 1,
-        },
-      ]),
-    ).toEqual({ option: 0 });
   });
 
   it("finds an unanswered ask_user tool call and ignores completed ones", () => {

@@ -103,6 +103,42 @@ func TestCompactExpiredTurnJournalsShrinksChunkPayloads(t *testing.T) {
 	}
 }
 
+func TestCompactExpiredTurnJournalsKeepsTextChunksWithoutMessageSnapshot(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	created := time.Now().UTC()
+	inputs := []EventAppendInput{
+		{Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"必须保留","attempt_id":"a","content_index":0}`), CreatedAt: created},
+		{Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "assistant/message", Payload: json.RawMessage(`{"attempt_id":"a","reason":"stop","usage":{"input":1,"output":1,"total_tokens":2}}`), CreatedAt: created},
+		{Sequence: 3, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "turn/end", Payload: json.RawMessage(`{"reason":"completed","status":"succeeded"}`), CreatedAt: created},
+	}
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, inputs); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections SET finished_at = $2, updated_at = $2 WHERE id = $1
+	`, claimed.turn.ID, old); err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := CompactExpiredTurnJournals(context.Background(), as.svc, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compacted != 0 {
+		t.Fatalf("compacted=%d want 0", compacted)
+	}
+	var payload string
+	if err := as.pool.QueryRow(context.Background(), `
+		SELECT payload_json FROM agent_turn_events WHERE turn_projection_id = $1 AND sequence = 1
+	`, claimed.turn.ID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, `"delta":"必须保留"`) {
+		t.Fatalf("text chunk was compacted: %s", payload)
+	}
+}
+
 func TestCompactExpiredTurnJournalsAdvancesPastEachBatch(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)

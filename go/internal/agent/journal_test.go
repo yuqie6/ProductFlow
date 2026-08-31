@@ -134,7 +134,7 @@ func seedProductGraphConversation(t *testing.T, as *agentServer) (productID, gra
 	return productID, graphID, convID
 }
 
-func seedPendingGraphProposalTurn(t *testing.T, as *agentServer, productID, graphID, convID string) (proposalID, projectionID string) {
+func seedPendingGraphProposalTurn(t *testing.T, as *agentServer, productID, graphID, convID string) (proposalID, projectionID, taskID string) {
 	t.Helper()
 	changeSet, err := json.Marshal(map[string]any{
 		"base_graph_revision": 1,
@@ -157,25 +157,49 @@ func seedPendingGraphProposalTurn(t *testing.T, as *agentServer, productID, grap
 	}
 	projectionID = clockid.New()
 	harnessTurnID := clockid.New()
+	var conversation schema.AgentConversations
+	if err := as.db.Where("id = ?", convID).Take(&conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conversation.SessionID == nil {
+		t.Fatal("missing session")
+	}
+	task, err := as.svc.CreateTask(context.Background(), *conversation.SessionID, "调整工作流", "提交并处理图提案", &convID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskID = task.ID
 	if _, err := as.pool.Exec(context.Background(), `
 		INSERT INTO agent_turn_projections (
 			id, conversation_id, harness_turn_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
-			status, resume_required, tool_steps_json, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, '改图', '[]'::jsonb, 'succeeded', FALSE, '[]'::jsonb, NOW(), NOW())
-	`, projectionID, convID, harnessTurnID, clockid.New(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); err != nil {
+			status, resume_required, tool_steps_json, task_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, '改图', '[]'::jsonb, 'awaiting_confirmation', FALSE, '[]'::jsonb, $6, NOW(), NOW())
+	`, projectionID, convID, harnessTurnID, clockid.New(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", taskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_conversations SET status = 'awaiting_confirmation', updated_at = NOW() WHERE id = $1
+	`, convID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_tasks
+		SET status = 'awaiting_confirmation', waiting_reason = 'awaiting_confirmation', current_turn_id = $1, updated_at = NOW()
+		WHERE id = $2
+	`, projectionID, taskID); err != nil {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"approval_id": proposalID, "approval_kind": "graph_proposal",
 	})
 	if err := as.db.Create(&schema.AgentTurnEvents{
-		ID: clockid.New(), TurnProjectionID: projectionID, RunID: convID, TurnID: harnessTurnID,
+		ID: clockid.New(), TurnProjectionID: projectionID, RunID: taskID, TurnID: harnessTurnID,
 		SchemaVersion: 1, Sequence: 1, Kind: "approval/requested", PayloadJSON: string(payload),
 		CreatedAt: time.Now().UTC(),
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	return proposalID, projectionID
+	return proposalID, projectionID, taskID
 }
 
 func lastJournalEvent(t *testing.T, as *agentServer, projectionID string) schema.AgentTurnEvents {
@@ -193,7 +217,7 @@ func lastJournalEvent(t *testing.T, as *agentServer, projectionID string) schema
 func TestConfirmGraphProposalWritesApprovalResolved(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	productID, graphID, convID := seedProductGraphConversation(t, as)
-	proposalID, projectionID := seedPendingGraphProposalTurn(t, as, productID, graphID, convID)
+	proposalID, projectionID, taskID := seedPendingGraphProposalTurn(t, as, productID, graphID, convID)
 
 	confirm := as.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/proposals/"+proposalID+"/confirm", nil, "", nil)
 	as.mustStatus(t, confirm, http.StatusOK)
@@ -209,12 +233,13 @@ func TestConfirmGraphProposalWritesApprovalResolved(t *testing.T) {
 	if payload["approval_kind"] != "graph_proposal" || payload["decision"] != "confirmed" || payload["approval_id"] != proposalID {
 		t.Fatalf("payload %+v", payload)
 	}
+	assertGraphProposalSettled(t, as, productID, convID, projectionID, taskID)
 }
 
 func TestDiscardGraphProposalWritesApprovalResolved(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	productID, graphID, convID := seedProductGraphConversation(t, as)
-	proposalID, projectionID := seedPendingGraphProposalTurn(t, as, productID, graphID, convID)
+	proposalID, projectionID, taskID := seedPendingGraphProposalTurn(t, as, productID, graphID, convID)
 
 	discard := as.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/proposals/"+proposalID+"/discard", nil, "", nil)
 	as.mustStatus(t, discard, http.StatusOK)
@@ -229,5 +254,38 @@ func TestDiscardGraphProposalWritesApprovalResolved(t *testing.T) {
 	}
 	if payload["approval_kind"] != "graph_proposal" || payload["decision"] != "discarded" || payload["approval_id"] != proposalID {
 		t.Fatalf("payload %+v", payload)
+	}
+	assertGraphProposalSettled(t, as, productID, convID, projectionID, taskID)
+}
+
+func assertGraphProposalSettled(t *testing.T, as *agentServer, productID, conversationID, projectionID, taskID string) {
+	t.Helper()
+	var projection schema.AgentTurnProjections
+	if err := as.db.Where("id = ?", projectionID).Take(&projection).Error; err != nil {
+		t.Fatal(err)
+	}
+	if projection.Status != "succeeded" || projection.FinishedAt == nil {
+		t.Fatalf("projection status=%s finished_at=%v", projection.Status, projection.FinishedAt)
+	}
+	var conversation schema.AgentConversations
+	if err := as.db.Where("id = ?", conversationID).Take(&conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conversation.Status != "completed" {
+		t.Fatalf("conversation status=%s", conversation.Status)
+	}
+	var task schema.AgentTasks
+	if err := as.db.Where("id = ?", taskID).Take(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "waiting_user" || task.WaitingReason == nil || *task.WaitingReason != "goal_loop" {
+		t.Fatalf("task status=%s waiting_reason=%v", task.Status, task.WaitingReason)
+	}
+	page := as.do(t, http.MethodGet, "/api/v2/products/"+productID+"/agent-conversations/"+conversationID+"/turns/"+projectionID+"/events/page?after=0&limit=10", nil, "", nil)
+	as.mustStatus(t, page, http.StatusOK)
+	var body projectedEventPage
+	as.decode(t, page, &body)
+	if body.StreamState != "terminal" {
+		t.Fatalf("stream_state=%s", body.StreamState)
 	}
 }

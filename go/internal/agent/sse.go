@@ -149,10 +149,10 @@ func (s Service) writePersistedTurnEvents(c *gin.Context, projectionID string, c
 func (s Service) waitForPersistedTurnEvents(c *gin.Context, projectionID string, cursor int) {
 	ctx := c.Request.Context()
 	flusher, _ := c.Writer.(http.Flusher)
-	notes, listenErr := notify.Listen(ctx, s.Pool, notify.ChannelTurn)
+	notes, unsubscribe := subscribeAgentNotifications(s.Pool, notify.ChannelTurn)
+	defer unsubscribe()
 	fallback := 2 * time.Second
-	if listenErr != nil {
-		notes = nil
+	if notes == nil {
 		fallback = 250 * time.Millisecond
 	}
 	eventTicker := time.NewTicker(fallback)

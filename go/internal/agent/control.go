@@ -145,9 +145,10 @@ func controlEventFromNotify(payload string) (controlEvent, bool) {
 
 func (s Service) StreamControlEvents(c *gin.Context) {
 	ctx := c.Request.Context()
-	notes, listenErr := notify.Listen(ctx, s.Pool, notify.ChannelControl)
+	notes, unsubscribeNotifications := subscribeAgentNotifications(s.Pool, notify.ChannelControl)
+	defer unsubscribeNotifications()
 	var hubCh <-chan controlEvent
-	if listenErr != nil {
+	if notes == nil {
 		ch, unsubscribe := s.hub().Subscribe()
 		defer unsubscribe()
 		hubCh = ch
@@ -164,17 +165,10 @@ func (s Service) StreamControlEvents(c *gin.Context) {
 	}
 	ticker := time.NewTicker(controlHeartbeatInterval)
 	defer ticker.Stop()
-	var watermarkTicker *time.Ticker
-	if listenErr != nil {
-		watermarkTicker = time.NewTicker(controlWatermarkInterval)
-		defer watermarkTicker.Stop()
-	}
-	sessionsAt, tasksAt := s.controlListWatermarks(ctx)
+	watermarkTicker := time.NewTicker(controlWatermarkInterval)
+	defer watermarkTicker.Stop()
+	sessionsAt, tasksAt, leasesAt := s.controlListWatermarks(ctx)
 	for {
-		var watermarkC <-chan time.Time
-		if watermarkTicker != nil {
-			watermarkC = watermarkTicker.C
-		}
 		select {
 		case <-ctx.Done():
 			return
@@ -182,8 +176,8 @@ func (s Service) StreamControlEvents(c *gin.Context) {
 			if err := writeControlHeartbeat(c.Writer, flusher); err != nil {
 				return
 			}
-		case <-watermarkC:
-			nextSessions, nextTasks := s.controlListWatermarks(ctx)
+		case <-watermarkTicker.C:
+			nextSessions, nextTasks, nextLeases := s.controlListWatermarks(ctx)
 			if nextSessions.After(sessionsAt) {
 				sessionsAt = nextSessions
 				if err := writeControlEvent(c.Writer, controlEvent{Kind: controlEventSessionChanged}); err != nil {
@@ -202,13 +196,18 @@ func (s Service) StreamControlEvents(c *gin.Context) {
 					flusher.Flush()
 				}
 			}
+			if nextLeases.After(leasesAt) {
+				leasesAt = nextLeases
+				if err := writeControlEvent(c.Writer, controlEvent{Kind: controlEventLeaseChanged}); err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
 		case note, ok := <-controlNotes(notes):
 			if !ok {
 				notes = nil
-				if watermarkTicker == nil {
-					watermarkTicker = time.NewTicker(controlWatermarkInterval)
-					defer watermarkTicker.Stop()
-				}
 				if hubCh == nil {
 					ch, unsubscribe := s.hub().Subscribe()
 					defer unsubscribe()
@@ -279,12 +278,13 @@ func writeControlEvent(w io.Writer, event controlEvent) error {
 	return err
 }
 
-func (s Service) controlListWatermarks(ctx context.Context) (time.Time, time.Time) {
-	var sessions, tasks time.Time
+func (s Service) controlListWatermarks(ctx context.Context) (time.Time, time.Time, time.Time) {
+	var sessions, tasks, leases time.Time
 	if s.DB == nil {
-		return sessions, tasks
+		return sessions, tasks, leases
 	}
 	_ = s.DB.WithContext(ctx).Raw("SELECT COALESCE(MAX(updated_at), TIMESTAMPTZ 'epoch') FROM agent_sessions").Scan(&sessions).Error
 	_ = s.DB.WithContext(ctx).Raw("SELECT COALESCE(MAX(updated_at), TIMESTAMPTZ 'epoch') FROM agent_tasks").Scan(&tasks).Error
-	return sessions, tasks
+	_ = s.DB.WithContext(ctx).Raw("SELECT COALESCE(MAX(updated_at), TIMESTAMPTZ 'epoch') FROM agent_turn_executions").Scan(&leases).Error
+	return sessions, tasks, leases
 }

@@ -175,6 +175,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
   let generation = 0;
   let repairing = false;
   let repairFailures = 0;
+  let finiteReconciliationRequested = false;
   const buffered = new Map<number, AgentTurnEvent>();
   let bufferedBytes = 0;
 
@@ -207,10 +208,14 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
     try {
       let hasMore = true;
       let progressed = false;
+      let reachedTail = false;
+      let tailStreamState: ConversationEventPage["stream_state"] | null = null;
       while (!closed && repairGeneration === generation && hasMore) {
+        const previousCursor = cursor;
         const page = await fetchEventPage(withEventPageCursor(input.url, cursor));
         if (closed || repairGeneration !== generation) return;
         hasMore = page.has_more;
+        tailStreamState = page.stream_state;
         for (const candidate of page.items) {
           const parsed = parseAgentTurnEvent(JSON.stringify(candidate), candidate.kind, input.scope);
           if (parsed.sequence <= cursor) continue;
@@ -219,11 +224,11 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
           progressed = true;
           drainBuffer();
         }
-        if (buffered.size === 0 || buffered.has(cursor + 1)) {
-          drainBuffer();
-          if (buffered.size === 0) break;
+        drainBuffer();
+        if (hasMore && (page.next_after <= previousCursor || cursor <= previousCursor)) {
+          throw new AgentEventProtocolError(`Agent 事件补洞没有推进 cursor ${previousCursor}`);
         }
-        if (page.items.length === 0 || page.next_after <= cursor) break;
+        reachedTail = !hasMore;
       }
       drainBuffer();
       if (buffered.size > 0 && !buffered.has(cursor + 1)) {
@@ -232,10 +237,17 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       if (!progressed && buffered.size > 0) {
         throw new AgentEventProtocolError(`Agent 事件补洞没有推进 cursor ${cursor}`);
       }
+      if (finiteReconciliationRequested && (!reachedTail || tailStreamState !== "terminal")) {
+        throw new AgentEventProtocolError("Agent 历史事件补齐后仍未到达 terminal 尾部");
+      }
       repairFailures = 0;
-      if (seenTerminal || streamComplete) close();
+      if (finiteReconciliationRequested || seenTerminal || streamComplete) close();
     } catch (error) {
       if (closed || repairGeneration !== generation) return;
+      if (finiteReconciliationRequested) {
+        protocolFailure(error instanceof Error ? error : new AgentEventProtocolError("Agent 历史事件补齐失败"));
+        return;
+      }
       repairFailures += 1;
       if (repairFailures >= 3) {
         protocolFailure(error instanceof Error ? error : new AgentEventProtocolError("Agent 事件补洞失败"));
@@ -300,8 +312,11 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       const data = readEventData(event);
       if (data !== null) input.onStreamError?.(readStreamError(data));
       if (input.finite || seenTerminal) {
-        if (buffered.size > 0) void repairGap(currentGeneration);
-        else close();
+        finiteReconciliationRequested = true;
+        nextSource.close();
+        source = null;
+        input.onConnectionState?.("reconnecting");
+        void repairGap(currentGeneration);
         return;
       }
       scheduleReconnect();

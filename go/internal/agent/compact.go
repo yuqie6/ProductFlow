@@ -22,7 +22,14 @@ func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (
 		uncompactedChunks := gdb.Table("agent_turn_events AS event").
 			Select("1").
 			Where("event.turn_projection_id = agent_turn_projections.id").
-			Where("event.kind IN ?", []string{"text.chunk", "thinking.chunk"}).
+			Where(`event.kind = 'thinking.chunk' OR (
+				event.kind = 'text.chunk' AND (
+					SELECT jsonb_typeof(message.payload_json::jsonb->'text')
+					FROM agent_turn_events AS message
+					WHERE message.turn_projection_id = agent_turn_projections.id AND message.kind = 'assistant/message'
+					ORDER BY message.sequence DESC LIMIT 1
+				) = 'string'
+			)`).
 			Where("event.payload_json::jsonb <> ?::jsonb", `{"compacted":true}`)
 		return gdb.Model(&schema.AgentTurnProjections{}).
 			Where("status IN ? AND finished_at IS NOT NULL AND finished_at < ?",
@@ -56,8 +63,23 @@ func compactTurnJournal(ctx context.Context, s Service, projectionID string) (bo
 			Order("sequence").Find(&rows).Error; err != nil {
 			return err
 		}
+		var messages []schema.AgentTurnEvents
+		if err := gdb.Where("turn_projection_id = ? AND kind = ?", projectionID, "assistant/message").
+			Order("sequence").Find(&messages).Error; err != nil {
+			return err
+		}
+		hasTextSnapshot := false
+		if len(messages) > 0 {
+			var payload map[string]any
+			if json.Unmarshal([]byte(messages[len(messages)-1].PayloadJSON), &payload) == nil {
+				_, hasTextSnapshot = payload["text"].(string)
+			}
+		}
 		seqs := make([]int, 0, len(rows))
 		for _, row := range rows {
+			if row.Kind == "text.chunk" && !hasTextSnapshot {
+				continue
+			}
 			var payload map[string]any
 			if json.Unmarshal([]byte(row.PayloadJSON), &payload) == nil {
 				if compacted, _ := payload["compacted"].(bool); compacted {
@@ -73,11 +95,6 @@ func compactTurnJournal(ctx context.Context, s Service, projectionID string) (bo
 		}
 		if len(seqs) == 0 {
 			return nil
-		}
-		var messages []schema.AgentTurnEvents
-		if err := gdb.Where("turn_projection_id = ? AND kind = ?", projectionID, "assistant/message").
-			Order("sequence").Find(&messages).Error; err != nil {
-			return err
 		}
 		if len(messages) == 0 {
 			return nil
