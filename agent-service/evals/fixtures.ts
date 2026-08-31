@@ -270,7 +270,10 @@ export const SKILL_EVAL_FIXTURES: readonly SkillEvalFixture[] = [
         params: {
           header: "图片类型",
           question: "需要哪些图片类型、各几张？参考图是否已经上传？",
-          options: [{ label: "主图 2 张" }, { label: "主图 2 张 + 细节 2 张" }],
+          options: [
+            { label: "推荐套图：封面2、卖点4、规格1、选款1、场景1、细节1" },
+            { label: "只要封面和细节" },
+          ],
         },
       },
     ],
@@ -307,20 +310,15 @@ export const SKILL_EVAL_FIXTURES: readonly SkillEvalFixture[] = [
       conciseProductContext(),
       { name: "inspect_product_image_assets_v1", params: { asset_ids: [EVAL_ASSET_ID] } },
       {
-        name: "finalize_product_intake_v1",
+        name: "ask_user",
         params: {
-          selection: {
-            schema_version: 1,
-            image_types: [
-              { key: "hero", quantity: 2, order: 0 },
-              { key: "detail", quantity: 2, order: 1 },
-            ],
-          },
-          reference_asset_ids: [EVAL_ASSET_ID],
+          header: "补齐详情套图？",
+          question: "现在只有封面和细节。是否补上卖点、规格和选款？",
+          options: [{ label: "补齐推荐套图" }, { label: "只要封面和细节" }],
         },
       },
     ],
-    neverTools: ["propose_graph_change_set_v1"],
+    neverTools: ["propose_graph_change_set_v1", "finalize_product_intake_v1"],
     neverOps: ["add_node"],
   },
   {

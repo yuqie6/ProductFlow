@@ -113,11 +113,14 @@ export function assertUtteranceAlignment(fixture: SkillEvalFixture, calls: EvalC
   const request = fixture.userRequest;
   if (/主图\s*2/.test(request) && request.includes("细节")) {
     const types = intakeTypes(calls);
-    if (!types.some((row) => row.key === "hero" && row.quantity === 2)) {
-      throw new Error("utterance asked for 主图2张 but finalize selection does not match");
-    }
-    if (!types.some((row) => row.key === "detail" && row.quantity === 2)) {
-      throw new Error("utterance asked for 细节图2张 but finalize selection does not match");
+    const askedWithoutFinalize = calls.some((call) => call.name === "ask_user") && types.length === 0;
+    if (!askedWithoutFinalize) {
+      if (!types.some((row) => row.key === "hero" && row.quantity === 2)) {
+        throw new Error("utterance asked for 主图2张 but finalize selection does not match");
+      }
+      if (!types.some((row) => row.key === "detail" && row.quantity === 2)) {
+        throw new Error("utterance asked for 细节图2张 but finalize selection does not match");
+      }
     }
   }
   if (request.includes("展开模板")) {
