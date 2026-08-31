@@ -25,6 +25,7 @@ import {
 import { AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { WorkflowRunRequestTurnSlot } from "./AgentWorkflowRunRequestCard";
+import { visibleAgentTurns } from "./agentTurnRetry";
 import {
   ConversationWorkbench,
   PanelError,
@@ -208,7 +209,7 @@ export function AgentConversationPanel({
   useEffect(() => {
     if (!onCanvasFocus) return;
     const selected = latestAgentCanvasFocus(
-      [agent.latestTurn, ...agent.turns],
+      visibleAgentTurns([agent.latestTurn, ...agent.turns]),
       eventStates,
       graph,
     );

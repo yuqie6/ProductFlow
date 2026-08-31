@@ -1488,6 +1488,50 @@ describe("Agent conversation components", () => {
     expect(markup).toMatch(/<button(?=[^>]*data-agent-turn-retry)(?=[^>]*disabled)[^>]*>/);
   });
 
+  it("hides later conversation after an earlier Turn is retried", () => {
+    const first = turn({
+      id: "projection-1",
+      status: "succeeded",
+      input_text: "第一问",
+      output_text: "第一答",
+      created_at: "2026-08-14T00:00:01Z",
+    });
+    const later = turn({
+      id: "projection-2",
+      status: "succeeded",
+      input_text: "第二问",
+      output_text: "第二答",
+      created_at: "2026-08-14T00:00:02Z",
+    });
+    const retry = turn({
+      id: "projection-3",
+      status: "running",
+      input_text: first.input_text,
+      output_text: null,
+      created_at: "2026-08-14T00:00:03Z",
+      idempotency_key: "retry:projection-1:attempt-2",
+    });
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [first, later, retry],
+        activeTurnId: "projection-3",
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+        onRetryTurn: () => undefined,
+        renderTurnExtras: (item) => item.id === "projection-2" ? "后方工作流卡" : null,
+      }),
+    );
+
+    expect(markup).toContain("第一问");
+    expect(markup).not.toContain("第二问");
+    expect(markup).not.toContain("第二答");
+    expect(markup).not.toContain("后方工作流卡");
+    expect(markup).toContain("Agent 正在处理");
+  });
+
   it("renders a sync diagnostic as a warning while the Turn remains active", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentMessageList, {

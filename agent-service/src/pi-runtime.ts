@@ -64,6 +64,7 @@ import {
 import { Config } from "./config.js";
 import { ProductFlowClient, type AgentEventInput } from "./productflow.js";
 import { loadRuntimePolicy } from "./runtime-policy.js";
+import { prepareSessionForTurn } from "./session-retry.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME, SkillCatalog } from "./skills.js";
 import { RuntimeError, TurnStore } from "./store.js";
 import { createProductFlowTools, ToolRuntime } from "./tools.js";
@@ -845,7 +846,7 @@ class RunRuntime implements ToolRuntime {
       });
       const runtimeContext = await this.client.runtimeContext(this.scope.conversation_id, this.scope.task_id, this.signal);
       const images = await this.loadInputImages(initial.input);
-      const { session, model } = await this.createSession(turnID, runtimeContext, initial.input.page_context, images);
+      const { session, model } = await this.createSession(turnID, runtimeContext, initial.input, images);
       this.session = session;
       this.model = model;
       const storedAnswer = await this.storedQuestionAnswer(turnID);
@@ -1529,7 +1530,7 @@ class RunRuntime implements ToolRuntime {
   private async createSession(
     turnID: string,
     runtimeContext: RuntimeContext,
-    pageContext: StartTurnInput["page_context"],
+    input: StartTurnInput,
     images: ImageContent[],
   ): Promise<{ session: AgentSession; model: Model<any> }> {
     const { runtime, model, thinkingLevel } = await this.ensureModel();
@@ -1562,6 +1563,7 @@ class RunRuntime implements ToolRuntime {
       .filter(Boolean)
       .join("\n\n");
     const contextStepID = `context_${turnID}`;
+    const pageContext = input.page_context;
     let contextDetails = buildContextStepDetails(this.scope, runtimeContext, pageContext, images.length, this.manager.skills.hash, 0);
     try {
       const dynamicContext = buildDynamicContext(
@@ -1603,6 +1605,16 @@ class RunRuntime implements ToolRuntime {
       });
       await resourceLoader.reload();
       const sessionManager = SessionManager.continueRecent(workspace, this.manager.store.sessionDir(this.scope.run_id));
+      try {
+        prepareSessionForTurn(sessionManager, {
+          turnId: turnID,
+          projectionId: this.executionLease?.projection_id ?? null,
+          idempotencyKey: input.idempotency_key,
+          inputText: input.input_text,
+        });
+      } catch {
+        // 切不到源轮时仍按当前 leaf 继续，避免整轮失败。
+      }
       this.currentPageType = pageContext?.page_type?.trim() || null;
       const tools = createProductFlowTools(this);
       const result = await createAgentSession({

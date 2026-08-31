@@ -16,7 +16,7 @@ import {
 import { assembleTurnNodes, echoMatchesTurn, type PendingUserEcho } from "./conversation/types";
 import { AgentTurnTail, shouldShowAgentTurnTail } from "./AgentTurnTail";
 import { AgentTurnTimeline } from "./AgentTurnTimeline";
-import { canRetryAgentTurn, excludeQuestionContinuationTurns, groupAgentTurnAttempts } from "./agentTurnRetry";
+import { canRetryAgentTurn, visibleAgentTurnGroups } from "./agentTurnRetry";
 import { toolStepSignature } from "./toolStepSignature";
 
 interface AgentMessageListProps {
@@ -65,7 +65,7 @@ export function AgentMessageList({
   const nearBottomRef = useRef(true);
   const [atLatest, setAtLatest] = useState(true);
   const groups = useMemo(
-    () => groupAgentTurnAttempts(excludeQuestionContinuationTurns(turns)),
+    () => visibleAgentTurnGroups(turns),
     [turns],
   );
   const latestLiveSignature = useMemo(() => {

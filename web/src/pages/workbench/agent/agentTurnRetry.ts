@@ -91,3 +91,38 @@ export function groupAgentTurnAttempts(turns: readonly AgentTurn[]): AgentTurnDi
     };
   });
 }
+
+function compareTurnTime(
+  left: Pick<AgentTurn, "id" | "created_at">,
+  right: Pick<AgentTurn, "id" | "created_at">,
+): number {
+  return left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id);
+}
+
+export function excludeSupersededTurnGroups(groups: readonly AgentTurnDisplayGroup[]): AgentTurnDisplayGroup[] {
+  const cuts = groups.filter((group) => {
+    if (group.latest.id === group.root.id) return false;
+    return retrySourceTurnId(group.latest.idempotency_key) !== null;
+  });
+  if (!cuts.length) return [...groups];
+  return groups.filter((group) => {
+    return !cuts.some((cut) =>
+      compareTurnTime(group.root, cut.root) > 0 && compareTurnTime(group.root, cut.latest) < 0,
+    );
+  });
+}
+
+export function visibleAgentTurnGroups(turns: readonly AgentTurn[]): AgentTurnDisplayGroup[] {
+  return excludeSupersededTurnGroups(groupAgentTurnAttempts(excludeQuestionContinuationTurns(turns)));
+}
+
+export function visibleAgentTurns(turns: readonly (AgentTurn | null | undefined)[]): AgentTurn[] {
+  const present: AgentTurn[] = [];
+  const seen = new Set<string>();
+  for (const turn of turns) {
+    if (!turn || seen.has(turn.id)) continue;
+    seen.add(turn.id);
+    present.push(turn);
+  }
+  return visibleAgentTurnGroups(present).map((group) => group.latest);
+}

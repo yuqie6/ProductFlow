@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentTurn, AgentWorkflowRunRequest } from "../../../../lib/types";
 import { createAgentTurnEventState } from "../agentEventReducer";
+import { visibleAgentTurns } from "../agentTurnRetry";
 import {
   latestAgentCanvasFocus,
   mergeWorkflowRunRequest,
@@ -199,6 +200,49 @@ describe("latestAgentCanvasFocus", () => {
     expect(latestAgentCanvasFocus([live], undefined, null)).toEqual({
       requestId: "projection-1:step-focus",
       nodeIds: ["node-detail-1"],
+      waitingForGraph: false,
+    });
+  });
+
+  it("ignores canvas focus from later Turns after an earlier Turn is retried", () => {
+    const first = turn({
+      id: "projection-1",
+      created_at: "2026-08-31T00:00:01Z",
+      canvas_focus: null,
+      tool_steps: [],
+    });
+    const later = turn({
+      id: "projection-2",
+      created_at: "2026-08-31T00:00:02Z",
+      canvas_focus: null,
+      tool_steps: [
+        {
+          step_id: "step-later",
+          kind: "focus_canvas",
+          summary: "聚焦画布",
+          status: "succeeded",
+          meta: { affected_node_ids: ["node-later"] },
+        },
+      ],
+    });
+    const retry = turn({
+      id: "projection-3",
+      created_at: "2026-08-31T00:00:03Z",
+      idempotency_key: "retry:projection-1:attempt-2",
+      canvas_focus: null,
+      tool_steps: [
+        {
+          step_id: "step-retry",
+          kind: "focus_canvas",
+          summary: "聚焦画布",
+          status: "succeeded",
+          meta: { affected_node_ids: ["node-retry"] },
+        },
+      ],
+    });
+    expect(latestAgentCanvasFocus(visibleAgentTurns([first, later, retry]), undefined, null)).toEqual({
+      requestId: "projection-3:step-retry",
+      nodeIds: ["node-retry"],
       waitingForGraph: false,
     });
   });

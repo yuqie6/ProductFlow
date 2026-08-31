@@ -5,6 +5,8 @@ import {
   canRetryAgentTurn,
   excludeQuestionContinuationTurns,
   groupAgentTurnAttempts,
+  visibleAgentTurnGroups,
+  visibleAgentTurns,
 } from "./agentTurnRetry";
 
 describe("agentTurnRetry", () => {
@@ -110,5 +112,46 @@ describe("agentTurnRetry", () => {
     };
     const visible = excludeQuestionContinuationTurns([parent as never, child as never]);
     expect(visible.map((turn) => turn.id)).toEqual(["turn-a"]);
+  });
+
+  it("hides later bubbles after an earlier Turn is retried, and keeps messages sent after the retry", () => {
+    const first = {
+      id: "turn-a",
+      status: "succeeded" as const,
+      input_text: "第一问",
+      input_asset_ids: [] as string[],
+      task_id: null,
+      idempotency_key: "first",
+      created_at: "2026-08-14T00:00:01Z",
+    };
+    const second = {
+      ...first,
+      id: "turn-b",
+      input_text: "第二问",
+      idempotency_key: "second",
+      created_at: "2026-08-14T00:00:02Z",
+    };
+    const retry = {
+      ...first,
+      id: "turn-c",
+      status: "running" as const,
+      idempotency_key: "retry:turn-a:attempt-2",
+      created_at: "2026-08-14T00:00:03Z",
+    };
+    const afterRetry = {
+      ...first,
+      id: "turn-d",
+      input_text: "重试后再问",
+      idempotency_key: "after-retry",
+      created_at: "2026-08-14T00:00:04Z",
+    };
+    const hidden = visibleAgentTurnGroups([first as never, second as never, retry as never]);
+    expect(hidden.map((group) => group.root.id)).toEqual(["turn-a"]);
+    expect(hidden[0].latest.id).toBe("turn-c");
+    expect(visibleAgentTurns([first as never, second as never, retry as never]).map((turn) => turn.id)).toEqual(["turn-c"]);
+
+    const kept = visibleAgentTurnGroups([first as never, second as never, retry as never, afterRetry as never]);
+    expect(kept.map((group) => group.root.id)).toEqual(["turn-a", "turn-d"]);
+    expect(kept.map((group) => group.latest.id)).toEqual(["turn-c", "turn-d"]);
   });
 });

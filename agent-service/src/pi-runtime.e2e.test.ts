@@ -423,6 +423,77 @@ describe("Pi runtime fake provider E2E", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("retries an earlier Turn without the later prompt in the next model request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-retry-e2e-"));
+    const provider = await createFakeResponsesServer();
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> = [];
+    const releasedPhases: string[] = [];
+    let claimCount = 0;
+    let manager: PiRuntimeManager | undefined;
+
+    try {
+      const productFlow = createFakeProductFlow(provider.baseURL, checkpoints, events, releasedPhases, () => {
+        claimCount += 1;
+        return claimCount;
+      });
+      const skills = {
+        root: "/tmp/fake-productflow-skills",
+        hash: "fake-skill-catalog",
+        names: [],
+        prompt: "",
+        promptForScope: () => "",
+        load: async () => "",
+      } satisfies SkillCatalog;
+      const store = new TurnStore(root);
+      await store.init();
+      manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
+      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
+
+      const first = await manager.start({
+        lookup: { conversationID: scope.conversation_id },
+        input: {
+          input_text: "第一轮请记住苹果",
+          asset_ids: [],
+          idempotency_key: "retry-e2e-turn-1",
+          page_context: null,
+        },
+      });
+      await waitForTerminal(store, scope.run_id, first.turn_id);
+      const second = await manager.start({
+        lookup: { conversationID: scope.conversation_id },
+        input: {
+          input_text: "第二轮请记住香蕉",
+          asset_ids: [],
+          idempotency_key: "retry-e2e-turn-2",
+          page_context: null,
+        },
+      });
+      await waitForTerminal(store, scope.run_id, second.turn_id);
+      const retried = await manager.start({
+        lookup: { conversationID: scope.conversation_id },
+        input: {
+          input_text: "第一轮请记住苹果",
+          asset_ids: [],
+          idempotency_key: `retry:projection-${first.turn_id}:attempt-2`,
+          page_context: null,
+        },
+      });
+      const terminal = await waitForTerminal(store, scope.run_id, retried.turn_id);
+
+      expect(terminal.status).toBe("succeeded");
+      expect(provider.requestCount).toBe(3);
+      const retryRequest = JSON.stringify(provider.requestBodies[2]);
+      expect(retryRequest).toContain("第一轮请记住苹果");
+      expect(retryRequest).not.toContain("香蕉");
+      expect(retryRequest).not.toContain("第二轮请记住香蕉");
+    } finally {
+      await manager?.close();
+      await provider.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 function createFakeProductFlow(
@@ -472,7 +543,7 @@ function createFakeProductFlow(
       claimedTurnID = args.harness_turn_id;
       return {
         execution_id: "execution-fake-provider-e2e",
-        projection_id: "projection-fake-provider-e2e",
+        projection_id: `projection-${claimedTurnID}`,
         harness_turn_id: claimedTurnID,
         owner_id: "agent-fake-provider-e2e",
         lease_token: "lease-fake-provider-e2e",
@@ -488,7 +559,7 @@ function createFakeProductFlow(
       args: { phase: "claimed" | "model" | "tool" | "waiting_input" | "external_job" | "terminal" },
     ) => ({
       execution_id: "execution-fake-provider-e2e",
-      projection_id: "projection-fake-provider-e2e",
+      projection_id: `projection-${claimedTurnID}`,
       harness_turn_id: claimedTurnID,
       owner_id: "agent-fake-provider-e2e",
       lease_token: "lease-fake-provider-e2e",
@@ -505,7 +576,7 @@ function createFakeProductFlow(
       checkpoints.push(args);
       return {
         id: `checkpoint-${checkpoints.length}`,
-        projection_id: "projection-fake-provider-e2e",
+        projection_id: `projection-${claimedTurnID}`,
         execution_id: "execution-fake-provider-e2e",
         attempt: 1,
         fencing_token: 1,
@@ -522,7 +593,7 @@ function createFakeProductFlow(
       events.push(...args.events);
       return args.events.map((event) => ({
         id: `event-${event.sequence}`,
-        projection_id: "projection-fake-provider-e2e",
+        projection_id: `projection-${claimedTurnID}`,
         execution_id: "execution-fake-provider-e2e",
         sequence: event.sequence,
         schema_version: 1 as const,
