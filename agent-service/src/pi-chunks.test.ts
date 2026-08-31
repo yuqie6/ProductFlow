@@ -4,6 +4,8 @@ import {
   JOURNAL_EVENT_MAX_PAYLOAD_BYTES,
   JournalStreamBuffer,
   JOURNAL_STREAM_EVENT_KINDS,
+  boundedUsage,
+  durableAssistantUsage,
   normalizeAssistantMessageEvent,
   PI_ASSISTANT_EVENT_TYPES,
   utf8Prefix,
@@ -208,5 +210,23 @@ describe("Pi assistantMessageEvent inventory", () => {
     expect(chunks).toHaveLength(3);
     expect(errors).toHaveLength(1);
     expect(errors[0]?.message).toContain("journal event budget of 3");
+  });
+});
+
+describe("durable usage", () => {
+  it("drops all-zero provider usage instead of persisting fake zeros", () => {
+    expect(boundedUsage({ input: 0, output: 0, totalTokens: 0 })).toBeUndefined();
+    expect(durableAssistantUsage({ input: 0, output: 0 })).toBeUndefined();
+  });
+
+  it("tags local estimates separately from provider usage", () => {
+    expect(durableAssistantUsage({ input: 2, output: 3, totalTokens: 5 }, "estimated")).toEqual({
+      usage: { input: 2, output: 3, total_tokens: 5 },
+      usage_source: "estimated",
+    });
+    expect(durableAssistantUsage({ input: 2, output: 3, totalTokens: 5 }, "provider")).toEqual({
+      usage: { input: 2, output: 3, total_tokens: 5 },
+      usage_source: "provider",
+    });
   });
 });

@@ -166,6 +166,11 @@ export interface AssistantFinishPayload {
   reason: string;
   attempt_id: string;
   model_request_id?: string;
+  duration_ms?: number;
+  provider_response_id?: string;
+  provider_response_cursor?: string;
+  error_code?: string;
+  usage_source?: "provider" | "estimated";
   usage?: {
     input: number;
     output: number;
@@ -245,6 +250,16 @@ export function boundedUsage(usage: PiUsage | undefined): AssistantFinishPayload
   const total = integerOrZero(usage.totalTokens) || input + output;
   if (input === 0 && output === 0 && total === 0) return undefined;
   return { input, output, total_tokens: total };
+}
+
+export function durableAssistantUsage(
+  usage: PiUsage | undefined,
+  source: NonNullable<AssistantFinishPayload["usage_source"]> = "provider",
+): Pick<AssistantFinishPayload, "usage" | "usage_source"> | undefined {
+  const bounded = boundedUsage(usage);
+  if (!bounded) return undefined;
+  if (source !== "provider" && source !== "estimated") return undefined;
+  return { usage: bounded, usage_source: source };
 }
 
 export function utf8Prefix(value: string, maxBytes: number): string {
