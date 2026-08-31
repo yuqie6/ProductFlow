@@ -22,7 +22,7 @@ const SHOT_LIST_PRESETS = [
   { name: "390", width: 390, height: 844 },
 ] as const;
 
-const RECOMMENDED_IMAGE_TYPES = ["hero", "detail", "scene", "selling_point"] as const;
+const RECOMMENDED_IMAGE_TYPES = ["hero", "selling_point", "specifications", "sku", "scene", "detail"] as const;
 
 function attachBrowserGuards(page: Page): () => void {
   const consoleErrors: string[] = [];
@@ -134,11 +134,11 @@ async function currentGraphGroupIds(page: Page): Promise<string[]> {
 async function assertShotListLayout(page: Page): Promise<string[]> {
   const shotList = page.locator("[data-graph-shot-filmstrip]");
   await expect(shotList).toBeVisible();
-  await expect.poll(async () => shotList.locator("[data-graph-shot-id]").count()).toBe(4);
+  await expect.poll(async () => shotList.locator("[data-graph-shot-id]").count()).toBe(6);
   const groupIds = await shotList.locator("[data-graph-shot-id]").evaluateAll((rows) => (
     rows.map((row) => row.getAttribute("data-graph-shot-id")).filter((id): id is string => Boolean(id))
   ));
-  expect(groupIds).toHaveLength(4);
+  expect(groupIds).toHaveLength(6);
   await expect(page.locator('[data-graph-run-all]')).toBeEnabled();
 
   const layout = await page.evaluate(() => {
