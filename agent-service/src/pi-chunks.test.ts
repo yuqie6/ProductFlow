@@ -167,27 +167,26 @@ describe("Pi assistantMessageEvent inventory", () => {
     expect(chunks).toEqual(["你好"]);
   });
 
-  it("coalesces a slow stream after its timed event budget is spent", () => {
+  it("keeps time-bounded chunks visible throughout a stream longer than the former soft budget", () => {
     vi.useFakeTimers();
     const chunks: string[] = [];
     const buffer = new JournalStreamBuffer((chunk) => chunks.push(chunk.delta), {
-      flushMS: 5,
+      flushMS: 25,
       maxChunkBytes: 128,
-      maxEvents: 10,
-      maxTimedEvents: 3,
+      maxEvents: 1_000,
     });
     const base = { kind: "text.chunk" as const, step_id: "step-1", attempt_id: "attempt-1", content_index: 0 };
-    const windows = 600;
+    const windows = 800;
 
     for (let index = 0; index < windows; index += 1) {
       buffer.append({ ...base, delta: "x" });
-      vi.advanceTimersByTime(5);
+      vi.advanceTimersByTime(25);
+      expect(chunks).toHaveLength(index + 1);
     }
-    buffer.flush();
 
-    expect(chunks).toHaveLength(8);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(chunks).toHaveLength(windows);
     expect(chunks.join("")).toBe("x".repeat(windows));
-    expect(chunks.length).toBeLessThanOrEqual(10);
   });
 
   it("enforces the hard event budget for size-triggered flushes", () => {
@@ -197,7 +196,6 @@ describe("Pi assistantMessageEvent inventory", () => {
       flushMS: 1_000,
       maxChunkBytes: 1,
       maxEvents: 3,
-      maxTimedEvents: 1,
       onError: (error) => errors.push(error),
     });
     const base = { kind: "text.chunk" as const, step_id: "step-1", attempt_id: "attempt-1", content_index: 0 };

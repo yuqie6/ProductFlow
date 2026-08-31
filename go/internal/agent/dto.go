@@ -267,6 +267,24 @@ type EventReceipt struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type EventConfirmationResponse struct {
+	Status           string                  `json:"status"`
+	ConfirmedThrough int                     `json:"confirmed_through"`
+	PersistedThrough int                     `json:"persisted_through"`
+	Items            []EventReceipt          `json:"items"`
+	Terminal         *ConfirmedTerminalEvent `json:"terminal,omitempty"`
+}
+
+type ConfirmedTerminalEvent struct {
+	EventReceipt
+	Payload          json.RawMessage `json:"payload"`
+	ProjectionStatus string          `json:"projection_status"`
+	Output           string          `json:"output"`
+	Thinking         string          `json:"thinking"`
+	Error            string          `json:"error"`
+	FinishedAt       time.Time       `json:"finished_at"`
+}
+
 type PreparedWorkflowRunRequest struct {
 	ProductID         string  `json:"product_id"`
 	WorkflowID        string  `json:"workflow_id"`

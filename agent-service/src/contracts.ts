@@ -84,6 +84,21 @@ export interface AgentEventReceipt {
   created_at: string;
 }
 
+export interface AgentEventConfirmation {
+  status: "confirmed" | "missing";
+  confirmed_through: number;
+  persisted_through: number;
+  items: AgentEventReceipt[];
+  terminal?: AgentEventReceipt & {
+    payload: JsonObject;
+    projection_status: TurnStatus;
+    output: string;
+    thinking: string;
+    error: string;
+    finished_at: string;
+  };
+}
+
 export {
   assertToolManifestCoverage,
   expectedToolNamesForScope,

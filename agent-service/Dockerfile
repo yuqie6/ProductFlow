@@ -15,7 +15,7 @@ FROM node:22.20.0-alpine AS runtime
 
 WORKDIR /app/agent-service
 
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates flock \
     && addgroup -S -g 10001 productflow \
     && adduser -S -D -H -u 10001 -G productflow productflow \
     && mkdir -p /data \

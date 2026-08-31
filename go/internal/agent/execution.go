@@ -172,6 +172,16 @@ func (s Service) ReleaseExecution(ctx context.Context, conversationID, execution
 		phase = "terminal"
 	}
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
+			return err
+		}
+		var current schema.AgentTurnExecutions
+		if err := gdb.Clauses(pfdb.ForUpdate()).Where("id = ?", executionID).Take(&current).Error; err != nil {
+			return err
+		}
+		if current.OwnerID == nil && current.LeaseToken == nil && current.ReleasedAt != nil && current.Phase == "terminal" {
+			return nil
+		}
 		if _, err := requireLease(ctx, gdb, conversationID, executionID, ownerID, leaseToken); err != nil {
 			return err
 		}
@@ -303,9 +313,12 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 	if len(inputs) == 0 || len(inputs) > 250 {
 		return nil, apperr.Validation("Agent event batch 大小无效")
 	}
-	for _, input := range inputs {
+	for index, input := range inputs {
 		if err := validateEventInput(input); err != nil {
 			return nil, err
+		}
+		if stringsTrim(input.Kind) == "turn/end" && index != len(inputs)-1 {
+			return nil, apperr.Validation("Agent turn/end 必须是 batch 最后一条事件")
 		}
 	}
 	var out []EventReceipt
@@ -530,6 +543,17 @@ func (s Service) projectTerminalEvent(
 	}); err != nil {
 		return err
 	}
+	if err := gdb.WithContext(ctx).Model(&schema.AgentTurnExecutions{}).Where("id = ?", lease.ExecutionID).Updates(map[string]any{
+		"owner_id":         nil,
+		"lease_token":      nil,
+		"lease_expires_at": nil,
+		"released_at":      createdAt,
+		"phase":            "terminal",
+		"updated_at":       createdAt,
+	}).Error; err != nil {
+		return err
+	}
+	publishLeaseChanged(gdb, lease.ExecutionID, "terminal")
 	var reasonCode *string
 	if terminal.ReasonCode != "" {
 		reasonCode = &terminal.ReasonCode

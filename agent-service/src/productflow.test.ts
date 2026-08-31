@@ -122,6 +122,22 @@ describe("ProductFlowClient", () => {
                 kind: body.kind ?? "before_model_request",
                 created_at: "2026-08-20T00:00:00.000Z",
               }
+            : request.url?.endsWith("/events/confirm")
+              ? {
+                  status: "confirmed",
+                  confirmed_through: 1,
+                  persisted_through: 1,
+                  items: [{
+                    id: "event-1",
+                    projection_id: "projection-1",
+                    execution_id: "execution-1",
+                    sequence: 1,
+                    schema_version: 1,
+                    kind: "turn/start",
+                    ignorable: false,
+                    created_at: "2026-08-20T00:00:00.000Z",
+                  }],
+                }
             : request.url?.endsWith("/events/batch")
               ? {
                   items: [{
@@ -184,6 +200,17 @@ describe("ProductFlowClient", () => {
           created_at: "2026-08-20T00:00:00.000Z",
         }],
       });
+      await expect(client.confirmTurnEvents("conversation-1", lease.execution_id, {
+        events: [{
+          sequence: 1,
+          schema_version: 1,
+          run_id: "run-1",
+          turn_id: "turn-1",
+          kind: "turn/start",
+          payload: { status: "running" },
+          created_at: "2026-08-20T00:00:00.000Z",
+        }],
+      })).resolves.toMatchObject({ status: "confirmed", confirmed_through: 1 });
       await client.releaseTurnExecution("conversation-1", lease.execution_id, {
         owner_id: lease.owner_id,
         lease_token: lease.lease_token,
@@ -195,6 +222,7 @@ describe("ProductFlowClient", () => {
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/heartbeat",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/checkpoints",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/events/batch",
+        "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/events/confirm",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/release",
       ]);
       expect(requests[1].body).toMatchObject({ owner_id: "agent-1", lease_token: "lease-1", phase: "tool" });

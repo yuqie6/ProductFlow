@@ -93,7 +93,7 @@ describe("Pi runtime fake provider E2E", () => {
       expect(provider.requestCount).toBe(1);
       expect(provider.requestPaths).toEqual(["/v1/responses"]);
       expect(claimCount).toBe(1);
-      expect(releasedPhases).toEqual(["terminal"]);
+      await expect.poll(() => releasedPhases).toEqual(["terminal"]);
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
       expect(events.map((event) => event.kind)).toEqual([
         "turn/start",

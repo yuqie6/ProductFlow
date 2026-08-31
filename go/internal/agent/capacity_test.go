@@ -1,14 +1,32 @@
 package agent
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
+)
+
+const (
+	agentJournalCapacityEnv             = "PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY"
+	agentJournalCapacityBatchSize       = 64
+	agentJournalCapacityEventCount      = 10_000
+	agentJournalCapacityConcurrentTurns = 25
+	agentJournalCapacityEventsPerTurn   = 128
+	agentJournalCapacityP95Limit        = 300 * time.Millisecond
 )
 
 func TestTurnEventSequenceCapacity(t *testing.T) {
@@ -62,4 +80,409 @@ func TestSessionTurnCapacity(t *testing.T) {
 		"input_text": "超过容量", "idempotency_key": clockid.New(),
 	})
 	as.mustStatus(t, response, http.StatusConflict)
+}
+
+func TestAgentJournalCapacityGate(t *testing.T) {
+	if os.Getenv(agentJournalCapacityEnv) != "1" {
+		t.Skipf("set %s=1 to run the PostgreSQL Agent journal capacity gate", agentJournalCapacityEnv)
+	}
+
+	// The standard capacity dimensions are independent: one 10k-event Turn
+	// proves journal depth, while 25 smaller Turns prove concurrent writers.
+	// Running 25x10k would test a different, substantially larger workload.
+	as := newAgentServer(t, mockGateway{}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	latencies := &appendLatencyRecorder{}
+
+	deepTurn := createClaimedJournalTurn(t, as)
+	if err := appendCapacityJournalTurn(ctx, as, deepTurn, agentJournalCapacityEventCount, latencies); err != nil {
+		t.Fatalf("append 10k-event Turn: %v", err)
+	}
+	if err := assertCapacityJournalTurn(ctx, as, deepTurn, agentJournalCapacityEventCount); err != nil {
+		t.Fatalf("verify 10k-event Turn: %v", err)
+	}
+
+	turns := make([]claimedJournalTurn, 0, agentJournalCapacityConcurrentTurns)
+	for range agentJournalCapacityConcurrentTurns {
+		turns = append(turns, createClaimedJournalTurn(t, as))
+	}
+	results := make(chan error, len(turns))
+	var writers sync.WaitGroup
+	for index := range turns {
+		claimed := turns[index]
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			if err := appendCapacityJournalTurn(ctx, as, claimed, agentJournalCapacityEventsPerTurn, latencies); err != nil {
+				results <- fmt.Errorf("Turn %s: %w", claimed.turn.ID, err)
+			}
+		}()
+	}
+	writers.Wait()
+	close(results)
+	for err := range results {
+		t.Error(err)
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+	for _, claimed := range turns {
+		if err := assertCapacityJournalTurn(ctx, as, claimed, agentJournalCapacityEventsPerTurn); err != nil {
+			t.Errorf("verify concurrent Turn %s: %v", claimed.turn.ID, err)
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	samples := latencies.snapshot()
+	p95 := durationPercentile(samples, 95)
+	t.Logf(
+		"Agent journal capacity passed: deep_events=%d concurrent_turns=%d concurrent_events_per_turn=%d batches=%d p95=%s",
+		agentJournalCapacityEventCount,
+		agentJournalCapacityConcurrentTurns,
+		agentJournalCapacityEventsPerTurn,
+		len(samples),
+		p95,
+	)
+	if p95 > agentJournalCapacityP95Limit {
+		t.Fatalf("AppendEvents batch P95=%s, want <=%s", p95, agentJournalCapacityP95Limit)
+	}
+}
+
+func TestAgentSSEHTTPConnectionCapacityGate(t *testing.T) {
+	if os.Getenv(agentJournalCapacityEnv) != "1" {
+		t.Skipf("set %s=1 to run the HTTP Agent SSE capacity gate", agentJournalCapacityEnv)
+	}
+
+	as := newAgentServer(t, mockGateway{}, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	claimed := createClaimedJournalTurn(t, as)
+	if _, err := as.svc.AppendEvents(
+		ctx,
+		claimed.conversationID,
+		claimed.lease.ExecutionID,
+		"worker-1",
+		claimed.lease.LeaseToken,
+		[]EventAppendInput{capacityJournalEvent(claimed, 1, 2)},
+	); err != nil {
+		t.Fatalf("persist initial SSE event: %v", err)
+	}
+
+	baseline := pfmetrics.AgentSSEConnections.Load()
+	if baseline != 0 {
+		t.Fatalf("Agent SSE connection baseline=%d, want 0 before capacity gate", baseline)
+	}
+	path := fmt.Sprintf(
+		"/api/v2/agent-conversations/%s/turns/%s/events",
+		claimed.conversationID,
+		claimed.turn.ID,
+	)
+	type openResult struct {
+		index    int
+		response *http.Response
+		cancel   context.CancelFunc
+		err      error
+	}
+	opened := make(chan openResult, maxSSEConnections)
+	for index := range maxSSEConnections {
+		requestCtx, requestCancel := context.WithCancel(ctx)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, as.srv.URL+path, nil)
+		if err != nil {
+			requestCancel()
+			t.Fatalf("build SSE request %d: %v", index, err)
+		}
+		for _, cookie := range as.cookies {
+			req.AddCookie(cookie)
+		}
+		go func() {
+			response, requestErr := as.client.Do(req)
+			opened <- openResult{index: index, response: response, cancel: requestCancel, err: requestErr}
+		}()
+	}
+
+	streams := make([]openResult, 0, maxSSEConnections)
+	closeStreams := func() {
+		for _, stream := range streams {
+			stream.cancel()
+			if stream.response != nil {
+				_ = stream.response.Body.Close()
+			}
+		}
+	}
+	defer closeStreams()
+	for range maxSSEConnections {
+		select {
+		case result := <-opened:
+			if result.err != nil {
+				result.cancel()
+				closeStreams()
+				t.Fatalf("open SSE stream %d: %v", result.index, result.err)
+			}
+			streams = append(streams, result)
+		case <-ctx.Done():
+			closeStreams()
+			t.Fatalf("open 100 SSE streams: %v", ctx.Err())
+		}
+	}
+	for _, stream := range streams {
+		if stream.response.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(stream.response.Body)
+			closeStreams()
+			t.Fatalf("SSE stream %d status=%d body=%s", stream.index, stream.response.StatusCode, raw)
+		}
+		if !strings.Contains(stream.response.Header.Get("Content-Type"), "text/event-stream") {
+			closeStreams()
+			t.Fatalf("SSE stream %d content-type=%q", stream.index, stream.response.Header.Get("Content-Type"))
+		}
+	}
+
+	frames := make(chan error, len(streams))
+	for _, stream := range streams {
+		stream := stream
+		go func() {
+			frame, err := readCapacitySSEFrame(stream.response.Body)
+			if err != nil {
+				frames <- fmt.Errorf("SSE stream %d read persisted event: %w", stream.index, err)
+				return
+			}
+			if !strings.Contains(frame, "id: 1\n") || !strings.Contains(frame, "event: turn.started\n") {
+				frames <- fmt.Errorf("SSE stream %d first frame=%q, want persisted turn.started sequence 1", stream.index, frame)
+				return
+			}
+			frames <- nil
+		}()
+	}
+	for range streams {
+		select {
+		case err := <-frames:
+			if err != nil {
+				closeStreams()
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			closeStreams()
+			t.Fatalf("read persisted events from 100 SSE streams: %v", ctx.Err())
+		}
+	}
+	if err := waitForAgentSSEConnections(ctx, int64(maxSSEConnections)); err != nil {
+		closeStreams()
+		t.Fatal(err)
+	}
+
+	overflowReq, err := http.NewRequestWithContext(ctx, http.MethodGet, as.srv.URL+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range as.cookies {
+		overflowReq.AddCookie(cookie)
+	}
+	overflow, err := as.client.Do(overflowReq)
+	if err != nil {
+		t.Fatalf("open 101st SSE stream: %v", err)
+	}
+	overflowBody, readErr := io.ReadAll(overflow.Body)
+	_ = overflow.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read 101st SSE response: %v", readErr)
+	}
+	if overflow.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("101st SSE status=%d body=%s, want %d", overflow.StatusCode, overflowBody, http.StatusServiceUnavailable)
+	}
+
+	closeStreams()
+	if err := waitForAgentSSEConnections(ctx, baseline); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Agent HTTP SSE capacity passed: active=%d overflow_status=%d baseline_after_cancel=%d", maxSSEConnections, overflow.StatusCode, baseline)
+}
+
+func readCapacitySSEFrame(body io.Reader) (string, error) {
+	reader := bufio.NewReader(body)
+	var frame strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		frame.WriteString(line)
+		if line == "\n" {
+			return frame.String(), nil
+		}
+		if err != nil {
+			return frame.String(), err
+		}
+	}
+}
+
+func waitForAgentSSEConnections(ctx context.Context, want int64) error {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		got := pfmetrics.AgentSSEConnections.Load()
+		if got == want {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("Agent SSE connections=%d, want %d before timeout: %w", got, want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+type appendLatencyRecorder struct {
+	mu      sync.Mutex
+	samples []time.Duration
+}
+
+func (r *appendLatencyRecorder) observe(elapsed time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.samples = append(r.samples, elapsed)
+}
+
+func (r *appendLatencyRecorder) snapshot() []time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]time.Duration(nil), r.samples...)
+}
+
+func appendCapacityJournalTurn(
+	ctx context.Context,
+	as *agentServer,
+	claimed claimedJournalTurn,
+	eventCount int,
+	latencies *appendLatencyRecorder,
+) error {
+	if eventCount < 2 {
+		return fmt.Errorf("event count %d must include turn/start and turn/end", eventCount)
+	}
+	lease, err := as.svc.HeartbeatExecution(
+		ctx,
+		claimed.conversationID,
+		claimed.lease.ExecutionID,
+		"worker-1",
+		claimed.lease.LeaseToken,
+		"model",
+	)
+	if err != nil {
+		return fmt.Errorf("start lease heartbeat: %w", err)
+	}
+	for first := 1; first <= eventCount; first += agentJournalCapacityBatchSize {
+		if time.Until(lease.LeaseExpiresAt) < 20*time.Second {
+			lease, err = as.svc.HeartbeatExecution(
+				ctx,
+				claimed.conversationID,
+				claimed.lease.ExecutionID,
+				"worker-1",
+				claimed.lease.LeaseToken,
+				"model",
+			)
+			if err != nil {
+				return fmt.Errorf("renew lease before sequence %d: %w", first, err)
+			}
+		}
+		last := min(first+agentJournalCapacityBatchSize-1, eventCount)
+		batch := make([]EventAppendInput, 0, last-first+1)
+		for sequence := first; sequence <= last; sequence++ {
+			batch = append(batch, capacityJournalEvent(claimed, sequence, eventCount))
+		}
+		started := time.Now()
+		receipts, appendErr := as.svc.AppendEvents(
+			ctx,
+			claimed.conversationID,
+			claimed.lease.ExecutionID,
+			"worker-1",
+			claimed.lease.LeaseToken,
+			batch,
+		)
+		latencies.observe(time.Since(started))
+		if appendErr != nil {
+			return fmt.Errorf("append sequences %d..%d: %w", first, last, appendErr)
+		}
+		if len(receipts) != len(batch) {
+			return fmt.Errorf("sequences %d..%d returned %d receipts, want %d", first, last, len(receipts), len(batch))
+		}
+		for index, receipt := range receipts {
+			if want := first + index; receipt.Sequence != want {
+				return fmt.Errorf("receipt %d sequence=%d, want %d", index, receipt.Sequence, want)
+			}
+		}
+	}
+	if _, err := as.svc.ReleaseExecution(
+		ctx,
+		claimed.conversationID,
+		claimed.lease.ExecutionID,
+		"worker-1",
+		claimed.lease.LeaseToken,
+		"terminal",
+	); err != nil {
+		return fmt.Errorf("release terminal execution: %w", err)
+	}
+	return nil
+}
+
+func capacityJournalEvent(claimed claimedJournalTurn, sequence, eventCount int) EventAppendInput {
+	kind := "text.chunk"
+	payload := json.RawMessage(`{"delta":"x","attempt_id":"capacity-attempt","step_id":"capacity-step","content_index":0}`)
+	switch sequence {
+	case 1:
+		kind = "turn/start"
+		payload = json.RawMessage(`{"status":"running","attempt_id":"capacity-attempt"}`)
+	case eventCount:
+		kind = "turn/end"
+		payload = json.RawMessage(`{"status":"succeeded","reason":"completed"}`)
+	}
+	return EventAppendInput{
+		Sequence: sequence, SchemaVersion: 1,
+		RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+		Kind: kind, Payload: payload, CreatedAt: time.Now().UTC(),
+	}
+}
+
+func assertCapacityJournalTurn(ctx context.Context, as *agentServer, claimed claimedJournalTurn, eventCount int) error {
+	var count, minimum, maximum, sequenceSum int64
+	if err := as.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COALESCE(MIN(sequence), 0), COALESCE(MAX(sequence), 0), COALESCE(SUM(sequence), 0)
+		FROM agent_turn_events
+		WHERE turn_projection_id = $1
+	`, claimed.turn.ID).Scan(&count, &minimum, &maximum, &sequenceSum); err != nil {
+		return fmt.Errorf("query event sequence: %w", err)
+	}
+	wantCount := int64(eventCount)
+	wantSum := wantCount * (wantCount + 1) / 2
+	if count != wantCount || minimum != 1 || maximum != wantCount || sequenceSum != wantSum {
+		return fmt.Errorf(
+			"sequence set count=%d min=%d max=%d sum=%d, want count=%d min=1 max=%d sum=%d",
+			count, minimum, maximum, sequenceSum, wantCount, wantCount, wantSum,
+		)
+	}
+
+	var status, phase string
+	var ownerReleased, tokenReleased, releaseRecorded bool
+	if err := as.pool.QueryRow(ctx, `
+		SELECT p.status, e.phase, e.owner_id IS NULL, e.lease_token IS NULL, e.released_at IS NOT NULL
+		FROM agent_turn_projections p
+		JOIN agent_turn_executions e ON e.turn_projection_id = p.id
+		WHERE p.id = $1
+	`, claimed.turn.ID).Scan(&status, &phase, &ownerReleased, &tokenReleased, &releaseRecorded); err != nil {
+		return fmt.Errorf("query terminal state: %w", err)
+	}
+	if status != "succeeded" || phase != "terminal" || !ownerReleased || !tokenReleased || !releaseRecorded {
+		return fmt.Errorf(
+			"terminal state status=%s phase=%s owner_released=%t token_released=%t release_recorded=%t",
+			status, phase, ownerReleased, tokenReleased, releaseRecorded,
+		)
+	}
+	return nil
+}
+
+func durationPercentile(samples []time.Duration, percentile int) time.Duration {
+	if len(samples) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	rank := (percentile*len(sorted) + 99) / 100
+	return sorted[rank-1]
 }

@@ -8,6 +8,7 @@
 import {
   ProductFlowError,
   type AgentEventReceipt,
+  type AgentEventConfirmation,
   type AgentCheckpointReceipt,
   type AgentExecutionLease,
   type CheckpointKind,
@@ -128,6 +129,18 @@ export class ProductFlowClient {
       this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/events/batch`,
       { method: "POST", body: args, signal },
     ).then((response) => response.items);
+  }
+
+  async confirmTurnEvents(
+    conversationID: string,
+    executionID: string,
+    args: { events: AgentEventInput[] },
+    signal?: AbortSignal,
+  ): Promise<AgentEventConfirmation> {
+    return this.json<AgentEventConfirmation>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/events/confirm`,
+      { method: "POST", body: args, signal },
+    );
   }
 
   async heartbeatTurnExecution(

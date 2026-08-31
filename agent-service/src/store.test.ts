@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -28,6 +28,201 @@ const input: StartTurnInput = {
 };
 
 describe("TurnStore", () => {
+  it.runIf(process.env.PRODUCTFLOW_RUN_AGENT_LOCAL_JOURNAL_CAPACITY === "1")(
+    "appends and reloads 10k durable WAL events without quadratic rewrite",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "productflow-pi-local-journal-capacity-"));
+      try {
+        const store = new TurnStore(root);
+        await store.init();
+        const turn = await store.createTurn(scope, { ...input, idempotency_key: "local-journal-capacity" });
+        const latencies: number[] = [];
+        const startedAt = performance.now();
+        for (let index = 0; index < 10_000; index += 1) {
+          const eventStartedAt = performance.now();
+          await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "text.chunk", {
+            delta: `chunk-${index.toString().padStart(5, "0")}-${"x".repeat(1000)}`,
+            attempt_id: "capacity",
+            step_id: "capacity",
+            content_index: index,
+          });
+          latencies.push(performance.now() - eventStartedAt);
+        }
+        const durationMS = performance.now() - startedAt;
+        latencies.sort((left, right) => left - right);
+        const p95MS = latencies[Math.floor(latencies.length * 0.95)]!;
+        expect(durationMS).toBeLessThan(120_000);
+        expect(p95MS).toBeLessThan(50);
+
+        const restarted = new TurnStore(root);
+        await restarted.init();
+        const events = await restarted.events(scope.run_id, turn.state.turn_id, 0);
+        expect(events).toHaveLength(10_000);
+        expect(events[0]?.sequence).toBe(1);
+        expect(events.at(-1)?.sequence).toBe(10_000);
+        process.stdout.write(`local journal 10k duration=${durationMS.toFixed(1)}ms p95=${p95MS.toFixed(2)}ms\n`);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    150_000,
+  );
+
+  it("persists one publisher identity and rejects a second live process lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-owner-"));
+    try {
+      const first = new TurnStore(root);
+      const second = new TurnStore(root);
+      await first.init();
+      await second.init();
+      expect(await second.publisherID()).toBe(await first.publisherID());
+
+      const lock = await first.acquireProcessLock();
+      await expect(second.acquireProcessLock()).rejects.toMatchObject({ code: "data_root_locked", status: 409 });
+      await lock.release();
+      const lockAgain = await second.acquireProcessLock();
+      await lockAgain.release();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unexpected advisory-lock process exit and releases ownership", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-owner-loss-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      let resolveLost!: (error: Error) => void;
+      const lost = new Promise<Error>((resolve) => {
+        resolveLost = resolve;
+      });
+      const lock = await store.acquireProcessLock(resolveLost);
+      process.kill(lock.processID, "SIGKILL");
+      expect((await lost).message).toMatch(/lock was lost/u);
+
+      const replacement = await store.acquireProcessLock();
+      await replacement.release();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists an independent PG ACK watermark and rebuilds the unpublished tail", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-event-ack-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, input);
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "one" });
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "two" });
+      expect((await store.unpublishedEvents(scope.run_id, turn.state.turn_id)).map((event) => event.sequence)).toEqual([1, 2]);
+
+      await store.markEventsPublished(scope.run_id, turn.state.turn_id, 1);
+      const restarted = new TurnStore(root);
+      await restarted.init();
+      expect((await restarted.unpublishedEvents(scope.run_id, turn.state.turn_id)).map((event) => event.sequence)).toEqual([2]);
+      await restarted.markEventsPublished(scope.run_id, turn.state.turn_id, 2);
+      expect(await restarted.unpublishedEvents(scope.run_id, turn.state.turn_id)).toEqual([]);
+      await expect(restarted.markEventsPublished(scope.run_id, turn.state.turn_id, 3)).rejects.toMatchObject({
+        code: "published_sequence_invalid",
+        status: 409,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a handoff killed before its first journal event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-empty-handoff-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, { ...input, idempotency_key: "empty-handoff" });
+      await store.updateState(scope.run_id, turn.state.turn_id, {
+        execution_attempt: 1,
+        execution_fencing_token: 1,
+      });
+      await store.saveDurableHandoff(scope.run_id, turn.state.turn_id, {
+        execution_id: "execution-empty",
+        projection_id: "projection-empty",
+        harness_turn_id: turn.state.turn_id,
+        owner_id: "owner-empty",
+        lease_token: "lease-empty",
+        attempt: 1,
+        fencing_token: 1,
+        phase: "claimed",
+        lease_expires_at: "2099-01-01T00:00:00.000Z",
+      });
+
+      const restarted = new TurnStore(root);
+      await restarted.init();
+      expect((await restarted.durableHandoffCandidates()).map((candidate) => candidate.turnID)).toEqual([turn.state.turn_id]);
+      expect(await restarted.unpublishedEvents(scope.run_id, turn.state.turn_id)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes only a local persistence fallback after PG confirms the preceding terminal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-confirmed-terminal-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, { ...input, idempotency_key: "confirmed-terminal" });
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "turn/end", {
+        status: "succeeded",
+        reason: "completed",
+      });
+      await store.markEventsPublished(scope.run_id, turn.state.turn_id, 1);
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "turn/end", {
+        status: "unknown",
+        reason: "unknown",
+        reason_code: "persistence_failed",
+        error: "response was lost",
+      });
+      await store.updateState(scope.run_id, turn.state.turn_id, {
+        status: "unknown",
+        error: "response was lost",
+      });
+
+      expect(await store.reconcileConfirmedTerminal(scope.run_id, turn.state.turn_id)).toBe(true);
+      expect(await store.getState(scope.run_id, turn.state.turn_id)).toMatchObject({ status: "succeeded", error: "" });
+      expect((await store.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.sequence)).toEqual([1]);
+      const restarted = new TurnStore(root);
+      await restarted.init();
+      expect((await restarted.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.sequence)).toEqual([1]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("truncates only a torn final WAL record and rejects corrupt completed records", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-torn-wal-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, { ...input, idempotency_key: "torn-wal" });
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "complete" });
+      const path = join(root, "runs", scope.run_id, "events", `${turn.state.turn_id}.jsonl`);
+      await appendFile(path, '{"schema_version":1,"sequence":2');
+
+      const restarted = new TurnStore(root);
+      await restarted.init();
+      expect((await restarted.events(scope.run_id, turn.state.turn_id, 0)).map((event) => event.sequence)).toEqual([1]);
+      expect(await readFile(path, "utf8")).toMatch(/\n$/u);
+
+      await appendFile(path, '{"invalid":}\n');
+      const corrupt = new TurnStore(root);
+      await corrupt.init();
+      await expect(corrupt.events(scope.run_id, turn.state.turn_id, 0)).rejects.toMatchObject({
+        code: "event_journal_corrupt",
+        status: 409,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("replays an idempotent turn and rejects a conflicting payload", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-store-"));
     try {
@@ -135,6 +330,33 @@ describe("TurnStore", () => {
     }
   });
 
+  it("requeues a durable cancel intent even when an older state write preceded the event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-cancel-recovery-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn({ ...scope, run_id: "cancel-recovery-run" }, input);
+      await store.updateState("cancel-recovery-run", turn.state.turn_id, {
+        status: "cancel_requested",
+        execution_attempt: 1,
+        execution_fencing_token: 1,
+      });
+
+      const result = await store.recoverAfterRestart();
+
+      expect(result.queued).toEqual([{
+        scope: { ...scope, run_id: "cancel-recovery-run" },
+        turnID: turn.state.turn_id,
+      }]);
+      expect(result.deferred).toBe(0);
+      expect((await store.events("cancel-recovery-run", turn.state.turn_id, 0)).map((event) => event.kind)).toEqual([
+        "turn/cancel_requested",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("materializes a safe queued handoff with the ProductFlow harness Turn ID", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-handoff-"));
     try {
@@ -166,6 +388,7 @@ describe("TurnStore", () => {
         status: "running",
         output: "recovered",
       });
+      await store.appendLocalEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "recovered" });
       await store.appendEvent(scope.run_id, turn.state.turn_id, "turn/end", {
         reason: "awaiting_confirmation",
         status: "awaiting_confirmation",
@@ -335,7 +558,10 @@ describe("TurnStore", () => {
       const cache = (store as unknown as {
         eventCache: Map<string, { sequence: number; items: unknown[] }>;
       }).eventCache;
-      cache.set(`${scope.run_id}:${turn.state.turn_id}`, { sequence: JOURNAL_EVENT_MAX_SEQUENCE, items: [] });
+      cache.set(`${scope.run_id}:${turn.state.turn_id}`, {
+        sequence: JOURNAL_EVENT_MAX_SEQUENCE,
+        items: [],
+      });
 
       await expect(store.appendEvent(scope.run_id, turn.state.turn_id, "text.chunk", { delta: "overflow" }))
         .rejects.toMatchObject({ code: "event_sequence_exhausted", status: 409 });

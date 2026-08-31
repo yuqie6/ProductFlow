@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,7 +12,153 @@ const runID = "44444444-4444-4444-8444-444444444444";
 const token = "0123456789abcdef0123456789abcdef";
 
 describe("ProductFlow Pi Agent process recovery", () => {
-  it("marks an interrupted model Turn unknown after process restart without replaying the model", async () => {
+  it("preserves a live ask_user Turn as requires_input on SIGTERM", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "productflow-pi-process-question-sigterm-"));
+    const provider = await createQuestionProviderServer();
+    const productFlow = await createFakeProductFlowServer(provider.baseURL);
+    let agent: AgentProcess | undefined;
+    const turnID = "process-question-sigterm-turn-id";
+    try {
+      agent = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
+      const response = await fetch(`http://127.0.0.1:${agent.port}/internal/v1/conversations/${conversationID}/turns`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input_text: "需要时向我提问",
+          asset_ids: [],
+          idempotency_key: "process-question-sigterm-turn-1",
+          turn_id: turnID,
+        }),
+      });
+      expect(response.status).toBe(202);
+      await within(productFlow.firstBatchCommitted, 5_000, "first journal batch was not committed");
+      productFlow.releaseFirstBatchResponse();
+      await within(provider.received, 5_000, "provider request was not started");
+      await waitForJSON<{ status: string }>(
+        `http://127.0.0.1:${agent.port}/internal/v1/conversations/${conversationID}/turns/${turnID}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+        (value) => value.status === "requires_input",
+      );
+
+      agent.child.kill("SIGTERM");
+      await waitForExit(agent.child);
+      expect(agent.child.exitCode).toBe(0);
+      agent = undefined;
+      const state = JSON.parse(await readFile(join(dataRoot, "runs", runID, "turns", `${turnID}.json`), "utf8")) as { status: string };
+      expect(state.status).toBe("requires_input");
+      expect(productFlow.events.map((event) => event.kind)).toContain("question/requested");
+      expect(productFlow.events.map((event) => event.kind)).not.toContain("turn/end");
+    } finally {
+      productFlow.releaseFirstBatchResponse();
+      if (agent) {
+        agent.child.kill("SIGKILL");
+        await waitForExit(agent.child).catch(() => undefined);
+      }
+      await productFlow.close();
+      await provider.close();
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("flushes an active Turn as unknown on SIGTERM instead of reporting user cancellation", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "productflow-pi-process-sigterm-"));
+    const provider = await createHangingProviderServer();
+    const productFlow = await createFakeProductFlowServer(provider.baseURL);
+    let agent: AgentProcess | undefined;
+    try {
+      agent = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
+      const response = await fetch(`http://127.0.0.1:${agent.port}/internal/v1/conversations/${conversationID}/turns`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input_text: "保持模型请求进行中",
+          asset_ids: [],
+          idempotency_key: "process-sigterm-turn-1",
+          turn_id: "process-sigterm-turn-id",
+        }),
+      });
+      expect(response.status).toBe(202);
+      await within(productFlow.firstBatchCommitted, 5_000, "first journal batch was not committed");
+      productFlow.releaseFirstBatchResponse();
+      await within(provider.received, 5_000, "provider request was not started");
+
+      agent.child.kill("SIGTERM");
+      await waitForExit(agent.child);
+      expect(agent.child.exitCode).toBe(0);
+      agent = undefined;
+      const terminal = productFlow.events.find((event) => event.kind === "turn/end");
+      expect(terminal?.payload).toMatchObject({
+        status: "unknown",
+        reason: "unknown",
+        reason_code: "execution_interrupted",
+      });
+      expect(terminal?.payload.error).toContain("stopped");
+    } finally {
+      productFlow.releaseFirstBatchResponse();
+      if (agent) {
+        agent.child.kill("SIGKILL");
+        await waitForExit(agent.child).catch(() => undefined);
+      }
+      await productFlow.close();
+      await provider.close();
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("does not replay the model after SIGKILL once the provider request has started", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "productflow-pi-model-sigkill-"));
+    const provider = await createHangingProviderServer();
+    const productFlow = await createFakeProductFlowServer(provider.baseURL);
+    let first: AgentProcess | undefined;
+    let second: AgentProcess | undefined;
+    try {
+      first = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
+      const response = await fetch(`http://127.0.0.1:${first.port}/internal/v1/conversations/${conversationID}/turns`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input_text: "模型开始后中断",
+          asset_ids: [],
+          idempotency_key: "process-model-sigkill-1",
+          turn_id: "process-model-sigkill-turn-id",
+        }),
+      });
+      expect(response.status).toBe(202);
+      await within(productFlow.firstBatchCommitted, 5_000, "first journal batch was not committed");
+      productFlow.releaseFirstBatchResponse();
+      await within(provider.received, 5_000, "provider request was not started");
+      expect(provider.requestCount).toBe(1);
+
+      first.child.kill("SIGKILL");
+      await waitForExit(first.child);
+      first = undefined;
+      second = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
+      const recovered = await waitForJSON<{ status: string }>(
+        `http://127.0.0.1:${second.port}/internal/v1/conversations/${conversationID}/turns/process-model-sigkill-turn-id`,
+        { headers: { Authorization: `Bearer ${token}` } },
+        (value) => value.status === "unknown",
+      );
+      expect(recovered.status).toBe("unknown");
+      expect(provider.requestCount).toBe(1);
+      expect(productFlow.checkpoints.map((checkpoint) => checkpoint.kind)).toContain("before_model_request");
+      expect(productFlow.events.at(-1)).toMatchObject({ kind: "turn/end", payload: { status: "unknown" } });
+    } finally {
+      productFlow.releaseFirstBatchResponse();
+      if (first) {
+        first.child.kill("SIGKILL");
+        await waitForExit(first.child).catch(() => undefined);
+      }
+      if (second) {
+        second.child.kill("SIGTERM");
+        await waitForExit(second.child).catch(() => undefined);
+      }
+      await productFlow.close();
+      await provider.close();
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("confirms a server-committed batch after SIGKILL before the local ACK", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "productflow-pi-process-restart-"));
     const provider = await createHangingProviderServer();
     const productFlow = await createFakeProductFlowServer(provider.baseURL);
@@ -37,12 +183,12 @@ describe("ProductFlow Pi Agent process recovery", () => {
       expect(start.status).toBe(202);
       const started = (await start.json()) as { turn_id: string };
       expect(started.turn_id).toBe("process-restart-turn-id");
-      await provider.received;
-      await waitFor(() => productFlow.events.some((event) => event.kind === "turn/start"));
+      await within(productFlow.firstBatchCommitted, 5_000, "first journal batch was not committed");
 
       first.child.kill("SIGKILL");
       await waitForExit(first.child);
       first = undefined;
+      productFlow.releaseFirstBatchResponse();
 
       second = await spawnAgentOnFreePort(dataRoot, productFlow.baseURL, provider.baseURL);
       const recovered = await waitForJSON<{ status: string; error: string }>(
@@ -53,11 +199,18 @@ describe("ProductFlow Pi Agent process recovery", () => {
 
       expect(recovered).toMatchObject({ status: "unknown" });
       expect(recovered.error).toContain("restarted");
-      expect(provider.requestCount).toBe(1);
+      expect(provider.requestCount).toBe(0);
       const health = await fetch(`http://127.0.0.1:${second.port}/healthz`);
       expect(await health.json()).toMatchObject({ active_turns: 0, queued_turns: 0 });
-      expect(productFlow.checkpoints.map((checkpoint) => checkpoint.kind)).toContain("before_model_request");
+      expect(productFlow.checkpoints).toEqual([]);
+      expect(productFlow.claimOwnerIDs.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(productFlow.claimOwnerIDs).size).toBe(1);
+      expect(productFlow.batchRequests.filter((sequences) => sequences.includes(1))).toHaveLength(1);
+      expect(productFlow.confirmRequests).toEqual([[], [1]]);
+      expect(productFlow.events.map((event) => event.sequence)).toEqual([1, 2]);
+      expect(productFlow.events.map((event) => event.kind)).toEqual(["turn/start", "turn/end"]);
     } finally {
+      productFlow.releaseFirstBatchResponse();
       if (first) {
         first.child.kill("SIGKILL");
         await waitForExit(first.child).catch(() => undefined);
@@ -121,7 +274,7 @@ function spawnAgentProcess(
       AGENT_PROVIDER_API_KEY: "fake-provider-key",
       AGENT_PROVIDER_BASE_URL: providerBaseURL,
       AGENT_PROVIDER_MODEL: "fake-model",
-      PRODUCTFLOW_REQUEST_TIMEOUT: "5s",
+      PRODUCTFLOW_REQUEST_TIMEOUT: "30s",
       AGENT_MAX_CONCURRENT_TURNS: "1",
       AGENT_MODEL_CONTEXT_WINDOW: "128000",
       AGENT_AUTO_COMPACT_TOKEN_LIMIT: "96000",
@@ -184,26 +337,131 @@ async function createHangingProviderServer(): Promise<{
   };
 }
 
+async function createQuestionProviderServer(): Promise<{
+  baseURL: string;
+  received: Promise<void>;
+  close: () => Promise<void>;
+}> {
+  let resolveReceived!: () => void;
+  const received = new Promise<void>((resolve) => {
+    resolveReceived = resolve;
+  });
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      resolveReceived();
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        connection: "keep-alive",
+        "cache-control": "no-cache",
+      });
+      const toolCall = {
+        type: "function_call",
+        id: "fc-question",
+        call_id: "call-question",
+        name: "ask_user",
+        arguments: JSON.stringify({
+          header: "确认",
+          question: "是否继续？",
+          options: [{ label: "继续" }, { label: "停止" }],
+        }),
+        status: "completed",
+      };
+      const responseBody = {
+        id: "resp-question",
+        object: "response",
+        status: "completed",
+        output: [toolCall],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      };
+      writeProviderSSE(response, {
+        type: "response.created",
+        response: { id: responseBody.id, object: "response", status: "in_progress", output: [] },
+      });
+      writeProviderSSE(response, {
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { ...toolCall, arguments: "" },
+      });
+      writeProviderSSE(response, {
+        type: "response.function_call_arguments.delta",
+        output_index: 0,
+        delta: toolCall.arguments,
+      });
+      writeProviderSSE(response, {
+        type: "response.function_call_arguments.done",
+        output_index: 0,
+        arguments: toolCall.arguments,
+      });
+      writeProviderSSE(response, { type: "response.output_item.done", output_index: 0, item: toolCall });
+      writeProviderSSE(response, { type: "response.completed", response: responseBody });
+      response.end();
+    });
+  });
+  return {
+    baseURL: await listen(server, "/v1"),
+    received,
+    close: () => closeServer(server),
+  };
+}
+
+function writeProviderSSE(response: ServerResponse, event: Record<string, unknown>): void {
+  response.write(`event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`);
+}
+
 async function createFakeProductFlowServer(providerBaseURL: string): Promise<{
   baseURL: string;
   checkpoints: Array<{ kind: string; payload: Record<string, unknown> }>;
   events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }>;
+  batchRequests: number[][];
+  confirmRequests: number[][];
+  claimOwnerIDs: string[];
+  firstBatchCommitted: Promise<void>;
+  releaseFirstBatchResponse: () => void;
   close: () => Promise<void>;
 }> {
   const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
   const events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> = [];
+  const batchRequests: number[][] = [];
+  const confirmRequests: number[][] = [];
+  const claimOwnerIDs: string[] = [];
+  let resolveFirstBatchCommitted!: () => void;
+  const firstBatchCommitted = new Promise<void>((resolve) => {
+    resolveFirstBatchCommitted = resolve;
+  });
+  let releaseFirstBatchResponse!: () => void;
+  const firstBatchResponse = new Promise<void>((resolve) => {
+    releaseFirstBatchResponse = resolve;
+  });
+  const handoff = { firstBatchBlocked: false, resolveFirstBatchCommitted, firstBatchResponse };
   const lease = {
     harnessTurnID: "",
     ownerID: "",
     leaseToken: "lease-process-restart",
   };
   const server = createServer((request, response) => {
-    void handleFakeProductFlowRequest(request, response, providerBaseURL, checkpoints, events, lease);
+    void handleFakeProductFlowRequest(
+      request,
+      response,
+      providerBaseURL,
+      checkpoints,
+      events,
+      batchRequests,
+      confirmRequests,
+      claimOwnerIDs,
+      lease,
+      handoff,
+    );
   });
   return {
     baseURL: await listen(server),
     checkpoints,
     events,
+    batchRequests,
+    confirmRequests,
+    claimOwnerIDs,
+    firstBatchCommitted,
+    releaseFirstBatchResponse,
     close: () => closeServer(server),
   };
 }
@@ -214,7 +472,11 @@ async function handleFakeProductFlowRequest(
   providerBaseURL: string,
   checkpoints: Array<{ kind: string; payload: Record<string, unknown> }>,
   events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }>,
+  batchRequests: number[][],
+  confirmRequests: number[][],
+  claimOwnerIDs: string[],
   lease: { harnessTurnID: string; ownerID: string; leaseToken: string },
+  handoff: { firstBatchBlocked: boolean; resolveFirstBatchCommitted: () => void; firstBatchResponse: Promise<void> },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const body = request.method === "POST" ? await readJSON(request) : {};
@@ -262,6 +524,7 @@ async function handleFakeProductFlowRequest(
   }
   if (url.pathname.endsWith("/turn-executions/claim")) {
     const value = body as { harness_turn_id: string; owner_id: string };
+    claimOwnerIDs.push(value.owner_id);
     lease.harnessTurnID = value.harness_turn_id;
     lease.ownerID = value.owner_id;
     sendJSON(response, 200, {
@@ -306,9 +569,57 @@ async function handleFakeProductFlowRequest(
     });
     return;
   }
+  if (url.pathname.endsWith("/events/confirm")) {
+    const value = body as { events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> };
+    confirmRequests.push(value.events.map((event) => event.sequence));
+    const confirmed = [];
+    for (const event of value.events) {
+      const existing = events.find((candidate) => candidate.sequence === event.sequence);
+      if (!existing) break;
+      if (JSON.stringify(existing) !== JSON.stringify(event)) {
+        sendJSON(response, 409, { detail: "Agent event sequence is bound to different content" });
+        return;
+      }
+      confirmed.push(event);
+    }
+    sendJSON(response, 200, {
+      status: confirmed.length === value.events.length ? "confirmed" : "missing",
+      confirmed_through: confirmed.at(-1)?.sequence ?? (value.events[0]?.sequence ?? 1) - 1,
+      persisted_through: events.at(-1)?.sequence ?? 0,
+      items: confirmed.map((event) => ({
+        id: `event-${event.sequence}`,
+        projection_id: "projection-process-restart",
+        execution_id: "execution-process-restart",
+        sequence: event.sequence,
+        schema_version: 1,
+        kind: event.kind,
+        ignorable: false,
+        created_at: new Date().toISOString(),
+      })),
+    });
+    return;
+  }
   if (url.pathname.endsWith("/events/batch")) {
     const value = body as { events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> };
-    events.push(...value.events);
+    batchRequests.push(value.events.map((event) => event.sequence));
+    for (const event of value.events) {
+      const existing = events.find((candidate) => candidate.sequence === event.sequence);
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(event)) {
+          sendJSON(response, 409, { detail: "Agent event sequence is bound to different content" });
+          return;
+        }
+        continue;
+      }
+      events.push(event);
+    }
+    events.sort((left, right) => left.sequence - right.sequence);
+    if (!handoff.firstBatchBlocked) {
+      handoff.firstBatchBlocked = true;
+      handoff.resolveFirstBatchCommitted();
+      await handoff.firstBatchResponse;
+      if (response.destroyed) return;
+    }
     sendJSON(response, 200, {
       items: value.events.map((event) => ({
         id: `event-${event.sequence}`,
@@ -387,4 +698,18 @@ function sendJSON(response: ServerResponse, status: number, body: unknown): void
 function waitForExit(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   return new Promise<void>((resolve) => child.once("exit", () => resolve()));
+}
+
+async function within<T>(promise: Promise<T>, timeoutMS: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

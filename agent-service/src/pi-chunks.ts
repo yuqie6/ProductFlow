@@ -15,7 +15,6 @@ export const JOURNAL_EVENT_MAX_SEQUENCE = 10_000;
 // JSON control-character escaping can expand one UTF-8 byte to six bytes.
 export const JOURNAL_STREAM_CHUNK_MAX_BYTES = 16 << 10;
 export const JOURNAL_STREAM_MAX_EVENTS = 9_000;
-export const JOURNAL_STREAM_TIMED_EVENT_BUDGET = 512;
 export const JOURNAL_STREAM_FLUSH_MS = 25;
 
 export interface JournalStreamChunk {
@@ -30,22 +29,19 @@ export interface JournalStreamChunk {
 interface JournalStreamBufferOptions {
   maxChunkBytes?: number;
   maxEvents?: number;
-  maxTimedEvents?: number;
   flushMS?: number;
   onError?: (error: Error) => void;
 }
 
-/** 把细粒度 Pi delta 收成 UTF-8 有界 journal chunk，并限制定时 flush 消耗的 sequence 预算。 */
+/** 把细粒度 Pi delta 收成 UTF-8 有界 journal chunk，并按固定时间上限持续发布。 */
 export class JournalStreamBuffer {
   private readonly maxChunkBytes: number;
   private readonly maxEvents: number;
-  private readonly maxTimedEvents: number;
   private readonly flushMS: number;
   private readonly onError?: (error: Error) => void;
   private pending?: JournalStreamChunk;
   private flushTimer?: ReturnType<typeof setTimeout>;
   private emittedEvents = 0;
-  private timedEvents = 0;
   private failed = false;
 
   constructor(
@@ -54,7 +50,6 @@ export class JournalStreamBuffer {
   ) {
     this.maxChunkBytes = options.maxChunkBytes ?? JOURNAL_STREAM_CHUNK_MAX_BYTES;
     this.maxEvents = options.maxEvents ?? JOURNAL_STREAM_MAX_EVENTS;
-    this.maxTimedEvents = options.maxTimedEvents ?? JOURNAL_STREAM_TIMED_EVENT_BUDGET;
     this.flushMS = options.flushMS ?? JOURNAL_STREAM_FLUSH_MS;
     this.onError = options.onError;
   }
@@ -90,7 +85,7 @@ export class JournalStreamBuffer {
     this.scheduleFlush();
   }
 
-  flush(fromTimer = false): void {
+  flush(): void {
     this.clearFlushTimer();
     const chunk = this.pending;
     if (!chunk || this.failed) return;
@@ -101,7 +96,6 @@ export class JournalStreamBuffer {
       return;
     }
     this.emittedEvents += 1;
-    if (fromTimer) this.timedEvents += 1;
     this.emit(chunk);
   }
 
@@ -111,10 +105,10 @@ export class JournalStreamBuffer {
   }
 
   private scheduleFlush(): void {
-    if (this.flushTimer || this.timedEvents >= this.maxTimedEvents) return;
+    if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined;
-      this.flush(true);
+      this.flush();
     }, this.flushMS);
     this.flushTimer.unref?.();
   }

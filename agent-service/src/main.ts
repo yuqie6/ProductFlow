@@ -16,44 +16,81 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const store = new TurnStore(config.dataRoot);
   await store.init();
-  const skills = await loadSkillCatalog();
-  const productFlow = new ProductFlowClient(config.productFlowBaseURL, config.internalToken, config.requestTimeoutMS);
-  const manager = new PiRuntimeManager(config, store, productFlow, skills);
-  store.setEventPublisher((scope, event) => manager.publishDurableEvent(scope, event));
-  // 先恢复本地文件再接流量，避免 queued Turn 丢失。
-  const recovery = await manager.recoverAfterRestart();
-  if (
-    recovery.queued_turns > 0 ||
-    recovery.deferred_turns > 0 ||
-    recovery.waiting_input_turns > 0 ||
-    recovery.restored_terminal_turns > 0 ||
-    recovery.unknown_turns > 0
-  ) {
-    process.stdout.write(`Recovered Agent runtime state: ${JSON.stringify(recovery)}\n`);
-  }
-  const server = createHTTPServer(manager, config);
-  const { host, port } = parseListenAddress(config.listenAddress);
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
+  let closeAfterLockLoss: ((error: Error) => void) | undefined;
+  let startupLockLoss: Error | undefined;
+  const processLock = await store.acquireProcessLock((error) => {
+    if (closeAfterLockLoss) closeAfterLockLoss(error);
+    else startupLockLoss = error;
   });
-  process.stdout.write(`ProductFlow Pi Agent listening on ${host}:${port}\n`);
+  let manager: PiRuntimeManager | undefined;
+  let server: ReturnType<typeof createHTTPServer> | undefined;
+  try {
+    const skills = await loadSkillCatalog();
+    const productFlow = new ProductFlowClient(config.productFlowBaseURL, config.internalToken, config.requestTimeoutMS);
+    const runtimeManager = new PiRuntimeManager(config, store, productFlow, skills, await store.publisherID());
+    manager = runtimeManager;
+    store.setEventPublisher((scope, event) => runtimeManager.publishDurableEvent(scope, event));
+    // 先恢复本地文件再接流量，避免 queued Turn 丢失。
+    const recovery = await runtimeManager.recoverAfterRestart();
+    if (
+      recovery.replayed_handoffs > 0 ||
+      recovery.queued_turns > 0 ||
+      recovery.deferred_turns > 0 ||
+      recovery.waiting_input_turns > 0 ||
+      recovery.restored_terminal_turns > 0 ||
+      recovery.unknown_turns > 0
+    ) {
+      process.stdout.write(`Recovered Agent runtime state: ${JSON.stringify(recovery)}\n`);
+    }
+    const httpServer = createHTTPServer(runtimeManager, config);
+    server = httpServer;
+    const { host, port } = parseListenAddress(config.listenAddress);
+    if (startupLockLoss) throw startupLockLoss;
 
-  let closing = false;
-  const close = async (signal: string) => {
-    if (closing) return;
-    closing = true;
-    process.stdout.write(`Received ${signal}; stopping ProductFlow Pi Agent\n`);
-    await manager.close();
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  };
-  process.once("SIGTERM", () => void close("SIGTERM").finally(() => process.exit(0)));
-  process.once("SIGINT", () => void close("SIGINT").finally(() => process.exit(0)));
+    await new Promise<void>((resolve, reject) => {
+      httpServer.once("error", reject);
+      httpServer.listen(port, host, () => {
+        httpServer.off("error", reject);
+        resolve();
+      });
+    });
+    process.stdout.write(`ProductFlow Pi Agent listening on ${host}:${port}\n`);
+
+    let closePromise: Promise<void> | undefined;
+    let failureExit = false;
+    const close = (signal: string, failed = false): Promise<void> => {
+      failureExit ||= failed;
+      closePromise ??= (async () => {
+        process.stdout.write(`Received ${signal}; stopping ProductFlow Pi Agent\n`);
+        await runtimeManager.close();
+        httpServer.closeAllConnections();
+        await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+        await processLock.release();
+      })();
+      return closePromise;
+    };
+    closeAfterLockLoss = (error) => {
+      process.stderr.write(`${error.message}\n`);
+      void close("LOCK_LOST", true).finally(() => {
+        if (failureExit) process.exitCode = 1;
+      });
+    };
+    if (startupLockLoss) closeAfterLockLoss(startupLockLoss);
+    process.once("SIGTERM", () => void close("SIGTERM").finally(() => {
+      process.exitCode = failureExit ? 1 : 0;
+    }));
+    process.once("SIGINT", () => void close("SIGINT").finally(() => {
+      process.exitCode = failureExit ? 1 : 0;
+    }));
+  } catch (error) {
+    await manager?.close();
+    if (server?.listening) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server?.close(() => resolve()));
+    }
+    await processLock.release();
+    throw error;
+  }
 }
 
 function parseListenAddress(value: string): { host: string; port: number } {

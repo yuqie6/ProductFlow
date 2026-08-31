@@ -120,7 +120,8 @@ export class PiRuntimeManager {
   private readonly pending: Array<{ runtime: RunRuntime; turnID: string }> = [];
   private readonly scheduled = new Set<string>();
   private readonly activeExecutions = new Set<Promise<void>>();
-  readonly instanceID = randomUUID();
+  private readonly handoffRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly instanceID: string;
   private running = 0;
   private closed = false;
 
@@ -129,17 +130,42 @@ export class PiRuntimeManager {
     readonly store: TurnStore,
     readonly productFlow: ProductFlowClient,
     readonly skills: SkillCatalog,
-  ) { }
+    instanceID: string = randomUUID(),
+  ) {
+    this.instanceID = instanceID;
+  }
 
   /** 只把本地能证明尚未被 claim 的 Turn 重新入队。 */
   async recoverAfterRestart(): Promise<RuntimeRecoverySummary> {
     this.assertOpen();
+    let replayedHandoffs = 0;
+    for (const candidate of await this.store.durableHandoffCandidates()) {
+      const runtime = await this.runtimeFor(candidate.scope);
+      const recovered = await runtime.recoverDurableHandoff(
+        candidate.turnID,
+        candidate.idempotencyKey,
+        candidate.executionID,
+        candidate.projectionID,
+      );
+      if (recovered) {
+        replayedHandoffs += 1;
+      } else {
+        this.scheduleDurableHandoffRecovery(
+          runtime,
+          candidate.turnID,
+          candidate.idempotencyKey,
+          candidate.executionID,
+          candidate.projectionID,
+        );
+      }
+    }
     const recovered = await this.store.recoverAfterRestart();
     for (const candidate of recovered.queued) {
       const runtime = await this.runtimeFor(candidate.scope);
       this.enqueue(runtime, candidate.turnID);
     }
     return {
+      replayed_handoffs: replayedHandoffs,
       queued_turns: recovered.queued.length,
       deferred_turns: recovered.deferred,
       waiting_input_turns: recovered.waitingInput,
@@ -183,8 +209,17 @@ export class PiRuntimeManager {
     const runtime = await this.runtimeForLookup(request);
     const state = await this.store.getState(runtime.scope.run_id, turnID);
     if (isTerminalStatus(state.status)) return state;
-    if (state.status === "requires_input" && !runtime.hasQuestionWaiter(turnID)) {
-      return runtime.cancelWaitingInputTurn(turnID);
+    if ((state.status === "requires_input" || state.status === "cancel_requested") && !runtime.hasQuestionWaiter(turnID)) {
+      const events = await this.store.events(runtime.scope.run_id, turnID, 0);
+      if (!events.some((event) => event.kind === "turn/cancel_requested")) {
+        await this.store.appendLocalEvent(runtime.scope.run_id, turnID, "turn/cancel_requested", { status: "cancel_requested" });
+      }
+      await this.store.updateState(runtime.scope.run_id, turnID, { status: "cancel_requested", question: undefined });
+      if (!runtime.canCancelQueuedTurn()) {
+        this.enqueue(runtime, turnID);
+        return this.store.getState(runtime.scope.run_id, turnID);
+      }
+      return this.cancelQueuedTurn(runtime, turnID);
     }
     if (state.status === "queued" && !runtime.hasQuestionWaiter(turnID) && runtime.canCancelQueuedTurn()) {
       return this.cancelQueuedTurn(runtime, turnID);
@@ -206,13 +241,23 @@ export class PiRuntimeManager {
       return this.store.getState(runtime.scope.run_id, turnID);
     }
     if (state.status === "queued") {
-      await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" }, true);
+      if (runtime.hasQuestionWaiter(turnID)) {
+        await this.store.appendEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" }, true);
+      } else {
+        await this.store.appendLocalEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" });
+      }
       this.enqueue(runtime, turnID);
       return state;
     }
     if (state.status === "requires_input") {
       if (!runtime.hasQuestionWaiter(turnID)) {
-        throw new RuntimeError(409, "not_resumable", "this question is no longer attached to a live Pi turn");
+        if (!await runtime.hasStoredQuestionAnswer(turnID)) {
+          throw new RuntimeError(409, "not_resumable", "this question is no longer attached to a live Pi turn");
+        }
+        await this.store.updateState(runtime.scope.run_id, turnID, { status: "queued", question: undefined });
+        await this.store.appendLocalEvent(runtime.scope.run_id, turnID, "turn/resume_requested", { status: "queued" });
+        this.enqueue(runtime, turnID);
+        return this.store.getState(runtime.scope.run_id, turnID);
       }
       return state;
     }
@@ -243,7 +288,9 @@ export class PiRuntimeManager {
 
   async close(): Promise<void> {
     this.closed = true;
-    for (const runtime of this.runs.values()) runtime.close();
+    for (const timer of this.handoffRetryTimers.values()) clearTimeout(timer);
+    this.handoffRetryTimers.clear();
+    await Promise.allSettled([...this.runs.values()].map((runtime) => runtime.close()));
     this.pending.length = 0;
     await Promise.allSettled([...this.activeExecutions]);
   }
@@ -253,6 +300,50 @@ export class PiRuntimeManager {
       throw new RuntimeError(400, "invalid_argument", "conversation_id or task_id is required");
     }
     return this.runtimeFor(await this.loadScope(lookup));
+  }
+
+  scheduleDurableHandoffRecovery(
+    runtime: RunRuntime,
+    turnID: string,
+    idempotencyKey: string,
+    executionID: string,
+    projectionID: string,
+    retry = 0,
+  ): void {
+    if (this.closed) return;
+    const key = `${runtime.scope.run_id}:${turnID}`;
+    if (this.handoffRetryTimers.has(key)) return;
+    const delay = Math.min(30_000, 250 * 2 ** Math.min(retry, 7));
+    const timer = setTimeout(() => {
+      this.handoffRetryTimers.delete(key);
+      if (this.closed) return;
+      if (!runtime.canStartTurn() || this.running >= this.config.maxConcurrentTurns) {
+        this.scheduleDurableHandoffRecovery(runtime, turnID, idempotencyKey, executionID, projectionID, retry);
+        return;
+      }
+      runtime.beginTurn(turnID);
+      runtime.setHandoffRecoveryManaged(true);
+      this.running += 1;
+      const recovery = runtime.recoverDurableHandoff(turnID, idempotencyKey, executionID, projectionID)
+        .then((recovered) => {
+          if (!recovered) {
+            this.scheduleDurableHandoffRecovery(runtime, turnID, idempotencyKey, executionID, projectionID, retry + 1);
+          }
+        })
+        .catch(() => {
+          this.scheduleDurableHandoffRecovery(runtime, turnID, idempotencyKey, executionID, projectionID, retry + 1);
+        })
+        .finally(() => {
+          runtime.setHandoffRecoveryManaged(false);
+          runtime.endTurn(turnID);
+          this.running -= 1;
+          void this.drain();
+        });
+      this.activeExecutions.add(recovery);
+      void recovery.finally(() => this.activeExecutions.delete(recovery));
+    }, delay);
+    timer.unref?.();
+    this.handoffRetryTimers.set(key, timer);
   }
 
   private async runtimeFor(scope: Scope): Promise<RunRuntime> {
@@ -333,6 +424,7 @@ export class PiRuntimeManager {
 }
 
 export interface RuntimeRecoverySummary {
+  replayed_handoffs: number;
   queued_turns: number;
   deferred_turns: number;
   waiting_input_turns: number;
@@ -373,8 +465,12 @@ class RunRuntime implements ToolRuntime {
   private executionLease?: AgentExecutionLease;
   private executionPhase: ExecutionPhase = "claimed";
   private executionHeartbeat?: ReturnType<typeof setInterval>;
+  private executionPhaseUpdates = Promise.resolve();
   private executionStopping = false;
   private executionLeaseError?: Error;
+  private shutdownRequested = false;
+  private shutdownWaitingInputTurnID?: string;
+  private handoffRecoveryManaged = false;
   private effectUnknownError?: string;
   private readonly unknownToolStepIDs = new Set<string>();
   private readonly activeToolStepDetails = new Map<string, ToolStepDetails>();
@@ -418,6 +514,172 @@ class RunRuntime implements ToolRuntime {
     return this.activeTurnID === undefined;
   }
 
+  setHandoffRecoveryManaged(value: boolean): void {
+    this.handoffRecoveryManaged = value;
+  }
+
+  /**
+   * 进程崩溃后只恢复本地 journal 到 PG 的提交，不续跑模型。
+   * 同一持久 owner 可以取回尚未过期的原 lease；lease 已被接管时必须服从 fencing。
+   */
+  async recoverDurableHandoff(
+    turnID: string,
+    idempotencyKey: string,
+    executionID: string,
+    projectionID: string,
+  ): Promise<boolean> {
+    this.resetTurnState();
+    this.currentTurn = turnID;
+    this.abortController = new AbortController();
+    try {
+      if (await this.confirmPublishedPrefix(turnID, executionID, projectionID)) {
+        await this.manager.store.clearDurableHandoff(this.scope.run_id, turnID);
+        return true;
+      }
+      if (await this.manager.store.reconcileConfirmedTerminal(this.scope.run_id, turnID)) {
+        await this.manager.store.clearDurableHandoff(this.scope.run_id, turnID);
+        return true;
+      }
+      let events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+      let unpublished = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
+      if (unpublished.length === 0 && events.some((event) => event.kind === "turn/end")) {
+        await this.manager.store.clearDurableHandoff(this.scope.run_id, turnID);
+        return true;
+      }
+      try {
+        this.executionLease = await this.claimExecution(idempotencyKey, turnID);
+      } catch (error) {
+        if (error instanceof ProductFlowError && error.status === 409) return false;
+        throw error;
+      }
+      this.executionPhase = this.executionLease.phase;
+      await this.manager.store.saveDurableHandoff(this.scope.run_id, turnID, this.executionLease);
+      this.startExecutionHeartbeat();
+      if (await this.syncRecoveryEvents(turnID)) return true;
+      events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+      unpublished = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
+      if (unpublished.length > 0) {
+        throw new RuntimeError(503, "event_handoff_incomplete", "Agent event handoff did not drain completely");
+      }
+      const state = await this.manager.store.getState(this.scope.run_id, turnID);
+      if (events.some((event) => event.kind === "turn/end")) {
+        await this.updateExecutionPhase("terminal");
+      } else if (storedAnswerFromEvents(events)) {
+        await this.manager.store.updateState(this.scope.run_id, turnID, {
+          status: "queued",
+          question: undefined,
+          execution_attempt: undefined,
+          execution_fencing_token: undefined,
+        });
+      } else if (state.status === "requires_input" && events.some((event) => event.kind === "question/requested")) {
+        await this.updateExecutionPhase("waiting_input");
+      } else if (hasUnresolvedApproval(events)) {
+        await this.updateExecutionPhase("terminal");
+        const artifact = artifactFromPendingApproval(events);
+        const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
+        await this.manager.store.terminal(this.scope.run_id, turnID, "awaiting_confirmation", {
+          ...summary,
+          ...(artifact ? { artifact } : {}),
+          approval_already_recorded: true,
+        });
+      } else {
+        await this.updateExecutionPhase("terminal");
+        const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
+        await this.manager.store.terminal(this.scope.run_id, turnID, "unknown", {
+          ...summary,
+          error: "Agent service restarted before this Turn reached a provable terminal state",
+          reason_code: "execution_interrupted",
+        });
+      }
+      await this.flushPublishedEvents();
+      return true;
+    } finally {
+      await this.cleanupAfterTurn();
+    }
+  }
+
+  private async confirmPublishedPrefix(turnID: string, executionID: string, projectionID: string): Promise<boolean> {
+    const probe = await this.client.confirmTurnEvents(
+      this.scope.conversation_id,
+      executionID,
+      { events: [] },
+      this.signal,
+    );
+    if (probe.status !== "confirmed" || probe.confirmed_through !== 0 || probe.items.length !== 0) {
+      throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an invalid empty Agent event confirmation");
+    }
+    if (await this.adoptConfirmedTerminal(turnID, executionID, projectionID, probe)) return true;
+    while (true) {
+      const events = (await this.manager.store.unpublishedEvents(this.scope.run_id, turnID)).slice(0, 250);
+      if (events.length === 0) return false;
+      const inputs = events.map(toAgentEventInput);
+      const confirmation = await this.client.confirmTurnEvents(
+        this.scope.conversation_id,
+        executionID,
+        { events: inputs },
+        this.signal,
+      );
+      const firstSequence = events[0]?.sequence ?? 1;
+      const lastSequence = events.at(-1)?.sequence ?? 0;
+      if (
+        (confirmation.status !== "confirmed" && confirmation.status !== "missing") ||
+        !Number.isInteger(confirmation.persisted_through) ||
+        confirmation.persisted_through < 0 ||
+        confirmation.confirmed_through < firstSequence - 1 ||
+        confirmation.confirmed_through > lastSequence
+      ) {
+        throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an invalid Agent event confirmation");
+      }
+      const confirmedCount = confirmation.confirmed_through - firstSequence + 1;
+      if (
+        confirmation.items.length !== confirmedCount ||
+        confirmation.items.some((receipt, index) => (
+          !eventReceiptMatches(receipt, events[index]!, executionID, projectionID)
+        ))
+      ) {
+        throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned mismatched Agent event confirmations");
+      }
+      if (confirmedCount > 0) {
+        await this.manager.store.markEventsPublished(this.scope.run_id, turnID, confirmation.confirmed_through);
+      }
+      if (await this.adoptConfirmedTerminal(turnID, executionID, projectionID, confirmation)) return true;
+      if (confirmation.status === "missing") return false;
+      if (confirmation.confirmed_through !== lastSequence) {
+        throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an incomplete Agent event confirmation");
+      }
+    }
+  }
+
+  private async adoptConfirmedTerminal(
+    turnID: string,
+    executionID: string,
+    projectionID: string,
+    confirmation: Awaited<ReturnType<ProductFlowClient["confirmTurnEvents"]>>,
+  ): Promise<boolean> {
+    if (!Number.isInteger(confirmation.persisted_through) || confirmation.persisted_through < 0) {
+      throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an invalid persisted journal head");
+    }
+    const terminal = confirmation.terminal;
+    if (!terminal) return false;
+    if (
+      terminal.kind !== "turn/end" ||
+      terminal.execution_id !== executionID ||
+      terminal.projection_id !== projectionID ||
+      terminal.schema_version !== EVENT_SCHEMA_VERSION ||
+      terminal.sequence > confirmation.persisted_through ||
+      typeof terminal.output !== "string" ||
+      typeof terminal.thinking !== "string" ||
+      typeof terminal.error !== "string" ||
+      typeof terminal.finished_at !== "string"
+    ) {
+      throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an invalid terminal confirmation");
+    }
+    if (!await this.manager.store.reconcileConfirmedTerminal(this.scope.run_id, turnID)) {
+      await this.manager.store.adoptAuthoritativeTerminal(this.scope.run_id, turnID, terminal);
+    }
+    return true;
+  }
+
   beginTurn(turnID: string): void {
     if (!this.canStartTurn()) throw new Error("ProductFlow run already has an active Pi Turn");
     this.activeTurnID = turnID;
@@ -444,7 +706,10 @@ class RunRuntime implements ToolRuntime {
     let executionClaimed = false;
     try {
       this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
+      this.executionPhase = this.executionLease.phase;
       executionClaimed = true;
+      await this.manager.store.saveDurableHandoff(this.scope.run_id, turnID, this.executionLease);
+      this.startExecutionHeartbeat();
       this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
       await this.manager.store.updateState(this.scope.run_id, turnID, {
         execution_attempt: this.executionLease.attempt,
@@ -494,7 +759,14 @@ class RunRuntime implements ToolRuntime {
       if (this.iterationError) throw this.iterationError;
       if (this.modelError) throw this.modelError;
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
-      if (current.status === "cancel_requested" || (this.abortController.signal.aborted && !this.workflowRunRequested && !this.artifact)) {
+      if (this.shutdownRequested && current.status === "requires_input" && this.shutdownWaitingInputTurnID === turnID) {
+        await this.updateExecutionPhase("waiting_input");
+      } else if (this.shutdownRequested) {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: "Agent service stopped before this Turn reached a provable terminal state",
+        });
+      } else if (current.status === "cancel_requested" || (this.abortController.signal.aborted && !this.workflowRunRequested && !this.artifact)) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
       } else if (this.workflowRunRequested || (this.artifact && this.scope.scope_type === "global")) {
         await this.finishTurn(turnID, "awaiting_confirmation", {
@@ -517,7 +789,14 @@ class RunRuntime implements ToolRuntime {
       }
       await this.eventChain;
       const current = await this.manager.store.getState(this.scope.run_id, turnID).catch(() => initial);
-      if (this.effectUnknownError) {
+      if (this.shutdownRequested && current.status === "requires_input" && this.shutdownWaitingInputTurnID === turnID) {
+        await this.updateExecutionPhase("waiting_input");
+      } else if (this.shutdownRequested) {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: "Agent service stopped before this Turn reached a provable terminal state",
+        });
+      } else if (this.effectUnknownError) {
         await this.finishTurn(turnID, "unknown", {
           output: this.output,
           error: this.effectUnknownError,
@@ -568,7 +847,7 @@ class RunRuntime implements ToolRuntime {
 
   async cancelQueuedTurn(turnID: string): Promise<TurnState> {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
-    if (initial.status !== "queued") {
+    if (initial.status !== "queued" && initial.status !== "cancel_requested") {
       if (isTerminalStatus(initial.status)) return initial;
       throw new RuntimeError(409, "turn_not_queued", "the Agent Turn is no longer queued");
     }
@@ -578,7 +857,10 @@ class RunRuntime implements ToolRuntime {
     let executionClaimed = false;
     try {
       this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
+      this.executionPhase = this.executionLease.phase;
       executionClaimed = true;
+      await this.manager.store.saveDurableHandoff(this.scope.run_id, turnID, this.executionLease);
+      this.startExecutionHeartbeat();
       this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
       await this.manager.store.updateState(this.scope.run_id, turnID, {
         execution_attempt: this.executionLease.attempt,
@@ -644,12 +926,23 @@ class RunRuntime implements ToolRuntime {
   }
 
   private async syncDurableEvents(turnID: string): Promise<void> {
-    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    const events = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
     for (const event of events) {
       await this.publishDurableEvent(event);
     }
     await this.flushPublishedEvents();
     if (this.persistenceError) throw this.persistenceError;
+  }
+
+  private async syncRecoveryEvents(turnID: string): Promise<boolean> {
+    const events = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
+    for (const event of events) {
+      await this.publishDurableEvent(event);
+      if (event.kind !== "turn/end") continue;
+      await this.flushPublishedEvents();
+      if (await this.manager.store.reconcileConfirmedTerminal(this.scope.run_id, turnID)) return true;
+    }
+    return false;
   }
 
   /** 写入 ProductFlow checkpoint；追加失败即丢失租约并中止。 */
@@ -755,9 +1048,16 @@ class RunRuntime implements ToolRuntime {
   }
 
   private async updateExecutionPhase(phase: ExecutionPhase): Promise<void> {
+    this.executionPhase = phase;
+    const operation = this.executionPhaseUpdates.then(() => this.sendLatestExecutionPhase());
+    this.executionPhaseUpdates = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async sendLatestExecutionPhase(): Promise<void> {
     const lease = this.executionLease;
     if (!lease || this.executionStopping || this.executionLeaseError) return;
-    this.executionPhase = phase;
+    const phase = this.executionPhase;
     try {
       const refreshed = await this.client.heartbeatTurnExecution(
         this.scope.conversation_id,
@@ -784,15 +1084,31 @@ class RunRuntime implements ToolRuntime {
       clearInterval(this.executionHeartbeat);
       this.executionHeartbeat = undefined;
     }
+    await this.executionPhaseUpdates.catch(() => undefined);
     const lease = this.executionLease;
     this.executionLease = undefined;
     if (!lease) return;
+    const turnID = this.currentTurn;
+    if (turnID && (await this.manager.store.unpublishedEvents(this.scope.run_id, turnID)).length > 0) {
+      const state = await this.manager.store.getState(this.scope.run_id, turnID);
+      if (!this.handoffRecoveryManaged) {
+        this.manager.scheduleDurableHandoffRecovery(
+          this,
+          turnID,
+          state.input.idempotency_key,
+          lease.execution_id,
+          lease.projection_id,
+        );
+      }
+      return;
+    }
     try {
       await this.client.releaseTurnExecution(this.scope.conversation_id, lease.execution_id, {
         owner_id: lease.owner_id,
         lease_token: lease.lease_token,
         phase: this.executionPhase,
       });
+      if (turnID) await this.manager.store.clearDurableHandoff(this.scope.run_id, turnID);
     } catch {
       // 过期租约由 ProductFlow 的 durable 扫描恢复。
     }
@@ -825,14 +1141,19 @@ class RunRuntime implements ToolRuntime {
     return this.manager.store.getState(this.scope.run_id, turnID);
   }
 
-  close(): void {
-    this.abortController?.abort();
-    this.session?.dispose();
-    this.streamBuffer.dispose();
-    this.eventBatcher.dispose();
+  async close(): Promise<void> {
+    this.shutdownRequested = true;
+    this.shutdownWaitingInputTurnID = this.questionWaiter?.turnID;
+    this.flushStreamChunks();
+    await this.eventChain;
     this.clearQuestionTimeout();
     this.questionWaiter?.reject(new RuntimeError(503, "closed", "Agent runtime is shutting down"));
     this.questionWaiter = undefined;
+    this.abortController?.abort();
+    await this.session?.abort().catch(() => undefined);
+    this.session?.dispose();
+    this.streamBuffer.dispose();
+    this.eventBatcher.dispose();
   }
 
   hasQuestionWaiter(turnID: string): boolean {
@@ -846,10 +1167,16 @@ class RunRuntime implements ToolRuntime {
     if (!waiter || waiter.turnID !== turnID || !answer) {
       throw new RuntimeError(409, "not_resumable", "the answered question is no longer attached to a live Pi turn");
     }
+    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    const answeredSequence = [...events].reverse().find((event) => event.kind === "question/answered")?.sequence ?? 0;
+    const existingResume = events.some((event) => event.kind === "turn/resume_requested" && event.sequence > answeredSequence);
+    if (!existingResume) {
+      await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/resume_requested", { status: "running" }, true);
+    }
+    await this.flushPublishedEvents();
     this.pendingQuestionAnswer = undefined;
     this.clearQuestionTimeout();
     await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn/resume_requested", { status: "running" }, true);
     this.questionWaiter = undefined;
     waiter.resolve(answer);
   }
@@ -875,7 +1202,12 @@ class RunRuntime implements ToolRuntime {
     void answerPromise.catch(() => undefined);
     await this.updateExecutionPhase("waiting_input");
     await this.checkpoint("question_required", { question: question as unknown as JsonObject });
-    await this.manager.store.updateState(this.scope.run_id, state.turn_id, { status: "requires_input", question });
+    await this.manager.store.updateState(this.scope.run_id, state.turn_id, {
+      status: "requires_input",
+      question,
+      output: this.output,
+      thinking: this.thinkingProjection.text,
+    });
     await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "question/requested", question as never);
     if (this.persistenceError) throw this.persistenceError;
     return answerPromise;
@@ -895,6 +1227,17 @@ class RunRuntime implements ToolRuntime {
       if (JSON.stringify(stored) !== JSON.stringify(answer)) {
         throw new RuntimeError(409, "question_already_answered", "the question already has a different answer");
       }
+      if (state.status === "requires_input" && state.question?.id === questionID) {
+        if (waiter?.turnID === turnID && waiter.questionID === questionID) {
+          this.clearQuestionTimeout();
+          this.pendingQuestionAnswer = answer;
+        }
+        return this.manager.store.updateState(this.scope.run_id, turnID, {
+          status: "queued",
+          question: undefined,
+          ...(!waiter ? { execution_attempt: undefined, execution_fencing_token: undefined } : {}),
+        });
+      }
       return state;
     }
     if (state.status !== "requires_input" || !state.question || state.question.id !== questionID) {
@@ -913,12 +1256,21 @@ class RunRuntime implements ToolRuntime {
     if (waiter && (waiter.turnID !== turnID || waiter.questionID !== questionID)) {
       throw new RuntimeError(409, "not_resumable", "the question is no longer attached to a live Pi turn");
     }
-    this.clearQuestionTimeout();
-    if (waiter) this.pendingQuestionAnswer = answer;
-    await this.manager.store.updateState(this.scope.run_id, turnID, { status: "queued", question: undefined });
-    await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", {
+    const answerPayload = {
       question_id: questionID,
       answer: answer as never,
+    };
+    if (waiter) {
+      await this.manager.store.appendEvent(this.scope.run_id, turnID, "question/answered", answerPayload);
+      this.clearQuestionTimeout();
+      this.pendingQuestionAnswer = answer;
+    } else {
+      await this.manager.store.appendLocalEvent(this.scope.run_id, turnID, "question/answered", answerPayload);
+    }
+    await this.manager.store.updateState(this.scope.run_id, turnID, {
+      status: "queued",
+      question: undefined,
+      ...(!waiter ? { execution_attempt: undefined, execution_fencing_token: undefined } : {}),
     });
     return this.manager.store.getState(this.scope.run_id, turnID);
   }
@@ -979,21 +1331,25 @@ class RunRuntime implements ToolRuntime {
   private async appendPublishedBatch(events: readonly TurnEvent[]): Promise<void> {
     const lease = this.executionLease;
     if (!lease) throw new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
-    const inputs: AgentEventInput[] = events.map((event) => ({
-      sequence: event.sequence,
-      schema_version: event.schema_version,
-      run_id: event.run_id,
-      turn_id: event.turn_id,
-      kind: event.kind,
-      ...(event.ignorable ? { ignorable: true } : {}),
-      payload: event.payload,
-      created_at: event.created_at,
-    }));
-    await this.client.appendTurnEvents(
+    const inputs: AgentEventInput[] = events.map(toAgentEventInput);
+    const receipts = await this.client.appendTurnEvents(
       this.scope.conversation_id,
       lease.execution_id,
       { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
     );
+    if (
+      receipts.length !== events.length ||
+      receipts.some((receipt, index) => !eventReceiptMatches(
+        receipt,
+        events[index]!,
+        lease.execution_id,
+        lease.projection_id,
+      ))
+    ) {
+      throw new RuntimeError(502, "event_receipt_mismatch", "ProductFlow returned mismatched Agent event receipts");
+    }
+    const last = events.at(-1);
+    if (last) await this.manager.store.markEventsPublished(this.scope.run_id, last.turn_id, last.sequence);
   }
 
   private createStreamBuffer(): JournalStreamBuffer {
@@ -1012,14 +1368,7 @@ class RunRuntime implements ToolRuntime {
 
   private emitStreamChunk(chunk: JournalStreamChunk): void {
     const { kind, ...payload } = chunk;
-    this.enqueue(async () => {
-      await this.manager.store.appendEvent(this.scope.run_id, this.currentTurnID(), kind, payload);
-      await this.manager.store.updateState(
-        this.scope.run_id,
-        this.currentTurnID(),
-        kind === "text.chunk" ? { output: this.output } : { thinking: this.thinkingProjection.text },
-      );
-    });
+    this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, this.currentTurnID(), kind, payload));
   }
 
   private flushStreamChunks(): void {
@@ -1401,6 +1750,10 @@ class RunRuntime implements ToolRuntime {
     return storedAnswerFromEvents(events);
   }
 
+  async hasStoredQuestionAnswer(turnID: string): Promise<boolean> {
+    return (await this.storedQuestionAnswer(turnID)) !== null;
+  }
+
   private async continueWithStoredQuestionAnswer(
     session: AgentSession,
     turnID: string,
@@ -1501,8 +1854,11 @@ class RunRuntime implements ToolRuntime {
     this.currentModelRequestID = undefined;
     this.completedModelRequestIDs.clear();
     this.executionPhase = "claimed";
+    this.executionPhaseUpdates = Promise.resolve();
     this.executionStopping = false;
     this.executionLeaseError = undefined;
+    this.shutdownRequested = false;
+    this.shutdownWaitingInputTurnID = undefined;
     this.effectUnknownError = undefined;
     this.unknownToolStepIDs.clear();
     this.activeToolStepDetails.clear();
@@ -1592,6 +1948,62 @@ function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup)
     );
   }
   return scope;
+}
+
+function toAgentEventInput(event: TurnEvent): AgentEventInput {
+  return {
+    sequence: event.sequence,
+    schema_version: event.schema_version,
+    run_id: event.run_id,
+    turn_id: event.turn_id,
+    kind: event.kind,
+    ...(event.ignorable ? { ignorable: true } : {}),
+    payload: event.payload,
+    created_at: event.created_at,
+  };
+}
+
+function eventReceiptMatches(
+  receipt: { sequence: number; kind: string; execution_id: string; projection_id: string; schema_version: number; ignorable?: boolean },
+  event: TurnEvent,
+  executionID: string,
+  projectionID: string,
+): boolean {
+  return receipt.sequence === event.sequence
+    && receipt.kind === event.kind
+    && receipt.execution_id === executionID
+    && receipt.projection_id === projectionID
+    && receipt.schema_version === event.schema_version
+    && Boolean(receipt.ignorable) === Boolean(event.ignorable);
+}
+
+function hasUnresolvedApproval(events: readonly TurnEvent[]): boolean {
+  let pending = false;
+  for (const event of events) {
+    if (event.kind === "approval/requested") pending = true;
+    if (event.kind === "approval/resolved") pending = false;
+  }
+  return pending;
+}
+
+function artifactFromPendingApproval(events: readonly TurnEvent[]): TurnArtifact | undefined {
+  const requested = [...events].reverse().find((event) => event.kind === "approval/requested");
+  const value = requested?.payload.artifact;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  if (
+    typeof value.name !== "string" ||
+    typeof value.step_id !== "string" ||
+    !value.value ||
+    typeof value.value !== "object" ||
+    Array.isArray(value.value)
+  ) {
+    return undefined;
+  }
+  return {
+    name: value.name,
+    step_id: value.step_id,
+    value: value.value as JsonObject,
+  };
 }
 
 function buildDynamicContext(

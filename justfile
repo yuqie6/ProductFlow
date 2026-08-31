@@ -31,6 +31,14 @@ docs-check:
 go-test:
     bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -p 1'
 
+# Opt-in PostgreSQL journal depth/concurrency/P95 and 100-SSE connection gate.
+go-test-agent-journal-capacity:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY=1 go test -C go ./internal/agent -run "^(TestAgentJournalCapacityGate|TestAgentSSEHTTPConnectionCapacityGate)$" -count=1 -v -timeout 6m'
+
+# Opt-in local fsync WAL depth/P95 gate.
+agent-service-test-local-journal-capacity:
+    cd agent-service && PRODUCTFLOW_RUN_AGENT_LOCAL_JOURNAL_CAPACITY=1 pnpm vitest run src/store.test.ts -t "appends and reloads 10k durable WAL events"
+
 go-test-live-providers:
     PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'
 

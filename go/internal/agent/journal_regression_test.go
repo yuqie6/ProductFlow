@@ -62,6 +62,70 @@ func TestInitialExecutionClaimRecordsHeartbeatAtClaimTime(t *testing.T) {
 	}
 }
 
+func TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	createdAt := time.Now().UTC().Truncate(time.Microsecond)
+	batch := []EventAppendInput{
+		{
+			Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"durable","attempt_id":"a","content_index":0}`), CreatedAt: createdAt,
+		},
+		{
+			Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "assistant/message", Payload: json.RawMessage(`{"attempt_id":"a","reason":"stop","usage":{"input":2,"output":1,"total_tokens":3}}`), CreatedAt: createdAt,
+		},
+	}
+	first, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 2 || len(replayed) != 2 {
+		t.Fatalf("receipt lengths first=%d replayed=%d", len(first), len(replayed))
+	}
+	for index := range first {
+		if replayed[index].ID != first[index].ID || !replayed[index].CreatedAt.Equal(first[index].CreatedAt) {
+			t.Fatalf("receipt[%d] changed: first=%+v replayed=%+v", index, first[index], replayed[index])
+		}
+	}
+	var count int64
+	if err := as.db.Model(&schema.AgentTurnEvents{}).Where("turn_projection_id = ?", claimed.turn.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("event count=%d, want 2", count)
+	}
+}
+
+func TestJournalBatchRejectsEventsAfterTerminalWithoutMutation(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "")
+	claimed := createClaimedJournalTurn(t, as)
+	_, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{
+		{
+			Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "turn/end", Payload: json.RawMessage(`{"status":"succeeded","reason":"completed"}`),
+		},
+		{
+			Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"after terminal","attempt_id":"a","step_id":"s","content_index":0}`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected events after turn/end to be rejected")
+	}
+	var count int64
+	if err := as.db.Model(&schema.AgentTurnEvents{}).Where("turn_projection_id = ?", claimed.turn.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("event count=%d, want 0", count)
+	}
+}
+
 func TestTurnEndStatusReasonContract(t *testing.T) {
 	tests := []struct {
 		name    string

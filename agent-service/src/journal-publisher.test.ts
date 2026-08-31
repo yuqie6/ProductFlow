@@ -86,4 +86,34 @@ describe("JournalEventBatcher", () => {
     expect(isJournalFlushBarrier("text.chunk")).toBe(false);
     expect(isJournalFlushBarrier("thinking.chunk")).toBe(false);
   });
+
+  it("keeps 25 concurrent 10000-event journals ordered and bounded", async () => {
+    const turns = 25;
+    const eventsPerTurn = 10_000;
+    const batchCounts = await Promise.all(Array.from({ length: turns }, async (_unused, turnIndex) => {
+      let expectedSequence = 1;
+      let batches = 0;
+      const publisher = new JournalEventBatcher(async (events) => {
+        expect(events.length).toBeGreaterThan(0);
+        expect(events.length).toBeLessThanOrEqual(64);
+        for (const item of events) {
+          expect(item.sequence).toBe(expectedSequence);
+          expectedSequence += 1;
+        }
+        batches += 1;
+      }, { flushMS: 60_000 });
+
+      for (let sequence = 1; sequence <= eventsPerTurn; sequence += 1) {
+        const item = event(sequence, sequence === eventsPerTurn ? "turn/end" : "text.chunk");
+        item.run_id = `run-${turnIndex}`;
+        item.turn_id = `turn-${turnIndex}`;
+        await publisher.enqueue(item, sequence === eventsPerTurn);
+      }
+      expect(expectedSequence).toBe(eventsPerTurn + 1);
+      expect(publisher.pendingCount).toBe(0);
+      return batches;
+    }));
+
+    expect(batchCounts.every((count) => count === Math.ceil(eventsPerTurn / 64))).toBe(true);
+  }, 30_000);
 });

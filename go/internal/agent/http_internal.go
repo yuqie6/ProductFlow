@@ -46,6 +46,7 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.POST("/turn-executions/:execution_id/checkpoints", h.appendCheckpoint)
 	conv.POST("/turn-executions/:execution_id/release", h.releaseExecution)
 	conv.POST("/turn-executions/:execution_id/events/batch", h.appendEvents)
+	conv.POST("/turn-executions/:execution_id/events/confirm", h.confirmEvents)
 
 	conv.POST("/workflow-run-requests/prepare", h.prepareRunRequest)
 	conv.POST("/global-workflow-run-requests/prepare", h.prepareGlobalRunRequest)
@@ -483,6 +484,10 @@ type appendEventBatchRequest struct {
 	Events     []appendEventRequest `json:"events"`
 }
 
+type confirmEventBatchRequest struct {
+	Events []appendEventRequest `json:"events"`
+}
+
 func (h HTTP) appendEvents(c *gin.Context) {
 	var req appendEventBatchRequest
 	if err := bindJSONStrict(c, &req); err != nil {
@@ -503,6 +508,28 @@ func (h HTTP) appendEvents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+func (h HTTP) confirmEvents(c *gin.Context) {
+	var req confirmEventBatchRequest
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	inputs := make([]EventAppendInput, 0, len(req.Events))
+	for _, event := range req.Events {
+		inputs = append(inputs, EventAppendInput{
+			Sequence: event.Sequence, SchemaVersion: event.SchemaVersion, RunID: event.RunID,
+			TurnID: event.TurnID, Kind: event.Kind, Ignorable: event.Ignorable,
+			Payload: event.Payload, CreatedAt: event.CreatedAt,
+		})
+	}
+	out, err := h.Service.ConfirmEvents(c.Request.Context(), c.Param("conversation_id"), c.Param("execution_id"), inputs)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 type workflowRunRequestBody struct {
