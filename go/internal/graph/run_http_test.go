@@ -486,11 +486,15 @@ func TestSubmitSelectionRunQueuesExplicitNodes(t *testing.T) {
 }
 
 func (gs *graphServer) createDirectGraph(t *testing.T) (productID, graphID string) {
+	return gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1}]`)
+}
+
+func (gs *graphServer) createDirectGraphWithImageTypes(t *testing.T, imageTypes string) (productID, graphID string) {
 	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	_ = w.WriteField("name", "直接创建跑图")
-	_ = w.WriteField("image_types", `[{"key":"hero","quantity":1}]`)
+	_ = w.WriteField("image_types", imageTypes)
 	part, err := w.CreateFormFile("images", "hero.png")
 	if err != nil {
 		t.Fatal(err)

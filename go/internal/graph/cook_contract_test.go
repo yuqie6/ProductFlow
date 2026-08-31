@@ -233,6 +233,32 @@ func TestGeneratedContentNodeRemainsReadyAfterAdopt(t *testing.T) {
 	}
 }
 
+func TestGraphRunPromotesEveryImageAcrossItsOwnDocumentRevisions(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraphWithImageTypes(t, `[
+		{"key":"hero","quantity":1},
+		{"key":"detail","quantity":1},
+		{"key":"scene","quantity":1}
+	]`)
+	prompts := &countingPrompt{}
+	images := &countingImage{}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
+	view := loadProjection(t, gs, productID, graphID)
+	imageNodes := 0
+	for _, node := range view.Nodes {
+		if node.NodeType != graph.NodeImageGeneration {
+			continue
+		}
+		imageNodes++
+		if node.CurrentArtifactID == nil || node.PreviewAssetID == nil {
+			t.Fatalf("successful image %q was not promoted: artifact=%v preview=%v", node.Title, node.CurrentArtifactID, node.PreviewAssetID)
+		}
+	}
+	if imageNodes != 3 {
+		t.Fatalf("image nodes %d", imageNodes)
+	}
+}
+
 func TestToNodeAfterGeneratedContentDoesNotCallPromptProvider(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)

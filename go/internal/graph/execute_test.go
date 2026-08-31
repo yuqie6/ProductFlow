@@ -576,3 +576,78 @@ func TestExecuteGraphRunPipelinesImageAfterFirstPrompt(t *testing.T) {
 		t.Fatalf("image started at %s after last prompt %s; expected overlap", firstImage, lastPrompt)
 	}
 }
+
+type delayedImage struct {
+	graph.MockImageProvider
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (d *delayedImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
+	d.once.Do(func() { close(d.entered) })
+	select {
+	case <-d.release:
+		return d.MockImageProvider.GenerateImage(ctx, req)
+	case <-ctx.Done():
+		return graph.ImageResult{}, ctx.Err()
+	}
+}
+
+func TestImagePreviewPromotesAfterLayoutRevisionBump(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+
+	images := &delayedImage{entered: make(chan struct{}), release: make(chan struct{})}
+	executor := graph.Executor{
+		DB:       gs.db,
+		Products: product.GraphGuard{},
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.reclaimRun(t, run.ID)
+	done := make(chan error, 1)
+	go func() { done <- executor.ExecuteRun(context.Background(), run.ID) }()
+	select {
+	case <-images.entered:
+	case <-time.After(8 * time.Second):
+		t.Fatal("image provider was not called")
+	}
+
+	view := loadProjection(t, gs, productID, graphID)
+	imageNode := nodeOfType(t, view, graph.NodeImageGeneration)
+	moved := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
+		"base_graph_revision": view.Revision,
+		"summary":             "自动布局",
+		"operations": []map[string]any{
+			{"op": "move_nodes", "nodes": []any{[]any{imageNode.ID, imageNode.PositionX + 24, imageNode.PositionY}}},
+		},
+	})
+	gs.mustStatus(t, moved, 200)
+	close(images.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("executor did not finish")
+	}
+
+	live := loadProjection(t, gs, productID, graphID)
+	promoted := nodeOfType(t, live, graph.NodeImageGeneration)
+	if promoted.CurrentArtifactID == nil || promoted.PreviewAssetID == nil {
+		t.Fatalf("layout during run dropped preview: artifact=%v preview=%v revision %d -> %d",
+			promoted.CurrentArtifactID, promoted.PreviewAssetID, view.Revision, live.Revision)
+	}
+	if live.Revision <= view.Revision {
+		t.Fatalf("expected layout to bump revision, got %d -> %d", view.Revision, live.Revision)
+	}
+}

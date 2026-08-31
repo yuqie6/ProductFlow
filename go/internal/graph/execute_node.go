@@ -675,16 +675,10 @@ func (e Executor) persistImageArtifact(
 			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
 		if nodeRun.NodeID != nil {
-			var live schema.WorkflowGraphs
-			if err := pgxTx.WithContext(ctx).Select("revision").Where("id = ?", run.GraphID).Take(&live).Error; err != nil {
+			// 节点 id 在 move/整理后仍稳定。不能用 run 快照 revision 对 live revision
+			// 的相等判断来跳过晋升：一键整理会抬 revision，预览资产就永远写不上去。
+			if err := promoteImageNodeArtifact(ctx, pgxTx, *nodeRun.NodeID, artifactID); err != nil {
 				return err
-			}
-			if live.Revision == run.GraphRevision {
-				if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
-					Select("current_artifact_id").
-					Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
-					return err
-				}
 			}
 			if e.Deps.Delivery != nil {
 				if err := e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID); err != nil {
@@ -802,6 +796,13 @@ func upsertArtifact(
 		CreatedAt:           time.Now().UTC(),
 	}).Error
 	return id, err
+}
+
+func promoteImageNodeArtifact(ctx context.Context, tx *gorm.DB, nodeID, artifactID string) error {
+	return tx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).
+		Where("id = ? AND node_type = ?", nodeID, NodeImageGeneration).
+		Select("current_artifact_id").
+		Updates(map[string]any{"current_artifact_id": artifactID}).Error
 }
 
 func measuredAspectMatches(aspect string, width, height int) bool {
