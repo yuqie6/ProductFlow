@@ -244,8 +244,9 @@ export function AgentProductWorkbenchPage({
       }
       setSelectedNodeIds([nodeId]);
       void requestSidebarTool("details");
+      actions.focusNodes([nodeId]);
     })();
-  }, [liveGraph, requestSidebarTool]);
+  }, [actions, liveGraph, requestSidebarTool]);
   const selectCanvasNodes = useCallback(async (nodeIds: string[]) => {
     try {
       await flushInspectorRef.current();
@@ -319,6 +320,8 @@ export function AgentProductWorkbenchPage({
           onOpenLocalEdit={localEdit.openLocalImageEdit}
           onOpenAdd={() => void requestSidebarTool("add")}
           onOpenLibrary={() => void requestSidebarTool("library")}
+          onPreviewRun={actions.previewRun}
+          onHideRunPreview={actions.hideRunPreview}
         />
       ),
     },
@@ -335,6 +338,8 @@ export function AgentProductWorkbenchPage({
           onBeforeRun={beforeRun}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
+          onPreviewRun={actions.previewRun}
+          onHideRunPreview={actions.hideRunPreview}
         />
       ),
     },
@@ -421,7 +426,7 @@ export function AgentProductWorkbenchPage({
   ];
 
   return (
-    <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-950 dark:bg-[#060a12] dark:text-slate-100">
+    <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary">
       {chromeCollapsed ? null : (
         <TopNav
           breadcrumbs={`${bootstrap.product.name} / ${t("agentWorkbench.breadcrumb")}`}
@@ -457,7 +462,7 @@ export function AgentProductWorkbenchPage({
         ) : (
           <div className="relative h-full min-h-0">
             {emptyGraphError ? (
-              <p role="alert" className="absolute inset-x-4 top-4 z-10 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+              <p role="alert" className="absolute inset-x-4 top-4 z-10 rounded-lg border border-state-error/30 bg-state-error-soft px-3 py-2 text-xs leading-5 text-state-error">
                 {emptyGraphError}
               </p>
             ) : null}
@@ -622,13 +627,13 @@ function SidebarError({
   onClose: () => void;
 }) {
   return (
-    <div role="alert" className="flex shrink-0 items-start gap-2 border-b border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-200">
+    <div role="alert" className="flex shrink-0 items-start gap-2 border-b border-state-error/30 bg-state-error-soft px-3 py-2 text-xs leading-5 text-state-error">
       <CircleAlert size={14} className="mt-0.5 shrink-0" />
       <span className="min-w-0 flex-1">{message}</span>
       <button
         type="button"
         onClick={onClose}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-red-100 dark:hover:bg-red-500/10"
+        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-state-error-soft lg:h-8 lg:w-8"
         aria-label={closeLabel}
         title={closeLabel}
       >
