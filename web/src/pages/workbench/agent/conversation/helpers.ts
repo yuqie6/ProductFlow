@@ -78,6 +78,11 @@ export function workflowRequestFromTurn(
     finished_at: null,
     created_at: turn.created_at,
     updated_at: turn.updated_at,
+    run_scope: "graph",
+    target_node_id: null,
+    target_node_ids: [],
+    force: false,
+    document_action: null,
   };
 }
 

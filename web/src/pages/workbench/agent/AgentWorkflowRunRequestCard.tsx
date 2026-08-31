@@ -98,6 +98,13 @@ export function AgentWorkflowRunRequestCard({
   ) : (
     <Loader2 size={14} className="animate-spin text-accent motion-reduce:animate-none" aria-hidden="true" />
   );
+  const documentActionLabel = request.document_action === "complete"
+    ? t("graph.inspector.complete")
+    : request.document_action === "rewrite"
+      ? t("graph.inspector.rewrite")
+      : request.document_action === "replace"
+        ? t("graph.inspector.replace")
+        : null;
 
   return (
     <section
@@ -138,6 +145,9 @@ export function AgentWorkflowRunRequestCard({
                 <span>{t("agentWorkbench.workflowRunRequest.revision", { version: request.expected_workflow_revision })}</span>
               ) : null}
               <span>{t("agentWorkbench.workflowRunRequest.requested", { time: formatDateTime(request.created_at, t.locale) })}</span>
+              {documentActionLabel ? (
+                <span>{t("agentWorkbench.workflowRunRequest.documentAction", { action: documentActionLabel })}</span>
+              ) : null}
               {request.finished_at ? (
                 <span>{t("agentWorkbench.workflowRunRequest.finished", { time: formatDateTime(request.finished_at, t.locale) })}</span>
               ) : null}

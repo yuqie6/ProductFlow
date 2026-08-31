@@ -29,6 +29,42 @@ func TestApplyDocumentSectionsOnlyReplacesSelectedBusinessSection(t *testing.T) 
 	}
 }
 
+func TestApplyDocumentSectionsDeletesMissingSelectedBriefField(t *testing.T) {
+	node := AppliedNode{
+		ID: "brief", NodeType: NodeCreativeBrief, DocumentOrigin: OriginAuthored,
+		Config: map[string]any{
+			"goal": "人工目标", "required_copy": []any{"必须保留的旧文案"},
+		},
+	}
+	candidate := map[string]any{"goal": "AI 目标"}
+
+	applied, err := applyDocumentSections(node, candidate, []string{"copy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := applied["required_copy"]; exists {
+		t.Fatalf("selected copy section retained a field removed by the candidate: %+v", applied)
+	}
+	if applied["goal"] != "人工目标" {
+		t.Fatalf("unselected objective changed: %+v", applied)
+	}
+}
+
+func TestMergeGeneratedBriefRewriteRemovesOmittedDocumentField(t *testing.T) {
+	current := map[string]any{
+		"goal": "人工目标", "required_copy": []any{"旧文案"}, "metadata": "保留",
+	}
+	generated := map[string]any{"goal": "AI 目标"}
+
+	merged := mergeGeneratedBrief(current, generated, DocumentActionRewrite, OriginAuthored)
+	if _, exists := merged["required_copy"]; exists {
+		t.Fatalf("rewrite retained an omitted document field: %+v", merged)
+	}
+	if merged["goal"] != "AI 目标" || merged["metadata"] != "保留" {
+		t.Fatalf("rewrite produced unexpected config: %+v", merged)
+	}
+}
+
 func TestDocumentBaseHashChangesAfterManualEdit(t *testing.T) {
 	node := AppliedNode{
 		ID: "prompt", NodeType: NodeImagePrompt, DocumentOrigin: OriginAuthored,

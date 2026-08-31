@@ -15,6 +15,11 @@ function request(status: AgentWorkflowRunRequest["status"]): AgentWorkflowRunReq
     workflow_id: "workflow-1",
     workflow_title: "春季新品主图",
     expected_workflow_revision: 7,
+    run_scope: "node",
+    target_node_id: "image-prompt-1",
+    target_node_ids: [],
+    force: true,
+    document_action: "rewrite",
     status,
     workflow_run_id: status === "awaiting_confirmation" ? null : "run-1",
     workflow_run_status: status === "awaiting_confirmation" ? null : "running",
@@ -44,6 +49,7 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).toContain("工作流执行请求");
     expect(markup).toContain("春季新品主图");
     expect(markup).toContain("基于工作流版本 v7");
+    expect(markup).toContain("文稿动作：改写文稿");
     expect(markup).toContain("确认并执行");
     expect(markup).toContain("取消请求");
     expect(markup).toContain("bg-accent");

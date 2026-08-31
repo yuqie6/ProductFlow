@@ -175,6 +175,11 @@ func applyDocumentSections(node AppliedNode, candidateConfig map[string]any, req
 	}
 	switch node.NodeType {
 	case NodeCreativeBrief:
+		for key := range selected {
+			for _, field := range allowed[key].Fields {
+				delete(out, field)
+			}
+		}
 		for key, value := range currentVisible {
 			out[key] = value
 		}

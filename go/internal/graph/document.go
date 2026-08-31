@@ -286,6 +286,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 	}
 	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
 		for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+			delete(out, key)
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
 			}

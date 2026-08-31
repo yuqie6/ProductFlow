@@ -1009,6 +1009,11 @@ export interface AgentWorkflowRunRequest {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+  run_scope: GraphRunScope;
+  target_node_id: string | null;
+  target_node_ids: string[];
+  force: boolean;
+  document_action: GraphDocumentAction | null;
 }
 
 export type LibraryOrganizationDraftStatus =
