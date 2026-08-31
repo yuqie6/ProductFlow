@@ -140,6 +140,7 @@ func (m MockPromptProvider) GenerateCreativeBrief(ctx context.Context, req Promp
 			"design_goals":  []any{"突出主体"},
 			"required_copy": []any{},
 			"prohibitions":  []any{},
+			"fact_gaps":     []any{},
 		}
 	}
 	return PromptResult{Payload: payload, Model: "mock-brief"}, nil

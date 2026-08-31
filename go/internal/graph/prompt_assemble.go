@@ -41,6 +41,7 @@ func AssemblePromptRequest(
 	switch node.NodeType {
 	case NodeCreativeBrief:
 		req.Brief = filteredBriefConfig(node.Config)
+		req.TextPolicy, req.TextLanguage = listingTextPolicy(graph)
 	case NodeVisualSystem:
 		if overlay := CatalogVisualOverlay(asMapOrNil(node.Config["visual_overlay"])); overlay != nil {
 			req.Visual = overlay
@@ -86,7 +87,7 @@ func AssemblePromptRequest(
 
 func filteredBriefConfig(config map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
 		value, ok := config[key]
 		if !ok || value == nil || value == "" {
 			continue
@@ -114,6 +115,13 @@ func identityDefaultFidelity() map[string]any {
 	}
 }
 
+func seedProductSharePercent(imageTypeKey string) int {
+	if imageTypeFamily(imageTypeKey) == "infographic" {
+		return 50
+	}
+	return 70
+}
+
 func seedPromptFromRuntime(
 	title, imageTypeKey string,
 	facts, briefs []map[string]any,
@@ -122,7 +130,7 @@ func seedPromptFromRuntime(
 	textPolicy string,
 ) (map[string]any, error) {
 	stored = stripV3PromptPayload(stored)
-	briefGoal, briefCopy, briefProhibitions := briefFields(briefs)
+	briefGoal, briefCopy, _ := briefFields(briefs)
 	productName := factValue(facts, "product_name")
 	designGoal := strings.TrimSpace(asString(stored["design_goal"]))
 	if designGoal == "" {
@@ -141,15 +149,6 @@ func seedPromptFromRuntime(
 		}
 	}
 	creativeBoundary := stringList(stored["creative_boundary"])
-	for _, item := range briefProhibitions {
-		if !containsString(creativeBoundary, item) {
-			creativeBoundary = append(creativeBoundary, item)
-		}
-	}
-	noOnImageText := prompts.IdentityRules().NoOnImageText
-	if textPolicy == "none" && !containsString(creativeBoundary, noOnImageText) {
-		creativeBoundary = append(creativeBoundary, noOnImageText)
-	}
 	text := asMapOrNil(stored["text"])
 	if textPolicy == "none" && !promptConfigHasAuthoredText(stored) {
 		text = map[string]any{}
@@ -167,10 +166,7 @@ func seedPromptFromRuntime(
 	}
 	sharedRules := stringList(stored["shared_rules"])
 	if len(sharedRules) == 0 {
-		sharedRules = append([]string{}, prompts.IdentityRules().Shared...)
-	}
-	if textPolicy == "none" && !containsString(sharedRules, noOnImageText) {
-		sharedRules = append(sharedRules, noOnImageText)
+		sharedRules = []string{"参考图中的商品是身份基准；保留其外形、结构、材质、颜色和可见标识"}
 	}
 	derived := prompts.IdentityRules().ContextDerived
 	composition := asMapOrNil(stored["composition"])
@@ -180,7 +176,7 @@ func seedPromptFromRuntime(
 			viewpoint, layout = derived, derived
 		}
 		composition = map[string]any{
-			"viewpoint": viewpoint, "product_share_percent": 70, "layout": layout, "copy_regions": []any{},
+			"viewpoint": viewpoint, "product_share_percent": seedProductSharePercent(imageTypeKey), "layout": layout, "copy_regions": []any{},
 		}
 	}
 	content := asMapOrNil(stored["content"])

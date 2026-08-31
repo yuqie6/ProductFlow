@@ -30,7 +30,7 @@ func TestEndpointStripsTrailingV1(t *testing.T) {
 }
 
 func TestPromptSuccessFailUnknown(t *testing.T) {
-	okPayload := `{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[]}`
+	okPayload := `{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[]}`
 	cases := []struct {
 		name   string
 		status int
@@ -623,6 +623,12 @@ func TestLocalEditSizeMapsPortraitSource(t *testing.T) {
 	}
 }
 
+func TestOpenAIImageSizeMapsFourByFiveToPortrait(t *testing.T) {
+	if got := openaiSizeFromSpec(map[string]any{"aspect_ratio": "4:5"}); got != "1024x1536" {
+		t.Fatalf("4:5 mapped to %s", got)
+	}
+}
+
 func TestGeminiUsesResolutionTierPixels(t *testing.T) {
 	got := pixelSizeFromSpec(map[string]any{"aspect_ratio": "3:4", "resolution_tier": "high"})
 	if got != "1536x2048" {
@@ -830,7 +836,7 @@ func TestGenerateImageWithReferencesUsesEdits(t *testing.T) {
 	if got.EffectiveParameters["reference_image_count"] != 1 {
 		t.Fatalf("effective %+v", got.EffectiveParameters)
 	}
-	if !strings.Contains(graph.CompileImageModelPrompt(graph.ImageRequest{NodeTitle: "hero", ImageTypeKey: "hero"}), "首屏海报图") {
+	if !strings.Contains(graph.CompileImageModelPrompt(graph.ImageRequest{NodeTitle: "hero", ImageTypeKey: "hero"}), "封面主图") {
 		t.Fatal("compiled prompt should be listing text")
 	}
 }
@@ -1000,7 +1006,7 @@ func TestPromptSendsReferenceImageURL(t *testing.T) {
 		path = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&posted)
 		w.WriteHeader(200)
-		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[]}}`)
+		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[]}}`)
 	}))
 	defer srv.Close()
 	p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
@@ -1262,7 +1268,7 @@ func TestPromptRejectsExtraAndMissingKeys(t *testing.T) {
 	t.Run("brief-extra", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"extra":"no"}}`)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[],"extra":"no"}}`)
 		}))
 		defer srv.Close()
 		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
@@ -1303,6 +1309,30 @@ func TestPromptRejectsExtraAndMissingKeys(t *testing.T) {
 			t.Fatal("expected missing key rejection")
 		}
 	})
+}
+
+func TestMatchJSONSchemaRejectsMaxItems(t *testing.T) {
+	schema := boundedStringArraySchema(0, 2)
+	if err := matchJSONSchema(schema, []any{"a", "b"}); err != nil {
+		t.Fatalf("valid bounded array rejected: %v", err)
+	}
+	if err := matchJSONSchema(schema, []any{"a", "b", "c"}); err == nil {
+		t.Fatal("expected maxItems rejection")
+	}
+}
+
+func TestListingPromptSchemaAllowsFullInfographicHierarchy(t *testing.T) {
+	composition := compositionSchema["properties"].(map[string]any)
+	content := contentSchema["properties"].(map[string]any)
+	if got, _ := jsonSchemaInt(composition["copy_regions"].(map[string]any)["maxItems"]); got != 4 {
+		t.Fatalf("copy_regions maxItems %d", got)
+	}
+	if got, _ := jsonSchemaInt(content["selling_points"].(map[string]any)["maxItems"]); got != 5 {
+		t.Fatalf("selling_points maxItems %d", got)
+	}
+	if got, _ := jsonSchemaInt(content["decorations"].(map[string]any)["maxItems"]); got != 4 {
+		t.Fatalf("decorations maxItems %d", got)
+	}
 }
 
 func TestImagesChatAppliesToolOptionsModelAndQuality(t *testing.T) {

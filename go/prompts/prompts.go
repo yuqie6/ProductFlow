@@ -30,6 +30,7 @@ var requiredCompileSections = []string{
 	"lead", "identity", "recompose", "invent",
 	"photography", "infographic", "evidence",
 	"text_none", "text_required", "text_required_with_language",
+	"text_required_infographic", "text_required_infographic_with_language",
 }
 
 type Look struct {
@@ -58,16 +59,19 @@ type Identity struct {
 }
 
 type CompileImage struct {
-	Lead                     string
-	Identity                 string
-	Recompose                string
-	Invent                   string
-	Photography              string
-	Infographic              string
-	Evidence                 string
-	TextNone                 string
-	TextRequired             string
-	TextRequiredWithLanguage string
+	Lead                                string
+	Identity                            string
+	Recompose                           string
+	Invent                              string
+	Photography                         string
+	Infographic                         string
+	Evidence                            string
+	TextNone                            string
+	TextRequired                        string
+	TextRequiredWithLanguage            string
+	TextRequiredInfographic             string
+	TextRequiredInfographicWithLanguage string
+	TypeLines                           map[string]string
 }
 
 var (
@@ -119,9 +123,15 @@ func (c CompileImage) LeadFor(typeTitle string) string {
 	return Expand(c.Lead, map[string]string{"type_title": typeTitle})
 }
 
-func (c CompileImage) TextPolicyLine(policy, language string) string {
+func (c CompileImage) TextPolicyLine(policy, language, family string) string {
 	switch policy {
 	case "required":
+		if family == "infographic" {
+			if strings.TrimSpace(language) != "" {
+				return Expand(c.TextRequiredInfographicWithLanguage, map[string]string{"language": strings.TrimSpace(language)})
+			}
+			return c.TextRequiredInfographic
+		}
 		if strings.TrimSpace(language) != "" {
 			return Expand(c.TextRequiredWithLanguage, map[string]string{"language": strings.TrimSpace(language)})
 		}
@@ -142,6 +152,14 @@ func (c CompileImage) FamilyLine(family string) string {
 	default:
 		return c.Photography
 	}
+}
+
+func (c CompileImage) TypeLine(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" || c.TypeLines == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.TypeLines[key])
 }
 
 func load() error {
@@ -356,16 +374,19 @@ func parseCompileImage() (CompileImage, error) {
 		return CompileImage{}, err
 	}
 	out := CompileImage{
-		Lead:                     strings.TrimSpace(sections["lead"]),
-		Identity:                 strings.TrimSpace(sections["identity"]),
-		Recompose:                strings.TrimSpace(sections["recompose"]),
-		Invent:                   strings.TrimSpace(sections["invent"]),
-		Photography:              strings.TrimSpace(sections["photography"]),
-		Infographic:              strings.TrimSpace(sections["infographic"]),
-		Evidence:                 strings.TrimSpace(sections["evidence"]),
-		TextNone:                 strings.TrimSpace(sections["text_none"]),
-		TextRequired:             strings.TrimSpace(sections["text_required"]),
-		TextRequiredWithLanguage: strings.TrimSpace(sections["text_required_with_language"]),
+		Lead:                                strings.TrimSpace(sections["lead"]),
+		Identity:                            strings.TrimSpace(sections["identity"]),
+		Recompose:                           strings.TrimSpace(sections["recompose"]),
+		Invent:                              strings.TrimSpace(sections["invent"]),
+		Photography:                         strings.TrimSpace(sections["photography"]),
+		Infographic:                         strings.TrimSpace(sections["infographic"]),
+		Evidence:                            strings.TrimSpace(sections["evidence"]),
+		TextNone:                            strings.TrimSpace(sections["text_none"]),
+		TextRequired:                        strings.TrimSpace(sections["text_required"]),
+		TextRequiredWithLanguage:            strings.TrimSpace(sections["text_required_with_language"]),
+		TextRequiredInfographic:             strings.TrimSpace(sections["text_required_infographic"]),
+		TextRequiredInfographicWithLanguage: strings.TrimSpace(sections["text_required_infographic_with_language"]),
+		TypeLines:                           map[string]string{},
 	}
 	for _, pair := range []struct {
 		name, value string
@@ -374,16 +395,28 @@ func parseCompileImage() (CompileImage, error) {
 		{"photography", out.Photography}, {"infographic", out.Infographic}, {"evidence", out.Evidence},
 		{"text_none", out.TextNone}, {"text_required", out.TextRequired},
 		{"text_required_with_language", out.TextRequiredWithLanguage},
+		{"text_required_infographic", out.TextRequiredInfographic},
+		{"text_required_infographic_with_language", out.TextRequiredInfographicWithLanguage},
 	} {
 		if pair.value == "" {
 			return CompileImage{}, fmt.Errorf("listing/compile-image.md: %s is empty", pair.name)
 		}
+	}
+	for _, key := range requiredImageTypeKeys {
+		line := strings.TrimSpace(sections[key])
+		if line == "" {
+			return CompileImage{}, fmt.Errorf("listing/compile-image.md: missing type line %s", key)
+		}
+		out.TypeLines[key] = line
 	}
 	if !strings.Contains(out.Lead, "{type_title}") {
 		return CompileImage{}, fmt.Errorf("listing/compile-image.md: lead must contain {type_title}")
 	}
 	if !strings.Contains(out.TextRequiredWithLanguage, "{language}") {
 		return CompileImage{}, fmt.Errorf("listing/compile-image.md: text_required_with_language must contain {language}")
+	}
+	if !strings.Contains(out.TextRequiredInfographicWithLanguage, "{language}") {
+		return CompileImage{}, fmt.Errorf("listing/compile-image.md: text_required_infographic_with_language must contain {language}")
 	}
 	return out, nil
 }

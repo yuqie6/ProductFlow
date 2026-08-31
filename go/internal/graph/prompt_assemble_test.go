@@ -30,8 +30,12 @@ func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 	if req.ImageTypeTitle != "核心卖点图" {
 		t.Fatalf("title %q", req.ImageTypeTitle)
 	}
-	if !strings.Contains(req.ImageTypeJob, "详情卖点图") {
+	if !strings.Contains(req.ImageTypeJob, "详情转化图") {
 		t.Fatalf("job %q", req.ImageTypeJob)
+	}
+	composition, _ := req.CurrentPrompt["composition"].(map[string]any)
+	if composition["product_share_percent"] != 50 {
+		t.Fatalf("infographic seed share %+v", composition["product_share_percent"])
 	}
 	if _, ok := req.CurrentPrompt["visual_variant_key"]; !ok {
 		t.Fatal("seed must include visual_variant_key")
@@ -43,8 +47,12 @@ func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 		t.Fatal("seed must have design_goal")
 	}
 	shared, _ := req.CurrentPrompt["shared_rules"].([]any)
-	if len(shared) == 0 {
-		t.Fatal("seed must include identity shared rules")
+	if len(shared) != 1 {
+		t.Fatalf("seed must include one compact identity anchor: %+v", shared)
+	}
+	boundary, _ := req.CurrentPrompt["creative_boundary"].([]any)
+	if len(boundary) != 0 {
+		t.Fatalf("seed must not inherit generic prohibitions: %+v", boundary)
 	}
 }
 
@@ -131,6 +139,28 @@ func TestAssembleCreativeBriefCollectsGraphImageTypes(t *testing.T) {
 	}
 	if len(req.ImageTypes) != 1 || req.ImageTypes[0]["key"] != "hero" {
 		t.Fatalf("image types %+v", req.ImageTypes)
+	}
+	if req.TextPolicy != "none" {
+		t.Fatalf("photography-only brief policy %q", req.TextPolicy)
+	}
+}
+
+func TestAssembleCreativeBriefLiftsInfographicTextPolicy(t *testing.T) {
+	brief := AppliedNode{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}}
+	image := AppliedNode{
+		ID: "image", NodeType: NodeImageGeneration, Title: "卖点",
+		Config: map[string]any{
+			"image_type_key": "selling_point",
+			"generation_spec": map[string]any{"text_policy": "required", "text_language": "zh-CN"},
+		},
+	}
+	g := AppliedGraph{Nodes: []AppliedNode{brief, image}}
+	req, err := AssemblePromptRequest(brief, nil, nil, nil, nil, "digest", g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.TextPolicy != "required" || req.TextLanguage != "zh-CN" {
+		t.Fatalf("brief policy %q %q", req.TextPolicy, req.TextLanguage)
 	}
 }
 

@@ -5,12 +5,13 @@ package providers
 var briefJSONSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []any{"goal", "design_goals", "required_copy", "prohibitions"},
+	"required":             []any{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"},
 	"properties": map[string]any{
 		"goal":          nonEmptyTextSchema(),
-		"design_goals":  stringArraySchema(),
-		"required_copy": stringArraySchema(),
-		"prohibitions":  stringArraySchema(),
+		"design_goals":  boundedTextArraySchema(1, 4, 320),
+		"required_copy": boundedTextArraySchema(0, 6, 120),
+		"prohibitions":  boundedStringArraySchema(0, 0),
+		"fact_gaps":     boundedTextArraySchema(0, 6, 160),
 	},
 }
 
@@ -19,10 +20,11 @@ var overlayJSONSchema = map[string]any{
 	"additionalProperties": false,
 	"required":             []any{"style", "colors", "prohibitions"},
 	"properties": map[string]any{
-		"style": map[string]any{"type": "array", "minItems": 1, "items": nonEmptyTextSchema()},
+		"style": boundedTextArraySchema(3, 5, 160),
 		"colors": map[string]any{
 			"type":     "array",
 			"minItems": 1,
+			"maxItems": 5,
 			"items": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -34,7 +36,7 @@ var overlayJSONSchema = map[string]any{
 				},
 			},
 		},
-		"prohibitions": stringArraySchema(),
+		"prohibitions": boundedStringArraySchema(0, 0),
 	},
 }
 
@@ -47,10 +49,10 @@ var listingPromptJSONSchema = map[string]any{
 	},
 	"properties": map[string]any{
 		"schema_version":    map[string]any{"type": "integer", "const": 1},
-		"shared_rules":      map[string]any{"type": "array", "minItems": 1, "items": nonEmptyTextSchema()},
+		"shared_rules":      boundedStringArraySchema(1, 1),
 		"design_goal":       nonEmptyTextSchema(),
 		"product_fidelity":  fidelitySchema,
-		"creative_boundary": stringArraySchema(),
+		"creative_boundary": boundedStringArraySchema(0, 1),
 		"composition":       compositionSchema,
 		"content":           contentSchema,
 		"text":              textSchema,
@@ -72,7 +74,7 @@ var fidelitySchema = map[string]any{
 		"complex_structure":  map[string]any{"type": "boolean"},
 		"product_present":    map[string]any{"type": "boolean"},
 		"picture_in_picture": map[string]any{"type": "string", "enum": []any{"none", "allowed", "required"}},
-		"requirements":       map[string]any{"type": "array", "minItems": 1, "items": nonEmptyTextSchema()},
+		"requirements":       boundedStringArraySchema(1, 2),
 	},
 }
 
@@ -84,7 +86,7 @@ var compositionSchema = map[string]any{
 		"viewpoint":             nonEmptyTextSchema(),
 		"product_share_percent": map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 100},
 		"layout":                nonEmptyTextSchema(),
-		"copy_regions":          stringArraySchema(),
+		"copy_regions":          boundedTextArraySchema(0, 4, 240),
 	},
 }
 
@@ -93,10 +95,10 @@ var contentSchema = map[string]any{
 	"additionalProperties": false,
 	"required":             []any{"focus", "selling_points", "background", "decorations"},
 	"properties": map[string]any{
-		"focus":          map[string]any{"type": "array", "minItems": 1, "items": nonEmptyTextSchema()},
-		"selling_points": stringArraySchema(),
+		"focus":          boundedTextArraySchema(1, 3, 240),
+		"selling_points": boundedTextArraySchema(0, 5, 240),
 		"background":     nonEmptyTextSchema(),
-		"decorations":    stringArraySchema(),
+		"decorations":    boundedTextArraySchema(0, 4, 160),
 	},
 }
 
@@ -116,7 +118,7 @@ var atmosphereSchema = map[string]any{
 	"additionalProperties": false,
 	"required":             []any{"keywords", "lighting"},
 	"properties": map[string]any{
-		"keywords": map[string]any{"type": "array", "minItems": 1, "items": nonEmptyTextSchema()},
+		"keywords": boundedTextArraySchema(2, 5, 120),
 		"lighting": nonEmptyTextSchema(),
 	},
 }
@@ -127,6 +129,17 @@ func nonEmptyTextSchema() map[string]any {
 
 func stringArraySchema() map[string]any {
 	return map[string]any{"type": "array", "items": nonEmptyTextSchema()}
+}
+
+func boundedStringArraySchema(minItems, maxItems int) map[string]any {
+	return boundedTextArraySchema(minItems, maxItems, 240)
+}
+
+func boundedTextArraySchema(minItems, maxItems, maxLength int) map[string]any {
+	return map[string]any{
+		"type": "array", "minItems": minItems, "maxItems": maxItems,
+		"items": map[string]any{"type": "string", "minLength": 1, "maxLength": maxLength},
+	}
 }
 
 func nullableStringSchema() map[string]any {

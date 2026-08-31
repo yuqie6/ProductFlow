@@ -91,6 +91,9 @@ func matchJSONSchema(schema map[string]any, value any) error {
 		if minItems, ok := jsonSchemaInt(schema["minItems"]); ok && len(arr) < minItems {
 			return fmt.Errorf("array too short")
 		}
+		if maxItems, ok := jsonSchemaInt(schema["maxItems"]); ok && len(arr) > maxItems {
+			return fmt.Errorf("array too long")
+		}
 		if itemSchema, ok := schema["items"].(map[string]any); ok {
 			for _, item := range arr {
 				if err := matchJSONSchema(itemSchema, item); err != nil {

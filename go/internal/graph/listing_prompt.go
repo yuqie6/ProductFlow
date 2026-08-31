@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -28,10 +26,6 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	if atmosphere == nil {
 		atmosphere = map[string]any{}
 	}
-	fidelity, _ := payload["product_fidelity"].(map[string]any)
-	if fidelity == nil {
-		fidelity = map[string]any{}
-	}
 	text, _ := payload["text"].(map[string]any)
 	if text == nil {
 		text = map[string]any{}
@@ -39,27 +33,22 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	imageTypeKey := strings.TrimSpace(req.ImageTypeKey)
 	family := imageTypeFamily(imageTypeKey)
 	typeTitle := imageTypeTitle(imageTypeKey)
-	job := imageTypeJob(imageTypeKey)
 	compile := prompts.CompileImageTemplates()
-	identity := prompts.IdentityRules()
 	briefLines := []string{
 		compile.LeadFor(typeTitle),
-		compile.Identity,
-		compile.Recompose,
-		prompts.ListingLook().Rule,
-		identity.NoCaptionOnReference + "。",
-		compile.Invent,
+		"参考图中的商品是身份基准：准确保留商品外形、结构、材质、颜色和可见标识；围绕本图任务重新设计场景、机位与光线。",
 	}
-	if job != "" {
-		briefLines = append(briefLines, "图种任务："+job)
+	if typeLine := compile.TypeLine(imageTypeKey); typeLine != "" {
+		briefLines = append(briefLines, typeLine)
+	} else if familyLine := compile.FamilyLine(family); familyLine != "" {
+		briefLines = append(briefLines, familyLine)
 	}
-	briefLines = append(briefLines, compile.FamilyLine(family))
 	policy, _ := spec["text_policy"].(string)
 	if policy == "" {
 		policy = "none"
 	}
 	language, _ := spec["text_language"].(string)
-	if line := compile.TextPolicyLine(policy, language); line != "" {
+	if line := compile.TextPolicyLine(policy, language, family); line != "" {
 		briefLines = append(briefLines, line)
 	}
 	if designGoal := usablePromptText(payload["design_goal"]); designGoal != "" {
@@ -107,12 +96,6 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		}
 		briefLines = append(briefLines, "氛围："+strings.Join(parts, "，"))
 	}
-	if requirements := usablePromptTexts(fidelity["requirements"]); len(requirements) > 0 {
-		briefLines = append(briefLines, "保真："+strings.Join(requirements, "、"))
-	}
-	if boundary := usablePromptTexts(payload["creative_boundary"]); len(boundary) > 0 {
-		briefLines = append(briefLines, "禁令："+strings.Join(boundary, "、"))
-	}
 	if policy != "none" {
 		copyBits := []string{}
 		for _, key := range []string{"headline", "subtitle", "body"} {
@@ -127,38 +110,10 @@ func CompileImageModelPrompt(req ImageRequest) string {
 			briefLines = append(briefLines, "文案区域："+strings.Join(regions, "、"))
 		}
 	}
-	if shared := usablePromptTexts(payload["shared_rules"]); len(shared) > 0 {
-		briefLines = append(briefLines, "规则："+strings.Join(shared, "；"))
-	}
 	if strings.TrimSpace(req.VariationInstruction) != "" {
 		briefLines = append(briefLines, "变化："+strings.TrimSpace(req.VariationInstruction))
 	}
-	refAssets := make([]map[string]any, 0, len(req.References))
-	for _, item := range req.References {
-		refAssets = append(refAssets, map[string]any{
-			"asset_id": item.AssetID,
-			"label":    item.Label,
-			"edge_id":  emptyToNil(item.EdgeID),
-		})
-	}
-	incoming := req.IncomingEdgeIDs
-	if incoming == nil {
-		incoming = []string{}
-	}
-	contract := marshalListingContract(map[string]any{
-		"contract_version":      3,
-		"task":                  "generate_one_ecommerce_listing_image",
-		"image_type_key":        emptyToNil(imageTypeKey),
-		"image_type_family":     family,
-		"prompt_artifact":       payload,
-		"visual_system":         req.VisualSystem,
-		"visual_overlay":        req.VisualOverlay,
-		"variation_instruction": emptyToNil(strings.TrimSpace(req.VariationInstruction)),
-		"generation_spec":       spec,
-		"reference_assets":      refAssets,
-		"incoming_edge_ids":     incoming,
-	})
-	return strings.Join(briefLines, "\n") + "\n\n" + contract
+	return strings.Join(uniquePromptLines(briefLines), "\n")
 }
 
 func overlayBriefLines(overlay map[string]any) []string {
@@ -172,10 +127,24 @@ func overlayBriefLines(overlay map[string]any) []string {
 	if colors := overlayColorTexts(overlay["colors"]); len(colors) > 0 {
 		lines = append(lines, "色彩："+strings.Join(colors, "、"))
 	}
-	if prohibitions := usablePromptTexts(overlay["prohibitions"]); len(prohibitions) > 0 {
-		lines = append(lines, "外观禁令："+strings.Join(prohibitions, "、"))
-	}
 	return lines
+}
+
+func uniquePromptLines(lines []string) []string {
+	seen := make(map[string]struct{}, len(lines))
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if _, exists := seen[line]; exists {
+			continue
+		}
+		seen[line] = struct{}{}
+		out = append(out, line)
+	}
+	return out
 }
 
 func overlayColorTexts(value any) []string {
@@ -259,15 +228,4 @@ func usablePromptTexts(value any) []string {
 		}
 	}
 	return out
-}
-
-func marshalListingContract(v any) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return "{}"
-	}
-	return strings.TrimSpace(buf.String())
 }

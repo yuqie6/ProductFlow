@@ -285,7 +285,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 		out = map[string]any{}
 	}
 	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
-		for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+		for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
 			delete(out, key)
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
@@ -293,7 +293,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 		}
 		return out
 	}
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
 		if documentFieldEmpty(out[key]) {
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
@@ -426,6 +426,37 @@ func collectGraphImageTypes(graph AppliedGraph) []map[string]any {
 		out = append(out, item)
 	}
 	return out
+}
+
+func listingTextPolicy(graph AppliedGraph) (policy, language string) {
+	policy = "none"
+	for _, node := range graph.Nodes {
+		if node.NodeType != NodeImageGeneration {
+			continue
+		}
+		key, _ := node.Config["image_type_key"].(string)
+		if imageTypeFamily(strings.TrimSpace(key)) != "infographic" {
+			continue
+		}
+		spec, _ := node.Config["generation_spec"].(map[string]any)
+		if spec == nil {
+			return "required", "zh-CN"
+		}
+		raw, _ := spec["text_policy"].(string)
+		raw = strings.TrimSpace(raw)
+		if raw == "" || raw == "none" {
+			return "required", firstTextLanguage(spec, "zh-CN")
+		}
+		return raw, firstTextLanguage(spec, "zh-CN")
+	}
+	return policy, language
+}
+
+func firstTextLanguage(spec map[string]any, fallback string) string {
+	if lang, _ := spec["text_language"].(string); strings.TrimSpace(lang) != "" {
+		return strings.TrimSpace(lang)
+	}
+	return fallback
 }
 
 func downstreamTextPolicy(graph AppliedGraph, promptNodeID string) (policy, language string) {
