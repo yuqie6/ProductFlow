@@ -10,28 +10,28 @@ import {
 } from "./createIntake";
 
 describe("create intake generation spec", () => {
-  it("builds a required Chinese spec; aspect ratio is chosen per image type", () => {
+  it("defaults photography to no copy and keeps language for infographic pages", () => {
     const spec = buildCreateGenerationSpec(defaultCreateOutputDraft());
     expect(spec).toMatchObject({
-      text_policy: "required",
+      text_policy: "none",
       text_language: "zh-CN",
       resolution_tier: "high",
     });
   });
 
-  it("omits language when the image must stay text-free", () => {
+  it("keeps language when photography is text-free so infographic shots can use it", () => {
     const spec = buildCreateGenerationSpec({
       textPolicy: "none",
       textLanguage: "zh-CN",
     });
     expect(spec).toMatchObject({
       text_policy: "none",
-      text_language: null,
+      text_language: "zh-CN",
     });
     expect(createOutputSummary({
       textPolicy: "none",
       textLanguage: "zh-CN",
-    }).textLanguage).toBeNull();
+    }).textLanguage).toBe("zh-CN");
   });
 
   it("rejects required copy without a language", () => {

@@ -9,7 +9,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 ## Online Flow
 
 1. `/products/new` is the only product-creation entry.
-2. Image types start unselected. Selecting a type initializes its quantity to 2.
+2. Image types start unselected. Selecting a type initializes its quantity to 2. 「应用推荐套图」补齐封面 2、卖点 4、规格 1、SKU 1、场景 1、细节 1，不覆盖已选类型的数量。
 3. Each selected type has a quantity from 1 to 6; the total planned images cannot exceed 30.
 4. The user uploads 1 to 6 verified references and is expected to include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
 5. Agent-first create can start from a product name.

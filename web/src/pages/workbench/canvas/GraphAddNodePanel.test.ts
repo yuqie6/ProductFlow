@@ -78,7 +78,7 @@ describe("GraphAddNodePanel", () => {
     }));
     expect(markup).toContain("添加场景");
     expect(markup).toContain("data-add-shot");
-    expect(markup).toContain("首屏海报图");
+    expect(markup).toContain("封面主图");
   });
 
   it("exposes recipes as an optional entrance, not a node type", () => {

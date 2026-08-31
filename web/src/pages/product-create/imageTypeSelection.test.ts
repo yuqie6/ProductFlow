@@ -7,6 +7,7 @@ import {
   aspectRatioForSelection,
   buildAgentProductSelection,
   resolveDeliveryPresetKey,
+  selectionNeedsConversionShot,
   toggleAgentImageType,
   updateAgentImageTypeAspectRatio,
   updateAgentImageTypeQuantity,
@@ -51,10 +52,10 @@ describe("Agent product image type selection", () => {
       ok: true,
       selections: [
         ...current,
+        { key: "selling_point", quantity: 4, aspectRatio: "3:4" },
         { key: "detail", quantity: 2, aspectRatio: "1:1" },
-        { key: "selling_point", quantity: 2, aspectRatio: "3:4" },
       ],
-      addedKeys: ["detail", "selling_point"],
+      addedKeys: ["selling_point", "detail"],
     });
     expect(current).toEqual([
       { key: "sku", quantity: 4, aspectRatio: "16:9" },
@@ -81,8 +82,8 @@ describe("Agent product image type selection", () => {
   });
 
   it("reports unavailable and complete sets without mutating the current array", () => {
-    const current = [{ key: "sku" as const, quantity: 2 }];
-    const unavailable = applyRecommendedImageSet({ current, catalogKeys: ["sku"], limits });
+    const current = [{ key: "packaging" as const, quantity: 2 }];
+    const unavailable = applyRecommendedImageSet({ current, catalogKeys: ["packaging"], limits });
     expect(unavailable).toEqual({
       ok: false,
       reason: "unavailable",
@@ -92,14 +93,15 @@ describe("Agent product image type selection", () => {
 
     const completeCurrent = [
       { key: "hero" as const, quantity: 2 },
-      { key: "detail" as const, quantity: 1 },
+      { key: "selling_point" as const, quantity: 4 },
+      { key: "specifications" as const, quantity: 1 },
+      { key: "sku" as const, quantity: 1, aspectRatio: "1:1" },
       { key: "scene" as const, quantity: 1 },
-      { key: "selling_point" as const, quantity: 1 },
-      { key: "sku" as const, quantity: 4, aspectRatio: "16:9" },
+      { key: "detail" as const, quantity: 1 },
     ];
     const complete = applyRecommendedImageSet({
       current: completeCurrent,
-      catalogKeys: ["hero", "detail", "scene", "selling_point", "sku"],
+      catalogKeys: ["hero", "detail", "scene", "selling_point", "sku", "specifications", "packaging"],
       limits,
     });
     expect(complete).toEqual({
@@ -213,6 +215,16 @@ describe("Agent product image type selection", () => {
 
     expect(initial).toEqual([{ key: "hero", quantity: 2 }]);
     expect(next).toEqual([{ key: "hero", quantity: 3 }]);
+  });
+
+  it("flags a photography-only selection as missing a conversion shot", () => {
+    expect(selectionNeedsConversionShot([])).toBe(false);
+    expect(selectionNeedsConversionShot([{ key: "hero", quantity: 2, aspectRatio: "3:4" }])).toBe(true);
+    expect(selectionNeedsConversionShot([
+      { key: "hero", quantity: 2, aspectRatio: "3:4" },
+      { key: "selling_point", quantity: 2, aspectRatio: "3:4" },
+    ])).toBe(false);
+    expect(selectionNeedsConversionShot([{ key: "specifications", quantity: 1, aspectRatio: "3:4" }])).toBe(false);
   });
 
   it("locks evidence types to quantity 1 and excludes them from generated totals", () => {

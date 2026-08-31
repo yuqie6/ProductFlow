@@ -1,6 +1,7 @@
 import {
   IMAGE_TYPE_ASPECT_RATIOS,
   defaultAspectRatioForType as familyDefaultAspectRatio,
+  imageTypeFamily,
   isEvidenceImageType,
 } from "../../lib/imageTypeFamilies";
 import type { TranslationKey } from "../../lib/i18n";
@@ -75,20 +76,39 @@ export const CREATE_TYPE_ASPECT_RATIOS = IMAGE_TYPE_ASPECT_RATIOS;
 
 export const CREATE_ASPECT_RATIO_PRESETS = ["1:1", "4:5", "3:4", "9:16", "4:3", "16:9"] as const;
 
-export const RECOMMENDED_AGENT_IMAGE_TYPE_KEYS = ["hero", "detail", "scene", "selling_point"] as const;
+/** 详情最小集：封面、卖点序列、规格、选款、场景、细节。 */
+export const RECOMMENDED_AGENT_IMAGE_SET = [
+  { key: "hero", quantity: 2 },
+  { key: "selling_point", quantity: 4 },
+  { key: "specifications", quantity: 1 },
+  { key: "sku", quantity: 1 },
+  { key: "scene", quantity: 1 },
+  { key: "detail", quantity: 1 },
+] as const satisfies readonly { key: AgentProductImageTypeKey; quantity: number }[];
+
+export const RECOMMENDED_AGENT_IMAGE_TYPE_KEYS = RECOMMENDED_AGENT_IMAGE_SET.map((item) => item.key);
+
+export function recommendedQuantityForType(
+  key: AgentProductImageTypeKey,
+  limits: Pick<AgentProductWorkspaceLimits, "min_images_per_type" | "max_images_per_type">,
+): number {
+  const found = RECOMMENDED_AGENT_IMAGE_SET.find((item) => item.key === key);
+  const raw = found?.quantity ?? limits.min_images_per_type;
+  return Math.min(limits.max_images_per_type, Math.max(limits.min_images_per_type, raw));
+}
 
 export type RecommendedImageSetApplication =
   | {
-      ok: true;
-      selections: AgentImageTypeSelectionDraft[];
-      addedKeys: AgentProductImageTypeKey[];
-    }
+    ok: true;
+    selections: AgentImageTypeSelectionDraft[];
+    addedKeys: AgentProductImageTypeKey[];
+  }
   | {
-      ok: false;
-      reason: "complete" | "unavailable" | "capacity";
-      selections: readonly AgentImageTypeSelectionDraft[];
-      addedKeys: AgentProductImageTypeKey[];
-    };
+    ok: false;
+    reason: "complete" | "unavailable" | "capacity";
+    selections: readonly AgentImageTypeSelectionDraft[];
+    addedKeys: AgentProductImageTypeKey[];
+  };
 
 export function defaultAspectRatioForType(key: AgentProductImageTypeKey): string {
   return familyDefaultAspectRatio(key);
@@ -131,6 +151,13 @@ export function updateAgentImageTypeAspectRatio(
   return current.map((item) => (item.key === key ? { ...item, aspectRatio } : item));
 }
 
+export function selectionNeedsConversionShot(
+  current: readonly AgentImageTypeSelectionDraft[],
+): boolean {
+  if (current.length === 0) return false;
+  return !current.some((item) => imageTypeFamily(item.key) === "infographic");
+}
+
 export function agentImageTotal(current: readonly AgentImageTypeSelectionDraft[]): number {
   return current.reduce((total, item) => total + (isEvidenceImageType(item.key) ? 0 : item.quantity), 0);
 }
@@ -138,23 +165,29 @@ export function agentImageTotal(current: readonly AgentImageTypeSelectionDraft[]
 export function applyRecommendedImageSet(input: {
   current: readonly AgentImageTypeSelectionDraft[];
   catalogKeys: readonly AgentProductImageTypeKey[];
-  limits: Pick<AgentProductWorkspaceLimits, "min_images_per_type" | "max_total_images">;
+  limits: Pick<AgentProductWorkspaceLimits, "min_images_per_type" | "max_images_per_type" | "max_total_images">;
 }): RecommendedImageSetApplication {
   const catalogKeys = new Set(input.catalogKeys);
   const selectedKeys = new Set(input.current.map((item) => item.key));
-  const availableKeys = RECOMMENDED_AGENT_IMAGE_TYPE_KEYS.filter((key) => catalogKeys.has(key));
-  const missingKeys = availableKeys.filter((key) => !selectedKeys.has(key));
+  const missing = RECOMMENDED_AGENT_IMAGE_SET.filter(
+    (item) => catalogKeys.has(item.key) && !selectedKeys.has(item.key),
+  );
 
-  if (missingKeys.length === 0) {
+  if (missing.length === 0) {
     return {
       ok: false,
-      reason: availableKeys.length === 0 ? "unavailable" : "complete",
+      reason: RECOMMENDED_AGENT_IMAGE_SET.some((item) => catalogKeys.has(item.key)) ? "complete" : "unavailable",
       selections: input.current,
       addedKeys: [],
     };
   }
 
-  const addedImages = missingKeys.length * input.limits.min_images_per_type;
+  const additions = missing.map((item) => ({
+    key: item.key,
+    quantity: recommendedQuantityForType(item.key, input.limits),
+    aspectRatio: defaultAspectRatioForType(item.key),
+  }));
+  const addedImages = additions.reduce((total, item) => total + item.quantity, 0);
   if (agentImageTotal(input.current) + addedImages > input.limits.max_total_images) {
     return {
       ok: false,
@@ -166,15 +199,8 @@ export function applyRecommendedImageSet(input: {
 
   return {
     ok: true,
-    selections: [
-      ...input.current,
-      ...missingKeys.map((key) => ({
-        key,
-        quantity: input.limits.min_images_per_type,
-        aspectRatio: defaultAspectRatioForType(key),
-      })),
-    ],
-    addedKeys: [...missingKeys],
+    selections: [...input.current, ...additions],
+    addedKeys: additions.map((item) => item.key),
   };
 }
 

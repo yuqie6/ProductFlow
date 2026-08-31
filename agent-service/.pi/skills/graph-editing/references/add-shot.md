@@ -5,7 +5,7 @@
 ## 操作
 
 1. `create_group`，新 `client_ref` 与镜头标题。`member_refs` 可空；后续 `create_node` 用 `group_ref`。
-2. `create_node` `node_type=prompt_generation` 放进该组。配置含 `image_type_key` 和 `prompt.design_goal`。
+2. `create_node` `node_type=image_prompt` 放进该组。配置含 `image_type_key` 和 `prompt.design_goal`。
 3. 一个或多个 `create_node` `node_type=image_generation` 放进该组。配置用同一 `image_type_key` 和 `generation_spec`。
 4. `connect_nodes` 从 prompt 接到每个 image 节点。`connect_nodes` 有 `client_ref`、`source_ref`、`target_ref`，可选 `order`。没有 `role` 或 `data_type`。
 5. `connect_nodes` 把已有 `product_source`、`creative_brief`、`visual_system` 接到新 prompt（有 visual 时也接到 image 节点）。

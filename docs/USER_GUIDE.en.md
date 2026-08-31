@@ -24,9 +24,10 @@ Open `/products/new`.
 
 - Enter the product name and a product brief (selling points, audience, style).
 - Select the required image types. Types are grouped as photography, infographic, and evidence.
-- Photography and infographic types default to two images in the same shot, sharing one prompt.
+- Manual checks default to two images per type. Apply recommended set fills the listing minimum: cover 2, selling-point 4 (one hook per frame), specifications 1, SKU 1, scene 1, detail 1, without overwriting quantities already chosen.
+- Multiple images of one type share one prompt; each image node can carry a variation instruction (selling-point pages use it to split hooks).
 - Certification and factory are evidence types: one unbound asset placeholder, not generated.
-- Each generating type has its own aspect ratio, editable in output settings. Hero defaults to 3:4, detail and SKU to 1:1, scene to 4:3.
+- Each generating type has its own aspect ratio, editable in output settings. Cover defaults to 3:4, detail and SKU to 1:1, scene to 4:3.
 
 ### 2.2 Upload Real References
 
@@ -63,7 +64,7 @@ Graph confirmation uses canvas proposals. The product path no longer confirms a 
 
 ### 2.5 Create the Canvas Directly
 
-On the create page, enter a product brief plus on-image copy and language, then set an aspect ratio for each image type. Skip the Agent to write a runnable workflow immediately. The brief is written into the creative-brief node; copy requirement and language are written onto every image node; aspect ratio is written per type. Defaults are required copy and Simplified Chinese, with type-specific frames such as 3:4 for hero and 1:1 for detail. After you upload references and choose image types, the graph includes product facts, identity references, visual system, creative brief, and one group per photography/infographic shot (one prompt plus N images). Evidence types are unbound placeholders. Identity photos connect to visual, brief, and generating shots, not to evidence placeholders. You can talk to the Agent as soon as the workbench opens; the photos are already on the product, so you do not resubmit create-page image requirements. If something is missing, the Agent asks in chat. Edit nodes and edges on the canvas, or use Add a shot. The Agent can explain the graph, check configuration, and request a run; it cannot submit a Draft that replaces the live graph. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes, a shot, or the whole graph.
+On the create page, enter a product brief plus on-image copy and language, then set an aspect ratio for each image type. Skip the Agent to write a runnable workflow immediately. The brief is written into the creative-brief node. Photography defaults to no on-image copy; selling-point and spec pages always include copy, using the selected language (Simplified Chinese by default). Aspect ratio is written per type, such as 3:4 for cover and 1:1 for detail. After you upload references and choose image types, the graph includes product facts, identity references, visual system, creative brief, and one group per photography/infographic shot (one prompt plus N images; variation instructions when quantity is greater than one). Evidence types are unbound placeholders. Identity photos connect to visual, brief, and generating shots, not to evidence placeholders. You can talk to the Agent as soon as the workbench opens; the photos are already on the product, so you do not resubmit create-page image requirements. If something is missing, the Agent asks in chat. Edit nodes and edges on the canvas, or use Add a shot. The Agent can explain the graph, check configuration, and request a run; it cannot submit a Draft that replaces the live graph. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes, a shot, or the whole graph.
 
 ## 3. Product Workbench
 
@@ -134,7 +135,7 @@ Image nodes:
 
 - Choose aspect ratio and resolution tier.
 - Set quality intent, reference fidelity, background, and text policy.
-- Text policy constrains prompt generation and rendering. Direct create defaults to required on-image copy with a language; a new image node added on the canvas defaults to no copy. Switch to allow or required and set a language when the image needs letters.
+- Text policy constrains prompt generation and rendering. Photography defaults to no copy; infographic pages always include copy and a language. A photography node added on the canvas defaults to no copy; an infographic node defaults to required copy. Switch photography to allow or required and set a language when the cover needs a one-line benefit.
 - A reference edge is optional. Text-only generation is allowed; an unbound reference edge fails and points at that asset node. Direct create wires uploads to visual, brief, prompt, and image nodes.
 - Running this node only renders an image from the live prompt document. A prompt artifact is not required. A seed prompt with only the template design goal can still render; the inspector warns that you may want to generate or fill composition first.
 - Inspect output both on the node and in the library.

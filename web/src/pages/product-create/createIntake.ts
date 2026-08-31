@@ -1,11 +1,10 @@
 import type { AgentProductWorkspaceLimits, WorkflowGenerationSpec } from "../../lib/types";
-import { parseWorkflowGenerationSpec } from "../workbench/canvas/generationSpec";
 import {
   validateAgentProductWorkspaceInput,
   type AgentImageTypeSelectionDraft,
 } from "./imageTypeSelection";
 
-export const CREATE_DEFAULT_TEXT_POLICY = "required" as const;
+export const CREATE_DEFAULT_TEXT_POLICY = "none" as const;
 export const CREATE_DEFAULT_TEXT_LANGUAGE = "zh-CN";
 export const CREATE_BRIEF_MAX_LENGTH = 4000;
 export const CREATE_SHARED_ASPECT_FALLBACK = "1:1";
@@ -34,15 +33,16 @@ export function defaultCreateOutputDraft(): CreateOutputDraft {
 
 export function buildCreateGenerationSpec(draft: CreateOutputDraft): WorkflowGenerationSpec | null {
   const language = draft.textLanguage.trim();
-  return parseWorkflowGenerationSpec({
+  if (draft.textPolicy !== "none" && !language) return null;
+  return {
     aspect_ratio: CREATE_SHARED_ASPECT_FALLBACK,
     resolution_tier: "high",
     quality_intent: "high",
     reference_fidelity: "high",
     background_intent: "auto",
     text_policy: draft.textPolicy,
-    text_language: draft.textPolicy === "none" ? null : language,
-  });
+    text_language: language || CREATE_DEFAULT_TEXT_LANGUAGE,
+  };
 }
 
 export function createOutputSummary(draft: CreateOutputDraft): {
@@ -51,7 +51,7 @@ export function createOutputSummary(draft: CreateOutputDraft): {
 } {
   return {
     textPolicy: draft.textPolicy,
-    textLanguage: draft.textPolicy === "none" ? null : draft.textLanguage.trim() || null,
+    textLanguage: draft.textLanguage.trim() || CREATE_DEFAULT_TEXT_LANGUAGE,
   };
 }
 

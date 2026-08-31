@@ -31,8 +31,10 @@ version: 2
 ## 工作循环
 
 1. 收集图片类型与 `reference_asset_ids`。
-2. 调用 `finalize_product_intake_v1`，再重读上下文。该工具写入 intake 并展开摄影/信息图模板（每种生成类型一组 + prompt + N 个 image 节点）。
-3. 若 intake 已在且 `birth_expandable` 仍为真：用同一 selection 再调用一次以展开模板。
+2. 用户没点名图种时，用 `ask_user` 提问。默认选项为推荐套图：封面主图 2、核心卖点图 4、规格参数图 1、SKU 1、场景 1、细节 1。不要在用户未确认时直接 finalize 这一套。
+3. 用户只点封面/主图和细节时，追问是否补上卖点图、规格图和选款图；选项为「补齐推荐套图」和「只要我说的这几种」。未确认前不要 finalize 纯摄影套图。
+4. 调用 `finalize_product_intake_v1`，再重读上下文。该工具写入 intake 并展开摄影/信息图模板（每种生成类型一组 + prompt + N 个 image 节点）。
+5. 若 intake 已在且 `birth_expandable` 仍为真：用同一 selection 再调用一次以展开模板。
 
 ## 禁止行为
 

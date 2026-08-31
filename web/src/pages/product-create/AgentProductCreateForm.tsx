@@ -42,6 +42,7 @@ import {
   applyRecommendedImageSet,
   agentImageTotal,
   aspectRatioForSelection,
+  selectionNeedsConversionShot,
   type AgentImageTypeSelectionDraft,
 } from "./imageTypeSelection";
 import { CreateAspectRatioChips } from "./CreateAspectRatioChips";
@@ -201,6 +202,7 @@ export function AgentProductCreateForm({
       })
     : null;
   const recommendedSetDisabled = isSubmitting || editingLocked || !recommendedSet?.ok;
+  const needsConversionShot = selectionNeedsConversionShot(selections);
   const totalImages = agentImageTotal(selections);
   const previewUrls = useMemo(
     () =>
@@ -446,7 +448,8 @@ export function AgentProductCreateForm({
       {stageCard(2, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
         <div className="space-y-3">
           {options ? (
-            <div className="flex justify-end">
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-end">
               <button
                 type="button"
                 data-agent-apply-recommended-set
@@ -457,6 +460,10 @@ export function AgentProductCreateForm({
                 <Sparkles size={13} aria-hidden="true" />
                 {t("agentCreate.applyRecommendedSet")}
               </button>
+              </div>
+              {needsConversionShot ? (
+                <p className="text-xs leading-5 text-text-secondary">{t("agentCreate.missingConversionShot")}</p>
+              ) : null}
             </div>
           ) : null}
           {isOptionsLoading ? (
@@ -642,25 +649,24 @@ export function AgentProductCreateForm({
                 );
               })}
             </div>
-            {outputDraft.textPolicy === "none" ? null : (
-              <label htmlFor="agent-create-text-language" className="block shrink-0 sm:w-40">
-                <span className="sr-only">{t("agentCreate.textLanguage")}</span>
-                <select
-                  id="agent-create-text-language"
-                  value={outputDraft.textLanguage}
-                  disabled={isSubmitting || editingLocked}
-                  onChange={(event) => updateOutput({ textLanguage: event.target.value })}
-                  className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {CREATE_TEXT_LANGUAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <label htmlFor="agent-create-text-language" className="block shrink-0 sm:w-40">
+              <span className="sr-only">{t("agentCreate.textLanguage")}</span>
+              <select
+                id="agent-create-text-language"
+                value={outputDraft.textLanguage}
+                disabled={isSubmitting || editingLocked}
+                onChange={(event) => updateOutput({ textLanguage: event.target.value })}
+                className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {CREATE_TEXT_LANGUAGE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
+          <p className="text-xs leading-5 text-text-muted">{t("agentCreate.textPolicyHint")}</p>
           <div>
             <div id="agent-create-type-ratios" className="mb-1 text-xs font-medium text-text-secondary">
               {t("agentCreate.aspectRatio")}

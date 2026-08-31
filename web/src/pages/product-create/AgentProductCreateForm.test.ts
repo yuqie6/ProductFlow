@@ -223,10 +223,12 @@ describe("AgentProductCreateForm", () => {
     const lockedMarkup = renderForm([{ key: "hero", quantity: 1 }], { editingLocked: true });
     const submittingMarkup = renderForm([{ key: "hero", quantity: 1 }], { isSubmitting: true });
     const completeMarkup = renderForm([
-      { key: "hero", quantity: 1 },
-      { key: "detail", quantity: 1 },
+      { key: "hero", quantity: 2 },
+      { key: "selling_point", quantity: 4 },
+      { key: "specifications", quantity: 1 },
+      { key: "sku", quantity: 1 },
       { key: "scene", quantity: 1 },
-      { key: "selling_point", quantity: 1 },
+      { key: "detail", quantity: 1 },
     ]);
 
     const lockedButton = lockedMarkup.match(/<button[^>]+data-agent-apply-recommended-set[^>]*>/)?.[0] ?? "";
@@ -255,6 +257,7 @@ describe("AgentProductCreateForm", () => {
     const markup = renderForm([{ key: "hero", quantity: 1 }]);
     expect(markup).toContain('data-create-outcome="need-plan"');
     expect(markup).toContain("图种或参考图还没齐，补齐后才会带上完整画布");
+    expect(markup).toContain("当前没有详情转化图");
   });
 
   it("keeps canvas-only disabled until image types and a reference are present", () => {

@@ -331,7 +331,7 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("平台预设");
     expect(markup).toContain("淘宝/天猫首屏");
     expect(markup).toContain("京东主图");
-    expect(markup).toContain("首屏海报图");
+    expect(markup).toContain("封面主图");
     expect(markup).not.toContain("支持自定义");
     expect(markup).not.toContain("2026-08-24");
     expect(markup).not.toContain("docs/ARCHITECTURE.md");

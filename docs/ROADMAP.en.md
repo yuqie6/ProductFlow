@@ -12,7 +12,6 @@ Do not write these into CONTEXT / PRD / ARCHITECTURE until they land.
 |---|---|---|
 | Shot list as default surface | Workbench opens on shot rows (type, count, status, thumbnail, run this shot); same schema-v3 canvas remains available | A Shot table or a second executor |
 | Generate-set copy | One merchant action runs the existing DAG (content nodes first, then each shot); progress projected per shot | A second run model |
-| Recommended types on create | One click fills missing image types; a second click does not overwrite existing shot config | Official canvas-template recipes |
 | Post-generation local edit | Inpaint / replace text / local redraw on an existing `ProductImageAsset`; new asset keeps lineage; failure does not replace the node's current result | A seventh node type, watermark-removal shelf, batch 200 |
 | Human fidelity checklist | People check form, color, and text on the result; then local-edit or rerun that shot | Auto quality scores as a formal gate |
 
