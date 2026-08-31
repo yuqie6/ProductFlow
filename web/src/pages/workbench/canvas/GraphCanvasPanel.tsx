@@ -24,6 +24,11 @@ import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCa
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
 import {
+  existingWorkbenchGroupId,
+  patchWorkbenchUiState,
+  readWorkbenchUiState,
+} from "../chrome/workbenchUiState";
+import {
   isWorkflowCanvasViewportScopeActive,
   readStoredWorkflowCanvasViewport,
   writeStoredWorkflowCanvasViewport,
@@ -126,6 +131,16 @@ function narrowWorkbench(): boolean {
     && window.matchMedia("(max-width: 639px)").matches;
 }
 
+function restoredCanvasWorkbenchUi(productId: string, graph: GraphProjection) {
+  const stored = readWorkbenchUiState(productId);
+  const enteredGroupId = existingWorkbenchGroupId(graph, stored.enteredGroupId);
+  return {
+    enteredGroupId,
+    filmstripVisible: stored.filmstripVisible ?? true,
+    viewport: readStoredWorkflowCanvasViewport(graph.id, enteredGroupId),
+  };
+}
+
 interface PendingGraphApply {
   summary: string;
   operations: GraphChangeSet["operations"];
@@ -174,11 +189,14 @@ export function GraphCanvasPanel({
     onGraphChange(next);
     queryClient.setQueryData(["workflow-graph", productId], next);
   }, [onGraphChange, productId, queryClient]);
-  const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
+  const restoredCanvasRef = useRef<ReturnType<typeof restoredCanvasWorkbenchUi> | null>(null);
+  if (restoredCanvasRef.current === null) {
+    restoredCanvasRef.current = restoredCanvasWorkbenchUi(productId, graph);
+  }
+  const restoredCanvas = restoredCanvasRef.current;
+  const [enteredGroupId, setEnteredGroupId] = useState<string | null>(restoredCanvas.enteredGroupId);
   const enteredGroupIdRef = useRef<string | null>(null);
-  const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(
-    () => readStoredWorkflowCanvasViewport(graph.id),
-  );
+  const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(restoredCanvas.viewport);
   const viewportRef = useRef(viewport);
   const [canvasSyncVersion, setCanvasSyncVersion] = useState(0);
   const applyInFlightRef = useRef(false);
@@ -201,7 +219,7 @@ export function GraphCanvasPanel({
     expectedRecipeVersion?: number;
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
-  const [filmstripVisible, setFilmstripVisible] = useState(true);
+  const [filmstripVisible, setFilmstripVisible] = useState(restoredCanvas.filmstripVisible);
   const [focusRequest, setFocusRequest] = useState<GraphCanvasFocusRequest | null>(null);
   const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
   const runningShotGroupRef = useRef<string | null>(null);
@@ -215,7 +233,10 @@ export function GraphCanvasPanel({
   viewportRef.current = viewport;
   enteredGroupIdRef.current = enteredGroupId;
 
+  const graphIdRef = useRef(graph.id);
   useEffect(() => {
+    if (graphIdRef.current === graph.id) return;
+    graphIdRef.current = graph.id;
     setEnteredGroupId(null);
     setViewport(readStoredWorkflowCanvasViewport(graph.id));
   }, [graph.id]);
@@ -257,6 +278,13 @@ export function GraphCanvasPanel({
       narrowMedia.removeEventListener("change", update);
     };
   }, []);
+
+  useEffect(() => {
+    patchWorkbenchUiState(productId, {
+      enteredGroupId,
+      filmstripVisible,
+    });
+  }, [enteredGroupId, filmstripVisible, productId]);
 
   const showNotice = useCallback((message: string) => {
     toast.custom(() => <GraphCanvasNotice notice={message} />, {

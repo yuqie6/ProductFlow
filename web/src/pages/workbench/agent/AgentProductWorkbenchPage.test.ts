@@ -12,6 +12,7 @@ import {
   initialAgentWorkbenchSidebarTool,
   requestAgentWorkbenchOpen,
   resolveAgentWorkbenchSidebarTool,
+  shouldOpenInspectorForCanvasSelection,
   startEmptyCanvasAdd,
 } from "./AgentProductWorkbenchPage";
 
@@ -24,6 +25,22 @@ describe("Agent workbench sidebar tool", () => {
       hasGraph: true,
       hasTask: false,
       preferConversation: true,
+    })).toBe("agent");
+    expect(initialAgentWorkbenchSidebarTool({
+      hasGraph: true,
+      hasTask: false,
+      preferConversation: true,
+      storedTool: "runs",
+    })).toBe("runs");
+    expect(initialAgentWorkbenchSidebarTool({
+      hasGraph: true,
+      hasTask: true,
+      storedTool: "runs",
+    })).toBe("agent");
+    expect(initialAgentWorkbenchSidebarTool({
+      hasGraph: false,
+      hasTask: false,
+      storedTool: "details",
     })).toBe("agent");
   });
 
@@ -162,5 +179,14 @@ describe("Agent recipe apply contract", () => {
     expect(keys.get("r2")).toBe("key-2");
     clearAgentWorkflowRecipeIdempotencyKey(keys, "apply", "r2");
     expect(keys.has("r2")).toBe(false);
+  });
+});
+
+describe("Agent canvas selection", () => {
+  it("keeps the Agent rail when the conversation asks the canvas to focus", () => {
+    expect(shouldOpenInspectorForCanvasSelection("agent", 1, true)).toBe(false);
+    expect(shouldOpenInspectorForCanvasSelection("pointer", 1, true)).toBe(true);
+    expect(shouldOpenInspectorForCanvasSelection("pointer", 2, true)).toBe(false);
+    expect(shouldOpenInspectorForCanvasSelection("pointer", 1, false)).toBe(false);
   });
 });

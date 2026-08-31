@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, CircleAlert, CircleDot, Eye, Images, Plus, X } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -33,6 +33,13 @@ import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
 import { RecipeLibraryPanel } from "../canvas/RecipeLibraryPanel";
+import {
+  existingWorkbenchNodeIds,
+  patchWorkbenchUiState,
+  readWorkbenchUiState,
+  sameWorkbenchIds,
+  type WorkbenchSidebarToolId,
+} from "../chrome/workbenchUiState";
 import { useLocalImageEditController } from "../local-edit/LocalImageEditController";
 import { AgentConversationPanel } from "./AgentConversationPanel";
 import {
@@ -42,8 +49,18 @@ import {
 import { isHttpErrorStatus, readWorkflowGraphOrNull } from "./productWorkbenchRoute";
 import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
 
+export type CanvasSelectionSource = "pointer" | "agent";
+
+export function shouldOpenInspectorForCanvasSelection(
+  source: CanvasSelectionSource,
+  nodeCount: number,
+  inspectable: boolean,
+): boolean {
+  return source === "pointer" && nodeCount === 1 && inspectable;
+}
+
 export type AgentWorkbenchPageBootstrap = AgentWorkbenchBootstrap;
-type AgentSidebarToolId = "agent" | "add" | "details" | "runs" | "library" | "recipes";
+type AgentSidebarToolId = WorkbenchSidebarToolId;
 
 const EMPTY_ACTIONS: GraphCanvasActions = {
   createNode: () => undefined,
@@ -82,9 +99,15 @@ export function AgentProductWorkbenchPage({
       hasGraph: Boolean(bootstrap.graph),
       hasTask: Boolean(agentTaskId),
       preferConversation,
+      storedTool: readWorkbenchUiState(bootstrap.product.id).sidebarTool,
     }),
   );
-  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(
+    () => existingWorkbenchNodeIds(
+      bootstrap.graph,
+      readWorkbenchUiState(bootstrap.product.id).selectedNodeIds,
+    ),
+  );
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
   const [bindNodeId, setBindNodeId] = useState<string | null>(null);
   const [archiveRecipe, setArchiveRecipe] = useState<WorkflowRecipeSummary | null>(null);
@@ -93,7 +116,9 @@ export function AgentProductWorkbenchPage({
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [agentEditing, setAgentEditing] = useState(false);
-  const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const [chromeCollapsed, setChromeCollapsed] = useState(
+    () => readWorkbenchUiState(bootstrap.product.id).chromeCollapsed === true,
+  );
   const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
   const [agentOpenRequest, setAgentOpenRequest] = useState(preferConversation ? 1 : 0);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
@@ -133,6 +158,19 @@ export function AgentProductWorkbenchPage({
     ? liveGraph?.nodes.find((node) => node.id === bindNodeId && node.node_type === "image_asset") ?? null
     : null;
   const activeSidebarTool = resolveAgentWorkbenchSidebarTool(sidebarTool, workflowAvailable);
+  useEffect(() => {
+    setSelectedNodeIds((current) => {
+      const next = existingWorkbenchNodeIds(liveGraph, current);
+      return sameWorkbenchIds(current, next) ? current : next;
+    });
+  }, [liveGraph]);
+  useEffect(() => {
+    patchWorkbenchUiState(bootstrap.product.id, {
+      sidebarTool: activeSidebarTool,
+      selectedNodeIds,
+      chromeCollapsed,
+    });
+  }, [activeSidebarTool, bootstrap.product.id, chromeCollapsed, selectedNodeIds]);
   const pageContext = useMemo<AgentPageContextSnapshotInput>(() => ({
     route: `${location.pathname}${location.search}`,
     page_type: "product_workbench",
@@ -249,17 +287,23 @@ export function AgentProductWorkbenchPage({
       actions.focusNodes([nodeId]);
     })();
   }, [actions, liveGraph, requestSidebarTool]);
-  const selectCanvasNodes = useCallback(async (nodeIds: string[]) => {
+  const selectCanvasNodes = useCallback(async (nodeIds: string[], source: CanvasSelectionSource = "pointer") => {
     try {
       await flushInspectorRef.current();
     } catch {
       return;
     }
     setSelectedNodeIds(nodeIds);
-    if (nodeIds.length === 1 && liveGraph && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
+    if (source === "agent" && nodeIds.length) {
+      actions.focusNodes(nodeIds);
+    }
+    const inspectable = Boolean(
+      liveGraph && nodeIds[0] && inspectableGraphNodeId(liveGraph, nodeIds[0]),
+    );
+    if (shouldOpenInspectorForCanvasSelection(source, nodeIds.length, inspectable)) {
       void requestSidebarTool("details");
     }
-  }, [liveGraph, requestSidebarTool]);
+  }, [actions, liveGraph, requestSidebarTool]);
 
 
 
@@ -436,6 +480,7 @@ export function AgentProductWorkbenchPage({
         />
       )}
       <AgentWorkbenchShell
+        productId={bootstrap.product.id}
         workflowAvailable={workflowAvailable}
         activeSidebarTool={activeSidebarTool}
         onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
@@ -497,6 +542,7 @@ export function AgentProductWorkbenchPage({
         )}
         agentContent={(
           <AgentConversationPanel
+            key={bootstrap.conversation.id}
             productId={bootstrap.product.id}
             productName={bootstrap.product.name}
             conversation={bootstrap.conversation}
@@ -507,7 +553,7 @@ export function AgentProductWorkbenchPage({
               void requestSidebarTool("runs");
             }}
             onCanvasFocus={(nodeIds) => {
-              void selectCanvasNodes(nodeIds);
+              void selectCanvasNodes(nodeIds, "agent");
             }}
             onAgentPresenceChange={onAgentPresenceChange}
             onExpandGlobalAgent={() => {
@@ -560,8 +606,13 @@ export function initialAgentWorkbenchSidebarTool(input: {
   hasGraph: boolean;
   hasTask: boolean;
   preferConversation?: boolean;
+  storedTool?: AgentSidebarToolId | null;
 }): AgentSidebarToolId {
-  if (input.hasTask || input.preferConversation) return "agent";
+  if (input.hasTask) return "agent";
+  if (input.storedTool) {
+    return resolveAgentWorkbenchSidebarTool(input.storedTool, input.hasGraph);
+  }
+  if (input.preferConversation) return "agent";
   return input.hasGraph ? "details" : "agent";
 }
 

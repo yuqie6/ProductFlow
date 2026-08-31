@@ -15,6 +15,7 @@ import {
   type ProductWorkbenchInspectorTool,
   useProductWorkbenchInspectorState,
 } from "../chrome/ProductWorkbenchInspector";
+import { patchWorkbenchUiState, readWorkbenchUiState } from "../chrome/workbenchUiState";
 
 export type AgentWorkbenchMobileView = "canvas" | "agent";
 
@@ -31,6 +32,7 @@ interface AgentWorkbenchRegionState {
 }
 
 interface AgentWorkbenchShellProps {
+  productId?: string;
   workflowAvailable: boolean;
   canvasContent: ReactNode;
   agentContent: ReactNode;
@@ -71,6 +73,7 @@ export function deriveAgentWorkbenchRegionState({
 }
 
 export function AgentWorkbenchShell({
+  productId,
   workflowAvailable,
   canvasContent,
   agentContent,
@@ -86,7 +89,12 @@ export function AgentWorkbenchShell({
     workflowAvailable ? "canvas" : "agent",
   );
   const [compact, setCompact] = useState(initialCompactWorkbench);
-  const inspector = useProductWorkbenchInspectorState(!workflowAvailable);
+  const inspectorInitialRef = useRef<boolean | null>(null);
+  if (inspectorInitialRef.current === null) {
+    const stored = productId ? readWorkbenchUiState(productId).inspectorCollapsed : undefined;
+    inspectorInitialRef.current = stored ?? !workflowAvailable;
+  }
+  const inspector = useProductWorkbenchInspectorState(inspectorInitialRef.current);
   const sidebarCollapsed = inspector.collapsed;
   const inspectorWidth = inspector.width;
   const previousWorkflowAvailableRef = useRef(workflowAvailable);
@@ -107,6 +115,11 @@ export function AgentWorkbenchShell({
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    if (!productId) return;
+    patchWorkbenchUiState(productId, { inspectorCollapsed: inspector.collapsed });
+  }, [inspector.collapsed, productId]);
 
   useEffect(() => {
     const previouslyAvailable = previousWorkflowAvailableRef.current;

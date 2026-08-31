@@ -6,7 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Boxes, CircleDot, Eye, Images, Plus, RotateCw, Sparkles } from "lucide-react";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -32,6 +32,13 @@ import { GraphLibraryPanel } from "./canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "./canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "./canvas/GraphRunsPanel";
 import { RecipeLibraryPanel } from "./canvas/RecipeLibraryPanel";
+import {
+  existingWorkbenchNodeIds,
+  parseWorkbenchSidebarTool,
+  patchWorkbenchUiState,
+  readWorkbenchUiState,
+  sameWorkbenchIds,
+} from "./chrome/workbenchUiState";
 import { useLocalImageEditController } from "./local-edit/LocalImageEditController";
 
 const EMPTY_ACTIONS: GraphCanvasActions = {
@@ -61,13 +68,22 @@ export function GraphWorkbenchPage({
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(
+    () => existingWorkbenchNodeIds(
+      initialGraph,
+      readWorkbenchUiState(product.id).selectedNodeIds,
+    ),
+  );
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
-  const [tool, setTool] = useState("details");
+  const [tool, setTool] = useState(
+    () => parseWorkbenchSidebarTool(readWorkbenchUiState(product.id).sidebarTool) ?? "details",
+  );
   const [bindNodeId, setBindNodeId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
-  const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const [chromeCollapsed, setChromeCollapsed] = useState(
+    () => readWorkbenchUiState(product.id).chromeCollapsed === true,
+  );
   const [archiveRecipe, setArchiveRecipe] = useState<WorkflowRecipeSummary | null>(null);
   const [recipeApplication, setRecipeApplication] = useState<WorkflowRecipeApplicationResult | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
@@ -79,12 +95,14 @@ export function GraphWorkbenchPage({
   // Graph Command 是写入者；运行使用最近一次 flush 持久化的配置。
   const beforeRun = useCallback(() => flushInspectorRef.current(), []);
   const requestSidebarTool = useCallback(async (nextTool: string): Promise<boolean> => {
+    const parsed = parseWorkbenchSidebarTool(nextTool);
+    if (!parsed) return false;
     try {
       await flushInspectorRef.current();
     } catch {
       return false;
     }
-    setTool(nextTool);
+    setTool(parsed);
     return true;
   }, []);
 
@@ -191,6 +209,21 @@ export function GraphWorkbenchPage({
     }
   }, [liveGraph]);
 
+  useEffect(() => {
+    setSelectedNodeIds((current) => {
+      const next = existingWorkbenchNodeIds(liveGraph, current);
+      return sameWorkbenchIds(current, next) ? current : next;
+    });
+  }, [liveGraph]);
+  useEffect(() => {
+    const storedTool = parseWorkbenchSidebarTool(tool);
+    patchWorkbenchUiState(product.id, {
+      ...(storedTool ? { sidebarTool: storedTool } : {}),
+      selectedNodeIds,
+      chromeCollapsed,
+    });
+  }, [chromeCollapsed, product.id, selectedNodeIds, tool]);
+
   return (
     <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary">
       {chromeCollapsed ? null : (
@@ -200,6 +233,7 @@ export function GraphWorkbenchPage({
         />
       )}
       <AgentWorkbenchShell
+        productId={product.id}
         workflowAvailable
         canvasContent={(
           <GraphCanvasPanel
