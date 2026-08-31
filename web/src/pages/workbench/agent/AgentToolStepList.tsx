@@ -36,6 +36,7 @@ const KIND_KEYS: Record<AgentToolStepKind, TranslationKey> = {
   create_product: "agentWorkbench.toolStep.kind.createProduct",
   apply_graph: "agentWorkbench.toolStep.kind.applyGraph",
   propose_graph: "agentWorkbench.toolStep.kind.proposeGraph",
+  focus_canvas: "agentWorkbench.toolStep.kind.focusCanvas",
 };
 
 const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; className?: string }>> = {
@@ -51,6 +52,7 @@ const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; class
   create_product: PackagePlus,
   apply_graph: GitBranch,
   propose_graph: FilePen,
+  focus_canvas: ScanEye,
 };
 
 const STATUS_KEYS: Record<AgentToolStepStatus, TranslationKey> = {
@@ -107,29 +109,18 @@ export function AgentToolStepRow({ step }: { step: AgentToolStep }) {
   const statusKey = STATUS_KEYS[step.status];
   const KindIcon = KIND_ICONS[step.kind] ?? CircleHelp;
   const StatusIcon = STATUS_ICONS[step.status] ?? CircleHelp;
-  const kindLabel = kindKey ? t(kindKey) : (step.tool_name || step.kind);
-  const statusLabel = statusKey ? t(statusKey) : step.status;
-  const title = t("agentWorkbench.toolStep.title", {
-    kind: kindLabel,
-    status: statusLabel,
-    summary: step.summary,
-  });
+  const kindLabel = kindKey ? t(kindKey) : t("agentWorkbench.toolStep.kind.unknown");
+  const statusLabel = statusKey ? t(statusKey) : t("agentWorkbench.status.unknown");
+  const title = `${kindLabel} · ${statusLabel}`;
   const tone = STATUS_TONES[step.status] ?? "text-text-muted";
-  const hasDetails = Boolean(step.tool_name || (step.details && Object.keys(step.details).length > 0));
+  const hasDetails = hasUserVisibleDetails(step.details);
   const row = (
     <div className="flex min-h-8 min-w-0 items-center gap-2 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-surface-subtle">
       <KindIcon size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
-      <span className="shrink-0 font-medium text-text-secondary">{kindLabel}</span>
-      {step.tool_name ? (
-        <code className="max-w-[12rem] shrink truncate rounded bg-surface-subtle px-1 font-mono text-[10px] text-text-muted">
-          {step.tool_name}
-        </code>
+      <span className="min-w-0 flex-1 truncate font-medium text-text-secondary">{kindLabel}</span>
+      {step.kind === "ask_question" && step.status !== "running" && step.details?.output_summary ? (
+        <span className="max-w-[45%] truncate leading-5 text-text-secondary">{step.details.output_summary}</span>
       ) : null}
-      <span className="min-w-0 flex-1 truncate leading-5 text-text-secondary">
-        {step.kind === "ask_question" && step.status !== "running" && step.details?.output_summary
-          ? step.details.output_summary
-          : step.summary}
-      </span>
       <span className={`inline-flex shrink-0 items-center gap-1 text-[10px] font-medium ${tone}`}>
         <StatusIcon
           size={12}
@@ -198,67 +189,38 @@ function ToolStepDetailsView({ details }: { details?: AgentToolStepDetails }) {
       data-agent-tool-step-details
       className="ml-8 grid gap-1 border-l border-border-l2 py-2 pl-3 text-[11px] leading-5 text-text-muted"
     >
-      {details.input_summary ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.input")} value={details.input_summary} />
-      ) : null}
-      {details.output_summary ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.output")} value={details.output_summary} />
-      ) : null}
-      {details.skill_name ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.skill")} value={details.skill_name} code />
-      ) : null}
-      {details.resource_path ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.resource")} value={details.resource_path} code />
-      ) : null}
-      {details.instruction_excerpt ? (
-        <div className="grid min-w-0 gap-1">
-          <span className="font-medium text-text-secondary">
-            {t("agentWorkbench.toolStep.detail.instructions")}
-            {details.instruction_truncated ? ` · ${t("agentWorkbench.toolStep.detail.truncated")}` : ""}
-          </span>
-          <pre
-            data-agent-tool-step-instructions
-            className="max-h-48 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-subtle p-2 font-mono text-[10px] leading-4"
-          >
-            {details.instruction_excerpt}
-          </pre>
-        </div>
-      ) : null}
       {details.question_text ? (
         <DetailLine label={t("agentWorkbench.toolStep.detail.question")} value={details.question_text} />
       ) : null}
       {details.option_labels?.length ? (
         <DetailLine label={t("agentWorkbench.toolStep.detail.options")} value={details.option_labels.join(" · ")} />
       ) : null}
-      {details.context_sections?.length ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.context")} value={details.context_sections.join(" · ")} code />
-      ) : null}
-      {details.page_route ? <DetailLine label={t("agentWorkbench.toolStep.detail.page")} value={details.page_route} code /> : null}
-      {details.page_type ? <DetailLine label={t("agentWorkbench.toolStep.detail.pageType")} value={details.page_type} /> : null}
-      {details.context_bytes !== undefined ? (
-        <DetailLine label={t("agentWorkbench.toolStep.detail.contextSize")} value={`${details.context_bytes} B`} />
-      ) : null}
       {details.error_code || details.error_message ? (
         <div className="grid gap-0.5 text-state-error">
           <span className="font-semibold">{t("agentWorkbench.toolStep.detail.error")}</span>
-          {details.error_code ? <code className="font-mono">{details.error_code}</code> : null}
-          {details.error_message ? <span className="break-words">{details.error_message}</span> : null}
+          <span>{t("agentWorkbench.toolStep.detail.failureMessage")}</span>
         </div>
       ) : null}
       {details.validation_issues?.length ? (
         <div className="grid gap-1 text-state-error">
           <span className="font-semibold">{t("agentWorkbench.toolStep.detail.validation")} </span>
-          <ul className="grid gap-1 pl-3">
-            {details.validation_issues.map((issue) => (
-              <li key={`${issue.path}:${issue.message}`} className="break-words">
-                <code className="font-mono">{issue.path}</code>: {issue.message}
-              </li>
-            ))}
-          </ul>
+          <span>{t("agentWorkbench.toolStep.detail.validationMessage")}</span>
         </div>
       ) : null}
       {details.retryable ? <span className="text-state-warning">{t("agentWorkbench.toolStep.detail.retryable")}</span> : null}
     </div>
+  );
+}
+
+function hasUserVisibleDetails(details?: AgentToolStepDetails): boolean {
+  if (!details) return false;
+  return Boolean(
+    details.question_text
+      || details.option_labels?.length
+      || details.error_code
+      || details.error_message
+      || details.validation_issues?.length
+      || details.retryable,
   );
 }
 

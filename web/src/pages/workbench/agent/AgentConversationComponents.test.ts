@@ -637,8 +637,8 @@ describe("Agent conversation components", () => {
       }),
     );
 
-    expect(markup).toContain("写入工作流");
-    expect(markup).toContain("提出图修改");
+    expect(markup).toContain("更新工作流");
+    expect(markup).toContain("准备画布修改");
     expect(markup).toContain("data-agent-tool-step-id=\"apply-1\"");
     expect(markup).toContain("data-agent-tool-step-id=\"propose-1\"");
   });
@@ -667,7 +667,7 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("继续当前 Agent 任务");
   });
 
-  it("renders expandable skill, context, and validation details without exposing raw payloads", () => {
+  it("keeps tool names, source fields, and validation internals out of the merchant timeline", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentToolStepList, {
         steps: [
@@ -716,16 +716,17 @@ describe("Agent conversation components", () => {
       }),
     );
 
-    expect(markup).toContain("load_productflow_skill");
-    expect(markup).toContain("library-organization");
-    expect(markup).toContain("data-agent-tool-step-instructions");
-    expect(markup).toContain("# Library Organization");
-    expect(markup).toContain("library_organization_draft_validation_failed");
-    expect(markup).toContain("image_types.0.images.0.delivery_spec.crop_anchor");
-    expect(markup).toContain("draft_guidance");
+    expect(markup).toContain("准备任务");
+    expect(markup).toContain("读取商品信息");
+    expect(markup).toContain("部分设置需要调整后才能继续");
     expect(markup).toContain("data-agent-tool-step-details");
     expect(markup).toContain("open=\"\"");
-    expect(markup).not.toContain("raw");
+    expect(markup).not.toContain("load_productflow_skill");
+    expect(markup).not.toContain("library-organization");
+    expect(markup).not.toContain("# Library Organization");
+    expect(markup).not.toContain("library_organization_draft_validation_failed");
+    expect(markup).not.toContain("image_types.0.images.0.delivery_spec.crop_anchor");
+    expect(markup).not.toContain("draft_guidance");
   });
 
   it("renders historical snapshot steps and merges live statuses without duplicating actions", () => {
@@ -825,7 +826,7 @@ describe("Agent conversation components", () => {
     );
 
     expect(historicalMarkup).toContain("data-agent-tool-step-id=\"step-1\"");
-    expect(historicalMarkup).toContain("检查上下文");
+    expect(historicalMarkup).toContain("读取商品信息");
     expect(activeMarkup.match(/data-agent-tool-step-id=/g)).toHaveLength(2);
     expect(activeMarkup).toContain("data-agent-tool-step-status=\"succeeded\"");
     expect(activeMarkup).toContain("读取历史");
@@ -895,7 +896,8 @@ describe("Agent conversation components", () => {
     );
 
     expect(staleMarkup).toContain("data-agent-tool-step-id=\"step-final\"");
-    expect(staleMarkup).toContain("完成工作流方案");
+    expect(staleMarkup).toContain("整理方案");
+    expect(staleMarkup).not.toContain("完成工作流方案");
     expect(staleMarkup).not.toContain("aria-live=\"polite\"");
     expect(convergedMarkup.match(/data-agent-tool-step-id="step-final"/g)).toHaveLength(1);
   });
