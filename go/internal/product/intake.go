@@ -321,9 +321,10 @@ func selectionToImageTypes(selection Selection) []graph.DirectCreateImageType {
 	out := make([]graph.DirectCreateImageType, 0, len(selection.ImageTypes))
 	for _, item := range selection.ImageTypes {
 		out = append(out, graph.DirectCreateImageType{
-			Key:      item.Key,
-			Quantity: item.Quantity,
-			Order:    item.Order,
+			Key:         item.Key,
+			Quantity:    item.Quantity,
+			Order:       item.Order,
+			AspectRatio: graph.DefaultAspectRatioForImageType(item.Key),
 		})
 	}
 	return out

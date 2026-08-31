@@ -294,7 +294,7 @@ func TestIncomingPromptDocumentUsesConfigWithoutArtifact(t *testing.T) {
 
 func TestCatalogBriefFieldsAffectDigest(t *testing.T) {
 	keys := catalogDigestKeys(NodeCreativeBrief)
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
+	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
 		if _, ok := keys[key]; !ok {
 			t.Fatalf("missing %s in %+v", key, keys)
 		}

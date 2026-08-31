@@ -111,6 +111,57 @@ func TestNormalizeRejectsUnknownConfigField(t *testing.T) {
 	}
 }
 
+func TestBuildDirectCreateTemplateSeedsPerShotVariation(t *testing.T) {
+	cs, err := BuildDirectCreateTemplate(DirectCreateInput{
+		ImageTypes: []DirectCreateImageType{
+			{Key: "hero", Quantity: 2, Order: 0},
+			{Key: "selling_point", Quantity: 4, Order: 1},
+		},
+		ReferenceAssetIDs: []string{"asset-a"},
+		ProductTitle:      "套图商品",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Apply(EmptyGraph, cs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hero := mustNodeByID(t, got, "image-hero-2")
+	if v, _ := hero.Config["variation_instruction"].(string); !strings.Contains(v, "另一张封面") {
+		t.Fatalf("hero variation %+v", hero.Config["variation_instruction"])
+	}
+	selling := mustNodeByID(t, got, "image-selling_point-3")
+	if v, _ := selling.Config["variation_instruction"].(string); !strings.Contains(v, "第 3 张") || !strings.Contains(v, "钩子") {
+		t.Fatalf("selling_point variation %+v", selling.Config["variation_instruction"])
+	}
+	single, err := BuildDirectCreateTemplate(DirectCreateInput{
+		ImageTypes:        []DirectCreateImageType{{Key: "hero", Quantity: 1, Order: 0}},
+		ReferenceAssetIDs: []string{"asset-a"},
+		ProductTitle:      "单封面",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := Apply(EmptyGraph, single)
+	if err != nil {
+		t.Fatal(err)
+	}
+	only := mustNodeByID(t, one, "image-hero-1")
+	if _, ok := only.Config["variation_instruction"]; ok {
+		t.Fatalf("single hero must not seed variation: %+v", only.Config)
+	}
+}
+
+func mustNodeByID(t *testing.T, g AppliedGraph, id string) AppliedNode {
+	t.Helper()
+	node, err := g.Node(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return node
+}
+
 func TestApplyDirectCreateTemplateHasNoCycle(t *testing.T) {
 	cs, err := BuildDirectCreateTemplate(DirectCreateInput{
 		ImageTypes:        []DirectCreateImageType{{Key: "hero", Quantity: 1, Order: 0}},

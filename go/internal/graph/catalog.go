@@ -311,6 +311,7 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 			fld("goal", "string", "textarea", withLabel("workflowConfirmation.designGoal")),
 			fld("design_goals", "string_list", "", withLabel("graph.inspector.designGoals")),
 			fld("required_copy", "string_list", "", withLabel("graph.inspector.requiredCopy")),
+			fld("fact_gaps", "string_list", "", withLabel("graph.inspector.factGaps")),
 			fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 		}, true
 	case NodeVisualSystem:
@@ -345,8 +346,38 @@ func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]
 	if !ok {
 		return out
 	}
+	_, hadGenerationSpec := out["generation_spec"]
 	applyConfigDefaults(fields, out)
+	if nodeType == NodeImageGeneration && !hadGenerationSpec {
+		applyImageTypeGenerationDefaults(out)
+	}
 	return out
+}
+
+func applyImageTypeGenerationDefaults(config map[string]any) {
+	key, _ := config["image_type_key"].(string)
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return
+	}
+	spec, _ := config["generation_spec"].(map[string]any)
+	if spec == nil {
+		return
+	}
+	if aspect, _ := spec["aspect_ratio"].(string); aspect == "" || aspect == "1:1" {
+		if def := defaultAspectRatioForImageType(key); def != "1:1" {
+			spec["aspect_ratio"] = def
+		}
+	}
+	if imageTypeFamily(key) != "infographic" {
+		return
+	}
+	if policy, _ := spec["text_policy"].(string); policy == "" || policy == "none" {
+		spec["text_policy"] = "required"
+		if spec["text_language"] == nil || asString(spec["text_language"]) == "" {
+			spec["text_language"] = "zh-CN"
+		}
+	}
 }
 
 func applyConfigDefaults(fields []configField, payload map[string]any) {

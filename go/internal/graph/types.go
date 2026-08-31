@@ -3,7 +3,7 @@ package graph
 
 const (
 	SchemaVersion      = 3
-	CatalogVersion     = 8
+	CatalogVersion     = 9
 	DefaultGraphTitle  = "商品创意工作流"
 	maxImagePerType    = 6
 	minImagePerType    = 1

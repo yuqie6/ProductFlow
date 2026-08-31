@@ -340,6 +340,9 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 				"image_type_key":  imageType.Key,
 				"generation_spec": cloneMap(typeGenerationSpec),
 			}
+			if variation := shotVariationInstruction(imageType.Key, imageIndex, imageType.Quantity); variation != "" {
+				imageConfig["variation_instruction"] = variation
+			}
 			if in.DeliverySpec != nil {
 				imageConfig["delivery_spec"] = cloneMap(in.DeliverySpec)
 			}
@@ -482,19 +485,61 @@ func TemplateForExistingProductSource(productSourceNodeID string, baseRevision i
 	return cs, validateChangeSet(cs)
 }
 
+func defaultAspectRatioForImageType(key string) string {
+	switch strings.TrimSpace(key) {
+	case "hero", "selling_point", "dimensions", "specifications", "after_sales", "precautions", "faq", "shipping":
+		return "3:4"
+	case "scene":
+		return "4:3"
+	case "brand_story", "factory":
+		return "16:9"
+	default:
+		return "1:1"
+	}
+}
+
+// DefaultAspectRatioForImageType 给 intake 展开和画布加镜头共用。
+func DefaultAspectRatioForImageType(key string) string {
+	return defaultAspectRatioForImageType(key)
+}
+
+func shotVariationInstruction(key string, imageIndex, quantity int) string {
+	if quantity < 2 {
+		return ""
+	}
+	n := imageIndex + 1
+	if imageTypeFamily(key) == "infographic" {
+		return fmt.Sprintf("第 %d 张，共 %d 张。本页只讲一个与其他张不同的钩子；共享店招和版式，不要把全部卖点画进这一页。", n, quantity)
+	}
+	if key == "hero" {
+		return fmt.Sprintf("第 %d 张，共 %d 张。另一张封面：棚拍、包装或使用瞬间择一，与其他封面不同，不要画购物 App 货架。", n, quantity)
+	}
+	return fmt.Sprintf("第 %d 张，共 %d 张。机位或用途与其他张不同。", n, quantity)
+}
+
 func generationSpecForShot(imageType DirectCreateImageType, generationSpec map[string]any) (map[string]any, error) {
 	overrides := cloneMap(generationSpec)
 	if imageType.AspectRatio != "" {
 		overrides["aspect_ratio"] = imageType.AspectRatio
+	} else if strings.TrimSpace(asString(overrides["aspect_ratio"])) == "" {
+		overrides["aspect_ratio"] = defaultAspectRatioForImageType(imageType.Key)
 	}
-	hasTextPolicy := false
-	if generationSpec != nil {
-		_, hasTextPolicy = generationSpec["text_policy"]
+	family := imageTypeFamily(imageType.Key)
+	language := strings.TrimSpace(asString(overrides["text_language"]))
+	if language == "" {
+		language = "zh-CN"
 	}
-	if imageTypeFamily(imageType.Key) == "infographic" && !hasTextPolicy {
+	if family == "infographic" {
 		overrides["text_policy"] = "required"
-		if _, ok := overrides["text_language"]; !ok {
-			overrides["text_language"] = "zh-CN"
+		overrides["text_language"] = language
+	} else {
+		policy := ""
+		if generationSpec != nil {
+			policy = asString(generationSpec["text_policy"])
+		}
+		if policy == "" || policy == "none" {
+			overrides["text_policy"] = "none"
+			overrides["text_language"] = nil
 		}
 	}
 	return resolveTemplateGenerationSpec(overrides)
