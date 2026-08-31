@@ -54,7 +54,9 @@ describe("ProductFlow Skill catalog", () => {
     await expect(catalog.load("product-intake")).resolves.toContain("不要用普通回复代替结构化问题");
     await expect(catalog.load("product-intake")).resolves.toContain("finalize_product_intake_v1");
     await expect(catalog.load("product-intake")).resolves.toContain("birth_expandable");
+    await expect(catalog.load("product-intake")).resolves.toContain("推荐套图");
     await expect(catalog.load("graph-editing", "references/add-shot.md")).resolves.toContain("create_group");
+    await expect(catalog.load("graph-editing", "references/add-shot.md")).resolves.toContain("image_prompt");
     expect(catalog.promptForScope("global")).toContain("media-library-organization");
     expect(catalog.promptForScope("global")).not.toContain("<name>graph-editing</name>");
     expect(catalog.promptForScope("product_workflow")).toContain("graph-editing");
