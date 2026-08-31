@@ -11,6 +11,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/notify"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -82,24 +83,29 @@ func (s Service) ClaimExecution(ctx context.Context, conversationID string, task
 			return apperr.Conflict("Agent Turn 已被其他 Agent worker claim")
 		}
 		if exec.OwnerID != nil && exec.LeaseToken != nil && exec.LeaseExpiresAt != nil && !exec.LeaseExpiresAt.After(now) && exec.Phase != "claimed" && exec.Phase != "waiting_input" {
-			return apperr.Conflict("Agent Turn execution 已过期，必须先完成副作用对账")
+			if proj.Status != "requires_input" || exec.Phase == "terminal" {
+				return apperr.Conflict("Agent Turn execution 已过期，必须先完成副作用对账")
+			}
 		}
 		if exec.OwnerID == nil && exec.LeaseToken == nil && exec.Phase != "claimed" && exec.Phase != "waiting_input" {
-			return apperr.Conflict("Agent Turn execution 已越过安全重试边界")
+			if proj.Status != "requires_input" || exec.Phase == "terminal" {
+				return apperr.Conflict("Agent Turn execution 已越过安全重试边界")
+			}
 		}
 		lease := newID()
 		expiresAt := now.Add(leaseSeconds * time.Second)
 		if err := gdb.Model(&schema.AgentTurnExecutions{}).Where("id = ?", exec.ID).Updates(map[string]any{
-			"owner_id":          owner,
-			"lease_token":       lease,
-			"lease_expires_at":  expiresAt,
-			"last_heartbeat_at": now,
-			"released_at":       nil,
-			"attempt":           gorm.Expr("attempt + 1"),
-			"fencing_token":     gorm.Expr("fencing_token + 1"),
-			"phase":             "claimed",
-			"harness_turn_id":   turnID,
-			"updated_at":        now,
+			"owner_id":                 owner,
+			"lease_token":              lease,
+			"lease_expires_at":         expiresAt,
+			"last_heartbeat_at":        now,
+			"released_at":              nil,
+			"attempt":                  gorm.Expr("attempt + 1"),
+			"fencing_token":            gorm.Expr("fencing_token + 1"),
+			"phase":                    "claimed",
+			"harness_turn_id":          turnID,
+			"last_checkpoint_sequence": gorm.Expr("0"),
+			"updated_at":               now,
 		}).Error; err != nil {
 			return err
 		}
@@ -142,6 +148,9 @@ func (s Service) HeartbeatExecution(ctx context.Context, conversationID, executi
 	}
 	var out ExecutionLeaseResponse
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
+			return err
+		}
 		lease, err := requireLease(ctx, gdb, conversationID, executionID, ownerID, leaseToken)
 		if err != nil {
 			return err
@@ -215,12 +224,25 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 	if len(payload) > maxCheckpointPayload {
 		return CheckpointResponse{}, apperr.Validation("Agent checkpoint payload 超过大小限制")
 	}
+	if kind == "tool_effect_intent" {
+		if _, err := parseToolEffectIntent(payload); err != nil {
+			return CheckpointResponse{}, err
+		}
+	}
 	if kind == "tool_effect_result" {
 		var doc map[string]any
 		_ = json.Unmarshal(payload, &doc)
 		result, _ := doc["result"].(string)
 		if result != "applied" && result != "failed" && result != "unknown" {
 			return CheckpointResponse{}, apperr.Validation("Agent effect result 必须是 applied、failed 或 unknown")
+		}
+	}
+	if kind == "model_response_bound" || kind == "model_response_cursor" {
+		var doc struct {
+			ModelRequestID string `json:"model_request_id"`
+		}
+		if err := json.Unmarshal(payload, &doc); err != nil || stringsTrim(doc.ModelRequestID) == "" {
+			return CheckpointResponse{}, apperr.Validation("Agent model response checkpoint 缺少 model_request_id")
 		}
 	}
 	var out CheckpointResponse
@@ -321,6 +343,8 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 			return nil, apperr.Validation("Agent turn/end 必须是 batch 最后一条事件")
 		}
 	}
+	started := time.Now()
+	defer func() { metrics.ObserveAgentEventBatch(time.Since(started)) }()
 	var out []EventReceipt
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
 		if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
@@ -359,7 +383,8 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 			scanErr := gdb.Where("turn_projection_id = ? AND sequence = ?", lease.ProjectionID, input.Sequence).Take(&existing).Error
 			if scanErr == nil {
 				if existing.SchemaVersion != input.SchemaVersion || existing.RunID != runID || existing.TurnID != turnID || existing.Kind != kind || existing.Ignorable != input.Ignorable || !sameJSON(existing.PayloadJSON, input.Payload) {
-					return apperr.Conflict("Agent event sequence 已绑定不同内容")
+					metrics.AgentEventSequenceConflicts.Add(1)
+					return apperr.ConflictCode(apperr.CodeEventSequenceConflict, "Agent event sequence 已绑定不同内容")
 				}
 				out = append(out, EventReceipt{
 					ID: existing.ID, ProjectionID: existing.TurnProjectionID, ExecutionID: executionID,
@@ -385,6 +410,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				return scanErr
 			}
 			if input.Sequence != last+1 {
+				metrics.AgentEventSequenceConflicts.Add(1)
 				return apperr.Conflict("Agent event sequence 必须连续提交")
 			}
 			createdAt := input.CreatedAt
@@ -401,6 +427,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 			}
 			if err := gdb.Create(&ev).Error; err != nil {
 				if uniqueViolation(err) {
+					metrics.AgentEventSequenceConflicts.Add(1)
 					return apperr.Conflict("Agent event 与其他 writer 冲突")
 				}
 				return err
@@ -438,8 +465,11 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 		return apperr.Validation("Agent model request checkpoint 无效")
 	}
 	doc.ModelRequestID, doc.Provider, doc.Model, doc.ExecutionMode = stringsTrim(doc.ModelRequestID), stringsTrim(doc.Provider), stringsTrim(doc.Model), stringsTrim(doc.ExecutionMode)
-	if doc.ModelRequestID == "" || doc.Provider == "" || doc.Model == "" || (doc.ExecutionMode != "foreground" && doc.ExecutionMode != "background") {
+	if doc.ModelRequestID == "" || doc.Provider == "" || doc.Model == "" {
 		return apperr.Validation("Agent model request checkpoint 缺少调用身份")
+	}
+	if doc.ExecutionMode != "foreground" {
+		return apperr.Validation("当前 Agent adapter 不支持 background 模型调用")
 	}
 	row := schema.AgentModelInvocations{
 		ID: newID(), TurnProjectionID: lease.ProjectionID, ExecutionID: lease.ExecutionID,
@@ -463,16 +493,33 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 
 func finishModelInvocation(gdb *gorm.DB, projectionID string, payload json.RawMessage, finishedAt time.Time) error {
 	var doc struct {
-		ModelRequestID string `json:"model_request_id"`
-		Reason         string `json:"reason"`
-		Interrupted    bool   `json:"interrupted"`
-		Usage          *struct {
+		ModelRequestID     string  `json:"model_request_id"`
+		Reason             string  `json:"reason"`
+		Interrupted        bool    `json:"interrupted"`
+		DurationMS         *int64  `json:"duration_ms"`
+		ProviderResponseID *string `json:"provider_response_id"`
+		ProviderCursor     *string `json:"provider_response_cursor"`
+		ErrorCode          *string `json:"error_code"`
+		UsageSource        *string `json:"usage_source"`
+		Usage              *struct {
 			Input       int64 `json:"input"`
 			Output      int64 `json:"output"`
 			TotalTokens int64 `json:"total_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(payload, &doc); err != nil || stringsTrim(doc.ModelRequestID) == "" {
+		return nil
+	}
+	requestID := stringsTrim(doc.ModelRequestID)
+	var existing schema.AgentModelInvocations
+	err := gdb.Where("turn_projection_id = ? AND model_request_id = ?", projectionID, requestID).Take(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return apperr.Conflict("Agent assistant message 缺少对应模型调用")
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Status != "started" {
 		return nil
 	}
 	status := "completed"
@@ -483,23 +530,67 @@ func finishModelInvocation(gdb *gorm.DB, projectionID string, payload json.RawMe
 	}
 	updates := map[string]any{
 		"status": status, "finished_at": finishedAt, "updated_at": finishedAt,
-		"duration_ms": gorm.Expr("GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - started_at)) * 1000)::bigint", finishedAt),
+	}
+	if doc.DurationMS != nil && *doc.DurationMS >= 0 {
+		updates["duration_ms"] = *doc.DurationMS
+	} else {
+		updates["duration_ms"] = gorm.Expr("GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - started_at)) * 1000)::bigint", finishedAt)
 	}
 	if doc.Usage != nil {
-		updates["input_tokens"] = doc.Usage.Input
-		updates["output_tokens"] = doc.Usage.Output
-		updates["total_tokens"] = doc.Usage.TotalTokens
-		updates["usage_source"] = "provider"
+		if doc.Usage.Input == 0 && doc.Usage.Output == 0 && doc.Usage.TotalTokens == 0 {
+			// 全 0 不能冒充 provider usage；保持 invocation 创建时的 unavailable。
+		} else {
+			source := "provider"
+			switch stringsTrim(ptrString(doc.UsageSource)) {
+			case "", "provider":
+				source = "provider"
+			case "estimated":
+				source = "estimated"
+			default:
+				return apperr.Validation("Agent usage_source 必须是 provider 或 estimated")
+			}
+			updates["input_tokens"] = doc.Usage.Input
+			updates["output_tokens"] = doc.Usage.Output
+			updates["total_tokens"] = doc.Usage.TotalTokens
+			updates["usage_source"] = source
+		}
+	}
+	if id := stringsTrim(ptrString(doc.ProviderResponseID)); id != "" {
+		updates["provider_response_id"] = id
+	}
+	if cursor := stringsTrim(ptrString(doc.ProviderCursor)); cursor != "" {
+		updates["provider_cursor"] = cursor
+	}
+	if code := boundedErrorCode(ptrString(doc.ErrorCode)); code != "" {
+		updates["error_code"] = code
 	}
 	result := gdb.Model(&schema.AgentModelInvocations{}).
-		Where("turn_projection_id = ? AND model_request_id = ?", projectionID, stringsTrim(doc.ModelRequestID)).Updates(updates)
+		Where("id = ? AND status = ?", existing.ID, "started").Updates(updates)
 	if result.Error != nil {
+		if uniqueViolation(result.Error) {
+			return apperr.Conflict("Agent provider response ID 已绑定其他调用")
+		}
 		return result.Error
 	}
-	if result.RowsAffected == 0 {
-		return apperr.Conflict("Agent assistant message 缺少对应模型调用")
-	}
 	return nil
+}
+
+func ptrString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func boundedErrorCode(value string) string {
+	trimmed := stringsTrim(value)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) > 80 {
+		return trimmed[:80]
+	}
+	return trimmed
 }
 
 func (s Service) projectTerminalEvent(
@@ -701,6 +792,9 @@ func lockProjectionForExecution(ctx context.Context, gdb *gorm.DB, conversationI
 }
 
 func requireLease(ctx context.Context, gdb *gorm.DB, conversationID, executionID, ownerID, leaseToken string) (ExecutionLeaseResponse, error) {
+	if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
+		return ExecutionLeaseResponse{}, err
+	}
 	var exec schema.AgentTurnExecutions
 	err := gdb.WithContext(ctx).Model(&schema.AgentTurnExecutions{}).
 		Clauses(pfdb.ForUpdateOf("agent_turn_executions")).

@@ -21,6 +21,12 @@ func TestTurnNeedsSyncOnlyInFlight(t *testing.T) {
 	if turnNeedsSync(turnRow{ID: "t1", Status: "running", ResumeRequired: true}) {
 		t.Fatal("resume_required must not sync")
 	}
+	if turnNeedsSync(turnRow{ID: "t1", Status: "requires_input"}) {
+		t.Fatal("unanswered requires_input must not loop ErrLater")
+	}
+	if !turnNeedsSync(turnRow{ID: "t1", Status: "requires_input", QuestionAnswerJSON: []byte(`{"text":"筋膜枪"}`)}) {
+		t.Fatal("answered requires_input must keep syncing until resume")
+	}
 }
 
 func TestEventKindsUseTheJournalVocabulary(t *testing.T) {

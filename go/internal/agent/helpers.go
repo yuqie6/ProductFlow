@@ -49,6 +49,7 @@ var (
 	checkpointKinds = map[string]struct{}{
 		"before_model_request": {}, "tool_effect_intent": {}, "tool_effect_result": {},
 		"question_required": {}, "external_job_submitted": {}, "terminal": {},
+		"model_response_bound": {}, "model_response_cursor": {},
 	}
 	executionPhases = map[string]struct{}{
 		"claimed": {}, "model": {}, "tool": {}, "waiting_input": {}, "external_job": {}, "terminal": {},
@@ -71,7 +72,10 @@ func turnNeedsSync(row turnRow) bool {
 	if row.ID == "" || row.ResumeRequired {
 		return false
 	}
-	return inSet(inFlightTurn, row.Status)
+	if inSet(inFlightTurn, row.Status) {
+		return true
+	}
+	return row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -217,6 +221,13 @@ func mapGateway(err error) error {
 	case 404:
 		return apperr.Conflict("Agent 服务中不存在对应 Turn")
 	case 409:
+		if ge.Code == apperr.CodeNotPending || ge.Code == "question_already_answered" || ge.Code == "question_expired" {
+			detail := strings.TrimSpace(ge.Detail)
+			if detail == "" {
+				detail = "当前 Agent 问题不存在或已经过期"
+			}
+			return apperr.NotPending(detail)
+		}
 		return apperr.Conflict("Agent Turn 当前状态与请求冲突")
 	default:
 		return apperr.Unavailable("Agent 服务暂时不可用")
@@ -230,5 +241,5 @@ func gatewayQuestionNotLive(err error) bool {
 	if !errors.As(err, &ge) || ge.Status != 409 {
 		return false
 	}
-	return ge.Code == "not_resumable" || ge.Code == "question_expired"
+	return ge.Code == "not_resumable" || ge.Code == "question_expired" || ge.Code == apperr.CodeNotPending
 }

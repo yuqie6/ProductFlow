@@ -7,7 +7,7 @@ package schema
 
 var EnumDDL = []string{
 	`DO $enum$ BEGIN
-CREATE TYPE agentcheckpointkind AS ENUM ('before_model_request', 'tool_effect_intent', 'tool_effect_result', 'question_required', 'external_job_submitted', 'terminal');
+CREATE TYPE agentcheckpointkind AS ENUM ('before_model_request', 'tool_effect_intent', 'tool_effect_result', 'question_required', 'external_job_submitted', 'terminal', 'model_response_bound', 'model_response_cursor');
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
@@ -146,6 +146,16 @@ END $enum$;`,
 // ExtraDDL adds CHECK/UNIQUE/FK constraints and indexes that CreateTable/AddColumn do not own.
 
 var ExtraDDL = []string{
+	`DO $c$ BEGIN
+ALTER TYPE agentcheckpointkind ADD VALUE IF NOT EXISTS 'model_response_bound';
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TYPE agentcheckpointkind ADD VALUE IF NOT EXISTS 'model_response_cursor';
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN undefined_object THEN NULL;
+END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE agent_model_invocations ADD CONSTRAINT fk_agent_model_invocations_turn_projection_id FOREIGN KEY (turn_projection_id) REFERENCES agent_turn_projections(id) ON DELETE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1578,6 +1588,7 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_status_updated ON public.agent_tasks USING btree (status, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tool_mutations_asset_id ON public.agent_tool_mutations USING btree (asset_id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_turn_checkpoints_projection_sequence ON public.agent_turn_checkpoints USING btree (turn_projection_id, sequence);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_model_invocations_provider_response_id ON public.agent_model_invocations USING btree (provider_response_id) WHERE (provider_response_id IS NOT NULL);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_turn_effect_reconciliations_projection_created ON public.agent_turn_effect_reconciliations USING btree (turn_projection_id, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_turn_events_projection_sequence ON public.agent_turn_events USING btree (turn_projection_id, sequence);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_turn_executions_lease ON public.agent_turn_executions USING btree (lease_expires_at, id);`,
