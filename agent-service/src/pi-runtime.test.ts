@@ -785,8 +785,9 @@ describe("PiRuntimeManager turn state", () => {
             status: "awaiting_confirmation",
             artifact: { name: "workflow", step_id: "artifact-step", value: { version: 1 } },
           });
-          expect(appendedKinds).toEqual(["approval/requested", "turn/end"]);
-          expect(releasedPhases).toEqual(["terminal"]);
+          expect((await store.events(scope.run_id, created.state.turn_id, 0)).filter((event) => event.kind === "turn/end")).toEqual([]);
+          expect(appendedKinds).toEqual(["approval/requested"]);
+          expect(releasedPhases).toEqual(["external_job"]);
         }
       } finally {
         await managerHolder.manager?.close();
@@ -1436,7 +1437,7 @@ describe("PiRuntimeManager turn state", () => {
     }
   });
 
-  it("retries a durable handoff after a competing claim is released", async () => {
+  it("leaves a recovered in-flight handoff for Go lease expiry", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-handoff-claim-conflict-"));
     let manager: PiRuntimeManager | undefined;
     try {
@@ -1465,6 +1466,7 @@ describe("PiRuntimeManager turn state", () => {
       });
       await store.saveDurableHandoff(scope.run_id, created.state.turn_id, lease);
       let claimCalls = 0;
+      const releasePhases: string[] = [];
       const productFlow = {
         confirmTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number }> }) => ({
           status: args.events.length === 0 ? "confirmed" as const : "missing" as const,
@@ -1474,7 +1476,6 @@ describe("PiRuntimeManager turn state", () => {
         }),
         claimTurnExecution: async () => {
           claimCalls += 1;
-          if (claimCalls === 1) throw new ProductFlowError(409, "execution_busy", "another owner holds the lease");
           return lease;
         },
         heartbeatTurnExecution: async (_conversationID: string, _executionID: string, args: { phase: typeof lease.phase }) => ({ ...lease, phase: args.phase }),
@@ -1483,22 +1484,25 @@ describe("PiRuntimeManager turn state", () => {
           sequence: event.sequence, schema_version: 1 as const, kind: event.kind, ignorable: false,
           created_at: "2026-08-31T00:00:00.000Z",
         })),
-        releaseTurnExecution: async () => ({ released: true }),
+        releaseTurnExecution: async (_conversationID: string, _executionID: string, args: { phase: string }) => {
+          releasePhases.push(args.phase);
+          return { released: true };
+        },
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
       manager = new PiRuntimeManager(
         { ...config, dataRoot: root, maxConcurrentTurns: 1 }, store, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
       );
 
-      const summary = await manager.recoverAfterRestart();
-      expect(summary.replayed_handoffs).toBe(0);
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((await store.getState(scope.run_id, created.state.turn_id)).status === "unknown") break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 25));
-      }
-      expect(claimCalls).toBeGreaterThanOrEqual(2);
-      expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: "unknown", output: "partial" });
-      expect(await store.durableHandoffCandidates()).toEqual([]);
+      const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
+      await expect((runtime as {
+        recoverDurableHandoff(turnID: string, key: string, executionID: string, projectionID: string): Promise<boolean>;
+      }).recoverDurableHandoff(created.state.turn_id, "handoff-claim-conflict", lease.execution_id, lease.projection_id)).resolves.toBe(true);
+      expect(claimCalls).toBe(1);
+      expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: "running", output: "" });
+      expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toEqual(["text.chunk"]);
+      expect((await store.durableHandoffCandidates()).map((candidate) => candidate.turnID)).toEqual([created.state.turn_id]);
+      expect(releasePhases).toEqual([]);
       expect(manager.health().active_turns).toBe(0);
     } finally {
       await manager?.close();

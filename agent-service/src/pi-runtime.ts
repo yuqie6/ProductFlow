@@ -560,6 +560,7 @@ class RunRuntime implements ToolRuntime {
       await this.manager.store.saveDurableHandoff(this.scope.run_id, turnID, this.executionLease);
       this.startExecutionHeartbeat();
       if (await this.syncRecoveryEvents(turnID)) return true;
+      await this.flushPublishedEvents();
       events = await this.manager.store.events(this.scope.run_id, turnID, 0);
       unpublished = await this.manager.store.unpublishedEvents(this.scope.run_id, turnID);
       if (unpublished.length > 0) {
@@ -578,22 +579,15 @@ class RunRuntime implements ToolRuntime {
       } else if (state.status === "requires_input" && events.some((event) => event.kind === "question/requested")) {
         await this.updateExecutionPhase("waiting_input");
       } else if (hasUnresolvedApproval(events)) {
-        await this.updateExecutionPhase("terminal");
-        const artifact = artifactFromPendingApproval(events);
-        const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
-        await this.writeJournalTerminal(turnID, "awaiting_confirmation", {
-          ...summary,
-          ...(artifact ? { artifact } : {}),
-          approval_already_recorded: true,
+        await this.updateExecutionPhase("external_job");
+        await this.manager.store.updateState(this.scope.run_id, turnID, {
+          status: "awaiting_confirmation",
+          artifact: artifactFromPendingApproval(events),
         });
       } else {
-        await this.updateExecutionPhase("terminal");
-        const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
-        await this.writeJournalTerminal(turnID, "unknown", {
-          ...summary,
-          error: "Agent service restarted before this Turn reached a provable terminal state",
-          reason_code: "execution_interrupted",
-        });
+        // The WAL prefix is drained, but only Go may decide the terminal state of
+        // a lost in-flight execution after the lease expires.
+        this.executionLease = undefined;
       }
       await this.flushPublishedEvents();
       return true;

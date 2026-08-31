@@ -212,7 +212,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 		if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
 			return 0, scanErr
 		}
-		if projection.Status == "requires_input" {
+		if projection.Status == "requires_input" || projection.Status == "awaiting_confirmation" {
 			continue
 		}
 		if inSet(activeTurn, projection.Status) && !(projection.Status == "queued" && execution.Phase == "claimed") {

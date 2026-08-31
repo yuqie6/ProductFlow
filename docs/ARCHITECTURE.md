@@ -180,7 +180,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - Redis 承担 broker 和并发 admission。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
-- Agent service 使用 Pi session 文件做模型 loop 恢复；本地 JSONL 只作私有 WAL，持有当前 lease/fencing 的 runtime 显式读取未确认连续前缀、批量写入 PostgreSQL `agent_turn_events`，并只在 receipt 匹配后推进 ACK。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 与文/图生图会话 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
+- Agent service 使用 Pi session 文件做模型 loop 恢复；本地 JSONL 只作私有 WAL，持有当前 lease/fencing 的 runtime 显式读取未确认连续前缀、批量写入 PostgreSQL `agent_turn_events`，并只在 receipt 匹配后推进 ACK。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 与文/图生图会话 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。启动只重放尚未开始的 queued Turn；Node 重启只确认或提交可证明的 WAL 连续前缀，不为丢失的 in-flight execution 写终态。Go lease 过期扫描是该类执行的唯一终态作者，`requires_input` 与 `awaiting_confirmation` parked Turn 不会被误标 unknown。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
 - ProductFlow 的 Turn sync 只信任符合 Agent service wire contract 的状态；无法证明的外部结果继续保留 `unknown` 语义。
 
 ## 10. 配置与安全

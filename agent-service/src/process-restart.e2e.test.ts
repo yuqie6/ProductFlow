@@ -136,12 +136,12 @@ describe("ProductFlow Pi Agent process recovery", () => {
       const recovered = await waitForJSON<{ status: string }>(
         `http://127.0.0.1:${second.port}/internal/v1/conversations/${conversationID}/turns/process-model-sigkill-turn-id`,
         { headers: { Authorization: `Bearer ${token}` } },
-        (value) => value.status === "unknown",
+        (value) => value.status === "running" && productFlow.confirmRequests.length > 0,
       );
-      expect(recovered.status).toBe("unknown");
+      expect(recovered.status).toBe("running");
       expect(provider.requestCount).toBe(1);
       expect(productFlow.checkpoints.map((checkpoint) => checkpoint.kind)).toContain("before_model_request");
-      expect(productFlow.events.at(-1)).toMatchObject({ kind: "turn/end", payload: { status: "unknown" } });
+      expect(productFlow.events.some((event) => event.kind === "turn/end")).toBe(false);
     } finally {
       productFlow.releaseFirstBatchResponse();
       if (first) {
@@ -194,11 +194,10 @@ describe("ProductFlow Pi Agent process recovery", () => {
       const recovered = await waitForJSON<{ status: string; error: string }>(
         `http://127.0.0.1:${second.port}/internal/v1/conversations/${conversationID}/turns/${started.turn_id}`,
         { headers: { Authorization: `Bearer ${token}` } },
-        (value) => value.status === "unknown",
+        (value) => value.status === "running" && productFlow.confirmRequests.some((sequences) => sequences.includes(1)),
       );
 
-      expect(recovered).toMatchObject({ status: "unknown" });
-      expect(recovered.error).toContain("restarted");
+      expect(recovered).toMatchObject({ status: "running", error: "" });
       expect(provider.requestCount).toBe(0);
       const health = await fetch(`http://127.0.0.1:${second.port}/healthz`);
       expect(await health.json()).toMatchObject({ active_turns: 0, queued_turns: 0 });
@@ -207,8 +206,8 @@ describe("ProductFlow Pi Agent process recovery", () => {
       expect(new Set(productFlow.claimOwnerIDs).size).toBe(1);
       expect(productFlow.batchRequests.filter((sequences) => sequences.includes(1))).toHaveLength(1);
       expect(productFlow.confirmRequests).toEqual([[], [1]]);
-      expect(productFlow.events.map((event) => event.sequence)).toEqual([1, 2]);
-      expect(productFlow.events.map((event) => event.kind)).toEqual(["turn/start", "turn/end"]);
+      expect(productFlow.events.map((event) => event.sequence)).toEqual([1]);
+      expect(productFlow.events.map((event) => event.kind)).toEqual(["turn/start"]);
     } finally {
       productFlow.releaseFirstBatchResponse();
       if (first) {
