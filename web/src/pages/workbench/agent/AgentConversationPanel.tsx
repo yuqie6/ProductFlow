@@ -328,14 +328,19 @@ export function AgentConversationPanel({
       variant="product"
       className={className}
       header={(
-        <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5 backdrop-blur">
+        <header className="relative z-30 flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5 backdrop-blur">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
             <Bot size={18} />
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
-            <p className="truncate text-xs text-text-secondary">{productName}</p>
+            <AgentSessionSwitcher conversation={conversation} />
           </div>
+          <AgentGoalLoopBar
+            productId={productId}
+            conversation={conversation}
+            taskId={taskId ?? null}
+          />
           {onExpandGlobalAgent ? (
             <IconButton
               label={t("agentWorkbench.expandGlobalAgent")}
@@ -361,16 +366,6 @@ export function AgentConversationPanel({
             />
           ) : null}
         </header>
-      )}
-      top={(
-        <>
-          <AgentSessionSwitcher conversation={conversation} productName={productName} />
-          <AgentGoalLoopBar
-            productId={productId}
-            conversation={conversation}
-            taskId={taskId ?? null}
-          />
-        </>
       )}
       notices={(
         <>
@@ -497,7 +492,8 @@ function AgentGoalLoopBar({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const sessionId = conversation.session_id;
-  const [formOpen, setFormOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
   const taskQuery = useQuery({
@@ -522,7 +518,7 @@ function AgentGoalLoopBar({
       });
     },
     onSuccess: (task) => {
-      setFormOpen(false);
+      setOpen(false);
       setTitle("");
       setGoal("");
       void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
@@ -567,129 +563,129 @@ function AgentGoalLoopBar({
     errorDetailOrNull(cancelMutation.error);
   const canStart = Boolean(sessionId) && title.trim().length > 0 && goal.trim().length > 0;
   const active = task != null && (GOAL_LOOP_ACTIVE.has(task.status) || task.status === "paused");
-  const showForm = formOpen && !active;
+  const showForm = open && !active;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const triggerLabel = active && task
+    ? `${task.title} · ${t(GOAL_STATUS_LABEL[task.status])}`
+    : sessionId
+      ? t("agentWorkbench.goal.openForm")
+      : t("agentWorkbench.goal.sessionRequired");
 
   return (
-    <div className="shrink-0 border-b border-border-l1 bg-surface-raised px-4 py-2.5">
-      {showForm ? (
-        <form
-          className="flex flex-col gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (canStart && !busy) createMutation.mutate();
-          }}
+    <div ref={rootRef} data-agent-goal-control className="relative shrink-0">
+      <IconButton
+        label={triggerLabel}
+        size="toolbar"
+        variant={active ? "secondary" : "ghost"}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        disabled={!sessionId}
+        onClick={() => setOpen((current) => !current)}
+        className={active ? "relative text-accent" : "relative"}
+      >
+        <Flag size={15} aria-hidden="true" />
+        {active ? <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-state-success ring-2 ring-surface-raised" aria-hidden="true" /> : null}
+      </IconButton>
+      {open ? (
+        <div
+          role="dialog"
+          aria-label={triggerLabel}
+          className="absolute right-0 top-[calc(100%+0.625rem)] w-60 max-w-[calc(100vw-5rem)] rounded-lg border border-border-l2 bg-surface-raised p-3 shadow-elev-3"
         >
-          <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
-            {t("agentWorkbench.goal.titleLabel")}
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder={t("agentWorkbench.goal.titlePlaceholder")}
-              className="h-8 rounded-md border border-border-l1 bg-surface-base px-2 text-xs text-text-primary"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
-            {t("agentWorkbench.goal.goalLabel")}
-            <textarea
-              value={goal}
-              onChange={(event) => setGoal(event.target.value)}
-              placeholder={t("agentWorkbench.goal.goalPlaceholder")}
-              rows={2}
-              className="rounded-md border border-border-l1 bg-surface-base px-2 py-1.5 text-xs text-text-primary"
-            />
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              type="submit"
-              disabled={!canStart || busy}
-              className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
+          {showForm ? (
+            <form
+              className="flex flex-col gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (canStart && !busy) createMutation.mutate();
+              }}
             >
-              {t("agentWorkbench.goal.start")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setFormOpen(false)}
-              className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary"
-            >
-              {t("agentWorkbench.goal.cancelForm")}
-            </button>
-          </div>
-        </form>
-      ) : task ? (
-        <div className="flex flex-col gap-2">
-          <div className="flex min-w-0 items-start gap-2">
-            <Flag size={14} className="mt-0.5 shrink-0 text-accent" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-text-primary">{task.title}</p>
-              <p className="truncate text-[11px] text-text-secondary">
-                {t(GOAL_STATUS_LABEL[task.status])}
-                {task.waiting_reason === "goal_loop" ? ` · ${t("agentWorkbench.goal.loopHint")}` : ""}
-              </p>
-            </div>
-          </div>
-          {active ? (
-            <div className="flex flex-wrap gap-1.5">
-              {GOAL_LOOP_COMPLETABLE.has(task.status) ? (
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
+                {t("agentWorkbench.goal.titleLabel")}
+                <input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder={t("agentWorkbench.goal.titlePlaceholder")}
+                  className="h-9 rounded-md border border-border-l1 bg-surface-base px-2 text-xs text-text-primary"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-[11px] font-medium text-text-secondary">
+                {t("agentWorkbench.goal.goalLabel")}
+                <textarea
+                  value={goal}
+                  onChange={(event) => setGoal(event.target.value)}
+                  placeholder={t("agentWorkbench.goal.goalPlaceholder")}
+                  rows={3}
+                  className="resize-none rounded-md border border-border-l1 bg-surface-base px-2 py-1.5 text-xs text-text-primary"
+                />
+              </label>
+              <div className="flex gap-1.5">
                 <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => completeMutation.mutate(task.id)}
+                  type="submit"
+                  disabled={!canStart || busy}
                   className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
                 >
-                  {t("agentWorkbench.goal.complete")}
+                  {t("agentWorkbench.goal.start")}
                 </button>
-              ) : null}
-              {GOAL_LOOP_PAUSABLE.has(task.status) ? (
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => pauseMutation.mutate(task.id)}
-                  className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary"
                 >
-                  {t("agentWorkbench.goal.pause")}
+                  {t("agentWorkbench.goal.cancelForm")}
                 </button>
-              ) : null}
-              {task.status === "paused" ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => resumeMutation.mutate(task.id)}
-                  className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
-                >
-                  {t("agentWorkbench.goal.resume")}
+              </div>
+            </form>
+          ) : task ? (
+            <div className="flex flex-col gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold text-text-primary">{task.title}</p>
+                <p className="mt-0.5 truncate text-[11px] text-text-secondary">
+                  {t(GOAL_STATUS_LABEL[task.status])}
+                  {task.waiting_reason === "goal_loop" ? ` · ${t("agentWorkbench.goal.loopHint")}` : ""}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {GOAL_LOOP_COMPLETABLE.has(task.status) ? (
+                  <button type="button" disabled={busy} onClick={() => completeMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50">
+                    {t("agentWorkbench.goal.complete")}
+                  </button>
+                ) : null}
+                {GOAL_LOOP_PAUSABLE.has(task.status) ? (
+                  <button type="button" disabled={busy} onClick={() => pauseMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50">
+                    {t("agentWorkbench.goal.pause")}
+                  </button>
+                ) : null}
+                {task.status === "paused" ? (
+                  <button type="button" disabled={busy} onClick={() => resumeMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50">
+                    {t("agentWorkbench.goal.resume")}
+                  </button>
+                ) : null}
+                <button type="button" disabled={busy} onClick={() => cancelMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary disabled:opacity-50">
+                  {t("agentWorkbench.goal.clear")}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => cancelMutation.mutate(task.id)}
-                className="inline-flex h-8 items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-secondary disabled:opacity-50"
-              >
-                {t("agentWorkbench.goal.clear")}
-              </button>
+              </div>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setFormOpen(true)}
-              className="inline-flex h-8 w-fit items-center rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary"
-            >
-              {t("agentWorkbench.goal.start")}
-            </button>
-          )}
+          ) : null}
+          {error ? <p className="mt-2 text-[11px] text-state-error">{error}</p> : null}
         </div>
-      ) : (
-        <button
-          type="button"
-          disabled={!sessionId}
-          onClick={() => setFormOpen(true)}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border-l1 px-2.5 text-[11px] font-semibold text-text-primary disabled:opacity-50"
-        >
-          <Flag size={13} />
-          {sessionId ? t("agentWorkbench.goal.openForm") : t("agentWorkbench.goal.sessionRequired")}
-        </button>
-      )}
-      {error ? <p className="mt-1.5 text-[11px] text-state-error">{error}</p> : null}
+      ) : null}
     </div>
   );
 }

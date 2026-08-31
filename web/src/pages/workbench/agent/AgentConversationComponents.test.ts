@@ -198,7 +198,7 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("aria-label=\"发送消息\"");
   });
 
-  it("renders quick prompt suggestion pills when composer is empty and no assets are selected", () => {
+  it("keeps the empty composer focused on the conversation input", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentComposer, {
         value: "",
@@ -217,9 +217,10 @@ describe("Agent conversation components", () => {
       }),
     );
 
-    expect(markup).toContain("优化构图与主图排版");
-    expect(markup).toContain("分析视觉风格与打光");
-    expect(markup).toContain("生成当前工作流执行草案");
+    expect(markup).not.toContain("优化构图与主图排版");
+    expect(markup).not.toContain("分析视觉风格与打光");
+    expect(markup).not.toContain("生成当前工作流执行草案");
+    expect(markup).toContain("data-agent-composer");
     expect(markup).toContain("Enter 发送，Shift + Enter 换行");
   });
 

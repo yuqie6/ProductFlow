@@ -24,7 +24,6 @@ import type { AgentConversation, AgentSession, AgentSessionConversation } from "
 
 interface AgentSessionSwitcherProps {
   conversation: AgentConversation;
-  productName: string;
 }
 
 type SessionEditor = { mode: "rename"; value: string } | null;
@@ -37,7 +36,7 @@ export function selectAgentSessionConversation(
   ) ?? null;
 }
 
-export function AgentSessionSwitcher({ conversation, productName }: AgentSessionSwitcherProps) {
+export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -251,84 +250,55 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
 
   return (
     <>
-      <div ref={rootRef} data-agent-session-switcher className="relative z-20 shrink-0 border-b border-border-l1 bg-surface-base px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <button
-            type="button"
-            aria-haspopup="dialog"
-            aria-expanded={open}
-            aria-controls="agent-session-menu"
-            onClick={() => {
-              setNotice(null);
-              setOpen((isOpen) => !isOpen);
-            }}
-            className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
-              open
-                ? "border-accent/60 bg-surface-raised"
-                : "border-border-l2 bg-surface-raised hover:border-border-l3 hover:bg-surface-subtle"
+      <div ref={rootRef} data-agent-session-switcher className="relative min-w-0 max-w-full">
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls="agent-session-menu"
+          onClick={() => {
+            setNotice(null);
+            setOpen((isOpen) => !isOpen);
+          }}
+          className={`-ml-1 flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1 py-0.5 text-left text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
+            open ? "bg-surface-subtle text-text-primary" : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+          }`}
+        >
+          <span
+            aria-hidden="true"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+              currentStatus === "active"
+                ? "bg-state-success"
+                : currentStatus === "archived"
+                  ? "bg-text-muted/60"
+                  : "bg-text-muted/40"
             }`}
-          >
-            <span
-              aria-hidden="true"
-              className={`h-2 w-2 shrink-0 rounded-full ${
-                currentStatus === "active"
-                  ? "bg-state-success"
-                  : currentStatus === "archived"
-                    ? "bg-text-muted/60"
-                    : "bg-text-muted/40"
-              }`}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-                {t("agentWorkbench.session.label")}
-              </span>
-              <span className="mt-0.5 block truncate text-sm font-semibold text-text-primary" title={currentTitle}>
-                {currentTitle}
-              </span>
-              <span className="mt-0.5 block truncate text-xs text-text-secondary" title={productName}>
-                {productName}
-              </span>
-            </span>
-            <ChevronDown
-              size={16}
-              aria-hidden="true"
-              className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-            />
-          </button>
-          <IconButton
-            label={t("agentWorkbench.session.new")}
-            variant="secondary"
-            size="toolbar"
-            onClick={createSession}
-            disabled={createSessionMutation.isPending}
-            busy={createSessionMutation.isPending}
-          >
-            <Plus size={17} />
-          </IconButton>
-        </div>
+          />
+          <span className="min-w-0 truncate" title={currentTitle}>{currentTitle}</span>
+          <ChevronDown
+            size={13}
+            aria-hidden="true"
+            className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
 
         {open ? (
           <div
             id="agent-session-menu"
-            role="menu"
+            role="dialog"
             aria-label={t("agentWorkbench.session.label")}
-            className="absolute left-2 right-2 top-[calc(100%+0.5rem)] overflow-hidden rounded-xl border border-border-l2 bg-surface-raised shadow-elev-3"
+            className="absolute -left-16 top-[calc(100%+0.625rem)] w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border-l2 bg-surface-raised shadow-elev-3"
           >
-            <div className="flex items-center gap-3 border-b border-border-l1 px-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold text-text-primary">
-                    {t("agentWorkbench.session.label")}
-                  </h3>
-                  <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
-                    {sessionsQuery.data?.items.length ?? 0}
-                  </span>
-                </div>
-                <p className="mt-0.5 truncate text-xs text-text-secondary">
-                  {t("agentWorkbench.session.menuDescription")}
-                </p>
+            <div className="flex min-h-12 items-center gap-2 border-b border-border-l1 px-3 py-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <h3 className="truncate text-sm font-semibold text-text-primary">
+                  {t("agentWorkbench.session.label")}
+                </h3>
+                <span className="rounded-full bg-surface-subtle px-1.5 py-0.5 text-[10px] font-semibold text-text-secondary">
+                  {sessionsQuery.data?.items.length ?? 0}
+                </span>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="flex shrink-0 items-center gap-0.5">
                 {currentSession && currentSession.status === "active" ? (
                   <>
                     <IconButton
@@ -472,17 +442,16 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
                 </>
               )}
             </div>
+            {sessionError || mutationErrorText ? (
+              <div role="alert" className="flex items-start gap-1.5 border-t border-state-error/30 bg-state-error-soft px-3 py-2 text-xs leading-5 text-state-error">
+                <CircleAlert size={14} className="mt-0.5 shrink-0" />
+                <span className="min-w-0">{sessionError ?? mutationErrorText}</span>
+              </div>
+            ) : null}
+            {notice ? <p className="truncate border-t border-border-l1 px-3 py-1.5 text-[11px] text-text-secondary">{notice}</p> : null}
           </div>
         ) : null}
       </div>
-
-      {sessionError || mutationErrorText ? (
-        <div role="alert" className="flex items-start gap-1.5 border-b border-state-error/30 bg-state-error-soft px-3 py-2 text-xs leading-5 text-state-error">
-          <CircleAlert size={14} className="mt-0.5 shrink-0" />
-          <span className="min-w-0">{sessionError ?? mutationErrorText}</span>
-        </div>
-      ) : null}
-      {notice ? <p className="truncate border-b border-border-l1 bg-surface-base px-3 py-1.5 text-[11px] text-text-secondary">{notice}</p> : null}
 
       <ConfirmDialog
         open={archiveTarget !== null}

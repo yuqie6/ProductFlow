@@ -1,4 +1,4 @@
-import { ImagePlus, Loader2, Send, Sparkles, Square, Trash2, Upload, X } from "lucide-react";
+import { ImagePlus, Loader2, Send, Square, Trash2, Upload, X } from "lucide-react";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -52,12 +52,6 @@ interface AgentComposerProps {
   questionError?: string | null;
   onAnswerQuestion?: (answer: AgentQuestionAnswer) => void;
 }
-
-const QUICK_PROMPTS = [
-  "agentWorkbench.composer.quickPrompt.composition",
-  "agentWorkbench.composer.quickPrompt.lighting",
-  "agentWorkbench.composer.quickPrompt.workflow",
-] as const;
 
 export function AgentComposer({
   value,
@@ -157,28 +151,6 @@ export function AgentComposer({
   return (
     <div data-agent-composer className="shrink-0 border-t border-border-l1 bg-surface-base/95 px-3 py-3 backdrop-blur sm:px-4 sm:py-4">
       <div className="mx-auto w-full max-w-[48rem]">
-        {!question && !value.trim() && !selectedAssets.length && !stopAvailable ? (
-          <div className="mb-2.5 flex items-center gap-2 overflow-x-auto pb-0.5 text-xs text-text-secondary scrollbar-none [&::-webkit-scrollbar]:hidden">
-            <Sparkles size={13} className="shrink-0 text-accent" aria-hidden="true" />
-            <div className="flex items-center gap-1.5">
-              {QUICK_PROMPTS.map((promptKey) => {
-                const label = t(promptKey);
-                return (
-                  <button
-                    key={promptKey}
-                    type="button"
-                    onClick={() => onChange(label)}
-                    disabled={isSubmitting}
-                    className="shrink-0 rounded-full border border-border-l2 bg-surface-raised px-3 py-1.5 text-xs text-text-secondary shadow-sm transition-colors hover:border-accent/40 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
         {error || uploadNotice ? (
           <div role="alert" className="mb-2 rounded-lg border border-state-error/20 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
             {error || uploadNotice}
