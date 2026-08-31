@@ -56,13 +56,6 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 		productID = nil
 	}
 	if s.Gateway != nil {
-		handled, err := s.syncQuestionContinuation(ctx, productID, row)
-		if err != nil {
-			return err
-		}
-		if handled {
-			return s.syncOutcome(ctx, projectionID)
-		}
 		if row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0 && row.HarnessTurnID != nil {
 			if err := s.resumeAnsweredParent(ctx, productID, row); err != nil {
 				return s.syncOutcome(ctx, projectionID)
@@ -112,74 +105,6 @@ func (s Service) syncOutcome(ctx context.Context, projectionID string) error {
 		return queue.ErrLater
 	}
 	return nil
-}
-
-// syncQuestionContinuation 处理「父 Turn 等回答、子 Turn 是多余 continuation」的竞态。
-//
-// 父 Turn 已有答案则在原 Turn resume，并 cancelUnusedContinuation。Pi waiter 已死则 cancel 父 Turn，不另开权威通道。返回 true 表示本轮已处理，调用方应走 syncOutcome。
-func (s Service) syncQuestionContinuation(ctx context.Context, productID *string, child turnRow) (bool, error) {
-	if !inSet(inFlightTurn, child.Status) {
-		return false, nil
-	}
-	var parent turnRow
-	var found bool
-	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		loaded, ok, loadErr := loadQuestionParent(ctx, pgxTx, child.ID)
-		parent = loaded
-		found = ok
-		return loadErr
-	})
-	if err != nil || !found {
-		return false, err
-	}
-	if parent.Status == "requires_input" && len(parent.QuestionAnswerJSON) > 0 && parent.HarnessTurnID != nil {
-		if err := s.resumeAnsweredParent(ctx, productID, parent); err != nil {
-			if gatewayQuestionNotLive(err) {
-				if cerr := s.cancelDeadQuestionTurn(ctx, productID, parent); cerr != nil {
-					return true, cerr
-				}
-				return false, nil
-			}
-			return true, mapGateway(err)
-		}
-		if err := s.cancelUnusedContinuation(ctx, productID, child); err != nil {
-			return true, err
-		}
-		return true, nil
-	}
-	if parent.Status != "requires_input" {
-		if err := s.cancelUnusedContinuation(ctx, productID, child); err != nil {
-			return true, err
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-func (s Service) cancelDeadQuestionTurn(ctx context.Context, productID *string, parent turnRow) error {
-	if parent.HarnessTurnID == nil || s.Gateway == nil {
-		return nil
-	}
-	state, err := s.Gateway.CancelTurn(parent.ConversationID, *parent.HarnessTurnID, parent.TaskID)
-	if err != nil {
-		return nil
-	}
-	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		return s.applyTurnState(ctx, pgxTx, productID, parent.ConversationID, parent.ID, state)
-	})
-}
-
-func loadQuestionParent(ctx context.Context, pgxTx *gorm.DB, continuationID string) (turnRow, bool, error) {
-	var rec schema.AgentTurnProjections
-	err := pgxTx.WithContext(ctx).Where("continuation_turn_id = ?", continuationID).Take(&rec).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return turnRow{}, false, nil
-	}
-	if err != nil {
-		return turnRow{}, false, err
-	}
-	row, err := loadTurnByID(ctx, pgxTx, rec.ID)
-	return row, true, err
 }
 
 // applyTurnState 把 Gateway / turn/end 的 TurnState 写入 PostgreSQL 投影，是模型状态进入业务库的唯一入口。

@@ -154,9 +154,8 @@ type TurnResponse struct {
 	ErrorText                          *string          `json:"error_text"`           // 投影错误摘要，不是 journal
 	Question                           json.RawMessage  `json:"question"`             // 待回答问题 JSON；完整对话以 journal 为准
 	QuestionAnswer                     json.RawMessage  `json:"question_answer"`      // 用户答案 JSON
-	ContinuationTurnID                 *string          `json:"continuation_turn_id"`
-	ToolSteps                          []map[string]any `json:"tool_steps"`    // 列表摘要，不是第二份 transcript
-	ArtifactName                       *string          `json:"artifact_name"` // 待确认工件名；权威在 Pi 侧
+	ToolSteps                          []map[string]any `json:"tool_steps"`           // 列表摘要，不是第二份 transcript
+	ArtifactName                       *string          `json:"artifact_name"`        // 待确认工件名；权威在 Pi 侧
 	ArtifactStepID                     *string          `json:"artifact_step_id"`
 	LibraryOrganizationDraftRevisionID *string          `json:"library_organization_draft_revision_id"`
 	WorkflowRunRequestID               *string          `json:"workflow_run_request_id"`
@@ -501,7 +500,6 @@ type turnRow struct {
 	ErrorText                 *string
 	QuestionJSON              []byte
 	QuestionAnswerJSON        []byte
-	ContinuationTurnID        *string
 	ToolStepsJSON             []byte
 	ArtifactName              *string
 	ArtifactStepID            *string

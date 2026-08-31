@@ -276,7 +276,7 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 
 // AnswerQuestion 把用户答案写入投影并尝试 resume Gateway 中仍活着的问题。Gateway 未配置返回 Unavailable。Turn 不在等待回答返回 NotPending；答案校验失败返回 Validation。
 func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
-	row, err := s.persistQuestionAnswer(ctx, productID, conversationID, projectionID, questionID, answer)
+	_, err := s.persistQuestionAnswer(ctx, productID, conversationID, projectionID, questionID, answer)
 	if err != nil {
 		return QuestionAnswerResponse{}, err
 	}
@@ -286,12 +286,6 @@ func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversa
 	resumed, rerr := s.resumeLiveQuestion(ctx, productID, conversationID, projectionID, questionID, answer)
 	if rerr != nil {
 		return QuestionAnswerResponse{}, mapGateway(rerr)
-	}
-	if row.ContinuationTurnID != nil {
-		_ = s.cancelUnusedContinuation(ctx, productID, turnRow{
-			ID:             *row.ContinuationTurnID,
-			ConversationID: conversationID,
-		})
 	}
 	return questionAnswerResult(resumed, resumed), nil
 }
@@ -315,9 +309,6 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 		}
 		if err := validateQuestionAnswer(question, answer); err != nil {
 			return err
-		}
-		if loaded.ContinuationTurnID != nil && len(loaded.QuestionAnswerJSON) > 0 && !sameQuestionAnswer(loaded.QuestionAnswerJSON, answer) {
-			return apperr.NotPending("当前问题已经使用其他答案")
 		}
 		answerJSON, err := json.Marshal(answer)
 		if err != nil {
@@ -380,22 +371,6 @@ func intAnswerOption(value any) (int, bool) {
 	}
 }
 
-func sameQuestionAnswer(stored []byte, answer map[string]any) bool {
-	var existing map[string]any
-	if json.Unmarshal(stored, &existing) != nil {
-		return false
-	}
-	left, err := json.Marshal(existing)
-	if err != nil {
-		return false
-	}
-	right, err := json.Marshal(answer)
-	if err != nil {
-		return false
-	}
-	return string(left) == string(right)
-}
-
 func questionAnswerResult(answered, continuation TurnResponse) QuestionAnswerResponse {
 	return QuestionAnswerResponse{
 		TurnResponse:     continuation,
@@ -406,7 +381,7 @@ func questionAnswerResult(answered, continuation TurnResponse) QuestionAnswerRes
 
 // resumeLiveQuestion 把已落库的答案交给 Pi 仍活着的 waiter，再 ResumeTurn 并把状态投影回 PG。
 //
-// AnswerQuestion 与 syncQuestionContinuation 调用。尚未绑定 harness 返回 Conflict。成功后清 resume_required 并 stage sync。Pi 侧失败由调用方 mapGateway，不改 Goal。
+// AnswerQuestion 与 SyncTurn 调用。尚未绑定 harness 返回 Conflict。成功后清 resume_required 并 stage sync。Pi 侧失败由调用方 mapGateway，不改 Goal。
 func (s Service) resumeLiveQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (TurnResponse, error) {
 	var harnessTurnID string
 	var taskID *string
@@ -466,50 +441,6 @@ func (s Service) serializedTurn(ctx context.Context, productID *string, conversa
 		return nil
 	})
 	return out, err
-}
-
-// cancelUnusedContinuation 在父 Turn 已于原 harness 恢复后，取消多余的 continuation，避免双执行。
-//
-// 尽量通知 Gateway cancel，再把仍飞行的投影标 canceled。失败的 Gateway cancel 不阻断本地收口。
-func (s Service) cancelUnusedContinuation(ctx context.Context, productID *string, child turnRow) error {
-	if child.ID == "" {
-		return nil
-	}
-	if child.HarnessTurnID == nil || child.ConversationID == "" {
-		var loaded turnRow
-		err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-			row, err := loadTurnByID(ctx, pgxTx, child.ID)
-			loaded = row
-			return err
-		})
-		if err != nil {
-			return err
-		}
-		child = loaded
-	}
-	if child.HarnessTurnID != nil && s.Gateway != nil {
-		_, _ = s.Gateway.CancelTurn(child.ConversationID, *child.HarnessTurnID, child.TaskID)
-	}
-	return s.abandonUnusedContinuation(ctx, productID, child.ConversationID, child.ID)
-}
-
-func (s Service) abandonUnusedContinuation(ctx context.Context, productID *string, conversationID, continuationID string) error {
-	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if conversationID != "" {
-			if _, err := loadTurn(ctx, pgxTx, productID, conversationID, continuationID); err != nil {
-				return err
-			}
-		}
-		now := time.Now().UTC()
-		return pgxTx.Model(&schema.AgentTurnProjections{}).
-			Where("id = ? AND status IN ?", continuationID, []string{"queued", "running", "cancel_requested"}).
-			Updates(map[string]any{
-				"status":      "canceled",
-				"finished_at": now,
-				"sync_error":  "问题已在原 Turn 内恢复，continuation 不再执行",
-				"updated_at":  now,
-			}).Error
-	})
 }
 
 func (s Service) resumeAnsweredParent(ctx context.Context, productID *string, parent turnRow) error {

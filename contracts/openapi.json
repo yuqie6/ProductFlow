@@ -13138,17 +13138,6 @@
             ],
             "title": "Question Answer"
           },
-          "continuation_turn_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Continuation Turn Id"
-          },
           "tool_steps": {
             "items": {
               "$ref": "#/components/schemas/AgentToolStepResponse"
@@ -13277,7 +13266,6 @@
           "error_text",
           "question",
           "question_answer",
-          "continuation_turn_id",
           "tool_steps",
           "artifact_name",
           "artifact_step_id",
@@ -14708,17 +14696,6 @@
             ],
             "title": "Question Answer"
           },
-          "continuation_turn_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Continuation Turn Id"
-          },
           "tool_steps": {
             "items": {
               "$ref": "#/components/schemas/AgentToolStepResponse"
@@ -14841,7 +14818,6 @@
           "error_text",
           "question",
           "question_answer",
-          "continuation_turn_id",
           "tool_steps",
           "artifact_name",
           "artifact_step_id",

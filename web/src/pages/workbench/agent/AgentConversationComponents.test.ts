@@ -34,7 +34,6 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     error_text: null,
     question: null,
     question_answer: null,
-    continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
     library_organization_draft_revision_id: null,
@@ -318,31 +317,6 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("筋膜枪");
     expect(markup).toContain("跳过");
     expect(markup).not.toContain("把参考图拖进来，直接说你要什么");
-  });
-
-  it("hides orphan question continuation turns from the timeline", () => {
-    const markup = renderToStaticMarkup(
-      createElement(AgentMessageList, {
-        turns: [
-          turn({
-            id: "projection-1",
-            input_text: "可以帮我创建商品工作流吗",
-            continuation_turn_id: "projection-2",
-            status: "requires_input",
-          }),
-          turn({
-            id: "projection-2",
-            input_text: "继续当前 Agent 任务。针对问题“这个商品叫什么名字？”，用户回答：筋膜枪。",
-            status: "queued",
-          }),
-        ],
-        activeTurnId: "projection-1",
-        eventState: null,
-        initialTurnPending: false,
-      }),
-    );
-    expect(markup).toContain("可以帮我创建商品工作流吗");
-    expect(markup).not.toContain("继续当前 Agent 任务");
   });
 
   it("distinguishes an applied effect from an interrupted reply on unknown Turns", () => {

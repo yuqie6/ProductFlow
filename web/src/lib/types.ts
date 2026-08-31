@@ -981,7 +981,6 @@ export interface AgentTurn {
   tool_steps?: AgentToolStep[];
   question: AgentQuestion | null;
   question_answer: AgentQuestionAnswer | null;
-  continuation_turn_id: string | null;
   artifact_name: string | null;
   artifact_step_id: string | null;
   library_organization_draft_revision_id: string | null;

@@ -626,7 +626,7 @@ func TestAnswerQuestionResumesLiveWaiter(t *testing.T) {
 	if body.AnsweredTurn.ID != turnID || body.ContinuationTurn.ID != turnID {
 		t.Fatalf("expected same-turn resume, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
 	}
-	if body.AnsweredTurn.Status != "running" || body.AnsweredTurn.ContinuationTurnID != nil {
+	if body.AnsweredTurn.Status != "running" {
 		t.Fatalf("answered %+v", body.AnsweredTurn)
 	}
 	if len(body.AnsweredTurn.Question) > 0 && string(body.AnsweredTurn.Question) != "null" {
@@ -686,7 +686,7 @@ func TestAnswerQuestionFallsBackWhenWaiterGone(t *testing.T) {
 	if body.AnsweredTurn.ID != turnID || body.ContinuationTurn.ID != turnID {
 		t.Fatalf("expected same-turn resume, answered=%s continuation=%s", body.AnsweredTurn.ID, body.ContinuationTurn.ID)
 	}
-	if body.AnsweredTurn.Status != "running" || body.AnsweredTurn.ContinuationTurnID != nil {
+	if body.AnsweredTurn.Status != "running" {
 		t.Fatalf("answered %+v", body.AnsweredTurn)
 	}
 	if as.conversationTurnCount(t, convID) != 1 {
@@ -700,7 +700,7 @@ func TestAnswerQuestionFallsBackWhenWaiterGone(t *testing.T) {
 	}
 }
 
-func TestAnswerQuestionTaskBoundContinuationCopiesAssetsAndCancelsWaiter(t *testing.T) {
+func TestAnswerQuestionTaskBoundSameTurnKeepsAssetsAndWaiter(t *testing.T) {
 	gw := &questionGateway{}
 	as := newAgentServer(t, gw, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
@@ -767,7 +767,7 @@ func TestAnswerQuestionTaskBoundContinuationCopiesAssetsAndCancelsWaiter(t *test
 	}
 }
 
-func TestAnswerQuestionUnavailableDoesNotCreateContinuation(t *testing.T) {
+func TestAnswerQuestionUnavailableDoesNotCreateSecondTurn(t *testing.T) {
 	gw := &questionGateway{answerErr: GatewayError{Status: 503, Code: "unavailable", Detail: "Agent 服务暂时不可用"}}
 	as := newAgentServer(t, gw, "")
 	convID, turnID, _ := as.submitAndParkQuestion(t, "question-name-3")
@@ -874,7 +874,7 @@ func TestSyncTurnAppliesQueuedResumeAfterDurableAnswer(t *testing.T) {
 	}
 }
 
-func TestAnswerQuestionNotResumableDoesNotCreateContinuation(t *testing.T) {
+func TestAnswerQuestionNotResumableDoesNotCreateSecondTurn(t *testing.T) {
 	gw := &questionGateway{answerErr: GatewayError{Status: 409, Code: "not_resumable", Detail: "this question is no longer attached to a live Pi turn"}}
 	as := newAgentServer(t, gw, "")
 	convID, turnID, _ := as.submitAndParkQuestion(t, "question-name-4")
@@ -887,112 +887,6 @@ func TestAnswerQuestionNotResumableDoesNotCreateContinuation(t *testing.T) {
 	resp.Body.Close()
 	if as.conversationTurnCount(t, convID) != 1 {
 		t.Fatalf("continuation created during not_resumable")
-	}
-}
-
-func TestSyncTurnResumesParentInsteadOfStartingOrphanContinuation(t *testing.T) {
-	gw := &questionGateway{}
-	as := newAgentServer(t, gw, "")
-	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-4")
-	childID := clockid.New()
-	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO agent_turn_projections (
-			id, conversation_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
-			status, resume_required, tool_steps_json, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, '[]', 'queued', false, '[]', NOW(), NOW()
-		)
-	`, childID, convID, "question-continuation-orphan", strings.Repeat("a", 64), "继续当前 Agent 任务。用户回答：筋膜枪。"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := as.pool.Exec(context.Background(), `
-		UPDATE agent_turn_projections
-		SET question_answer_json = $2::json, continuation_turn_id = $3, updated_at = NOW()
-		WHERE id = $1
-	`, turnID, `{"text":"筋膜枪"}`, childID); err != nil {
-		t.Fatal(err)
-	}
-	gw.calls = nil
-	gw.startCount = 0
-	if err := as.svc.SyncTurn(context.Background(), childID); err != nil {
-		t.Fatal(err)
-	}
-	if gw.startCount != 0 {
-		t.Fatalf("StartTurn calls %d", gw.startCount)
-	}
-	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
-		t.Fatalf("gateway calls %v", gw.calls)
-	}
-	var parentStatus, childStatus string
-	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&parentStatus); err != nil {
-		t.Fatal(err)
-	}
-	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, childID).Scan(&childStatus); err != nil {
-		t.Fatal(err)
-	}
-	if parentStatus != "running" {
-		t.Fatalf("parent status %s", parentStatus)
-	}
-	if childStatus != "canceled" {
-		t.Fatalf("child status %s", childStatus)
-	}
-}
-
-func TestSyncTurnCancelsBoundOrphanContinuation(t *testing.T) {
-	gw := &questionGateway{}
-	as := newAgentServer(t, gw, "")
-	convID, turnID, harnessID := as.submitAndParkQuestion(t, "question-name-5")
-	childID := clockid.New()
-	childHarness := "ht-orphan-" + clockid.New()
-	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO agent_turn_projections (
-			id, conversation_id, harness_turn_id, idempotency_key, request_hash, input_text, input_asset_ids_json,
-			status, resume_required, tool_steps_json, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, '[]', 'queued', false, '[]', NOW(), NOW()
-		)
-	`, childID, convID, childHarness, "question-continuation-bound", strings.Repeat("b", 64), "继续当前 Agent 任务。用户回答：筋膜枪。"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := as.pool.Exec(context.Background(), `
-		UPDATE agent_turn_projections
-		SET question_answer_json = $2::json, continuation_turn_id = $3, updated_at = NOW()
-		WHERE id = $1
-	`, turnID, `{"text":"筋膜枪"}`, childID); err != nil {
-		t.Fatal(err)
-	}
-	gw.calls = nil
-	gw.startCount = 0
-	if err := as.svc.SyncTurn(context.Background(), childID); err != nil {
-		t.Fatal(err)
-	}
-	if gw.startCount != 0 {
-		t.Fatalf("StartTurn calls %d", gw.startCount)
-	}
-	foundCancelChild := false
-	if len(gw.calls) < 3 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
-		t.Fatalf("gateway calls %v", gw.calls)
-	}
-	for _, call := range gw.calls {
-		if call == "cancel:"+childHarness {
-			foundCancelChild = true
-		}
-	}
-	if !foundCancelChild {
-		t.Fatalf("expected cancel of bound continuation %v", gw.calls)
-	}
-	var parentStatus, childStatus string
-	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&parentStatus); err != nil {
-		t.Fatal(err)
-	}
-	if err := as.pool.QueryRow(context.Background(), `SELECT status FROM agent_turn_projections WHERE id = $1`, childID).Scan(&childStatus); err != nil {
-		t.Fatal(err)
-	}
-	if parentStatus != "running" {
-		t.Fatalf("parent status %s", parentStatus)
-	}
-	if childStatus != "canceled" {
-		t.Fatalf("child status %s", childStatus)
 	}
 }
 

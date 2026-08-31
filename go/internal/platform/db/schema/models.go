@@ -240,7 +240,6 @@ type AgentTurnProjections struct {
 	LibraryOrganizationDraftRevisionID *string    `gorm:"column:library_organization_draft_revision_id;type:varchar(36)"`
 	WorkflowRunRequestID               *string    `gorm:"column:workflow_run_request_id;type:varchar(36)"`
 	QuestionAnswerJSON                 *string    `gorm:"column:question_answer_json;type:json"`
-	ContinuationTurnID                 *string    `gorm:"column:continuation_turn_id;type:varchar(36)"`
 }
 
 func (AgentTurnProjections) TableName() string { return "agent_turn_projections" }

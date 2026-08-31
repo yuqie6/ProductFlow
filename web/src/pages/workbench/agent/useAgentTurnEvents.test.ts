@@ -299,7 +299,6 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     error_text: null,
     question: null,
     question_answer: null,
-    continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
     library_organization_draft_revision_id: null,
