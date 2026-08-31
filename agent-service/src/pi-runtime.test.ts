@@ -976,6 +976,69 @@ describe("PiRuntimeManager turn state", () => {
     }
   });
 
+  it("retries a 5xx journal batch then ACKs the original sequence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-batch-5xx-retry-"));
+    let manager: PiRuntimeManager | undefined;
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const created = await store.createTurn(scope, {
+        input_text: "重试 journal 5xx",
+        asset_ids: [],
+        idempotency_key: "batch-5xx-retry",
+        page_context: null,
+      });
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "text.chunk", { delta: "retry" });
+      const event = (await store.unpublishedEvents(scope.run_id, created.state.turn_id))[0];
+      if (!event) throw new Error("missing unpublished event");
+      const lease = {
+        execution_id: "execution-5xx",
+        projection_id: "projection-5xx",
+        harness_turn_id: created.state.turn_id,
+        owner_id: "owner-5xx",
+        lease_token: "lease-5xx",
+        attempt: 1,
+        fencing_token: 1,
+        phase: "claimed" as const,
+        lease_expires_at: "2099-01-01T00:00:00.000Z",
+      };
+      let appendCalls = 0;
+      const productFlow = {
+        appendTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number; kind: string }> }) => {
+          appendCalls += 1;
+          if (appendCalls === 1) throw new ProductFlowError(500, "upstream_error", "服务器内部错误");
+          return args.events.map((item) => ({
+            id: `event-${item.sequence}`,
+            projection_id: lease.projection_id,
+            execution_id: lease.execution_id,
+            sequence: item.sequence,
+            schema_version: 1 as const,
+            kind: item.kind,
+            ignorable: false,
+            created_at: "2026-08-31T00:00:00.000Z",
+          }));
+        },
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      manager = new PiRuntimeManager(
+        { ...config, dataRoot: root }, store, productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3], "owner-5xx",
+      );
+      const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<unknown> }).runtimeFor(scope);
+      const internal = runtime as {
+        executionLease?: typeof lease;
+        appendPublishedBatch(events: readonly typeof event[]): Promise<void>;
+      };
+      internal.executionLease = lease;
+      await expect(internal.appendPublishedBatch([event])).resolves.toBeUndefined();
+      expect(appendCalls).toBe(2);
+      expect((await store.unpublishedEvents(scope.run_id, created.state.turn_id))).toEqual([]);
+      internal.executionLease = undefined;
+    } finally {
+      await manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes one original terminal and removes its local persistence fallback during recovery", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-terminal-fallback-recovery-"));
     let manager: PiRuntimeManager | undefined;
@@ -1115,6 +1178,187 @@ describe("PiRuntimeManager turn state", () => {
       }).recoverDurableHandoff(created.state.turn_id, "pg-only-terminal", lease.execution_id, lease.projection_id)).resolves.toBe(true);
       expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: "unknown", error: "lease expired" });
       expect(await store.durableHandoffCandidates()).toEqual([]);
+    } finally {
+      await manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips a divergent local prefix on event content 409 and still recovers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-content-409-handoff-"));
+    let manager: PiRuntimeManager | undefined;
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const created = await store.createTurn(scope, {
+        input_text: "divergent local WAL",
+        asset_ids: [],
+        idempotency_key: "content-409-handoff",
+        page_context: null,
+      });
+      const lease = {
+        execution_id: "execution-content-409",
+        projection_id: "projection-content-409",
+        harness_turn_id: created.state.turn_id,
+        owner_id: "owner-content-409",
+        lease_token: "lease-content-409",
+        attempt: 1,
+        fencing_token: 1,
+        phase: "model" as const,
+        lease_expires_at: "2099-01-01T00:00:00.000Z",
+      };
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "text.chunk", { delta: "local-only" });
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "tool/call", {
+        step_id: "context_local", kind: "inject_context", summary: "注入上下文", status: "running",
+      });
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "tool/result", {
+        step_id: "context_local", kind: "inject_context", summary: "注入上下文", status: "failed",
+      });
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "turn/end", {
+        reason: "unknown", reason_code: "execution_interrupted", status: "unknown",
+        error: "Agent event sequence 已绑定不同内容",
+      });
+      await store.updateState(scope.run_id, created.state.turn_id, {
+        status: "running", execution_attempt: 1, execution_fencing_token: 1,
+      });
+      await store.saveDurableHandoff(scope.run_id, created.state.turn_id, lease);
+      const confirmCalls: number[][] = [];
+      const productFlow = {
+        confirmTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number }> }) => {
+          confirmCalls.push(args.events.map((event) => event.sequence));
+          if (args.events.length === 0) {
+            return {
+              status: "confirmed" as const,
+              confirmed_through: 0,
+              persisted_through: 1,
+              items: [],
+            };
+          }
+          throw new ProductFlowError(409, "event_sequence_conflict", "Agent event sequence 已绑定不同内容");
+        },
+        claimTurnExecution: async () => lease,
+        heartbeatTurnExecution: async (_conversationID: string, _executionID: string, args: { phase: typeof lease.phase }) => ({
+          ...lease, phase: args.phase,
+        }),
+        appendTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number; kind: string }> }) => (
+          args.events.map((event) => ({
+            id: `event-${event.sequence}`, projection_id: lease.projection_id, execution_id: lease.execution_id,
+            sequence: event.sequence, schema_version: 1 as const, kind: event.kind, ignorable: false,
+            created_at: "2026-08-31T00:00:00.000Z",
+          }))
+        ),
+        releaseTurnExecution: async () => ({ released: true }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      manager = new PiRuntimeManager(
+        { ...config, dataRoot: root }, store, productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3], lease.owner_id,
+      );
+      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
+      await expect(manager.recoverAfterRestart()).resolves.toMatchObject({ replayed_handoffs: 1 });
+      expect(confirmCalls).toContainEqual([]);
+      expect(confirmCalls).toContainEqual([1, 2, 3, 4]);
+      expect(confirmCalls).toContainEqual([1]);
+      expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({
+        status: "unknown",
+        output: "local-only",
+      });
+      expect(await store.durableHandoffCandidates()).toEqual([]);
+      expect((await store.unpublishedEvents(scope.run_id, created.state.turn_id)).map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+    } finally {
+      await manager?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps listening after one leftover durable handoff fails to recover", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-handoff-isolation-"));
+    let manager: PiRuntimeManager | undefined;
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const broken = await store.createTurn(scope, {
+        input_text: "broken leftover",
+        asset_ids: [],
+        idempotency_key: "broken-handoff",
+        page_context: null,
+      });
+      const healthy = await store.createTurn(scope, {
+        input_text: "healthy leftover",
+        asset_ids: [],
+        idempotency_key: "healthy-handoff",
+        page_context: null,
+      });
+      const brokenLease = {
+        execution_id: "execution-broken",
+        projection_id: "projection-broken",
+        harness_turn_id: broken.state.turn_id,
+        owner_id: "owner-isolation",
+        lease_token: "lease-broken",
+        attempt: 1,
+        fencing_token: 1,
+        phase: "model" as const,
+        lease_expires_at: "2099-01-01T00:00:00.000Z",
+      };
+      const healthyLease = {
+        ...brokenLease,
+        execution_id: "execution-healthy",
+        projection_id: "projection-healthy",
+        harness_turn_id: healthy.state.turn_id,
+        lease_token: "lease-healthy",
+      };
+      await store.appendLocalEvent(scope.run_id, broken.state.turn_id, "text.chunk", { delta: "broken" });
+      await store.appendLocalEvent(scope.run_id, healthy.state.turn_id, "question/requested", {
+        id: "q-healthy", header: "确认", question: "继续吗？", options: [{ label: "继续" }],
+      });
+      await store.updateState(scope.run_id, broken.state.turn_id, {
+        status: "running", execution_attempt: 1, execution_fencing_token: 1,
+      });
+      await store.updateState(scope.run_id, healthy.state.turn_id, {
+        status: "requires_input",
+        execution_attempt: 1,
+        execution_fencing_token: 1,
+        question: { id: "q-healthy", header: "确认", question: "继续吗？", options: [{ label: "继续" }] },
+      });
+      await store.saveDurableHandoff(scope.run_id, broken.state.turn_id, brokenLease);
+      await store.saveDurableHandoff(scope.run_id, healthy.state.turn_id, healthyLease);
+      const productFlow = {
+        confirmTurnEvents: async (_conversationID: string, executionID: string, args: { events: Array<{ sequence: number }> }) => {
+          if (executionID === brokenLease.execution_id) {
+            throw new ProductFlowError(500, "upstream_error", "ProductFlow request failed");
+          }
+          return {
+            status: args.events.length === 0 ? "confirmed" as const : "missing" as const,
+            confirmed_through: (args.events[0]?.sequence ?? 1) - 1,
+            persisted_through: 0,
+            items: [],
+          };
+        },
+        claimTurnExecution: async (_conversationID: string, args: { idempotency_key: string }) => (
+          args.idempotency_key === "healthy-handoff" ? healthyLease : brokenLease
+        ),
+        heartbeatTurnExecution: async (_conversationID: string, executionID: string, args: { phase: string }) => ({
+          ...(executionID === healthyLease.execution_id ? healthyLease : brokenLease),
+          phase: args.phase,
+        }),
+        appendTurnEvents: async (_conversationID: string, executionID: string, args: { events: Array<{ sequence: number; kind: string }> }) => (
+          args.events.map((event) => ({
+            id: `event-${executionID}-${event.sequence}`,
+            projection_id: executionID === healthyLease.execution_id ? healthyLease.projection_id : brokenLease.projection_id,
+            execution_id: executionID,
+            sequence: event.sequence, schema_version: 1 as const, kind: event.kind, ignorable: false,
+            created_at: "2026-08-31T00:00:00.000Z",
+          }))
+        ),
+        releaseTurnExecution: async () => ({ released: true }),
+      } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      manager = new PiRuntimeManager(
+        { ...config, dataRoot: root }, store, productFlow,
+        {} as ConstructorParameters<typeof PiRuntimeManager>[3], brokenLease.owner_id,
+      );
+      store.setEventPublisher((eventScope, event) => manager!.publishDurableEvent(eventScope, event));
+      await expect(manager.recoverAfterRestart()).resolves.toMatchObject({ replayed_handoffs: 1 });
+      expect(await store.getState(scope.run_id, healthy.state.turn_id)).toMatchObject({ status: "requires_input" });
+      expect((await store.durableHandoffCandidates()).map((candidate) => candidate.turnID)).toEqual([broken.state.turn_id]);
     } finally {
       await manager?.close();
       await rm(root, { recursive: true, force: true });

@@ -29,10 +29,12 @@ import {
   MAX_DYNAMIC_CONTEXT_BYTES,
   PI_SDK_VERSION,
   ProductFlowError,
+  isAgentEventSequenceConflict,
   ProductFlowContract,
   RUNTIME_NAME,
   RuntimeContext,
   RuntimeStatus,
+  type AgentEventReceipt,
   type CheckpointKind,
   type ExecutionPhase,
   type JsonObject,
@@ -81,6 +83,7 @@ import {
   type JournalStreamChunk,
 } from "./pi-chunks.js";
 import { isJournalFlushBarrier, JournalEventBatcher } from "./journal-publisher.js";
+import { effectiveBackgroundResumable } from "./provider-capability.js";
 import {
   applyThinkingEvent,
   createThinkingProjectionState,
@@ -140,22 +143,28 @@ export class PiRuntimeManager {
     this.assertOpen();
     let replayedHandoffs = 0;
     for (const candidate of await this.store.durableHandoffCandidates()) {
-      const runtime = await this.runtimeFor(candidate.scope);
-      const recovered = await runtime.recoverDurableHandoff(
-        candidate.turnID,
-        candidate.idempotencyKey,
-        candidate.executionID,
-        candidate.projectionID,
-      );
-      if (recovered) {
-        replayedHandoffs += 1;
-      } else {
-        this.scheduleDurableHandoffRecovery(
-          runtime,
+      try {
+        const runtime = await this.runtimeFor(candidate.scope);
+        const recovered = await runtime.recoverDurableHandoff(
           candidate.turnID,
           candidate.idempotencyKey,
           candidate.executionID,
           candidate.projectionID,
+        );
+        if (recovered) {
+          replayedHandoffs += 1;
+        } else {
+          this.scheduleDurableHandoffRecovery(
+            runtime,
+            candidate.turnID,
+            candidate.idempotencyKey,
+            candidate.executionID,
+            candidate.projectionID,
+          );
+        }
+      } catch (error) {
+        process.stderr.write(
+          `Agent durable handoff recovery failed for turn ${candidate.turnID}: ${safeErrorMessage(error)}\n`,
         );
       }
     }
@@ -478,6 +487,7 @@ class RunRuntime implements ToolRuntime {
   private checkpointSequence = 0;
   private modelRequestSequence = 0;
   private currentModelRequestID?: string;
+  private modelRequestStartedAt?: number;
   private readonly completedModelRequestIDs = new Set<string>();
   private currentPageType: string | null = null;
   private providerRequestOptions: ProviderRequestOptions = {
@@ -593,6 +603,11 @@ class RunRuntime implements ToolRuntime {
       }
       await this.flushPublishedEvents();
       return true;
+    } catch (error) {
+      if (!isAgentEventSequenceConflict(error)) throw error;
+      await this.abandonUnpublishedJournal(turnID);
+      await this.manager.store.clearDurableHandoff(this.scope.run_id, turnID);
+      return true;
     } finally {
       await this.cleanupAfterTurn();
     }
@@ -611,14 +626,33 @@ class RunRuntime implements ToolRuntime {
     if (await this.adoptConfirmedTerminal(turnID, executionID, projectionID, probe)) return true;
     while (true) {
       const events = (await this.manager.store.unpublishedEvents(this.scope.run_id, turnID)).slice(0, 250);
-      if (events.length === 0) return false;
+      if (events.length === 0) {
+        const published = await this.manager.store.publishedThrough(this.scope.run_id, turnID);
+        if (Number.isInteger(probe.persisted_through) && probe.persisted_through > published) {
+          await this.abandonUnpublishedJournal(turnID);
+          return true;
+        }
+        return false;
+      }
       const inputs = events.map(toAgentEventInput);
-      const confirmation = await this.client.confirmTurnEvents(
-        this.scope.conversation_id,
-        executionID,
-        { events: inputs },
-        this.signal,
-      );
+      let confirmation: Awaited<ReturnType<ProductFlowClient["confirmTurnEvents"]>>;
+      try {
+        confirmation = await this.client.confirmTurnEvents(
+          this.scope.conversation_id,
+          executionID,
+          { events: inputs },
+          this.signal,
+        );
+      } catch (error) {
+        if (!isAgentEventSequenceConflict(error)) throw error;
+        const matched = await this.confirmMatchingUnpublishedPrefix(turnID, executionID, projectionID, events);
+        if (matched === "adopted") return true;
+        if (matched === "missing") return false;
+        if (matched === "confirmed") continue;
+        if (await this.adoptConfirmedTerminal(turnID, executionID, projectionID, probe)) return true;
+        await this.abandonUnpublishedJournal(turnID);
+        return true;
+      }
       const firstSequence = events[0]?.sequence ?? 1;
       const lastSequence = events.at(-1)?.sequence ?? 0;
       if (
@@ -648,6 +682,81 @@ class RunRuntime implements ToolRuntime {
         throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned an incomplete Agent event confirmation");
       }
     }
+  }
+
+  private async confirmMatchingUnpublishedPrefix(
+    turnID: string,
+    executionID: string,
+    projectionID: string,
+    events: readonly TurnEvent[],
+  ): Promise<"adopted" | "missing" | "conflict" | "confirmed"> {
+    const firstSequence = events[0]?.sequence ?? 1;
+    let confirmedThrough = firstSequence - 1;
+    for (const event of events) {
+      try {
+        const confirmation = await this.client.confirmTurnEvents(
+          this.scope.conversation_id,
+          executionID,
+          { events: [toAgentEventInput(event)] },
+          this.signal,
+        );
+        if (confirmation.status === "missing") {
+          if (confirmedThrough >= firstSequence) {
+            await this.manager.store.markEventsPublished(this.scope.run_id, turnID, confirmedThrough);
+          }
+          return "missing";
+        }
+        if (
+          confirmation.status !== "confirmed"
+          || confirmation.confirmed_through !== event.sequence
+          || confirmation.items.length !== 1
+          || !eventReceiptMatches(confirmation.items[0]!, event, executionID, projectionID)
+        ) {
+          throw new RuntimeError(502, "event_confirmation_mismatch", "ProductFlow returned mismatched Agent event confirmations");
+        }
+        confirmedThrough = event.sequence;
+        if (await this.adoptConfirmedTerminal(turnID, executionID, projectionID, confirmation)) {
+          await this.manager.store.markEventsPublished(this.scope.run_id, turnID, confirmedThrough);
+          return "adopted";
+        }
+      } catch (error) {
+        if (!isAgentEventSequenceConflict(error)) throw error;
+        if (confirmedThrough >= firstSequence) {
+          await this.manager.store.markEventsPublished(this.scope.run_id, turnID, confirmedThrough);
+        }
+        return "conflict";
+      }
+    }
+    if (confirmedThrough >= firstSequence) {
+      await this.manager.store.markEventsPublished(this.scope.run_id, turnID, confirmedThrough);
+    }
+    return "confirmed";
+  }
+
+  /** 本地未发布后缀与 PG 分叉时，不以错误内容覆盖权威 journal，只把本地 Turn 收成 unknown。 */
+  private async abandonUnpublishedJournal(turnID: string): Promise<void> {
+    const state = await this.manager.store.getState(this.scope.run_id, turnID);
+    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    if (isTerminalStatus(state.status) && events.some((event) => event.kind === "turn/end")) return;
+    const summary = await this.manager.store.journalText(this.scope.run_id, turnID);
+    const error = state.error?.trim() || "Agent event sequence 已绑定不同内容";
+    if (!events.some((event) => event.kind === "turn/end")) {
+      await this.manager.store.appendLocalEvent(this.scope.run_id, turnID, "turn/end", {
+        reason: "unknown",
+        reason_code: "execution_interrupted",
+        status: "unknown",
+        error,
+      });
+    }
+    if (isTerminalStatus(state.status)) return;
+    await this.manager.store.updateState(this.scope.run_id, turnID, {
+      status: "unknown",
+      output: summary.output || state.output,
+      thinking: summary.thinking || state.thinking,
+      error,
+      question: undefined,
+      finished_at: nowISO(),
+    });
   }
 
   private async adoptConfirmedTerminal(
@@ -1332,11 +1441,21 @@ class RunRuntime implements ToolRuntime {
     const lease = this.executionLease;
     if (!lease) throw new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
     const inputs: AgentEventInput[] = events.map(toAgentEventInput);
-    const receipts = await this.client.appendTurnEvents(
-      this.scope.conversation_id,
-      lease.execution_id,
-      { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
-    );
+    let receipts: AgentEventReceipt[] | undefined;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        receipts = await this.client.appendTurnEvents(
+          this.scope.conversation_id,
+          lease.execution_id,
+          { owner_id: lease.owner_id, lease_token: lease.lease_token, events: inputs },
+        );
+        break;
+      } catch (error: unknown) {
+        if (!isRetryableJournalBatchError(error) || attempt >= 8 || this.shutdownRequested) throw error;
+        await this.waitForRetry(attempt);
+      }
+    }
+    if (!receipts) throw new RuntimeError(502, "event_receipt_mismatch", "ProductFlow returned no Agent event receipts");
     if (
       receipts.length !== events.length ||
       receipts.some((receipt, index) => !eventReceiptMatches(
@@ -1350,6 +1469,14 @@ class RunRuntime implements ToolRuntime {
     }
     const last = events.at(-1);
     if (last) await this.manager.store.markEventsPublished(this.scope.run_id, last.turn_id, last.sequence);
+  }
+
+  private async waitForRetry(attempt: number): Promise<void> {
+    const delay = Math.min(30_000, 250 * 2 ** Math.min(attempt, 7));
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, delay);
+      timer.unref?.();
+    });
   }
 
   private createStreamBuffer(): JournalStreamBuffer {
@@ -1626,6 +1753,9 @@ class RunRuntime implements ToolRuntime {
     if (!providerKind || !modelID) throw new ProductFlowError(502, "provider_config_invalid", "ProductFlow provider configuration is incomplete");
     if (providerKind === "mock") throw new ProductFlowError(503, "provider_unavailable", "mock Agent provider cannot run the Pi production adapter");
     if (providerKind === "openai" && !apiKey) throw new ProductFlowError(503, "provider_config_invalid", "ProductFlow provider configuration has no API key");
+    if (effectiveBackgroundResumable(provider.background_resumable)) {
+      throw new ProductFlowError(502, "background_unsupported", "Pi adapter does not support background resumable model calls");
+    }
     const runtime = await ModelRuntime.create({
       authPath: join(await this.manager.store.workspace(this.scope.run_id), ".pi-agent", "auth.json"),
       modelsPath: join(await this.manager.store.workspace(this.scope.run_id), ".pi-agent", "models.json"),
@@ -1687,6 +1817,7 @@ class RunRuntime implements ToolRuntime {
     });
     this.modelRequestSequence = sequence;
     this.currentModelRequestID = requestID;
+    this.modelRequestStartedAt = Date.now();
     return requestID;
   }
 
@@ -1812,11 +1943,14 @@ class RunRuntime implements ToolRuntime {
     const modelRequestID = this.currentModelRequestID;
     if (modelRequestID && this.completedModelRequestIDs.has(modelRequestID)) return;
     if (modelRequestID) this.completedModelRequestIDs.add(modelRequestID);
+    const startedAt = this.modelRequestStartedAt;
+    const durationMS = startedAt !== undefined ? Math.max(0, Date.now() - startedAt) : undefined;
     const finish: AssistantFinishPayload = {
       reason,
       attempt_id: this.attemptID,
       ...(modelRequestID ? { model_request_id: modelRequestID } : {}),
-      ...(usage ? { usage } : {}),
+      ...(durationMS !== undefined ? { duration_ms: durationMS } : {}),
+      ...(usage ? { usage, usage_source: "provider" } : {}),
     };
     this.flushStreamChunks();
     this.enqueue(() => this.manager.store.appendEvent(this.scope.run_id, turnID, "assistant/message", {
@@ -1852,6 +1986,7 @@ class RunRuntime implements ToolRuntime {
     this.checkpointSequence = 0;
     this.modelRequestSequence = 0;
     this.currentModelRequestID = undefined;
+    this.modelRequestStartedAt = undefined;
     this.completedModelRequestIDs.clear();
     this.executionPhase = "claimed";
     this.executionPhaseUpdates = Promise.resolve();
@@ -2409,4 +2544,8 @@ function safeDetailString(value: unknown, maximum: number, allowNewline = false)
     return undefined;
   }
   return value;
+}
+
+function isRetryableJournalBatchError(error: unknown): boolean {
+  return error instanceof ProductFlowError && error.status >= 500;
 }
