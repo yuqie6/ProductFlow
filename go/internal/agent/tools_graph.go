@@ -46,15 +46,27 @@ func requireGlobalScope(conv conversationRow) error {
 	return nil
 }
 
+func graphChangeSetPrepared(changeSet json.RawMessage) (before, target map[string]any, parsed graph.ChangeSet, err error) {
+	parsed, err = graph.ParseChangeSet(changeSet)
+	if err != nil {
+		return nil, nil, graph.ChangeSet{}, err
+	}
+	raw, err := json.Marshal(parsed)
+	if err != nil {
+		return nil, nil, graph.ChangeSet{}, err
+	}
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return nil, nil, graph.ChangeSet{}, err
+	}
+	before = map[string]any{"base_graph_revision": parsed.BaseGraphRevision}
+	return before, target, parsed, nil
+}
+
 func (s Service) ApplyGraphTool(ctx context.Context, conversationID string, changeSet json.RawMessage, idempotencyKey string) (map[string]any, error) {
-	parsed, err := graph.ParseChangeSet(changeSet)
+	before, targetMap, parsed, err := graphChangeSetPrepared(changeSet)
 	if err != nil {
 		return nil, err
 	}
-	target, _ := json.Marshal(parsed)
-	var targetMap map[string]any
-	_ = json.Unmarshal(target, &targetMap)
-	before := map[string]any{"base_graph_revision": parsed.BaseGraphRevision}
 	replay, found, err := s.lookupMutation(ctx, conversationID, applyGraphTool, idempotencyKey, applyGraphTool, before, targetMap)
 	if err != nil {
 		return nil, err
@@ -87,14 +99,10 @@ func (s Service) ApplyGraphTool(ctx context.Context, conversationID string, chan
 }
 
 func (s Service) ProposeGraphTool(ctx context.Context, conversationID string, changeSet json.RawMessage, idempotencyKey string) (map[string]any, error) {
-	parsed, err := graph.ParseChangeSet(changeSet)
+	before, targetMap, parsed, err := graphChangeSetPrepared(changeSet)
 	if err != nil {
 		return nil, err
 	}
-	target, _ := json.Marshal(parsed)
-	var targetMap map[string]any
-	_ = json.Unmarshal(target, &targetMap)
-	before := map[string]any{"base_graph_revision": parsed.BaseGraphRevision}
 	replay, found, err := s.lookupMutation(ctx, conversationID, proposeGraphTool, idempotencyKey, proposeGraphTool, before, targetMap)
 	if err != nil {
 		return nil, err

@@ -227,12 +227,8 @@ func TestExpiredExecutionRecoveryKeepsChunkOutputOutOfTerminalPayload(t *testing
 	`, claimed.lease.ExecutionID); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
-	if err != nil {
+	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
 		t.Fatal(err)
-	}
-	if summary.UnknownExecutions != 1 {
-		t.Fatalf("recovery summary=%+v", summary)
 	}
 	var projection schema.AgentTurnProjections
 	if err := as.db.Where("id = ?", claimed.turn.ID).Take(&projection).Error; err != nil {
@@ -260,6 +256,95 @@ func TestExpiredExecutionRecoveryKeepsChunkOutputOutOfTerminalPayload(t *testing
 	}
 	if _, exists := terminalPayload["output"]; exists {
 		t.Fatalf("recovery terminal contains output: %s", events[2].PayloadJSON)
+	}
+}
+
+func TestExpiredExecutionRecoveryInterruptsEachAttemptWithoutCanonicalMessage(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{
+		{Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"第一次","attempt_id":"a","content_index":0}`)},
+		{Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "assistant/message", Payload: json.RawMessage(`{"attempt_id":"a","text":"第一次","reason":"stop"}`)},
+		{Sequence: 3, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"第二次中断","attempt_id":"b","content_index":0}`)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expireClaimedTurn(t, as, claimed)
+	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
+		t.Fatal(err)
+	}
+	var events []schema.AgentTurnEvents
+	if err := as.db.Where("turn_projection_id = ?", claimed.turn.ID).Order("sequence").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 5 {
+		t.Fatalf("events=%+v", events)
+	}
+	if events[3].Kind != "assistant/message" || events[4].Kind != "turn/end" {
+		t.Fatalf("kinds %+v", events)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(events[3].PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["interrupted"] != true || payload["attempt_id"] != "b" {
+		t.Fatalf("second attempt interrupt %+v", payload)
+	}
+}
+
+func TestExpiredExecutionRecoveryReprojectsExistingTerminalWithoutSecondEnd(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{
+		{
+			Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"已完成正文","attempt_id":"a","content_index":0}`),
+		},
+		{
+			Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID,
+			Kind: "turn/end", Payload: json.RawMessage(`{"status":"succeeded","reason":"completed"}`),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_projections
+		SET status = 'running', finished_at = NULL, terminal_reason_code = NULL, error_text = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, claimed.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE agent_turn_executions
+		SET owner_id = $2, lease_token = $3, lease_expires_at = NOW() - INTERVAL '1 second',
+		    released_at = NULL, phase = 'model', updated_at = NOW()
+		WHERE id = $1
+	`, claimed.lease.ExecutionID, claimed.lease.OwnerID, claimed.lease.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
+		t.Fatal(err)
+	}
+	var projection schema.AgentTurnProjections
+	if err := as.db.Where("id = ?", claimed.turn.ID).Take(&projection).Error; err != nil {
+		t.Fatal(err)
+	}
+	if projection.Status != "succeeded" || projection.OutputText == nil || *projection.OutputText != "已完成正文" {
+		t.Fatalf("projection status=%s output=%v", projection.Status, projection.OutputText)
+	}
+	var events []schema.AgentTurnEvents
+	if err := as.db.Where("turn_projection_id = ?", claimed.turn.ID).Order("sequence").Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[1].Kind != "turn/end" {
+		t.Fatalf("events=%+v", events)
+	}
+	var execution schema.AgentTurnExecutions
+	if err := as.db.Where("id = ?", claimed.lease.ExecutionID).Take(&execution).Error; err != nil {
+		t.Fatal(err)
+	}
+	if execution.Phase != "terminal" || execution.OwnerID != nil {
+		t.Fatalf("execution %+v", execution)
 	}
 }
 

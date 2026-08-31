@@ -26,6 +26,19 @@ type Service struct {
 	control  *controlHub
 }
 
+// RecoveryService 给 dispatcher 崩溃恢复用：带 Graph/Product，才能对账并原键重试副作用。
+func RecoveryService(pool *pgxpool.Pool, gdb *gorm.DB) Service {
+	return Service{
+		DB:   gdb,
+		Pool: pool,
+		Graph: graph.Service{
+			DB: gdb, Pool: pool, AfterRunStatus: SyncGraphRunToTasks,
+			AfterProposalDecision: SyncGraphProposalDecision, Products: product.GraphGuard{},
+		},
+		Product: product.Service{DB: gdb, Canvas: WriteProductCanvas},
+	}
+}
+
 func (s Service) GatewayConfigured() bool {
 	if s.Gateway == nil {
 		return false

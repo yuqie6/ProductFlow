@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -21,25 +22,37 @@ type RecoverySummary struct {
 	UnknownExecutions  int
 }
 
-func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, _ int) (RecoverySummary, error) {
+const expiredExecutionBatchLimit = 25
+
+func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, limit int) (RecoverySummary, error) {
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
 		return RecoverySummary{}, err
 	}
-	return RecoverUnfinishedTurns(ctx, Service{DB: gdb})
+	if limit <= 0 {
+		limit = expiredExecutionBatchLimit
+	}
+	return recoverUnfinishedTurns(ctx, RecoveryService(pool, gdb), limit)
 }
 
 func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, error) {
+	return recoverUnfinishedTurns(ctx, s, expiredExecutionBatchLimit)
+}
+
+func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (RecoverySummary, error) {
 	var out RecoverySummary
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		n, err := recoverExpiredExecutions(ctx, pgxTx)
+		n, err := recoverExpiredExecutions(ctx, s, pgxTx, limit)
 		if err != nil {
 			return err
 		}
 		out.UnknownExecutions = n
+		if n > 0 {
+			metrics.AgentRecoveryUnknownExecutions.Add(int64(n))
+		}
 		var ids []string
 		if err := pgxTx.Model(&schema.AgentTurnProjections{}).
-			Where("resume_required = FALSE AND status IN ('queued','running','cancel_requested')").
+			Where("resume_required = FALSE AND (status IN ? OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
 			Order("created_at, id").
 			Pluck("id", &ids).Error; err != nil {
 			return err
@@ -106,16 +119,26 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 	return ids, created, nil
 }
 
-func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) {
+func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, limit int) (int, error) {
+	if limit <= 0 {
+		limit = expiredExecutionBatchLimit
+	}
 	type candidate struct {
 		ID           string `gorm:"column:id"`
 		ProjectionID string `gorm:"column:turn_projection_id"`
 	}
 	var candidates []candidate
-	if err := pgxTx.WithContext(ctx).Model(&schema.AgentTurnExecutions{}).
-		Select("id, turn_projection_id").
+	// Claim by locking the projection first (SKIP LOCKED). AppendEvents / heartbeat
+	// use the same projection → execution order; locking executions here first deadlocks
+	// a live writer that already holds the projection and is waiting on the lease row.
+	if err := pgxTx.WithContext(ctx).
+		Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_projections")).
+		Model(&schema.AgentTurnExecutions{}).
+		Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id").
+		Joins("JOIN agent_turn_projections ON agent_turn_projections.id = agent_turn_executions.turn_projection_id").
 		Where("agent_turn_executions.owner_id IS NOT NULL AND agent_turn_executions.lease_expires_at IS NOT NULL AND agent_turn_executions.lease_expires_at <= NOW()").
-		Order("id").
+		Order("agent_turn_executions.id").
+		Limit(limit).
 		Scan(&candidates).Error; err != nil {
 		return 0, err
 	}
@@ -123,7 +146,7 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 	now := time.Now().UTC()
 	for _, item := range candidates {
 		var projection schema.AgentTurnProjections
-		err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where("id = ?", item.ProjectionID).Take(&projection).Error
+		err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", item.ProjectionID).Take(&projection).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}
@@ -131,7 +154,7 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 			return 0, err
 		}
 		var execution schema.AgentTurnExecutions
-		err = pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).
+		err = pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 			Where("id = ? AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= NOW()", item.ID).
 			Take(&execution).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -150,11 +173,27 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 			return 0, err
 		}
 		publishLeaseChanged(pgxTx, item.ID, "expired")
-		if projection.Status == "requires_input" && execution.Phase == "waiting_input" {
+		var existingTerminal schema.AgentTurnEvents
+		scanErr := pgxTx.Where("turn_projection_id = ? AND kind = ?", item.ProjectionID, "turn/end").
+			Order("sequence DESC").Take(&existingTerminal).Error
+		if scanErr == nil {
+			if err := reprojectExistingTerminal(ctx, s, pgxTx, item.ProjectionID, item.ID, execution, existingTerminal); err != nil {
+				return 0, err
+			}
+			var payload terminalEventPayload
+			if json.Unmarshal([]byte(existingTerminal.PayloadJSON), &payload) == nil && payload.Status == "unknown" {
+				unknown++
+			}
+			continue
+		}
+		if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
+			return 0, scanErr
+		}
+		if projection.Status == "requires_input" {
 			continue
 		}
 		if inSet(activeTurn, projection.Status) && !(projection.Status == "queued" && execution.Phase == "claimed") {
-			output, err := appendInterruptedTurnEvents(ctx, pgxTx, item.ProjectionID, item.ID, now)
+			output, err := appendInterruptedTurnEvents(ctx, s, pgxTx, item.ProjectionID, item.ID, now)
 			if err != nil {
 				return 0, err
 			}
@@ -185,7 +224,35 @@ func recoverExpiredExecutions(ctx context.Context, pgxTx *gorm.DB) (int, error) 
 	return unknown, nil
 }
 
-func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID, executionID string, now time.Time) (string, error) {
+func reprojectExistingTerminal(
+	ctx context.Context,
+	s Service,
+	gdb *gorm.DB,
+	projectionID, executionID string,
+	execution schema.AgentTurnExecutions,
+	existingTerminal schema.AgentTurnEvents,
+) error {
+	row, err := loadTurnByID(ctx, gdb, projectionID)
+	if err != nil {
+		return err
+	}
+	if row.HarnessTurnID == nil {
+		return gdb.Model(&schema.AgentTurnExecutions{}).Where("id = ?", executionID).Updates(map[string]any{
+			"phase": "terminal",
+		}).Error
+	}
+	lease := ExecutionLeaseResponse{
+		ExecutionID:   executionID,
+		ProjectionID:  projectionID,
+		HarnessTurnID: *row.HarnessTurnID,
+		Attempt:       execution.Attempt,
+		FencingToken:  execution.FencingToken + 1,
+		Phase:         "terminal",
+	}
+	return s.projectTerminalEvent(ctx, gdb, row, lease, existingTerminal.Sequence, json.RawMessage(existingTerminal.PayloadJSON), existingTerminal.CreatedAt)
+}
+
+func appendInterruptedTurnEvents(ctx context.Context, s Service, gdb *gorm.DB, projectionID, executionID string, now time.Time) (string, error) {
 	row, err := loadTurnByID(ctx, gdb, projectionID)
 	if err != nil {
 		return "", err
@@ -206,23 +273,45 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 		return "", err
 	}
 	last := 0
-	sourceSeqs := make([]int, 0)
-	hasAssistantMessage := false
+	type attemptStream struct {
+		seqs       []int
+		hasMessage bool
+	}
+	streams := map[string]*attemptStream{}
+	attemptOrder := make([]string, 0)
+	ensureAttempt := func(id string) *attemptStream {
+		if id == "" {
+			id = "_"
+		}
+		if streams[id] == nil {
+			streams[id] = &attemptStream{}
+			attemptOrder = append(attemptOrder, id)
+		}
+		return streams[id]
+	}
+	existingResults := map[string]bool{}
 	for _, event := range events {
 		if event.Sequence > last {
 			last = event.Sequence
 		}
-		if event.Kind == "assistant/message" {
-			hasAssistantMessage = true
-		}
-		if event.Kind != "text.chunk" {
-			continue
-		}
 		var payload struct {
-			Delta string `json:"delta"`
+			AttemptID string `json:"attempt_id"`
+			Delta     string `json:"delta"`
+			StepID    string `json:"step_id"`
 		}
-		if json.Unmarshal([]byte(event.PayloadJSON), &payload) == nil && payload.Delta != "" {
-			sourceSeqs = append(sourceSeqs, event.Sequence)
+		_ = json.Unmarshal([]byte(event.PayloadJSON), &payload)
+		switch event.Kind {
+		case "assistant/message":
+			ensureAttempt(payload.AttemptID).hasMessage = true
+		case "text.chunk":
+			if payload.Delta != "" {
+				stream := ensureAttempt(payload.AttemptID)
+				stream.seqs = append(stream.seqs, event.Sequence)
+			}
+		case "tool/result":
+			if payload.StepID != "" {
+				existingResults[payload.StepID] = true
+			}
 		}
 	}
 	var exec schema.AgentTurnExecutions
@@ -262,13 +351,8 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 		if checkpoint.Kind != "tool_effect_intent" {
 			continue
 		}
-		var intent struct {
-			ToolName       string `json:"tool_name"`
-			ToolCallID     string `json:"tool_call_id"`
-			IdempotencyKey string `json:"idempotency_key"`
-			RecoveryPolicy string `json:"recovery_policy"`
-		}
-		if json.Unmarshal([]byte(checkpoint.PayloadJSON), &intent) != nil || intent.ToolCallID == "" || resolvedCalls[intent.ToolCallID] {
+		intent, parseErr := parseToolEffectIntent(json.RawMessage(checkpoint.PayloadJSON))
+		if parseErr != nil || resolvedCalls[intent.ToolCallID] {
 			continue
 		}
 		policy := toolRecoveryPolicies[intent.ToolName]
@@ -278,39 +362,35 @@ func appendInterruptedTurnEvents(ctx context.Context, gdb *gorm.DB, projectionID
 		if policy == "" || policy == "none" {
 			continue
 		}
-		var mutation schema.AgentToolMutations
-		err := gdb.Where("conversation_id = ? AND tool_name = ? AND idempotency_key = ?", row.ConversationID, intent.ToolName, intent.IdempotencyKey).Take(&mutation).Error
-		if err != nil || mutation.Status != "applied" || mutation.ResultJSON == nil {
+		outcome, reconErr := s.reconcileEffectIntent(ctx, gdb, row.ConversationID, projectionID, intent, true)
+		if reconErr != nil {
+			return "", reconErr
+		}
+		if outcome.EffectResult != effectResultApplied || len(outcome.Result) == 0 || existingResults[intent.ToolCallID] {
 			continue
 		}
-		nowResult := *mutation.ResultJSON
-		reconciliation := schema.AgentTurnEffectReconciliations{
-			ID: newID(), TurnProjectionID: projectionID, ToolCallID: intent.ToolCallID,
-			ToolName: intent.ToolName, IdempotencyKey: intent.IdempotencyKey,
-			EffectResult: "applied", ReconciliationState: "applied", ResultJSON: &nowResult,
-			CreatedAt: now, UpdatedAt: now,
-		}
-		var existing schema.AgentTurnEffectReconciliations
-		if scanErr := gdb.Where("turn_projection_id = ? AND tool_call_id = ?", projectionID, intent.ToolCallID).Take(&existing).Error; errors.Is(scanErr, gorm.ErrRecordNotFound) {
-			if err := gdb.Create(&reconciliation).Error; err != nil {
-				return "", err
-			}
-		} else if scanErr != nil {
-			return "", scanErr
-		}
 		var result any
-		_ = json.Unmarshal([]byte(nowResult), &result)
+		_ = json.Unmarshal(outcome.Result, &result)
 		if err := appendEvent("tool/result", map[string]any{
 			"step_id": intent.ToolCallID, "tool_name": intent.ToolName, "status": "succeeded",
 			"result": result, "reconciled": true,
 		}); err != nil {
 			return "", err
 		}
+		existingResults[intent.ToolCallID] = true
 	}
-	if !hasAssistantMessage && len(sourceSeqs) > 0 {
-		if err := appendEvent("assistant/message", map[string]any{
-			"interrupted": true, "reason": "aborted", "sourceEventSeqs": sourceSeqs,
-		}); err != nil {
+	for _, attemptID := range attemptOrder {
+		stream := streams[attemptID]
+		if stream.hasMessage || len(stream.seqs) == 0 {
+			continue
+		}
+		payload := map[string]any{
+			"interrupted": true, "reason": "aborted", "sourceEventSeqs": stream.seqs,
+		}
+		if attemptID != "_" {
+			payload["attempt_id"] = attemptID
+		}
+		if err := appendEvent("assistant/message", payload); err != nil {
 			return "", err
 		}
 	}

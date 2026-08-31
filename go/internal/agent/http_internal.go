@@ -216,9 +216,12 @@ func (h HTTP) reconcileGraphChange(c *gin.Context, toolName string) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	var target map[string]any
-	_ = json.Unmarshal(req.ChangeSet, &target)
-	out, err := h.Service.ReconcileGraphTool(c.Request.Context(), c.Param("conversation_id"), toolName, key, map[string]any{}, target)
+	before, target, _, err := graphChangeSetPrepared(req.ChangeSet)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ReconcileGraphTool(c.Request.Context(), c.Param("conversation_id"), toolName, key, before, target)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

@@ -48,11 +48,18 @@ func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConvers
 	}
 	var rec schema.AgentConversations
 	err = s.DB.WithContext(ctx).Select("id").Where("creation_idempotency_key = ?", key).Take(&rec).Error
-	if err != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ReconcileResponse{State: "not_applied", Detail: ptr("商品工作区尚未创建")}, nil
+	}
+	if err != nil {
+		return ReconcileResponse{}, err
 	}
 	launch, err := s.LaunchWorkspaceFromGlobal(ctx, globalConversationID, name, key)
 	if err != nil {
+		var appErr apperr.Error
+		if errors.As(err, &appErr) && appErr.Status == 409 {
+			return ReconcileResponse{State: "conflict", Detail: ptr(appErr.Detail)}, nil
+		}
 		return ReconcileResponse{State: "unknown", Detail: ptr("商品工作区对账结果仍不明确")}, nil
 	}
 	raw, _ := json.Marshal(launch)
