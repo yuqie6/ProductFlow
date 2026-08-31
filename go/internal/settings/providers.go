@@ -32,37 +32,45 @@ var (
 	}
 )
 
+// ProviderProfile 是设置页上的供应商档案 HTTP 投影，不回传 API Key 明文。
+// HasAPIKey 表示已保存密钥。ArchivedAt 非 nil 视为不存在（更新接口当 Validation）。
+// 不要和 ProviderBindings 用途行搞混：档案可被 prompt/agent/image 多个用途引用。
 type ProviderProfile struct {
 	ID            string         `json:"id"`
 	Name          string         `json:"name"`
-	ProviderType  string         `json:"provider_type"`
-	BaseURL       *string        `json:"base_url"`
-	Capabilities  []string       `json:"capabilities"`
-	DefaultModels map[string]any `json:"default_models"`
-	Config        map[string]any `json:"config"`
-	Enabled       bool           `json:"enabled"`
+	ProviderType  string         `json:"provider_type"`  // openai_compatible | google_gemini
+	BaseURL       *string        `json:"base_url"`       // nil 或空表示供应商默认
+	Capabilities  []string       `json:"capabilities"`   // text_responses | image_responses | image_images | image_google_gemini | image_mask_edit
+	DefaultModels map[string]any `json:"default_models"` // 用途默认模型，如 prompt_model
+	Config        map[string]any `json:"config"`         // 档案级额外配置，不是用途绑定
+	Enabled       bool           `json:"enabled"`        // false 时 Resolve 视为尚未配置
 	ArchivedAt    *string        `json:"archived_at"`
-	HasAPIKey     bool           `json:"has_api_key"`
+	HasAPIKey     bool           `json:"has_api_key"` // 已保存密钥；响应不含明文
 	CreatedAt     string         `json:"created_at"`
 	UpdatedAt     string         `json:"updated_at"`
 }
 
+// ProviderBindingView 是 prompt / agent / image 用途的当前绑定。
 type ProviderBindingView struct {
 	ID                string         `json:"id"`
-	Purpose           string         `json:"purpose"`
-	ProviderKind      string         `json:"provider_kind"`
+	Purpose           string         `json:"purpose"`       // prompt | agent | image
+	ProviderKind      string         `json:"provider_kind"` // 随 purpose：mock/openai 或 mock/openai_responses/openai_images/google_gemini_image
 	ProviderProfileID *string        `json:"provider_profile_id"`
-	ModelSettings     map[string]any `json:"model_settings"`
-	Config            map[string]any `json:"config"`
+	ModelSettings     map[string]any `json:"model_settings"` // 通常含 model
+	Config            map[string]any `json:"config"`         // 如 reasoning_effort、responses_background_enabled
 	CreatedAt         string         `json:"created_at"`
 	UpdatedAt         string         `json:"updated_at"`
 }
 
+// ProviderConfigResponse 是设置页「供应商」整页：档案列表 + 各用途绑定。
+// API Key 只以 has_api_key 布尔出现，导出/HTTP 都不要回明文。缺用途绑定时 GET 会补 mock 行。
 type ProviderConfigResponse struct {
-	Profiles []ProviderProfile     `json:"profiles"`
-	Bindings []ProviderBindingView `json:"bindings"`
+	Profiles []ProviderProfile     `json:"profiles"` // 不回传 API Key 明文
+	Bindings []ProviderBindingView `json:"bindings"` // 缺用途行时 GET 会补 mock
 }
 
+// ProviderConfig 列出档案与绑定；缺的 prompt/agent/image 用途行会补 mock。
+// 调用时机：GET /provider-config。有写入（ensureBindings），不是纯只读。
 func (s *Store) ProviderConfig(ctx context.Context) (ProviderConfigResponse, error) {
 	if err := s.ensureBindings(ctx); err != nil {
 		return ProviderConfigResponse{}, err
@@ -78,6 +86,7 @@ func (s *Store) ProviderConfig(ctx context.Context) (ProviderConfigResponse, err
 	return ProviderConfigResponse{Profiles: profiles, Bindings: bindings}, nil
 }
 
+// ensureBindings 补齐 prompt/agent/image 三行。缺行才插入 mock，已有行不覆盖，避免把线上 Key 冲掉。
 func (s *Store) ensureBindings(ctx context.Context) error {
 	defaults := []struct{ purpose, model string }{
 		{"prompt", "mock-prompt-v2"},
@@ -290,6 +299,8 @@ func bindingFromModel(row schema.ProviderBindings) ProviderBindingView {
 	}
 }
 
+// CreateProfile 新建供应商档案。调用时机：POST /provider-profiles。
+// 名称空、类型不在闭集、连接不合法返回 Validation。响应不含 API Key 明文。
 func (s *Store) CreateProfile(ctx context.Context, name, providerType string, baseURL, apiKey *string, caps []string, defaults, cfg map[string]any, enabled bool) (ProviderProfile, error) {
 	providerType, err := normalizeProviderType(providerType)
 	if err != nil {
@@ -324,6 +335,9 @@ func (s *Store) CreateProfile(ctx context.Context, name, providerType string, ba
 	return s.getProfile(ctx, id)
 }
 
+// UpdateProfile 按出现的 JSON 字段补丁更新档案，未出现的字段保持原值。
+// 调用时机：PATCH /provider-profiles/:profile_id。已归档当「不存在」Validation。
+// 不要用零值结构体 Updates，否则会把未提交字段洗成空。
 func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]json.RawMessage) (ProviderProfile, error) {
 	var out ProviderProfile
 	err := tx.WithGorm(ctx, s.db, func(dbTx *gorm.DB) error {
@@ -441,6 +455,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id string, fields map[string]
 	return out, nil
 }
 
+// ArchiveProfile 归档档案；仍被绑定占用时返回 Validation。
 func (s *Store) ArchiveProfile(ctx context.Context, id string) (ProviderProfile, error) {
 	var n int64
 	if err := s.db.WithContext(ctx).Model(&schema.ProviderBindings{}).Where("provider_profile_id = ?", id).Count(&n).Error; err != nil {
@@ -462,6 +477,9 @@ func (s *Store) ArchiveProfile(ctx context.Context, id string) (ProviderProfile,
 	return s.getProfile(ctx, id)
 }
 
+// UpdateBinding 更新某一用途（prompt/agent/image）的供应商绑定。
+// 调用时机：PATCH /provider-bindings/:purpose。kind=mock 时强制 profileID=nil。
+// 真实供应商必须指向已启用且具备对应 capability 的档案，否则 Validation。
 func (s *Store) UpdateBinding(ctx context.Context, purpose, kind string, profileID *string, modelSettings, cfg map[string]any) (ProviderBindingView, error) {
 	if err := s.ensureBindings(ctx); err != nil {
 		return ProviderBindingView{}, err
@@ -544,6 +562,7 @@ func (s *Store) getBinding(ctx context.Context, purpose string) (ProviderBinding
 	return bindingFromModel(row), nil
 }
 
+// validateProfileKeepsBindings 在停用/砍能力前检查是否仍被绑定占用。mock 绑定放过；真绑定缺能力返回 400。
 func (s *Store) validateProfileKeepsBindings(ctx context.Context, dbTx *gorm.DB, profile profileRow) error {
 	var bindings []schema.ProviderBindings
 	if err := dbTx.WithContext(ctx).Where("provider_profile_id = ?", profile.ID).Find(&bindings).Error; err != nil {
@@ -623,6 +642,7 @@ func validateConnection(providerType string, baseURL *string) error {
 	return nil
 }
 
+// validateBindingRuntime 检查用途必填模型，以及 Responses background / Gemini API 版本等 kind 专有字段。
 func validateBindingRuntime(purpose, kind string, model, cfg map[string]any) error {
 	modelText := lookupMapString(model, "model")
 	if purpose == "prompt" && modelText == "" {
@@ -668,6 +688,7 @@ func normalizeModelSettings(purpose string, model map[string]any) map[string]any
 	return out
 }
 
+// normalizeBindingConfig 只保留该用途认识的键。agent 收 reasoning/verbosity；image 按 kind 收专有字段；其余丢掉。
 func normalizeBindingConfig(purpose, kind string, cfg map[string]any) map[string]any {
 	if purpose == "agent" {
 		out := map[string]any{}

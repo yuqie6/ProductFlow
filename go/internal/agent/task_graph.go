@@ -17,6 +17,8 @@ var userOwnedTask = map[string]struct{}{
 
 // SyncGraphRunToTasks 把 GraphRun 状态投影到关联的 workflow request 和 Task。
 // 商品 Goal 保持 waiting_user / goal_loop；用户完成、取消、暂停不被跑图终态改写。
+//
+// runID 空或 GraphRun 缺失时静默成功。锁 Task / 更新 request 的数据库错误会返回。未知 run 状态跳过 Task 写入。
 func SyncGraphRunToTasks(ctx context.Context, pgxTx *gorm.DB, runID string) error {
 	if runID == "" {
 		return nil
@@ -45,6 +47,7 @@ func SyncGraphRunToTasks(ctx context.Context, pgxTx *gorm.DB, runID string) erro
 	return nil
 }
 
+// syncRequestRowFromRun 把 WorkflowGraphRun 状态投影到 agent_workflow_run_requests。running 升 confirmed；终态写 finished_at。不改 Task（由 applyGraphRunStatusToTask 负责 goal_loop）。
 func syncRequestRowFromRun(ctx context.Context, pgxTx *gorm.DB, requestID, runStatus string, failure *string, finished *time.Time, now time.Time) error {
 	finishedAt := now
 	if finished != nil {
@@ -86,6 +89,11 @@ func syncRequestRowFromRun(ctx context.Context, pgxTx *gorm.DB, requestID, runSt
 	}
 }
 
+// applyGraphRunStatusToTask 把 GraphRun 终态投影到关联 Task。用户已 succeeded/canceled/paused 立刻返回，读路径不得覆盖。
+//
+// 商品工作流 keepGoal：succeeded/failed/cancelled 都停在 waiting_user / goal_loop，摘要说明跑图结果但 Goal 未结束。全局 Task 才随跑图终态结束。
+//
+// SyncGraphRunToTasks 调用。禁区：不要在 GetTask 之外再写一套「跑图成功即完成 Goal」。
 func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *string, runStatus string, failure *string, finished *time.Time) error {
 	if taskID == nil || *taskID == "" || runStatus == "" {
 		return nil
@@ -248,6 +256,9 @@ func resolveWorkflowRequestApproval(ctx context.Context, pgxTx *gorm.DB, request
 	})
 }
 
+// completeOrganizationDraftTask 在用户确认图库整理 Draft 后，把仍 awaiting_confirmation 的全局 Task 标 succeeded，并向 journal 写 approval/resolved。
+//
+// 这是全局整理 Goal 的用户完成路径，不是商品 goal_loop。找不到关联 Turn 则只跳过。写 agent_tasks、agent_turn_events、conversation。
 func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft library.OrganizationDraft) error {
 	if draft.CurrentRevision == nil {
 		return nil
@@ -321,6 +332,9 @@ func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft li
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
 }
 
+// parkTaskAfterCancelledRunRequest 在用户取消尚未提交 GraphRun 的确认单后安置 Task：商品工作流停在 goal_loop，全局 Task 标 canceled。
+//
+// 用户已拥有的终态/暂停不覆盖。写 agent_tasks。
 func parkTaskAfterCancelledRunRequest(ctx context.Context, pgxTx *gorm.DB, taskID *string) error {
 	if taskID == nil || *taskID == "" {
 		return nil

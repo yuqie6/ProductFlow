@@ -17,6 +17,7 @@ func marshalOperations(ops []Operation) ([]byte, error) {
 	return json.Marshal(raws)
 }
 
+// marshalOperation 把内存 op 编成提案/账本 JSON。未知类型报错。DocumentOrigin 只在内部 op 出现。
 func marshalOperation(op Operation) ([]byte, error) {
 	switch t := op.(type) {
 	case CreateNodeOp:

@@ -21,10 +21,12 @@ type AdoptImageArtifactInput struct {
 	SourceArtifactID          string
 	ExpectedSourceAssetID     string
 	ResultAssetID             string
-	PayloadJSON               []byte
-	PayloadHash               string
-	ProviderName              string
-	ProviderModel             *string
+	PayloadJSON               []byte // adoption 事件 JSON，写入 artifact.payload_json
+	// PayloadHash 是 PayloadJSON 的 SHA-256 hex，写入 artifact.payload_hash。
+	PayloadHash  string
+	ProviderName string // 写入 artifact.provider_name；局部编辑常为 local_edit
+	// ProviderModel 为 nil 表示未记录模型。
+	ProviderModel *string
 }
 
 // AdoptImageArtifact 锁定 active 图与节点，写入 image artifact 并切换 current_artifact_id。
@@ -96,6 +98,7 @@ func AdoptImageArtifact(ctx context.Context, tx *gorm.DB, in AdoptImageArtifactI
 }
 
 // RevertNodeCurrentArtifact 把节点 current_artifact_id 从已 adoption 的结果改回 source。
+// graph 不再 active、节点缺失或当前 artifact 已变返回 Conflict；其余库错误原样返回。
 func RevertNodeCurrentArtifact(ctx context.Context, tx *gorm.DB, productID, graphID, nodeID, expectedArtifactID, adoptedArtifactID, restoreArtifactID string) error {
 	var graph schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).

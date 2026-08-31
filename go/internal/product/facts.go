@@ -18,14 +18,14 @@ import (
 // Fields 记录 JSON 里实际出现的键，用来区分「未传」和「显式清空」。
 type UpdateFactsInput struct {
 	ExpectedFactSetVersionID *string
-	ExpectedFactVersion      *int
-	ExpectedVersionProvided  bool
+	ExpectedFactVersion      *int // 与 ExpectedFactSetVersionID 二选一做乐观锁
+	ExpectedVersionProvided  bool // 区分「未传 expected」和「传了但值为 0」
 	Name                     *string
-	Category                 *string
-	Price                    *string
-	SourceNote               *string
-	Facts                    *[]map[string]any
-	Fields                   map[string]bool
+	Category                 *string           // 仅当 Fields["category"] 时写入；可显式清空
+	Price                    *string           // 仅当 Fields["price"] 时写入
+	SourceNote               *string           // 仅当 Fields["source_note"] 时写入
+	Facts                    *[]map[string]any // nil 表示不改 facts 数组
+	Fields                   map[string]bool   // JSON 里实际出现的键
 }
 
 // GetFacts 返回当前选中的 fact 版本；v2 无图出生尚未写 fact 时 id 为 null。
@@ -134,6 +134,7 @@ func checkExpectedFactVersion(in UpdateFactsInput, product Product, current *Fac
 	return nil
 }
 
+// factsResponse 无 current_fact_set_version_id 或版本行缺失时 id 为 null，不报 NotFound。
 func factsResponse(ctx context.Context, tx *gorm.DB, product Product) (FactsResponse, error) {
 	current, err := loadCurrentFactSet(ctx, tx, product)
 	if err != nil {
@@ -157,6 +158,7 @@ func factsResponse(ctx context.Context, tx *gorm.DB, product Product) (FactsResp
 	return out, nil
 }
 
+// loadCurrentFactSet 指向的版本行不存在时返回 nil，避免把悬挂指针当错误。
 func loadCurrentFactSet(ctx context.Context, tx *gorm.DB, product Product) (*FactSet, error) {
 	if product.FactSetVersionID == nil {
 		return nil, nil
@@ -255,6 +257,7 @@ func normalizeFactMaps(items []map[string]any) ([]map[string]any, error) {
 	return out, nil
 }
 
+// normalizeFactPayload 拒绝可选字段显式 null；source_type/status 必须是闭集枚举。
 func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
 	for _, key := range []string{"source_type", "status", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
 		if v, ok := payload[key]; ok && v == nil {

@@ -116,6 +116,7 @@ func galleryQuery(tx *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN workflow_graph_nodes source_node ON source_node.id = source_gen.node_id")
 }
 
+// galleryRowFromScan 把生成/交付 join 列挂到身份上；交付子图仍指向源 ProductImageAsset id。
 func galleryRowFromScan(row galleryScanRow) galleryRow {
 	out := galleryRow{
 		asset: imageAssetFromJoin(assetJoinRow{
@@ -222,12 +223,13 @@ func (s Service) GalleryBootstrap(ctx context.Context, productID string) (Galler
 	return out, err
 }
 
+// GalleryListInput 是图库分页查询。After 必须与当前 directory/q/sort 绑定。
 type GalleryListInput struct {
-	DirectoryKind string
-	DirectoryKey  string
+	DirectoryKind string // all|recent_generated|uploads|generated|unorganized|image_type|source|user_folder
+	DirectoryKey  string // 与 DirectoryKind 绑定；换条件必须重拉
 	Query         string
-	Sort          string
-	After         string
+	Sort          string // created_desc|created_asc|name_asc|name_desc；空视为 created_desc
+	After         string // opaque cursor，不是页码；必须与当前筛选绑定
 	Limit         int
 }
 
@@ -336,6 +338,7 @@ func (s Service) ListGalleryAssets(ctx context.Context, productID string, in Gal
 }
 
 // GetGalleryAsset 返回单张商品图及其生成/交付 lineage。
+// GetGalleryAsset 读取单张商品图详情，含生成与交付摘要。找不到返回 NotFound。
 func (s Service) GetGalleryAsset(ctx context.Context, productID, assetID string) (GalleryAssetResponse, error) {
 	var out GalleryAssetResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -386,6 +389,7 @@ func loadOriginCounts(ctx context.Context, tx *gorm.DB, productID string) (map[s
 	return out, nil
 }
 
+// loadImageTypeCounts 把 image_type_key IS NULL 投影成 __unclassified__，不另建文件夹。
 func loadImageTypeCounts(ctx context.Context, tx *gorm.DB, productID string) ([]GalleryImageType, error) {
 	var rows []struct {
 		Key   *string `gorm:"column:image_type_key"`
@@ -415,6 +419,7 @@ func loadImageTypeCounts(ctx context.Context, tx *gorm.DB, productID string) ([]
 	return out, nil
 }
 
+// loadFolderCounts 统计一层用户文件夹；空文件夹仍返回，Count 可为 0。
 func loadFolderCounts(ctx context.Context, tx *gorm.DB, productID string) ([]GalleryFolder, error) {
 	var rows []struct {
 		ID        string `gorm:"column:id"`
@@ -439,6 +444,7 @@ func loadFolderCounts(ctx context.Context, tx *gorm.DB, productID string) ([]Gal
 	return out, nil
 }
 
+// normalizeDirectory 校验系统目录与 directory_key 配对；user_folder 必须属于该商品。
 func normalizeDirectory(ctx context.Context, tx *gorm.DB, productID, kind, key string) (string, *string, error) {
 	kind = strings.TrimSpace(kind)
 	if kind == "" {
@@ -498,6 +504,7 @@ func validGallerySort(sort string) bool {
 	}
 }
 
+// applyGalleryListFilters 把系统目录当查询投影；generated 排除 parent_asset_id 非空的交付子图。
 func applyGalleryListFilters(q *gorm.DB, productID, kind string, key *string, query, sort string, cursor *galleryCursor, asOf *time.Time, limit int) *gorm.DB {
 	q = q.Where("a.product_id = ?", productID)
 	switch kind {
@@ -559,6 +566,7 @@ func parseCursorTime(raw string) (time.Time, error) {
 	return time.Time{}, apperr.Validation("图库分页 cursor 无效")
 }
 
+// projectGalleryAsset 生成摘要可空；交付摘要的 SourceAssetID 是源商品图 id，不是存储路径。
 func projectGalleryAsset(row galleryRow) GalleryAssetResponse {
 	item := GalleryAssetResponse{
 		AssetResponse:  serializeAsset(row.asset),
@@ -628,6 +636,8 @@ func encodeGalleryCursor(cursor galleryCursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
+// decodeGalleryCursor 解开分页 cursor。必须带 v/sort/filter/key/id；未知字段或版本不对返回 Validation。
+// filter 是当前 directory/q/sort 的哈希，换筛选必须重拉，不能拿旧 cursor。as_of 可选。
 func decodeGalleryCursor(value string) (galleryCursor, error) {
 	normalized := strings.TrimSpace(value)
 	if normalized == "" || len(normalized) > 4096 {

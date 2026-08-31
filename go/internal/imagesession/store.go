@@ -72,6 +72,7 @@ func loadEffect(ctx context.Context, q *gorm.DB, taskID string, start int) (Effe
 	return effectFromModel(row), nil
 }
 
+// validateGeneration 核对底图/参考图属于本会话、count 在 1..上限。返回规范化后的 baseID 与参考 id。
 func validateGeneration(ctx context.Context, tx *gorm.DB, sessionID string, baseID *string, selected []string, count int) (*string, []string, error) {
 	if count < 1 || count > maxGenerationCount {
 		return nil, nil, apperr.Validationf("一次生成数量必须在 1-%d 张之间", maxGenerationCount)
@@ -162,6 +163,7 @@ func boolToInt(v bool) int {
 	return 0
 }
 
+// filterToolOptions 只保留 allowed 里的键。空输入返回 nil，与「用户没传 options」同一形状。
 func filterToolOptions(in map[string]any, allowed []string) map[string]any {
 	if len(in) == 0 {
 		return nil
@@ -186,6 +188,7 @@ func filterToolOptions(in map[string]any, allowed []string) map[string]any {
 	return out
 }
 
+// validateToolOptions 检查 quality/format 等闭集与压缩范围。未知键或非法值返回 400。
 func validateToolOptions(in map[string]any) error {
 	if len(in) == 0 {
 		return nil
@@ -266,6 +269,7 @@ func optionalIntRange(in map[string]any, key string, min, max int) error {
 	return nil
 }
 
+// jsonInt 把 JSON 数字收成 int。float64 只接受整数值；其它类型返回 false，不要静默截断。
 func jsonInt(v any) (int, bool) {
 	switch n := v.(type) {
 	case int:
@@ -337,6 +341,7 @@ func assetFromModels(tx *gorm.DB, asset schema.ImageSessionAssets) (assetRow, er
 	}, nil
 }
 
+// assetsFromModels 联表补 MediaObject。任一素材缺媒体行返回 404，不输出半残列表。
 func assetsFromModels(tx *gorm.DB, assets []schema.ImageSessionAssets) ([]assetRow, error) {
 	if len(assets) == 0 {
 		return nil, nil

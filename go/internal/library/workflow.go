@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ListWorkflow 列出工作流子图库关联；关联行不复制媒体 bytes。
 func (s Service) ListWorkflow(ctx context.Context, productID, workflowID string, limit int) (WorkflowList, error) {
 	if limit < 1 {
 		limit = maxWorkflow
@@ -37,6 +38,7 @@ type workflowLinkScan struct {
 	SourceID  *string   `gorm:"column:source_id"`
 }
 
+// listWorkflowTx 列出工作流子图库关联。ProductImageAssetID 优先用本商品收藏行，否则回落到源商品图。
 func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, limit int) (WorkflowList, error) {
 	var rows []workflowLinkScan
 	err := pgxTx.WithContext(ctx).Table("workflow_media_library_assets AS w").
@@ -82,6 +84,7 @@ func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, 
 	return out, nil
 }
 
+// SyncWorkflow 重写工作流子图库关联集合，不复制媒体 bytes。
 func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string, libraryIDs []string) (WorkflowList, error) {
 	if len(libraryIDs) == 0 {
 		return WorkflowList{}, apperr.Validation("至少选择一个素材")
@@ -167,6 +170,8 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 	return out, err
 }
 
+// RemoveWorkflow 删除一条工作流子图库关联，不删除全局素材。
+// 工作流不属于该商品或不存在返回 NotFound「工作流不存在」；关联行不存在返回 NotFound「工作流素材关联不存在」。
 func (s Service) RemoveWorkflow(ctx context.Context, productID, workflowID, libraryAssetID string) error {
 	return tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {

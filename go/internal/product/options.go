@@ -2,6 +2,7 @@ package product
 
 import "github.com/yuqie6/productflow/prompts"
 
+// workspaceOptionsJSON 给出创建页图种目录与数量上限，权威来自 prompts.ImageTypes 与 intake 常量。
 func workspaceOptionsJSON() map[string]any {
 	types := []map[string]any{}
 	for _, item := range prompts.ImageTypes() {

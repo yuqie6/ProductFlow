@@ -72,6 +72,8 @@ func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID str
 	return id, tx.WithContext(ctx).Create(&rec).Error
 }
 
+// insertProductConversation 在商品出生事务写入 product_workflow conversation，并带上创建幂等键与 request hash。
+// 不创建 AgentTask 或 Turn；产品 Goal 必须由用户稍后显式发起。
 func insertProductConversation(ctx context.Context, tx *gorm.DB, sessionID, productID, key, requestHash string) (product.Conversation, error) {
 	id := newID()
 	now := time.Now().UTC()

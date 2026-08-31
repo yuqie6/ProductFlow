@@ -21,22 +21,27 @@ func init() {
 	})
 }
 
+// Preset 是内置交付尺寸模板的 HTTP 项，不构成平台审核或合规保证。
+// DeliverySpec 是确定性渲染合同，改它不会调用图像模型。
 type Preset struct {
-	Key                 string `json:"key"`
+	Key                 string `json:"key"` // 进程内常量键，如 taobao_tmall_hero
 	Title               string `json:"title"`
-	AspectRatio         string `json:"aspect_ratio"`
-	ApplicableImageType string `json:"applicable_image_type"`
-	ReviewedAt          string `json:"reviewed_at"`
-	Source              string `json:"source"`
-	Disclaimer          string `json:"disclaimer"`
-	DeliverySpec        Spec   `json:"delivery_spec"`
+	AspectRatio         string `json:"aspect_ratio"`          // 如 3:4，与 DeliverySpec 宽高对应
+	ApplicableImageType string `json:"applicable_image_type"` // hero | detail | scene
+	ReviewedAt          string `json:"reviewed_at"`           // 模板审阅日期，不是任务时间
+	Source              string `json:"source"`                // 文档出处，非供应商
+	Disclaimer          string `json:"disclaimer"`            // 不构成平台审核或合规保证
+	DeliverySpec        Spec   `json:"delivery_spec"`         // 确定性渲染合同，改它不调图像模型
 }
 
+// PresetCatalog 列出内置模板，并声明是否允许自定义 DeliverySpec。
 type PresetCatalog struct {
-	SupportsCustom bool     `json:"supports_custom"`
-	Items          []Preset `json:"items"`
+	SupportsCustom bool     `json:"supports_custom"` // true 表示也允许自定义 DeliverySpec
+	Items          []Preset `json:"items"`           // 进程内常量目录，无 DB
 }
 
+// ListPresets 返回内置交付模板目录（进程内常量，无 DB）。
+// 调用时机：HTTP GET /api/v3/delivery-presets。SupportsCustom=true 表示也允许自定义 Spec。
 func ListPresets() PresetCatalog {
 	return PresetCatalog{
 		SupportsCustom: true,
@@ -50,6 +55,7 @@ func ListPresets() PresetCatalog {
 	}
 }
 
+// GetPreset 按 key 读取内置模板；不存在时返回 NotFound。
 func GetPreset(key string) (Preset, error) {
 	for _, item := range ListPresets().Items {
 		if item.Key == key {
@@ -59,6 +65,7 @@ func GetPreset(key string) (Preset, error) {
 	return Preset{}, apperr.NotFound("交付预设不存在")
 }
 
+// SpecAsMap 把 Spec 编成可写入节点 config 的 map。
 func SpecAsMap(spec Spec) map[string]any {
 	var maxByte any
 	if spec.MaxByteSize != nil {

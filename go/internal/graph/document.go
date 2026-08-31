@@ -7,14 +7,21 @@ import (
 )
 
 const (
-	OriginSeed          = "seed"
-	OriginGenerated     = "generated"
-	OriginAuthored      = "authored"
+	// OriginSeed 是模板创建的初始文稿。Fill cook 只对 seed 调 prompt provider。
+	OriginSeed = "seed"
+	// OriginGenerated 是成功 generate adopt 写入的文稿。
+	OriginGenerated = "generated"
+	// OriginAuthored 是检查器可见字段保存后的人工文稿。
+	OriginAuthored = "authored"
+	// OriginCollaborative 是对 generated 文稿再做部分人工编辑。
 	OriginCollaborative = "collaborative"
 
+	// DocumentActionComplete 补全空字段，不覆盖已有文稿。
 	DocumentActionComplete = "complete"
-	DocumentActionRewrite  = "rewrite"
-	DocumentActionReplace  = "replace"
+	// DocumentActionRewrite 按模型输出重写整份可见文稿。
+	DocumentActionRewrite = "rewrite"
+	// DocumentActionReplace 用模型输出替换整份可见文稿。
+	DocumentActionReplace = "replace"
 )
 
 func isContentNodeType(nodeType NodeType) bool {
@@ -148,6 +155,8 @@ func documentVisibleKeys(nodeType NodeType) []string {
 	return keys
 }
 
+// inferDocumentOriginFromConfig 只在持久化列缺失时猜测 origin。内容空或像出生种子则为 seed，否则 authored。
+// 不能猜 generated / collaborative。非内容节点返回空串。不要把它当唯一来源——DocumentOrigin() 优先读列。
 func inferDocumentOriginFromConfig(nodeType NodeType, config map[string]any) string {
 	if !isContentNodeType(nodeType) {
 		return ""
@@ -185,6 +194,8 @@ func contentFieldsEmpty(nodeType NodeType, config map[string]any) bool {
 	return true
 }
 
+// looksLikeSourceNoteSeedBrief 识别创建页看图起草落成的 brief 种子：goal 等于 listing look rule，
+// design_goals 带 source-note 前缀，prohibitions 与 look 一致。改 look.md 会让旧种子被当成 authored。
 func looksLikeSourceNoteSeedBrief(config map[string]any) bool {
 	look := prompts.ListingLook()
 	goal, _ := config["goal"].(string)
@@ -210,6 +221,8 @@ func looksLikeSourceNoteSeedBrief(config map[string]any) bool {
 	return true
 }
 
+// looksLikeBirthPromptSeed 识别出生模板的 prompt 种子：只允许空字段或图种默认 design_goal。
+// 用户改过可见字段后不再是 seed，Fill cook 不会再打 provider。
 func looksLikeBirthPromptSeed(config map[string]any) bool {
 	prompt, _ := config["prompt"].(map[string]any)
 	if prompt == nil {
@@ -257,6 +270,7 @@ func documentValueEqual(left, right any) bool {
 	return pythonDumps(left) == pythonDumps(right)
 }
 
+// contentNodeShouldGenerate 为 true 才会打 prompt provider。非 force 时只有 document_origin=seed 为 true。
 func contentNodeShouldGenerate(node AppliedNode, forceTarget bool, action string) bool {
 	if !isContentNodeType(node.NodeType) {
 		return false
@@ -279,6 +293,8 @@ func publishedPromptDocument(node AppliedNode, record SourceRecord) map[string]a
 	return cloneMap(stored)
 }
 
+// mergeGeneratedBrief 按 document_action 合并 brief。rewrite/replace/seed 整段替换可见字段；complete 只填空。
+// 不改未列出的键。adopt 写回用这份，不要把 payload 原样 dump 进 config。
 func mergeGeneratedBrief(current, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
@@ -303,6 +319,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 	return out
 }
 
+// mergeGeneratedOverlay 合并 visual_overlay 的 style/colors/prohibitions。rewrite/replace/seed 整份替换 overlay。
 func mergeGeneratedOverlay(current map[string]any, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
@@ -342,6 +359,7 @@ func mergeGeneratedPrompt(current map[string]any, generated map[string]any, acti
 	return out
 }
 
+// mergePromptObjects 做 complete：只填空子字段。product_share_percent 永不被模型覆盖。
 func mergePromptObjects(current, generated map[string]any) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
@@ -376,6 +394,7 @@ func mergePromptObjects(current, generated map[string]any) map[string]any {
 	return out
 }
 
+// documentFieldEmpty 把 nil、空白串、空切片、全空子对象视为空。complete 只填这些空位。
 func documentFieldEmpty(value any) bool {
 	if value == nil {
 		return true
@@ -402,6 +421,7 @@ func documentFieldEmpty(value any) bool {
 	}
 }
 
+// collectGraphImageTypes 从 image_prompt 节点收集图种目录，供 AssemblePromptRequest。unspecified 跳过。
 func collectGraphImageTypes(graph AppliedGraph) []map[string]any {
 	seen := map[string]struct{}{}
 	var out []map[string]any
@@ -428,6 +448,8 @@ func collectGraphImageTypes(graph AppliedGraph) []map[string]any {
 	return out
 }
 
+// listingTextPolicy 从图上第一个 infographic 生图节点读 text_policy。无信息图则 none。
+// spec 缺省或 none 时信息图仍返回 required + zh-CN，避免图上无字。
 func listingTextPolicy(graph AppliedGraph) (policy, language string) {
 	policy = "none"
 	for _, node := range graph.Nodes {
@@ -459,6 +481,8 @@ func firstTextLanguage(spec map[string]any, fallback string) string {
 	return fallback
 }
 
+// downstreamTextPolicy 从该 prompt 连出的生图节点读 text_policy，供 AssemblePromptRequest。
+// 没有下游或全是 none 则 none。与 listingTextPolicy（全图第一个信息图）不是同一条规则。
 func downstreamTextPolicy(graph AppliedGraph, promptNodeID string) (policy, language string) {
 	policy = "none"
 	for _, edge := range graph.Edges {

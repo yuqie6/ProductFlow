@@ -52,6 +52,8 @@ func SnapshotGraph(graph AppliedGraph, sources map[string]SourceRecord) map[stri
 	}
 }
 
+// sourceSnapshot 把运行输入收成 snapshot JSON 的一条。执行只读这份，不再查 live 图。
+// 缺字段保持 JSON null / 空切片，不要省略 key，appliedGraphFromSnapshot 靠这些键回放。
 func sourceSnapshot(record SourceRecord) map[string]any {
 	var artifactType any
 	if record.CurrentArtifactType != nil {
@@ -75,6 +77,7 @@ func sourceSnapshot(record SourceRecord) map[string]any {
 	}
 }
 
+// productSourceDict 把商品资料快照编进 snapshot；nil 写成 JSON null，不要省略，回放时靠它区分「没源」和「空 facts」。
 func productSourceDict(snap *productSourceSnapshot) any {
 	if snap == nil {
 		return nil
@@ -126,6 +129,8 @@ func snapshotNodeTitle(snapshot map[string]any, nodeID string) *string {
 	return nil
 }
 
+// snapshotInputTrace 从 snapshot 的入边拼 UI 用 input_trace（edge_id / role / 源标题）。
+// 不参与 digest。缺 nodeID 返回空切片不是 nil。
 func snapshotInputTrace(snapshot map[string]any, nodeID string) []map[string]any {
 	if nodeID == "" {
 		return []map[string]any{}
@@ -196,6 +201,8 @@ func snapshotSlice(raw any) []map[string]any {
 	}
 }
 
+// appliedGraphFromSnapshot 把 run snapshot 回放成 AppliedGraph。执行必须走这份，不要再 load live 图。
+// revision 缺省为 0；config 缺省空 map。几乎不返回 error——坏字段当空值，调用方靠后续 Node() 再失败。
 func appliedGraphFromSnapshot(payload map[string]any) (AppliedGraph, error) {
 	revision := 0
 	switch typed := payload["revision"].(type) {
@@ -239,6 +246,8 @@ func appliedGraphFromSnapshot(payload map[string]any) (AppliedGraph, error) {
 	return out, nil
 }
 
+// sourcesFromSnapshot 回放 snapshot.sources。缺 sources 得到空 map。
+// product_source 在 facts 为空时回填 snap.Facts。执行前还要用 hydrateSourcesFromNodeRuns 覆盖本 run 新产物。
 func sourcesFromSnapshot(payload map[string]any) map[string]SourceRecord {
 	out := map[string]SourceRecord{}
 	rawSources, _ := payload["sources"].(map[string]any)
@@ -287,6 +296,7 @@ func sourcesFromSnapshot(payload map[string]any) map[string]SourceRecord {
 	return out
 }
 
+// productSourceFromDict 回放商品资料快照。缺字段保持空；legacy_fallback 只认 bool。
 func productSourceFromDict(src map[string]any) productSourceSnapshot {
 	snap := productSourceSnapshot{Facts: []map[string]any{}}
 	snap.SourceProductID = strPtrField(src["source_product_id"])

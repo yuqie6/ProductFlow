@@ -15,14 +15,18 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
+// HTTP 是配方提取、预览与应用的 Gin 处理器集合。
+// 应用走 Graph Command（actor_type=recipe），不直接写 workflow_graphs 行。
+// 配方库 ≠ 全局图库 ≠ 收藏画廊；配方不存商品身份或媒体 bytes。
 type HTTP struct {
-	Service  Service
-	Settings interface {
+	Service  Service     // 必须注入；应用走 Graph Command
+	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌
 		settings.RuntimeReader
 	}
 }
 
 // Register 挂上工作流配方提取 / 预览 / 应用。应用走 Graph Command，actor_type=recipe。
+// 路径与成功状态码见各处理器注释。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		if h.Settings == nil {
@@ -44,6 +48,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3.POST("/products/:product_id/workflow-recipes/:recipe_id/apply", h.apply)
 }
 
+// list 是 GET /api/v3/workflow-recipes：200 返回 RecipeView 数组。
 func (h HTTP) list(c *gin.Context) {
 	includeArchived, err := queryBool(c, "include_archived", false)
 	if err != nil {
@@ -58,6 +63,7 @@ func (h HTTP) list(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// get 是 GET /api/v3/workflow-recipes/:recipe_id：200 返回 RecipeView。
 func (h HTTP) get(c *gin.Context) {
 	out, err := h.Service.Get(c.Request.Context(), c.Param("recipe_id"))
 	if err != nil {
@@ -67,6 +73,7 @@ func (h HTTP) get(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// create 是 POST /api/v3/products/:product_id/workflows/:workflow_id/recipes：201 返回 RecipeView。
 func (h HTTP) create(c *gin.Context) {
 	in, _, err := bindCreate(c, false)
 	if err != nil {
@@ -83,6 +90,7 @@ func (h HTTP) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// append 是 POST /api/v3/products/:product_id/workflows/:workflow_id/recipes/:recipe_id/versions：201 返回 RecipeView。
 func (h HTTP) append(c *gin.Context) {
 	in, version, err := bindCreate(c, true)
 	if err != nil {
@@ -103,6 +111,7 @@ func (h HTTP) append(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// preview 是 POST /api/v3/products/:product_id/workflow-recipes/:recipe_id/preview：200 返回 PreviewView。
 func (h HTTP) preview(c *gin.Context) {
 	var body struct {
 		ExpectedRecipeVersion *int `json:"expected_recipe_version"`
@@ -123,6 +132,7 @@ func (h HTTP) preview(c *gin.Context) {
 	c.JSON(http.StatusOK, serializePreview(out))
 }
 
+// apply 是 POST /api/v3/products/:product_id/workflow-recipes/:recipe_id/apply：201 返回 ApplicationView。
 func (h HTTP) apply(c *gin.Context) {
 	var body struct {
 		ExpectedRecipeVersion *int    `json:"expected_recipe_version"`
@@ -161,6 +171,7 @@ func (h HTTP) apply(c *gin.Context) {
 	c.JSON(http.StatusCreated, serializeApplication(out))
 }
 
+// archive 是 DELETE /api/v3/workflow-recipes/:recipe_id：200 返回 ArchiveView。
 func (h HTTP) archive(c *gin.Context) {
 	raw := strings.TrimSpace(c.Query("expected_recipe_version"))
 	n, err := strconv.Atoi(raw)
@@ -187,6 +198,7 @@ type createBody struct {
 	ExpectedRecipeVersion          *int      `json:"expected_recipe_version"`
 }
 
+// bindCreate 解码创建/追加版本体。追加版本必须带 expected_recipe_version>=1；首次创建带了该字段则 400。
 func bindCreate(c *gin.Context, appendVersion bool) (CreateInput, int, error) {
 	var body createBody
 	if err := bindJSON(c, &body); err != nil {
@@ -232,6 +244,7 @@ func bindCreate(c *gin.Context, appendVersion bool) (CreateInput, int, error) {
 	return in, expectedRecipeVersion, nil
 }
 
+// bindJSON 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」。
 func bindJSON(c *gin.Context, dest any) error {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -248,6 +261,7 @@ func bindJSON(c *gin.Context, dest any) error {
 	return nil
 }
 
+// queryBool 把 1/true/yes 当 true，0/false/no 当 false；缺省用 def。其它值 400。
 func queryBool(c *gin.Context, key string, def bool) (bool, error) {
 	raw, ok := c.GetQuery(key)
 	if !ok || raw == "" {

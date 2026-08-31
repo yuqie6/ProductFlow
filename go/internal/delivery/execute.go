@@ -20,9 +20,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// Executor 是交付派生的 worker 入口。别人正在跑时返回 queue.ErrBusy；交付失败不标 unknown。
 type Executor struct {
-	DB    *gorm.DB
-	Media media.Store
+	DB    *gorm.DB    // worker 事务
+	Media media.Store // 读原图、写交付变体
 }
 
 // Execute 本地渲染已有原图；失败不改源资产，也不标 unknown。
@@ -97,6 +98,7 @@ type claim struct {
 	spec         Spec
 }
 
+// claim 把 queued 作业标 running 并带上 attemptID。RowsAffected≠1 表示已被别人抢走，返回 ok=false 且 error=nil。
 func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, error) {
 	var out claim
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -151,6 +153,7 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 	return out, err
 }
 
+// persist 写入结果 MediaObject/资产并把 running 标 succeeded。attempt 不匹配时空操作；失败会 Rollback 已写文件。
 func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered) error {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -231,6 +234,7 @@ func failClaimIfClient(ctx context.Context, pgxTx *gorm.DB, jobID, attemptID str
 	return nil
 }
 
+// failJob 仅在 running 且 attempt 匹配时标 failed。文案截到 1000 字；retryable 决定是否允许用户重试。
 func failJob(ctx context.Context, pgxTx *gorm.DB, jobID, attemptID string, reason error, retryable bool) error {
 	detail := unexpectedFailure
 	if reason != nil {

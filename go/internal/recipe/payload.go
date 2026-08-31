@@ -29,11 +29,16 @@ const (
 	originUser        = "user"
 	originOfficial    = "official"
 	sourceUserExtract = "user_extract"
-	SourceWorkflow    = "workflow"
-	SourceGroup       = "group"
-	SourceSelection   = "selection"
-	ModeCreate        = "create"
-	ModeMerge         = "merge"
+	// SourceWorkflow 表示从整张 live 图保存完整配方。
+	SourceWorkflow = "workflow"
+	// SourceGroup 表示从一组节点保存 fragment。
+	SourceGroup = "group"
+	// SourceSelection 表示从多选节点保存 fragment。
+	SourceSelection = "selection"
+	// ModeCreate 表示目标商品尚无 live 图，应用时创建。
+	ModeCreate = "create"
+	// ModeMerge 表示 fragment 并入已有 live 图。
+	ModeMerge = "merge"
 )
 
 var (
@@ -84,36 +89,42 @@ var (
 	}
 )
 
+// Payload 是配方保存的图结构；不含商品身份、绑定、生成结果或媒体 bytes。
 type Payload struct {
-	SchemaVersion int
-	Nodes         []PayloadNode
-	Edges         []PayloadEdge
-	Groups        []PayloadGroup
+	SchemaVersion int            // 当前为 3，与 live 图一致
+	Nodes         []PayloadNode  // 按 Key 标识，不是 live id
+	Edges         []PayloadEdge  // 端点是节点 Key
+	Groups        []PayloadGroup // 一层视觉分组模板
 }
 
+// PayloadNode 是配方里的节点模板，内部结构，按 key 而不是 live 节点 id 标识。
+// Config 不含商品绑定资产或生成结果。不要把 Key 当成画布 node id。
 type PayloadNode struct {
-	Key       string
-	NodeType  graph.NodeType
+	Key       string         // 配方内稳定键，不是 live 节点 id
+	NodeType  graph.NodeType // product_source | image_asset | creative_brief | visual_system | image_prompt | image_generation
 	Title     string
-	PositionX int
-	PositionY int
-	GroupKey  *string
-	Config    map[string]any
+	PositionX int            // 画布坐标，Apply 时 fragment 会加 offset
+	PositionY int            // 画布坐标，Apply 时 fragment 会加 offset
+	GroupKey  *string        // nil 表示不在分组内
+	Config    map[string]any // 已去掉商品身份/生成结果；不要把 Key 当画布 id
 }
 
+// PayloadEdge 是配方里的边模板，端点是节点 Key，不是 live 边 id。
 type PayloadEdge struct {
-	Key           string
-	SourceNodeKey string
-	TargetNodeKey string
-	DataType      graph.EdgeDataType
-	Role          graph.EdgeRole
-	Order         int
+	Key           string             // 配方内稳定键，不是 live 边 id
+	SourceNodeKey string             // 端点是节点 Key
+	TargetNodeKey string             // 端点是节点 Key
+	DataType      graph.EdgeDataType // product_facts | image_asset | creative_brief | visual_system | prompt
+	Role          graph.EdgeRole     // facts | reference | brief | visual_guidance | prompt
+	Order         int                // 同 role 多条边的顺序
 }
 
+// PayloadGroup 是配方持久化里的一层视觉分组模板，MemberKeys 指向同 payload 的节点 Key。
+// 没有端口、运行或嵌套。Apply 时只复视觉组织，不复生成结果。
 type PayloadGroup struct {
-	Key        string
+	Key        string // 配方内稳定键，不是 live 分组 id
 	Title      string
-	MemberKeys []string
+	MemberKeys []string // 指向同 payload 的节点 Key，不是 live id
 }
 
 type payloadWire struct {
@@ -156,6 +167,8 @@ type governanceWire struct {
 	ProviderSample       *string  `json:"provider_sample"`
 }
 
+// payloadDict 把 Payload 收成可哈希的 map：config 深拷贝，nil config 写成空对象，group_key 无值写 JSON null。
+// 哈希必须走这里，不要 encoding/json 默认零值，否则同一配方会算出两种 hash。
 func payloadDict(p Payload) map[string]any {
 	nodes := make([]any, 0, len(p.Nodes))
 	for _, node := range p.Nodes {
@@ -271,6 +284,8 @@ func parsePayloadOrRaise(raw []byte, storedHash string) (Payload, error) {
 	return p, nil
 }
 
+// payloadFromWire 把解码后的 wire 收成 Payload。nil Config 变成空 map，nil MemberKeys 变成空切片，
+// 避免后续校验把「没写」和「写了 null」当成两种形状。
 func payloadFromWire(wire payloadWire) Payload {
 	p := Payload{SchemaVersion: wire.SchemaVersion}
 	p.Nodes = make([]PayloadNode, 0, len(wire.Nodes))
@@ -311,6 +326,8 @@ func payloadFromWire(wire payloadWire) Payload {
 	return p
 }
 
+// validatePayload 校验配方图：schema_version 必须是当前版本，至少一节点，key 唯一且合法，
+// config 禁止再塞拓扑字段（id/edges 等）。失败一律 400，给用户改，不要写成 409。
 func validatePayload(p Payload) error {
 	if p.SchemaVersion != schemaVersion {
 		return apperr.Validation("工作流配方内容无效")
@@ -506,6 +523,8 @@ func validateNodeConfig(nodeType graph.NodeType, config map[string]any) error {
 	return nil
 }
 
+// parseGovernance 读已存的治理 JSON，返回 required_inputs。空或 null 当「没有必填绑定」。
+// 库里的脏数据返回 409「治理元数据无效」，不是 400：用户改不了请求体，只能重存一版配方。
 func parseGovernance(raw []byte) ([]string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []string{}, nil
@@ -586,6 +605,7 @@ func normalizeRecipeText(raw string) (string, error) {
 
 func strPtr(v string) *string { return &v }
 
+// cloneValue 深拷贝 map/切片，避免哈希或预览改到调用方手里的 config。其他类型原样返回。
 func cloneValue(value any) any {
 	switch t := value.(type) {
 	case map[string]any:

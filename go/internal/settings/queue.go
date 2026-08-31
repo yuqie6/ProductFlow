@@ -6,13 +6,16 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 )
 
+// GenerationQueueOverview 汇总图运行与连续生图的 queued/running 计数。
 type GenerationQueueOverview struct {
-	ActiveCount        int `json:"active_count"`
-	RunningCount       int `json:"running_count"`
-	QueuedCount        int `json:"queued_count"`
-	MaxConcurrentTasks int `json:"max_concurrent_tasks"`
+	ActiveCount        int `json:"active_count"`         // running + queued
+	RunningCount       int `json:"running_count"`        // 图运行占用 + 连续生图 running
+	QueuedCount        int `json:"queued_count"`         // 图运行排队 + 连续生图 queued
+	MaxConcurrentTasks int `json:"max_concurrent_tasks"` // app_settings generation_max_concurrent_tasks
 }
 
+// GenerationQueue 读取当前生成队列占用（图运行 + 连续生图任务）。
+// 调用时机：GET /api/generation-queue。无写入。不含交付/局部编辑任务。
 func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, error) {
 	type nodeRow struct {
 		runID  string
@@ -72,6 +75,8 @@ func (s *Store) GenerationQueue(ctx context.Context) (GenerationQueueOverview, e
 	}, nil
 }
 
+// classifyGraphDelivery 把一次 Graph Run 收成队列占用：run 不是 running 算 none；
+// 有节点 running 算 running；只剩 queued 或节点都终态但 run 还 running 算 queued（等收尾）。
 func classifyGraphDelivery(runStatus string, nodeStatuses []string) string {
 	if runStatus != "running" {
 		return "none"

@@ -22,6 +22,11 @@ type taskCursor struct {
 	ID              string  `json:"id"`
 }
 
+// ListTasks 分页列出 AgentTask（用户显式 Goal），给 Dock 任务列表。
+//
+// sessionID 为 nil 跨 Session 列。after 是 opaque cursor，必须与当前 session_id / include_terminal 一致，否则 Validation。不是页码。
+// includeTerminal=false 去掉 succeeded/failed/canceled/unknown。每条会 sync 关联 GraphRun，但 waiting_reason=goal_loop 不得被覆盖成 succeeded。
+// limit 须在 1–100。不写 lease、不追加 journal、不因列表刷新完成 Goal。
 func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTerminal bool, after string, limit int) (TaskListResponse, error) {
 	if limit < 1 || limit > taskListMaxLimit {
 		return TaskListResponse{}, apperr.Validationf("Agent Task 列表 limit 必须在 1 到 %d 之间", taskListMaxLimit)
@@ -93,6 +98,7 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 	return out, err
 }
 
+// CreateTask 创建用户显式 Goal；不会因后续 Turn 成功自动完成。
 func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, conversationID *string) (TaskResponse, error) {
 	normalizedTitle, err := normalizeTaskTitle(title)
 	if err != nil {
@@ -158,6 +164,7 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 	return out, nil
 }
 
+// GetTask 读取 Task；关联 GraphRun 同步不得覆盖 waiting_reason=goal_loop。
 func (s Service) GetTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -171,6 +178,9 @@ func (s Service) GetTask(ctx context.Context, taskID string) (TaskResponse, erro
 	return out, err
 }
 
+// RenameTask 只改 Task.title，给 PATCH /api/v2/agent-tasks/:task_id。
+//
+// 锁住任务行。找不到 NotFound。空或过长 Validation。不改 status、Goal 正文、waiting_reason，也不取消进行中的 Turn。
 func (s Service) RenameTask(ctx context.Context, taskID, title string) (TaskResponse, error) {
 	normalized, err := normalizeTaskTitle(title)
 	if err != nil {
@@ -205,6 +215,7 @@ func (s Service) RenameTask(ctx context.Context, taskID, title string) (TaskResp
 	return out, nil
 }
 
+// CompleteTask 由用户把 Goal 标为 succeeded；Turn 成功不能代替本调用。
 func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -247,6 +258,7 @@ func (s Service) CompleteTask(ctx context.Context, taskID string) (TaskResponse,
 	return out, nil
 }
 
+// PauseTask 在无忙碌 Turn 时暂停 Goal；已暂停或已终态则幂等返回。
 func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -292,6 +304,7 @@ func (s Service) PauseTask(ctx context.Context, taskID string) (TaskResponse, er
 	return out, nil
 }
 
+// ResumeTask 恢复已暂停的 Goal；非 paused 则幂等返回当前行。
 func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -381,6 +394,10 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 	return out, nil
 }
 
+// CancelTask 由用户把 Goal 标 canceled，给 POST /api/v2/agent-tasks/:task_id/cancel。
+//
+// 已终态幂等返回当前行。若当前 Turn 挂着执行请求则经 graph 取消 GraphRun；Turn 仍阻塞则转发 harness cancel。
+// 这是用户拥有的 Goal 终态，Turn/GraphRun 成功都不能代替。读路径禁止调用。找不到 NotFound。
 func (s Service) CancelTask(ctx context.Context, taskID string) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -398,6 +415,9 @@ func (s Service) CancelTask(ctx context.Context, taskID string) (TaskResponse, e
 	return out, nil
 }
 
+// cancelTaskRun 落实用户取消 Goal：若当前 Turn 挂着执行请求则经 graph 包取消 GraphRun；若 Turn 仍阻塞则 controlTurnTx cancel；否则 cancelTaskLocal。
+//
+// 已终态幂等返回。商品 Goal 取消是用户动作，与 Turn/GraphRun 成功无关。不要在读路径调用本函数。
 func cancelTaskRun(ctx context.Context, pgxTx *gorm.DB, s Service, taskID string) (TaskResponse, error) {
 	task, err := loadTask(ctx, pgxTx, taskID)
 	if err != nil {
@@ -424,6 +444,9 @@ func cancelTaskRun(ctx context.Context, pgxTx *gorm.DB, s Service, taskID string
 	return cancelTaskLocal(ctx, pgxTx, taskID)
 }
 
+// cancelTaskLocal 在没有需要转发的 GraphRun / harness Turn 时，把 Task 标 canceled，并取消仍阻塞的本地投影。
+//
+// 写 agent_tasks 与可能的 agent_turn_projections。已终态不改。这是用户取消，不是 goal_loop 停车。
 func cancelTaskLocal(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
 	task, err := lockTask(ctx, pgxTx, taskID)
 	if err != nil {
@@ -479,6 +502,7 @@ func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID strin
 	return loadTask(ctx, pgxTx, taskID)
 }
 
+// loadTask 读取 AgentTask 投影及最近一条 workflow request 的 graph id。不调用 SyncGraphRunToTasks，避免读路径覆盖 waiting_reason=goal_loop。
 func loadTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
 	var t schema.AgentTasks
 	err := pgxTx.WithContext(ctx).Where("id = ?", taskID).Take(&t).Error

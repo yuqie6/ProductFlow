@@ -23,6 +23,11 @@ type sessionCursor struct {
 	ID     string `json:"id"`
 }
 
+// ListSessions 分页列出 Agent Session，给 Dock 和商品工作台侧栏。
+//
+// productID 为 nil 只列全局 Dock（并给缺 global conversation 的 Session 补一条 collecting 对话）；非 nil 只列该商品画布 Session。
+// after 是上次返回的 NextCursor，不是页码；非法或版本不匹配返回 Validation。limit 须在 1–100。
+// includeArchived=false 只列 active。除补 conversation 外只读，不改 Goal、lease、journal。
 func (s Service) ListSessions(ctx context.Context, includeArchived bool, productID *string, after string, limit int) (SessionListResponse, error) {
 	if limit < 1 || limit > sessionListMax {
 		return SessionListResponse{}, apperr.Validationf("Agent Session 分页 limit 必须在 1 到 %d 之间", sessionListMax)
@@ -56,6 +61,7 @@ func (s Service) ListSessions(ctx context.Context, includeArchived bool, product
 	return out, err
 }
 
+// CreateSession 创建全局 Dock Session 及其 global conversation。
 func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -99,6 +105,9 @@ func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	return out, nil
 }
 
+// RenameSession 把 Session.title 改成规范化标题，给 PATCH /api/v2/agent-sessions/:session_id。
+//
+// 空或超过 160 字返回 Validation。找不到返回 NotFound。只改 title 与 updated_at，不归档、不改 Goal、不碰 journal。
 func (s Service) RenameSession(ctx context.Context, sessionID, title string) (SessionResponse, error) {
 	normalized, err := normalizeSessionTitle(title)
 	if err != nil {
@@ -130,6 +139,7 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 	return out, nil
 }
 
+// ArchiveSession 归档 Session；已归档则幂等返回当前行。
 func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -159,6 +169,9 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 	return out, nil
 }
 
+// ensureGlobalConversations 给尚未挂 global conversation 的 Dock Session 补一条 collecting 对话。
+//
+// ListSessions / CreateSession 路径调用。不创建 Task 或 Turn。已有 global conversation 的 Session 跳过。
 func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 	var ids []string
 	err := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).
@@ -188,6 +201,9 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 	return nil
 }
 
+// listSessions 按 Session 与其对话的最近更新时间分页。productID=nil 只列全局 Dock；否则只列该商品画布 Session。
+//
+// cursor 无效返回 Validation。不写表，不改 Goal。
 func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string, cursor *sessionCursor, limit int) ([]SessionResponse, *string, error) {
 	q := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{})
 	if productID == nil {
@@ -253,6 +269,7 @@ const sessionRankSQL = `GREATEST(
 			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
 		)`
 
+// loadSession 组装一条 Session 投影：标题、摘要、至多 20 条对话。缺失返回 NotFound。只读，不触发 GraphRun 同步。
 func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
 	var row schema.AgentSessions
 	err := pgxTx.WithContext(ctx).Where("id = ?", sessionID).Take(&row).Error
@@ -308,6 +325,7 @@ func deriveSessionTitle(input string) string {
 	return candidate
 }
 
+// autoNameSession 仅当标题仍是默认值时，用首条用户输入生成标题。用户已改名则不动。写 agent_sessions.title。
 func autoNameSession(ctx context.Context, pgxTx *gorm.DB, sessionID, inputText string) error {
 	var session schema.AgentSessions
 	if err := pgxTx.WithContext(ctx).Select("title").Where("id = ?", sessionID).Take(&session).Error; err != nil {

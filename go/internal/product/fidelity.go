@@ -31,37 +31,43 @@ var fidelityOutcomes = map[string]struct{}{
 	"not_applicable": {},
 }
 
+// CreateFidelityInput 写入一条人工保真检查。IdempotencyKey 相同且内容不同返回 Conflict。
 type CreateFidelityInput struct {
-	ExpectedLatestVersion int
-	IdempotencyKey        string
-	ShapeFidelity         string
-	ColorMaterialFidelity string
-	LogoTextLegibility    string
-	TextPolicyCompliance  string
+	ExpectedLatestVersion int    // 乐观锁；不匹配 Conflict
+	IdempotencyKey        string // 相同键内容不同返回 Conflict
+	ShapeFidelity         string // pass|fail|not_applicable
+	ColorMaterialFidelity string // pass|fail|not_applicable
+	LogoTextLegibility    string // pass|fail|not_applicable
+	TextPolicyCompliance  string // pass|fail|not_applicable
 	Notes                 *string
 }
 
+// FidelityCheck 是一条不可变人工保真检查的 HTTP 投影，对应 product_image_fidelity_checks。
+// 四项结果闭集 pass|fail|not_applicable；CheckedBy 固定 administrator。同一 IdempotencyKey 内容不同返回 Conflict。
+// 不要改已有行；新检查插入新 version。不要和 media.verification_status 搞混。
 type FidelityCheck struct {
 	ID                    string    `json:"id"`
 	ProductID             string    `json:"product_id"`
 	AssetID               string    `json:"asset_id"`
-	Version               int       `json:"version"`
-	ShapeFidelity         string    `json:"shape_fidelity"`
-	ColorMaterialFidelity string    `json:"color_material_fidelity"`
-	LogoTextLegibility    string    `json:"logo_text_legibility"`
-	TextPolicyCompliance  string    `json:"text_policy_compliance"`
+	Version               int       `json:"version"`                 // 不可变；新检查插入新 version
+	ShapeFidelity         string    `json:"shape_fidelity"`          // pass|fail|not_applicable
+	ColorMaterialFidelity string    `json:"color_material_fidelity"` // pass|fail|not_applicable
+	LogoTextLegibility    string    `json:"logo_text_legibility"`    // pass|fail|not_applicable
+	TextPolicyCompliance  string    `json:"text_policy_compliance"`  // pass|fail|not_applicable
 	Notes                 *string   `json:"notes"`
-	CheckedBy             string    `json:"checked_by"`
-	IdempotencyKey        string    `json:"idempotency_key"`
-	RequestHash           string    `json:"request_hash"`
+	CheckedBy             string    `json:"checked_by"`      // 固定 administrator
+	IdempotencyKey        string    `json:"idempotency_key"` // 同 key 内容不同返回 Conflict
+	RequestHash           string    `json:"request_hash"`    // 内容哈希，用来检测同 key 改内容
 	CreatedAt             time.Time `json:"created_at"`
 }
 
+// FidelityCheckList 是 GET .../fidelity-checks 200 体。LatestVersion 给 POST 的 expected 乐观锁。
+// Items 新在前。limit 非法 400。不写库。
 type FidelityCheckList struct {
 	ProductID     string          `json:"product_id"`
 	AssetID       string          `json:"asset_id"`
-	LatestVersion int             `json:"latest_version"`
-	Items         []FidelityCheck `json:"items"`
+	LatestVersion int             `json:"latest_version"` // 给 POST 的 expected 乐观锁
+	Items         []FidelityCheck `json:"items"`          // 新在前；空列表是 [] 不是 nil
 }
 
 func fidelityFromSchema(rec schema.ProductImageFidelityChecks) FidelityCheck {
@@ -82,6 +88,7 @@ func fidelityFromSchema(rec schema.ProductImageFidelityChecks) FidelityCheck {
 	}
 }
 
+// ListFidelityChecks 按 version 降序列出保真检查。limit 须在 1–100。
 func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID string, limit int) (FidelityCheckList, error) {
 	if limit < 1 || limit > fidelityCheckMaxLimit {
 		return FidelityCheckList{}, apperr.Validationf("人工保真检查列表最多返回 %d 条", fidelityCheckMaxLimit)
@@ -113,6 +120,7 @@ func (s Service) ListFidelityChecks(ctx context.Context, productID, assetID stri
 	return out, err
 }
 
+// CreateFidelityCheck 在 expected_latest_version 匹配时追加新版本。资产须属于该商品。
 func (s Service) CreateFidelityCheck(ctx context.Context, productID, assetID string, in CreateFidelityInput) (FidelityCheck, error) {
 	if in.ExpectedLatestVersion < 0 {
 		return FidelityCheck{}, apperr.Validation("expected_latest_version 不能小于 0")
@@ -161,6 +169,9 @@ func (s Service) CreateFidelityCheck(ctx context.Context, productID, assetID str
 	return out, err
 }
 
+// insertFidelityCheck 追加不可变保真检查版本。
+// 同 idempotency key 且内容哈希一致：原样返回（幂等）。expected_latest_version 落后、或同 key 哈希不同：Conflict。
+// 不覆盖旧行。资产必须属于该商品，调用方已锁商品。
 func insertFidelityCheck(
 	ctx context.Context,
 	tx *gorm.DB,

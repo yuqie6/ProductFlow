@@ -16,14 +16,18 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
+// HTTP 是连续生图会话的 Gin 处理器集合，不是 WorkflowGraphRun 也不是 AgentTask。
+// 路由挂 /api/image-sessions；attach 在 /api/v2。生成只写 PENDING dispatch，不在请求里打 broker。
 type HTTP struct {
-	Service  Service
-	Settings interface {
+	Service  Service     // 必须注入；拥有会话/生成/attach
+	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌；上限走内置默认
 		settings.RuntimeReader
 		settings.LimitsReader
 	}
 }
 
+// Register 挂上 /api/image-sessions，全部走管理员 session。
+// 路径与成功状态码见各处理器注释。删除受 runtime.DeletionEnabled 门闩。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		if h.Settings == nil {
@@ -54,6 +58,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v2.POST("/image-sessions/:image_session_id/assets/:asset_id/attach-to-product", h.attach)
 }
 
+// requireDeletion 是 DELETE /api/image-sessions/:image_session_id 的中间件：关闭删除时 403。
 func (h HTTP) requireDeletion(c *gin.Context) {
 	if h.Settings == nil {
 		httpx.AbortDetail(c, http.StatusForbidden, "删除功能已关闭，请联系管理员")
@@ -70,6 +75,7 @@ func (h HTTP) requireDeletion(c *gin.Context) {
 	}
 }
 
+// list 是 GET /api/image-sessions：200 返回 ListResponse。
 func (h HTTP) list(c *gin.Context) {
 	out, err := h.Service.List(c.Request.Context())
 	if err != nil {
@@ -79,6 +85,7 @@ func (h HTTP) list(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// create 是 POST /api/image-sessions：201 返回 DetailResponse。
 func (h HTTP) create(c *gin.Context) {
 	var req CreateRequest
 	if err := bindJSONStrict(c, &req); err != nil {
@@ -93,6 +100,7 @@ func (h HTTP) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// get 是 GET /api/image-sessions/:image_session_id：200 返回 DetailResponse。
 func (h HTTP) get(c *gin.Context) {
 	out, err := h.Service.Get(c.Request.Context(), c.Param("image_session_id"))
 	if err != nil {
@@ -102,6 +110,7 @@ func (h HTTP) get(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// status 是 GET /api/image-sessions/:image_session_id/status：200 返回 StatusResponse。
 func (h HTTP) status(c *gin.Context) {
 	out, err := h.Service.Status(c.Request.Context(), c.Param("image_session_id"))
 	if err != nil {
@@ -111,6 +120,7 @@ func (h HTTP) status(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// update 是 PATCH /api/image-sessions/:image_session_id：200 返回 DetailResponse。
 func (h HTTP) update(c *gin.Context) {
 	var req UpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -125,6 +135,7 @@ func (h HTTP) update(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// delete 是 DELETE /api/image-sessions/:image_session_id：204。
 func (h HTTP) delete(c *gin.Context) {
 	if err := h.Service.Delete(c.Request.Context(), c.Param("image_session_id")); err != nil {
 		httpx.AbortErr(c, err)
@@ -133,6 +144,7 @@ func (h HTTP) delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// uploadRefs 是 POST /api/image-sessions/:image_session_id/reference-images：200 返回 DetailResponse。
 func (h HTTP) uploadRefs(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil || form == nil {
@@ -186,6 +198,7 @@ func (h HTTP) uploadRefs(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// deleteRef 是 DELETE /api/image-sessions/:image_session_id/reference-images/:asset_id：200 返回 DetailResponse。
 func (h HTTP) deleteRef(c *gin.Context) {
 	out, err := h.Service.DeleteReference(c.Request.Context(), c.Param("image_session_id"), c.Param("asset_id"))
 	if err != nil {
@@ -195,6 +208,7 @@ func (h HTTP) deleteRef(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// generate 是 POST /api/image-sessions/:image_session_id/generate：202 返回含 queued 任务的 DetailResponse。
 func (h HTTP) generate(c *gin.Context) {
 	var req GenerateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -229,6 +243,7 @@ func (h HTTP) generate(c *gin.Context) {
 	c.JSON(http.StatusAccepted, out)
 }
 
+// retry 是 POST /api/image-sessions/:image_session_id/generation-tasks/:task_id/retry：202 返回 DetailResponse。
 func (h HTTP) retry(c *gin.Context) {
 	out, err := h.Service.Retry(c.Request.Context(), c.Param("image_session_id"), c.Param("task_id"))
 	if err != nil {
@@ -238,6 +253,7 @@ func (h HTTP) retry(c *gin.Context) {
 	c.JSON(http.StatusAccepted, out)
 }
 
+// cancel 是 POST /api/image-sessions/:image_session_id/generation-tasks/:task_id/cancel：200 返回 DetailResponse。
 func (h HTTP) cancel(c *gin.Context) {
 	out, err := h.Service.Cancel(c.Request.Context(), c.Param("image_session_id"), c.Param("task_id"))
 	if err != nil {
@@ -247,6 +263,7 @@ func (h HTTP) cancel(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// reconcile 是 POST /api/image-sessions/:image_session_id/generation-tasks/:task_id/provider-effects/:candidate_start_index/reconciliation：200 返回 DetailResponse。
 func (h HTTP) reconcile(c *gin.Context) {
 	idx, err := strconv.Atoi(c.Param("candidate_start_index"))
 	if err != nil || idx < 1 {
@@ -261,6 +278,7 @@ func (h HTTP) reconcile(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// download 是 GET /api/image-session-assets/:asset_id/download：200 写出文件；缺文件 404。
 func (h HTTP) download(c *gin.Context) {
 	asset, err := h.Service.AssetDownload(c.Request.Context(), c.Param("asset_id"))
 	if err != nil {
@@ -283,6 +301,7 @@ func (h HTTP) download(c *gin.Context) {
 	)
 }
 
+// attach 是 POST /api/v2/image-sessions/:image_session_id/assets/:asset_id/attach-to-product：200 返回商品图投影。
 func (h HTTP) attach(c *gin.Context) {
 	var req AttachRequest
 	if err := bindJSONStrict(c, &req); err != nil {
@@ -301,6 +320,7 @@ func (h HTTP) attach(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// bindJSONStrict 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」。
 func bindJSONStrict(c *gin.Context, dest any) error {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {

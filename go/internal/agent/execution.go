@@ -17,6 +17,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// ClaimExecution 按幂等键认领一轮 Turn 的 execution lease，供 agent-service 在写 journal 前证明自己是当前 writer。
+//
+// 由内部路由 POST /turn-executions/claim 调用。锁顺序必须是 projection → execution，与 Heartbeat / AppendEvents / 过期回收一致。写 agent_turn_executions（owner、lease_token、lease_expires_at、attempt、fencing_token、phase）以及 projection.harness_turn_id。
+//
+// 同一 owner 仍持未过期 lease 时原样回放，不递增 fencing_token。任何其他成功认领都会 attempt+1 且 fencing_token+1；旧 token 的 writer 再 AppendEvents 会 Conflict。
+//
+// 终态 Turn、已被其他 owner 持有的有效 lease、过期后尚未对账、或已越过安全重试边界，返回 Conflict。找不到 projection 返回 NotFound。
+//
+// 禁区：不要为了「重试方便」在回放路径递增 fencing_token；不要先锁 execution 再锁 projection（会与 live writer 死锁）；不要在这里改 agent_tasks 或把 Goal 标完成。
 func (s Service) ClaimExecution(ctx context.Context, conversationID string, taskID *string, idempotencyKey, harnessTurnID, ownerID string) (ExecutionLeaseResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "Agent execution idempotency key")
 	if err != nil {
@@ -142,6 +151,13 @@ func leaseFromExec(exec schema.AgentTurnExecutions, projectionID, owner string) 
 	return out
 }
 
+// HeartbeatExecution 在持有有效 lease 时续期，并更新 execution phase（claimed / model / tool / waiting_input / external_job / terminal）。
+//
+// 由内部路由 heartbeat 调用。先按 projection → execution 加锁，再 requireLease 核对 owner 与 lease_token。只写 agent_turn_executions 的 phase、lease_expires_at、last_heartbeat_at。
+//
+// lease 过期、token 错配或 execution 不属于该 conversation 返回 Conflict / NotFound。phase 不在白名单返回 Validation。
+//
+// 禁区：不要在心跳里递增 fencing_token；不要把心跳当成 journal 写入；不要在这里改 Turn 投影或 Goal。
 func (s Service) HeartbeatExecution(ctx context.Context, conversationID, executionID, ownerID, leaseToken, phase string) (ExecutionLeaseResponse, error) {
 	if !inSet(executionPhases, phase) {
 		return ExecutionLeaseResponse{}, apperr.Validation("Agent execution phase 不受支持")
@@ -176,6 +192,13 @@ func (s Service) HeartbeatExecution(ctx context.Context, conversationID, executi
 	return out, err
 }
 
+// ReleaseExecution 主动交还 execution lease：清空 owner / lease_token / 过期时间，并记下 released_at 与 phase。
+//
+// 由内部路由 release 调用。已是 terminal 且已释放过则幂等成功，不再要求 lease。其它情况必须持有有效 lease，否则 Conflict。
+//
+// 只写 agent_turn_executions。不写 journal，也不把 Turn 或 Goal 标终态；真正终态由 AppendEvents 的 turn/end 走 projectTerminalEvent。
+//
+// 禁区：不要在释放时伪造 turn/end；不要把「进程退出」当成可证明的 succeeded。
 func (s Service) ReleaseExecution(ctx context.Context, conversationID, executionID, ownerID, leaseToken, phase string) (map[string]any, error) {
 	if phase == "" {
 		phase = "terminal"
@@ -214,6 +237,13 @@ func (s Service) ReleaseExecution(ctx context.Context, conversationID, execution
 	return map[string]any{"released": true}, nil
 }
 
+// AppendCheckpoint 在有效 lease 下按连续 sequence 写入 agent_turn_checkpoints，供崩溃恢复对账 tool_effect 与模型调用。
+//
+// 由内部路由 checkpoints 调用。同 attempt + sequence 且 kind / fencing_token / payload 一致则回放；内容不同返回 Conflict。新行必须是 last_checkpoint_sequence+1。
+//
+// before_model_request 会幂等写入 agent_model_invocations，并把当前 fencing_token 钉在调用行上。tool_effect_intent 必须通过 parseToolEffectIntent（禁止密钥与图片 bytes）。
+//
+// 禁区：不要跳号；不要用 checkpoint 代替 journal；不要在这里改 Goal。lease 失效返回 Conflict。
 func (s Service) AppendCheckpoint(ctx context.Context, conversationID, executionID, ownerID, leaseToken string, sequence int, kind string, payload json.RawMessage) (CheckpointResponse, error) {
 	if sequence < 1 || sequence > maxCheckpointSequence {
 		return CheckpointResponse{}, apperr.Validation("Agent checkpoint sequence 无效")
@@ -318,19 +348,27 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 	return out, err
 }
 
+// EventAppendInput 是准备写入 PostgreSQL agent_turn_events 的一条 journal 事件。
+//
+// Sequence 从 1 起连续；SchemaVersion 必须为 1。Kind 用 agent-service 的原始词表（text.chunk、turn/end 等），浏览器看到的是 sse.go 翻译后的 UI 词表。Payload 必须是 JSON object，且受大小上限约束。
 type EventAppendInput struct {
-	Sequence      int
-	SchemaVersion int
+	Sequence      int // 从 1 连续；已存在则幂等回放
+	SchemaVersion int // 必须为 1
 	RunID         string
 	TurnID        string
-	Kind          string
-	Ignorable     bool
-	Payload       json.RawMessage
+	Kind          string          // agent-service 原始词表
+	Ignorable     bool            // 未知 kind 且 false 则校验失败
+	Payload       json.RawMessage // JSON object，受大小上限
 	CreatedAt     time.Time
 }
 
-// AppendEvents persists one contiguous journal batch under one execution lease.
-// Existing rows may be replayed idempotently; new rows must continue the sequence.
+// AppendEvents 在有效 lease 下把一批连续事件写入 PostgreSQL agent_turn_events。该表是对话 journal 权威；Pi session files 不能证明事件顺序。
+//
+// 由内部路由 events/batch 调用。先锁 projection 再 requireLease。已存在的 sequence 若 schema / run / turn / kind / payload 一致则回放；不一致返回 EventSequenceConflict。新行必须紧接当前 MAX(sequence)。
+//
+// turn/end 必须是 batch 最后一条，并触发 projectTerminalEvent（重建 output、释放 lease、经 applyTurnState 投影；商品 Goal 保持 goal_loop）。assistant/message 收口对应的 model invocation。
+//
+// 成功后 NOTIFY ChannelTurn，SSE 从同一游标读。禁区：不要绕过 lease 直接 INSERT；不要在这里把 Goal 标 succeeded；过期 writer 的 fencing 由 requireLease 挡掉。
 func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, ownerID, leaseToken string, inputs []EventAppendInput) ([]EventReceipt, error) {
 	if len(inputs) == 0 || len(inputs) > 250 {
 		return nil, apperr.Validation("Agent event batch 大小无效")
@@ -454,6 +492,11 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 	return out, err
 }
 
+// recordModelInvocationStart 在 before_model_request checkpoint 时幂等插入 agent_model_invocations。
+//
+// 由 AppendCheckpoint 调用。把当前 lease 的 execution_id、attempt、fencing_token 钉在 model_request_id 上。同一 ID 已存在且身份一致则回放；已绑定不同 execution / fence / 模型则 Conflict。
+//
+// 当前 adapter 只接受 execution_mode=foreground。禁区：不要在恢复路径用新 fence 覆盖旧调用行；不要把 Pi 日志当成 invocation 权威。
 func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payload json.RawMessage, now time.Time) error {
 	var doc struct {
 		ModelRequestID string `json:"model_request_id"`
@@ -491,6 +534,11 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 	return gdb.Create(&row).Error
 }
 
+// finishModelInvocation 在 assistant/message 入 journal 后，把对应 agent_model_invocations 从 started 收成 completed / interrupted / failed。
+//
+// 由 AppendEvents 调用。缺少 model_request_id 对应行是 Conflict（消息不能早于 before_model_request）。已终态行幂等忽略。全 0 usage 保持创建时的 unavailable，不能冒充 provider。
+//
+// provider_response_id 撞唯一约束返回 Conflict。禁区：不要用估算 usage 覆盖已有 provider 数字；不要在这里改 Turn 或 Goal。
 func finishModelInvocation(gdb *gorm.DB, projectionID string, payload json.RawMessage, finishedAt time.Time) error {
 	var doc struct {
 		ModelRequestID     string  `json:"model_request_id"`
@@ -593,6 +641,13 @@ func boundedErrorCode(value string) string {
 	return trimmed
 }
 
+// projectTerminalEvent 在 journal 出现 turn/end 后，用 PG 事件重建 output_text，把投影写成终态，并释放 execution lease。
+//
+// 由 AppendEvents（含幂等回放 turn/end）和 recover 的 reprojectExistingTerminal 调用。写 agent_turn_projections（经 applyTurnState，另补 terminal_reason_code / output_text）和 agent_turn_executions（清空 owner/lease，phase=terminal）。
+//
+// fencing 交给 applyTurnState：过期 token 不能把活动状态写回去。商品工作流 Goal 在 updateTaskFromTurn 里停在 waiting_user / goal_loop，Turn 成功不自动完成 Goal。
+//
+// 禁区：不要用 Pi 文件重建 output；不要在这里直接 UPDATE agent_tasks 绕过 goal_loop；不要另写第二条 turn/end。
 func (s Service) projectTerminalEvent(
 	ctx context.Context,
 	gdb *gorm.DB,
@@ -664,6 +719,11 @@ type terminalEventPayload struct {
 	Artifact   *TurnArtifact   `json:"artifact"`
 }
 
+// parseTerminalEventPayload 校验 turn/end payload：status 必须是终态，reason 必须与 status 对齐（succeeded 对应 completed）。
+//
+// 由 validateEventInput 与 projectTerminalEvent 调用。reason_code 若出现，只能是 provider_failed、execution_interrupted、effect_reconciled、effect_conflict、effect_unknown、persistence_failed。
+//
+// 无法证明终态时不要发明 succeeded。禁区：不要放宽 reason_code 白名单来「好看一点」；unknown 必须带着可审计原因。
 func parseTerminalEventPayload(payload json.RawMessage) (terminalEventPayload, error) {
 	var terminal terminalEventPayload
 	if err := json.Unmarshal(payload, &terminal); err != nil {
@@ -691,9 +751,11 @@ func parseTerminalEventPayload(payload json.RawMessage) (terminalEventPayload, e
 	return terminal, nil
 }
 
-// rebuildJournalOutput uses the latest complete assistant message as a snapshot,
-// then appends later chunks. Event payload and sequence limits bound the input;
-// output is never silently truncated.
+// rebuildJournalOutput 从 PostgreSQL journal 重建助手可见文本：以最近一条完整 assistant/message 为快照，再拼接其后的 text.chunk。
+//
+// 由 projectTerminalEvent 与 lease 过期恢复调用。只读 agent_turn_events（sequence < turn/end）。compacted 行跳过（正文已绑到 message 的 sourceEventSeqs）。payload 损坏返回 Validation，绝不静默截断。
+//
+// 禁区：不要读 Pi session files；不要把 thinking.chunk 并进 output_text；不要在 compact 之后假定 chunk 仍有 delta。
 func rebuildJournalOutput(gdb *gorm.DB, projectionID string, terminalSequence int) (string, error) {
 	var events []schema.AgentTurnEvents
 	if err := gdb.Select("sequence", "kind", "payload_json").
@@ -746,6 +808,11 @@ func stringValueOrEmpty(value *string) string {
 	return *value
 }
 
+// validateEventInput 在落库前检查一条 journal 事件：schema_version=1、sequence 与 run/turn ID 有界、payload 是不超过上限的 JSON object。
+//
+// 由 AppendEvents 与 ConfirmEvents 调用。非 ignorable 的 kind 必须在 eventKinds；turn/end 还要能 parseTerminalEventPayload。
+//
+// 禁区：不要为了兼容旧 adapter 放宽 schema；不要把校验失败写成 unknown Turn。
 func validateEventInput(input EventAppendInput) error {
 	if input.SchemaVersion != 1 {
 		return apperr.Validation("Agent event schema version 不受支持")
@@ -776,8 +843,11 @@ func validateEventInput(input EventAppendInput) error {
 	return nil
 }
 
-// lockProjectionForExecution establishes the shared projection -> execution
-// lock order before requireLease takes the execution row lock.
+// lockProjectionForExecution 先锁 agent_turn_projections，再让调用方锁 execution。这是全包统一的加锁顺序。
+//
+// Heartbeat、Release、AppendEvents、ConfirmEvents、requireLease、过期回收都必须先投影后 execution。反过来会与已持有投影锁、正在等 lease 行的 live writer 死锁。
+//
+// execution 不属于该 conversation 返回 NotFound。本函数不写表。
 func lockProjectionForExecution(ctx context.Context, gdb *gorm.DB, conversationID, executionID string) error {
 	var projection schema.AgentTurnProjections
 	err := gdb.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
@@ -791,6 +861,11 @@ func lockProjectionForExecution(ctx context.Context, gdb *gorm.DB, conversationI
 	return err
 }
 
+// requireLease 核对当前 writer 是否仍持有未过期的 owner + lease_token，并 FOR UPDATE 锁住 agent_turn_executions。
+//
+// 内部会再调 lockProjectionForExecution，因此调用方即使已锁投影也安全（同事务可重入）。owner / token 错配或 lease_expires_at 已过返回 Conflict；行不存在返回 NotFound。
+//
+// 返回值带当前 fencing_token / attempt，供 checkpoint 与 journal 钉身份。禁区：不要在校验失败时「顺手」续期；过期必须走 recovery，不能在这里复活 lease。
 func requireLease(ctx context.Context, gdb *gorm.DB, conversationID, executionID, ownerID, leaseToken string) (ExecutionLeaseResponse, error) {
 	if err := lockProjectionForExecution(ctx, gdb, conversationID, executionID); err != nil {
 		return ExecutionLeaseResponse{}, err
@@ -826,6 +901,11 @@ func requireLease(ctx context.Context, gdb *gorm.DB, conversationID, executionID
 	return out, nil
 }
 
+// ListEvents 从 PostgreSQL agent_turn_events 按 sequence 游标分页读取 journal。浏览器 SSE 与内部回放都走这里。
+//
+// 只读，不延长 lease，不读 Pi session files。after / limit 越界返回 Validation。游标语义是 sequence > after，断线用 Last-Event-ID 接同一位置。
+//
+// 禁区：不要改成读 agent-service 本地事件流；不要在列表路径投影 Goal 或改 Turn 状态。
 func (s Service) ListEvents(ctx context.Context, projectionID string, after, limit int) ([]eventRow, error) {
 	if after < 0 || after > maxEventSequence {
 		return nil, apperr.Validation("Agent event cursor 无效")

@@ -11,20 +11,24 @@ import (
 	"gorm.io/gorm"
 )
 
+// AgentProviderConfig 是解析给 Pi 内部服务的工作流 Agent 绑定，不是设置页 HTTP 投影。
+// 含 API Key 明文，只给 agent-service 进程内用。ProviderKind 当前只支持 openai。
+// BackgroundResumable 是档案声明 AND 适配器常数（现为 false），不要只看档案字段对外说可恢复。
 type AgentProviderConfig struct {
-	SchemaVersion       int     `json:"schema_version"`
-	ProviderKind        string  `json:"provider_kind"`
-	APIKey              string  `json:"api_key"`
-	BaseURL             *string `json:"base_url"`
-	Model               string  `json:"model"`
-	ReasoningEffort     *string `json:"reasoning_effort"`
-	ReasoningSummary    *string `json:"reasoning_summary"`
-	TextVerbosity       *string `json:"text_verbosity"`
-	ServiceTier         *string `json:"service_tier"`
-	BackgroundResumable bool    `json:"background_resumable"`
+	SchemaVersion       int     `json:"schema_version"`       // 当前为 1
+	ProviderKind        string  `json:"provider_kind"`        // 当前只支持 openai；mock 会 Unavailable
+	APIKey              string  `json:"api_key"`              // 明文，只给 agent-service 进程内用
+	BaseURL             *string `json:"base_url"`             // nil 表示用供应商默认
+	Model               string  `json:"model"`                // 绑定解析出的 Agent 模型
+	ReasoningEffort     *string `json:"reasoning_effort"`     // nil 表示不发送该 OpenAI 参数
+	ReasoningSummary    *string `json:"reasoning_summary"`    // nil 表示不发送
+	TextVerbosity       *string `json:"text_verbosity"`       // nil 表示不发送
+	ServiceTier         *string `json:"service_tier"`         // nil 表示不发送
+	BackgroundResumable bool    `json:"background_resumable"` // profile 与 adapter 合取；当前 adapter 为 false
 }
 
-// Pi production adapter 当前不支持 background 恢复；有效能力是 profile AND adapter。
+// agentAdapterBackgroundResumable 是 Pi 生产适配器是否支持 background 恢复。当前固定 false；
+// 有效能力是档案声明 AND 本常数，不要只看档案字段就对外说可恢复。
 const agentAdapterBackgroundResumable = false
 
 // ResolveAgentProvider 给 Pi 内部服务解析当前工作流 Agent 绑定。

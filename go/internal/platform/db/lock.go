@@ -2,21 +2,22 @@ package db
 
 import "gorm.io/gorm/clause"
 
-// ForUpdate is PostgreSQL FOR UPDATE on the query's primary table.
+// ForUpdate 是 PostgreSQL FOR UPDATE，锁查询主表整行，给命令路径「先锁再改」用。
 func ForUpdate() clause.Expression {
 	return clause.Locking{Strength: "UPDATE"}
 }
 
-// ForUpdateOf is PostgreSQL FOR UPDATE OF table (join 时只锁指定别名).
+// ForUpdateOf 是 FOR UPDATE OF table。join 时只锁指定别名，避免把关联表一起锁死。
 func ForUpdateOf(table string) clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: table}}
 }
 
+// ForUpdateOfSkipLocked 是 FOR UPDATE OF table SKIP LOCKED。多 dispatcher 并发 claim 时跳过已锁行，不互相等待。
 func ForUpdateOfSkipLocked(table string) clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: table}, Options: "SKIP LOCKED"}
 }
 
-// SkipLocked is FOR UPDATE SKIP LOCKED，给 dispatcher claim 用.
+// SkipLocked 是 FOR UPDATE SKIP LOCKED，锁主表且跳过已被别人锁的行。dispatcher claim PENDING 必须用这个，不要用普通 ForUpdate 堵死其它进程。
 func SkipLocked() clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}
 }

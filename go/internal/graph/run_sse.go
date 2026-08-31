@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// streamRunEvents 是 GET .../runs/:run_id/events：200 text/event-stream；缺 run 404。
 func (h HTTP) streamRunEvents(c *gin.Context) {
 	productID := c.Param("product_id")
 	graphID := c.Param("workflow_id")
@@ -114,6 +115,7 @@ func notesOrNil(notes <-chan notify.Notification) <-chan notify.Notification {
 	return notes
 }
 
+// listRunEvents 按 seq 读取 workflow_graph_run_events，供 SSE 回放；不是独立 HTTP 路由。
 func (h HTTP) listRunEvents(ctx context.Context, runID string, after int) ([]graphRunEventRow, error) {
 	var out []graphRunEventRow
 	err := tx.WithGorm(ctx, h.Service.DB, func(dbTx *gorm.DB) error {
@@ -124,6 +126,7 @@ func (h HTTP) listRunEvents(ctx context.Context, runID string, after int) ([]gra
 	return out, err
 }
 
+// writeRunEvent 写一条 SSE：event=run.event，id 用 Sequence，retry 1000ms。不要改事件名，前端按这个订阅。
 func writeRunEvent(c *gin.Context, payload GraphRunEventResponse) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -133,6 +136,7 @@ func writeRunEvent(c *gin.Context, payload GraphRunEventResponse) error {
 	return err
 }
 
+// runEventCursor 取 after 查询或 Last-Event-ID 的较大值。这是事件序号不是页码；非法整数 400。
 func runEventCursor(c *gin.Context) (int, error) {
 	cursor := 0
 	for _, raw := range []string{c.Query("after"), c.GetHeader("Last-Event-ID")} {

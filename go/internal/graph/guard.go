@@ -13,18 +13,20 @@ type productGuardCtxKey struct{}
 type SourceProduct struct {
 	ID               string
 	Name             string
-	Category         *string
-	Price            *string
-	SourceNote       *string
+	Category         *string // nil 表示未填类目
+	Price            *string // nil 表示未填价格
+	SourceNote       *string // nil 表示未填商品说明
 	CurrentFactSetID *string
 }
 
-// FactSet 是商品事实版本；缺行时守卫返回 nil。
+// FactSet 是 graph 编译器用的商品事实版本快照，由 ProductGuard.LoadFactSet 从 product_fact_set_versions 填入。
+// Facts 是 payload_json 的 []map，不是 product.Fact HTTP 结构；缺行时守卫返回 nil, nil，不要改成 NotFound。
+// 不要和 product.FactSet（GET/PUT /facts 投影）搞混。graph 包不得直接查 products 表。
 type FactSet struct {
 	ID        string
 	ProductID string
-	Version   int
-	Facts     []map[string]any
+	Version   int              // 不可变版本号，对应 product_fact_set_versions.version
+	Facts     []map[string]any // payload_json 的 []map；空列表是 [] 不是 nil
 }
 
 // ProductGuard 把商品行锁、绑定资产和资料快照留在 product 包，避免 graph 查询 products。

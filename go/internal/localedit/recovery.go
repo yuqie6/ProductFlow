@@ -12,11 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的局部编辑任务。
 type RecoverySummary struct {
-	QueuedTasks       int `json:"queued_tasks"`
-	StaleRunningTasks int `json:"stale_running_tasks"`
-	EnqueuedTasks     int `json:"enqueued_tasks"`
-	UnknownTasks      int `json:"unknown_tasks"`
+	QueuedTasks       int `json:"queued_tasks"`        // 本轮 queued 并补回 PENDING 的数量
+	StaleRunningTasks int `json:"stale_running_tasks"` // 过期 claimed 被重排队
+	EnqueuedTasks     int `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
+	UnknownTasks      int `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown
 }
 
 // RecoverUnfinished 把 queued 任务补回 PENDING；过期且已打 provider 的 running 标 unknown。
@@ -56,6 +57,8 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	return summary, err
 }
 
+// recoverOne 处理一条 queued/running 任务。queued 补 PENDING；running 过期且尚未打 provider 可重排队；
+// 已过 provider 边界只能标 unknown。resetStale=false 时只观察不改行。
 func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
 	task, err := loadTaskByID(ctx, pgxTx, taskID)
 	if err != nil {

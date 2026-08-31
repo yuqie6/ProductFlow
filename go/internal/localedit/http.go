@@ -15,14 +15,18 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
+// HTTP 是局部编辑的 Gin 处理器集合，不是画布 GraphRun。
+// 路由前缀 /api/v3；提交只写 PENDING dispatch。未 adopt 前结果不是节点当前图。
 type HTTP struct {
-	Service  Service
-	Settings interface {
+	Service  Service     // 必须注入；拥有草稿/提交/adopt
+	Settings interface { // nil 时 RequireAdmin 视为不要求访问令牌
 		settings.RuntimeReader
 		settings.LimitsReader
 	}
 }
 
+// Register 挂上 /api/v3 局部编辑路由，全部走管理员 session。
+// 路径与成功状态码见各处理器注释。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		if h.Settings == nil {
@@ -47,10 +51,12 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3.POST("/products/:product_id/image-edits/:task_id/adoptions/:adoption_event_id/revert", h.revert)
 }
 
+// capability 是 GET /api/v3/local-image-edits/capability：200 返回 CapabilityResponse。
 func (h HTTP) capability(c *gin.Context) {
 	c.JSON(http.StatusOK, h.Service.Capability())
 }
 
+// list 是 GET /api/v3/products/:product_id/image-edits：200 返回 TaskListResponse。
 func (h HTTP) list(c *gin.Context) {
 	limit := 50
 	if raw := c.Query("limit"); raw != "" {
@@ -69,6 +75,7 @@ func (h HTTP) list(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// get 是 GET /api/v3/products/:product_id/image-edits/:task_id：200 返回 TaskResponse。
 func (h HTTP) get(c *gin.Context) {
 	out, err := h.Service.Get(c.Request.Context(), c.Param("product_id"), c.Param("task_id"), true)
 	if err != nil {
@@ -78,6 +85,7 @@ func (h HTTP) get(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// create 是 POST /api/v3/products/:product_id/image-edits：201 返回草稿 TaskResponse。
 func (h HTTP) create(c *gin.Context) {
 	if err := rejectAliases(c); err != nil {
 		httpx.AbortErr(c, err)
@@ -104,6 +112,7 @@ func (h HTTP) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// update 是 PATCH /api/v3/products/:product_id/image-edits/:task_id：200 返回 TaskResponse。
 func (h HTTP) update(c *gin.Context) {
 	if err := rejectAliases(c); err != nil {
 		httpx.AbortErr(c, err)
@@ -135,6 +144,7 @@ func (h HTTP) update(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// submit 是 POST /api/v3/products/:product_id/image-edits/:task_id/submit：202 返回 queued TaskResponse。
 func (h HTTP) submit(c *gin.Context) {
 	var req SubmitRequest
 	if err := bindJSON(c, &req); err != nil {
@@ -149,6 +159,7 @@ func (h HTTP) submit(c *gin.Context) {
 	c.JSON(http.StatusAccepted, out)
 }
 
+// cancel 是 POST /api/v3/products/:product_id/image-edits/:task_id/cancel：200 返回 TaskResponse。
 func (h HTTP) cancel(c *gin.Context) {
 	rev, err := optionalRevision(c)
 	if err != nil {
@@ -163,6 +174,7 @@ func (h HTTP) cancel(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// retry 是 POST /api/v3/products/:product_id/image-edits/:task_id/retry：202 返回 TaskResponse。
 func (h HTTP) retry(c *gin.Context) {
 	rev, err := optionalRevision(c)
 	if err != nil {
@@ -177,6 +189,7 @@ func (h HTTP) retry(c *gin.Context) {
 	c.JSON(http.StatusAccepted, out)
 }
 
+// adopt 是 POST /api/v3/products/:product_id/image-edits/:task_id/adopt：200 返回 TaskResponse。
 func (h HTTP) adopt(c *gin.Context) {
 	var req AdoptRequest
 	if err := bindJSON(c, &req); err != nil {
@@ -191,6 +204,7 @@ func (h HTTP) adopt(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// revert 是 POST /api/v3/products/:product_id/image-edits/:task_id/adoptions/:adoption_event_id/revert：200 返回 TaskResponse。
 func (h HTTP) revert(c *gin.Context) {
 	var req AdoptRequest
 	if err := bindJSON(c, &req); err != nil {
@@ -205,6 +219,7 @@ func (h HTTP) revert(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// readMask 读 multipart 字段 mask，必须是 PNG bytes。required=false 且缺文件时返回 nil,nil，不要当成 Validation。
 func (h HTTP) readMask(c *gin.Context, required bool) ([]byte, error) {
 	file, err := c.FormFile("mask")
 	if err != nil {
@@ -239,6 +254,7 @@ func (h HTTP) readMask(c *gin.Context, required bool) ([]byte, error) {
 	return validated.Content, nil
 }
 
+// rejectAliases 拒绝 mask_geometry / reference_asset_ids 这类别名，避免旧客户端静默写错字段。
 func rejectAliases(c *gin.Context) error {
 	form, err := c.MultipartForm()
 	if err != nil || form == nil {
@@ -257,6 +273,7 @@ func rejectAliases(c *gin.Context) error {
 	return nil
 }
 
+// optionalRevision 读表单/查询里的 expected_revision；缺省 nil。非法整数 400。
 func optionalRevision(c *gin.Context) (*int, error) {
 	if c.Request.ContentLength == 0 {
 		return nil, nil
@@ -276,6 +293,7 @@ func optionalRevision(c *gin.Context) (*int, error) {
 	return req.ExpectedRevision, nil
 }
 
+// bindJSON 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」。
 func bindJSON(c *gin.Context, dest any) error {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {

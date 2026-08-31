@@ -9,6 +9,7 @@ import (
 	"github.com/yuqie6/productflow/prompts"
 )
 
+// ListingLookRule 返回 listing look 的 rule 字符串。出站 JSON 应改用 [ListingLookContext]。
 func ListingLookRule() string { return prompts.ListingLook().Rule }
 
 // ListingLookContext 出站 user JSON 必须带这份对象，不能只发 rule 字符串。权威在 go/prompts/listing/look.md。
@@ -94,6 +95,7 @@ var infographicImageTypeKeys = map[string]struct{}{
 	"precautions": {}, "faq": {}, "shipping": {}, "brand_story": {},
 }
 
+// ImageTypeFamily 把图种分成 photography / infographic / evidence。
 func ImageTypeFamily(key string) string { return imageTypeFamily(key) }
 
 func imageTypeFamily(key string) string {
@@ -144,6 +146,7 @@ func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 	}
 }
 
+// BuildProductSourceCreateGraph 生成仅含 product_source 的名称-only 出生 ChangeSet。
 func BuildProductSourceCreateGraph(productTitle, sourceProductID string, factSetVersionID *string) (ChangeSet, error) {
 	var fact any
 	if factSetVersionID != nil {
@@ -170,6 +173,7 @@ func BuildProductSourceCreateGraph(productTitle, sourceProductID string, factSet
 	return cs, validateChangeSet(cs)
 }
 
+// BuildDirectCreateTemplate 按图种与参考图生成完整 schema-v3 模板 ChangeSet。证据类图种是未绑定 image_asset 占位。
 func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 	if len(in.ImageTypes) == 0 {
 		return ChangeSet{}, apperr.Validation("至少选择一种图片类型")
@@ -517,6 +521,7 @@ func shotVariationInstruction(key string, imageIndex, quantity int) string {
 	return fmt.Sprintf("第 %d 张，共 %d 张。机位或用途与其他张不同。", n, quantity)
 }
 
+// generationSpecForShot 按图种填默认比例与信息图 text_policy。用户已带的 generation_spec 优先。非法枚举返回 Validation。
 func generationSpecForShot(imageType DirectCreateImageType, generationSpec map[string]any) (map[string]any, error) {
 	overrides := cloneMap(generationSpec)
 	if imageType.AspectRatio != "" {

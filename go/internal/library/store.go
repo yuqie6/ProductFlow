@@ -1,3 +1,10 @@
+// Package library 实现全局图库。MediaLibraryAsset 是素材身份；WorkflowMediaLibraryAsset 只保存工作流关联，不复制媒体 bytes。
+//
+// 职责：跨商品、可归档的长期素材。/media-library 是入口。收藏画廊、配方库、商品图库都不是本包。
+// 调用时机：HTTP 上传/归档/文件夹/标签；工作流子图库 Sync/Remove 只改关联表。
+// 副作用：写 media_library_* 与 workflow_media_library_assets；bytes 仍归 media.MediaObject。
+// 错误：缺素材 NotFound；收录到商品走 Collect，冲突按唯一约束变 Conflict。
+// 禁区：不要复制一份媒体 bytes 给工作流；节点/封面仍引用 ProductImageAsset，不引用本包路径。
 package library
 
 import (
@@ -14,11 +21,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// Service 拥有全局素材库的保存、组织、收录与工作流子图库关联。
+// Service 拥有全局素材库命令：保存、组织、收录到商品、工作流子图库关联。
+// Media 写 bytes；DB 写身份行。Now 为 nil 时用 time.Now UTC。
+// 不要在这里改 workflow_graphs 或 ProductImageAsset 绑定。
 type Service struct {
-	DB    *gorm.DB
-	Media media.Store
-	Now   func() time.Time
+	DB    *gorm.DB         // 命令事务
+	Media media.Store      // 写 MediaObject bytes
+	Now   func() time.Time // nil 时用 time.Now UTC
 }
 
 func (s Service) now() time.Time {
@@ -75,6 +84,7 @@ func libraryAssetQuery(tx *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN image_session_assets sess ON sess.id = a.source_image_session_asset_id")
 }
 
+// assetFromScan 把 join 扫描行收成 Asset。媒体列为 nil 时保持零值，调用方再判定是否缺失。
 func assetFromScan(row libraryAssetScan) Asset {
 	a := Asset{
 		ID:                     row.ID,
@@ -132,6 +142,7 @@ func (s Service) loadAsset(ctx context.Context, q *gorm.DB, id string) (Asset, e
 	return items[0], nil
 }
 
+// loadAssets 执行已拼好的 query 并补标签。无标签的资产得到空切片而不是 nil。
 func loadAssets(ctx context.Context, tx *gorm.DB, q *gorm.DB) ([]Asset, error) {
 	var rows []libraryAssetScan
 	if err := q.Scan(&rows).Error; err != nil {
@@ -156,6 +167,7 @@ func loadAssets(ctx context.Context, tx *gorm.DB, q *gorm.DB) ([]Asset, error) {
 	return items, nil
 }
 
+// loadTags 按资产批量取标签。空 ids 返回空 map，避免 IN () 语法错误。
 func loadTags(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string][]Tag, error) {
 	out := map[string][]Tag{}
 	if len(assetIDs) == 0 {
@@ -182,6 +194,7 @@ func loadTags(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string][
 	return out, nil
 }
 
+// insertLibraryAsset 写入 media_library_assets，revision 从 1 起。不复制 MediaObject 字节。
 func insertLibraryAsset(ctx context.Context, tx *gorm.DB, in Asset, p Provenance) (string, error) {
 	id := clockid.New()
 	hash, err := provenanceHash(p)
@@ -283,6 +296,7 @@ func lockLibraryAssets(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset,
 	return loadAssets(ctx, tx, libraryAssetQuery(tx).Where("a.id IN ?", ids))
 }
 
+// reloadInOrder 按传入 ids 顺序重载。任一 id 不在结果集返回 404。
 func reloadInOrder(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset, error) {
 	if len(ids) == 0 {
 		return []Asset{}, nil
@@ -323,6 +337,7 @@ type sessionAssetScan struct {
 	VerifiedAt         *time.Time `gorm:"column:verified_at"`
 }
 
+// loadSessionAsset FOR UPDATE 锁会话图行并带上 MediaObject。不存在返回 404。
 func loadSessionAsset(ctx context.Context, tx *gorm.DB, id string) (sessionRow, error) {
 	var row sessionAssetScan
 	err := tx.WithContext(ctx).Table("image_session_assets AS a").

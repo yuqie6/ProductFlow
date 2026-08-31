@@ -26,11 +26,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// ExportArchive 指向已写好的临时 ZIP，内部返回值，不是 HTTP JSON。
+// 调用方（HTTP exportZip）必须 FileAttachment 之后删 Path。Filename 给 Content-Disposition。
 type ExportArchive struct {
 	Path     string
 	Filename string
 }
 
+// Export 把已成功的交付结果打成 ZIP；allowPartial 为 false 时任一任务未成功即失败。
 func (s Service) Export(ctx context.Context, productID string, jobIDs []string, allowPartial bool) (ExportArchive, error) {
 	if len(jobIDs) < 1 || len(jobIDs) > exportMaxJobs {
 		return ExportArchive{}, apperr.Validationf("一次最多导出 %d 个交付图任务", exportMaxJobs)
@@ -250,6 +253,7 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	return ExportArchive{Path: tmp.Name(), Filename: filename}, nil
 }
 
+// writeZipEntry 用预计算 CRC/大小写入 Deflate 条目，mtime 固定 1980-01-01，保证重复导出哈希稳定。
 func writeZipEntry(zw *zip.Writer, name string, data []byte) error {
 	var compressed bytes.Buffer
 	fw, err := flate.NewWriter(&compressed, 9)
@@ -298,6 +302,7 @@ func exportImageFilename(productName, imageType string, index, width, height int
 	return fmt.Sprintf("%s-%s-%02d-%dx%d%s", productName, imageType, index, width, height, ext)
 }
 
+// sourceLineage 查源图最近一条 image artifact 的 graph/run。查不到时 graph/run/node_run_id 均为 nil，不返回 error。
 func sourceLineage(ctx context.Context, tx *gorm.DB, sourceAssetID, productID string) map[string]any {
 	var art schema.WorkflowGraphArtifacts
 	err := tx.WithContext(ctx).Model(&schema.WorkflowGraphArtifacts{}).
@@ -326,6 +331,7 @@ func sourceLineage(ctx context.Context, tx *gorm.DB, sourceAssetID, productID st
 	return map[string]any{"graph": graph, "run": run, "node_run_id": nodeRunID}
 }
 
+// assetMetadata 组装导出 sidecar。sha256 为空时写入 JSON null，避免空串冒充摘要。
 func assetMetadata(asset product.ImageAsset, sha256 string) map[string]any {
 	var sha any
 	if sha256 != "" {
@@ -349,6 +355,7 @@ func assetMetadata(asset product.ImageAsset, sha256 string) map[string]any {
 
 var errFileSizeChanged = errors.New("delivery result file size changed")
 
+// readVerifiedResultMedia 读盘并对照 MediaObject 核验字段。状态非 verified、字节变化或元数据漂移返回 409。
 func readVerifiedResultMedia(ctx context.Context, q *gorm.DB, files storage.Local, asset product.ImageAsset) ([]byte, media.Verified, string, error) {
 	if asset.VerificationStatus != media.StatusVerified {
 		return nil, media.Verified{}, "", apperr.Conflict("交付图结果媒体不可用")

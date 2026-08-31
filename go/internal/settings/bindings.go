@@ -13,16 +13,16 @@ import (
 
 // ModelBinding 是 prompt / image 用途在 PostgreSQL 里解析出的供应商绑定。
 type ModelBinding struct {
-	Kind                string
-	APIKey              string
-	BaseURL             string
-	Model               string
-	ImagesQuality       string
-	ImagesStyle         string
-	ResponsesBackground bool
-	GeminiAPIVersion    string
-	GeminiOutputMIME    string
-	MaskEdit            bool
+	Kind                string // mock | openai | openai_responses | openai_images | google_gemini_image
+	APIKey              string // mock 时为空
+	BaseURL             string // 空表示供应商默认
+	Model               string // 绑定解析出的模型 id；mock 可空
+	ImagesQuality       string // 仅 openai_images
+	ImagesStyle         string // 仅 openai_images
+	ResponsesBackground bool   // 仅 openai_responses
+	GeminiAPIVersion    string // 仅 google_gemini_image；空则 v1beta
+	GeminiOutputMIME    string // 仅 google_gemini_image
+	MaskEdit            bool   // openai_images/responses 且档案有 image_mask_edit
 }
 
 // ResolvePrompt 解析提示词用途绑定；mock 时 Kind=mock 且没有 API Key。
@@ -30,7 +30,10 @@ func (s *Store) ResolvePrompt(ctx context.Context) (ModelBinding, error) {
 	return s.resolvePurpose(ctx, "prompt", "text_responses", "prompt_model", []string{"openai", "mock"})
 }
 
-// ResolveImage 解析图片用途绑定。
+// ResolveImage 解析图片用途绑定（内部 ModelBinding，含 API Key）。
+// 调用时机：providers 工厂构造生图/局部编辑适配器。无绑定行时 Kind=mock，不是 404。
+// 档案禁用/没 Key 返回 Unavailable(503)。Kind 闭集：mock / openai_responses / openai_images / google_gemini_image。
+// 不要用本函数解析 prompt 或 agent 用途。
 func (s *Store) ResolveImage(ctx context.Context) (ModelBinding, error) {
 	binding, err := s.resolvePurpose(ctx, "image", "", "image_model", []string{"mock", "openai_responses", "openai_images", "google_gemini_image"})
 	if err != nil || binding.Kind == "mock" {
@@ -92,6 +95,8 @@ func imageCapabilityForKind(kind string) string {
 	}
 }
 
+// resolvePurpose 读某一用途绑定。没有行时回退 Kind=mock（开发默认可跑），不是 404。
+// 档案禁用/归档/没 Key 返回 503「尚未配置」，前端应引导去设置页，不要当请求错误。
 func (s *Store) resolvePurpose(ctx context.Context, purpose, capability, fallbackModelKey string, allowed []string) (ModelBinding, error) {
 	var row schema.ProviderBindings
 	err := s.db.WithContext(ctx).Where("purpose = ?", purpose).Take(&row).Error

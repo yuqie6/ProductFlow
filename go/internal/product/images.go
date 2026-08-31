@@ -43,7 +43,8 @@ func (s Service) SetCover(ctx context.Context, productID, assetID string) (Detai
 	return detail, err
 }
 
-// ClearCover 只清展示封面，不删资产。
+// ClearCover 给 DELETE /api/v2/products/:product_id/cover：只把 products.cover_image_asset_id 置 nil。
+// 不删 product_image_assets、不改 facts 或节点绑定。缺商品 NotFound。已无封面仍 200 详情。
 func (s Service) ClearCover(ctx context.Context, productID string) (Detail, error) {
 	var detail Detail
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -122,6 +123,7 @@ func (s Service) AddImages(ctx context.Context, productID string, uploads []Uplo
 }
 
 // DeleteAsset 在无封面/节点/生成/交付/局部编辑引用时删除商品图片身份，commit 后再清无引用文件。
+// 缺行 NotFound；仍被引用 Conflict；磁盘清理失败被忽略。
 func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 	var files []media.Deleted
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -152,6 +154,8 @@ func (s Service) DeleteAsset(ctx context.Context, assetID string) error {
 	return nil
 }
 
+// ensureAssetNotReferenced 查封面、节点绑定、产物、交付、局部编辑引用。任一存在即 Conflict，不级联删。
+// 只读、不加行锁。调用方须已锁商品。不要改成静默跳过「软引用」。
 func ensureAssetNotReferenced(ctx context.Context, tx *gorm.DB, assetID string) error {
 	type check struct {
 		run    func() error

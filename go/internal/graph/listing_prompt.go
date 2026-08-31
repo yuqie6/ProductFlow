@@ -147,6 +147,7 @@ func uniquePromptLines(lines []string) []string {
 	return out
 }
 
+// overlayColorTexts 从 colors 列表抽出可写入 listing prompt 的文本。非数组返回 nil。
 func overlayColorTexts(value any) []string {
 	list, ok := value.([]any)
 	if !ok {

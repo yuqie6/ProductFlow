@@ -1,3 +1,10 @@
+// Package localedit 实现局部编辑任务、mask 以及 adopt/revert。
+//
+// 职责：对一张已有商品图做 mask 内编辑（去物、换字、inpaint），再 adopt 回节点或图库。
+// 调用时机：HTTP 建草稿/提交/重试/取消/adopt/revert；worker 走 [Executor]。Retry 只接受 failed。
+// 副作用：写 local_image_edit_* 任务、attempt、adoption 事件；adopt 才会动商品图身份。
+// 错误：能力不足 Validation；并发 revision Conflict；源图变了 AdoptRequest 对不上则拒绝，避免覆盖他人。
+// 禁区：未 adopt 前不要当生成结果用；不要绕过 mask 几何直接改像素坐标。
 package localedit
 
 import (
@@ -21,10 +28,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// Service 拥有局部编辑任务的创建、提交、adopt 与 revert。
 type Service struct {
-	DB       *gorm.DB
-	Media    media.Store
-	Provider Provider
+	DB       *gorm.DB    // 命令事务
+	Media    media.Store // 写 mask 与结果图
+	Provider Provider    // nil 时用 MockProvider；Capability 决定能否提交
 }
 
 func (s Service) provider() Provider {
@@ -34,10 +42,16 @@ func (s Service) provider() Provider {
 	return MockProvider{}
 }
 
+// Capability 返回当前绑定供应商的局部编辑能力 HTTP 投影。
+// 调用时机：HTTP GET /local-image-edits/capability。无写入、不打网。Provider 为 nil 时用 Mock（unsupported）。
 func (s Service) Capability() CapabilityResponse {
 	return s.provider().Capability().Response()
 }
 
+// Create 创建草稿局部编辑任务并 Stage mask PNG。
+// 调用时机：HTTP POST /image-edits。还不入队；Submit 才写 PENDING dispatch。
+// 源图缺尺寸或 mask 对不齐 Validation；商品/源图不存在 NotFound。失败 Rollback 文件。
+// 禁区：不要在这里 adopt，也不要当生成结果用。
 func (s Service) Create(ctx context.Context, productID, sourceAssetID, targetNodeID string, draft Draft, maskPNG []byte) (TaskResponse, error) {
 	var taskID string
 	var compensation storage.Compensation
@@ -99,6 +113,7 @@ func (s Service) Create(ctx context.Context, productID, sourceAssetID, targetNod
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Update 按 expectedRevision 更新草稿任务与 mask。
 func (s Service) Update(ctx context.Context, productID, taskID string, expectedRevision int, draft Draft, maskPNG []byte) (TaskResponse, error) {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -167,6 +182,7 @@ func (s Service) Update(ctx context.Context, productID, taskID string, expectedR
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Get 读取局部编辑任务；includeAudit 为 true 时带上 provider attempts 与 adoption 事件。
 func (s Service) Get(ctx context.Context, productID, taskID string, includeAudit bool) (TaskResponse, error) {
 	var out TaskResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -180,6 +196,8 @@ func (s Service) Get(ctx context.Context, productID, taskID string, includeAudit
 	return out, err
 }
 
+// List 按商品列出局部编辑任务，不含完整 audit。
+// 调用时机：HTTP GET /image-edits。limit 必须 1–100，否则 Validation。商品不存在 NotFound。
 func (s Service) List(ctx context.Context, productID string, limit int) (TaskListResponse, error) {
 	if limit < 1 || limit > 100 {
 		return TaskListResponse{}, apperr.Validation("局部编辑任务 limit 必须在 1 到 100 之间")
@@ -218,6 +236,7 @@ func (s Service) List(ctx context.Context, productID string, limit int) (TaskLis
 	return out, err
 }
 
+// Submit 按幂等键把草稿任务标 queued 并写入 PENDING dispatch。
 func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey string) (TaskResponse, error) {
 	cap := s.provider().Capability()
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -306,6 +325,9 @@ func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey s
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Retry 把可重试的 failed 任务重新标 queued 并 Requeue。
+// 调用时机：HTTP POST .../retry。unknown 不能重试（Conflict）。revision 对不上 Conflict。
+// HTTP 不直接入队 broker。
 func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRevision *int) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
@@ -345,6 +367,9 @@ func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRe
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Cancel 取消尚未终态的局部编辑任务。
+// 调用时机：HTTP POST .../cancel。succeeded/failed/unknown 返回 Conflict；已 cancelled 幂等成功。
+// expectedRevision 非 nil 且对不上 Conflict。不删除 mask MediaObject。
 func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedRevision *int) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
@@ -392,6 +417,7 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Adopt 把成功结果写入目标 image_generation 节点的当前 artifact。
 func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactID string) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
@@ -467,6 +493,7 @@ func (s Service) Adopt(ctx context.Context, productID, taskID, expectedArtifactI
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// Revert 按 adoption 事件把节点当前 artifact 恢复到 adopt 之前。
 func (s Service) Revert(ctx context.Context, productID, taskID, eventID, expectedArtifactID string) (TaskResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var event schema.LocalImageEditAdoptionEvents
@@ -500,6 +527,7 @@ func (s Service) Revert(ctx context.Context, productID, taskID, eventID, expecte
 	return s.Get(ctx, productID, taskID, true)
 }
 
+// validateCapability 对照当前供应商能力：不支持该 operation、缺 mask、或缺替换文案时返回 400，提交前拦截。
 func validateCapability(task taskRow, cap Capability) error {
 	if !cap.Supported || cap.Mode == "" {
 		reason := cap.Reason
@@ -543,6 +571,7 @@ func normalizeIntent(value, label string) (string, error) {
 	return normalized, nil
 }
 
+// requestHash 对任务参数 + 源图/mask/参考图身份做幂等摘要。同一草稿重复提交应得到同一 hash。
 func requestHash(ctx context.Context, tx *gorm.DB, task taskRow, providerName, mode string) (string, error) {
 	var mask schema.MediaObjects
 	err := tx.WithContext(ctx).Where("id = ?", task.MaskMediaID).Take(&mask).Error

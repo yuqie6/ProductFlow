@@ -12,11 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的连续生图任务。
 type RecoverySummary struct {
-	QueuedTasks       int `json:"queued_tasks"`
-	StaleRunningTasks int `json:"stale_running_tasks"`
-	EnqueuedTasks     int `json:"enqueued_tasks"`
-	UnknownTasks      int `json:"unknown_tasks"`
+	QueuedTasks       int `json:"queued_tasks"`        // 本轮看到的 queued 任务数
+	StaleRunningTasks int `json:"stale_running_tasks"` // 过期且未打 provider 的 running 被重排队
+	EnqueuedTasks     int `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
+	UnknownTasks      int `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown 且不可自动重试
 }
 
 // RecoverUnfinished 把 queued 任务补回 PENDING；过期 running 若已打 provider 则 unknown。

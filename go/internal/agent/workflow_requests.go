@@ -80,6 +80,7 @@ func runRequestBaseQuery(pgxTx *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN workflow_graph_runs ON workflow_graph_runs.id = agent_workflow_run_requests.graph_run_id")
 }
 
+// GetWorkflowRunRequest 读取 conversation 上最新的执行请求；有 GraphRun 时同步但不覆盖 goal_loop。
 func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, conversationID string, taskID *string) (*WorkflowRunRequestResponse, error) {
 	var out *WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -112,6 +113,7 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 	return out, err
 }
 
+// ConfirmWorkflowRunRequest 经 graph 包提交或重试 GraphRun；已确认则回放。
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -167,6 +169,7 @@ func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *strin
 	return out, err
 }
 
+// CancelWorkflowRunRequestHTTP 取消待确认请求，或经 graph 包取消已提交的 GraphRun。
 func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -177,6 +180,9 @@ func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *st
 	return out, err
 }
 
+// cancelWorkflowRunRequest 取消执行确认单：已提交 GraphRun 则经 graph.CancelRunTx 再 SyncGraphRunToTasks（遵守 goal_loop）；未提交则标 cancelled、写 approval/denied，并 parkTaskAfterCancelledRunRequest。
+//
+// 已 cancelled 幂等返回。Agent 不得直接改 graph 跑表。
 func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 	if err != nil {
@@ -215,6 +221,7 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 	return loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 }
 
+// PrepareWorkflowRunRequest 检查商品工作流 conversation 当前 live 图是否可提交执行。
 func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID string, expectedRevision int, sourceRunID *string, taskID *string) (PreparedWorkflowRunRequest, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -230,6 +237,7 @@ func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID s
 	return s.prepareProductGraphRequest(ctx, s.DB, conv, expectedRevision, sourceRunID, taskID)
 }
 
+// PrepareGlobalWorkflowRunRequest 检查全局 Agent 指定的商品 live 图是否可提交执行。
 func (s Service) PrepareGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -277,6 +285,9 @@ func (s Service) prepareGlobalGraphRequest(ctx context.Context, db *gorm.DB, con
 	return prep, nil
 }
 
+// resolveGraphRunnable 校验 live 图 revision 未变、有可运行节点、source_run 可重试。只读 graph 表，不写 GraphRun。
+//
+// revision 变化返回 Conflict。商品路径 requireActive=true；全局路径按明确 workflow id。
 func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productID, workflowID string, requireActive bool, expectedRevision int, sourceRunID *string) (PreparedWorkflowRunRequest, error) {
 	if err := requireExpectedWorkflowRevision(expectedRevision); err != nil {
 		return PreparedWorkflowRunRequest{}, err
@@ -319,14 +330,19 @@ func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productI
 	}, nil
 }
 
+// CreateWorkflowRunRequest 按幂等键创建商品工作流执行确认单。
 func (s Service) CreateWorkflowRunRequest(ctx context.Context, conversationID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	return s.createRunRequest(ctx, conversationID, "", workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
+// CreateGlobalWorkflowRunRequest 按幂等键从全局 Agent 创建执行确认单。
 func (s Service) CreateGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	return s.createRunRequest(ctx, conversationID, productID, workflowID, idempotencyKey, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }
 
+// createRunRequest 按幂等键插入 agent_workflow_run_requests（awaiting_confirmation）。同键同 hash 回放；同键不同 hash 返回 Conflict。
+//
+// CreateWorkflowRunRequest / CreateGlobalWorkflowRunRequest 共用。写确认单并 markRequestWaiting；不创建 GraphRun（确认接口才经 graph 包提交）。
 func (s Service) createRunRequest(ctx context.Context, conversationID, productID, workflowID, idempotencyKey, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool, spec runScopeSpec) (WorkflowRunRequestResponse, error) {
 	if err := requireExpectedWorkflowRevision(expectedRevision); err != nil {
 		return WorkflowRunRequestResponse{}, err
@@ -446,14 +462,19 @@ func (s Service) createRunRequest(ctx context.Context, conversationID, productID
 	return out, err
 }
 
+// ReconcileWorkflowRunRequest 按幂等键对账商品工作流执行请求。
 func (s Service) ReconcileWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
 	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, false, spec)
 }
 
+// ReconcileGlobalWorkflowRunRequest 按幂等键对账全局 Agent 的执行请求。
 func (s Service) ReconcileGlobalWorkflowRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) (ReconcileResponse, error) {
 	return s.reconcileRunRequest(ctx, conversationID, idempotencyKey, productID, workflowID, sourceStepID, expectedRevision, taskID, sourceRunID, true, spec)
 }
 
+// reconcileRunRequest 按幂等键对账执行确认单：未提交 not_applied，hash 冲突 conflict，能读出则 applied，读失败 unknown。
+//
+// 不插入、不提交 GraphRun。证据不足保持 unknown。
 func (s Service) reconcileRunRequest(ctx context.Context, conversationID, idempotencyKey, productID, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, global bool, spec runScopeSpec) (ReconcileResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
@@ -564,6 +585,9 @@ type runScopeSpec struct {
 	DocumentAction string
 }
 
+// parseRunScopeSpec 校验 Graph 运行 scope（graph/node/to_node/selection）及 force、document_action 约束。
+//
+// document_action 只允许强制跑单个文稿节点。空 scope 默认 graph。非法组合返回 Validation，不写表。
 func parseRunScopeSpec(scope string, nodeID *string, nodeIDs []string, force bool, documentAction string) (runScopeSpec, error) {
 	normalized := strings.TrimSpace(scope)
 	documentAction = strings.TrimSpace(documentAction)
@@ -621,6 +645,7 @@ func (spec runScopeSpec) nodeIDsJSON() *string {
 	return &encoded
 }
 
+// workflowRunRequestHashPayload 构造执行确认单的 canonical 字段，供幂等 hash。缺字段或乱序会导致同键 Conflict，改字段集合必须同步读写双方。
 func workflowRunRequestHashPayload(conversationID string, productID *string, workflowID, sourceStepID string, expectedRevision int, taskID, sourceRunID *string, spec runScopeSpec) map[string]any {
 	payload := map[string]any{
 		"schema_version":             1,
@@ -695,6 +720,7 @@ func normalizeSourceStepID(value string) (string, error) {
 	return normalized, nil
 }
 
+// validateTaskScope 确认可选 Task 属于当前 Session / conversation / 商品。错配返回 Conflict，避免跨对话挂跑图。
 func validateTaskScope(ctx context.Context, db *gorm.DB, conv conversationRow, taskID *string) error {
 	if taskID == nil || strings.TrimSpace(*taskID) == "" {
 		return nil
@@ -722,6 +748,7 @@ func validateTaskScope(ctx context.Context, db *gorm.DB, conv conversationRow, t
 	return nil
 }
 
+// validateSourceRun 只允许 failed 且 is_retryable 的 GraphRun 作为重试来源。其它状态返回 Validation；不存在返回 NotFound。
 func validateSourceRun(ctx context.Context, db *gorm.DB, productID, graphID string, sourceRunID *string) (*string, error) {
 	if sourceRunID == nil {
 		return nil, nil
@@ -744,6 +771,7 @@ func validateSourceRun(ctx context.Context, db *gorm.DB, productID, graphID stri
 	return sourceRunID, nil
 }
 
+// requireRunnableWorkflow 经 graph 包判断全图是否有可运行节点。没有则 Conflict。Agent 不直接写 graph 表。
 func requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
 	id, err := graph.LoadGraph(ctx, db, productID, graphID)
 	if err != nil {
@@ -767,6 +795,9 @@ func requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphI
 	return len(selected), nil
 }
 
+// markRequestWaiting 把 conversation 标 awaiting_confirmation；未终态/未暂停的 Task 标 waiting_reason=workflow_run_confirmation。
+//
+// 用户已完成、取消或暂停的 Goal 不覆盖。写 agent_conversations / agent_tasks。
 func markRequestWaiting(ctx context.Context, pgxTx *gorm.DB, conversationID string, taskID *string) error {
 	if err := applyConversationStatus(ctx, pgxTx, conversationID, "awaiting_confirmation"); err != nil {
 		return err

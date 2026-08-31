@@ -1,3 +1,11 @@
+// Package imagesession 实现连续生图会话，职责与 WorkflowGraphRun 和 AgentTask 分离。
+//
+// 职责：一轮会话里反复 chat 出候选图，用户再 attach 进商品图库。不是画布 GraphRun，也不是 Goal。
+// 调用时机：HTTP 创建/生成/取消；worker 执行 image_session 任务。Retry 只接受 failed，unknown 不能走 Retry。
+// 副作用：写 image_sessions、rounds、generation_tasks、provider_effects、session assets。
+// 错误：会话不存在 NotFound。Generate 在已有任务 running 时仍可再入队，不会 Conflict。
+// Delete 会拆掉商品图上的 source_image_session_asset_id，不因运行中任务拒绝。
+// 禁区：不要把会话状态写进 workflow_graphs；不要把 attach 当成节点绑定的唯一路径。
 package imagesession
 
 import (
@@ -23,11 +31,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// Service 拥有连续生图会话、参考图、生成任务与 attach 到商品。
+// Pool 给 SSE LISTEN；Media 写 bytes。Settings 为 nil 时上限走内置默认。
+// 不要在这里写 workflow_graphs 或 AgentTask。
 type Service struct {
-	DB       *gorm.DB
-	Pool     *pgxpool.Pool
-	Media    media.Store
-	Settings interface {
+	DB       *gorm.DB      // 命令事务
+	Pool     *pgxpool.Pool // SSE LISTEN；会话状态推送
+	Media    media.Store   // 写会话素材 bytes
+	Settings interface {   // nil 时生图上限与 tool 字段走内置默认
 		settings.RuntimeReader
 		settings.LimitsReader
 	}
@@ -61,6 +72,8 @@ func (s Service) allowedToolFields(ctx context.Context) []string {
 	return runtime.ImageToolAllowedFields
 }
 
+// List 按 updated_at 倒序列出全部会话摘要，不分页。
+// 调用时机：HTTP GET /api/image-sessions。无写入。空库返回 Items=[] 而不是 nil。
 func (s Service) List(ctx context.Context) (ListResponse, error) {
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -82,6 +95,9 @@ func (s Service) List(ctx context.Context) (ListResponse, error) {
 	return out, err
 }
 
+// Create 新建连续生图会话，然后 Get 详情。
+// 调用时机：HTTP POST /api/image-sessions。title 为 nil/空白用「未命名会话」；超 255 字 Validation。
+// 副作用：插入 image_sessions 一行。不创建生成任务。
 func (s Service) Create(ctx context.Context, title *string) (DetailResponse, error) {
 	normalized := defaultTitle
 	if title != nil {
@@ -105,6 +121,8 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 	return s.Get(ctx, id)
 }
 
+// Get 读取会话详情（素材、轮次、任务）。找不到返回 NotFound。
+// 调用时机：HTTP GET 详情，以及 Create/Update/Generate 成功后的回读。无写入。
 func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, error) {
 	var out DetailResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -115,6 +133,8 @@ func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, err
 	return out, err
 }
 
+// Status 读取会话轻量状态，含是否仍有 queued/running 任务。
+// 调用时机：HTTP GET /status 与 SSE。找不到 NotFound。不要把本结果当 DetailResponse 用。
 func (s Service) Status(ctx context.Context, sessionID string) (StatusResponse, error) {
 	var out StatusResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -150,6 +170,8 @@ func (s Service) Status(ctx context.Context, sessionID string) (StatusResponse, 
 	return out, err
 }
 
+// Update 只改会话标题。调用时机：HTTP PATCH。空白或超长 Validation；找不到 NotFound。
+// 不取消进行中的生成任务。
 func (s Service) Update(ctx context.Context, sessionID, title string) (DetailResponse, error) {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" || len([]rune(trimmed)) > 255 {
@@ -169,6 +191,9 @@ func (s Service) Update(ctx context.Context, sessionID, title string) (DetailRes
 	return s.Get(ctx, sessionID)
 }
 
+// Delete 删除会话及其素材；已附加到商品的引用会被断开，未再被引用的 MediaObject 会被清理。
+// Delete 删除会话及其素材；已附加到商品的引用会被断开，未再被引用的 MediaObject 会被清理。
+// 会话不存在返回 NotFound「连续生图会话不存在」。不因运行中任务拒绝。磁盘清理错误不回传。
 func (s Service) Delete(ctx context.Context, sessionID string) error {
 	var deleted []media.Deleted
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -205,6 +230,9 @@ func (s Service) Delete(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// AddReferences 把已校验上传写成会话参考图（kind=reference_upload）。
+// 调用时机：HTTP POST reference-images。找不到会话 NotFound。失败 Rollback 已 Stage 文件。
+// 禁区：不要把参考图当 generated_image，也不能走 Attach。
 func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []product.Upload) (DetailResponse, error) {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -238,6 +266,9 @@ func (s Service) AddReferences(ctx context.Context, sessionID string, uploads []
 	return s.Get(ctx, sessionID)
 }
 
+// DeleteReference 只删参考图，不删已生成结果。
+// 调用时机：HTTP DELETE reference-images/:asset_id。非参考图 Validation；找不到 NotFound。
+// 副作用：断开商品图上的 source_image_session_asset_id，无引用则 Prune MediaObject。
 func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string) (DetailResponse, error) {
 	var deleted []media.Deleted
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -274,6 +305,7 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 	return s.Get(ctx, sessionID)
 }
 
+// Generate 创建 queued 生成任务并写入 PENDING dispatch；HTTP 不直接入队 broker。
 func (s Service) Generate(ctx context.Context, sessionID string, req GenerateRequest) (DetailResponse, error) {
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
@@ -363,6 +395,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	return s.Get(ctx, sessionID)
 }
 
+// Retry 把可重试的 failed 任务重新标 queued 并补 PENDING dispatch；unknown 不会被当成失败重试。
 func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
@@ -406,6 +439,9 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 	return s.Get(ctx, sessionID)
 }
 
+// Cancel 取消尚未终态的生成任务（queued/running → cancelled）。
+// 调用时机：HTTP POST .../cancel。已 succeeded/failed/unknown 返回 Validation；已 cancelled 幂等成功。
+// HTTP 不入队 broker。unknown 任务不能当失败取消后再 Retry。
 func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
@@ -442,6 +478,7 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 	return s.Get(ctx, sessionID)
 }
 
+// Attach 把生成结果作为商品图片身份写入商品图库，复用同一 MediaObject，不复制 bytes。
 func (s Service) Attach(ctx context.Context, sessionID, assetID, productID string) (product.AssetResponse, error) {
 	var out product.AssetResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -503,6 +540,7 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 	return out, err
 }
 
+// AssetDownload 读取会话素材行供下载；不存在时返回 NotFound。
 func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, error) {
 	var asset schema.ImageSessionAssets
 	err := s.DB.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error
@@ -515,6 +553,7 @@ func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, e
 	return assetFromModels(s.DB.WithContext(ctx), asset)
 }
 
+// Reconcile 对 unknown 生成任务查询供应商原请求；不可证明时保持 unknown。
 func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candidateStart int) (EffectResponse, error) {
 	var out EffectResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

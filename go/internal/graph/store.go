@@ -18,9 +18,9 @@ type Identity struct {
 	ID            string
 	ProductID     string
 	Title         string
-	Active        bool
-	SchemaVersion int
-	Revision      int
+	Active        bool // 每商品仅一张 active 图
+	SchemaVersion int  // 在线图固定为 3
+	Revision      int  // 每次成功 ChangeSet 递增
 }
 
 type graphRow struct {
@@ -102,6 +102,8 @@ func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string
 	return &row, nil
 }
 
+// loadAppliedGraph 从 workflow_graph_groups / nodes / edges 展开内存图。config JSON 坏了整份失败。
+// DocumentOrigin 非法值不会被解释成 seed。不扫产物表——产物走 loadGraphSources。
 func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row graphRow) (AppliedGraph, error) {
 	var groupRecs []schema.WorkflowGraphGroups
 	if err := tx.WithContext(ctx).Where("graph_id = ?", row.ID).Order("sort_order, id").Find(&groupRecs).Error; err != nil {
@@ -173,6 +175,8 @@ func lastOperationGroup(ctx context.Context, tx *gorm.DB, graph graphRow) (*oper
 	}, nil
 }
 
+// replaceGraphContents 按 after 图替换节点/边/分组：先删多余边，再清空将删节点的 artifact 指针，再删节点。
+// 顺序不能反，否则 FK 会炸。只写内容表，不改 workflow_graphs.revision——revision 由调用方递增。
 func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
 	// 先删不再存在的边，再清节点持有的 artifact 指针后删节点。
 	nextGroupIDs := idsOf(applied.Groups, func(g AppliedGroup) string { return g.ID })

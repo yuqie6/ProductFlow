@@ -42,6 +42,9 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 
 var errProviderFenced = errors.New("graph provider call fenced")
 
+// runClaimedNode 从 snapshot cook 一个已 claim 节点：写 compiled_context，按 digest/冻结决定 skip 或打 provider。
+// attempt 不匹配返回 errProviderFenced（不当失败）。unknown 向上抛，由 ExecuteRun 吃掉并保持 run 不 failed。
+// 内容节点非 force 且 authored/generated 走 skipFrozenContent，不打 prompt。不要在这里读 live 图。
 func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expectedAttemptID string) error {
 	run, err := e.loadRun(ctx, runID)
 	if err != nil {
@@ -235,6 +238,7 @@ func isForceTarget(run graphRunRow, nodeID string) bool {
 	return false
 }
 
+// skipUnchanged 在非 force 且 current input digest 相同时装 skipped，对下游视为就绪。
 func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun graphNodeRunRow, sources map[string]SourceRecord, digest string) (bool, error) {
 	if nodeRun.NodeID == nil {
 		return false, nil
@@ -249,6 +253,7 @@ func (e Executor) skipUnchanged(ctx context.Context, run graphRunRow, nodeRun gr
 	return true, e.markNodeSkipped(ctx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, record)
 }
 
+// skipFrozenContent 把 authored/generated 文稿在非 force 时标 skipped，不打 prompt provider。
 func (e Executor) skipFrozenContent(ctx context.Context, run graphRunRow, nodeRun graphNodeRunRow, sources map[string]SourceRecord) error {
 	record := SourceRecord{}
 	if nodeRun.NodeID != nil {
@@ -257,6 +262,8 @@ func (e Executor) skipFrozenContent(ctx context.Context, run graphRunRow, nodeRu
 	return e.markNodeSkipped(ctx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, record)
 }
 
+// markNodeSkipped 把节点标 skipped，对下游视为就绪。须有 attempt；lockNodeRunForPromotion 失败则不写。
+// 复用已有 artifact / product_image_asset_id 写进 output，不调 provider。写 node.skipped 事件后尝试 complete。
 func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, attemptID *string, record SourceRecord) error {
 	now := time.Now().UTC()
 	skippedOut := map[string]any{"skipped": true}
@@ -300,6 +307,9 @@ func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, 
 	})
 }
 
+// callProvider 打 prompt 供应商：先 prepare（写 effect + 推进到 provider_call），再 invoke。
+// invoke 出错一律标 unknown 并返回 providerUnknownError，不要当 failed。
+// 返回的 promote=false 表示围栏抢先，调用方仍须 persist 但走 finishUnpromoted。
 func (e Executor) callProvider(
 	ctx context.Context,
 	runID string,
@@ -335,6 +345,8 @@ func (e Executor) callProvider(
 	return result, promote, err
 }
 
+// callImageProvider 与 callProvider 同一围栏：prepare → invoke → finish。
+// invoke 出错标 unknown，不把空 Bytes 当失败——空结果由 runClaimedNode 再报证明失败。
 func (e Executor) callImageProvider(
 	ctx context.Context,
 	runID string,
@@ -371,6 +383,8 @@ func (e Executor) callImageProvider(
 	return result, promote, err
 }
 
+// prepareProviderCall 在事务里推进 prepared → 写入 effect intent → provider_call。
+// 任一步围栏失败返回 errProviderFenced，调用方不得再打 provider。这是 unknown 边界的起点。
 func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, attemptID, providerName string, request map[string]any) error {
 	hash, err := providerEffectHash(request)
 	if err != nil {
@@ -403,11 +417,13 @@ func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, att
 	})
 }
 
+// finishProviderCall 记录 applied 结果并推进到 provider_result_received。
+// 锁序 run → effect → node。run 已不 running、effect 是 unknown、attempt 过期时 promote=false。
+// true 才允许 persist 改 live 节点投影。
 func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
 	var promote bool
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		// Keep the same run -> node -> effect order used by cancellation and
-		// unknown-result fencing before touching the provider effect row.
+		// 碰 provider effect 行之前，必须与取消、unknown 围栏同一把锁序：run → node → effect。
 		var run schema.WorkflowGraphRuns
 		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
@@ -452,6 +468,9 @@ func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID str
 	})
 }
 
+// persistContentArtifact 写入文稿 artifact；seed 且非显式 document_action 时才 auto-adopt 进 live config。
+// promote=false 走 finishUnpromoted，不改节点投影。adopt 前先锁 graph，避免与并行内容节点死锁。
+// 副作用：workflow_graph_artifacts、node_runs succeeded、可能 Mutate 节点 config、run.graph_revision。
 func (e Executor) persistContentArtifact(
 	ctx context.Context,
 	run graphRunRow,
@@ -576,6 +595,9 @@ func (e Executor) persistContentArtifact(
 	})
 }
 
+// persistImageArtifact 经 GeneratedImageWriter 写成 ProductImageAsset，再挂 image artifact。
+// 成功后可 DeliveryQueuer 排队派生。promote=false 不切 current_artifact_id / 不排队交付。
+// 本包不写存储路径；资产 id 才是产物。Assets 未注入视为证明失败，不是 unknown。
 func (e Executor) persistImageArtifact(
 	ctx context.Context,
 	run graphRunRow,
@@ -714,6 +736,8 @@ func (e Executor) persistImageArtifact(
 	})
 }
 
+// loadReferences 按 ProductImageAsset id 读字节交给 provider。Assets 未注入或 MIME 非 png/jpeg/webp 返回 Validation。
+// 不缓存；每次 cook 现读。失败是证明失败，不是 unknown。
 func (e Executor) loadReferences(ctx context.Context, productID string, refs []compiledReference) ([]ReferenceImage, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -746,6 +770,8 @@ func (e Executor) loadReferences(ctx context.Context, productID string, refs []c
 	return out, nil
 }
 
+// upsertArtifact 按 node_run_id 唯一写入 workflow_graph_artifacts。已有行则覆盖 payload/digest/资产，不换 id。
+// provider 名为空写成 unconfigured。调用方须已在事务里。不要用它切 current_artifact_id。
 func upsertArtifact(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -842,6 +868,8 @@ func hashBytes(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// hydrateSourcesFromNodeRuns 用本 run 已 succeeded 的 artifact 覆盖 snapshot 源，让下游看到刚 cook 的文稿/图。
+// 只合并 succeeded；skipped/failed/unknown 不覆盖。payload JSON 坏了整份失败。
 func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []graphNodeRunRow, sources map[string]SourceRecord) (map[string]SourceRecord, error) {
 	var ids []string
 	for _, item := range nodeRuns {
@@ -921,6 +949,8 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 	return sources, nil
 }
 
+// writeCompiledContext 把本次 cook 的 input_trace / digest 写进 node_run.compiled_context_json。
+// 保留已有 node_title。给 UI 看，不参与 digest 计算。找不到行时仍尝试 Updates。
 func writeCompiledContext(ctx context.Context, db *gorm.DB, nodeRunID string, node AppliedNode, applied AppliedGraph, sources map[string]SourceRecord, digest string) error {
 	trace := compiledContextTrace(applied, node, sources, digest)
 	var rec schema.WorkflowGraphNodeRuns
@@ -962,6 +992,8 @@ func validateGeneratedPayload(artifactType string, payload map[string]any) error
 	}
 }
 
+// finishUnpromotedNodeRun 在围栏失败、取消抢先或不应晋升时收口：仍能锁住则标 cancelled，否则 noop。
+// 不是 unknown、不是 failed。缺 attempt 只 complete。须已在事务里。
 func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string, now time.Time) error {
 	reason := GraphCancelledReason
 	if attemptID == nil || *attemptID == "" {
@@ -995,9 +1027,9 @@ func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRun
 	return err
 }
 
-// lockNodeRunForPromotion closes the gap between provider result fencing and
-// artifact promotion. Cancellation or a newer attempt wins before any live
-// node/config projection is changed.
+// lockNodeRunForPromotion 补上 provider 结果围栏与产物晋升之间的空窗。
+// 先锁 run 再锁 node_run：run 已不 running、attempt 过期或取消抢先时返回 false，
+// 此时禁止改 live 节点 / config 投影。true 才允许本次晋升产物。
 func lockNodeRunForPromotion(ctx context.Context, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string) (bool, error) {
 	var run schema.WorkflowGraphRuns
 	if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
@@ -1029,6 +1061,9 @@ func adoptSummary(artifactType string) string {
 	}
 }
 
+// adoptGeneratedDocument 用 ActorSystem Mutate 把生成文稿写回 live 节点 config。
+// snapshot 对不上当前 revision 则不 adopt（返回 false），避免覆盖用户后来的编辑。
+// 写 workflow_graphs 节点 config + 历史。返回新 revision 与是否采用。
 func adoptGeneratedDocument(
 	ctx context.Context,
 	pgxTx *gorm.DB,

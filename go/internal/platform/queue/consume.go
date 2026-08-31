@@ -16,6 +16,7 @@ func gormFrom(pool *pgxpool.Pool) (*gorm.DB, error) {
 	return pfdb.OpenGorm(pool)
 }
 
+// ClaimForConsumption 给 SENT 且无 lease 的行加上消费 lease。未抢到返回 ("", false, nil)。
 func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, leaseSeconds int) (string, bool, error) {
 	if leaseSeconds <= 0 {
 		leaseSeconds = DefaultConsumerLeaseSeconds
@@ -42,6 +43,7 @@ func ClaimForConsumption(ctx context.Context, pool *pgxpool.Pool, dispatchID, ag
 	return token, true, nil
 }
 
+// MarkConsumed 仅在 lease_token 匹配时把 SENT 标 CONSUMED。返回是否更新到一行。
 func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string) (bool, error) {
 	gdb, err := gormFrom(pool)
 	if err != nil {
@@ -63,6 +65,7 @@ func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregate
 	return res.RowsAffected == 1, nil
 }
 
+// MarkFailed 按 attempts 把信封标 DEAD 或带退避回到 PENDING。lease 不匹配时返回 (false, nil)。
 func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken, errMsg string, maxAttempts, backoffSeconds int) (bool, error) {
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxAttempts
@@ -117,6 +120,11 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 	return ok, nil
 }
 
+// Consume 是 worker 入口：claim 消费 lease，调 Actor，成功则 CONSUMED。
+// 找不到行、身份/状态不对、抢不到 lease 都当空操作返回 nil。
+// 未知 actor 会 MarkFailed 并返回 nil，不把错误交给 asynq。
+// [ErrBusy]/[ErrLater] 释放 lease 回到 PENDING，不向 asynq 报失败。
+// 其他 error 先 MarkFailed 再返回给 asynq；worker MaxRetry=0，broker 不会重试。
 func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, actors map[string]ActorFunc) error {
 	gdb, err := gormFrom(pool)
 	if err != nil {
@@ -158,6 +166,7 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 	return err
 }
 
+// ReleaseForRetry 在 [ErrBusy]/[ErrLater] 后清消费 lease，把 SENT 拉回 PENDING。
 func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string, delay time.Duration) (bool, error) {
 	if delay < 0 {
 		delay = 0

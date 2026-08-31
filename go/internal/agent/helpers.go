@@ -37,8 +37,7 @@ var (
 	terminalTurn = map[string]struct{}{
 		"awaiting_confirmation": {}, "succeeded": {}, "failed": {}, "canceled": {}, "unknown": {},
 	}
-	// Agent service owns the journal vocabulary. These are raw events; the
-	// browser receives the smaller UI vocabulary emitted by sse.go.
+	// eventKinds 是 agent-service 写入 journal 的原始词表。浏览器只消费 sse.go 翻译后的更小 UI 词表。
 	eventKinds = map[string]struct{}{
 		"turn/start": {}, "step/start": {}, "text.chunk": {}, "thinking.chunk": {},
 		"assistant/message": {}, "tool/call": {}, "tool/result": {},
@@ -207,6 +206,9 @@ func decodeCursor(value string, dest any, invalid string) error {
 	return nil
 }
 
+// mapGateway 把 GatewayError 收成业务错误：未配置或 5xx 为 Unavailable，400 为 Validation，404/普通 409 为 Conflict，问题已过期为 NotPending。
+//
+// Pi 不可用不等于 PostgreSQL journal 丢失，调用方应回落投影而不是改写 Goal。
 func mapGateway(err error) error {
 	var ge GatewayError
 	if !errors.As(err, &ge) {
@@ -234,8 +236,9 @@ func mapGateway(err error) error {
 	}
 }
 
-// gatewayQuestionNotLive 表示 Pi 进程内已经没有这个问题的 waiter。
-// 答案仍打原 Turn 的 answer + resume，由 Pi 把 ask_user 收成 toolResult。
+// gatewayQuestionNotLive 判断 Pi 进程里是否已经没有该问题的 waiter（409 not_resumable / question_expired / not_pending）。
+//
+// 为真时不要另开 continuation 当权威答案通道；答案仍应打回原 Turn 的 AnswerQuestion + Resume，由 Pi 把 ask_user 收成 toolResult。投影以 PostgreSQL 已存的 question_answer_json 为准。
 func gatewayQuestionNotLive(err error) bool {
 	var ge GatewayError
 	if !errors.As(err, &ge) || ge.Status != 409 {

@@ -7,22 +7,27 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// RuleNode 给拓扑排序与 NodeConfigStatus 用的精简节点，不含坐标、分组或文稿来源。
+// BoundAssetID 为 nil 或空串时 image_asset 判 incomplete。不要和 AppliedNode 或 NodeView 搞混；不落库。
 type RuleNode struct {
 	ID           string
-	NodeType     NodeType
-	Config       map[string]any
+	NodeType     NodeType       // schema-v3 闭集
+	Config       map[string]any // 只看 Catalog 必填项，不看产物 digest
 	BoundAssetID *string
 }
 
+// RuleEdge 给环检测与入边计数用的精简边。Order 参与同一 role 多边次序，环检测只用 Source/Target。
+// 不要和 AppliedEdge / EdgeView 搞混；不落库。有环时 TopologicalGraphNodeIDs 返回 Validation。
 type RuleEdge struct {
 	ID           string
 	SourceNodeID string
 	TargetNodeID string
-	DataType     EdgeDataType
-	Role         EdgeRole
-	Order        int
+	DataType     EdgeDataType // 由 Catalog accepts 决定
+	Role         EdgeRole     // 等于 Catalog 端口 / React Flow handle id
+	Order        int          // 同一 role 多边次序；环检测只用 Source/Target
 }
 
+// TopologicalGraphNodeIDs 返回稳定拓扑序。有环返回 Validation。
 func TopologicalGraphNodeIDs(nodes []RuleNode, edges []RuleEdge) ([]string, error) {
 	nodesByID := map[string]RuleNode{}
 	incomingCount := map[string]int{}
@@ -86,6 +91,7 @@ func validateGraphEdge(source, target RuleNode, existing []RuleEdge) (inputContr
 	return contract, nil
 }
 
+// NodeConfigStatus 只看必填 config 与运行所需入边，不看产物 digest。
 func NodeConfigStatus(node RuleNode, incoming []RuleEdge) ConfigStatus {
 	if msg := nodeConfigError(node); msg != "" {
 		return ConfigIncomplete

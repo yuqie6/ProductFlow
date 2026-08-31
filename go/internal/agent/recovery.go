@@ -15,15 +15,19 @@ import (
 	"gorm.io/gorm"
 )
 
+// RecoverySummary 是 dispatcher 本轮崩溃恢复的计数：待同步 Turn、实际补入 PENDING 的条数、为 queued Task 补出的首轮 Turn、以及因过期 lease 标 unknown 的 execution。
 type RecoverySummary struct {
-	PendingTurns       int
-	EnqueuedTurns      int
-	RecoveredTaskTurns int
-	UnknownExecutions  int
+	PendingTurns       int // 待同步 Turn 数
+	EnqueuedTurns      int // 实际补入 PENDING 的条数
+	RecoveredTaskTurns int // 为 queued Task 补出的首轮 Turn
+	UnknownExecutions  int // 因过期 lease 标 unknown 的 execution
 }
 
 const expiredExecutionBatchLimit = 25
 
+// RecoverUnfinished 是 dispatcher 崩溃恢复入口：用连接池构造 RecoveryService，再跑 recoverUnfinishedTurns。
+//
+// 过期 lease 先标 unknown（无法证明终态时），未完成 Turn 补回 ActorAgentTurnSync 的 PENDING。Pi session files 不是恢复权威。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, limit int) (RecoverySummary, error) {
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
@@ -35,10 +39,18 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, limit int) (Reco
 	return recoverUnfinishedTurns(ctx, RecoveryService(pool, gdb), limit)
 }
 
+// RecoverUnfinishedTurns 用调用方已构造的 Service 跑同一套崩溃恢复（测试与 dispatcher 共用）。
+//
+// Service 必须带 Graph/Product，才能在 lease 过期时 reconcile 副作用并按原幂等键重试。不要传入只读的空依赖。
 func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, error) {
 	return recoverUnfinishedTurns(ctx, s, expiredExecutionBatchLimit)
 }
 
+// recoverUnfinishedTurns 在同一事务里：先回收过期 execution，再把未完成 Turn 与 queued Task 的首轮 Turn 补进 dispatch。
+//
+// 扫描 queued/running/cancel_requested，以及已有答案的 requires_input。waiting_reason=goal_loop 的 Goal 不在这里造新 Turn。RestageIfIdle 只在 dispatch 空闲时写入 PENDING，已在飞的不重复入队。
+//
+// 事务提交后才 CompactExpiredTurnJournals。禁区：不要读 Pi 文件决定「该补哪条」；不要在恢复里把 Goal 标 succeeded。
 func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (RecoverySummary, error) {
 	var out RecoverySummary
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -82,6 +94,11 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 	return out, nil
 }
 
+// recoverQueuedTaskTurns 给 status=queued 且 current_turn_id 为空的 Task 补首轮 Turn。
+//
+// 幂等键固定为 initial:{conversationID}:{taskID}，崩溃重入走 reserveTurn 回放，不会重复造 projection。reserve 失败的单条跳过，不让一只坏 Task 卡死整批恢复。
+//
+// 写 agent_turn_projections（经 reserveTurn）。不改已处于 goal_loop / 用户终态的 Task。
 func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int, error) {
 	type item struct {
 		ID        string  `gorm:"column:id"`
@@ -119,6 +136,13 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 	return ids, created, nil
 }
 
+// recoverExpiredExecutions 回收 lease_expires_at 已过的 execution：递增 fencing_token、清空 owner，无法证明终态则把 Turn 标 unknown。
+//
+// 由 recoverUnfinishedTurns 调用。必须先 SKIP LOCKED 锁 projection，再锁 execution；AppendEvents / heartbeat 用同一顺序。先锁 execution 会与已持有投影、正在等 lease 行的 live writer 死锁。
+//
+// journal 已有 turn/end 则 reprojectExistingTerminal，不另写终态。requires_input 且尚未过安全边界则只收 lease。否则 appendInterruptedTurnEvents（含 effect reconcile）并写 projection=unknown、started invocation=interrupted。
+//
+// 禁区：不要把过期当成 failed；不要覆盖用户拥有的 Goal（本函数不写 agent_tasks 终态完成）。
 func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, limit int) (int, error) {
 	if limit <= 0 {
 		limit = expiredExecutionBatchLimit
@@ -128,9 +152,8 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 		ProjectionID string `gorm:"column:turn_projection_id"`
 	}
 	var candidates []candidate
-	// Claim by locking the projection first (SKIP LOCKED). AppendEvents / heartbeat
-	// use the same projection → execution order; locking executions here first deadlocks
-	// a live writer that already holds the projection and is waiting on the lease row.
+	// 先 SKIP LOCKED 锁 projection。AppendEvents / heartbeat 同样是投影 → execution；
+	// 这里若先锁 execution，会与已持有投影、正在等 lease 行的 live writer 死锁。
 	if err := pgxTx.WithContext(ctx).
 		Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_projections")).
 		Model(&schema.AgentTurnExecutions{}).
@@ -224,6 +247,11 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 	return unknown, nil
 }
 
+// reprojectExistingTerminal 在 lease 已过期、但 journal 已有 turn/end 时，用回收后的 fencing_token（原值+1）重跑 projectTerminalEvent。
+//
+// 由 recoverExpiredExecutions 调用。不插入新的 turn/end；PostgreSQL journal 仍是权威。尚无 harness_turn_id 则只把 execution.phase 标 terminal。
+//
+// 商品 Goal 是否保持 goal_loop 仍走 applyTurnState，本函数不得直接改 agent_tasks。
 func reprojectExistingTerminal(
 	ctx context.Context,
 	s Service,
@@ -252,6 +280,11 @@ func reprojectExistingTerminal(
 	return s.projectTerminalEvent(ctx, gdb, row, lease, existingTerminal.Sequence, json.RawMessage(existingTerminal.PayloadJSON), existingTerminal.CreatedAt)
 }
 
+// appendInterruptedTurnEvents 在 lease 过期且 journal 还没有 turn/end 时，补齐可证明的中断记录。
+//
+// 先按 checkpoint 对未收口的 tool_effect_intent 做 reconcile（能 applied 的补 tool/result）。再给只有 chunk、没有 assistant/message 的 attempt 写 interrupted 消息，最后写 turn/end status=unknown / reason_code=execution_interrupted。
+//
+// 已有 turn/end 则只 rebuildJournalOutput，不重复终态。写 agent_turn_events；fencing 用回收后的 execution 行。禁区：不要写成 succeeded 或 failed；证据不足必须 unknown。
 func appendInterruptedTurnEvents(ctx context.Context, s Service, gdb *gorm.DB, projectionID, executionID string, now time.Time) (string, error) {
 	row, err := loadTurnByID(ctx, gdb, projectionID)
 	if err != nil {

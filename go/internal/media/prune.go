@@ -9,10 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// Deleted 是已无逻辑引用、事务内删行之后待提交后清文件的媒体。
+// Deleted 是已无逻辑引用、事务内删 media_objects 行之后、待 commit 再清文件的媒体。
+// 调用方必须在 tx 成功后再 Files.DeleteWithVariants(StoragePath)。不要在事务里删磁盘。
 type Deleted struct {
 	ID          string
-	StoragePath string
+	StoragePath string // 事务成功后再 Files.DeleteWithVariants；不要在 tx 里删磁盘
 }
 
 // PruneUnreferenced 删除已无商品图/会话图/全局素材/局部编辑 mask 引用的 MediaObject 行。
@@ -51,6 +52,8 @@ func PruneUnreferenced(ctx context.Context, tx *gorm.DB, mediaIDs []string) ([]D
 	return deleted, nil
 }
 
+// mediaObjectReferenced 查商品图、会话图、全局素材、局部编辑 mask 是否还指着这个 MediaObject。
+// 任一表查到行就 true；四张都 NotFound 才 false。查询 error 原样冒泡，不要当成「没引用」去删。
 func mediaObjectReferenced(ctx context.Context, tx *gorm.DB, mediaID string) (bool, error) {
 	var asset schema.ProductImageAssets
 	err := tx.WithContext(ctx).Select("id").Where("media_object_id = ?", mediaID).Take(&asset).Error

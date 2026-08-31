@@ -55,6 +55,7 @@ func catalogDocumentActions(nodeType NodeType) []string {
 	return []string{DocumentActionComplete, DocumentActionRewrite, DocumentActionReplace}
 }
 
+// CatalogIndexJSON 是 CatalogJSON 的瘦身版：config_fields 只保留 key 列表。
 func CatalogIndexJSON() map[string]any {
 	full := CatalogJSON()
 	rawNodes, _ := full["nodes"].([]map[string]any)
@@ -80,6 +81,7 @@ func CatalogIndexJSON() map[string]any {
 	return map[string]any{"version": full["version"], "nodes": nodes}
 }
 
+// configFieldJSON 把 Catalog 字段投成 Web/Agent JSON。choices 缺省空数组不是 null。改字段名须同步前端。
 func configFieldJSON(item configField) map[string]any {
 	choices := item.choices
 	if choices == nil {

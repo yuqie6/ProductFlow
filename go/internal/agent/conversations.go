@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// GetConversation 按商品作用域读取 Agent Conversation。
 func (s Service) GetConversation(ctx context.Context, productID *string, conversationID string) (ConversationResponse, error) {
 	var out ConversationResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -32,6 +33,7 @@ func conversationFromSchema(rec schema.AgentConversations) conversationRow {
 	}
 }
 
+// loadConversation 按商品或全局作用域读取 conversation。商品行缺失与 conversation 缺失返回不同 NotFound。
 func loadConversation(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID string) (conversationRow, error) {
 	var rec schema.AgentConversations
 	var err error
@@ -81,6 +83,9 @@ func lockConversation(ctx context.Context, pgxTx *gorm.DB, conversationID string
 	return conversationFromSchema(rec), nil
 }
 
+// applyConversationStatus 把 Turn 终态投影到 agent_conversations。全局图库 draft 仍 awaiting_confirmation 时，Turn succeeded 不把 conversation 标 completed。
+//
+// applyTurnState 与本地 cancel 调用。写 conversation.status；状态变化时通知 Session。不改 Goal。
 func applyConversationStatus(ctx context.Context, pgxTx *gorm.DB, conversationID, turnStatus string) error {
 	status := "collecting"
 	switch turnStatus {

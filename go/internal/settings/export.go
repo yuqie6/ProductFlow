@@ -14,30 +14,36 @@ import (
 	"gorm.io/gorm"
 )
 
+// SettingsExport 是可再导入的设置导出文档 HTTP 体。
+// 含 API Key 明文（导出给管理员备份）。schema_version 必须对上才能导入。不要当 ConfigResponse 用。
 type SettingsExport struct {
-	Metadata struct {
+	Metadata struct { // 含 schema_version；对不上不能导入
 		SchemaVersion int       `json:"schema_version"`
 		ExportedAt    time.Time `json:"exported_at"`
 		App           string    `json:"app"`
 		AppVersion    string    `json:"app_version"`
 		Compatibility string    `json:"compatibility"`
 	} `json:"metadata"`
-	RuntimeConfig    map[string]any   `json:"runtime_config"`
-	ProviderProfiles []map[string]any `json:"provider_profiles"`
-	ProviderBindings []map[string]any `json:"provider_bindings"`
+	RuntimeConfig    map[string]any   `json:"runtime_config"`    // app_settings 键值，含可编辑运行时
+	ProviderProfiles []map[string]any `json:"provider_profiles"` // 未归档档案，导出含 API Key 明文
+	ProviderBindings []map[string]any `json:"provider_bindings"` // prompt/agent/image 用途行
 }
 
+// ImportPreview 是导入前的计数摘要 HTTP 体，还不写入。
+// IncludesAPIKeys 只表示文档里有没有 Key，不是已经替换了现网档案。
 type ImportPreview struct {
-	SchemaVersion                   int      `json:"schema_version"`
-	RuntimeConfigCount              int      `json:"runtime_config_count"`
-	ProviderProfileCount            int      `json:"provider_profile_count"`
-	ProviderBindingCount            int      `json:"provider_binding_count"`
-	ProviderProfileNames            []string `json:"provider_profile_names"`
-	ProviderBindingPurposes         []string `json:"provider_binding_purposes"`
-	IncludesAPIKeys                 bool     `json:"includes_api_keys"`
-	ProviderProfilesWithAPIKeyCount int      `json:"provider_profiles_with_api_key_count"`
+	SchemaVersion                   int      `json:"schema_version"`                       // 必须与导出文档一致才能导入
+	RuntimeConfigCount              int      `json:"runtime_config_count"`                 // 将写入的 app_settings 条数
+	ProviderProfileCount            int      `json:"provider_profile_count"`               // 文档中的档案数
+	ProviderBindingCount            int      `json:"provider_binding_count"`               // 文档中的用途绑定数
+	ProviderProfileNames            []string `json:"provider_profile_names"`               // 将导入的档案名
+	ProviderBindingPurposes         []string `json:"provider_binding_purposes"`            // prompt | agent | image
+	IncludesAPIKeys                 bool     `json:"includes_api_keys"`                    // 只表示文档里有 Key，不是已替换现网
+	ProviderProfilesWithAPIKeyCount int      `json:"provider_profiles_with_api_key_count"` // 含 API Key 的档案数
 }
 
+// Export 导出运行时配置、未归档供应商档案与绑定（含 API Key）。
+// 调用时机：GET /api/settings/export。已归档档案跳过。无写入。
 func (s *Store) Export(ctx context.Context) (SettingsExport, error) {
 	view, err := s.ConfigView(ctx)
 	if err != nil {
@@ -117,6 +123,8 @@ type importBundle struct {
 	bindings []importBinding
 }
 
+// PreviewImport 校验导入文档并返回预览，不写入。
+// 调用时机：POST /import/preview。版本/键闭集不对返回 Validation。第二个返回值是规范化后的 wire 文档。
 func (s *Store) PreviewImport(doc map[string]any) (ImportPreview, map[string]any, error) {
 	bundle, err := normalizeImportDocument(doc)
 	if err != nil {
@@ -143,6 +151,9 @@ func (s *Store) PreviewImport(doc map[string]any) (ImportPreview, map[string]any
 	return preview, bundle.wire(doc["metadata"]), nil
 }
 
+// ApplyImport 用已规范化文档整表替换运行时配置与供应商档案/绑定。
+// 调用时机：POST /import 在 PreviewImport 成功之后。先删全部 bindings 和 profiles 再插入。
+// 禁区：不要部分更新；失败应整事务回滚。env-only 密钥不会被本函数改写。
 func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 	bundle, err := normalizeImportDocument(doc)
 	if err != nil {
@@ -192,6 +203,8 @@ func (s *Store) ApplyImport(ctx context.Context, doc map[string]any) error {
 	})
 }
 
+// normalizeImportDocument 校验导出文档：metadata 版本、runtime 键闭集、档案与绑定互相引用。
+// 任一字段不对返回 400，不写入。nil doc 当格式错误。
 func normalizeImportDocument(doc map[string]any) (importBundle, error) {
 	if doc == nil {
 		return importBundle{}, apperr.Validation("配置文件格式不正确")
@@ -223,6 +236,8 @@ func normalizeImportDocument(doc map[string]any) (importBundle, error) {
 	return importBundle{version: version, runtime: runtime, profiles: profiles, bindings: bindings}, nil
 }
 
+// normalizeImportRuntime 要求 runtime_config 正好覆盖 configDefinitions 全部键：多了未知项、少了必填都 400。
+// 值再走 normalizeConfigValue + validateMerged，与设置页单条更新同一套闸门。
 func normalizeImportRuntime(raw any) (map[string]string, error) {
 	runtime, _ := raw.(map[string]any)
 	if runtime == nil {
@@ -262,6 +277,7 @@ func normalizeImportRuntime(raw any) (map[string]string, error) {
 	return normalized, nil
 }
 
+// normalizeImportProfiles 校验档案 id 不重复、类型在闭集、连接与能力合法。API Key 可空，导入后仍要用户补。
 func normalizeImportProfiles(items []map[string]any) ([]importProfile, error) {
 	seen := map[string]struct{}{}
 	out := make([]importProfile, 0, len(items))
@@ -337,6 +353,7 @@ func normalizeImportProfiles(items []map[string]any) ([]importProfile, error) {
 	return out, nil
 }
 
+// normalizeImportBindings 校验用途闭集、指向的档案存在且具备该能力。绑定到已归档/未启用档案也拒绝。
 func normalizeImportBindings(items []map[string]any, profiles []importProfile) ([]importBinding, error) {
 	profilesByID := map[string]importProfile{}
 	for _, profile := range profiles {
@@ -421,6 +438,7 @@ func normalizeImportBindings(items []map[string]any, profiles []importProfile) (
 	return out, nil
 }
 
+// wire 把已规范化的 bundle 编回导出形状，给预览页原样展示。空指针写成 JSON null。
 func (b importBundle) wire(meta any) map[string]any {
 	runtime := map[string]any{}
 	for key, value := range b.runtime {
@@ -479,6 +497,7 @@ func asObjectList(v any) ([]map[string]any, error) {
 	return out, nil
 }
 
+// validateImportMetadata 只认 schema_version=3。缺 exported_at/app 等字段或版本不对返回 400，不尝试升级旧导出。
 func validateImportMetadata(raw any) (int, error) {
 	meta, ok := raw.(map[string]any)
 	if !ok || meta == nil {
@@ -582,6 +601,7 @@ func optionalImportStringPtr(item map[string]any, key string, max int) (*string,
 	return &s, nil
 }
 
+// optionalStringSlice 读可选字符串数组。缺键返回 nil；键在但值为 null 返回 400，避免把「明确清空」和「没写」搞混。
 func optionalStringSlice(item map[string]any, key string) ([]string, error) {
 	raw, ok := item[key]
 	if !ok {

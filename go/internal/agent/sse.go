@@ -27,6 +27,10 @@ type projectedEventPage struct {
 
 var turnSSEHeartbeatInterval = 15 * time.Second
 
+// ListProjectedEventPage 处理 GET .../turns/:projection_id/events/page 的数据面：从 PostgreSQL agent_turn_events 读一页，再经 projectTurnEvent 翻成浏览器协议。
+//
+// 对话历史接口调用（pageProductEvents / pageGlobalEvents）。权威是 PG journal，不是 Pi session files。after 是 sequence 游标不是页码。
+// stream_state 由投影状态决定：等待确认/回答为 parked，终态为 terminal，其余 live。不延长 lease，不改 Goal。
 func (s Service) ListProjectedEventPage(ctx context.Context, productID *string, conversationID, projectionID string, after, limit int) (projectedEventPage, error) {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
@@ -63,6 +67,13 @@ func (s Service) ListProjectedEventPage(ctx context.Context, productID *string, 
 	return projectedEventPage{Items: items, NextAfter: nextAfter, HasMore: hasMore, StreamState: streamState}, nil
 }
 
+// StreamTurnEvents 处理 GET /api/v2/products/:product_id/agent-conversations/:conversation_id/turns/:projection_id/events
+// 以及 GET /api/v2/agent-conversations/:conversation_id/turns/:projection_id/events。
+//
+// 浏览器已鉴权后，从 PostgreSQL journal 游标以 SSE 回放。终态或尚未绑定 harness 时只冲刷已落库事件并 stream.complete。进行中则先回放存量，再 LISTEN ChannelTurn（慢订阅回落轮询）。
+// Last-Event-ID 与 after 取较大者，都不是页码；断线重连不丢序、不跳序。连接数超限 503；Last-Event-ID 非法 400。
+//
+// agent-service 不提供本地事件流。禁区：不要改成读 Pi 文件；不要在 SSE 路径写 Turn / Task / Goal；不要延长 lease。
 func (s Service) StreamTurnEvents(c *gin.Context, productID *string, conversationID, projectionID string, after int, lastEventID string) {
 	if pfmetrics.AgentSSEConnections.Add(1) > maxSSEConnections {
 		pfmetrics.AgentSSEConnections.Add(-1)
@@ -113,6 +124,9 @@ func (s Service) StreamTurnEvents(c *gin.Context, productID *string, conversatio
 	s.waitForPersistedTurnEvents(c, projectionID, cursor)
 }
 
+// writePersistedTurnEvents 从 cursor 之后按页写出已落库 journal。settled 为 true 时补 stream.complete。
+//
+// 只读 ListEvents。写失败或上下文取消则停在当前 cursor，由调用方决定是否继续等。
 func (s Service) writePersistedTurnEvents(c *gin.Context, projectionID string, cursor int, settled bool) int {
 	ctx := c.Request.Context()
 	flusher, _ := c.Writer.(http.Flusher)
@@ -146,6 +160,11 @@ func (s Service) writePersistedTurnEvents(c *gin.Context, projectionID string, c
 	return cursor
 }
 
+// waitForPersistedTurnEvents 等 ChannelTurn 通知或轮询间隔，继续从同一 cursor 读 PG journal。
+//
+// LISTEN 失败或订阅通道关闭后改为 250ms 轮询，保证不丢事件。approval/resolved 或投影已进非 awaiting_confirmation 的终态时发 stream.complete。
+//
+// 禁区：不要把通知当权威（通知只是唤醒）；漏通知必须靠轮询补上。
 func (s Service) waitForPersistedTurnEvents(c *gin.Context, projectionID string, cursor int) {
 	ctx := c.Request.Context()
 	flusher, _ := c.Writer.(http.Flusher)
@@ -249,9 +268,11 @@ func projectedTurnEvent(event eventRow) map[string]any {
 	}
 }
 
-// projectTurnEvent is the only server-side translation from the append-only
-// journal vocabulary to the browser protocol. The raw payload remains bounded
-// and is copied only into the corresponding stable item shape.
+// projectTurnEvent 是服务端唯一把 append-only journal 词表翻成浏览器协议的地方。
+//
+// text.chunk → item.delta，turn/end → turn.completed / failed / unknown 等。compacted 行变成 agent.ignored，保留 raw_kind。payload 只拷进对应稳定形状，不扩写、不补第二份 transcript。
+//
+// 禁区：不要在其它 handler 再翻译一套 kind；不要把 ignorable 未知 kind 当成有效 UI 事件（应发 agent.ignored / agent.invalid）。
 func projectTurnEvent(event eventRow) (string, map[string]any) {
 	var raw map[string]any
 	if err := json.Unmarshal(event.Payload, &raw); err != nil || raw == nil {

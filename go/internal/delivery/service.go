@@ -1,3 +1,10 @@
+// Package delivery 按 DeliverySpec 做决定性出图：改尺寸或格式不调用图像模型，也不替换 generated source。
+//
+// 职责：把已有生成图做成 jpeg/webp/png 等交付件。这是本地渲染，不是再跑一遍 image 模型。
+// 调用时机：画布/HTTP 提交只写 delivery_rendition_jobs + PENDING dispatch；worker 走 [Executor]。
+// 副作用：写任务行、MediaObject 变体、产品图库关联；不改 workflow 节点上的 generated 原图绑定。
+// 错误：规格不合法 Validation；找不到源 NotFound；不可证明的 I/O 标 unknown，不要改成 failed 重试。
+// 禁区：不要为了「导出失败」去调 Gemini/OpenAI；jpeg444.go 是无色度抽样编码器，版权头保持英文。
 package delivery
 
 import (
@@ -23,17 +30,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// Service 拥有 DeliverySpec 派生任务的提交、查询与重试。
 type Service struct {
-	DB    *gorm.DB
-	Media media.Store
+	DB    *gorm.DB    // 命令事务
+	Media media.Store // 读原图、写交付变体；HTTP 不打图像模型
 }
 
+// SubmitResult 是提交一次交付派生的内部结果，HTTP 只回 Job。
+// Created=false 表示相同源图+SpecHash 已有任务。Queued=true 表示写了 PENDING dispatch。
+// 不要把 Created 和 HTTP 201 绑死：handler 按 Job.Status 回 200 或 202。
 type SubmitResult struct {
-	Job     JobResponse
-	Created bool
-	Queued  bool
+	Job     JobResponse // HTTP 只回这一份任务投影
+	Created bool        // false 表示相同源图+SpecHash 已有任务，本次没有新建
+	Queued  bool        // true 表示写了 PENDING dispatch；HTTP 不直接入队 broker
 }
 
+// Submit 按规范化 DeliverySpec 创建或复用交付任务，并写入 PENDING dispatch。
 func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[string]any) (SubmitResult, error) {
 	normalized, err := NormalizeSpec(specRaw)
 	if err != nil {
@@ -108,6 +120,8 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 	return SubmitResult{Job: resp, Created: created, Queued: queued}, nil
 }
 
+// Get 按 id 读取交付任务 HTTP 投影。
+// 调用时机：HTTP GET /delivery-rendition-jobs/:job_id，以及 Submit 后回读。找不到 NotFound。
 func (s Service) Get(ctx context.Context, jobID string) (JobResponse, error) {
 	var out JobResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -121,6 +135,8 @@ func (s Service) Get(ctx context.Context, jobID string) (JobResponse, error) {
 	return out, err
 }
 
+// List 列出同一原图上的全部交付任务，按创建时间倒序。
+// 调用时机：HTTP GET .../renditions。源图不存在 NotFound。无写入。
 func (s Service) List(ctx context.Context, sourceAssetID string) (JobListResponse, error) {
 	var out JobListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -148,6 +164,7 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 	return out, err
 }
 
+// Retry 把可重试的失败任务重新标 queued 并补 PENDING dispatch。
 func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadJobForUpdate(ctx, pgxTx, jobID)
@@ -241,6 +258,7 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 	return err
 }
 
+// serialize 把作业行投影成 JobResponse；结果资产缺失时返回 LoadAsset 的 error，不伪造空结果。
 func (s Service) serialize(ctx context.Context, q *gorm.DB, row jobRow) (JobResponse, error) {
 	spec, err := specFromJSON(row.SpecJSON)
 	if err != nil {

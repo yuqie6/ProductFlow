@@ -16,11 +16,16 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+// Variant 是原图或派生 JPEG 变体名，不是交付 DeliverySpec 格式。
+// 闭集：original / preview（最长边 1600）/ thumbnail（最长边 320）。未知值 ParseVariant 报错。
 type Variant string
 
 const (
-	VariantOriginal  Variant = "original"
-	VariantPreview   Variant = "preview"
+	// VariantOriginal 表示未经缩放的原文件。
+	VariantOriginal Variant = "original"
+	// VariantPreview 是最长边 1600 的 JPEG。
+	VariantPreview Variant = "preview"
+	// VariantThumbnail 是最长边 320 的 JPEG。
 	VariantThumbnail Variant = "thumbnail"
 )
 
@@ -29,6 +34,7 @@ var variantMaxEdge = map[Variant]int{
 	VariantThumbnail: 320,
 }
 
+// ParseVariant 把查询参数变成 [Variant]。空字符串视为 original；未知值返回 error。
 func ParseVariant(raw string) (Variant, error) {
 	switch strings.TrimSpace(raw) {
 	case "", "original":
@@ -42,12 +48,14 @@ func ParseVariant(raw string) (Variant, error) {
 	}
 }
 
+// ResolvedFile 是一次变体解析结果。生成失败时 AbsPath 可能回退到原图。
 type ResolvedFile struct {
-	AbsPath   string
-	MediaType string
+	AbsPath   string // 可能回退到原图
+	MediaType string // 变体 JPEG 或原图 MIME
 	Filename  string
 }
 
+// ResolveForVariant 定位原图或 .variants 下的 JPEG。变体生成失败时回退原图且不返回 error。
 func (s Local) ResolveForVariant(relativePath, fallbackMediaType string, variant Variant) (ResolvedFile, error) {
 	original, err := s.Resolve(relativePath)
 	if err != nil {
@@ -77,6 +85,7 @@ func (s Local) ResolveForVariant(relativePath, fallbackMediaType string, variant
 	}, nil
 }
 
+// DeleteWithVariants 删除原图、preview、thumbnail 以及变体目录；单文件缺失不返回 error。
 func (s Local) DeleteWithVariants(relativePath string) error {
 	original, err := s.Resolve(relativePath)
 	if err != nil {
@@ -105,6 +114,8 @@ func (s Local) variantPath(originalAbs string, variant Variant) string {
 	return filepath.Join(dir, ".variants", stem+"."+string(variant)+".jpg")
 }
 
+// generateVariant 从原图解码、按边长缩、压成 JPEG 86，先写 .tmp 再 Rename，避免读到半文件。
+// variant 是 original 时返回「原图不需要派生缩略图」，调用方应先 ParseVariant 挡掉。
 func (s Local) generateVariant(originalAbs, variantAbs string, variant Variant) error {
 	maxEdge := variantMaxEdge[variant]
 	if maxEdge <= 0 {
@@ -141,6 +152,7 @@ func (s Local) generateVariant(originalAbs, variantAbs string, variant Variant) 
 	return os.Rename(tmp, variantAbs)
 }
 
+// thumbnail 把长边收到 maxEdge，短边按比例。已经不超过则原样返回，不复制像素。
 func thumbnail(src image.Image, maxEdge int) image.Image {
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
@@ -191,6 +203,7 @@ func guessMediaType(path, fallback string) string {
 	}
 }
 
+// VariantDownloadName 给 Content-Disposition 用：original 保留原名，变体加 -preview/-thumbnail 后缀。
 func VariantDownloadName(originalFilename string, variant Variant, resolvedSuffix string) string {
 	if variant == VariantOriginal {
 		return originalFilename
@@ -208,6 +221,7 @@ func VariantDownloadName(originalFilename string, variant Variant, resolvedSuffi
 	return stem + "-" + string(variant) + resolvedSuffix
 }
 
+// ImageURLs 由下载基址派生 original/preview/thumbnail 三个 URL。
 func ImageURLs(baseDownloadURL string) (download, preview, thumbnail string) {
 	return baseDownloadURL, baseDownloadURL + "?variant=preview", baseDownloadURL + "?variant=thumbnail"
 }

@@ -40,11 +40,12 @@ func HasImageArtifactForAsset(ctx context.Context, tx *gorm.DB, assetID string) 
 
 // ImageNodeTarget 是局部编辑需要的当前 image_generation 节点快照。
 type ImageNodeTarget struct {
-	GraphID     string
-	NodeID      string
-	Revision    int
-	ArtifactID  string
-	AssetID     string
+	GraphID    string
+	NodeID     string
+	Revision   int // 锁定时 active 图 revision
+	ArtifactID string
+	AssetID    string
+	// InputDigest 是当前 image artifact 的编译 digest，长度必须为 64。
 	InputDigest string
 }
 
@@ -87,8 +88,9 @@ func LockImageNodeTarget(ctx context.Context, tx *gorm.DB, productID, nodeID str
 
 // ArtifactLineage 是局部编辑 adoption payload 需要的源 artifact 摘要。
 type ArtifactLineage struct {
+	// InputDigest 来自源 artifact；供 adoption payload 带上编译签名。
 	InputDigest   *string
-	GraphRevision int
+	GraphRevision int // 源 artifact 写入时的图 revision
 }
 
 // LoadArtifactLineage 读取 artifact 的 input_digest 与 graph_revision。

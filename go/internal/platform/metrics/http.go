@@ -1,3 +1,5 @@
+// Package metrics 在配置了 METRICS_BEARER_TOKEN 时暴露 GET /metrics（Prometheus 文本）。
+// token 为空不注册路由，避免把内部计数裸奔到公网。
 package metrics
 
 import (
@@ -13,14 +15,29 @@ import (
 	"gorm.io/gorm"
 )
 
+// AgentSSEConnections 是当前 Agent SSE 连接数（gauge，仅本进程）。
+// 连接建立 +1、断开 -1。不要拿它当跨实例总数，也不要和连续生图 SSE 混计。
 var AgentSSEConnections atomic.Int64
+
+// AgentEventSequenceConflicts 累计 Turn journal 序号冲突次数。
 var AgentEventSequenceConflicts atomic.Int64
+
+// AgentJournalCompactTurns 累计已压缩的终态 Turn journal 数。
 var AgentJournalCompactTurns atomic.Int64
+
+// AgentJournalCompactErrors 累计 compact 作业失败次数。
 var AgentJournalCompactErrors atomic.Int64
+
+// AgentRecoveryUnknownExecutions 累计恢复时被标 unknown 的过期 execution。
 var AgentRecoveryUnknownExecutions atomic.Int64
+
+// AgentEventBatchCount 累计追加的 Agent 事件批次。
 var AgentEventBatchCount atomic.Int64
+
+// AgentEventBatchLastMS 上一批事件写入耗时，单位毫秒。
 var AgentEventBatchLastMS atomic.Int64
 
+// ObserveAgentEventBatch 记一批：计数 +1，并把耗时写入 AgentEventBatchLastMS。负 duration 当 0。
 func ObserveAgentEventBatch(elapsed time.Duration) {
 	ms := elapsed.Milliseconds()
 	if ms < 0 {
@@ -35,7 +52,8 @@ type statusCount struct {
 	Count  int64  `gorm:"column:count"`
 }
 
-// Register keeps metrics private by default: no token means no route.
+// Register 仅在 token 非空时挂 GET /metrics。Authorization 必须是 Bearer 且恒定时间比较；
+// 失败只回 401/500 状态码，不写 {"detail"}，避免探测。
 func Register(engine *gin.Engine, db *gorm.DB, token string) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -61,6 +79,7 @@ func Register(engine *gin.Engine, db *gorm.DB, token string) {
 	})
 }
 
+// snapshot 扫 PostgreSQL 状态计数并拼 Prometheus 文本。任一查询失败整页失败，不返回半截指标。
 func snapshot(db *gorm.DB) (string, error) {
 	var turns, runs, dispatches, invocations, reconciliations, executions []statusCount
 	queries := []struct {

@@ -1,3 +1,8 @@
+// Command productflow-api 是浏览器打到的 HTTP 进程（默认 :29280）。
+//
+// 启动顺序：读 env overlay → 日志 → PostgreSQL/GORM → 本地 storage → 注册各切片路由。
+// 不跑 asynq 消费，也不把 PENDING dispatch 标 SENT。改路由看 register.go；密钥只来自 env。
+// 收到 SIGINT/SIGTERM 会 Shutdown，不要在这里 panic 普通校验错误（仅 config.Load 失败才 panic）。
 package main
 
 import (

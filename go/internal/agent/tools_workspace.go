@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// LaunchWorkspaceFromGlobal 从全局 conversation 按幂等键创建商品工作区。
 func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (WorkspaceLaunchResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, globalConversationID)
 	if err != nil {
@@ -38,6 +39,7 @@ func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversati
 	}, nil
 }
 
+// ReconcileWorkspaceFromGlobal 按幂等键对账商品工作区创建；证据不足返回 unknown。
 func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (ReconcileResponse, error) {
 	if _, err := s.loadScopedConversation(ctx, globalConversationID); err != nil {
 		return ReconcileResponse{}, err
@@ -66,6 +68,7 @@ func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConvers
 	return ReconcileResponse{State: "applied", Result: raw, Detail: ptr("商品工作区已创建")}, nil
 }
 
+// FinalizeProductIntake 经 product 包写入图类型与参考图，并可能展开 name-only 出生图。
 func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idempotencyKey string, selection json.RawMessage, assetIDs []string) (map[string]any, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
@@ -105,6 +108,10 @@ func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idem
 	return result, nil
 }
 
+// ListGlobalProducts 给全局 Agent 分页搜索商品摘要，对应内部 GET .../products。
+//
+// conversation 必须 global。cursor 绑定当前 query；换搜索词却复用旧 cursor 返回 Validation。limit 须在 1–100。
+// 只读 products 与 active workflow 摘要。不创建工作区、不改 Goal、不写 lease。
 func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, cursor string, limit int) (GlobalProductListResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -176,6 +183,7 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 	return out, nil
 }
 
+// InspectGlobalProducts 按明确 id 检查商品摘要。
 func (s Service) InspectGlobalProducts(ctx context.Context, conversationID string, productIDs []string) ([]GlobalProductResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -221,6 +229,7 @@ func (s Service) activeWorkflowSummary(ctx context.Context, productID string) *m
 	return &summary
 }
 
+// GlobalWorkflowContext 读取指定商品工作区的 ProductContext。
 func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, productID, responseFormat string) (map[string]any, error) {
 	productID = stringsTrim(productID)
 	if productID == "" {
@@ -258,6 +267,9 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 	return payload, nil
 }
 
+// ValidateLibraryDraft 校验素材整理 Draft 是否含 operations。
+//
+// conversation 不存在返回 NotFound；非 global 返回 Conflict。payload 非 JSON 或缺少 operations 返回 Validation。
 func (s Service) ValidateLibraryDraft(ctx context.Context, conversationID string, value json.RawMessage) error {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -276,6 +288,9 @@ func (s Service) ValidateLibraryDraft(ctx context.Context, conversationID string
 	return nil
 }
 
+// ValidateGlobalDraft 校验全局 Agent Draft；当前只接受素材整理。
+//
+// conversation 不存在返回 NotFound；非 global 返回 Conflict。JSON 无效、draft_kind 非 library_organization、或内层 payload 缺 operations 返回 Validation。
 func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string, value json.RawMessage) error {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -299,6 +314,7 @@ func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string,
 	return s.ValidateLibraryDraft(ctx, conversationID, payload)
 }
 
+// ConfirmLibraryDraftHTTP 按幂等键确认素材整理 Draft。
 func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID string, expectedVersion int, idempotencyKey string) (any, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
@@ -326,6 +342,7 @@ func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID str
 	return out, err
 }
 
+// GetLibraryDraftHTTP 读取全局 conversation 的素材整理 Draft。
 func (s Service) GetLibraryDraftHTTP(ctx context.Context, conversationID string) (any, error) {
 	if _, err := s.loadScopedConversation(ctx, conversationID); err != nil {
 		return nil, err

@@ -1,3 +1,4 @@
+// Package clockid 生成带连字符的 UUID v4 主键。名字像时间有序，实现是随机 v4，不要按时间排序依赖它。
 package clockid
 
 import (
@@ -6,7 +7,7 @@ import (
 	"strings"
 )
 
-// New returns a random UUID v4 string (36 chars, hyphenated).
+// New 返回 36 字符 hyphenated UUID v4。crypto/rand 失败会 panic：主键不能静默退化成全零。
 func New() string {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -21,7 +22,7 @@ func format(buf [16]byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", buf[0:4], buf[4:6], buf[6:8], buf[8:10], buf[10:16])
 }
 
-// Normalize accepts hyphenated or 32-hex UUIDs and returns the canonical 36-char form.
+// Normalize 接受带连字符或 32 位 hex，收成小写 8-4-4-4-12。长度或字符非法返回「媒体 ID 必须是 UUID」。
 func Normalize(raw string) (string, error) {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	s = strings.ReplaceAll(s, "-", "")

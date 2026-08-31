@@ -11,6 +11,7 @@ func cloneMap(in map[string]any) map[string]any {
 	return out
 }
 
+// cloneValue 深拷贝 map/slice，标量原样返回。改图与 digest 前必须 clone，避免共享 config 被原地改。
 func cloneValue(value any) any {
 	switch t := value.(type) {
 	case map[string]any:

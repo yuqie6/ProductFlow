@@ -10,13 +10,15 @@ import (
 	"time"
 )
 
+// HTTPGateway 用 HTTP 实现 Gateway，调用 Node.js/Pi agent-service。
 type HTTPGateway struct {
-	BaseURL        string
-	Token          string
-	ConnectTimeout time.Duration
-	ReadTimeout    time.Duration
+	BaseURL        string        // env AGENT_SERVICE_BASE_URL
+	Token          string        // env AGENT_SERVICE_INTERNAL_TOKEN，env-only 密钥
+	ConnectTimeout time.Duration // 来自 AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS
+	ReadTimeout    time.Duration // 来自 AGENT_SERVICE_READ_TIMEOUT_SECONDS；≤0 时 request 用 90s
 }
 
+// Configured 报告 BaseURL 与 Token 是否已设置。
 func (g HTTPGateway) Configured() bool {
 	return g.BaseURL != "" && g.Token != ""
 }
@@ -25,6 +27,7 @@ func (g HTTPGateway) configured() bool {
 	return g.Configured()
 }
 
+// StartTurn 实现 Gateway，向 agent-service POST 一轮 Turn。
 func (g HTTPGateway) StartTurn(conversationID string, taskID *string, inputText string, assetIDs []string, idempotencyKey string, pageContext any) (TurnState, error) {
 	body := map[string]any{
 		"input_text":      inputText,
@@ -35,18 +38,22 @@ func (g HTTPGateway) StartTurn(conversationID string, taskID *string, inputText 
 	return g.request("POST", g.executionPath(conversationID, taskID)+"/turns", body)
 }
 
+// GetTurn 实现 Gateway，读取 agent-service 当前 Turn。
 func (g HTTPGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("GET", g.turnPath(conversationID, turnID, taskID), nil)
 }
 
+// CancelTurn 实现 Gateway，请求 agent-service 取消 Turn。
 func (g HTTPGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/cancel", map[string]any{})
 }
 
+// ResumeTurn 实现 Gateway，请求 agent-service 恢复 Turn。
 func (g HTTPGateway) ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/resume", map[string]any{})
 }
 
+// AnswerQuestion 实现 Gateway，把答案交给 agent-service。
 func (g HTTPGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/questions/"+url.PathEscape(questionID)+"/answer", map[string]any{"answer": answer})
 }
@@ -62,6 +69,9 @@ func (g HTTPGateway) turnPath(conversationID, turnID string, taskID *string) str
 	return g.executionPath(conversationID, taskID) + "/turns/" + url.PathEscape(turnID)
 }
 
+// request 调用 Node.js/Pi agent-service 并解码 TurnState。返回值不是 journal 权威；投影与 SSE 仍以 PostgreSQL 为准。
+//
+// 未配置返回 not_configured。非 2xx 收成 GatewayError（带上游 code）。响应体超过 1MiB 截断读取。超时默认 90s。
 func (g HTTPGateway) request(method, path string, body any) (TurnState, error) {
 	if !g.configured() {
 		return TurnState{}, GatewayError{Code: "not_configured", Detail: "Agent 服务尚未配置"}
@@ -117,6 +127,7 @@ func (g HTTPGateway) request(method, path string, body any) (TurnState, error) {
 	return state, nil
 }
 
+// String 返回含 BaseURL 的调试标识，给日志 fmt 用。不要把 Token 拼进去。
 func (g HTTPGateway) String() string {
 	return fmt.Sprintf("agent-gateway %s", g.BaseURL)
 }

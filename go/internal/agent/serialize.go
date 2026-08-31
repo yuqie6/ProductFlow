@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// serializeTurn 把 projection 行收成 Web DTO。output_text / thinking_text / tool_steps 是列表摘要，不是第二份模型 transcript；完整对话靠 journal SSE。
 func serializeTurn(row turnRow, focus *CanvasFocus) TurnResponse {
 	assetIDs := []string{}
 	if len(row.InputAssetIDs) > 0 {
@@ -84,6 +85,7 @@ func turnFromModels(proj schema.AgentTurnProjections, convHarness string, taskHa
 	}
 }
 
+// loadTurn 按商品或全局作用域读取一条 Turn 投影。作用域不匹配当成 NotFound，避免跨商品漏数据。不触发 GraphRun 同步，以免读路径覆盖 goal_loop。
 func loadTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string) (turnRow, error) {
 	row, err := scanTurn(ctx, pgxTx, projectionID, &conversationID)
 	if err != nil {
@@ -138,6 +140,7 @@ func scanTurn(ctx context.Context, pgxTx *gorm.DB, projectionID string, conversa
 	return turnFromModels(dest.AgentTurnProjections, dest.ConversationHarnessRunID, dest.TaskHarnessRunID, dest.ConversationScope, dest.ConversationProductID), nil
 }
 
+// canvasFocusForTurns 从已 applied 的 focus_canvas_items_v1 账本给列表中的 Turn 配焦点。只读 agent_tool_mutations，不读 Pi，不改图。
 func canvasFocusForTurns(ctx context.Context, pgxTx *gorm.DB, turns []turnRow) (map[string]*CanvasFocus, error) {
 	out := map[string]*CanvasFocus{}
 	if len(turns) == 0 {

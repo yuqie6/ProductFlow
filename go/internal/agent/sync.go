@@ -16,14 +16,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// Executor 是 Agent Turn 同步的 worker 入口。Execute 调用 SyncTurn；未到终态时返回 queue.ErrLater。
 type Executor struct {
-	Service Service
+	Service Service // 调用 SyncTurn 的 worker 入口
 }
 
+// Execute 同步一个 Turn projection；缺失行视为已处理。
+//
+// 仍需同步时返回 queue.ErrLater。applyTurnState 围栏失败返回 Conflict。Gateway 失败记 sync_error 后走 syncOutcome，不把 Goal 标完成。
 func (e Executor) Execute(ctx context.Context, projectionID string) error {
 	return e.Service.SyncTurn(ctx, projectionID)
 }
 
+// SyncTurn 把 agent-service Turn 状态投影到 PostgreSQL。商品 Goal 在 waiting_reason=goal_loop 时不被 Turn 终态改写。
+//
+// 投影不存在视为已处理。resume_required 时不催 Gateway。load/apply 数据库错误原样返回；围栏失败 Conflict。
+// Gateway 不可用只记 sync_error。仍需同步时经 syncOutcome 返回 queue.ErrLater。
 func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -81,6 +89,9 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	return s.syncOutcome(ctx, projectionID)
 }
 
+// syncOutcome 在 SyncTurn 末尾决定 worker 是否还要再来：投影仍需同步则返回 queue.ErrLater，否则视为本轮处理完。
+//
+// 不写表。缺失行当已处理。resume_required 的 Turn 不催 Gateway。
 func (s Service) syncOutcome(ctx context.Context, projectionID string) error {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -103,6 +114,9 @@ func (s Service) syncOutcome(ctx context.Context, projectionID string) error {
 	return nil
 }
 
+// syncQuestionContinuation 处理「父 Turn 等回答、子 Turn 是多余 continuation」的竞态。
+//
+// 父 Turn 已有答案则在原 Turn resume，并 cancelUnusedContinuation。Pi waiter 已死则 cancel 父 Turn，不另开权威通道。返回 true 表示本轮已处理，调用方应走 syncOutcome。
 func (s Service) syncQuestionContinuation(ctx context.Context, productID *string, child turnRow) (bool, error) {
 	if !inSet(inFlightTurn, child.Status) {
 		return false, nil
@@ -168,6 +182,13 @@ func loadQuestionParent(ctx context.Context, pgxTx *gorm.DB, continuationID stri
 	return row, true, err
 }
 
+// applyTurnState 把 Gateway / turn/end 的 TurnState 写入 PostgreSQL 投影，是模型状态进入业务库的唯一入口。
+//
+// SyncTurn、projectTerminalEvent、ControlTurn、resumeLiveQuestion 调用。先 validateFence：过期 fencing_token 或终态 lease 回写活动状态一律 Conflict。无 fence 的陈旧 queued 回写被 isStaleQueued 丢掉。
+//
+// 写 agent_turn_projections、conversation 状态；有 Task 时走 updateTaskFromTurn（商品工作流终态停在 goal_loop）。可能挂 workflow_run_request 或图库 draft revision。
+//
+// 禁区：不要在其它函数直接 UPDATE 投影状态绕过 fencing；不要在这里把 Goal 标 succeeded；run_id 必须匹配 conversation/task harness。
 func (s Service) applyTurnState(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, projectionID string, state TurnState) error {
 	row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 	if err != nil {
@@ -282,6 +303,9 @@ func nullableString(s string) any {
 	return s
 }
 
+// validateFence 拒绝过期 writer：state 的 attempt/fencing_token 必须等于当前 agent_turn_executions 行。
+//
+// 终态 lease 不能再回写活动状态。queued 且未带 fence 允许（尚未 claim）。缺 execution 却带着 fence 返回 Conflict。
 func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, state TurnState) error {
 	var exec schema.AgentTurnExecutions
 	err := pgxTx.WithContext(ctx).Where("turn_projection_id = ?", projectionID).Take(&exec).Error
@@ -309,6 +333,7 @@ func validateFence(ctx context.Context, pgxTx *gorm.DB, projectionID string, sta
 	return nil
 }
 
+// isStaleQueued 判断 Gateway 回的 queued 是否已过时：投影已离开 queued，或 execution 已越过 claimed，则忽略这次回写，避免把进行中 Turn 打回队列。
 func isStaleQueued(ctx context.Context, pgxTx *gorm.DB, row turnRow, state TurnState) (bool, error) {
 	if state.Status != "queued" {
 		return false, nil
@@ -330,6 +355,7 @@ func isStaleQueued(ctx context.Context, pgxTx *gorm.DB, row turnRow, state TurnS
 	return row.Status != "queued" || exec.Phase != "claimed", nil
 }
 
+// pendingWorkflowRequest 从 tool_steps 里找最近一次成功的 request_workflow_run，返回已落库的确认单 id，供投影挂 awaiting_confirmation。
 func pendingWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, conversationID string, taskID *string, state TurnState) string {
 	for i := len(state.ToolSteps) - 1; i >= 0; i-- {
 		step := state.ToolSteps[i]
@@ -368,6 +394,11 @@ func attachWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, projectionID,
 	}).Error
 }
 
+// updateTaskFromTurn 把 Turn 状态投影到 AgentTask，但商品工作流的 Goal 在 Turn 终态后停在 waiting_user / goal_loop。
+//
+// applyTurnState 与未绑定 harness 的 cancel 调用。用户已 succeeded/canceled 的 Task 立刻返回。paused 只更新 summary。workflow_run_confirmation 等待中遇到飞行 Turn 也不改 waiting_reason。
+//
+// 写 agent_tasks 与 session summary。禁区：读路径与 GraphRun 同步不得覆盖 goal_loop；不要在这里把 Goal 标完成。
 func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus, errorText, summary string) error {
 	task, err := lockTask(ctx, pgxTx, taskID)
 	if err != nil {
@@ -492,6 +523,7 @@ func updateTaskFromTurn(ctx context.Context, pgxTx *gorm.DB, taskID, turnStatus,
 	return nil
 }
 
+// taskListChangedFromTurn 判断本次投影是否改变列表可见字段，避免无意义的 task-changed 广播。
 func taskListChangedFromTurn(task taskRow, status string, waiting, failure any, summary string) bool {
 	if task.Status != status {
 		return true
@@ -521,6 +553,7 @@ func taskListChangedFromTurn(task taskRow, status string, waiting, failure any, 
 	return prevFailure != nextFailure
 }
 
+// taskTurnSummary 生成有界 operational summary（等待回答、失败原因、output 摘要）。这不是第二份模型 transcript，长度截断到 2000 字。
 func taskTurnSummary(status string, state TurnState) string {
 	const maxLen = 2000
 	bound := func(value string) string {

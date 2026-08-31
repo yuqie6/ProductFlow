@@ -82,6 +82,7 @@ type visualVersionRef struct {
 	visualSystemID string
 }
 
+// prepareVisualSystemCleanup 只回收本商品独占的视觉版本；外商品或配方仍引用则 Conflict。
 func prepareVisualSystemCleanup(ctx context.Context, tx *gorm.DB, productID string) ([]visualVersionRef, error) {
 	owned, err := collectOwnedVisualVersionIDs(ctx, tx, productID)
 	if err != nil {
@@ -124,6 +125,7 @@ func prepareVisualSystemCleanup(ctx context.Context, tx *gorm.DB, productID stri
 	return removable, nil
 }
 
+// deleteOwnedVisualVersions 删版本后若 VisualSystem 已无子版本才删体系行，避免误删共享体系。
 func deleteOwnedVisualVersions(ctx context.Context, tx *gorm.DB, versions []visualVersionRef) error {
 	systemIDs := map[string]struct{}{}
 	for _, version := range versions {
@@ -198,6 +200,7 @@ func collectReferencedVisualVersionIDs(ctx context.Context, tx *gorm.DB, product
 	return out, nil
 }
 
+// visualVersionHasExternalConsumer 外商品节点/产物或配方 preferred 引用即视为占用。
 func visualVersionHasExternalConsumer(ctx context.Context, tx *gorm.DB, productID, versionID string) (bool, error) {
 	var node schema.WorkflowGraphNodes
 	err := tx.WithContext(ctx).Table("workflow_graph_nodes AS n").

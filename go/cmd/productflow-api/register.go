@@ -14,8 +14,7 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
-// apiHandlers is the live HTTP surface. Tests register the same set so
-// contracts/http-routes.json cannot drift from cmd/productflow-api.
+// apiHandlers 是线上 HTTP 面。契约测试必须注册同一组，避免 contracts/http-routes.json 与 cmd/productflow-api 漂移。
 type apiHandlers struct {
 	Auth         auth.HTTP
 	Settings     settings.HTTP
@@ -29,6 +28,7 @@ type apiHandlers struct {
 	Agent        agent.HTTP
 }
 
+// registerAPI 按固定顺序挂上各垂直切片。增删路由必须同时改测试与 http-routes.json，不要只改一处。
 func registerAPI(engine *gin.Engine, h apiHandlers) {
 	h.Auth.Register(engine)
 	h.Settings.Register(engine)

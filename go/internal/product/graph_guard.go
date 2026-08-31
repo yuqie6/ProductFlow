@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// LoadSource 实现 graph.ProductGuard：找不到商品时返回 nil, nil。
 func (GraphGuard) LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*graph.SourceProduct, error) {
 	var rec schema.Products
 	err := tx.WithContext(ctx).Select("id, name, category, price, source_note, current_fact_set_version_id").
@@ -30,6 +31,7 @@ func (GraphGuard) LoadSource(ctx context.Context, tx *gorm.DB, productID string)
 	}, nil
 }
 
+// LoadFactSet 实现 graph.ProductGuard：找不到版本时返回 nil, nil。
 func (GraphGuard) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, productID string) (*graph.FactSet, error) {
 	q := tx.WithContext(ctx).Where("id = ?", factSetID)
 	if productID != "" {
@@ -60,6 +62,7 @@ func (GraphGuard) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, produ
 	}, nil
 }
 
+// BoundAssetMeta 返回绑定图的显示名与 MIME。找不到时返回空串，不报 NotFound。
 func (GraphGuard) BoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (string, string, error) {
 	var row struct {
 		DisplayName string `gorm:"column:display_name"`

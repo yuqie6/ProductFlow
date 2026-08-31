@@ -60,6 +60,7 @@ func assetJoinQuery(tx *gorm.DB) *gorm.DB {
 		Joins("JOIN media_objects m ON m.id = a.media_object_id")
 }
 
+// imageAssetFromJoin 把 join 行的 Source*AssetID 与 int64 ByteSize 收成领域身份；StoragePath 仅供本包读字节。
 func imageAssetFromJoin(row assetJoinRow) ImageAsset {
 	return ImageAsset{
 		ID:                      row.ID,
@@ -175,15 +176,16 @@ func insertAsset(ctx context.Context, tx *gorm.DB, productID, mediaID, filename 
 	return insertAssetOrigin(ctx, tx, productID, mediaID, filename, "upload", nil)
 }
 
+// AssetIdentityInput 写入一条商品图片身份。Origin 空则按 upload。
 type AssetIdentityInput struct {
 	ProductID                 string
 	MediaID                   string
 	Filename                  string
-	Origin                    string
-	ImageTypeKey              *string
+	Origin                    string  // 空则按 upload
+	ImageTypeKey              *string // 图种闭集；nil 表示未分类
 	ParentAssetID             *string
 	SourceImageSessionAssetID *string
-	DisplayName               string
+	DisplayName               string // 空则回落 Filename
 }
 
 func insertAssetOrigin(ctx context.Context, tx *gorm.DB, productID, mediaID, filename, origin string, imageTypeKey *string) (ImageAsset, error) {
@@ -321,6 +323,7 @@ func LoadAssetRow(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, 
 	return loadAsset(ctx, q, assetID)
 }
 
+// listProducts 封面 URL 由 ProductImageAsset id 推导；未知 sort 回落到 updated_desc。
 func listProducts(ctx context.Context, tx *gorm.DB, page, pageSize int, q, sort string) ([]Summary, int, error) {
 	if page < 1 {
 		page = 1
@@ -384,6 +387,7 @@ func listProducts(ctx context.Context, tx *gorm.DB, page, pageSize int, q, sort 
 	return items, int(total), nil
 }
 
+// insertFactSet 追加不可变 fact 版本；version 取当前 MAX+1，不覆盖旧行。
 func insertFactSet(ctx context.Context, tx *gorm.DB, productID string, facts []map[string]any) (string, int, error) {
 	payload := map[string]any{
 		"schema_version":    1,

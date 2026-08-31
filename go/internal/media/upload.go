@@ -7,12 +7,14 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// Validated 是通过闸门后的上传字节。MIMEType 是解码后的真实类型，不是声明值。
 type Validated struct {
-	Content  []byte
+	Content  []byte // 已过闸门的 bytes
 	Filename string
 	MIMEType string
 }
 
+// ValidateUpload 校验单张图：声明 MIME、大小、可解码、像素上限、真实 MIME。失败映射 400/413/415。
 func ValidateUpload(filename, declaredMIME string, content []byte, limits Limits) (Validated, error) {
 	if filename == "" {
 		filename = "reference.bin"
@@ -52,6 +54,7 @@ func ValidateUpload(filename, declaredMIME string, content []byte, limits Limits
 	return Validated{Content: content, Filename: filename, MIMEType: verified.MIMEType}, nil
 }
 
+// ValidateBatch 校验批次张数与总字节。空切片返回 400；超张数 400；超总大小 413。
 func ValidateBatch(uploads []Validated, limits Limits) error {
 	if len(uploads) == 0 {
 		return apperr.Validation("至少需要上传一张图片")
@@ -73,6 +76,7 @@ func ValidateBatch(uploads []Validated, limits Limits) error {
 	return nil
 }
 
+// NormalizeDeclaredMIME 规范化声明类型；空串变成 application/octet-stream。
 func NormalizeDeclaredMIME(declared string) string {
 	cleaned := NormalizeMIME(declared)
 	if cleaned == "" {
@@ -81,6 +85,7 @@ func NormalizeDeclaredMIME(declared string) string {
 	return cleaned
 }
 
+// NormalizeMIME 去掉参数、转小写，并把 image/jpg、image/pjpeg、image/x-png 收到标准名。
 func NormalizeMIME(raw string) string {
 	cleaned := strings.ToLower(strings.TrimSpace(strings.Split(raw, ";")[0]))
 	switch cleaned {

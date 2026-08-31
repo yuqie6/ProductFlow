@@ -1,3 +1,8 @@
+// Package httpx 组装 Gin 引擎、session cookie、管理口令门禁、healthz 与统一错误写入。
+//
+// 所有业务错误经 AbortErr：apperr.Error 用自己的 Status/Detail/Code，其它 error 变 500 且进 Gin error 日志。
+// JSON 未知字段由调用方 DisallowUnknownFields 变成 400「请求体无效」。cookie 名必须是 session。
+// /healthz 是 Debug 级访问日志，不要改成每次 Info。
 package httpx
 
 import (
@@ -11,6 +16,8 @@ import (
 
 const requestIDHeader = "x-request-id"
 
+// NewEngine 返回 ReleaseMode 的 Gin 引擎，挂上 Recovery、x-request-id 与访问日志。
+// /healthz 与心跳路径在成功时记 Debug。
 func NewEngine(logger *zap.Logger) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()

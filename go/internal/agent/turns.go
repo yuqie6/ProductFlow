@@ -28,6 +28,7 @@ type startTurnInput struct {
 	PageContext    map[string]any
 }
 
+// ListTurns 按时间正序分页列出 Conversation 的 Turn 投影。
 func (s Service) ListTurns(ctx context.Context, productID *string, conversationID, taskID, after string, limit int) (TurnPageResponse, error) {
 	if limit < 1 || limit > turnMaxPageSize {
 		return TurnPageResponse{}, apperr.Validationf("Agent Turn 分页 limit 必须在 1 到 %d 之间", turnMaxPageSize)
@@ -122,6 +123,7 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 	return out, err
 }
 
+// SubmitTurn 按幂等键预留 projection 并交给 Gateway；HTTP 只写 PENDING dispatch。
 func (s Service) SubmitTurn(ctx context.Context, productID *string, conversationID string, in startTurnInput) (SubmitTurnResponse, error) {
 	if s.Gateway == nil {
 		return SubmitTurnResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
@@ -157,6 +159,7 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	return SubmitTurnResponse{Created: created, Turn: bound}, nil
 }
 
+// GetTurn 读取 Turn 投影；进行中时可能向 Gateway 刷新，失败则回落 PostgreSQL。
 func (s Service) GetTurn(ctx context.Context, productID *string, conversationID, projectionID string, requireLibraryClear bool) (TurnResponse, error) {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -196,6 +199,7 @@ func (s Service) GetTurn(ctx context.Context, productID *string, conversationID,
 	return out, err
 }
 
+// ControlTurn 执行 cancel 或 resume。尚未绑定 harness Turn 的 cancel 只改 PostgreSQL 投影。
 func (s Service) ControlTurn(ctx context.Context, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
 	var out TurnResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -209,6 +213,9 @@ func (s Service) ControlTurn(ctx context.Context, productID *string, conversatio
 	return out, err
 }
 
+// controlTurnTx 执行 cancel / resume。尚未绑定 harness 的 cancel 只改 PostgreSQL 投影与 Task（商品 Goal 仍走 updateTaskFromTurn 的 goal_loop）。
+//
+// 已绑定则调 Gateway，再 applyTurnState 并 stage sync。终态 Turn 不能 resume。Gateway 未配置返回 Unavailable。
 func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *string, conversationID, projectionID, command string) (TurnResponse, error) {
 	row, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 	if err != nil {
@@ -267,6 +274,7 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 	return serializeTurn(loaded, nil), nil
 }
 
+// AnswerQuestion 把用户答案写入投影并尝试 resume Gateway 中仍活着的问题。
 func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (QuestionAnswerResponse, error) {
 	row, err := s.persistQuestionAnswer(ctx, productID, conversationID, projectionID, questionID, answer)
 	if err != nil {
@@ -288,6 +296,9 @@ func (s Service) AnswerQuestion(ctx context.Context, productID *string, conversa
 	return questionAnswerResult(resumed, resumed), nil
 }
 
+// persistQuestionAnswer 把用户答案写入 projection.question_answer_json 并 stage Turn sync。
+//
+// 不在 requires_input、问题 id 不对、或已有不同答案时返回 NotPending。这是答案的 PG 权威；Pi waiter 可能已死，仍以本列为准。
 func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (turnRow, error) {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -329,6 +340,7 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 	return row, err
 }
 
+// validateQuestionAnswer 校验 skip / option / text 互斥且 option 落在问题选项内。不写表。
 func validateQuestionAnswer(question, answer map[string]any) error {
 	if skip, ok := answer["skip"].(bool); ok && skip {
 		if _, hasOption := answer["option"]; hasOption {
@@ -392,6 +404,9 @@ func questionAnswerResult(answered, continuation TurnResponse) QuestionAnswerRes
 	}
 }
 
+// resumeLiveQuestion 把已落库的答案交给 Pi 仍活着的 waiter，再 ResumeTurn 并把状态投影回 PG。
+//
+// AnswerQuestion 与 syncQuestionContinuation 调用。尚未绑定 harness 返回 Conflict。成功后清 resume_required 并 stage sync。Pi 侧失败由调用方 mapGateway，不改 Goal。
 func (s Service) resumeLiveQuestion(ctx context.Context, productID *string, conversationID, projectionID, questionID string, answer map[string]any) (TurnResponse, error) {
 	var harnessTurnID string
 	var taskID *string
@@ -453,6 +468,9 @@ func (s Service) serializedTurn(ctx context.Context, productID *string, conversa
 	return out, err
 }
 
+// cancelUnusedContinuation 在父 Turn 已于原 harness 恢复后，取消多余的 continuation，避免双执行。
+//
+// 尽量通知 Gateway cancel，再把仍飞行的投影标 canceled。失败的 Gateway cancel 不阻断本地收口。
 func (s Service) cancelUnusedContinuation(ctx context.Context, productID *string, child turnRow) error {
 	if child.ID == "" {
 		return nil
@@ -527,6 +545,11 @@ func stringsTrim(s string) string {
 	return s
 }
 
+// reserveTurn 按幂等键预占一条 queued 投影。同键同 request hash 回放；同键不同 hash 返回 Conflict。
+//
+// SubmitTurn 与 recoverQueuedTaskTurns 调用。写 agent_turn_projections，可选 insertPageContext（只绑本 Turn）。商品工作流参考图必须属于该商品且已 verified。
+//
+// 已结束或 paused 的 Task、仍有 blocking 当前 Turn、会话 Turn 数量触顶、conversation 不可 start 返回 Conflict。页面上下文不得改 Goal。
 func reserveTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID, inputText string, assetIDs []string, idempotencyKey string, taskID *string, ignoreTurnID string, pageContext map[string]any) (turnRow, bool, error) {
 	text, err := normalizeInputText(inputText)
 	if err != nil {
@@ -691,6 +714,9 @@ func (s Service) recordStartError(ctx context.Context, productID *string, conver
 	})
 }
 
+// bindGatewayTurn 把尚未绑定 harness 的 queued 投影交给 Gateway.StartTurn，再用 applyTurnState 写下 harness_turn_id。
+//
+// 已绑定则原样返回。Gateway 不可用且 deferIfUnavailable 时只记 sync_error，不伪造终态。幂等键沿用 projection，避免 Pi 侧重复开 Turn。
 func (s Service) bindGatewayTurn(ctx context.Context, productID *string, conversationID, projectionID string, deferIfUnavailable bool) (TurnResponse, error) {
 	var row turnRow
 	var pageContext any
@@ -749,6 +775,9 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 	return serializeTurn(row, nil), nil
 }
 
+// refreshTurn 从 Gateway.GetTurn 拉模型状态并 applyTurnState。tolerate 时网关失败只记 sync_error，回落 PostgreSQL 投影，不改 Goal。
+//
+// GetTurn HTTP 在进行中调用。无 harness 或无 Gateway 直接返回库内行。
 func (s Service) refreshTurn(ctx context.Context, productID *string, conversationID, projectionID string, tolerate bool) (TurnResponse, error) {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

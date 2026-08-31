@@ -8,33 +8,57 @@ import (
 )
 
 const (
-	RunScopeGraph     = "graph"
-	RunScopeNode      = "node"
-	RunScopeToNode    = "to_node"
+	// RunScopeGraph 入队所有具备必需输入的处理节点。全图运行不能携带 force。
+	RunScopeGraph = "graph"
+	// RunScopeNode 只入队显式目标节点。
+	RunScopeNode = "node"
+	// RunScopeToNode 入队目标及仍需 cook 的处理祖先。
+	RunScopeToNode = "to_node"
+	// RunScopeSelection 入队显式 node_ids；镜头「跑这一组」走此范围。
 	RunScopeSelection = "selection"
 
-	RunStatusQueued    = "queued"
-	RunStatusRunning   = "running"
+	// RunStatusQueued 表示已提交、等待当前 running 结束。
+	RunStatusQueued = "queued"
+	// RunStatusRunning 表示该图当前唯一在执行的 WorkflowGraphRun。
+	RunStatusRunning = "running"
+	// RunStatusSucceeded 表示范围内节点均 succeeded 或 skipped。
 	RunStatusSucceeded = "succeeded"
-	RunStatusFailed    = "failed"
+	// RunStatusFailed 表示有失败节点且没有 unknown；可 RetryRun。
+	RunStatusFailed = "failed"
+	// RunStatusCancelled 表示用户取消；剩余 queued/running 节点写成 cancelled。
 	RunStatusCancelled = "cancelled"
-	RunStatusUnknown   = "unknown"
+	// RunStatusUnknown 表示无法证明的 provider 结果；IsRetryable=false，不自动当失败重试。
+	RunStatusUnknown = "unknown"
 
-	NodeRunQueued    = "queued"
-	NodeRunRunning   = "running"
+	// NodeRunQueued 等待上游就绪或容量。
+	NodeRunQueued = "queued"
+	// NodeRunRunning 已被 worker claim。
+	NodeRunRunning = "running"
+	// NodeRunSucceeded 已写入产物。
 	NodeRunSucceeded = "succeeded"
-	NodeRunFailed    = "failed"
-	NodeRunUnknown   = "unknown"
-	NodeRunSkipped   = "skipped"
+	// NodeRunFailed 已证明失败；下游处理节点标 failed，无依赖路径的兄弟继续跑。
+	NodeRunFailed = "failed"
+	// NodeRunUnknown 无法证明的 provider 结果；与 failed 一样挡住下游，但不自动重试。
+	NodeRunUnknown = "unknown"
+	// NodeRunSkipped 输入 digest 未变或文稿冻结；对下游视为就绪。
+	NodeRunSkipped = "skipped"
+	// NodeRunCancelled 随 run 取消写入。
 	NodeRunCancelled = "cancelled"
 
+	// PlannedGenerate 预览：将调用 provider。
 	PlannedGenerate = "generate"
-	PlannedReuse    = "reuse"
-	PlannedFrozen   = "frozen"
-	PlannedBlocked  = "blocked"
+	// PlannedReuse 预览：digest 未变，执行时 skipped。
+	PlannedReuse = "reuse"
+	// PlannedFrozen 预览：authored/generated 文稿非 force 不 cook。
+	PlannedFrozen = "frozen"
+	// PlannedBlocked 预览：缺少运行所需入边或类型不可跑。
+	PlannedBlocked = "blocked"
 
-	GraphCancelledReason       = "已取消"
-	ProviderUnknownDetail      = "工作流供应商请求结果未知，系统未自动重试。请检查供应商记录后重新发起工作流。"
+	// GraphCancelledReason 写入 cancelled run 与节点的 failure_reason。
+	GraphCancelledReason = "已取消"
+	// ProviderUnknownDetail 是 unknown 终态给用户看的说明，系统未自动重试。
+	ProviderUnknownDetail = "工作流供应商请求结果未知，系统未自动重试。请检查供应商记录后重新发起工作流。"
+	// GraphSnapshotSchemaVersion 是 run snapshot JSON 的版本号。
 	GraphSnapshotSchemaVersion = 1
 )
 
@@ -44,6 +68,7 @@ func SelectRunNodeIDs(graph AppliedGraph, scope, targetNodeID string, sources ma
 	return SelectRunNodeIDsWithMode(graph, scope, targetNodeID, nil, sources, false, DocumentActionComplete)
 }
 
+// SelectRunNodeIDsWithMode 按范围选出处理节点。force 只对 node|to_node|selection 的显式目标生效；graph 范围忽略 force。
 func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]string, error) {
 	mode = validDocumentAction(mode)
 	var processingIDs []string
@@ -126,6 +151,7 @@ func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, no
 	return ordered, nil
 }
 
+// forceTargetSet 只把 node|to_node 的 NodeID 或 selection 的 node_ids 标为 force；graph 范围得到空集。
 func forceTargetSet(scope, targetNodeID string, nodeIDs []string, force bool) map[string]bool {
 	out := map[string]bool{}
 	if !force {
@@ -147,13 +173,18 @@ func forceTargetSet(scope, targetNodeID string, nodeIDs []string, force bool) ma
 	return out
 }
 
+// RunPreviewNode 是 PreviewRun / PlanRun 里一个处理节点的计划动作，给预览 HTTP 用。
+// Action 为 generate（将调供应商）、reuse（digest 未变，执行 skipped）、frozen（文稿非 force 不 cook）、blocked（缺入边）。
+// 不是 workflow_graph_node_runs 行。改 Action 枚举必须同步 Web 预览文案与 Planned* 常量。
 type RunPreviewNode struct {
 	NodeID string `json:"node_id"`
 	Title  string `json:"title"`
+	// Action 为 generate|reuse|frozen|blocked，JSON 键是 planned_action。
 	Action string `json:"planned_action"`
-	Reason string `json:"reason"`
+	Reason string `json:"reason"` // 给预览文案，如「输入签名未变」
 }
 
+// PlanRun 为范围内每个处理节点计算 planned_action，不入队。force 仅作用于显式目标。
 func PlanRun(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]RunPreviewNode, error) {
 	mode = validDocumentAction(mode)
 	forceTargets := forceTargetSet(scope, targetNodeID, nodeIDs, force)
@@ -238,6 +269,8 @@ func previewScopeSet(graph AppliedGraph, scope, targetNodeID string, nodeIDs []s
 	return out, nil
 }
 
+// plannedActionFor 给 PreviewRun 算 generate/reuse/frozen/blocked，不写库。
+// 内容节点非 force 且非 seed 为 frozen；图片看 digest。缺必连边为 blocked。force 只对显式目标为 true。
 func plannedActionFor(graph AppliedGraph, node AppliedNode, sources map[string]SourceRecord, forceTarget bool, mode string) (string, string) {
 	if !hasRequiredEdges(graph, node.ID) {
 		return PlannedBlocked, "缺少必连输入"
@@ -264,6 +297,7 @@ func plannedActionFor(graph AppliedGraph, node AppliedNode, sources map[string]S
 	return PlannedBlocked, "不能运行该节点类型"
 }
 
+// nodeShouldCook 决定 TO_NODE 是否拉入祖先。Fill cook 只对 seed 文稿为 true；force 目标除外。图片看 digest。
 func nodeShouldCook(graph AppliedGraph, node AppliedNode, sources map[string]SourceRecord, forceTarget bool, mode string) bool {
 	if isContentNodeType(node.NodeType) {
 		return contentNodeShouldGenerate(node, forceTarget, mode)
@@ -300,6 +334,7 @@ func hasRequiredEdges(graph AppliedGraph, nodeID string) bool {
 	return rejectIncompleteRequiredEdges(graph, node) == nil
 }
 
+// processingAncestors 沿入边收集处理祖先，供 to_node 选点。非处理源不入列。只扫入边，不保证拓扑序。
 func processingAncestors(graph AppliedGraph, nodeID string) []string {
 	seen := map[string]struct{}{}
 	var ordered []string
@@ -328,6 +363,7 @@ func processingAncestors(graph AppliedGraph, nodeID string) []string {
 	return ordered
 }
 
+// topoOrder 只在选中集合内按入边排序，供入队 sort_order。环或不在集合的边被忽略。
 func topoOrder(graph AppliedGraph, selected []string) []string {
 	selectedSet := map[string]struct{}{}
 	incomingCount := map[string]int{}

@@ -11,16 +11,20 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 )
 
+// GeneratedSourceNoteField 是看图起草返回的一条可编辑规格。照片上看不到的值保持空串。
 type GeneratedSourceNoteField struct {
 	Label string `json:"label"`
-	Value string `json:"value"`
+	Value string `json:"value"` // 照片上看不到则空串
 }
 
+// GeneratedSourceNote 是 POST /api/v2/product-source-notes/generate 200 体：创建页看图起草，不走画布 cook、不写 products。
+// Visible 是可见描述；Fields 是可编辑规格，照片上看不到的 Value 保持空串。不要当成 CreativeBrief 文档或 facts 版本。
 type GeneratedSourceNote struct {
-	Visible string                     `json:"visible"`
-	Fields  []GeneratedSourceNoteField `json:"fields"`
+	Visible string                     `json:"visible"` // 可见商品说明
+	Fields  []GeneratedSourceNoteField `json:"fields"`  // 可编辑规格；空列表是 [] 不是 nil
 }
 
+// generateSourceNote 是 POST /api/v2/product-source-notes/generate：200 起草结果；未配置供应商 503。
 func (h HTTP) generateSourceNote(c *gin.Context) {
 	if h.Service.SourceNote == nil {
 		httpx.AbortErr(c, apperr.Unavailable("未配置提示词供应商"))

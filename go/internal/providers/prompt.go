@@ -15,16 +15,18 @@ import (
 
 type jsonRoundTrip func(ctx context.Context, method, url, apiKey string, body []byte) (int, []byte, error)
 
-// OpenAIPrompt 走 Responses structured outputs，对齐 Python client.responses.parse。
+// OpenAIPrompt 走 Responses structured outputs，字段对齐旧 Python client.responses.parse。
 type OpenAIPrompt struct {
-	APIKey    string
-	BaseURL   string
-	Model     string
-	Transport jsonRoundTrip
+	APIKey    string        // 明文，只给进程内调用
+	BaseURL   string        // 空则用 OpenAI 默认
+	Model     string        // Responses 模型 id
+	Transport jsonRoundTrip // 可注入 HTTP；测试用
 }
 
+// Name 实现 graph.PromptProvider，返回 "openai"。
 func (p OpenAIPrompt) Name() string { return "openai" }
 
+// GenerateCreativeBrief 实现 graph.PromptProvider，走 Responses structured outputs。
 func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.BriefInstructions(), "generated_creative_brief", briefJSONSchema, req, "brief")
 	if err != nil {
@@ -36,6 +38,7 @@ func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.Promp
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
+// GenerateVisualOverlay 实现 graph.PromptProvider，走 Responses structured outputs。
 func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.OverlayInstructions(), "generated_visual_overlay", overlayJSONSchema, req, "overlay")
 	if err != nil {
@@ -44,6 +47,7 @@ func (p OpenAIPrompt) GenerateVisualOverlay(ctx context.Context, req graph.Promp
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
+// GeneratePrompt 实现 graph.PromptProvider，走 Responses structured outputs。
 func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.PromptInstructions(), "listing_prompt_payload", listingPromptJSONSchema, req, "prompt")
 	if err != nil {
@@ -52,6 +56,7 @@ func (p OpenAIPrompt) GeneratePrompt(ctx context.Context, req graph.PromptReques
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
+// GenerateSourceNote 实现 graph.PromptProvider，走 Responses structured outputs。
 func (p OpenAIPrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	payload, model, id, err := p.parseStructured(ctx, prompts.SourceNoteInstructions(), "generated_source_note", sourceNoteJSONSchema, req, "source_note")
 	if err != nil {
@@ -60,6 +65,7 @@ func (p OpenAIPrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRe
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
+// parseStructured 走 Responses structured outputs。schema 必须是 strict；解析失败或对不上 schema 返回 unknown。
 func (p OpenAIPrompt) parseStructured(
 	ctx context.Context,
 	instructions, schemaName string,
@@ -117,6 +123,7 @@ func BuildPromptResponsesBody(model, instructions, schemaName string, schema map
 	}, nil
 }
 
+// promptRequestContent 把 PromptRequest 编成 Responses input。参考图以 input_image 附上；缺字节返回 error。
 func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]any, error) {
 	refMeta := make([]map[string]any, 0, len(req.References))
 	for _, ref := range req.References {
@@ -210,6 +217,7 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 	return content, nil
 }
 
+// parseResponsesStructured 从 Responses JSON 抽 output_parsed 并 matchJSONSchema。对不上返回 error，不要把原文当成功。
 func parseResponsesStructured(raw []byte, fallbackModel string, schema map[string]any) (map[string]any, string, string, error) {
 	var envelope struct {
 		ID           string          `json:"id"`

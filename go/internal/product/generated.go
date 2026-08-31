@@ -34,6 +34,7 @@ type compensatingConnPool struct {
 	files []*storage.Compensation
 }
 
+// Commit 先提交事务，失败则回滚已 stage 的媒体文件。
 func (c *compensatingConnPool) Commit() error {
 	committer, ok := c.ConnPool.(gorm.TxCommitter)
 	if !ok {
@@ -48,6 +49,7 @@ func (c *compensatingConnPool) Commit() error {
 	return nil
 }
 
+// Rollback 回滚事务并删除已 stage 的媒体文件。
 func (c *compensatingConnPool) Rollback() error {
 	committer, ok := c.ConnPool.(gorm.TxCommitter)
 	if !ok {

@@ -1,3 +1,6 @@
+// Package config 是进程启动时从环境变量读出的 overlay。
+// 供应商、模型、运行时门禁等仍以 PostgreSQL app_settings / provider_* 为准，启动后再由 settings.Store 覆盖。
+// DATABASE_URL、REDIS_URL、SESSION_SECRET、ADMIN_ACCESS_KEY 只认 env，禁止写进数据库或配置导出。
 package config
 
 import (
@@ -9,39 +12,42 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config is the process start-up overlay. Runtime provider settings still live in PostgreSQL.
+// Config 是进程启动 overlay。改供应商/模型不要改这里，去 PostgreSQL；密钥字段永远只来自 env。
 type Config struct {
-	AppHost                           string
-	AppPort                           int
-	DatabaseURL                       string
-	RedisURL                          string
-	LogLevel                          string
-	LogFormat                         string
-	LogDir                            string
-	LogMaxBytes                       int
-	LogBackupCount                    int
-	LogRetentionDays                  int
-	StorageRoot                       string
-	SessionSecret                     string
-	SessionCookieSecure               bool
-	AdminAccessKey                    string
-	SettingsAccessToken               string
-	AdminAccessRequired               bool
-	DeletionEnabled                   bool
-	UploadMaxImageBytes               int
-	UploadMaxBatchBytes               int
-	UploadMaxBatchFiles               int
-	UploadMaxReferenceImages          int
-	UploadMaxPixels                   int
-	UploadAllowedMIMETypes            string
-	AgentServiceBaseURL               string
-	AgentServiceInternalToken         string
-	AgentServiceConnectTimeoutSeconds float64
-	AgentServiceReadTimeoutSeconds    float64
-	AgentTurnSyncPollSeconds          float64
-	MetricsBearerToken                string
+	AppHost                           string  // env APP_HOST
+	AppPort                           int     // env APP_PORT
+	DatabaseURL                       string  // env DATABASE_URL，启动后不再读库
+	RedisURL                          string  // env REDIS_URL，asynq 用；Load 不强制非空
+	LogLevel                          string  // env LOG_LEVEL
+	LogFormat                         string  // env LOG_FORMAT，console 或 json
+	LogDir                            string  // env LOG_DIR；空则 STORAGE_ROOT/logs
+	LogMaxBytes                       int     // 字节；交给 lumberjack 前会换成 MiB
+	LogBackupCount                    int     // env LOG_BACKUP_COUNT，滚动份数
+	LogRetentionDays                  int     // env LOG_RETENTION_DAYS，天
+	StorageRoot                       string  // env STORAGE_ROOT，相对仓库根
+	SessionSecret                     string  // env SESSION_SECRET，空则 Load 失败
+	SessionCookieSecure               bool    // env SESSION_COOKIE_SECURE
+	AdminAccessKey                    string  // env ADMIN_ACCESS_KEY，登录时恒定时间比较
+	SettingsAccessToken               string  // env SETTINGS_ACCESS_TOKEN，设置页解锁密钥，env-only
+	AdminAccessRequired               bool    // env 默认值；运行时 app_settings 可覆盖
+	DeletionEnabled                   bool    // env DELETION_ENABLED；运行时 app_settings 可覆盖
+	UploadMaxImageBytes               int     // env UPLOAD_MAX_IMAGE_BYTES，字节；运行时可被 app_settings 覆盖
+	UploadMaxBatchBytes               int     // env UPLOAD_MAX_BATCH_BYTES，字节；运行时可被 app_settings 覆盖
+	UploadMaxBatchFiles               int     // env UPLOAD_MAX_BATCH_FILES；运行时可被 app_settings 覆盖
+	UploadMaxReferenceImages          int     // env UPLOAD_MAX_REFERENCE_IMAGES；运行时可被 app_settings 覆盖
+	UploadMaxPixels                   int     // env UPLOAD_MAX_PIXELS；运行时可被 app_settings 覆盖
+	UploadAllowedMIMETypes            string  // env UPLOAD_ALLOWED_IMAGE_MIME_TYPES，逗号分隔
+	AgentServiceBaseURL               string  // env AGENT_SERVICE_BASE_URL
+	AgentServiceInternalToken         string  // env AGENT_SERVICE_INTERNAL_TOKEN，env-only 密钥
+	AgentServiceConnectTimeoutSeconds float64 // env AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS
+	AgentServiceReadTimeoutSeconds    float64 // env AGENT_SERVICE_READ_TIMEOUT_SECONDS
+	AgentTurnSyncPollSeconds          float64 // env AGENT_TURN_SYNC_POLL_SECONDS
+	MetricsBearerToken                string  // 空则不注册 GET /metrics
 }
 
+// Load 用 viper AutomaticEnv 读进程环境，并填开发默认值。
+// DATABASE_URL 与 SESSION_SECRET 为空会失败；REDIS_URL 空留给 worker/dispatcher 再报。
+// 相对 STORAGE_ROOT / LOG_DIR 相对仓库根解析，不跟 cwd。
 func Load() (Config, error) {
 	v := viper.New()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
@@ -114,17 +120,21 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// NormalizePostgresURL 把 SQLAlchemy 的 postgresql+psycopg(2):// 收成 pgx 认识的 postgres://。
+// 只替换前缀一次；其它 scheme 原样返回。测试库与 migrate 也走这里，避免两套 URL。
 func NormalizePostgresURL(raw string) string {
 	replaced := strings.Replace(raw, "postgresql+psycopg://", "postgres://", 1)
 	replaced = strings.Replace(replaced, "postgresql+psycopg2://", "postgres://", 1)
 	return replaced
 }
 
+// Addr 拼出 http.Server 监听地址 APP_HOST:APP_PORT。不要自己再拼一次以免漏默认端口。
 func (c Config) Addr() string {
 	return fmt.Sprintf("%s:%d", c.AppHost, c.AppPort)
 }
 
-// ResolveStorageRoot 把相对路径收到仓库根（go.mod 所在 go/ 的上一级），不跟进程 cwd。
+// ResolveStorageRoot 把 STORAGE_ROOT 收到仓库根（含 go/go.mod 时取其父目录），不跟进程 cwd。
+// 空串当作 ./storage-dev。绝对路径只做 Clean。
 func ResolveStorageRoot(raw string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {
@@ -133,7 +143,7 @@ func ResolveStorageRoot(raw string) (string, error) {
 	return resolveRepoRelative(cleaned)
 }
 
-// ResolveLogDir 解析持久化日志目录。LOG_DIR 为空时用 STORAGE_ROOT/logs。
+// ResolveLogDir 解析滚动 JSON 日志目录。LOG_DIR 为空则用 STORAGE_ROOT/logs；两者都空返回 error。
 func ResolveLogDir(raw, storageRoot string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {
@@ -156,6 +166,8 @@ func resolveRepoRelative(cleaned string) (string, error) {
 	return filepath.Abs(filepath.Join(root, cleaned))
 }
 
+// moduleAwareRepoRoot 从 cwd 向上找 go.mod：目录名是 go 则仓库根是其父目录，否则把该目录当根。
+// 找不到 go.mod 时退回 cwd，避免在容器里因工作目录不同把 storage 写飞。
 func moduleAwareRepoRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {

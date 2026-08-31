@@ -11,6 +11,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/notify"
 )
 
+// streamEvents 是 GET /api/image-sessions/:image_session_id/events：200 打开 text/event-stream。
 func (h HTTP) streamEvents(c *gin.Context) {
 	sessionID := c.Param("image_session_id")
 	status, err := h.Service.Status(c.Request.Context(), sessionID)
@@ -89,6 +90,7 @@ func sessionNotesOrNil(notes <-chan notify.Notification) <-chan notify.Notificat
 	return notes
 }
 
+// writeSessionStatus 写 SSE event=session.status。不要改事件名；失败时让上层关流，不要写半帧。
 func writeSessionStatus(c *gin.Context, status StatusResponse) error {
 	body, err := json.Marshal(status)
 	if err != nil {

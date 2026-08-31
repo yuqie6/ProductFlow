@@ -94,6 +94,7 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 	}, nil
 }
 
+// ConfirmProposal 把 PENDING 提案 Mutate 进 live 图。非 pending 返回 NotPending。
 func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) (graphRow, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
@@ -130,6 +131,8 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	return row, nil
 }
 
+// DiscardProposal 把提案标 discarded，不改 live 图。
+// 缺图或缺提案 NotFound；非 pending 返回 NotPending。
 func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) error {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {
@@ -148,6 +151,8 @@ func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	}).Error
 }
 
+// pendingProposalView 读该图唯一 PENDING 提案并相对当前 revision 投影。没有返回 nil,nil。
+// Stale 表示 base 已落后，确认前须先处理冲突。不改 live 图。
 func pendingProposalView(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (*ProposalView, error) {
 	var rec schema.WorkflowGraphProposals
 	err := tx.WithContext(ctx).Where("graph_id = ? AND status = ?", row.ID, "pending").Take(&rec).Error

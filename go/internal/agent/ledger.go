@@ -77,6 +77,9 @@ func lookupToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, too
 	return replay, true, nil
 }
 
+// applyToolMutation 按 conversation + tool + 幂等键写入 agent_tool_mutations。同键同 hash 且已 applied 则回放；同键不同 hash 返回 Conflict。
+//
+// 图工具、intake、工作区创建在副作用成功后调用。唯一约束冲突会重入自身做回放。证据不足（未 applied 或空 result）返回 Conflict，不能当成功。
 func applyToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey, operation string, before, target, result map[string]any, extra map[string]any) (map[string]any, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
@@ -135,6 +138,9 @@ func applyToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, tool
 	return result, nil
 }
 
+// reconcileToolMutation 只读工具账本：未命中 not_applied，hash 冲突 conflict，已 applied 回放，其它 unknown。
+//
+// 不插入。不可证明的结果保持 unknown，供 effect reconcile 决定是否原键重试。
 func reconcileToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
 	if err != nil {
@@ -163,6 +169,7 @@ func reconcileToolMutation(ctx context.Context, pgxTx *gorm.DB, conversationID, 
 	return ReconcileResponse{State: "unknown", Detail: ptr("副作用结果仍不明确")}, nil
 }
 
+// ReconcileTool 按幂等键查询工具账本：已 applied 回放，未提交返回 not_applied，证据不足返回 unknown。
 func (s Service) ReconcileTool(ctx context.Context, conversationID, toolName, idempotencyKey string, prepared map[string]any) (ReconcileResponse, error) {
 	var out ReconcileResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

@@ -6,6 +6,8 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// validateChangeSet 在 Apply 前做封闭 op 表与 client_ref 去重。空 ops 或未知类型返回 Validation。
+// 公开 ChangeSet 的 DocumentOrigin / 禁改 key 在这里拦。Catalog 字段校验在 Apply 之后，不要提前放进来。
 func validateChangeSet(cs ChangeSet) error {
 	if len(cs.Operations) < 1 {
 		return apperr.Validation("不支持的 Graph 操作")

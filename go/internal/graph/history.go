@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Undo 应用最近一条非 Undo 历史的 inverse。空 inverse 返回 Conflict。
 func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {
@@ -37,6 +38,10 @@ func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandR
 	}, HistoryUndo)
 }
 
+// Redo 由 POST .../redo 与 Service.Redo 调用：只消费栈顶 HistoryUndo 的 inverse，再经 Mutate 写成 HistoryRedo。
+// 副作用：workflow_graphs.revision 递增，替换节点/边/分组，并追加 workflow_operation_groups。
+// 栈顶不是 Undo 或 inverse 为空返回 Conflict（409）。空图画布从未编辑时 last 为 nil，同样 409。
+// 不要把 Redo 实现成再调一次 Undo。Undo 之后若又写入 HistoryEdit，栈顶不再是 Undo，重做机会消失。
 func Redo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {

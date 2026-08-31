@@ -32,6 +32,7 @@ func (p OpenAIImages) edit(ctx context.Context, prompt, size, quality string, im
 	return batch[0], mime, model, id, nil
 }
 
+// editN 调 /v1/images/edits。images 为空直接失败且不打网；mask 可空（连续生图参考图路径）。
 func (p OpenAIImages) editN(ctx context.Context, prompt, size, quality string, images []imagePart, mask []byte, n int, classify func(int, []byte) error) ([][]byte, string, string, string, error) {
 	if len(images) == 0 {
 		return nil, "", "", "", fmt.Errorf("图片供应商缺少编辑输入图片")
@@ -72,6 +73,7 @@ func (p OpenAIImages) postEdit(ctx context.Context, prompt, size, quality string
 	return p.callTyped(ctx, "POST", endpoint(p.BaseURL, "/v1/images/edits"), contentType, body)
 }
 
+// buildImagesEditMultipart 拼 Images edits 的 multipart。n 会 clamp；mask 非空才加 mask 字段。
 func buildImagesEditMultipart(model, prompt, size, quality string, images []imagePart, mask []byte, n int) ([]byte, string, error) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -180,6 +182,7 @@ func responsesInput(prompt string, refs []graph.ReferenceImage) any {
 	return []map[string]any{{"role": "user", "content": content}}
 }
 
+// finishImageResult 用 Inspect 补宽高和真实 MIME，写成 graph.ImageResult。Inspect 失败仍返回原字节，宽高为 0。
 func finishImageResult(adapter string, data []byte, mime, model, id, size, quality string, refCount int) graph.ImageResult {
 	width, height := 0, 0
 	if verified, err := media.Inspect(data, ""); err == nil {

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// ServeVariant 按 variant 查询参数写出文件。未知变体 400；路径或文件缺失 404 且文案为 missingDetail。
 func ServeVariant(
 	c *gin.Context,
 	files storage.Local,
@@ -42,6 +43,9 @@ func ServeVariant(
 	c.File(resolved.AbsPath)
 }
 
+// OriginalMissing 报告原图相对路径是否解析失败或不存在于磁盘。
+// true 表示该当 404 并把 MediaObject 标 missing。路径越界或空串也当 missing。
+// 不要用它判断 preview/thumbnail 变体是否生成过。
 func OriginalMissing(files storage.Local, storagePath string) bool {
 	abs, err := files.Resolve(storagePath)
 	if err != nil {
@@ -51,6 +55,7 @@ func OriginalMissing(files storage.Local, storagePath string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
+// ServeExistingVariant 在原图缺失时把 MediaObject 标 missing 再 404，否则调用 [ServeVariant]。
 func ServeExistingVariant(
 	c *gin.Context,
 	store Store,

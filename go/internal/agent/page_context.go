@@ -47,6 +47,9 @@ type normalizedPageContext struct {
 	FiltersJSON      []byte
 }
 
+// normalizePageContext 把浏览器传来的 ambient 页面上下文收成有界快照并算 digest。
+//
+// reserveTurn 在创建 projection 时调用。未知字段、超长 route、超限 ID 列表返回 Validation。路由变化只影响后续 Turn，禁止在这里改 Task Goal 或回写 agent_tasks。
 func normalizePageContext(value map[string]any) (normalizedPageContext, error) {
 	if value == nil {
 		return normalizedPageContext{}, apperr.Validation("页面上下文缺少 route 或 page_type")
@@ -136,6 +139,9 @@ func pageContextDigest(value normalizedPageContext) (string, error) {
 	})
 }
 
+// insertPageContext 写入 agent_page_context_snapshots，并把 snapshot id 挂到本 Turn。
+//
+// 由 reserveTurn 在新建 projection 后调用。task_id 只作索引，不改 Goal。禁区：不要用新 snapshot 覆盖旧 Turn；不要把整库 asset id 塞进可见列表。
 func insertPageContext(ctx context.Context, pgxTx *gorm.DB, taskID *string, turnID string, pageContext map[string]any) error {
 	normalized, err := normalizePageContext(pageContext)
 	if err != nil {
@@ -168,6 +174,9 @@ func insertPageContext(ctx context.Context, pgxTx *gorm.DB, taskID *string, turn
 	}).Error
 }
 
+// loadPageContextPayload 读出已落库的页面快照，供 bindGatewayTurn 传给 agent-service。
+//
+// 只读。损坏的 JSON 原样报错，不猜测。不重建 Task，也不把 snapshot 当成 journal。
 func loadPageContextPayload(ctx context.Context, pgxTx *gorm.DB, snapshotID string) (map[string]any, error) {
 	var snap schema.AgentPageContextSnapshots
 	if err := pgxTx.WithContext(ctx).Where("id = ?", snapshotID).Take(&snap).Error; err != nil {
@@ -258,6 +267,7 @@ func optionalPageIdentifier(value any, label string) (*string, error) {
 	return &text, nil
 }
 
+// boundedPageIdentifiers 把页面上的 asset id 收成去重、有上限的列表。超限或重复返回 Validation，防止整库进入 Turn。
 func boundedPageIdentifiers(value any, label string) ([]string, error) {
 	if value == nil {
 		return []string{}, nil
@@ -304,6 +314,7 @@ func boundedPageIdentifiers(value any, label string) ([]string, error) {
 	return out, nil
 }
 
+// normalizePageFilters 把 filters 收成有界 string map。键值超长或非对象返回 Validation。
 func normalizePageFilters(value any) (map[string]string, error) {
 	if value == nil {
 		return map[string]string{}, nil
@@ -334,6 +345,7 @@ func normalizePageFilters(value any) (map[string]string, error) {
 	return out, nil
 }
 
+// optionalNonNegativeInt 解析可选的 workflow_revision / library_revision。缺省为 nil；负数或非整数返回 Validation。
 func optionalNonNegativeInt(value any, label string) (*int, error) {
 	if value == nil {
 		return nil, nil
@@ -368,6 +380,7 @@ func optionalNonNegativeInt(value any, label string) (*int, error) {
 	}
 }
 
+// parsePageCapturedAt 把 captured_at 收成 UTC。空值或无法解析返回 Validation，避免用服务器「现在」冒充用户捕获时刻。
 func parsePageCapturedAt(value any) (time.Time, error) {
 	switch typed := value.(type) {
 	case time.Time:

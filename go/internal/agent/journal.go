@@ -16,6 +16,11 @@ import (
 
 const eventSchemaVersion = 1
 
+// appendUserJournalEvent 向 PostgreSQL agent_turn_events 追加用户侧事件（如 approval/resolved）。该表是对话 journal 权威。
+//
+// 提案确认、跑图确认、图库 draft 确认后调用。尚无 harness_turn_id 时不写行，避免伪造投影。sequence 必须连续，撞唯一约束返回 Conflict。写完 NOTIFY ChannelTurn。
+//
+// 禁区：不要写 graph 表；不要用本函数冒充模型 chunk。
 func appendUserJournalEvent(ctx context.Context, gdb *gorm.DB, projectionID, kind string, payload map[string]any, ignorable bool) error {
 	if !inSet(eventKinds, kind) && !ignorable {
 		return apperr.Validation("Agent event kind 不受支持")
@@ -112,6 +117,9 @@ func projectionIDForLibraryRevision(ctx context.Context, gdb *gorm.DB, revisionI
 	return proj.ID, err
 }
 
+// latestApprovalRequest 从 journal 读最近一条 approval/requested，解析 approval_id / approval_kind。
+//
+// 确认或丢弃前调用。wantKind 非空且不匹配则当作没有。只读 agent_turn_events，不查 Pi。
 func latestApprovalRequest(ctx context.Context, gdb *gorm.DB, projectionID, wantKind string) (approvalID, kind string, err error) {
 	var row schema.AgentTurnEvents
 	q := gdb.WithContext(ctx).Where("turn_projection_id = ? AND kind = ?", projectionID, "approval/requested")
@@ -134,6 +142,11 @@ func latestApprovalRequest(ctx context.Context, gdb *gorm.DB, projectionID, want
 	return approvalID, kind, nil
 }
 
+// SyncGraphProposalDecision 在用户确认或丢弃图提案后，向 PostgreSQL journal 追加 approval/resolved。
+//
+// proposalID 空白或找不到匹配的 approval/requested 时静默成功。journal 追加失败（无 harness、序号冲突、校验失败）原样返回。
+// 投影已不是 awaiting_confirmation 时只写 journal，不改 Turn/Goal。
+// Take/Updates/applyConversationStatus/updateTaskFromTurn 的数据库错误会返回。
 func SyncGraphProposalDecision(ctx context.Context, gdb *gorm.DB, _, _, proposalID, decision string) error {
 	proposalID = strings.TrimSpace(proposalID)
 	if proposalID == "" {

@@ -47,6 +47,7 @@ func provenanceFromMedia(sourceType, sourceID, filename string, obj media.Object
 	}
 }
 
+// mediaFromAsset 从库行拼 MediaObject。缺 MIME 视为来源行不完整，返回 409。
 func mediaFromAsset(asset Asset) (media.Object, error) {
 	if asset.MIMEType == "" {
 		return media.Object{}, apperr.Conflict("素材来源缺少 MediaObject")
@@ -70,6 +71,7 @@ func mediaFromAsset(asset Asset) (media.Object, error) {
 	return verifiedMedia(obj)
 }
 
+// assertCoherent 核对 provenance 哈希与媒体尺寸/摘要。任一字段漂移返回 409，防止复用被改过的源。
 func assertCoherent(asset Asset, obj media.Object) error {
 	parsed, err := parseProvenance(asset.ProvenanceJSON)
 	if err != nil {
@@ -132,6 +134,7 @@ func originForLibrary(asset Asset) string {
 	return "upload"
 }
 
+// SaveFromSession 把连续生图结果写入全局素材身份，复用 MediaObject。
 func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string) (SaveResult, error) {
 	var result SaveResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -194,6 +197,7 @@ func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string
 	return result, err
 }
 
+// SaveFromProduct 把商品图片写入全局素材身份，复用 MediaObject。
 func (s Service) SaveFromProduct(ctx context.Context, productImageAssetID string) (SaveResult, error) {
 	var result SaveResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -255,6 +259,7 @@ func (s Service) SaveFromProduct(ctx context.Context, productImageAssetID string
 	return result, err
 }
 
+// normalizeUploadNames 填默认文件名并截到 maxFilename。display 为空时回落到 filename。
 func normalizeUploadNames(filename, displayName string) (string, string) {
 	normalized := strings.TrimSpace(filename)
 	if normalized == "" {
@@ -276,6 +281,10 @@ func normalizeUploadNames(filename, displayName string) (string, string) {
 	return normalized, display
 }
 
+// Upload 把已校验文件写成全局素材（source_type=direct_upload）。
+// 调用时机：HTTP POST /upload。有 Idempotency-Key 时同键同哈希回放已有行；键相同参数不同 Conflict。
+// folderID 为空指针或空白视为未整理。失败会 Rollback 已 Stage 的文件。
+// 禁区：不要在这里收录到商品图库（那是 Collect）。
 func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *string, idempotencyKey string) ([]SaveResult, error) {
 	if folderID != nil && strings.TrimSpace(*folderID) == "" {
 		folderID = nil
@@ -378,14 +387,19 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 	return results, err
 }
 
+// Archive 归档全局素材；不删除 MediaObject 或工作流引用。
 func (s Service) Archive(ctx context.Context, assetID string, expectedRevision *int) (Asset, error) {
 	return s.setArchive(ctx, assetID, true, expectedRevision)
 }
 
+// Restore 取消归档（is_archived=false），不恢复已删的 MediaObject。
+// 调用时机：HTTP POST /:asset_id/restore。expectedRevision 非 nil 且对不上则 Conflict。
+// 找不到 NotFound。不改工作流子图库关联。
 func (s Service) Restore(ctx context.Context, assetID string, expectedRevision *int) (Asset, error) {
 	return s.setArchive(ctx, assetID, false, expectedRevision)
 }
 
+// setArchive 按 revision 乐观锁改归档位。仍被 workflow_media_library_assets 引用时禁止归档。
 func (s Service) setArchive(ctx context.Context, assetID string, archived bool, expectedRevision *int) (Asset, error) {
 	var out Asset
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

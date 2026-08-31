@@ -17,25 +17,27 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// OrganizationDraftRevision 是全局 Agent 素材整理 Draft 的一版 payload。
 type OrganizationDraftRevision struct {
 	ID                   string          `json:"id"`
-	Version              int             `json:"version"`
-	SchemaVersion        int             `json:"schema_version"`
-	Payload              json.RawMessage `json:"payload"`
-	PayloadHash          string          `json:"payload_hash"`
+	Version              int             `json:"version"`        // 从 1 起的 revision 序号
+	SchemaVersion        int             `json:"schema_version"` // 当前为 1
+	Payload              json.RawMessage `json:"payload"`        // 整理 operations JSON
+	PayloadHash          string          `json:"payload_hash"`   // payload 的 canonjson SHA256
 	SourceTurnID         *string         `json:"source_turn_id"`
 	SourceArtifactStepID *string         `json:"source_artifact_step_id"`
 	ConfirmedAt          *time.Time      `json:"confirmed_at"`
 	CreatedAt            time.Time       `json:"created_at"`
 }
 
+// OrganizationDraft 是绑定全局 conversation 的素材整理 Draft。
 type OrganizationDraft struct {
 	ID                  string                     `json:"id"`
 	ConversationID      string                     `json:"conversation_id"`
 	Status              string                     `json:"status"`
-	CurrentRevision     *OrganizationDraftRevision `json:"current_revision"`
+	CurrentRevision     *OrganizationDraftRevision `json:"current_revision"` // nil 表示还没有 revision
 	ConfirmedRevisionID *string                    `json:"confirmed_revision_id"`
-	ConfirmationResult  json.RawMessage            `json:"confirmation_result"`
+	ConfirmationResult  json.RawMessage            `json:"confirmation_result"` // 未确认时为 null；确认后是应用结果
 	ConfirmedAt         *time.Time                 `json:"confirmed_at"`
 	CreatedAt           time.Time                  `json:"created_at"`
 	UpdatedAt           time.Time                  `json:"updated_at"`
@@ -221,6 +223,7 @@ func (s Service) ConfirmOrganizationDraftTx(ctx context.Context, pgxTx *gorm.DB,
 	return loadOrganizationDraft(ctx, pgxTx, conversationID)
 }
 
+// applyDraftOperations 在同一事务里按 expected_revision 执行整理操作。冲突或素材缺失立即失败，不做部分提交。
 func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, payload json.RawMessage) ([]byte, error) {
 	var body struct {
 		Operations []map[string]any `json:"operations"`
@@ -371,6 +374,7 @@ type organizationDraftScan struct {
 	RevCreatedAt           *time.Time `gorm:"column:rev_created_at"`
 }
 
+// scanOrganizationDraft 联表读当前 revision。forUpdate 只锁 drafts 别名 d，避免锁住 revision 行。
 func scanOrganizationDraft(ctx context.Context, q *gorm.DB, conversationID string, forUpdate bool) (OrganizationDraft, error) {
 	query := q.WithContext(ctx).Table("library_organization_drafts AS d").
 		Select(`d.id, d.conversation_id, d.status, d.confirmed_revision_id, d.confirmation_result_json,

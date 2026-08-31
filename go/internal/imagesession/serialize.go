@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// serializeSummary 投影会话列表项：轮次数与是否仍有 queued/running 任务。
 func (s Service) serializeSummary(ctx context.Context, tx *gorm.DB, sess sessionRow) (SummaryResponse, error) {
 	tx = tx.WithContext(ctx)
 	var rounds int64
@@ -30,6 +31,7 @@ func (s Service) serializeSummary(ctx context.Context, tx *gorm.DB, sess session
 	}, nil
 }
 
+// loadDetail 组装会话详情：素材、轮次、任务与队列位置。会话不存在返回 404。
 func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) (DetailResponse, error) {
 	sess, err := loadSession(ctx, tx, sessionID)
 	if err != nil {
@@ -133,6 +135,7 @@ type queueOverview struct {
 	Active, Running, Queued, Max int
 }
 
+// queueOverview 扫当前 queued/running 任务算占用。查询失败返回零值，详情页仍能渲染，只是队列位可能过时。
 func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
 	max := 3
 	if s.Settings != nil {
@@ -205,6 +208,7 @@ func queuedPositions(ctx context.Context, tx *gorm.DB) map[string]int {
 	return out
 }
 
+// serializeTask 投影任务及队列位置。effects/notes 为 nil 时写成空切片。
 func serializeTask(row taskRow, effects []EffectResponse, notes []string, overview queueOverview, positions map[string]int) TaskResponse {
 	if notes == nil {
 		notes = []string{}
@@ -255,6 +259,7 @@ type providerMeta struct {
 	notes  []string
 }
 
+// extractProviderMeta 从 output_json 抽 model/response_id。缺字段或非法 JSON 返回零值，不报错。
 func extractProviderMeta(outputJSON []byte) providerMeta {
 	out := providerMeta{notes: []string{}}
 	if len(outputJSON) == 0 {

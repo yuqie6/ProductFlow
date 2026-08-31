@@ -7,10 +7,11 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// ExtractInput 指定从 live 图提取完整配方、分组或选区。
 type ExtractInput struct {
-	SourceType string
+	SourceType string // workflow | group | selection
 	GroupID    *string
-	NodeIDs    []string
+	NodeIDs    []string // 仅 selection；workflow/group 必须为空
 }
 
 func recipeKind(sourceType string) string {
@@ -20,6 +21,8 @@ func recipeKind(sourceType string) string {
 	return kindFragment
 }
 
+// validateSourceFields 检查提取范围三选一：完整工作流不能带 group/node；分组只能带 group_id；
+// 多选必须非空且不重复的 node_ids。
 func validateSourceFields(in ExtractInput) error {
 	nodeIDs := in.NodeIDs
 	if nodeIDs == nil {
@@ -47,6 +50,7 @@ func validateSourceFields(in ExtractInput) error {
 	return nil
 }
 
+// extractPayload 从 live 图抽出配方：只保留选中节点及其之间的边，config 经 sanitizeConfig 去掉商品身份和生成结果。
 func extractPayload(applied graph.AppliedGraph, in ExtractInput) (Payload, error) {
 	if err := validateSourceFields(in); err != nil {
 		return Payload{}, err
@@ -202,6 +206,7 @@ func reusableConfig(node graph.AppliedNode) map[string]any {
 	return cleaned
 }
 
+// sanitizeConfig 递归丢掉提示词正文、拓扑字段，并把商品身份键写成 null。配方不能带走源商品或生成结果。
 func sanitizeConfig(value any) any {
 	switch t := value.(type) {
 	case map[string]any:

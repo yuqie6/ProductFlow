@@ -16,41 +16,49 @@ import (
 	"gorm.io/gorm"
 )
 
+// DocumentSectionDefinition 描述文稿候选里一个可独立应用的 section 及其字段。
 type DocumentSectionDefinition struct {
-	Key    string   `json:"key"`
-	Fields []string `json:"fields"`
+	Key    string   `json:"key"`    // section 闭集，如 objective / copy
+	Fields []string `json:"fields"` // 该 section 可独立合并的可见字段
 }
 
+// DocumentCandidateSection 对比当前文稿与候选在一个 section 上的差异。
 type DocumentCandidateSection struct {
 	Key       string         `json:"key"`
-	Changed   bool           `json:"changed"`
-	Current   map[string]any `json:"current"`
-	Candidate map[string]any `json:"candidate"`
+	Changed   bool           `json:"changed"`   // 当前与候选该 section 是否不同
+	Current   map[string]any `json:"current"`   // live 文稿该 section；无值为空 map
+	Candidate map[string]any `json:"candidate"` // 建议文稿该 section；无值为空 map
 }
 
+// DocumentCandidate 是内容节点上挂起的 AI 文稿建议。Status 为 outdated 时不可 Apply。
 type DocumentCandidate struct {
-	ArtifactID        string                     `json:"artifact_id"`
-	NodeID            string                     `json:"node_id"`
-	DocumentAction    string                     `json:"document_action"`
-	Status            string                     `json:"status"`
-	BaseDocumentHash  string                     `json:"base_document_hash"`
+	ArtifactID string `json:"artifact_id"`
+	NodeID     string `json:"node_id"`
+	// DocumentAction 是生成该候选时的 complete|rewrite|replace。
+	DocumentAction   string `json:"document_action"`
+	Status           string `json:"status"`
+	BaseDocumentHash string `json:"base_document_hash"` // 生成时节点可见文稿哈希；偏离则 outdated
+	// InputDigest 是生成时的编译 input digest；偏离则 Status=outdated，不可 Apply。
 	InputDigest       string                     `json:"input_digest"`
-	CurrentDocument   map[string]any             `json:"current_document"`
-	CandidateDocument map[string]any             `json:"candidate_document"`
-	Sections          []DocumentCandidateSection `json:"sections"`
+	CurrentDocument   map[string]any             `json:"current_document"`   // 节点当前可见文稿
+	CandidateDocument map[string]any             `json:"candidate_document"` // 候选可见文稿
+	Sections          []DocumentCandidateSection `json:"sections"`           // 可独立应用的差异块
 	CreatedAt         time.Time                  `json:"created_at"`
 }
 
+// ApplyDocumentCandidateInput 指定 artifact 与要合并的 section_keys；空 keys 表示整份候选。
 type ApplyDocumentCandidateInput struct {
 	ArtifactID        string   `json:"artifact_id"`
-	BaseGraphRevision int      `json:"base_graph_revision"`
-	SectionKeys       []string `json:"section_keys"`
+	BaseGraphRevision int      `json:"base_graph_revision"` // 必须等于当前 live revision，否则 Conflict
+	SectionKeys       []string `json:"section_keys"`        // 空表示整份候选；未知 key 为 Validation
 }
 
+// DiscardDocumentCandidateInput 用 artifact_id 做乐观校验。
 type DiscardDocumentCandidateInput struct {
 	ArtifactID string `json:"artifact_id"`
 }
 
+// documentSections 定义候选可独立应用的 section。未知类型返回 nil，Apply 会 Validation。
 func documentSections(nodeType NodeType) []DocumentSectionDefinition {
 	switch nodeType {
 	case NodeCreativeBrief:
@@ -145,6 +153,8 @@ func candidateSections(nodeType NodeType, current, candidate map[string]any) []D
 	return out
 }
 
+// applyDocumentSections 按 section_keys 把候选可见字段合并进节点 config。空 keys 表示整份候选。
+// 未知 section 返回 Validation。只改可见文稿字段，不碰 image_type_key 等 hidden。
 func applyDocumentSections(node AppliedNode, candidateConfig map[string]any, requested []string) (map[string]any, error) {
 	definitions := documentSections(node.NodeType)
 	allowed := map[string]DocumentSectionDefinition{}
@@ -192,6 +202,8 @@ func applyDocumentSections(node AppliedNode, candidateConfig map[string]any, req
 	return out, nil
 }
 
+// loadDocumentCandidate 读节点上挂起的候选 artifact。lock=true 时 FOR UPDATE 图。
+// 无 pending_candidate_artifact_id 返回 NotFound。outdated 仍返回，但 Apply 会拒。
 func loadDocumentCandidate(ctx context.Context, tx *gorm.DB, productID, graphID, nodeID string, lock bool) (graphRow, AppliedGraph, AppliedNode, schema.WorkflowGraphNodes, schema.WorkflowGraphArtifacts, DocumentCandidate, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	if err != nil {

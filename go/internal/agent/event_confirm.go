@@ -12,8 +12,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// ConfirmEvents compares a local journal suffix with PostgreSQL without
-// extending a lease or changing the persisted Turn.
+// ConfirmEvents 把调用方手里的 journal 后缀与 PostgreSQL agent_turn_events 比对，不续期 lease，也不改 Turn / Goal。
+//
+// 由内部路由 events/confirm 调用。锁顺序仍是 projection → execution，但只读 execution 身份与事件行。sequence 连续且内容一致则 confirmed；PG 缺行则 status=missing（让 adapter 再 AppendEvents）；同序号不同内容返回 EventSequenceConflict。
+//
+// 已有 turn/end 时附带 ConfirmedTerminalEvent（投影终态与 output 摘要）。禁区：不要在确认成功时当成 claim；不要在这里 projectTerminalEvent。
 func (s Service) ConfirmEvents(ctx context.Context, conversationID, executionID string, inputs []EventAppendInput) (EventConfirmationResponse, error) {
 	if len(inputs) > 250 {
 		return EventConfirmationResponse{}, apperr.Validation("Agent event confirmation batch 大小无效")

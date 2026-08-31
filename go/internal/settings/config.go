@@ -14,24 +14,28 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// ConfigItem 是一条运行时配置的设置页 HTTP 投影。
+// Source 为 env_default 或 database。Secret=true 时 Value 永远是空串，HasValue 表示库里有没有值。
+// 不要把本类型当 app_settings 原实行。
 type ConfigItem struct {
-	Key         string         `json:"key"`
-	Label       string         `json:"label"`
-	Category    string         `json:"category"`
-	InputType   string         `json:"input_type"`
-	Description string         `json:"description"`
-	Value       any            `json:"value"`
-	Source      string         `json:"source"`
-	Secret      bool           `json:"secret"`
-	HasValue    bool           `json:"has_value"`
-	Options     []configOption `json:"options"`
-	Minimum     *int           `json:"minimum"`
-	Maximum     *int           `json:"maximum"`
+	Key         string         `json:"key"`         // catalog 闭集键，不是任意字符串
+	Label       string         `json:"label"`       // 设置页展示名，来自 catalog
+	Category    string         `json:"category"`    // 图片工具参数 | 图片生成 | 提示词 | 图片与上传 | 生成队列 | 安全与运维
+	InputType   string         `json:"input_type"`  // text | textarea | select | multi_select | number | boolean
+	Description string         `json:"description"` // catalog 说明，可空
+	Value       any            `json:"value"`       // Secret=true 时永远是空串
+	Source      string         `json:"source"`      // env_default | database
+	Secret      bool           `json:"secret"`      // true 时 Value 永远空串，用 HasValue 判断已配置
+	HasValue    bool           `json:"has_value"`   // 库里或默认是否有值；Secret 项靠它判断已配置
+	Options     []configOption `json:"options"`     // select 闭集；其它类型为 []
+	Minimum     *int           `json:"minimum"`     // nil 表示无下限
+	Maximum     *int           `json:"maximum"`     // nil 表示无上限
 	UpdatedAt   *string        `json:"updated_at"`
 }
 
+// ConfigResponse 是可编辑运行时配置列表的 HTTP 体，只含 configDefinitions 闭集。
 type ConfigResponse struct {
-	Items []ConfigItem `json:"items"`
+	Items []ConfigItem `json:"items"` // 只含 configDefinitions 闭集
 }
 
 type configRow struct {
@@ -39,6 +43,8 @@ type configRow struct {
 	updatedAt time.Time
 }
 
+// ConfigView 读取运行时配置 HTTP 投影，无写入。
+// 调用时机：GET /api/settings。Secret 项不回明文。缺 app_settings 行时用环境默认，Source=env_default。
 func (s *Store) ConfigView(ctx context.Context) (ConfigResponse, error) {
 	rows, err := s.configRows(ctx)
 	if err != nil {
@@ -89,6 +95,7 @@ func upsertAppSetting(dbTx *gorm.DB, key, value string) error {
 	}).Create(&row).Error
 }
 
+// publicValue 把库里的字符串收成设置页类型。Secret 永远回空串，不要把 API Key 投影出去。
 func publicValue(def configDefinition, raw string) any {
 	if def.Secret {
 		return ""
@@ -120,6 +127,9 @@ func hasConfigValue(def configDefinition, raw string) bool {
 	return strings.TrimSpace(raw) != ""
 }
 
+// UpdateConfig 写入或重置 app_settings 键，然后回读 ConfigView。
+// 调用时机：PATCH /api/settings。同一 key 不能同时出现在 values 和 reset_keys（Validation）。
+// 未知键 Validation。不改供应商档案。DATABASE_URL 等 env-only 键不在闭集里，改了也无效。
 func (s *Store) UpdateConfig(ctx context.Context, values map[string]any, resetKeys []string) (ConfigResponse, error) {
 	reset := map[string]struct{}{}
 	for _, key := range resetKeys {
@@ -186,6 +196,7 @@ func (s *Store) UpdateConfig(ctx context.Context, values map[string]any, resetKe
 	return s.ConfigView(ctx)
 }
 
+// normalizeConfigValue 按 InputType 把设置页值收成入库字符串。未知键 400；布尔只认常见真假写法。
 func normalizeConfigValue(key string, value any) (string, error) {
 	def, ok := definitionByKey(key)
 	if !ok {

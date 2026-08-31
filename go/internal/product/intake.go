@@ -33,16 +33,18 @@ func BindDeliveryPresetSpec(fn func(key string) (map[string]any, error)) {
 	lookupDeliveryPresetSpec = fn
 }
 
+// ImageTypeSelection 是 AgentProductSelectionV1 里的一种图种数量。
 type ImageTypeSelection struct {
-	Key      string `json:"key"`
-	Quantity int    `json:"quantity"`
-	Order    int    `json:"order"`
+	Key      string `json:"key"`      // 图种闭集，不是 NodeType
+	Quantity int    `json:"quantity"` // 生成类 1–6
+	Order    int    `json:"order"`    // 套图展开次序
 }
 
+// Selection 是 Agent 落库 intake 的图种选择。schema_version 必须为 1。
 type Selection struct {
-	SchemaVersion     int                  `json:"schema_version"`
-	ImageTypes        []ImageTypeSelection `json:"image_types"`
-	DeliveryPresetKey *string              `json:"delivery_preset_key"`
+	SchemaVersion     int                  `json:"schema_version"`      // 必须为 1
+	ImageTypes        []ImageTypeSelection `json:"image_types"`         // 按 Order 展开套图
+	DeliveryPresetKey *string              `json:"delivery_preset_key"` // nil 表示不套交付预设
 }
 
 func catalogKeySet() map[string]struct{} {
@@ -83,6 +85,8 @@ func ParseSelection(raw string) (Selection, error) {
 	return parseSelection(raw)
 }
 
+// parseSelection 强制 AgentProductSelectionV1：schema_version=1，未知字段 extra=forbid。
+// 未登记图种、超量、乱序一律 Validation。不要静默丢掉未知图种。
 func parseSelection(raw string) (Selection, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -136,6 +140,7 @@ func parseSelection(raw string) (Selection, error) {
 	return selection, nil
 }
 
+// parseDirectImageTypes 解析直连创建图种数组；证据类图种不计入 30 张生成上限。
 func parseDirectImageTypes(raw string) ([]graph.DirectCreateImageType, error) {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	var items []json.RawMessage
@@ -231,6 +236,8 @@ func draftRequestHash(name string, sessionID *string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// workspaceRequestHash 用参考图像素 sha256（不是资产 id）做幂等指纹，避免同一文件重复出生。
+// 与 intakeRequestHash 分 request_kind，不能互换。改字段集合会让旧 Idempotency-Key 全部 Conflict。
 func workspaceRequestHash(name string, selection Selection, uploads []Upload, sessionID *string) string {
 	images := make([]map[string]any, 0, len(uploads))
 	for i, upload := range uploads {
@@ -262,6 +269,7 @@ func workspaceRequestHash(name string, selection Selection, uploads []Upload, se
 	return hex.EncodeToString(sum[:])
 }
 
+// intakeRequestHash 是 finalize intake 的幂等指纹；与 workspace 哈希分 request_kind，不能互换。
 func intakeRequestHash(selection Selection, uploads []Upload) string {
 	images := make([]map[string]any, 0, len(uploads))
 	for i, upload := range uploads {
@@ -290,6 +298,7 @@ func intakeRequestHash(selection Selection, uploads []Upload) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// intakePayload 把图种与参考图 ProductImageAsset id 写成商品 intake JSON，不存存储路径。
 func intakePayload(selection Selection, assetIDs []string) ([]byte, error) {
 	imageTypes := make([]map[string]any, 0, len(selection.ImageTypes))
 	for _, item := range selection.ImageTypes {
@@ -332,11 +341,11 @@ func selectionToImageTypes(selection Selection) []graph.DirectCreateImageType {
 
 // ApplyIntakeResult 是 Agent 落库 intake 后的有界结果：是否展开了 birth 套图。
 type ApplyIntakeResult struct {
-	Intake        json.RawMessage
-	GraphExpanded bool
-	Revision      int
-	NodeCount     int
-	GroupCount    int
+	Intake        json.RawMessage // 已规范化的图种选择 + 参考图 id
+	GraphExpanded bool            // 名称-only 空图是否按模板展开了套图
+	Revision      int             // 展开后的 live revision
+	NodeCount     int             // 展开后的节点数；未展开为 0
+	GroupCount    int             // 展开后的组数；未展开为 0
 }
 
 // ApplyIntake 把图片类型选择与参考图写入商品 intake；名称-only 图画按模板展开套图。

@@ -156,6 +156,7 @@ func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
 	return err
 }
 
+// lockSource FOR UPDATE 锁商品图并返回 MediaObject 路径。图不属于该商品或不存在返回 404。
 func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (product.ImageAsset, string, error) {
 	var locked schema.ProductImageAssets
 	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", assetID, productID).Take(&locked).Error
@@ -186,6 +187,7 @@ func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (pr
 	return asset, sha, nil
 }
 
+// validateTarget 确认目标是本商品 live 图上的 image_generation 节点，且当前 artifact 仍是 sourceAssetID。
 func validateTarget(ctx context.Context, tx *gorm.DB, productID, sourceAssetID, targetNodeID string) (targetSnapshot, error) {
 	if targetNodeID == "" {
 		return targetSnapshot{}, nil
@@ -209,6 +211,7 @@ func validateTarget(ctx context.Context, tx *gorm.DB, productID, sourceAssetID, 
 	}, nil
 }
 
+// lockReferences 按传入顺序锁参考图。重复 id 去重；任一不属于本商品返回 404。
 func lockReferences(ctx context.Context, tx *gorm.DB, productID string, ids []string) ([]string, error) {
 	if len(ids) > maxReferences {
 		return nil, apperr.Validation("局部编辑参考图不能超过 6 张")

@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Collect 按幂等键把全局素材收录为商品图片身份，复用 MediaObject，不复制 bytes。
 func (s Service) Collect(ctx context.Context, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
 	var out []product.ImageAsset
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -26,6 +27,7 @@ func (s Service) Collect(ctx context.Context, productID string, libraryIDs []str
 	return out, err
 }
 
+// collectTx 把全局素材收录进商品图库。Idempotency-Key 命中同一 hash 则复用；重复 ID 或超限返回 400。
 func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string, libraryIDs []string, idempotencyKey string) ([]product.ImageAsset, error) {
 	if len(libraryIDs) > maxCollect {
 		return nil, apperr.Validationf("一次最多收录 %d 个素材", maxCollect)

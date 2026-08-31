@@ -1,3 +1,4 @@
+// Package log 把终端写成可读行，并把 JSON 滚动文件写到 STORAGE_ROOT/logs（可用 LOG_DIR 覆盖）。
 package log
 
 import (
@@ -15,27 +16,34 @@ import (
 )
 
 const (
-	ProcessAPI        = "api"
-	ProcessWorker     = "worker"
+	// ProcessAPI 是 productflow-api 的 process 字段，日志文件名为 productflow-api.log。
+	ProcessAPI = "api"
+	// ProcessWorker 是 productflow-worker 的 process 字段。
+	ProcessWorker = "worker"
+	// ProcessDispatcher 是 productflow-dispatcher 的 process 字段。
 	ProcessDispatcher = "dispatcher"
 
+	// FormatConsole 是 stderr 默认格式：时间、级别、进程、消息、key=value。
 	FormatConsole = "console"
-	FormatJSON    = "json"
+	// FormatJSON 让 stderr 也写 JSON（文件始终是 JSON）。
+	FormatJSON = "json"
 )
 
 // Options 配置日志：stderr 给终端（默认可读行），滚动 JSON 文件给排障。
 type Options struct {
-	Level         string
-	Format        string
-	Dir           string
-	Process       string
-	MaxBytes      int
-	BackupCount   int
-	RetentionDays int
-	Stderr        io.Writer
-	DisableColor  bool
+	Level         string    // env LOG_LEVEL
+	Format        string    // env LOG_FORMAT：console 或 json
+	Dir           string    // env LOG_DIR；空则不写滚动文件
+	Process       string    // log file stem: api / worker / dispatcher
+	MaxBytes      int       // rotation size in bytes; converted to MiB for lumberjack
+	BackupCount   int       // lumberjack MaxBackups
+	RetentionDays int       // 天；≤0 不清理
+	Stderr        io.Writer // 终端 Writer，nil 则 os.Stderr
+	DisableColor  bool      // 关闭 ANSI
 }
 
+// New 组装 zap.Logger：stderr 按 Format 输出；Dir 非空时再挂 Debug 级滚动 JSON 文件。
+// Process 必须是小写字母、数字或连字符。
 func New(opts Options) (*zap.Logger, error) {
 	process, err := sanitizeProcess(opts.Process)
 	if err != nil {
@@ -93,6 +101,7 @@ func New(opts Options) (*zap.Logger, error) {
 	return logger, nil
 }
 
+// FilePath 返回 Dir 下的 productflow-{process}.log。
 func FilePath(dir, process string) string {
 	return filepath.Join(dir, "productflow-"+process+".log")
 }

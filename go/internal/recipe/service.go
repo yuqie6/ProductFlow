@@ -1,3 +1,10 @@
+// Package recipe 仅从 live schema-v3 显式保存配方；应用走 Graph Command。
+//
+// 职责：把当前图的结构/配置存成可复用配方。完整配方不能 merge 进已有 live 图（只能应用到空商品）；
+// fragment（组或选区）可以 merge，或返回显式冲突。配方不存商品身份、绑定资产、生成结果或媒体 bytes。
+// 调用时机：用户从画布显式保存；预览后再 Apply。不要在 Agent 工具里偷偷建配方。
+// 副作用：写 workflow_recipes / versions / applications；Apply 经 graph 命令改目标商品的 live 图。
+// 错误：目标已有图且配方是完整图 → Conflict；选区对不上 → Validation。
 package recipe
 
 import (
@@ -11,53 +18,62 @@ import (
 	"gorm.io/gorm"
 )
 
+// Service 拥有配方提取、预览与应用；应用走 Graph Command。
 type Service struct {
-	DB       *gorm.DB
-	Products graph.ProductGuard
+	DB       *gorm.DB           // 命令事务
+	Products graph.ProductGuard // 锁目标商品行，避免 graph import product
 }
 
+// CreateInput 从 live schema-v3 显式保存一条新配方。
 type CreateInput struct {
 	ProductID                      string
 	WorkflowID                     string
-	SourceType                     string
+	SourceType                     string // workflow | group | selection
 	GroupID                        *string
-	NodeIDs                        []string
-	ExpectedGraphRevision          int
+	NodeIDs                        []string // 仅 selection
+	ExpectedGraphRevision          int      // 对不上则 409
 	Title                          string
-	Description                    *string
+	Description                    *string // nil 表示未写说明
 	PreferredVisualSystemVersionID *string
 }
 
+// AppendInput 在已有配方上追加一版，仍从 live 图显式提取。
 type AppendInput struct {
 	CreateInput
 	RecipeID              string
-	ExpectedRecipeVersion int
+	ExpectedRecipeVersion int // 对不上则 409
 }
 
+// ApplyInput 把配方应用到目标商品 live 图；IdempotencyKey 绑定同一次确认。
 type ApplyInput struct {
 	ProductID             string
 	RecipeID              string
-	ExpectedRecipeVersion int
-	ExpectedGraphRevision int
-	PreviewDigest         string
-	IdempotencyKey        string
+	ExpectedRecipeVersion int    // 对不上则 409
+	ExpectedGraphRevision int    // 目标图变了则 409
+	PreviewDigest         string // 必须与 Preview 一致
+	IdempotencyKey        string // 绑定同一次确认；命中则回放
 }
 
+// ApplicationResult 是一次配方 Apply 的内部结果，HTTP 用 ApplicationView。
+// Created=false 表示相同幂等键已应用，回放。Mode=create 空画布；merge 只允许 fragment。
+// Graph 来自 Graph Command，本包不直接写 workflow_graphs。
 type ApplicationResult struct {
-	Created           bool
+	Created           bool // false 表示相同幂等键已应用过，本次回放
 	RecipeID          string
 	RecipeVersionID   string
-	RecipeVersion     int
-	Mode              string
-	Graph             graph.Projection
-	AddedNodeIDs      []string
-	AddedEdgeIDs      []string
-	UpdatedNodeIDs    []string
-	BaseGraphRevision *int
-	PreviewDigest     *string
-	RequiredBindings  []string
+	RecipeVersion     int              // 实际应用的配方版本
+	Mode              string           // create | merge；merge 只允许 fragment
+	Graph             graph.Projection // 来自 Graph Command，本包不直接写 workflow_graphs
+	AddedNodeIDs      []string         // 本次写入的 live 节点
+	AddedEdgeIDs      []string         // 本次写入的 live 边
+	UpdatedNodeIDs    []string         // create 模式应为 []
+	BaseGraphRevision *int             // 预览时的图 revision
+	PreviewDigest     *string          // 与 Preview 相同的 digest
+	RequiredBindings  []string         // 如 product_identity
 }
 
+// List 列出配方摘要（当前版本，不含历史 Versions）。
+// 调用时机：HTTP GET /workflow-recipes。includeArchived=false 时跳过已归档。空列表返回 [] 不是 nil。
 func (s Service) List(ctx context.Context, includeArchived bool) ([]RecipeView, error) {
 	var out []RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -81,6 +97,8 @@ func (s Service) List(ctx context.Context, includeArchived bool) ([]RecipeView, 
 	return out, err
 }
 
+// Get 读取配方及其全部版本。调用时机：HTTP GET /:recipe_id。找不到 NotFound。
+// current version 缺失返回 Conflict，不要把半残行给前端。
 func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -94,6 +112,7 @@ func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 	return out, err
 }
 
+// Create 从当前 live schema-v3 显式提取并保存配方。
 func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error) {
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -152,6 +171,9 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 	return out, err
 }
 
+// Append 从当前 live 图再提取一版，接到已有配方。
+// 调用时机：HTTP POST .../versions。已归档 Conflict；expected_recipe_version 对不上 Conflict。
+// 不改目标商品的 live 图。
 func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error) {
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -215,6 +237,8 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 	return out, err
 }
 
+// Archive 归档配方，使其不再出现在默认列表。已归档则 Changed=false 幂等成功。
+// 调用时机：HTTP DELETE /workflow-recipes/:recipe_id。版本对不上 Conflict。不删 versions 行。
 func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion int) (ArchiveView, error) {
 	var out ArchiveView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -245,6 +269,7 @@ func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion i
 	return out, err
 }
 
+// Preview 计算应用到目标商品时将出现的节点与边；完整配方不能 merge 进已有 live 图。
 func (s Service) Preview(ctx context.Context, productID, recipeID string, expectedVersion int) (Preview, error) {
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out Preview
@@ -263,6 +288,7 @@ func (s Service) Preview(ctx context.Context, productID, recipeID string, expect
 	return out, err
 }
 
+// Apply 按预览 digest 确认写入目标 live 图。完整配方在已有 live 图上返回冲突；fragment 可 merge 或返回显式冲突。相同幂等键回放。
 func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, error) {
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	key, err := normalizeIdempotencyKey(in.IdempotencyKey)
@@ -410,6 +436,8 @@ func (s Service) planForProduct(
 	return s.planFromRecipe(ctx, pgxTx, target, rec, expectedVersion, expectedGraphRevision)
 }
 
+// planFromRecipe 从已加载的配方行算出 applyPlan。已归档或 current 版本对不上 expectedVersion 返回 409。
+// 目标没有 live 图时 existing 是空图，后面会走 create 而不是 merge。
 func (s Service) planFromRecipe(
 	ctx context.Context,
 	pgxTx *gorm.DB,
@@ -458,6 +486,8 @@ func (s Service) planFromRecipe(
 	)
 }
 
+// applyPlanCommand 把计划交给 Graph Command：ModeCreate 走 StageNew，否则 Mutate。
+// live 图没了或 GraphID 对不上返回 409，禁止对着过期预览写入。
 func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, plan applyPlan) (graph.CommandResult, error) {
 	if plan.Mode == ModeCreate {
 		title := limitRunes(plan.ChangeSet.Summary, 255)
@@ -479,6 +509,7 @@ func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, pla
 	return graph.Mutate(ctx, pgxTx, productID, live.ID, plan.ChangeSet, graph.HistoryEdit)
 }
 
+// applicationResult 在同一事务里投影刚写入的图。Created 表示这次是新确认还是幂等回放。
 func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec applicationRecord, created bool) (ApplicationResult, error) {
 	row, err := graph.LoadGraph(ctx, pgxTx, rec.ProductID, rec.GraphID)
 	if err != nil {
@@ -504,6 +535,7 @@ func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec appl
 	}, nil
 }
 
+// extractLive FOR UPDATE 锁 live 图再提取。非 active 或 revision 对不上返回 409，避免从过期画布存配方。
 func extractLive(ctx context.Context, pgxTx *gorm.DB, in CreateInput) (Payload, error) {
 	row, err := graph.LoadGraphForUpdate(ctx, pgxTx, in.ProductID, in.WorkflowID)
 	if err != nil {

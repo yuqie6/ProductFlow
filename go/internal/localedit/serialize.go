@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// serializeTask 投影任务。includeAudit 为 true 才查 attempts/adoption，列表路径不要开以免放大查询。
 func serializeTask(ctx context.Context, tx *gorm.DB, row taskRow, includeAudit bool) (TaskResponse, error) {
 	source, err := product.LoadAssetRow(ctx, tx, row.SourceAssetID)
 	if err != nil {
@@ -69,6 +70,7 @@ func serializeTask(ctx context.Context, tx *gorm.DB, row taskRow, includeAudit b
 	return out, nil
 }
 
+// listAttempts 按时间列出该任务的 provider 尝试。空结果是空切片不是 nil。
 func listAttempts(ctx context.Context, tx *gorm.DB, taskID string) ([]AttemptResponse, error) {
 	var rows []schema.LocalImageEditProviderAttempts
 	if err := tx.Where("task_id = ?", taskID).Order("attempt_number DESC, id DESC").Limit(50).Find(&rows).Error; err != nil {

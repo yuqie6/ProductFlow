@@ -73,6 +73,7 @@ func recipeFromSchema(rec schema.WorkflowRecipes) recipeRecord {
 	}
 }
 
+// versionFromSchema 把版本行收成应用记录。GovernanceJSON 为 nil 时保持 nil，与「空对象 {}」区分。
 func versionFromSchema(rec schema.WorkflowRecipeVersions) versionRecord {
 	ver := versionRecord{
 		ID:                             rec.ID,
@@ -116,6 +117,7 @@ func visualSystemVersionExists(ctx context.Context, tx *gorm.DB, id string) erro
 	return err
 }
 
+// listRecipes 只列 origin=user 的配方（系统种子不出现在设置页）。默认去掉已归档，再批量补 current 版本。
 func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]recipeRecord, error) {
 	q := tx.WithContext(ctx).Where("origin = ?", "user")
 	if !includeArchived {
@@ -150,6 +152,8 @@ func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]reci
 	return out, nil
 }
 
+// loadRecipe 读一条用户配方及全部版本。official 种子对外伪装成 404，避免设置页改系统配方。
+// forUpdate 锁 recipes 行，给 Append/Archive 用。
 func loadRecipe(ctx context.Context, tx *gorm.DB, recipeID string, forUpdate bool) (recipeRecord, error) {
 	q := tx.WithContext(ctx).Where("id = ?", recipeID)
 	if forUpdate {
@@ -224,6 +228,7 @@ func insertRecipe(ctx context.Context, tx *gorm.DB, rec recipeRecord) error {
 	}).Error
 }
 
+// insertVersion 写入一版 payload。GovernanceJSON 空切片不当空对象写入，保持列 NULL。
 func insertVersion(ctx context.Context, tx *gorm.DB, ver versionRecord) error {
 	row := schema.WorkflowRecipeVersions{
 		ID:                             ver.ID,
@@ -279,6 +284,7 @@ type applicationScan struct {
 	RequiredBindingsJSON *string `gorm:"column:required_bindings_json"`
 }
 
+// applicationByKey 按商品 + Idempotency-Key 找已确认的应用。没有行返回 (nil, nil)，不是 404。
 func applicationByKey(ctx context.Context, tx *gorm.DB, productID, key string) (*applicationRecord, error) {
 	var row applicationScan
 	err := tx.WithContext(ctx).Table("workflow_recipe_applications AS a").
@@ -322,6 +328,7 @@ func applicationByKey(ctx context.Context, tx *gorm.DB, productID, key string) (
 	return &rec, nil
 }
 
+// insertApplication 记下一次确认。nil 切片编成 []，避免下次回放把 null 和空数组当成不同 hash。
 func insertApplication(ctx context.Context, tx *gorm.DB, rec applicationRecord) error {
 	addedNodes, err := json.Marshal(nonNilStrings(rec.AddedNodeIDs))
 	if err != nil {

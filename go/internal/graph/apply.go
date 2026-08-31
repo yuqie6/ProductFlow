@@ -9,6 +9,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// Node 按 id 取节点。找不到返回 Validation，不是 NotFound。
 func (g AppliedGraph) Node(nodeID string) (AppliedNode, error) {
 	for _, node := range g.Nodes {
 		if node.ID == nodeID {
@@ -18,6 +19,9 @@ func (g AppliedGraph) Node(nodeID string) (AppliedNode, error) {
 	return AppliedNode{}, apperr.Validation("图节点不存在")
 }
 
+// Group 按 id 从 AppliedGraph.Groups 取一层视觉分组，给 Apply 之后的校验与投影用。
+// 找不到返回 Validation（400「图分组不存在」），不是 NotFound——缺分组视为非法 ChangeSet。
+// 不要和 Node（查节点）或 HTTP 的 GroupView 搞混。不写库。
 func (g AppliedGraph) Group(groupID string) (AppliedGroup, error) {
 	for _, group := range g.Groups {
 		if group.ID == groupID {
@@ -27,6 +31,7 @@ func (g AppliedGraph) Group(groupID string) (AppliedGroup, error) {
 	return AppliedGroup{}, apperr.Validation("图分组不存在")
 }
 
+// Incoming 返回指向该节点的边。compiler 只使用这些入边，不扫描图其余部分。
 func (g AppliedGraph) Incoming(nodeID string) []AppliedEdge {
 	var out []AppliedEdge
 	for _, edge := range g.Edges {
@@ -37,6 +42,7 @@ func (g AppliedGraph) Incoming(nodeID string) []AppliedEdge {
 	return out
 }
 
+// ConfigStatus 按 Catalog 必填项与当前产物 digest 计算 incomplete/ready/stale。
 func (g AppliedGraph) ConfigStatus(nodeID string) (ConfigStatus, error) {
 	node, err := g.Node(nodeID)
 	if err != nil {
@@ -403,6 +409,7 @@ func Apply(graph AppliedGraph, changeSet ChangeSet) (AppliedGraph, error) {
 	}, nil
 }
 
+// Invert 生成把 after 还原成 before 的 inverse ops。空 inverse 的历史不可 Undo。
 func Invert(before, after AppliedGraph) []Operation {
 	operations := make([]Operation, 0)
 	beforeNodeIDs := idSet(before.Nodes, func(n AppliedNode) string { return n.ID })
@@ -538,6 +545,7 @@ type edgeOrderKey struct {
 	Role         EdgeRole
 }
 
+// groupedEdgeOrder 按目标节点+role 分组后按 Order、id 排序，供 Invert ReorderEdges 还原顺序。
 func groupedEdgeOrder(edges []AppliedEdge) map[edgeOrderKey][]string {
 	grouped := map[edgeOrderKey][]AppliedEdge{}
 	for _, edge := range edges {
@@ -575,6 +583,8 @@ func sortedEdgeOrderKeys(groups map[edgeOrderKey][]string) []edgeOrderKey {
 	return keys
 }
 
+// assignPersistentIDs 把 Create 的临时 client_ref 换成持久 id，并改写边/分组成员引用。
+// before 已有 id 保持不变。必须在写库前调用，否则历史 inverse 对不上 live id。
 func assignPersistentIDs(before, after AppliedGraph, newID func() string) AppliedGraph {
 	idMap := map[string]string{}
 	for _, node := range before.Nodes {

@@ -7,6 +7,7 @@ import (
 
 var chatPromptPlaceholder = regexp.MustCompile(`\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
+// RenderChatPrompt 用模板渲染连续生图提示词；空模板则返回原始 prompt。
 func RenderChatPrompt(template, prompt, size, historyBlock string) string {
 	if strings.TrimSpace(template) == "" {
 		return strings.TrimSpace(prompt)

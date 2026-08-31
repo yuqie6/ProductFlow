@@ -13,9 +13,13 @@ import (
 
 const streamCompactAfter = 7 * 24 * time.Hour
 
-// CompactExpiredTurnJournals shrinks chunk payloads on terminal Turns older
-// than the retention window. Sequence numbers stay in place so replay has no
-// holes; projectTurnEvent emits agent.ignored for compacted rows.
+// CompactExpiredTurnJournals 收缩超过保留窗口的终态 Turn 上的 text.chunk / thinking.chunk payload。
+//
+// dispatcher 在 recoverUnfinishedTurns 末尾调用。只改 agent_turn_events.payload_json：chunk 写成 {"compacted":true}，并把 sequence 列表记到对应 assistant/message 的 sourceEventSeqs。行不删、sequence 不重排，SSE 回放不会出现空洞。
+//
+// 仅处理 finished_at 早于 7 天且已有完整 assistant/message 的终态（含 awaiting_confirmation）。projectTurnEvent 对 compacted 行发 agent.ignored。
+//
+// 禁区：不要 DELETE 事件行；不要改 agent_tasks 或 Goal；不要把 compact 当成「journal 可以不连续」的借口。
 func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (int, error) {
 	cutoff := now.Add(-streamCompactAfter)
 	var ids []string
@@ -61,6 +65,11 @@ func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (
 	return compacted, nil
 }
 
+// compactTurnJournal 收缩单个终态 Turn 的 chunk：有对应 assistant/message 才压，没有完整 message 的流式片段保持原样。
+//
+// 由 CompactExpiredTurnJournals 按批调用。只写 agent_turn_events，journal 权威仍是 PostgreSQL。Pi 文件不参与。
+//
+// 禁区：不要重排 sequence；不要在 compact 时改 output_text（列表摘要仍由重建路径或已落库列提供）。
 func compactTurnJournal(ctx context.Context, s Service, projectionID string) (bool, error) {
 	changed := false
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {

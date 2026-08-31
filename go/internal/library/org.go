@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// CreateFolder 创建一层用户文件夹；同名已存在时返回已有行且 Created=false。
 func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation, error) {
 	display, err := normalizeName(name, kindFolder)
 	if err != nil {
@@ -60,6 +61,10 @@ func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation,
 	return out, err
 }
 
+// RenameFolder 按期望旧名重命名一层用户文件夹。
+// 调用时机：HTTP PATCH /folders/:folder_id。副作用只改 media_library_folders，不改素材 revision。
+// 找不到文件夹 NotFound；expectedName 对不上 Conflict；新名非法 Validation。
+// 禁区：不要顺手改 folder_id 下的素材。
 func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name string) (Folder, error) {
 	var folder Folder
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -98,6 +103,7 @@ func (s Service) RenameFolder(ctx context.Context, folderID, expectedName, name 
 	return folder, err
 }
 
+// DeleteFolder 只删除文件夹组织，不删除素材，也不打断节点或 lineage 引用。
 func (s Service) DeleteFolder(ctx context.Context, folderID string) (int, error) {
 	var moved int
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -121,6 +127,7 @@ func (s Service) DeleteFolder(ctx context.Context, folderID string) (int, error)
 	return moved, err
 }
 
+// CreateTag 创建标签；同名已存在时返回已有行且 Created=false。
 func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error) {
 	display, err := normalizeName(name, kindTag)
 	if err != nil {
@@ -166,6 +173,9 @@ func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error
 	return out, err
 }
 
+// RenameTag 按期望旧名重命名标签定义。
+// 调用时机：HTTP PATCH /tags/:tag_id。已关联素材跟着新名走，因为关联的是 tag_id。
+// 找不到 NotFound；expectedName 对不上 Conflict。不要把改名当成新建标签。
 func (s Service) RenameTag(ctx context.Context, tagID, expectedName, name string) (Tag, error) {
 	var tag Tag
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -201,6 +211,9 @@ func (s Service) RenameTag(ctx context.Context, tagID, expectedName, name string
 	return tag, err
 }
 
+// DeleteTag 删除标签定义并解除素材关联，返回解除条数。
+// 调用时机：HTTP DELETE /tags/:tag_id。不删 MediaLibraryAsset，不碰 MediaObject。
+// 找不到标签 NotFound。返回值不是「删了多少素材」。
 func (s Service) DeleteTag(ctx context.Context, tagID string) (int, error) {
 	var removed int
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -221,6 +234,10 @@ func (s Service) DeleteTag(ctx context.Context, tagID string) (int, error) {
 	return removed, err
 }
 
+// MoveAssets 把素材移入一层用户文件夹，或 folderID 为 nil/空串时移到未整理。
+// 调用时机：HTTP POST /organize/move。每条素材 revision+1。
+// expected 必须覆盖全部 assetIDs，对不上 Conflict；文件夹不存在 NotFound。
+// 禁区：不要复制媒体、不要改商品图库文件夹。
 func (s Service) MoveAssets(ctx context.Context, assetIDs []string, folderID *string, expected map[string]int) ([]Asset, error) {
 	ids, err := validateOrgIDs(assetIDs)
 	if err != nil {
@@ -300,6 +317,9 @@ func (s Service) RenameAsset(ctx context.Context, assetID, expectedName string, 
 	return out, err
 }
 
+// SetTags 整表替换素材标签集合：缺的标签会创建，空 tagNames 表示清光。
+// 调用时机：HTTP POST /organize/tags。每条素材 revision+1。
+// expected 必须覆盖全部 id，对不上 Conflict。不要做成增量 add/remove。
 func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expected map[string]int) ([]Asset, error) {
 	ids, err := validateOrgIDs(assetIDs)
 	if err != nil {
@@ -402,6 +422,7 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 	return out, err
 }
 
+// validateOrgIDs 检查整理批量：1..maxOrgAssets、无重复、序列化后不超过 maxOrgBytes。
 func validateOrgIDs(assetIDs []string) ([]string, error) {
 	if len(assetIDs) < 1 || len(assetIDs) > maxOrgAssets {
 		return nil, apperr.Validationf("单次最多整理 %d 个素材", maxOrgAssets)

@@ -11,6 +11,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// forbiddenConfigKeys 是 ChangeSet config 不得引入的退役 plan key 与拓扑字段。未登记 key 由 validateConfigFields 拒绝。
 var forbiddenConfigKeys = map[string]struct{}{
 	"prompt_plan_key":  {},
 	"image_plan_key":   {},
@@ -113,6 +114,8 @@ func hid(key, kind string, opts ...func(*configField)) configField {
 	return item
 }
 
+// fld 声明 Catalog 可编辑字段。control 空则按 kind 选默认控件；hidden 默认不影响 digest。
+// 改 key/kind 必须同步 Web/Agent CatalogJSON 与 NormalizeNodeConfig，否则旧图或提案会 Validation。
 func fld(key, kind, control string, opts ...func(*configField)) configField {
 	item := configField{key: key, valueKind: kind, control: control, affectsDigest: control != "hidden"}
 	if control == "" {
@@ -232,6 +235,7 @@ func visualOverlayFields() []configField {
 	}
 }
 
+// promptFields 是 image_prompt.config.prompt 的 Catalog 字段表。改 key 必须同步 Web/Agent 与 normalize。
 func promptFields() []configField {
 	return []configField{
 		hid("schema_version", "number"),
@@ -293,6 +297,7 @@ func deliverySpecFields() []configField {
 	}
 }
 
+// nodeConfigFields 返回该类型可编辑字段。未知类型 ok=false。hidden 字段仍参与校验；withNoDigest 的不进 input digest。
 func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	switch nodeType {
 	case NodeProductSource:
@@ -337,6 +342,7 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	}
 }
 
+// FillDefaultNodeConfig 填入 Catalog 声明的缺省值；已有键不覆盖。未知节点类型原样返回。
 func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]any {
 	out := cloneMap(config)
 	if out == nil {
@@ -354,6 +360,7 @@ func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]
 	return out
 }
 
+// applyImageTypeGenerationDefaults 仅在用户没带 generation_spec 时按图种填默认比例等。已有 spec 不覆盖。
 func applyImageTypeGenerationDefaults(config map[string]any) {
 	key, _ := config["image_type_key"].(string)
 	key = strings.TrimSpace(key)
@@ -418,6 +425,7 @@ func requiredConfigIncomplete(nodeType NodeType, config map[string]any) bool {
 	return requiredFieldsMissing(fields, config)
 }
 
+// requiredFieldsMissing 递归检查 Catalog required 字段是否空。用于 ConfigIncomplete，不是 HTTP 校验入口。
 func requiredFieldsMissing(fields []configField, payload map[string]any) bool {
 	if payload == nil {
 		payload = map[string]any{}
@@ -443,6 +451,7 @@ func requiredFieldsMissing(fields []configField, payload map[string]any) bool {
 	return false
 }
 
+// IsProcessingNode 为 true 的类型才会进入 GraphRun：creative_brief、visual_system、image_prompt、image_generation。
 func IsProcessingNode(nodeType NodeType) bool {
 	switch nodeType {
 	case NodeCreativeBrief, NodeVisualSystem, NodeImagePrompt, NodeImageGeneration:
@@ -465,6 +474,7 @@ func catalogAccepts(nodeType NodeType) []inputContract {
 	return out
 }
 
+// GraphNodeOutputType 返回该节点类型的唯一输出 DataType。不支持的类型返回 Validation。
 func GraphNodeOutputType(nodeType NodeType) (EdgeDataType, error) {
 	out, ok := outputType[nodeType]
 	if !ok {
@@ -473,6 +483,7 @@ func GraphNodeOutputType(nodeType NodeType) (EdgeDataType, error) {
 	return out, nil
 }
 
+// GraphInputContract 查 Catalog accepts：源输出类型能否连到目标。处理节点每个 accepts role 一个命名输入端口。
 func GraphInputContract(sourceType, targetType NodeType) (inputContract, bool) {
 	out, err := GraphNodeOutputType(sourceType)
 	if err != nil {
@@ -482,6 +493,7 @@ func GraphInputContract(sourceType, targetType NodeType) (inputContract, bool) {
 	return c, ok
 }
 
+// RequireGraphConnection 在类型不兼容时返回 Validation，供 ConnectNodes 使用。
 func RequireGraphConnection(sourceType, targetType NodeType) (inputContract, error) {
 	c, ok := GraphInputContract(sourceType, targetType)
 	if !ok {
@@ -510,13 +522,20 @@ func runRequiredInputs(nodeType NodeType) []inputContract {
 	return out
 }
 
-// RunInputContract 是配方应用后检查「运行所需输入边」用的端口。
+// RunInputContract 给配方应用后的内部检查看：某节点类型跑图时必须存在的入边端口（data_type + role）。
+// 不是 HTTP 体，也不是 CatalogJSON 整份 accepts（accepts 还含 max_count / required_to_run）。
+// 改字段必须同步 Catalog acceptance 与 recipe 缺边 Conflict。不要当成 AppliedEdge。
 type RunInputContract struct {
+	// DataType 是 Catalog accepts 的入边数据类型。
 	DataType EdgeDataType
-	Role     EdgeRole
+	// Role 是入边端口，等于 React Flow handle id。
+	Role EdgeRole
 }
 
-// RequiredRunContracts 返回该节点类型跑图时必须存在的入边。
+// RequiredRunContracts 在配方预览/确认把 ChangeSet 打到内存图之后调用，列出该 NodeType 跑图仍必须存在的入边。
+// 当前 Catalog 只有 image_generation 的 prompt 口 RequiredToRun=true；参考图等可选边不会出现在此列表。
+// 无副作用。改 RequiredToRun 会同时改 GET /api/v3/node-catalog 的 required_to_run 与 NodeConfigStatus 的 incomplete。
+// 不要用它判断「能不能连边」——连边走 RequireGraphConnection。
 func RequiredRunContracts(nodeType NodeType) []RunInputContract {
 	var out []RunInputContract
 	for _, c := range runRequiredInputs(nodeType) {
@@ -539,6 +558,7 @@ func rejectForbiddenKeys(config map[string]any) error {
 	return apperr.Validation("节点配置不能包含拓扑字段: " + strings.Join(illegal, ", "))
 }
 
+// NormalizeNodeConfig 拒绝未登记 key 与退役 plan key，并规范化 generation_spec / delivery_spec。
 func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]any, error) {
 	payload := cloneMap(config)
 	if payload == nil {
@@ -573,6 +593,7 @@ func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]a
 	return payload, nil
 }
 
+// CatalogVisualOverlay 只保留 style / colors / prohibitions；空则 nil。
 func CatalogVisualOverlay(overlay map[string]any) map[string]any {
 	if len(overlay) == 0 {
 		return nil
@@ -589,6 +610,7 @@ func CatalogVisualOverlay(overlay map[string]any) map[string]any {
 	return filtered
 }
 
+// validateConfigFields 拒绝未登记 key，再逐字段校验 kind。未知 key 返回 Validation，不要静默丢掉。
 func validateConfigFields(fields []configField, payload map[string]any, path string) error {
 	known := map[string]struct{}{}
 	for _, item := range fields {
@@ -624,6 +646,7 @@ func validateConfigFields(fields []configField, payload map[string]any, path str
 	return nil
 }
 
+// validateConfigField 校验单个 Catalog 字段的 kind、choices、min/max。hidden object 跳过结构检查。
 func validateConfigField(item configField, value any, path string) error {
 	if item.control == "hidden" && (item.valueKind == "object" || item.valueKind == "object_or_null" || item.valueKind == "object_list") {
 		return nil
@@ -683,6 +706,7 @@ func validateConfigField(item configField, value any, path string) error {
 	return nil
 }
 
+// matchesValueKind 按 Catalog valueKind 认 JSON 类型。未知 kind 返回 false，等于拒绝该字段。
 func matchesValueKind(kind string, value any) bool {
 	switch kind {
 	case "string":
@@ -725,6 +749,7 @@ func matchesValueKind(kind string, value any) bool {
 	}
 }
 
+// asFiniteNumber 只认有限数字。NaN/Inf 与非数字返回 false，避免 digest 或校验放进非法 number。
 func asFiniteNumber(value any) (float64, bool) {
 	switch n := value.(type) {
 	case int:

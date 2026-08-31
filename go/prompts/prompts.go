@@ -1,3 +1,7 @@
+// Package prompts 通过 go:embed 提供固定模型 prompt 文本；graph、providers 与 agent 加载它们。
+//
+// 改文案只改本目录 markdown，然后确认 Must 解析测试仍过。不要把 Agent Skill 正文、工具 JSON schema
+// 或按图类分支的拼装逻辑放进本包——拼装在 graph.prompt_assemble / providers。
 package prompts
 
 import (
@@ -33,45 +37,50 @@ var requiredCompileSections = []string{
 	"text_required_infographic", "text_required_infographic_with_language",
 }
 
+// Look 是 listing/look.md 解析出的刊登视觉规则，进程内缓存，不是 HTTP DTO。
+// SourceNoteIsProductFact 等是规则开关，不要写成商品 FactSet。
 type Look struct {
-	Rule                    string
-	ProductSharePercent     string
-	BenefitCount            string
-	SourceNoteIsProductFact bool
-	IgnoreAsArtDirection    []string
-	DoNotInvertInto         []string
-	BriefProhibitions       []string
+	Rule                    string   // look.md 导言
+	ProductSharePercent     string   // 图种主体占比规则
+	BenefitCount            string   // 卖点条数范围
+	SourceNoteIsProductFact bool     // source_note 当商品事实，不是美术方向
+	IgnoreAsArtDirection    []string // 参考图里要忽略的偶然因素
+	DoNotInvertInto         []string // 禁止反推成的视觉套路
+	BriefProhibitions       []string // brief 禁写项
 }
 
+// ImageType 是 listing/image-types.md 中的一种图类（hero、selling_point 等闭集）。
 type ImageType struct {
-	Key         string
+	Key         string // 闭集 hero / selling_point 等
 	Title       string
-	Description string
-	Job         string
-	Order       int
+	Description string // 图种说明
+	Job         string // 该图种要完成的拍摄任务
+	Order       int    // 排序
 }
 
+// Identity 是 listing/identity-rules.md 的商品身份约束。
 type Identity struct {
-	Shared               []string
-	NoOnImageText        string
-	NoCaptionOnReference string
-	ContextDerived       string
+	Shared               []string // 外形材质以参考图为准
+	NoOnImageText        string   // 画面不含文字/价格/Logo
+	NoCaptionOnReference string   // 参考图只作商品本体
+	ContextDerived       string   // 根据参考图、资料与图种生成
 }
 
+// CompileImage 是 listing/compile-image.md 的拼装模板，含 {type_title}/{language} 占位符。
 type CompileImage struct {
-	Lead                                string
-	Identity                            string
-	Recompose                           string
-	Invent                              string
-	Photography                         string
-	Infographic                         string
-	Evidence                            string
-	TextNone                            string
-	TextRequired                        string
-	TextRequiredWithLanguage            string
-	TextRequiredInfographic             string
-	TextRequiredInfographicWithLanguage string
-	TypeLines                           map[string]string
+	Lead                                string            // 含 {type_title}
+	Identity                            string            // 身份约束段
+	Recompose                           string            // 按图种重做构图
+	Invent                              string            // 禁止虚构资料未出现的内容
+	Photography                         string            // 摄影家族模板
+	Infographic                         string            // 信息图家族模板
+	Evidence                            string            // 资质/工厂说明图
+	TextNone                            string            // 画面无字
+	TextRequired                        string            // 画面需要文字
+	TextRequiredWithLanguage            string            // 含 {language}
+	TextRequiredInfographic             string            // 信息图需要文字
+	TextRequiredInfographicWithLanguage string            // 信息图 + {language}
+	TypeLines                           map[string]string // 图类 key → compile 行
 }
 
 var (
@@ -95,26 +104,48 @@ func init() {
 	}
 }
 
+// AgentWorkflow 返回 agent/workflow-live-graph.md 全文。
 func AgentWorkflow() string { return agentWorkflow }
-func AgentGlobal() string   { return agentGlobal }
+
+// AgentGlobal 返回 agent/global.md 全文（进程内缓存）。
+// 调用时机：全局 Agent 系统提示。改文案只改 markdown。不要把 Skill/JSON schema 塞进本文件。
+func AgentGlobal() string { return agentGlobal }
+
+// AgentGoalLoop 返回 agent/goal-loop.md 全文。
 func AgentGoalLoop() string { return agentGoalLoop }
 
-func BriefInstructions() string   { return briefInstr }
+// BriefInstructions 返回 providers/creative-brief.md 全文。
+func BriefInstructions() string { return briefInstr }
+
+// OverlayInstructions 返回 providers/visual-overlay.md 全文。
 func OverlayInstructions() string { return overlayInstr }
-func PromptInstructions() string  { return promptInstr }
+
+// PromptInstructions 返回 providers/prompt-generation.md 全文。
+func PromptInstructions() string { return promptInstr }
 
 // SourceNoteInstructions 返回创建页看图起草商品说明的指令，正文在 providers/source-note.md。
 func SourceNoteInstructions() string { return sourceNoteInstr }
 
-func ListingLook() Look       { return look }
+// ListingLook 返回进程内缓存的刊登视觉规则副本语义（结构体值拷贝）。
+func ListingLook() Look { return look }
+
+// ImageTypes 返回按 order 排序的图类副本；调用方可改切片，不会写回缓存。
 func ImageTypes() []ImageType { return append([]ImageType(nil), imageTypes...) }
+
+// ImageTypeByKey 按闭集 key（hero、selling_point 等）查找图类。未知 key 返回零值与 false。
 func ImageTypeByKey(key string) (ImageType, bool) {
 	item, ok := imageTypeMap[key]
 	return item, ok
 }
-func IdentityRules() Identity             { return identity }
+
+// IdentityRules 返回进程内缓存的身份约束。调用时机：graph 拼装提示词。无 IO。
+func IdentityRules() Identity { return identity }
+
+// CompileImageTemplates 返回进程内缓存的拼装模板（含 {type_title}/{language}）。
+// 真正 Expand 在 graph/providers；本函数不按图类分支。
 func CompileImageTemplates() CompileImage { return compileImage }
 
+// Expand 把 template 里的 {key} 替换成 vars 的值。
 func Expand(template string, vars map[string]string) string {
 	out := template
 	for key, value := range vars {
@@ -123,10 +154,12 @@ func Expand(template string, vars map[string]string) string {
 	return out
 }
 
+// LeadFor 用 type_title 展开 Lead 模板。调用时机：拼装某图类的 lead 段。缺占位则原样返回。
 func (c CompileImage) LeadFor(typeTitle string) string {
 	return Expand(c.Lead, map[string]string{"type_title": typeTitle})
 }
 
+// TextPolicyLine 按 policy（required/none）与 family（infographic 等）选出一行文案；未知 policy 返回空串。
 func (c CompileImage) TextPolicyLine(policy, language, family string) string {
 	switch policy {
 	case "required":
@@ -147,6 +180,7 @@ func (c CompileImage) TextPolicyLine(policy, language, family string) string {
 	}
 }
 
+// FamilyLine 返回 photography/infographic/evidence 家族说明；其他 family 走 photography。
 func (c CompileImage) FamilyLine(family string) string {
 	switch family {
 	case "infographic":
@@ -158,6 +192,7 @@ func (c CompileImage) FamilyLine(family string) string {
 	}
 }
 
+// TypeLine 返回该图类的 compile 行；缺 key 返回空串。
 func (c CompileImage) TypeLine(key string) string {
 	key = strings.TrimSpace(key)
 	if key == "" || c.TypeLines == nil {
@@ -166,6 +201,8 @@ func (c CompileImage) TypeLine(key string) string {
 	return strings.TrimSpace(c.TypeLines[key])
 }
 
+// load 在 init 里一次性读 embed 文件并解析 listing 结构。任一文件空或章节缺字段直接失败，
+// 进程起不来，避免运行时才发现 prompt 半残。不要在请求路径再读磁盘。
 func load() error {
 	var err error
 	if agentWorkflow, err = wholeFile("agent/workflow-live-graph.md"); err != nil {
@@ -216,6 +253,8 @@ func wholeFile(path string) (string, error) {
 	return text, nil
 }
 
+// parseLook 解析 listing/look.md：正文前的 preamble 是总规则，## 章节必须齐全。
+// source_note_is_product_fact 只能是 true/false；三个列表空则失败，禁止悄悄当「没有禁令」。
 func parseLook() (Look, error) {
 	raw, err := files.ReadFile("listing/look.md")
 	if err != nil {
@@ -253,6 +292,8 @@ func parseLook() (Look, error) {
 	return out, nil
 }
 
+// parseImageTypes 解析 listing/image-types.md。章节名必须正好是 requiredImageTypeKeys 闭集：
+// 少一个、多一个都失败。返回值按 Order 再按 Key 排好，给创建页和下拉用。
 func parseImageTypes() ([]ImageType, map[string]ImageType, error) {
 	raw, err := files.ReadFile("listing/image-types.md")
 	if err != nil {
@@ -303,6 +344,8 @@ func parseImageTypes() ([]ImageType, map[string]ImageType, error) {
 	return out, byKey, nil
 }
 
+// parseImageType 读一种图类：开头连续的 title/description/order 行，其余整段当 Job。
+// 缺 title、description 或 Job 返回 error，不要用空 Job 让 compile 拼出半截提示词。
 func parseImageType(key, body string) (ImageType, error) {
 	item := ImageType{Key: key}
 	lines := strings.Split(body, "\n")
@@ -340,6 +383,7 @@ func parseImageType(key, body string) (ImageType, error) {
 	return item, nil
 }
 
+// parseIdentity 解析 listing/identity-rules.md。shared 必须至少一行；三个具名规则空则失败。
 func parseIdentity() (Identity, error) {
 	raw, err := files.ReadFile("listing/identity-rules.md")
 	if err != nil {
@@ -368,6 +412,8 @@ func parseIdentity() (Identity, error) {
 	return out, nil
 }
 
+// parseCompileImage 解析 listing/compile-image.md。每个必填章节空则失败；
+// Lead 必须含 {type_title}，带语言的 text 模板必须含 {language}，否则 Expand 会留下字面占位符。
 func parseCompileImage() (CompileImage, error) {
 	raw, err := files.ReadFile("listing/compile-image.md")
 	if err != nil {
@@ -428,6 +474,8 @@ func parseCompileImage() (CompileImage, error) {
 	return out, nil
 }
 
+// parseSections 按 ## 标题切 Markdown。第一个标题前的正文是 preamble；空标题或重复标题返回 error。
+// 只认行首「## 」，不要把正文里的 ## 当章节。
 func parseSections(src string) (preamble string, sections map[string]string, err error) {
 	src = strings.ReplaceAll(src, "\r\n", "\n")
 	sections = map[string]string{}

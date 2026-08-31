@@ -29,9 +29,11 @@ var archiveExtensions = map[string]string{
 	"image/webp": ".webp",
 }
 
+// GalleryArchive 是 POST .../download-archive 200 的内存 ZIP，不落库。
+// Filename 来自商品名；Bytes 是已核验原图。最多 100 张、合计 512MiB。不要当成 MediaObject。
 type GalleryArchive struct {
 	Filename string
-	Bytes    []byte
+	Bytes    []byte // 已核验原图打成的 ZIP，不落库
 }
 
 // BuildGalleryArchive 按资产 id 打包已核验原图；ZIP 条目名来自显示名。

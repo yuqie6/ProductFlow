@@ -471,6 +471,6 @@ func consoleColorEnabled(w io.Writer, disable bool) bool {
 	if err != nil {
 		return false
 	}
-	// TTY and pipes (just/Compose) get color; redirecting to a regular file does not.
+	// TTY 和管道（just / Compose）上色；重定向到普通文件则不上色。
 	return !info.Mode().IsRegular()
 }

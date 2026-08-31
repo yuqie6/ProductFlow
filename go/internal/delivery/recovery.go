@@ -12,10 +12,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// RecoverySummary 统计 dispatcher 本轮补回的交付任务。
 type RecoverySummary struct {
-	QueuedJobs       int `json:"queued_jobs"`
-	StaleRunningJobs int `json:"stale_running_jobs"`
-	EnqueuedJobs     int `json:"enqueued_jobs"`
+	QueuedJobs       int `json:"queued_jobs"`        // 本轮看到的 queued 任务数
+	StaleRunningJobs int `json:"stale_running_jobs"` // 过期 running 被重置为 queued 的数量
+	EnqueuedJobs     int `json:"enqueued_jobs"`      // 成功补回 PENDING dispatch 的数量
 }
 
 // RecoverUnfinished 把 queued / 过期 running 的交付任务补回 PENDING dispatch。交付没有 unknown。

@@ -41,6 +41,7 @@ func endpoint(baseURL, path string) string {
 	return base + path
 }
 
+// doJSON 发 JSON 请求并限读 maxProviderJSONBytes。超限或读失败返回 ErrProviderUnknown，避免把截断 JSON 当成功。
 func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string, body io.Reader, contentType string) (int, []byte, error) {
 	if client == nil {
 		client = newHTTPClient()
@@ -160,6 +161,7 @@ func mapChatStatus(status int, body []byte) error {
 	return nil
 }
 
+// chatBodyRateLimited 从 429 响应体判断是否限流。匹配不到返回 false，调用方按普通 4xx 处理。
 func chatBodyRateLimited(body []byte) bool {
 	var parsed struct {
 		Error struct {

@@ -80,10 +80,12 @@ func ParseChangeSet(raw []byte) (ChangeSet, error) {
 	return cs, nil
 }
 
+// UnmarshalOperations 解析公开 ChangeSet 的 operations 数组，不允许内部 DocumentOrigin。
 func UnmarshalOperations(raw []byte) ([]Operation, error) {
 	return unmarshalOperations(raw, false)
 }
 
+// unmarshalOperations 解析封闭 op 数组。多余字节或空数组返回 Validation。allowInternal 才许 DocumentOrigin。
 func unmarshalOperations(raw []byte, allowInternal bool) ([]Operation, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -108,6 +110,8 @@ func unmarshalOperations(raw []byte, allowInternal bool) ([]Operation, error) {
 	return out, nil
 }
 
+// unmarshalOperation 按 op 名收成具体类型。未知 op / 未知字段 extra=forbid 返回 Validation。
+// 公开路径 allowInternal=false，禁止带 DocumentOrigin。
 func unmarshalOperation(raw json.RawMessage, allowInternal bool) (Operation, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

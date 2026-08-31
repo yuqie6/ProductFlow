@@ -49,6 +49,7 @@ func recoverableToolNames() []string {
 	return names
 }
 
+// reconcileEffectIntent 按 tool_call_id 对账副作用；已 applied/failed 的对账行直接返回，unknown 才继续。
 func (s Service) reconcileEffectIntent(
 	ctx context.Context,
 	gdb *gorm.DB,
@@ -104,6 +105,9 @@ func (s Service) reconcileEffectIntent(
 	return s.persistEffectReconciliation(gdb, projectionID, existing, intent, reconciled)
 }
 
+// lookupEffectState 按工具名查对应账本或 reconcile API，不重试副作用。payload 无法解析或缺少关键字段时保持 unknown，不猜 applied。
+//
+// reconcileEffectIntent 在落对账行前调用。图工具走 ReconcileGraphTool；跑图请求走 ReconcileWorkflowRunRequest。
 func (s Service) lookupEffectState(ctx context.Context, conversationID string, intent toolEffectIntentV1) (ReconcileResponse, error) {
 	fields, err := decodeIntentPayload(intent.RequestPayload)
 	if err != nil {
@@ -164,6 +168,9 @@ func (s Service) lookupEffectState(ctx context.Context, conversationID string, i
 	}
 }
 
+// retryEffectIntent 仅在 policy=reconcile_then_retry 且 lookup 为 not_applied 时，按原幂等键重放工具入口。
+//
+// 由 reconcileEffectIntent 调用。不支持的工具返回 Conflict。重试后仍对不上必须再 lookup，不可证明则 unknown。
 func (s Service) retryEffectIntent(ctx context.Context, conversationID string, intent toolEffectIntentV1) (any, error) {
 	fields, err := decodeIntentPayload(intent.RequestPayload)
 	if err != nil {
@@ -221,6 +228,9 @@ func (s Service) retryEffectIntent(ctx context.Context, conversationID string, i
 	}
 }
 
+// persistEffectReconciliation 按 turn_projection_id + tool_call_id 写入或更新 agent_turn_effect_reconciliations。
+//
+// 唯一约束冲突回放已有行。not_applied 不能当终态，finalizeEffectStates 会收成 unknown。已 applied/failed 的行不应被本函数改回 unknown（调用方先短路）。
 func (s Service) persistEffectReconciliation(
 	gdb *gorm.DB,
 	projectionID string,

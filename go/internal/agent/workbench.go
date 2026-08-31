@@ -12,10 +12,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// GetWorkbench 读取商品工作台；没有工作区时返回 Conflict。
 func (s Service) GetWorkbench(ctx context.Context, productID string, sessionID, taskID *string) (WorkbenchResponse, error) {
 	return s.loadWorkbench(ctx, productID, sessionID, taskID)
 }
 
+// EnsureWorkbench 按幂等键确保商品拥有 Agent 工作区；已存在且未 forceNew 则复用。
 func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey string, sessionID *string, forceNew bool) (WorkbenchResponse, error) {
 	key, err := normalizeIdempotency(idempotencyKey, "Idempotency-Key")
 	if err != nil {
@@ -125,6 +127,9 @@ func createProductBoundSession(ctx context.Context, pgxTx *gorm.DB, productID st
 	return id, pgxTx.WithContext(ctx).Create(&rec).Error
 }
 
+// loadWorkbench 读取商品工作台：Product、product_workflow conversation、live 图。没有工作区返回 Conflict，不隐式创建。
+//
+// GetWorkbench / EnsureWorkbench 在确认存在后调用。session/task 必须属于该商品。只读 graph.TryCurrent，不写 Goal。
 func (s Service) loadWorkbench(ctx context.Context, productID string, sessionID, taskID *string) (WorkbenchResponse, error) {
 	productDetail, err := s.Product.Get(ctx, productID)
 	if err != nil {

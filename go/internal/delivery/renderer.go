@@ -18,11 +18,14 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+// Rendered 是本地渲染后的字节与 media 核验元数据，内部类型。
+// 不是商品图身份；落盘由 Executor 写成新的 ProductImageAsset。
 type Rendered struct {
-	Bytes    []byte
-	Metadata media.Verified
+	Bytes    []byte         // 按 Spec 编码后的交付图，不是源图
+	Metadata media.Verified // 对 Bytes 再核验的 MIME/尺寸/哈希
 }
 
+// Render 按 DeliverySpec 缩放编码已有原图，不调用图像模型。
 func Render(source []byte, spec Spec) (Rendered, error) {
 	if len(source) == 0 {
 		return Rendered{}, apperr.Validation("交付派生原图内容为空")
@@ -63,6 +66,7 @@ func decodeSource(source []byte) (image.Image, error) {
 	return img, nil
 }
 
+// resize 按 fit 缩放。contain 居中铺到画布；jpeg 无背景时填白，避免透明通道进 JPEG。
 func resize(src image.Image, spec Spec) image.Image {
 	sb := src.Bounds()
 	sw, sh := sb.Dx(), sb.Dy()
@@ -96,6 +100,7 @@ func resize(src image.Image, spec Spec) image.Image {
 	return canvas
 }
 
+// fitCover 放大后按 crop_anchor 裁切。anchor 为 nil 时从中心裁。
 func fitCover(src image.Image, tw, th int, anchor *string) image.Image {
 	sb := src.Bounds()
 	sw, sh := sb.Dx(), sb.Dy()
@@ -138,6 +143,7 @@ func fitCover(src image.Image, tw, th int, anchor *string) image.Image {
 	return out
 }
 
+// encodeImage 按 format 编码。有 MaxByteSize 时 jpeg/webp 沿 quality 阶下降；仍超限返回 400，不改尺寸。
 func encodeImage(img image.Image, spec Spec) ([]byte, error) {
 	switch spec.Format {
 	case "png":
@@ -246,6 +252,7 @@ func sourceExifOrientation(source []byte) (int, bool) {
 	return webpExifOrientation(source)
 }
 
+// jpegExifOrientation 扫 APP1 段取 TIFF Orientation。不是 JPEG 或没有 EXIF 返回 (0, false)。
 func jpegExifOrientation(source []byte) (int, bool) {
 	if len(source) < 4 || source[0] != 0xff || source[1] != 0xd8 {
 		return 0, false
@@ -284,6 +291,7 @@ func jpegExifOrientation(source []byte) (int, bool) {
 	return 0, false
 }
 
+// pngExifOrientation 读 eXIf chunk。签名不对或没有该 chunk 返回 (0, false)。
 func pngExifOrientation(source []byte) (int, bool) {
 	sig := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
 	if !bytes.HasPrefix(source, sig) {
@@ -309,6 +317,7 @@ func pngExifOrientation(source []byte) (int, bool) {
 	return 0, false
 }
 
+// webpExifOrientation 读 RIFF EXIF chunk。奇数 chunk 后跳过 pad 字节。
 func webpExifOrientation(source []byte) (int, bool) {
 	if len(source) < 12 || string(source[:4]) != "RIFF" || string(source[8:12]) != "WEBP" {
 		return 0, false
@@ -333,6 +342,7 @@ func webpExifOrientation(source []byte) (int, bool) {
 	return 0, false
 }
 
+// tiffOrientation 解析 EXIF TIFF IFD 的 Orientation(0x0112)。字节序非法或找不到标签返回 (0, false)。
 func tiffOrientation(data []byte) (int, bool) {
 	const prefix = "Exif\x00\x00"
 	tiff := data

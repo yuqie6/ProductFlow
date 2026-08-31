@@ -85,6 +85,7 @@ func AssemblePromptRequest(
 	return req, nil
 }
 
+// filteredBriefConfig 只保留 brief 可见字段给 prompt 组装。全空返回 nil，不要写成 {}。
 func filteredBriefConfig(config map[string]any) map[string]any {
 	out := map[string]any{}
 	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
@@ -122,6 +123,8 @@ func seedProductSharePercent(imageTypeKey string) int {
 	return 70
 }
 
+// seedPromptFromRuntime 在 seed cook 时从 facts/brief/图种拼一份初始 prompt 对象。
+// 已有 stored 非空字段不覆盖。失败返回 Validation。不要拿它改 live config——那是 adopt 的事。
 func seedPromptFromRuntime(
 	title, imageTypeKey string,
 	facts, briefs []map[string]any,
@@ -228,6 +231,7 @@ func seedPromptFromRuntime(
 	}, nil
 }
 
+// ApplyTextPolicyToPrompt 在 text_policy=none 且无人工文案时清空 text 与 copy_regions。
 func ApplyTextPolicyToPrompt(payload map[string]any, textPolicy string, keepAuthored bool) map[string]any {
 	out := cloneMap(payload)
 	if textPolicy != "none" || keepAuthored {
@@ -285,6 +289,8 @@ func isInlineVisualOverlay(visual map[string]any) bool {
 	return true
 }
 
+// visualExceptionsFromOverlay 把工作流内联 overlay 编成 Python visual_exceptions。空 overlay 返回 nil；
+// 有 overlay 但抽不出有效字段返回 Validation。不要把它写成完整 VisualSystemDraft。
 func visualExceptionsFromOverlay(overlay map[string]any) ([]map[string]any, error) {
 	if len(overlay) == 0 {
 		return nil, nil
@@ -360,6 +366,7 @@ func overlayColorRole(raw string, index int, used map[string]struct{}) string {
 	return candidate
 }
 
+// briefFields 从多份 brief 抽出 goal / design_goals / required_copy，供 seedPromptFromRuntime。
 func briefFields(briefs []map[string]any) (string, []string, []string) {
 	var goals, copyItems, prohibitions []string
 	for _, brief := range briefs {
@@ -408,6 +415,7 @@ func asString(value any) string {
 	return s
 }
 
+// stringList 把 []string / []any 收成去空白列表。其他类型当空，不要 panic。
 func stringList(value any) []string {
 	switch t := value.(type) {
 	case []string:

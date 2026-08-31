@@ -84,6 +84,7 @@ func pythonISOFormat(t time.Time) string {
 	return fmt.Sprintf("%s.%06d+00:00", t.Format("2006-01-02T15:04:05"), usec)
 }
 
+// parseProvenance 校验闭集字段与 schema_version=1。未知键或非法尺寸/摘要返回 error，供哈希前拦截。
 func parseProvenance(raw map[string]any) (Provenance, error) {
 	allowed := map[string]struct{}{
 		"schema_version": {}, "source_type": {}, "source_id": {}, "sha256": {},
@@ -219,6 +220,7 @@ func collectRequestHash(productID string, libraryIDs []string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// uploadRequestHash 按文件内容 sha256 排序后做幂等摘要，与上传顺序无关。
 func uploadRequestHash(folderID *string, items []UploadItem) (string, error) {
 	files := make([]any, 0, len(items))
 	for _, item := range items {

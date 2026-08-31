@@ -15,16 +15,15 @@ import (
 
 const maxRunEventPageSize = 250
 
-// GraphRunEventResponse is the durable UI event for one graph run. The
-// payload is deliberately opaque to the event store; node-specific details
-// stay behind the graph event vocabulary.
+// GraphRunEventResponse 是 GraphRun 的持久化 UI 事件。payload 对事件表不透明。
+// kind 必须是 graphRunEventKinds 闭集。sequence 单调递增，SSE 用 after=sequence 翻页。
 type GraphRunEventResponse struct {
-	SchemaVersion int            `json:"schema_version"`
+	SchemaVersion int            `json:"schema_version"` // 事件合同版本
 	RunID         string         `json:"run_id"`
-	Sequence      int            `json:"sequence"`
-	Kind          string         `json:"kind"`
+	Sequence      int            `json:"sequence"` // 单调递增；SSE 用 after=sequence 翻页
+	Kind          string         `json:"kind"`     // graphRunEventKinds 闭集
 	NodeRunID     *string        `json:"node_run_id,omitempty"`
-	Payload       map[string]any `json:"payload"`
+	Payload       map[string]any `json:"payload"` // 对事件表不透明
 	CreatedAt     time.Time      `json:"created_at"`
 }
 
@@ -43,6 +42,8 @@ var graphRunEventKinds = map[string]struct{}{
 	"node.claimed": {}, "node.started": {}, "node.progress": {}, "node.succeeded": {}, "node.failed": {}, "node.skipped": {}, "node.cancelled": {},
 }
 
+// appendGraphRunEvent 追加 workflow_graph_run_events 并 notify ChannelRun。
+// 须先 FOR UPDATE 住 run。未知 kind 返回普通 error（不是 apperr）。sequence 取 MAX+1。
 func appendGraphRunEvent(ctx context.Context, tx *gorm.DB, runID, kind string, nodeRunID *string, payload map[string]any) error {
 	if _, ok := graphRunEventKinds[kind]; !ok {
 		return errors.New("unsupported graph run event kind")
@@ -73,6 +74,7 @@ func appendGraphRunEvent(ctx context.Context, tx *gorm.DB, runID, kind string, n
 	return notify.Publish(ctx, tx, notify.ChannelRun, runID)
 }
 
+// listGraphRunEvents 按 sequence 翻页。after<0 或 limit 越界返回普通 error。给 SSE 用，不是 HTTP 校验。
 func listGraphRunEvents(ctx context.Context, tx *gorm.DB, runID string, after, limit int) ([]graphRunEventRow, error) {
 	if after < 0 {
 		return nil, errors.New("graph run event cursor must not be negative")

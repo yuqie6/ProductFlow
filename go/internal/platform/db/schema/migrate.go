@@ -11,11 +11,10 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// Apply creates or upgrades the current ProductFlow schema.
-// Missing tables and columns are created from GORM models. ExtraDDL owns
-// PostgreSQL enums, CHECKs, unique constraints, foreign keys, and indexes.
-// AutoMigrate is not used: it rewrites unique index names on an existing head.
-// This function does not drop retired tables or columns.
+// Apply 按当前模型把头库建齐或补列。先 EnumDDL，再 CreateTable/AddColumn，最后 ExtraDDL。
+// 禁止 AutoMigrate：它会改已有库上的唯一索引名。本函数不删退役表或列。
+//
+// EnumDDL、建表、补列或 ExtraDDL 失败会 wrap 返回。并发 migrate 时表/列已存在（42P07/42701）视为成功。
 func Apply(gdb *gorm.DB) error {
 	db := gdb.Session(&gorm.Session{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -33,6 +32,7 @@ func Apply(gdb *gorm.DB) error {
 	return nil
 }
 
+// createMissing 缺表则 CreateTable，已有表只 AddColumn。已存在错误（42P07/42701）当成功，方便并发 migrate。
 func createMissing(db *gorm.DB) error {
 	migrator := db.Migrator()
 	for _, model := range AllModels() {

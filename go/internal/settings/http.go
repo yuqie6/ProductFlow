@@ -13,17 +13,24 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 )
 
+// LockState 是设置页锁状态的 HTTP 投影，不是管理员 session。
+// Unlocked 表示 cookie 里 settings_unlocked=true；Configured 表示进程配了 SETTINGS_ACCESS_TOKEN。
+// 管理员登录成功不等于设置页已解锁；写配置必须先 POST /unlock。
 type LockState struct {
-	Unlocked   bool `json:"unlocked"`
-	Configured bool `json:"configured"`
+	Unlocked   bool `json:"unlocked"`   // cookie 里 settings_unlocked=true
+	Configured bool `json:"configured"` // 进程配了 SETTINGS_ACCESS_TOKEN
 }
 
+// HTTP 是设置页与生成队列的 Gin 处理器集合。
+// 设置路由前缀 /api/settings；生成队列单独挂 GET /api/generation-queue。
+// 读 lock-state/unlock/runtime 不要求设置页解锁；其余读写要 requireUnlocked。
 type HTTP struct {
-	Store               RuntimeReader
-	DB                  *Store
-	SettingsAccessToken string
+	Store               RuntimeReader // RequireAdmin 读 AdminAccessRequired
+	DB                  *Store        // 设置读写；导出/供应商档案走这里
+	SettingsAccessToken string        // 与 POST /unlock 比较；空则 Configured=false
 }
 
+// Register 挂上 /api/settings；写操作要求设置页已解锁。
 func (h HTTP) Register(engine *gin.Engine) {
 	group := engine.Group("/api/settings")
 	group.Use(httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
@@ -56,6 +63,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	}), h.generationQueue)
 }
 
+// requireUnlocked 是设置写路由中间件：未配令牌 503；cookie 未解锁 403。
 func (h HTTP) requireUnlocked(c *gin.Context) {
 	if strings.TrimSpace(h.SettingsAccessToken) == "" {
 		httpx.AbortDetail(c, http.StatusServiceUnavailable, "设置解锁令牌未配置，请联系管理员")
@@ -67,6 +75,7 @@ func (h HTTP) requireUnlocked(c *gin.Context) {
 	}
 }
 
+// lockState 是 GET /api/settings/lock-state：200 返回 LockState。
 func (h HTTP) lockState(c *gin.Context) {
 	configured := strings.TrimSpace(h.SettingsAccessToken) != ""
 	c.JSON(http.StatusOK, LockState{
@@ -75,6 +84,7 @@ func (h HTTP) lockState(c *gin.Context) {
 	})
 }
 
+// unlock 是 POST /api/settings/unlock：200 返回已解锁 LockState。
 func (h HTTP) unlock(c *gin.Context) {
 	expected := strings.TrimSpace(h.SettingsAccessToken)
 	if expected == "" {
@@ -100,6 +110,7 @@ func (h HTTP) unlock(c *gin.Context) {
 	c.JSON(http.StatusOK, LockState{Unlocked: true, Configured: true})
 }
 
+// runtime 是 GET /api/settings/runtime：200 返回 Runtime 投影。
 func (h HTTP) runtime(c *gin.Context) {
 	runtime, err := h.Store.Runtime(c.Request.Context())
 	if err != nil {
@@ -109,6 +120,7 @@ func (h HTTP) runtime(c *gin.Context) {
 	c.JSON(http.StatusOK, runtime)
 }
 
+// getConfig 是 GET /api/settings：200 返回 ConfigResponse。
 func (h HTTP) getConfig(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -122,6 +134,7 @@ func (h HTTP) getConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, view)
 }
 
+// patchConfig 是 PATCH /api/settings：200 返回更新后的 ConfigResponse。
 func (h HTTP) patchConfig(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -146,6 +159,7 @@ func (h HTTP) patchConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, view)
 }
 
+// providerConfig 是 GET /api/settings/provider-config：200 返回 ProviderConfigResponse。
 func (h HTTP) providerConfig(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -159,6 +173,7 @@ func (h HTTP) providerConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, view)
 }
 
+// createProfile 是 POST /api/settings/provider-profiles：200 返回 ProviderProfile。
 func (h HTTP) createProfile(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -193,6 +208,7 @@ func (h HTTP) createProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+// updateProfile 是 PATCH /api/settings/provider-profiles/:profile_id：200 返回 ProviderProfile。
 func (h HTTP) updateProfile(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -218,6 +234,7 @@ func (h HTTP) updateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+// archiveProfile 是 DELETE /api/settings/provider-profiles/:profile_id：200 返回已归档 ProviderProfile。
 func (h HTTP) archiveProfile(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -231,6 +248,7 @@ func (h HTTP) archiveProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+// updateBinding 是 PATCH /api/settings/provider-bindings/:purpose：200 返回 ProviderBindingView。
 func (h HTTP) updateBinding(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -260,6 +278,7 @@ func (h HTTP) updateBinding(c *gin.Context) {
 	c.JSON(http.StatusOK, binding)
 }
 
+// export 是 GET /api/settings/export：200 返回 SettingsExport。
 func (h HTTP) export(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -273,6 +292,7 @@ func (h HTTP) export(c *gin.Context) {
 	c.JSON(http.StatusOK, doc)
 }
 
+// importPreview 是 POST /api/settings/import/preview：200 返回 ImportPreview。
 func (h HTTP) importPreview(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -291,6 +311,7 @@ func (h HTTP) importPreview(c *gin.Context) {
 	c.JSON(http.StatusOK, preview)
 }
 
+// importCommit 是 POST /api/settings/import：200 返回 preview、config、provider_config。
 func (h HTTP) importCommit(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -325,6 +346,7 @@ func (h HTTP) importCommit(c *gin.Context) {
 	})
 }
 
+// generationQueue 是 GET /api/generation-queue：200 返回 GenerationQueueOverview。
 func (h HTTP) generationQueue(c *gin.Context) {
 	if h.DB == nil {
 		httpx.AbortDetail(c, http.StatusInternalServerError, "服务器内部错误")
@@ -338,6 +360,7 @@ func (h HTTP) generationQueue(c *gin.Context) {
 	c.JSON(http.StatusOK, view)
 }
 
+// bindJSONStrict 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」。
 func bindJSONStrict(c *gin.Context, dest any) error {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -354,6 +377,7 @@ func bindJSONStrict(c *gin.Context, dest any) error {
 	return nil
 }
 
+// readObject 把请求体解成 JSON object，供导入配置。未知键或非 object 返回「配置文件格式不正确」，文案与普通 bind 不同。
 func readObject(c *gin.Context) (map[string]any, error) {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {

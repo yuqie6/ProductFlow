@@ -1,3 +1,7 @@
+// Command productflow-dispatcher 把 PENDING 的 async_dispatches 标 SENT 并入 asynq，再跑各域未完成作业恢复。
+//
+// HTTP/API 禁止直接 enqueue。本进程是唯一把 PENDING→SENT 的地方。空闲轮询是 Debug 日志，不要改成 Info 刷屏。
+// 恢复会调 graph/agent/imagesession/localedit/delivery 的 RecoverUnfinished；改恢复顺序要先想清楚锁与幂等键。
 package main
 
 import (

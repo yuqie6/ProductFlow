@@ -12,47 +12,56 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
+// Preview 是 Apply 前算出的内部计划摘要，HTTP 用 PreviewView。
+// Mode 为 create 或 merge，与 ApplicationResult 相同。切片在 serialize 时 nil→[]。
 type Preview struct {
-	Mode              string
+	Mode              string // create | merge，与 ApplicationResult 相同
 	RecipeID          string
-	RecipeVersion     int
-	BaseGraphRevision int
-	PreviewDigest     string
-	Nodes             []PreviewNode
-	Edges             []PreviewEdge
-	Groups            []PreviewGroup
-	UpdatedNodes      []PreviewUpdatedNode
-	RequiredBindings  []string
+	RecipeVersion     int                  // 预览所用配方版本
+	BaseGraphRevision int                  // 目标 live 图当前 revision；空画布为 0
+	PreviewDigest     string               // Apply 必须原样带回
+	Nodes             []PreviewNode        // 将新增的节点
+	Edges             []PreviewEdge        // 将新增的边
+	Groups            []PreviewGroup       // 将新增的一层视觉分组
+	UpdatedNodes      []PreviewUpdatedNode // create 模式应为空
+	RequiredBindings  []string             // 如 product_identity
 }
 
+// PreviewNode 是预览中将新增的节点（HTTP 字段），还没有 live id。
 type PreviewNode struct {
-	Key       string         `json:"key"`
-	NodeType  graph.NodeType `json:"node_type"`
+	Key       string         `json:"key"`       // 预览里的临时键，还不是 live id
+	NodeType  graph.NodeType `json:"node_type"` // 与 PayloadNode 相同闭集
 	Title     string         `json:"title"`
-	PositionX int            `json:"position_x"`
-	PositionY int            `json:"position_y"`
+	PositionX int            `json:"position_x"` // 预览画布坐标
+	PositionY int            `json:"position_y"` // 预览画布坐标
 }
 
+// PreviewEdge 是预览里将新增的边，HTTP 端点仍用配方 Key，还不是 live 图 node id。
+// Apply 成功后才会变成 workflow_graph_edges；不要拿这些 Key 去调 Graph Command。
 type PreviewEdge struct {
-	Key           string `json:"key"`
-	SourceNodeKey string `json:"source_node_key"`
-	TargetNodeKey string `json:"target_node_key"`
-	Role          string `json:"role"`
-	DataType      string `json:"data_type"`
-	Order         int    `json:"order"`
+	Key           string `json:"key"`             // 预览临时键，还不是 live 边 id
+	SourceNodeKey string `json:"source_node_key"` // 仍是配方/预览 Key
+	TargetNodeKey string `json:"target_node_key"` // 仍是配方/预览 Key
+	Role          string `json:"role"`            // facts | reference | brief | visual_guidance | prompt
+	DataType      string `json:"data_type"`       // product_facts | image_asset | creative_brief | visual_system | prompt
+	Order         int    `json:"order"`           // 同 role 多条边的顺序
 }
 
+// PreviewGroup 是预览里将新增的一层视觉分组，MemberKeys 仍是配方 Key。
+// 分组没有端口、运行、取消或嵌套；不要把它当成子图画布。
 type PreviewGroup struct {
-	Key        string   `json:"key"`
+	Key        string   `json:"key"` // 预览临时键，还不是 live 分组 id
 	Title      string   `json:"title"`
-	MemberKeys []string `json:"member_keys"`
+	MemberKeys []string `json:"member_keys"` // 仍是配方 Key
 }
 
+// PreviewUpdatedNode 是 merge 时将改写 config 的已有 live 节点。
+// ID 是目标图画布节点 id。create 模式下列表应为空。
 type PreviewUpdatedNode struct {
-	ID                string         `json:"id"`
-	NodeType          graph.NodeType `json:"node_type"`
+	ID                string         `json:"id"`        // 目标图画布节点 id
+	NodeType          graph.NodeType `json:"node_type"` // 与 live 节点相同闭集
 	Title             string         `json:"title"`
-	ChangedConfigKeys []string       `json:"changed_config_keys"`
+	ChangedConfigKeys []string       `json:"changed_config_keys"` // merge 将改写的 config 键
 }
 
 type applyPlan struct {
@@ -71,6 +80,7 @@ type applyPlan struct {
 	RequiredBindings  []string
 }
 
+// preview 把内部 plan 收成 HTTP 预览。nil 切片写成空切片，避免前端对 null 再判一次。
 func (p applyPlan) preview() Preview {
 	bindings := p.RequiredBindings
 	if bindings == nil {
@@ -131,6 +141,8 @@ func mergeOffset(applied graph.AppliedGraph) (int, int) {
 	return maxX + 280, 0
 }
 
+// buildChangeSet 把配方节点/边编成 Graph Command。临时 ClientRef 用随机 token，避免和已有 live 图 id 撞车。
+// product_source 节点会改写成目标商品与当前 facts 版本，配方里绝不能带着源商品 id。
 func buildChangeSet(
 	payload Payload,
 	baseRevision int,
@@ -204,6 +216,8 @@ func buildChangeSet(
 	}, nil
 }
 
+// attachSharedInputs 把 fragment 里缺的共享输入接到目标 live 图已有节点上。对不上的绑定记进 map 给预览展示。
+// 完整配方不要走这里：它必须自带全部输入，merge 会冲突。
 func attachSharedInputs(existing graph.AppliedGraph, changeSet graph.ChangeSet) (graph.ChangeSet, map[string][]string, error) {
 	promptRefs := []string{}
 	imageRefs := []string{}
@@ -350,6 +364,8 @@ func configString(config map[string]any, key string) string {
 	return s
 }
 
+// additionSemantic 算出预览 digest 用的语义快照：节点/边/分组的稳定形状，不含临时 ClientRef。
+// product_source 同样改写成目标商品，否则换商品预览会撞上同一 digest。
 func additionSemantic(
 	payload Payload,
 	targetProductID string,
@@ -417,6 +433,7 @@ func additionSemantic(
 	}, nil
 }
 
+// previewAdditions 对比应用后与现有图，只列出将新增的节点/边/分组，给预览 UI 高亮。
 func previewAdditions(after, existing graph.AppliedGraph) ([]PreviewNode, []PreviewEdge, []PreviewGroup) {
 	existingNodes := map[string]struct{}{}
 	for _, node := range existing.Nodes {
@@ -535,6 +552,8 @@ func assertRequiredBindings(applied graph.AppliedGraph, required []string, affec
 	return nil
 }
 
+// previewDigest 对「目标+配方版本+图修订+语义」做 canonjson 哈希。确认时必须带回同一 digest，
+// 否则中间有人改了 live 图或配方，Apply 会 409。
 func previewDigest(
 	productID, recipeID string,
 	recipeVersion int,
@@ -566,6 +585,8 @@ func previewDigest(
 	})
 }
 
+// planPayload 决定 create 还是 merge：目标没有 live 图走 create；完整配方遇上已有图返回冲突；
+// fragment 可 merge，expectedGraphRevision 对不上则 409。
 func planPayload(
 	target productTarget,
 	live *graph.Identity,

@@ -14,20 +14,29 @@ import (
 )
 
 const (
-	ChannelControl      = "productflow_control"
-	ChannelRun          = "productflow_run"
-	ChannelTurn         = "productflow_turn"
+	// ChannelControl 是控制面唤醒通道。
+	ChannelControl = "productflow_control"
+	// ChannelRun 是工作流 Run 唤醒通道。
+	ChannelRun = "productflow_run"
+	// ChannelTurn 是 Agent Turn 唤醒通道。
+	ChannelTurn = "productflow_turn"
+	// ChannelImageSession 是连续生图会话唤醒通道。
 	ChannelImageSession = "productflow_image_session"
 	maxPayload          = 7900
 )
 
+// ErrNoPool 表示 Listen 收到了 nil pgx 池。调用方应改走轮询，不要 panic。
 var ErrNoPool = errors.New("notify: pgx pool is nil")
 
+// Notification 是一条 LISTEN 收到的消息，不是 HTTP 体。
+// Channel 必为本包闭集常量；Payload 在图/会话 SSE 里通常是聚合 id。
 type Notification struct {
-	Channel string
-	Payload string
+	Channel string // 必须是本包闭集常量
+	Payload string // 通常是聚合 id；超长会按 UTF-8 截断
 }
 
+// ValidChannel 报告 name 是否为本包闭集（control/run/turn/image_session）。
+// 调用时机：Publish/Listen 入参校验。拼 SQL 标识符前还要过 safeIdent，不要只信本函数。
 func ValidChannel(name string) bool {
 	switch name {
 	case ChannelControl, ChannelRun, ChannelTurn, ChannelImageSession:
@@ -37,6 +46,8 @@ func ValidChannel(name string) bool {
 	}
 }
 
+// Publish 在同一 GORM 事务里 SELECT pg_notify；db 为 nil 时静默成功。
+// payload 超过 maxPayload 会按 UTF-8 边界截断。非法 channel 或非 UTF-8 返回 error。
 func Publish(ctx context.Context, db *gorm.DB, channel, payload string) error {
 	if db == nil {
 		return nil

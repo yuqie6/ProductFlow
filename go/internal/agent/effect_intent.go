@@ -20,6 +20,9 @@ type toolEffectIntentV1 struct {
 	RequestPayload json.RawMessage `json:"request_payload"`
 }
 
+// parseToolEffectIntent 解析 checkpoint 里的 tool_effect_intent schema v1：工具名、tool_call_id、幂等键、recovery_policy、request_payload。
+//
+// AppendCheckpoint 与崩溃恢复调用。未知字段、错误 schema、空身份、非法 recovery_policy 返回 Validation。payload 禁止密钥与图片 bytes（walkForbiddenIntentValue）。
 func parseToolEffectIntent(payload json.RawMessage) (toolEffectIntentV1, error) {
 	if len(payload) > maxCheckpointPayload {
 		return toolEffectIntentV1{}, apperr.Validation("Agent checkpoint payload 超过大小限制")
@@ -70,6 +73,7 @@ func rejectForbiddenIntentValue(raw json.RawMessage) error {
 	return walkForbiddenIntentValue(value)
 }
 
+// walkForbiddenIntentValue 拒绝把 authorization、apiKey、image bytes、原始 HTTP 响应等写入 intent。checkpoint 不是密钥保险柜。
 func walkForbiddenIntentValue(value any) error {
 	switch typed := value.(type) {
 	case nil, bool, float64:

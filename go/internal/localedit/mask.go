@@ -12,6 +12,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
+// parseDraft 收草稿字段。operation 必须在闭集；geometry JSON 非法返回 400。不在这里读 mask 字节。
 func parseDraft(operation, instruction, sourceText, replacementText, geometryJSON, refsJSON string) (Draft, error) {
 	if strings.TrimSpace(geometryJSON) == "" {
 		return Draft{}, apperr.Validation("局部编辑 mask_geometry JSON 不能为空")
@@ -63,6 +64,7 @@ func parseDraft(operation, instruction, sourceText, replacementText, geometryJSO
 	}, nil
 }
 
+// parseGeometry 解析视口到源图的仿射。缺字段或非有限数字返回 400，避免 mask 对不齐却静默提交。
 func parseGeometry(raw string) (MaskGeometry, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
@@ -113,6 +115,7 @@ func trimPtr(s string) *string {
 	return &t
 }
 
+// normalizeMask 按 geometry 把画布 mask 对齐到源图像素并重编码 PNG。尺寸对不上返回 400。
 func normalizeMask(sourceW, sourceH int, maskPNG []byte, geo MaskGeometry) ([]byte, error) {
 	if geo.SourceWidth != sourceW || geo.SourceHeight != sourceH {
 		return nil, apperr.Validation("mask geometry 的 source 尺寸必须匹配已核验的源图尺寸")
@@ -156,6 +159,7 @@ func normalizeMask(sourceW, sourceH int, maskPNG []byte, geo MaskGeometry) ([]by
 	return buf.Bytes(), nil
 }
 
+// providerInstruction 拼给供应商的英文指令。replace_text 把原文/替换文拼进去；空 instruction 用 operation 默认句。
 func providerInstruction(d Draft) string {
 	if d.Operation == opReplaceText {
 		src, rep := "", ""

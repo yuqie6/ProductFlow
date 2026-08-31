@@ -23,9 +23,10 @@ func ParseRedis(redisURL string) (asynq.RedisConnOpt, error) {
 	return opt, nil
 }
 
+// TaskPayload 是 asynq 信封 JSON：dispatch_id 与 aggregate_id。
 type TaskPayload struct {
-	DispatchID  string `json:"dispatch_id"`
-	AggregateID string `json:"aggregate_id"`
+	DispatchID  string `json:"dispatch_id"`  // async_dispatches.id
+	AggregateID string `json:"aggregate_id"` // 业务聚合主键
 }
 
 // NewTask 构造 HTTP 默认信封。MaxRetry=0，broker 重试不是业务状态机。
@@ -37,6 +38,7 @@ func NewTask(dispatchID, aggregateID string) (*asynq.Task, error) {
 	return asynq.NewTask(TaskRunAsyncDispatch, body, asynq.MaxRetry(0), asynq.Timeout(TaskTimeout)), nil
 }
 
+// EnqueueWith 返回把已 SENT 信封交给 asynq 的 [EnqueueFunc]。Enqueue 失败不得在此改 PostgreSQL 行。
 func EnqueueWith(client *asynq.Client) EnqueueFunc {
 	return func(dispatchID, aggregateID string) error {
 		task, err := NewTask(dispatchID, aggregateID)

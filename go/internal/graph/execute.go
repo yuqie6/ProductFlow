@@ -23,17 +23,28 @@ const (
 	graphRunAdvisoryLockNamespace = 847261
 )
 
+// graphRunLocks 是进程内互斥：同一 runID 只允许一个 ExecuteRun 持锁，另一条返回 queue.ErrBusy。
 var graphRunLocks sync.Map
 
+// Executor 是 GraphRun worker。本包不得 import product；图片写入与交付排队走 [Dependencies]。
 type Executor struct {
-	DB             *gorm.DB
-	Deps           Dependencies
-	Log            *zap.Logger
+	DB   *gorm.DB     // 命令事务与 advisory lock 入口
+	Deps Dependencies // Prompt/Image 为 nil 时用 Mock；Delivery 排队失败只记日志，不失败 cook
+	Log  *zap.Logger  // nil 时用 Nop
+	// AfterRunStatus 在 ExecuteRun 到达终态（成功、failed、unknown）后回调，供 Agent 同步 Task。
+	// nil 跳过。失败被吞掉，不回滚已写入的 run 状态。
 	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
-	Products       ProductGuard
+	// Products 在 ExecuteRun 开头挂到 ctx，供 compile/cook 锁商品、读 facts 与绑定图。
+	// nil 时需要守卫的路径返回 Internal。
+	Products ProductGuard
 }
 
-// ExecuteRun 是 worker 入口：同一 run 只允许一个 worker；无法证明的 provider 结果标 unknown。
+// ExecuteRun 是 asynq worker 入口：同一 run 只允许一个 worker。
+//
+// 先抢进程内互斥，再抢 PostgreSQL advisory lock；任一把未拿到返回 queue.ErrBusy，让 asynq 稍后再投递。
+// 找不到 run 视为已消费，返回 nil。无法证明的 provider 结果标 unknown，返回 nil，不把 run 标 failed、不自动重试。
+// 已证明的节点失败会把 run 标 failed 后仍返回 nil，让 worker 消费任务。
+// 不要在这里打 broker，也不要把 unknown 改成 failed。副作用见 executeLoop / claim / persist。
 func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 	ctx = WithProductGuard(ctx, e.Products)
 	e.logger().Info("graph run", zap.String("workflow_run_id", runID))
@@ -101,6 +112,11 @@ func (e Executor) logger() *zap.Logger {
 	return zap.NewNop()
 }
 
+// executeLoop 是单次 GraphRun 的调度循环：从 snapshot 找上游 ready 的 queued 节点，claim 后并发 cook。
+// 只在 ExecuteRun 已持进程锁 + PG advisory lock 之后调用。循环里再 fail 被挡住的 queued、检查终态。
+// 容量不足返回 errWaitingCapacity 后短睡再试；真正抢不到锁才把 queue.ErrBusy 抛给 asynq。
+// unknown 不停止 claim（noteNodeOutcome 把它当成功）；已证明失败才 stopClaiming。
+// 不要在这里打 broker，也不要把 missing run 当错误——当作已消费返回 nil。
 func (e Executor) executeLoop(ctx context.Context, runID string) error {
 	const capacityWait = 250 * time.Millisecond
 	type nodeOutcome struct{ err error }
@@ -269,6 +285,9 @@ func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error
 	return run, err
 }
 
+// failBlockedQueuedNodes 把上游已 failed/unknown/cancelled 的 queued 处理节点级联标 failed。
+// 调用方须已在事务里；只改 status=queued 的行，写 node.failed 事件。不是 unknown：上游失败已证明。
+// 循环直到没有新的 blocked，避免漏标间接下游。RowsAffected!=1 表示并发抢先，跳过即可。
 func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
 	now := time.Now().UTC()
 	for {
@@ -306,6 +325,9 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 	}
 }
 
+// processingUpstreamState 只看处理节点入边：succeeded/skipped 视为就绪，queued/running 为 wait，
+// failed/unknown/cancelled 为 blocked。非处理源（product_source / image_asset）不挡下游。
+// 返回 ready / wait / blocked。改它会同时影响 claim 与 failBlockedQueuedNodes。
 func processingUpstreamState(graph AppliedGraph, nodeRuns []graphNodeRunRow, nodeRun graphNodeRunRow) string {
 	if nodeRun.NodeID == nil {
 		return "ready"
@@ -344,6 +366,7 @@ func processingUpstreamState(graph AppliedGraph, nodeRuns []graphNodeRunRow, nod
 	return "ready"
 }
 
+// tryProcessLock 抢进程内互斥。未抢到时调用方应返回 queue.ErrBusy，而不是失败 run。
 func tryProcessLock(runID string) (func(), bool) {
 	mu := &sync.Mutex{}
 	actual, _ := graphRunLocks.LoadOrStore(runID, mu)
@@ -400,6 +423,8 @@ func releaseAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) er
 	return err
 }
 
+// finishOrLater 在没有可 claim 节点且 inflight=0 时收口：再 fail blocked，再 completeGraphRunIfNodesTerminal。
+// run 已消失或不再 running 返回 nil。不要在这里标 unknown——那是 failClaimedNode / failGraphRun 的职责。
 func (e Executor) finishOrLater(ctx context.Context, runID string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		run, err := loadGraphRunByID(ctx, pgxTx, runID)

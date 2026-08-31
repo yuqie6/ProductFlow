@@ -13,6 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// Get 按 id 读取全局素材身份（内部 Asset，不是 AssetResponse）。
+// 调用时机：HTTP GET/download/archive/restore，以及收录前核验。
+// 找不到返回 NotFound「素材库资产不存在」。不读磁盘 bytes；不要当工作流子图库关联用。
 func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 	var asset Asset
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -23,6 +26,8 @@ func (s Service) Get(ctx context.Context, assetID string) (Asset, error) {
 	return asset, err
 }
 
+// Bootstrap 读图库首页计数、一层文件夹与标签，无写入。
+// 调用时机：HTTP GET /bootstrap。文件夹 Count 只含未归档素材。
 func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var out Bootstrap
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -81,6 +86,9 @@ func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	return out, err
 }
 
+// List 按 ListFilter 分页列出全局素材 HTTP 投影。
+// 调用时机：HTTP GET /api/media-library。Limit 默认 20、上限 100。
+// 游标与当前筛选签名不一致返回 Validation，禁止跨筛选续页。
 func (s Service) List(ctx context.Context, in ListFilter) (ListResponse, error) {
 	if in.Limit < 1 {
 		in.Limit = 20
@@ -172,6 +180,7 @@ func encodeCursor(createdAt time.Time, assetID, signature string, asOf time.Time
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(raw), "="), nil
 }
 
+// decodeCursor 解开 v2 游标。sort/filter 与当前列表签名不一致时一律 400，避免跨筛选续页。
 func decodeCursor(cursor, signature string) (time.Time, string, time.Time, error) {
 	invalid := apperr.Validation("素材库分页游标无效或与当前筛选条件不匹配")
 	padded := cursor + strings.Repeat("=", (4-len(cursor)%4)%4)

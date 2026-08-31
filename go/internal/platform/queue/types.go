@@ -1,3 +1,9 @@
+// Package queue 负责 async_dispatches：HTTP 不 enqueue broker，只写业务行与 PENDING；dispatcher 标 SENT 再入队；worker MaxRetry=0。
+//
+// 职责：把「已持久化的业务作业」交给 asynq。SENT 只表示信封已给 broker，不等于 GraphRun 成功。
+// 调用时机：命令路径 Stage/StageForActor；dispatcher RunDispatcherOnce；worker Consume。
+// 副作用：写 async_dispatches；Consume 成功标 CONSUMED。ErrBusy 不得标 CONSUMED（别人正在跑）。
+// ErrLater 回到 PENDING，不进死信。改 actor 名要同时改 worker 路由，否则任务会丢。
 package queue
 
 import (
@@ -15,27 +21,28 @@ var ErrLater = errors.New("queue: retry later")
 // Dispatch 是 async_dispatches 行。SENT 只表示已交给 broker，不等于业务完成。
 type Dispatch struct {
 	ID             string
-	DeliveryKey    string
-	ActorName      string
+	DeliveryKey    string // 幂等键，格式 actorName:aggregateID
+	ActorName      string // worker 路由名；改名必须同步路由
 	AggregateID    string
-	PayloadJSON    []byte
-	Status         string
+	PayloadJSON    []byte // 信封负载
+	Status         string // pending | sent | consumed | dead
 	AvailableAt    time.Time
-	LeaseToken     *string
+	LeaseToken     *string // dispatcher/worker 围栏；错配不得 CONSUMED
 	LeaseExpiresAt *time.Time
-	Attempts       int
-	LastError      *string
+	Attempts       int     // 对账失败累计，到上限标 dead
+	LastError      *string // 最近失败摘要
 	SentAt         *time.Time
 	ConsumedAt     *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
 
+// Summary 是 dispatcher 一轮的计数。Pending 是本轮 claim 数，Sent 是成功标 SENT 并入队的条数。
 type Summary struct {
-	Pending    int `json:"pending"`
-	Sent       int `json:"sent"`
-	Reconciled int `json:"reconciled"`
-	Dead       int `json:"dead"`
+	Pending    int `json:"pending"`    // 本轮 claim 数
+	Sent       int `json:"sent"`       // 成功标 SENT 并入队
+	Reconciled int `json:"reconciled"` // 本轮回收过期/陈旧 SENT
+	Dead       int `json:"dead"`       // 库中 dead 行数，不是本轮新增
 }
 
 // EnqueueFunc 把已 SENT 的信封交给 broker。失败不得在本函数里改 PostgreSQL 行。

@@ -32,6 +32,8 @@ type productSourceSnapshot struct {
 	LegacyFallback   bool
 }
 
+// loadProductSourceSnapshot 经 ProductGuard 读商品与 fact 版本，编进 snapshot。
+// Guard 返回 nil,nil 时这里变成 Validation（绑定了不存在的商品）。未写 source_product_id 绑本图商品。
 func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) (productSourceSnapshot, error) {
 	payload := config
 	if payload == nil {
@@ -116,6 +118,7 @@ func loadProductSourceSnapshot(ctx context.Context, tx *gorm.DB, graphProductID 
 	return out, nil
 }
 
+// mergeRuntimeFacts 用商品名称等身份字段补 facts 里没有的 key。已有同名 key（大小写不敏感）不覆盖。
 func mergeRuntimeFacts(facts []map[string]any, source *productSourceSnapshot) []map[string]any {
 	if source == nil || source.SourceProduct == nil {
 		return facts

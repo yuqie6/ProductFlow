@@ -143,6 +143,9 @@ func controlEventFromNotify(payload string) (controlEvent, bool) {
 	}, true
 }
 
+// StreamControlEvents 处理 GET /api/v2/agent-control/events：把 session/task/lease 控制面事件以 SSE 推给浏览器。
+//
+// 200 text/event-stream。通知只是唤醒，水位轮询保证不丢。不是 Turn journal（那条走 .../turns/:projection_id/events）。只读，不写 Goal、不延长 lease。
 func (s Service) StreamControlEvents(c *gin.Context) {
 	ctx := c.Request.Context()
 	notes, unsubscribeNotifications := subscribeAgentNotifications(s.Pool, notify.ChannelControl)
@@ -256,6 +259,7 @@ func writeControlHeartbeat(w io.Writer, flusher http.Flusher) error {
 	return nil
 }
 
+// writeControlEvent 把 session/task/lease 控制面事件写成 SSE。这不是对话 journal；浏览器对话仍从 agent_turn_events 游标回放。
 func writeControlEvent(w io.Writer, event controlEvent) error {
 	payload := map[string]string{}
 	if event.SessionID != "" {

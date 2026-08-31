@@ -1,3 +1,7 @@
+// Command productflow-worker 消费 asynq 信封 run_async_dispatch，执行已经 SENT 的 async_dispatches。
+//
+// 只处理 dispatcher 标过 SENT 的行。MaxRetry=0：业务失败不要靠 asynq 重试，unknown/Busy/Later 由队列语义处理。
+// actor 名与 queue.Actor* 必须一致，否则任务会被丢掉。不要在 worker 里再 Stage 同一作业造成双跑。
 package main
 
 import (

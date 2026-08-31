@@ -29,9 +29,11 @@ var processNotificationFanouts = struct {
 	byPool map[*pgxpool.Pool]*notificationFanout
 }{byPool: make(map[*pgxpool.Pool]*notificationFanout)}
 
-// subscribeAgentNotifications shares one PostgreSQL LISTEN connection across
-// all Turn and Control SSE clients using the same pool. Journal polling remains
-// the lossless fallback when a subscriber is slow or the listener stops.
+// subscribeAgentNotifications 让同一 pgxpool 上的 Turn / Control SSE 共用一条 PostgreSQL LISTEN。
+//
+// StreamTurnEvents 与控制面 SSE 调用。通知只是唤醒；journal 轮询才是不丢事件的回落。订阅者慢或 listen 退出时，调用方必须继续按游标读 agent_turn_events。
+//
+// pool 为 nil 返回空订阅。禁区：不要把 NOTIFY payload 当成 journal 内容；不要在 fanout 里写业务表。
 func subscribeAgentNotifications(pool *pgxpool.Pool, channel string) (<-chan notify.Notification, func()) {
 	if pool == nil {
 		return nil, func() {}
@@ -48,6 +50,9 @@ func subscribeAgentNotifications(pool *pgxpool.Pool, channel string) (<-chan not
 	return hub.subscribe(channel)
 }
 
+// subscribe 登记一个有界缓冲的订阅。hub 已关闭则立刻返回关闭的 channel。
+//
+// 最后一个订阅退出会 cancel listen。缓冲满时 publish 丢弃该条（唤醒丢失），调用方靠 journal 轮询补齐。
 func (h *notificationFanout) subscribe(channel string) (<-chan notify.Notification, func()) {
 	h.mu.Lock()
 	if h.closed {

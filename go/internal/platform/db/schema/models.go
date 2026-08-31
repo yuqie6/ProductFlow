@@ -1,10 +1,13 @@
+// Package schema 是 GORM 表模型与 ExtraDDL 的权威来源。productflow-migrate 只做 CreateTable/AddColumn，不用 AutoMigrate。
 package schema
 
-// Code generated from live PostgreSQL head (Alembic 20260829_0095). DO NOT hand-edit column tags;
-// regenerate from schema dump if the target head changes.
+// 从线上 PostgreSQL head（Alembic 20260829_0095）生成。禁止手改 column tag；
+// 目标 head 变了应从 schema dump 重新生成，不要在本文件补列或改类型。
 
 import "time"
 
+// AgentConversations 对应表 agent_conversations。
+// 保存商品工作流或全局 Dock 的 Agent 对话投影；Turn journal 挂在其上。
 type AgentConversations struct {
 	ID                     string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID              *string   `gorm:"column:product_id;type:varchar(36)"`
@@ -22,6 +25,8 @@ type AgentConversations struct {
 
 func (AgentConversations) TableName() string { return "agent_conversations" }
 
+// AgentPageContextSnapshots 对应表 agent_page_context_snapshots。
+// 记录 Turn 当时可见的有界页面上下文，路由切换只更新后续 Turn。
 type AgentPageContextSnapshots struct {
 	ID                   string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TaskID               *string   `gorm:"column:task_id;type:varchar(36)"`
@@ -42,6 +47,8 @@ type AgentPageContextSnapshots struct {
 
 func (AgentPageContextSnapshots) TableName() string { return "agent_page_context_snapshots" }
 
+// AgentSessions 对应表 agent_sessions。
+// 长期交流容器：画布会话属于一个商品，全局 Dock 会话不属于商品。
 type AgentSessions struct {
 	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	Title      string     `gorm:"column:title;type:varchar(160);not null"`
@@ -55,6 +62,8 @@ type AgentSessions struct {
 
 func (AgentSessions) TableName() string { return "agent_sessions" }
 
+// AgentTasks 对应表 agent_tasks。
+// 一条业务 Goal；harness_run_id 是持久化的运行身份，完成只能走用户 complete/cancel。
 type AgentTasks struct {
 	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID      string     `gorm:"column:session_id;type:varchar(36);not null"`
@@ -77,6 +86,8 @@ type AgentTasks struct {
 
 func (AgentTasks) TableName() string { return "agent_tasks" }
 
+// AgentToolMutations 对应表 agent_tool_mutations。
+// 按 idempotency_key 记录工具写入，避免重复副作用。
 type AgentToolMutations struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ConversationID      string    `gorm:"column:conversation_id;type:varchar(36);not null"`
@@ -95,6 +106,8 @@ type AgentToolMutations struct {
 
 func (AgentToolMutations) TableName() string { return "agent_tool_mutations" }
 
+// AgentTurnCheckpoints 对应表 agent_turn_checkpoints。
+// 执行围栏检查点；fencing_token 淘汰过期 worker。
 type AgentTurnCheckpoints struct {
 	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -109,6 +122,8 @@ type AgentTurnCheckpoints struct {
 
 func (AgentTurnCheckpoints) TableName() string { return "agent_turn_checkpoints" }
 
+// AgentModelInvocations 对应表 agent_model_invocations。
+// 一次模型调用的用量与状态记账。
 type AgentModelInvocations struct {
 	ID                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID   string     `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -136,6 +151,8 @@ type AgentModelInvocations struct {
 
 func (AgentModelInvocations) TableName() string { return "agent_model_invocations" }
 
+// AgentTurnEffectReconciliations 对应表 agent_turn_effect_reconciliations。
+// 工具副作用对账；无法证明的结果保持 unknown。
 type AgentTurnEffectReconciliations struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID    string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -152,6 +169,8 @@ type AgentTurnEffectReconciliations struct {
 
 func (AgentTurnEffectReconciliations) TableName() string { return "agent_turn_effect_reconciliations" }
 
+// AgentTurnEvents 对应表 agent_turn_events。
+// Turn journal 权威行；浏览器 SSE 只回放本表。
 type AgentTurnEvents struct {
 	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID string    `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -170,6 +189,8 @@ type AgentTurnEvents struct {
 
 func (AgentTurnEvents) TableName() string { return "agent_turn_events" }
 
+// AgentTurnExecutions 对应表 agent_turn_executions。
+// 同一 Turn 的执行 lease 与 phase；过期恢复标 unknown。
 type AgentTurnExecutions struct {
 	ID                     string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	TurnProjectionID       string     `gorm:"column:turn_projection_id;type:varchar(36);not null"`
@@ -190,6 +211,8 @@ type AgentTurnExecutions struct {
 
 func (AgentTurnExecutions) TableName() string { return "agent_turn_executions" }
 
+// AgentTurnProjections 对应表 agent_turn_projections。
+// Web 侧 Turn 投影；output_text 等是列表摘要，不是第二份模型 transcript。
 type AgentTurnProjections struct {
 	ID                                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	ConversationID                     string     `gorm:"column:conversation_id;type:varchar(36);not null"`
@@ -222,6 +245,8 @@ type AgentTurnProjections struct {
 
 func (AgentTurnProjections) TableName() string { return "agent_turn_projections" }
 
+// AgentWorkflowRunRequests 对应表 agent_workflow_run_requests。
+// Agent 代为请求工作流执行，确认后复用同一套 Graph Run 约束。
 type AgentWorkflowRunRequests struct {
 	ID                       string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	ConversationID           string     `gorm:"column:conversation_id;type:varchar(36);not null"`
@@ -249,6 +274,8 @@ type AgentWorkflowRunRequests struct {
 
 func (AgentWorkflowRunRequests) TableName() string { return "agent_workflow_run_requests" }
 
+// AppSettings 对应表 app_settings。
+// 运行时键值覆盖（供应商与门禁等）；DATABASE_URL 一类密钥不进本表。
 type AppSettings struct {
 	Key       string    `gorm:"column:key;type:varchar(120);primaryKey"`
 	Value     string    `gorm:"column:value;type:text;not null"`
@@ -258,6 +285,8 @@ type AppSettings struct {
 
 func (AppSettings) TableName() string { return "app_settings" }
 
+// AsyncDispatches 对应表 async_dispatches。
+// 异步信封：HTTP 只写 PENDING，dispatcher 标 SENT 再入队。
 type AsyncDispatches struct {
 	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	DeliveryKey    string     `gorm:"column:delivery_key;type:varchar(255);not null"`
@@ -278,6 +307,8 @@ type AsyncDispatches struct {
 
 func (AsyncDispatches) TableName() string { return "async_dispatches" }
 
+// DeliveryRenditionJobs 对应表 delivery_rendition_jobs。
+// 确定性交付转码作业，不调用图像模型。
 type DeliveryRenditionJobs struct {
 	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID         string     `gorm:"column:product_id;type:varchar(36);not null"`
@@ -299,6 +330,8 @@ type DeliveryRenditionJobs struct {
 
 func (DeliveryRenditionJobs) TableName() string { return "delivery_rendition_jobs" }
 
+// ImageSessionAssets 对应表 image_session_assets。
+// 连续生图会话里的参考图或生成图，指向 MediaObject。
 type ImageSessionAssets struct {
 	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID        string    `gorm:"column:session_id;type:varchar(36);not null"`
@@ -312,6 +345,8 @@ type ImageSessionAssets struct {
 
 func (ImageSessionAssets) TableName() string { return "image_session_assets" }
 
+// ImageSessionGenerationTasks 对应表 image_session_generation_tasks。
+// 一轮连续生图任务及其进度。
 type ImageSessionGenerationTasks struct {
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID                 string     `gorm:"column:session_id;type:varchar(36);not null"`
@@ -341,6 +376,8 @@ type ImageSessionGenerationTasks struct {
 
 func (ImageSessionGenerationTasks) TableName() string { return "image_session_generation_tasks" }
 
+// ImageSessionProviderEffects 对应表 image_session_provider_effects。
+// 连续生图的 provider 调用对账。
 type ImageSessionProviderEffects struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GenerationTaskID    string    `gorm:"column:generation_task_id;type:varchar(36);not null"`
@@ -364,6 +401,8 @@ type ImageSessionProviderEffects struct {
 
 func (ImageSessionProviderEffects) TableName() string { return "image_session_provider_effects" }
 
+// ImageSessionRounds 对应表 image_session_rounds。
+// 一轮提示词、候选与生成结果。
 type ImageSessionRounds struct {
 	ID                        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID                 string    `gorm:"column:session_id;type:varchar(36);not null"`
@@ -389,6 +428,8 @@ type ImageSessionRounds struct {
 
 func (ImageSessionRounds) TableName() string { return "image_session_rounds" }
 
+// ImageSessions 对应表 image_sessions。
+// 连续生图会话容器，不等于 AgentSession。
 type ImageSessions struct {
 	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Title     string    `gorm:"column:title;type:varchar(255);not null"`
@@ -398,6 +439,8 @@ type ImageSessions struct {
 
 func (ImageSessions) TableName() string { return "image_sessions" }
 
+// LibraryOrganizationDraftRevisions 对应表 library_organization_draft_revisions。
+// 全局图库组织草稿的不可变版本。
 type LibraryOrganizationDraftRevisions struct {
 	ID                   string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	DraftID              string     `gorm:"column:draft_id;type:varchar(36);not null"`
@@ -415,6 +458,8 @@ func (LibraryOrganizationDraftRevisions) TableName() string {
 	return "library_organization_draft_revisions"
 }
 
+// LibraryOrganizationDrafts 对应表 library_organization_drafts。
+// Agent 提出的图库文件夹/标签草稿，需用户确认。
 type LibraryOrganizationDrafts struct {
 	ID                         string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	ConversationID             string     `gorm:"column:conversation_id;type:varchar(36);not null"`
@@ -431,6 +476,8 @@ type LibraryOrganizationDrafts struct {
 
 func (LibraryOrganizationDrafts) TableName() string { return "library_organization_drafts" }
 
+// LocalImageEditAdoptionEvents 对应表 local_image_edit_adoption_events。
+// 局部编辑结果采纳或回退到图节点的事件。
 type LocalImageEditAdoptionEvents struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID      string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -446,6 +493,8 @@ type LocalImageEditAdoptionEvents struct {
 
 func (LocalImageEditAdoptionEvents) TableName() string { return "local_image_edit_adoption_events" }
 
+// LocalImageEditProviderAttempts 对应表 local_image_edit_provider_attempts。
+// 一次局部编辑的 provider 尝试与对账。
 type LocalImageEditProviderAttempts struct {
 	ID                      string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	TaskID                  string    `gorm:"column:task_id;type:varchar(36);not null"`
@@ -470,6 +519,8 @@ type LocalImageEditProviderAttempts struct {
 
 func (LocalImageEditProviderAttempts) TableName() string { return "local_image_edit_provider_attempts" }
 
+// LocalImageEditTaskReferences 对应表 local_image_edit_task_references。
+// 局部编辑任务的参考图关联。
 type LocalImageEditTaskReferences struct {
 	TaskID    string `gorm:"column:task_id;type:varchar(36);primaryKey"`
 	AssetID   string `gorm:"column:asset_id;type:varchar(36);primaryKey"`
@@ -478,6 +529,8 @@ type LocalImageEditTaskReferences struct {
 
 func (LocalImageEditTaskReferences) TableName() string { return "local_image_edit_task_references" }
 
+// LocalImageEditTasks 对应表 local_image_edit_tasks。
+// 蒙版局部编辑任务；mask 指向独立 MediaObject。
 type LocalImageEditTasks struct {
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID                 string     `gorm:"column:product_id;type:varchar(36);not null"`
@@ -520,6 +573,8 @@ type LocalImageEditTasks struct {
 
 func (LocalImageEditTasks) TableName() string { return "local_image_edit_tasks" }
 
+// MediaLibraryAssetTags 对应表 media_library_asset_tags。
+// 全局素材与标签的多对多。
 type MediaLibraryAssetTags struct {
 	AssetID   string    `gorm:"column:asset_id;type:varchar(36);primaryKey"`
 	TagID     string    `gorm:"column:tag_id;type:varchar(36);primaryKey"`
@@ -528,6 +583,8 @@ type MediaLibraryAssetTags struct {
 
 func (MediaLibraryAssetTags) TableName() string { return "media_library_asset_tags" }
 
+// MediaLibraryAssets 对应表 media_library_assets。
+// 跨会话可归档的全局图库素材身份，不拥有第二份 bytes。
 type MediaLibraryAssets struct {
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	MediaObjectID             string     `gorm:"column:media_object_id;type:varchar(36);not null"`
@@ -549,6 +606,8 @@ type MediaLibraryAssets struct {
 
 func (MediaLibraryAssets) TableName() string { return "media_library_assets" }
 
+// MediaLibraryCollectionKeys 对应表 media_library_collection_keys。
+// 从商品收藏到全局图库的幂等键。
 type MediaLibraryCollectionKeys struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID      string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -559,6 +618,8 @@ type MediaLibraryCollectionKeys struct {
 
 func (MediaLibraryCollectionKeys) TableName() string { return "media_library_collection_keys" }
 
+// MediaLibraryFolders 对应表 media_library_folders。
+// 全局图库一层用户文件夹。
 type MediaLibraryFolders struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name           string    `gorm:"column:name;type:varchar(120);not null"`
@@ -569,6 +630,8 @@ type MediaLibraryFolders struct {
 
 func (MediaLibraryFolders) TableName() string { return "media_library_folders" }
 
+// MediaLibraryTags 对应表 media_library_tags。
+// 全局图库标签。
 type MediaLibraryTags struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name           string    `gorm:"column:name;type:varchar(80);not null"`
@@ -579,6 +642,8 @@ type MediaLibraryTags struct {
 
 func (MediaLibraryTags) TableName() string { return "media_library_tags" }
 
+// MediaLibraryUploadKeys 对应表 media_library_upload_keys。
+// 直接上传到全局图库的幂等键。
 type MediaLibraryUploadKeys struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	IdempotencyKey string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
@@ -589,6 +654,8 @@ type MediaLibraryUploadKeys struct {
 
 func (MediaLibraryUploadKeys) TableName() string { return "media_library_upload_keys" }
 
+// MediaObjects 对应表 media_objects。
+// 不可变媒体字节身份；商品图、会话图、全局素材都引用它。
 type MediaObjects struct {
 	ID                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	StoragePath        string     `gorm:"column:storage_path;type:varchar(500);not null"`
@@ -604,6 +671,8 @@ type MediaObjects struct {
 
 func (MediaObjects) TableName() string { return "media_objects" }
 
+// ProductAssetFolders 对应表 product_asset_folders。
+// 商品图库一层用户文件夹；删除只去掉组织，不删资产。
 type ProductAssetFolders struct {
 	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -615,6 +684,8 @@ type ProductAssetFolders struct {
 
 func (ProductAssetFolders) TableName() string { return "product_asset_folders" }
 
+// ProductFactSetVersions 对应表 product_fact_set_versions。
+// 商品 facts 的不可变版本，供历史 Run 引用。
 type ProductFactSetVersions struct {
 	ID          string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID   string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -626,6 +697,8 @@ type ProductFactSetVersions struct {
 
 func (ProductFactSetVersions) TableName() string { return "product_fact_set_versions" }
 
+// ProductImageAssets 对应表 product_image_assets。
+// 商品命名空间内的一张图；工作流节点绑定本 id，不绑存储路径。
 type ProductImageAssets struct {
 	ID                        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID                 string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -644,6 +717,8 @@ type ProductImageAssets struct {
 
 func (ProductImageAssets) TableName() string { return "product_image_assets" }
 
+// ProductImageFidelityChecks 对应表 product_image_fidelity_checks。
+// 商品图相对参考图的保真人工检查。
 type ProductImageFidelityChecks struct {
 	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID             string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -662,6 +737,8 @@ type ProductImageFidelityChecks struct {
 
 func (ProductImageFidelityChecks) TableName() string { return "product_image_fidelity_checks" }
 
+// Products 对应表 products。
+// 商品主档：名称、intake、封面与当前 facts 版本。
 type Products struct {
 	ID                      string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name                    string    `gorm:"column:name;type:varchar(255);not null"`
@@ -678,6 +755,8 @@ type Products struct {
 
 func (Products) TableName() string { return "products" }
 
+// ProviderBindings 对应表 provider_bindings。
+// 把 prompt/image 等用途绑到一个 ProviderProfile。
 type ProviderBindings struct {
 	ID                string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Purpose           string    `gorm:"column:purpose;type:varchar(40);not null"`
@@ -691,6 +770,8 @@ type ProviderBindings struct {
 
 func (ProviderBindings) TableName() string { return "provider_bindings" }
 
+// ProviderProfiles 对应表 provider_profiles。
+// 供应商连接与默认模型；密钥存在本表而非进程 overlay。
 type ProviderProfiles struct {
 	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name              string     `gorm:"column:name;type:varchar(120);not null"`
@@ -708,6 +789,8 @@ type ProviderProfiles struct {
 
 func (ProviderProfiles) TableName() string { return "provider_profiles" }
 
+// VisualSystemVersionReferences 对应表 visual_system_version_references。
+// 视觉系统某一版本引用的参考图。
 type VisualSystemVersionReferences struct {
 	ID                    string `gorm:"column:id;type:varchar(36);primaryKey"`
 	VisualSystemVersionID string `gorm:"column:visual_system_version_id;type:varchar(36);not null"`
@@ -719,6 +802,8 @@ type VisualSystemVersionReferences struct {
 
 func (VisualSystemVersionReferences) TableName() string { return "visual_system_version_references" }
 
+// VisualSystemVersions 对应表 visual_system_versions。
+// 视觉系统不可变版本，供历史 Run 引用。
 type VisualSystemVersions struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	VisualSystemID string    `gorm:"column:visual_system_id;type:varchar(36);not null"`
@@ -732,6 +817,8 @@ type VisualSystemVersions struct {
 
 func (VisualSystemVersions) TableName() string { return "visual_system_versions" }
 
+// VisualSystems 对应表 visual_systems。
+// 可归档的视觉系统主档。
 type VisualSystems struct {
 	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name       string     `gorm:"column:name;type:varchar(255);not null"`
@@ -742,6 +829,8 @@ type VisualSystems struct {
 
 func (VisualSystems) TableName() string { return "visual_systems" }
 
+// WorkflowGraphArtifacts 对应表 workflow_graph_artifacts。
+// 节点产物与 lineage；image_generation 产物不是 compile 闸门。
 type WorkflowGraphArtifacts struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID             string    `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -763,6 +852,8 @@ type WorkflowGraphArtifacts struct {
 
 func (WorkflowGraphArtifacts) TableName() string { return "workflow_graph_artifacts" }
 
+// WorkflowGraphEdges 对应表 workflow_graph_edges。
+// schema-v3 边；role 等于 React Flow handle id。
 type WorkflowGraphEdges struct {
 	ID           string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID      string    `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -776,6 +867,8 @@ type WorkflowGraphEdges struct {
 
 func (WorkflowGraphEdges) TableName() string { return "workflow_graph_edges" }
 
+// WorkflowGraphGroups 对应表 workflow_graph_groups。
+// 画布一层视觉分组，没有执行状态或端口。
 type WorkflowGraphGroups struct {
 	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID   string    `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -787,6 +880,8 @@ type WorkflowGraphGroups struct {
 
 func (WorkflowGraphGroups) TableName() string { return "workflow_graph_groups" }
 
+// WorkflowGraphNodeRuns 对应表 workflow_graph_node_runs。
+// 一次 Graph Run 里单个节点的 queued|running|succeeded|failed|unknown|skipped|cancelled。
 type WorkflowGraphNodeRuns struct {
 	ID                  string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphRunID          string     `gorm:"column:graph_run_id;type:varchar(36);not null"`
@@ -807,6 +902,8 @@ type WorkflowGraphNodeRuns struct {
 
 func (WorkflowGraphNodeRuns) TableName() string { return "workflow_graph_node_runs" }
 
+// WorkflowGraphRunEvents 对应表 workflow_graph_run_events。
+// Graph Run 的有序事件。
 type WorkflowGraphRunEvents struct {
 	ID          string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphRunID  string    `gorm:"column:graph_run_id;type:varchar(36);not null"`
@@ -819,6 +916,8 @@ type WorkflowGraphRunEvents struct {
 
 func (WorkflowGraphRunEvents) TableName() string { return "workflow_graph_run_events" }
 
+// WorkflowGraphNodes 对应表 workflow_graph_nodes。
+// schema-v3 节点；document_origin 为 seed|generated|authored。
 type WorkflowGraphNodes struct {
 	ID                         string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID                    string    `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -838,6 +937,8 @@ type WorkflowGraphNodes struct {
 
 func (WorkflowGraphNodes) TableName() string { return "workflow_graph_nodes" }
 
+// WorkflowGraphProposals 对应表 workflow_graph_proposals。
+// Agent 提出的多节点 ChangeSet，确认前不写入 live 图。
 type WorkflowGraphProposals struct {
 	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID           string     `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -853,6 +954,8 @@ type WorkflowGraphProposals struct {
 
 func (WorkflowGraphProposals) TableName() string { return "workflow_graph_proposals" }
 
+// WorkflowGraphProviderEffects 对应表 workflow_graph_provider_effects。
+// 图节点 provider 调用对账；无法证明则 unknown。
 type WorkflowGraphProviderEffects struct {
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	NodeRunID           string    `gorm:"column:node_run_id;type:varchar(36);not null"`
@@ -874,6 +977,8 @@ type WorkflowGraphProviderEffects struct {
 
 func (WorkflowGraphProviderEffects) TableName() string { return "workflow_graph_provider_effects" }
 
+// WorkflowGraphRuns 对应表 workflow_graph_runs。
+// 独立业务执行记录；用户点运行即可创建，不必先有 Agent Session。
 type WorkflowGraphRuns struct {
 	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID          string     `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -891,6 +996,8 @@ type WorkflowGraphRuns struct {
 
 func (WorkflowGraphRuns) TableName() string { return "workflow_graph_runs" }
 
+// WorkflowGraphs 对应表 workflow_graphs。
+// 商品上唯一在线的 schema-v3 live 图。
 type WorkflowGraphs struct {
 	ID            string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID     string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -904,6 +1011,8 @@ type WorkflowGraphs struct {
 
 func (WorkflowGraphs) TableName() string { return "workflow_graphs" }
 
+// WorkflowMediaLibraryAssets 对应表 workflow_media_library_assets。
+// 工作流与全局素材的关联，不复制媒体 bytes。
 type WorkflowMediaLibraryAssets struct {
 	WorkflowID          string    `gorm:"column:workflow_id;type:varchar(36);primaryKey"`
 	MediaLibraryAssetID string    `gorm:"column:media_library_asset_id;type:varchar(36);primaryKey"`
@@ -912,6 +1021,8 @@ type WorkflowMediaLibraryAssets struct {
 
 func (WorkflowMediaLibraryAssets) TableName() string { return "workflow_media_library_assets" }
 
+// WorkflowOperationGroups 对应表 workflow_operation_groups。
+// 一次可撤销的 Graph Command 操作组及其 inverse。
 type WorkflowOperationGroups struct {
 	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GraphID               string    `gorm:"column:graph_id;type:varchar(36);not null"`
@@ -927,6 +1038,8 @@ type WorkflowOperationGroups struct {
 
 func (WorkflowOperationGroups) TableName() string { return "workflow_operation_groups" }
 
+// WorkflowRecipeApplications 对应表 workflow_recipe_applications。
+// 把配方应用到某商品 live 图的确认记录。
 type WorkflowRecipeApplications struct {
 	ID                   string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	ProductID            string    `gorm:"column:product_id;type:varchar(36);not null"`
@@ -948,6 +1061,8 @@ type WorkflowRecipeApplications struct {
 
 func (WorkflowRecipeApplications) TableName() string { return "workflow_recipe_applications" }
 
+// WorkflowRecipeVersions 对应表 workflow_recipe_versions。
+// 配方不可变版本；不含商品身份或媒体 bytes。
 type WorkflowRecipeVersions struct {
 	ID                             string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	RecipeID                       string    `gorm:"column:recipe_id;type:varchar(36);not null"`
@@ -966,6 +1081,8 @@ type WorkflowRecipeVersions struct {
 
 func (WorkflowRecipeVersions) TableName() string { return "workflow_recipe_versions" }
 
+// WorkflowRecipes 对应表 workflow_recipes。
+// 可复用工作流结构的主档，不等于收藏画廊。
 type WorkflowRecipes struct {
 	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	Kind             string     `gorm:"column:kind;type:workflowrecipekind;not null"`
@@ -979,6 +1096,7 @@ type WorkflowRecipes struct {
 
 func (WorkflowRecipes) TableName() string { return "workflow_recipes" }
 
+// AllModels 返回 migrate CreateTable/AddColumn 要注册的全部 GORM 模型，顺序即建表顺序。
 func AllModels() []any {
 	return []any{
 		&AgentConversations{},

@@ -31,23 +31,27 @@ var formatExt = map[string]string{
 	"webp": ".webp",
 }
 
-// Spec 是确定性交付派生合同。
+// Spec 是确定性交付派生合同（HTTP 与节点 config 共用形状）。
+// Format 闭集 png/jpeg/webp；Fit 为 contain 或 cover。
+// contain 不能带 CropAnchor；cover 不能带 BackgroundColor。指针字段 nil 在哈希里是 JSON null，不能省略。
 type Spec struct {
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
-	Format          string  `json:"format"`
-	MaxByteSize     *int    `json:"max_byte_size"`
-	Fit             string  `json:"fit"`
-	BackgroundColor *string `json:"background_color"`
-	CropAnchor      *string `json:"crop_anchor"`
+	Format          string  `json:"format"`           // png | jpeg | webp
+	MaxByteSize     *int    `json:"max_byte_size"`    // nil 表示不限制体积；哈希里仍写 JSON null
+	Fit             string  `json:"fit"`              // contain | cover
+	BackgroundColor *string `json:"background_color"` // nil 表示不填底；cover 不得带此字段
+	CropAnchor      *string `json:"crop_anchor"`      // nil 表示不裁切；闭集 center|top|bottom|left|right；contain 不得带
 }
 
+// NormalizedSpec 是校验后的 DeliverySpec、规范 payload 与幂等哈希。
 type NormalizedSpec struct {
-	Spec    Spec
-	Payload map[string]any
-	Hash    string
+	Spec    Spec           // 校验后的合同
+	Payload map[string]any // 稳定键集合；指针 nil 写成 JSON null，不能省略
+	Hash    string         // Payload 的 canonjson SHA256，用作任务幂等键
 }
 
+// NormalizeSpec 校验并规范化 DeliverySpec；未知字段返回 Validation。
 func NormalizeSpec(raw map[string]any) (NormalizedSpec, error) {
 	if raw == nil {
 		return NormalizedSpec{}, apperr.Validation("DeliverySpec 不符合 schema")
@@ -122,6 +126,7 @@ func NormalizeSpec(raw map[string]any) (NormalizedSpec, error) {
 	return NormalizedSpec{Spec: spec, Payload: payload, Hash: hash}, nil
 }
 
+// specPayload 把 Spec 展成稳定键集合供 SHA256 哈希；指针字段为 nil 时写入 JSON null，不能省略。
 func specPayload(spec Spec) map[string]any {
 	var maxByte any
 	if spec.MaxByteSize != nil {
@@ -158,6 +163,7 @@ func specFromJSON(raw []byte) (Spec, error) {
 	return normalized.Spec, nil
 }
 
+// asInt 把 JSON 数字收成 int。非整 float64 返回 false，避免宽高被截断。
 func asInt(v any) (int, bool) {
 	switch n := v.(type) {
 	case int:

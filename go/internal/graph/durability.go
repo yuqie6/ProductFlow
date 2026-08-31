@@ -15,6 +15,8 @@ import (
 
 const generationCapacityLockKey = 42630001
 
+// generationMaxConcurrent 读 app_settings.generation_max_concurrent_tasks。
+// 空值或非正整数回落到 3；结果夹在 1–20。与连续生图共用同一把容量锁，改上限两边一起生效。
 func generationMaxConcurrent(ctx context.Context, q *gorm.DB) int {
 	var rec schema.AppSettings
 	_ = q.WithContext(ctx).Where("key = ?", "generation_max_concurrent_tasks").Take(&rec).Error
@@ -80,6 +82,10 @@ var (
 	errWaitingCapacity = errors.New("waiting_for_capacity")
 )
 
+// claimQueuedNodeRun 把 queued 节点标 running 并分配 attempt_id。
+// 先查容量（pg_advisory_xact_lock），再按 run → node 加 FOR UPDATE，避免与取消死锁。
+// 未抢到返回 false, ""（不当失败）；容量满返回 errWaitingCapacity。
+// 副作用：workflow_graph_node_runs + node.claimed / node.started 事件。不要先锁 node 再锁 run。
 func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bool, string, error) {
 	claimed := false
 	claimedAttemptID := ""
@@ -98,9 +104,8 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 			}
 			return err
 		}
-		// All node state transitions that append a run event use run -> node
-		// locking. Keep claiming in the same order so cancellation cannot form
-		// a run/node deadlock with the worker.
+		// 所有会写 run event 的节点状态迁移都按 run → node 加锁。
+		// claim 必须同一顺序，避免取消与 worker 形成 run/node 死锁。
 		var run schema.WorkflowGraphRuns
 		if err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 			Select("id", "status").Where("id = ?", ref.GraphRunID).Take(&run).Error; err != nil {
@@ -186,6 +191,7 @@ func terminalNodeRunUpdates(status string, now time.Time) map[string]any {
 	}
 }
 
+// aggregateGraphRunTerminalStatus 优先 unknown（不可重试），其次 failed（可重试），再 cancelled。
 func aggregateGraphRunTerminalStatus(statuses, reasons []string) (string, *string, bool) {
 	for i, status := range statuses {
 		if status != NodeRunUnknown {
@@ -222,6 +228,10 @@ func aggregateGraphRunTerminalStatus(statuses, reasons []string) (string, *strin
 	return RunStatusSucceeded, nil, false
 }
 
+// completeGraphRunIfNodesTerminal 在所有节点离开 queued/running 后收口 run。
+// 聚合顺序：unknown（不可重试）> failed（可重试）> cancelled > succeeded。
+// 写 workflow_graph_runs 终态、run.* 事件，并 promote 下一条 queued。仍有 queued/running 返回 false。
+// 调用方须已持事务；不要在这里把 unknown 改成 failed。
 func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
 	var run schema.WorkflowGraphRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status").Where("id = ?", runID).Take(&run).Error
@@ -276,6 +286,9 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 	return true, nil
 }
 
+// failGraphRunLocked 假定调用方已 FOR UPDATE 住 run：把仍 queued/running 的节点标 failed，
+// run 标 failed + is_retryable=true，再 promote queued。不检查 provider 边界——已打过 provider
+// 的节点必须先走 markNodeUnknown，否则会把无法证明的结果当可重试失败。
 func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) error {
 	now := time.Now().UTC()
 	if len(reason) > 1000 {
@@ -336,6 +349,10 @@ func nodePastProviderBoundary(phase *string) bool {
 	return *phase == "provider_call" || *phase == "provider_result_received"
 }
 
+// failClaimedNode 收口一个已 claim 节点的证明失败。锁序 run → node。
+// 已过 provider_call / provider_result_received 边界则标 unknown，禁止当 failed 重试。
+// attempt 不匹配、节点已终态、run 已终态：只尝试 complete，不改状态。
+// 写 node.failed 事件后调用 completeGraphRunIfNodesTerminal。
 func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expectedAttemptID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		var run schema.WorkflowGraphRuns
@@ -405,6 +422,8 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 	})
 }
 
+// failGraphRun 是 ExecuteRun 在已证明失败时的收口。先锁 run：若有 running 且已过 provider 边界的节点，
+// 标 unknown 再 complete；否则 failGraphRunLocked。run 已终态直接返回 nil。
 func failGraphRun(ctx context.Context, gdb *gorm.DB, runID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		var run schema.WorkflowGraphRuns

@@ -1,3 +1,4 @@
+// Package canonjson 产出稳定 JSON（对象键排序、无多余空白），供哈希与契约比对。
 package canonjson
 
 import (
@@ -21,7 +22,9 @@ func Compact(v any) ([]byte, error) {
 	return marshalSorted(decoded)
 }
 
-// SHA256Hex 对 Compact 结果做 sha256 hex。
+// SHA256Hex 对 Compact 结果做 sha256 hex，供幂等键和契约比对。
+// 调用时机：DeliverySpec、配方 payload、上传请求哈希。error 来自无法 JSON 化的值。
+// 禁区：不要对未 Compact 的 json.Marshal 字节哈希，键序不稳会导致假冲突。
 func SHA256Hex(v any) (string, error) {
 	raw, err := Compact(v)
 	if err != nil {
@@ -41,6 +44,8 @@ func marshalUnescaped(v any) ([]byte, error) {
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
+// marshalSorted 递归产出稳定 JSON：对象键按 UTF-16 码点排序（Go sort.Strings）、无空白。
+// map 和 []any 自己拼；json.Number 原样写出，避免 float64 把大整数洗掉。其他类型走 marshalUnescaped。
 func marshalSorted(v any) ([]byte, error) {
 	switch typed := v.(type) {
 	case map[string]any:

@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 )
 
+// matchJSONSchema 按 strict Responses schema 核对模型输出。缺 required、多 extra 字段或类型不对返回 error，
+// 调用方应标失败而不是把半残 JSON 当成功。
 func matchJSONSchema(schema map[string]any, value any) error {
 	if schema == nil {
 		return fmt.Errorf("missing schema")
@@ -160,6 +162,7 @@ func jsonSchemaEqual(schemaVal, got any) bool {
 	return schemaVal == got
 }
 
+// jsonSchemaFloat 把 JSON 数字收成 float64。json.Number 解析失败返回 false，不要当 0。
 func jsonSchemaFloat(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:

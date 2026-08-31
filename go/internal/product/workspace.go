@@ -44,6 +44,7 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 	})
 }
 
+// CreateAgentWorkspace 是表单完整 Agent 出生：写商品、参考图、intake 与直连模板图，并打开对话。Idempotency-Key 去重。
 func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, idempotencyKey string, agentSessionID *string, uploads []Upload) (WorkspaceCreateResponse, error) {
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)
@@ -128,6 +129,7 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 	}, nil
 }
 
+// GetAgentWorkspace 按 conversation_id 读取商品工作区快照。找不到返回 NotFound。
 func (s Service) GetAgentWorkspace(ctx context.Context, conversationID string) (WorkspaceSnapshotResponse, error) {
 	var snap WorkspaceSnapshotResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -145,6 +147,7 @@ func (s Service) GetAgentWorkspace(ctx context.Context, conversationID string) (
 	return snap, err
 }
 
+// FinalizeAgentIntake 把名称-only 图按模板展开套图，并写入参考图与 intake。重复 Idempotency-Key 且哈希不同返回 Conflict。
 func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, selectionJSON, idempotencyKey string, sourceNote *string, uploads []Upload, taskID *string) (WorkspaceSnapshotResponse, error) {
 	_ = taskID
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
@@ -259,6 +262,7 @@ func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, select
 	return snap, err
 }
 
+// appendUploads 在已有事务里 stage 媒体并写成商品图身份；失败须由调用方 Rollback compensation。
 func (s Service) appendUploads(ctx context.Context, pgxTx *gorm.DB, compensation *storage.Compensation, productID string, uploads []Upload) ([]ImageAsset, error) {
 	assets := make([]ImageAsset, 0, len(uploads))
 	for _, upload := range uploads {
@@ -280,6 +284,9 @@ func (s Service) appendUploads(ctx context.Context, pgxTx *gorm.DB, compensation
 	return loadAssetsByIDs(ctx, pgxTx, productID, assetIDs(assets))
 }
 
+// expandBirthGraphFromIntake 只在名称-only（仅一个 product_source）图上按模板展开套图。
+// 已有其它节点则不改图并返回 false，避免二次 finalize 覆盖用户编辑。
+// 副作用：graph.Mutate 写 workflow_graphs。失败由调用方 Rollback。
 func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Product, selection Selection, assetIDs []string) (bool, error) {
 	if len(selection.ImageTypes) == 0 || len(assetIDs) == 0 {
 		return false, nil
@@ -345,6 +352,9 @@ func liveGraphCounts(ctx context.Context, pgxTx *gorm.DB, productID string) (rev
 	return applied.Revision, len(applied.Nodes), len(applied.Groups), nil
 }
 
+// upsertWorkspace 按 Idempotency-Key 复用已有对话。
+// 同一 key 且哈希相同：原样返回已有快照（Created=false）。哈希不同：Conflict，禁止用同一 key 出生不同商品。
+// 插入撞 23505 再读一次当命中。create 回调须只写调用方事务。
 func (s Service) upsertWorkspace(
 	ctx context.Context,
 	key, requestHash string,
@@ -407,6 +417,8 @@ func (s Service) upsertWorkspace(
 	return snap, err
 }
 
+// stageUploads 在调用方事务里写商品行、stage 媒体、写成参考图身份；可选设封面与首版 facts。
+// 不 commit。媒体或写库失败须由调用方 Rollback compensation，否则磁盘留无主文件。
 func (s Service) stageUploads(ctx context.Context, pgxTx *gorm.DB, compensation *storage.Compensation, in CreateInput, setCover, writeFacts bool) (canonicalCreation, error) {
 	product, err := insertProduct(ctx, pgxTx, in.Name, nil, nil, nil)
 	if err != nil {
@@ -478,6 +490,7 @@ func refreshWorkspaceSessionSummary(ctx context.Context, pgxTx *gorm.DB, convers
 	return agentsession.RefreshSummary(ctx, pgxTx, *conversation.SessionID)
 }
 
+// loadWorkspaceSnapshot 只回放 intake 里的 reference_asset_ids，不把整库商品图当 CreatedAssets。
 func loadWorkspaceSnapshot(ctx context.Context, tx *gorm.DB, conversation Conversation, created bool) (WorkspaceSnapshotResponse, error) {
 	if conversation.ProductID == nil {
 		return WorkspaceSnapshotResponse{}, apperr.Conflict("Agent 商品工作空间聚合不完整")

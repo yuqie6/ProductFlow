@@ -9,7 +9,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// LoadGraph 按商品 + 图 id 读取 live 图身份。
+// LoadGraph 在配方保存、Agent 工作流请求里按 product_id + graph_id 读 workflow_graphs 身份。
+// 返回 Identity（revision/active），不展开节点/边，也不 FOR UPDATE。
+// 对不上返回 NotFound。画布 HTTP 请走 Service.Get（会 Project）；要锁行用 LoadGraphForUpdate。
 func LoadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (Identity, error) {
 	row, err := loadGraph(ctx, tx, productID, graphID)
 	return row.Identity, err

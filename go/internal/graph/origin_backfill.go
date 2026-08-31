@@ -17,6 +17,7 @@ type originBackfillRow struct {
 
 // BackfillDocumentOrigin 把内容节点 origin 从「config 旧键或默认 seed」收敛为：
 // 可见文稿与当前种子模板一致则为 seed，否则 authored。已是 generated/authored 的行不改。
+// db 为 nil 返回 nil。查行或 UPDATE 失败返回包装后的 unknown 错误，不映射 Validation/NotFound。
 func BackfillDocumentOrigin(db *gorm.DB) error {
 	if db == nil {
 		return nil

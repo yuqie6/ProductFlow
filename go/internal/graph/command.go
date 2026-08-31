@@ -92,6 +92,8 @@ func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeS
 	}, nil
 }
 
+// recordOperationGroup 写入 workflow_operation_groups，供 Undo/Redo 消费 inverse。
+// 空 inverse 仍落库，但历史不可 Undo。actor 空则 ActorUser。只 flush，不 commit。
 func recordOperationGroup(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -181,6 +183,9 @@ func validateProductSourceConfigs(ctx context.Context, tx *gorm.DB, graphProduct
 	return nil
 }
 
+// resolveProductSource 校验 product_source 的 source_product_id / fact_set_version_id。
+// 未写 source_product_id 时绑定本图商品。Guard 返回 nil,nil 在这里变成 Validation，不要改成 NotFound。
+// 未绑定商品却带 fact_set_version_id 非法。缺当前 fact 版本允许通过（v2 无图出生）。
 func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) error {
 	payload := config
 	if payload == nil {
@@ -251,6 +256,8 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 	return nil
 }
 
+// insertGraphContents 给新图插入 groups/nodes/edges。只用于 StageNew 空表，已有内容须走 replaceGraphContents。
+// DocumentOrigin 经 documentOriginPtr 写入；空 config 写成 {}。不改 revision。
 func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
 	now := time.Now().UTC()
 	for index, group := range applied.Groups {

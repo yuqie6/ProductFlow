@@ -1,4 +1,20 @@
-// Package product 实现商品四条出生命令、facts、封面与商品图库，HTTP 合同对齐 Python。
+// Package product 实现商品四条出生命令、facts、封面与商品图库。
+//
+// 职责：无图创建、直连创建、Agent 名称-only、Agent 表单工作区。商品图、封面、图库、节点绑定
+// 一律引用 ProductImageAsset id，合同与 intake 不得出现存储路径。
+//
+// 调用时机：HTTP 出生/facts/图库走 [Service]；graph 编译与跑图通过 [GraphGuard] 读商品与 fact，
+// 不得反向 import 本包。创建页看图起草走 [SourceNoteGenerator]，不走画布 cook。
+//
+// 副作用：写 products、product_image_assets、fact 版本、intake JSON、用户文件夹；
+// 直连/Agent 出生还会经 graph.StageNew 写 workflow_graphs。媒体先 stage 再 commit，
+// after 失败必须 Rollback 已 stage 的文件。Idempotency-Key 去重工作区与保真检查。
+//
+// 错误：缺行 NotFound；乐观锁/重复 key 哈希不一致 Conflict；未知字段 extra=forbid 为 Validation。
+// GraphGuard 找不到商品或 fact 版本返回 nil, nil，不要改成 NotFound（compiler 把缺源当空输入）。
+//
+// HTTP：POST /api/v2/products、POST /api/v3/products、Agent 工作区与 intake、
+// GET/PUT /api/v3/products/:id/facts、图库与封面。删除受 runtime.DeletionEnabled 门闩。
 package product
 
 import (
@@ -13,10 +29,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// Service 拥有商品出生、facts、封面与商品图库命令。
+// Service 拥有商品出生、facts、封面与商品图库命令，给 HTTP 与 Agent 工具调用。
+// 必须注入 DB 与 Media；Canvas/SourceNote 直连测试可空。改图经 graph.StageNew，本结构不写 workflow_* 表。
+// 媒体先 stage 再 commit，after 失败必须 Rollback。不要在 handler 里绕过本入口直接插 products。
 type Service struct {
-	DB    *gorm.DB
-	Media media.Store
+	DB    *gorm.DB    // 命令事务入口
+	Media media.Store // 参考图 stage/commit；after 失败必须 Rollback
 	// Now 可注入，图库「最近生成」目录用它锚定 30 天窗口。
 	Now func() time.Time
 	// Canvas 写入 Agent 商品工作区会话；直连创建可以不设。
@@ -40,20 +58,23 @@ func (s Service) now() time.Time {
 	return time.Now().UTC()
 }
 
-// GetAsset 按 id 读取商品图片身份（含媒体元数据）。
+// GetAsset 按 ProductImageAsset id 读取身份（join media 元数据），供 Agent 工具检视商品图。
+// 找不到返回 NotFound。不锁行。图库详情请走带文件夹/生成摘要的 GetGalleryAsset；下载走 AssetForDownload。
 func (s Service) GetAsset(ctx context.Context, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, s.DB, assetID)
 }
 
+// CreateInput 是商品出生时的名称、可选资料与参考图。Uploads 引用随后写成的 ProductImageAsset，不是存储路径。
 type CreateInput struct {
 	Name       string
-	Category   string
-	Price      string
-	SourceNote string
-	Uploads    []Upload
-	SetCover   bool
+	Category   string   // 空表示未填
+	Price      string   // 空表示未填
+	SourceNote string   // 空表示未填；不是 CreativeBrief
+	Uploads    []Upload // 已校验参考图；至少一张、最多六张
+	SetCover   bool     // 出生入参位；当前封面由 createWithGraph 的 setCover 参数决定，本字段未被读取
 }
 
+// CreateWithoutGraph 是 v2 无图出生：写商品与参考图，不创建 workflow_graphs。至少一张、最多六张参考图。
 func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (CreateResponse, error) {
 	creation, err := s.createCanonical(ctx, in, true, false, nil)
 	if err != nil {
@@ -65,6 +86,7 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 	}, nil
 }
 
+// CreateDirect 是 v3 直连创建：同一事务写商品、参考图与 schema-v3 模板图，不创建 Agent 对话。
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	var result DirectCreateResponse
@@ -98,6 +120,8 @@ func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []
 	return result, err
 }
 
+// Get 读取商品详情 HTTP 合同（不含图列表与图画布）。找不到 products 行返回 NotFound。
+// 只读，不锁。facts 请走 GetFacts；画布请走 graph.Service。
 func (s Service) Get(ctx context.Context, id string) (Detail, error) {
 	var detail Detail
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -111,6 +135,7 @@ func (s Service) Get(ctx context.Context, id string) (Detail, error) {
 	return detail, err
 }
 
+// List 分页列出商品。sort 为 updated_desc、created_desc 或 name_asc。
 func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (ListResponse, error) {
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -130,6 +155,7 @@ func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (
 	return out, err
 }
 
+// AssetForDownload 按 ProductImageAsset id 读取身份供下载；缺失文件由 HTTP 层再判 verification_status。
 func (s Service) AssetForDownload(ctx context.Context, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, s.DB, assetID)
 }
@@ -152,6 +178,9 @@ func (s Service) createCanonical(ctx context.Context, in CreateInput, setCover, 
 	return created, err
 }
 
+// createWithGraph 在同一事务里写 products、参考图身份，并调用 after（直连/Agent 在此 StageNew 图）。
+// 媒体先 stage 再 commit；after 或写库失败必须 Rollback compensation，否则磁盘会留无主文件。
+// 不 commit——调用方 tx.WithGorm 负责。不要在 after 里另开事务。
 func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(*gorm.DB, canonicalCreation) error) error {
 	name, err := normalizeName(in.Name)
 	if err != nil {

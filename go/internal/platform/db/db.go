@@ -1,3 +1,5 @@
+// Package db 提供 PostgreSQL 连接池与 GORM 句柄。
+// 命令路径用 schema 模型加本包 lock 子句写入，禁止把 Query/Exec 裸 SQL 当主写入；池留给 healthz 与 recovery。
 package db
 
 import (
@@ -8,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Connect 解析 DATABASE_URL 建 pgx 池（MaxConns=16，MinConns=0）。Ping 失败会 Close 再返回 error，避免把坏池交给调用方。
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {

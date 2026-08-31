@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// RegisterHealth 注册 GET /healthz（进程存活）与 GET /healthz/ready（Ping PostgreSQL）。
 func RegisterHealth(engine *gin.Engine, pool *pgxpool.Pool) {
 	engine.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

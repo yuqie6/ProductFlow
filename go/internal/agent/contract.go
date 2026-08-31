@@ -20,6 +20,7 @@ import (
 //go:embed global_draft_schema.json
 var globalDraftSchemaJSON []byte
 
+// ConversationContract 读取 conversation 的 system prompt、工具合同与 Draft schema。
 func (s Service) ConversationContract(ctx context.Context, conversationID string) (ContractResponse, error) {
 	var out ContractResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -33,6 +34,7 @@ func (s Service) ConversationContract(ctx context.Context, conversationID string
 	return out, err
 }
 
+// TaskContract 读取绑定 conversation 的 Task 合同；已取消 Task 返回 Conflict。
 func (s Service) TaskContract(ctx context.Context, taskID string) (ContractResponse, error) {
 	var out ContractResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -56,6 +58,7 @@ func (s Service) TaskContract(ctx context.Context, taskID string) (ContractRespo
 	return out, err
 }
 
+// RuntimeContext 读取 Session / Task 的有界 operational summary。
 func (s Service) RuntimeContext(ctx context.Context, conversationID string, taskID *string) (RuntimeContextResponse, error) {
 	var out RuntimeContextResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -90,6 +93,9 @@ func (s Service) RuntimeContext(ctx context.Context, conversationID string, task
 	return out, err
 }
 
+// contractForConversation 组装发给 Pi 的 system prompt、工具合同与 Draft schema。
+//
+// ConversationContract / TaskContract 调用。商品工作流且带 Task 时追加 AgentGoalLoop 提示：Turn/GraphRun 成功不完成 Goal。不写表。已取消 Task 由调用方拦截。
 func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID string, task *TaskResponse) (ContractResponse, error) {
 	conv, err := loadConversationByID(ctx, pgxTx, conversationID)
 	if err != nil {
@@ -138,6 +144,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 	return out, nil
 }
 
+// ProductContext 读取商品工作流 conversation 的 facts、intake 与 live 图摘要。
 func (s Service) ProductContext(ctx context.Context, conversationID, responseFormat string) (map[string]any, error) {
 	var conv conversationRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -261,6 +268,7 @@ func liveGraphSummary(proj graph.Projection, format string) map[string]any {
 	return liveGraphConcise(proj)
 }
 
+// liveGraphConcise 给 Agent 有界图摘要：节点类型/状态/是否有 artifact，不含媒体 bytes 与完整 config。
 func liveGraphConcise(proj graph.Projection) map[string]any {
 	nodes := make([]map[string]any, 0, len(proj.Nodes))
 	for _, node := range proj.Nodes {
@@ -283,6 +291,7 @@ func liveGraphConcise(proj graph.Projection) map[string]any {
 	}
 }
 
+// liveGraphDetailed 在 concise 基础上补边与绑定 asset id，仍不含媒体 bytes。仅当 response_format=detailed。
 func liveGraphDetailed(proj graph.Projection) map[string]any {
 	nodes := make([]map[string]any, 0, len(proj.Nodes))
 	for _, node := range proj.Nodes {

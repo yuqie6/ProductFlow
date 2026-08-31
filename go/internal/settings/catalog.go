@@ -44,6 +44,7 @@ type configDefinition struct {
 
 func intPtr(v int) *int { return &v }
 
+// configDefinitions 是设置页可编辑键的闭集。导入/导出和 UpdateConfig 都必须走这份表，不要在别处再列一遍。
 func configDefinitions() []configDefinition {
 	toolKeys := make([]configOption, 0, len(imageToolFieldKeys))
 	for _, key := range imageToolFieldKeys {
@@ -86,6 +87,7 @@ func definitionByKey(key string) (configDefinition, bool) {
 	return configDefinition{}, false
 }
 
+// parseImageToolAllowedFields 解析逗号/空白分隔的 tool 字段。未知字段 400；输出按 imageToolFieldKeys 原序，方便稳定展示。
 func parseImageToolAllowedFields(value string) ([]string, error) {
 	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' })
 	selected := map[string]struct{}{}
@@ -128,6 +130,7 @@ func defaultImageToolAllowedFieldsText() string {
 	return strings.Join(fields, ",")
 }
 
+// envDefault 给出 app_settings 没有覆盖时的启动默认值。上传上限来自 env overlay；模板/尺寸是内置常数。
 func envDefault(s *Store, key string) string {
 	switch key {
 	case "image_tool_allowed_fields":

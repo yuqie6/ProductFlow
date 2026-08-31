@@ -1,3 +1,10 @@
+// Package settings 保存 PostgreSQL 中的运行时供应商与模型配置，并与 env 启动 overlay 分工。
+//
+// 职责：app_settings、provider_profiles、provider_bindings。进程启动值来自 config.Load；
+// 本包在 API 起来后覆盖「可以进库的键」。DATABASE_URL / SESSION_SECRET / ADMIN_ACCESS_KEY 永远只认 env。
+// 调用时机：设置页 HTTP、providers.Live* 每次 Resolve、httpx 管理口令门闩读 Runtime。
+// 副作用：只写上述三张设置表。导出/导入不要带出密钥明文（has_api_key 布尔即可）。
+// 错误：档案仍被绑定就 Archive 会 Validation（不是 Conflict）。缺绑定对 mock 是合法的。
 package settings
 
 import (
@@ -18,26 +25,33 @@ var defaultImageToolAllowedFields = []string{
 	"moderation", "action", "input_fidelity", "partial_images",
 }
 
+// Runtime 是 API 启动后仍可被 app_settings 覆盖的运行时开关。
 type Runtime struct {
-	ImageGenerationMaxDimension int      `json:"image_generation_max_dimension"`
-	ImageToolAllowedFields      []string `json:"image_tool_allowed_fields"`
-	AdminAccessRequired         bool     `json:"admin_access_required"`
-	DeletionEnabled             bool     `json:"deletion_enabled"`
+	ImageGenerationMaxDimension int      `json:"image_generation_max_dimension"` // 生图最大单边像素
+	ImageToolAllowedFields      []string `json:"image_tool_allowed_fields"`      // image tool 字段白名单
+	AdminAccessRequired         bool     `json:"admin_access_required"`          // true 时工作台需要登录
+	DeletionEnabled             bool     `json:"deletion_enabled"`               // false 时禁止删商品/连续生图会话
 }
 
+// RuntimeReader 读取合并 env 与 DB overlay 后的运行时开关。
 type RuntimeReader interface {
+	// Runtime 返回当前进程应遵守的运行时开关。
 	Runtime(ctx context.Context) (Runtime, error)
 }
 
+// LimitsReader 读取上传限制；DB overlay 可覆盖 env 启动值。
 type LimitsReader interface {
+	// UploadLimits 返回当前上传字节、像素与 MIME 限制。
 	UploadLimits(ctx context.Context) (media.Limits, error)
 }
 
+// Store 读写 PostgreSQL app_settings、供应商档案与绑定。
 type Store struct {
 	db  *gorm.DB
 	env config.Config
 }
 
+// NewStore 打开 GORM 连接；失败时 panic，供进程启动使用。
 func NewStore(pool *pgxpool.Pool, env config.Config) *Store {
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
@@ -46,6 +60,7 @@ func NewStore(pool *pgxpool.Pool, env config.Config) *Store {
 	return &Store{db: gdb, env: env}
 }
 
+// Runtime 实现 RuntimeReader：env 提供启动默认值，app_settings 覆盖所选键。
 func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
@@ -76,11 +91,13 @@ func (s *Store) Runtime(ctx context.Context) (Runtime, error) {
 	return runtime, nil
 }
 
+// ImageToolRuntime 是连续生图 / images tool 允许字段与 DB 中的默认选项。
 type ImageToolRuntime struct {
-	Options map[string]any
-	Allowed []string
+	Options map[string]any // 设置页默认 tool 选项
+	Allowed []string       // 允许发送给 Responses image tool 的字段
 }
 
+// ImageToolRuntime 读取 image tool 允许字段与默认选项。
 func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) {
 	if s == nil {
 		return ImageToolRuntime{Allowed: append([]string{}, defaultImageToolAllowedFields...)}, nil
@@ -118,6 +135,7 @@ func (s *Store) ImageToolRuntime(ctx context.Context) (ImageToolRuntime, error) 
 	return out, nil
 }
 
+// UploadLimits 实现 LimitsReader：env 启动值可被 app_settings 覆盖。
 func (s *Store) UploadLimits(ctx context.Context) (media.Limits, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {
@@ -176,6 +194,9 @@ func (s *Store) overrides(ctx context.Context) (map[string]string, error) {
 	return out, nil
 }
 
+// ImageChatPromptTemplate 读取连续生图提示词模板。
+// 调用时机：imagesession 拼 prompt。app_settings 缺键或空白时回退内置 defaultPromptTemplate。
+// 不要把返回值当 listing 图类 compile 模板。
 func (s *Store) ImageChatPromptTemplate(ctx context.Context) (string, error) {
 	overrides, err := s.overrides(ctx)
 	if err != nil {

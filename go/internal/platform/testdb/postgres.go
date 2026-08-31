@@ -1,3 +1,4 @@
+// Package testdb 把测试接到隔离库 <dbname>_gotest_<package>，绝不写 just-dev 的 productflow_dev。
 package testdb
 
 import (
@@ -21,7 +22,7 @@ import (
 
 const (
 	testDBSuffix = "_gotest"
-	// Session lock so parallel `go test ./...` processes do not race CreateTable.
+	// 会话级 advisory lock，避免并行 go test ./... 抢 CreateTable。
 	gotestMigrateLock int64 = 712450011
 )
 
@@ -30,11 +31,10 @@ var (
 	ensuredURL string
 )
 
-// Pool returns a connection to an isolated test database derived from
-// DATABASE_URL. The live just-dev database (productflow_dev) is never used:
-// tests write to <dbname>_gotest_<package> so fixtures cannot be recovered
-// by the running API/dispatcher, and leftover async_dispatches from another
-// package cannot steal dispatcher claims.
+// Pool 连到从 DATABASE_URL 派生的隔离测试库。不用线上 just-dev（productflow_dev）：
+// 夹具写在 <dbname>_gotest_<package>，避免跑着的 API/dispatcher 回收测试数据，
+// 也避免别的包留下的 async_dispatches 抢走 dispatcher claim。
+// DATABASE_URL 未设或 Postgres 不可达会 Skip，不是 Fatal。
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	raw := os.Getenv("DATABASE_URL")
@@ -56,7 +56,7 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// Open returns the live test pool and a GORM handle on the same connections.
+// Open 返回隔离库的 pgx 池和同一组连接上的 GORM。OpenGorm 失败 Fatal，因为后面写库已经假定句柄可用。
 func Open(t *testing.T) (*pgxpool.Pool, *gorm.DB) {
 	t.Helper()
 	pool := Pool(t)
@@ -67,12 +67,15 @@ func Open(t *testing.T) (*pgxpool.Pool, *gorm.DB) {
 	return pool, gdb
 }
 
+// Gorm 只返回 [Open] 的 GORM 句柄，给不需要直接用池的测试。
 func Gorm(t *testing.T) *gorm.DB {
 	t.Helper()
 	_, gdb := Open(t)
 	return gdb
 }
 
+// ensureTestDatabase 在 advisory lock 下 CREATE DATABASE（已存在忽略 42P04）并 schema.Apply。
+// 进程内只做一次；库名来自测试二进制，所以不同包不会共用一张表。
 func ensureTestDatabase(t *testing.T, raw string) string {
 	t.Helper()
 	ensureMu.Lock()
@@ -146,6 +149,7 @@ func isolatedName(liveName string) string {
 	return liveName + suffix
 }
 
+// testBinaryIdent 把 os.Args[0] 收成安全 ident，用作 _gotest_<ident> 后缀。空结果回落到 pkg。
 func testBinaryIdent() string {
 	base := strings.ToLower(filepath.Base(os.Args[0]))
 	base = strings.TrimSuffix(base, ".exe")

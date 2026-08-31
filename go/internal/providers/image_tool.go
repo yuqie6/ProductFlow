@@ -61,6 +61,7 @@ func WorkflowImageToolOptions(req graph.ImageRequest, runtime map[string]any, al
 	return filterImageToolOptions(mergeToolOptions(runtime, request), allowed)
 }
 
+// filterImageToolOptions 只保留 allowed 字段。空 allowed 用默认集；结果供 Responses image tool。
 func filterImageToolOptions(opts map[string]any, allowed []string) map[string]any {
 	if len(opts) == 0 {
 		return nil
@@ -115,6 +116,7 @@ func imageTypeFamilyOf(key string) string {
 	}
 }
 
+// pixelSizeFromSpec 从 generation_spec 读 WxH。缺宽高回落 1024x1024。
 func pixelSizeFromSpec(spec map[string]any) string {
 	longest := 2048
 	switch strings.TrimSpace(asToolString(spec["resolution_tier"])) {
@@ -140,6 +142,7 @@ func pixelSizeFromSpec(spec map[string]any) string {
 	return strconv.Itoa(maxInt(1, int(float64(longest)*ratio+0.5))) + "x" + strconv.Itoa(longest)
 }
 
+// openaiSizeFromPixels 把像素尺寸收到 Images API 认识的档位（如 1024x1024）。对不上回落 1024x1024。
 func openaiSizeFromPixels(size string) string {
 	width, height := 1024, 1024
 	if parts := strings.SplitN(size, "x", 2); len(parts) == 2 {

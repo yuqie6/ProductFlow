@@ -62,6 +62,7 @@ func graphChangeSetPrepared(changeSet json.RawMessage) (before, target map[strin
 	return before, target, parsed, nil
 }
 
+// ApplyGraphTool 经 graph 包立即应用 ChangeSet；相同幂等键回放，不直接写 graph 表。
 func (s Service) ApplyGraphTool(ctx context.Context, conversationID string, changeSet json.RawMessage, idempotencyKey string) (map[string]any, error) {
 	before, targetMap, parsed, err := graphChangeSetPrepared(changeSet)
 	if err != nil {
@@ -98,6 +99,7 @@ func (s Service) ApplyGraphTool(ctx context.Context, conversationID string, chan
 	return result, nil
 }
 
+// ProposeGraphTool 经 graph 包创建待确认提案；相同幂等键回放。
 func (s Service) ProposeGraphTool(ctx context.Context, conversationID string, changeSet json.RawMessage, idempotencyKey string) (map[string]any, error) {
 	before, targetMap, parsed, err := graphChangeSetPrepared(changeSet)
 	if err != nil {
@@ -131,6 +133,7 @@ func (s Service) ProposeGraphTool(ctx context.Context, conversationID string, ch
 	return result, nil
 }
 
+// DiscardProposalTool 经 graph 包丢弃待处理提案；相同幂等键回放。
 func (s Service) DiscardProposalTool(ctx context.Context, conversationID string, proposalID, idempotencyKey string) (map[string]any, error) {
 	target := map[string]any{"proposal_id": nullable(proposalID)}
 	replay, found, err := s.lookupMutation(ctx, conversationID, discardProposalTool, idempotencyKey, discardProposalTool, map[string]any{}, target)
@@ -168,6 +171,7 @@ func (s Service) DiscardProposalTool(ctx context.Context, conversationID string,
 	return result, nil
 }
 
+// CancelRunTool 经 graph 包取消 WorkflowGraphRun；相同幂等键回放。
 func (s Service) CancelRunTool(ctx context.Context, conversationID, runID, idempotencyKey string) (map[string]any, error) {
 	target := map[string]any{"run_id": runID}
 	replay, found, err := s.lookupMutation(ctx, conversationID, cancelRunTool, idempotencyKey, cancelRunTool, map[string]any{}, target)
@@ -199,6 +203,7 @@ func (s Service) CancelRunTool(ctx context.Context, conversationID, runID, idemp
 	return result, nil
 }
 
+// FocusCanvasTool 记录画布聚焦请求；不改图，相同幂等键回放。
 func (s Service) FocusCanvasTool(ctx context.Context, conversationID, idempotencyKey string, nodeIDs, edgeIDs, groupIDs []string) (map[string]any, error) {
 	if len(nodeIDs)+len(edgeIDs)+len(groupIDs) == 0 {
 		return nil, apperr.Validation("画布聚焦至少需要一个节点、边或分组")
@@ -223,10 +228,17 @@ func (s Service) FocusCanvasTool(ctx context.Context, conversationID, idempotenc
 	return result, nil
 }
 
+// ReconcileGraphTool 按幂等键只读对账图工具副作用，转给 ReconcileTool。
+//
+// agent-service 崩溃恢复时调用。不重放 ChangeSet、不延长 lease、不改 Goal。State 见 ReconcileResponse。
+// conversation 不存在 NotFound；同键不同目标 Conflict。
 func (s Service) ReconcileGraphTool(ctx context.Context, conversationID, toolName, idempotencyKey string, before, target map[string]any) (ReconcileResponse, error) {
 	return s.ReconcileTool(ctx, conversationID, toolName, idempotencyKey, toolPrepared(conversationID, toolName, before, target))
 }
 
+// GetNodeDetail 读取商品 live 图上一个节点的投影，给内部 GET .../graph/nodes/:node_id。
+//
+// conversation 必须是 product_workflow。无 live 图或节点不在图上返回 NotFound。只读，不写 Graph Command、lease、journal。
 func (s Service) GetNodeDetail(ctx context.Context, conversationID, nodeID string) (map[string]any, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -250,6 +262,7 @@ func (s Service) GetNodeDetail(ctx context.Context, conversationID, nodeID strin
 	return nil, apperr.NotFound("节点不存在")
 }
 
+// ListWorkflowRuns 列出当前商品 live 图的 GraphRun。
 func (s Service) ListWorkflowRuns(ctx context.Context, conversationID string, limit int) (map[string]any, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -276,6 +289,7 @@ func (s Service) ListWorkflowRuns(ctx context.Context, conversationID string, li
 	return map[string]any{"workflow_id": live.ID, "workflow_revision": live.Revision, "items": items}, nil
 }
 
+// InspectWorkflowRuns 供全局 Agent 按 workflow id 检查有界 GraphRun 列表。
 func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string, workflowIDs []string, limit int) (map[string]any, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -311,6 +325,10 @@ func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string,
 	return map[string]any{"items": items}, nil
 }
 
+// WorkflowRunDetail 读取一次 GraphRun 的有界摘要（无媒体 bytes），给内部 GET .../workflow-runs/:run_id。
+//
+// 商品对话只看本商品；全局对话按 run 反查所属商品。runID 空返回 Validation；找不到 NotFound。
+// 不取消 run、不改 Goal。artifact 只保留身份字段。
 func (s Service) WorkflowRunDetail(ctx context.Context, conversationID, runID string) (map[string]any, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -356,6 +374,7 @@ func (s Service) WorkflowRunDetail(ctx context.Context, conversationID, runID st
 	return boundedWorkflowRunDetail(run), nil
 }
 
+// boundedWorkflowRunDetail 把 GraphRun 收成有界摘要，避免整份节点 artifact 进入 Agent 上下文。
 func boundedWorkflowRunDetail(run graph.GraphRunResponse) map[string]any {
 	nodes := make([]map[string]any, 0, len(run.NodeRuns))
 	for _, node := range run.NodeRuns {
@@ -388,6 +407,7 @@ func boundedWorkflowRunDetail(run graph.GraphRunResponse) map[string]any {
 	}
 }
 
+// boundedNodeArtifact 只暴露 artifact 身份字段或有界 key 列表，不传媒体 bytes。
 func boundedNodeArtifact(output map[string]any) map[string]any {
 	if len(output) == 0 {
 		return nil

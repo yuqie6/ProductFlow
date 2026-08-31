@@ -32,21 +32,23 @@ func requestConfigForDigest(nodeType NodeType, config map[string]any) map[string
 	return out
 }
 
+// SourceRecord 是 compiler 从入边解析出的运行输入。断开边即从 digest 消失；不扫描图其余节点。
 type SourceRecord struct {
-	Facts                  []map[string]any
-	ProductSource          *productSourceSnapshot
-	Brief                  map[string]any
-	VisualPayload          map[string]any
+	Facts                  []map[string]any       // 来自入边 product_source 的 payload；空列表是 [] 不是 nil
+	ProductSource          *productSourceSnapshot // 仅 product_source 节点
+	Brief                  map[string]any         // 入边 creative_brief 的可见文稿
+	VisualPayload          map[string]any         // 入边 visual_system 的 overlay 或版本 payload
 	VisualSystemVersionID  *string
 	BoundAssetID           *string
-	BoundAssetLabel        *string
-	BoundAssetMIME         *string
+	BoundAssetLabel        *string // 绑定图展示名；未绑定时用节点标题
+	BoundAssetMIME         *string // 绑定图 MIME；未绑定或读失败为 nil
 	CurrentArtifactID      *string
-	CurrentArtifactType    *string
-	CurrentArtifactPayload map[string]any
+	CurrentArtifactType    *string        // 当前产物类型，如 image；无产物为 nil
+	CurrentArtifactPayload map[string]any // 无产物时为空 map
 	CurrentOutputAssetID   *string
-	CurrentInputDigest     *string
-	PromptDocument         map[string]any
+	// CurrentInputDigest 是当前产物编译时的 input digest；nil 表示尚无产物，cook 必须生成。
+	CurrentInputDigest *string
+	PromptDocument     map[string]any // 入边 image_prompt 的 prompt 文档
 }
 
 type compiledReference struct {
@@ -59,6 +61,7 @@ type compiledReference struct {
 	Role         string
 }
 
+// incomingSorted 只收集指向该节点的边。compiler 运行输入不含未连入的 facts / 参考图 / 文稿。
 func incomingSorted(graph AppliedGraph, nodeID string) []AppliedEdge {
 	var out []AppliedEdge
 	for _, edge := range graph.Edges {
@@ -78,8 +81,9 @@ func incomingSorted(graph AppliedGraph, nodeID string) []AppliedEdge {
 	return out
 }
 
-// incomingFactSetVersions keeps the selected product fact-set identity in the
-// downstream signature even when two versions currently contain equal facts.
+// incomingFactSetVersions 把选中的 fact-set 版本身份写进下游签名。
+// 两个版本即使当前 facts 内容相同，版本 id 不同也会让 digest 变化，避免错复用旧产物。
+// 只扫入边 RoleFacts；断开边即从签名消失。改 digest 算法时必须连同 skipUnchanged 一起看。
 func incomingFactSetVersions(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) []map[string]any {
 	entries := make([]map[string]any, 0)
 	for _, edge := range incomingSorted(graph, nodeID) {
@@ -99,6 +103,7 @@ func incomingFactSetVersions(graph AppliedGraph, nodeID string, sources map[stri
 	return entries
 }
 
+// compileInputDigest 哈希目标节点入边与 affects_digest 的 config。image digest 省略 delivery_spec。
 func compileInputDigest(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (string, error) {
 	node, err := graph.Node(nodeID)
 	if err != nil {
@@ -120,6 +125,9 @@ func compileInputDigest(graph AppliedGraph, nodeID string, sources map[string]So
 	}
 }
 
+// compilePromptRuntime 编 image_prompt 的 input digest：只扫入边 facts/brief/reference/visual。
+// 缺运行所需边返回 Validation。digest 含 fact_set_versions，同内容不同版本也会变。
+// 改字段集合必须同步 skipUnchanged 与 compiled_context，否则会错复用或永远 stale。
 func compilePromptRuntime(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (string, error) {
 	node, err := graph.Node(nodeID)
 	if err != nil {
@@ -187,6 +195,8 @@ func compilePromptRuntime(graph AppliedGraph, nodeID string, sources map[string]
 	}), nil
 }
 
+// compileContextRuntime 编 creative_brief / visual_system 的 digest。只消费 facts 与 reference 入边。
+// 类型不对或缺必填边返回 Validation。不要把 live 文档本身编进 digest——adopt 后会自我 stale。
 func compileContextRuntime(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (string, error) {
 	node, err := graph.Node(nodeID)
 	if err != nil {
@@ -233,6 +243,9 @@ func compileContextRuntime(graph AppliedGraph, nodeID string, sources map[string
 	}), nil
 }
 
+// compileImageRuntime 编 image_generation 的 digest。必须有 prompt 入边，文稿空则 Validation。
+// digest 用 strip 后的 prompt_document + 参考资产 id + visual version/overlay + 规范化 config。
+// 产物本身不进 digest。改字段须同步 skipUnchanged，否则会错跳过或永远重新生成。
 func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (string, error) {
 	node, err := graph.Node(nodeID)
 	if err != nil {
@@ -330,6 +343,8 @@ func rejectIncompleteRequiredEdges(graph AppliedGraph, node AppliedNode) error {
 	return nil
 }
 
+// compileReference 把 reference 入边收成资产 id。image_asset 用绑定；image_generation 用当前输出资产。
+// 未绑定或上游尚无输出返回 Validation。绑定不是 reference 边——断边才会从 digest 消失。
 func compileReference(graph AppliedGraph, edge AppliedEdge, sources map[string]SourceRecord) (compiledReference, error) {
 	source, err := graph.Node(edge.SourceNodeID)
 	if err != nil {
@@ -367,6 +382,8 @@ func compileReference(graph AppliedGraph, edge AppliedEdge, sources map[string]S
 	}, nil
 }
 
+// compileVisual 合并 visual_system 的 version payload 与节点 visual_overlay。
+// 源类型必须是 visual_system，否则 Validation。返回 payload、version_id、overlay；空 overlay 为 nil。
 func compileVisual(source AppliedNode, record SourceRecord) (any, any, any, error) {
 	if source.NodeType != NodeVisualSystem {
 		return nil, nil, nil, apperr.Validation("visual_guidance 边的源必须是视觉规范节点")
@@ -411,6 +428,8 @@ func visualOverlayFromConfig(config map[string]any) map[string]any {
 	return nil
 }
 
+// incomingPromptDocument 取第一条 RolePrompt 入边的已发布文稿与 artifact id。
+// 缺边或文稿空返回 Validation。只扫入边，不扫图其余部分。
 func incomingPromptDocument(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (map[string]any, string, error) {
 	for _, edge := range incomingSorted(graph, nodeID) {
 		if edge.Role != RolePrompt {
@@ -434,6 +453,8 @@ func incomingPromptDocument(graph AppliedGraph, nodeID string, sources map[strin
 	return nil, "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
 }
 
+// collectPromptInputs 按入边组装 cook 用的 facts/briefs/visual/references。
+// 只给 AssemblePromptRequest 用，不写库。参考边编译失败会整份返回 error。
 func collectPromptInputs(graph AppliedGraph, nodeID string, sources map[string]SourceRecord) (facts []map[string]any, briefs []map[string]any, visual map[string]any, refs []compiledReference, err error) {
 	for _, edge := range incomingSorted(graph, nodeID) {
 		record := sources[edge.SourceNodeID]
@@ -697,6 +718,8 @@ func inputDigest(payload map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// pythonDumps 按 Python json.dumps(sort_keys=True, separators=(', ', ': ')) 的字节序编 digest。
+// 改分隔符或 key 排序会让所有存量 input_digest 失效，旧产物会全部被当成 stale。整数浮点必须写成不带小数。
 func pythonDumps(v any) string {
 	switch t := v.(type) {
 	case nil:

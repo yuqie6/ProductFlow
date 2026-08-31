@@ -22,10 +22,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// Executor 是局部编辑的 worker 入口。别人正在跑时返回 queue.ErrBusy；无法证明的供应商结果标 unknown。
 type Executor struct {
-	DB       *gorm.DB
-	Media    media.Store
-	Provider Provider
+	DB       *gorm.DB    // worker 事务
+	Media    media.Store // 读源图/mask，写结果
+	Provider Provider    // nil 时用 MockProvider，不打网
 }
 
 func (e Executor) provider() Provider {
@@ -151,6 +152,8 @@ func (s snapshot) auditJSON() map[string]any {
 	}
 }
 
+// claim 把 queued 标 running 并发 attemptID。别人未过期的 running 返回 ErrBusy。
+// 已进入 provider_pending 及之后的过期 running 标 unknown，禁止自动重投以免重复扣费。
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error) {
 	var claimed bool
 	var attemptID string
@@ -246,6 +249,7 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// loadSnapshot 在 claim 成功后读任务、源图、mask、参考图。attempt 已不是当前 running 返回 409，调用方应停手。
 func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (snapshot, error) {
 	var out snapshot
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -327,6 +331,7 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 	return out, err
 }
 
+// markPhase 推进 progress_phase 并写 attempt 账本。fence 失败当 409，表示别人已接管或任务已终态。
 func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, providerName string, requestJSON map[string]any) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, attemptOK, err := lockFenced(ctx, pgxTx, taskID, attemptID)
@@ -361,6 +366,7 @@ func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, provi
 	})
 }
 
+// persistResult 把供应商返回的图落成 MediaObject 并挂到任务。fence 失效返回 409，compensation 回滚刚写的文件。
 func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID string, result EditResult) error {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -442,6 +448,7 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 	return nil
 }
 
+// finish 写终态。fence 失效直接返回（不报错）：信封仍由 Consume 标 CONSUMED，业务行以库里为准。
 func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, effect, detail string, retryable bool, providerStatus, responseID string) {
 	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, ok, err := lockFenced(ctx, pgxTx, taskID, attemptID)
@@ -505,6 +512,8 @@ func lockFenced(ctx context.Context, tx *gorm.DB, taskID, attemptID string) (tas
 	return taskFromModel(row), err == nil, err
 }
 
+// markStaleClaimed 把过期但尚未打网的 running 拉回 queued，并把 pending attempt 标 failed。
+// 只有 phase=claimed 才能走这里；已过 provider 边界必须标 unknown。
 func markStaleClaimed(ctx context.Context, tx *gorm.DB, task taskRow) error {
 	now := time.Now().UTC()
 	if task.ActiveAttemptID != nil {

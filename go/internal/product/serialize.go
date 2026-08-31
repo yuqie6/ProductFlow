@@ -31,6 +31,7 @@ func SerializeAsset(asset ImageAsset) AssetResponse {
 	return serializeAsset(asset)
 }
 
+// serializeAsset 用 ProductImageAsset id 拼下载 URL，合同里不出现 StoragePath。
 func serializeAsset(asset ImageAsset) AssetResponse {
 	download, preview, thumb := assetURLs(asset.ID)
 	return AssetResponse{
@@ -71,6 +72,7 @@ func assetURLs(assetID string) (download, preview, thumbnail string) {
 	return storage.ImageURLs(base)
 }
 
+// metadataFacts 只把非空商品字段写成 confirmed user facts，空值不占 fact 行。
 func metadataFacts(p Product) []map[string]any {
 	type pair struct {
 		key string

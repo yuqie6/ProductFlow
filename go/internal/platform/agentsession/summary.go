@@ -1,3 +1,4 @@
+// Package agentsession 维护 AgentSession 的 operational summary，供 Dock 与列表展示。
 package agentsession
 
 import (
@@ -13,7 +14,9 @@ import (
 
 const summaryMax = 2_000
 
-// RefreshSummary 按当前 session 下的 Task 重写 agent_sessions.summary，对齐 Python refresh_agent_session_summary。
+// RefreshSummary 按当前 session 下的 Task 重写 agent_sessions.summary。
+//
+// sessionID 空白时静默成功。Count/Find/Updates 数据库错误会返回。session 行不存在时 Updates 影响 0 行仍成功。
 func RefreshSummary(ctx context.Context, pgxTx *gorm.DB, sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil

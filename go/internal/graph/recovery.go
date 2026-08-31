@@ -15,11 +15,13 @@ import (
 
 const defaultStaleRunningAfter = 30 * time.Minute
 
+// RecoverySummary 统计补回 dispatch、标 unknown 与仍 queued 的 GraphRun。
 type RecoverySummary struct {
-	QueuedRuns       int `json:"queued_runs"`
-	StaleRunningRuns int `json:"stale_running_runs"`
-	EnqueuedRuns     int `json:"enqueued_runs"`
-	UnknownRuns      int `json:"unknown_runs"`
+	QueuedRuns       int `json:"queued_runs"`        // 仍 active、需补 dispatch 的 run 数
+	StaleRunningRuns int `json:"stale_running_runs"` // 过期 running 节点被重新 queued
+	EnqueuedRuns     int `json:"enqueued_runs"`      // RestageIfIdle 实际补回 PENDING 的次数
+	// UnknownRuns 是过期且已打 provider、被标 unknown 的 run 数；unknown 不可经 RetryRun 重试。
+	UnknownRuns int `json:"unknown_runs"`
 }
 
 // RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
@@ -144,9 +146,8 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				summary.StaleRunningRuns++
 			}
 		}
-		// A terminal transition and queue promotion are separate writes. If the
-		// process dies between them, no running row remains to lead recovery to
-		// the queued run. Promote one queued run per affected graph explicitly.
+		// 终态迁移与队列晋升是两次独立写。进程若死在中间，不会再有 running 行把 recovery 领到 queued run。
+		// 因此对每个仍有 queued 的 graph 显式 promote 一条，而不是等 running 行来带头。
 		var queuedGraphIDs []string
 		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
 			Where("status = ?", RunStatusQueued).
@@ -164,6 +165,9 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	return summary, err
 }
 
+// classifyDelivery 决定 recovery 对仍 running 的 run 补 dispatch 还是只 promote。
+// 有 running 节点返回 running；只有 queued 或节点已全终态返回 queued；其余 none。
+// 不要在这里标 unknown——过期且已打 provider 的节点由 RecoverUnfinishedGraphRuns 另标。
 func classifyDelivery(run graphRunRow) string {
 	if run.Status != RunStatusRunning {
 		return "none"

@@ -1,3 +1,10 @@
+// Package providers 构造 prompt 与 image 供应商；不可证明的结果保持 unknown。
+//
+// 职责：按 settings 里当前绑定选出 OpenAI / Gemini / mock，并翻译 HTTP 错误。
+// 调用时机：graph cook、创建页 source_note、连续生图、局部编辑。每次 Live* 调用都重新 Resolve，不要缓存过期 Key。
+// 副作用：只打外网；业务行由调用方写 provider_effects。本包不 Stage 队列。
+// 错误：已证明的 4xx/内容拒绝可以 failed；超时、断流、非图响应走 unknown，调用方不得当失败自动重试。
+// 禁区：不要在这里写 workflow_* 表；mock 实现不能打网。
 package providers
 
 import (
@@ -18,6 +25,7 @@ func (l LivePrompt) resolve(ctx context.Context) (graph.PromptProvider, error) {
 	return Prompt(ctx, l.Store)
 }
 
+// Name 实现 graph.PromptProvider。每次从 settings 解析当前绑定；无法解析时返回 "unconfigured"。
 func (l LivePrompt) Name() string {
 	p, err := l.resolve(context.Background())
 	if err != nil || p == nil {
@@ -26,6 +34,7 @@ func (l LivePrompt) Name() string {
 	return p.Name()
 }
 
+// GenerateCreativeBrief 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
 func (l LivePrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -34,6 +43,7 @@ func (l LivePrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptR
 	return p.GenerateCreativeBrief(ctx, req)
 }
 
+// GenerateVisualOverlay 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
 func (l LivePrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -42,6 +52,7 @@ func (l LivePrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptR
 	return p.GenerateVisualOverlay(ctx, req)
 }
 
+// GeneratePrompt 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
 func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -50,6 +61,7 @@ func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest)
 	return p.GeneratePrompt(ctx, req)
 }
 
+// GenerateSourceNote 实现 graph.PromptProvider。底层没有该方法时回退 MockSourceNotePayload，不打网。
 func (l LivePrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -70,6 +82,7 @@ func (l LiveImage) resolve(ctx context.Context) (imageAdapterSet, error) {
 	return imageAdapter(ctx, l.Store)
 }
 
+// Name 实现 graph.ImageProvider。每次从 settings 解析当前 image 绑定；无法解析时返回 "unconfigured"。
 func (l LiveImage) Name() string {
 	p, err := l.resolve(context.Background())
 	if err != nil || p == nil {
@@ -78,6 +91,7 @@ func (l LiveImage) Name() string {
 	return p.Name()
 }
 
+// GenerateImage 实现 graph.ImageProvider，按当前 settings 绑定调用底层供应商。
 func (l LiveImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -86,6 +100,7 @@ func (l LiveImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (g
 	return p.GenerateImage(ctx, req)
 }
 
+// Generate 实现 imagesession.ChatProvider。先读 settings 的 chat prompt 模板再调底层；无法证明的结果保持 unknown。
 func (l LiveImage) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -105,6 +120,7 @@ func (l LiveImage) Generate(ctx context.Context, req imagesession.ChatRequest) (
 	return p.Generate(ctx, req)
 }
 
+// Capability 实现 localedit.Provider，按当前 image 绑定声明能力。
 func (l LiveImage) Capability() localedit.Capability {
 	p, err := l.resolve(context.Background())
 	if err != nil || p == nil {
@@ -113,6 +129,7 @@ func (l LiveImage) Capability() localedit.Capability {
 	return p.Capability()
 }
 
+// Edit 实现 localedit.Provider，按当前 settings 绑定调用底层供应商。
 func (l LiveImage) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -121,6 +138,7 @@ func (l LiveImage) Edit(ctx context.Context, req localedit.EditRequest) (localed
 	return p.Edit(ctx, req)
 }
 
+// ReconcileResponse 查询供应商原请求状态；底层不支持时返回 "unsupported"，不可证明时返回 "unknown"。
 func (l LiveImage) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
 	p, err := l.resolve(ctx)
 	if err != nil {
@@ -135,7 +153,9 @@ func (l LiveImage) ReconcileResponse(ctx context.Context, responseID string) (st
 	return r.ReconcileResponse(ctx, responseID)
 }
 
-// Prompt 按当前 prompt 绑定构造图运行提示词供应商。
+// Prompt 按当前 prompt 用途绑定构造图运行提示词供应商。
+// 调用时机：跑图 cook prompt 节点。store 为 nil 或 Kind=mock 返回 MockPromptProvider（不打网）。
+// 非 openai 的真实绑定返回 Unavailable。不要用本函数构造 image 或 agent 供应商。
 func Prompt(ctx context.Context, store *settings.Store) (graph.PromptProvider, error) {
 	if store == nil {
 		return graph.MockPromptProvider{}, nil
@@ -153,6 +173,7 @@ func Prompt(ctx context.Context, store *settings.Store) (graph.PromptProvider, e
 	return OpenAIPrompt{APIKey: binding.APIKey, BaseURL: binding.BaseURL, Model: binding.Model}, nil
 }
 
+// imageAdapter 按当前 image 绑定构造具体适配器。store 为 nil 或绑定是 mock 时返回不打网的 mockBundle。
 func imageAdapter(ctx context.Context, store *settings.Store) (imageAdapterSet, error) {
 	if store == nil {
 		return mockBundle{}, nil

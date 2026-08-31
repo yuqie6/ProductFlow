@@ -1,10 +1,8 @@
 package schema
 
-// EnumDDL and ExtraDDL are applied around CreateTable/AddColumn.
-// Each statement is idempotent (IF NOT EXISTS or duplicate_object).
+// EnumDDL 与 ExtraDDL 夹在 CreateTable/AddColumn 前后执行。每条语句必须幂等（IF NOT EXISTS 或 duplicate_object）。
 
-// EnumDDL creates PostgreSQL enum types, including leftover unused types from Alembic history.
-
+// EnumDDL 创建 PostgreSQL enum，含 Alembic 历史上留下、代码已不用的类型，删掉会让旧库 Apply 失败。
 var EnumDDL = []string{
 	`DO $enum$ BEGIN
 CREATE TYPE agentcheckpointkind AS ENUM ('before_model_request', 'tool_effect_intent', 'tool_effect_result', 'question_required', 'external_job_submitted', 'terminal', 'model_response_bound', 'model_response_cursor');
@@ -143,8 +141,7 @@ WHEN duplicate_table THEN NULL;
 END $enum$;`,
 }
 
-// ExtraDDL adds CHECK/UNIQUE/FK constraints and indexes that CreateTable/AddColumn do not own.
-
+// ExtraDDL 补上 CreateTable/AddColumn 不管的 CHECK/UNIQUE/FK 与索引。改约束只改这里，不要在模型 tag 里再写一份。
 var ExtraDDL = []string{
 	`DO $c$ BEGIN
 ALTER TYPE agentcheckpointkind ADD VALUE IF NOT EXISTS 'model_response_bound';

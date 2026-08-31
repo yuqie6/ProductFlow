@@ -13,11 +13,12 @@ import (
 
 var errNilPool = errors.New("gorm: nil postgres pool")
 
+// gormByPool 按 pgx 池缓存一条 GORM 句柄，保证 OpenGorm 幂等，避免双池。
 var gormByPool sync.Map
 
-// OpenGorm wraps an existing pgx pool with one GORM handle. Closing GORM's
-// sql.DB does not close the pool. Callers share this handle; do not open a
-// second pool for GORM.
+// OpenGorm 把已有 pgx 池包成一条 GORM 句柄。关 GORM 的 sql.DB 不会关池；调用方必须共用这条句柄。
+// pool 为 nil 返回 error。并发两次 OpenGorm 只保留 Map 里先存进去的那条，后打开的 sql.DB 会关掉。
+// PreferSimpleProtocol=true、SkipDefaultTransaction=true：命令事务由 [tx.WithGorm] 显式开。
 func OpenGorm(pool *pgxpool.Pool) (*gorm.DB, error) {
 	if pool == nil {
 		return nil, errNilPool

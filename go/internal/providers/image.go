@@ -18,16 +18,17 @@ import (
 
 // OpenAIImages 调用 /v1/images/generations；有参考图或局部编辑走 /v1/images/edits。
 type OpenAIImages struct {
-	Kind      string
-	APIKey    string
-	BaseURL   string
-	Model     string
-	Quality   string
-	Style     string
-	MaskEdit  bool
-	Transport jsonRoundTrip
+	Kind      string        // openai_images；空时 Name() 返回 openai-images
+	APIKey    string        // 明文，只给进程内调用
+	BaseURL   string        // 空则用 OpenAI 默认
+	Model     string        // Images API 模型 id
+	Quality   string        // Images API quality；空则按请求 spec
+	Style     string        // Images API style
+	MaskEdit  bool          // false 时局部编辑 Capability 为 unsupported
+	Transport jsonRoundTrip // 可注入 HTTP；测试用
 }
 
+// Name 实现 graph.ImageProvider；Kind 为空时返回 "openai-images"。
 func (p OpenAIImages) Name() string {
 	if p.Kind != "" {
 		return providerDisplayName(p.Kind)
@@ -35,6 +36,7 @@ func (p OpenAIImages) Name() string {
 	return "openai-images"
 }
 
+// GenerateImage 实现 graph.ImageProvider。有参考图走 /v1/images/edits；不可证明的失败经 asGraphUnknown 标 unknown。
 func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	size := openaiSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
@@ -53,6 +55,7 @@ func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest)
 	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
 }
 
+// Generate 实现 imagesession.ChatProvider。有参考图走 edits；否则走 generations。
 func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	size := req.Size
 	if size == "" {
@@ -84,6 +87,7 @@ func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest
 	}, nil
 }
 
+// Capability 实现 localedit.Provider；仅 MaskEdit 为 true 时声明 masked local edit。
 func (p OpenAIImages) Capability() localedit.Capability {
 	if p.MaskEdit {
 		return localedit.SupportedCapability(p.Name())
@@ -91,6 +95,7 @@ func (p OpenAIImages) Capability() localedit.Capability {
 	return localedit.UnsupportedCapability(p.Name())
 }
 
+// Edit 实现 localedit.Provider，走 /v1/images/edits；未声明 mask 能力时拒绝且不打网。
 func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	if !p.MaskEdit {
 		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
@@ -124,6 +129,7 @@ func (p OpenAIImages) generate(ctx context.Context, prompt, size, quality string
 	return images[0], mime, model, id, nil
 }
 
+// generateN 调 /v1/images/generations 一次出 n 张。classify 把 HTTP 状态收成 unknown/failed；4xx 不重试。
 func (p OpenAIImages) generateN(ctx context.Context, prompt, size, quality string, n int, classify func(int, []byte) error) ([][]byte, string, string, string, error) {
 	if quality == "" {
 		quality = p.Quality
@@ -176,6 +182,7 @@ func (p OpenAIImages) callTyped(ctx context.Context, method, url, contentType st
 	return doJSON(ctx, newHTTPClient(), method, url, p.APIKey, bytes.NewReader(body), contentType)
 }
 
+// parseImageResponses 从 Images API JSON 抽出 b64 图。没有 data 或解码失败返回 unknown。
 func parseImageResponses(raw []byte, fallbackModel string) ([][]byte, string, string, string, error) {
 	var parsed struct {
 		ID    string `json:"id"`
@@ -270,13 +277,15 @@ func openaiSizeFromSpec(spec map[string]any) string {
 // OpenAIResponses 只用 /v1/responses 出图；4xx 不回退 Images edits/generations。
 type OpenAIResponses struct {
 	OpenAIImages
-	Background    bool
-	ToolRuntime   map[string]any
-	AllowedFields []string
+	Background    bool           // responses_background_enabled
+	ToolRuntime   map[string]any // 设置页默认 tool 选项
+	AllowedFields []string       // image tool 允许字段白名单
 }
 
+// Name 实现 graph.ImageProvider，返回 "openai-responses"。
 func (p OpenAIResponses) Name() string { return "openai-responses" }
 
+// ReconcileResponse 查询 /v1/responses/{id}。空 id 返回 "unsupported"；4xx/5xx 或证据不足返回 "unknown"。
 func (p OpenAIResponses) ReconcileResponse(ctx context.Context, responseID string) (string, error) {
 	responseID = strings.TrimSpace(responseID)
 	if responseID == "" {
@@ -315,6 +324,7 @@ var (
 
 const imageToolInputMaskKey = "input_image_mask"
 
+// GenerateImage 实现 graph.ImageProvider，只用 /v1/responses；不可证明的失败标 unknown。
 func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
 	size := openaiSizeFromSpec(req.GenerationSpec)
 	prompt := graph.CompileImageModelPrompt(req)
@@ -327,6 +337,7 @@ func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageReque
 	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
 }
 
+// Generate 实现 imagesession.ChatProvider，只用 /v1/responses。
 func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
 	size := req.Size
 	if size == "" {
@@ -344,6 +355,7 @@ func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequ
 	}, nil
 }
 
+// Edit 实现 localedit.Provider，走 Responses image tool；未声明 mask 能力时拒绝且不打网。
 func (p OpenAIResponses) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
 	if !p.MaskEdit {
 		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
@@ -398,6 +410,7 @@ func imageGenerationTool(size string, opts map[string]any) map[string]any {
 	return tool
 }
 
+// createResponsesRequired 发 /v1/responses，强制 image_generation tool。previousID 用于连续对话，没有则开新响应。
 func (p OpenAIResponses) createResponsesRequired(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string, requiredToolOptions map[string]any) (int, []byte, error) {
 	tool := imageGenerationTool(size, mergeToolOptions(toolOptions, requiredToolOptions))
 	payload := map[string]any{
@@ -469,6 +482,7 @@ func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size str
 	return p.generateResponsesRequired(ctx, prompt, size, toolOptions, refs, previousID, classify, nil)
 }
 
+// generateResponsesRequired 调 Responses 出图。4xx 不回退 Images API；证据不足标 unknown。
 func (p OpenAIResponses) generateResponsesRequired(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error, requiredToolOptions map[string]any) ([]byte, string, string, string, error) {
 	input := responsesInput(prompt, refs)
 	status, raw, err := p.createResponsesRequired(ctx, input, size, toolOptions, previousID, requiredToolOptions)
@@ -585,6 +599,7 @@ func lastSSEJSON(raw []byte) []byte {
 	return last
 }
 
+// extractResponsesImage 从 Responses JSON 找第一张图。找不到返回 ok=false，调用方再看是否有文本输出。
 func extractResponsesImage(parsed map[string]any, fallbackModel string) ([]byte, string, string, string, bool) {
 	id := responsesID(parsed)
 	model, _ := parsed["model"].(string)
@@ -658,6 +673,7 @@ func responsesNoImageError(parsed map[string]any) error {
 	return imagesession.ErrMissingOutput
 }
 
+// responsesHasTextOutput 报告响应是否只有文字没有图。有字无图时调用方应标 failed 而不是 unknown。
 func responsesHasTextOutput(parsed map[string]any) bool {
 	for _, obj := range responsesOutput(parsed) {
 		if obj["type"] != "message" {

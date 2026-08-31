@@ -20,6 +20,7 @@ const (
 	defaultMaxDimension = 3840
 )
 
+// normalizeSize 把 WxH 收到设置页最大边长，并对齐 16 的倍数。非法格式或超范围返回 400。
 func normalizeSize(value string, maxDimension int) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if !sizePattern.MatchString(normalized) {
@@ -52,6 +53,7 @@ func normalizeSize(value string, maxDimension int) (string, error) {
 	return fmt.Sprintf("%dx%d", rw, rh), nil
 }
 
+// nearestMultiple 把边长收到最接近的 16 倍数，夹在 minDimension 与 maxDimension 之间。
 func nearestMultiple(value, maxDimension int) int {
 	lower := (value / dimensionMultiple) * dimensionMultiple
 	upper := lower + dimensionMultiple

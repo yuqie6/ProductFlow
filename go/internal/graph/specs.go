@@ -38,6 +38,7 @@ func resolveTemplateGenerationSpec(overrides map[string]any) (map[string]any, er
 	return normalized, nil
 }
 
+// normalizeGenerationSpec 拒绝未知 key，并规范化闭集枚举。非法返回 Validation。text_language 仅 text_policy 需要时保留。
 func normalizeGenerationSpec(value any) (map[string]any, error) {
 	raw, ok := asMap(value)
 	if !ok {
@@ -105,6 +106,7 @@ func normalizeGenerationSpec(value any) (map[string]any, error) {
 	}, nil
 }
 
+// normalizeDeliverySpec 拒绝未知 key，宽高校 1–16384。非法返回 Validation。不进 image digest（withNoDigest）。
 func normalizeDeliverySpec(value any) (map[string]any, error) {
 	raw, ok := asMap(value)
 	if !ok {
@@ -197,6 +199,7 @@ func oneOf(value string, options ...string) bool {
 	return false
 }
 
+// asInt 从 JSON number / 整数类型收 int。非有限或超范围返回 false。
 func asInt(value any) (int, bool) {
 	switch n := value.(type) {
 	case int:

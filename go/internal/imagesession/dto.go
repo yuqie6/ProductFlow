@@ -19,144 +19,168 @@ const (
 	effectKind         = "image_session_generation"
 )
 
+// AssetResponse 是会话内一张图的 HTTP 下载/预览投影，不是 ProductImageAsset。
+// Kind 为 reference_upload 或 generated_image。不要用它当全局图库素材。
 type AssetResponse struct {
 	ID               string    `json:"id"`
-	Kind             string    `json:"kind"`
-	OriginalFilename string    `json:"original_filename"`
+	Kind             string    `json:"kind"`              // reference_upload | generated_image
+	OriginalFilename string    `json:"original_filename"` // 上传或生成时的文件名
 	MIMEType         string    `json:"mime_type"`
-	DownloadURL      string    `json:"download_url"`
-	PreviewURL       string    `json:"preview_url"`
-	ThumbnailURL     string    `json:"thumbnail_url"`
+	DownloadURL      string    `json:"download_url"`  // 原图；不是 ProductImageAsset 路径
+	PreviewURL       string    `json:"preview_url"`   // 预览变体
+	ThumbnailURL     string    `json:"thumbnail_url"` // 缩略图变体
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// RoundResponse 是一轮连续生图结果的 HTTP 投影（提示词、模型、候选）。
+// 一轮对应一次成功落盘的候选；queued 任务还没有 Round。不要和 GraphRun 节点结果搞混。
 type RoundResponse struct {
 	ID                        string        `json:"id"`
-	Prompt                    string        `json:"prompt"`
-	AssistantMessage          string        `json:"assistant_message"`
-	Size                      string        `json:"size"`
-	ModelName                 string        `json:"model_name"`
-	ProviderName              string        `json:"provider_name"`
-	PromptVersion             string        `json:"prompt_version"`
+	Prompt                    string        `json:"prompt"`            // 本轮用户提示词
+	AssistantMessage          string        `json:"assistant_message"` // 会话展示文案，不是模型 thinking
+	Size                      string        `json:"size"`              // 请求尺寸，宽x高
+	ModelName                 string        `json:"model_name"`        // 供应商实际模型名
+	ProviderName              string        `json:"provider_name"`     // 供应商标识，如 openai-responses
+	PromptVersion             string        `json:"prompt_version"`    // 连续生图模板版本，不是 graph 文稿
 	ProviderResponseID        *string       `json:"provider_response_id"`
 	PreviousResponseID        *string       `json:"previous_response_id"`
 	ImageGenerationCallID     *string       `json:"image_generation_call_id"`
 	GenerationGroupID         *string       `json:"generation_group_id"`
-	CandidateIndex            int           `json:"candidate_index"`
-	CandidateCount            int           `json:"candidate_count"`
+	CandidateIndex            int           `json:"candidate_index"` // 本组内从 1 起的候选序号
+	CandidateCount            int           `json:"candidate_count"` // 本任务计划候选总数
 	BaseAssetID               *string       `json:"base_asset_id"`
-	SelectedReferenceAssetIDs []string      `json:"selected_reference_asset_ids"`
-	ActualSize                *string       `json:"actual_size"`
-	ProviderNotes             []string      `json:"provider_notes"`
-	GeneratedAsset            AssetResponse `json:"generated_asset"`
+	SelectedReferenceAssetIDs []string      `json:"selected_reference_asset_ids"` // 参考图，不是节点绑定
+	ActualSize                *string       `json:"actual_size"`                  // nil 表示供应商未回实测尺寸
+	ProviderNotes             []string      `json:"provider_notes"`               // 供应商旁注；空是 []
+	GeneratedAsset            AssetResponse `json:"generated_asset"`              // 本轮落盘的 generated_image
 	CreatedAt                 time.Time     `json:"created_at"`
 }
 
+// EffectResponse 是一次供应商副作用账本行；EffectResult 为 unknown 时不自动当失败重试。
 type EffectResponse struct {
 	ID                  string    `json:"id"`
 	GenerationTaskID    string    `json:"generation_task_id"`
-	CandidateStartIndex int       `json:"candidate_start_index"`
-	CandidateCount      int       `json:"candidate_count"`
-	OperationKey        string    `json:"operation_key"`
-	EffectKind          string    `json:"effect_kind"`
-	RequestHash         string    `json:"request_hash"`
-	ProviderName        string    `json:"provider_name"`
-	EffectResult        string    `json:"effect_result"`
-	ReconciliationState string    `json:"reconciliation_state"`
+	CandidateStartIndex int       `json:"candidate_start_index"` // 本批覆盖的起始候选序号
+	CandidateCount      int       `json:"candidate_count"`       // 本批候选张数
+	OperationKey        string    `json:"operation_key"`         // 幂等操作键，避免重复打网
+	EffectKind          string    `json:"effect_kind"`           // 固定 image_session_generation
+	RequestHash         string    `json:"request_hash"`          // 请求体哈希，对账用
+	ProviderName        string    `json:"provider_name"`         // 实际打网的供应商标识
+	EffectResult        string    `json:"effect_result"`         // pending | applied | failed | unknown
+	ReconciliationState string    `json:"reconciliation_state"`  // not_requested | applied | not_applied | unknown
 	ProviderResponseID  *string   `json:"provider_response_id"`
-	ProviderStatus      *string   `json:"provider_status"`
+	ProviderStatus      *string   `json:"provider_status"` // nil 表示供应商未回状态；常见 completed
 	Detail              *string   `json:"detail"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
+// TaskResponse 是一次连续生图任务的 HTTP 投影，含队列位置。
+// Status 为 queued/running/succeeded/failed/unknown/cancelled。
+// EffectResult=unknown 时 IsRetryable 为 false，不能走 Retry。不要当成 AgentTask。
 type TaskResponse struct {
 	ID                        string           `json:"id"`
 	SessionID                 string           `json:"session_id"`
 	Status                    string           `json:"status"`
-	Prompt                    string           `json:"prompt"`
-	Size                      string           `json:"size"`
+	Prompt                    string           `json:"prompt"` // 本任务提示词
+	Size                      string           `json:"size"`   // 规范化后的宽x高
 	BaseAssetID               *string          `json:"base_asset_id"`
-	SelectedReferenceAssetIDs []string         `json:"selected_reference_asset_ids"`
-	GenerationCount           int              `json:"generation_count"`
-	CompletedCandidates       int              `json:"completed_candidates"`
-	ActiveCandidateIndex      *int             `json:"active_candidate_index"`
-	ProgressPhase             *string          `json:"progress_phase"`
+	SelectedReferenceAssetIDs []string         `json:"selected_reference_asset_ids"` // 参考图，不是节点绑定
+	GenerationCount           int              `json:"generation_count"`             // 计划候选张数，1–10
+	CompletedCandidates       int              `json:"completed_candidates"`         // 已落盘候选数
+	ActiveCandidateIndex      *int             `json:"active_candidate_index"`       // nil 表示当前没有在跑的候选
+	ProgressPhase             *string          `json:"progress_phase"`               // nil 表示尚未进入 worker 阶段
 	ProgressUpdatedAt         *time.Time       `json:"progress_updated_at"`
 	ProviderResponseID        *string          `json:"provider_response_id"`
-	ProviderResponseStatus    *string          `json:"provider_response_status"`
-	ProgressMetadata          map[string]any   `json:"progress_metadata"`
-	FailureReason             *string          `json:"failure_reason"`
+	ProviderResponseStatus    *string          `json:"provider_response_status"` // nil 表示尚未收到供应商状态
+	ProgressMetadata          map[string]any   `json:"progress_metadata"`        // worker 进度旁路；空是 {}
+	FailureReason             *string          `json:"failure_reason"`           // nil 表示未失败；unknown 时有说明且不可 Retry
 	ResultGenerationGroupID   *string          `json:"result_generation_group_id"`
-	ToolOptions               map[string]any   `json:"tool_options"`
-	ProviderNotes             []string         `json:"provider_notes"`
-	ProviderEffects           []EffectResponse `json:"provider_effects"`
-	Attempts                  int              `json:"attempts"`
-	IsRetryable               bool             `json:"is_retryable"`
-	IsCancelable              bool             `json:"is_cancelable"`
+	ToolOptions               map[string]any   `json:"tool_options"`     // 过滤后的 image tool 字段
+	ProviderNotes             []string         `json:"provider_notes"`   // 空是 []
+	ProviderEffects           []EffectResponse `json:"provider_effects"` // 副作用账本；unknown 不自动重试
+	Attempts                  int              `json:"attempts"`         // 已占用的执行次数
+	IsRetryable               bool             `json:"is_retryable"`     // unknown 时为 false，不能走 Retry
+	IsCancelable              bool             `json:"is_cancelable"`    // queued 或 running 才为 true
 	CreatedAt                 time.Time        `json:"created_at"`
 	StartedAt                 *time.Time       `json:"started_at"`
 	FinishedAt                *time.Time       `json:"finished_at"`
-	QueueActiveCount          int              `json:"queue_active_count"`
-	QueueRunningCount         int              `json:"queue_running_count"`
-	QueueQueuedCount          int              `json:"queue_queued_count"`
-	QueueMaxConcurrentTasks   int              `json:"queue_max_concurrent_tasks"`
-	QueuedAheadCount          *int             `json:"queued_ahead_count"`
-	QueuePosition             *int             `json:"queue_position"`
+	QueueActiveCount          int              `json:"queue_active_count"`         // 图运行+连续生图占用
+	QueueRunningCount         int              `json:"queue_running_count"`        // 当前 running 占用
+	QueueQueuedCount          int              `json:"queue_queued_count"`         // 当前 queued 占用
+	QueueMaxConcurrentTasks   int              `json:"queue_max_concurrent_tasks"` // app_settings 全局并发上限
+	QueuedAheadCount          *int             `json:"queued_ahead_count"`         // nil 表示本任务不在 queued
+	QueuePosition             *int             `json:"queue_position"`             // nil 表示本任务不在 queued；1 为队首
 }
 
+// SummaryResponse 是会话列表项的 HTTP 投影，不含全量轮次。
+// LatestGeneratedAsset 为 nil 表示还没成功出图，不是「文件丢失」。
 type SummaryResponse struct {
 	ID                   string         `json:"id"`
 	Title                string         `json:"title"`
-	RoundsCount          int            `json:"rounds_count"`
-	LatestGeneratedAsset *AssetResponse `json:"latest_generated_asset"`
+	RoundsCount          int            `json:"rounds_count"`           // 已成功落盘的轮次数，不含 queued 任务
+	LatestGeneratedAsset *AssetResponse `json:"latest_generated_asset"` // nil 表示还没成功出图，不是文件丢失
 	CreatedAt            time.Time      `json:"created_at"`
 	UpdatedAt            time.Time      `json:"updated_at"`
 }
 
+// ListResponse 是 GET 会话列表的 HTTP 体：不分页，按 updated_at 倒序一次返回。
+// 会话很多时也不要改成 cursor 除非改合同；轮询单会话请用 StatusResponse。
 type ListResponse struct {
-	Items []SummaryResponse `json:"items"`
+	Items []SummaryResponse `json:"items"` // 不分页；空库是 [] 不是 null
 }
 
+// DetailResponse 是会话详情的 HTTP 投影：素材、轮次、生成任务。
+// 轮询请用 StatusResponse，不要反复拉本类型。
 type DetailResponse struct {
 	ID              string          `json:"id"`
 	Title           string          `json:"title"`
-	Assets          []AssetResponse `json:"assets"`
-	Rounds          []RoundResponse `json:"rounds"`
-	GenerationTasks []TaskResponse  `json:"generation_tasks"`
+	Assets          []AssetResponse `json:"assets"`           // 参考图与已生成图
+	Rounds          []RoundResponse `json:"rounds"`           // 已落盘轮次；queued 任务还没有 Round
+	GenerationTasks []TaskResponse  `json:"generation_tasks"` // 含队列位置；轮询请用 StatusResponse
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
+// StatusResponse 是会话轻量状态的 HTTP 投影，供轮询和 SSE，不带全量轮次/素材。
+// HasActiveGenerationTask 在任一任务 queued 或 running 时为 true。
 type StatusResponse struct {
 	ID                      string         `json:"id"`
 	Title                   string         `json:"title"`
-	RoundsCount             int            `json:"rounds_count"`
+	RoundsCount             int            `json:"rounds_count"` // 已成功落盘的轮次数
 	LatestRoundID           *string        `json:"latest_round_id"`
 	LatestGenerationGroupID *string        `json:"latest_generation_group_id"`
-	HasActiveGenerationTask bool           `json:"has_active_generation_task"`
-	GenerationTasks         []TaskResponse `json:"generation_tasks"`
+	HasActiveGenerationTask bool           `json:"has_active_generation_task"` // 任一任务 queued 或 running
+	GenerationTasks         []TaskResponse `json:"generation_tasks"`           // 轻量轮询用，不含全量轮次/素材
 	CreatedAt               time.Time      `json:"created_at"`
 	UpdatedAt               time.Time      `json:"updated_at"`
 }
 
+// CreateRequest 是 POST /api/image-sessions 的 JSON 体。
+// Title 为 nil 或空白时用「未命名会话」；不要传空对象以外的未知字段（extra=forbid）。
 type CreateRequest struct {
 	Title *string `json:"title"`
 }
 
+// UpdateRequest 是 PATCH 重命名会话的 JSON 体。Title 必填且非空，最长 255 字。
 type UpdateRequest struct {
 	Title string `json:"title"`
 }
 
+// GenerateRequest 是提交一轮连续生图的 JSON 体，不是 GraphRun 入参。
+// BaseAssetID 为从哪张已生成图继续；SelectedReferenceAssetIDs 是参考图，二者不是绑定节点。
+// GenerationCount 为 nil 时默认 1。
 type GenerateRequest struct {
-	Prompt                    string         `json:"prompt"`
-	Size                      string         `json:"size"`
+	Prompt                    string         `json:"prompt"` // 用户提示词，空则 Validation
+	Size                      string         `json:"size"`   // 宽x高；空则 1024x1024，再按最大边长规范化
 	BaseAssetID               *string        `json:"base_asset_id"`
-	SelectedReferenceAssetIDs []string       `json:"selected_reference_asset_ids"`
-	GenerationCount           *int           `json:"generation_count"`
-	ToolOptions               map[string]any `json:"tool_options"`
+	SelectedReferenceAssetIDs []string       `json:"selected_reference_asset_ids"` // 参考图，不是节点绑定
+	GenerationCount           *int           `json:"generation_count"`             // nil 时默认 1
+	ToolOptions               map[string]any `json:"tool_options"`                 // 超出允许字段的键会被丢掉
 }
 
+// AttachRequest 指定把生成结果写入哪个商品图库。
+// 只接受 generated_image；参考图不能 attach。复用同一 MediaObject，不复制 bytes。
 type AttachRequest struct {
 	ProductID string `json:"product_id"`
 }

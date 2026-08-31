@@ -10,100 +10,125 @@ import (
 	"gorm.io/gorm"
 )
 
+// Projection 是 live 图画布 HTTP 合同，含撤销栈与 pending 提案。
 type Projection struct {
-	ID                    string        `json:"id"`
-	ProductID             string        `json:"product_id"`
-	Title                 string        `json:"title"`
-	SchemaVersion         int           `json:"schema_version"`
-	Revision              int           `json:"revision"`
-	SourceDraftRevisionID *string       `json:"source_draft_revision_id"`
-	LastOperationGroupID  *string       `json:"last_operation_group_id"`
-	CanUndo               bool          `json:"can_undo"`
-	CanRedo               bool          `json:"can_redo"`
-	Nodes                 []NodeView    `json:"nodes"`
-	Edges                 []EdgeView    `json:"edges"`
-	Groups                []GroupView   `json:"groups"`
-	PendingProposal       *ProposalView `json:"pending_proposal"`
+	ID                    string      `json:"id"`
+	ProductID             string      `json:"product_id"`
+	Title                 string      `json:"title"`
+	SchemaVersion         int         `json:"schema_version"` // 在线图固定为 3
+	Revision              int         `json:"revision"`       // 每次成功 ChangeSet 递增
+	SourceDraftRevisionID *string     `json:"source_draft_revision_id"`
+	LastOperationGroupID  *string     `json:"last_operation_group_id"`
+	CanUndo               bool        `json:"can_undo"` // 栈顶不是 Undo 时为 true
+	CanRedo               bool        `json:"can_redo"` // 仅当栈顶 HistoryKind=undo
+	Nodes                 []NodeView  `json:"nodes"`    // 空列表是 [] 不是 nil
+	Edges                 []EdgeView  `json:"edges"`    // 空列表是 [] 不是 nil
+	Groups                []GroupView `json:"groups"`   // 空列表是 [] 不是 nil
+	// PendingProposal 为 nil 表示没有 PENDING 提案。
+	PendingProposal *ProposalView `json:"pending_proposal"`
 }
 
+// NodeView 是画布上一个节点的投影。BoundAssetID 是 ProductImageAsset id。
 type NodeView struct {
-	ID                         string           `json:"id"`
-	NodeType                   NodeType         `json:"node_type"`
-	Title                      string           `json:"title"`
-	PositionX                  int              `json:"position_x"`
-	PositionY                  int              `json:"position_y"`
-	Config                     map[string]any   `json:"config"`
-	SourceProduct              *productSummary  `json:"source_product"`
-	ProductFactSet             *factSetSnapshot `json:"product_fact_set"`
-	BoundAssetID               *string          `json:"bound_asset_id"`
-	GroupID                    *string          `json:"group_id"`
-	PreviewAssetID             *string          `json:"preview_asset_id"`
-	ConfigStatus               ConfigStatus     `json:"config_status"`
-	Unused                     bool             `json:"unused"`
-	DocumentOrigin             *string          `json:"document_origin"`
-	BindingStatus              *string          `json:"binding_status,omitempty"`
-	CurrentArtifactID          *string          `json:"current_artifact_id"`
-	CurrentArtifactType        *string          `json:"current_artifact_type"`
-	CurrentArtifactPayload     map[string]any   `json:"current_artifact_payload"`
-	PendingCandidateArtifactID *string          `json:"pending_candidate_artifact_id"`
-	Incoming                   []EdgeSummary    `json:"incoming"`
-	Outgoing                   []EdgeSummary    `json:"outgoing"`
+	ID string `json:"id"`
+	// NodeType 是 schema-v3 闭集，不是商品图种 image_type_key。
+	NodeType       NodeType         `json:"node_type"`
+	Title          string           `json:"title"`
+	PositionX      int              `json:"position_x"`       // 画布像素坐标
+	PositionY      int              `json:"position_y"`       // 画布像素坐标
+	Config         map[string]any   `json:"config"`           // Catalog 登记的可见配置
+	SourceProduct  *productSummary  `json:"source_product"`   // 仅 product_source
+	ProductFactSet *factSetSnapshot `json:"product_fact_set"` // 仅 product_source
+	BoundAssetID   *string          `json:"bound_asset_id"`
+	GroupID        *string          `json:"group_id"`
+	PreviewAssetID *string          `json:"preview_asset_id"`
+	// ConfigStatus 为 incomplete|ready|stale；stale 表示产物 digest 已落后。
+	ConfigStatus ConfigStatus `json:"config_status"`
+	Unused       bool         `json:"unused"` // 仅 image_asset：未连出边时为 true
+	// DocumentOrigin 是内容节点 seed|generated|authored|collaborative；非内容节点为 nil。
+	DocumentOrigin *string `json:"document_origin"`
+	// BindingStatus 仅 image_asset：bound|unbound；其他类型省略。
+	BindingStatus              *string        `json:"binding_status,omitempty"`
+	CurrentArtifactID          *string        `json:"current_artifact_id"`
+	CurrentArtifactType        *string        `json:"current_artifact_type"`    // 如 image；无产物为 nil
+	CurrentArtifactPayload     map[string]any `json:"current_artifact_payload"` // 无产物为空 map
+	PendingCandidateArtifactID *string        `json:"pending_candidate_artifact_id"`
+	Incoming                   []EdgeSummary  `json:"incoming"` // 空列表是 [] 不是 nil
+	Outgoing                   []EdgeSummary  `json:"outgoing"` // 空列表是 [] 不是 nil
 }
 
+// EdgeSummary 是 NodeView.incoming / outgoing 里的短边，给检查器画端口用，不是整图边列表。
+// NodeID 是对端节点：入边为 source，出边为 target。Role 等于 React Flow handle id。
+// 改字段会碰到画布 HTTP 投影；完整 source+target 请看 EdgeView。不要持久化本结构。
 type EdgeSummary struct {
 	ID       string       `json:"id"`
 	NodeID   string       `json:"node_id"`
 	DataType EdgeDataType `json:"data_type"`
-	Role     EdgeRole     `json:"role"`
-	Order    int          `json:"order"`
+	Role     EdgeRole     `json:"role"`  // 等于 React Flow handle id
+	Order    int          `json:"order"` // 同一目标同一 role 下的次序
 }
 
+// EdgeView 是画布 HTTP 投影里一条完整边，对应 workflow_graph_edges。
+// Role 由 Catalog 在 Connect 时写入，公开 ChangeSet 不得带 role。Order 是同一目标同一 role 下的次序。
+// 不要和 EdgeSummary（缺一端）或 AppliedEdge（内存 Apply 快照、无 JSON tag）搞混。
 type EdgeView struct {
 	ID           string       `json:"id"`
 	SourceNodeID string       `json:"source_node_id"`
 	TargetNodeID string       `json:"target_node_id"`
 	DataType     EdgeDataType `json:"data_type"`
-	Role         EdgeRole     `json:"role"`
-	Order        int          `json:"order"`
+	Role         EdgeRole     `json:"role"`  // 由 Catalog 在 Connect 时写入
+	Order        int          `json:"order"` // 同一目标同一 role 下的次序
 }
 
+// GroupView 是画布 HTTP 投影的一层视觉分组，MemberIDs 由节点 GroupID 反推，不是单独成员表。
+// 分组没有端口、运行或嵌套。对应 workflow_graph_groups。不要和商品图库 GalleryFolder 或 AppliedGroup 搞混。
 type GroupView struct {
 	ID        string   `json:"id"`
 	Title     string   `json:"title"`
-	MemberIDs []string `json:"member_ids"`
+	MemberIDs []string `json:"member_ids"` // 由节点 GroupID 反推；空列表是 [] 不是 nil
 }
 
+// ProposalView 是 PENDING 提案相对当前 revision 的预览；Stale 表示 base 已落后。
 type ProposalView struct {
 	ID                string             `json:"id"`
 	Summary           string             `json:"summary"`
-	BaseGraphRevision int                `json:"base_graph_revision"`
-	Stale             bool               `json:"stale"`
-	AddedNodes        []ProposalNodeView `json:"added_nodes"`
-	AddedEdges        []ProposalEdgeView `json:"added_edges"`
-	DeletedNodeIDs    []string           `json:"deleted_node_ids"`
-	DeletedEdgeIDs    []string           `json:"deleted_edge_ids"`
-	ChangedNodeIDs    []string           `json:"changed_node_ids"`
+	BaseGraphRevision int                `json:"base_graph_revision"` // 提案相对的 live revision
+	Stale             bool               `json:"stale"`               // base 已落后，确认前须处理冲突
+	AddedNodes        []ProposalNodeView `json:"added_nodes"`         // 空列表是 [] 不是 nil
+	AddedEdges        []ProposalEdgeView `json:"added_edges"`         // 空列表是 [] 不是 nil
+	DeletedNodeIDs    []string           `json:"deleted_node_ids"`    // 将删除的 live 节点 id
+	DeletedEdgeIDs    []string           `json:"deleted_edge_ids"`    // 将删除的 live 边 id
+	ChangedNodeIDs    []string           `json:"changed_node_ids"`    // 配置将改的已有节点 id
 }
 
+// ProposalNodeView 是 PENDING 提案预览里将新增的节点草稿，ID 是提案 ChangeSet 的 client_ref，尚未 assignPersistentIDs。
+// 出现在 Projection.pending_proposal.added_nodes。确认前不写 workflow_graph_nodes。
+// 不要当成已落库的 NodeView；本结构没有 BoundAssetID / ConfigStatus。
 type ProposalNodeView struct {
 	ID        string         `json:"id"`
 	NodeType  NodeType       `json:"node_type"`
 	Title     string         `json:"title"`
-	PositionX int            `json:"position_x"`
-	PositionY int            `json:"position_y"`
+	PositionX int            `json:"position_x"` // 画布像素坐标
+	PositionY int            `json:"position_y"` // 画布像素坐标
 	GroupID   *string        `json:"group_id"`
 	Config    map[string]any `json:"config"`
 }
 
+// ProposalEdgeView 是 PENDING 提案预览里将新增的边草稿；Role/DataType 是字符串，来自内存 Apply 推断结果。
+// 确认前不写 workflow_graph_edges。不要和 EdgeView（已落库）或 ConnectNodesOp（公开 payload 不带 role）搞混。
 type ProposalEdgeView struct {
 	ID           string `json:"id"`
 	SourceNodeID string `json:"source_node_id"`
 	TargetNodeID string `json:"target_node_id"`
-	Role         string `json:"role"`
-	DataType     string `json:"data_type"`
+	Role         string `json:"role"`      // 内存 Apply 推断结果，尚未落库
+	DataType     string `json:"data_type"` // 内存 Apply 推断结果，尚未落库
 	Order        int    `json:"order"`
 }
 
+// Project 把 live 图行展开成画布 HTTP 投影，供 GET current/get 与改图成功后的 200 体。
+// 读 workflow_graphs、节点/边/分组、workflow_operation_groups、artifacts 与 pending 提案；不写库。
+// ctx 必须带 ProductGuard，否则绑图元数据会 Internal。缺图由调用方 loadGraph 先 NotFound。
+// CanRedo 仅当栈顶 HistoryKind=undo。不要把返回值当成 AppliedGraph。
 func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) {
 	row := graphRow{Identity: id}
 	applied, err := loadAppliedGraph(ctx, tx, row)
@@ -133,6 +158,8 @@ func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) 
 	return buildProjection(row, applied, lastID, canUndo, canRedo, previews, artifactDigests, pendingCandidates, sources, proposal), nil
 }
 
+// buildProjection 把 live 行+源+提案收成画布 HTTP 合同。未连出的 image_asset 标 unused，绑定仍不等于 reference 边。
+// stale 走 configStatusWithStale（generated 文稿跳过 adopt 后自比）。不写库。
 func buildProjection(
 	row graphRow,
 	applied AppliedGraph,
@@ -250,15 +277,15 @@ func buildProjection(
 	}
 }
 
+// configStatusWithStale 在 Catalog 已判 ready 时再比 input digest。generated 文稿跳过，避免 adopt 后自我 stale。
+// authored 文稿仍比 digest。digest 算失败保持原 status，不要改成 incomplete。
 func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDigest string, sources map[string]SourceRecord, status ConfigStatus) ConfigStatus {
 	if status != ConfigReady || !IsProcessingNode(node.NodeType) || artifactDigest == "" || sources == nil {
 		return status
 	}
-	// Content artifacts hash the document-generation request before the generated
-	// document is adopted. The adopted document necessarily changes the node's
-	// own config, so comparing that request hash with the post-adopt config would
-	// mark every successful content cook stale. Authored content still falls
-	// through and is reported stale when its current document diverges.
+	// 内容产物的 digest 哈希的是 adopt 之前的文稿生成请求。adopt 必然改节点自身 config，
+	// 若拿请求哈希去跟 adopt 后的 config 比，每次成功 cook 都会被标 stale。
+	// generated 文稿因此跳过这次比较；authored 文稿仍走 digest，当前文档偏离时才标 stale。
 	if isContentNodeType(node.NodeType) && DocumentOrigin(node) == OriginGenerated {
 		return status
 	}
@@ -272,6 +299,8 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 	return status
 }
 
+// loadGraphSources 组装编译/投影用的 SourceRecord：商品 facts、绑定图元数据、current artifact digest。
+// Guard 缺商品/fact 返回空源，不报 NotFound。同时返回 preview 标题、digest、pending candidate 映射。
 func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, map[string]string, error) {
 	var nodeRecs []schema.WorkflowGraphNodes
 	if err := tx.WithContext(ctx).Where("graph_id = ?", row.ID).Find(&nodeRecs).Error; err != nil {

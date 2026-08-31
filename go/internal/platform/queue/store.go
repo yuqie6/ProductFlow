@@ -14,6 +14,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// Stage 按 delivery_key 幂等写入 PENDING。已存在且身份一致则复用；CONSUMED 会重置为 PENDING。
+// 同一 key 绑到不同 actor/aggregate/payload 返回 409。
 func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
@@ -94,6 +96,7 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 	return fromSchema(row), nil
 }
 
+// RestageIfIdle 仅在无 PENDING/SENT/DEAD 行时重新入队。返回是否新建或重置了信封。
 func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, payload any) (bool, error) {
 	key := DeliveryKey(actorName, aggregateID)
 	existing, err := loadByDeliveryKey(ctx, tx, key)
@@ -109,6 +112,7 @@ func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 	return true, nil
 }
 
+// StageForActor 用 [DeliveryKey] 调用 [Stage]；delay>0 时设置 available_at。
 func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
 	var availableAt *time.Time
 	if delay > 0 {
@@ -118,6 +122,7 @@ func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 	return Stage(ctx, tx, DeliveryKey(actorName, aggregateID), actorName, aggregateID, nil, availableAt)
 }
 
+// Requeue 把已有信封拉回 PENDING。SENT 且 lease 仍有效时，除非 allowActiveLease，否则原样返回。
 func Requeue(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time, allowActiveLease bool) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
@@ -173,6 +178,8 @@ func loadByDeliveryKey(ctx context.Context, tx *gorm.DB, deliveryKey string) (*D
 	return &d, nil
 }
 
+// resetPending 把已有信封拉回 PENDING：清 lease、sent_at、consumed_at、last_error。
+// resetAttempts 为 true 时把 attempts 归零（用户重试）；dispatcher 对账不要归零，否则死信封会无限复活。
 func resetPending(ctx context.Context, tx *gorm.DB, id string, availableAt, now time.Time, resetAttempts bool) (Dispatch, error) {
 	updates := map[string]any{
 		"status":           StatusPending,

@@ -17,8 +17,12 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
+// HTTP 给管理员 session 挂商品出生、facts、封面、图库、工作区与删除路由。
+// Service 与 Settings 必须注入（删除门闩读 DeletionEnabled）。路径见各处理器。不要把本类型当成 product.Service。
 type HTTP struct {
-	Service  Service
+	Service Service // 必须注入
+	// Settings 必须注入：RequireAdmin 读 AdminAccessRequired；nil 时删除门闩视为关闭（403）。
+	// UploadLimits 失败则回落 media 默认上限。
 	Settings interface {
 		settings.RuntimeReader
 		settings.LimitsReader
@@ -26,6 +30,7 @@ type HTTP struct {
 }
 
 // Register 挂上商品出生、facts、封面、图库与删除路由，全部走管理员 session。
+// 路径见各处理器注释。删除受 runtime.DeletionEnabled 门闩，关闭时 403。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		runtime, err := h.Settings.Runtime(c.Request.Context())
@@ -66,6 +71,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.POST("/v2/product-source-notes/generate", h.generateSourceNote)
 }
 
+// requireDeletion 挂在 DELETE /api/v2/products/:product_id 与 DELETE /api/v2/product-image-assets/:asset_id 前：放行不写响应（后续 204）；Settings 为 nil 或 DeletionEnabled=false 时 403；读设置失败 500。
 func (h HTTP) requireDeletion(c *gin.Context) {
 	if h.Settings == nil {
 		httpx.AbortDetail(c, http.StatusForbidden, "删除功能已关闭，请联系管理员")
@@ -82,6 +88,7 @@ func (h HTTP) requireDeletion(c *gin.Context) {
 	}
 }
 
+// createV2 是 POST /api/v2/products：201 无图出生；缺参考图 400。
 func (h HTTP) createV2(c *gin.Context) {
 	uploads, err := h.readImages(c, "images", "reference.bin", "至少上传一张商品参考图")
 	if err != nil {
@@ -102,6 +109,7 @@ func (h HTTP) createV2(c *gin.Context) {
 	c.JSON(http.StatusCreated, created)
 }
 
+// createV3 是 POST /api/v3/products：201 直连创建（商品+参考图+模板图）；校验失败 400。
 func (h HTTP) createV3(c *gin.Context) {
 	uploads, err := h.readImages(c, "images", "reference.bin", "至少上传一张商品参考图")
 	if err != nil {
@@ -137,6 +145,7 @@ func (h HTTP) createV3(c *gin.Context) {
 	c.JSON(http.StatusCreated, created)
 }
 
+// list 是 GET /api/v2/products：200 分页列表；page/page_size/q/sort 非法 400。
 func (h HTTP) list(c *gin.Context) {
 	page, err := parseQueryInt(c, "page", 1, 1, 0)
 	if err != nil {
@@ -166,6 +175,7 @@ func (h HTTP) list(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// get 是 GET /api/v2/products/:product_id：200 详情；找不到 404。
 func (h HTTP) get(c *gin.Context) {
 	detail, err := h.Service.Get(c.Request.Context(), c.Param("product_id"))
 	if err != nil {
@@ -175,6 +185,7 @@ func (h HTTP) get(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// download 是 GET /api/v2/product-image-assets/:asset_id/download：200 原图/变体；缺文件 404。
 func (h HTTP) download(c *gin.Context) {
 	asset, err := h.Service.AssetForDownload(c.Request.Context(), c.Param("asset_id"))
 	if err != nil {
@@ -197,6 +208,7 @@ func (h HTTP) download(c *gin.Context) {
 	)
 }
 
+// createDraftWorkspace 是 POST /api/v2/agent-product-workspaces/drafts：201 名称-only；体非法 400。
 func (h HTTP) createDraftWorkspace(c *gin.Context) {
 	var payload struct {
 		Name           string  `json:"name"`
@@ -214,6 +226,7 @@ func (h HTTP) createDraftWorkspace(c *gin.Context) {
 	c.JSON(http.StatusCreated, created)
 }
 
+// createWorkspace 是 POST /api/v2/agent-product-workspaces：201 表单出生；Idempotency-Key 去重。
 func (h HTTP) createWorkspace(c *gin.Context) {
 	uploads, err := h.readImages(c, "images", "reference.bin", "至少上传一张商品参考图")
 	if err != nil {
@@ -240,6 +253,7 @@ func (h HTTP) createWorkspace(c *gin.Context) {
 	c.JSON(http.StatusCreated, created)
 }
 
+// getWorkspace 是 GET /api/v2/agent-product-workspaces/:conversation_id：200 快照；找不到 404。
 func (h HTTP) getWorkspace(c *gin.Context) {
 	out, err := h.Service.GetAgentWorkspace(c.Request.Context(), c.Param("conversation_id"))
 	if err != nil {
@@ -249,6 +263,7 @@ func (h HTTP) getWorkspace(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// finalizeWorkspaceIntake 是 POST .../intake：200 快照；同 key 不同哈希 409。
 func (h HTTP) finalizeWorkspaceIntake(c *gin.Context) {
 	uploads, err := h.readImages(c, "images", "reference.bin", "至少上传一张商品参考图")
 	if err != nil {
@@ -281,10 +296,12 @@ func (h HTTP) finalizeWorkspaceIntake(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// workspaceOptions 是 GET /api/v2/agent-product-workspaces/options：200 图种目录与数量上限。
 func (h HTTP) workspaceOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, workspaceOptionsJSON())
 }
 
+// getFacts 是 GET /api/v3/products/:product_id/facts：200；v2 未写 fact 时 id 为 null。
 func (h HTTP) getFacts(c *gin.Context) {
 	out, err := h.Service.GetFacts(c.Request.Context(), c.Param("product_id"))
 	if err != nil {
@@ -294,6 +311,7 @@ func (h HTTP) getFacts(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// updateFacts 是 PUT /api/v3/products/:product_id/facts：200 新版本；体非法 400；expected 落后 409。
 func (h HTTP) updateFacts(c *gin.Context) {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -313,6 +331,7 @@ func (h HTTP) updateFacts(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// setCover 是 PUT /api/v2/products/:product_id/cover：200 详情；asset 非法 400。
 func (h HTTP) setCover(c *gin.Context) {
 	var payload struct {
 		AssetID string `json:"asset_id"`
@@ -329,6 +348,7 @@ func (h HTTP) setCover(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// clearCover 是 DELETE /api/v2/products/:product_id/cover：200 详情；只清封面不删资产。
 func (h HTTP) clearCover(c *gin.Context) {
 	detail, err := h.Service.ClearCover(c.Request.Context(), c.Param("product_id"))
 	if err != nil {
@@ -338,6 +358,7 @@ func (h HTTP) clearCover(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// addImages 是 POST /api/v2/products/:product_id/image-assets：201 新图列表。
 func (h HTTP) addImages(c *gin.Context) {
 	uploads, err := h.readImages(c, "images", "image.bin", "至少上传一张商品图片")
 	if err != nil {
@@ -352,6 +373,7 @@ func (h HTTP) addImages(c *gin.Context) {
 	c.JSON(http.StatusCreated, AssetListResponse{Items: serializeAssets(assets)})
 }
 
+// galleryBootstrap 是 GET /api/v2/products/:product_id/image-library：200 目录与文件夹。
 func (h HTTP) galleryBootstrap(c *gin.Context) {
 	out, err := h.Service.GalleryBootstrap(c.Request.Context(), c.Param("product_id"))
 	if err != nil {
@@ -361,6 +383,7 @@ func (h HTTP) galleryBootstrap(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// createFolder 是 POST /api/v2/products/:product_id/image-folders：201；体非法 400。
 func (h HTTP) createFolder(c *gin.Context) {
 	var payload struct {
 		Name string `json:"name"`
@@ -377,6 +400,7 @@ func (h HTTP) createFolder(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// renameFolder 是 PATCH .../image-folders/:folder_id：200；expected_name 不匹配 409。
 func (h HTTP) renameFolder(c *gin.Context) {
 	var payload struct {
 		ExpectedName string `json:"expected_name"`
@@ -394,6 +418,7 @@ func (h HTTP) renameFolder(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// deleteFolder 是 DELETE .../image-folders/:folder_id：200；资产移回未整理，不删 MediaObject。
 func (h HTTP) deleteFolder(c *gin.Context) {
 	out, err := h.Service.DeleteGalleryFolder(c.Request.Context(), c.Param("product_id"), c.Param("folder_id"), c.Query("expected_name"))
 	if err != nil {
@@ -403,6 +428,7 @@ func (h HTTP) deleteFolder(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// moveAssets 是 POST .../image-assets/move：200；expected_folder_id 不一致整批失败 409。
 func (h HTTP) moveAssets(c *gin.Context) {
 	var payload struct {
 		Items []struct {
@@ -427,6 +453,7 @@ func (h HTTP) moveAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// downloadArchive 是 POST .../image-assets/download-archive：200 application/zip。
 func (h HTTP) downloadArchive(c *gin.Context) {
 	var payload struct {
 		AssetIDs []string `json:"asset_ids"`
@@ -444,6 +471,7 @@ func (h HTTP) downloadArchive(c *gin.Context) {
 	c.Data(http.StatusOK, "application/zip", archive.Bytes)
 }
 
+// listGalleryAssets 是 GET .../image-assets：200 分页；cursor 与筛选不匹配 400。
 func (h HTTP) listGalleryAssets(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	out, err := h.Service.ListGalleryAssets(c.Request.Context(), c.Param("product_id"), GalleryListInput{
@@ -461,6 +489,7 @@ func (h HTTP) listGalleryAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// getGalleryAsset 是 GET .../image-assets/:asset_id：200 详情；找不到 404。
 func (h HTTP) getGalleryAsset(c *gin.Context) {
 	out, err := h.Service.GetGalleryAsset(c.Request.Context(), c.Param("product_id"), c.Param("asset_id"))
 	if err != nil {
@@ -470,6 +499,7 @@ func (h HTTP) getGalleryAsset(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// renameGalleryAsset 是 PATCH .../image-assets/:asset_id：200；expected_display_name 不匹配 409。
 func (h HTTP) renameGalleryAsset(c *gin.Context) {
 	var payload struct {
 		ExpectedDisplayName string `json:"expected_display_name"`
@@ -487,6 +517,7 @@ func (h HTTP) renameGalleryAsset(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// deleteAsset 是 DELETE /api/v2/product-image-assets/:asset_id：204；仍被引用 409。
 func (h HTTP) deleteAsset(c *gin.Context) {
 	if err := h.Service.DeleteAsset(c.Request.Context(), c.Param("asset_id")); err != nil {
 		httpx.AbortErr(c, err)
@@ -495,6 +526,7 @@ func (h HTTP) deleteAsset(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// deleteProduct 是 DELETE /api/v2/products/:product_id：204；有 running GraphRun 或共享视觉体系 409。
 func (h HTTP) deleteProduct(c *gin.Context) {
 	if err := h.Service.DeleteProduct(c.Request.Context(), c.Param("product_id")); err != nil {
 		httpx.AbortErr(c, err)
@@ -503,6 +535,7 @@ func (h HTTP) deleteProduct(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// listFidelityChecks 是 GET /api/v3/.../fidelity-checks：200；limit 非法 400。
 func (h HTTP) listFidelityChecks(c *gin.Context) {
 	limit := fidelityCheckMaxLimit
 	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
@@ -521,6 +554,7 @@ func (h HTTP) listFidelityChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// createFidelityCheck 是 POST /api/v3/.../fidelity-checks：201；expected 落后或同 key 哈希不同 409。
 func (h HTTP) createFidelityCheck(c *gin.Context) {
 	var payload struct {
 		ExpectedLatestVersion *int    `json:"expected_latest_version"`
@@ -556,6 +590,7 @@ func (h HTTP) createFidelityCheck(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
+// bindJSON 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」，不要改成忽略未知键。
 func bindJSON(c *gin.Context, dest any) error {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -572,6 +607,8 @@ func bindJSON(c *gin.Context, dest any) error {
 	return nil
 }
 
+// readImages 从 multipart 字段读参考图，供 createV2/createV3/addImages/generateSourceNote 使用，不是独立路由。
+// 数量超限或缺文件返回 Validation。不要把未校验字节写进 ProductImageAsset。
 func (h HTTP) readImages(c *gin.Context, field, fallback, emptyDetail string) ([]Upload, error) {
 	form, err := c.MultipartForm()
 	if err != nil || form == nil {
@@ -609,6 +646,7 @@ func (h HTTP) readImages(c *gin.Context, field, fallback, emptyDetail string) ([
 	return out, nil
 }
 
+// limits 读运行时上传上限，供 readImages 校验；Settings 为 nil 或读取失败时用 media 默认。不是路由。
 func (h HTTP) limits(ctx context.Context) media.Limits {
 	if h.Settings == nil {
 		return media.DefaultLimits()
@@ -620,6 +658,8 @@ func (h HTTP) limits(ctx context.Context) media.Limits {
 	return limits
 }
 
+// parseUpdateFacts 用出现过的 JSON 键区分「未传」和「显式清空」。未知字段 extra=forbid，返回 Validation。
+// Fields 必须原样交给 UpdateFacts，不要自己填默认空值。
 func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return UpdateFactsInput{}, apperr.Validation("请求体无效")
@@ -729,6 +769,7 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 	return in, nil
 }
 
+// parseFactItems 要求每条同时有 key/value；可选枚举字段禁止 JSON null。
 func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
@@ -821,6 +862,7 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 	return &out, nil
 }
 
+// parseQueryInt 读查询整数；缺省用 def。空字符串或越界是 400，不要静默夹紧。
 func parseQueryInt(c *gin.Context, key string, def, min, max int) (int, error) {
 	raw, present := c.GetQuery(key)
 	if !present {
@@ -837,6 +879,7 @@ func parseQueryInt(c *gin.Context, key string, def, min, max int) (int, error) {
 	return n, nil
 }
 
+// parseProductListSort 只接受 updated_desc / created_desc / name_asc；缺省 updated_desc。其它值 400。
 func parseProductListSort(c *gin.Context) (string, error) {
 	raw, present := c.GetQuery("sort")
 	if !present {

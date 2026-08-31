@@ -20,6 +20,7 @@ const (
 	entityIDMaxLen       = 36
 )
 
+// GalleryAssetMove 是一次乐观并发移动：ExpectedFolderID 不匹配则整批失败。
 type GalleryAssetMove struct {
 	AssetID          string
 	ExpectedFolderID *string

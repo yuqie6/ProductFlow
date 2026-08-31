@@ -22,6 +22,7 @@ const (
 
 type providerUnknownError struct{}
 
+// Error 返回 ProviderUnknownDetail，供 errors.As 识别 unknown。
 func (providerUnknownError) Error() string { return ProviderUnknownDetail }
 
 // ErrProviderUnknown 把超时或 5xx 等无法证明的供应商结果标成 unknown。
@@ -48,6 +49,10 @@ func marshalCompactSorted(v any) ([]byte, error) {
 	return canonjson.Compact(v)
 }
 
+// markNodeUnknown 把无法证明的 provider 结果写成 unknown，不是 failed。
+// 须已在事务里；锁序 run → node。run 已终态、节点不在 running、attempt 不匹配都直接成功返回（幂等围栏）。
+// 副作用：workflow_graph_provider_effects 标 unknown；node_run 终态 unknown；事件 kind 仍是 node.failed，
+// 但 payload.status 是 unknown。不要在这里 promote queued——由 completeGraphRunIfNodesTerminal 做。
 func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, attemptID *string, detail string) error {
 	if len(detail) > 1000 {
 		detail = detail[:1000]
@@ -99,6 +104,8 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	})
 }
 
+// advanceNodePhase 推进 running 节点的 progress_phase（claimed → provider_call 等）。
+// run 不 running 或 attempt 不匹配返回 false,nil，调用方应停，不要当失败。写 node.progress 事件。
 func advanceNodePhase(ctx context.Context, tx *gorm.DB, runID, nodeRunID, attemptID, phase string) (bool, error) {
 	now := time.Now().UTC()
 	var run schema.WorkflowGraphRuns
@@ -132,6 +139,9 @@ func advanceNodePhase(ctx context.Context, tx *gorm.DB, runID, nodeRunID, attemp
 	return true, nil
 }
 
+// ensureProviderEffectIntent 在打 provider 前写入或复用 workflow_graph_provider_effects。
+// 每节点一行：hash/provider 不一致报错；已有非 failed 结果返回 false（禁止再打）；failed 可重开 pending。
+// 返回 true 才允许本次调用 provider。operation_key 固定为 graph-node-run:{nodeRunID}，不要改格式。
 func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, requestHash, providerName string, requestJSON []byte) (bool, error) {
 	var node schema.WorkflowGraphNodeRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error
@@ -189,6 +199,8 @@ func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, att
 	return err == nil, err
 }
 
+// recordProviderEffectResult 把 provider 成功结果写成 applied。unknown 行不覆盖（返回 false）；
+// 已 failed 返回 true 让调用方当已收口。attempt 不匹配返回 false。不要用它标 unknown。
 func recordProviderEffectResult(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
 	var existing schema.WorkflowGraphProviderEffects
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("node_run_id = ?", nodeRunID).Take(&existing).Error

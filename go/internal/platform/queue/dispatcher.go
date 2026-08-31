@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+// RunDispatcherOnce 对账过期 lease 与陈旧 SENT，再 SKIP LOCKED claim PENDING、标 SENT 并 enqueue。
+// HTTP 不得调用本函数入队。
 func RunDispatcherOnce(ctx context.Context, pool *pgxpool.Pool, enqueue EnqueueFunc, limit int) (Summary, error) {
 	if limit < 1 {
 		limit = DefaultClaimLimit
@@ -71,6 +73,8 @@ func reconcileExpiredLeases(ctx context.Context, dbTx *gorm.DB, now time.Time) (
 	return int(res.RowsAffected), nil
 }
 
+// reconcileStaleSent 找回「标了 SENT 但没人消费」的信封。只处理 sent_at 早于 cutoff、且没有有效消费 lease 的行。
+// attempts 已到上限标 DEAD，否则清 lease/sent_at 拉回 PENDING。必须先 FOR UPDATE，避免和 worker 抢同一行。
 func reconcileStaleSent(ctx context.Context, dbTx *gorm.DB, now time.Time, sentAfter time.Duration, maxAttempts int) (int, error) {
 	cutoff := now.Add(-sentAfter)
 	var items []schema.AsyncDispatches
@@ -102,6 +106,8 @@ func reconcileStaleSent(ctx context.Context, dbTx *gorm.DB, now time.Time, sentA
 	return len(items), nil
 }
 
+// claimPending 用 SKIP LOCKED 抢走到期的 PENDING。多 dispatcher 并发时跳过已锁行，不互相等待。
+// 抢到后立刻写 lease 并 attempts+1；事务失败整批不算，避免「加了次数却没发出去」。
 func claimPending(ctx context.Context, gdb *gorm.DB, now time.Time, limit, leaseSeconds int) ([]Dispatch, error) {
 	var claimed []Dispatch
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
@@ -139,7 +145,10 @@ func claimPending(ctx context.Context, gdb *gorm.DB, now time.Time, limit, lease
 	return claimed, nil
 }
 
+// sendClaimed 先把行标 SENT 再 enqueue。broker 失败只写 last_error，行保持 SENT 等对账，不回滚成 PENDING。
+// 否则会出现「库里 PENDING、broker 里已有任务」的双投。enqueue==nil 只改库，给单测用。
 func sendClaimed(ctx context.Context, gdb *gorm.DB, dispatch Dispatch, enqueue EnqueueFunc, now time.Time) bool {
+	// 先标 SENT 再 enqueue；broker 失败只写 last_error，行保持 SENT 等对账，不回滚状态。
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		return dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", dispatch.ID).Updates(map[string]any{
 			"status":           StatusSent,

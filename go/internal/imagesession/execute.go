@@ -26,10 +26,11 @@ import (
 
 var sessionTaskLocks sync.Map
 
+// Executor 是连续生图的 worker 入口。同任务并发返回 queue.ErrBusy；无法证明的供应商结果标 unknown。
 type Executor struct {
-	DB       *gorm.DB
-	Media    media.Store
-	Provider ChatProvider
+	DB       *gorm.DB     // worker 事务
+	Media    media.Store  // 读写会话素材 bytes
+	Provider ChatProvider // nil 时用 MockChatProvider，不打网
 }
 
 func (e Executor) provider() ChatProvider {
@@ -79,11 +80,14 @@ var (
 	errStale           = errors.New("stale_attempt")
 )
 
+// unknownErr 表示无法证明的供应商结果；Execute 标 unknown 且不自动当失败重试。
 type unknownErr struct{}
 
 func (unknownErr) Error() string { return unknownDetail }
 
-// ErrUnknown 把无法证明的供应商结果标成 unknown。
+// ErrUnknown 构造「无法证明供应商结果」的内部 error，供 Execute 把任务标 unknown。
+// 调用时机：worker 超时、断连、5xx、截断 JSON。不要把已证明失败（文字回复、限流）标成 unknown。
+// 副作用在调用方：写 unknown 且 IsRetryable=false。HTTP 不要直接把本 error 当 500 文案。
 func ErrUnknown() error { return unknownErr{} }
 
 func isUnknown(err error) bool {
@@ -91,6 +95,7 @@ func isUnknown(err error) bool {
 	return errors.As(err, &u)
 }
 
+// tryLock 占用进程内任务锁；未拿到则 Execute 返回 queue.ErrBusy。
 func tryLock(id string) (func(), bool) {
 	_, loaded := sessionTaskLocks.LoadOrStore(id, struct{}{})
 	if loaded {
@@ -99,6 +104,8 @@ func tryLock(id string) (func(), bool) {
 	return func() { sessionTaskLocks.Delete(id) }, true
 }
 
+// claim FOR UPDATE 把 queued 标 running。行不存在返回 (false,"","",nil) 让信封 CONSUMED；
+// 容量满返回 ErrLater（回 PENDING）；别人已 running 返回 ErrBusy。
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, string, error) {
 	var claimed bool
 	var attemptID, sessionID string
@@ -181,6 +188,8 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	return nil
 }
 
+// runGeneration 按 count 调 ChatProvider 并逐张 saveCandidate。attempt 已失效返回 errStale，调用方停手。
+// 无法证明的供应商错误走 finishFailed 标 unknown，不要自动当 failed 重试。
 func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionID string) error {
 	var prompt, size string
 	var baseID *string
@@ -347,6 +356,7 @@ func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string
 	return nil
 }
 
+// ensureEffect 按 candidate_start_index 写入或复用 provider 账本。已 applied 的区间不再打网，避免重复扣费。
 func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, start, count int, opKey, hash, provider string, req map[string]any) (string, int, error) {
 	raw, _ := json.Marshal(req)
 	var result string
@@ -396,6 +406,7 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 	return result, storedCount, err
 }
 
+// markEffect 更新该起始序号的账本。result=applied 同时写 reconciliation_state，给对账查询用。
 func (e Executor) markEffect(ctx context.Context, taskID string, start int, result, detail string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		now := time.Now().UTC()
@@ -417,6 +428,7 @@ func (e Executor) markEffect(ctx context.Context, taskID string, start int, resu
 	})
 }
 
+// saveCandidate 把一张生成图落成会话素材并挂到本轮。取消或 attempt 失效时 compensation 删刚写的文件。
 func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptID, groupID string, index, count int, prompt, size string, baseID *string, refs []string, result ChatResult) error {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -548,6 +560,7 @@ func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID string) e
 	})
 }
 
+// finishFailed 按错误类型标 failed 或 unknown。可重试且 attempts 未满则拉回 queued 并补 PENDING；unknown 不自动重试。
 func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, cause error) {
 	reason := genericFailure
 	if cause != nil && cause.Error() != "" {
@@ -677,6 +690,7 @@ type chatContext struct {
 	ReferenceBytes [][]byte
 }
 
+// loadChatContext 读底图和参考图字节。素材不属于本会话或文件缺失返回 error，不要用空字节继续打网。
 func (e Executor) loadChatContext(ctx context.Context, sessionID string, baseID *string, refIDs []string) (chatContext, error) {
 	out := chatContext{}
 	if baseID != nil && strings.TrimSpace(*baseID) != "" {

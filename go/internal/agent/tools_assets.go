@@ -41,6 +41,7 @@ func libraryMeta(item library.AssetResponse) AssetMetadata {
 	}
 }
 
+// ListProductAssets 列出商品图库有界元数据，不把整库交给 Turn。
 func (s Service) ListProductAssets(ctx context.Context, conversationID, directoryKind, directoryKey, query, sort, after string, limit int) (AssetListResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -62,6 +63,7 @@ func (s Service) ListProductAssets(ctx context.Context, conversationID, director
 	return AssetListResponse{Items: items, NextCursor: page.NextCursor}, nil
 }
 
+// InspectProductAssets 按明确 id 检查商品图片元数据。
 func (s Service) InspectProductAssets(ctx context.Context, conversationID string, assetIDs []string) ([]AssetMetadata, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
@@ -97,12 +99,16 @@ func (s Service) InspectProductAssets(ctx context.Context, conversationID string
 	return out, nil
 }
 
+// AssetContent 是内部工具面读图时的字节袋，不是 JSON DTO，也不进 SSE。
+//
+// Bytes 是已核验原图；与行内 MIME / 尺寸对不上会拒绝。浏览器请走媒体 URL，不要把本结构塞进 Turn 投影或 Goal。
 type AssetContent struct {
-	Bytes       []byte
-	MediaType   string
-	DisplayName string
+	Bytes       []byte // 已核验原图 bytes
+	MediaType   string // 与核验 MIME 对齐
+	DisplayName string // 展示名，随 bytes 返回
 }
 
+// ReadProductAssetContent 读取商品图片 bytes；超过上限或与核验元数据不一致时拒绝。
 func (s Service) ReadProductAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -121,6 +127,10 @@ func (s Service) ReadProductAssetContent(ctx context.Context, conversationID, as
 	return s.readAssetBytes(asset.StoragePath, asset.MIMEType, asset.DisplayName, asset.ByteSize, asset.Width, asset.Height)
 }
 
+// ListLibraryAssets 给全局 Agent 列有界图库元数据（无 bytes），对应内部 GET .../media-library。
+//
+// conversation 必须是 global，否则校验失败。cursor 是图库 opaque 游标不是页码。query 可选。归档素材不出现。
+// limit<1 回落到默认 50。只读，不写工具账本、lease、Goal。
 func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, cursor string, limit int) (AssetListResponse, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -143,6 +153,7 @@ func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, c
 	return AssetListResponse{Items: items, NextCursor: page.NextCursor}, nil
 }
 
+// InspectLibraryAssets 按明确 id 检查未归档全局素材元数据。
 func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string, assetIDs []string) ([]AssetMetadata, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
@@ -177,6 +188,7 @@ func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string
 	return out, nil
 }
 
+// ReadLibraryAssetContent 读取全局素材 bytes；已归档返回 NotFound。
 func (s Service) ReadLibraryAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
@@ -195,6 +207,9 @@ func (s Service) ReadLibraryAssetContent(ctx context.Context, conversationID, as
 	return s.readAssetBytes(asset.StoragePath, asset.MIMEType, asset.DisplayName, asset.ByteSize, asset.Width, asset.Height)
 }
 
+// readAssetBytes 从已核验存储路径读图片 bytes，并与库内 mime/尺寸/大小对账。不一致返回 Conflict；超过 Agent 单张上限返回 Validation。
+//
+// 商品图与全局图库的 Read*Content 共用。不把未核验文件交给模型。
 func (s Service) readAssetBytes(storagePath, mimeType, displayName string, byteSize, width, height *int) (AssetContent, error) {
 	if byteSize != nil && *byteSize > assetMaxBytes {
 		return AssetContent{}, apperr.Validation("图片超过 Agent 单张图片大小上限")

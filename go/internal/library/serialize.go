@@ -5,6 +5,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/storage"
 )
 
+// serializeAsset 投影下载/预览 URL。缺 MediaObject 或 MIME 返回 404，不输出半残行。
 func serializeAsset(asset Asset) (AssetResponse, error) {
 	if asset.MediaObjectID == "" || asset.VerificationStatus == "" && asset.MIMEType == "" {
 		return AssetResponse{}, apperr.NotFound("素材库媒体对象不存在")
