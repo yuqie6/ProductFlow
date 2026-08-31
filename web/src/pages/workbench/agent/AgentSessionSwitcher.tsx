@@ -21,6 +21,11 @@ import { PanelSkeleton } from "../../../components/ui/skeleton";
 import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentConversation, AgentSession, AgentSessionConversation } from "../../../lib/types";
+import {
+  agentWorkbenchQueryKey,
+  loadProductWorkbenchAgent,
+  rememberAgentWorkbenchQueryData,
+} from "./productWorkbenchRoute";
 
 interface AgentSessionSwitcherProps {
   conversation: AgentConversation;
@@ -126,9 +131,16 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
       setOpen(false);
       setNotice(t("agentWorkbench.session.created"));
       void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true, conversation.product_id] });
-      if (bootstrap.conversation.session_id) {
+      const productId = conversation.product_id ?? bootstrap.product.id;
+      const sessionId = bootstrap.conversation.session_id;
+      if (sessionId) {
+        rememberAgentWorkbenchQueryData(
+          (queryKey, data) => queryClient.setQueryData(queryKey, data),
+          bootstrap,
+          sessionId,
+        );
         navigate(
-          `/products/${encodeURIComponent(conversation.product_id ?? bootstrap.product.id)}?agent_session_id=${encodeURIComponent(bootstrap.conversation.session_id)}`,
+          `/products/${encodeURIComponent(productId)}?agent_session_id=${encodeURIComponent(sessionId)}`,
         );
       }
     },
@@ -187,13 +199,18 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
     }
     const target = sessionItems.find((agentSession) => agentSession.id === sessionId);
     const targetConversation = target ? selectAgentSessionConversation(target) : null;
-    if (!targetConversation?.product_id) {
+    const productId = targetConversation?.product_id;
+    if (!productId) {
       setNotice(t("agentWorkbench.session.noConversation"));
       return;
     }
     setOpen(false);
+    void queryClient.prefetchQuery({
+      queryKey: agentWorkbenchQueryKey(productId, sessionId, null),
+      queryFn: () => loadProductWorkbenchAgent(api, productId, sessionId, null),
+    });
     navigate(
-      `/products/${encodeURIComponent(targetConversation.product_id)}?agent_session_id=${encodeURIComponent(sessionId)}`,
+      `/products/${encodeURIComponent(productId)}?agent_session_id=${encodeURIComponent(sessionId)}`,
     );
   };
 
@@ -213,21 +230,19 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
         role="option"
         aria-selected={selected}
         onClick={() => switchSession(agentSession.id)}
-        className={`group flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
-          selected
+        className={`group flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${selected
             ? "bg-accent-soft text-text-primary"
             : "text-text-primary hover:bg-surface-subtle"
-        }`}
+          }`}
       >
         <span
           aria-hidden="true"
-          className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${
-            selected
+          className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${selected
               ? "bg-accent"
               : agentSession.status === "active"
                 ? "bg-state-success"
                 : "bg-text-muted/50"
-          }`}
+            }`}
         />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
@@ -265,19 +280,17 @@ export function AgentSessionSwitcher({ conversation }: AgentSessionSwitcherProps
             setNotice(null);
             setOpen((isOpen) => !isOpen);
           }}
-          className={`-ml-1 flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1 py-0.5 text-left text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
-            open ? "bg-surface-subtle text-text-primary" : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-          }`}
+          className={`-ml-1 flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1 py-0.5 text-left text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${open ? "bg-surface-subtle text-text-primary" : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+            }`}
         >
           <span
             aria-hidden="true"
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-              currentStatus === "active"
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${currentStatus === "active"
                 ? "bg-state-success"
                 : currentStatus === "archived"
                   ? "bg-text-muted/60"
                   : "bg-text-muted/40"
-            }`}
+              }`}
           />
           <span className="min-w-0 truncate" title={currentTitle}>{currentTitle}</span>
           <ChevronDown

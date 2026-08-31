@@ -5,12 +5,14 @@ import type { GraphProjection } from "../../../lib/types";
 import {
   agentProductIntakeResumePath,
   agentProductWorkbenchPath,
+  agentWorkbenchQueryKey,
   isAgentWorkbenchMissing,
   isHttpErrorStatus,
   isWorkflowGraphMissing,
   loadProductWorkbenchAgent,
   productWorkbenchRouteTarget,
   readWorkflowGraphOrNull,
+  rememberAgentWorkbenchQueryData,
   resolveProductWorkbenchSurface,
   type ProductWorkbenchRouteInput,
 } from "./productWorkbenchRoute";
@@ -68,6 +70,12 @@ describe("productWorkbenchRouteTarget", () => {
     expect(agentProductIntakeResumePath("conversation/1", "session/1")).toBe(
       "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1",
     );
+    expect(agentWorkbenchQueryKey("product-1", "session-1")).toEqual([
+      "agent-workbench",
+      "product-1",
+      "session-1",
+      null,
+    ]);
   });
 });
 
@@ -160,5 +168,28 @@ describe("resolveProductWorkbenchSurface", () => {
       agentPending: true,
       agentError: null,
     }).kind).toBe("loading");
+  });
+});
+
+describe("rememberAgentWorkbenchQueryData", () => {
+  it("writes the session-scoped workbench query and the live graph", () => {
+    const writes: Array<{ key: readonly unknown[]; data: unknown }> = [];
+    const graph = { id: "graph-1" } as GraphProjection;
+    const bootstrap = {
+      product: { id: "product-1" },
+      conversation: { session_id: "session-2" },
+      graph,
+    } as never;
+    rememberAgentWorkbenchQueryData(
+      (queryKey, data) => {
+        writes.push({ key: queryKey, data });
+      },
+      bootstrap,
+      "session-2",
+    );
+    expect(writes).toEqual([
+      { key: ["agent-workbench", "product-1", "session-2", null], data: bootstrap },
+      { key: ["workflow-graph", "product-1"], data: graph },
+    ]);
   });
 });

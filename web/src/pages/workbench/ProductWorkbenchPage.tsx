@@ -14,11 +14,14 @@ import { Button } from "../../components/ui/button";
 import { useI18n } from "../../lib/preferences";
 import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
+  agentWorkbenchQueryKey,
   isHttpErrorStatus,
   loadProductWorkbenchAgent,
   readWorkflowGraphOrNull,
+  rememberAgentWorkbenchQueryData,
   resolveProductWorkbenchSurface,
 } from "./agent/productWorkbenchRoute";
+import { keepAgentWorkbenchPlaceholder } from "./chrome/workbenchUiState";
 import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
 
 export function ProductWorkbenchPage() {
@@ -28,9 +31,11 @@ export function ProductWorkbenchPage() {
   const agentSessionId = searchParams.get("agent_session_id");
   const agentTaskId = searchParams.get("agent_task_id");
   const agentQuery = useQuery({
-    queryKey: ["agent-workbench", productId, agentSessionId, agentTaskId],
+    queryKey: agentWorkbenchQueryKey(productId, agentSessionId, agentTaskId),
     queryFn: () => loadProductWorkbenchAgent(api, productId, agentSessionId, agentTaskId),
     enabled: Boolean(productId),
+    placeholderData: (previousData, previousQuery) =>
+      keepAgentWorkbenchPlaceholder(previousData, previousQuery, productId),
     retry: (failureCount, error) =>
       !isHttpErrorStatus(error, 404) && !isHttpErrorStatus(error, 409) && failureCount < 2,
   });
@@ -111,7 +116,15 @@ export function ProductWorkbenchPage() {
             error={agentQuery.error}
             onRetry={() => void agentQuery.refetch()}
             onOpenConversation={() => {
-              void api.ensureAgentWorkbench(productId).then(() => agentQuery.refetch());
+              void api.ensureAgentWorkbench(productId).then((bootstrap) => {
+                rememberAgentWorkbenchQueryData(
+                  (queryKey, data) => queryClient.setQueryData(queryKey, data),
+                  bootstrap,
+                  agentSessionId,
+                  agentTaskId,
+                );
+                void agentQuery.refetch();
+              });
             }}
           />
         )}

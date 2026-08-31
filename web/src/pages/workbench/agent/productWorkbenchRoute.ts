@@ -34,6 +34,33 @@ export function isAgentWorkbenchMissing(error: unknown): boolean {
   return isHttpErrorStatus(error, 409);
 }
 
+export function agentWorkbenchQueryKey(
+  productId: string,
+  agentSessionId?: string | null,
+  agentTaskId?: string | null,
+): readonly ["agent-workbench", string, string | null, string | null] {
+  return ["agent-workbench", productId, agentSessionId ?? null, agentTaskId ?? null];
+}
+
+export function rememberAgentWorkbenchQueryData(
+  setQueryData: (queryKey: readonly unknown[], data: unknown) => void,
+  bootstrap: AgentWorkbenchBootstrap,
+  agentSessionId?: string | null,
+  agentTaskId?: string | null,
+): void {
+  setQueryData(
+    agentWorkbenchQueryKey(
+      bootstrap.product.id,
+      agentSessionId ?? bootstrap.conversation.session_id,
+      agentTaskId,
+    ),
+    bootstrap,
+  );
+  if (bootstrap.graph) {
+    setQueryData(["workflow-graph", bootstrap.product.id], bootstrap.graph);
+  }
+}
+
 /** 页面加载只读取；没有对话时 409，由画布面打开侧栏再 ensure。 */
 export function loadProductWorkbenchAgent(
   loaders: {
