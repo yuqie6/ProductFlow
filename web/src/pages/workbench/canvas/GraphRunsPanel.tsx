@@ -63,7 +63,6 @@ export function GraphRunsPanel({
     queryKey,
     queryFn: () => api.listGraphRuns(productId, graph.id),
     // GraphCanvasPanel owns the shared run SSE and updates this query cache.
-    refetchInterval: false,
   });
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => api.cancelGraphRun(productId, graph.id, runId),

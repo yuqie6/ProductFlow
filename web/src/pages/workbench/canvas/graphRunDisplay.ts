@@ -29,10 +29,6 @@ export interface GraphNodeRunPresentation {
 
 export const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
 
-export function graphRunsAreLive(runs: readonly GraphRun[] | undefined): boolean {
-  return Boolean(runs?.some((run) => LIVE_RUN_STATUSES.has(run.status)));
-}
-
 export function graphQueuedRuns(runs: readonly GraphRun[] | undefined): GraphRun[] {
   return (runs ?? []).filter((run) => run.status === "queued");
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { GraphNode, GraphProjection } from "../../../lib/types";
 import {
   GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_MEDIA_HEIGHT,
   GRAPH_NODE_WIDTH,
   GRAPH_SNAP,
   buildDeleteNodeOperations,
@@ -12,6 +13,7 @@ import {
   buildGraphAutoLayoutPositions,
   buildRenameGroupOperations,
   computeGraphGroupBounds,
+  graphNodeLayoutHeight,
   createdGraphNodeIds,
   graphCanvasView,
   graphAvailableNodePosition,
@@ -64,6 +66,60 @@ describe("graph layout commands", () => {
     const byId = Object.fromEntries(positions.map((item) => [item.node_id, item]));
     expect(byId.source.position_x).toBeLessThan(byId.prompt.position_x);
     expect(byId.prompt.position_x).toBeLessThan(byId.image.position_x);
+  });
+
+  it("keeps group members on one row and leaves room for media-height folder bounds", () => {
+    const grouped = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        node({ id: "prompt-2", node_type: "image_prompt", position_x: 10, position_y: 600, group_id: "group-2" }),
+        node({ id: "image-2", node_type: "image_generation", position_x: 10, position_y: 900, group_id: "group-2" }),
+      ],
+      edges: [
+        ...graph.edges,
+        { id: "e3", source_node_id: "source", target_node_id: "prompt-2", data_type: "product_facts" as const, role: "facts" as const, order: 1 },
+        { id: "e4", source_node_id: "prompt-2", target_node_id: "image-2", data_type: "prompt" as const, role: "prompt" as const, order: 0 },
+      ],
+      groups: [
+        ...graph.groups,
+        { id: "group-2", title: "二组", member_ids: ["prompt-2", "image-2"] },
+      ],
+    };
+    const positions = new Map(buildGraphAutoLayoutPositions(grouped).map((item) => [item.node_id, item]));
+    const laidOut = {
+      ...grouped,
+      nodes: grouped.nodes.map((item) => ({
+        ...item,
+        position_x: positions.get(item.id)?.position_x ?? item.position_x,
+        position_y: positions.get(item.id)?.position_y ?? item.position_y,
+      })),
+    };
+    expect(positions.get("prompt")?.position_y).toBe(positions.get("image")?.position_y);
+    expect(positions.get("prompt-2")?.position_y).toBe(positions.get("image-2")?.position_y);
+    const first = computeGraphGroupBounds(laidOut, laidOut.groups[0])!;
+    const second = computeGraphGroupBounds(laidOut, laidOut.groups[1])!;
+    expect(first.y + first.height).toBeLessThan(second.y);
+  });
+
+  it("stacks same-layer shots inside a group instead of overlapping them", () => {
+    const twoShots = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        node({ id: "image-b", node_type: "image_generation", position_x: 10, position_y: 400, group_id: "group-1" }),
+      ],
+      edges: [
+        ...graph.edges,
+        { id: "e-b", source_node_id: "prompt", target_node_id: "image-b", data_type: "prompt" as const, role: "prompt" as const, order: 1 },
+      ],
+      groups: [{ id: "group-1", title: "一组", member_ids: ["prompt", "image", "image-b"] }],
+    };
+    const positions = new Map(buildGraphAutoLayoutPositions(twoShots).map((item) => [item.node_id, item]));
+    expect(positions.get("image")?.position_x).toBe(positions.get("image-b")?.position_x);
+    expect(positions.get("image")?.position_y).not.toBe(positions.get("image-b")?.position_y);
+    expect(Math.abs((positions.get("image")?.position_y ?? 0) - (positions.get("image-b")?.position_y ?? 0)))
+      .toBeGreaterThanOrEqual(GRAPH_NODE_MEDIA_HEIGHT);
   });
 
   it("duplicates selected nodes and only their internal edges", () => {
@@ -154,7 +210,8 @@ describe("graph layout commands", () => {
     const bounds = computeGraphGroupBounds(graph, graph.groups[0]);
     expect(bounds).not.toBeNull();
     expect(bounds!.width).toBeGreaterThan(248);
-    expect(bounds!.height).toBeGreaterThan(236);
+    expect(graphNodeLayoutHeight(graph.nodes.find((item) => item.id === "image")!)).toBe(356);
+    expect(bounds!.y + bounds!.height).toBeGreaterThanOrEqual(300 + 356 + 32);
   });
 
   it("renames a group through a single ChangeSet op", () => {

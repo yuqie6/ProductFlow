@@ -162,7 +162,6 @@ export function GraphNodeInspector({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
     // GraphCanvasPanel owns the shared run SSE and updates this query cache.
-    refetchInterval: false,
   });
   const presentations = useMemo(
     () => graphNodeRunPresentations(runsQuery.data?.items ?? []),

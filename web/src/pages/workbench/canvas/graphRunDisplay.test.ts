@@ -11,7 +11,6 @@ import {
   graphOutputQualityLabelKey,
   graphRunInputTraceEntries,
   graphRunScopeLabelKey,
-  graphRunsAreLive,
   humanizeTechnicalKey,
 } from "./graphRunDisplay";
 
@@ -27,9 +26,9 @@ const graph: GraphProjection = {
   title: "t",
   schema_version: 3,
   revision: 2,
-    last_operation_group_id: null,
-    can_undo: false,
-    can_redo: false,
+  last_operation_group_id: null,
+  can_undo: false,
+  can_redo: false,
   nodes: [{
     id: "image",
     node_type: "image_generation",
@@ -308,26 +307,6 @@ describe("graph run display", () => {
       finished_at: null,
     };
     expect(graphNodeRunPresentations([running]).image.progressPhase).toBe("provider_call");
-  });
-
-  it("polls queued and running graph runs, not terminal ones", () => {
-    const queued = {
-      id: "run-q",
-      graph_id: "g1",
-      status: "running",
-      scope: "graph",
-      requested_node_id: null,
-      graph_revision: 2,
-      failure_reason: null,
-      is_retryable: false,
-      node_runs: [nodeRun({ status: "queued" })],
-      started_at: "2026-08-21T00:00:00Z",
-      finished_at: null,
-    } satisfies GraphRun;
-    expect(graphRunsAreLive([queued])).toBe(true);
-    expect(graphRunsAreLive([{ ...queued, status: "running" }])).toBe(true);
-    expect(graphRunsAreLive([{ ...queued, status: "succeeded", finished_at: "2026-08-21T00:01:00Z" }])).toBe(false);
-    expect(graphRunsAreLive([])).toBe(false);
   });
 
   it("overlays the running graph run even when a newer queued run exists", () => {

@@ -11,6 +11,7 @@ import type { WorkflowCanvasViewport } from "./canvasState";
 
 export const GRAPH_NODE_WIDTH = 248;
 export const GRAPH_NODE_HEIGHT = 236;
+export const GRAPH_NODE_MEDIA_HEIGHT = 356;
 export const GRAPH_LAYOUT_GAP_X = 420;
 export const GRAPH_LAYOUT_GAP_Y = 72;
 export const GRAPH_SNAP = 24;
@@ -28,6 +29,15 @@ export interface GraphGroupBounds {
   y: number;
   width: number;
   height: number;
+}
+
+export function graphNodeLayoutHeight(
+  node: Pick<GraphNode, "node_type" | "preview_asset_id" | "bound_asset_id">,
+): number {
+  if (node.node_type === "image_asset" || node.node_type === "image_generation") {
+    return GRAPH_NODE_MEDIA_HEIGHT;
+  }
+  return GRAPH_NODE_HEIGHT;
 }
 
 export function snapGraphCoordinate(value: number): number {
@@ -129,15 +139,52 @@ export function buildGraphAutoLayoutPositions(graph: GraphProjection): GraphNode
   const nextPositions = new Map<string, { x: number; y: number }>();
   for (const [layerDepth, layer] of [...layers.entries()].sort(([left], [right]) => left - right)) {
     layer.sort((left, right) => left.position_y - right.position_y || left.position_x - right.position_x);
-    const totalHeight = layer.length * GRAPH_NODE_HEIGHT + Math.max(0, layer.length - 1) * GRAPH_LAYOUT_GAP_Y;
+    const totalHeight = layer.reduce((sum, node) => sum + graphNodeLayoutHeight(node), 0)
+      + Math.max(0, layer.length - 1) * GRAPH_LAYOUT_GAP_Y;
     let nextY = Math.max(72, 360 - totalHeight / 2);
     for (const node of layer) {
       nextPositions.set(node.id, {
         x: snapGraphCoordinate(72 + layerDepth * GRAPH_LAYOUT_GAP_X),
         y: snapGraphCoordinate(nextY),
       });
-      nextY += GRAPH_NODE_HEIGHT + GRAPH_LAYOUT_GAP_Y;
+      nextY += graphNodeLayoutHeight(node) + GRAPH_LAYOUT_GAP_Y;
     }
+  }
+
+  const groupedRows = graph.groups
+    .map((group) => {
+      const members = graph.nodes.filter((node) => group.member_ids.includes(node.id));
+      return {
+        group,
+        members,
+        currentY: members.length ? Math.min(...members.map((node) => node.position_y)) : Number.POSITIVE_INFINITY,
+      };
+    })
+    .filter((row) => row.members.length > 0)
+    .sort((left, right) => left.currentY - right.currentY || left.group.title.localeCompare(right.group.title));
+  let nextGroupY = 72;
+  for (const row of groupedRows) {
+    const groupLayers = new Map<number, GraphNode[]>();
+    for (const node of row.members) {
+      const position = nextPositions.get(node.id);
+      if (!position) continue;
+      const layer = groupLayers.get(position.x) ?? [];
+      layer.push(node);
+      groupLayers.set(position.x, layer);
+    }
+    let groupHeight = 0;
+    for (const layer of groupLayers.values()) {
+      layer.sort((left, right) => left.position_y - right.position_y || left.id.localeCompare(right.id));
+      let y = nextGroupY;
+      for (const node of layer) {
+        const position = nextPositions.get(node.id);
+        if (!position) continue;
+        position.y = snapGraphCoordinate(y);
+        y += graphNodeLayoutHeight(node) + GRAPH_LAYOUT_GAP_Y;
+      }
+      groupHeight = Math.max(groupHeight, y - nextGroupY - GRAPH_LAYOUT_GAP_Y);
+    }
+    nextGroupY += Math.max(groupHeight, 0) + GRAPH_GROUP_PADDING * 2 + 28 + GRAPH_LAYOUT_GAP_Y;
   }
 
   return graph.nodes.flatMap((node) => {
@@ -182,7 +229,7 @@ export function computeGraphGroupBounds(graph: GraphProjection, group: GraphGrou
   const minX = Math.min(...members.map((node) => node.position_x));
   const minY = Math.min(...members.map((node) => node.position_y));
   const maxX = Math.max(...members.map((node) => node.position_x + GRAPH_NODE_WIDTH));
-  const maxY = Math.max(...members.map((node) => node.position_y + GRAPH_NODE_HEIGHT));
+  const maxY = Math.max(...members.map((node) => node.position_y + graphNodeLayoutHeight(node)));
   return {
     x: minX - GRAPH_GROUP_PADDING,
     y: minY - GRAPH_GROUP_PADDING - 28,
