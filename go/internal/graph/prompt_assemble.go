@@ -439,15 +439,6 @@ func stringListToAny(in []string) []any {
 	return out
 }
 
-func containsString(list []string, needle string) bool {
-	for _, item := range list {
-		if item == needle {
-			return true
-		}
-	}
-	return false
-}
-
 func uniqueStrings(in []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(in))

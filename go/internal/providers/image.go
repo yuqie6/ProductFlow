@@ -398,10 +398,6 @@ func imageGenerationTool(size string, opts map[string]any) map[string]any {
 	return tool
 }
 
-func (p OpenAIResponses) createResponses(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string) (int, []byte, error) {
-	return p.createResponsesRequired(ctx, input, size, toolOptions, previousID, nil)
-}
-
 func (p OpenAIResponses) createResponsesRequired(ctx context.Context, input any, size string, toolOptions map[string]any, previousID *string, requiredToolOptions map[string]any) (int, []byte, error) {
 	tool := imageGenerationTool(size, mergeToolOptions(toolOptions, requiredToolOptions))
 	payload := map[string]any{
