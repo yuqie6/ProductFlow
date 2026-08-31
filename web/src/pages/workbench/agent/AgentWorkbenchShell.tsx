@@ -9,7 +9,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../../lib/preferences";
-import { INSPECTOR_CANVAS_GAP, INSPECTOR_RAIL_WIDTH } from "../chrome/constants";
+import { INSPECTOR_RAIL_WIDTH } from "../chrome/constants";
 import {
   ProductWorkbenchInspector,
   type ProductWorkbenchInspectorTool,
@@ -113,7 +113,7 @@ export function AgentWorkbenchShell({
     previousWorkflowAvailableRef.current = workflowAvailable;
     if (workflowAvailable && !previouslyAvailable) {
       setMobileView("canvas");
-      inspector.setCollapsed(false);
+      inspector.setCollapsed(compact);
     } else if (!workflowAvailable) {
       setMobileView("canvas");
       inspector.setCollapsed(true);
@@ -121,13 +121,13 @@ export function AgentWorkbenchShell({
   }, [compact, inspector.setCollapsed, workflowAvailable]);
 
   useEffect(() => {
-    if (previousSidebarToolRef.current === resolvedActiveToolId) {
+    if (previousSidebarToolRef.current === activeSidebarTool) {
       return;
     }
-    previousSidebarToolRef.current = resolvedActiveToolId;
+    previousSidebarToolRef.current = activeSidebarTool;
     inspector.setCollapsed(false);
     setMobileView("agent");
-  }, [inspector.setCollapsed, resolvedActiveToolId, workflowAvailable]);
+  }, [activeSidebarTool, inspector.setCollapsed]);
 
   useEffect(() => {
     if (
@@ -196,13 +196,12 @@ export function AgentWorkbenchShell({
     <main
       data-agent-workbench-shell
       data-workbench-layout="canvas-sidebar"
-      className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 pb-[calc(4.5rem+env(safe-area-inset-bottom))] dark:bg-[#0b1220] lg:pb-0"
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-surface-base pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0"
     >
       <div
         data-agent-workbench-work-area
-        className="relative min-h-0 flex-1 overflow-hidden lg:grid lg:gap-[var(--agent-workbench-inspector-gap)] lg:pr-[var(--agent-workbench-inspector-gap)] lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none"
+        className="relative min-h-0 flex-1 overflow-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none"
         style={{
-          "--agent-workbench-inspector-gap": `${INSPECTOR_CANVAS_GAP}px`,
           gridTemplateColumns: `minmax(0, 1fr) ${inspectorTrackWidth}px`,
         } as CSSProperties}
       >
@@ -240,7 +239,7 @@ export function AgentWorkbenchShell({
       {confirmationContent ? (
         <div
           data-agent-workbench-confirmation-layer
-          className="absolute inset-0 z-40 min-h-0 overflow-hidden bg-white dark:bg-[#090d13]"
+          className="absolute inset-0 z-40 min-h-0 overflow-hidden bg-surface-raised"
         >
           {confirmationContent}
         </div>

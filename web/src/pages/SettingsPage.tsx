@@ -31,8 +31,9 @@ import type { LucideIcon } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { SelectField } from "../components/SelectField";
 import { TopNav } from "../components/TopNav";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "../components/ui/dialog";
+import { Select as SelectField } from "../components/ui/select";
 import { api, ApiError } from "../lib/api";
 import type { TranslationKey } from "../lib/i18n";
 import { useI18n } from "../lib/preferences";
@@ -239,6 +240,7 @@ const PROVIDER_CAPABILITY_OPTIONS: Array<{ value: ProviderCapability; labelKey: 
   { value: "text_responses", labelKey: "settings.provider.capability.textResponses" },
   { value: "image_responses", labelKey: "settings.provider.capability.imageResponses" },
   { value: "image_images", labelKey: "settings.provider.capability.imageImages" },
+  { value: "image_mask_edit", labelKey: "settings.provider.capability.imageMaskEdit" },
   { value: "image_google_gemini", labelKey: "settings.provider.capability.imageGoogleGemini" },
 ];
 
@@ -351,6 +353,14 @@ function boolValue(record: Record<string, unknown> | undefined, key: string, fal
 
 function defaultCapabilitiesForProviderType(providerType: ProviderType): ProviderCapability[] {
   return providerType === "google_gemini" ? ["image_google_gemini"] : ["text_responses", "image_images"];
+}
+
+export function providerCapabilityValuesForType(providerType: ProviderType): ProviderCapability[] {
+  return PROVIDER_CAPABILITY_OPTIONS
+    .filter((option) => providerType === "google_gemini"
+      ? option.value === "image_google_gemini"
+      : option.value !== "image_google_gemini")
+    .map((option) => option.value);
 }
 
 function providerTypeLabelKey(providerType: ProviderType): TranslationKey {
@@ -1358,11 +1368,9 @@ function ProviderProfileDrawer({
 }: ProviderProfileDrawerProps) {
   const { t } = useI18n();
   const titleId = useId();
-  const capabilityOptions = PROVIDER_CAPABILITY_OPTIONS.filter((option) =>
-    form.provider_type === "google_gemini"
-      ? option.value === "image_google_gemini"
-      : option.value !== "image_google_gemini",
-  );
+  const openerRef = useRef<HTMLElement | null>(null);
+  const capabilityValues = providerCapabilityValuesForType(form.provider_type);
+  const capabilityOptions = PROVIDER_CAPABILITY_OPTIONS.filter((option) => capabilityValues.includes(option.value));
   const handleProviderTypeChange = (provider_type: ProviderType) => {
     onFormChange({
       ...form,
@@ -1384,41 +1392,44 @@ function ProviderProfileDrawer({
     });
   };
 
-  if (!open) {
-    return null;
-  }
-
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/55 backdrop-blur-sm">
-      <div
-        className="absolute inset-0 h-full w-full cursor-default"
-        aria-hidden="true"
-        onClick={onClose}
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent
+        placement="right"
+        hideClose
         aria-labelledby={titleId}
-        className="relative flex h-full w-full max-w-full flex-col overflow-hidden bg-white shadow-2xl shadow-slate-950/25 dark:bg-[#121722] sm:max-w-[448px]"
+        className="flex flex-col"
+        bodyClassName="contents"
+        onOpenAutoFocus={() => {
+          openerRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          openerRef.current?.focus();
+        }}
       >
         <div className="flex h-[74px] items-center justify-between border-b border-slate-200 px-6 dark:border-slate-800">
           <div className="flex min-w-0 items-center gap-3">
             <span className="text-indigo-600 dark:text-violet-400">
               {editingProfileId ? <Pencil size={17} /> : <Plus size={18} />}
             </span>
-            <h2 id={titleId} className="truncate text-lg font-bold text-slate-950 dark:text-white">
+            <DialogTitle id={titleId} className="truncate text-lg font-bold text-slate-950 dark:text-white">
               {editingProfileId ? t("settings.provider.edit") : t("settings.provider.create")}
-            </h2>
+            </DialogTitle>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-950 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
-            aria-label={t("settings.provider.closeDrawer")}
-            title={t("settings.provider.closeDrawer")}
-          >
-            <X size={16} />
-          </button>
+          <DialogClose asChild>
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-950 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white lg:h-9 lg:w-9"
+              aria-label={t("settings.provider.closeDrawer")}
+              title={t("settings.provider.closeDrawer")}
+            >
+              <X size={16} />
+            </button>
+          </DialogClose>
         </div>
 
         <form
@@ -1449,7 +1460,6 @@ function ProviderProfileDrawer({
                 onChange={(value) =>
                   handleProviderTypeChange(value === "google_gemini" ? "google_gemini" : "openai_compatible")
                 }
-                radius="lg"
               />
             </SettingsFormField>
             {form.provider_type === "openai_compatible" ? (
@@ -1517,8 +1527,8 @@ function ProviderProfileDrawer({
             </button>
           </div>
         </form>
-      </aside>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1545,7 +1555,6 @@ function PromptBindingSection({ data, draft, pending, onChange, onSave }: Prompt
             { value: "openai", label: t("settings.provider.interface.openaiResponses") },
           ]}
           onChange={(value) => onChange({ ...draft, provider_kind: value === "openai" ? "openai" : "mock" })}
-          radius="lg"
         />
       </SettingsFormField>
       {draft.provider_kind !== "mock" ? (
@@ -1557,7 +1566,6 @@ function PromptBindingSection({ data, draft, pending, onChange, onSave }: Prompt
               ...profiles.map((profile) => ({ value: profile.id, label: profile.name })),
             ]}
             onChange={(value) => onChange({ ...draft, provider_profile_id: value })}
-            radius="lg"
           />
         </SettingsFormField>
       ) : null}
@@ -1617,7 +1625,6 @@ function AgentBindingSection({ data, draft, pending, onChange, onSave }: AgentBi
               provider_profile_id: value === "openai" ? draft.provider_profile_id : "",
             })
           }
-          radius="lg"
         />
       </SettingsFormField>
       {draft.provider_kind === "openai" ? (
@@ -1629,7 +1636,6 @@ function AgentBindingSection({ data, draft, pending, onChange, onSave }: AgentBi
               ...profiles.map((profile) => ({ value: profile.id, label: profile.name })),
             ]}
             onChange={(value) => onChange({ ...draft, provider_profile_id: value })}
-            radius="lg"
           />
         </SettingsFormField>
       ) : (
@@ -1740,7 +1746,6 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
               provider_profile_id: "",
             })
           }
-          radius="lg"
         />
       </SettingsFormField>
       {draft.provider_kind !== "mock" ? (
@@ -1752,7 +1757,6 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
               ...profiles.map((profile) => ({ value: profile.id, label: profile.name })),
             ]}
             onChange={(value) => onChange({ ...draft, provider_profile_id: value })}
-            radius="lg"
           />
         </SettingsFormField>
       ) : null}
@@ -1776,7 +1780,6 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
               onChange={(value) =>
                 onChange({ ...draft, gemini_api_version: value === "v1" ? "v1" : "v1beta" })
               }
-              radius="lg"
             />
           </SettingsFormField>
           <SettingsFormField label={t("settings.provider.geminiOutputMimeTypeLabel")}>
@@ -1789,7 +1792,6 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
                 { value: "image/webp", label: "image/webp" },
               ]}
               onChange={(value) => onChange({ ...draft, gemini_output_mime_type: value })}
-              radius="lg"
             />
           </SettingsFormField>
         </div>
@@ -2417,7 +2419,6 @@ export function SettingsPage() {
                       })),
                     }))}
                     onChange={(value) => setActiveSection(value as SettingsSectionId)}
-                    radius="lg"
                   />
                 </div>
               </aside>

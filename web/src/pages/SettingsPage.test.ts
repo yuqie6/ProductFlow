@@ -10,6 +10,7 @@ import {
   providerDisableBlocked,
   providerDrawerCreateState,
   providerDrawerEditState,
+  providerCapabilityValuesForType,
   providerFormFromProfile,
   providerProfileCreatePayload,
   providerProfileUpdatePayload,
@@ -140,6 +141,11 @@ describe("SettingsPage draft helpers", () => {
 });
 
 describe("SettingsPage provider profile helpers", () => {
+  it("offers masked local editing as an explicit OpenAI-compatible capability", () => {
+    expect(providerCapabilityValuesForType("openai_compatible")).toContain("image_mask_edit");
+    expect(providerCapabilityValuesForType("google_gemini")).not.toContain("image_mask_edit");
+  });
+
   it("opens the drawer in create mode with a clean provider form", () => {
     expect(providerDrawerCreateState()).toEqual({
       open: true,

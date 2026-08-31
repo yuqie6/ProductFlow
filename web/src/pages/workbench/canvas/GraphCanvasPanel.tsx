@@ -6,14 +6,20 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, ChevronRight, Loader2, Play, Redo2, Undo2 } from "lucide-react";
+import { Bot, ChevronRight, Images, ListChecks, Play, Redo2, Undo2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
+import { Button } from "../../../components/ui/button";
+import { Dialog, DialogContent } from "../../../components/ui/dialog";
+import { IconButton } from "../../../components/ui/icon-button";
+import { Kbd } from "../../../components/ui/kbd";
+import { toast } from "../../../components/ui/toast";
+import { Tooltip } from "../../../components/ui/tooltip";
 import { api, ApiError } from "../../../lib/api";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { useI18n } from "../../../lib/preferences";
-import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphPlannedAction, GraphProjection, GraphRunListResponse, GraphRunPreviewResponse, GraphRunSubmitInput } from "../../../lib/types";
+import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection, GraphRunListResponse, GraphRunPreviewResponse, GraphRunSubmitInput } from "../../../lib/types";
 import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCanvasChromeToggle";
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
@@ -29,7 +35,7 @@ import {
   resolveGraphAssetDrop,
   type GraphAssetDropPlan,
 } from "./graphAssetDrop";
-import { GraphWorkflowCanvas } from "./GraphWorkflowCanvas";
+import { GraphWorkflowCanvas, type GraphCanvasFocusRequest } from "./GraphWorkflowCanvas";
 import {
   resolveRecipeSaveRequest,
   type RecipeSaveKind,
@@ -45,22 +51,23 @@ import {
   createdGraphNodeIds,
   graphCanvasView,
   graphChangeSetClientRef,
+  graphAvailableNodePosition,
   graphNodeTitleKey,
-  graphViewportCenterPosition,
   selectionInsideGroup,
 } from "./graphLayout";
 import { graphNodeRunPresentations, graphQueuedRuns, graphRunningRuns } from "./graphRunDisplay";
 import { applyGraphRunEvent, subscribeGraphRunEvents } from "./graphRunEvents";
 import { withGraphRunSubmit } from "./graphRunLock";
+import { plannedActionsFromPreview } from "./graphRunPreview";
 import { isMoveNodesOnly } from "./graphChangeSetQueue";
 import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
   buildCreateShotOperations,
   shotRunRequest,
 } from "./shotChangeSet";
-import { GraphShotList } from "./GraphShotList";
+import { GraphShotFilmstrip } from "./GraphShotFilmstrip";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
-import { graphHasImageGenerationGroups, projectGraphShots } from "./shotProjection";
+import { projectGraphShots, type GraphShotProjection } from "./shotProjection";
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
@@ -82,6 +89,9 @@ export interface GraphCanvasActions {
     boundAssetId?: string | null;
   }) => Promise<GraphProjection | void>;
   pinCurrentOutput: (nodeId: string) => void;
+  previewRun: (input: GraphRunSubmitInput) => void;
+  hideRunPreview: () => void;
+  focusNodes: (nodeIds: string[]) => void;
 }
 
 export function graphHistoryShortcutAction(
@@ -97,7 +107,7 @@ export function GraphCanvasNotice({ notice }: { notice: string | null }) {
     <div
       role="status"
       data-graph-canvas-notice
-      className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200"
+      className="rounded-control border border-border-l1 bg-surface-raised/95 px-3 py-2 text-xs font-medium text-text-secondary shadow-elev-1"
     >
       {notice}
     </div>
@@ -108,6 +118,12 @@ function compactWorkbench(): boolean {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
     && window.matchMedia("(max-width: 1023px)").matches;
+}
+
+function narrowWorkbench(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 639px)").matches;
 }
 
 interface PendingGraphApply {
@@ -127,7 +143,6 @@ export function GraphCanvasPanel({
   onBindNode,
   onBusyChange,
   onBeforeRun,
-  onOpenLocalEdit,
   chromeCollapsed = false,
   onToggleChrome,
   agentEditing = false,
@@ -172,6 +187,7 @@ export function GraphCanvasPanel({
   const historyInFlightRef = useRef(false);
   const mutationPreparationRef = useRef(false);
   const [compact, setCompact] = useState(compactWorkbench);
+  const [narrow, setNarrow] = useState(narrowWorkbench);
   const [mobileMode, setMobileMode] = useState<CanvasInteractionMode>("edit");
   const [reusePrompt, setReusePrompt] = useState<Extract<GraphAssetDropPlan, { kind: "choose_reuse" }> | null>(null);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
@@ -185,17 +201,13 @@ export function GraphCanvasPanel({
     expectedRecipeVersion?: number;
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [mainView, setMainView] = useState<"shots" | "canvas">(
-    () => graphHasImageGenerationGroups(graph) ? "shots" : "canvas",
-  );
-  const mainViewGraphIdRef = useRef(graph.id);
+  const [filmstripVisible, setFilmstripVisible] = useState(true);
+  const [focusRequest, setFocusRequest] = useState<GraphCanvasFocusRequest | null>(null);
   const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
   const runningShotGroupRef = useRef<string | null>(null);
   const [runPreview, setRunPreview] = useState<GraphRunPreviewResponse | null>(null);
   const [runEventsFallback, setRunEventsFallback] = useState(false);
   const previewTimerRef = useRef<number | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
   const runEventCursorRef = useRef<Record<string, number>>({});
   graphRef.current = graph;
   catalogRef.current = catalog;
@@ -232,20 +244,29 @@ export function GraphCanvasPanel({
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
     const media = window.matchMedia("(max-width: 1023px)");
-    const update = () => setCompact(media.matches);
+    const narrowMedia = window.matchMedia("(max-width: 639px)");
+    const update = () => {
+      setCompact(media.matches);
+      setNarrow(narrowMedia.matches);
+    };
     update();
     media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
+    narrowMedia.addEventListener("change", update);
+    return () => {
+      media.removeEventListener("change", update);
+      narrowMedia.removeEventListener("change", update);
+    };
   }, []);
 
   const showNotice = useCallback((message: string) => {
-    setNotice(message);
-    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
-    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 2200);
+    toast.custom(() => <GraphCanvasNotice notice={message} />, {
+      duration: 2200,
+      id: "graph-canvas-notice",
+      unstyled: true,
+    });
   }, []);
 
   useEffect(() => () => {
-    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
     if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
     pendingApplyRef.current?.resolve(null);
     pendingApplyRef.current = null;
@@ -377,7 +398,7 @@ export function GraphCanvasPanel({
     if (!graphRunBlocked) return undefined;
     const missing = missingRunNodesSummary(missingRunNodes, (role) => {
       const key = graphEdgeRoleLabelKey(role);
-      return t("graph.missingRunInput", { role: key ? t(key) : role });
+      return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
     });
     return missing || t("graph.runs.noRunnableNodes");
   }, [graphRunBlocked, missingRunNodes, t]);
@@ -388,16 +409,12 @@ export function GraphCanvasPanel({
       if (!missing.length) continue;
       reasons[group.id] = missingRunNodesSummary(missing, (role) => {
         const key = graphEdgeRoleLabelKey(role);
-        return t("graph.missingRunInput", { role: key ? t(key) : role });
+        return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
       });
     }
     return reasons;
   }, [catalog, graph, t]);
-  const plannedActions = useMemo(() => {
-    const next: Record<string, GraphPlannedAction> = {};
-    for (const node of runPreview?.nodes ?? []) next[node.node_id] = node.planned_action;
-    return next;
-  }, [runPreview]);
+  const plannedActions = useMemo(() => plannedActionsFromPreview(runPreview), [runPreview]);
   useEffect(() => {
     if (!liveRunId) {
       setRunEventsFallback(false);
@@ -429,19 +446,6 @@ export function GraphCanvasPanel({
       },
     });
   }, [graph.id, liveRunId, productId, queryClient, showNotice, t]);
-
-  useEffect(() => {
-    if (mainViewGraphIdRef.current !== graph.id) {
-      mainViewGraphIdRef.current = graph.id;
-      setMainView(hasShotGroups && !graph.pending_proposal ? "shots" : "canvas");
-      return;
-    }
-    if (graph.pending_proposal) {
-      setMainView("canvas");
-      return;
-    }
-    if (!hasShotGroups) setMainView("canvas");
-  }, [graph.id, graph.pending_proposal, hasShotGroups]);
 
   const executeApply = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
     mutationPreparationRef.current = true;
@@ -585,8 +589,8 @@ export function GraphCanvasPanel({
 
   const createNode = useCallback((nodeType: GraphNodeType) => {
     const before = graphRef.current;
-    const position = graphViewportCenterPosition(viewportRef.current);
     const groupRef = enteredGroupIdRef.current;
+    const position = graphAvailableNodePosition(viewportRef.current, before.nodes, groupRef);
     void applyAsync("创建节点", [{
       op: "create_node",
       client_ref: graphChangeSetClientRef("node"),
@@ -603,7 +607,7 @@ export function GraphCanvasPanel({
 
   const createShot = useCallback((imageTypeKey: AgentProductImageTypeKey) => {
     const before = graphRef.current;
-    const position = graphViewportCenterPosition(viewportRef.current);
+    const position = graphAvailableNodePosition(viewportRef.current, before.nodes, enteredGroupIdRef.current);
     const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[imageTypeKey];
     const operations = buildCreateShotOperations({
       imageTypeKey,
@@ -779,13 +783,16 @@ export function GraphCanvasPanel({
     void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
   }, [productId, queryClient, submitRun]);
 
-  const showGraphRunPreview = useCallback(() => {
+  const previewSeqRef = useRef(0);
+  const showRunPreview = useCallback((input: GraphRunSubmitInput) => {
     if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
     const previewGraphId = graphRef.current.id;
     const previewRevision = graphRef.current.revision;
+    const seq = ++previewSeqRef.current;
     previewTimerRef.current = window.setTimeout(() => {
-      void api.previewGraphRun(productId, previewGraphId, { scope: "graph" })
+      void api.previewGraphRun(productId, previewGraphId, input)
         .then((preview) => {
+          if (seq !== previewSeqRef.current) return;
           const current = graphRef.current;
           if (current.id !== previewGraphId || current.revision !== previewRevision) return;
           setRunPreview(preview);
@@ -793,9 +800,10 @@ export function GraphCanvasPanel({
         .catch(() => undefined);
     }, 160);
   }, [productId]);
-  const hideGraphRunPreview = useCallback(() => {
+  const hideRunPreview = useCallback(() => {
     if (previewTimerRef.current) window.clearTimeout(previewTimerRef.current);
     previewTimerRef.current = null;
+    previewSeqRef.current += 1;
     setRunPreview(null);
   }, []);
 
@@ -814,20 +822,40 @@ export function GraphCanvasPanel({
   }, [runShot]);
 
   const handleShotRun = useCallback((groupId: string) => {
+    hideRunPreview();
     void runShotWithBusy(groupId).catch((runError: unknown) => {
       showNotice(runError instanceof ApiError && runError.detail ? runError.detail : t("workbench.error.run"));
     });
-  }, [runShotWithBusy, showNotice, t]);
+  }, [hideRunPreview, runShotWithBusy, showNotice, t]);
 
-  const openShotNode = useCallback((nodeId: string) => {
+  const focusShot = useCallback((shot: GraphShotProjection) => {
     void (async () => {
       try {
-        await onSelect([nodeId]);
+        if (enteredGroupIdRef.current) {
+          setEnteredGroupId(null);
+          setViewport(readStoredWorkflowCanvasViewport(graphRef.current.id));
+        }
+        await onSelect([shot.primaryImageNodeId]);
+        setFocusRequest((current) => ({
+          nodeIds: shot.imageNodeIds,
+          version: (current?.version ?? 0) + 1,
+          padding: 0.28,
+          duration: 220,
+        }));
       } catch {
         return;
       }
     })();
   }, [onSelect]);
+
+  const focusNodes = useCallback((nodeIds: string[]) => {
+    setFocusRequest((current) => ({
+      nodeIds,
+      version: (current?.version ?? 0) + 1,
+      padding: 0.22,
+      duration: 180,
+    }));
+  }, []);
 
   const handleViewportChange = useCallback((next: WorkflowCanvasViewport, groupId: string | null) => {
     if (!isWorkflowCanvasViewportScopeActive(enteredGroupIdRef.current, groupId)) return;
@@ -896,6 +924,9 @@ export function GraphCanvasPanel({
     appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
     pinCurrentOutput,
+    previewRun: showRunPreview,
+    hideRunPreview,
+    focusNodes,
   });
   actionsRef.current = {
     createNode,
@@ -907,6 +938,9 @@ export function GraphCanvasPanel({
     appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
     pinCurrentOutput,
+    previewRun: showRunPreview,
+    hideRunPreview,
+    focusNodes,
   };
   useEffect(() => {
     onRegisterActions?.({
@@ -919,6 +953,9 @@ export function GraphCanvasPanel({
       appendRecipe: (recipe) => actionsRef.current.appendRecipe(recipe),
       commitNode: (input) => actionsRef.current.commitNode(input),
       pinCurrentOutput: (nodeId) => actionsRef.current.pinCurrentOutput(nodeId),
+      previewRun: (input) => actionsRef.current.previewRun(input),
+      hideRunPreview: () => actionsRef.current.hideRunPreview(),
+      focusNodes: (nodeIds) => actionsRef.current.focusNodes(nodeIds),
     });
   }, [onRegisterActions]);
 
@@ -1001,124 +1038,101 @@ export function GraphCanvasPanel({
   return (
     <div
       data-graph-canvas-panel
-      className="relative flex h-full min-h-0 flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#080c12] dark:text-slate-100"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary"
     >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-l1 bg-surface-raised px-3 py-2 sm:px-4">
-        <div
-          role="tablist"
-          aria-label={t("graph.canvas.ariaLabel")}
-          data-graph-view-switcher
-          className="inline-flex min-h-9 max-w-full items-center rounded-lg border border-border-l1 bg-surface-subtle p-0.5"
-        >
-          <button
-            type="button"
-            role="tab"
-            data-graph-view="shots"
-            aria-selected={mainView === "shots"}
-            disabled={!hasShotGroups}
-            onClick={() => setMainView("shots")}
-            className="min-h-8 rounded-md px-3 text-xs font-semibold text-text-secondary hover:text-text-primary aria-selected:bg-surface-raised aria-selected:text-text-primary disabled:cursor-not-allowed disabled:opacity-45 sm:px-4"
-          >
-            {t("graph.canvas.shotsView")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            data-graph-view="canvas"
-            aria-selected={mainView === "canvas"}
-            onClick={() => setMainView("canvas")}
-            className="min-h-8 rounded-md px-3 text-xs font-semibold text-text-secondary hover:text-text-primary aria-selected:bg-surface-raised aria-selected:text-text-primary sm:px-4"
-          >
-            {t("agentWorkbench.canvas")}
-          </button>
+      <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-border-l1 bg-surface-raised px-2 py-1.5 sm:px-4">
+        <div className="min-w-0 flex-1">
+          {enteredGroup ? (
+            <nav data-graph-group-breadcrumb aria-label={t("workbench.breadcrumb")} className="flex min-w-0 items-center gap-1 text-xs">
+              <button
+                type="button"
+                aria-label={t("workbench.canvas.back")}
+                onClick={exitGroup}
+                className="min-h-11 shrink-0 rounded-control px-2 font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary lg:min-h-9"
+              >
+                {t("workbench.breadcrumb")}
+              </button>
+              <ChevronRight size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+              <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
+            </nav>
+          ) : null}
         </div>
-        <div className="flex min-w-0 items-center gap-2">
-          {agentEditing ? (
-            <span
-              role="status"
-              data-agent-canvas-presence
-              className="inline-flex min-h-8 min-w-0 items-center gap-1.5 rounded-md border border-accent/30 bg-accent-soft px-2 text-[11px] font-medium text-accent-strong"
-            >
-              <Bot size={13} className="shrink-0" aria-hidden="true" />
-              <span className="truncate">{t("graph.canvas.agentEditing")}</span>
+        <div className="flex shrink-0 items-center gap-1" data-graph-canvas-toolbar>
+        <IconButton
+          label={t("graph.canvas.undo")}
+          tooltipContent={(
+            <span className="inline-flex items-center gap-1.5">
+              {t("graph.canvas.undo")}
+              <Kbd>⌘Z</Kbd>
             </span>
-          ) : null}
-          {onToggleChrome ? (
-            <ProductWorkbenchCanvasChromeToggle
-              embedded
-              collapsed={chromeCollapsed}
-              maximizeLabel={t("detail.maximizeCanvas")}
-              restoreLabel={t("detail.restoreCanvas")}
-              onToggle={onToggleChrome}
-            />
-          ) : null}
-        </div>
-      </div>
-      {mainView === "canvas" ? <div
-        className={`absolute z-20 flex items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 p-1 shadow-sm backdrop-blur ${compact ? "right-3 top-[4.75rem]" : "right-4 top-16"
-          }`}
-      >
-        <button
-          type="button"
+          )}
           disabled={structureBusy || !graph.can_undo}
           onClick={() => void runHistoryMutation("undo")}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
-          aria-label={t("graph.canvas.undo")}
-          title={t("graph.canvas.undo")}
         >
           <Undo2 size={16} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
+        </IconButton>
+        <IconButton
+          label={t("graph.canvas.redo")}
+          tooltipContent={(
+            <span className="inline-flex items-center gap-1.5">
+              {t("graph.canvas.redo")}
+              <Kbd>⌘⇧Z</Kbd>
+            </span>
+          )}
           disabled={structureBusy || !graph.can_redo}
           onClick={() => void runHistoryMutation("redo")}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
-          aria-label={t("graph.canvas.redo")}
-          title={t("graph.canvas.redo")}
         >
           <Redo2 size={16} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          data-graph-run-all
+        </IconButton>
+        <IconButton
+          label={graphRunBlocked ? (graphRunBlockedReason ?? t("graph.canvas.run")) : t("graph.canvas.run")}
           disabled={structureBusy || graphRunBlocked}
+          variant="primary"
+          busy={runBusy}
+          data-graph-run-all
           onClick={() => {
-            hideGraphRunPreview();
+            hideRunPreview();
             void submitRun({ scope: "graph" }).catch(() => undefined);
           }}
-          onMouseEnter={showGraphRunPreview}
-          onMouseLeave={hideGraphRunPreview}
-          onFocus={showGraphRunPreview}
-          onBlur={hideGraphRunPreview}
-          className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent text-accent-fg hover:bg-accent-strong disabled:opacity-45 lg:h-9 lg:w-9"
-          aria-label={t("graph.canvas.run")}
-          title={graphRunBlocked ? graphRunBlockedReason : t("graph.canvas.run")}
+          onMouseEnter={() => showRunPreview({ scope: "graph" })}
+          onMouseLeave={hideRunPreview}
+          onFocus={() => showRunPreview({ scope: "graph" })}
+          onBlur={hideRunPreview}
         >
-          {runBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
-        </button>
+          <Play size={16} aria-hidden="true" />
+        </IconButton>
         {runningRuns.length || queuedRuns.length ? (
-          <div
-            data-graph-run-queue
-            className="ml-1 flex max-w-[14rem] items-center gap-1 rounded-lg border border-border-l1 bg-surface-subtle px-2 py-1 text-[10px] font-semibold text-text-secondary"
-          >
-            <span>
-              {t("graph.runs.queue", { running: runningRuns.length, queued: queuedRuns.length })}
-            </span>
+          <Tooltip content={t("graph.runs.queue", { running: runningRuns.length, queued: queuedRuns.length })}>
+            <div data-graph-run-queue className="flex h-9 items-center gap-0.5 rounded-control border border-border-l1 bg-surface-subtle px-1 text-[10px] font-semibold text-text-secondary">
+              <ListChecks size={14} aria-hidden="true" />
+              <span className="min-w-4 text-center">{runningRuns.length + queuedRuns.length}</span>
             {queuedRuns.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                disabled={cancelRunMutation.isPending}
-                onClick={() => cancelRunMutation.mutate(run.id)}
-                className="rounded px-1 text-[10px] text-red-700 hover:bg-red-50 dark:text-red-300"
-                title={t("graph.runs.cancelQueued")}
-              >
-                {t("graph.runs.cancelQueued")}
-              </button>
+              <IconButton key={run.id} label={t("graph.runs.cancelQueued")} size="sm" variant="danger" disabled={cancelRunMutation.isPending} onClick={() => cancelRunMutation.mutate(run.id)}>
+                <X size={12} aria-hidden="true" />
+              </IconButton>
             ))}
-          </div>
+            </div>
+          </Tooltip>
         ) : null}
-      </div> : null}
+        {agentEditing ? (
+          <Tooltip content={t("graph.canvas.agentEditing")}>
+            <span role="status" data-agent-canvas-presence className="relative flex h-9 w-9 items-center justify-center rounded-control text-accent-strong">
+              <Bot size={16} aria-hidden="true" />
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-state-success ring-2 ring-surface-raised" aria-hidden="true" />
+              <span className="sr-only">{t("graph.canvas.agentEditing")}</span>
+            </span>
+          </Tooltip>
+        ) : null}
+        {hasShotGroups ? (
+          <IconButton label={t("graph.canvas.shotsView")} aria-pressed={filmstripVisible} variant={filmstripVisible ? "secondary" : "ghost"} onClick={() => setFilmstripVisible((visible) => !visible)}>
+            <Images size={16} aria-hidden="true" />
+          </IconButton>
+        ) : null}
+        {onToggleChrome ? (
+          <ProductWorkbenchCanvasChromeToggle embedded collapsed={chromeCollapsed} maximizeLabel={t("detail.maximizeCanvas")} restoreLabel={t("detail.restoreCanvas")} onToggle={onToggleChrome} />
+        ) : null}
+        </div>
+      </div>
       {graph.pending_proposal ? (
         <div
           data-graph-proposal-banner
@@ -1130,68 +1144,39 @@ export function GraphCanvasPanel({
               {graph.pending_proposal.stale ? t("graph.proposal.stale") : graph.pending_proposal.summary}
             </p>
             <div className="mt-2 flex gap-2">
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="toolbar"
                 disabled={busy || graph.pending_proposal.stale}
                 onClick={() => {
                   void proposalMutation.mutateAsync("confirm").catch(() => undefined);
                 }}
-                className="inline-flex h-8 items-center rounded-lg bg-accent px-3 text-[11px] font-semibold text-accent-fg disabled:opacity-45"
               >
                 {t("graph.proposal.confirm")}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="toolbar"
                 disabled={busy}
                 onClick={() => {
                   void proposalMutation.mutateAsync("discard").catch(() => undefined);
                 }}
-                className="inline-flex h-8 items-center rounded-lg border border-border-l1 px-3 text-[11px] font-semibold text-text-primary disabled:opacity-45"
               >
                 {t("graph.proposal.discard")}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       ) : null}
-      {mainView === "canvas" && (enteredGroup || error || notice) ? (
-        <div
-          className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-16 max-w-sm"
-            }`}
-        >
-          {enteredGroup ? (
-            <nav
-              data-graph-group-breadcrumb
-              aria-label={t("workbench.breadcrumb")}
-              className="flex min-w-0 items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 px-2 py-1 text-xs shadow-sm backdrop-blur"
-            >
-              <button
-                type="button"
-                onClick={exitGroup}
-                className="min-h-9 shrink-0 rounded-lg px-2 font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary lg:min-h-7"
-                aria-label={t("workbench.canvas.back")}
-                title={t("workbench.canvas.back")}
-              >
-                {t("workbench.breadcrumb")}
-              </button>
-              <ChevronRight size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
-              <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
-            </nav>
-          ) : null}
-          {error ? (
-            <div role="alert" className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
-              {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
-            </div>
-          ) : (
-            <GraphCanvasNotice notice={notice} />
-          )}
+      {error ? (
+        <div className="absolute left-3 right-3 top-[4.5rem] z-30 sm:left-4 sm:right-auto sm:max-w-sm">
+          <div role="alert" className="rounded-control border border-state-error/30 bg-state-error-soft px-3 py-2 text-xs text-state-error shadow-sm">
+            {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
+          </div>
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <div
-          className={`absolute inset-0 min-h-0 overflow-hidden ${mainView === "canvas" ? "" : "pointer-events-none invisible"}`}
-          aria-hidden={mainView !== "canvas"}
-        >
+        <div className="absolute inset-0 min-h-0 overflow-hidden">
           <GraphWorkflowCanvas
             graph={graph}
             catalog={catalog}
@@ -1203,6 +1188,8 @@ export function GraphCanvasPanel({
             plannedActions={plannedActions}
             runningNodeId={runningNodeId}
             canvasSyncVersion={canvasSyncVersion}
+            focusRequest={focusRequest}
+            bottomInset={hasShotGroups && filmstripVisible ? (narrow ? 116 : 124) : 0}
             viewport={viewport}
             onViewportChange={handleViewportChange}
             compact={compact}
@@ -1247,12 +1234,16 @@ export function GraphCanvasPanel({
             onDeleteNode={(nodeId) => requestDeleteNodes([nodeId])}
             onDeleteEdge={(edgeId) => apply("断开连线", [{ op: "disconnect_edge", edge_ref: edgeId }])}
             onRunNode={(nodeId) => {
+              hideRunPreview();
               void submitRun({ scope: "node", node_id: nodeId }).catch(() => undefined);
             }}
             onRunToNode={(nodeId) => {
+              hideRunPreview();
               void submitRun({ scope: "to_node", node_id: nodeId }).catch(() => undefined);
             }}
             onRunShot={handleShotRun}
+            onPreviewRun={showRunPreview}
+            onHideRunPreview={hideRunPreview}
             onBindNode={(nodeId) => onBindNode?.(nodeId)}
             onPinNode={pinCurrentOutput}
             onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
@@ -1271,81 +1262,72 @@ export function GraphCanvasPanel({
             }}
           />
         </div>
-        <div
-          className={`absolute inset-0 min-h-0 overflow-hidden ${mainView === "shots" ? "" : "pointer-events-none invisible"}`}
-          aria-hidden={mainView !== "shots"}
-        >
-          <GraphShotList
+        {hasShotGroups ? (
+          <GraphShotFilmstrip
             shots={shotProjections}
             runsLoading={runsQuery.isLoading}
             runsFetching={runsQuery.isFetching}
             runsError={runsQuery.error}
-            operationError={error}
-            notice={notice}
             onRetryRuns={() => void runsQuery.refetch()}
             busy={runControlsBusy}
             runningGroupId={runningShotGroupId}
-            onOpenNode={openShotNode}
-            onOpenLocalEdit={onOpenLocalEdit}
+            selectedNodeIds={selectedNodeIds}
+            onFocusShot={focusShot}
             onRunShot={handleShotRun}
-            onRunAll={() => {
-              void submitRun({ scope: "graph" }).catch(() => undefined);
-            }}
-            runAllDisabled={graphRunBlocked}
+            onPreviewRun={showRunPreview}
+            onHideRunPreview={hideRunPreview}
+            plannedActions={plannedActions}
             blockedReasons={blockedShotReasons}
-            runAllBlockedReason={graphRunBlockedReason}
+            visible={filmstripVisible}
           />
-        </div>
+        ) : null}
       </div>
-      {reusePrompt ? (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/40 p-4">
-          <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl dark:bg-[#0f1726]">
-            <h3 className="text-sm font-semibold text-text-primary">{t("graph.drop.reuseTitle")}</h3>
-            <p className="mt-1 text-xs leading-5 text-text-muted">{t("graph.drop.reuseDescription")}</p>
-            <div className="mt-3 space-y-2">
-              {reusePrompt.existing.map((node) => (
-                <button
-                  key={node.id}
-                  type="button"
-                  onClick={() => {
-                    apply("连接参考图", buildReuseConnectOperations(node.id, reusePrompt.targetNodeId));
-                    setReusePrompt(null);
-                  }}
-                  className="flex h-10 w-full items-center rounded-xl border border-zinc-200 px-3 text-left text-xs font-semibold text-zinc-800 dark:border-slate-700 dark:text-slate-100"
-                >
-                  {t("graph.drop.reuseNode", { title: node.title })}
-                </button>
-              ))}
-              <button
-                type="button"
+      <Dialog open={Boolean(reusePrompt)} onOpenChange={(next) => { if (!next) setReusePrompt(null); }}>
+        <DialogContent
+          title={t("graph.drop.reuseTitle")}
+          description={t("graph.drop.reuseDescription")}
+          size="sm"
+          closeLabel={t("common.cancel")}
+        >
+          <div className="space-y-2">
+            {reusePrompt?.existing.map((node) => (
+              <Button
+                key={node.id}
+                variant="secondary"
+                size="lg"
+                className="w-full justify-start"
                 onClick={() => {
-                  apply(
-                    "添加参考图",
-                    buildCreateAndConnectOperations(
-                      [reusePrompt.assetId],
-                      reusePrompt.targetNodeId,
-                      reusePrompt.position,
-                      () => t("graph.node.imageAsset"),
-                      enteredGroupId,
-                    ),
-                  );
+                  apply("连接参考图", buildReuseConnectOperations(node.id, reusePrompt.targetNodeId));
                   setReusePrompt(null);
                 }}
-                className="flex h-10 w-full items-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white "
               >
-                {t("graph.drop.createAndConnect")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setReusePrompt(null)}
-                className="flex h-10 w-full items-center rounded-xl px-3 text-xs font-semibold text-zinc-500"
-              >
-                {t("common.cancel")}
-              </button>
-            </div>
+                {t("graph.drop.reuseNode", { title: node.title })}
+              </Button>
+            ))}
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                if (!reusePrompt) return;
+                apply(
+                  "添加参考图",
+                  buildCreateAndConnectOperations(
+                    [reusePrompt.assetId],
+                    reusePrompt.targetNodeId,
+                    reusePrompt.position,
+                    () => t("graph.node.imageAsset"),
+                    enteredGroupId,
+                  ),
+                );
+                setReusePrompt(null);
+              }}
+            >
+              {t("graph.drop.createAndConnect")}
+            </Button>
           </div>
-        </div>
-      ) : null}
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={Boolean(pendingDeleteIds?.length)}
         title={pendingDeleteIds?.length === 1

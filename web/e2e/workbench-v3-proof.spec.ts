@@ -63,6 +63,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
     REFERENCE_PRODUCT_IMAGE,
   );
+  await expect(page.locator('[data-create-reference-count="1"]')).toBeVisible();
   const submit = page.getByRole("button", { name: "只建画布" });
   await expect(submit).toBeEnabled();
   await Promise.all([
@@ -73,16 +74,8 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
     submit.click(),
   ]);
   await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
-  const shotsTab = page.locator('[data-graph-view="shots"]');
-  const canvasTab = page.locator('[data-graph-view="canvas"]');
-  await expect(shotsTab).toBeVisible();
-  await expect(canvasTab).toBeVisible();
-  await expect(shotsTab).toBeEnabled();
-  await expect(shotsTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("[data-graph-shot-list]")).toBeVisible();
-  await canvasTab.click({ force: true });
-  await expect(canvasTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator('[aria-hidden="false"] [aria-label="工作流画布"]')).toBeVisible();
+  await expect(page.locator('[aria-label="工作流画布"]')).toBeVisible();
+  await expect(page.locator("[data-graph-shot-filmstrip]")).toBeVisible();
 }
 
 async function openRecommendedSetWorkbench(page: Page, name: string): Promise<void> {
@@ -107,6 +100,7 @@ async function openRecommendedSetWorkbench(page: Page, name: string): Promise<vo
   await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
     REFERENCE_PRODUCT_IMAGE,
   );
+  await expect(page.locator('[data-create-reference-count="1"]')).toBeVisible();
   const submit = page.getByRole("button", { name: "只建画布" });
   await expect(submit).toBeEnabled();
   await submit.scrollIntoViewIfNeeded();
@@ -118,13 +112,8 @@ async function openRecommendedSetWorkbench(page: Page, name: string): Promise<vo
     submit.click(),
   ]);
   await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
-  const shotsTab = page.locator('[data-graph-view="shots"]');
-  const canvasTab = page.locator('[data-graph-view="canvas"]');
-  await expect(shotsTab).toBeVisible();
-  await expect(canvasTab).toBeVisible();
-  await expect(shotsTab).toBeEnabled();
-  await expect(shotsTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("[data-graph-shot-list]")).toBeVisible();
+  await expect(page.locator('[aria-label="工作流画布"]')).toBeVisible();
+  await expect(page.locator("[data-graph-shot-filmstrip]")).toBeVisible();
 }
 
 function productIdFrom(page: Page): string {
@@ -143,19 +132,19 @@ async function currentGraphGroupIds(page: Page): Promise<string[]> {
 }
 
 async function assertShotListLayout(page: Page): Promise<string[]> {
-  const shotList = page.locator("[data-graph-shot-list]");
+  const shotList = page.locator("[data-graph-shot-filmstrip]");
   await expect(shotList).toBeVisible();
   await expect.poll(async () => shotList.locator("[data-graph-shot-id]").count()).toBe(4);
   const groupIds = await shotList.locator("[data-graph-shot-id]").evaluateAll((rows) => (
     rows.map((row) => row.getAttribute("data-graph-shot-id")).filter((id): id is string => Boolean(id))
   ));
   expect(groupIds).toHaveLength(4);
-  await expect(page.locator('[data-graph-shot-run-all]')).toBeEnabled();
+  await expect(page.locator('[data-graph-run-all]')).toBeEnabled();
 
   const layout = await page.evaluate(() => {
     const controls = [
       ...document.querySelectorAll<HTMLElement>(
-        '[data-graph-view-switcher], [data-graph-shot-run-all], [data-graph-shot-open-node], [data-graph-shot-run], [data-graph-shot-preview]',
+        '[data-graph-canvas-toolbar], [data-graph-run-all], [data-graph-shot-focus], [data-graph-shot-run]',
       ),
     ].filter((element) => {
       const style = window.getComputedStyle(element);
@@ -173,7 +162,7 @@ async function assertShotListLayout(page: Page): Promise<string[]> {
         if (width * height > 1) overlapPairs.push([left, right]);
       }
     }
-    const shotList = document.querySelector<HTMLElement>("[data-graph-shot-list]");
+    const shotList = document.querySelector<HTMLElement>("[data-graph-shot-filmstrip]");
     return {
       viewportWidth: window.innerWidth,
       documentWidth: document.documentElement.scrollWidth,
@@ -254,7 +243,7 @@ async function addPaletteNode(page: Page, label: string): Promise<string> {
 }
 
 async function assertCanvasEvidence(page: Page, presetName: string): Promise<void> {
-  const canvas = page.locator('[aria-hidden="false"] [aria-label="工作流画布"]');
+  const canvas = page.locator('[aria-label="工作流画布"]');
   await expect(canvas).toBeVisible();
   await fitCanvas(page);
   const metrics = await canvas.evaluate((element) => {
@@ -362,6 +351,32 @@ async function assertInspectorDoesNotCoverNode(page: Page, nodeId: string): Prom
   expect(overlapWidth * overlapHeight).toBe(0);
 }
 
+async function assertWorkbenchChromeGeometry(page: Page): Promise<void> {
+  const geometry = await page.evaluate(() => {
+    const tool = document.querySelector<HTMLElement>("[data-sidebar-tool]");
+    const shots = document.querySelector<HTMLElement>('[data-graph-shot-filmstrip] .overflow-x-auto');
+    return {
+      innerWidth: window.innerWidth,
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      toolFontSize: tool ? window.getComputedStyle(tool).fontSize : null,
+      toolFontWeight: tool ? window.getComputedStyle(tool).fontWeight : null,
+      shotsClientWidth: shots?.clientWidth ?? 0,
+      shotsScrollWidth: shots?.scrollWidth ?? 0,
+      shotsClientHeight: shots?.clientHeight ?? 0,
+      shotsScrollHeight: shots?.scrollHeight ?? 0,
+    };
+  });
+  expect(geometry.toolFontSize).toBe("10px");
+  expect(Number(geometry.toolFontWeight)).toBeGreaterThanOrEqual(500);
+  expect(geometry.shotsScrollWidth).toBeGreaterThanOrEqual(geometry.shotsClientWidth);
+  expect(geometry.shotsScrollHeight).toBeLessThanOrEqual(geometry.shotsClientHeight);
+  if (geometry.innerWidth < 768) {
+    expect(geometry.clientWidth).toBe(geometry.innerWidth);
+    expect(geometry.scrollWidth).toBe(geometry.innerWidth);
+  }
+}
+
 for (const preset of PRESETS) {
   test.describe(`workbench v3 proof ${preset.name}px`, () => {
     test.use({
@@ -377,6 +392,7 @@ for (const preset of PRESETS) {
       const assertClean = attachBrowserGuards(page);
       await openDirectCreateWorkbench(page, `e2e-v3-proof-${preset.name}-${Date.now()}`);
 
+      await assertWorkbenchChromeGeometry(page);
       await assertCanvasEvidence(page, preset.name);
       const imageId = await addPaletteNode(page, "图片生成");
 
@@ -450,14 +466,10 @@ for (const preset of SHOT_LIST_PRESETS) {
 
       const shotGroupIds = await assertShotListLayout(page);
       const firstShot = page.locator("[data-graph-shot-id]").first();
-      await firstShot.locator("[data-graph-shot-open-node]").click({ force: true });
+      await firstShot.locator("[data-graph-shot-focus]").click({ force: true });
       await expect(page.locator("[data-graph-node-inspector]")).toBeVisible();
 
-      const shotsTab = page.locator('[data-graph-view="shots"]');
-      const canvasTab = page.locator('[data-graph-view="canvas"]');
-      await canvasTab.click({ force: true });
-      await expect(canvasTab).toHaveAttribute("aria-selected", "true");
-      const canvas = page.locator('[aria-hidden="false"] [aria-label="工作流画布"]');
+      const canvas = page.locator('[aria-label="工作流画布"]');
       await expect(canvas).toBeVisible();
       const canvasGroupIds = await canvas.locator("[data-graph-group-id]").evaluateAll((groups) => (
         groups.map((group) => group.getAttribute("data-graph-group-id")).filter((id): id is string => Boolean(id))
@@ -465,9 +477,7 @@ for (const preset of SHOT_LIST_PRESETS) {
       expect(canvasGroupIds.sort()).toEqual(shotGroupIds.sort());
       expect(canvasGroupIds.sort()).toEqual((await currentGraphGroupIds(page)).sort());
 
-      await shotsTab.click({ force: true });
-      await expect(shotsTab).toHaveAttribute("aria-selected", "true");
-      await expect(page.locator("[data-graph-shot-list]")).toBeVisible();
+      await expect(page.locator("[data-graph-shot-filmstrip]")).toBeVisible();
       await expect(page.locator("[data-graph-shot-id]")).toHaveCount(4);
       assertClean();
     });

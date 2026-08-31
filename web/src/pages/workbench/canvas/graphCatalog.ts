@@ -76,15 +76,15 @@ export function graphInputPorts(
 export function graphPortDataTypeClass(dataType: GraphCatalogInputContract["data_type"] | "output"): string {
   switch (dataType) {
     case "product_facts":
-      return "!border-slate-600 !bg-slate-100 dark:!border-slate-300 dark:!bg-slate-800";
+      return "!border-kind-product !bg-kind-product-soft";
     case "image_asset":
-      return "!border-emerald-700 !bg-emerald-50 dark:!border-emerald-300 dark:!bg-emerald-950/70";
+      return "!border-kind-image !bg-kind-image-soft";
     case "creative_brief":
-      return "!border-amber-700 !bg-amber-50 dark:!border-amber-300 dark:!bg-amber-950/70";
+      return "!border-kind-brief !bg-kind-brief-soft";
     case "visual_system":
-      return "!border-violet-700 !bg-violet-50 dark:!border-violet-300 dark:!bg-violet-950/70";
+      return "!border-kind-visual !bg-kind-visual-soft";
     case "prompt":
-      return "!border-sky-700 !bg-sky-50 dark:!border-sky-300 dark:!bg-sky-950/70";
+      return "!border-kind-prompt !bg-kind-prompt-soft";
     default:
       return "";
   }

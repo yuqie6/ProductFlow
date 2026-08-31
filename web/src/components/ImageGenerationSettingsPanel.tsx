@@ -1,6 +1,6 @@
 import { ImageToolControls } from "./ImageToolControls";
 import { ImageSizePicker } from "./ImageSizePicker";
-import { SelectField } from "./SelectField";
+import { Select as SelectField } from "./ui/select";
 import type { ImageSizeOption } from "../lib/imageSizes";
 import { formatImageSizeValue } from "../lib/imageSizes";
 import { useI18n } from "../lib/preferences";

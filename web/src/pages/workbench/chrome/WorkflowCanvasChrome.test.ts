@@ -32,6 +32,8 @@ describe("shared workflow canvas chrome", () => {
         createElement(WorkflowCanvasControls, {
           labels: {
             resetZoom: "重置画布缩放",
+            zoomIn: "放大画布",
+            zoomOut: "缩小画布",
             fitView: "适配全图",
             fitSelection: "聚焦选中节点",
             controls: "画布控制",
@@ -66,8 +68,8 @@ describe("shared workflow canvas chrome", () => {
       ),
     );
 
-    expect(markup).toContain("!border-slate-500");
-    expect(markup).toContain("!shadow-[0_0_0_2px_#fff");
+    expect(markup).toContain("!border-port-target");
+    expect(markup).toContain("!shadow-[0_0_0_2px_var(--color-port-ring)]");
   });
 
   it("disables both connection directions when a presentation port is read-only", () => {

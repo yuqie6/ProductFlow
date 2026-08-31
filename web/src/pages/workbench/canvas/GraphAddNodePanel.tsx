@@ -1,6 +1,9 @@
 import { BookmarkPlus, Boxes, CopyPlus, FolderPlus, Ungroup } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { Button } from "../../../components/ui/button";
+import { Select } from "../../../components/ui/select";
+
 import { generatingImageTypeKeys } from "../../../lib/imageTypeFamilies";
 import type { TranslationKey } from "../../../lib/i18n";
 import { useI18n } from "../../../lib/preferences";
@@ -9,6 +12,7 @@ import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { graphNodeTypeOrder } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
+import { humanizeCatalogKey } from "./CatalogConfigFields";
 
 const NODE_DESCRIPTIONS: Record<GraphNodeType, TranslationKey> = {
   product_source: "graph.palette.productSourceDesc",
@@ -118,48 +122,38 @@ export function GraphAddNodePanel({
 
       {onCreateShot ? (
         <div data-add-shot="">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          <h3 className="text-xs font-bold text-text-muted">
             {t("graph.palette.addShot")}
           </h3>
-          <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+          <p className="mt-0.5 text-[11px] text-text-muted">
             {t("graph.palette.addShotHint")}
           </p>
           <div className="mt-2 flex gap-2">
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">{t("graph.palette.addShot")}</span>
-              <select
+            <div className="min-w-0 flex-1">
+              <Select
                 value={shotKey}
                 disabled={busy}
-                onChange={(event) => setShotKey(event.target.value as AgentProductImageTypeKey)}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-              >
-                {shotKeys.map((key) => {
+                ariaLabel={t("graph.palette.addShot")}
+                size="sm"
+                onChange={(value) => setShotKey(value as AgentProductImageTypeKey)}
+                options={shotKeys.map((key) => {
                   const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[key];
-                  return (
-                    <option key={key} value={key}>
-                      {translations ? t(translations.title) : key}
-                    </option>
-                  );
+                  return { value: key, label: translations ? t(translations.title) : humanizeCatalogKey(key) };
                 })}
-              </select>
-            </label>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onCreateShot(shotKey)}
-              className="inline-flex h-9 shrink-0 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-            >
+              />
+            </div>
+            <Button variant="secondary" size="md" disabled={busy} onClick={() => onCreateShot(shotKey)}>
               {t("graph.palette.addShotAction")}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
       <div>
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+        <h3 className="text-xs font-bold text-text-muted">
           {t("graph.palette.title")}
         </h3>
-        <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+        <p className="mt-0.5 text-[11px] text-text-muted">
           {t("graph.palette.subtitle")}
         </p>
       </div>
@@ -174,21 +168,21 @@ export function GraphAddNodePanel({
               type="button"
               disabled={busy}
               onClick={() => onCreate(nodeType)}
-              className="group relative flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-[#0e1726] dark:hover:border-slate-600 dark:hover:bg-slate-900/60"
+              className="group relative flex items-start gap-3 rounded-panel border border-border-l1 bg-surface-raised p-3 text-left transition-colors duration-fast hover:border-border-l3 hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-45"
             >
               <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${theme.iconBox}`}>
                 <Icon size={16} />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  <span className="text-xs font-semibold text-text-primary">
                     {t(graphNodeTitleKey(nodeType))}
                   </span>
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  <span className="rounded bg-surface-subtle px-1.5 py-0.5 text-[9px] font-medium text-text-secondary">
                     + {t("graph.palette.add")}
                   </span>
                 </div>
-                <p className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                <p className="mt-1 text-[11px] leading-4 text-text-muted">
                   {t(NODE_DESCRIPTIONS[nodeType])}
                 </p>
               </div>
@@ -198,20 +192,20 @@ export function GraphAddNodePanel({
       </div>
 
       {onOpenRecipesTab ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-[#0c121e]">
+        <div className="rounded-panel border border-border-l1 bg-surface-raised p-3.5">
           <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control border border-border-l1 bg-surface-subtle text-text-secondary">
               <Boxes size={15} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{t("workbench.sidebar.recipes")}</div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400">{t("graph.palette.recipesHint")}</div>
+              <div className="text-xs font-bold text-text-primary">{t("workbench.sidebar.recipes")}</div>
+              <div className="text-[10px] text-text-muted">{t("graph.palette.recipesHint")}</div>
             </div>
           </div>
           <button
             type="button"
             onClick={onOpenRecipesTab}
-            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            className="mt-3 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-panel border border-border-l1 bg-surface-raised py-1.5 text-xs font-semibold text-text-primary hover:bg-surface-subtle lg:min-h-9"
           >
             <span>{t("graph.palette.recipes")}</span>
             <span aria-hidden="true">&rarr;</span>
@@ -240,9 +234,9 @@ function SelectionAction({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="group flex w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-2.5 text-left text-slate-800 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+      className="group flex w-full items-center gap-2.5 rounded-panel border border-border-l1 bg-surface-raised p-2.5 text-left text-text-primary hover:bg-surface-subtle disabled:opacity-45"
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-control bg-surface-subtle text-text-secondary lg:h-9 lg:w-9">
         {icon}
       </span>
       <div className="min-w-0 flex-1">

@@ -2,14 +2,24 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNodeRun, GraphProjection, GraphRun } from "../../../lib/types";
 import {
+  graphArtifactTypeLabelKey,
   graphContextEntries,
   graphIncomingSourceEntries,
   graphNodeRunPresentations,
   graphNodeRunPreviewAssetId,
+  graphOutputActionLabelKey,
+  graphOutputQualityLabelKey,
   graphRunInputTraceEntries,
   graphRunScopeLabelKey,
   graphRunsAreLive,
+  humanizeTechnicalKey,
 } from "./graphRunDisplay";
+
+describe("humanizeTechnicalKey", () => {
+  it("formats unknown backend labels without exposing snake case", () => {
+    expect(humanizeTechnicalKey("future_provider_name")).toBe("Future Provider Name");
+  });
+});
 
 const graph: GraphProjection = {
   id: "g1",
@@ -203,6 +213,13 @@ describe("graph run display", () => {
       { key: "fact_count", labelKey: "graph.runs.context.factCount", value: "3" },
       { key: "reference_asset_ids", labelKey: "graph.runs.context.referenceAssets", value: "a · b" },
     ]);
+  });
+
+  it("maps backend artifact, quality, and action enums to display labels", () => {
+    expect(graphArtifactTypeLabelKey("creative_brief")).toBe("graph.artifactType.creativeBrief");
+    expect(graphOutputQualityLabelKey("ultra")).toBe("graph.output.quality.ultra");
+    expect(graphOutputActionLabelKey("generate")).toBe("graph.output.action.generate");
+    expect(graphArtifactTypeLabelKey("future_type")).toBeNull();
   });
 
   it("projects the latest node failure onto the card presentation", () => {

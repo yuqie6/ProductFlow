@@ -3,6 +3,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { GraphAddNodePanel } from "./GraphAddNodePanel";
+import { humanizeCatalogKey } from "./CatalogConfigFields";
+
+describe("humanizeCatalogKey", () => {
+  it("turns unknown catalog keys into readable labels", () => {
+    expect(humanizeCatalogKey("future_quality_mode")).toBe("Future Quality Mode");
+  });
+});
 
 describe("GraphAddNodePanel", () => {
   it("lists every v3 node type with a purpose line and no JSON dump", () => {

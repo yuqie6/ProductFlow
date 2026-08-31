@@ -123,6 +123,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await page.locator("[data-agent-product-intake-form] input[type='file']").setInputFiles(
     REFERENCE_PRODUCT_IMAGE,
   );
+  await expect(page.locator('[data-create-reference-count="1"]')).toBeVisible();
   const submit = page.getByRole("button", { name: "只建画布" });
   await expect(submit).toBeEnabled();
   await Promise.all([
@@ -130,16 +131,8 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
     submit.click(),
   ]);
   await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
-  const shotsTab = page.locator('[data-graph-view="shots"]');
-  const canvasTab = page.locator('[data-graph-view="canvas"]');
-  await expect(shotsTab).toBeVisible();
-  await expect(canvasTab).toBeVisible();
-  await expect(shotsTab).toBeEnabled();
-  await expect(shotsTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("[data-graph-shot-list]")).toBeVisible();
-  await canvasTab.click({ force: true });
-  await expect(canvasTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator('[aria-hidden="false"] [aria-label="工作流画布"]')).toBeVisible();
+  await expect(page.locator('[aria-label="工作流画布"]')).toBeVisible();
+  await expect(page.locator("[data-graph-shot-filmstrip]")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", /light|dark/);
 }
 
@@ -195,12 +188,7 @@ async function enableMobileEditMode(page: Page): Promise<void> {
 }
 
 async function openAddPanel(page: Page) {
-  const canvasTab = page.locator('[data-graph-view="canvas"]');
-  if (await canvasTab.getAttribute("aria-selected") !== "true") {
-    await canvasTab.click({ force: true });
-    await expect(canvasTab).toHaveAttribute("aria-selected", "true");
-    await expect(page.locator('[aria-hidden="false"] [aria-label="工作流画布"]')).toBeVisible();
-  }
+  await expect(page.locator('[aria-label="工作流画布"]')).toBeVisible();
   await openSidebarTool(page, "add");
   const panel = page.locator("[data-graph-add-node-panel]");
   await expect(panel).toBeVisible();
@@ -294,6 +282,15 @@ async function dragPointerConnection(page: Page, source: Locator, target: Locato
   await page.waitForTimeout(50);
   await page.mouse.move(end.x, end.y, { steps: 8 });
   await page.mouse.up();
+}
+
+async function expectLocatorHitTarget(locator: Locator, expectedClass: string): Promise<void> {
+  await expect.poll(async () => locator.evaluate((element, className) => {
+    const box = element.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return false;
+    const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return Boolean(hit?.classList.contains(className));
+  }, expectedClass)).toBe(true);
 }
 
 for (const preset of PRESETS) {
@@ -410,7 +407,7 @@ for (const preset of PRESETS) {
       await page.locator("[data-graph-node-inspector]").getByRole("button", { name: "选图" }).click();
       await expect(page.locator("[data-graph-library-panel]")).toBeVisible();
       await page.locator("[data-gallery-asset-id]").first().getByLabel("更多操作").click();
-      await page.getByRole("button", { name: "再次引用" }).click();
+      await page.getByRole("menuitem", { name: "再次引用" }).click();
       await expect.poll(async () => {
         const graph = await currentGraph(page);
         const node = graph.nodes.find((item) => item.id === created!.id);
@@ -677,6 +674,8 @@ for (const preset of PRESETS) {
       await enableMobileEditMode(page);
       const assetOutput = page.locator(`[data-id="${asset!.id}"] [data-handleid="output"]`);
       const promptReference = page.locator(`[data-id="${prompt!.id}"] [data-handleid="reference"]`);
+      await expectLocatorHitTarget(assetOutput, "react-flow__handle");
+      await expectLocatorHitTarget(promptReference, "react-flow__handle");
       const connected = page.waitForResponse((response) => {
         if (response.request().method() !== "POST" || !response.url().includes("/changesets")) return false;
         const body = response.request().postDataJSON() as { summary?: unknown } | null;
@@ -706,6 +705,24 @@ for (const preset of PRESETS) {
       const targetUpdater = edge.locator(".react-flow__edgeupdater-target");
       const visualReference = page.locator(`[data-id="${visual!.id}"] [data-handleid="reference"]`);
       await expect(targetUpdater).toBeAttached();
+      await expect.poll(async () => targetUpdater.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const canvas = document.querySelector<HTMLElement>("[data-graph-canvas-panel]")?.getBoundingClientRect();
+        const hitClass = document.elementFromPoint(
+          box.x + box.width / 2,
+          box.y + box.height / 2,
+        )?.getAttribute("class") ?? "";
+        return Boolean(
+          canvas
+          && box.width > 0
+          && box.height > 0
+          && box.x >= canvas.left
+          && box.right <= canvas.right
+          && box.y >= canvas.top
+          && box.bottom <= canvas.bottom
+          && hitClass.includes("react-flow__edgeupdater-target"),
+        );
+      })).toBe(true);
       const updaterHitClass = await targetUpdater.evaluate((element) => {
         const box = element.getBoundingClientRect();
         return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.getAttribute("class") ?? "";

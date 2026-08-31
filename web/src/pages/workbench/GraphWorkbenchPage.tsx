@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
+import { Button } from "../../components/ui/button";
 import { TopNav } from "../../components/TopNav";
 import { api, ApiError } from "../../lib/api";
 import type { DownloadableImage } from "../../lib/image-downloads";
@@ -43,6 +44,9 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   appendRecipe: () => undefined,
   commitNode: async () => undefined,
   pinCurrentOutput: () => undefined,
+  previewRun: () => undefined,
+  hideRunPreview: () => undefined,
+  focusNodes: () => undefined,
 };
 
 export function GraphWorkbenchPage({
@@ -172,8 +176,9 @@ export function GraphWorkbenchPage({
       }
       setSelectedNodeIds([nodeId]);
       setTool("details");
+      actions.focusNodes([nodeId]);
     })();
-  }, [liveGraph]);
+  }, [actions, liveGraph]);
   const selectCanvasNodes = useCallback(async (nodeIds: string[]) => {
     try {
       await flushInspectorRef.current();
@@ -187,7 +192,7 @@ export function GraphWorkbenchPage({
   }, [liveGraph]);
 
   return (
-    <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-950 dark:bg-[#060a12] dark:text-slate-100">
+    <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary">
       {chromeCollapsed ? null : (
         <TopNav
           breadcrumbs={`${product.name} / ${t("agentWorkbench.breadcrumb")}`}
@@ -274,6 +279,8 @@ export function GraphWorkbenchPage({
                 onOpenLocalEdit={localEdit.openLocalImageEdit}
                 onOpenAdd={() => void requestSidebarTool("add")}
                 onOpenLibrary={() => void requestSidebarTool("library")}
+                onPreviewRun={actions.previewRun}
+                onHideRunPreview={actions.hideRunPreview}
               />
             ),
           },
@@ -290,6 +297,8 @@ export function GraphWorkbenchPage({
                 onBeforeRun={beforeRun}
                 onJump={inspectNode}
                 onPreviewImage={setPreviewImage}
+                onPreviewRun={actions.previewRun}
+                onHideRunPreview={actions.hideRunPreview}
               />
             ),
           },
@@ -478,24 +487,15 @@ export function GraphAgentPanel({
       <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 p-4">
         <p role="status" className="text-sm leading-6 text-text-secondary">{message}</p>
         {missingWorkspace && onOpenConversation ? (
-          <button
-            type="button"
-            data-open-canvas-conversation
-            onClick={onOpenConversation}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-violet-600 px-3 text-sm font-semibold text-white hover:bg-violet-700"
-          >
+          <Button variant="primary" size="lg" data-open-canvas-conversation onClick={onOpenConversation}>
             <Bot size={15} />
             {t("graph.workbench.openConversation")}
-          </button>
+          </Button>
         ) : onRetry ? (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:border-zinc-500 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500"
-          >
+          <Button variant="secondary" size="lg" onClick={onRetry}>
             <RotateCw size={15} />
             {t("graph.workbench.agentRetry")}
-          </button>
+          </Button>
         ) : null}
       </div>
     </section>

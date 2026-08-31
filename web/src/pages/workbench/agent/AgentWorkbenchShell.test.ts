@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { INSPECTOR_CANVAS_GAP, INSPECTOR_RAIL_WIDTH } from "../chrome/constants";
+import { INSPECTOR_RAIL_WIDTH } from "../chrome/constants";
 import { ProductWorkbenchInspector } from "../chrome/ProductWorkbenchInspector";
 import {
   AgentWorkbenchShell,
@@ -86,9 +86,7 @@ describe("AgentWorkbenchShell", () => {
 
     expect(source).toContain("lg:grid");
     expect(source).toContain("grid-template-columns:minmax(0, 1fr) 432px");
-    expect(source).toContain(`--agent-workbench-inspector-gap:${INSPECTOR_CANVAS_GAP}px`);
-    expect(source).toContain("lg:gap-[var(--agent-workbench-inspector-gap)]");
-    expect(source).toContain("lg:pr-[var(--agent-workbench-inspector-gap)]");
+    expect(source).not.toContain("agent-workbench-inspector-gap");
     expect(source).not.toContain("padding-right");
     expect(source).not.toContain("transition-[padding");
     expect(getAgentWorkbenchInspectorTrackWidth(false, 360)).toBe(INSPECTOR_RAIL_WIDTH + 360);
@@ -103,7 +101,7 @@ describe("AgentWorkbenchShell", () => {
     const markup = renderShell(true);
 
     expect(markup).toContain('data-inspector-layout="drawer"');
-    expect(markup).toContain("max-h-[min(48vh,22rem)]");
+    expect(markup).toContain("max-h-[min(64vh,30rem)]");
     expect(markup).toContain("bottom-0");
     expect(markup).toContain("data-agent-workbench-canvas-slot");
     expect(markup).toContain("data-canvas-probe");
@@ -180,18 +178,21 @@ describe("AgentWorkbenchShell", () => {
     const collapsedGridChild = renderInspector({ collapsed: true, desktopLayout: "grid-child", inert: true });
 
     expect(overlay).toContain("data-inspector-layout=\"drawer\"");
-    expect(overlay).toContain("max-h-[min(48vh,22rem)]");
+    expect(overlay).toContain("max-h-[min(64vh,30rem)]");
     expect(overlay).toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
     expect(overlay).not.toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
 
     expect(gridChild).toContain("data-inspector-layout=\"drawer\"");
-    expect(gridChild).toContain("max-h-[min(48vh,22rem)]");
+    expect(gridChild).toContain("max-h-[min(64vh,30rem)]");
     expect(gridChild).toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
+    expect(gridChild).toContain("lg:rounded-none lg:border-l lg:border-t-0 lg:shadow-none");
+    expect(gridChild).not.toContain("lg:rounded-surface");
     expect(gridChild).not.toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
     expect(gridChild).toContain(`--product-workbench-inspector-width:${INSPECTOR_RAIL_WIDTH + 360}px`);
 
     expect(collapsedGridChild).toContain("data-product-workbench-collapsed-tools");
     expect(collapsedGridChild).toContain(`style="width:${INSPECTOR_RAIL_WIDTH}px"`);
+    expect(collapsedGridChild).toContain("border-l border-border-l1 bg-surface-raised");
     expect(collapsedGridChild).toContain("lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch");
     expect(collapsedGridChild).toContain("lg:hidden");
     expect(collapsedGridChild).not.toContain("lg:invisible");

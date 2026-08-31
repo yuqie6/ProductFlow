@@ -1,7 +1,8 @@
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import { useI18n } from "../lib/preferences";
 import type { ImageToolOptionKey, ImageToolOptions } from "../lib/types";
-import { CompactInput, CompactSelect } from "./CompactFormFields";
+import { Field, Input } from "./ui/field";
+import { Select, type SelectOption } from "./ui/select";
 
 interface ImageToolControlsProps {
   value: ImageToolOptions;
@@ -18,6 +19,48 @@ function parseOptionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function CompactInput({
+  label,
+  value,
+  placeholder,
+  inputMode,
+  onChange,
+}: {
+  label: string;
+  value: string | number;
+  placeholder?: string;
+  inputMode?: "text" | "numeric";
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Input
+      label={label}
+      value={value}
+      placeholder={placeholder}
+      inputMode={inputMode}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+function CompactSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: readonly SelectOption[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Select value={value} options={options} onChange={onChange} ariaLabel={label} size="sm" />
+    </Field>
+  );
+}
+
 export function ImageToolControls({
   value,
   onChange,
@@ -31,10 +74,10 @@ export function ImageToolControls({
     return null;
   }
   const containerClassName =
-    surface === "card" ? "rounded-2xl border border-slate-200 bg-white p-4" : "space-y-3";
+    surface === "card" ? "rounded-panel border border-border-l1 bg-surface-raised p-4" : "space-y-3";
   return (
     <div className={containerClassName}>
-      <div className="mb-3 text-sm font-semibold text-slate-950">{t("imageTool.provider")}</div>
+      <div className="mb-3 text-sm font-semibold text-text-primary">{t("imageTool.provider")}</div>
       <div className="grid grid-cols-2 gap-2">
         {allowed.has("model") ? (
           <CompactInput

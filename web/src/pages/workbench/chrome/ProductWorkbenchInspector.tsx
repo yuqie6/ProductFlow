@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
 import { INSPECTOR_RAIL_WIDTH, MAX_INSPECTOR_WIDTH, MIN_INSPECTOR_WIDTH } from "./constants";
 import { SidebarTabButton } from "./SidebarTabButton";
 import { clamp, readStoredNumber } from "./utils";
@@ -48,7 +49,11 @@ interface ProductWorkbenchInspectorProps {
 }
 
 export function useProductWorkbenchInspectorState(initialCollapsed = false) {
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [collapsed, setCollapsed] = useState(() => initialCollapsed || (
+    typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 1023px)").matches
+  ));
   const [width, setWidth] = useState(() =>
     clamp(
       readStoredNumber(INSPECTOR_WIDTH_STORAGE_KEY, 360),
@@ -164,40 +169,37 @@ export function ProductWorkbenchInspector({
     <>
       {workflowAvailable && collapsed ? (
         <>
-        <button
-          type="button"
-          data-product-workbench-drawer-handle
-          onClick={() => onCollapsedChange(false)}
-          className="glass-inspector absolute inset-x-4 bottom-3 z-30 flex h-11 items-center justify-center rounded-2xl text-xs font-semibold text-slate-600 shadow-lg lg:hidden dark:text-slate-200"
-          aria-label={expandLabel}
-        >
-          {expandLabel}
-        </button>
-        <nav
-          {...collapsedData}
-          data-product-workbench-collapsed-tools
-          aria-label={ariaLabel}
-          style={{ width: INSPECTOR_RAIL_WIDTH }}
-          className={`glass-inspector absolute right-6 z-30 hidden flex-col items-center gap-2 rounded-[24px] p-2 pb-3 shadow-2xl lg:flex ${
-            desktopGridChild
-              ? "lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch lg:rounded-[24px]"
-              : desktopCollapsedPositionClassName
-          }`}
-        >
-          {railBefore}
-          {renderRailTools(true)}
-          <div className="mt-auto flex w-full justify-center border-t border-slate-200/40 pt-2 dark:border-white/5">
-            <button
-              type="button"
-              onClick={() => onCollapsedChange(false)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition-all hover:scale-105 hover:bg-white/40 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
-              title={expandLabel}
-              aria-label={expandLabel}
-            >
-              <ChevronLeft size={16} />
-            </button>
-          </div>
-        </nav>
+          <button
+            type="button"
+            data-product-workbench-drawer-handle
+            onClick={() => onCollapsedChange(false)}
+            className="glass-inspector absolute inset-x-4 bottom-3 z-30 flex h-11 items-center justify-center rounded-surface text-xs font-semibold text-text-secondary shadow-elev-2 lg:hidden"
+            aria-label={expandLabel}
+          >
+            {expandLabel}
+          </button>
+          <nav
+            {...collapsedData}
+            data-product-workbench-collapsed-tools
+            aria-label={ariaLabel}
+            style={{ width: INSPECTOR_RAIL_WIDTH }}
+            className={`absolute right-6 z-30 hidden flex-col items-center gap-2 p-2 pb-3 lg:flex ${desktopGridChild
+                ? "border-l border-border-l1 bg-surface-raised lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch"
+                : desktopCollapsedPositionClassName
+              } ${desktopGridChild ? "" : "glass-inspector rounded-surface shadow-elev-3"}`}
+          >
+            {railBefore}
+            {renderRailTools(true)}
+            <div className="mt-auto flex w-full justify-center border-t border-border-l1 pt-2">
+              <IconButton
+                label={expandLabel}
+                size="toolbar"
+                onClick={() => onCollapsedChange(false)}
+              >
+                <ChevronLeft size={16} />
+              </IconButton>
+            </div>
+          </nav>
         </>
       ) : null}
 
@@ -207,15 +209,13 @@ export function ProductWorkbenchInspector({
         data-inspector-layout={workflowAvailable ? "drawer" : "page"}
         aria-hidden={inert || undefined}
         inert={inert}
-        className={`absolute z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-white transition-[opacity,visibility] duration-300 motion-reduce:transition-none dark:bg-[#070b11] lg:flex-row ${visibilityClassName} ${
-          workflowAvailable
-            ? `inset-x-0 bottom-0 top-auto h-[min(48vh,22rem)] max-h-[min(48vh,22rem)] rounded-t-[28px] shadow-[0_-12px_40px_rgba(15,23,42,0.16)] glass-inspector lg:inset-auto lg:h-auto lg:max-h-none lg:w-[var(--product-workbench-inspector-width)] lg:rounded-[28px] lg:shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:lg:shadow-[0_32px_64px_rgba(0,0,0,0.45)] ${
-                desktopGridChild
-                  ? "lg:relative lg:z-auto lg:h-full lg:justify-self-stretch"
-                  : desktopPositionClassName
-              }`
+        className={`absolute z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-surface-raised transition-[opacity,visibility] duration-300 motion-reduce:transition-none lg:flex-row ${visibilityClassName} ${workflowAvailable
+            ? `inset-x-0 bottom-0 top-auto h-[min(64vh,30rem)] max-h-[min(64vh,30rem)] rounded-t-surface border-t border-border-l1 shadow-elev-3 lg:inset-auto lg:h-auto lg:max-h-none lg:w-[var(--product-workbench-inspector-width)] ${desktopGridChild
+              ? "lg:relative lg:z-auto lg:h-full lg:justify-self-stretch lg:rounded-none lg:border-l lg:border-t-0 lg:shadow-none"
+              : desktopPositionClassName
+            } ${desktopGridChild ? "" : "glass-inspector lg:rounded-surface"}`
             : "inset-0"
-        } ${workflowAvailable && collapsed ? "hidden lg:hidden" : ""}`}
+          } ${workflowAvailable && collapsed ? "hidden lg:hidden" : ""}`}
         style={inspectorStyle}
       >
         {workflowAvailable ? (
@@ -226,35 +226,32 @@ export function ProductWorkbenchInspector({
               onPointerDown={onResizeStart}
               className="group absolute left-0 top-0 z-30 hidden h-full w-2.5 cursor-col-resize items-center justify-center lg:flex"
             >
-              <div className="h-12 w-1 rounded-full bg-slate-300 opacity-40 transition-all duration-300 group-hover:h-20 group-hover:opacity-100 dark:bg-slate-700 animate-handle-glow" />
+              <div className="h-12 w-0.5 rounded-full bg-text-muted opacity-0 transition-[height,opacity] duration-slow group-hover:h-20 group-hover:opacity-60 motion-reduce:transition-none" />
             </div>
 
             <nav
               aria-label={ariaLabel}
-              className="flex h-auto w-full shrink-0 gap-1 overflow-x-auto border-b border-slate-200/60 bg-white/80 px-2 py-2 dark:border-white/5 dark:bg-black/10 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
+              className="flex h-auto w-full shrink-0 gap-1 overflow-x-auto border-b border-border-l1 bg-surface-raised px-2 py-2 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
             >
               {railBefore}
               {renderRailTools(false)}
-              <button
-                type="button"
+              <IconButton
+                label={collapseLabel}
+                size="toolbar"
+                className="ml-auto lg:hidden"
                 onClick={() => onCollapsedChange(true)}
-                className="ml-auto inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-white/40 hover:text-slate-800 lg:hidden dark:hover:bg-white/5"
-                title={collapseLabel}
-                aria-label={collapseLabel}
               >
                 <ChevronRight size={16} />
-              </button>
+              </IconButton>
               <div className="hidden w-full flex-1 lg:block" />
-              <div className="hidden w-full justify-center border-t border-slate-200/40 pt-2 dark:border-white/5 lg:flex">
-                <button
-                  type="button"
+              <div className="hidden w-full justify-center border-t border-border-l1 pt-2 lg:flex">
+                <IconButton
+                  label={collapseLabel}
+                  size="toolbar"
                   onClick={() => onCollapsedChange(true)}
-                  className="btn-secondary-spring inline-flex h-9 w-9 items-center justify-center rounded-xl"
-                  title={collapseLabel}
-                  aria-label={collapseLabel}
                 >
                   <ChevronRight size={16} />
-                </button>
+                </IconButton>
               </div>
             </nav>
           </>
@@ -270,21 +267,20 @@ export function ProductWorkbenchInspector({
                 data-product-workbench-tool-panel={tool.id}
                 aria-hidden={!active || undefined}
                 inert={!active}
-                className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-white transition-[opacity,visibility] duration-200 dark:bg-[#070b11] ${
-                  active ? "visible opacity-100" : "invisible pointer-events-none opacity-0"
-                }`}
+                className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-surface-raised transition-[opacity,visibility] duration-200 ${active ? "visible opacity-100" : "invisible pointer-events-none opacity-0"
+                  }`}
               >
                 {mounted ? tool.chrome === "embedded" ? tool.content : (
                   <div className="flex h-full min-h-0 flex-col bg-transparent">
-                    <header className="flex h-12 shrink-0 items-center border-b border-slate-200/50 px-4 dark:border-slate-800">
-                      <span className="mr-2 text-indigo-600 dark:text-violet-400">{tool.icon}</span>
-                      <h2 className="truncate text-[11px] font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200">
+                    <header className="flex h-12 shrink-0 items-center border-b border-border-l1 px-4">
+                      <span className="mr-2 text-accent">{tool.icon}</span>
+                      <h2 className="truncate text-xs font-semibold text-text-secondary">
                         {tool.label}
                       </h2>
                     </header>
                     <div
                       key={tool.contentKey}
-                      className={tool.contentClassName ?? "min-h-0 flex-1 overflow-y-auto p-4 animate-spring-slide-in"}
+                      className={tool.contentClassName ?? "min-h-0 flex-1 overflow-y-auto p-4 motion-safe:animate-node-reveal"}
                     >
                       {tool.content}
                     </div>

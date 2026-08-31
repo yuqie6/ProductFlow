@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { Button } from "../../../components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../../components/ui/dialog";
 import { ApiError, api } from "../../../lib/api";
 import { isLocalImageEditOperation } from "../../../lib/localImageEdits";
 import { useI18n } from "../../../lib/preferences";
@@ -12,6 +14,7 @@ import type {
   LocalImageEditTask,
   LocalImageEditTaskStatus,
 } from "../../../lib/types";
+import { graphProgressPhaseLabelKey } from "../canvas/graphRunDisplay";
 import {
   LocalImageEditDialog,
   type LocalImageEditCapability as DialogCapability,
@@ -405,6 +408,22 @@ export function useLocalImageEditController({
     retryTask: t("localEdit.retry"),
     phase: t("localEdit.phase"),
     provider: t("localEdit.provider"),
+    progressPhases: Object.fromEntries([
+      "claimed",
+      "prepared",
+      "provider_call",
+      "provider_result_received",
+      "requeued_after_idle",
+    ].map((phase) => {
+      const key = graphProgressPhaseLabelKey(phase);
+      return [phase, key ? t(key) : phase];
+    })),
+    providers: {
+      mock: t("settings.provider.interface.mock"),
+      openai_responses: t("settings.provider.interface.openaiResponses"),
+      openai_images: t("settings.provider.interface.openaiImages"),
+      google_gemini_image: t("settings.provider.interface.googleGeminiImage"),
+    },
   }), [t]);
 
   const dialogCapability: DialogCapability | undefined = capabilityQuery.data
@@ -478,18 +497,35 @@ function ControllerState({
   closeLabel: string;
   onClose: () => void;
 }) {
+  const message = error ?? loadingLabel;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" data-local-edit-controller-state>
-      <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-xl bg-surface-raised p-5 text-text-primary shadow-2xl">
-        <div className="flex items-start gap-3">
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent hideClose size="sm" bodyClassName="p-5">
+        <div data-local-edit-controller-state className="flex items-start gap-3">
+          <DialogTitle className="sr-only">{message}</DialogTitle>
+          <DialogDescription className="sr-only">{message}</DialogDescription>
           {loading ? <Loader2 size={18} className="mt-0.5 animate-spin text-accent" aria-hidden="true" /> : <AlertCircle size={18} className="mt-0.5 text-state-error" aria-hidden="true" />}
-          <p role={error ? "alert" : "status"} className="min-w-0 flex-1 text-sm leading-6">{error ?? loadingLabel}</p>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-subtle" aria-label={closeLabel} title={closeLabel}>
+          <p role={error ? "alert" : "status"} className="min-w-0 flex-1 text-sm leading-6">{message}</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-11 w-11 shrink-0 px-0 lg:h-9 lg:w-9"
+            onClick={onClose}
+            aria-label={closeLabel}
+          >
             <X size={17} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

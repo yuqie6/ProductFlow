@@ -1,8 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FolderPlus, Images, Link2, Loader2, Maximize2, Search, Unlink, X } from "lucide-react";
+import { Check, FolderPlus, Images, Link2, Maximize2, Search, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "../../../lib/api";
+import { Button } from "../../../components/ui/button";
+import { Dialog, DialogContent } from "../../../components/ui/dialog";
+import { EmptyState as PanelState } from "../../../components/ui/empty-state";
+import { PanelSkeleton } from "../../../components/ui/skeleton";
+import { Input } from "../../../components/ui/field";
+import { IconButton } from "../../../components/ui/icon-button";
+import { Tooltip } from "../../../components/ui/tooltip";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { MediaLibraryAsset, WorkflowMediaLibraryAsset } from "../../../lib/types";
@@ -94,72 +101,108 @@ export function WorkflowMediaLibraryPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border-l1 px-3 py-2">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">{t("workbench.mediaLibrary.title")}</div>
-          <div className="mt-0.5 text-[10px] text-slate-400">{t("workbench.mediaLibrary.count", { count: linked.length })}</div>
+          <div className="text-xs font-semibold text-text-primary">{t("workbench.mediaLibrary.title")}</div>
+          <div className="mt-0.5 text-[10px] text-text-muted">{t("workbench.mediaLibrary.count", { count: linked.length })}</div>
         </div>
-        <button type="button" onClick={() => setPickerOpen(true)} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400" title={t("workbench.mediaLibrary.add")}>
-          <FolderPlus size={13} />{t("workbench.mediaLibrary.add")}
-        </button>
+        <Button variant="primary" size="sm" onClick={() => setPickerOpen(true)}>
+          <FolderPlus size={13} aria-hidden="true" />
+          {t("workbench.mediaLibrary.add")}
+        </Button>
       </div>
 
-      {error ? <div role="alert" className="m-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">{error instanceof ApiError ? error.detail : error.message}</div> : null}
-      {linkedQuery.isLoading ? <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("workbench.mediaLibrary.loading")} /> : linked.length === 0 ? <PanelState icon={<Images size={20} />} text={t("workbench.mediaLibrary.empty")} action={t("workbench.mediaLibrary.add")} onAction={() => setPickerOpen(true)} /> : <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2">{linked.map((item) => <LinkedAssetCard key={item.asset.id} item={item} busy={busy} canReference={Boolean(referenceTarget?.bindAsset && item.product_image_asset_id)} onPreview={() => preview(item.asset)} onRemove={() => removeMutation.mutate(item.asset.id)} onUseAsReference={() => referenceMutation.mutate(item)} />)}</div></div>}
-
-      {pickerOpen ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3 sm:p-5" onMouseDown={(event) => event.target === event.currentTarget && !syncMutation.isPending && setPickerOpen(false)}>
-          <div role="dialog" aria-modal="true" className="flex h-[min(720px,calc(100svh-1.5rem))] w-full max-w-3xl min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#0d131e]">
-            <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{t("workbench.mediaLibrary.pickerTitle")}</h2>
-                <p className="mt-0.5 text-[11px] text-slate-400">{t("workbench.mediaLibrary.pickerSelected", { count: selectedIds.size })}</p>
-              </div>
-              <button type="button" onClick={() => setPickerOpen(false)} disabled={syncMutation.isPending} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("detail.library.close")}>
-                <X size={16} />
-              </button>
-            </header>
-            <div className="shrink-0 border-b border-slate-200 p-3 dark:border-slate-800">
-              <label className="relative block">
-                <span className="sr-only">{t("mediaLibrary.search")}</span>
-                <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input autoFocus value={pickerSearch} onChange={(event) => setPickerSearch(event.target.value)} placeholder={t("mediaLibrary.search")} className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-8 pr-3 text-xs outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white dark:focus:border-violet-400" />
-              </label>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-3">
-              {pickerQuery.isLoading ? (
-                <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("mediaLibrary.loading")} />
-              ) : (pickerQuery.data?.items ?? []).filter((asset) => !linkedById.has(asset.id)).length === 0 ? (
-                <PanelState text={t("workbench.mediaLibrary.pickerEmpty")} />
-              ) : (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-                  {(pickerQuery.data?.items ?? [])
-                    .filter((asset) => !linkedById.has(asset.id))
-                    .map((asset) => (
-                      <PickerAssetCard
-                        key={asset.id}
-                        asset={asset}
-                        selected={selectedIds.has(asset.id)}
-                        onToggle={() => togglePickerAsset(asset.id)}
-                        onPreview={() => preview(asset)}
-                      />
-                    ))}
-                </div>
-              )}
-            </div>
-            <footer className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/35">
-              <span className="mr-auto text-xs text-slate-500 dark:text-slate-400">{t("workbench.mediaLibrary.pickerHint")}</span>
-              <button type="button" onClick={() => setPickerOpen(false)} disabled={syncMutation.isPending} className="h-9 rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">
-                {t("common.cancel")}
-              </button>
-              <button type="button" onClick={() => syncMutation.mutate([...selectedIds])} disabled={syncMutation.isPending || selectedIds.size === 0} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">
-                {syncMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-                {t("workbench.mediaLibrary.confirmAdd")}
-              </button>
-            </footer>
-          </div>
+      {error ? (
+        <div role="alert" className="m-3 rounded-md border border-state-error/30 bg-state-error-soft px-2.5 py-2 text-xs text-state-error">
+          {error instanceof ApiError ? error.detail : error.message}
         </div>
       ) : null}
+      {linkedQuery.isLoading ? (
+        <PanelSkeleton rows={4} label={t("workbench.mediaLibrary.loading")} />
+      ) : linked.length === 0 ? (
+        <PanelState icon={<Images size={20} />} text={t("workbench.mediaLibrary.empty")} action={t("workbench.mediaLibrary.add")} onAction={() => setPickerOpen(true)} />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          <div className="grid grid-cols-2 gap-2">
+            {linked.map((item) => (
+              <LinkedAssetCard
+                key={item.asset.id}
+                item={item}
+                busy={busy}
+                canReference={Boolean(referenceTarget?.bindAsset && item.product_image_asset_id)}
+                onPreview={() => preview(item.asset)}
+                onRemove={() => removeMutation.mutate(item.asset.id)}
+                onUseAsReference={() => referenceMutation.mutate(item)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Dialog
+        open={pickerOpen}
+        onOpenChange={(open) => {
+          if (!open && !syncMutation.isPending) setPickerOpen(false);
+        }}
+      >
+        <DialogContent
+          title={t("workbench.mediaLibrary.pickerTitle")}
+          description={t("workbench.mediaLibrary.pickerSelected", { count: selectedIds.size })}
+          size="xl"
+          className="flex max-h-[min(720px,calc(100svh-1.5rem))] flex-col"
+          bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
+          closeLabel={t("detail.library.close")}
+          footer={(
+            <>
+              <span className="mr-auto text-xs text-text-muted">{t("workbench.mediaLibrary.pickerHint")}</span>
+              <Button variant="secondary" onClick={() => setPickerOpen(false)} disabled={syncMutation.isPending}>{t("common.cancel")}</Button>
+              <Button
+                variant="primary"
+                busy={syncMutation.isPending}
+                disabled={selectedIds.size === 0}
+                onClick={() => syncMutation.mutate([...selectedIds])}
+              >
+                {t("workbench.mediaLibrary.confirmAdd")}
+              </Button>
+            </>
+          )}
+        >
+          <div className="shrink-0 border-b border-border-l1 p-3">
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute inset-y-0 left-2.5 my-auto text-text-muted" aria-hidden="true" />
+              <Input
+                autoFocus
+                value={pickerSearch}
+                onChange={(event) => setPickerSearch(event.target.value)}
+                placeholder={t("mediaLibrary.search")}
+                aria-label={t("mediaLibrary.search")}
+                className="pl-8"
+              />
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {pickerQuery.isLoading ? (
+              <PanelSkeleton compact rows={4} label={t("mediaLibrary.loading")} />
+            ) : (pickerQuery.data?.items ?? []).filter((asset) => !linkedById.has(asset.id)).length === 0 ? (
+              <PanelState text={t("workbench.mediaLibrary.pickerEmpty")} />
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                {(pickerQuery.data?.items ?? [])
+                  .filter((asset) => !linkedById.has(asset.id))
+                  .map((asset) => (
+                    <PickerAssetCard
+                      key={asset.id}
+                      asset={asset}
+                      selected={selectedIds.has(asset.id)}
+                      onToggle={() => togglePickerAsset(asset.id)}
+                      onPreview={() => preview(asset)}
+                    />
+                  ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -170,7 +213,7 @@ function LinkedAssetCard({ item, busy, canReference, onPreview, onRemove, onUseA
   const productAssetId = item.product_image_asset_id;
   return (
     <article
-      className="group min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/35"
+      className="group min-w-0 overflow-hidden rounded-lg border border-border-l1 bg-surface-raised"
       draggable={Boolean(readable && productAssetId)}
       onDragStart={(event) => {
         if (!productAssetId) return;
@@ -178,25 +221,34 @@ function LinkedAssetCard({ item, busy, canReference, onPreview, onRemove, onUseA
         event.dataTransfer.effectAllowed = "copyMove";
       }}
     >
-      <button type="button" onClick={onPreview} disabled={!readable} className="relative block aspect-square w-full overflow-hidden bg-slate-100 disabled:cursor-not-allowed dark:bg-slate-900">
+      <button type="button" onClick={onPreview} disabled={!readable} className="relative block aspect-square w-full overflow-hidden bg-surface-subtle disabled:cursor-not-allowed">
         <img src={api.toApiUrl(item.asset.thumbnail_url)} alt={item.asset.display_name} className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${readable ? "" : "opacity-50 grayscale"}`} />
-        {!readable ? <span className="absolute inset-x-1 bottom-1 rounded bg-slate-950/70 px-1 py-1 text-[9px] text-white">{t("detail.library.mediaPending")}</span> : null}
+        {!readable ? <span className="absolute inset-x-1 bottom-1 rounded bg-surface-inverse/70 px-1 py-1 text-[9px] text-surface-raised">{t("detail.library.mediaPending")}</span> : null}
       </button>
       <div className="min-w-0 p-2">
-        <div className="truncate text-[11px] font-semibold text-slate-800 dark:text-slate-100" title={item.asset.display_name}>
-          {item.asset.display_name}
-        </div>
-        <div className="mt-1 truncate text-[9px] text-slate-400">
+        <Tooltip content={item.asset.display_name}>
+          <div className="truncate text-[11px] font-semibold text-text-primary">
+            {item.asset.display_name}
+          </div>
+        </Tooltip>
+        <div className="mt-1 truncate text-[9px] text-text-muted">
           {item.asset.folder_name ?? t("mediaLibrary.unorganized")}
         </div>
         <div className="mt-2 flex items-center justify-end gap-1">
-          <button type="button" onClick={onRemove} disabled={busy} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300" aria-label={t("workbench.mediaLibrary.remove")} title={t("workbench.mediaLibrary.remove")}>
-            <Unlink size={13} />
-          </button>
+          <IconButton
+            variant="danger"
+            size="sm"
+            label={t("workbench.mediaLibrary.remove")}
+            onClick={onRemove}
+            disabled={busy}
+          >
+            <Unlink size={13} aria-hidden="true" />
+          </IconButton>
           {canReference ? (
-            <button type="button" onClick={onUseAsReference} disabled={busy} className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-100 px-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-40 dark:border-violet-400/25 dark:text-violet-200 dark:hover:bg-violet-500/10">
-              <Link2 size={11} />{t("workbench.mediaLibrary.use")}
-            </button>
+            <Button variant="secondary" size="sm" onClick={onUseAsReference} disabled={busy}>
+              <Link2 size={11} aria-hidden="true" />
+              {t("workbench.mediaLibrary.use")}
+            </Button>
           ) : null}
         </div>
       </div>
@@ -222,19 +274,17 @@ function PickerAssetCard({ asset, selected, onToggle, onPreview }: { asset: Medi
           onToggle();
         }
       }}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition-all select-none hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 dark:bg-[#0d131e] ${
-        selected
-          ? "border-indigo-500 ring-2 ring-indigo-500/20 dark:border-violet-400 dark:ring-violet-500/25"
-          : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
-      }`}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-surface-raised shadow-sm transition-colors select-none hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1 ${selected
+          ? "border-accent ring-2 ring-accent/20"
+          : "border-border-l1 hover:border-border-l3"
+        }`}
     >
-      <div className="relative aspect-square w-full bg-slate-100 dark:bg-slate-900">
+      <div className="relative aspect-square w-full bg-surface-subtle">
         <img
           src={api.toApiUrl(asset.thumbnail_url)}
           alt={asset.display_name}
-          className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${
-            readable ? "" : "opacity-50 grayscale"
-          }`}
+          className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${readable ? "" : "opacity-50 grayscale"
+            }`}
         />
 
         {/* 选框（视觉层；键盘/语义由卡片 role=button 承载） */}
@@ -248,49 +298,36 @@ function PickerAssetCard({ asset, selected, onToggle, onPreview }: { asset: Medi
           disabled={!readable}
           aria-pressed={selected}
           aria-label={asset.display_name}
-          className={`absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-md backdrop-blur-md transition-all ${
-            selected
-              ? "border-indigo-600 bg-indigo-600 text-white opacity-100 dark:border-violet-500 dark:bg-violet-500"
-              : "border-white/40 bg-slate-950/40 text-transparent opacity-75 group-hover:opacity-100 hover:border-white hover:bg-slate-950/70 hover:text-white/80 dark:border-white/30 dark:bg-slate-900/60"
-          }`}
+          className={`absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-md backdrop-blur-md transition-colors ${selected
+              ? "border-accent bg-accent text-accent-fg opacity-100"
+              : "border-surface-raised/40 bg-surface-inverse/40 text-transparent opacity-75 group-hover:opacity-100 hover:border-surface-raised hover:bg-surface-inverse/70 hover:text-surface-raised/80"
+            }`}
         >
           <Check size={13} strokeWidth={selected ? 2.5 : 2} />
         </button>
 
         {/* 悬浮预览按钮 */}
         {readable ? (
-          <button
-            type="button"
+          <IconButton
+            variant="ghost"
+            size="sm"
+            label={t("mediaLibrary.previewLabel")}
             onClick={(e) => {
               e.stopPropagation();
               onPreview();
             }}
-            className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border border-white/30 bg-slate-950/50 text-white opacity-0 shadow-md backdrop-blur-md transition-all group-hover:opacity-100 hover:scale-105 hover:bg-slate-950/80 focus:opacity-100"
-            aria-label={t("mediaLibrary.previewLabel")}
-            title={t("mediaLibrary.previewLabel")}
+            className="absolute right-2 top-2 z-10 border-surface-raised/30 bg-surface-inverse/50 text-surface-raised opacity-0 shadow-md backdrop-blur-md hover:bg-surface-inverse/80 hover:text-surface-raised focus:opacity-100 group-hover:opacity-100"
           >
-            <Maximize2 size={12} />
-          </button>
+            <Maximize2 size={12} aria-hidden="true" />
+          </IconButton>
         ) : null}
       </div>
 
-      <div className="truncate px-2 py-1.5 text-[11px] font-semibold text-slate-800 dark:text-slate-200" title={asset.display_name}>
-        {asset.display_name}
-      </div>
+      <Tooltip content={asset.display_name}>
+        <div className="truncate px-2 py-1.5 text-[11px] font-semibold text-text-primary">
+          {asset.display_name}
+        </div>
+      </Tooltip>
     </article>
-  );
-}
-
-function PanelState({ icon, text, action, onAction }: { icon?: React.ReactNode; text: string; action?: string; onAction?: () => void }) {
-  return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 px-5 text-center text-xs text-slate-500 dark:text-slate-400">
-      {icon ? <span className="text-slate-400">{icon}</span> : null}
-      <span>{text}</span>
-      {action && onAction ? (
-        <button type="button" onClick={onAction} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-violet-300">
-          {action}
-        </button>
-      ) : null}
-    </div>
   );
 }

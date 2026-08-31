@@ -28,6 +28,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
+import { Dialog, DialogContent } from "../../components/ui/dialog";
 import { IMAGE_TYPE_FAMILY_ORDER, imageTypeFamily, isEvidenceImageType } from "../../lib/imageTypeFamilies";
 import type { ImageTypeFamily } from "../../lib/imageTypeFamilies";
 import { useI18n } from "../../lib/preferences";
@@ -258,7 +259,6 @@ export function AgentProductCreateForm({
   const languageLabel =
     CREATE_TEXT_LANGUAGE_OPTIONS.find((option) => option.value === outputDraft.textLanguage)?.label
     ?? outputDraft.textLanguage;
-  const selectedDeliveryPreset = deliveryPresetCatalog?.items.find((item) => item.key === deliveryPresetKey) ?? null;
 
   const stageTitle = (stage: 1 | 2 | 3 | 4): string => {
     if (stage === 1) return t("agentCreate.productInfo");
@@ -438,16 +438,6 @@ export function AgentProductCreateForm({
                   {t("agentCreate.deliveryPreset.retry")}
                 </button>
               </div>
-            ) : null}
-            {selectedDeliveryPreset ? (
-              <dl className="mt-3 grid gap-x-4 gap-y-1 text-xs leading-5 text-text-muted sm:grid-cols-[auto_1fr_auto_1fr]">
-                <dt className="font-medium text-text-secondary">{t("agentCreate.deliveryPreset.reviewedAt")}</dt>
-                <dd>{selectedDeliveryPreset.reviewed_at}</dd>
-                <dt className="font-medium text-text-secondary">{t("agentCreate.deliveryPreset.source")}</dt>
-                <dd className="min-w-0 truncate" title={selectedDeliveryPreset.source}>{selectedDeliveryPreset.source}</dd>
-                <dt className="font-medium text-text-secondary sm:col-span-1">{t("agentCreate.deliveryPreset.disclaimer")}</dt>
-                <dd className="sm:col-span-3">{selectedDeliveryPreset.disclaimer}</dd>
-              </dl>
             ) : null}
           </div>
         </div>
@@ -713,7 +703,7 @@ export function AgentProductCreateForm({
       {error ? (
         <div
           role="alert"
-          className="animate-spring-slide-in rounded-xl border border-state-error/30 bg-state-error/10 px-4 py-3 text-sm leading-5 text-state-error"
+          className="animate-node-reveal rounded-control border border-state-error/30 bg-state-error/10 px-4 py-3 text-sm leading-5 text-state-error motion-reduce:animate-none"
         >
           {error}
         </div>
@@ -740,7 +730,12 @@ export function AgentProductCreateForm({
             </span>
             <span>
               {t("agentCreate.referenceImages")}:{" "}
-              <strong className="font-semibold tabular-nums text-text-primary">{referenceFiles.length}</strong>
+              <strong
+                data-create-reference-count={referenceFiles.length}
+                className="font-semibold tabular-nums text-text-primary"
+              >
+                {referenceFiles.length}
+              </strong>
             </span>
             <span>
               {t("agentCreate.textPolicy")}:{" "}
@@ -778,7 +773,7 @@ export function AgentProductCreateForm({
             <button
               type="submit"
               disabled={isSubmitting || isDirectCreating}
-              className="btn-primary-spring inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-6 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+              className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-accent px-6 text-sm font-semibold text-accent-fg shadow-elev-1 transition-[background-color,box-shadow] duration-fast hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {isSubmitting ? (
                 <Loader2 size={16} className="animate-spin" />
@@ -793,39 +788,24 @@ export function AgentProductCreateForm({
 
       <div data-create-form-bottom-spacer="" className="h-28 shrink-0" aria-hidden="true" />
 
-      {previewFile && previewUrl ? (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("agentCreate.preview", { name: previewFile.name })}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setPreviewIndex(null);
-          }}
-        >
-          <div className="flex max-h-[92vh] w-full max-w-5xl animate-spring-pop-in flex-col overflow-hidden rounded-2xl border border-border-l1 bg-surface-raised shadow-2xl">
-            <div className="flex h-13 shrink-0 items-center justify-between gap-3 border-b border-border-l1 px-4">
-              <span className="min-w-0 truncate text-sm font-medium text-text-primary">{previewFile.name}</span>
-              <button
-                type="button"
-                title={t("agentCreate.closePreview")}
-                aria-label={t("agentCreate.closePreview")}
-                onClick={() => setPreviewIndex(null)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 bg-surface-subtle p-3">
+      <Dialog open={Boolean(previewFile && previewUrl)} onOpenChange={(open) => !open && setPreviewIndex(null)}>
+        {previewFile && previewUrl ? (
+          <DialogContent
+            title={t("agentCreate.preview", { name: previewFile.name })}
+            size="xl"
+            className="max-h-[92vh] max-w-5xl"
+            closeLabel={t("agentCreate.closePreview")}
+            onClose={() => setPreviewIndex(null)}
+            bodyClassName="min-h-0 bg-surface-subtle p-3"
+          >
               <img
                 src={previewUrl}
                 alt={previewFile.name}
                 className="mx-auto max-h-[calc(92vh-76px)] max-w-full object-contain"
               />
-            </div>
-          </div>
-        </div>
-      ) : null}
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </form>
   );
 }

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { SelectField } from "../../components/SelectField";
+import { Select as SelectField } from "../../components/ui/select";
 import { api } from "../../lib/api";
 import { formatPrice, formatShortDate } from "../../lib/format";
 import { useI18n } from "../../lib/preferences";
@@ -140,8 +140,7 @@ export function ProductListSurface({
                 options={SORT_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
                 ariaLabel={t("products.sort.label")}
                 className="w-[148px] sm:w-[158px] [&>button]:!h-11 sm:[&>button]:!h-9"
-                radius="lg"
-                visualSize="sm"
+                size="sm"
               />
             </div>
           </div>

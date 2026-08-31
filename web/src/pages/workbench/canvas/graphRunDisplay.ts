@@ -115,6 +115,12 @@ export function graphProgressPhaseLabelKey(phase: string | null | undefined): Tr
   }
 }
 
+export function humanizeTechnicalKey(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 export function graphRunScopeLabelKey(scope: GraphRunScope): TranslationKey {
   if (scope === "node") return "graph.runs.scope.node";
   if (scope === "to_node") return "graph.runs.scope.toNode";
@@ -144,6 +150,42 @@ const CONTEXT_LABEL_KEYS = {
   prompt_artifact_id: "graph.runs.context.promptArtifact",
   prompt_edge_id: "graph.runs.context.promptEdge",
 } as const;
+
+const ARTIFACT_TYPE_LABEL_KEYS = {
+  creative_brief: "graph.artifactType.creativeBrief",
+  visual_system: "graph.artifactType.visualSystem",
+  prompt: "graph.artifactType.prompt",
+  image: "graph.artifactType.image",
+} as const satisfies Record<NonNullable<GraphRunInputTraceEntry["artifact_type"]>, TranslationKey>;
+
+const OUTPUT_QUALITY_LABEL_KEYS: Record<string, TranslationKey> = {
+  draft: "graph.output.quality.draft",
+  low: "graph.output.quality.low",
+  standard: "graph.output.quality.standard",
+  medium: "graph.output.quality.medium",
+  high: "graph.output.quality.high",
+  ultra: "graph.output.quality.ultra",
+  auto: "graph.output.quality.auto",
+};
+
+const OUTPUT_ACTION_LABEL_KEYS: Record<string, TranslationKey> = {
+  generate: "graph.output.action.generate",
+  edit: "graph.output.action.edit",
+  refine: "graph.output.action.refine",
+  replace: "graph.output.action.replace",
+};
+
+export function graphArtifactTypeLabelKey(value: string | null | undefined): TranslationKey | null {
+  return value ? ARTIFACT_TYPE_LABEL_KEYS[value as keyof typeof ARTIFACT_TYPE_LABEL_KEYS] ?? null : null;
+}
+
+export function graphOutputQualityLabelKey(value: string | null | undefined): TranslationKey | null {
+  return value ? OUTPUT_QUALITY_LABEL_KEYS[value] ?? null : null;
+}
+
+export function graphOutputActionLabelKey(value: string | null | undefined): TranslationKey | null {
+  return value ? OUTPUT_ACTION_LABEL_KEYS[value] ?? null : null;
+}
 
 export interface GraphIncomingSourceEntry {
   id: string;

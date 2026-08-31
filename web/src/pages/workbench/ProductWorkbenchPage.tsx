@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../../lib/api";
+import { Button } from "../../components/ui/button";
 import { useI18n } from "../../lib/preferences";
 import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
@@ -143,20 +144,16 @@ function WorkbenchRouteState({
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex min-h-screen items-center justify-center bg-white p-6 text-zinc-500 dark:bg-[#060a12] dark:text-slate-400">
+    <div className="flex min-h-screen items-center justify-center bg-surface-base p-6 text-text-muted">
       {error ? (
         <div className="flex max-w-md flex-col items-center gap-3 text-center">
-          <p role="alert" className="text-sm text-red-700 dark:text-red-200">
+          <p role="alert" className="text-sm text-state-error">
             {errorDetail(error, t("productWorkbench.loadFailed"))}
           </p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:border-zinc-500 dark:border-slate-700 dark:text-slate-200 dark:hover:border-slate-500"
-          >
+          <Button variant="secondary" size="lg" onClick={onRetry}>
             <RotateCw size={15} />
             {t("productWorkbench.retry")}
-          </button>
+          </Button>
         </div>
       ) : (
         <>

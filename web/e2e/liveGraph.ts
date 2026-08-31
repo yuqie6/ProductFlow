@@ -45,12 +45,7 @@ export async function selectCreateImageType(page: Page, imageType: string): Prom
 }
 
 export async function openCanvasView(page: Page): Promise<void> {
-  const canvasTab = page.locator('[data-graph-view="canvas"]');
-  await expect(canvasTab).toBeVisible();
-  if ((await canvasTab.getAttribute("aria-selected")) !== "true") {
-    await canvasTab.click({ force: true });
-  }
-  await expect(canvasTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[aria-label="工作流画布"]')).toBeVisible();
 }
 
 export async function loginAsAdmin(page: Page, adminKey: string): Promise<void> {

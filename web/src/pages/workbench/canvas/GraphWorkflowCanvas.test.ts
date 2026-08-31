@@ -10,7 +10,28 @@ import {
   graphPortVisualScale,
 } from "./graphCanvasVisual";
 import { graphNodeHasPinnableOutput } from "./graphLayout";
-import { GraphGroupCard, GraphNodeCard, rejectedGraphConnectionNotice } from "./GraphWorkflowCanvas";
+import { GraphGroupCard, GraphNodeCard, graphCanvasFitPadding, rejectedGraphConnectionNotice, visibleGraphFocusNodeIds } from "./GraphWorkflowCanvas";
+
+describe("graphCanvasFitPadding", () => {
+  it("reserves the visible filmstrip height at the bottom", () => {
+    expect(graphCanvasFitPadding(0.22, 124)).toEqual({
+      top: 0.22,
+      right: 0.22,
+      bottom: "148px",
+      left: 0.22,
+    });
+    expect(graphCanvasFitPadding(0.22, 0)).toBe(0.22);
+  });
+});
+
+describe("visibleGraphFocusNodeIds", () => {
+  it("focuses only unique nodes rendered in the current canvas scope", () => {
+    expect(visibleGraphFocusNodeIds(
+      ["image-1", "image-2", "image-1", "outside"],
+      ["image-1", "image-2", "group-1"],
+    )).toEqual(["image-1", "image-2"]);
+  });
+});
 
 const catalog: GraphNodeCatalog = {
   version: 1,
@@ -76,6 +97,9 @@ function renderNodeCard(
   connectable = true,
   runDisabled = false,
   selected = false,
+  nodeCatalog: GraphNodeCatalog | null = catalog,
+  plannedAction?: "generate" | "reuse" | "frozen" | "blocked" | null,
+  latestPlannedAction?: "generate" | "reuse" | "frozen" | "blocked" | null,
 ): string {
   const graph = graphWith(node);
   const props: ComponentProps<typeof GraphNodeCard> = {
@@ -101,9 +125,11 @@ function renderNodeCard(
       selectedCount: 1,
       selectionPrimary: true,
       missingRunLabels: [],
+      plannedAction,
+      latestPlannedAction,
       onSelectNode: () => undefined,
       graph,
-      catalog,
+      catalog: nodeCatalog,
     },
     dragging: false,
     zIndex: 0,
@@ -155,9 +181,18 @@ describe("graph workflow node ports", () => {
     }));
     expect(image).toContain("data-node-kind=\"image_generation\"");
     expect(source).toContain("data-node-kind=\"product_source\"");
-    expect(image).toContain("cyan-");
-    expect(source).toContain("purple-");
+    expect(image).toContain("kind-image");
+    expect(source).toContain("kind-product");
     expect(image).not.toBe(source);
+  });
+
+  it("only outlines an active run preview, not a historical planned action", () => {
+    const node = graphNode({ id: "image", node_type: "image_generation", title: "主图 1" });
+    const historical = renderNodeCard(node, true, false, false, catalog, null, "generate");
+    const preview = renderNodeCard(node, true, false, false, catalog, "generate", "generate");
+
+    expect(historical).not.toContain("outline-accent/90");
+    expect(preview).toContain("outline-accent/90");
   });
 
   it("offers pin-as-image-asset on an image_generation node with current output", () => {
@@ -184,6 +219,18 @@ describe("graph workflow node ports", () => {
     expect(handles).toHaveLength(1);
     expect(handles[0]).toContain('data-handleid="output"');
     expect(handles[0]).not.toContain('data-handleid="input"');
+  });
+
+  it("does not fall back to a generic input handle when Catalog ports are missing", () => {
+    const handles = handleMarkup(renderNodeCard(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }), true, false, false, null));
+
+    expect(handles.some((handle) => handle.includes('data-handleid="output"'))).toBe(true);
+    expect(handles.some((handle) => handle.includes('data-handleid="input"'))).toBe(false);
+    expect(handles.some((handle) => handle.includes('data-handleid="prompt"'))).toBe(false);
   });
 
   it("writes failure on the card instead of only in the run sidebar", () => {

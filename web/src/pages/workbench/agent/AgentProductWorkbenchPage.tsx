@@ -55,6 +55,9 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   appendRecipe: () => undefined,
   commitNode: async () => undefined,
   pinCurrentOutput: () => undefined,
+  previewRun: () => undefined,
+  hideRunPreview: () => undefined,
+  focusNodes: () => undefined,
 };
 
 interface AgentProductWorkbenchPageProps {

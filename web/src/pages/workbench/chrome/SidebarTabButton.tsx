@@ -1,3 +1,4 @@
+import { Tooltip } from "../../../components/ui/tooltip";
 import type { ReactNode } from "react";
 
 interface SidebarTabButtonProps {
@@ -18,20 +19,21 @@ export function SidebarTabButton({
   onClick,
 }: SidebarTabButtonProps) {
   return (
-    <button
-      type="button"
-      data-sidebar-tool={toolId}
-      aria-pressed={active}
-      title={title}
-      onClick={onClick}
-      className={`flex w-full flex-col items-center rounded-xl px-1 py-2 text-[10px] font-medium transition-all transition-spring ${
-        active
-          ? "bg-white text-indigo-600 shadow-[0_2px_8px_rgba(99,102,241,0.15)] ring-1 ring-indigo-500/30 scale-[1.05] dark:bg-slate-800 dark:text-slate-100 dark:ring-1 dark:ring-indigo-500/50 dark:shadow-[0_4px_12px_rgba(0,0,0,0.3)]"
-          : "text-slate-500 hover:scale-[1.05] hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-white"
-      }`}
-    >
-      <span className={`transition-transform duration-300 ${active ? "scale-110" : ""}`}>{icon}</span>
-      <span className="mt-1 leading-tight">{label}</span>
-    </button>
+    <Tooltip content={title} side="left">
+      <button
+        type="button"
+        data-sidebar-tool={toolId}
+        aria-pressed={active}
+        aria-label={title}
+        onClick={onClick}
+        className={`flex w-full flex-col items-center rounded-panel px-1 py-2 text-[10px] font-medium outline-none transition-[background-color,color,transform] duration-fast focus-visible:ring-2 focus-visible:ring-focus-ring motion-reduce:transition-none min-h-11 ${active
+            ? "bg-surface-raised text-accent shadow-elev-1 ring-1 ring-accent/30"
+            : "text-text-muted hover:bg-surface-subtle hover:text-text-primary"
+          }`}
+      >
+        <span>{icon}</span>
+        <span className="mt-1 leading-tight">{label}</span>
+      </button>
+    </Tooltip>
   );
 }

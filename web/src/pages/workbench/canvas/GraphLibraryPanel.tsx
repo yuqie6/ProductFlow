@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { TabList, TabTrigger, Tabs } from "../../../components/ui/tabs";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { CanonicalProductDetail, GraphNode, GraphProjection } from "../../../lib/types";
@@ -36,56 +37,32 @@ export function GraphLibraryPanel({
   } : undefined;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-graph-library-panel>
-      <div className="flex shrink-0 gap-1 border-b border-zinc-200 p-2 dark:border-slate-800">
-        <TabButton active={tab === "product"} onClick={() => setTab("product")}>
-          {t("graph.library.product")}
-        </TabButton>
-        <TabButton active={tab === "workflow"} onClick={() => setTab("workflow")}>
-          {t("graph.library.workflow")}
-        </TabButton>
-      </div>
-      {tab === "workflow" ? (
-        <WorkflowMediaLibraryPanel
-          productId={product.id}
-          workflowId={graph.id}
-          referenceTarget={referenceTarget}
-          onPreviewImage={onPreviewImage}
-        />
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <ProductImageExplorer
-            productId={product.id}
-            productName={product.name}
-            onPreviewImage={onPreviewImage}
-            onOpenLocalEdit={onOpenLocalEdit}
-            referenceTarget={referenceTarget}
-          />
+      <Tabs value={tab} onValueChange={(value) => setTab(value as LibraryTab)} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex shrink-0 border-b border-border-l1 p-2">
+          <TabList aria-label={t("graph.library.product")} className="w-full">
+            <TabTrigger value="product">{t("graph.library.product")}</TabTrigger>
+            <TabTrigger value="workflow">{t("graph.library.workflow")}</TabTrigger>
+          </TabList>
         </div>
-      )}
+        {tab === "workflow" ? (
+          <WorkflowMediaLibraryPanel
+            productId={product.id}
+            workflowId={graph.id}
+            referenceTarget={referenceTarget}
+            onPreviewImage={onPreviewImage}
+          />
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <ProductImageExplorer
+              productId={product.id}
+              productName={product.name}
+              onPreviewImage={onPreviewImage}
+              onOpenLocalEdit={onOpenLocalEdit}
+              referenceTarget={referenceTarget}
+            />
+          </div>
+        )}
+      </Tabs>
     </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`h-8 flex-1 rounded-lg px-2 text-[11px] font-semibold ${
-        active
-          ? "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100"
-          : "text-zinc-500 hover:bg-zinc-50 dark:text-slate-400 dark:hover:bg-slate-900"
-      }`}
-    >
-      {children}
-    </button>
   );
 }

@@ -237,7 +237,7 @@ describe("AgentProductCreateForm", () => {
     expect(completeButton).toContain('disabled=""');
   });
 
-  it("shows selected platform governance metadata", () => {
+  it("keeps platform governance metadata out of the merchant form", () => {
     const markup = renderForm([], {
       deliveryPresetCatalog,
       deliveryPresetKey: "jd_hero",
@@ -246,9 +246,9 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain('data-delivery-preset-control="true"');
     expect(markup).toContain('id="agent-create-delivery-preset"');
     expect(markup).toContain("京东主图");
-    expect(markup).toContain("2026-08-24");
-    expect(markup).toContain("official catalog");
-    expect(markup).toContain("Default only");
+    expect(markup).not.toContain("2026-08-24");
+    expect(markup).not.toContain("official catalog");
+    expect(markup).not.toContain("Default only");
   });
 
   it("warns when image types are selected without a reference", () => {

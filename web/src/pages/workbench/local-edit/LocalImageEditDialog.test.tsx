@@ -98,6 +98,7 @@ describe("LocalImageEditDialog", () => {
     expect(markup).not.toMatch(/data-local-edit-operation-option="remove"[^>]*disabled=""/);
     expect(markup).toContain('data-local-edit-operation-unavailable');
     expect(markup).toContain("不支持的局部编辑操作");
+    expect(markup.match(/不支持的局部编辑操作/g)).toHaveLength(1);
   });
 
   it("uses the internally selected operation for validation and submit fields", () => {
@@ -141,7 +142,10 @@ describe("LocalImageEditDialog", () => {
 
     expect(markup).toContain('data-local-edit-task-status="failed"');
     expect(markup).toContain("供应商超时");
-    expect(markup).toContain("openai_images");
+    expect(markup).toContain("调用模型中");
+    expect(markup).toContain("OpenAI Images API");
+    expect(markup).not.toContain("provider_call");
+    expect(markup).not.toContain("openai_images");
     expect(markup).toContain("重试编辑");
   });
 

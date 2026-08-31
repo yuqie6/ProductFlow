@@ -1336,7 +1336,12 @@ export interface SettingsLockState {
   configured: boolean;
 }
 
-export type ProviderCapability = "text_responses" | "image_responses" | "image_images" | "image_google_gemini";
+export type ProviderCapability =
+  | "text_responses"
+  | "image_responses"
+  | "image_images"
+  | "image_google_gemini"
+  | "image_mask_edit";
 export type ProviderPurpose = "prompt" | "image" | "agent";
 export type ProviderType = "openai_compatible" | "google_gemini";
 

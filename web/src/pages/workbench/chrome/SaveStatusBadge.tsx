@@ -13,10 +13,10 @@ const SAVE_STATUS_LABEL_KEYS: Record<SaveStatus, TranslationKey> = {
 };
 
 const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
-  idle: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300",
-  saving: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/35 dark:bg-blue-500/12 dark:text-blue-200",
-  saved: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/12 dark:text-emerald-200",
-  failed: "border-red-200 bg-red-50 text-red-700 dark:border-red-400/35 dark:bg-red-500/12 dark:text-red-200",
+  idle: "border-border-l1 bg-surface-subtle text-text-muted",
+  saving: "border-accent/30 bg-accent-soft text-accent",
+  saved: "border-state-success/30 bg-state-success/10 text-state-success",
+  failed: "border-state-error/30 bg-state-error/10 text-state-error",
 };
 
 export function SaveStatusBadge({ status }: { status: SaveStatus }) {

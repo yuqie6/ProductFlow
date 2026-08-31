@@ -28,6 +28,17 @@ for (const preset of PRESETS) {
       await expect(page.getByText("系统配置已解锁")).toBeVisible();
       await expect(page.getByRole("heading", { name: "供应商档案" })).toBeVisible();
       await expect(page.getByText("统一管理 API Key、Base URL 和接口能力。")).toBeVisible();
+      const createProvider = page.getByRole("button", { name: "新增供应商" }).first();
+      await createProvider.click();
+      const providerDialog = page.getByRole("dialog", { name: "新增供应商" });
+      await expect(providerDialog).toBeVisible();
+      await page.keyboard.press("Tab");
+      await expect.poll(async () => providerDialog.evaluate((dialog) => (
+        dialog.contains(document.activeElement)
+      ))).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(providerDialog).not.toBeVisible();
+      await expect(createProvider).toBeFocused();
 
       await page.goto("/media-library");
       await expect(page.getByRole("heading", { name: "全局图库" })).toBeVisible();

@@ -11,6 +11,9 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import type { LocalImageEditTaskStatus } from "../../../lib/types";
+import { Dialog, DialogContent, DialogTitle } from "../../../components/ui/dialog";
+import { IconButton } from "../../../components/ui/icon-button";
+import { humanizeTechnicalKey } from "../canvas/graphRunDisplay";
 import {
   clampSourcePoint,
   createContainTransform,
@@ -78,6 +81,8 @@ export interface LocalImageEditLabels {
   retryTask: string;
   phase: string;
   provider: string;
+  progressPhases: Record<string, string>;
+  providers: Record<string, string>;
   operations: Partial<Record<LocalEditOperation, string>>;
   validationMessages: Partial<Record<LocalEditValidationIssue["code"], string>>;
 }
@@ -178,6 +183,19 @@ const DEFAULT_LABELS: LocalImageEditLabels = {
   retryTask: "重试编辑",
   phase: "阶段",
   provider: "供应商",
+  progressPhases: {
+    claimed: "已受理",
+    prepared: "已准备",
+    provider_call: "调用模型中",
+    provider_result_received: "已收到结果",
+    requeued_after_idle: "已重新排队",
+  },
+  providers: {
+    mock: "Mock",
+    openai_responses: "OpenAI Responses",
+    openai_images: "OpenAI Images API",
+    google_gemini_image: "Google Gemini Image",
+  },
   operations: {
     remove: "移除",
     replace_text: "替换文字",
@@ -202,6 +220,8 @@ function mergeLabels(labels: LocalImageEditDialogProps["labels"]): LocalImageEdi
     ...labels,
     operations: { ...DEFAULT_LABELS.operations, ...labels?.operations },
     validationMessages: { ...DEFAULT_LABELS.validationMessages, ...labels?.validationMessages },
+    progressPhases: { ...DEFAULT_LABELS.progressPhases, ...labels?.progressPhases },
+    providers: { ...DEFAULT_LABELS.providers, ...labels?.providers },
   };
 }
 
@@ -545,7 +565,7 @@ export function LocalImageEditDialog({
   const operationCapabilityText = !operationSupported
     ? capabilityText || labels.validationMessages.unsupported_operation || labels.capabilityUnavailable
     : null;
-  const visibleError = sourceError || operationCapabilityText || error || submitError || commandError;
+  const visibleError = sourceError || error || submitError || commandError;
   const canSubmit = !busy && !taskStatus && operationSupported && !sourceError && sourceReady && !validationIssue;
 
   const handleSubmit = useCallback(async () => {
@@ -633,272 +653,280 @@ export function LocalImageEditDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/55 p-3 sm:p-6" data-local-edit-dialog>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-surface-raised text-text-primary shadow-2xl"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent
+        hideClose
+        labelledBy={titleId}
+        className="flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden"
+        bodyClassName="flex min-h-0 flex-1 flex-col overflow-hidden p-0"
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border-l1 px-4 py-3 sm:px-5">
-          <div className="min-w-0">
-            <h2 id={titleId} className="truncate text-sm font-semibold">{labels.title}</h2>
-            <p className="mt-0.5 text-xs text-text-muted">{hasResult ? labels.resultState : labels.editState}</p>
-          </div>
-          <button
-            type="button"
-            aria-label={labels.close}
-            title={labels.close}
-            onClick={onClose}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </header>
+        <div data-local-edit-dialog className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border-l1 px-4 py-3 sm:px-5">
+            <div className="min-w-0">
+              <DialogTitle id={titleId} className="truncate text-sm font-semibold">
+                {labels.title}
+              </DialogTitle>
+              <p className="mt-0.5 text-xs text-text-muted">{hasResult ? labels.resultState : labels.editState}</p>
+            </div>
+            <IconButton
+              label={labels.close}
+              variant="ghost"
+              size="md"
+              onClick={onClose}
+            >
+              <X size={18} aria-hidden="true" />
+            </IconButton>
+          </header>
 
-        <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5">
-          {visibleError ? (
-            <div role="alert" data-local-edit-error className="mb-3 rounded-lg border border-state-error/30 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
-              {visibleError}
-            </div>
-          ) : null}
-          {!sourceReady && !sourceError ? (
-            <div role="status" data-local-edit-source-loading className="mb-3 flex items-center gap-2 text-xs text-text-muted">
-              <ImageIcon size={15} aria-hidden="true" />
-              {labels.sourceLoading}
-            </div>
-          ) : null}
-          {targetNodeImpact ? (
-            <div data-local-edit-target-impact className="mb-4 border-l-2 border-accent/60 pl-3 text-xs leading-5 text-text-secondary">
-              <span className="font-semibold text-text-primary">{labels.targetNodeImpact}</span>
-              <span className="ml-2">{targetNodeImpact}</span>
-            </div>
-          ) : null}
-          {taskStatus ? (
-            <TaskStatusState
-              labels={labels}
-              status={taskStatus}
-              progressPhase={progressPhase}
-              providerName={providerName}
-              failureReason={failureReason}
-              isRetryable={isRetryable}
-              isCancelable={isCancelable}
-              busy={busy}
-              onCancel={onCancel ? () => void runCommand(onCancel) : undefined}
-              onRetry={onRetry ? () => void runCommand(onRetry) : undefined}
-            />
-          ) : null}
+          <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-5">
+            {visibleError ? (
+              <div role="alert" data-local-edit-error className="mb-3 rounded-lg border border-state-error/30 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
+                {visibleError}
+              </div>
+            ) : null}
+            {!sourceReady && !sourceError ? (
+              <div role="status" data-local-edit-source-loading className="mb-3 flex items-center gap-2 text-xs text-text-muted">
+                <ImageIcon size={15} aria-hidden="true" />
+                {labels.sourceLoading}
+              </div>
+            ) : null}
+            {targetNodeImpact ? (
+              <div data-local-edit-target-impact className="mb-4 border-l-2 border-accent/60 pl-3 text-xs leading-5 text-text-secondary">
+                <span className="font-semibold text-text-primary">{labels.targetNodeImpact}</span>
+                <span className="ml-2">{targetNodeImpact}</span>
+              </div>
+            ) : null}
+            {taskStatus ? (
+              <TaskStatusState
+                labels={labels}
+                status={taskStatus}
+                progressPhase={progressPhase}
+                providerName={providerName}
+                failureReason={failureReason}
+                isRetryable={isRetryable}
+                isCancelable={isCancelable}
+                busy={busy}
+                onCancel={onCancel ? () => void runCommand(onCancel) : undefined}
+                onRetry={onRetry ? () => void runCommand(onRetry) : undefined}
+              />
+            ) : null}
 
-          {hasResult && resultUrl ? (
-            <ResultState
-              labels={labels}
-              sourceUrl={sourceAsset.url}
-              resultUrl={resultUrl}
-              resultView={resultView}
-              onResultViewChange={handleResultViewKey}
-              onSourceLoad={markSourceReady}
-              onSourceError={sourceLoadError}
-              busy={busy}
-              onKeepInLibrary={() => void runCommand(onKeepInLibrary)}
-              adopted={adopted}
-              onAdopt={onAdopt && !adopted ? () => void runCommand(onAdopt) : undefined}
-              onRevert={onRevert && adopted ? () => void runCommand(onRevert) : undefined}
-              onContinue={() => void runCommand(onContinue)}
-            />
-          ) : taskStatus ? (
-            <PersistedTaskRequest
-              labels={labels}
-              sourceUrl={sourceAsset.url}
-              sourceAlt={sourceAsset.alt || labels.sourceAlt}
-              operation={selectedOperation}
-              instruction={instruction}
-              sourceText={sourceText}
-              replacementText={replacementText}
-            />
-          ) : (
-            <fieldset disabled={busy} className="min-w-0 space-y-4 border-0 p-0">
-              <legend className="sr-only">{labels.editState}</legend>
-              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-secondary">
-                <span className="font-semibold">{labels.operation}</span>
+            {hasResult && resultUrl ? (
+              <ResultState
+                labels={labels}
+                sourceUrl={sourceAsset.url}
+                resultUrl={resultUrl}
+                resultView={resultView}
+                onResultViewChange={handleResultViewKey}
+                onSourceLoad={markSourceReady}
+                onSourceError={sourceLoadError}
+                busy={busy}
+                onKeepInLibrary={() => void runCommand(onKeepInLibrary)}
+                adopted={adopted}
+                onAdopt={onAdopt && !adopted ? () => void runCommand(onAdopt) : undefined}
+                onRevert={onRevert && adopted ? () => void runCommand(onRevert) : undefined}
+                onContinue={() => void runCommand(onContinue)}
+              />
+            ) : taskStatus ? (
+              <PersistedTaskRequest
+                labels={labels}
+                sourceUrl={sourceAsset.url}
+                sourceAlt={sourceAsset.alt || labels.sourceAlt}
+                operation={selectedOperation}
+                instruction={instruction}
+                sourceText={sourceText}
+                replacementText={replacementText}
+              />
+            ) : (
+              <fieldset disabled={busy} className="min-w-0 space-y-4 border-0 p-0">
+                <legend className="sr-only">{labels.editState}</legend>
+                <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-text-secondary">
+                  <span className="font-semibold">{labels.operation}</span>
+                  <div
+                    role="group"
+                    aria-label={labels.operation}
+                    aria-invalid={!operationSupported}
+                    data-local-edit-operation
+                    data-selected-operation={selectedOperation}
+                    className="inline-flex min-h-10 min-w-0 flex-wrap rounded-lg border border-border-l1 bg-surface-subtle p-0.5"
+                  >
+                    {operationOptions.map((candidate) => {
+                      const candidateSupported = capabilitySupported
+                        && (operationList === undefined || operationList === null || operationList.includes(candidate));
+                      return (
+                        <button
+                          key={candidate}
+                          type="button"
+                          aria-pressed={selectedOperation === candidate}
+                          data-local-edit-operation-option={candidate}
+                          disabled={busy || !candidateSupported}
+                          onClick={() => setSelectedOperation(candidate)}
+                          className="min-h-9 min-w-20 rounded-md px-2.5 text-xs font-semibold text-text-secondary transition-colors aria-pressed:bg-surface-raised aria-pressed:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {labels.operations[candidate] ?? candidate}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {operationCapabilityText ? (
+                  <p role="status" data-local-edit-operation-unavailable className="text-xs leading-5 text-state-error">
+                    {operationCapabilityText}
+                  </p>
+                ) : null}
+
+                {selectedOperation === "replace_text" ? (
+                  <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                    <label className="min-w-0 space-y-1.5 text-xs font-medium">
+                      <span>{labels.sourceText}</span>
+                      <input
+                        value={sourceText}
+                        onChange={(event) => setSourceText(event.target.value)}
+                        className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                      />
+                    </label>
+                    <label className="min-w-0 space-y-1.5 text-xs font-medium">
+                      <span>{labels.replacementText}</span>
+                      <input
+                        value={replacementText}
+                        onChange={(event) => setReplacementText(event.target.value)}
+                        className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <label className="block space-y-1.5 text-xs font-medium">
+                    <span>{labels.instruction}</span>
+                    <textarea
+                      value={instruction}
+                      onChange={(event) => setInstruction(event.target.value)}
+                      rows={3}
+                      className="min-h-20 w-full resize-y rounded-lg border border-border-l1 bg-surface-base px-3 py-2 text-sm font-normal leading-5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                    />
+                  </label>
+                )}
+
+                <div className="flex min-w-0 flex-wrap items-end gap-3 border-y border-border-l1 py-3">
+                  <label className="flex min-w-36 flex-1 flex-col gap-1.5 text-xs font-medium">
+                    <span className="flex items-center justify-between gap-2">
+                      <span>{labels.brushSize}</span>
+                      <output data-local-edit-brush-size>{brushSize}</output>
+                    </span>
+                    <input
+                      type="range"
+                      min="4"
+                      max="256"
+                      step="4"
+                      value={brushSize}
+                      onChange={(event) => setBrushSize(Number(event.target.value))}
+                    />
+                  </label>
+                  <label className="flex min-w-36 flex-1 flex-col gap-1.5 text-xs font-medium">
+                    <span className="flex items-center justify-between gap-2">
+                      <span>{labels.hardness}</span>
+                      <output data-local-edit-hardness>{Math.round(hardness * 100)}%</output>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={hardness}
+                      onChange={(event) => setHardness(Number(event.target.value))}
+                    />
+                  </label>
+                  <label className="inline-flex min-h-10 shrink-0 items-center gap-2 text-xs font-medium">
+                    <input
+                      type="checkbox"
+                      checked={eraseSelection}
+                      onChange={(event) => setEraseSelection(event.target.checked)}
+                      className="h-4 w-4 accent-accent"
+                    />
+                    <Eraser size={15} aria-hidden="true" />
+                    <span>{labels.eraseSelection}</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={clearMask}
+                    className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-border-l1 px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+                  >
+                    <RotateCcw size={14} aria-hidden="true" />
+                    <span>{labels.clear}</span>
+                  </button>
+                </div>
+
                 <div
-                  role="group"
-                  aria-label={labels.operation}
-                  aria-invalid={!operationSupported}
-                  data-local-edit-operation
-                  data-selected-operation={selectedOperation}
-                  className="inline-flex min-h-10 min-w-0 flex-wrap rounded-lg border border-border-l1 bg-surface-subtle p-0.5"
+                  className="relative w-full min-w-0 overflow-hidden rounded-lg border border-border-l1 bg-surface-subtle"
+                  style={{ aspectRatio: `${renderWidth} / ${renderHeight}` }}
+                  data-local-edit-stage
                 >
-                  {operationOptions.map((candidate) => {
-                    const candidateSupported = capabilitySupported
-                      && (operationList === undefined || operationList === null || operationList.includes(candidate));
-                    return (
-                      <button
-                        key={candidate}
-                        type="button"
-                        aria-pressed={selectedOperation === candidate}
-                        data-local-edit-operation-option={candidate}
-                        disabled={busy || !candidateSupported}
-                        onClick={() => setSelectedOperation(candidate)}
-                        className="min-h-9 min-w-20 rounded-md px-2.5 text-xs font-semibold text-text-secondary transition-colors aria-pressed:bg-surface-raised aria-pressed:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {labels.operations[candidate] ?? candidate}
-                      </button>
-                    );
-                  })}
+                  <img
+                    src={sourceAsset.url || undefined}
+                    alt={sourceAsset.alt || labels.sourceAlt}
+                    crossOrigin="anonymous"
+                    draggable={false}
+                    onLoad={(event) => markSourceReady(event.currentTarget)}
+                    onError={sourceLoadError}
+                    className="absolute inset-0 h-full w-full select-none object-contain"
+                  />
+                  <canvas
+                    ref={maskPreviewCanvasRef}
+                    width={renderWidth}
+                    height={renderHeight}
+                    aria-label={labels.maskCanvasLabel}
+                    aria-disabled={busy || !sourceReady}
+                    data-local-edit-mask-canvas
+                    onPointerDown={handlePointerDown}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={stopPointer}
+                    onPointerCancel={stopPointer}
+                    className="absolute inset-0 h-full w-full touch-none select-none"
+                  />
+                  <canvas ref={maskCanvasRef} width={renderWidth} height={renderHeight} aria-hidden="true" className="hidden" />
                 </div>
-              </div>
-              {operationCapabilityText ? (
-                <p role="status" data-local-edit-operation-unavailable className="text-xs leading-5 text-state-error">
-                  {operationCapabilityText}
-                </p>
-              ) : null}
 
-              {selectedOperation === "replace_text" ? (
-                <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-                  <label className="min-w-0 space-y-1.5 text-xs font-medium">
-                    <span>{labels.sourceText}</span>
-                    <input
-                      value={sourceText}
-                      onChange={(event) => setSourceText(event.target.value)}
-                      className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                    />
-                  </label>
-                  <label className="min-w-0 space-y-1.5 text-xs font-medium">
-                    <span>{labels.replacementText}</span>
-                    <input
-                      value={replacementText}
-                      onChange={(event) => setReplacementText(event.target.value)}
-                      className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                    />
-                  </label>
+                {validationText ? (
+                  <p role="status" data-local-edit-validation className="text-xs leading-5 text-text-muted">{validationText}</p>
+                ) : null}
+                {maskSummary ? (
+                  <span
+                    data-local-edit-mask-summary
+                    data-edit-pixels={maskSummary.editPixelCount}
+                    data-protected-pixels={maskSummary.protectedPixelCount}
+                    data-feathered-pixels={maskSummary.featheredPixelCount}
+                    className="sr-only"
+                  />
+                ) : null}
+
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="inline-flex h-10 items-center rounded-lg px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle"
+                  >
+                    {labels.close}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canSubmit}
+                    onClick={() => void handleSubmit()}
+                    className="inline-flex h-10 min-w-32 items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-semibold text-accent-fg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <PencilLine size={14} aria-hidden="true" />
+                    <span>{labels.submit}</span>
+                  </button>
                 </div>
-              ) : (
-                <label className="block space-y-1.5 text-xs font-medium">
-                  <span>{labels.instruction}</span>
-                  <textarea
-                    value={instruction}
-                    onChange={(event) => setInstruction(event.target.value)}
-                    rows={3}
-                    className="min-h-20 w-full resize-y rounded-lg border border-border-l1 bg-surface-base px-3 py-2 text-sm font-normal leading-5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
-                  />
-                </label>
-              )}
-
-              <div className="flex min-w-0 flex-wrap items-end gap-3 border-y border-border-l1 py-3">
-                <label className="flex min-w-36 flex-1 flex-col gap-1.5 text-xs font-medium">
-                  <span className="flex items-center justify-between gap-2">
-                    <span>{labels.brushSize}</span>
-                    <output data-local-edit-brush-size>{brushSize}</output>
-                  </span>
-                  <input
-                    type="range"
-                    min="4"
-                    max="256"
-                    step="4"
-                    value={brushSize}
-                    onChange={(event) => setBrushSize(Number(event.target.value))}
-                  />
-                </label>
-                <label className="flex min-w-36 flex-1 flex-col gap-1.5 text-xs font-medium">
-                  <span className="flex items-center justify-between gap-2">
-                    <span>{labels.hardness}</span>
-                    <output data-local-edit-hardness>{Math.round(hardness * 100)}%</output>
-                  </span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={hardness}
-                    onChange={(event) => setHardness(Number(event.target.value))}
-                  />
-                </label>
-                <label className="inline-flex min-h-10 shrink-0 items-center gap-2 text-xs font-medium">
-                  <input
-                    type="checkbox"
-                    checked={eraseSelection}
-                    onChange={(event) => setEraseSelection(event.target.checked)}
-                    className="h-4 w-4 accent-accent"
-                  />
-                  <Eraser size={15} aria-hidden="true" />
-                  <span>{labels.eraseSelection}</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={clearMask}
-                  className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border border-border-l1 px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-                >
-                  <RotateCcw size={14} aria-hidden="true" />
-                  <span>{labels.clear}</span>
-                </button>
-              </div>
-
-              <div
-                className="relative w-full min-w-0 overflow-hidden rounded-lg border border-border-l1 bg-slate-100 dark:bg-slate-900"
-                style={{ aspectRatio: `${renderWidth} / ${renderHeight}` }}
-                data-local-edit-stage
-              >
-                <img
-                  src={sourceAsset.url || undefined}
-                  alt={sourceAsset.alt || labels.sourceAlt}
-                  crossOrigin="anonymous"
-                  draggable={false}
-                  onLoad={(event) => markSourceReady(event.currentTarget)}
-                  onError={sourceLoadError}
-                  className="absolute inset-0 h-full w-full select-none object-contain"
-                />
-                <canvas
-                  ref={maskPreviewCanvasRef}
-                  width={renderWidth}
-                  height={renderHeight}
-                  aria-label={labels.maskCanvasLabel}
-                  aria-disabled={busy || !sourceReady}
-                  data-local-edit-mask-canvas
-                  onPointerDown={handlePointerDown}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={stopPointer}
-                  onPointerCancel={stopPointer}
-                  className="absolute inset-0 h-full w-full touch-none select-none"
-                />
-                <canvas ref={maskCanvasRef} width={renderWidth} height={renderHeight} aria-hidden="true" className="hidden" />
-              </div>
-
-              {validationText ? (
-                <p role="status" data-local-edit-validation className="text-xs leading-5 text-text-muted">{validationText}</p>
-              ) : null}
-              {maskSummary ? (
-                <span
-                  data-local-edit-mask-summary
-                  data-edit-pixels={maskSummary.editPixelCount}
-                  data-protected-pixels={maskSummary.protectedPixelCount}
-                  data-feathered-pixels={maskSummary.featheredPixelCount}
-                  className="sr-only"
-                />
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="inline-flex h-10 items-center rounded-lg px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle"
-                >
-                  {labels.close}
-                </button>
-                <button
-                  type="button"
-                  disabled={!canSubmit}
-                  onClick={() => void handleSubmit()}
-                  className="inline-flex h-10 min-w-32 items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-semibold text-accent-fg hover:bg-accent-strong disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <PencilLine size={14} aria-hidden="true" />
-                  <span>{labels.submit}</span>
-                </button>
-              </div>
-            </fieldset>
-          )}
+              </fieldset>
+            )}
+          </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1116,8 +1144,8 @@ function TaskStatusState({
         {active ? <Loader2 size={15} className="mt-0.5 shrink-0 animate-spin text-accent" aria-hidden="true" /> : null}
         <div className="min-w-0 flex-1 text-xs leading-5">
           <p className="font-semibold text-text-primary">{labels.statusLabels[status]}</p>
-          {progressPhase ? <p className="text-text-secondary">{labels.phase}: {progressPhase}</p> : null}
-          {providerName ? <p className="text-text-secondary">{labels.provider}: {providerName}</p> : null}
+          {progressPhase ? <p className="text-text-secondary">{labels.phase}: {labels.progressPhases[progressPhase] ?? humanizeTechnicalKey(progressPhase)}</p> : null}
+          {providerName ? <p className="text-text-secondary">{labels.provider}: {labels.providers[providerName] ?? humanizeTechnicalKey(providerName)}</p> : null}
           {failureReason ? <p role="alert" className="mt-1 break-words text-state-error">{failureReason}</p> : null}
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-2">

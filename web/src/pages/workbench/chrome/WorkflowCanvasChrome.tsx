@@ -1,8 +1,6 @@
 import {
   Background,
   BackgroundVariant,
-  ControlButton,
-  Controls,
   Handle,
   NodeToolbar,
   Position,
@@ -10,28 +8,32 @@ import {
   useViewport,
 } from "@xyflow/react";
 import type { FitViewOptions, Viewport } from "@xyflow/react";
-import { Expand, Focus, Grid, Loader2, Sparkles } from "lucide-react";
+import { Expand, Focus, Grid, Minus, Plus, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 
+import { cn } from "../../../components/ui/cn";
+import { IconButton } from "../../../components/ui/icon-button";
+import { tabListClassName, tabTriggerClassName } from "../../../components/ui/tabs";
+import { Tooltip } from "../../../components/ui/tooltip";
 import type { CanvasInteractionMode } from "./workflowCanvasInteraction";
 
 export type WorkflowCanvasPortVisualState = "idle" | "origin" | "valid-target" | "invalid-target" | "missing";
 
 const SOURCE_PORT_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-slate-700 !bg-white !opacity-100 !shadow-[0_0_0_2px_#fff,0_1px_2px_rgba(15,23,42,0.18)] hover:!bg-slate-50 dark:!border-slate-200 dark:!bg-[#111b2d] dark:!shadow-[0_0_0_2px_#0d1424,0_1px_2px_rgba(0,0,0,0.45)] dark:hover:!bg-slate-800";
+  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-port-source !bg-surface-raised !opacity-100 !shadow-[0_0_0_2px_var(--color-port-ring)] hover:!bg-surface-subtle";
 const TARGET_PORT_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-slate-500 !bg-slate-50 !opacity-100 !shadow-[0_0_0_2px_#fff,0_1px_2px_rgba(15,23,42,0.18)] hover:!border-slate-700 hover:!bg-white dark:!border-slate-300 dark:!bg-[#111b2d] dark:!shadow-[0_0_0_2px_#0d1424,0_1px_2px_rgba(0,0,0,0.45)] dark:hover:!border-white";
+  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-port-target !bg-surface-subtle !opacity-100 !shadow-[0_0_0_2px_var(--color-port-ring)] hover:!border-port-source hover:!bg-surface-raised";
 const PORT_STATE_CLASS_NAMES: Record<WorkflowCanvasPortVisualState, string> = {
   idle: "",
   origin:
-    "!border-slate-900 !bg-slate-800 !shadow-[0_0_0_3px_#e2e8f0] dark:!border-white dark:!bg-slate-200 dark:!shadow-[0_0_0_3px_#1e293b]",
+    "!border-text-primary !bg-text-primary !shadow-[0_0_0_3px_var(--color-border-l1)]",
   "valid-target":
-    "!border-emerald-700 !bg-emerald-50 !shadow-[0_0_0_3px_#d1fae5] dark:!border-emerald-300 dark:!bg-emerald-950/70 dark:!shadow-[0_0_0_3px_#14532d]",
+    "!border-port-valid !bg-port-valid-soft !shadow-[0_0_0_3px_var(--color-port-valid-soft)]",
   "invalid-target":
-    "!border-dashed !border-red-600 !bg-red-50 !shadow-[0_0_0_3px_#fee2e2] dark:!border-red-400 dark:!bg-red-950/50 dark:!shadow-[0_0_0_3px_#7f1d1d]",
+    "!border-dashed !border-port-invalid !bg-port-invalid-soft !shadow-[0_0_0_3px_var(--color-port-invalid-soft)]",
   missing:
-    "!border-red-600 !bg-red-100 !shadow-[0_0_0_3px_#fecaca] dark:!border-red-400 dark:!bg-red-950/80 dark:!shadow-[0_0_0_3px_#7f1d1d]",
+    "!border-port-invalid !bg-port-invalid-soft !shadow-[0_0_0_3px_var(--color-port-invalid-soft)]",
 };
 
 export function WorkflowCanvasNodePort({
@@ -72,9 +74,8 @@ export function WorkflowCanvasNodePort({
         visibility: presentationHidden ? "hidden" : undefined,
         pointerEvents: presentationHidden ? "none" : undefined,
       }}
-      className={`${type === "source" ? SOURCE_PORT_CLASS_NAME : TARGET_PORT_CLASS_NAME} ${
-        colorClass
-      } ${PORT_STATE_CLASS_NAMES[visualState]} ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}
+      className={`${type === "source" ? SOURCE_PORT_CLASS_NAME : TARGET_PORT_CLASS_NAME} ${colorClass
+        } ${PORT_STATE_CLASS_NAMES[visualState]} ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}
       title={label}
       aria-label={label}
       aria-hidden={presentationHidden || undefined}
@@ -95,11 +96,11 @@ export function WorkflowCanvasNodeToolbar({
       position={Position.Top}
       align="center"
       offset={10}
-      className="nodrag nopan nowheel z-50"
+      className="nodrag nopan nowheel z-toolbar"
     >
       <div
         data-node-action
-        className="nodrag nopan nowheel flex items-center gap-1 rounded-xl border border-slate-200 bg-white/98 p-1 shadow-lg shadow-slate-950/15 backdrop-blur dark:border-slate-700/80 dark:bg-[#111a2b]/98 dark:shadow-black/40"
+        className="nodrag nopan nowheel flex items-center gap-1 rounded-panel border border-border-l1 bg-surface-raised/98 p-1 shadow-elev-2 backdrop-blur"
         onPointerDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
       >
@@ -114,18 +115,34 @@ export function WorkflowCanvasNodeToolbarButton({
   disabled = false,
   destructive = false,
   onClick,
+  onMouseEnter,
+  onMouseLeave,
+  onFocus,
+  onBlur,
   children,
 }: {
   label: string;
   disabled?: boolean;
   destructive?: boolean;
   onClick: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
+    <IconButton
+      label={label}
+      disabled={disabled}
+      variant={destructive ? "danger" : "ghost"}
+      size="toolbar"
       data-node-action
+      className="nodrag nopan nowheel"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -133,23 +150,16 @@ export function WorkflowCanvasNodeToolbarButton({
           onClick();
         }
       }}
-      disabled={disabled}
-      className={`nodrag nopan nowheel inline-flex h-11 w-11 items-center justify-center rounded-lg border text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 lg:h-9 lg:w-9 ${
-        destructive
-          ? "border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100 hover:text-red-700 dark:border-red-400/45 dark:bg-red-500/10 dark:text-red-200 dark:hover:border-red-400/70 dark:hover:bg-red-500/18"
-          : "border-transparent bg-white text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 dark:bg-[#111a2b] dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-      }`}
-      aria-label={label}
-      title={label}
     >
       {children}
-      <span className="sr-only">{label}</span>
-    </button>
+    </IconButton>
   );
 }
 
 export interface WorkflowCanvasControlLabels {
   resetZoom: string;
+  zoomIn: string;
+  zoomOut: string;
   fitView: string;
   fitSelection: string;
   controls: string;
@@ -167,6 +177,7 @@ export function WorkflowCanvasControls({
   autoLayoutBusy = false,
   fitViewOptions,
   normalizeZoom = (zoom) => zoom,
+  topInset,
 }: {
   labels: WorkflowCanvasControlLabels;
   selectedNodeIds: string[];
@@ -177,6 +188,7 @@ export function WorkflowCanvasControls({
   autoLayoutBusy?: boolean;
   fitViewOptions: FitViewOptions;
   normalizeZoom?: (zoom: number) => number;
+  topInset?: number;
 }) {
   const { zoom } = useViewport();
   const reactFlow = useReactFlow();
@@ -184,15 +196,18 @@ export function WorkflowCanvasControls({
   const commitCurrentViewport = useCallback(() => {
     onViewportCommit(reactFlow.getViewport());
   }, [onViewportCommit, reactFlow]);
-  const commitViewportAfterControlAction = useCallback(() => {
-    window.setTimeout(commitCurrentViewport, duration + 40);
-  }, [commitCurrentViewport, duration]);
   const zoomTo = useCallback(
     (nextZoom: number) => {
       void reactFlow.zoomTo(normalizeZoom(nextZoom)).then(commitCurrentViewport);
     },
     [commitCurrentViewport, normalizeZoom, reactFlow],
   );
+  const zoomIn = useCallback(() => {
+    void reactFlow.zoomIn({ duration }).then(commitCurrentViewport);
+  }, [commitCurrentViewport, duration, reactFlow]);
+  const zoomOut = useCallback(() => {
+    void reactFlow.zoomOut({ duration }).then(commitCurrentViewport);
+  }, [commitCurrentViewport, duration, reactFlow]);
   const fitSelectedNodes = useCallback(() => {
     const selectedNodes = selectedNodeIds
       .filter((nodeId) => reactFlow.getNode(nodeId))
@@ -206,81 +221,85 @@ export function WorkflowCanvasControls({
   }, [commitCurrentViewport, fitViewOptions, reactFlow, selectedNodeIds]);
 
   return (
-    <Controls
-      position="top-left"
-      orientation="horizontal"
-      showInteractive={false}
-      showFitView={false}
-      fitViewOptions={fitViewOptions}
-      onZoomIn={commitViewportAfterControlAction}
-      onZoomOut={commitViewportAfterControlAction}
+    <div
+      role="toolbar"
       aria-label={labels.controls}
-      className="workflow-canvas-controls nopan nodrag nowheel z-30 !m-0 translate-x-3 translate-y-3 lg:translate-x-4 lg:translate-y-4"
+      className="workflow-canvas-controls nopan nodrag nowheel absolute left-3 top-3 z-toolbar flex items-center lg:left-4 lg:top-4"
+      style={topInset == null ? undefined : { top: topInset }}
     >
-      <ControlButton onClick={() => zoomTo(1)} aria-label={labels.resetZoom} title={labels.resetZoom}>
-        <span className="text-[11px] tabular-nums">{Math.round(normalizeZoom(zoom) * 100)}%</span>
-      </ControlButton>
-      <ControlButton
+      <IconButton
+        label={labels.zoomOut}
+        size="toolbar"
+        className="nodrag nopan nowheel rounded-none"
+        onClick={zoomOut}
+      >
+        <Minus size={14} aria-hidden="true" />
+      </IconButton>
+      <IconButton
+        label={labels.resetZoom}
+        size="toolbar"
+        className="nodrag nopan nowheel min-w-11 rounded-none lg:min-w-9"
+        onClick={() => zoomTo(1)}
+      >
+        <span className="px-0.5 text-[11px] tabular-nums">{Math.round(normalizeZoom(zoom) * 100)}%</span>
+      </IconButton>
+      <IconButton
+        label={labels.zoomIn}
+        size="toolbar"
+        className="nodrag nopan nowheel rounded-none"
+        onClick={zoomIn}
+      >
+        <Plus size={14} aria-hidden="true" />
+      </IconButton>
+      <IconButton
+        label={labels.fitView}
+        size="toolbar"
+        className="nodrag nopan nowheel rounded-none"
         onClick={() => {
           void reactFlow.fitView(fitViewOptions).then(commitCurrentViewport);
         }}
-        aria-label={labels.fitView}
-        title={labels.fitView}
       >
-        <Expand aria-hidden="true" size={13} />
-      </ControlButton>
-      <ControlButton
-        onClick={fitSelectedNodes}
+        <Expand aria-hidden="true" size={14} />
+      </IconButton>
+      <IconButton
+        label={labels.fitSelection}
+        size="toolbar"
+        className="nodrag nopan nowheel rounded-none"
         disabled={!selectedNodeIds.length}
-        aria-label={labels.fitSelection}
-        title={labels.fitSelection}
+        onClick={fitSelectedNodes}
       >
-        <Focus aria-hidden="true" size={13} />
-      </ControlButton>
-      <ControlButton
+        <Focus aria-hidden="true" size={14} />
+      </IconButton>
+      <IconButton
+        label={labels.snapToGrid}
+        size="toolbar"
+        className={cn("nodrag nopan nowheel rounded-none", snapToGrid && "bg-surface-subtle text-text-primary")}
         onClick={onToggleSnapToGrid}
-        aria-label={labels.snapToGrid}
-        title={labels.snapToGrid}
-        className={snapToGrid ? "!bg-slate-100 dark:!bg-slate-800" : ""}
       >
-        <Grid aria-hidden="true" size={13} className={snapToGrid ? "text-slate-800 dark:text-slate-100" : ""} />
-      </ControlButton>
-      <ControlButton
+        <Grid aria-hidden="true" size={14} />
+      </IconButton>
+      <IconButton
+        label={labels.autoLayout}
+        size="toolbar"
+        className="nodrag nopan nowheel rounded-none"
+        busy={autoLayoutBusy}
         onClick={onAutoLayout}
-        disabled={autoLayoutBusy}
-        aria-label={labels.autoLayout}
-        title={labels.autoLayout}
       >
-        {autoLayoutBusy ? (
-          <Loader2 aria-hidden="true" size={13} className="animate-spin" />
-        ) : (
-          <Sparkles aria-hidden="true" size={13} />
-        )}
-      </ControlButton>
-    </Controls>
+        <Sparkles aria-hidden="true" size={14} />
+      </IconButton>
+    </div>
   );
 }
 
 export function WorkflowCanvasGrid({ gap = 36 }: { gap?: number }) {
   return (
-    <>
-      <Background
-        id={`workflow-grid-light-${gap}`}
-        className="block dark:hidden"
-        variant={BackgroundVariant.Dots}
-        gap={gap}
-        size={1.5}
-        color="#94a3b8"
-      />
-      <Background
-        id={`workflow-grid-dark-${gap}`}
-        className="hidden dark:block"
-        variant={BackgroundVariant.Dots}
-        gap={gap}
-        size={1.5}
-        color="rgba(148, 163, 184, 0.35)"
-      />
-    </>
+    <Background
+      id={`workflow-grid-${gap}`}
+      variant={BackgroundVariant.Dots}
+      gap={gap}
+      size={1.5}
+      color="var(--color-canvas-dot)"
+    />
   );
 }
 
@@ -301,24 +320,24 @@ export function WorkflowCanvasMobileModeTabs({
   onChange: (mode: CanvasInteractionMode) => void;
 }) {
   return (
-    <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-900/85">
+    <div
+      role="group"
+      data-workflow-canvas-mobile-mode-tabs
+      className={cn(tabListClassName, "grid w-full grid-cols-3 gap-1 p-1")}
+    >
       {items.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          onClick={() => onChange(item.key)}
-          className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
-            value === item.key
-              ? "bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
-              : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-          }`}
-          aria-pressed={value === item.key}
-          aria-label={item.description}
-          title={item.description}
-        >
-          {item.icon}
-          <span className="truncate">{item.label}</span>
-        </button>
+        <Tooltip key={item.key} content={item.description}>
+          <button
+            type="button"
+            onClick={() => onChange(item.key)}
+            className={cn(tabTriggerClassName, "min-h-11 gap-2")}
+            aria-pressed={value === item.key}
+            aria-label={item.description}
+          >
+            {item.icon}
+            <span className="truncate">{item.label}</span>
+          </button>
+        </Tooltip>
       ))}
     </div>
   );

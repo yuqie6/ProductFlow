@@ -1,7 +1,7 @@
 import { Check, ImagePlus, Loader2, Trash2 } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
-import { SelectField } from "../../components/SelectField";
+import { Select as SelectField } from "../../components/ui/select";
 import { api } from "../../lib/api";
 import { formatImageSizeValue } from "../../lib/imageSizes";
 import type { ImageSessionAsset, ImageSessionRound, ProductSummary } from "../../lib/types";

@@ -10,15 +10,18 @@ import {
   RotateCcw,
   Workflow,
 } from "lucide-react";
-import { useCallback, type ReactNode } from "react";
+import { useCallback } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
+import { StatusBadge, statusBadgeClass } from "../../../components/ui/status-badge";
+import { EmptyState } from "../../../components/ui/empty-state";
+import { PanelSkeleton } from "../../../components/ui/skeleton";
 import { ApiError, api } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { GraphNodeRun, GraphProjection, GraphRun, GraphRunSubmitInput, WorkflowNodeDisplayStatus } from "../../../lib/types";
-import { statusClass } from "../chrome/utils";
 import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
   graphContextEntries,
@@ -30,6 +33,7 @@ import {
   LIVE_RUN_STATUSES,
 } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
+import { failedNodesRunInput, runPreviewPointerHandlers } from "./graphRunPreview";
 
 export function GraphRunsPanel({
   productId,
@@ -39,6 +43,8 @@ export function GraphRunsPanel({
   onBeforeRun,
   onJump,
   onPreviewImage,
+  onPreviewRun,
+  onHideRunPreview,
 }: {
   productId: string;
   graph: GraphProjection;
@@ -47,6 +53,8 @@ export function GraphRunsPanel({
   onBeforeRun?: () => Promise<void>;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -78,27 +86,23 @@ export function GraphRunsPanel({
     retryMutation.mutate(runId);
   }, [onBeforeRun, retryMutation]);
   const retryFailedNodes = useCallback(async (run: GraphRun) => {
-    const nodeIds = run.node_runs
-      .filter((nodeRun) => nodeRun.status === "failed" && nodeRun.node_id)
-      .map((nodeRun) => nodeRun.node_id as string);
-    if (!nodeIds.length) return;
+    const input = failedNodesRunInput(run);
+    if (!input) return;
     try {
       await onBeforeRun?.();
     } catch {
       return;
     }
-    await withGraphRunSubmit(() => selectionMutation.mutateAsync({
-      scope: "selection",
-      node_ids: nodeIds,
-    }));
-  }, [onBeforeRun, selectionMutation]);
+    onHideRunPreview?.();
+    await withGraphRunSubmit(() => selectionMutation.mutateAsync(input));
+  }, [onBeforeRun, onHideRunPreview, selectionMutation]);
 
   if (runsQuery.isLoading) {
-    return <PanelState icon={<Loader2 size={20} className="animate-spin" />} text={t("app.loading")} />;
+    return <PanelSkeleton rows={5} label={t("app.loading")} />;
   }
   if (runsQuery.isError) {
     return (
-      <PanelState
+      <EmptyState
         icon={<AlertCircle size={20} />}
         text={errorDetail(runsQuery.error, t("graph.runs.loadFailed"))}
         action={t("agentWorkbench.retry")}
@@ -132,11 +136,14 @@ export function GraphRunsPanel({
           onCancel={() => cancelMutation.mutate(run.id)}
           onRetry={() => void retryRun(run.id)}
           onRetryFailed={() => void retryFailedNodes(run)}
+          onPreviewFailed={failedNodesRunInput(run) ?? undefined}
+          onPreviewRun={onPreviewRun}
+          onHideRunPreview={onHideRunPreview}
           onJump={onJump}
           onPreviewImage={onPreviewImage}
         />
       )) : (
-        <PanelState icon={<Clock3 size={20} />} text={t("graph.runs.empty")} compact />
+        <EmptyState icon={<Clock3 size={20} />} text={t("graph.runs.empty")} compact />
       )}
     </div>
   );
@@ -152,6 +159,9 @@ function GraphRunRecord({
   onCancel,
   onRetry,
   onRetryFailed,
+  onPreviewFailed,
+  onPreviewRun,
+  onHideRunPreview,
   onJump,
   onPreviewImage,
 }: {
@@ -164,6 +174,9 @@ function GraphRunRecord({
   onCancel: () => void;
   onRetry: () => void;
   onRetryFailed: () => void;
+  onPreviewFailed?: GraphRunSubmitInput;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
@@ -180,7 +193,7 @@ function GraphRunRecord({
     >
       <div className="p-3.5">
         <div className="flex min-w-0 items-start gap-2.5">
-          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${statusClass(run.status as WorkflowNodeDisplayStatus)}`}>
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${statusBadgeClass(run.status as WorkflowNodeDisplayStatus)}`}>
             {active ? <Loader2 size={14} className="animate-spin" /> : <Workflow size={14} />}
           </span>
           <div className="min-w-0 flex-1">
@@ -188,9 +201,9 @@ function GraphRunRecord({
               <span className="text-xs font-semibold text-text-primary">
                 {t(graphRunScopeLabelKey(run.scope))}
               </span>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusClass(run.status as WorkflowNodeDisplayStatus)}`}>
+              <StatusBadge status={run.status as WorkflowNodeDisplayStatus}>
                 {t(`detail.nodeStatus.${run.status}`)}
-              </span>
+              </StatusBadge>
             </div>
             <div className="mt-1 space-y-0.5 text-[10px] text-text-muted">
               {requested ? <div>{requested.title}</div> : null}
@@ -203,29 +216,36 @@ function GraphRunRecord({
           </div>
           <div className="flex shrink-0 gap-1.5">
             {run.node_runs.some((nodeRun) => nodeRun.status === "failed" && nodeRun.node_id) && !active ? (
-              <IconButton label={t("graph.runs.retryFailed")} disabled={retryFailedBusy} onClick={onRetryFailed}>
+              <IconButton
+                label={t("graph.runs.retryFailed")}
+                disabled={retryFailedBusy}
+                variant="secondary"
+                size="sm"
+                onClick={onRetryFailed}
+                {...runPreviewPointerHandlers(onPreviewFailed, onPreviewRun, onHideRunPreview)}
+              >
                 {retryFailedBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
               </IconButton>
             ) : null}
             {run.status === "failed" && run.is_retryable ? (
-              <IconButton label={t("agentWorkbench.runHistory.retryRun")} disabled={retryBusy} onClick={onRetry}>
+              <IconButton label={t("agentWorkbench.runHistory.retryRun")} disabled={retryBusy} variant="secondary" size="sm" onClick={onRetry}>
                 {retryBusy ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
               </IconButton>
             ) : null}
             {active ? (
-              <IconButton label={t("agentWorkbench.runHistory.cancel")} disabled={cancelBusy} danger onClick={onCancel}>
+              <IconButton label={t("agentWorkbench.runHistory.cancel")} disabled={cancelBusy} variant="danger" size="sm" onClick={onCancel}>
                 {cancelBusy ? <Loader2 size={14} className="animate-spin" /> : <OctagonX size={14} />}
               </IconButton>
             ) : null}
           </div>
         </div>
         {run.failure_reason ? (
-          <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11px] leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+          <div className="mt-3 rounded-md border border-state-error/30 bg-state-error-soft px-3 py-2 text-[11px] leading-5 text-state-error">
             {run.failure_reason}
           </div>
         ) : null}
       </div>
-      <div className="divide-y divide-zinc-100 border-t border-zinc-100 dark:divide-slate-800 dark:border-slate-800">
+      <div className="divide-y divide-border-l2 border-t border-border-l2">
         {run.node_runs.map((nodeRun) => (
           <NodeRunRecord
             key={nodeRun.id}
@@ -266,23 +286,23 @@ function NodeRunRecord({
   const phaseKey = graphProgressPhaseLabelKey(nodeRun.progress_phase);
   const elapsed = formatElapsed(nodeRun.started_at, nodeRun.finished_at, nodeRun.status);
   return (
-    <div className={selected ? "bg-slate-50 dark:bg-slate-800/50" : ""}>
+    <div className={selected ? "bg-surface-subtle" : ""}>
       <div className="flex min-w-0 items-start gap-2.5 px-3.5 py-3">
-        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${statusClass(nodeRun.status)}`}>
+        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${statusBadgeClass(nodeRun.status)}`}>
           {active ? <Loader2 size={12} className="animate-spin" /> : <CircleDot size={12} />}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             {onJump ? (
-              <button type="button" onClick={onJump} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-zinc-800 hover:text-text-primary dark:hover:text-white">
+              <button type="button" onClick={onJump} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-text-primary hover:text-accent">
                 {title}
               </button>
             ) : (
               <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">{title}</span>
             )}
-            <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${statusClass(nodeRun.status)}`}>
+            <StatusBadge status={nodeRun.status} className="px-1.5 py-0.5 text-[9px]">
               {t(`detail.nodeStatus.${nodeRun.status}`)}
-            </span>
+            </StatusBadge>
           </div>
           {phaseKey || elapsed || nodeRun.attempt_count > 1 ? (
             <div className="mt-1 space-y-0.5 text-[10px] text-text-muted">
@@ -300,7 +320,7 @@ function NodeRunRecord({
                 return (
                   <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-text-muted">
                     <span className="min-w-0 truncate">{item.title || t("graph.runs.deletedNode")}</span>
-                    <span>{roleKey ? t(roleKey) : item.role}</span>
+                    <span>{roleKey ? t(roleKey) : t("graph.edgeRole.unknown")}</span>
                   </li>
                 );
               })}
@@ -313,6 +333,8 @@ function NodeRunRecord({
         {previewAssetId && onPreviewImage ? (
           <IconButton
             label={t("agentWorkbench.runHistory.result")}
+            variant="secondary"
+            size="sm"
             onClick={() => onPreviewImage({
               previewUrl: api.getProductImageAssetMediaUrl(previewAssetId, "thumbnail"),
               downloadUrl: api.getProductImageAssetMediaUrl(previewAssetId),
@@ -325,76 +347,20 @@ function NodeRunRecord({
         ) : null}
       </div>
       {evidence.length ? (
-        <details data-graph-run-inputs-technical className="group border-t border-zinc-100 px-3.5 py-2.5 dark:border-slate-800">
-          <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-semibold text-zinc-500 marker:hidden dark:text-slate-400 [&::-webkit-details-marker]:hidden">
+        <details data-graph-run-inputs-technical className="group border-t border-border-l2 px-3.5 py-2.5">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-semibold text-text-muted marker:hidden [&::-webkit-details-marker]:hidden">
             <FileText size={12} />
             <span>{t("agentWorkbench.runHistory.evidence")}</span>
           </summary>
           <dl className="mt-2 space-y-1">
             {evidence.map((item) => (
               <div key={item.key} className="grid grid-cols-[minmax(88px,0.4fr)_minmax(0,1fr)] gap-2 text-[10px] leading-4">
-                <dt className="break-words text-zinc-400 dark:text-slate-500">{t(item.labelKey)}</dt>
+                <dt className="break-words text-text-muted">{t(item.labelKey)}</dt>
                 <dd className="break-words text-text-secondary">{item.value}</dd>
               </div>
             ))}
           </dl>
         </details>
-      ) : null}
-    </div>
-  );
-}
-
-function IconButton({
-  label,
-  disabled,
-  danger = false,
-  onClick,
-  children,
-}: {
-  label: string;
-  disabled?: boolean;
-  danger?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border disabled:opacity-40 ${danger
-        ? "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-400/35 dark:text-red-200 dark:hover:bg-red-500/10"
-        : "border-zinc-200 text-zinc-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
-        }`}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PanelState({
-  icon,
-  text,
-  action,
-  onAction,
-  compact = false,
-}: {
-  icon?: ReactNode;
-  text: string;
-  action?: string;
-  onAction?: () => void;
-  compact?: boolean;
-}) {
-  return (
-    <div className={`flex flex-col items-center justify-center gap-2 px-6 text-center text-xs text-text-muted ${compact ? "min-h-[180px]" : "min-h-[260px]"}`}>
-      {icon ? <span className="text-zinc-400 dark:text-slate-500">{icon}</span> : null}
-      <span className="max-w-[260px] leading-5">{text}</span>
-      {action && onAction ? (
-        <button type="button" onClick={onAction} className="mt-1 font-semibold text-slate-800 hover:underline dark:text-slate-200">
-          {action}
-        </button>
       ) : null}
     </div>
   );

@@ -42,7 +42,7 @@ export function ImageAssetGrid(props: ImageAssetCollectionProps) {
 export function ImageAssetList(props: ImageAssetCollectionProps) {
   const { t } = useI18n();
   return (
-    <div className="divide-y divide-slate-100 rounded-md border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+    <div className="divide-y divide-border-l2 rounded-panel border border-border-l1">
       {props.assets.map((asset) => {
         const readable = assetCanReadMedia(asset);
         const selected = props.selectedIds.has(asset.id);
@@ -53,34 +53,34 @@ export function ImageAssetList(props: ImageAssetCollectionProps) {
             data-gallery-origin-type={asset.origin_type}
             draggable
             onDragStart={(event) => startAssetDrag(event, asset, props.selectedIds)}
-            className={`flex min-h-[58px] min-w-0 items-center gap-2 px-2 py-1.5 ${selected ? "bg-indigo-50/70 dark:bg-violet-500/10" : "bg-white dark:bg-slate-950/35"}`}
+            className={`flex min-h-[58px] min-w-0 items-center gap-2 px-2 py-1.5 ${selected ? "bg-accent-soft" : "bg-surface-raised"}`}
           >
             <SelectionButton asset={asset} selected={selected} onToggle={props.onToggleSelected} />
             <button
               type="button"
               onClick={() => readable && props.onPreview(asset)}
               disabled={!readable}
-              className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-100 dark:bg-slate-900"
+              className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-control bg-surface-subtle"
               aria-label={t("detail.previewImage", { alt: asset.display_name })}
             >
               {readable ? (
                 <img src={api.toApiUrl(asset.thumbnail_url)} alt="" className="h-full w-full object-cover" />
               ) : (
-                <FileQuestion size={17} className="text-slate-400" />
+                <FileQuestion size={17} className="text-text-muted" />
               )}
             </button>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-900 dark:text-slate-100" title={asset.display_name}>
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-primary" title={asset.display_name}>
                   {asset.display_name}
                 </span>
                 {asset.rendition ? (
-                  <span className="shrink-0 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                  <span className="shrink-0 rounded-control bg-surface-subtle px-1 py-0.5 text-[9px] font-semibold text-text-muted">
                     {asset.rendition.delivery_spec.format.toUpperCase()}
                   </span>
                 ) : null}
               </div>
-              <div className="mt-1 truncate text-[10px] text-slate-400">
+              <div className="mt-1 truncate text-[10px] text-text-muted">
                 {assetPixelSize(asset)} · {formatAssetByteSize(asset.byte_size)} · {formatDateTime(asset.created_at, t.locale)}
               </div>
             </div>
@@ -124,13 +124,13 @@ function ImageAssetCard({
       data-gallery-origin-type={asset.origin_type}
       draggable
       onDragStart={(event) => startAssetDrag(event, asset, selectedIds)}
-      className={`group min-w-0 overflow-visible rounded-md border bg-white shadow-sm ${
+      className={`group min-w-0 overflow-visible rounded-panel border bg-surface-raised shadow-sm ${
         selected
-          ? "border-indigo-400 ring-2 ring-indigo-100 dark:border-violet-400 dark:ring-violet-500/15"
-          : "border-slate-200 dark:border-slate-700 dark:bg-slate-950/35"
+          ? "border-accent ring-2 ring-accent/20"
+          : "border-border-l1"
       }`}
     >
-      <div className="relative aspect-square overflow-hidden rounded-t-[5px] bg-slate-100 dark:bg-slate-900">
+      <div className="relative aspect-square overflow-hidden rounded-t-panel bg-surface-subtle">
         <button
           type="button"
           onClick={() => readable && onPreview(asset)}
@@ -145,7 +145,7 @@ function ImageAssetCard({
               className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
             />
           ) : (
-            <span className="flex flex-col items-center gap-1 text-[10px] text-slate-400">
+            <span className="flex flex-col items-center gap-1 text-[10px] text-text-muted">
               <FileQuestion size={20} />
               {asset.verification_status === "missing"
                 ? t("detail.library.mediaMissing")
@@ -157,17 +157,17 @@ function ImageAssetCard({
           <SelectionButton asset={asset} selected={selected} onToggle={onToggleSelected} />
         </div>
         {asset.rendition ? (
-          <span className="absolute bottom-1.5 right-1.5 max-w-[calc(100%-0.75rem)] truncate rounded bg-slate-950/80 px-1.5 py-1 text-[9px] font-semibold text-white backdrop-blur">
+          <span className="absolute bottom-1.5 right-1.5 max-w-[calc(100%-0.75rem)] truncate rounded-control bg-surface-inverse/80 px-1.5 py-1 text-[9px] font-semibold text-surface-raised backdrop-blur">
             {asset.rendition.delivery_spec.width} x {asset.rendition.delivery_spec.height} {asset.rendition.delivery_spec.format.toUpperCase()}
           </span>
         ) : null}
       </div>
       <div className="flex h-[52px] min-w-0 items-center gap-1 px-2 py-1.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] font-medium text-slate-900 dark:text-slate-100" title={asset.display_name}>
+          <div className="truncate text-[11px] font-medium text-text-primary" title={asset.display_name}>
             {asset.display_name}
           </div>
-          <div className="mt-0.5 truncate text-[9px] text-slate-400">
+          <div className="mt-0.5 truncate text-[9px] text-text-muted">
             {asset.image_type_title ?? assetPixelSize(asset)}
           </div>
         </div>
@@ -203,10 +203,10 @@ function SelectionButton({
         event.stopPropagation();
         onToggle(asset.id);
       }}
-      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border shadow-sm ${
+      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-control border shadow-sm ${
         selected
-          ? "border-indigo-600 bg-indigo-600 text-white dark:border-violet-400 dark:bg-violet-500"
-          : "border-slate-300 bg-white/95 text-transparent hover:text-slate-300 dark:border-slate-600 dark:bg-slate-950/90"
+          ? "border-accent bg-accent text-accent-fg"
+          : "border-border-l3 bg-surface-raised/95 text-transparent hover:text-text-muted"
       }`}
       aria-label={asset.display_name}
       aria-pressed={selected}

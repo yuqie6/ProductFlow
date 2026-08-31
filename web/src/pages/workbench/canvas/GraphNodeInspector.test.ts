@@ -292,7 +292,7 @@ describe("GraphNodeInspector", () => {
     expect(withoutPin).not.toContain("data-graph-pin-asset");
   });
 
-  it("renders server delivery presets with custom support and provenance metadata", () => {
+  it("renders localized delivery presets without catalog governance metadata", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["delivery-presets"], deliveryPresetCatalog);
     const selectedImage = node({
@@ -313,11 +313,13 @@ describe("GraphNodeInspector", () => {
     );
 
     expect(markup).toContain("平台预设");
-    expect(markup).toContain("支持自定义");
     expect(markup).toContain("淘宝/天猫首屏");
     expect(markup).toContain("京东主图");
-    expect(markup).toContain("来源 docs/ARCHITECTURE.md §7");
-    expect(markup).toContain("模板仅提供便捷默认值");
+    expect(markup).toContain("首屏海报图");
+    expect(markup).not.toContain("支持自定义");
+    expect(markup).not.toContain("2026-08-24");
+    expect(markup).not.toContain("docs/ARCHITECTURE.md");
+    expect(markup).not.toContain("模板仅提供便捷默认值");
     expect((markup.match(/data-delivery-preset-key=/g) ?? []).length).toBe(5);
   });
 
@@ -528,7 +530,7 @@ describe("GraphNodeInspector", () => {
           sort_order: 0,
           node_title: "主图 1",
           input_trace: [{
-            edge_id: "edge-1",
+            edge_id: "edge-prompt",
             source_node_id: "brief",
             source_title: "创作要求",
             role: "brief",
@@ -552,19 +554,21 @@ describe("GraphNodeInspector", () => {
       }],
     });
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
-    const firstScreen = markup.split("data-graph-runtime-inputs-technical")[0];
-    expect(firstScreen).toContain("当前连线");
-    expect(firstScreen).toContain("实际运行输入");
-    expect(firstScreen).toContain("data-graph-runtime-inputs");
-    expect(firstScreen).toContain("data-graph-current-wiring");
+    const firstScreen = markup.split("data-graph-technical-details")[0];
+    expect(firstScreen).toContain("来自");
+    expect(firstScreen).toContain("data-graph-runtime-input-used");
     expect(firstScreen).toContain("创作要求");
-    expect(firstScreen).toContain("brief");
-    expect(firstScreen).toContain("顺序 0");
-    expect(firstScreen).toContain("artifact-brief");
-    expect(firstScreen).toContain("version-brief");
+    expect(firstScreen).not.toContain("artifact-brief");
+    expect(firstScreen).not.toContain("version-brief");
+    expect(firstScreen).not.toContain("creative_brief");
     expect(firstScreen).not.toContain("asset-a");
     expect(firstScreen).not.toContain("deadbeef");
-    expect(markup).toContain("data-graph-runtime-inputs-technical");
+    expect(markup).toContain("data-graph-technical-details");
+    expect(markup).toContain("artifact-brief");
+    expect(markup).toContain("version-brief");
+    expect(markup).toContain("产物类型");
+    expect(markup).not.toContain("creative_brief");
+    expect(markup).toContain("deadbeef");
   });
 
   it("shows the last generated prompt on a prompt node", () => {
@@ -654,7 +658,9 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("要求比例");
     expect(markup).toContain("3:4");
     expect(markup).toContain("1024×1536");
-    expect(markup).toContain("generate");
+    expect(markup).toContain("生成");
+    expect(markup).toContain("高质量");
+    expect(markup).not.toContain(">generate<");
     expect(markup).toContain("供应商回退");
     expect(markup).toContain("data-preview-aspect=\"3:4\"");
     expect(markup).not.toContain("aspect-[4/3]");

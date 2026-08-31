@@ -51,6 +51,37 @@ export function graphViewportCenterPosition(
   };
 }
 
+export function graphAvailableNodePosition(
+  viewport: WorkflowCanvasViewport | null,
+  nodes: readonly GraphNode[],
+  groupId: string | null = null,
+): { position_x: number; position_y: number } {
+  const center = graphViewportCenterPosition(viewport);
+  const occupied = groupId === null
+    ? nodes
+    : nodes.filter((node) => node.group_id === groupId);
+  const stepX = snapGraphCoordinate(GRAPH_NODE_WIDTH + GRAPH_SNAP * 2);
+  const stepY = snapGraphCoordinate(GRAPH_NODE_HEIGHT + GRAPH_SNAP * 2);
+  const overlaps = (position_x: number, position_y: number) => occupied.some((node) => (
+    position_x < node.position_x + GRAPH_NODE_WIDTH + GRAPH_SNAP
+    && position_x + GRAPH_NODE_WIDTH + GRAPH_SNAP > node.position_x
+    && position_y < node.position_y + GRAPH_NODE_HEIGHT + GRAPH_SNAP
+    && position_y + GRAPH_NODE_HEIGHT + GRAPH_SNAP > node.position_y
+  ));
+
+  for (let ring = 0; ring <= 12; ring += 1) {
+    for (let row = -ring; row <= ring; row += 1) {
+      for (let column = -ring; column <= ring; column += 1) {
+        if (ring > 0 && Math.abs(row) !== ring && Math.abs(column) !== ring) continue;
+        const position_x = snapGraphCoordinate(center.position_x + column * stepX);
+        const position_y = snapGraphCoordinate(center.position_y + row * stepY);
+        if (!overlaps(position_x, position_y)) return { position_x, position_y };
+      }
+    }
+  }
+  return center;
+}
+
 export function createdGraphNodeIds(before: GraphProjection, after: GraphProjection): string[] {
   const known = new Set(before.nodes.map((node) => node.id));
   return after.nodes.filter((node) => !known.has(node.id)).map((node) => node.id);

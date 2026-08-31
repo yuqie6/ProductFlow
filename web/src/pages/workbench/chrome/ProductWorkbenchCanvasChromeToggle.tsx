@@ -1,5 +1,7 @@
 import { Maximize2, Minimize2 } from "lucide-react";
 
+import { IconButton } from "../../../components/ui/icon-button";
+
 interface ProductWorkbenchCanvasChromeToggleProps {
   collapsed: boolean;
   maximizeLabel: string;
@@ -17,16 +19,15 @@ export function ProductWorkbenchCanvasChromeToggle({
 }: ProductWorkbenchCanvasChromeToggleProps) {
   const label = collapsed ? restoreLabel : maximizeLabel;
   const button = (
-    <button
-      type="button"
+    <IconButton
       data-canvas-control
+      label={label}
+      size="toolbar"
+      className="pointer-events-auto"
       onClick={onToggle}
-      className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary transition-colors duration-fast hover:bg-surface-subtle hover:text-text-primary active:scale-[0.98] motion-reduce:active:scale-100 lg:h-9 lg:w-9"
-      aria-label={label}
-      title={label}
     >
       {collapsed ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-    </button>
+    </IconButton>
   );
   if (embedded) return button;
   return (

@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { ConfirmDialog } from "../../../../components/ConfirmDialog";
+import { Button } from "../../../../components/ui/button";
+import { Dialog, DialogContent } from "../../../../components/ui/dialog";
+import { Input } from "../../../../components/ui/field";
+import { IconButton } from "../../../../components/ui/icon-button";
+import { Select } from "../../../../components/ui/select";
 import { api, ApiError } from "../../../../lib/api";
 import type { DownloadableImage } from "../../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../../lib/image-downloads";
@@ -25,6 +30,8 @@ import {
 import { assetCanReadMedia, isWideImageExplorer } from "./explorerState";
 import { toggleImageExplorerTargetAsset } from "./selectionTarget";
 import { useProductImageExplorer } from "./useProductImageExplorer";
+
+const UNORGANIZED_FOLDER_VALUE = "__none__";
 
 export interface ImageExplorerReferenceTarget {
   bindAsset: (asset: Pick<GalleryAsset, "id">) => Promise<unknown>;
@@ -79,24 +86,26 @@ export function DeliveryExportButton({
   const reasonId = "delivery-export-selection-reason";
   return (
     <>
-      <button
+      <Button
         type="button"
+        size="sm"
+        className="h-7 px-2"
         onClick={() => {
           if (eligibility.eligible) {
             onExport(eligibility.renditionJobIds);
           }
         }}
         disabled={!eligibility.eligible || busy}
+        busy={exporting}
         aria-describedby={reasonLabel ? reasonId : undefined}
-        title={reasonLabel ?? label}
+        title={!eligibility.eligible ? (reasonLabel ?? undefined) : undefined}
         data-testid="delivery-export-button"
-        className="inline-flex h-7 items-center gap-1 rounded bg-white px-2 font-medium shadow-sm disabled:opacity-40 dark:bg-slate-950/70"
       >
-        {exporting ? <Loader2 size={13} className="animate-spin" /> : <Package size={13} />}
+        {exporting ? null : <Package size={13} />}
         {exporting ? exportingLabel : label}
-      </button>
+      </Button>
       {reasonLabel ? (
-        <span id={reasonId} data-testid="delivery-export-reason" className="basis-full text-[10px] text-amber-700 dark:text-amber-200">
+        <span id={reasonId} data-testid="delivery-export-reason" className="basis-full text-[10px] text-state-warning">
           {reasonLabel}
         </span>
       ) : null}
@@ -399,7 +408,7 @@ export function ProductImageExplorer({
 
       <div className={wide ? "grid grid-cols-[148px_minmax(0,1fr)] gap-3 pt-3" : "pt-3"}>
         {wide || directoryOpen ? (
-          <div className={wide ? "min-w-0 border-r border-slate-200 pr-2 dark:border-slate-800" : "mb-3 border-b border-slate-200 pb-3 dark:border-slate-800"}>
+          <div className={wide ? "min-w-0 border-r border-border-l1 pr-2" : "mb-3 border-b border-border-l1 pb-3"}>
             <ImageDirectoryTree
               bootstrap={bootstrap}
               directory={explorer.directory}
@@ -420,46 +429,53 @@ export function ProductImageExplorer({
 
         <div className="min-w-0">
           {operationError ? (
-            <div role="alert" className="mb-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            <div role="alert" className="mb-2 rounded-control border border-state-error/30 bg-state-error-soft px-2.5 py-2 text-xs text-state-error">
               {operationError instanceof ApiError ? operationError.detail : operationError.message}
             </div>
           ) : null}
 
           {selectionTarget && targetAssetsById.size ? (
-            <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-800 dark:border-cyan-400/35 dark:bg-cyan-400/10 dark:text-cyan-100">
+            <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-control border border-accent/30 bg-accent-soft px-2 py-1.5 text-xs text-accent">
               <span className="mr-auto font-semibold">
                 {selectionTarget.selectionLabel(targetAssetsById.size, selectionTarget.maxSelected)}
               </span>
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="primary"
                 onClick={() => selectionTarget.onConfirm(targetSelectedAssets)}
-                className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
               >
                 {selectionTarget.confirmLabel}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <IconButton
+                label={t("detail.library.clearSelection")}
+                size="sm"
+                className="h-11 w-11 lg:h-8 lg:w-8"
                 onClick={() => {
                   setTargetAssetsById(new Map());
                   setSelectionError(null);
                 }}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-white dark:hover:bg-slate-950/70"
-                aria-label={t("detail.library.clearSelection")}
-                title={t("detail.library.clearSelection")}
               >
                 <X size={13} />
-              </button>
+              </IconButton>
             </div>
           ) : explorer.selectedIds.size ? (
-            <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800 dark:border-violet-400/35 dark:bg-violet-500/10 dark:text-violet-100">
+            <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-control border border-accent/30 bg-accent-soft px-2 py-1.5 text-xs text-accent">
               <span className="mr-auto font-semibold">{t("detail.library.selected", { count: explorer.selectedIds.size })}</span>
-              <button type="button" onClick={() => setDialog({ kind: "move-assets", assets: explorer.selectedAssets })} className="inline-flex h-7 items-center gap-1 rounded bg-white px-2 font-medium shadow-sm dark:bg-slate-950/70">
+              <Button type="button" size="sm" className="px-2" onClick={() => setDialog({ kind: "move-assets", assets: explorer.selectedAssets })}>
                 <FolderInput size={13} /> {t("detail.library.move")}
-              </button>
-              <button type="button" onClick={() => void downloadSelected()} disabled={!selectionCanDownload || explorer.archiveMutation.isPending} className="inline-flex h-7 items-center gap-1 rounded bg-white px-2 font-medium shadow-sm disabled:opacity-40 dark:bg-slate-950/70">
-                {explorer.archiveMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-2"
+                onClick={() => void downloadSelected()}
+                disabled={!selectionCanDownload || explorer.archiveMutation.isPending}
+                busy={explorer.archiveMutation.isPending}
+              >
+                {explorer.archiveMutation.isPending ? null : <Download size={13} />}
                 {t("detail.library.downloadZip")}
-              </button>
+              </Button>
               <DeliveryExportButton
                 eligibility={deliveryExportEligibility}
                 busy={operationBusy}
@@ -469,12 +485,17 @@ export function ProductImageExplorer({
                 reasonLabel={deliveryExportReason}
                 onExport={(jobIds) => void exportDeliveryPackage(jobIds)}
               />
-              <button type="button" onClick={explorer.clearSelection} className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-white dark:hover:bg-slate-950/70" aria-label={t("detail.library.clearSelection")} title={t("detail.library.clearSelection")}>
+              <IconButton
+                label={t("detail.library.clearSelection")}
+                size="sm"
+                className="h-11 w-11 lg:h-7 lg:w-7"
+                onClick={explorer.clearSelection}
+              >
                 <X size={13} />
-              </button>
+              </IconButton>
             </div>
           ) : explorer.assets.length && !selectionTarget ? (
-            <button type="button" onClick={explorer.selectAllLoaded} className="mb-2 text-[10px] font-medium text-slate-500 hover:text-indigo-700 dark:text-slate-400 dark:hover:text-violet-300">
+            <button type="button" onClick={explorer.selectAllLoaded} className="mb-2 text-[10px] font-medium text-text-muted hover:text-accent">
               {t("detail.library.selectAll")}
             </button>
           ) : null}
@@ -520,15 +541,16 @@ export function ProductImageExplorer({
           )}
 
           {explorer.assetsQuery.hasNextPage ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
               onClick={() => explorer.assetsQuery.fetchNextPage()}
               disabled={explorer.assetsQuery.isFetchingNextPage}
-              className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-md border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-200 dark:hover:bg-slate-900"
+              busy={explorer.assetsQuery.isFetchingNextPage}
+              className="mt-3 w-full"
             >
-              {explorer.assetsQuery.isFetchingNextPage ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}
               {t("detail.library.loadMore")}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -572,10 +594,14 @@ function directoryLabel(
 
 function ExplorerState({ icon, text, action, onAction }: { icon?: React.ReactNode; text: string; action?: string; onAction?: () => void }) {
   return (
-    <div className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-slate-200 px-4 text-center text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">
+    <div className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-panel border border-dashed border-border-l1 px-4 text-center text-xs text-text-muted">
       {icon}
       <span>{text}</span>
-      {action && onAction ? <button type="button" onClick={onAction} className="mt-1 font-semibold text-indigo-600 dark:text-violet-300">{action}</button> : null}
+      {action && onAction ? (
+        <Button type="button" variant="ghost" size="sm" onClick={onAction} className="mt-1 font-semibold text-accent hover:text-accent-strong">
+          {action}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -604,30 +630,47 @@ function TextDialog({
   useEffect(() => {
     if (open) setValue(initialValue);
   }, [initialValue, open]);
-  if (!open) return null;
+  const normalized = value.trim();
+  const submit = () => {
+    if (normalized && !busy) onSubmit(normalized);
+  };
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          const normalized = value.trim();
-          if (normalized) onSubmit(normalized);
-        }}
-        className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-950"
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !busy) onClose();
+      }}
+    >
+      <DialogContent
+        title={title}
+        size="sm"
+        closeLabel={t("workbench.dialog.close")}
+        footer={(
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
+            <Button variant="primary" onClick={submit} disabled={!normalized} busy={busy}>
+              {t("detail.library.save")}
+            </Button>
+          </>
+        )}
       >
-        <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
-        <label className="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-300">
-          {label}
-          <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} maxLength={maxLength} className="mt-1.5 h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-violet-400 dark:focus:ring-violet-500/15" />
-        </label>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 px-3 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">{t("common.cancel")}</button>
-          <button type="submit" disabled={busy || !value.trim()} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">
-            {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}{t("detail.library.save")}
-          </button>
-        </div>
-      </form>
-    </div>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <Input
+            label={label}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            maxLength={maxLength}
+            autoFocus
+            disabled={busy}
+          />
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -645,26 +688,45 @@ function MoveAssetsDialog({
   onMove: (folderId: string | null) => void;
 }) {
   const { t } = useI18n();
-  const [folderId, setFolderId] = useState("");
+  const [folderId, setFolderId] = useState(UNORGANIZED_FOLDER_VALUE);
   useEffect(() => {
-    if (open) setFolderId("");
+    if (open) setFolderId(UNORGANIZED_FOLDER_VALUE);
   }, [open]);
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-950">
-        <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{t("detail.library.moveTitle")}</h2>
-        <select value={folderId} onChange={(event) => setFolderId(event.target.value)} className="mt-4 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-          <option value="">{t("detail.library.moveUnorganized")}</option>
-          {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-        </select>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 px-3 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">{t("common.cancel")}</button>
-          <button type="button" onClick={() => onMove(folderId || null)} disabled={busy} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">
-            {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}{t("detail.library.move")}
-          </button>
-        </div>
-      </div>
-    </div>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !busy) onClose();
+      }}
+    >
+      <DialogContent
+        title={t("detail.library.moveTitle")}
+        size="sm"
+        closeLabel={t("workbench.dialog.close")}
+        footer={(
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
+            <Button
+              variant="primary"
+              busy={busy}
+              onClick={() => onMove(folderId === UNORGANIZED_FOLDER_VALUE ? null : folderId)}
+            >
+              {t("detail.library.move")}
+            </Button>
+          </>
+        )}
+      >
+        <Select
+          value={folderId}
+          onChange={setFolderId}
+          disabled={busy}
+          ariaLabel={t("detail.library.moveTitle")}
+          options={[
+            { value: UNORGANIZED_FOLDER_VALUE, label: t("detail.library.moveUnorganized") },
+            ...folders.map((folder) => ({ value: folder.id, label: folder.name })),
+          ]}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }

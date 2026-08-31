@@ -1,6 +1,5 @@
-import { X } from "lucide-react";
-
 import { useI18n } from "../lib/preferences";
+import { Dialog, DialogContent } from "./ui/dialog";
 
 export interface PromptPreview {
   title: string;
@@ -16,28 +15,19 @@ interface PromptPreviewDialogProps {
 export function PromptPreviewDialog({ preview, onClose }: PromptPreviewDialogProps) {
   const { t } = useI18n();
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm">
-      <div className="max-h-[82vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-950/20 animate-spring-pop-in">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-slate-950">{preview.title}</div>
-            {preview.meta ? <div className="mt-1 text-xs text-slate-500">{preview.meta}</div> : null}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
-            aria-label={t("promptPreview.close")}
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
-          <pre className="whitespace-pre-wrap break-words rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-800">
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        title={preview.title}
+        description={preview.meta}
+        size="xl"
+        closeLabel={t("promptPreview.close")}
+        onClose={onClose}
+        bodyClassName="max-h-[60vh] overflow-y-auto"
+      >
+          <pre className="whitespace-pre-wrap break-words rounded-control bg-surface-subtle p-4 text-sm leading-6 text-text-primary">
             {preview.text}
           </pre>
-        </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

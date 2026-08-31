@@ -4,12 +4,15 @@ import {
   FileStack,
   Image as ImageIcon,
   Link2,
-  Loader2,
   PencilLine,
   Play,
 } from "lucide-react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
+import { Button } from "../../../components/ui/button";
+import { EmptyState as PanelState } from "../../../components/ui/empty-state";
+import { IconButton } from "../../../components/ui/icon-button";
+import { PanelSkeleton } from "../../../components/ui/skeleton";
 import { useI18n } from "../../../lib/preferences";
 import type {
   WorkflowRecipeApplicationResult,
@@ -78,12 +81,12 @@ export function RecipeLibraryPanel({
   return (
     <div className="space-y-3 p-3" data-graph-recipe-panel>
       {application ? (
-        <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-400/30 dark:!bg-emerald-500/10" aria-live="polite">
+        <section className="rounded-lg border border-state-success/35 bg-state-success-soft p-3" aria-live="polite">
           <div className="flex items-start gap-2">
-            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white"><FileStack size={14} /></span>
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-state-success text-white"><FileStack size={14} /></span>
             <div className="min-w-0">
-              <div className="text-xs font-semibold text-emerald-900 dark:text-emerald-100">{t("workbench.recipe.applied")}</div>
-              <div className="mt-1 text-[11px] leading-4 text-emerald-700 dark:text-emerald-200">
+              <div className="text-xs font-semibold text-state-success">{t("workbench.recipe.applied")}</div>
+              <div className="mt-1 text-[11px] leading-4 text-text-secondary">
                 {t("workbench.recipe.appliedDetail")}
               </div>
             </div>
@@ -92,7 +95,7 @@ export function RecipeLibraryPanel({
       ) : null}
 
       {loading ? (
-        <PanelState icon={<Loader2 size={18} className="animate-spin" />} text={t("workbench.recipe.loading")} />
+        <PanelSkeleton rows={4} label={t("workbench.recipe.loading")} />
       ) : error ? (
         <PanelState text={error} action={t("workbench.retry")} onAction={onRetry} />
       ) : visibleRecipes.length === 0 ? (
@@ -106,7 +109,7 @@ export function RecipeLibraryPanel({
           return (
             <article key={recipe.id} className="rounded-lg border border-border-l1 bg-surface-raised p-3 shadow-sm" data-recipe-origin={recipe.origin}>
               <div className="flex items-start gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-state-warning-soft text-state-warning">
                   <FileStack size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -124,37 +127,36 @@ export function RecipeLibraryPanel({
                 <span>{t("workbench.recipe.version", { version: version.version })}</span>
               </div>
 
-              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_36px_36px] gap-1.5">
-                <button
-                  type="button"
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto_auto] gap-1.5">
+                <Button
+                  variant="primary"
+                  size="toolbar"
+                  className="w-full"
                   onClick={() => void openPreview(recipe)}
                   disabled={busy}
-                  title={t("workbench.recipe.apply")}
-                  className="inline-flex h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
+                  busy={busy}
                 >
-                  {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Play size={13} className="mr-1.5" fill="currentColor" />}
+                  {busy ? null : <Play size={13} fill="currentColor" />}
                   {t("workbench.recipe.apply")}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <IconButton
+                  label={t("workbench.recipe.append")}
+                  variant="secondary"
+                  size="toolbar"
                   onClick={() => onAppend(recipe)}
                   disabled={busy || !appendable}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-accent hover:text-accent disabled:opacity-35"
-                  aria-label={t("workbench.recipe.append")}
-                  title={t("workbench.recipe.append")}
                 >
                   <PencilLine size={14} />
-                </button>
-                <button
-                  type="button"
+                </IconButton>
+                <IconButton
+                  label={t("workbench.recipe.archive")}
+                  variant="secondary"
+                  size="toolbar"
                   onClick={() => onArchive(recipe)}
                   disabled={busy}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-red-300 hover:text-red-600 disabled:opacity-35"
-                  aria-label={t("workbench.recipe.archive")}
-                  title={t("workbench.recipe.archive")}
                 >
                   <Archive size={14} />
-                </button>
+                </IconButton>
               </div>
             </article>
           );
@@ -225,9 +227,9 @@ export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePre
           <ul data-recipe-preview-edges className="mt-1 max-h-24 space-y-1 overflow-y-auto text-[11px] text-text-secondary">
             {preview.edges.map((edge) => (
               <li key={edge.key}>
-                {nodeTitle.get(edge.source_node_key) ?? edge.source_node_key}
+                {nodeTitle.get(edge.source_node_key) ?? t("graph.runs.deletedNode")}
                 {" → "}
-                {nodeTitle.get(edge.target_node_key) ?? edge.target_node_key}
+                {nodeTitle.get(edge.target_node_key) ?? t("graph.runs.deletedNode")}
               </li>
             ))}
           </ul>
@@ -283,25 +285,5 @@ function PreviewSection({
       </div>
       {empty ? <p className="text-[11px] text-text-secondary">{t("workbench.recipe.noChanges")}</p> : children}
     </section>
-  );
-}
-
-function PanelState({
-  icon,
-  text,
-  action,
-  onAction,
-}: {
-  icon?: React.ReactNode;
-  text: string;
-  action?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 p-6 text-center text-xs text-text-secondary">
-      {icon ? <span className="text-text-secondary">{icon}</span> : null}
-      <span className="max-w-[250px] leading-5">{text}</span>
-      {action && onAction ? <button type="button" onClick={onAction} className="mt-1 font-semibold text-accent hover:underline">{action}</button> : null}
-    </div>
   );
 }

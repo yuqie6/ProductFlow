@@ -17,6 +17,7 @@ import type {
   Connection,
   Edge,
   EdgeProps,
+  FitViewOptions,
   IsValidConnection,
   Node,
   NodeProps,
@@ -33,11 +34,12 @@ import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
+import { IconButton } from "../../../components/ui/icon-button";
 import { api } from "../../../lib/api";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphGroup, GraphNode, GraphNodeCatalog, GraphPlannedAction, GraphProjection, WorkflowNodeDisplayStatus, WorkflowNodeStatus } from "../../../lib/types";
+import type { GraphGroup, GraphNode, GraphNodeCatalog, GraphPlannedAction, GraphProjection, GraphRunSubmitInput, WorkflowNodeDisplayStatus, WorkflowNodeStatus } from "../../../lib/types";
 import {
   graphProposalEdgeStates,
   graphProposalNodeStates,
@@ -73,7 +75,6 @@ import {
   graphDataTypeLabelKey,
   graphEdgeRoleLabelKey,
   graphInputPorts,
-  graphNodeHasInput,
   graphNodePresentationKind,
   graphPortDataTypeClass,
   graphPortVisualState,
@@ -84,6 +85,8 @@ import {
   missingRunNodesSummary,
 } from "./graphCatalog";
 import { graphProgressPhaseLabelKey, type GraphNodeRunPresentation } from "./graphRunDisplay";
+import { plannedActionClassName, runPreviewPointerHandlers } from "./graphRunPreview";
+import { shotRunRequest } from "./shotChangeSet";
 import {
   GRAPH_NODE_WIDTH,
   GRAPH_SNAP,
@@ -96,6 +99,16 @@ import { graphEdgeDeleteClassName, graphEdgeEmphasis, graphPortVisualScale } fro
 const SNAP_GRID: [number, number] = [GRAPH_SNAP, GRAPH_SNAP];
 const PRO_OPTIONS = { hideAttribution: true };
 const CONTROL_FIT_VIEW_OPTIONS = { padding: 0.22, duration: 180, maxZoom: 1.05 };
+
+export function graphCanvasFitPadding(basePadding: number, bottomInset: number): FitViewOptions["padding"] {
+  if (bottomInset <= 0) return basePadding;
+  return {
+    top: basePadding,
+    right: basePadding,
+    bottom: `${bottomInset + 24}px`,
+    left: basePadding,
+  };
+}
 
 export function rejectedGraphConnectionNotice(
   graph: GraphProjection,
@@ -148,6 +161,8 @@ interface GraphNodeData extends Record<string, unknown> {
   progressPhase?: string | null;
   elapsedLabel?: string | null;
   attemptCount?: number;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
@@ -166,6 +181,9 @@ interface GraphGroupData extends Record<string, unknown> {
   onRename: (groupId: string, title: string) => void;
   onDissolve: (groupId: string) => void;
   onRunShot?: (groupId: string) => void;
+  shotRunInput?: GraphRunSubmitInput | null;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
 }
 
 type GraphCanvasNode =
@@ -219,21 +237,6 @@ function nodeImage(node: GraphNode): DownloadableImage | null {
   };
 }
 
-function plannedActionClass(action: GraphPlannedAction | null | undefined): string {
-  switch (action) {
-    case "generate":
-      return "outline outline-2 outline-accent/90";
-    case "reuse":
-      return "outline outline-2 outline-border-l3 opacity-80";
-    case "frozen":
-      return "outline outline-2 outline-text-muted";
-    case "blocked":
-      return "outline outline-2 outline-state-error/90";
-    default:
-      return "";
-  }
-}
-
 export const GraphNodeCard = memo(function GraphNodeCard({
   id,
   data,
@@ -254,10 +257,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   }));
   const updateNodeInternals = useUpdateNodeInternals();
   const inputPorts = graphInputPorts(data.catalog, node.node_type);
-  const hasInput = inputPorts.length > 0
-    || graphNodeHasInput(node.node_type, data.catalog)
-    || node.node_type === "prompt_generation"
-    || node.node_type === "image_generation";
+  const hasInput = inputPorts.length > 0;
   const running = data.status === "queued" || data.status === "running";
   const runBlocked = data.missingRunLabels.length > 0;
   const connectionSnapshot = {
@@ -280,7 +280,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
 
   const proposalState = data.proposalState ?? null;
   const multi = data.selectedCount >= 2 && data.selectionPrimary;
-  const plannedClass = plannedActionClass(data.plannedAction);
+  const plannedClass = plannedActionClassName(data.plannedAction);
   const displayPlannedAction = data.plannedAction ?? data.latestPlannedAction ?? null;
   return (
     <div
@@ -357,6 +357,11 @@ export const GraphNodeCard = memo(function GraphNodeCard({
                 label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.canvas.runNode")}
                 disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
                 onClick={() => data.onRun(node)}
+                {...runPreviewPointerHandlers(
+                  { scope: "node", node_id: node.id },
+                  data.onPreviewRun,
+                  data.onHideRunPreview,
+                )}
               >
                 {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
               </WorkflowCanvasNodeToolbarButton>
@@ -364,6 +369,11 @@ export const GraphNodeCard = memo(function GraphNodeCard({
                 label={runBlocked ? data.missingRunLabels.join(" · ") : t("graph.runs.scope.toNode")}
                 disabled={data.runBusy || data.runDisabled || running || data.structureBusy || runBlocked}
                 onClick={() => data.onRunToNode(node)}
+                {...runPreviewPointerHandlers(
+                  { scope: "to_node", node_id: node.id },
+                  data.onPreviewRun,
+                  data.onHideRunPreview,
+                )}
               >
                 <ChevronsRight size={16} aria-hidden="true" />
               </WorkflowCanvasNodeToolbarButton>
@@ -401,13 +411,13 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           </WorkflowCanvasNodeToolbarButton>
         </WorkflowCanvasNodeToolbar>
       )}
-      {inputPorts.length ? inputPorts.map((port, index) => {
+      {inputPorts.map((port, index) => {
         const occupancy = node.incoming.filter((edge) => edge.role === port.role).length;
         const maxLabel = port.max_count == null ? t("graph.port.unbounded") : String(port.max_count);
         const roleKey = graphEdgeRoleLabelKey(port.role);
         const typeKey = graphDataTypeLabelKey(port.data_type);
         const titleParts = [
-          roleKey ? t(roleKey) : port.role,
+          roleKey ? t(roleKey) : t("graph.edgeRole.unknown"),
           typeKey ? t("graph.port.accepts", { type: t(typeKey) }) : null,
           t("graph.port.occupancy", { count: occupancy, max: maxLabel }),
           port.required_to_run ? t("graph.port.required") : null,
@@ -433,23 +443,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
             colorClass={graphPortDataTypeClass(port.data_type)}
           />
         );
-      }) : hasInput ? (
-        <WorkflowCanvasNodePort
-          id="input"
-          type="target"
-          top="50%"
-          label={t("detail.inputHandle")}
-          connectable={Boolean(isConnectable)}
-          visualState={graphPortVisualState(
-            data.graph,
-            node.id,
-            "target",
-            connectionSnapshot,
-            data.catalog,
-          )}
-          visualScale={portVisualScale}
-        />
-      ) : null}
+      })}
       <WorkflowCanvasNodePort
         id="output"
         type="source"
@@ -467,7 +461,11 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         kind={graphNodePresentationKind(node.node_type)}
         title={node.title}
         label={nodeTypeLabel(node.node_type, t)}
-        status={data.status}
+        status={
+          displayPlannedAction === "frozen" && (data.status === "idle" || data.status === "skipped")
+            ? "frozen"
+            : data.status
+        }
         statusLabel={
           node.node_type === "image_asset" && !node.bound_asset_id
             ? t("graph.inspector.unbound")
@@ -492,8 +490,9 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           ].filter(Boolean).join(" · ")
           : data.elapsedLabel && data.status !== "idle"
             ? data.elapsedLabel
-            : null}
+          : null}
         failureReason={data.failureReason}
+        blockedReason={runBlocked ? data.missingRunLabels.join(" · ") : null}
         lastRunAt={data.lastRunAt}
         retryable={data.retryable}
         attemptCount={data.attemptCount ?? 0}
@@ -505,7 +504,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         }}
       />
       {displayPlannedAction === "frozen" ? (
-        <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-surface-inverse p-1 text-surface-raised" aria-hidden="true">
+        <span className="pointer-events-none absolute left-2 top-2 z-30 rounded-full bg-state-frozen p-1 text-surface-raised" aria-hidden="true">
           <Lock size={10} />
         </span>
       ) : null}
@@ -526,7 +525,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   selected,
 }: NodeProps<Node<GraphGroupData>>) {
   const { t } = useI18n();
-  const { group, bounds, runDisabled, runBlocked, runBlockedReason, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
+  const { group, bounds, runDisabled, runBlocked, runBlockedReason, structureBusy, onEnter, onRename, onDissolve, onRunShot, shotRunInput, onPreviewRun, onHideRunPreview } = data;
   const [draft, setDraft] = useState(group.title);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -545,7 +544,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   return (
     <div
       style={{ width: bounds.width, height: bounds.height }}
-      className={`group relative rounded-surface border-2 border-dashed transition-all pointer-events-none ${selected
+      className={`group relative rounded-surface border-2 border-dashed transition-[border-color,background-color,box-shadow] duration-fast pointer-events-none ${selected
         ? "border-border-l3 bg-surface-subtle/40"
         : "border-border-l1 bg-surface-subtle/30"
         }`}
@@ -590,27 +589,26 @@ export const GraphGroupCard = memo(function GraphGroupCard({
           {t("workbench.folder.memberCount", { count: group.member_ids.length })}
         </span>
         {onRunShot ? (
-          <button
-            type="button"
-            className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
+          <IconButton
+            label={runBlocked ? (runBlockedReason ?? t("graph.canvas.runShot")) : t("graph.canvas.runShot")}
+            size="toolbar"
+            className="nodrag nowheel nopan"
             disabled={structureBusy || runDisabled || runBlocked}
-            title={runBlocked ? runBlockedReason : t("graph.canvas.runShot")}
-            aria-label={t("graph.canvas.runShot")}
             data-run-shot=""
+            {...runPreviewPointerHandlers(shotRunInput, onPreviewRun, onHideRunPreview)}
             onClick={(event) => {
               event.stopPropagation();
               onRunShot(group.id);
             }}
           >
             <Play size={12} aria-hidden="true" />
-          </button>
+          </IconButton>
         ) : null}
-        <button
-          type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
+        <IconButton
+          label={t("graph.canvas.enterGroup")}
+          size="toolbar"
+          className="nodrag nowheel nopan"
           disabled={structureBusy}
-          title={t("graph.canvas.enterGroup")}
-          aria-label={t("graph.canvas.enterGroup")}
           data-enter-group=""
           onClick={(event) => {
             event.stopPropagation();
@@ -618,33 +616,32 @@ export const GraphGroupCard = memo(function GraphGroupCard({
           }}
         >
           <FolderOpen size={12} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-surface-raised hover:text-text-primary disabled:opacity-40"
+        </IconButton>
+        <IconButton
+          label={t("graph.canvas.renameGroup")}
+          size="toolbar"
+          className="nodrag nowheel nopan"
           disabled={structureBusy}
-          title={t("graph.canvas.renameGroup")}
-          aria-label={t("graph.canvas.renameGroup")}
           onClick={(event) => {
             event.stopPropagation();
             setEditing(true);
           }}
         >
           <Pencil size={12} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-control text-text-muted hover:bg-state-error-soft hover:text-state-error disabled:opacity-40"
+        </IconButton>
+        <IconButton
+          label={t("graph.palette.dissolve")}
+          size="toolbar"
+          variant="danger"
+          className="nodrag nowheel nopan"
           disabled={structureBusy}
-          title={t("graph.palette.dissolve")}
-          aria-label={t("graph.palette.dissolve")}
           onClick={(event) => {
             event.stopPropagation();
             onDissolve(group.id);
           }}
         >
           <Ungroup size={12} aria-hidden="true" />
-        </button>
+        </IconButton>
       </div>
     </div>
   );
@@ -707,23 +704,23 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
           x={labelX}
           y={labelY}
           isVisible
-          className={`nodrag nowheel nopan transition-all duration-200 ${graphEdgeDeleteClassName(Boolean(selected), hovered)}`}
+          className={`nodrag nowheel nopan transition-[opacity,visibility,transform] duration-fast ${graphEdgeDeleteClassName(Boolean(selected))}`}
           onMouseEnter={() => setHovered(true)}
           onMouseLeave={() => setHovered(false)}
         >
-          <button
-            type="button"
-            className="nodrag nowheel nopan flex h-8 w-8 items-center justify-center rounded-full border border-border-l1 bg-surface-raised text-text-muted shadow-elev-1 hover:border-state-error/40 hover:bg-state-error-soft hover:text-state-error disabled:opacity-45"
+          <IconButton
+            label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
+            size="toolbar"
+            variant="danger"
+            className="nodrag nowheel nopan"
+            disabled={data?.structureBusy}
             onClick={(event) => {
               event.stopPropagation();
               if (!data?.structureBusy) data?.onDelete(id);
             }}
-            disabled={data?.structureBusy}
-            title={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
-            aria-label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
           >
             <Trash2 size={13} strokeWidth={2.2} aria-hidden="true" />
-          </button>
+          </IconButton>
         </EdgeToolbar>
       ) : null}
     </>
@@ -735,6 +732,21 @@ const edgeTypes = { "graph-edge": GraphCanvasEdgeCard };
 
 function isRealNode(node: GraphCanvasNode): node is Node<GraphNodeData, "graph-node"> {
   return node.data.kind === "node";
+}
+
+export interface GraphCanvasFocusRequest {
+  nodeIds: string[];
+  version: number;
+  padding?: number;
+  duration?: number;
+}
+
+export function visibleGraphFocusNodeIds(
+  requestedNodeIds: readonly string[],
+  visibleNodeIds: readonly string[],
+): string[] {
+  const visible = new Set(visibleNodeIds);
+  return [...new Set(requestedNodeIds)].filter((nodeId) => visible.has(nodeId));
 }
 
 export function GraphWorkflowCanvas({
@@ -754,6 +766,8 @@ export function GraphWorkflowCanvas({
   compact = false,
   enteredGroupId = null,
   canvasSyncVersion = 0,
+  focusRequest = null,
+  bottomInset = 0,
   onSelect,
   onConnect,
   onReconnect,
@@ -764,6 +778,8 @@ export function GraphWorkflowCanvas({
   onRunNode,
   onRunToNode,
   onRunShot,
+  onPreviewRun,
+  onHideRunPreview,
   onBindNode,
   onPinNode,
   onDuplicateNode,
@@ -794,6 +810,8 @@ export function GraphWorkflowCanvas({
   compact?: boolean;
   enteredGroupId?: string | null;
   canvasSyncVersion?: number;
+  focusRequest?: GraphCanvasFocusRequest | null;
+  bottomInset?: number;
   onSelect: (nodeIds: string[]) => void | Promise<void>;
   onConnect: (source: string, target: string) => void;
   onReconnect?: (edgeId: string, source: string, target: string, order: number) => void;
@@ -804,6 +822,8 @@ export function GraphWorkflowCanvas({
   onRunNode: (nodeId: string) => void;
   onRunToNode?: (nodeId: string) => void;
   onRunShot?: (groupId: string) => void;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
   onBindNode: (nodeId: string) => void;
   onPinNode?: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
@@ -821,6 +841,7 @@ export function GraphWorkflowCanvas({
   const { t } = useI18n();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<GraphCanvasNode, GraphCanvasEdge> | null>(null);
+  const handledFocusVersionRef = useRef<number | null>(null);
   const viewportInitTimerRef = useRef<number | null>(null);
   const [surfaceSize, setSurfaceSize] = useState(() => ({
     width: typeof window === "undefined" ? 1440 : window.innerWidth,
@@ -828,6 +849,27 @@ export function GraphWorkflowCanvas({
   }));
   const [snapToGrid, setSnapToGrid] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!focusRequest || handledFocusVersionRef.current === focusRequest.version) return;
+    const frame = window.requestAnimationFrame(() => {
+      const flow = flowRef.current;
+      if (!flow) return;
+      const nodes = visibleGraphFocusNodeIds(
+        focusRequest.nodeIds,
+        flow.getNodes().map((node) => node.id),
+      ).map((id) => ({ id }));
+      if (!nodes.length) return;
+      handledFocusVersionRef.current = focusRequest.version;
+      void flow.fitView({
+        nodes,
+        padding: graphCanvasFitPadding(focusRequest.padding ?? 0.28, bottomInset),
+        duration: focusRequest.duration ?? 220,
+        maxZoom: 1.05,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [bottomInset, focusRequest]);
   const publishSelection = useCallback((nodeIds: string[]) => {
     if (
       selectedNodeIds.length !== nodeIds.length
@@ -903,7 +945,7 @@ export function GraphWorkflowCanvas({
           runBlockedReason: missing.length
             ? missingRunNodesSummary(missing, (role) => {
               const key = graphEdgeRoleLabelKey(role);
-              return t("graph.missingRunInput", { role: key ? t(key) : role });
+              return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
             })
             : undefined,
           structureBusy: busy,
@@ -911,6 +953,9 @@ export function GraphWorkflowCanvas({
           onRename: onRenameGroup,
           onDissolve: onDissolveGroup,
           onRunShot,
+          shotRunInput: shotRunRequest(displayGraph, group.id),
+          onPreviewRun,
+          onHideRunPreview,
         },
       }];
     });
@@ -947,13 +992,15 @@ export function GraphWorkflowCanvas({
         selectionPrimary: selectedNodeIds[0] === node.id,
         missingRunLabels: missingRequiredRunRoles(node, catalog).map((role) => {
           const key = graphEdgeRoleLabelKey(role);
-          return t("graph.missingRunInput", { role: key ? t(key) : role });
+          return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
         }),
         plannedAction: plannedActions[node.id] ?? null,
         latestPlannedAction: nodePresentations[node.id]?.lastPlannedAction ?? null,
         progressPhase: nodePresentations[node.id]?.progressPhase ?? null,
         elapsedLabel: nodePresentations[node.id]?.elapsedLabel ?? null,
         attemptCount: nodePresentations[node.id]?.attemptCount ?? 0,
+        onPreviewRun,
+        onHideRunPreview,
         onSelectNode: selectNodeFromPointer,
         graph: displayGraph,
         catalog,
@@ -961,7 +1008,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onPinNode, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, plannedActions, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onHideRunPreview, onPinNode, onPreviewRun, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, plannedActions, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -1049,8 +1096,9 @@ export function GraphWorkflowCanvas({
   const fitMinZoom = workflowCanvasFitMinZoom(surfaceSize.width);
   const fitViewOptions = useMemo(() => ({
     ...CONTROL_FIT_VIEW_OPTIONS,
+    padding: graphCanvasFitPadding(CONTROL_FIT_VIEW_OPTIONS.padding, bottomInset),
     minZoom: fitMinZoom,
-  }), [fitMinZoom]);
+  }), [bottomInset, fitMinZoom]);
   const persistViewport = useCallback((nextViewport: Viewport, groupId = enteredGroupId) => {
     onViewportChange({
       ...nextViewport,
@@ -1246,6 +1294,8 @@ export function GraphWorkflowCanvas({
         <WorkflowCanvasControls
           labels={{
             resetZoom: t("detail.resetZoom"),
+            zoomIn: t("detail.zoomIn"),
+            zoomOut: t("detail.zoomOut"),
             fitView: t("detail.fitCanvas"),
             fitSelection: t("detail.fitSelection"),
             controls: t("detail.canvasControls"),
@@ -1260,6 +1310,7 @@ export function GraphWorkflowCanvas({
           onAutoLayout={onAutoLayout}
           onViewportCommit={persistViewport}
           normalizeZoom={(zoom) => Math.min(2, Math.max(0.12, zoom))}
+          topInset={compact ? 68 : undefined}
         />
         <MiniMap
           position="bottom-right"
@@ -1271,6 +1322,7 @@ export function GraphWorkflowCanvas({
           pannable
           zoomable
           offsetScale={8}
+          style={bottomInset > 0 ? { bottom: bottomInset + 16 } : undefined}
         />
       </ReactFlow>
     </div>

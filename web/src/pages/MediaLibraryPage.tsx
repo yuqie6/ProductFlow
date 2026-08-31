@@ -24,6 +24,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
 import { TopNav } from "../components/TopNav";
+import { Button } from "../components/ui/button";
+import { Dialog, DialogContent } from "../components/ui/dialog";
+import { Input } from "../components/ui/field";
+import { Select } from "../components/ui/select";
 import { useRegisterAgentPageContext } from "../lib/agentPageContext";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -519,50 +523,32 @@ export function MediaLibraryPage() {
       ) : null}
 
       {/* 上传结果/错误汇总弹窗 */}
-      {uploadSummaryErrors ? (
-        <div
-          className="fixed inset-0 z-[170] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
-          onClick={() => setUploadSummaryErrors(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-950"
-            onClick={(e) => e.stopPropagation()}
+      <Dialog open={Boolean(uploadSummaryErrors)} onOpenChange={(open) => !open && setUploadSummaryErrors(null)}>
+        {uploadSummaryErrors ? (
+          <DialogContent
+            title={t("mediaLibrary.upload")}
+            closeLabel={t("common.cancel")}
+            onClose={() => setUploadSummaryErrors(null)}
+            footer={
+              <Button type="button" onClick={() => setUploadSummaryErrors(null)}>
+                {t("workbench.dialog.confirm")}
+              </Button>
+            }
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-slate-950 dark:text-white">
-                {t("mediaLibrary.upload")}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setUploadSummaryErrors(null)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-              >
-                <X size={15} />
-              </button>
-            </div>
-            <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
+            <div className="max-h-60 space-y-2 overflow-y-auto pr-1">
               {uploadSummaryErrors.map((item, idx) => (
                 <div
                   key={idx}
-                  className="rounded-lg border border-red-200/70 bg-red-50/60 p-2.5 text-xs dark:border-red-900/40 dark:bg-red-950/30"
+                  className="rounded-control border border-state-error/30 bg-state-error/10 p-2.5 text-xs"
                 >
-                  <div className="font-semibold text-red-900 dark:text-red-300 truncate">{item.filename}</div>
-                  <div className="mt-0.5 text-red-700 dark:text-red-400">{item.reason}</div>
+                  <div className="truncate font-semibold text-state-error">{item.filename}</div>
+                  <div className="mt-0.5 text-state-error">{item.reason}</div>
                 </div>
               ))}
             </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setUploadSummaryErrors(null)}
-                className="h-8 rounded-lg bg-indigo-600 px-4 text-xs font-semibold text-white hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400"
-              >
-                {t("workbench.dialog.confirm")}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+          </DialogContent>
+        ) : null}
+      </Dialog>
 
       {isDragging ? (
         <div className="pointer-events-none fixed inset-0 z-[150] flex flex-col items-center justify-center bg-indigo-950/60 p-6 backdrop-blur-md dark:bg-violet-950/60">
@@ -1209,21 +1195,24 @@ function NameDialog({
   useEffect(() => {
     if (open) setValue(initialValue);
   }, [open, initialValue]);
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <form className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-950" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}>
-        <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{title}</h2>
-        <label className="mt-4 block text-xs font-medium text-slate-600 dark:text-slate-300">
-          {label}
-          <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} maxLength={120} className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:border-violet-400" />
-        </label>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">{t("common.cancel")}</button>
-          <button type="submit" disabled={busy || !value.trim()} className="inline-flex h-9 items-center rounded-lg bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">{busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}{t("detail.library.save")}</button>
-        </div>
-      </form>
-    </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && !busy && onClose()}>
+      <DialogContent
+        title={title}
+        size="sm"
+        hideClose={busy}
+        footer={
+          <>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
+            <Button type="submit" form="media-library-name-form" disabled={busy || !value.trim()} busy={busy}>{t("detail.library.save")}</Button>
+          </>
+        }
+      >
+        <form id="media-library-name-form" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSubmit(value.trim()); }}>
+          <Input autoFocus label={label} value={value} onChange={(event) => setValue(event.target.value)} placeholder={placeholder} maxLength={120} />
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1231,21 +1220,29 @@ function MoveDialog({ open, folders, busy, onClose, onMove }: { open: boolean; f
   const { t } = useI18n();
   const [folderId, setFolderId] = useState("");
   useEffect(() => { if (open) setFolderId(""); }, [open]);
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/55 p-4" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
-      <div role="dialog" aria-modal="true" className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-950">
-        <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{t("detail.library.moveTitle")}</h2>
-        <select value={folderId} onChange={(event) => setFolderId(event.target.value)} className="mt-4 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-          <option value="">{t("detail.library.moveUnorganized")}</option>
-          {folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-        </select>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-lg border border-slate-200 px-3 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">{t("common.cancel")}</button>
-          <button type="button" onClick={() => onMove(folderId || null)} disabled={busy} className="inline-flex h-9 items-center rounded-lg bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">{busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}{t("detail.library.move")}</button>
-        </div>
-      </div>
-    </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && !busy && onClose()}>
+      <DialogContent
+        title={t("detail.library.moveTitle")}
+        size="sm"
+        hideClose={busy}
+        footer={
+          <>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
+            <Button type="button" onClick={() => onMove(folderId || null)} disabled={busy} busy={busy}>{t("detail.library.move")}</Button>
+          </>
+        }
+      >
+        <Select
+          value={folderId}
+          onChange={setFolderId}
+          ariaLabel={t("detail.library.moveTitle")}
+          options={[
+            { value: "", label: t("detail.library.moveUnorganized") },
+            ...folders.map((folder) => ({ value: folder.id, label: folder.name })),
+          ]}
+        />
+      </DialogContent>
+    </Dialog>
   );
 }
-

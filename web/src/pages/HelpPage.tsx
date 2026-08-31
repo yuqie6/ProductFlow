@@ -18,7 +18,7 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
-import { SelectField } from "../components/SelectField";
+import { Select as SelectField } from "../components/ui/select";
 import { TopNav } from "../components/TopNav";
 import type { Locale } from "../lib/i18n";
 import { useI18n } from "../lib/preferences";
@@ -900,7 +900,6 @@ export function HelpPage() {
                 options: group.pages.map((slug) => ({ value: slug, label: pagesBySlug.get(slug)!.title })),
               }))}
               onChange={openPage}
-              radius="lg"
             />
           </div>
         </aside>

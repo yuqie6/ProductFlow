@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNode, GraphProjection } from "../../../lib/types";
 import {
+  GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_WIDTH,
+  GRAPH_SNAP,
   buildDeleteNodeOperations,
   buildDuplicateGraphOperations,
   buildPinImageAssetOperations,
@@ -11,6 +14,7 @@ import {
   computeGraphGroupBounds,
   createdGraphNodeIds,
   graphCanvasView,
+  graphAvailableNodePosition,
   graphViewportCenterPosition,
   selectedGraphEdges,
   selectionInsideGroup,
@@ -176,6 +180,29 @@ describe("graph layout commands", () => {
     expect(position.position_y).not.toBe(120);
     expect(position.position_x % 24).toBe(0);
     expect(position.position_y % 24).toBe(0);
+  });
+
+  it("moves a new node to the nearest free grid slot when the viewport center is occupied", () => {
+    const viewport = {
+      x: 0,
+      y: 0,
+      zoom: 1,
+      surface_width: 1024,
+      surface_height: 768,
+    };
+    const center = graphViewportCenterPosition(viewport);
+    const position = graphAvailableNodePosition(viewport, [
+      node({ id: "occupied", node_type: "prompt_generation", group_id: "group-1", ...center }),
+    ]);
+    expect(position).not.toEqual(center);
+    expect(Math.abs(position.position_x % GRAPH_SNAP)).toBe(0);
+    expect(Math.abs(position.position_y % GRAPH_SNAP)).toBe(0);
+    expect(
+      position.position_x + GRAPH_NODE_WIDTH + GRAPH_SNAP <= center.position_x
+      || position.position_x >= center.position_x + GRAPH_NODE_WIDTH + GRAPH_SNAP
+      || position.position_y + GRAPH_NODE_HEIGHT + GRAPH_SNAP <= center.position_y
+      || position.position_y >= center.position_y + GRAPH_NODE_HEIGHT + GRAPH_SNAP,
+    ).toBe(true);
   });
 
   it("selects clones by diffing node ids after a duplicate ChangeSet", () => {

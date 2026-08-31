@@ -40,13 +40,17 @@ import type {
   WorkflowNodeDisplayStatus,
 } from "../../../lib/types";
 import { parseAspectRatio } from "../../../components/ImageRatioFrame";
+import { ConfirmDialog } from "../../../components/ConfirmDialog";
+import { Button } from "../../../components/ui/button";
+import { Field, Input, TextArea } from "../../../components/ui/field";
+import { IconButton } from "../../../components/ui/icon-button";
+import { StatusBadge } from "../../../components/ui/status-badge";
+import { Tooltip } from "../../../components/ui/tooltip";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "../chrome/constants";
 import { parseWorkflowGenerationSpec } from "./generationSpec";
 import { graphDocumentOrigin, isContentGraphNodeType } from "./graphDocument";
 import { DownloadLink } from "../chrome/ImageDownloadComponents";
 import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
-import { TextArea } from "../chrome/TextArea";
-import { statusClass } from "../chrome/utils";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { CatalogConfigFields } from "./CatalogConfigFields";
 import {
@@ -60,8 +64,9 @@ import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
 import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles, missingRunNodesSummary } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
-import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
+import { graphArtifactTypeLabelKey, graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphOutputActionLabelKey, graphOutputQualityLabelKey, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
+import { runPreviewPointerHandlers } from "./graphRunPreview";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -100,6 +105,8 @@ export function GraphNodeInspector({
   onRegisterFlush,
   onOpenAdd,
   onOpenLibrary,
+  onPreviewRun,
+  onHideRunPreview,
 }: {
   graph: GraphProjection;
   node: GraphNode | null;
@@ -121,6 +128,8 @@ export function GraphNodeInspector({
   onRegisterFlush?: (flush: () => Promise<void>) => void;
   onOpenAdd?: () => void;
   onOpenLibrary?: () => void;
+  onPreviewRun?: (input: GraphRunSubmitInput) => void;
+  onHideRunPreview?: () => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -145,6 +154,7 @@ export function GraphNodeInspector({
     status: "idle",
     error: null,
   });
+  const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const runsQueryKey = ["graph-runs", graph.product_id, graph.id] as const;
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
@@ -214,6 +224,7 @@ export function GraphNodeInspector({
 
   useEffect(() => {
     setSaveState({ status: "idle", error: null });
+    setReplaceConfirmOpen(false);
   }, [node?.id]);
 
   const persist = useCallback(async (input: {
@@ -265,8 +276,11 @@ export function GraphNodeInspector({
         runBlocked={graphRunBlocked}
         runBlockedReason={graphRunBlockedReason}
         onRunGraph={() => {
+          onHideRunPreview?.();
           submitInspectorRun({ scope: "graph" });
         }}
+        onPreviewGraph={() => onPreviewRun?.({ scope: "graph" })}
+        onHideRunPreview={onHideRunPreview}
         onOpenAdd={onOpenAdd}
         onOpenLibrary={onOpenLibrary}
       />
@@ -305,69 +319,66 @@ export function GraphNodeInspector({
 
   return (
     <InspectorFlushContext.Provider value={registerFlush}>
-      <div className="space-y-3 pb-4" data-graph-node-inspector>
-        <section className="config-bubble rounded-2xl p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ${theme.iconBox}`}>
-              <Icon size={16} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <h3 className="truncate text-base font-semibold text-zinc-950 dark:text-white">{node.title}</h3>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${theme.badge}`}>
-                  {t(graphNodeTitleKey(node.node_type))}
-                </span>
-                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(nodeStatus)}`}>
-                  {LIVE_RUN_STATUSES.has(nodeStatus) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
-                  {t(`detail.nodeStatus.${nodeStatus}`)}
-                </span>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${node.config_status === "ready"
-                  ? "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
-                  : "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-                  }`}>
-                  {t(configStatusKey(node.config_status))}
-                </span>
-                <SaveStatusBadge status={saveState.status} />
-              </div>
-            </div>
+      <div key={node.id} className="space-y-4 pb-4 motion-safe:animate-node-reveal" data-graph-node-inspector>
+        <section className="border-b border-border-l1 pb-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Tooltip content={t(graphNodeTitleKey(node.node_type))}>
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control border ${theme.iconBox}`}>
+                <Icon size={15} aria-hidden="true" />
+              </span>
+            </Tooltip>
+            <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{node.title}</h3>
+            <StatusBadge status={nodeStatus} spinning={LIVE_RUN_STATUSES.has(nodeStatus)}>
+              {t(`detail.nodeStatus.${nodeStatus}`)}
+            </StatusBadge>
+            <Tooltip content={t(configStatusKey(node.config_status))}>
+              <span data-graph-config-status={node.config_status} className={`h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-surface-raised ${node.config_status === "ready" ? "bg-state-success" : node.config_status === "stale" ? "bg-state-warning" : "bg-text-muted"}`}>
+                <span className="sr-only">{t(configStatusKey(node.config_status))}</span>
+              </span>
+            </Tooltip>
+            <Tooltip content={saveState.error ?? t(saveStatusKey(saveState.status))}>
+              <span data-graph-save-status={saveState.status} className={`h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-surface-raised ${saveState.status === "failed" ? "bg-state-error" : saveState.status === "saving" ? "bg-accent" : "bg-state-success"}`}>
+                <span className="sr-only"><SaveStatusBadge status={saveState.status} /></span>
+              </span>
+            </Tooltip>
           </div>
 
           {node.unused && node.bound_asset_id ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
               {t("graph.inspector.unused")}
             </div>
           ) : null}
           {node.node_type === "image_asset" && !node.bound_asset_id ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
               {t("graph.inspector.unbound")}
             </div>
           ) : null}
           {missingRoles.length ? (
-            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            <div className="mt-3 rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2 text-xs text-state-error">
               {missingRoles.map((role) => {
                 const key = graphEdgeRoleLabelKey(role);
-                return t("graph.missingRunInput", { role: key ? t(key) : role });
+                return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
               }).join(" · ")}
             </div>
           ) : null}
           {seedDocument || seedPromptForImage ? (
-            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
               {t("graph.inspector.seedDocument")}
             </div>
           ) : null}
           {presentation?.failureReason && !activeRun ? (
-            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            <div className="mt-3 rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
               <div className="font-semibold">{t("graph.inspector.lastFailed")}</div>
               <p className="mt-1">{presentation.failureReason}</p>
               {presentation.lastRunAt ? (
-                <p className="mt-1 text-[10px] text-red-600/80 dark:text-red-300/80">
+                <p className="mt-1 text-[10px] text-state-error/80">
                   {t("graph.inspector.lastRun", { time: formatDateTime(presentation.lastRunAt, t.locale) })}
                 </p>
               ) : null}
             </div>
           ) : null}
           {activeRun ? (
-            <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-accent/30 bg-accent-soft px-3 py-2.5 text-xs text-text-primary">
               <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
               <div>
                 <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>
@@ -381,109 +392,116 @@ export function GraphNodeInspector({
             </div>
           ) : null}
 
-          {canRun || activeRun || presentation?.retryable ? (
-            <div className="mt-4 space-y-2">
+          {canRun || activeRun || presentation?.retryable || (graphNodeHasPinnableOutput(node) && onPinAsset) ? (
+            <div className="mt-3 flex flex-wrap items-center gap-1.5" data-graph-inspector-actions>
               {canRun ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
+                <>
+                  <Button
                     data-graph-inspector-run-node
-                    onClick={() => submitInspectorRun({ scope: "node", node_id: node.id })}
+                    variant="primary"
+                    size="toolbar"
+                    onClick={() => {
+                      onHideRunPreview?.();
+                      submitInspectorRun({ scope: "node", node_id: node.id });
+                    }}
                     disabled={runMutation.isPending || busy || runBlocked}
-                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                    {...runPreviewPointerHandlers(
+                      { scope: "node", node_id: node.id },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
                   >
                     {runMutation.isPending && runMutation.variables?.scope === "node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
                     {t("graph.runs.scope.node")}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <IconButton
+                    label={t("graph.runs.scope.toNode")}
                     data-graph-inspector-run-to-node
-                    onClick={() => submitInspectorRun({ scope: "to_node", node_id: node.id })}
+                    onClick={() => {
+                      onHideRunPreview?.();
+                      submitInspectorRun({ scope: "to_node", node_id: node.id });
+                    }}
                     disabled={runMutation.isPending || busy || runBlocked}
-                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    {...runPreviewPointerHandlers(
+                      { scope: "to_node", node_id: node.id },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
                   >
-                    {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
-                    {t("graph.runs.scope.toNode")}
-                  </button>
-                </div>
+                    {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                  </IconButton>
+                </>
               ) : null}
               {frozenDocument ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
+                <>
+                  <IconButton
+                    label={t("graph.inspector.refine")}
                     data-graph-inspector-refine
-                    onClick={() => submitInspectorRun({
-                      scope: "node",
-                      node_id: node.id,
-                      force: true,
-                      regenerate_mode: "refine",
-                    })}
-                    disabled={runMutation.isPending || busy}
-                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                  >
-                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "refine" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
-                    {t("graph.inspector.refine")}
-                  </button>
-                  <button
-                    type="button"
-                    data-graph-inspector-replace
                     onClick={() => {
-                      if (!window.confirm(t("graph.inspector.replaceConfirm"))) return;
+                      onHideRunPreview?.();
                       submitInspectorRun({
                         scope: "node",
                         node_id: node.id,
                         force: true,
-                        regenerate_mode: "replace",
+                        regenerate_mode: "refine",
                       });
                     }}
                     disabled={runMutation.isPending || busy}
-                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    {...runPreviewPointerHandlers(
+                      { scope: "node", node_id: node.id, force: true, regenerate_mode: "refine" },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
                   >
-                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "replace" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
-                    {t("graph.inspector.replace")}
-                  </button>
-                </div>
+                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "refine" ? <Loader2 size={14} className="animate-spin" /> : <PencilLine size={14} />}
+                  </IconButton>
+                  <IconButton
+                    label={t("graph.inspector.replace")}
+                    data-graph-inspector-replace
+                    onClick={() => setReplaceConfirmOpen(true)}
+                    disabled={runMutation.isPending || busy}
+                    {...runPreviewPointerHandlers(
+                      { scope: "node", node_id: node.id, force: true, regenerate_mode: "replace" },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
+                  >
+                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "replace" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                  </IconButton>
+                </>
               ) : null}
               {activeRun ? (
-                <button
-                  type="button"
+                <IconButton
+                  label={t("detail.cancel")}
+                  variant="danger"
                   onClick={() => cancelMutation.mutate(activeRun.id)}
                   disabled={cancelMutation.isPending}
-                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-950/30"
+                  busy={cancelMutation.isPending}
                 >
-                  {cancelMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <XCircle size={14} className="mr-1.5" />}
-                  {t("detail.cancel")}
-                </button>
+                  <XCircle size={14} aria-hidden="true" />
+                </IconButton>
               ) : null}
               {presentation?.retryable && presentation.runId && !activeRun ? (
-                <button
-                  type="button"
+                <IconButton
+                  label={t("graph.inspector.retryRun")}
                   onClick={() => void retryRun()}
                   disabled={retryMutation.isPending || busy}
-                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  busy={retryMutation.isPending}
                 >
-                  {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
-                  {t("graph.inspector.retryRun")}
-                </button>
+                  <RotateCcw size={14} />
+                </IconButton>
+              ) : null}
+              {graphNodeHasPinnableOutput(node) && onPinAsset ? (
+                <IconButton label={t("graph.canvas.pinAsset")} data-graph-pin-asset onClick={onPinAsset} disabled={busy}>
+                  <Pin size={14} aria-hidden="true" />
+                </IconButton>
               ) : null}
             </div>
-          ) : null}
-          {graphNodeHasPinnableOutput(node) && onPinAsset ? (
-            <button
-              type="button"
-              data-graph-pin-asset
-              onClick={onPinAsset}
-              disabled={busy}
-              className="mt-2 inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              <Pin size={14} className="mr-1.5" aria-hidden="true" />
-              {t("graph.canvas.pinAsset")}
-            </button>
           ) : null}
         </section>
 
         {saveState.error || mutationError ? (
-          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+          <div role="alert" className="rounded-panel border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
             <AlertCircle size={13} className="mr-1.5 inline" />
             {saveState.error ?? t("workbench.error.structure")}
           </div>
@@ -511,7 +529,7 @@ export function GraphNodeInspector({
             onRetry={retryCatalog}
           />
         ) : !catalog ? (
-          <p className="px-1 text-xs text-zinc-500 dark:text-slate-400">{t("app.loading")}</p>
+          <p className="px-1 text-xs text-text-muted">{t("app.loading")}</p>
         ) : node.node_type === "image_asset" ? (
           <ImageAssetEditor
             key={node.id}
@@ -543,16 +561,13 @@ export function GraphNodeInspector({
                   aspectRatio={requestedAspectRatio(node)}
                 />
                 {node.node_type === "image_generation" && node.preview_asset_id && onOpenLocalEdit ? (
-                  <button
-                    type="button"
+                  <IconButton
+                    label={t("localEdit.open")}
                     data-graph-node-local-edit
                     onClick={() => onOpenLocalEdit({ sourceAssetId: node.preview_asset_id!, targetNodeId: node.id })}
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-border-l1 px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-                    title={t("localEdit.open")}
                   >
                     <PencilLine size={14} aria-hidden="true" />
-                    <span>{t("localEdit.open")}</span>
-                  </button>
+                  </IconButton>
                 ) : null}
                 {node.node_type === "image_generation" ? <MeasuredOutputStrip node={node} /> : null}
               </div>
@@ -577,13 +592,33 @@ export function GraphNodeInspector({
           heading={t("graph.inspector.inputs")}
           empty={t("graph.inspector.inputsEmpty")}
           items={incoming}
+          lastRun={lastNodeRun}
           busy={busy || reorderMutation.isPending}
           onJump={onJump}
           onReorder={(role, edgeRefs) => reorderMutation.mutate({ nodeId: node.id, role, edgeRefs })}
         />
-        <RuntimeInputList node={node} graph={graph} lastRun={lastNodeRun} />
         <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
+        <GraphTechnicalDetails node={node} graph={graph} lastRun={lastNodeRun} />
       </div>
+      <ConfirmDialog
+        open={replaceConfirmOpen}
+        title={t("graph.inspector.replace")}
+        description={t("graph.inspector.replaceConfirm")}
+        confirmLabel={t("graph.inspector.replace")}
+        cancelLabel={t("common.cancel")}
+        destructive
+        busy={runMutation.isPending}
+        onConfirm={() => {
+          setReplaceConfirmOpen(false);
+          submitInspectorRun({
+            scope: "node",
+            node_id: node.id,
+            force: true,
+            regenerate_mode: "replace",
+          });
+        }}
+        onClose={() => setReplaceConfirmOpen(false)}
+      />
     </InspectorFlushContext.Provider>
   );
 }
@@ -597,11 +632,11 @@ function PromptResult({ payload }: { payload: Record<string, unknown> | null | u
     : null;
   const background = typeof content?.background === "string" ? content.background.trim() : "";
   return (
-    <section className="config-bubble rounded-2xl p-4 shadow-sm">
-      <h4 className="text-xs font-semibold text-zinc-950 dark:text-white">{t("graph.inspector.lastPrompt")}</h4>
-      <p className="mt-2 text-xs leading-5 text-zinc-700 dark:text-slate-200">{goal}</p>
+    <section className="border-b border-border-l1 pb-4">
+      <h4 className="text-xs font-semibold text-text-primary">{t("graph.inspector.lastPrompt")}</h4>
+      <p className="mt-2 text-xs leading-5 text-text-secondary">{goal}</p>
       {background ? (
-        <p className="mt-1 text-[11px] leading-4 text-zinc-500 dark:text-slate-400">{background}</p>
+        <p className="mt-1 text-[11px] leading-4 text-text-muted">{background}</p>
       ) : null}
     </section>
   );
@@ -622,22 +657,23 @@ function CatalogLoadError({
   return (
     <div
       role="alert"
-      className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200"
+      className="flex items-start gap-2 rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error"
     >
       <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <p>{message || t("graph.inspector.catalogLoadFailed")}</p>
-        <button
-          type="button"
+        <Button
+          variant="dangerSoft"
+          size="sm"
+          className="mt-2"
           onClick={onRetry}
           disabled={busy || retrying}
+          busy={retrying}
           aria-label={t("workbench.retry")}
-          title={t("workbench.retry")}
-          className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/30 dark:bg-transparent dark:text-red-200 dark:hover:bg-red-950/30"
         >
-          {retrying ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <RotateCcw size={12} aria-hidden="true" />}
+          {retrying ? null : <RotateCcw size={12} aria-hidden="true" />}
           {t("workbench.retry")}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -649,6 +685,8 @@ function GraphInspectorDashboard({
   runBlocked,
   runBlockedReason,
   onRunGraph,
+  onPreviewGraph,
+  onHideRunPreview,
   onOpenAdd,
   onOpenLibrary,
 }: {
@@ -657,46 +695,51 @@ function GraphInspectorDashboard({
   runBlocked: boolean;
   runBlockedReason?: string;
   onRunGraph: () => void;
+  onPreviewGraph?: () => void;
+  onHideRunPreview?: () => void;
   onOpenAdd?: () => void;
   onOpenLibrary?: () => void;
 }) {
   const { t } = useI18n();
   return (
-    <div className="space-y-3 p-3.5 pb-6" data-graph-node-inspector>
-      <section className="config-bubble rounded-2xl p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-zinc-950 dark:text-white">{graph.title}</h3>
-        <p className="mt-2 text-xs leading-5 text-zinc-600 dark:text-slate-300">{t("graph.inspector.selectHint")}</p>
-        <div className="mt-4 grid gap-2">
+    <div key={graph.id} className="px-1 py-2 motion-safe:animate-node-reveal" data-graph-node-inspector>
+      <section>
+        <h3 className="text-sm font-semibold text-text-primary">{graph.title}</h3>
+        <p className="mt-1.5 text-xs leading-5 text-text-muted">{t("graph.inspector.selectHint")}</p>
+        <div className="mt-5 grid gap-2">
           {onOpenAdd ? (
-            <button
-              type="button"
-              onClick={onOpenAdd}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
+            <Button variant="secondary" size="lg" className="w-full" onClick={onOpenAdd}>
               <Plus size={14} aria-hidden="true" />
               {t("graph.inspector.openAdd")}
-            </button>
+            </Button>
           ) : null}
           {onOpenLibrary ? (
-            <button
-              type="button"
-              onClick={onOpenLibrary}
-              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
+            <Button variant="secondary" size="lg" className="w-full" onClick={onOpenLibrary}>
               <Images size={14} aria-hidden="true" />
               {t("graph.inspector.openLibrary")}
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            onClick={onRunGraph}
-            disabled={busy || runBlocked}
-            title={runBlocked ? runBlockedReason : undefined}
-            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
-            {t("graph.inspector.runGraph")}
-          </button>
+          <Tooltip content={runBlocked ? runBlockedReason : undefined}>
+            <span className="block w-full">
+              <Button
+                variant="primary"
+                size="lg"
+                className="w-full min-h-11"
+                onClick={onRunGraph}
+                disabled={busy || runBlocked}
+                title={runBlocked ? runBlockedReason : undefined}
+                busy={busy}
+                {...runPreviewPointerHandlers(
+                  { scope: "graph" },
+                  onPreviewGraph ? () => onPreviewGraph() : undefined,
+                  onHideRunPreview,
+                )}
+              >
+                {busy ? null : <Play size={14} aria-hidden="true" />}
+                {t("graph.inspector.runGraph")}
+              </Button>
+            </span>
+          </Tooltip>
         </div>
       </section>
     </div>
@@ -722,6 +765,7 @@ function ProductSourceEditor({
   const queryClient = useQueryClient();
   const sourceDraft = graphProductSourceDraft(node);
   const sourceProductId = sourceDraft.source_product_id;
+  const searchInputId = useId();
   const [search, setSearch] = useState("");
   const [factsForm, setFactsForm] = useState<ProductFactsDraft | null>(null);
   const [factsSaveState, setFactsSaveState] = useState<{ status: SaveStatus; error: string | null }>({
@@ -837,70 +881,71 @@ function ProductSourceEditor({
         <SaveStatusBadge status={factsSaveState.status} />
       </div>
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ title })} />
-      <p className="text-[11px] leading-5 text-zinc-500 dark:text-slate-400">{t("graph.inspector.productSourceHint")}</p>
+      <p className="text-[11px] leading-5 text-text-muted">{t("graph.inspector.productSourceHint")}</p>
       {!sourceProductId ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">
+        <div className="rounded-xl border border-state-warning/35 bg-state-warning-soft px-3 py-2.5 text-xs leading-5 text-state-warning">
           {t("graph.inspector.productSourceUnbound")}
         </div>
       ) : null}
 
       <div className="space-y-2">
-        <label className="block">
-          <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{t("graph.inspector.productSourceSearch")}</span>
+        <Field label={t("graph.inspector.productSourceSearch")} htmlFor={searchInputId}>
           <span className="relative block">
-            <Search size={14} className="pointer-events-none absolute left-3 top-3 text-zinc-400" aria-hidden="true" />
-            <input
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden="true" />
+            <Input
+              id={searchInputId}
               value={search}
               disabled={busy}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t("graph.inspector.productSourceSearchPlaceholder")}
-              className="input-premium h-10 w-full pl-9 pr-3 text-xs outline-none"
+              className="pl-9 pr-3"
             />
           </span>
-        </label>
-        <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-zinc-200 p-1 dark:border-slate-700">
-          {productsQuery.isPending ? <p className="px-2 py-2 text-xs text-zinc-500 dark:text-slate-400">{t("app.loading")}</p> : null}
-          {!productsQuery.isPending && pickerItems.length === 0 ? <p className="px-2 py-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.productSourceNoProducts")}</p> : null}
+        </Field>
+        <div className="max-h-44 space-y-1 overflow-y-auto rounded-xl border border-border-l1 p-1">
+          {productsQuery.isPending ? <p className="px-2 py-2 text-xs text-text-muted">{t("app.loading")}</p> : null}
+          {!productsQuery.isPending && pickerItems.length === 0 ? <p className="px-2 py-2 text-xs text-text-muted">{t("graph.inspector.productSourceNoProducts")}</p> : null}
           {pickerItems.map((item) => (
             <button
               key={item.id}
               type="button"
               disabled={busy || item.id === sourceProductId}
               onClick={() => void saveBinding(item.id, item.name)}
-              className="flex w-full min-w-0 items-start justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-zinc-50 disabled:cursor-default disabled:opacity-60 dark:hover:bg-slate-800"
+              className="flex w-full min-w-0 items-start justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs hover:bg-surface-subtle disabled:cursor-default disabled:opacity-60"
             >
               <span className="min-w-0">
-                <span className="block truncate font-semibold text-zinc-900 dark:text-slate-100">{item.name}</span>
-                <span className="mt-0.5 block truncate text-[10px] text-zinc-500 dark:text-slate-400">{item.category || t("agentWorkbench.nodeEditor.noValue")}</span>
+                <span className="block truncate font-semibold text-text-primary">{item.name}</span>
+                <span className="mt-0.5 block truncate text-[10px] text-text-muted">{item.category || t("agentWorkbench.nodeEditor.noValue")}</span>
               </span>
-              {item.id === sourceProductId ? <span className="shrink-0 text-[10px] text-emerald-600">{t("graph.inspector.productSourceSelected")}</span> : null}
+              {item.id === sourceProductId ? <span className="shrink-0 text-[10px] text-state-success">{t("graph.inspector.productSourceSelected")}</span> : null}
             </button>
           ))}
         </div>
         {sourceProductId ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="md"
+            className="w-full"
             disabled={busy}
             onClick={() => void saveBinding(null)}
-            className="inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
           >
             {t("graph.inspector.productSourceClear")}
-          </button>
+          </Button>
         ) : null}
       </div>
 
       {factsQuery.error ? (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+        <div role="alert" className="rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
           <AlertCircle size={13} className="mr-1.5 inline" />
           {errorMessage(factsQuery.error, t("graph.inspector.productFactsLoadFailed"))}
         </div>
       ) : null}
-      {sourceProductId && factsQuery.isPending ? <p className="text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.productFactsLoading")}</p> : null}
+      {sourceProductId && factsQuery.isPending ? <p className="text-xs text-text-muted">{t("graph.inspector.productFactsLoading")}</p> : null}
       {sourceProductId && factsForm ? (
-        <div className="space-y-3 border-t border-zinc-200 pt-4 dark:border-slate-700">
+        <div className="space-y-3 border-t border-border-l1 pt-4">
           <div className="flex items-center justify-between gap-2">
             <SectionTitle title={t("graph.inspector.productFacts")} />
-            {factSet ? <span className="text-[10px] text-zinc-500 dark:text-slate-400">{t("graph.inspector.productFactsVersion", { version: factSet.version })}</span> : null}
+            {factSet ? <span className="text-[10px] text-text-muted">{t("graph.inspector.productFactsVersion", { version: factSet.version })}</span> : null}
           </div>
           <TextInput label={t("detail.inspector.productName")} value={factsForm.name} maxLength={255} disabled={busy} onChange={(name) => setFactsForm({ ...factsForm, name })} />
           <TextInput label={t("detail.inspector.category")} value={factsForm.category} maxLength={255} disabled={busy} onChange={(category) => setFactsForm({ ...factsForm, category })} />
@@ -908,9 +953,10 @@ function ProductSourceEditor({
           <TextArea label={t("detail.inspector.productDescription")} value={factsForm.source_note} onChange={(source_note) => setFactsForm({ ...factsForm, source_note })} minRows={2} maxRows={8} disabled={busy} />
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{t("graph.inspector.productFacts")}</span>
-              <button
-                type="button"
+              <span className="text-[10px] font-semibold text-text-muted">{t("graph.inspector.productFacts")}</span>
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={busy}
                 onClick={() => setFactsForm({
                   ...factsForm,
@@ -921,56 +967,57 @@ function ProductSourceEditor({
                     original: { key: "", value: "" },
                   }],
                 })}
-                className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 <Plus size={13} aria-hidden="true" />
                 {t("graph.inspector.productFactAdd")}
-              </button>
+              </Button>
             </div>
             {factsForm.facts.map((fact, index) => (
-              <div key={fact.id} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px] gap-1.5">
-                <input
+              <div key={fact.id} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_44px] gap-1.5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px]">
+                <Input
                   value={fact.key}
                   disabled={busy}
                   aria-label={`${t("graph.inspector.productFactKey")} ${index + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { key: event.target.value })}
                   placeholder={t("graph.inspector.productFactKey")}
-                  className="input-premium h-9 min-w-0 px-2 text-xs outline-none"
+                  className="min-w-0 px-2"
                 />
-                <input
+                <Input
                   value={fact.value}
                   disabled={busy}
                   aria-label={`${t("graph.inspector.productFactValue")} ${index + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { value: event.target.value })}
                   placeholder={t("graph.inspector.productFactValue")}
-                  className="input-premium h-9 min-w-0 px-2 text-xs outline-none"
+                  className="min-w-0 px-2"
                 />
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-11 w-11 px-0 text-text-muted hover:text-state-error lg:h-9 lg:w-8"
                   disabled={busy}
                   aria-label={t("graph.inspector.productFactRemove")}
-                  title={t("graph.inspector.productFactRemove")}
                   onClick={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
-                  className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:border-red-200 hover:text-red-600 dark:border-slate-700 dark:text-slate-400"
                 >
                   <Trash2 size={14} aria-hidden="true" />
-                </button>
+                </Button>
               </div>
             ))}
           </div>
           {validateProductFactsDraft(factsForm) ? (
-            <p role="alert" className="text-[11px] leading-5 text-red-600 dark:text-red-300">{productFactsValidationMessage(validateProductFactsDraft(factsForm), t)}</p>
+            <p role="alert" className="text-[11px] leading-5 text-state-error">{productFactsValidationMessage(validateProductFactsDraft(factsForm), t)}</p>
           ) : null}
-          {factsSaveState.error ? <p role="alert" className="text-[11px] leading-5 text-red-600 dark:text-red-300">{factsSaveState.error}</p> : null}
-          <button
-            type="button"
+          {factsSaveState.error ? <p role="alert" className="text-[11px] leading-5 text-state-error">{factsSaveState.error}</p> : null}
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
             onClick={() => void saveFacts()}
             disabled={busy || factsSaveState.status === "saving" || Boolean(validateProductFactsDraft(factsForm))}
-            className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+            busy={factsSaveState.status === "saving"}
           >
-            {factsSaveState.status === "saving" ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {factsSaveState.status === "saving" ? null : <Save size={14} />}
             {factsSaveState.status === "saving" ? t("graph.inspector.productFactsSaving") : t("graph.inspector.productFactsSave")}
-          </button>
+          </Button>
         </div>
       ) : null}
       {sourceProduct && !factsForm && !factsQuery.isPending ? (
@@ -1033,7 +1080,7 @@ function ImageAssetEditor({
   return (
     <AutosaveForm editor={editor} busy={busy}>
       {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} aspectRatio={requestedAspectRatio(node)} /> : null}
-      {!image ? <p className="text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.noPreview")}</p> : null}
+      {!image ? <p className="text-xs text-text-muted">{t("graph.inspector.noPreview")}</p> : null}
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
       <CatalogConfigFields
         fields={fields}
@@ -1042,25 +1089,27 @@ function ImageAssetEditor({
         disabled={busy}
       />
       {onBind ? (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="lg"
+          className="w-full"
           onClick={() => void onBind()}
           disabled={busy}
-          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           <Link2 size={14} aria-hidden="true" />
           {node.bound_asset_id ? t("graph.inspector.rebind") : t("graph.inspector.bind")}
-        </button>
+        </Button>
       ) : null}
       {node.bound_asset_id ? (
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="lg"
+          className="w-full"
           disabled={busy}
           onClick={() => void unbind()}
-          className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200"
         >
           {t("graph.inspector.unbind")}
-        </button>
+        </Button>
       ) : null}
     </AutosaveForm>
   );
@@ -1158,7 +1207,7 @@ function AutosaveForm<T>({
   useEffect(() => registerFlush(flushId, () => editor.flush(true)), [editor.flush, flushId, registerFlush]);
   return (
     <form
-      className="config-bubble space-y-4 rounded-2xl p-4 shadow-sm"
+      className="space-y-4 border-b border-border-l1 pb-4"
       onSubmit={(event) => {
         event.preventDefault();
         void editor.flush(true).catch(() => undefined);
@@ -1166,22 +1215,22 @@ function AutosaveForm<T>({
     >
       {children}
       {editor.dirty || editor.status === "failed" ? (
-        <div className="grid grid-cols-2 gap-2 border-t border-zinc-200 pt-4 dark:border-slate-700">
-          <button type="button" onClick={editor.discard} disabled={busy} className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-            <Undo2 size={14} className="mr-1.5" />
+        <div className="grid grid-cols-2 gap-2 border-t border-border-l1 pt-4">
+          <Button type="button" variant="secondary" size="lg" onClick={editor.discard} disabled={busy}>
+            <Undo2 size={14} />
             {t("settings.discard")}
-          </button>
-          <button type="submit" disabled={busy} className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900">
-            {busy || editor.status === "saving" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
+          </Button>
+          <Button type="submit" variant="primary" size="lg" disabled={busy} busy={editor.status === "saving"}>
+            {busy || editor.status === "saving" ? null : <Save size={14} />}
             {t("detail.save")}
-          </button>
+          </Button>
         </div>
       ) : null}
     </form>
   );
 }
 
-function RuntimeInputList({
+function GraphTechnicalDetails({
   node,
   graph,
   lastRun,
@@ -1194,88 +1243,37 @@ function RuntimeInputList({
   const currentSources = graphIncomingSourceEntries(node, graph);
   const historicalSources = lastRun ? graphRunInputTraceEntries(lastRun) : [];
   const technical = graphContextEntries(lastRun?.compiled_context ?? null);
+  const identifiers = [
+    { label: t("graph.inspector.nodeId"), value: node.id },
+    ...(lastRun ? [{ label: t("graph.inspector.nodeRunId"), value: lastRun.id }] : []),
+    ...historicalSources.flatMap((item) => [
+      item.artifactId ? { label: t("graph.inspector.artifact"), value: item.artifactId } : null,
+      item.versionId ? { label: t("graph.inspector.version"), value: item.versionId } : null,
+      item.assetId ? { label: t("graph.inspector.asset"), value: item.assetId } : null,
+      item.sourceNodeId ? { label: t("graph.inspector.sourceNodeId"), value: item.sourceNodeId } : null,
+      item.artifactType ? { label: t("graph.inspector.artifactType"), value: graphArtifactTypeLabelKey(item.artifactType) ? t(graphArtifactTypeLabelKey(item.artifactType)!) : t("graph.artifactType.unknown") } : null,
+    ].filter((item): item is { label: string; value: string } => Boolean(item))),
+  ];
   return (
-    <section className="config-bubble rounded-2xl p-4 shadow-sm" data-graph-runtime-inputs>
-      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.currentWiring")}</h4>
-      {currentSources.length === 0 ? (
-        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.currentWiringEmpty")}</p>
-      ) : (
-        <ul data-graph-current-wiring className="mt-2 space-y-1">
-          {currentSources.map((item) => <RuntimeInputRow key={item.id} item={item} />)}
-        </ul>
-      )}
-      <h4 className="mt-4 text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
-      {historicalSources.length === 0 ? (
-        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.runtimeInputsEmpty")}</p>
-      ) : (
-        <ul data-graph-run-inputs className="mt-2 space-y-1">
-          {historicalSources.map((item) => <RuntimeInputRow key={item.id} item={item} />)}
-        </ul>
-      )}
-      {technical.length ? (
-        <details data-graph-runtime-inputs-technical className="mt-3 border-t border-zinc-100 pt-2 dark:border-slate-800">
-          <summary className="cursor-pointer text-[10px] font-semibold text-zinc-500 dark:text-slate-400">
-            {t("graph.inspector.runtimeInputsTechnical")}
-          </summary>
-          <dl className="mt-2 space-y-1">
-            {technical.map((item) => (
-              <div key={item.key} className="flex min-w-0 items-baseline justify-between gap-3 px-2.5 py-1.5">
-                <dt className="shrink-0 text-[10px] text-zinc-500 dark:text-slate-400">{t(item.labelKey)}</dt>
-                <dd className="min-w-0 truncate text-right text-xs font-medium text-zinc-800 dark:text-slate-100">{item.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      ) : null}
-    </section>
-  );
-}
-
-function RuntimeInputRow({ item }: { item: ReturnType<typeof graphIncomingSourceEntries>[number] }) {
-  const { t } = useI18n();
-  const roleKey = graphEdgeRoleLabelKey(item.role);
-  const sourceLabel = item.title || (item.sourceNodeId
-    ? t("graph.inspector.sourceNode", { id: item.sourceNodeId })
-    : t("graph.runs.deletedNode"));
-  return (
-    <li data-graph-runtime-input-entry={item.id} className="min-w-0 px-2.5 py-1.5">
-      <div className="flex min-w-0 items-start justify-between gap-2">
-        {item.assetId ? (
-          <img
-            src={api.getProductImageAssetMediaUrl(item.assetId, "thumbnail")}
-            alt=""
-            className="mt-0.5 h-8 w-8 shrink-0 rounded-md object-cover"
-          />
-        ) : null}
-        <div className="min-w-0">
-          <div className="truncate text-xs font-medium text-zinc-800 dark:text-slate-100">{sourceLabel}</div>
-          <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 text-[10px] text-zinc-500 dark:text-slate-400">
-            {item.sourceNodeId ? (
-              <span data-graph-source-node-id={item.sourceNodeId} className="truncate">
-                {t("graph.inspector.sourceNode", { id: item.sourceNodeId })}
-              </span>
-            ) : null}
-            <span data-graph-input-order={item.order}>{t("graph.inspector.inputOrder", { order: item.order })}</span>
+    <details className="border-b border-border-l1 py-3" data-graph-technical-details>
+      <summary className="cursor-pointer text-xs font-semibold text-text-primary">
+        {t("graph.inspector.runtimeInputsTechnical")}
+      </summary>
+      <dl className="mt-3 space-y-1 border-t border-border-l2 pt-2">
+        {identifiers.map((item, index) => (
+          <ReadOnlyRow key={`${item.label}:${item.value}:${index}`} label={item.label} value={item.value} mono />
+        ))}
+        {technical.map((item) => (
+          <ReadOnlyRow key={item.key} label={t(item.labelKey)} value={item.value} mono />
+        ))}
+        {!currentSources.length && !historicalSources.length && !technical.length ? (
+          <div className="py-2">
+            <dt className="sr-only">{t("graph.inspector.runtimeInputsTechnical")}</dt>
+            <dd className="text-xs text-text-muted">{t("graph.inspector.runtimeInputsEmpty")}</dd>
           </div>
-        </div>
-        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
-          {roleKey ? t(roleKey) : item.role}
-        </span>
-      </div>
-      <InputArtifactSummary item={item} />
-    </li>
-  );
-}
-
-function InputArtifactSummary({ item }: { item: ReturnType<typeof graphIncomingSourceEntries>[number] }) {
-  const { t } = useI18n();
-  return (
-    <div data-graph-input-artifact className="mt-1 truncate text-[10px] text-zinc-500 dark:text-slate-400">
-      <span>{t("graph.inspector.artifact")}: {item.artifactId ?? t("graph.inspector.artifactUnavailable")}</span>
-      {item.artifactType ? <span> · {item.artifactType}</span> : null}
-      {item.assetId ? <span> · {t("graph.inspector.asset")}: {item.assetId}</span> : null}
-      {item.versionId ? <span> · {t("graph.inspector.version")}: {item.versionId}</span> : null}
-    </div>
+        ) : null}
+      </dl>
+    </details>
   );
 }
 
@@ -1283,6 +1281,7 @@ function IncomingEdgeList({
   heading,
   empty,
   items,
+  lastRun,
   busy,
   onJump,
   onReorder,
@@ -1290,12 +1289,14 @@ function IncomingEdgeList({
   heading: string;
   empty: string;
   items: Array<{ edge: GraphNode["incoming"][number]; related: GraphNode | null }>;
+  lastRun: GraphNodeRun | null;
   busy: boolean;
   onJump?: (nodeId: string) => void;
   onReorder: (role: string, edgeRefs: string[]) => void;
 }) {
   const { t } = useI18n();
   const [draggingEdgeId, setDraggingEdgeId] = useState<string | null>(null);
+  const actualEdgeIds = new Set((lastRun?.input_trace ?? []).map((item) => item.edge_id));
   const grouped = new Map<string, typeof items>();
   for (const item of items) {
     const group = grouped.get(item.edge.role) ?? [];
@@ -1303,22 +1304,24 @@ function IncomingEdgeList({
     grouped.set(item.edge.role, group);
   }
   return (
-    <section className="config-bubble rounded-2xl p-4 shadow-sm">
-      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{heading}</h4>
-      {items.length === 0 ? <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{empty}</p> : null}
+    <section className="border-b border-border-l1 pb-4">
+      <h4 className="text-xs font-semibold text-text-primary">{heading}</h4>
+      {items.length === 0 ? <p className="mt-2 text-xs text-text-muted">{empty}</p> : null}
       <div className="mt-2 space-y-3">
         {[...grouped.entries()].map(([role, group]) => {
           const roleKey = graphEdgeRoleLabelKey(role);
           const ordered = group.slice().sort((left, right) => left.edge.order - right.edge.order || left.edge.id.localeCompare(right.edge.id));
           return (
             <div key={role}>
-              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-slate-400">
-                {roleKey ? t(roleKey) : role}
+              <div className="mb-1 text-[10px] font-semibold text-text-muted">
+                {roleKey ? t(roleKey) : t("graph.edgeRole.unknown")}
               </div>
               <ul className="space-y-1">
                 {ordered.map((item, index) => {
                   const assetId = item.related?.preview_asset_id ?? item.related?.bound_asset_id;
                   const primaryBrief = role === "brief" && index === 0;
+                  const RelatedIcon = item.related ? workflowNodeKindTheme(item.related.node_type).icon : Link2;
+                  const usedInLastRun = actualEdgeIds.has(item.edge.id);
                   return (
                     <li
                       key={item.edge.id}
@@ -1357,7 +1360,7 @@ function IncomingEdgeList({
                         setDraggingEdgeId(null);
                         onReorder(role, refs);
                       }}
-                      className={`flex items-center gap-2 rounded-xl px-1 py-1 ${draggingEdgeId === item.edge.id ? "bg-zinc-100 dark:bg-slate-800" : ""}`}
+                      className={`flex items-center gap-2 rounded-xl px-1 py-1 ${draggingEdgeId === item.edge.id ? "bg-surface-subtle" : ""}`}
                     >
                       {assetId ? (
                         <img
@@ -1365,16 +1368,27 @@ function IncomingEdgeList({
                           alt=""
                           className="h-8 w-8 shrink-0 rounded-md object-cover"
                         />
-                      ) : null}
+                      ) : (
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-subtle text-text-muted">
+                          <RelatedIcon size={13} aria-hidden="true" />
+                        </span>
+                      )}
                       <button
                         type="button"
                         disabled={!item.related || !onJump}
                         onClick={() => item.related && onJump?.(item.related.id)}
-                        className="min-w-0 flex-1 truncate text-left text-xs font-medium text-zinc-800 hover:underline disabled:text-zinc-400 dark:text-slate-100"
+                        className="min-w-0 flex-1 truncate text-left text-xs font-medium text-text-primary hover:underline disabled:text-text-muted"
                       >
                         {item.related?.title ?? t("graph.runs.deletedNode")}
                         {primaryBrief ? ` · ${t("graph.inspector.primaryBrief")}` : ""}
                       </button>
+                      {usedInLastRun ? (
+                        <Tooltip content={t("graph.inspector.runtimeInputs")}>
+                          <span data-graph-runtime-input-used className="h-2.5 w-2.5 shrink-0 rounded-full bg-state-success ring-2 ring-surface-raised">
+                            <span className="sr-only">{t("graph.inspector.runtimeInputs")}</span>
+                          </span>
+                        </Tooltip>
+                      ) : null}
                       {ordered.length > 1 ? (
                         <span className="flex shrink-0 gap-0.5">
                           <button
@@ -1388,7 +1402,7 @@ function IncomingEdgeList({
                               refs[index] = swap;
                               onReorder(role, refs);
                             }}
-                            className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                            className="rounded p-1 text-text-muted hover:bg-surface-subtle disabled:opacity-30"
                           >
                             <ArrowUp size={12} />
                           </button>
@@ -1403,7 +1417,7 @@ function IncomingEdgeList({
                               refs[index] = swap;
                               onReorder(role, refs);
                             }}
-                            className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:hover:bg-slate-800"
+                            className="rounded p-1 text-text-muted hover:bg-surface-subtle disabled:opacity-30"
                           >
                             <ArrowDown size={12} />
                           </button>
@@ -1434,9 +1448,9 @@ function EdgeList({
 }) {
   const { t } = useI18n();
   return (
-    <section className="config-bubble rounded-2xl p-4 shadow-sm">
-      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{heading}</h4>
-      {items.length === 0 ? <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{empty}</p> : null}
+    <section className="border-b border-border-l1 pb-4">
+      <h4 className="text-xs font-semibold text-text-primary">{heading}</h4>
+      {items.length === 0 ? <p className="mt-2 text-xs text-text-muted">{empty}</p> : null}
       <ul className="mt-2 space-y-1">
         {items.map(({ edge, related }) => (
           <li key={edge.id}>
@@ -1444,12 +1458,12 @@ function EdgeList({
               type="button"
               disabled={!related || !onJump}
               onClick={() => related && onJump?.(related.id)}
-              className="flex w-full min-w-0 items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-left hover:bg-zinc-50 disabled:text-zinc-400 dark:hover:bg-slate-900/60"
+              className="flex w-full min-w-0 items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-left hover:bg-surface-subtle disabled:text-text-muted"
             >
-              <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
+              <span className="min-w-0 truncate text-xs font-medium text-text-primary">
                 {related?.title ?? t("graph.runs.deletedNode")}
               </span>
-              <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
+              <span className="shrink-0 rounded-full bg-surface-subtle px-2 py-0.5 text-[10px] font-medium text-text-muted">
                 {t(edgeRoleKey(edge.role))}
               </span>
             </button>
@@ -1498,11 +1512,11 @@ function MeasuredOutputStrip({ node }: { node: GraphNode }) {
     <section
       data-measured-output=""
       data-aspect-matched={aspectMatched ? "true" : "false"}
-      className="config-bubble rounded-2xl p-4 shadow-sm"
+      className="border-t border-border-l1 pt-3"
     >
-      <h4 className="text-xs font-semibold text-zinc-950 dark:text-white">{t("graph.inspector.measuredOutput")}</h4>
+      <h4 className="text-xs font-semibold text-text-primary">{t("graph.inspector.measuredOutput")}</h4>
       {aspectMatched ? null : (
-        <p role="status" className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+        <p role="status" className="mt-2 text-[11px] leading-4 text-state-warning">
           {t("graph.inspector.aspectMismatch", {
             requested: requestedAspect || "—",
             size: typeof measuredWidth === "number" && typeof measuredHeight === "number"
@@ -1511,34 +1525,34 @@ function MeasuredOutputStrip({ node }: { node: GraphNode }) {
           })}
         </p>
       )}
-      <dl className="mt-2 space-y-1 text-[11px] leading-4 text-zinc-600 dark:text-slate-300">
+      <dl className="mt-2 space-y-1 text-[11px] leading-4 text-text-secondary">
         {requestedAspect ? (
           <div className="flex justify-between gap-3">
             <dt>{t("graph.inspector.requestedAspect")}</dt>
-            <dd className="font-medium text-zinc-800 dark:text-slate-100">{requestedAspect}</dd>
+            <dd className="font-medium text-text-primary">{requestedAspect}</dd>
           </div>
         ) : null}
         {typeof measuredWidth === "number" && typeof measuredHeight === "number" ? (
           <div className="flex justify-between gap-3">
             <dt>{t("graph.inspector.measuredSize")}</dt>
-            <dd className="font-medium text-zinc-800 dark:text-slate-100">{measuredWidth}×{measuredHeight}</dd>
+            <dd className="font-medium text-text-primary">{measuredWidth}×{measuredHeight}</dd>
           </div>
         ) : null}
         {quality ? (
           <div className="flex justify-between gap-3">
             <dt>{t("graph.inspector.measuredQuality")}</dt>
-            <dd className="font-medium text-zinc-800 dark:text-slate-100">{quality}</dd>
+            <dd className="font-medium text-text-primary">{graphOutputQualityLabelKey(quality) ? t(graphOutputQualityLabelKey(quality)!) : t("graph.output.quality.unknown")}</dd>
           </div>
         ) : null}
         {action ? (
           <div className="flex justify-between gap-3">
             <dt>{t("graph.inspector.measuredAction")}</dt>
-            <dd className="font-medium text-zinc-800 dark:text-slate-100">{action}</dd>
+            <dd className="font-medium text-text-primary">{graphOutputActionLabelKey(action) ? t(graphOutputActionLabelKey(action)!) : t("graph.output.action.unknown")}</dd>
           </div>
         ) : null}
       </dl>
       {fallback && typeof fallback.message === "string" ? (
-        <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">{t("graph.inspector.generationFallback")}: {fallback.message}</p>
+        <p className="mt-2 text-[11px] leading-4 text-state-warning">{t("graph.inspector.generationFallback")}: {fallback.message}</p>
       ) : null}
     </section>
   );
@@ -1556,7 +1570,7 @@ function NodeImagePreview({
   const { t } = useI18n();
   const parsed = parseAspectRatio(aspectRatio);
   return (
-    <div className="relative overflow-hidden rounded-xl border border-zinc-200 dark:border-slate-700">
+    <div className="relative overflow-hidden rounded-xl border border-border-l1">
       <button
         type="button"
         onClick={() => onPreview(image)}
@@ -1573,7 +1587,7 @@ function NodeImagePreview({
 }
 
 function SectionTitle({ title }: { title: string }) {
-  return <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{title}</h4>;
+  return <h4 className="text-xs font-semibold text-text-primary">{title}</h4>;
 }
 
 function TextInput({
@@ -1590,10 +1604,13 @@ function TextInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{label}</span>
-      <input disabled={disabled} value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} className="input-premium h-10 w-full px-3 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60" />
-    </label>
+    <Input
+      label={label}
+      value={value}
+      maxLength={maxLength}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 
@@ -1640,9 +1657,9 @@ function errorMessage(error: unknown, fallback: string): string {
 
 function ReadOnlyRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 border-b border-zinc-100 py-2 last:border-0 dark:border-slate-800">
-      <dt className="text-zinc-500 dark:text-slate-400">{label}</dt>
-      <dd className={`min-w-0 break-all text-zinc-800 dark:text-slate-100 ${mono ? "font-mono text-[10px]" : "font-medium"}`}>{value}</dd>
+    <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3 border-b border-border-l2 py-2 last:border-0">
+      <dt className="text-text-muted">{label}</dt>
+      <dd className={`min-w-0 break-all text-text-primary ${mono ? "font-mono text-[10px]" : "font-medium"}`}>{value}</dd>
     </div>
   );
 }
@@ -1664,6 +1681,16 @@ function configStatusKey(status: GraphConfigStatus): TranslationKey {
     ready: "graph.inspector.config.ready",
     stale: "graph.inspector.config.stale",
   } as const;
+  return keys[status];
+}
+
+function saveStatusKey(status: SaveStatus): TranslationKey {
+  const keys: Record<SaveStatus, TranslationKey> = {
+    idle: "detail.inspector.saveIdle",
+    saving: "detail.inspector.saving",
+    saved: "detail.inspector.saved",
+    failed: "detail.inspector.saveFailed",
+  };
   return keys[status];
 }
 

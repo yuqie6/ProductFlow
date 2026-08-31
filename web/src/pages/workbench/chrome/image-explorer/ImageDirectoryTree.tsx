@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useState, type DragEvent, type ReactNode } from "react";
 
+import { IconButton } from "../../../../components/ui/icon-button";
 import { useI18n } from "../../../../lib/preferences";
 import type { TranslationKey } from "../../../../lib/i18n";
 import type {
@@ -130,16 +131,15 @@ export function ImageDirectoryTree({
       <DirectorySection
         title={t("detail.library.folders")}
         action={(
-          <button
-            type="button"
-            onClick={onCreateFolder}
+          <IconButton
+            label={t("detail.library.createFolder")}
+            variant="ghost"
+            size="sm"
             disabled={busy}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-            title={t("detail.library.createFolder")}
-            aria-label={t("detail.library.createFolder")}
+            onClick={onCreateFolder}
           >
             <Plus size={14} />
-          </button>
+          </IconButton>
         )}
       >
         {bootstrap.user_folders.map((folder) => (
@@ -156,26 +156,26 @@ export function ImageDirectoryTree({
                 disabled={busy}
               />
             </div>
-            <button
-              type="button"
-              onClick={() => onRenameFolder(folder)}
+            <IconButton
+              label={t("detail.library.renameFolder")}
+              variant="ghost"
+              size="sm"
               disabled={busy}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-slate-100 hover:text-slate-900 focus:opacity-100 disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-white"
-              title={t("detail.library.renameFolder")}
-              aria-label={t("detail.library.renameFolder")}
+              className="text-text-muted"
+              onClick={() => onRenameFolder(folder)}
             >
               <Pencil size={12} />
-            </button>
-            <button
-              type="button"
-              onClick={() => onDeleteFolder(folder)}
+            </IconButton>
+            <IconButton
+              label={t("detail.library.deleteFolder")}
+              variant="ghost"
+              size="sm"
               disabled={busy}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 focus:opacity-100 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300"
-              title={t("detail.library.deleteFolder")}
-              aria-label={t("detail.library.deleteFolder")}
+              className="text-text-muted hover:bg-state-error-soft hover:text-state-error"
+              onClick={() => onDeleteFolder(folder)}
             >
               <Trash2 size={12} />
-            </button>
+            </IconButton>
           </div>
         ))}
       </DirectorySection>
@@ -187,7 +187,7 @@ function DirectorySection({ title, action, children }: { title: string; action?:
   return (
     <section>
       <div className="mb-1 flex h-7 items-center justify-between gap-2 px-1">
-        <h3 className="min-w-0 truncate text-[10px] font-bold uppercase text-slate-400">{title}</h3>
+        <h3 className="min-w-0 truncate text-[10px] font-bold uppercase text-text-muted">{title}</h3>
         {action}
       </div>
       <div className="space-y-1">{children}</div>
@@ -212,15 +212,15 @@ function DirectoryButton({
     <button
       type="button"
       onClick={onClick}
-      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${active
-          ? "bg-indigo-50 font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-100"
-          : "text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-control px-2 text-left text-xs transition-colors ${active
+          ? "bg-accent-soft font-semibold text-accent"
+          : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
         }`}
       title={label}
     >
       <span className="shrink-0">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 tabular-nums text-[10px] text-slate-400">{count}</span>
+      <span className="shrink-0 tabular-nums text-[10px] text-text-muted">{count}</span>
     </button>
   );
 }
@@ -273,17 +273,17 @@ function DropDirectoryButton({
         }
       }}
       onDrop={handleDrop}
-      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${dragOver
-          ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-400 dark:bg-emerald-500/15 dark:text-emerald-200"
+      className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-control px-2 text-left text-xs transition-colors ${dragOver
+          ? "bg-state-success-soft text-state-success ring-1 ring-state-success"
           : active
-            ? "bg-indigo-50 font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-100"
-            : "text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+            ? "bg-accent-soft font-semibold text-accent"
+            : "text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
         }`}
       title={label}
     >
       <span className="shrink-0">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 tabular-nums text-[10px] text-slate-400">{count}</span>
+      <span className="shrink-0 tabular-nums text-[10px] text-text-muted">{count}</span>
     </button>
   );
 }

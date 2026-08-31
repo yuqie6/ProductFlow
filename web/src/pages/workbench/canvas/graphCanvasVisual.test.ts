@@ -17,10 +17,10 @@ describe("graphCanvasVisual", () => {
   });
 
   it("keeps selected-edge delete visible without hover", () => {
-    expect(graphEdgeDeleteClassName(true, false)).toContain("opacity-100");
-    expect(graphEdgeDeleteClassName(true, false)).toContain("!pointer-events-auto");
-    expect(graphEdgeDeleteClassName(true, false)).not.toContain("opacity-0");
-    expect(graphEdgeDeleteClassName(false, false)).toContain("opacity-0");
-    expect(graphEdgeDeleteClassName(false, false)).toContain("!pointer-events-none");
+    expect(graphEdgeDeleteClassName(true)).toContain("opacity-100");
+    expect(graphEdgeDeleteClassName(true)).toContain("!pointer-events-auto");
+    expect(graphEdgeDeleteClassName(true)).not.toContain("opacity-0");
+    expect(graphEdgeDeleteClassName(false)).toContain("opacity-0");
+    expect(graphEdgeDeleteClassName(false)).toContain("!pointer-events-none");
   });
 });

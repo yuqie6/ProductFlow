@@ -7,6 +7,7 @@ import {
   graphDataTypeLabelKey,
   graphNodeHasInput,
   graphNodeTypeOrder,
+  graphPortDataTypeClass,
   inspectableGraphNodeId,
   isGraphConnectionValid,
   graphHasRunnableProcessingNode,
@@ -300,5 +301,17 @@ describe("graphDataTypeLabelKey", () => {
     expect(graphDataTypeLabelKey("prompt")).toBe("graph.dataType.prompt");
     expect(graphDataTypeLabelKey("product_facts")).toBe("graph.dataType.product_facts");
     expect(graphDataTypeLabelKey("unknown")).toBeNull();
+  });
+});
+
+describe("graphPortDataTypeClass", () => {
+  it("uses kind tokens instead of palette utility classes", () => {
+    expect(graphPortDataTypeClass("product_facts")).toContain("kind-product");
+    expect(graphPortDataTypeClass("image_asset")).toContain("kind-image");
+    expect(graphPortDataTypeClass("creative_brief")).toContain("kind-brief");
+    expect(graphPortDataTypeClass("visual_system")).toContain("kind-visual");
+    expect(graphPortDataTypeClass("prompt")).toContain("kind-prompt");
+    expect(graphPortDataTypeClass("product_facts")).not.toContain("slate-");
+    expect(graphPortDataTypeClass("image_asset")).not.toContain("emerald-");
   });
 });

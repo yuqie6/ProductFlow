@@ -11,15 +11,20 @@ import {
 import { useState } from "react";
 
 import { api, ApiError } from "../../../lib/api";
+import { Button, buttonVariants } from "../../../components/ui/button";
+import { EmptyState as PanelState } from "../../../components/ui/empty-state";
+import { PanelSkeleton } from "../../../components/ui/skeleton";
 import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type {
+  AgentProductImageTypeKey,
   DeliveryRenditionJob,
   ProductImageAsset,
   DeliveryPreset,
   WorkflowDeliverySpec,
 } from "../../../lib/types";
+import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import {
   deliverySpecKey,
   deliverySpecLabel,
@@ -118,62 +123,63 @@ export function DeliveryRenditionPanel({
   return (
     <div className="min-w-0 p-3" data-delivery-rendition-panel>
       {presetSection}
-      <div className="flex min-w-0 items-start gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
+      <div className="flex min-w-0 items-start gap-2 border-b border-border-l1 pb-3">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold text-slate-950 dark:text-slate-100">
+          <div className="text-xs font-semibold text-text-primary">
             {t("workbench.rendition.currentSpec")}
           </div>
-          <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
+          <div className="mt-1 text-sm font-semibold text-text-primary">
             {deliverySpecLabel(deliverySpec)}
           </div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-            <span className="rounded bg-slate-200 px-1.5 py-1 dark:bg-slate-800">
+          <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-text-muted">
+            <span className="rounded bg-surface-subtle px-1.5 py-1">
               {t("workbench.rendition.fit")}: {t(`workbench.rendition.fit.${deliverySpec.fit}`)}
             </span>
-            <span className="rounded bg-slate-200 px-1.5 py-1 dark:bg-slate-800">
+            <span className="rounded bg-surface-subtle px-1.5 py-1">
               {t("workbench.rendition.maxBytes")}: {formatMaxBytes(deliverySpec.max_byte_size, t("workbench.rendition.noLimit"))}
             </span>
           </div>
         </div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
           onClick={() => sourceMutation.mutate()}
-          disabled={sourceMutation.isPending}
-          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-950 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white"
-          title={t("workbench.rendition.viewSource")}
+          busy={sourceMutation.isPending}
         >
-          {sourceMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ArrowUpLeft size={13} />}
+          {sourceMutation.isPending ? null : <ArrowUpLeft size={13} aria-hidden="true" />}
           {t("workbench.rendition.viewSource")}
-        </button>
+        </Button>
       </div>
 
       {error ? (
-        <div role="alert" className="mt-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+        <div role="alert" className="mt-3 rounded-md border border-state-error/30 bg-state-error-soft px-2.5 py-2 text-xs text-state-error">
           {error}
         </div>
       ) : null}
 
       {!hasCurrentJob && !jobsQuery.isLoading ? (
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="lg"
+          className="mt-3 w-full"
           onClick={() => createMutation.mutate(deliverySpec)}
-          disabled={createMutation.isPending}
-          className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
+          busy={createMutation.isPending}
         >
-          {createMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
+          {createMutation.isPending ? null : <WandSparkles size={14} aria-hidden="true" />}
           {t("workbench.rendition.create")}
-        </button>
+        </Button>
       ) : null}
 
       <div className="mt-4 flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+        <h3 className="text-xs font-semibold text-text-primary">
           {t("workbench.rendition.jobs")}
         </h3>
-        {jobsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-slate-400" /> : null}
+        {jobsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-text-muted" /> : null}
       </div>
 
       {jobsQuery.isLoading ? (
-        <PanelState compact icon={<Loader2 size={17} className="animate-spin" />} text={t("workbench.rendition.loading")} />
+        <PanelSkeleton compact rows={3} label={t("workbench.rendition.loading")} />
       ) : jobs.length === 0 ? (
         <PanelState compact text={t("workbench.rendition.empty")} />
       ) : (
@@ -214,7 +220,6 @@ function DeliveryPresetSection({
   const selectedPreset = presetsQuery.data?.items.find((item) => (
     currentSpecKey !== null && deliverySpecKey(item.delivery_spec) === currentSpecKey
   )) ?? null;
-  const metadataPreset = selectedPreset ?? presetsQuery.data?.items[0] ?? null;
 
   const applyPreset = async (preset: DeliveryPreset) => {
     if (!onApply || disabled || applyingKey || currentSpecKey === deliverySpecKey(preset.delivery_spec)) return;
@@ -230,25 +235,26 @@ function DeliveryPresetSection({
   };
 
   return (
-    <section className="mb-3 border-b border-slate-200 pb-3 dark:border-slate-800" data-delivery-presets>
+    <section className="mb-3 border-b border-border-l1 pb-3" data-delivery-presets>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">{t("workbench.rendition.presets")}</h3>
-        {presetsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-slate-400" /> : null}
+        <h3 className="text-xs font-semibold text-text-primary">{t("workbench.rendition.presets")}</h3>
+        {presetsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-text-muted" /> : null}
       </div>
       {presetsQuery.isPending ? (
-        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{t("workbench.rendition.presetsLoading")}</p>
+        <PanelSkeleton compact rows={2} label={t("workbench.rendition.presetsLoading")} />
       ) : presetsQuery.error ? (
-        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-red-600 dark:text-red-300" role="alert">
+        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-state-error" role="alert">
           <span>{firstError(presetsQuery.error) ?? t("workbench.rendition.presetsLoadFailed")}</span>
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
             onClick={() => void presetsQuery.refetch()}
             disabled={presetsQuery.isFetching}
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-red-200 px-2 font-semibold hover:bg-red-50 disabled:opacity-50 dark:border-red-400/30 dark:hover:bg-red-500/10"
           >
-            <RefreshCw size={12} />
+            <RefreshCw size={12} aria-hidden="true" />
             {t("workbench.rendition.presetsRetry")}
-          </button>
+          </Button>
         </div>
       ) : presetsQuery.data ? (
         <>
@@ -266,41 +272,38 @@ function DeliveryPresetSection({
                   onClick={() => void applyPreset(preset)}
                   disabled={disabled || Boolean(applyingKey) || selected || !onApply}
                   className={`min-w-0 rounded-md border px-2 py-2 text-left text-[10px] transition-colors disabled:cursor-default disabled:opacity-60 ${selected
-                    ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/50 dark:bg-emerald-500/10 dark:text-emerald-200"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500"
+                    ? "border-accent bg-accent-soft text-accent"
+                    : "border-border-l1 bg-surface-raised text-text-secondary hover:border-border-l3"
                     }`}
                 >
                   <span className="flex min-w-0 items-center gap-1.5">
                     {applying ? <Loader2 size={11} className="shrink-0 animate-spin" /> : null}
                     <span className="min-w-0 truncate font-semibold">{preset.title}</span>
                   </span>
-                  <span className="mt-1 block truncate text-[9px] text-slate-500 dark:text-slate-400">
-                    {preset.aspect_ratio} · {preset.applicable_image_type}
+                  <span className="mt-1 block truncate text-[9px] text-text-muted">
+                    {preset.aspect_ratio} · {deliveryPresetImageTypeLabel(preset.applicable_image_type, t)}
                   </span>
                 </button>
               );
             })}
           </div>
-          <div className="mt-2 space-y-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400" data-delivery-preset-meta>
-            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-              <span className="font-semibold text-slate-700 dark:text-slate-200">{t("workbench.rendition.presetsCustom")}</span>
-              <span>{t("workbench.rendition.presetsCustomHint")}</span>
-            </div>
-            {metadataPreset ? (
-              <>
-                <div>{t("workbench.rendition.presetReviewedAt", { date: metadataPreset.reviewed_at })}</div>
-                <div className="truncate" title={metadataPreset.source}>{t("workbench.rendition.presetSource", { source: metadataPreset.source })}</div>
-                <p>{metadataPreset.disclaimer}</p>
-              </>
-            ) : (
-              <p>{t("workbench.rendition.presetDisclaimer")}</p>
-            )}
-            {applyError ? <p className="text-red-600 dark:text-red-300" role="alert">{t("workbench.rendition.presetApplyFailed")}: {applyError}</p> : null}
-          </div>
+          {applyError ? (
+            <p className="mt-2 text-[10px] leading-4 text-state-error" role="alert">
+              {t("workbench.rendition.presetApplyFailed")}: {applyError}
+            </p>
+          ) : null}
         </>
       ) : null}
     </section>
   );
+}
+
+function deliveryPresetImageTypeLabel(
+  imageType: string,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[imageType as AgentProductImageTypeKey];
+  return translations ? t(translations.title) : t("workbench.rendition.imageTypeOther");
 }
 
 function RenditionJobRow({
@@ -319,12 +322,12 @@ function RenditionJobRow({
   const { t } = useI18n();
   const active = isActiveJob(job);
   return (
-    <article className="overflow-hidden rounded-md border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950/45">
+    <article className="overflow-hidden rounded-md border border-border-l1 bg-surface-raised">
       {job.result_asset ? (
         <button
           type="button"
           onClick={onPreview}
-          className="relative block aspect-[16/9] w-full overflow-hidden bg-slate-100 dark:bg-slate-900"
+          className="relative block aspect-[16/9] w-full overflow-hidden bg-surface-subtle"
           aria-label={t("workbench.rendition.preview")}
         >
           <img
@@ -332,7 +335,7 @@ function RenditionJobRow({
             alt={job.result_asset.display_name}
             className="h-full w-full object-contain"
           />
-          <span className="absolute bottom-1.5 right-1.5 inline-flex h-7 w-7 items-center justify-center rounded bg-slate-950/80 text-white">
+          <span className="absolute bottom-1.5 right-1.5 inline-flex h-7 w-7 items-center justify-center rounded bg-surface-inverse/80 text-surface-raised">
             <Eye size={13} />
           </span>
         </button>
@@ -340,16 +343,16 @@ function RenditionJobRow({
       <div className="p-2.5">
         <div className="flex min-w-0 items-center gap-2">
           <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${statusDotClass(job.status)}`} />
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-900 dark:text-slate-100">
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">
             {deliverySpecLabel(job.delivery_spec)}
           </span>
           {current ? (
-            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            <span className="shrink-0 rounded bg-surface-subtle px-1.5 py-0.5 text-[9px] font-semibold text-text-secondary">
               {t("workbench.rendition.current")}
             </span>
           ) : null}
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-text-muted">
           <span className={statusTextClass(job.status)}>
             {active ? <Loader2 size={10} className="mr-1 inline animate-spin" /> : null}
             {t(`workbench.rendition.status.${job.status}`)}
@@ -358,49 +361,38 @@ function RenditionJobRow({
           <span>{formatDateTime(job.updated_at, t.locale)}</span>
         </div>
         {job.failure_reason ? (
-          <p className="mt-2 break-words text-[11px] leading-5 text-red-600 dark:text-red-300">
+          <p className="mt-2 break-words text-[11px] leading-5 text-state-error">
             {job.failure_reason}
           </p>
         ) : null}
         {job.result_asset || (job.status === "failed" && job.is_retryable) ? (
-          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2 dark:border-slate-800">
+          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border-l1 pt-2">
             {job.result_asset ? (
               <>
-                <button type="button" onClick={onPreview} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-[11px] font-semibold text-slate-600 hover:text-slate-950 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
-                  <Eye size={12} /> {t("workbench.rendition.preview")}
-                </button>
-                <a href={api.toApiUrl(job.result_asset.download_url)} download={job.result_asset.original_filename} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-[11px] font-semibold text-slate-600 hover:text-slate-950 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
-                  <Download size={12} /> {t("workbench.rendition.download")}
+                <Button variant="secondary" size="sm" onClick={onPreview}>
+                  <Eye size={12} aria-hidden="true" /> {t("workbench.rendition.preview")}
+                </Button>
+                <a
+                  href={api.toApiUrl(job.result_asset.download_url)}
+                  download={job.result_asset.original_filename}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={buttonVariants({ variant: "secondary", size: "sm" })}
+                >
+                  <Download size={12} aria-hidden="true" /> {t("workbench.rendition.download")}
                 </a>
               </>
             ) : null}
             {job.status === "failed" && job.is_retryable ? (
-              <button type="button" onClick={onRetry} disabled={retrying} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-2 text-[11px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50">
-                {retrying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              <Button variant="secondary" size="sm" onClick={onRetry} busy={retrying}>
+                {retrying ? null : <RefreshCw size={12} aria-hidden="true" />}
                 {t("workbench.rendition.retry")}
-              </button>
+              </Button>
             ) : null}
           </div>
         ) : null}
       </div>
     </article>
-  );
-}
-
-function PanelState({
-  icon,
-  text,
-  compact = false,
-}: {
-  icon?: React.ReactNode;
-  text: string;
-  compact?: boolean;
-}) {
-  return (
-    <div className={`flex flex-col items-center justify-center gap-2 px-5 text-center text-xs text-slate-500 dark:text-slate-400 ${compact ? "min-h-28" : "min-h-[260px]"}`}>
-      {icon ? <span className="text-slate-400 dark:text-slate-500">{icon}</span> : null}
-      <span className="max-w-[260px] leading-5">{text}</span>
-    </div>
   );
 }
 
@@ -432,17 +424,17 @@ function formatMaxBytes(value: number | null | undefined, noLimit: string): stri
 }
 
 function statusDotClass(status: DeliveryRenditionJob["status"]): string {
-  if (status === "succeeded") return "bg-emerald-500";
-  if (status === "failed") return "bg-red-500";
-  if (status === "running") return "bg-blue-500";
-  if (status === "queued") return "bg-amber-500";
-  return "bg-slate-400";
+  if (status === "succeeded") return "bg-state-success";
+  if (status === "failed") return "bg-state-error";
+  if (status === "running") return "bg-accent";
+  if (status === "queued") return "bg-state-warning";
+  return "bg-text-muted";
 }
 
 function statusTextClass(status: DeliveryRenditionJob["status"]): string {
-  if (status === "succeeded") return "font-semibold text-emerald-700 dark:text-emerald-300";
-  if (status === "failed") return "font-semibold text-red-600 dark:text-red-300";
-  if (status === "running") return "font-semibold text-blue-700 dark:text-blue-300";
-  if (status === "queued") return "font-semibold text-amber-700 dark:text-amber-300";
-  return "font-semibold text-slate-500";
+  if (status === "succeeded") return "font-semibold text-state-success";
+  if (status === "failed") return "font-semibold text-state-error";
+  if (status === "running") return "font-semibold text-accent";
+  if (status === "queued") return "font-semibold text-state-warning";
+  return "font-semibold text-text-muted";
 }
