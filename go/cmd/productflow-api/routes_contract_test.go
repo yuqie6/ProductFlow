@@ -38,20 +38,21 @@ var sealedDocsOnly = map[string]bool{
 }
 
 var goOpsExtras = map[string]bool{
-	"GET /healthz/ready":                                                             true,
-	"GET /api/v2/agent-control/events":                                               true,
-	"GET /api/v2/agent-conversations/{}/turns/{}/events/page":                        true,
-	"GET /api/v2/products/{}/agent-conversations/{}/turns/{}/events/page":            true,
-	"GET /api/internal/v1/agent-conversations/{}/workflow-runs/{}":                   true,
-	"GET /api/image-sessions/{}/events":                                              true,
-	"GET /api/v3/products/{}/workflows/{}/runs/{}/events":                            true,
-	"GET /api/v3/products/{}/workflows/{}/nodes/{}/candidate":                        true,
-	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/batch":   true,
-	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/confirm": true,
-	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/apply":                 true,
-	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/discard":               true,
-	"POST /api/v3/products/{}/workflows/{}/runs/preview":                             true,
-	"POST /api/v2/product-source-notes/generate":                                     true,
+	"GET /healthz/ready":                                                                true,
+	"GET /api/v2/agent-control/events":                                                  true,
+	"GET /api/v2/agent-conversations/{}/turns/{}/events/page":                           true,
+	"GET /api/v2/products/{}/agent-conversations/{}/turns/{}/events/page":               true,
+	"GET /api/internal/v1/agent-conversations/{}/workflow-runs/{}":                      true,
+	"GET /api/image-sessions/{}/events":                                                 true,
+	"GET /api/v3/products/{}/workflows/{}/runs/{}/events":                               true,
+	"GET /api/v3/products/{}/workflows/{}/nodes/{}/candidate":                           true,
+	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/batch":      true,
+	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/confirm":    true,
+	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/effects/reconcile": true,
+	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/apply":                    true,
+	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/discard":                  true,
+	"POST /api/v3/products/{}/workflows/{}/runs/preview":                                true,
+	"POST /api/v2/product-source-notes/generate":                                        true,
 }
 
 // Historical snapshot still lists retired Agent library-effect and single-event routes.

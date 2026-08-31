@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Config } from "../src/config.js";
 import { ProductFlowError, resolvedToolContractVersion } from "../src/contracts.js";
-import { PiRuntimeManager } from "../src/pi-runtime.js";
+import { PiRuntimeManager } from "../src/runtime-manager.js";
 import type { ProductFlowClient } from "../src/productflow.js";
 import { loadSkillCatalog } from "../src/skills.js";
 import { TurnStore } from "../src/store.js";

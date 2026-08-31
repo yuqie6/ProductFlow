@@ -9,7 +9,8 @@ import {
   type Scope,
   type TurnState,
 } from "./contracts.js";
-import { PiRuntimeManager, toolStepDetailsForResult } from "./pi-runtime.js";
+import { toolStepDetailsForResult } from "./tool-step-projection.js";
+import { PiRuntimeManager } from "./runtime-manager.js";
 import { JOURNAL_EVENT_MAX_PAYLOAD_BYTES } from "./pi-chunks.js";
 import { RuntimeError, TurnStore } from "./store.js";
 

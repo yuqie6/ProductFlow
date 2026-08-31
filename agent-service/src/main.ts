@@ -6,7 +6,7 @@
  */
 
 import { loadConfig } from "./config.js";
-import { PiRuntimeManager } from "./pi-runtime.js";
+import { PiRuntimeManager } from "./runtime-manager.js";
 import { ProductFlowClient } from "./productflow.js";
 import { loadSkillCatalog } from "./skills.js";
 import { createHTTPServer } from "./server.js";

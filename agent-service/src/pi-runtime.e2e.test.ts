@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolvedToolContractVersion, type Scope, type TurnState } from "./contracts.js";
-import { PiRuntimeManager } from "./pi-runtime.js";
+import { PiRuntimeManager } from "./runtime-manager.js";
 import type { SkillCatalog } from "./skills.js";
 import { TurnStore } from "./store.js";
 

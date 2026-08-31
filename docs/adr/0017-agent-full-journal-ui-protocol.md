@@ -27,7 +27,7 @@ ADR 0013 去掉了每条 token 写 PG 再 500ms 轮询的第二份 live journal�
 
 - 断线或进程崩溃后，已落盘的流式前缀可从游标回放；in-flight 模型请求仍标 `unknown`，不续跑。
 - 历史 Turn 保持真实交错顺序，只要该 Turn 的 journal 非空。
-- 证据：`go/internal/agent/sse.go`、`execution.go`、`recovery.go`、`control.go`、`compact.go`；`agent-service/src/store.ts`、`pi-runtime.ts`、`tool-manifest.ts`；`web/src/pages/workbench/agent/conversation/runtime.ts`。
+- 证据：`go/internal/agent/sse.go`、`execution.go`、`recovery.go`、`control.go`、`compact.go`；`agent-service/src/store.ts`、`turn-runtime.ts`、`pi-runtime.ts`、`tool-manifest.ts`；`web/src/pages/workbench/agent/conversation/runtime.ts`。
 
 ## 排除方案
 

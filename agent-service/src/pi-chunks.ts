@@ -2,7 +2,7 @@
  * Pi 0.83 `assistantMessageEvent` → ProductFlow UI chunk 归一。
  *
  * 对照 `@earendil-works/pi-ai` AssistantMessageEvent。
- * Pi 原始流在这里归一，随后由 RunRuntime 写入 append-only journal。
+ * Pi 原始流在这里归一，随后由 TurnRuntime 写入 append-only journal。
  * toolcall_* 的原始 arguments 不进日志；工具卡使用有界的 call/result meta。
  */
 

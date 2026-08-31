@@ -26,7 +26,7 @@ Agent 商品工作台（`pages/workbench/agent/`）目前是"能用的功能拼�
 
 #### 1.2 工具调用降噪与交错时间线（跨层）
 
-这是跨层的一项。`agent-service/src/store.ts` 和 `pi-runtime.ts` 产生 `tool/call`、`tool/result`、`thinking.chunk` 与 `text.chunk` journal 事件；全部事件先写入 PostgreSQL。Go `projectTurnEvent` 投影为 `item.started`、`item.delta`、`item.completed`，前端 `ConversationRuntime` 按 sequence 增量维护 thinking / text / tool item。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）和有界思考通过 web projection 对用户可见。
+这是跨层的一项。`agent-service/src/turn-runtime.ts` 和 `pi-chunks.ts` 产生 `tool/call`、`tool/result`、`thinking.chunk` 与 `text.chunk` journal 事件；本地 WAL 由 `store.ts` 保存，全部事件再由 Go 写入 PostgreSQL。Go `projectTurnEvent` 投影为 `item.started`、`item.delta`、`item.completed`，前端 `ConversationRuntime` 按 sequence 增量维护 thinking / text / tool item。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）和有界思考通过 web projection 对用户可见。
 
 决策：在 Agent service 侧维护**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。投影使用四个必填字段和两个可选字段：
 

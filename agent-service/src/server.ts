@@ -11,7 +11,7 @@ import { byteLength, PageContext, StartTurnInput, TurnAnswer, validatePageContex
 import { Config } from "./config.js";
 import { ProductFlowError } from "./contracts.js";
 import { renderMetrics } from "./metrics.js";
-import { PiRuntimeManager, RuntimeLookup } from "./pi-runtime.js";
+import { PiRuntimeManager, RuntimeLookup } from "./runtime-manager.js";
 import { RuntimeError } from "./store.js";
 
 const MAX_INPUT_TEXT_CHARS = 20_000;

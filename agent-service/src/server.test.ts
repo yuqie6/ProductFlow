@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProductFlowClient } from "./productflow.js";
-import { PiRuntimeManager } from "./pi-runtime.js";
+import { PiRuntimeManager } from "./runtime-manager.js";
 import { createHTTPServer } from "./server.js";
 import { loadSkillCatalog } from "./skills.js";
 import { TurnStore } from "./store.js";
