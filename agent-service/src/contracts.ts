@@ -19,6 +19,8 @@ export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** 必须与后端 AGENT_CONTEXT_MAX_BYTES 对齐。 */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
 export const MAX_DYNAMIC_CONTEXT_BYTES = 64 << 10;
+/** 必须与 go/internal/agent maxCheckpointPayload 对齐。 */
+export const MAX_CHECKPOINT_PAYLOAD_BYTES = 64 << 10;
 /** 思考投影上限：完整 chain-of-thought 不得灌进浏览器。 */
 export const MAX_THINKING_TEXT_BYTES = 16 << 10;
 
@@ -150,6 +152,7 @@ export interface ProviderConfig {
   reasoning_summary: string | null;
   text_verbosity: string | null;
   service_tier: string | null;
+  background_resumable: boolean;
 }
 
 export interface ProductFlowContract {
@@ -444,6 +447,15 @@ export class ProductFlowError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+export const EVENT_SEQUENCE_CONFLICT_CODE = "event_sequence_conflict";
+
+export function isAgentEventSequenceConflict(error: unknown): boolean {
+  if (!(error instanceof Error) || !("status" in error) || error.status !== 409) return false;
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  if (code === EVENT_SEQUENCE_CONFLICT_CODE) return true;
+  return error.message.includes("已绑定不同内容") || /bound to different content/iu.test(error.message);
 }
 
 /** 对本交互运行时，unknown 和 awaiting_confirmation 都是终态。 */

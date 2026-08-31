@@ -27,6 +27,7 @@ import {
 import {
   PreparedWorkflowRunRequest,
   ProductFlowClient,
+  workflowRunRequestPayload,
 } from "./productflow.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME } from "./skills.js";
 import {
@@ -199,7 +200,7 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
         task_id: runtime.scope.task_id,
       };
       return withEffect(runtime, "finalize_product_intake_v1", toolCallID, {
-        intentPayload: jsonObject({ selection: body.selection, reference_asset_ids: body.reference_asset_ids }),
+        intentPayload: jsonObject(body),
         mutate: (idempotencyKey) =>
           runtime.client.finalizeProductIntake(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
@@ -356,13 +357,7 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
         );
       prepared = { ...prepared, scope, node_id: nodeID, node_ids: nodeIDs, force, document_action: documentAction };
       return withEffect(runtime, name, toolCallID, {
-        intentPayload: {
-          product_id: prepared.product_id,
-          task_id: prepared.task_id,
-          workflow_id: prepared.workflow_id,
-          workflow_revision: prepared.workflow_revision,
-          source_run_id: prepared.source_run_id ?? null,
-        },
+        intentPayload: workflowIntentPayload(prepared, toolCallID, global),
         mutate: (idempotencyKey) =>
           global
             ? runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
@@ -420,7 +415,7 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
     label: "Create product workspace",
     execute: async (toolCallID, params: ToolParams<"create_product_workspace_v1">): Promise<Result> =>
       withEffect(runtime, "create_product_workspace_v1", toolCallID, {
-        intentPayload: { product_name: params.name.trim() },
+        intentPayload: { name: params.name.trim() },
         mutate: (idempotencyKey) =>
           runtime.client.createProductWorkspace(runtime.scope.conversation_id, params.name.trim(), idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
@@ -526,7 +521,7 @@ function createDiscardWorkflowProposalTool(runtime: ToolRuntime): ToolDefinition
     label: "Discard graph proposal",
     execute: async (toolCallID, params: ToolParams<"discard_workflow_proposal_v1">): Promise<Result> =>
       withEffect(runtime, "discard_workflow_proposal_v1", toolCallID, {
-        intentPayload: jsonObject(params),
+        intentPayload: jsonObject({ proposal_id: params.proposal_id ?? null }),
         mutate: (idempotencyKey) =>
           runtime.client.discardGraphProposal(runtime.scope.conversation_id, params.proposal_id ?? null, idempotencyKey, runtime.signal),
         reconcile: (idempotencyKey) =>
@@ -742,6 +737,11 @@ function optionalCount(result: unknown, key: string, maximum: number): JsonObjec
 
 function jsonObject(value: object): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function workflowIntentPayload(prepared: PreparedWorkflowRunRequest, toolCallID: string, global: boolean): JsonObject {
+  const body = workflowRunRequestPayload(prepared, toolCallID);
+  return jsonObject(global ? { ...body, product_id: prepared.product_id } : body);
 }
 
 function buildSkillInstructionDetails(content: string): Pick<ToolStepDetails, "instruction_excerpt" | "instruction_truncated"> {

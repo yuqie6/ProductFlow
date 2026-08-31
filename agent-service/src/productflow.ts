@@ -561,9 +561,11 @@ export class ProductFlowClient {
         try {
           const parsed = JSON.parse(raw) as {
             detail?: unknown;
+            code?: unknown;
             error?: { code?: unknown; message?: unknown; details?: unknown };
           };
           if (typeof parsed.error?.code === "string" && parsed.error.code.trim()) code = parsed.error.code;
+          else if (typeof parsed.code === "string" && parsed.code.trim()) code = parsed.code;
           if (typeof parsed.detail === "string" && parsed.detail.trim()) message = parsed.detail;
           else if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) message = parsed.error.message;
           details = isJsonObject(parsed.error?.details) ? parsed.error.details : undefined;
@@ -606,7 +608,7 @@ async function readBoundedBytes(response: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
-function workflowRunRequestPayload(prepared: PreparedWorkflowRunRequest, sourceStepID: string): Record<string, unknown> {
+export function workflowRunRequestPayload(prepared: PreparedWorkflowRunRequest, sourceStepID: string): Record<string, unknown> {
   return {
     expected_workflow_revision: prepared.workflow_revision,
     workflow_id: prepared.workflow_id,

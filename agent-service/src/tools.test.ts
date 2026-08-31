@@ -620,7 +620,7 @@ describe("ProductFlow Pi tools", () => {
     }
   });
 
-  it("records a failed workflow request when reconciliation proves it was not applied", async () => {
+  it("records unknown after a retry still cannot prove the workflow request", async () => {
     const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
     let executeCalls = 0;
     const client = {
@@ -652,7 +652,7 @@ describe("ProductFlow Pi tools", () => {
 
     expect(checkpoints.at(-1)).toMatchObject({
       kind: "tool_effect_result",
-      payload: { result: "failed", reconciliation_state: "not_applied" },
+      payload: { result: "unknown", reconciliation_state: "unknown" },
     });
     expect(executeCalls).toBe(2);
   });
@@ -843,5 +843,136 @@ describe("ProductFlow Pi tools", () => {
     const result = await tool.execute("tool-run-detail", { run_id: "run-1" }, undefined, undefined, {} as never);
     const parsed = JSON.parse((result.content[0] as { text: string }).text) as { data: { status: string } };
     expect(parsed.data.status).toBe("failed");
+  });
+
+  it("writes tool_effect_intent schema v1 with complete bounded request_payload", async () => {
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const capture = async (kind: string, payload: Record<string, unknown>) => {
+      checkpoints.push({ kind, payload });
+    };
+    const intake = createProductFlowTools(
+      runtime(baseScope, {
+        finalizeProductIntake: async () => ({ accepted: true }),
+      } as unknown as ProductFlowClient, undefined, capture),
+    ).find((candidate) => candidate.name === "finalize_product_intake_v1");
+    const workspace = createProductFlowTools(
+      runtime(
+        { ...baseScope, scope_type: "global", product_id: null },
+        { createProductWorkspace: async () => ({ product_id: "product-1" }) } as unknown as ProductFlowClient,
+        undefined,
+        capture,
+      ),
+    ).find((candidate) => candidate.name === "create_product_workspace_v1");
+    const workflow = createProductFlowTools(
+      runtime(baseScope, {
+        prepareWorkflowRunRequest: async () => ({
+          product_id: baseScope.product_id!,
+          workflow_id: "workflow-1",
+          workflow_title: "工作流",
+          workflow_revision: 3,
+          runnable_node_count: 2,
+          task_id: "task-1",
+          source_run_id: "run-9",
+        }),
+        executeWorkflowRunRequest: async () => ({ request_id: "request-1", status: "awaiting_confirmation" }),
+      } as unknown as ProductFlowClient, undefined, capture),
+    ).find((candidate) => candidate.name === "request_workflow_run_v1");
+    const apply = createProductFlowTools(
+      runtime({ ...baseScope, has_live_graph: true }, {
+        applyGraphChangeSet: async () => ({ accepted: true, applied: true, revision: 2 }),
+      } as unknown as ProductFlowClient, undefined, capture),
+    ).find((candidate) => candidate.name === "apply_graph_change_set_v1");
+    if (!intake || !workspace || !workflow || !apply) throw new Error("mutate tools were not registered");
+
+    await intake.execute(
+      "tool-intake-intent",
+      {
+        selection: { schema_version: 1, image_types: [{ key: "hero", quantity: 1, order: 0 }] },
+        reference_asset_ids: ["asset-1"],
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    await workspace.execute("tool-workspace-intent", { name: "春季新品" }, undefined, undefined, {} as never);
+    await workflow.execute(
+      "tool-workflow-intent",
+      {
+        expected_workflow_revision: 3,
+        scope: "nodes",
+        node_ids: ["n1"],
+        force: true,
+        document_action: "rewrite",
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+    await apply.execute(
+      "tool-apply-intent",
+      {
+        base_graph_revision: 1,
+        summary: "改名",
+        operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    const intents = checkpoints.filter((entry) => entry.kind === "tool_effect_intent").map((entry) => entry.payload);
+    expect(intents).toHaveLength(4);
+    for (const intent of intents) {
+      expect(Object.keys(intent).sort()).toEqual([
+        "idempotency_key",
+        "recovery_policy",
+        "request_payload",
+        "schema_version",
+        "tool_call_id",
+        "tool_name",
+      ]);
+      expect(intent.schema_version).toBe(1);
+      expect(intent).not.toHaveProperty("request");
+    }
+    expect(intents[0]).toMatchObject({
+      tool_name: "finalize_product_intake_v1",
+      recovery_policy: "reconcile_then_retry",
+      request_payload: {
+        selection: { schema_version: 1, image_types: [{ key: "hero", quantity: 1, order: 0 }] },
+        reference_asset_ids: ["asset-1"],
+        task_id: null,
+      },
+    });
+    expect(intents[1]).toMatchObject({
+      tool_name: "create_product_workspace_v1",
+      request_payload: { name: "春季新品" },
+    });
+    expect(intents[1]).not.toHaveProperty("name");
+    expect(intents[2]).toMatchObject({
+      tool_name: "request_workflow_run_v1",
+      request_payload: {
+        expected_workflow_revision: 3,
+        workflow_id: "workflow-1",
+        source_step_id: "tool-workflow-intent",
+        task_id: "task-1",
+        source_run_id: "run-9",
+        scope: "nodes",
+        node_id: null,
+        node_ids: ["n1"],
+        force: true,
+        document_action: "rewrite",
+      },
+    });
+    expect(intents[2].request_payload).not.toHaveProperty("product_id");
+    expect(intents[3]).toMatchObject({
+      tool_name: "apply_graph_change_set_v1",
+      request_payload: {
+        change_set: {
+          base_graph_revision: 1,
+          summary: "改名",
+          operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
+        },
+      },
+    });
   });
 });

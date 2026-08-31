@@ -1,21 +1,40 @@
 /**
  * 工具效果的唯一包装器。
  *
- * mutate：intent checkpoint → 执行 → 4xx=failed / 5xx=对账 → applied/not_applied/conflict/unknown。
+ * mutate：intent checkpoint → 执行 → 4xx=failed / 5xx=对账 → applied/conflict/unknown。
+ * 最终不得落库 not_applied；二次对账仍 not_applied 记 unknown。
  * ui_effect：执行且写 checkpoint，不对账、不把 5xx 标成 unknown。
  * approval 只是清单上的效果等级。本函数不根据 effect 自动 requestApproval：
  * 需要中止 Turn 的调用方在 onApplied 里显式 requestApproval。
+ *
+ * tool_effect_intent schema v1 只保存 tool_name、tool_call_id、idempotency_key、
+ * recovery_policy 和有界 request_payload；禁止密钥、图片字节和原始 HTTP 响应。
  */
 
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import {
   CheckpointKind,
   JsonObject,
+  JsonValue,
+  MAX_CHECKPOINT_PAYLOAD_BYTES,
   ProductFlowError,
 } from "./contracts.js";
 import { ReconcileResult } from "./productflow.js";
-import { toolManifestEntry, toolRecoveryPolicy, type ToolName } from "./tool-manifest.js";
+import { toolManifestEntry, toolRecoveryPolicy, type ToolName, type ToolRecoveryPolicy } from "./tool-manifest.js";
 import { encodeToolResult } from "./tool-result.js";
+
+export const TOOL_EFFECT_INTENT_SCHEMA_VERSION = 1 as const;
+export const TOOL_EFFECT_INTENT_KEYS = [
+  "schema_version",
+  "tool_name",
+  "tool_call_id",
+  "idempotency_key",
+  "recovery_policy",
+  "request_payload",
+] as const;
+
+const FORBIDDEN_INTENT_KEY =
+  /^(authorization|cookie|set-cookie|api[_-]?key|access[_-]?key|secret|password|passwd|token|bearer|raw_response|http_response|response_body|response_headers|raw_http|image_bytes|image_data|file_bytes)$/iu;
 
 export interface EffectRuntime {
   checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void>;
@@ -35,6 +54,38 @@ export interface EffectOptions {
   onApplied?: (result: unknown, idempotencyKey: string) => void;
 }
 
+export interface ToolEffectIntentV1 extends JsonObject {
+  schema_version: typeof TOOL_EFFECT_INTENT_SCHEMA_VERSION;
+  tool_name: ToolName;
+  tool_call_id: string;
+  idempotency_key: string;
+  recovery_policy: ToolRecoveryPolicy;
+  request_payload: JsonObject;
+}
+
+export function buildToolEffectIntent(
+  toolName: ToolName,
+  toolCallID: string,
+  idempotencyKey: string,
+  requestPayload: JsonObject = {},
+): ToolEffectIntentV1 {
+  const entry = toolManifestEntry(toolName);
+  if (!entry) throw new Error(`Unknown ProductFlow tool manifest entry: ${toolName}`);
+  const intent: ToolEffectIntentV1 = {
+    schema_version: TOOL_EFFECT_INTENT_SCHEMA_VERSION,
+    tool_name: toolName,
+    tool_call_id: toolCallID,
+    idempotency_key: idempotencyKey,
+    recovery_policy: toolRecoveryPolicy(toolName),
+    request_payload: sanitizeRequestPayload(requestPayload),
+  };
+  const encoded = JSON.stringify(intent);
+  if (Buffer.byteLength(encoded, "utf8") > MAX_CHECKPOINT_PAYLOAD_BYTES) {
+    throw new Error("tool_effect_intent exceeds the checkpoint payload limit");
+  }
+  return JSON.parse(encoded) as ToolEffectIntentV1;
+}
+
 export async function withEffect(
   runtime: EffectRuntime,
   toolName: ToolName,
@@ -44,14 +95,7 @@ export async function withEffect(
   const entry = toolManifestEntry(toolName);
   if (!entry) throw new Error(`Unknown ProductFlow tool manifest entry: ${toolName}`);
   const idempotencyKey = runtime.idempotencyKey(toolCallID);
-  const intent: JsonObject = {
-    tool_name: toolName,
-    tool_call_id: toolCallID,
-    idempotency_key: idempotencyKey,
-    recovery_policy: toolRecoveryPolicy(toolName),
-    request: options.intentPayload ?? {},
-    ...(options.intentPayload ?? {}),
-  };
+  const intent = buildToolEffectIntent(toolName, toolCallID, idempotencyKey, options.intentPayload ?? {});
   await runtime.checkpoint("tool_effect_intent", intent);
 
   const finishApplied = async (result: unknown, extra: JsonObject = {}): Promise<AgentToolResult<JsonObject>> => {
@@ -144,16 +188,6 @@ export async function withEffect(
           reconciliation_state: "not_applied_then_retried",
         });
       } catch (retryError) {
-        if (!(retryError instanceof ProductFlowError) || retryError.status < 500) {
-          await runtime.checkpoint("tool_effect_result", {
-            tool_name: toolName,
-            tool_call_id: toolCallID,
-            idempotency_key: idempotencyKey,
-            result: "failed",
-            reconciliation_state: "not_applied",
-          });
-          throw retryError;
-        }
         let retriedReconciliation: ReconcileResult;
         try {
           retriedReconciliation = await options.reconcile!(idempotencyKey);
@@ -170,13 +204,13 @@ export async function withEffect(
         if (retriedReconciliation.state === "applied" && retriedReconciliation.result !== undefined) {
           return await finishApplied(retriedReconciliation.result, { reconciliation_state: "applied" });
         }
-        if (retriedReconciliation.state === "not_applied" || retriedReconciliation.state === "conflict") {
+        if (retriedReconciliation.state === "conflict") {
           await runtime.checkpoint("tool_effect_result", {
             tool_name: toolName,
             tool_call_id: toolCallID,
             idempotency_key: idempotencyKey,
             result: "failed",
-            reconciliation_state: retriedReconciliation.state,
+            reconciliation_state: "conflict",
           });
           throw retryError;
         }
@@ -190,13 +224,13 @@ export async function withEffect(
         throw retryError;
       }
     }
-    if (reconciled.state === "not_applied" || reconciled.state === "conflict") {
+    if (reconciled.state === "conflict") {
       await runtime.checkpoint("tool_effect_result", {
         tool_name: toolName,
         tool_call_id: toolCallID,
         idempotency_key: idempotencyKey,
         result: "failed",
-        reconciliation_state: reconciled.state,
+        reconciliation_state: "conflict",
       });
       throw error;
     }
@@ -208,12 +242,40 @@ export async function withEffect(
         tool_call_id: toolCallID,
         idempotency_key: idempotencyKey,
         result: "unknown",
-        reconciliation_state: isReconcileState(reconciled.state) ? reconciled.state : "invalid",
+        reconciliation_state: isReconcileState(reconciled.state) && reconciled.state !== "not_applied"
+          ? reconciled.state
+          : "unknown",
       },
       options.unknownReason,
     );
     throw error;
   }
+}
+
+function sanitizeRequestPayload(value: JsonObject): JsonObject {
+  return walkRequestPayload(value) as JsonObject;
+}
+
+function walkRequestPayload(value: JsonValue): JsonValue {
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") {
+    if (value.startsWith("data:image/")) {
+      throw new Error("tool_effect_intent must not store secrets, image bytes, or raw HTTP responses");
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => walkRequestPayload(item));
+  if (!value || typeof value !== "object") {
+    throw new Error("tool_effect_intent request_payload must be JSON");
+  }
+  const out: JsonObject = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (FORBIDDEN_INTENT_KEY.test(key)) {
+      throw new Error("tool_effect_intent must not store secrets, image bytes, or raw HTTP responses");
+    }
+    out[key] = walkRequestPayload(child);
+  }
+  return out;
 }
 
 function isReconcileState(value: string): value is "applied" | "not_applied" | "conflict" | "unknown" {

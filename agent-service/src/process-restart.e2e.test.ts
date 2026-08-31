@@ -508,6 +508,7 @@ async function handleFakeProductFlowRequest(
       reasoning_summary: null,
       text_verbosity: null,
       service_tier: null,
+      background_resumable: false,
     });
     return;
   }

@@ -296,6 +296,7 @@ function stubProductFlow(
       reasoning_summary: null,
       text_verbosity: null,
       service_tier: null,
+      background_resumable: false,
     }),
     claimTurnExecution: async (_conversationID: string, args: { harness_turn_id: string }) => ({
       ...lease,
