@@ -159,32 +159,10 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	return SubmitTurnResponse{Created: created, Turn: bound}, nil
 }
 
-// GetTurn 读取 Turn 投影；进行中时可能向 Gateway 刷新，失败则回落 PostgreSQL。
-func (s Service) GetTurn(ctx context.Context, productID *string, conversationID, projectionID string, requireLibraryClear bool) (TurnResponse, error) {
-	var row turnRow
-	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
-		if err != nil {
-			return err
-		}
-		row = loaded
-		return nil
-	})
-	if err != nil {
-		return TurnResponse{}, err
-	}
-	needsRefresh := inSet(inFlightTurn, row.Status)
-	if row.Status == "awaiting_confirmation" && (!requireLibraryClear || row.LibraryOrgDraftRevisionID == nil) {
-		needsRefresh = true
-	}
-	if needsRefresh && s.Gateway != nil && row.HarnessTurnID != nil {
-		refreshed, err := s.refreshTurn(ctx, productID, conversationID, projectionID, true)
-		if err == nil {
-			return refreshed, nil
-		}
-	}
+// GetTurn 只读取 PostgreSQL Turn 投影；活动状态和摘要由 journal fold，不读取 Node 文件快照。
+func (s Service) GetTurn(ctx context.Context, productID *string, conversationID, projectionID string, _ bool) (TurnResponse, error) {
 	var out TurnResponse
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
 		if err != nil {
 			return err
@@ -704,50 +682,4 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 		return TurnResponse{}, err
 	}
 	return serializeTurn(row, nil), nil
-}
-
-// refreshTurn 从 Gateway.GetTurn 拉模型状态并 applyTurnState。tolerate 时网关失败只记 sync_error，回落 PostgreSQL 投影，不改 Goal。
-//
-// GetTurn HTTP 在进行中调用。无 harness 或无 Gateway 直接返回库内行。
-func (s Service) refreshTurn(ctx context.Context, productID *string, conversationID, projectionID string, tolerate bool) (TurnResponse, error) {
-	var row turnRow
-	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
-		if err != nil {
-			return err
-		}
-		row = loaded
-		return nil
-	})
-	if err != nil {
-		return TurnResponse{}, err
-	}
-	if row.HarnessTurnID == nil || s.Gateway == nil {
-		return serializeTurn(row, nil), nil
-	}
-	state, ge := s.Gateway.GetTurn(conversationID, *row.HarnessTurnID, row.TaskID)
-	if ge != nil {
-		if tolerate {
-			_ = s.recordStartError(ctx, productID, conversationID, projectionID, "Agent 服务暂时不可用")
-			return serializeTurn(row, nil), nil
-		}
-		return TurnResponse{}, mapGateway(ge)
-	}
-	var out TurnResponse
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
-			return err
-		}
-		loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
-		if err != nil {
-			return err
-		}
-		focus, err := canvasFocusForTurns(ctx, pgxTx, []turnRow{loaded})
-		if err != nil {
-			return err
-		}
-		out = serializeTurn(loaded, focus[loaded.ID])
-		return nil
-	})
-	return out, err
 }

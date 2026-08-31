@@ -71,10 +71,10 @@ func turnNeedsSync(row turnRow) bool {
 	if row.ID == "" || row.ResumeRequired {
 		return false
 	}
-	if inSet(inFlightTurn, row.Status) {
+	if row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0 {
 		return true
 	}
-	return row.Status == "requires_input" && len(row.QuestionAnswerJSON) > 0
+	return row.HarnessTurnID == nil && inSet(inFlightTurn, row.Status)
 }
 
 func ptr[T any](v T) *T { return &v }

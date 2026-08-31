@@ -101,6 +101,37 @@ func TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows(t *te
 	}
 }
 
+func TestJournalBatchFoldsLiveProjectionWithoutGatewaySnapshot(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	batch := []EventAppendInput{
+		{Sequence: 1, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "turn/start", Payload: json.RawMessage(`{"status":"running","attempt_id":"a"}`)},
+		{Sequence: 2, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "thinking.chunk", Payload: json.RawMessage(`{"delta":"思考","attempt_id":"a","content_index":0}`)},
+		{Sequence: 3, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "text.chunk", Payload: json.RawMessage(`{"delta":"回答","attempt_id":"a","content_index":0}`)},
+		{Sequence: 4, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "tool/call", Payload: json.RawMessage(`{"step_id":"tool-1","kind":"inspect_context","summary":"读取上下文","status":"running"}`)},
+		{Sequence: 5, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID, TurnID: *claimed.turn.HarnessTurnID, Kind: "tool/result", Payload: json.RawMessage(`{"step_id":"tool-1","kind":"inspect_context","summary":"已读取上下文","status":"succeeded"}`)},
+	}
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, batch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, batch); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.svc.SyncTurn(context.Background(), claimed.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := as.svc.GetTurn(context.Background(), nil, claimed.conversationID, claimed.turn.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn.Status != "running" || turn.OutputText == nil || *turn.OutputText != "回答" || turn.ThinkingText == nil || *turn.ThinkingText != "思考" {
+		t.Fatalf("folded projection %+v", turn)
+	}
+	if len(turn.ToolSteps) != 1 || turn.ToolSteps[0]["status"] != "succeeded" || turn.ToolSteps[0]["summary"] != "已读取上下文" {
+		t.Fatalf("tool steps %+v", turn.ToolSteps)
+	}
+}
+
 func TestJournalBatchRejectsEventsAfterTerminalWithoutMutation(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
 	claimed := createClaimedJournalTurn(t, as)

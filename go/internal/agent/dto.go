@@ -533,8 +533,6 @@ func (e GatewayError) Error() string { return e.Detail }
 type Gateway interface {
 	// StartTurn 向 agent-service 提交一轮模型 Turn。
 	StartTurn(conversationID string, taskID *string, inputText string, assetIDs []string, idempotencyKey string, pageContext any) (TurnState, error)
-	// GetTurn 读取 agent-service 当前 Turn 状态。
-	GetTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	// CancelTurn 请求 agent-service 取消当前 Turn。
 	CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error)
 	// ResumeTurn 请求 agent-service 恢复当前 Turn。

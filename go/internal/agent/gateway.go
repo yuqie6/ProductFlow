@@ -38,11 +38,6 @@ func (g HTTPGateway) StartTurn(conversationID string, taskID *string, inputText 
 	return g.request("POST", g.executionPath(conversationID, taskID)+"/turns", body)
 }
 
-// GetTurn 实现 Gateway，读取 agent-service 当前 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
-func (g HTTPGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
-	return g.request("GET", g.turnPath(conversationID, turnID, taskID), nil)
-}
-
 // CancelTurn 实现 Gateway，请求 agent-service 取消 Turn。未配置返回 not_configured。连接失败或超时返回 unavailable；agent-service HTTP 非 2xx 或响应无效返回 error。
 func (g HTTPGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.request("POST", g.turnPath(conversationID, turnID, taskID)+"/cancel", map[string]any{})
@@ -69,7 +64,7 @@ func (g HTTPGateway) turnPath(conversationID, turnID string, taskID *string) str
 	return g.executionPath(conversationID, taskID) + "/turns/" + url.PathEscape(turnID)
 }
 
-// request 调用 Node.js/Pi agent-service 并解码 TurnState。返回值不是 journal 权威；投影与 SSE 仍以 PostgreSQL 为准。
+// request 调用 Node.js/Pi agent-service 的 start/control/answer 命令并解码 TurnState。返回值不是 journal 权威；投影与 SSE 仍以 PostgreSQL 为准。
 //
 // 未配置返回 not_configured。非 2xx 收成 GatewayError（带上游 code）。响应体超过 1MiB 截断读取。超时默认 90s。
 func (g HTTPGateway) request(method, path string, body any) (TurnState, error) {

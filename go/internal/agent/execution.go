@@ -476,6 +476,9 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				Sequence: ev.Sequence, SchemaVersion: ev.SchemaVersion, Kind: ev.Kind,
 				Ignorable: ev.Ignorable, CreatedAt: ev.CreatedAt,
 			})
+			if err := foldJournalProjection(gdb, lease.ProjectionID, kind, input.Payload, createdAt); err != nil {
+				return err
+			}
 			if kind == "turn/end" {
 				if err := s.projectTerminalEvent(ctx, gdb, row, lease, input.Sequence, input.Payload, createdAt); err != nil {
 					return err
@@ -490,6 +493,66 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 		return notify.Publish(ctx, gdb, notify.ChannelTurn, lease.ProjectionID)
 	})
 	return out, err
+}
+
+// foldJournalProjection 把一条新 journal event 增量投影到列表摘要；exact replay 不调用它，避免重复拼接 chunk。
+func foldJournalProjection(gdb *gorm.DB, projectionID, kind string, payload json.RawMessage, eventAt time.Time) error {
+	updates := map[string]any{"updated_at": gorm.Expr("GREATEST(updated_at, ?)", eventAt)}
+	var doc map[string]any
+	if err := json.Unmarshal(payload, &doc); err != nil || doc == nil {
+		return apperr.Validation("Agent journal projection payload 无效")
+	}
+	switch kind {
+	case "turn/start":
+		updates["status"] = "running"
+	case "turn/cancel_requested":
+		updates["status"] = "cancel_requested"
+	case "question/requested":
+		updates["status"] = "requires_input"
+		updates["question_json"] = string(payload)
+	case "text.chunk":
+		if delta, _ := doc["delta"].(string); delta != "" {
+			updates["output_text"] = gorm.Expr("COALESCE(output_text, '') || ?", delta)
+		}
+	case "thinking.chunk":
+		if delta, _ := doc["delta"].(string); delta != "" {
+			updates["thinking_text"] = gorm.Expr("COALESCE(thinking_text, '') || ?", delta)
+		}
+	case "assistant/message":
+		if text, ok := doc["text"].(string); ok {
+			updates["output_text"] = nullableString(text)
+		}
+	case "tool/call", "tool/result":
+		stepID, _ := doc["step_id"].(string)
+		if stringsTrim(stepID) != "" {
+			var projection schema.AgentTurnProjections
+			if err := gdb.Select("tool_steps_json").Where("id = ?", projectionID).Take(&projection).Error; err != nil {
+				return err
+			}
+			var steps []map[string]any
+			_ = json.Unmarshal([]byte(projection.ToolStepsJSON), &steps)
+			replaced := false
+			for index := range steps {
+				if current, _ := steps[index]["step_id"].(string); current == stepID {
+					steps[index] = doc
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				steps = append(steps, doc)
+			}
+			encoded, err := json.Marshal(steps)
+			if err != nil {
+				return err
+			}
+			updates["tool_steps_json"] = string(encoded)
+		}
+	}
+	if len(updates) == 1 {
+		return nil
+	}
+	return gdb.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(updates).Error
 }
 
 // recordModelInvocationStart 在 before_model_request checkpoint 时幂等插入 agent_model_invocations。
@@ -662,6 +725,10 @@ func (s Service) projectTerminalEvent(
 		return err
 	}
 	output, err := rebuildJournalOutput(gdb.WithContext(ctx), row.ID, terminalSequence)
+	if err != nil {
+		return err
+	}
+	row, err = loadTurnByID(ctx, gdb, row.ID)
 	if err != nil {
 		return err
 	}

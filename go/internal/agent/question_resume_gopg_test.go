@@ -57,10 +57,6 @@ func (g *liveGateway) StartTurn(conversationID string, taskID *string, inputText
 	return g.current().StartTurn(conversationID, taskID, inputText, assetIDs, idempotencyKey, pageContext)
 }
 
-func (g *liveGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
-	return g.current().GetTurn(conversationID, turnID, taskID)
-}
-
 func (g *liveGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
 	return g.current().CancelTurn(conversationID, turnID, taskID)
 }

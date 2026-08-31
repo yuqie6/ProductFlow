@@ -16,22 +16,22 @@ import (
 	"gorm.io/gorm"
 )
 
-// Executor 是 Agent Turn 同步的 worker 入口。Execute 调用 SyncTurn；未到终态时返回 queue.ErrLater。
+// Executor 是 Agent Turn 启动/答案恢复 worker 入口。活动状态和摘要由 PostgreSQL journal 投影。
 type Executor struct {
 	Service Service // 调用 SyncTurn 的 worker 入口
 }
 
 // Execute 同步一个 Turn projection；缺失行视为已处理。
 //
-// 仍需同步时返回 queue.ErrLater。applyTurnState 围栏失败返回 Conflict。Gateway 失败记 sync_error 后走 syncOutcome，不把 Goal 标完成。
+// 未绑定 start 或已有答案待 resume 时可返回 queue.ErrLater。Gateway 失败记 sync_error 后走 syncOutcome，不把 Goal 标完成。
 func (e Executor) Execute(ctx context.Context, projectionID string) error {
 	return e.Service.SyncTurn(ctx, projectionID)
 }
 
-// SyncTurn 把 agent-service Turn 状态投影到 PostgreSQL。商品 Goal 在 waiting_reason=goal_loop 时不被 Turn 终态改写。
+// SyncTurn 只负责绑定 agent-service harness Turn，或恢复已持久化答案的同一 Turn。
 //
-// 投影不存在视为已处理。resume_required 时不催 Gateway。load/apply 数据库错误原样返回；围栏失败 Conflict。
-// Gateway 不可用只记 sync_error。仍需同步时经 syncOutcome 返回 queue.ErrLater。
+// 活动状态和三列摘要由 PostgreSQL journal fold。投影不存在视为已处理；resume_required 时不催 Gateway。
+// Gateway 不可用只记 sync_error。未绑定 start 或答案 resume 尚未完成时经 syncOutcome 返回 queue.ErrLater。
 func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -66,17 +66,6 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 			if _, err := s.bindGatewayTurn(ctx, productID, row.ConversationID, projectionID, true); err != nil {
 				return s.syncOutcome(ctx, projectionID)
 			}
-		} else {
-			state, ge := s.Gateway.GetTurn(row.ConversationID, *row.HarnessTurnID, row.TaskID)
-			if ge != nil {
-				_ = s.recordStartError(ctx, productID, row.ConversationID, projectionID, "Agent 服务暂时不可用")
-				return s.syncOutcome(ctx, projectionID)
-			}
-			if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-				return s.applyTurnState(ctx, pgxTx, productID, row.ConversationID, projectionID, state)
-			}); err != nil {
-				return err
-			}
 		}
 	}
 	return s.syncOutcome(ctx, projectionID)
@@ -107,9 +96,9 @@ func (s Service) syncOutcome(ctx context.Context, projectionID string) error {
 	return nil
 }
 
-// applyTurnState 把 Gateway / turn/end 的 TurnState 写入 PostgreSQL 投影，是模型状态进入业务库的唯一入口。
+// applyTurnState 把命令响应或 turn/end 的 TurnState 写入 PostgreSQL 投影。
 //
-// SyncTurn、projectTerminalEvent、ControlTurn、resumeLiveQuestion 调用。先 validateFence：过期 fencing_token 或终态 lease 回写活动状态一律 Conflict。无 fence 的陈旧 queued 回写被 isStaleQueued 丢掉。
+// projectTerminalEvent、ControlTurn、resumeLiveQuestion 调用。流式活动状态与摘要直接由 journal fold。先 validateFence：过期 fencing_token 或终态 lease 回写活动状态一律 Conflict。无 fence 的陈旧 queued 回写被 isStaleQueued 丢掉。
 //
 // 写 agent_turn_projections、conversation 状态；有 Task 时走 updateTaskFromTurn（商品工作流终态停在 goal_loop）。可能挂 workflow_run_request 或图库 draft revision。
 //

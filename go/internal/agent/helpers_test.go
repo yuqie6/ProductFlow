@@ -2,12 +2,18 @@ package agent
 
 import "testing"
 
-func TestTurnNeedsSyncOnlyInFlight(t *testing.T) {
+func TestTurnNeedsSyncOnlyForStartOrAnswer(t *testing.T) {
+	if turnNeedsSync(turnRow{ID: "t1", Status: "running", HarnessTurnID: ptr("h1")}) {
+		t.Fatal("bound running Turn is projected from the PG journal")
+	}
 	if !turnNeedsSync(turnRow{ID: "t1", Status: "running"}) {
-		t.Fatal("running must keep syncing")
+		t.Fatal("unbound running Turn must retry start")
 	}
 	if !turnNeedsSync(turnRow{ID: "t1", Status: "queued"}) {
-		t.Fatal("queued must keep syncing")
+		t.Fatal("unbound queued Turn must retry start")
+	}
+	if turnNeedsSync(turnRow{ID: "t1", Status: "queued", HarnessTurnID: ptr("h1")}) {
+		t.Fatal("bound queued Turn must wait for journal events")
 	}
 	if turnNeedsSync(turnRow{ID: "t1", Status: "awaiting_confirmation"}) {
 		t.Fatal("parked awaiting_confirmation must not loop ErrLater")

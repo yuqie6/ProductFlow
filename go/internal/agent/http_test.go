@@ -58,7 +58,7 @@ func (mockGateway) StartTurn(conversationID string, taskID *string, inputText st
 	}, nil
 }
 
-func (mockGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
+func (mockGateway) turnState(conversationID, turnID string, taskID *string) (TurnState, error) {
 	runID := conversationID
 	if taskID != nil && *taskID != "" {
 		runID = *taskID
@@ -67,17 +67,17 @@ func (mockGateway) GetTurn(conversationID, turnID string, taskID *string) (TurnS
 }
 
 func (mockGateway) CancelTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
-	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	st, _ := mockGateway{}.turnState(conversationID, turnID, taskID)
 	st.Status = "canceled"
 	return st, nil
 }
 
 func (mockGateway) ResumeTurn(conversationID, turnID string, taskID *string) (TurnState, error) {
-	return mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	return mockGateway{}.turnState(conversationID, turnID, taskID)
 }
 
 func (mockGateway) AnswerQuestion(conversationID, turnID, questionID string, answer map[string]any, taskID *string) (TurnState, error) {
-	return mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	return mockGateway{}.turnState(conversationID, turnID, taskID)
 }
 
 func (mockGateway) StreamTurnEvents(ctx context.Context, conversationID, turnID string, taskID *string, after int, w io.Writer) error {
@@ -104,7 +104,7 @@ func (g *questionGateway) AnswerQuestion(conversationID, turnID, questionID stri
 	if g.answerErr != nil {
 		return TurnState{}, g.answerErr
 	}
-	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	st, _ := mockGateway{}.turnState(conversationID, turnID, taskID)
 	st.Status = "queued"
 	st.Question = nil
 	return st, nil
@@ -115,7 +115,7 @@ func (g *questionGateway) ResumeTurn(conversationID, turnID string, taskID *stri
 	if g.resumeErr != nil {
 		return TurnState{}, g.resumeErr
 	}
-	st, _ := mockGateway{}.GetTurn(conversationID, turnID, taskID)
+	st, _ := mockGateway{}.turnState(conversationID, turnID, taskID)
 	if g.resumeStatus != "" {
 		st.Status = g.resumeStatus
 	} else {
@@ -553,8 +553,8 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 		t.Fatalf("get %+v", loaded)
 	}
 
-	if err := (Executor{Service: as.svc}).Execute(context.Background(), submitted.Turn.ID); !errors.Is(err, queue.ErrLater) {
-		t.Fatalf("in-flight turn must return ErrLater, got %v", err)
+	if err := (Executor{Service: as.svc}).Execute(context.Background(), submitted.Turn.ID); err != nil {
+		t.Fatalf("bound turn dispatch must be consumed after start, got %v", err)
 	}
 	if _, err := RecoverUnfinishedTurns(context.Background(), as.svc); err != nil {
 		t.Fatal(err)
