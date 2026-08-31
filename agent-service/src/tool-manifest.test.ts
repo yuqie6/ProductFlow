@@ -14,6 +14,7 @@ import {
   TOOL_STEP_KINDS,
   toolKind,
   toolParameters,
+  toolRecoveryPolicy,
   validateToolResultMeta,
 } from "./tool-manifest.js";
 
@@ -83,6 +84,29 @@ describe("ProductFlow tool manifest", () => {
     expect(withGraph).toContain("finalize_product_intake_v1");
     expect(expectedToolNamesForScope("global", false)).toContain("request_global_workflow_run_v1");
     expect(expectedToolNamesForScope("global", false)).not.toContain("request_workflow_run_v1");
+  });
+
+  it("puts recovery_policy on every manifest entry and matches the C-01 table", () => {
+    const retry = new Set([
+      "request_workflow_run_v1",
+      "request_global_workflow_run_v1",
+      "finalize_product_intake_v1",
+      "create_product_workspace_v1",
+      "apply_graph_change_set_v1",
+      "propose_graph_change_set_v1",
+      "discard_workflow_proposal_v1",
+      "cancel_workflow_run_v1",
+    ]);
+    expect(TOOL_MANIFEST.map((entry) => entry.name).sort()).toEqual(Object.keys(TOOL_PARAMETER_SCHEMAS).sort());
+    for (const entry of TOOL_MANIFEST) {
+      const expected = retry.has(entry.name) ? "reconcile_then_retry" : "none";
+      expect({ name: entry.name, recovery_policy: entry.recovery_policy }).toEqual({
+        name: entry.name,
+        recovery_policy: expected,
+      });
+      expect(toolRecoveryPolicy(entry.name)).toBe(expected);
+    }
+    expect(retry.size).toBe(8);
   });
 
   it("assigns distinct ui_kind values for intake, discard, cancel, and canvas focus", () => {

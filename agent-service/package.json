@@ -9,11 +9,12 @@
   },
   "scripts": {
     "generate-contract-artifacts": "tsx scripts/generate-contract-artifacts.ts",
-    "prebuild": "pnpm run generate-contract-artifacts",
+    "check-contract-artifacts": "tsx scripts/generate-contract-artifacts.ts --check",
+    "prebuild": "pnpm run check-contract-artifacts",
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
-    "pretest": "pnpm run generate-contract-artifacts",
+    "pretest": "pnpm run check-contract-artifacts",
     "test": "vitest run"
   },
   "dependencies": {

@@ -232,34 +232,6 @@ export const TOOL_PARAMETER_SCHEMAS = {
 export type ToolName = keyof typeof TOOL_PARAMETER_SCHEMAS;
 export type ToolParams<Name extends ToolName> = Static<(typeof TOOL_PARAMETER_SCHEMAS)[Name]>;
 
-export const TOOL_RECOVERY_POLICIES = {
-  load_productflow_skill: "none",
-  ask_user: "none",
-  productflow_context_injection: "none",
-  get_product_workflow_context_v1: "none",
-  inspect_workflow_runs_v1: "none",
-  list_product_image_assets_v2: "none",
-  inspect_product_image_assets_v1: "none",
-  request_workflow_run_v1: "reconcile_then_retry",
-  request_global_workflow_run_v1: "reconcile_then_retry",
-  finalize_product_intake_v1: "reconcile_then_retry",
-  list_products_v1: "none",
-  inspect_products_v1: "none",
-  inspect_global_workflow_context_v1: "none",
-  inspect_global_workflow_runs_v1: "none",
-  list_global_media_library_assets_v1: "none",
-  inspect_global_media_library_assets_v1: "none",
-  create_product_workspace_v1: "reconcile_then_retry",
-  propose_global_draft: "none",
-  get_node_detail_v1: "none",
-  get_workflow_run_detail_v1: "none",
-  apply_graph_change_set_v1: "reconcile_then_retry",
-  propose_graph_change_set_v1: "reconcile_then_retry",
-  discard_workflow_proposal_v1: "reconcile_then_retry",
-  cancel_workflow_run_v1: "reconcile_then_retry",
-  focus_canvas_items_v1: "none",
-} as const satisfies Record<ToolName, ToolRecoveryPolicy>;
-
 export const LIVE_GRAPH_TOOL_NAMES = [
   "get_node_detail_v1",
   "apply_graph_change_set_v1",
@@ -363,6 +335,7 @@ interface ToolManifestShape {
   input_schema: TSchema;
   input_schema_source?: ToolInputSchemaSource;
   result_meta_schema: TSchema;
+  recovery_policy: ToolRecoveryPolicy;
 }
 
 export const TOOL_MANIFEST = [
@@ -377,6 +350,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "none",
     input_schema: TOOL_PARAMETER_SCHEMAS.load_productflow_skill,
     result_meta_schema: resultMetaSchemaFor("load_productflow_skill"),
+    recovery_policy: "none",
   },
   {
     name: "ask_user",
@@ -389,6 +363,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "none",
     input_schema: TOOL_PARAMETER_SCHEMAS.ask_user,
     result_meta_schema: resultMetaSchemaFor("ask_user"),
+    recovery_policy: "none",
   },
   {
     name: "productflow_context_injection",
@@ -401,6 +376,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "context",
     input_schema: TOOL_PARAMETER_SCHEMAS.productflow_context_injection,
     result_meta_schema: resultMetaSchemaFor("productflow_context_injection"),
+    recovery_policy: "none",
   },
   {
     name: "get_product_workflow_context_v1",
@@ -413,6 +389,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "context",
     input_schema: TOOL_PARAMETER_SCHEMAS.get_product_workflow_context_v1,
     result_meta_schema: resultMetaSchemaFor("get_product_workflow_context_v1"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_workflow_runs_v1",
@@ -425,6 +402,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "list",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_workflow_runs_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_workflow_runs_v1"),
+    recovery_policy: "none",
   },
   {
     name: "list_product_image_assets_v2",
@@ -437,6 +415,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "list",
     input_schema: TOOL_PARAMETER_SCHEMAS.list_product_image_assets_v2,
     result_meta_schema: resultMetaSchemaFor("list_product_image_assets_v2"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_product_image_assets_v1",
@@ -449,6 +428,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_product_image_assets_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_product_image_assets_v1"),
+    recovery_policy: "none",
   },
   {
     name: "request_workflow_run_v1",
@@ -461,6 +441,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.request_workflow_run_v1,
     result_meta_schema: resultMetaSchemaFor("request_workflow_run_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "request_global_workflow_run_v1",
@@ -473,6 +454,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.request_global_workflow_run_v1,
     result_meta_schema: resultMetaSchemaFor("request_global_workflow_run_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "finalize_product_intake_v1",
@@ -485,6 +467,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.finalize_product_intake_v1,
     result_meta_schema: resultMetaSchemaFor("finalize_product_intake_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "list_products_v1",
@@ -497,6 +480,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "list",
     input_schema: TOOL_PARAMETER_SCHEMAS.list_products_v1,
     result_meta_schema: resultMetaSchemaFor("list_products_v1"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_products_v1",
@@ -509,6 +493,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_products_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_products_v1"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_global_workflow_context_v1",
@@ -521,6 +506,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "context",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_global_workflow_context_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_global_workflow_context_v1"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_global_workflow_runs_v1",
@@ -533,6 +519,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "list",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_global_workflow_runs_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_global_workflow_runs_v1"),
+    recovery_policy: "none",
   },
   {
     name: "list_global_media_library_assets_v1",
@@ -545,6 +532,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "list",
     input_schema: TOOL_PARAMETER_SCHEMAS.list_global_media_library_assets_v1,
     result_meta_schema: resultMetaSchemaFor("list_global_media_library_assets_v1"),
+    recovery_policy: "none",
   },
   {
     name: "inspect_global_media_library_assets_v1",
@@ -557,6 +545,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.inspect_global_media_library_assets_v1,
     result_meta_schema: resultMetaSchemaFor("inspect_global_media_library_assets_v1"),
+    recovery_policy: "none",
   },
   {
     name: "create_product_workspace_v1",
@@ -569,6 +558,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.create_product_workspace_v1,
     result_meta_schema: resultMetaSchemaFor("create_product_workspace_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "propose_global_draft",
@@ -582,6 +572,7 @@ export const TOOL_MANIFEST = [
     input_schema: TOOL_PARAMETER_SCHEMAS.propose_global_draft,
     input_schema_source: "contract:draft_schema",
     result_meta_schema: resultMetaSchemaFor("propose_global_draft"),
+    recovery_policy: "none",
   },
   {
     name: "get_node_detail_v1",
@@ -594,6 +585,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.get_node_detail_v1,
     result_meta_schema: resultMetaSchemaFor("get_node_detail_v1"),
+    recovery_policy: "none",
   },
   {
     name: "get_workflow_run_detail_v1",
@@ -606,6 +598,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.get_workflow_run_detail_v1,
     result_meta_schema: resultMetaSchemaFor("get_workflow_run_detail_v1"),
+    recovery_policy: "none",
   },
   {
     name: "apply_graph_change_set_v1",
@@ -618,6 +611,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.apply_graph_change_set_v1,
     result_meta_schema: resultMetaSchemaFor("apply_graph_change_set_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "propose_graph_change_set_v1",
@@ -630,6 +624,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.propose_graph_change_set_v1,
     result_meta_schema: resultMetaSchemaFor("propose_graph_change_set_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "discard_workflow_proposal_v1",
@@ -642,6 +637,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.discard_workflow_proposal_v1,
     result_meta_schema: resultMetaSchemaFor("discard_workflow_proposal_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "cancel_workflow_run_v1",
@@ -654,6 +650,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.cancel_workflow_run_v1,
     result_meta_schema: resultMetaSchemaFor("cancel_workflow_run_v1"),
+    recovery_policy: "reconcile_then_retry",
   },
   {
     name: "focus_canvas_items_v1",
@@ -666,6 +663,7 @@ export const TOOL_MANIFEST = [
     result_reducer: "detail",
     input_schema: TOOL_PARAMETER_SCHEMAS.focus_canvas_items_v1,
     result_meta_schema: resultMetaSchemaFor("focus_canvas_items_v1"),
+    recovery_policy: "none",
   },
 ] as const satisfies readonly ToolManifestShape[];
 
@@ -678,7 +676,6 @@ const TOOL_BY_NAME = new Map<string, ToolManifestEntry>(TOOL_MANIFEST.map((entry
 function manifestPayload(dynamicSchemas: Readonly<Partial<Record<ToolName, TSchema>>> = {}): unknown {
   return TOOL_MANIFEST.map((entry) => ({
     ...entry,
-    recovery_policy: TOOL_RECOVERY_POLICIES[entry.name],
     input_schema: dynamicSchemas[entry.name] ?? entry.input_schema,
   }));
 }
@@ -730,7 +727,9 @@ export function toolManifestEntry(name: string): ToolManifestEntry | undefined {
 }
 
 export function toolRecoveryPolicy(name: ToolName): ToolRecoveryPolicy {
-  return TOOL_RECOVERY_POLICIES[name];
+  const entry = TOOL_BY_NAME.get(name);
+  if (!entry) throw new Error(`Unknown ProductFlow tool manifest entry: ${name}`);
+  return entry.recovery_policy;
 }
 
 export function toolDescription<Name extends ToolName>(name: Name): string {

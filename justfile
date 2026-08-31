@@ -9,6 +9,9 @@ agent-service-run:
 agent-service-test:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service test'
 
+agent-service-check-contracts:
+    pnpm --dir agent-service run check-contract-artifacts
+
 # Opt-in real-model skill/tool evals. Requires AGENT_PROVIDER_API_KEY.
 # Scripted fixtures always run in agent-service-test.
 agent-evals-live:
