@@ -70,6 +70,7 @@ func main() {
 	pfmetrics.Register(engine, gdb, cfg.MetricsBearerToken)
 	settingsStore := settings.NewStore(pool, cfg)
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
+	liveImage := providers.LiveImage{Store: settingsStore}
 	graphService := graph.Service{DB: gdb, AfterRunStatus: agent.SyncGraphRunToTasks, Products: product.GraphGuard{}}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
@@ -97,7 +98,7 @@ func main() {
 		ImageSession: imagesession.HTTP{
 			Service: imagesession.Service{
 				DB: gdb, Media: mediaStore, Settings: settingsStore,
-				Reconciler: providers.LiveImage{Store: settingsStore},
+				Reconciler: liveImage,
 			},
 			Settings: settingsStore,
 		},
@@ -106,7 +107,7 @@ func main() {
 			Settings: settingsStore,
 		},
 		LocalEdit: localedit.HTTP{
-			Service:  localedit.Service{DB: gdb, Media: mediaStore},
+			Service:  localedit.Service{DB: gdb, Media: mediaStore, Provider: liveImage},
 			Settings: settingsStore,
 		},
 		Agent: agent.HTTP{
