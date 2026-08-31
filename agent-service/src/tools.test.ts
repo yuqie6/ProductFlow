@@ -20,6 +20,11 @@ function runtime(
     askUser: async () => ({ text: "answer" }),
     requestApproval: () => undefined,
     checkpoint,
+    reconcileEffect: (toolCallID) => client.reconcileTurnEffect(
+      scope.conversation_id,
+      "execution-test",
+      { owner_id: "worker-test", lease_token: "lease-test", tool_call_id: toolCallID },
+    ),
     markEffectUnknown,
     idempotencyKey: (id) => `pi-test-${id}`,
   };
@@ -302,9 +307,9 @@ describe("ProductFlow Pi tools", () => {
         calls.push("create");
         throw new ProductFlowError(504, "timeout", "ProductFlow response timed out");
       },
-      reconcileProductWorkspace: async () => {
+      reconcileTurnEffect: async () => {
         calls.push("reconcile");
-        return { state: "applied", result: { product_id: "product-1" } };
+        return { effect_result: "applied", reconciliation_state: "applied", result: { product_id: "product-1" } };
       },
     } as unknown as ProductFlowClient;
     const globalScope: Scope = {
@@ -327,11 +332,10 @@ describe("ProductFlow Pi tools", () => {
     let createCount = 0;
     let reconcileCount = 0;
     let createIdempotencyKey = "";
-    let reconcileIdempotencyKey = "";
+    let reconciledToolCallID = "";
     const server = createServer(async (request, response) => {
-      for await (const _chunk of request) {
-        // 先读完请求体，再模拟响应丢失
-      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const idempotencyKey = request.headers["idempotency-key"];
       if (request.url?.endsWith("/product-workspaces")) {
         createCount += 1;
@@ -340,11 +344,15 @@ describe("ProductFlow Pi tools", () => {
         response.destroy();
         return;
       }
-      if (request.url?.endsWith("/product-workspaces/reconcile")) {
+      if (request.url?.endsWith("/turn-executions/execution-test/effects/reconcile")) {
         reconcileCount += 1;
-        reconcileIdempotencyKey = String(idempotencyKey);
+        reconciledToolCallID = (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { tool_call_id: string }).tool_call_id;
         response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(JSON.stringify({ state: "applied", result: { product_id: "product-network-reconciled" } }));
+        response.end(JSON.stringify({
+          effect_result: "applied",
+          reconciliation_state: "applied",
+          result: { product_id: "product-network-reconciled" },
+        }));
         return;
       }
       response.writeHead(404);
@@ -374,7 +382,7 @@ describe("ProductFlow Pi tools", () => {
       expect(createCount).toBe(1);
       expect(reconcileCount).toBe(1);
       expect(createIdempotencyKey).toBe("pi-test-tool-network-loss");
-      expect(reconcileIdempotencyKey).toBe(createIdempotencyKey);
+      expect(reconciledToolCallID).toBe("tool-network-loss");
       expect(result.details).toMatchObject({ product_workspace_created: true, reconciled: true });
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
         "tool_effect_intent",
@@ -396,7 +404,7 @@ describe("ProductFlow Pi tools", () => {
       createProductWorkspace: async () => {
         throw new ProductFlowError(504, "timeout", "ProductFlow response timed out");
       },
-      reconcileProductWorkspace: async () => ({ state: "applied", result: { product_id: "product-1" } }),
+      reconcileTurnEffect: async () => ({ effect_result: "applied", reconciliation_state: "applied", result: { product_id: "product-1" } }),
     } as unknown as ProductFlowClient;
     const globalScope: Scope = {
       ...baseScope,
@@ -425,10 +433,6 @@ describe("ProductFlow Pi tools", () => {
       createProductWorkspace: async () => {
         calls.push("create");
         return { product_id: "product-1" };
-      },
-      reconcileProductWorkspace: async () => {
-        calls.push("reconcile");
-        return { state: "not_applied" };
       },
     } as unknown as ProductFlowClient;
     const globalScope: Scope = {
@@ -463,7 +467,7 @@ describe("ProductFlow Pi tools", () => {
       createProductWorkspace: async () => {
         throw new ProductFlowError(504, "timeout", "ProductFlow response timed out");
       },
-      reconcileProductWorkspace: async () => ({ state: "unknown", detail: "database unavailable" }),
+      reconcileTurnEffect: async () => ({ effect_result: "unknown", reconciliation_state: "unknown", detail: "database unavailable" }),
     } as unknown as ProductFlowClient;
     const globalScope: Scope = {
       ...baseScope,
@@ -541,7 +545,7 @@ describe("ProductFlow Pi tools", () => {
     let executeCount = 0;
     let reconcileCount = 0;
     let executeIdempotencyKey = "";
-    let reconcileIdempotencyKey = "";
+    let reconciledToolCallID = "";
     const server = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -566,12 +570,13 @@ describe("ProductFlow Pi tools", () => {
         response.destroy();
         return;
       }
-      if (request.url?.endsWith("/workflow-run-requests/reconcile")) {
+      if (request.url?.endsWith("/turn-executions/execution-test/effects/reconcile")) {
         reconcileCount += 1;
-        reconcileIdempotencyKey = String(idempotencyKey);
+        reconciledToolCallID = (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { tool_call_id: string }).tool_call_id;
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(JSON.stringify({
-          state: "applied",
+          effect_result: "applied",
+          reconciliation_state: "applied",
           result: { request_id: "request-network-reconciled", status: "awaiting_confirmation" },
         }));
         return;
@@ -603,7 +608,7 @@ describe("ProductFlow Pi tools", () => {
       expect(executeCount).toBe(1);
       expect(reconcileCount).toBe(1);
       expect(executeIdempotencyKey).toBe("pi-test-tool-workflow-network-loss");
-      expect(reconcileIdempotencyKey).toBe(executeIdempotencyKey);
+      expect(reconciledToolCallID).toBe("tool-workflow-network-loss");
       expect(result.terminate).toBeUndefined();
       expect(result.details).toMatchObject({ pending_confirmation: true, reconciled: true });
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
@@ -620,7 +625,7 @@ describe("ProductFlow Pi tools", () => {
     }
   });
 
-  it("records unknown after a retry still cannot prove the workflow request", async () => {
+  it("does not retry a workflow mutation after Go returns unknown", async () => {
     const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
     let executeCalls = 0;
     const client = {
@@ -637,7 +642,7 @@ describe("ProductFlow Pi tools", () => {
         executeCalls += 1;
         throw new ProductFlowError(504, "timeout", "request timed out");
       },
-      reconcileWorkflowRunRequest: async () => ({ state: "not_applied" }),
+      reconcileTurnEffect: async () => ({ effect_result: "unknown", reconciliation_state: "unknown" }),
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(
       runtime(baseScope, client, undefined, async (kind, payload) => {
@@ -654,7 +659,7 @@ describe("ProductFlow Pi tools", () => {
       kind: "tool_effect_result",
       payload: { result: "unknown", reconciliation_state: "unknown" },
     });
-    expect(executeCalls).toBe(2);
+    expect(executeCalls).toBe(1);
   });
 
   it("records an unknown workflow request result and stops continuation", async () => {
@@ -673,7 +678,7 @@ describe("ProductFlow Pi tools", () => {
       executeWorkflowRunRequest: async () => {
         throw new ProductFlowError(504, "timeout", "request timed out");
       },
-      reconcileWorkflowRunRequest: async () => ({ state: "unknown" }),
+      reconcileTurnEffect: async () => ({ effect_result: "unknown", reconciliation_state: "unknown" }),
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(
       runtime(
@@ -744,7 +749,7 @@ describe("ProductFlow Pi tools", () => {
       applyGraphChangeSet: async () => {
         throw new ProductFlowError(503, "timeout", "timeout");
       },
-      reconcileApplyGraphChangeSet: async () => ({ state: "unknown", detail: "副作用结果仍不明确" }),
+      reconcileTurnEffect: async () => ({ effect_result: "unknown", reconciliation_state: "unknown", detail: "副作用结果仍不明确" }),
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(
       runtime({ ...baseScope, has_live_graph: true }, client, (_id, reason) => unknownReasons.push(reason ?? "")),
@@ -773,7 +778,7 @@ describe("ProductFlow Pi tools", () => {
       applyGraphChangeSet: async () => {
         throw new ProductFlowError(503, "timeout", "timeout");
       },
-      reconcileApplyGraphChangeSet: async () => ({ state: "conflict", detail: "revision mismatch" }),
+      reconcileTurnEffect: async () => ({ effect_result: "failed", reconciliation_state: "conflict", detail: "revision mismatch" }),
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(
       runtime(
@@ -813,9 +818,9 @@ describe("ProductFlow Pi tools", () => {
         calls.push("focus");
         throw new ProductFlowError(503, "timeout", "timeout");
       },
-      reconcileFocusCanvasItems: async () => {
+      reconcileTurnEffect: async () => {
         calls.push("reconcile");
-        return { state: "applied", result: { accepted: true } };
+        return { effect_result: "applied", reconciliation_state: "applied", result: { accepted: true } };
       },
     } as unknown as ProductFlowClient;
     const tool = createProductFlowTools(

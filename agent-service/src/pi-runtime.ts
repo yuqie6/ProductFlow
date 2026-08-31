@@ -62,7 +62,7 @@ import {
   validateScope,
 } from "./contracts.js";
 import { Config } from "./config.js";
-import { ProductFlowClient, type AgentEventInput } from "./productflow.js";
+import { ProductFlowClient, type AgentEventInput, type EffectReconciliation } from "./productflow.js";
 import { loadRuntimePolicy } from "./runtime-policy.js";
 import { prepareSessionForTurn } from "./session-retry.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME, SkillCatalog } from "./skills.js";
@@ -1069,6 +1069,19 @@ class RunRuntime implements ToolRuntime {
       void this.session?.abort();
       throw this.executionLeaseError;
     }
+  }
+
+  async reconcileEffect(toolCallID: string): Promise<EffectReconciliation> {
+    const lease = this.executionLease;
+    if (!lease || this.executionLeaseError || this.executionStopping) {
+      throw this.executionLeaseError ?? new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
+    }
+    return this.client.reconcileTurnEffect(
+      this.scope.conversation_id,
+      lease.execution_id,
+      { owner_id: lease.owner_id, lease_token: lease.lease_token, tool_call_id: toolCallID },
+      this.signal,
+    );
   }
 
   /** PG 接受 turn/end 的事务就是唯一终态提交点；checkpoint 不再重复提交终态。 */

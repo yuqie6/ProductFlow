@@ -78,11 +78,32 @@ func TestReconcileEffectIntentEightToolStateMatrix(t *testing.T) {
 	}
 }
 
-func TestReconcileTurnEffectAndScannerShareInterpreter(t *testing.T) {
+func TestLiveManualAndScannerEffectReconciliationShareInterpreter(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
 		t.Fatal(err)
 	}
+
+	live := createClaimedJournalTurn(t, as)
+	liveIntent := workspaceIntent("运行中工作区")
+	insertIntentCheckpoint(t, as, live, liveIntent)
+	seedEffectLedger(t, as, liveIntent.ToolName, live.conversationID, liveIntent, "applied")
+	livePath := "/api/internal/v1/agent-conversations/" + live.conversationID + "/turn-executions/" + live.lease.ExecutionID + "/effects/reconcile"
+	wrongLease := as.doJSONAuth(t, http.MethodPost, livePath, map[string]any{
+		"owner_id": "worker-1", "lease_token": "wrong-lease", "tool_call_id": liveIntent.ToolCallID,
+	}, http.Header{"Authorization": []string{"Bearer tok"}})
+	as.mustStatus(t, wrongLease, http.StatusConflict)
+	wrongLease.Body.Close()
+	liveResponse := as.doJSONAuth(t, http.MethodPost, livePath, map[string]any{
+		"owner_id": "worker-1", "lease_token": live.lease.LeaseToken, "tool_call_id": liveIntent.ToolCallID,
+	}, http.Header{"Authorization": []string{"Bearer tok"}})
+	as.mustStatus(t, liveResponse, http.StatusOK)
+	var liveOut EffectReconciliationResponse
+	as.decode(t, liveResponse, &liveOut)
+	if liveOut.EffectResult != effectResultApplied || liveOut.ReconciliationState != reconStateApplied {
+		t.Fatalf("live %+v", liveOut)
+	}
+
 	claimed := createClaimedJournalTurn(t, as)
 	intent := workspaceIntent("共享解释器工作区")
 	insertIntentCheckpoint(t, as, claimed, intent)

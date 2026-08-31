@@ -50,6 +50,13 @@ export interface ReconcileResult {
   detail?: string;
 }
 
+export interface EffectReconciliation {
+  effect_result: "applied" | "failed" | "unknown";
+  reconciliation_state: "applied" | "conflict" | "unknown";
+  result?: unknown;
+  detail?: string;
+}
+
 export interface AgentEventInput {
   sequence: number;
   schema_version: 1;
@@ -111,6 +118,18 @@ export class ProductFlowClient {
   ): Promise<AgentCheckpointReceipt> {
     return this.json<AgentCheckpointReceipt>(
       this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/checkpoints`,
+      { method: "POST", body: args, signal },
+    );
+  }
+
+  async reconcileTurnEffect(
+    conversationID: string,
+    executionID: string,
+    args: { owner_id: string; lease_token: string; tool_call_id: string },
+    signal?: AbortSignal,
+  ): Promise<EffectReconciliation> {
+    return this.json<EffectReconciliation>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/effects/reconcile`,
       { method: "POST", body: args, signal },
     );
   }

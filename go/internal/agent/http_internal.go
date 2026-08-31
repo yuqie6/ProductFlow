@@ -48,6 +48,7 @@ func (h HTTP) registerInternal(engine *gin.Engine) {
 	conv.POST("/turn-executions/claim", h.claimExecution)
 	conv.POST("/turn-executions/:execution_id/heartbeat", h.heartbeatExecution)
 	conv.POST("/turn-executions/:execution_id/checkpoints", h.appendCheckpoint)
+	conv.POST("/turn-executions/:execution_id/effects/reconcile", h.reconcileExecutionEffect)
 	conv.POST("/turn-executions/:execution_id/release", h.releaseExecution)
 	conv.POST("/turn-executions/:execution_id/events/batch", h.appendEvents)
 	conv.POST("/turn-executions/:execution_id/events/confirm", h.confirmEvents)
@@ -529,6 +530,27 @@ func (h HTTP) appendCheckpoint(c *gin.Context) {
 		return
 	}
 	out, err := h.Service.AppendCheckpoint(c.Request.Context(), c.Param("conversation_id"), c.Param("execution_id"), req.OwnerID, req.LeaseToken, req.Sequence, req.Kind, req.Payload)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// reconcileExecutionEffect 处理 live mutation 5xx 后的 lease-scoped 副作用对账。
+//
+// 200 返回 EffectReconciliationResponse。JSON owner_id / lease_token / tool_call_id；intent 和 recovery_policy 只从当前 execution 的 PG checkpoint 读取。
+func (h HTTP) reconcileExecutionEffect(c *gin.Context) {
+	var req struct {
+		OwnerID    string `json:"owner_id"`
+		LeaseToken string `json:"lease_token"`
+		ToolCallID string `json:"tool_call_id"`
+	}
+	if err := bindJSONStrict(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ReconcileExecutionEffect(c.Request.Context(), c.Param("conversation_id"), c.Param("execution_id"), req.OwnerID, req.LeaseToken, req.ToolCallID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

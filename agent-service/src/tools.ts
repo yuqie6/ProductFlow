@@ -203,8 +203,6 @@ function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
         intentPayload: jsonObject(body),
         mutate: (idempotencyKey) =>
           runtime.client.finalizeProductIntake(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileProductIntake(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Product intake result is unknown",
         resultMeta: intakeResultMeta,
       });
@@ -362,15 +360,6 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
           global
             ? runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
             : runtime.client.executeWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileWorkflowRunRequest(
-            runtime.scope.conversation_id,
-            prepared,
-            toolCallID,
-            idempotencyKey,
-            global,
-            runtime.signal,
-          ),
         unknownReason: "WorkflowRun request result is unknown",
         afterAppliedCheckpoints: [
           {
@@ -418,8 +407,6 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
         intentPayload: { name: params.name.trim() },
         mutate: (idempotencyKey) =>
           runtime.client.createProductWorkspace(runtime.scope.conversation_id, params.name.trim(), idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileProductWorkspace(runtime.scope.conversation_id, params.name.trim(), idempotencyKey, runtime.signal),
         unknownReason: "Product workspace creation result is unknown",
         meta: { product_workspace_created: true },
       }),
@@ -462,8 +449,6 @@ function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
         intentPayload: { change_set: body },
         mutate: (idempotencyKey) =>
           runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileApplyGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Graph apply result is unknown",
         meta: operationMeta(params.operations),
       });
@@ -480,8 +465,6 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
         intentPayload: { change_set: body },
         mutate: (idempotencyKey) =>
           runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileProposeGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Graph proposal result is unknown",
         meta: { pending_confirmation: true, ...operationMeta(params.operations) },
         resultMeta: (result) => {
@@ -524,13 +507,6 @@ function createDiscardWorkflowProposalTool(runtime: ToolRuntime): ToolDefinition
         intentPayload: jsonObject({ proposal_id: params.proposal_id ?? null }),
         mutate: (idempotencyKey) =>
           runtime.client.discardGraphProposal(runtime.scope.conversation_id, params.proposal_id ?? null, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileDiscardGraphProposal(
-            runtime.scope.conversation_id,
-            params.proposal_id ?? null,
-            idempotencyKey,
-            runtime.signal,
-          ),
         unknownReason: "Graph proposal discard result is unknown",
         meta: params.proposal_id ? { proposal_id: params.proposal_id } : {},
       }),
@@ -545,13 +521,6 @@ function createCancelWorkflowRunTool(runtime: ToolRuntime): ToolDefinition {
         intentPayload: { run_id: params.run_id },
         mutate: (idempotencyKey) =>
           runtime.client.cancelWorkflowRun(runtime.scope.conversation_id, params.run_id, idempotencyKey, runtime.signal),
-        reconcile: (idempotencyKey) =>
-          runtime.client.reconcileCancelWorkflowRun(
-            runtime.scope.conversation_id,
-            params.run_id,
-            idempotencyKey,
-            runtime.signal,
-          ),
         unknownReason: "Workflow run cancel result is unknown",
         meta: { run_id: params.run_id },
       }),
