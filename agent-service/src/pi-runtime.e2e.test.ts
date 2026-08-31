@@ -23,6 +23,13 @@ const scope: Scope = {
   has_live_graph: false,
 };
 
+const graphScope: Scope = {
+  ...scope,
+  scope_type: "product_workflow",
+  product_id: "22222222-2222-4222-8222-222222222222",
+  has_live_graph: true,
+};
+
 const config = {
   listenAddress: "127.0.0.1:0",
   dataRoot: "/tmp/productflow-pi-runtime-e2e",
@@ -348,10 +355,77 @@ describe("Pi runtime fake provider E2E", () => {
         tool_name: "create_product_workspace_v1",
         result: "applied",
       });
+      await expect.poll(() => events.map((event) => event.kind)).toContain("turn/end");
       expect(events.map((event) => event.kind)).toEqual(
         expect.arrayContaining(["turn/start", "tool/call", "tool/result", "turn/end"]),
       );
       expect(events.some((event) => event.kind === "text.chunk")).toBe(true);
+    } finally {
+      await manager?.close();
+      await provider.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit an aborted follow-up after a graph proposal result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-approval-e2e-"));
+    const provider = await createFakeResponsesServer("graph_proposal");
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
+    const events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> = [];
+    const releasedPhases: string[] = [];
+    let manager: PiRuntimeManager | undefined;
+
+    try {
+      const productFlow = createFakeProductFlow(
+        provider.baseURL,
+        checkpoints,
+        events,
+        releasedPhases,
+        () => 1,
+        graphScope,
+      );
+      productFlow.proposeGraphChangeSet = async () => ({
+        accepted: true,
+        applied: false,
+        pending_confirmation: true,
+        proposal_id: "proposal-fake-provider-e2e",
+        summary: "移动节点",
+      });
+      const store = new TurnStore(root);
+      await store.init();
+      const skills = {
+        root: "/tmp/fake-productflow-skills",
+        hash: "fake-skill-catalog",
+        names: [],
+        prompt: "",
+        promptForScope: () => "",
+        load: async () => "",
+      } satisfies SkillCatalog;
+      manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
+
+      const started = await manager.start({
+        lookup: { conversationID: graphScope.conversation_id },
+        input: {
+          input_text: "整理画布布局并提交提案",
+          asset_ids: [],
+          idempotency_key: "fake-provider-graph-proposal-e2e-1",
+          page_context: null,
+        },
+      });
+      const terminal = await waitForTerminal(store, graphScope.run_id, started.turn_id);
+
+      expect(terminal).toMatchObject({ status: "awaiting_confirmation" });
+      expect(provider.requestCount).toBe(1);
+      expect(events.map((event) => event.kind)).toEqual(
+        expect.arrayContaining(["turn/start", "tool/call", "tool/result", "approval/requested"]),
+      );
+      expect(events.filter((event) => event.kind === "assistant/message").map((event) => event.payload.reason)).toEqual(["toolUse"]);
+      await expect.poll(() => events.map((event) => event.kind)).toContain("turn/end");
+      expect(events.find((event) => event.kind === "tool/result" && event.payload.tool_name === "propose_graph_change_set_v1")?.payload).toMatchObject({
+        tool_name: "propose_graph_change_set_v1",
+        status: "succeeded",
+      });
+      await expect.poll(() => releasedPhases).toEqual(["terminal"]);
     } finally {
       await manager?.close();
       await provider.close();
@@ -495,28 +569,30 @@ function createFakeProductFlow(
   events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }>,
   releasedPhases: string[],
   nextClaim: () => number,
+  runtimeScope: Scope = scope,
 ): ConstructorParameters<typeof PiRuntimeManager>[2] {
   let claimedTurnID = "";
   return {
     conversationContract: async () => ({
       schema_version: 1,
-      scope_type: "global",
-      conversation_id: scope.conversation_id,
-      task_id: null,
-      task_goal: null,
-      product_id: null,
-      harness_run_id: scope.run_id,
-      current_draft_version: 1,
-      system_prompt: scope.system_prompt,
-      draft_kind: "global",
-      draft_schema: scope.draft_schema,
-      tool_contract_version: resolvedToolContractVersion(scope.draft_schema),
+      scope_type: runtimeScope.scope_type,
+      conversation_id: runtimeScope.conversation_id,
+      task_id: runtimeScope.task_id,
+      task_goal: runtimeScope.task_goal,
+      product_id: runtimeScope.product_id,
+      harness_run_id: runtimeScope.run_id,
+      current_draft_version: runtimeScope.current_draft_version,
+      system_prompt: runtimeScope.system_prompt,
+      draft_kind: runtimeScope.scope_type === "global" ? "global" : "product_workflow",
+      draft_schema: runtimeScope.draft_schema,
+      has_live_graph: runtimeScope.has_live_graph,
+      tool_contract_version: resolvedToolContractVersion(runtimeScope.draft_schema),
     }),
     runtimeContext: async () => ({
       schema_version: 1,
       session_id: "session-fake-provider-e2e",
-      conversation_id: scope.conversation_id,
-      task_id: null,
+      conversation_id: runtimeScope.conversation_id,
+      task_id: runtimeScope.task_id,
       session_summary: null,
       task_summary: null,
     }),
@@ -679,7 +755,7 @@ async function waitForTerminal(store: TurnStore, runID: string, turnID: string):
   throw new Error("fake provider E2E Turn did not reach a terminal state");
 }
 
-type FakeProviderMode = "text" | "reasoning" | "workspace" | "disconnect" | "reset" | "timeout";
+type FakeProviderMode = "text" | "reasoning" | "workspace" | "graph_proposal" | "disconnect" | "reset" | "timeout";
 
 async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promise<{
   baseURL: string;
@@ -710,6 +786,7 @@ async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promi
         });
       }
       if (mode === "workspace" && requestCount === 1) writeWorkspaceToolResponse(response);
+      else if (mode === "graph_proposal" && requestCount === 1) writeGraphProposalToolResponse(response);
       else if (mode === "reasoning") writeReasoningTextResponse(response, requestCount);
       else if (mode === "disconnect") writeTruncatedTextResponse(response, requestCount);
       else if (mode === "reset") response.destroy();
@@ -883,6 +960,49 @@ function writeWorkspaceToolResponse(response: import("node:http").ServerResponse
   };
   const responseBody = {
     id: "resp-fake-provider-tool-e2e-1",
+    object: "response",
+    status: "completed",
+    output: [toolCall],
+    usage: { input_tokens: 1, output_tokens: 3, total_tokens: 4 },
+  };
+  writeSSE(response, {
+    type: "response.created",
+    response: { id: responseBody.id, object: "response", status: "in_progress", output: [] },
+  });
+  writeSSE(response, {
+    type: "response.output_item.added",
+    output_index: 0,
+    item: { ...toolCall, arguments: "" },
+  });
+  writeSSE(response, {
+    type: "response.function_call_arguments.delta",
+    output_index: 0,
+    delta: toolCall.arguments,
+  });
+  writeSSE(response, {
+    type: "response.function_call_arguments.done",
+    output_index: 0,
+    arguments: toolCall.arguments,
+  });
+  writeSSE(response, { type: "response.output_item.done", output_index: 0, item: toolCall });
+  writeSSE(response, { type: "response.completed", response: responseBody });
+}
+
+function writeGraphProposalToolResponse(response: import("node:http").ServerResponse): void {
+  const toolCall = {
+    type: "function_call",
+    id: "fc-proposal",
+    call_id: "call-proposal",
+    name: "propose_graph_change_set_v1",
+    arguments: JSON.stringify({
+      base_graph_revision: 1,
+      summary: "移动节点",
+      operations: [{ op: "move_nodes", nodes: [["node-1", 100, 200]] }],
+    }),
+    status: "completed",
+  };
+  const responseBody = {
+    id: "resp-fake-provider-graph-proposal-e2e-1",
     object: "response",
     status: "completed",
     output: [toolCall],

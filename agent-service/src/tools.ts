@@ -361,6 +361,7 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
             ? runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
             : runtime.client.executeWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal),
         unknownReason: "WorkflowRun request result is unknown",
+        terminate: true,
         afterAppliedCheckpoints: [
           {
             kind: "external_job_submitted",
@@ -466,6 +467,7 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
         mutate: (idempotencyKey) =>
           runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, body, idempotencyKey, runtime.signal),
         unknownReason: "Graph proposal result is unknown",
+        terminate: true,
         meta: { pending_confirmation: true, ...operationMeta(params.operations) },
         resultMeta: (result) => {
           const record = result && typeof result === "object" && !Array.isArray(result)
@@ -567,10 +569,13 @@ function createDraftTool(runtime: ToolRuntime, schema: JsonObject): ToolDefiniti
         approval_kind: "artifact",
         artifact: { name: "propose_global_draft", value: params as JsonObject, step_id: toolCallID },
       });
-      return encodeToolResult("propose_global_draft", { accepted: true, pending_confirmation: true }, {
-        artifact_name: "propose_global_draft",
-        pending_confirmation: true,
-      });
+      return {
+        ...encodeToolResult("propose_global_draft", { accepted: true, pending_confirmation: true }, {
+          artifact_name: "propose_global_draft",
+          pending_confirmation: true,
+        }),
+        terminate: true,
+      };
     },
   });
 }

@@ -526,7 +526,7 @@ describe("ProductFlow Pi tools", () => {
 
     const result = await tool.execute("tool-run-applied", { expected_workflow_revision: 3 }, undefined, undefined, {} as never);
 
-    expect(result.terminate).toBeUndefined();
+    expect(result.terminate).toBe(true);
     expect(result.details).toMatchObject({
       pending_confirmation: true,
       workflow_id: "workflow-1",
@@ -609,7 +609,7 @@ describe("ProductFlow Pi tools", () => {
       expect(reconcileCount).toBe(1);
       expect(executeIdempotencyKey).toBe("pi-test-tool-workflow-network-loss");
       expect(reconciledToolCallID).toBe("tool-workflow-network-loss");
-      expect(result.terminate).toBeUndefined();
+      expect(result.terminate).toBe(true);
       expect(result.details).toMatchObject({ pending_confirmation: true, reconciled: true });
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
         "tool_effect_intent",
@@ -728,7 +728,8 @@ describe("ProductFlow Pi tools", () => {
       operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
     };
     const applyResult = await apply.execute("tool-apply-1", params, undefined, undefined, {} as never);
-    await propose.execute("tool-propose-1", { ...params, operations: [params.operations[0], params.operations[0]] }, undefined, undefined, {} as never);
+    const proposeResult = await propose.execute("tool-propose-1", { ...params, operations: [params.operations[0], params.operations[0]] }, undefined, undefined, {} as never);
+    expect(proposeResult.terminate).toBe(true);
     expect(keys).toEqual(["pi-test-tool-apply-1", "pi-test-tool-propose-1"]);
     expect(approvals).toEqual([expect.objectContaining({
       approval_id: "p1",

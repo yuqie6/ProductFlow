@@ -51,6 +51,8 @@ export interface EffectOptions {
   meta?: JsonObject;
   resultMeta?: (result: unknown) => JsonObject;
   afterAppliedCheckpoints?: Array<{ kind: CheckpointKind; payload: JsonObject }>;
+  /** Approval effects end the current Pi tool batch after the result is persisted. */
+  terminate?: boolean;
   onApplied?: (result: unknown, idempotencyKey: string) => void;
 }
 
@@ -110,11 +112,12 @@ export async function withEffect(
       ...extra,
     });
     options.onApplied?.(result, idempotencyKey);
-    return encodeToolResult(toolName, result, {
+    const encoded = encodeToolResult(toolName, result, {
       ...(options.meta ?? {}),
       ...(options.resultMeta?.(result) ?? {}),
       ...(extra.reconciliation_state ? { reconciled: true } : {}),
     });
+    return options.terminate ? { ...encoded, terminate: true } : encoded;
   };
 
   try {
