@@ -12,6 +12,9 @@ import { PreferencesProvider, useI18n } from "./lib/preferences";
 const MediaLibraryPage = lazy(() =>
   import("./pages/MediaLibraryPage").then((module) => ({ default: module.MediaLibraryPage })),
 );
+const HomePage = lazy(() =>
+  import("./pages/HomePage").then((module) => ({ default: module.HomePage })),
+);
 const HelpPage = lazy(() =>
   import("./pages/HelpPage").then((module) => ({ default: module.HelpPage })),
 );
@@ -72,6 +75,10 @@ function AppRoutes() {
         <Routes>
           <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
           <Route
+            path="/home"
+            element={authenticated ? <HomePage /> : <Navigate to="/login" replace />}
+          />
+          <Route
             path="/products"
             element={authenticated ? <ProductListPage /> : <Navigate to="/login" replace />}
           />
@@ -103,7 +110,7 @@ function AppRoutes() {
             path="/products/:productId"
             element={authenticated ? <ProductWorkbenchPage /> : <Navigate to="/login" replace />}
           />
-          <Route path="*" element={<Navigate to={authenticated ? "/products" : "/login"} replace />} />
+          <Route path="*" element={<Navigate to={authenticated ? "/home" : "/login"} replace />} />
         </Routes>
       </Suspense>
       {authenticated ? <GlobalAgentDock /> : null}

@@ -432,7 +432,7 @@ export function AgentProductWorkbenchPage({
       {chromeCollapsed ? null : (
         <TopNav
           breadcrumbs={`${bootstrap.product.name} / ${t("agentWorkbench.breadcrumb")}`}
-          onHome={() => navigate("/products")}
+          onHome={() => navigate("/home")}
         />
       )}
       <AgentWorkbenchShell

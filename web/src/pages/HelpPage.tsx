@@ -836,7 +836,7 @@ export function HelpPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-white dark:bg-[#060a12] dark:text-slate-100">
-      <TopNav breadcrumbs={t("help.breadcrumb")} onHome={() => navigate("/products")} />
+      <TopNav breadcrumbs={t("help.breadcrumb")} onHome={() => navigate("/home")} />
 
       <main className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_208px]">
         <aside className="border-b border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-[#0f1726] lg:border-r lg:border-b-0">

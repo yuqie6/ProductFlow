@@ -60,6 +60,7 @@ The public instance is a personal live demo with one administrator and one merch
 
 | Route | Purpose |
 |---|---|
+| `/home` | Feature navigation and real product showcase |
 | `/products` | Product list |
 | `/products/new` | Agent product creation |
 | `/products/:productId` | Agent conversation, schema-v3 workflow, and image library |

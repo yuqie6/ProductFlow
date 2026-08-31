@@ -560,7 +560,7 @@ export function MediaLibraryPage() {
         </div>
       ) : null}
 
-      <TopNav breadcrumbs={t("mediaLibrary.title")} onHome={() => navigate("/products")} />
+      <TopNav breadcrumbs={t("mediaLibrary.title")} onHome={() => navigate("/home")} />
       <main className="mx-auto flex min-h-[calc(100svh-4.5rem)] max-w-[1600px] flex-col px-3 py-3 sm:px-5 lg:px-7 lg:py-5">
         <header className="flex flex-wrap items-start gap-4 border-b border-slate-200 pb-4 dark:border-slate-800">
           <div className="flex min-w-0 flex-1 items-start gap-3">

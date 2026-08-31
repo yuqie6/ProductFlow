@@ -49,6 +49,7 @@ Current code ownership:
 `web/src/App.tsx` registers the current pages:
 
 - `/login`
+- `/home`
 - `/products`
 - `/products/new`
 - `/products/new/agent`, redirect only
@@ -74,6 +75,7 @@ Current frontend ownership:
 
 | Capability | Owner | Primary tests |
 |---|---|---|
+| Home navigation and real showcase assets | `HomePage.tsx`, `HomePage.css`, `public/home-showcase/` | web build, real browser viewport checks |
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
 | Agent conversation, SSE, Goal | `pages/workbench/agent/` | reducer, conversation assembler, event, Goal, and proposal tests |
 | Graph canvas and inspector | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs, and rendition tests |

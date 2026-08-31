@@ -86,6 +86,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 
 ## 5. 当前页面
 
+- `/home`：登录后的功能导航与真实商品素材展示。
 - `/products`：商品列表和自动封面。
 - `/products/new`：全屏 Agent 创建流程。
 - `/products/:productId`：Agent、工作流画布、节点详情、运行记录、配方和图片库。

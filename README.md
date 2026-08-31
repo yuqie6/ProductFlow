@@ -60,6 +60,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 | 路由 | 用途 |
 |---|---|
+| `/home` | 功能导航与真实商品素材展示 |
 | `/products` | 商品列表 |
 | `/products/new` | Agent 创建商品 |
 | `/products/:productId` | Agent 对话 + schema-v3 工作流 + 图片库 |

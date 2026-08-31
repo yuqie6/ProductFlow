@@ -196,7 +196,7 @@ export function GraphWorkbenchPage({
       {chromeCollapsed ? null : (
         <TopNav
           breadcrumbs={`${product.name} / ${t("agentWorkbench.breadcrumb")}`}
-          onHome={() => navigate("/products")}
+          onHome={() => navigate("/home")}
         />
       )}
       <AgentWorkbenchShell

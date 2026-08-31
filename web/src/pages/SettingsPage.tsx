@@ -2254,7 +2254,7 @@ export function SettingsPage() {
     <div className="flex min-h-screen flex-col bg-white dark:bg-[#060a12] dark:text-slate-100">
       <TopNav
         breadcrumbs={t("settings.breadcrumb")}
-        onHome={() => navigate("/products")}
+        onHome={() => navigate("/home")}
         onLogout={() => logoutMutation.mutate()}
       />
 

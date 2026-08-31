@@ -86,6 +86,7 @@ The current release serves a personal project and live demo. The main repository
 
 ## 5. Current Pages
 
+- `/home`: authenticated feature navigation and real product showcase.
 - `/products`: product list and automatic covers.
 - `/products/new`: full-screen Agent creation flow.
 - `/products/:productId`: Agent, workflow canvas, inspector, runs, recipes, and image library.
