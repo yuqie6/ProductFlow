@@ -2,17 +2,23 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
 
 type Service struct {
-	DB             *gorm.DB
-	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
-	Products       ProductGuard
+	DB                    *gorm.DB
+	Pool                  *pgxpool.Pool
+	AfterRunStatus        func(ctx context.Context, tx *gorm.DB, runID string) error
+	AfterProposalDecision func(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID, decision string) error
+	Products              ProductGuard
 }
 
 func (s Service) guardCtx(ctx context.Context) context.Context {
@@ -183,6 +189,11 @@ func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, propos
 		if err != nil {
 			active = row
 		}
+		if s.AfterProposalDecision != nil {
+			if err := s.AfterProposalDecision(ctx, pgxTx, productID, graphID, proposalID, "confirmed"); err != nil {
+				return err
+			}
+		}
 		out, err = Project(ctx, pgxTx, active.Identity)
 		return err
 	})
@@ -199,6 +210,121 @@ func (s Service) DiscardProposal(ctx context.Context, productID, graphID, propos
 		row, err := loadGraph(ctx, pgxTx, productID, graphID)
 		if err != nil {
 			return err
+		}
+		if s.AfterProposalDecision != nil {
+			if err := s.AfterProposalDecision(ctx, pgxTx, productID, graphID, proposalID, "discarded"); err != nil {
+				return err
+			}
+		}
+		out, err = Project(ctx, pgxTx, row.Identity)
+		return err
+	})
+	return out, err
+}
+
+func (s Service) GetDocumentCandidate(ctx context.Context, productID, graphID, nodeID string) (DocumentCandidate, error) {
+	ctx = s.guardCtx(ctx)
+	var out DocumentCandidate
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		_, _, _, _, _, candidate, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, false)
+		out = candidate
+		return err
+	})
+	return out, err
+}
+
+func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID, nodeID string, input ApplyDocumentCandidateInput) (Projection, error) {
+	ctx = s.guardCtx(ctx)
+	var out Projection
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		row, _, node, _, artifact, candidate, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, true)
+		if err != nil {
+			return err
+		}
+		if input.BaseGraphRevision != row.Revision {
+			return apperr.Conflict("图 revision 已变化，请刷新后重试")
+		}
+		if strings.TrimSpace(input.ArtifactID) == "" || input.ArtifactID != artifact.ID {
+			return apperr.Conflict("文稿候选已变化，请刷新后重试")
+		}
+		if candidate.Status != "ready" {
+			return apperr.Conflict("文稿或上游输入已变化，候选已过期")
+		}
+		payload := map[string]any{}
+		if err := json.Unmarshal([]byte(artifact.PayloadJSON), &payload); err != nil {
+			return err
+		}
+		proposed := proposedDocumentConfig(node, payload, candidate.DocumentAction)
+		sectionKeys := normalizeSectionKeys(input.SectionKeys)
+		changed := map[string]struct{}{}
+		for _, section := range candidate.Sections {
+			if section.Changed {
+				changed[section.Key] = struct{}{}
+			}
+		}
+		if len(changed) == 0 {
+			return apperr.Validation("文稿候选与当前文稿没有差异")
+		}
+		for _, key := range sectionKeys {
+			if _, ok := changed[key]; !ok {
+				return apperr.Validation("只能应用包含差异的文稿 section")
+			}
+		}
+		config, err := applyDocumentSections(node, proposed, sectionKeys)
+		if err != nil {
+			return err
+		}
+		origin := OriginCollaborative
+		if len(sectionKeys) == 0 && (candidate.DocumentAction == DocumentActionRewrite || candidate.DocumentAction == DocumentActionReplace) {
+			origin = OriginGenerated
+		} else if DocumentOrigin(node) == OriginSeed {
+			origin = OriginGenerated
+		}
+		result, err := Mutate(ctx, pgxTx, productID, graphID, ChangeSet{
+			BaseGraphRevision: row.Revision,
+			Summary:           "采用 AI 文稿建议",
+			ActorType:         ActorUser,
+			Operations: []Operation{UpdateNodeConfigOp{
+				NodeRef: nodeID, Config: config, DocumentOrigin: strPtr(origin),
+			}},
+		}, HistoryEdit)
+		if err != nil {
+			return err
+		}
+		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).
+			Where("id = ? AND pending_candidate_artifact_id = ?", nodeID, artifact.ID).
+			Update("pending_candidate_artifact_id", nil).Error; err != nil {
+			return err
+		}
+		updated, err := loadGraph(ctx, pgxTx, productID, result.GraphID)
+		if err != nil {
+			return err
+		}
+		out, err = Project(ctx, pgxTx, updated.Identity)
+		return err
+	})
+	return out, err
+}
+
+func (s Service) DiscardDocumentCandidate(ctx context.Context, productID, graphID, nodeID string, input DiscardDocumentCandidateInput) (Projection, error) {
+	ctx = s.guardCtx(ctx)
+	var out Projection
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		row, _, _, _, artifact, _, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, true)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(input.ArtifactID) == "" || input.ArtifactID != artifact.ID {
+			return apperr.Conflict("文稿候选已变化，请刷新后重试")
+		}
+		result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).
+			Where("id = ? AND pending_candidate_artifact_id = ?", nodeID, artifact.ID).
+			Update("pending_candidate_artifact_id", nil)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return apperr.Conflict("文稿候选已变化，请刷新后重试")
 		}
 		out, err = Project(ctx, pgxTx, row.Identity)
 		return err
@@ -255,11 +381,11 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 		if err != nil {
 			return err
 		}
-		sources, _, _, err := loadGraphSources(ctx, pgxTx, row, applied)
+		sources, _, _, _, err := loadGraphSources(ctx, pgxTx, row, applied)
 		if err != nil {
 			return err
 		}
-		nodes, err := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validRegenerateMode(req.RegenerateMode))
+		nodes, err := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validDocumentAction(req.DocumentAction))
 		if err != nil {
 			return err
 		}
@@ -268,7 +394,7 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 			RequestedNodeID:  req.NodeID,
 			RequestedNodeIDs: requestedNodeIDsOrEmpty(req.NodeIDs),
 			Force:            req.Force,
-			RegenerateMode:   validRegenerateMode(req.RegenerateMode),
+			DocumentAction:   validDocumentAction(req.DocumentAction),
 			Nodes:            nodes,
 		}
 		return nil

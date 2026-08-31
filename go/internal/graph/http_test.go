@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -74,7 +75,7 @@ func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServ
 	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
-	graph.HTTP{Service: graph.Service{DB: gdb, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
+	graph.HTTP{Service: graph.Service{DB: gdb, Pool: pool, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	gs := &graphServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
@@ -265,11 +266,12 @@ func TestCatalogHTTPMatchesDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := json.Marshal(payload)
-	if err != nil {
+	var expected map[string]any
+	if err := json.Unmarshal(want, &expected); err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(want) {
+	if !reflect.DeepEqual(payload, expected) {
+		got, _ := json.Marshal(payload)
 		t.Fatalf("catalog mismatch\n got %s\nwant %s", got, want)
 	}
 	if payload["version"].(float64) != float64(graph.CatalogVersion) {
@@ -284,8 +286,16 @@ func TestCatalogHTTPMatchesDocument(t *testing.T) {
 		t.Fatalf("%+v", first)
 	}
 	image := nodes[5].(map[string]any)
-	if image["node_type"] != "image_generation" || image["kind"] != "processing" {
+	if image["node_type"] != "image_generation" || image["kind"] != "effect" {
 		t.Fatalf("%+v", image)
+	}
+	prompt := nodes[4].(map[string]any)
+	if prompt["node_type"] != "image_prompt" || prompt["kind"] != "document" {
+		t.Fatalf("%+v", prompt)
+	}
+	actions := prompt["document_actions"].([]any)
+	if len(actions) != 3 || actions[0] != "complete" || actions[1] != "rewrite" || actions[2] != "replace" {
+		t.Fatalf("document_actions %+v", actions)
 	}
 	fields := image["config_fields"].([]any)
 	var generation map[string]any

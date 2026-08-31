@@ -47,6 +47,8 @@ type PromptRequest struct {
 	ImageTypeJob         string
 	GenerateFromContext  bool
 	CurrentPrompt        map[string]any
+	DocumentAction       string
+	CurrentDocument      map[string]any
 	VisualExceptions     []map[string]any
 	TextPolicy           string
 	TextLanguage         string

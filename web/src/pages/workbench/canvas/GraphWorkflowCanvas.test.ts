@@ -38,12 +38,12 @@ const catalog: GraphNodeCatalog = {
   nodes: [
     { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
     { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
-    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [] },
-    { node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [] },
+    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "document", accepts: [] },
+    { node_type: "visual_system", output_data_type: "visual_system", kind: "document", accepts: [] },
     {
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       output_data_type: "prompt",
-      kind: "processing",
+      kind: "document",
       accepts: [
         { data_type: "product_facts", role: "facts", max_count: null, required_to_run: false },
       ],
@@ -51,7 +51,7 @@ const catalog: GraphNodeCatalog = {
     {
       node_type: "image_generation",
       output_data_type: "image_asset",
-      kind: "processing",
+      kind: "effect",
       accepts: [
         { data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true },
       ],
@@ -339,7 +339,7 @@ describe("graph workflow node ports", () => {
       binding_status: "unbound",
       bound_asset_id: null,
     }));
-    expect(markup).toContain("还没选图");
+    expect(markup).toContain("待选择图片");
   });
 
   it("puts copy, group, delete, and save-as-recipe on a multi-selection toolbar", () => {

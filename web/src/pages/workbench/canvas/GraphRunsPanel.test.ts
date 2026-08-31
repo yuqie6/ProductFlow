@@ -37,7 +37,7 @@ const graph: GraphProjection = {
     outgoing: [],
   }, {
     id: "prompt",
-    node_type: "prompt_generation",
+    node_type: "image_prompt",
     title: "主图提示词",
     position_x: 0,
     position_y: 0,

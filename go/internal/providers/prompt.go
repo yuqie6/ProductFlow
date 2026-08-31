@@ -129,6 +129,8 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 		}
 		context = map[string]any{
 			"task":                   "generate_ecommerce_image_prompt_artifact",
+			"document_action":        req.DocumentAction,
+			"current_document":       req.CurrentDocument,
 			"generate_from_context":  req.GenerateFromContext,
 			"image_type_key":         emptyToUnspecified(req.ImageTypeKey),
 			"image_type_title":       nilIfEmpty(req.ImageTypeTitle),
@@ -153,6 +155,8 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 		}
 		context = map[string]any{
 			"task":              "generate_ecommerce_context_node",
+			"document_action":   req.DocumentAction,
+			"current_document":  req.CurrentDocument,
 			"node_title":        req.NodeTitle,
 			"confirmed_facts":   factsOrEmpty(req.Facts),
 			"current_brief":     req.Brief,

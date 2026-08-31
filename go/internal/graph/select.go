@@ -39,13 +39,13 @@ const (
 )
 
 // SelectRunNodeIDs GRAPH 入队所有具备必需输入的处理节点，由执行器把无需重算的节点落成 skipped。
-// NODE 只入队目标。TO_NODE 入队目标及 fill 仍会干活的祖先。SELECTION 入队显式节点集合。
+// NODE 只入队目标。TO_NODE 入队目标及仍需生成的祖先。SELECTION 入队显式节点集合。
 func SelectRunNodeIDs(graph AppliedGraph, scope, targetNodeID string, sources map[string]SourceRecord) ([]string, error) {
-	return SelectRunNodeIDsWithMode(graph, scope, targetNodeID, nil, sources, false, RegenerateFill)
+	return SelectRunNodeIDsWithMode(graph, scope, targetNodeID, nil, sources, false, DocumentActionComplete)
 }
 
 func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]string, error) {
-	mode = validRegenerateMode(mode)
+	mode = validDocumentAction(mode)
 	var processingIDs []string
 	for _, node := range graph.Nodes {
 		if IsProcessingNode(node.NodeType) {
@@ -85,7 +85,7 @@ func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, no
 				if err != nil {
 					continue
 				}
-				if nodeShouldCook(graph, node, sources, false, RegenerateFill) {
+				if nodeShouldCook(graph, node, sources, false, DocumentActionComplete) {
 					selected = append(selected, nodeID)
 				}
 			}
@@ -155,7 +155,7 @@ type RunPreviewNode struct {
 }
 
 func PlanRun(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]RunPreviewNode, error) {
-	mode = validRegenerateMode(mode)
+	mode = validDocumentAction(mode)
 	forceTargets := forceTargetSet(scope, targetNodeID, nodeIDs, force)
 	inScope, err := previewScopeSet(graph, scope, targetNodeID, nodeIDs)
 	if err != nil {
@@ -248,9 +248,9 @@ func plannedActionFor(graph AppliedGraph, node AppliedNode, sources map[string]S
 		}
 		origin := DocumentOrigin(node)
 		if origin == OriginAuthored {
-			return PlannedFrozen, "已手写，fill 不覆盖"
+			return PlannedFrozen, "人工文稿保持不变"
 		}
-		return PlannedFrozen, "已生成，fill 不覆盖"
+		return PlannedFrozen, "正式文稿保持不变"
 	}
 	if node.NodeType == NodeImageGeneration {
 		if forceTarget {

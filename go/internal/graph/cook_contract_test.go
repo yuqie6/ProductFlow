@@ -3,6 +3,7 @@ package graph_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -12,11 +13,12 @@ import (
 
 type countingPrompt struct {
 	graph.MockPromptProvider
-	mu      sync.Mutex
-	briefs  int
-	visuals int
-	prompts int
-	last    graph.PromptRequest
+	mu         sync.Mutex
+	briefs     int
+	visuals    int
+	prompts    int
+	last       graph.PromptRequest
+	varyPrompt bool
 }
 
 func (p *countingPrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
@@ -38,7 +40,11 @@ func (p *countingPrompt) GeneratePrompt(ctx context.Context, req graph.PromptReq
 	p.prompts++
 	p.last = req
 	p.mu.Unlock()
-	return p.MockPromptProvider.GeneratePrompt(ctx, req)
+	result, err := p.MockPromptProvider.GeneratePrompt(ctx, req)
+	if err == nil && p.varyPrompt {
+		result.Payload["design_goal"] = fmt.Sprintf("候选提示词 %d", p.promptCalls())
+	}
+	return result, err
 }
 
 func (p *countingPrompt) promptCalls() int {
@@ -145,7 +151,7 @@ func TestHandFilledPromptNodeScopeImageDoesNotCallPromptProvider(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
 	view := loadProjection(t, gs, productID, graphID)
-	promptNode := nodeOfType(t, view, graph.NodePromptGeneration)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
 	imageNode := nodeOfType(t, view, graph.NodeImageGeneration)
 	cfg := cloneConfig(t, promptNode.Config)
 	delete(cfg, "document_origin")
@@ -181,7 +187,7 @@ func TestGraphRunAfterAuthoredLayoutEditSkipsPromptProvider(t *testing.T) {
 		t.Fatalf("first run prompt=%d image=%d", firstPrompts, firstImages)
 	}
 	view := loadProjection(t, gs, productID, graphID)
-	promptNode := nodeOfType(t, view, graph.NodePromptGeneration)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
 	cfg := cloneConfig(t, promptNode.Config)
 	delete(cfg, "document_origin")
 	prompt, _ := cfg["prompt"].(map[string]any)
@@ -216,7 +222,7 @@ func TestGeneratedContentNodeRemainsReadyAfterAdopt(t *testing.T) {
 	images := &countingImage{}
 	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
 	view := loadProjection(t, gs, productID, graphID)
-	for _, nodeType := range []graph.NodeType{graph.NodeCreativeBrief, graph.NodeVisualSystem, graph.NodePromptGeneration} {
+	for _, nodeType := range []graph.NodeType{graph.NodeCreativeBrief, graph.NodeVisualSystem, graph.NodeImagePrompt} {
 		node := nodeOfType(t, view, nodeType)
 		if node.DocumentOrigin == nil || *node.DocumentOrigin != graph.OriginGenerated {
 			t.Fatalf("%s origin %+v", nodeType, node.DocumentOrigin)
@@ -259,29 +265,44 @@ func TestToNodeAfterGeneratedContentDoesNotCallPromptProvider(t *testing.T) {
 func TestForceReplacePromptIsUndoable(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
-	prompts := &countingPrompt{}
+	prompts := &countingPrompt{varyPrompt: true}
 	images := &countingImage{}
 	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
 	view := loadProjection(t, gs, productID, graphID)
-	promptNode := nodeOfType(t, view, graph.NodePromptGeneration)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
 	before := cloneConfig(t, promptNode.Config)
 	firstPrompts := prompts.promptCalls()
 	executeGraphRun(t, gs, productID, graphID, map[string]any{
-		"scope": "node", "node_id": promptNode.ID, "force": true, "regenerate_mode": "replace",
+		"scope": "node", "node_id": promptNode.ID, "force": true, "document_action": "replace",
 	}, prompts, images)
 	if prompts.promptCalls() != firstPrompts+1 {
 		t.Fatalf("force replace prompt calls %d -> %d", firstPrompts, prompts.promptCalls())
 	}
 	after := loadProjection(t, gs, productID, graphID)
-	replaced := nodeOfType(t, after, graph.NodePromptGeneration)
+	replaced := nodeOfType(t, after, graph.NodeImagePrompt)
 	if replaced.DocumentOrigin == nil || *replaced.DocumentOrigin != graph.OriginGenerated {
 		t.Fatalf("origin %+v", replaced.DocumentOrigin)
+	}
+	if replaced.PendingCandidateArtifactID == nil {
+		t.Fatal("force replace must stage a document candidate")
+	}
+	apply := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/nodes/"+replaced.ID+"/candidate/apply", map[string]any{
+		"artifact_id":         *replaced.PendingCandidateArtifactID,
+		"base_graph_revision": after.Revision,
+		"section_keys":        []string{},
+	})
+	gs.mustStatus(t, apply, 200)
+	var applied graph.Projection
+	gs.decode(t, apply, &applied)
+	published := nodeOfType(t, applied, graph.NodeImagePrompt)
+	if published.PendingCandidateArtifactID != nil || applied.Revision <= after.Revision {
+		t.Fatalf("candidate was not published: pending=%v revision=%d", published.PendingCandidateArtifactID, applied.Revision)
 	}
 	undone := gs.do(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/undo", nil, "")
 	gs.mustStatus(t, undone, 200)
 	var restored graph.Projection
 	gs.decode(t, undone, &restored)
-	got := nodeOfType(t, restored, graph.NodePromptGeneration)
+	got := nodeOfType(t, restored, graph.NodeImagePrompt)
 	if pythonish(got.Config["prompt"]) != pythonish(before["prompt"]) {
 		t.Fatalf("undo prompt %+v vs %+v", got.Config["prompt"], before["prompt"])
 	}
@@ -341,10 +362,10 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	if brief.DocumentOrigin == nil || *brief.DocumentOrigin != graph.OriginAuthored {
 		t.Fatalf("origin %+v", brief.DocumentOrigin)
 	}
-	if brief.CurrentArtifactID == nil {
-		t.Fatal("generated artifact must be kept")
+	if brief.CurrentArtifactID != nil || brief.PendingCandidateArtifactID == nil {
+		t.Fatalf("generated result must remain a candidate: current=%v pending=%v", brief.CurrentArtifactID, brief.PendingCandidateArtifactID)
 	}
-	if brief.ConfigStatus != graph.ConfigStale {
+	if brief.ConfigStatus != graph.ConfigReady {
 		t.Fatalf("status %s", brief.ConfigStatus)
 	}
 	finishedResp := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
@@ -353,7 +374,7 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs.decode(t, finishedResp, &finished)
 	for _, nodeRun := range finished.NodeRuns {
 		if nodeRun.NodeID != nil && *nodeRun.NodeID == brief.ID {
-			if nodeRun.Output["adopted"] != false || nodeRun.Output["stale"] != true {
+			if nodeRun.Output["disposition"] != "candidate" {
 				t.Fatalf("content adoption output %+v", nodeRun.Output)
 			}
 			return

@@ -262,7 +262,7 @@ func TestRecipeAPISavesFragmentPreviewAndApply(t *testing.T) {
 	for _, raw := range payload["nodes"].([]any) {
 		nodeTypes[raw.(map[string]any)["node_type"].(string)] = struct{}{}
 	}
-	for _, want := range []string{"product_source", "prompt_generation", "image_generation"} {
+	for _, want := range []string{"product_source", "image_prompt", "image_generation"} {
 		if _, ok := nodeTypes[want]; !ok {
 			t.Fatalf("missing %s in %+v", want, nodeTypes)
 		}
@@ -307,7 +307,7 @@ func TestRecipeAPISavesFragmentPreviewAndApply(t *testing.T) {
 	var promptID, imageID string
 	for _, node := range g.Nodes {
 		switch node.NodeType {
-		case "prompt_generation":
+		case "image_prompt":
 			promptID = node.ID
 		case "image_generation":
 			imageID = node.ID
@@ -472,7 +472,7 @@ func TestRecipeApplyCreateModeAndFragmentNeedsGraph(t *testing.T) {
 	var promptID, imageID string
 	for _, node := range g.Nodes {
 		switch node.NodeType {
-		case "prompt_generation":
+		case "image_prompt":
 			promptID = node.ID
 		case "image_generation":
 			imageID = node.ID

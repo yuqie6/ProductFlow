@@ -22,21 +22,21 @@ const catalog: GraphNodeCatalog = {
     { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
     { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
     {
-      node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [
+      node_type: "creative_brief", output_data_type: "creative_brief", kind: "document", accepts: [
         { data_type: "product_facts", role: "facts", max_count: 1, required_to_run: false },
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
       ]
     },
     {
-      node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [
+      node_type: "visual_system", output_data_type: "visual_system", kind: "document", accepts: [
         { data_type: "product_facts", role: "facts", max_count: 1, required_to_run: false },
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
       ]
     },
     {
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       output_data_type: "prompt",
-      kind: "processing",
+      kind: "document",
       accepts: [
         { data_type: "product_facts", role: "facts", max_count: null, required_to_run: false },
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
@@ -47,7 +47,7 @@ const catalog: GraphNodeCatalog = {
     {
       node_type: "image_generation",
       output_data_type: "image_asset",
-      kind: "processing",
+      kind: "effect",
       accepts: [
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
@@ -114,7 +114,7 @@ const graph: GraphProjection = {
     },
     {
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "提示词",
       position_x: 0,
       position_y: 0,
@@ -271,11 +271,11 @@ describe("missingRunNodesSummary", () => {
 
 describe("graphNodeHasInput", () => {
   it("uses catalog accepts, not a local type list", () => {
-    expect(graphNodeHasInput("prompt_generation", catalog)).toBe(true);
+    expect(graphNodeHasInput("image_prompt", catalog)).toBe(true);
     expect(graphNodeHasInput("visual_system", catalog)).toBe(true);
     expect(graphNodeHasInput("creative_brief", catalog)).toBe(true);
     expect(graphNodeHasInput("product_source", catalog)).toBe(false);
-    expect(graphNodeHasInput("prompt_generation", null)).toBe(false);
+    expect(graphNodeHasInput("image_prompt", null)).toBe(false);
     expect(graphNodeHasInput("image_generation", undefined)).toBe(false);
     expect(graphNodeHasInput("product_source", null)).toBe(false);
   });

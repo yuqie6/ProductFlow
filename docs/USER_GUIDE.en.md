@@ -117,18 +117,18 @@ Reference nodes:
 Creative brief nodes:
 
 - A template seed can run to generate the goal, design goals, and prohibitions from photos and product facts.
-- The result is adopted through a ChangeSet into the inspector. After you edit visible fields, graph or run-to-here will not overwrite those four keys. Use refine or regenerate when the model should write again.
+- The first generation of a template seed may publish automatically. Complete, rewrite, and replace actions on an existing document create a reviewable suggestion that can be applied by business section.
 
 Visual system nodes:
 
 - An empty overlay seed can run to generate style keywords and background from photos and product facts.
-- A published overlay is not overwritten on fill; without a version those values are used as-is.
+- A published overlay is not overwritten by normal runs. New AI output becomes a reviewable suggestion; the published overlay remains the rendering input.
 
 Prompt nodes:
 
 - A seed can run to write a prompt into the inspector. This does not render images.
 - Edit image goal, composition, content, text, and atmosphere. A hand-filled composition can feed downstream image nodes immediately.
-- Authored documents are not overwritten on fill. Regenerate replaces the whole document and can be undone.
+- Authored documents are not overwritten by normal runs. Complete, rewrite, and replace produce Inspector suggestions that can be applied by section, applied in full, or discarded.
 
 Image nodes:
 
@@ -142,9 +142,10 @@ Image nodes:
 ### 3.4 Runs
 
 - Run this node executes only the selected processing node. Visual, brief, and prompt write content when they are seed; authored documents skip. Image generation renders.
-- Run to this node runs ancestors that fill would actually work (seed content, missing or stale images), then the selected node. Authored content nodes are not queued.
+- Run to this node processes ancestors that still need generation (seed content and missing or stale images), then the selected node. Published document nodes are not queued.
 - Run the whole graph considers every processing node with its required inputs in DAG order. Seed content and stale images generate; authored documents and unchanged images are recorded as skipped with frozen or reused status. Nodes missing required inputs are excluded, and a graph with no enqueueable node returns a validation error.
-- When an authored document needs another model pass, the inspector offers refine (fill empty fields) and regenerate (replace all, undoable).
+- When a published document needs another model pass, the Inspector offers complete, rewrite, and replace. The result is reviewed against the current document before an undoable canvas edit is applied.
+- Card status describes operational availability, such as data available, document available, can generate, or review required. Queued, running, and failed are temporary execution states; prior execution results remain in Runs.
 - The Runs panel shows state, node results, and failure reasons. Compiler keys stay out of the first screen.
 - Active runs can be cancelled. Retry is available for retryable failures.
 

@@ -263,7 +263,7 @@ func TestSubmitGraphRunRejectsForce(t *testing.T) {
 	gs := newGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
 	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
-		"scope": "graph", "force": true, "regenerate_mode": "replace",
+		"scope": "graph", "force": true, "document_action": "replace",
 	})
 	gs.mustStatus(t, resp, http.StatusBadRequest)
 	var body struct {
@@ -325,12 +325,12 @@ func TestSubmitRunQueuesWhenAnotherRunIsActive(t *testing.T) {
 		if node.NodeType == graph.NodeImageGeneration {
 			imageID = node.ID
 		}
-		if node.NodeType == graph.NodePromptGeneration {
+		if node.NodeType == graph.NodeImagePrompt {
 			promptID = node.ID
 		}
 	}
 	if imageID == "" || promptID == "" {
-		t.Fatal("missing image_generation or prompt_generation")
+		t.Fatal("missing image_generation or image_prompt")
 	}
 	second := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
 		"scope": "node", "node_id": imageID,

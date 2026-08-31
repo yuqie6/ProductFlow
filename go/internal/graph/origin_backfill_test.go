@@ -58,10 +58,10 @@ func TestBackfillDocumentOriginUpgradesDivergedSeed(t *testing.T) {
 		INSERT INTO workflow_graph_nodes (
 			id, graph_id, node_type, title, position_x, position_y, config_json, document_origin, created_at, updated_at
 		) VALUES
-			(?, ?, 'prompt_generation', '种子提示词', 0, 0, ?::json, 'seed', NOW(), NOW()),
-			(?, ?, 'prompt_generation', '手填提示词', 0, 0, ?::json, 'seed', NOW(), NOW()),
+			(?, ?, 'image_prompt', '种子提示词', 0, 0, ?::json, 'seed', NOW(), NOW()),
+			(?, ?, 'image_prompt', '手填提示词', 0, 0, ?::json, 'seed', NOW(), NOW()),
 			(?, ?, 'creative_brief', '手填要求', 0, 0, ?::json, 'seed', NOW(), NOW()),
-			(?, ?, 'prompt_generation', '已生成', 0, 0, ?::json, 'generated', NOW(), NOW())
+			(?, ?, 'image_prompt', '已生成', 0, 0, ?::json, 'generated', NOW(), NOW())
 	`,
 		seedPromptID, graphID, string(seedPrompt),
 		authoredPromptID, graphID, string(authoredPrompt),

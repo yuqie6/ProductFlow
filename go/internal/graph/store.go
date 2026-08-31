@@ -174,7 +174,7 @@ func lastOperationGroup(ctx context.Context, tx *gorm.DB, graph graphRow) (*oper
 }
 
 func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
-	// 先删不再存在的边，再清 current_artifact_id 后删节点，避免历史 artifact 外键卡住 live 图。
+	// 先删不再存在的边，再清节点持有的 artifact 指针后删节点。
 	nextGroupIDs := idsOf(applied.Groups, func(g AppliedGroup) string { return g.ID })
 	nextNodeIDs := idsOf(applied.Nodes, func(n AppliedNode) string { return n.ID })
 	nextEdgeIDs := idsOf(applied.Edges, func(e AppliedEdge) string { return e.ID })
@@ -188,8 +188,9 @@ func replaceGraphContents(ctx context.Context, tx *gorm.DB, graphID string, appl
 		nullQ = nullQ.Where("id NOT IN ?", nextNodeIDs)
 	}
 	if err := nullQ.Updates(map[string]any{
-		"current_artifact_id": nil,
-		"updated_at":          now,
+		"current_artifact_id":           nil,
+		"pending_candidate_artifact_id": nil,
+		"updated_at":                    now,
 	}).Error; err != nil {
 		return err
 	}

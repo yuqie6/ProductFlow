@@ -8,7 +8,7 @@ import (
 func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 	node := AppliedNode{
 		ID:             "prompt-1",
-		NodeType:       NodePromptGeneration,
+		NodeType:       NodeImagePrompt,
 		Title:          "核心卖点图提示词",
 		DocumentOrigin: OriginSeed,
 		Config: map[string]any{
@@ -51,7 +51,7 @@ func TestAssemblePromptRequestBuildsListingSeed(t *testing.T) {
 func TestAssemblePromptRequestAuthoredDoesNotGenerateFromContext(t *testing.T) {
 	node := AppliedNode{
 		ID:             "prompt-1",
-		NodeType:       NodePromptGeneration,
+		NodeType:       NodeImagePrompt,
 		Title:          "核心卖点图提示词",
 		DocumentOrigin: OriginAuthored,
 		Config: map[string]any{
@@ -71,7 +71,7 @@ func TestAssemblePromptRequestAuthoredDoesNotGenerateFromContext(t *testing.T) {
 func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t *testing.T) {
 	prompt := AppliedNode{
 		ID:       "prompt-1",
-		NodeType: NodePromptGeneration,
+		NodeType: NodeImagePrompt,
 		Title:    "信息图提示词",
 		Config: map[string]any{
 			"image_type_key": "faq",
@@ -121,7 +121,7 @@ func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t 
 func TestAssembleCreativeBriefCollectsGraphImageTypes(t *testing.T) {
 	brief := AppliedNode{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}}
 	prompt := AppliedNode{
-		ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词",
+		ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词",
 		Config: map[string]any{"image_type_key": "hero"},
 	}
 	g := AppliedGraph{Nodes: []AppliedNode{brief, prompt}}

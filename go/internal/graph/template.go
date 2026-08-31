@@ -311,7 +311,7 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 		groupRefCopy := groupRef
 		ops = append(ops, CreateNodeOp{
 			ClientRef: promptRef,
-			NodeType:  NodePromptGeneration,
+			NodeType:  NodeImagePrompt,
 			Title:     typeTitle + "提示词",
 			PositionX: 420,
 			PositionY: groupY,

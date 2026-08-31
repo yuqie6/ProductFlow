@@ -24,7 +24,7 @@ describe("GraphCanvasNotice", () => {
         {
           node_type: "image_generation",
           output_data_type: "image_asset",
-          kind: "processing",
+          kind: "effect",
           accepts: [{ data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true }],
         },
       ],

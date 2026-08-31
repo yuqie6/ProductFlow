@@ -8,7 +8,7 @@ Accepted
 
 ## 背景
 
-ADR 0014 把单输入 handle、镜头逐张 `scope=node` 和一图一活跃 run 写成条款。这些选择让用户无法从画布结构读出缺什么输入，镜头进度不可整体观测，有活跃 run 时新提交只能 409。digest 排除清单和 `document_origin` 启发式也在运行时漂移。本 ADR 记录 0014 中被修订的编排/交互边界；文稿 vs 产物、`delivery_spec` 不进 digest、fill 不覆盖 authored/generated 仍以 0014 为准。
+ADR 0014 把单输入 handle、镜头逐张 `scope=node` 和一图一活跃 run 写成条款。这些选择让用户无法从画布结构读出缺什么输入，镜头进度不可整体观测，有活跃 run 时新提交只能 409。digest 排除清单和 `document_origin` 启发式也在运行时漂移。本 ADR 记录 0014 中被修订的编排/交互边界；正式文稿、候选产物、`delivery_spec` 不进 digest 等合同仍以 0014 为准。
 
 ## 决策
 

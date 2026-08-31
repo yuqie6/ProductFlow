@@ -9,6 +9,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/notify"
 	"gorm.io/gorm"
 )
 
@@ -63,10 +64,13 @@ func appendGraphRunEvent(ctx context.Context, tx *gorm.DB, runID, kind string, n
 		return err
 	}
 	now := time.Now().UTC()
-	return tx.WithContext(ctx).Create(&schema.WorkflowGraphRunEvents{
+	if err := tx.WithContext(ctx).Create(&schema.WorkflowGraphRunEvents{
 		ID: newGraphRunEventID(), GraphRunID: runID, Sequence: last + 1, Kind: kind,
 		NodeRunID: nodeRunID, PayloadJSON: string(raw), CreatedAt: now,
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	return notify.Publish(ctx, tx, notify.ChannelRun, runID)
 }
 
 func listGraphRunEvents(ctx context.Context, tx *gorm.DB, runID string, after, limit int) ([]graphRunEventRow, error) {

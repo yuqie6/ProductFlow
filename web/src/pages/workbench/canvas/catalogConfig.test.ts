@@ -175,7 +175,7 @@ describe("catalog config drafts", () => {
   it("stores prompt fields under config.prompt and keeps image_type_key", () => {
     const source = node({
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "主图提示词",
       config: { image_type_key: "hero" },
     });
@@ -193,7 +193,7 @@ describe("catalog config drafts", () => {
   it("keeps an object without a default sparse until a child is edited", () => {
     const source = node({
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       config: { image_type_key: "hero" },
     });
     const draft = catalogNodeDraft(source, promptFields);
@@ -302,7 +302,7 @@ describe("catalog config drafts", () => {
   it("strips topology keys from prompt config writes", () => {
     const source = node({
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "主图提示词",
       config: {
         image_type_key: "hero",

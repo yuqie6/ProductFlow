@@ -3,7 +3,7 @@ package graph
 
 const (
 	SchemaVersion      = 3
-	CatalogVersion     = 7
+	CatalogVersion     = 8
 	DefaultGraphTitle  = "商品创意工作流"
 	maxImagePerType    = 6
 	minImagePerType    = 1
@@ -17,12 +17,12 @@ const (
 type NodeType string
 
 const (
-	NodeProductSource    NodeType = "product_source"
-	NodeImageAsset       NodeType = "image_asset"
-	NodeCreativeBrief    NodeType = "creative_brief"
-	NodeVisualSystem     NodeType = "visual_system"
-	NodePromptGeneration NodeType = "prompt_generation"
-	NodeImageGeneration  NodeType = "image_generation"
+	NodeProductSource   NodeType = "product_source"
+	NodeImageAsset      NodeType = "image_asset"
+	NodeCreativeBrief   NodeType = "creative_brief"
+	NodeVisualSystem    NodeType = "visual_system"
+	NodeImagePrompt     NodeType = "image_prompt"
+	NodeImageGeneration NodeType = "image_generation"
 )
 
 type EdgeDataType string

@@ -1060,6 +1060,8 @@ func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
 		ImageTypeJob:        "详情卖点图",
 		GenerateFromContext: true,
 		CurrentPrompt:       map[string]any{"design_goal": "卖点"},
+		DocumentAction:      graph.DocumentActionRewrite,
+		CurrentDocument:     map[string]any{"design_goal": "人工目标"},
 		Facts:               []map[string]any{{"key": "product_name", "value": "杯"}},
 	}, "prompt")
 	if err != nil {
@@ -1074,6 +1076,8 @@ func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
 	for _, needle := range []string{
 		`"task":"generate_ecommerce_image_prompt_artifact"`,
 		`"generate_from_context":true`,
+		`"document_action":"rewrite"`,
+		`"current_document":{"design_goal":"人工目标"}`,
 		`"image_type_key":"selling_point"`,
 		`"listing_look"`,
 		`"listing_look_rule"`,

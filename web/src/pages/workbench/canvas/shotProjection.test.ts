@@ -44,7 +44,7 @@ function makeGraph(): GraphProjection {
     nodes: [
       makeNode("image-1", "image_generation", "group-1", "asset-old"),
       makeNode("image-2", "image_generation", "group-1"),
-      makeNode("prompt-1", "prompt_generation", "group-2"),
+      makeNode("prompt-1", "image_prompt", "group-2"),
     ],
     edges: [],
     groups: [

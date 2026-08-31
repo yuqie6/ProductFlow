@@ -15,7 +15,7 @@ function graph(): GraphProjection {
     can_redo: false,
     nodes: [{
       id: "keep",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "提示词",
       position_x: 0,
       position_y: 0,

@@ -10,8 +10,8 @@ func TestCompiledContextTraceCountsOnlyIncomingEdges(t *testing.T) {
 		Nodes: []AppliedNode{
 			{ID: "src", NodeType: NodeProductSource, Title: "资料", Config: map[string]any{}},
 			{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
-			{ID: "other", NodeType: NodePromptGeneration, Title: "其他", Config: map[string]any{"image_type_key": "scene"}},
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
+			{ID: "other", NodeType: NodeImagePrompt, Title: "其他", Config: map[string]any{"image_type_key": "scene"}},
 		},
 		Edges: []AppliedEdge{
 			{ID: "e-facts", SourceNodeID: "src", TargetNodeID: "prompt", DataType: DataProductFacts, Role: RoleFacts, Order: 0},
@@ -49,7 +49,7 @@ func TestCompiledContextTraceImageIncludesPromptArtifact(t *testing.T) {
 	g := AppliedGraph{
 		Revision: 1,
 		Nodes: []AppliedNode{
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{"prompt": map[string]any{"design_goal": "主图"}}},
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{"prompt": map[string]any{"design_goal": "主图"}}},
 			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{"image_type_key": "hero"}},
 		},
 		Edges: []AppliedEdge{
@@ -87,7 +87,7 @@ func TestGraphRuntimeInputTraceFillsArtifactIdentities(t *testing.T) {
 		Nodes: []AppliedNode{
 			{ID: "src", NodeType: NodeProductSource, Title: "资料", Config: map[string]any{}},
 			{ID: "ref", NodeType: NodeImageAsset, Title: "参考", BoundAssetID: &bound, Config: map[string]any{}},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
 			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{"image_type_key": "hero"}},
 		},
 		Edges: []AppliedEdge{
@@ -141,7 +141,7 @@ func TestCollectPromptInputsPrefersMergedVisualPayload(t *testing.T) {
 					"visual_overlay":           map[string]any{"style": []any{"overlay-style"}},
 				},
 			},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{"image_type_key": "hero"}},
 		},
 		Edges: []AppliedEdge{
 			{ID: "e-vis", SourceNodeID: "visual", TargetNodeID: "prompt", DataType: DataVisualSystem, Role: RoleVisualGuidance, Order: 0},
@@ -168,7 +168,7 @@ func TestCollectPromptInputsPrefersMergedVisualPayload(t *testing.T) {
 
 func TestAssemblePromptRequestKeepsFullVisualDraft(t *testing.T) {
 	node := AppliedNode{
-		ID: "prompt-1", NodeType: NodePromptGeneration, Title: "提示词",
+		ID: "prompt-1", NodeType: NodeImagePrompt, Title: "提示词",
 		Config: map[string]any{"image_type_key": "hero", "prompt": map[string]any{}},
 	}
 	visual := map[string]any{
@@ -192,7 +192,7 @@ func TestCompileImageRuntimeHashesPromptDocumentNotArtifactID(t *testing.T) {
 	g := AppliedGraph{
 		Revision: 1,
 		Nodes: []AppliedNode{
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{
 				"prompt": map[string]any{"design_goal": "主图", "composition": map[string]any{"layout": "居中"}},
 			}},
 			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{
@@ -236,7 +236,7 @@ func TestCompileImageRuntimeHashesUpstreamVisualOverlay(t *testing.T) {
 			{ID: "visual", NodeType: NodeVisualSystem, Title: "视觉", Config: map[string]any{
 				"visual_overlay": map[string]any{"style": []any{"冷色"}},
 			}},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{
 				"prompt": map[string]any{"design_goal": "主图"},
 			}},
 			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{
@@ -271,7 +271,7 @@ func TestIncomingPromptDocumentUsesConfigWithoutArtifact(t *testing.T) {
 	g := AppliedGraph{
 		Revision: 1,
 		Nodes: []AppliedNode{
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", Config: map[string]any{
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", Config: map[string]any{
 				"prompt": map[string]any{"design_goal": "主图"},
 			}},
 			{ID: "image", NodeType: NodeImageGeneration, Title: "生图", Config: map[string]any{}},

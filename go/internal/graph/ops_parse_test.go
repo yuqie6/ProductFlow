@@ -84,7 +84,7 @@ func TestParseChangeSetAcceptsCreateNodeAndConnectNodes(t *testing.T) {
 		"base_graph_revision": 1,
 		"summary": "加节点并连线",
 		"operations": [
-			{"op": "create_node", "client_ref": "n1", "node_type": "prompt_generation", "title": "提示词"},
+			{"op": "create_node", "client_ref": "n1", "node_type": "image_prompt", "title": "提示词"},
 			{"op": "connect_nodes", "client_ref": "e1", "source_ref": "src", "target_ref": "n1"}
 		]
 	}`))
@@ -126,7 +126,7 @@ func TestParseChangeSetAcceptsJSONNumberConfig(t *testing.T) {
 		"operations": [{
 			"op": "create_node",
 			"client_ref": "prompt-1",
-			"node_type": "prompt_generation",
+			"node_type": "image_prompt",
 			"title": "提示词",
 			"config": {"prompt": {"composition": {"product_share_percent": 70}}}
 		}]
@@ -134,7 +134,7 @@ func TestParseChangeSetAcceptsJSONNumberConfig(t *testing.T) {
 	if _, err := ParseChangeSet(raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NormalizeNodeConfig(NodePromptGeneration, map[string]any{
+	if _, err := NormalizeNodeConfig(NodeImagePrompt, map[string]any{
 		"prompt": map[string]any{"composition": map[string]any{"product_share_percent": json.Number("70")}},
 	}); err != nil {
 		t.Fatal(err)

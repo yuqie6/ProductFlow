@@ -73,7 +73,7 @@ const KIND_THEMES: Record<WorkflowNodePresentationKind, {
     iconBox: "border-kind-visual-border bg-kind-visual-soft text-kind-visual",
     badge: "border-kind-visual-border bg-kind-visual-soft text-kind-visual",
   },
-  prompt_generation: {
+  image_prompt: {
     icon: Braces,
     iconBox: "border-kind-prompt-border bg-kind-prompt-soft text-kind-prompt",
     badge: "border-kind-prompt-border bg-kind-prompt-soft text-kind-prompt",

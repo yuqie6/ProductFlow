@@ -28,8 +28,8 @@ The current release serves a personal project and live demo. The main repository
 
 - Users add, move, delete, and connect nodes.
 - Folders organize local workflow sections.
-- Prompt nodes hold the prompt strategy for one image type or related image set. Seed documents generate and adopt through a ChangeSet; authored composition is not overwritten on fill.
-- Visual system and creative brief nodes distinguish seed from authored; fill only completes seed documents and does not trigger image generation.
+- Prompt nodes hold the prompt strategy for one image type or related image set. A seed may publish its first generation automatically. Complete, rewrite, and replace actions on published content create a candidate for section-based review.
+- Visual system and creative brief nodes use the same candidate contract. Generated output never directly overwrites authored or collaborative content.
 - Reference nodes bind one image from the product library.
 - Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy; running them renders from the live prompt document and does not rewrite authored upstream content. A reference edge is optional.
 - Users run a whole DAG, run-to-node, a single node, or one selection for a shot or failed subset; they inspect runs, cancel, and retry. A busy graph queues new submits. Independent processing nodes call providers concurrently, limited by the generation concurrency setting; one failed image does not stop sibling shots. None of this requires the Agent conversation to be open; closing it matches never having opened it.

@@ -59,13 +59,13 @@ const catalog: GraphNodeCatalog = {
       ]
     },
     {
-      node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [], config_fields: [
+      node_type: "creative_brief", output_data_type: "creative_brief", kind: "document", accepts: [], config_fields: [
         field("goal", "textarea", { label_key: "workflowConfirmation.designGoal" }),
         field("design_goals", "string_list", { label_key: "graph.inspector.designGoals" }),
       ]
     },
     {
-      node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [], config_fields: [
+      node_type: "visual_system", output_data_type: "visual_system", kind: "document", accepts: [], config_fields: [
         field("visual_system_version_id", "hidden", { value_kind: "string_or_null" }),
         field("visual_overlay", "group", {
           value_kind: "object_or_null",
@@ -77,9 +77,9 @@ const catalog: GraphNodeCatalog = {
         }),
       ]
     },
-    { node_type: "prompt_generation", output_data_type: "prompt", kind: "processing", accepts: [], config_fields: [] },
+    { node_type: "image_prompt", output_data_type: "prompt", kind: "document", accepts: [], config_fields: [] },
     {
-      node_type: "image_generation", output_data_type: "image_asset", kind: "processing", accepts: [
+      node_type: "image_generation", output_data_type: "image_asset", kind: "effect", accepts: [
         { data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true },
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
@@ -246,10 +246,10 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("运行该节点");
   });
 
-  it("offers refine and replace when the document is authored", () => {
+  it("offers complete, rewrite, and replace when the document is authored", () => {
     const selected = node({
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "提示词",
       document_origin: "authored",
       config: {
@@ -257,9 +257,25 @@ describe("GraphNodeInspector", () => {
       },
     });
     const markup = renderInspector(selected);
-    expect(markup).toContain("润色文稿");
+    expect(markup).toContain("补全文稿");
+    expect(markup).toContain("改写文稿");
     expect(markup).toContain("重新生成");
-    expect(markup).toContain("data-graph-inspector-refine");
+    expect(markup).toContain("data-graph-inspector-complete");
+    expect(markup).toContain("data-graph-inspector-rewrite");
+  });
+
+  it("shows candidate review in the inspector without replacing the editor document", () => {
+    const selected = node({
+      id: "prompt",
+      node_type: "image_prompt",
+      title: "提示词",
+      document_origin: "authored",
+      pending_candidate_artifact_id: "candidate-1",
+      config: { prompt: { design_goal: "人工目标" } },
+    });
+    const markup = renderInspector(selected);
+    expect(markup).toContain("data-graph-document-candidate");
+    expect(markup).toContain("正在读取建议");
   });
 
   it("exposes local edit for the current generation asset and keeps its node target", () => {
@@ -574,7 +590,7 @@ describe("GraphNodeInspector", () => {
   it("shows the last generated prompt on a prompt node", () => {
     const markup = renderInspector(node({
       id: "prompt",
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: "首屏海报图提示词",
       config_status: "ready",
       current_artifact_payload: {

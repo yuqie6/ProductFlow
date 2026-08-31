@@ -67,6 +67,7 @@ import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
 import { graphArtifactTypeLabelKey, graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphOutputActionLabelKey, graphOutputQualityLabelKey, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
 import { runPreviewPointerHandlers } from "./graphRunPreview";
+import { displayNodeState } from "./graphOperationalState";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -155,6 +156,7 @@ export function GraphNodeInspector({
     error: null,
   });
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
+  const [selectedCandidateSections, setSelectedCandidateSections] = useState<string[]>([]);
   const runsQueryKey = ["graph-runs", graph.product_id, graph.id] as const;
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
@@ -173,6 +175,7 @@ export function GraphNodeInspector({
     ))) ?? null
     : null;
   const nodeStatus: WorkflowNodeDisplayStatus = presentation?.status ?? "idle";
+  const inspectorDisplayState = node ? displayNodeState(node, nodeStatus) : null;
   const missingRunNodes = useMemo(
     () => missingRequiredRunNodes(graph, catalog),
     [catalog, graph],
@@ -221,11 +224,42 @@ export function GraphNodeInspector({
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
     },
   });
+  const candidateQueryKey = ["graph-document-candidate", graph.product_id, graph.id, node?.id] as const;
+  const candidateQuery = useQuery({
+    queryKey: candidateQueryKey,
+    queryFn: () => api.getGraphDocumentCandidate(graph.product_id, graph.id, node!.id),
+    enabled: Boolean(node?.pending_candidate_artifact_id),
+  });
+  const candidateMutation = useMutation({
+    mutationFn: (input: { kind: "apply"; sectionKeys?: string[] } | { kind: "discard" }) => {
+      if (!node || !candidateQuery.data) throw new Error(t("graph.candidate.missing"));
+      if (input.kind === "discard") {
+        return api.discardGraphDocumentCandidate(graph.product_id, graph.id, node.id, candidateQuery.data.artifact_id);
+      }
+      return api.applyGraphDocumentCandidate(graph.product_id, graph.id, node.id, {
+        artifact_id: candidateQuery.data.artifact_id,
+        base_graph_revision: graph.revision,
+        section_keys: input.sectionKeys,
+      });
+    },
+    onSuccess: () => {
+      setSelectedCandidateSections([]);
+      queryClient.removeQueries({ queryKey: candidateQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
+    },
+  });
 
   useEffect(() => {
     setSaveState({ status: "idle", error: null });
     setReplaceConfirmOpen(false);
+    setSelectedCandidateSections([]);
   }, [node?.id]);
+
+  useEffect(() => {
+    const candidate = candidateQuery.data;
+    if (!candidate) return;
+    setSelectedCandidateSections(candidate.sections.filter((section) => section.changed).map((section) => section.key));
+  }, [candidateQuery.data?.artifact_id]);
 
   const persist = useCallback(async (input: {
     title: string;
@@ -294,7 +328,7 @@ export function GraphNodeInspector({
   const runBlocked = missingRoles.length > 0;
   const origin = graphDocumentOrigin(node);
   const contentNode = isContentGraphNodeType(node.node_type);
-  const frozenDocument = contentNode && (origin === "authored" || origin === "generated");
+  const frozenDocument = contentNode && (origin === "authored" || origin === "generated" || origin === "collaborative");
   const seedDocument = contentNode && origin === "seed";
   const promptSource = node.node_type === "image_generation"
     ? graph.nodes.find((item) => item.id === node.incoming.find((edge) => edge.role === "prompt")?.node_id)
@@ -302,9 +336,9 @@ export function GraphNodeInspector({
   const seedPromptForImage = Boolean(promptSource && graphDocumentOrigin(promptSource) === "seed");
   const canRun = node.node_type === "creative_brief"
     || node.node_type === "visual_system"
-    || node.node_type === "prompt_generation"
+    || node.node_type === "image_prompt"
     || node.node_type === "image_generation";
-  const mutationError = runMutation.error ?? cancelMutation.error ?? retryMutation.error;
+  const mutationError = runMutation.error ?? cancelMutation.error ?? retryMutation.error ?? candidateMutation.error;
   const incoming = node.incoming.map((edge) => ({
     edge,
     related: graph.nodes.find((item) => item.id === edge.node_id) ?? null,
@@ -328,8 +362,8 @@ export function GraphNodeInspector({
               </span>
             </Tooltip>
             <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{node.title}</h3>
-            <StatusBadge status={nodeStatus} spinning={LIVE_RUN_STATUSES.has(nodeStatus)}>
-              {t(`detail.nodeStatus.${nodeStatus}`)}
+            <StatusBadge status={inspectorDisplayState?.status ?? nodeStatus} spinning={LIVE_RUN_STATUSES.has(nodeStatus)}>
+              {inspectorDisplayState ? t(inspectorDisplayState.labelKey) : t(`detail.nodeStatus.${nodeStatus}`)}
             </StatusBadge>
             <Tooltip content={t(configStatusKey(node.config_status))}>
               <span data-graph-config-status={node.config_status} className={`h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-surface-raised ${node.config_status === "ready" ? "bg-state-success" : node.config_status === "stale" ? "bg-state-warning" : "bg-text-muted"}`}>
@@ -435,25 +469,46 @@ export function GraphNodeInspector({
               {frozenDocument ? (
                 <>
                   <IconButton
-                    label={t("graph.inspector.refine")}
-                    data-graph-inspector-refine
+                    label={t("graph.inspector.complete")}
+                    data-graph-inspector-complete
                     onClick={() => {
                       onHideRunPreview?.();
                       submitInspectorRun({
                         scope: "node",
                         node_id: node.id,
                         force: true,
-                        regenerate_mode: "refine",
+                        document_action: "complete",
                       });
                     }}
                     disabled={runMutation.isPending || busy}
                     {...runPreviewPointerHandlers(
-                      { scope: "node", node_id: node.id, force: true, regenerate_mode: "refine" },
+                      { scope: "node", node_id: node.id, force: true, document_action: "complete" },
                       onPreviewRun,
                       onHideRunPreview,
                     )}
                   >
-                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "refine" ? <Loader2 size={14} className="animate-spin" /> : <PencilLine size={14} />}
+                    {runMutation.isPending && runMutation.variables?.document_action === "complete" ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  </IconButton>
+                  <IconButton
+                    label={t("graph.inspector.rewrite")}
+                    data-graph-inspector-rewrite
+                    onClick={() => {
+                      onHideRunPreview?.();
+                      submitInspectorRun({
+                        scope: "node",
+                        node_id: node.id,
+                        force: true,
+                        document_action: "rewrite",
+                      });
+                    }}
+                    disabled={runMutation.isPending || busy}
+                    {...runPreviewPointerHandlers(
+                      { scope: "node", node_id: node.id, force: true, document_action: "rewrite" },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
+                  >
+                    {runMutation.isPending && runMutation.variables?.document_action === "rewrite" ? <Loader2 size={14} className="animate-spin" /> : <PencilLine size={14} />}
                   </IconButton>
                   <IconButton
                     label={t("graph.inspector.replace")}
@@ -461,12 +516,12 @@ export function GraphNodeInspector({
                     onClick={() => setReplaceConfirmOpen(true)}
                     disabled={runMutation.isPending || busy}
                     {...runPreviewPointerHandlers(
-                      { scope: "node", node_id: node.id, force: true, regenerate_mode: "replace" },
+                      { scope: "node", node_id: node.id, force: true, document_action: "replace" },
                       onPreviewRun,
                       onHideRunPreview,
                     )}
                   >
-                    {runMutation.isPending && runMutation.variables?.regenerate_mode === "replace" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                    {runMutation.isPending && runMutation.variables?.document_action === "replace" ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
                   </IconButton>
                 </>
               ) : null}
@@ -507,7 +562,24 @@ export function GraphNodeInspector({
           </div>
         ) : null}
 
-        {node.node_type === "prompt_generation" ? (
+        {node.pending_candidate_artifact_id ? (
+          <DocumentCandidateReview
+            candidate={candidateQuery.data ?? null}
+            loading={candidateQuery.isLoading}
+            error={candidateQuery.error ? errorMessage(candidateQuery.error, t("graph.candidate.loadFailed")) : null}
+            selectedKeys={selectedCandidateSections}
+            busy={busy || candidateMutation.isPending}
+            onToggle={(key) => setSelectedCandidateSections((current) => (
+              current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+            ))}
+            onApplySelected={() => candidateMutation.mutate({ kind: "apply", sectionKeys: selectedCandidateSections })}
+            onApplyAll={() => candidateMutation.mutate({ kind: "apply" })}
+            onDiscard={() => candidateMutation.mutate({ kind: "discard" })}
+            onRetry={() => void candidateQuery.refetch()}
+          />
+        ) : null}
+
+        {node.node_type === "image_prompt" ? (
           <PromptResult payload={node.current_artifact_payload} />
         ) : null}
 
@@ -606,7 +678,6 @@ export function GraphNodeInspector({
         description={t("graph.inspector.replaceConfirm")}
         confirmLabel={t("graph.inspector.replace")}
         cancelLabel={t("common.cancel")}
-        destructive
         busy={runMutation.isPending}
         onConfirm={() => {
           setReplaceConfirmOpen(false);
@@ -614,13 +685,146 @@ export function GraphNodeInspector({
             scope: "node",
             node_id: node.id,
             force: true,
-            regenerate_mode: "replace",
+            document_action: "replace",
           });
         }}
         onClose={() => setReplaceConfirmOpen(false)}
       />
     </InspectorFlushContext.Provider>
   );
+}
+
+function DocumentCandidateReview({
+  candidate,
+  loading,
+  error,
+  selectedKeys,
+  busy,
+  onToggle,
+  onApplySelected,
+  onApplyAll,
+  onDiscard,
+  onRetry,
+}: {
+  candidate: import("../../../lib/types").GraphDocumentCandidate | null;
+  loading: boolean;
+  error: string | null;
+  selectedKeys: string[];
+  busy: boolean;
+  onToggle: (key: string) => void;
+  onApplySelected: () => void;
+  onApplyAll: () => void;
+  onDiscard: () => void;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  if (error) {
+    return (
+      <section className="border-b border-border-l1 pb-4" data-graph-document-candidate>
+        <div role="alert" className="text-xs leading-5 text-state-error">{error}</div>
+        <Button size="sm" variant="secondary" className="mt-2" onClick={onRetry} disabled={busy}>
+          <RotateCcw size={12} aria-hidden="true" />
+          {t("workbench.retry")}
+        </Button>
+      </section>
+    );
+  }
+  if (loading || !candidate) {
+    return (
+      <section className="border-b border-border-l1 pb-4" data-graph-document-candidate>
+        <div className="flex items-center gap-2 text-xs text-text-muted">
+          <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+          {t("graph.candidate.loading")}
+        </div>
+      </section>
+    );
+  }
+  const outdated = candidate.status === "outdated";
+  const changedSections = candidate.sections.filter((section) => section.changed);
+  return (
+    <section className="border-b border-border-l1 pb-4" data-graph-document-candidate data-candidate-status={candidate.status}>
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold text-text-primary">{t("graph.candidate.title")}</h4>
+        <span className={`text-[10px] font-medium ${outdated ? "text-state-warning" : "text-accent"}`}>
+          {outdated ? t("graph.candidate.outdated") : t("graph.candidate.ready")}
+        </span>
+      </div>
+      {outdated ? (
+        <p className="mt-2 text-xs leading-5 text-state-warning">{t("graph.candidate.outdatedDetail")}</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {changedSections.map((section) => (
+            <label key={section.key} className="block border-l-2 border-border-l1 pl-3">
+              <span className="flex items-center gap-2 text-xs font-medium text-text-primary">
+                <input
+                  type="checkbox"
+                  checked={selectedKeys.includes(section.key)}
+                  onChange={() => onToggle(section.key)}
+                  disabled={busy}
+                />
+                {t(candidateSectionLabelKey(section.key))}
+              </span>
+              <span className="mt-2 grid grid-cols-2 gap-2">
+                <CandidateValue label={t("graph.candidate.current")} value={section.current} />
+                <CandidateValue label={t("graph.candidate.proposed")} value={section.candidate} accent />
+              </span>
+            </label>
+          ))}
+          {changedSections.length === 0 ? (
+            <p className="text-xs leading-5 text-text-muted">{t("graph.candidate.noChanges")}</p>
+          ) : null}
+        </div>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {!outdated ? (
+          <>
+            <Button size="sm" variant="primary" onClick={onApplySelected} disabled={busy || selectedKeys.length === 0} busy={busy}>
+              {t("graph.candidate.applySelected")}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={onApplyAll} disabled={busy || changedSections.length === 0}>
+              {t("graph.candidate.applyAll")}
+            </Button>
+          </>
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={onDiscard} disabled={busy}>
+          {t("graph.candidate.discard")}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function CandidateValue({ label, value, accent = false }: { label: string; value: Record<string, unknown>; accent?: boolean }) {
+  return (
+    <span className={`min-w-0 border-t px-2 py-2 ${accent ? "border-accent/40 bg-accent-soft" : "border-border-l1 bg-surface-subtle"}`}>
+      <span className="block text-[10px] font-medium text-text-muted">{label}</span>
+      <span className="mt-1 block whitespace-pre-wrap break-words text-[11px] leading-4 text-text-secondary">
+        {formatCandidateValue(value)}
+      </span>
+    </span>
+  );
+}
+
+function formatCandidateValue(value: Record<string, unknown>): string {
+  return Object.entries(value).map(([key, item]) => {
+    const text = typeof item === "string" ? item : JSON.stringify(item, null, 2);
+    return `${key}: ${text ?? ""}`;
+  }).join("\n") || "-";
+}
+
+function candidateSectionLabelKey(key: string): TranslationKey {
+  const labels: Record<string, TranslationKey> = {
+    objective: "graph.candidate.section.objective",
+    copy: "graph.candidate.section.copy",
+    guardrails: "graph.candidate.section.guardrails",
+    style: "graph.candidate.section.style",
+    palette: "graph.candidate.section.palette",
+    subject: "graph.candidate.section.subject",
+    composition: "graph.candidate.section.composition",
+    visual_style: "graph.candidate.section.visualStyle",
+    constraints: "graph.candidate.section.constraints",
+  };
+  return labels[key] ?? "graph.candidate.section.other";
 }
 
 function PromptResult({ payload }: { payload: Record<string, unknown> | null | undefined }) {

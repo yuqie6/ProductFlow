@@ -59,7 +59,7 @@ describe("shotChangeSet", () => {
     const createOps = operations.filter((op) => op.op === "create_node" || op.op === "create_group");
     const connectOps = operations.filter((op) => op.op === "connect_nodes");
     expect(createOps.map((op) => op.op)).toEqual(["create_group", "create_node", "create_node"]);
-    expect(createOps.some((op) => op.op === "create_node" && op.node_type === "prompt_generation")).toBe(true);
+    expect(createOps.some((op) => op.op === "create_node" && op.node_type === "image_prompt")).toBe(true);
     expect(createOps.some((op) => op.op === "create_node" && op.node_type === "image_generation")).toBe(true);
     const sources = connectOps.map((op) => op.source_ref);
     expect(sources).toContain("source");
@@ -95,7 +95,7 @@ describe("shotChangeSet", () => {
 
   it("runs every image in a group with one selection run", () => {
     const current = graph([
-      node({ id: "prompt", node_type: "prompt_generation", group_id: "shot-hero" }),
+      node({ id: "prompt", node_type: "image_prompt", group_id: "shot-hero" }),
       node({ id: "image-2", node_type: "image_generation", group_id: "shot-hero", position_y: 120 }),
       node({ id: "image-1", node_type: "image_generation", group_id: "shot-hero", position_y: 40 }),
       node({ id: "other", node_type: "image_generation", group_id: "shot-detail" }),

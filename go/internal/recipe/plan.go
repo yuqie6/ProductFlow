@@ -213,7 +213,7 @@ func attachSharedInputs(existing graph.AppliedGraph, changeSet graph.ChangeSet) 
 			continue
 		}
 		switch create.NodeType {
-		case graph.NodePromptGeneration:
+		case graph.NodeImagePrompt:
 			promptRefs = append(promptRefs, create.ClientRef)
 		case graph.NodeImageGeneration:
 			imageRefs = append(imageRefs, create.ClientRef)

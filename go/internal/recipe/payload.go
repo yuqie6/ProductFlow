@@ -61,12 +61,12 @@ var (
 		"image_plan_keys":  {},
 	}
 	validNodeTypes = map[graph.NodeType]struct{}{
-		graph.NodeProductSource:    {},
-		graph.NodeImageAsset:       {},
-		graph.NodeCreativeBrief:    {},
-		graph.NodeVisualSystem:     {},
-		graph.NodePromptGeneration: {},
-		graph.NodeImageGeneration:  {},
+		graph.NodeProductSource:   {},
+		graph.NodeImageAsset:      {},
+		graph.NodeCreativeBrief:   {},
+		graph.NodeVisualSystem:    {},
+		graph.NodeImagePrompt:     {},
+		graph.NodeImageGeneration: {},
 	}
 	validDataTypes = map[graph.EdgeDataType]struct{}{
 		graph.DataProductFacts:  {},

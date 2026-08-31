@@ -112,7 +112,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
 	`DO $enum$ BEGIN
-CREATE TYPE workflownodetype AS ENUM ('product_context', 'reference_image', 'copy_generation', 'image_generation', 'prompt_generation');
+CREATE TYPE workflownodetype AS ENUM ('product_context', 'reference_image', 'copy_generation', 'image_generation', 'image_prompt');
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
@@ -373,6 +373,11 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE agent_turn_projections ADD CONSTRAINT ck_agent_turn_projections_request_hash CHECK (length(request_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_turn_projections ADD CONSTRAINT ck_agent_turn_projections_terminal_reason_code CHECK (terminal_reason_code IS NULL OR terminal_reason_code = ANY (ARRAY['provider_failed', 'execution_interrupted', 'effect_reconciled', 'effect_conflict', 'effect_unknown', 'persistence_failed']));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1297,7 +1302,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_type CHECK (node_type::text = ANY (ARRAY['product_source'::character varying, 'image_asset'::character varying, 'creative_brief'::character varying, 'visual_system'::character varying, 'prompt_generation'::character varying, 'image_generation'::character varying]::text[]));
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_type CHECK (node_type::text = ANY (ARRAY['product_source'::character varying, 'image_asset'::character varying, 'creative_brief'::character varying, 'visual_system'::character varying, 'image_prompt'::character varying, 'image_generation'::character varying]::text[]));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1308,6 +1313,21 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_current_artifact_id FOREIGN KEY (current_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT fk_workflow_graph_nodes_pending_candidate_artifact_id FOREIGN KEY (pending_candidate_artifact_id) REFERENCES workflow_graph_artifacts(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_document_action CHECK (document_action IS NULL OR document_action IN ('complete', 'rewrite', 'replace'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_artifacts ADD CONSTRAINT ck_workflow_graph_artifacts_base_document_hash CHECK (base_document_hash IS NULL OR length(base_document_hash) = 64);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1674,7 +1694,20 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_document_origin CHECK (document_origin IS NULL OR (document_origin::text = ANY (ARRAY['seed'::character varying, 'generated'::character varying, 'authored'::character varying]::text[])));
+ALTER TABLE workflow_graph_nodes DROP CONSTRAINT IF EXISTS ck_workflow_graph_nodes_type;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_type CHECK (node_type::text = ANY (ARRAY['product_source'::character varying, 'image_asset'::character varying, 'creative_brief'::character varying, 'visual_system'::character varying, 'image_prompt'::character varying, 'image_generation'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes DROP CONSTRAINT IF EXISTS ck_workflow_graph_nodes_document_origin;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_document_origin CHECK (document_origin IS NULL OR (document_origin::text = ANY (ARRAY['seed'::character varying, 'generated'::character varying, 'authored'::character varying, 'collaborative'::character varying]::text[])));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1684,13 +1717,22 @@ END $c$;`,
 		WHEN config_json->>'document_origin' IN ('seed', 'generated', 'authored') THEN config_json->>'document_origin'
 		ELSE 'seed'
 	END
-		WHERE node_type IN ('creative_brief', 'visual_system', 'prompt_generation')
+		WHERE node_type IN ('creative_brief', 'visual_system', 'image_prompt')
 		  AND (document_origin IS NULL OR document_origin = '');`,
 	`UPDATE workflow_graph_nodes
 		SET config_json = (config_json::jsonb - 'document_origin' - 'visual_overrides')::json
 		WHERE config_json::jsonb ?| ARRAY['document_origin', 'visual_overrides'];`,
 	`DO $c$ BEGIN
-ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_content_origin_required CHECK (node_type NOT IN ('creative_brief', 'visual_system', 'prompt_generation') OR document_origin IN ('seed', 'generated', 'authored'));
+ALTER TABLE workflow_graph_nodes DROP CONSTRAINT IF EXISTS ck_workflow_graph_nodes_content_origin_required;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_nodes ADD CONSTRAINT ck_workflow_graph_nodes_content_origin_required CHECK (node_type NOT IN ('creative_brief', 'visual_system', 'image_prompt') OR document_origin IN ('seed', 'generated', 'authored', 'collaborative'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT ck_agent_workflow_run_requests_document_action CHECK (document_action IS NULL OR (document_action IN ('complete', 'rewrite', 'replace') AND force = true AND run_scope = 'node' AND target_node_id IS NOT NULL));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,

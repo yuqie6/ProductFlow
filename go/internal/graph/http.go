@@ -42,6 +42,9 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3.POST("/products/:product_id/workflows/:workflow_id/redo", h.redo)
 	v3.POST("/products/:product_id/workflows/:workflow_id/proposals/:proposal_id/confirm", h.confirmProposal)
 	v3.POST("/products/:product_id/workflows/:workflow_id/proposals/:proposal_id/discard", h.discardProposal)
+	v3.GET("/products/:product_id/workflows/:workflow_id/nodes/:node_id/candidate", h.getDocumentCandidate)
+	v3.POST("/products/:product_id/workflows/:workflow_id/nodes/:node_id/candidate/apply", h.applyDocumentCandidate)
+	v3.POST("/products/:product_id/workflows/:workflow_id/nodes/:node_id/candidate/discard", h.discardDocumentCandidate)
 	v3.POST("/products/:product_id/workflows/:workflow_id/runs", h.submitRun)
 	v3.POST("/products/:product_id/workflows/:workflow_id/runs/preview", h.previewRun)
 	v3.GET("/products/:product_id/workflows/:workflow_id/runs", h.listRuns)
@@ -147,6 +150,55 @@ func (h HTTP) discardProposal(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+func (h HTTP) getDocumentCandidate(c *gin.Context) {
+	out, err := h.Service.GetDocumentCandidate(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), c.Param("node_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) applyDocumentCandidate(c *gin.Context) {
+	var input ApplyDocumentCandidateInput
+	if err := decodeStrictJSON(c, &input); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.ApplyDocumentCandidate(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), c.Param("node_id"), input)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h HTTP) discardDocumentCandidate(c *gin.Context) {
+	var input DiscardDocumentCandidateInput
+	if err := decodeStrictJSON(c, &input); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.DiscardDocumentCandidate(c.Request.Context(), c.Param("product_id"), c.Param("workflow_id"), c.Param("node_id"), input)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func decodeStrictJSON(c *gin.Context, target any) error {
+	dec := json.NewDecoder(c.Request.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(target); err != nil {
+		return apperr.Validation("请求体无效")
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return apperr.Validation("请求体无效")
+	}
+	return nil
+}
+
 func (h HTTP) submitRun(c *gin.Context) {
 	req, err := parseGraphRunRequest(c)
 	if err != nil {
@@ -245,7 +297,10 @@ func parseGraphRunRequest(c *gin.Context) (GraphRunRequest, error) {
 		}
 	}
 	req.NodeIDs = normalizeRunNodeIDs(req.NodeIDs)
-	req.RegenerateMode = validRegenerateMode(req.RegenerateMode)
+	if strings.TrimSpace(req.DocumentAction) != "" && validDocumentAction(req.DocumentAction) == "" {
+		return GraphRunRequest{}, apperr.Validation("document_action 无效")
+	}
+	req.DocumentAction = validDocumentAction(req.DocumentAction)
 	if err := validateGraphRunRequest(req); err != nil {
 		return GraphRunRequest{}, err
 	}

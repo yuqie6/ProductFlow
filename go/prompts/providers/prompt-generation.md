@@ -12,9 +12,12 @@ Write one ListingPromptPayload. Attached photos lock product identity: shape, ma
 - evidence: layout the user-supplied certificate or factory photo so seals and names are readable; if missing, leave the gap.
 - Obey `text_policy`. `none`: `text.headline`, `subtitle`, and `body` null, `copy_regions` empty. `required`: short benefit copy in `text_language`.
 
-## Seed
+## Document action
+- `complete`: preserve non-empty fields in `current_document` and fill missing business content.
+- `rewrite`: produce a coherent full alternative using the current document as context.
+- `replace`: produce a new full document from confirmed facts, references, and the requested image job.
+- `current_document` is the published document. Your response is a candidate and must not assume it has already replaced that document.
 - When `generate_from_context` is true, `current_prompt` is a schema seed. Observe the photos and write composition, background, lighting, focus, and selling points for that image type. Replace placeholder phrases such as 干净背景, 正面, 均匀照明, or 根据参考图、商品资料与图片类型生成.
-- When `generate_from_context` is false, refine `current_prompt` and keep user-authored fields.
 
 ## Facts
 Logos, certifications, prices, spec numbers, and structures come only from facts and photos. Do not emit `images`, `image_plan_key`, `fact_keys`, or `evidence_asset_ids`.

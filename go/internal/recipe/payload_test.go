@@ -63,7 +63,7 @@ func TestExtractStripsIdentityAndPlanKeys(t *testing.T) {
 			},
 			{
 				ID:        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-				NodeType:  graph.NodePromptGeneration,
+				NodeType:  graph.NodeImagePrompt,
 				Title:     "主图提示词",
 				PositionX: 200,
 				Config: map[string]any{
@@ -113,7 +113,7 @@ func TestExtractSelectionKeepsInternalEdges(t *testing.T) {
 		Revision: 1,
 		Nodes: []graph.AppliedNode{
 			{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", NodeType: graph.NodeProductSource, Title: "商品资料", Config: map[string]any{"source_product_id": nil, "fact_set_version_id": nil}},
-			{ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", NodeType: graph.NodePromptGeneration, Title: "提示词", PositionX: 200, Config: map[string]any{"image_type_key": "hero"}},
+			{ID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", NodeType: graph.NodeImagePrompt, Title: "提示词", PositionX: 200, Config: map[string]any{"image_type_key": "hero"}},
 			{ID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", NodeType: graph.NodeImageGeneration, Title: "主图", PositionX: 400, Config: map[string]any{"image_type_key": "hero"}},
 		},
 		Edges: []graph.AppliedEdge{
@@ -144,7 +144,7 @@ func TestExtractGroupIncludesMembers(t *testing.T) {
 		Groups: []graph.AppliedGroup{{ID: gid, Title: "主图组"}},
 		Nodes: []graph.AppliedNode{
 			{ID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", NodeType: graph.NodeProductSource, Title: "商品资料", Config: map[string]any{"source_product_id": nil, "fact_set_version_id": nil}},
-			{ID: prompt, NodeType: graph.NodePromptGeneration, Title: "提示词", PositionX: 200, GroupID: strPtr(gid), Config: map[string]any{"image_type_key": "hero"}},
+			{ID: prompt, NodeType: graph.NodeImagePrompt, Title: "提示词", PositionX: 200, GroupID: strPtr(gid), Config: map[string]any{"image_type_key": "hero"}},
 			{ID: image, NodeType: graph.NodeImageGeneration, Title: "主图", PositionX: 400, GroupID: strPtr(gid), Config: map[string]any{"image_type_key": "hero"}},
 		},
 		Edges: []graph.AppliedEdge{

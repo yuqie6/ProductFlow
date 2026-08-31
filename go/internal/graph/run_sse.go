@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/platform/notify"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -29,6 +30,9 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
+	ctx := c.Request.Context()
+	notes, listenErr := notify.Listen(ctx, h.Service.Pool, notify.ChannelRun)
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache, no-transform")
 	c.Header("Connection", "keep-alive")
@@ -38,9 +42,12 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 	if flusher != nil {
 		flusher.Flush()
 	}
-
-	ctx := c.Request.Context()
-	eventTicker := time.NewTicker(250 * time.Millisecond)
+	fallback := 2 * time.Second
+	if listenErr != nil {
+		notes = nil
+		fallback = 250 * time.Millisecond
+	}
+	eventTicker := time.NewTicker(fallback)
 	defer eventTicker.Stop()
 	heartbeatTicker := time.NewTicker(15 * time.Second)
 	defer heartbeatTicker.Stop()
@@ -80,6 +87,14 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case note, ok := <-notesOrNil(notes):
+			if !ok && notes != nil {
+				notes = nil
+				eventTicker.Reset(250 * time.Millisecond)
+			}
+			if ok && note.Payload != "" && note.Payload != runID {
+				continue
+			}
 		case <-eventTicker.C:
 		case <-heartbeatTicker.C:
 			if _, err := c.Writer.Write([]byte(": keep-alive\n\n")); err != nil {
@@ -90,6 +105,13 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 			}
 		}
 	}
+}
+
+func notesOrNil(notes <-chan notify.Notification) <-chan notify.Notification {
+	if notes == nil {
+		return nil
+	}
+	return notes
 }
 
 func (h HTTP) listRunEvents(ctx context.Context, runID string, after int) ([]graphRunEventRow, error) {

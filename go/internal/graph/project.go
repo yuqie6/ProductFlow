@@ -27,26 +27,27 @@ type Projection struct {
 }
 
 type NodeView struct {
-	ID                     string           `json:"id"`
-	NodeType               NodeType         `json:"node_type"`
-	Title                  string           `json:"title"`
-	PositionX              int              `json:"position_x"`
-	PositionY              int              `json:"position_y"`
-	Config                 map[string]any   `json:"config"`
-	SourceProduct          *productSummary  `json:"source_product"`
-	ProductFactSet         *factSetSnapshot `json:"product_fact_set"`
-	BoundAssetID           *string          `json:"bound_asset_id"`
-	GroupID                *string          `json:"group_id"`
-	PreviewAssetID         *string          `json:"preview_asset_id"`
-	ConfigStatus           ConfigStatus     `json:"config_status"`
-	Unused                 bool             `json:"unused"`
-	DocumentOrigin         *string          `json:"document_origin"`
-	BindingStatus          *string          `json:"binding_status,omitempty"`
-	CurrentArtifactID      *string          `json:"current_artifact_id"`
-	CurrentArtifactType    *string          `json:"current_artifact_type"`
-	CurrentArtifactPayload map[string]any   `json:"current_artifact_payload"`
-	Incoming               []EdgeSummary    `json:"incoming"`
-	Outgoing               []EdgeSummary    `json:"outgoing"`
+	ID                         string           `json:"id"`
+	NodeType                   NodeType         `json:"node_type"`
+	Title                      string           `json:"title"`
+	PositionX                  int              `json:"position_x"`
+	PositionY                  int              `json:"position_y"`
+	Config                     map[string]any   `json:"config"`
+	SourceProduct              *productSummary  `json:"source_product"`
+	ProductFactSet             *factSetSnapshot `json:"product_fact_set"`
+	BoundAssetID               *string          `json:"bound_asset_id"`
+	GroupID                    *string          `json:"group_id"`
+	PreviewAssetID             *string          `json:"preview_asset_id"`
+	ConfigStatus               ConfigStatus     `json:"config_status"`
+	Unused                     bool             `json:"unused"`
+	DocumentOrigin             *string          `json:"document_origin"`
+	BindingStatus              *string          `json:"binding_status,omitempty"`
+	CurrentArtifactID          *string          `json:"current_artifact_id"`
+	CurrentArtifactType        *string          `json:"current_artifact_type"`
+	CurrentArtifactPayload     map[string]any   `json:"current_artifact_payload"`
+	PendingCandidateArtifactID *string          `json:"pending_candidate_artifact_id"`
+	Incoming                   []EdgeSummary    `json:"incoming"`
+	Outgoing                   []EdgeSummary    `json:"outgoing"`
 }
 
 type EdgeSummary struct {
@@ -113,7 +114,7 @@ func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) 
 	if err != nil {
 		return Projection{}, err
 	}
-	sources, previews, artifactDigests, err := loadGraphSources(ctx, tx, row, applied)
+	sources, previews, artifactDigests, pendingCandidates, err := loadGraphSources(ctx, tx, row, applied)
 	if err != nil {
 		return Projection{}, err
 	}
@@ -129,7 +130,7 @@ func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) 
 		canUndo = last.HistoryKind != HistoryUndo
 		canRedo = last.HistoryKind == HistoryUndo
 	}
-	return buildProjection(row, applied, lastID, canUndo, canRedo, previews, artifactDigests, sources, proposal), nil
+	return buildProjection(row, applied, lastID, canUndo, canRedo, previews, artifactDigests, pendingCandidates, sources, proposal), nil
 }
 
 func buildProjection(
@@ -139,6 +140,7 @@ func buildProjection(
 	canUndo, canRedo bool,
 	previews map[string]string,
 	artifactDigests map[string]string,
+	pendingCandidates map[string]string,
 	sources map[string]SourceRecord,
 	proposal *ProposalView,
 ) Projection {
@@ -197,26 +199,27 @@ func buildProjection(
 			}
 		}
 		nodes = append(nodes, NodeView{
-			ID:                     node.ID,
-			NodeType:               node.NodeType,
-			Title:                  node.Title,
-			PositionX:              node.PositionX,
-			PositionY:              node.PositionY,
-			Config:                 nonemptyMap(node.Config),
-			SourceProduct:          sourceProduct,
-			ProductFactSet:         factSet,
-			BoundAssetID:           node.BoundAssetID,
-			GroupID:                node.GroupID,
-			PreviewAssetID:         preview,
-			ConfigStatus:           status,
-			Unused:                 unused,
-			DocumentOrigin:         documentOriginPtr(node),
-			BindingStatus:          binding,
-			CurrentArtifactID:      record.CurrentArtifactID,
-			CurrentArtifactType:    record.CurrentArtifactType,
-			CurrentArtifactPayload: record.CurrentArtifactPayload,
-			Incoming:               incoming,
-			Outgoing:               outgoing,
+			ID:                         node.ID,
+			NodeType:                   node.NodeType,
+			Title:                      node.Title,
+			PositionX:                  node.PositionX,
+			PositionY:                  node.PositionY,
+			Config:                     nonemptyMap(node.Config),
+			SourceProduct:              sourceProduct,
+			ProductFactSet:             factSet,
+			BoundAssetID:               node.BoundAssetID,
+			GroupID:                    node.GroupID,
+			PreviewAssetID:             preview,
+			ConfigStatus:               status,
+			Unused:                     unused,
+			DocumentOrigin:             documentOriginPtr(node),
+			BindingStatus:              binding,
+			CurrentArtifactID:          record.CurrentArtifactID,
+			CurrentArtifactType:        record.CurrentArtifactType,
+			CurrentArtifactPayload:     record.CurrentArtifactPayload,
+			PendingCandidateArtifactID: stringMapPtr(pendingCandidates, node.ID),
+			Incoming:                   incoming,
+			Outgoing:                   outgoing,
 		})
 	}
 	edges := make([]EdgeView, 0, len(applied.Edges))
@@ -269,10 +272,10 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 	return status
 }
 
-func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, error) {
+func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, map[string]string, error) {
 	var nodeRecs []schema.WorkflowGraphNodes
 	if err := tx.WithContext(ctx).Where("graph_id = ?", row.ID).Find(&nodeRecs).Error; err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	artifactIDs := make([]string, 0)
 	for _, n := range nodeRecs {
@@ -284,7 +287,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 	if len(artifactIDs) > 0 {
 		var artifactRecs []schema.WorkflowGraphArtifacts
 		if err := tx.WithContext(ctx).Where("id IN ?", artifactIDs).Find(&artifactRecs).Error; err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		for _, a := range artifactRecs {
 			artifactByID[a.ID] = a
@@ -301,14 +304,19 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 	}
 	artifacts := map[string]nodeArtifact{}
 	for _, n := range nodeRecs {
-		rec := nodeArtifact{boundAssetID: n.BoundImageAssetID, artifactID: n.CurrentArtifactID}
+		rec := nodeArtifact{boundAssetID: n.BoundImageAssetID}
+		if n.NodeType == string(NodeImageGeneration) {
+			rec.artifactID = n.CurrentArtifactID
+		}
 		if n.CurrentArtifactID != nil {
 			if a, ok := artifactByID[*n.CurrentArtifactID]; ok {
-				rec.artifactType = &a.ArtifactType
-				rec.payload = []byte(a.PayloadJSON)
 				digest := a.InputDigest
 				rec.digest = &digest
-				rec.outputAssetID = a.ProductImageAssetID
+				if rec.artifactID != nil {
+					rec.artifactType = &a.ArtifactType
+					rec.payload = []byte(a.PayloadJSON)
+					rec.outputAssetID = a.ProductImageAssetID
+				}
 			}
 		}
 		artifacts[n.ID] = rec
@@ -316,9 +324,16 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 
 	previews := map[string]string{}
 	digests := map[string]string{}
+	pendingCandidates := map[string]string{}
 	sources := map[string]SourceRecord{}
 	for _, node := range applied.Nodes {
 		rec := artifacts[node.ID]
+		for _, nodeRec := range nodeRecs {
+			if nodeRec.ID == node.ID && nodeRec.PendingCandidateArtifactID != nil {
+				pendingCandidates[node.ID] = *nodeRec.PendingCandidateArtifactID
+				break
+			}
+		}
 		if rec.boundAssetID != nil && *rec.boundAssetID != "" {
 			previews[node.ID] = *rec.boundAssetID
 		} else if rec.outputAssetID != nil && *rec.outputAssetID != "" {
@@ -344,7 +359,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 		case NodeProductSource:
 			snap, err := loadProductSourceSnapshot(ctx, tx, row.ProductID, node.Config)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			record.ProductSource = &snap
 			record.Facts = snap.Facts
@@ -357,14 +372,14 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 				record.VisualSystemVersionID = &vid
 				payload, err := loadVisualSystemPayload(ctx, tx, vid)
 				if err != nil {
-					return nil, nil, nil, err
+					return nil, nil, nil, nil, err
 				}
 				record.VisualPayload = payload
 			}
 			if record.VisualPayload == nil {
 				record.VisualPayload = visualOverlayFromConfig(node.Config)
 			}
-		case NodePromptGeneration:
+		case NodeImagePrompt:
 			if prompt, ok := node.Config["prompt"].(map[string]any); ok {
 				record.PromptDocument = cloneMap(prompt)
 			}
@@ -375,7 +390,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 			if node.BoundAssetID != nil {
 				display, mime, err := loadBoundAssetMeta(ctx, tx, row.ProductID, *node.BoundAssetID)
 				if err != nil {
-					return nil, nil, nil, err
+					return nil, nil, nil, nil, err
 				}
 				if display != "" {
 					record.BoundAssetLabel = &display
@@ -387,7 +402,15 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 		}
 		sources[node.ID] = record
 	}
-	return sources, previews, digests, nil
+	return sources, previews, digests, pendingCandidates, nil
+}
+
+func stringMapPtr(values map[string]string, key string) *string {
+	value := values[key]
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func loadVisualSystemPayload(ctx context.Context, tx *gorm.DB, versionID string) (map[string]any, error) {

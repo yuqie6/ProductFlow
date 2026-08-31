@@ -38,7 +38,7 @@ func TestApplyReorderEdgesUpdatesOrder(t *testing.T) {
 		Nodes: []AppliedNode{
 			{ID: "img1", NodeType: NodeImageAsset, Title: "a"},
 			{ID: "img2", NodeType: NodeImageAsset, Title: "b"},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "p", DocumentOrigin: OriginSeed},
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "p", DocumentOrigin: OriginSeed},
 		},
 		Edges: []AppliedEdge{
 			{ID: "e1", SourceNodeID: "img1", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 0},
@@ -71,7 +71,7 @@ func TestInvertReorderEdges(t *testing.T) {
 		Nodes: []AppliedNode{
 			{ID: "img1", NodeType: NodeImageAsset},
 			{ID: "img2", NodeType: NodeImageAsset},
-			{ID: "prompt", NodeType: NodePromptGeneration, DocumentOrigin: OriginSeed},
+			{ID: "prompt", NodeType: NodeImagePrompt, DocumentOrigin: OriginSeed},
 		},
 		Edges: []AppliedEdge{
 			{ID: "e1", SourceNodeID: "img1", TargetNodeID: "prompt", DataType: DataImageAsset, Role: RoleReference, Order: 0},
@@ -131,7 +131,7 @@ func TestApplyDirectCreateTemplateHasNoCycle(t *testing.T) {
 	if types[NodeProductSource] != 1 || types[NodeVisualSystem] != 1 || types[NodeCreativeBrief] != 1 {
 		t.Fatalf("context nodes %+v", types)
 	}
-	if types[NodeImageAsset] != 1 || types[NodePromptGeneration] != 1 || types[NodeImageGeneration] != 1 {
+	if types[NodeImageAsset] != 1 || types[NodeImagePrompt] != 1 || types[NodeImageGeneration] != 1 {
 		t.Fatalf("pipeline nodes %+v", types)
 	}
 	if len(got.Groups) != 1 || got.Groups[0].ID != "shot-hero" {
@@ -192,7 +192,7 @@ func TestTemplateForExistingProductSourceReusesBirthNode(t *testing.T) {
 	for _, node := range expanded.Nodes {
 		types[node.NodeType] = struct{}{}
 	}
-	for _, want := range []NodeType{NodeVisualSystem, NodeCreativeBrief, NodeImageAsset, NodePromptGeneration, NodeImageGeneration} {
+	for _, want := range []NodeType{NodeVisualSystem, NodeCreativeBrief, NodeImageAsset, NodeImagePrompt, NodeImageGeneration} {
 		if _, ok := types[want]; !ok {
 			t.Fatalf("missing %s in %+v", want, types)
 		}

@@ -277,7 +277,7 @@ export function graphNodeTitleKey(nodeType: GraphNode["node_type"]): Translation
       return "graph.node.creativeBrief";
     case "visual_system":
       return "graph.node.visualSystem";
-    case "prompt_generation":
+    case "image_prompt":
       return "graph.node.promptGeneration";
     case "image_generation":
       return "graph.node.imageGeneration";

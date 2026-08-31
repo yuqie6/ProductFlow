@@ -47,7 +47,7 @@ var catalogNodeOrder = []NodeType{
 	NodeImageAsset,
 	NodeCreativeBrief,
 	NodeVisualSystem,
-	NodePromptGeneration,
+	NodeImagePrompt,
 	NodeImageGeneration,
 }
 
@@ -56,10 +56,10 @@ var catalogAcceptanceOrder = [][2]string{
 	{string(DataImageAsset), string(NodeCreativeBrief)},
 	{string(DataProductFacts), string(NodeVisualSystem)},
 	{string(DataImageAsset), string(NodeVisualSystem)},
-	{string(DataProductFacts), string(NodePromptGeneration)},
-	{string(DataImageAsset), string(NodePromptGeneration)},
-	{string(DataCreativeBrief), string(NodePromptGeneration)},
-	{string(DataVisualSystem), string(NodePromptGeneration)},
+	{string(DataProductFacts), string(NodeImagePrompt)},
+	{string(DataImageAsset), string(NodeImagePrompt)},
+	{string(DataCreativeBrief), string(NodeImagePrompt)},
+	{string(DataVisualSystem), string(NodeImagePrompt)},
 	{string(DataImageAsset), string(NodeImageGeneration)},
 	{string(DataVisualSystem), string(NodeImageGeneration)},
 	{string(DataPrompt), string(NodeImageGeneration)},
@@ -196,28 +196,28 @@ func withRequired() func(*configField) {
 }
 
 var outputType = map[NodeType]EdgeDataType{
-	NodeProductSource:    DataProductFacts,
-	NodeImageAsset:       DataImageAsset,
-	NodeCreativeBrief:    DataCreativeBrief,
-	NodeVisualSystem:     DataVisualSystem,
-	NodePromptGeneration: DataPrompt,
-	NodeImageGeneration:  DataImageAsset,
+	NodeProductSource:   DataProductFacts,
+	NodeImageAsset:      DataImageAsset,
+	NodeCreativeBrief:   DataCreativeBrief,
+	NodeVisualSystem:    DataVisualSystem,
+	NodeImagePrompt:     DataPrompt,
+	NodeImageGeneration: DataImageAsset,
 }
 
 func one(n int) *int { return i(n) }
 
 var acceptance = map[[2]string]inputContract{
-	{string(DataProductFacts), string(NodeCreativeBrief)}:     {DataProductFacts, RoleFacts, one(1), false},
-	{string(DataImageAsset), string(NodeCreativeBrief)}:       {DataImageAsset, RoleReference, nil, false},
-	{string(DataProductFacts), string(NodeVisualSystem)}:      {DataProductFacts, RoleFacts, one(1), false},
-	{string(DataImageAsset), string(NodeVisualSystem)}:        {DataImageAsset, RoleReference, nil, false},
-	{string(DataProductFacts), string(NodePromptGeneration)}:  {DataProductFacts, RoleFacts, nil, false},
-	{string(DataImageAsset), string(NodePromptGeneration)}:    {DataImageAsset, RoleReference, nil, false},
-	{string(DataCreativeBrief), string(NodePromptGeneration)}: {DataCreativeBrief, RoleBrief, one(1), false},
-	{string(DataVisualSystem), string(NodePromptGeneration)}:  {DataVisualSystem, RoleVisualGuidance, one(1), false},
-	{string(DataImageAsset), string(NodeImageGeneration)}:     {DataImageAsset, RoleReference, nil, false},
-	{string(DataVisualSystem), string(NodeImageGeneration)}:   {DataVisualSystem, RoleVisualGuidance, one(1), false},
-	{string(DataPrompt), string(NodeImageGeneration)}:         {DataPrompt, RolePrompt, one(1), true},
+	{string(DataProductFacts), string(NodeCreativeBrief)}:   {DataProductFacts, RoleFacts, one(1), false},
+	{string(DataImageAsset), string(NodeCreativeBrief)}:     {DataImageAsset, RoleReference, nil, false},
+	{string(DataProductFacts), string(NodeVisualSystem)}:    {DataProductFacts, RoleFacts, one(1), false},
+	{string(DataImageAsset), string(NodeVisualSystem)}:      {DataImageAsset, RoleReference, nil, false},
+	{string(DataProductFacts), string(NodeImagePrompt)}:     {DataProductFacts, RoleFacts, nil, false},
+	{string(DataImageAsset), string(NodeImagePrompt)}:       {DataImageAsset, RoleReference, nil, false},
+	{string(DataCreativeBrief), string(NodeImagePrompt)}:    {DataCreativeBrief, RoleBrief, one(1), false},
+	{string(DataVisualSystem), string(NodeImagePrompt)}:     {DataVisualSystem, RoleVisualGuidance, one(1), false},
+	{string(DataImageAsset), string(NodeImageGeneration)}:   {DataImageAsset, RoleReference, nil, false},
+	{string(DataVisualSystem), string(NodeImageGeneration)}: {DataVisualSystem, RoleVisualGuidance, one(1), false},
+	{string(DataPrompt), string(NodeImageGeneration)}:       {DataPrompt, RolePrompt, one(1), true},
 }
 
 func visualOverlayFields() []configField {
@@ -318,7 +318,7 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 			hid("visual_system_version_id", "string_or_null"),
 			fld("visual_overlay", "object_or_null", "group", withHint("graph.inspector.visualVersionHint"), withNoDigest(), withFields(visualOverlayFields()...)),
 		}, true
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
 			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withNoDigest(), withFields(promptFields()...)),
@@ -414,7 +414,7 @@ func requiredFieldsMissing(fields []configField, payload map[string]any) bool {
 
 func IsProcessingNode(nodeType NodeType) bool {
 	switch nodeType {
-	case NodeCreativeBrief, NodeVisualSystem, NodePromptGeneration, NodeImageGeneration:
+	case NodeCreativeBrief, NodeVisualSystem, NodeImagePrompt, NodeImageGeneration:
 		return true
 	default:
 		return false

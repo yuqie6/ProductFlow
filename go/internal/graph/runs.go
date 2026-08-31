@@ -33,13 +33,23 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 	targetNodeID := req.NodeID
 	nodeIDs := normalizeRunNodeIDs(req.NodeIDs)
 	force := req.Force
-	mode := validRegenerateMode(req.RegenerateMode)
+	mode := validDocumentAction(req.DocumentAction)
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
 	if !row.Active {
 		return graphRunSubmission{}, apperr.Conflict("只能运行 active schema-v3 工作流")
+	}
+	if mode != "" {
+		applied, err := loadAppliedGraph(ctx, tx, row)
+		if err != nil {
+			return graphRunSubmission{}, err
+		}
+		target, err := applied.Node(ptrStr(targetNodeID))
+		if err != nil || !isContentNodeType(target.NodeType) {
+			return graphRunSubmission{}, apperr.Validation("document_action 只支持文稿节点")
+		}
 	}
 	active, err := loadActiveRun(ctx, tx, row.ID)
 	if err != nil {
@@ -118,12 +128,12 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	targetNodeID := req.NodeID
 	nodeIDs := normalizeRunNodeIDs(req.NodeIDs)
 	force := req.Force
-	mode := validRegenerateMode(req.RegenerateMode)
+	mode := validDocumentAction(req.DocumentAction)
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
-	sources, _, _, err := loadGraphSources(ctx, tx, row, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, tx, row, applied)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -248,7 +258,7 @@ func runProgressMeta(scope string, targetNodeID *string, nodeIDs []string, force
 		"requested_node_id":  targetNodeID,
 		"requested_node_ids": nodeIDs,
 		"force":              force,
-		"regenerate_mode":    mode,
+		"document_action":    mode,
 	}
 }
 
@@ -278,7 +288,7 @@ func sameInFlightRun(active graphRunRow, scope string, targetNodeID *string, nod
 		ptrEqual(active.RequestedNodeID, targetNodeID) &&
 		sameStringSlice(active.RequestedNodeIDs, nodeIDs) &&
 		active.Force == force &&
-		validRegenerateMode(active.RegenerateMode) == mode &&
+		validDocumentAction(active.DocumentAction) == mode &&
 		active.GraphRevision == revision
 }
 
@@ -325,6 +335,14 @@ func validateGraphRunRequest(req GraphRunRequest) error {
 	if req.Force && scope == RunScopeSelection && len(normalizeRunNodeIDs(req.NodeIDs)) == 0 {
 		return apperr.Validation("force 必须指定目标节点")
 	}
+	if req.DocumentAction != "" {
+		if validDocumentAction(req.DocumentAction) == "" {
+			return apperr.Validation("document_action 无效")
+		}
+		if !req.Force || scope != RunScopeNode || req.NodeID == nil {
+			return apperr.Validation("document_action 只支持强制运行单个文稿节点")
+		}
+	}
 	return nil
 }
 
@@ -347,17 +365,17 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 		NodeID:         run.RequestedNodeID,
 		NodeIDs:        run.RequestedNodeIDs,
 		Force:          run.Force,
-		RegenerateMode: run.RegenerateMode,
+		DocumentAction: run.DocumentAction,
 	}
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
 		return err
 	}
-	sources, _, _, err := loadGraphSources(ctx, tx, row, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, tx, row, applied)
 	if err != nil {
 		return err
 	}
-	selected, err := SelectRunNodeIDsWithMode(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validRegenerateMode(req.RegenerateMode))
+	selected, err := SelectRunNodeIDsWithMode(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validDocumentAction(req.DocumentAction))
 	if err != nil {
 		now := time.Now().UTC()
 		reason := err.Error()
@@ -373,7 +391,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 			"status": RunStatusFailed, "failure_reason": reason,
 		})
 	}
-	preview, _ := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validRegenerateMode(req.RegenerateMode))
+	preview, _ := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validDocumentAction(req.DocumentAction))
 	actionByNode := map[string]string{}
 	for _, item := range preview {
 		actionByNode[item.NodeID] = item.Action
@@ -551,7 +569,7 @@ func graphRunFromSchema(rec schema.WorkflowGraphRuns) graphRunRow {
 			if force, ok := meta["force"].(bool); ok {
 				run.Force = force
 			}
-			run.RegenerateMode = validRegenerateMode(asString(meta["regenerate_mode"]))
+			run.DocumentAction = validDocumentAction(asString(meta["document_action"]))
 			run.RequestedNodeIDs = stringSliceField(meta["requested_node_ids"])
 		}
 	}
@@ -691,7 +709,7 @@ func retryGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID s
 		NodeID:         source.RequestedNodeID,
 		NodeIDs:        source.RequestedNodeIDs,
 		Force:          source.Force,
-		RegenerateMode: source.RegenerateMode,
+		DocumentAction: source.DocumentAction,
 	})
 }
 

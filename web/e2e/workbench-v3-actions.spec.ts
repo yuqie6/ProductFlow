@@ -16,7 +16,7 @@ const NODE_TYPES = [
   { type: "image_asset", label: "图片素材" },
   { type: "creative_brief", label: "创作要求" },
   { type: "visual_system", label: "视觉规范" },
-  { type: "prompt_generation", label: "提示词生成" },
+  { type: "image_prompt", label: "提示词生成" },
   { type: "image_generation", label: "图片生成" },
 ] as const;
 
@@ -346,7 +346,7 @@ for (const preset of PRESETS) {
       const afterScene = await currentGraph(page);
       const newGroups = afterScene.groups.filter((group) => !preScene.groups.some((item) => item.id === group.id));
       const newPrompts = afterScene.nodes.filter((node) => {
-        return node.node_type === "prompt_generation"
+        return node.node_type === "image_prompt"
           && !preScene.nodes.some((item) => item.id === node.id);
       });
       const newImages = afterScene.nodes.filter((node) => {
@@ -488,7 +488,7 @@ for (const preset of PRESETS) {
       await openDirectCreateWorkbench(page, `e2e-actions-paste ${preset.name} ${Date.now()}`);
       await enableMultiSelect(page);
       const before = await currentGraph(page);
-      const prompt = before.nodes.find((node) => node.node_type === "prompt_generation");
+      const prompt = before.nodes.find((node) => node.node_type === "image_prompt");
       const image = before.nodes.find((node) => {
         return node.node_type === "image_generation" && node.incoming.some((edge) => edge.node_id === prompt?.id);
       });
@@ -503,7 +503,7 @@ for (const preset of PRESETS) {
       const after = await currentGraph(page);
       const created = after.nodes.filter((node) => !before.nodes.some((item) => item.id === node.id));
       expect(created).toHaveLength(2);
-      const createdPrompt = created.find((node) => node.node_type === "prompt_generation");
+      const createdPrompt = created.find((node) => node.node_type === "image_prompt");
       const createdImage = created.find((node) => node.node_type === "image_generation");
       expect(createdPrompt && createdImage).toBeTruthy();
       expect(after.edges.some((edge) => {
@@ -522,7 +522,7 @@ for (const preset of PRESETS) {
       await openDirectCreateWorkbench(page, `e2e-actions-group ${preset.name} ${Date.now()}`);
       await enableMultiSelect(page);
       const before = await currentGraph(page);
-      const prompt = before.nodes.find((node) => node.node_type === "prompt_generation");
+      const prompt = before.nodes.find((node) => node.node_type === "image_prompt");
       const image = before.nodes.find((node) => node.node_type === "image_generation");
       const source = before.nodes.find((node) => node.node_type === "product_source");
       expect(prompt && image && source).toBeTruthy();
@@ -664,7 +664,7 @@ for (const preset of PRESETS) {
       const asset = withAsset.nodes.find((node) => {
         return node.node_type === "image_asset" && !graph.nodes.some((existing) => existing.id === node.id);
       });
-      const prompt = withAsset.nodes.find((node) => node.node_type === "prompt_generation");
+      const prompt = withAsset.nodes.find((node) => node.node_type === "image_prompt");
       const visual = withAsset.nodes.find((node) => node.node_type === "visual_system");
       expect(asset && prompt && visual).toBeTruthy();
       await fitCanvas(page);

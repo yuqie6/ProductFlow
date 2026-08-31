@@ -19,7 +19,7 @@ const NODE_DESCRIPTIONS: Record<GraphNodeType, TranslationKey> = {
   image_asset: "graph.palette.imageAssetDesc",
   creative_brief: "graph.palette.creativeBriefDesc",
   visual_system: "graph.palette.visualSystemDesc",
-  prompt_generation: "graph.palette.promptGenerationDesc",
+  image_prompt: "graph.palette.promptGenerationDesc",
   image_generation: "graph.palette.imageGenerationDesc",
 };
 

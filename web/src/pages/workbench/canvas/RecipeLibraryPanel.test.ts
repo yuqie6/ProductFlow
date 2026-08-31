@@ -37,7 +37,7 @@ function recipe(
         nodes: [
           {
             key: "prompt",
-            node_type: "prompt_generation",
+            node_type: "image_prompt",
             title: "主图提示词",
             position_x: 0,
             position_y: 0,
@@ -140,7 +140,7 @@ describe("RecipeLibraryPanel", () => {
       base_graph_revision: 7,
       preview_digest: "d".repeat(64),
       nodes: [
-        { key: "prompt", node_type: "prompt_generation", title: "主图提示词", position_x: 0, position_y: 0 },
+        { key: "prompt", node_type: "image_prompt", title: "主图提示词", position_x: 0, position_y: 0 },
         { key: "image", node_type: "image_generation", title: "主图 1", position_x: 40, position_y: 0 },
       ],
       edges: [{

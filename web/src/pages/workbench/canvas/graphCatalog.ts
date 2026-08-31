@@ -23,7 +23,7 @@ export const GRAPH_NODE_TYPE_ORDER: GraphNodeType[] = [
   "image_asset",
   "creative_brief",
   "visual_system",
-  "prompt_generation",
+  "image_prompt",
   "image_generation",
 ];
 
@@ -178,7 +178,7 @@ export function missingRequiredRunNodes(
 const FALLBACK_PROCESSING_TYPES = new Set<GraphNodeType>([
   "creative_brief",
   "visual_system",
-  "prompt_generation",
+  "image_prompt",
   "image_generation",
 ]);
 
@@ -187,7 +187,7 @@ function nodeIsProcessing(
   catalog: GraphNodeCatalog | null | undefined,
 ): boolean {
   const spec = graphCatalogNode(catalog, node.node_type);
-  if (spec) return spec.kind === "processing";
+  if (spec) return spec.kind === "document" || spec.kind === "effect";
   return FALLBACK_PROCESSING_TYPES.has(node.node_type);
 }
 

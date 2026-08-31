@@ -88,7 +88,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		return err
 	}
 	forceTarget := isForceTarget(run, node.ID)
-	mode := validRegenerateMode(run.RegenerateMode)
+	mode := validDocumentAction(run.DocumentAction)
 	if isContentNodeType(node.NodeType) && !contentNodeShouldGenerate(node, forceTarget, mode) {
 		return e.skipFrozenContent(ctx, run, *nodeRun, sources)
 	}
@@ -119,6 +119,11 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 	if err != nil {
 		return err
 	}
+	req.DocumentAction = mode
+	if req.DocumentAction == "" {
+		req.DocumentAction = DocumentActionComplete
+	}
+	req.CurrentDocument = visibleDocument(node.NodeType, node.Config)
 	switch node.NodeType {
 	case NodeCreativeBrief:
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
@@ -152,7 +157,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
 			return mergeGeneratedOverlay(config, result.Payload, mode, DocumentOrigin(node))
 		})
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
 			return prompt.GeneratePrompt(ctx, req)
 		})
@@ -461,13 +466,30 @@ func (e Executor) persistContentArtifact(
 	if err := validateGeneratedPayload(artifactType, result.Payload); err != nil {
 		return err
 	}
+	snapshotGraph, err := appliedGraphFromSnapshot(run.Snapshot)
+	if err != nil {
+		return err
+	}
+	if nodeRun.NodeID == nil {
+		return apperr.Validation("文稿节点运行缺少 node_id")
+	}
+	snapshotNode, err := snapshotGraph.Node(*nodeRun.NodeID)
+	if err != nil {
+		return err
+	}
+	action := validDocumentAction(run.DocumentAction)
+	if action == "" {
+		action = DocumentActionComplete
+	}
+	baseDocumentHash := documentBaseHash(snapshotNode)
+	autoPublish := run.DocumentAction == "" && DocumentOrigin(snapshotNode) == OriginSeed
 	payload, err := json.Marshal(result.Payload)
 	if err != nil {
 		return err
 	}
 	hash := sha256Hex(payload)
 	now := time.Now().UTC()
-	adoptionAttempted := promote && nodeRun.NodeID != nil && writeback != nil
+	adoptionAttempted := promote && autoPublish && writeback != nil
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var productID string
 		if adoptionAttempted {
@@ -485,6 +507,10 @@ func (e Executor) persistContentArtifact(
 		if err != nil {
 			return err
 		}
+		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphArtifacts{}).Where("id = ?", artifactID).
+			Updates(map[string]any{"document_action": action, "base_document_hash": baseDocumentHash}).Error; err != nil {
+			return err
+		}
 		if !promote {
 			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
@@ -496,7 +522,7 @@ func (e Executor) persistContentArtifact(
 			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
 		adopted := false
-		if promote && nodeRun.NodeID != nil {
+		if promote {
 			if adoptionAttempted {
 				revision, didAdopt, err := adoptGeneratedDocument(ctx, pgxTx, productID, run.GraphID, *nodeRun.NodeID, adoptSummary(artifactType), run.Snapshot, writeback)
 				if err != nil {
@@ -511,16 +537,22 @@ func (e Executor) persistContentArtifact(
 					}
 				}
 			}
+			candidateID := any(artifactID)
+			if adopted {
+				candidateID = nil
+			}
 			if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).Where("id = ?", *nodeRun.NodeID).
-				Select("current_artifact_id").
-				Updates(map[string]any{"current_artifact_id": artifactID}).Error; err != nil {
+				Select("current_artifact_id", "pending_candidate_artifact_id").
+				Updates(map[string]any{"current_artifact_id": nil, "pending_candidate_artifact_id": candidateID}).Error; err != nil {
 				return err
 			}
 		}
-		outputPayload := map[string]any{"artifact_id": artifactID}
+		outputPayload := map[string]any{"artifact_id": artifactID, "disposition": "candidate"}
 		if adoptionAttempted {
 			outputPayload["adopted"] = adopted
-			outputPayload["stale"] = !adopted
+			if adopted {
+				outputPayload["disposition"] = "published"
+			}
 		}
 		output, _ := json.Marshal(outputPayload)
 		outputStr := string(output)

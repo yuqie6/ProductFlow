@@ -39,7 +39,7 @@ export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSe
     {
       op: "create_node",
       client_ref: promptRef,
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       title: `${input.title}提示词`,
       position_x: x,
       position_y: y,

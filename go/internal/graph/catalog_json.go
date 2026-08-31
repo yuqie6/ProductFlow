@@ -9,8 +9,10 @@ func CatalogJSON() map[string]any {
 			continue
 		}
 		kind := "source"
-		if IsProcessingNode(nodeType) {
-			kind = "processing"
+		if isContentNodeType(nodeType) {
+			kind = "document"
+		} else if nodeType == NodeImageGeneration {
+			kind = "effect"
 		}
 		accepts := catalogAccepts(nodeType)
 		acceptJSON := make([]map[string]any, 0, len(accepts))
@@ -31,17 +33,26 @@ func CatalogJSON() map[string]any {
 			fieldJSON = append(fieldJSON, configFieldJSON(field))
 		}
 		nodes = append(nodes, map[string]any{
-			"node_type":        nodeType,
-			"output_data_type": out,
-			"kind":             kind,
-			"accepts":          acceptJSON,
-			"config_fields":    fieldJSON,
+			"node_type":         nodeType,
+			"output_data_type":  out,
+			"kind":              kind,
+			"accepts":           acceptJSON,
+			"config_fields":     fieldJSON,
+			"document_actions":  catalogDocumentActions(nodeType),
+			"document_sections": documentSections(nodeType),
 		})
 	}
 	return map[string]any{
 		"version": CatalogVersion,
 		"nodes":   nodes,
 	}
+}
+
+func catalogDocumentActions(nodeType NodeType) []string {
+	if !isContentNodeType(nodeType) {
+		return []string{}
+	}
+	return []string{DocumentActionComplete, DocumentActionRewrite, DocumentActionReplace}
 }
 
 func CatalogIndexJSON() map[string]any {

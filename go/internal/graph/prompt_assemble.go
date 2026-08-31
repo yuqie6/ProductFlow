@@ -45,7 +45,7 @@ func AssemblePromptRequest(
 		if overlay := CatalogVisualOverlay(asMapOrNil(node.Config["visual_overlay"])); overlay != nil {
 			req.Visual = overlay
 		}
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		key, _ := node.Config["image_type_key"].(string)
 		key = strings.TrimSpace(key)
 		if key == "" {

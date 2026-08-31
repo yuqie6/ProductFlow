@@ -7,18 +7,19 @@ import (
 )
 
 const (
-	OriginSeed      = "seed"
-	OriginGenerated = "generated"
-	OriginAuthored  = "authored"
+	OriginSeed          = "seed"
+	OriginGenerated     = "generated"
+	OriginAuthored      = "authored"
+	OriginCollaborative = "collaborative"
 
-	RegenerateFill    = "fill"
-	RegenerateRefine  = "refine"
-	RegenerateReplace = "replace"
+	DocumentActionComplete = "complete"
+	DocumentActionRewrite  = "rewrite"
+	DocumentActionReplace  = "replace"
 )
 
 func isContentNodeType(nodeType NodeType) bool {
 	switch nodeType {
-	case NodeCreativeBrief, NodeVisualSystem, NodePromptGeneration:
+	case NodeCreativeBrief, NodeVisualSystem, NodeImagePrompt:
 		return true
 	default:
 		return false
@@ -27,19 +28,19 @@ func isContentNodeType(nodeType NodeType) bool {
 
 func validDocumentOrigin(value string) (string, bool) {
 	switch strings.TrimSpace(value) {
-	case OriginSeed, OriginGenerated, OriginAuthored:
+	case OriginSeed, OriginGenerated, OriginAuthored, OriginCollaborative:
 		return strings.TrimSpace(value), true
 	default:
 		return "", false
 	}
 }
 
-func validRegenerateMode(value string) string {
+func validDocumentAction(value string) string {
 	switch strings.TrimSpace(value) {
-	case RegenerateRefine, RegenerateReplace:
+	case DocumentActionComplete, DocumentActionRewrite, DocumentActionReplace:
 		return strings.TrimSpace(value)
 	default:
-		return RegenerateFill
+		return ""
 	}
 }
 
@@ -87,6 +88,9 @@ func nextDocumentOrigin(nodeType NodeType, previous AppliedNode, normalized map[
 		}
 	}
 	if documentVisibleChanged(nodeType, previous.Config, normalized) {
+		if DocumentOrigin(previous) == OriginGenerated || DocumentOrigin(previous) == OriginCollaborative {
+			return OriginCollaborative
+		}
 		return OriginAuthored
 	}
 	return DocumentOrigin(previous)
@@ -162,7 +166,7 @@ func inferDocumentOriginFromConfig(nodeType NodeType, config map[string]any) str
 			return OriginSeed
 		}
 		return OriginAuthored
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		if looksLikeBirthPromptSeed(config) {
 			return OriginSeed
 		}
@@ -253,12 +257,12 @@ func documentValueEqual(left, right any) bool {
 	return pythonDumps(left) == pythonDumps(right)
 }
 
-func contentNodeShouldGenerate(node AppliedNode, forceTarget bool, mode string) bool {
+func contentNodeShouldGenerate(node AppliedNode, forceTarget bool, action string) bool {
 	if !isContentNodeType(node.NodeType) {
 		return false
 	}
 	origin := DocumentOrigin(node)
-	if forceTarget && (mode == RegenerateRefine || mode == RegenerateReplace) {
+	if forceTarget && validDocumentAction(action) != "" {
 		return true
 	}
 	return origin == OriginSeed
@@ -275,12 +279,12 @@ func publishedPromptDocument(node AppliedNode, record SourceRecord) map[string]a
 	return cloneMap(stored)
 }
 
-func mergeGeneratedBrief(current, generated map[string]any, mode, origin string) map[string]any {
+func mergeGeneratedBrief(current, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
 		out = map[string]any{}
 	}
-	if mode == RegenerateReplace || origin == OriginSeed {
+	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
 		for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions"} {
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
@@ -298,7 +302,7 @@ func mergeGeneratedBrief(current, generated map[string]any, mode, origin string)
 	return out
 }
 
-func mergeGeneratedOverlay(current map[string]any, generated map[string]any, mode, origin string) map[string]any {
+func mergeGeneratedOverlay(current map[string]any, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
 		out = map[string]any{}
@@ -307,7 +311,7 @@ func mergeGeneratedOverlay(current map[string]any, generated map[string]any, mod
 	if overlay == nil {
 		overlay = map[string]any{}
 	}
-	if mode == RegenerateReplace || origin == OriginSeed {
+	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
 		out["visual_overlay"] = cloneMap(generated)
 		return out
 	}
@@ -322,14 +326,14 @@ func mergeGeneratedOverlay(current map[string]any, generated map[string]any, mod
 	return out
 }
 
-func mergeGeneratedPrompt(current map[string]any, generated map[string]any, mode, origin string) map[string]any {
+func mergeGeneratedPrompt(current map[string]any, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
 		out = map[string]any{}
 	}
 	stored, _ := out["prompt"].(map[string]any)
 	payload := stripV3PromptPayload(generated)
-	if mode == RegenerateReplace || origin == OriginSeed {
+	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
 		out["prompt"] = payload
 		return out
 	}
@@ -401,7 +405,7 @@ func collectGraphImageTypes(graph AppliedGraph) []map[string]any {
 	seen := map[string]struct{}{}
 	var out []map[string]any
 	for _, node := range graph.Nodes {
-		if node.NodeType != NodePromptGeneration {
+		if node.NodeType != NodeImagePrompt {
 			continue
 		}
 		key, _ := node.Config["image_type_key"].(string)

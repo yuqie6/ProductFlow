@@ -86,6 +86,7 @@ import {
 } from "./graphCatalog";
 import { graphProgressPhaseLabelKey, type GraphNodeRunPresentation } from "./graphRunDisplay";
 import { plannedActionClassName, runPreviewPointerHandlers } from "./graphRunPreview";
+import { displayNodeState } from "./graphOperationalState";
 import { shotRunRequest } from "./shotChangeSet";
 import {
   GRAPH_NODE_WIDTH,
@@ -206,7 +207,7 @@ function nodeTypeLabel(type: GraphNode["node_type"], t: ReturnType<typeof useI18
     image_asset: "graph.node.imageAsset",
     creative_brief: "graph.node.creativeBrief",
     visual_system: "graph.node.visualSystem",
-    prompt_generation: "graph.node.promptGeneration",
+    image_prompt: "graph.node.promptGeneration",
     image_generation: "graph.node.imageGeneration",
   } as const;
   return t(keys[type]);
@@ -282,6 +283,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   const multi = data.selectedCount >= 2 && data.selectionPrimary;
   const plannedClass = plannedActionClassName(data.plannedAction);
   const displayPlannedAction = data.plannedAction ?? data.latestPlannedAction ?? null;
+  const displayedState = displayNodeState(node, data.status);
   return (
     <div
       className={`relative w-[248px] overflow-visible ${proposalState === "deleted"
@@ -461,21 +463,8 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         kind={graphNodePresentationKind(node.node_type)}
         title={node.title}
         label={nodeTypeLabel(node.node_type, t)}
-        status={
-          displayPlannedAction === "frozen" && (data.status === "idle" || data.status === "skipped")
-            ? "frozen"
-            : data.status
-        }
-        statusLabel={
-          node.node_type === "image_asset" && !node.bound_asset_id
-            ? t("graph.inspector.unbound")
-            : data.status === "skipped"
-              ? (displayPlannedAction === "frozen" ? t("graph.node.skippedFrozen") : t("graph.node.skippedReuse"))
-              : data.status !== "idle"
-                ? nodeStatusLabel(data.status, t)
-                : node.unused
-                  ? t("graph.inspector.unused")
-                  : nodeStatusLabel(data.status, t)}
+        status={displayedState.status}
+        statusLabel={node.unused ? t("graph.inspector.unused") : t(displayedState.labelKey)}
         image={nodeImage(node)}
         imageWaiting={node.node_type === "image_generation" && running}
         waitingLabel={graphProgressPhaseLabelKey(data.progressPhase)

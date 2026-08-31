@@ -48,7 +48,7 @@ const graph: GraphProjection = {
   can_redo: false,
   nodes: [
     node({ id: "source", node_type: "product_source", position_x: 400, position_y: 10 }),
-    node({ id: "prompt", node_type: "prompt_generation", position_x: 10, position_y: 10, group_id: "group-1" }),
+    node({ id: "prompt", node_type: "image_prompt", position_x: 10, position_y: 10, group_id: "group-1" }),
     node({ id: "image", node_type: "image_generation", position_x: 10, position_y: 300, group_id: "group-1" }),
   ],
   edges: [
@@ -192,7 +192,7 @@ describe("graph layout commands", () => {
     };
     const center = graphViewportCenterPosition(viewport);
     const position = graphAvailableNodePosition(viewport, [
-      node({ id: "occupied", node_type: "prompt_generation", group_id: "group-1", ...center }),
+      node({ id: "occupied", node_type: "image_prompt", group_id: "group-1", ...center }),
     ]);
     expect(position).not.toEqual(center);
     expect(Math.abs(position.position_x % GRAPH_SNAP)).toBe(0);
@@ -210,7 +210,7 @@ describe("graph layout commands", () => {
       ...graph,
       nodes: [
         ...graph.nodes,
-        node({ id: "prompt-copy", node_type: "prompt_generation" }),
+        node({ id: "prompt-copy", node_type: "image_prompt" }),
         node({ id: "image-copy", node_type: "image_generation" }),
       ],
     };

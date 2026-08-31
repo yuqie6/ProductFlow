@@ -11,7 +11,7 @@ type GraphRunRequest struct {
 	NodeID         *string  `json:"node_id"`
 	NodeIDs        []string `json:"node_ids"`
 	Force          bool     `json:"force"`
-	RegenerateMode string   `json:"regenerate_mode"`
+	DocumentAction string   `json:"document_action"`
 }
 
 type GraphRunInputTraceEntry struct {
@@ -63,7 +63,7 @@ type GraphRunPreviewResponse struct {
 	RequestedNodeID  *string          `json:"requested_node_id"`
 	RequestedNodeIDs []string         `json:"requested_node_ids"`
 	Force            bool             `json:"force"`
-	RegenerateMode   string           `json:"regenerate_mode"`
+	DocumentAction   string           `json:"document_action"`
 	Nodes            []RunPreviewNode `json:"nodes"`
 }
 
@@ -85,7 +85,7 @@ type graphRunRow struct {
 	StartedAt        time.Time
 	FinishedAt       *time.Time
 	Force            bool
-	RegenerateMode   string
+	DocumentAction   string
 	NodeRuns         []graphNodeRunRow
 }
 

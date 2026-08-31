@@ -25,7 +25,7 @@ func cookSelectGraph() AppliedGraph {
 		Revision: 1,
 		Nodes: []AppliedNode{
 			{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", DocumentOrigin: OriginSeed, Config: map[string]any{}},
-			{ID: "prompt", NodeType: NodePromptGeneration, Title: "提示词", DocumentOrigin: OriginAuthored, Config: map[string]any{
+			{ID: "prompt", NodeType: NodeImagePrompt, Title: "提示词", DocumentOrigin: OriginAuthored, Config: map[string]any{
 				"image_type_key": "hero",
 				"prompt":         map[string]any{"design_goal": "手填", "composition": map[string]any{"layout": "左侧留白"}},
 			}},
@@ -103,7 +103,7 @@ func TestSelectToNodeSkipsAuthoredAncestors(t *testing.T) {
 
 func TestSelectGraphKeepsAuthoredNodesForSkipHistory(t *testing.T) {
 	g := cookSelectGraph()
-	ids, err := SelectRunNodeIDsWithMode(g, RunScopeGraph, "", nil, nil, true, RegenerateReplace)
+	ids, err := SelectRunNodeIDsWithMode(g, RunScopeGraph, "", nil, nil, true, DocumentActionReplace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestSelectGraphKeepsAuthoredNodesForSkipHistory(t *testing.T) {
 
 func TestSelectForceNodeCooksAuthoredTarget(t *testing.T) {
 	g := cookSelectGraph()
-	ids, err := SelectRunNodeIDsWithMode(g, RunScopeNode, "prompt", nil, nil, true, RegenerateReplace)
+	ids, err := SelectRunNodeIDsWithMode(g, RunScopeNode, "prompt", nil, nil, true, DocumentActionReplace)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSelectForceNodeCooksAuthoredTarget(t *testing.T) {
 
 func TestSelectSelectionQueuesExplicitImages(t *testing.T) {
 	g := cookSelectGraph()
-	ids, err := SelectRunNodeIDsWithMode(g, RunScopeSelection, "", []string{"image"}, nil, false, RegenerateFill)
+	ids, err := SelectRunNodeIDsWithMode(g, RunScopeSelection, "", []string{"image"}, nil, false, DocumentActionComplete)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestSelectSelectionQueuesExplicitImages(t *testing.T) {
 
 func TestPlanRunMarksAuthoredPromptFrozen(t *testing.T) {
 	g := cookSelectGraph()
-	nodes, err := PlanRun(g, RunScopeGraph, "", nil, nil, false, RegenerateFill)
+	nodes, err := PlanRun(g, RunScopeGraph, "", nil, nil, false, DocumentActionComplete)
 	if err != nil {
 		t.Fatal(err)
 	}

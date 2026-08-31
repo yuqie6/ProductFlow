@@ -171,7 +171,8 @@ const OUTPUT_QUALITY_LABEL_KEYS: Record<string, TranslationKey> = {
 const OUTPUT_ACTION_LABEL_KEYS: Record<string, TranslationKey> = {
   generate: "graph.output.action.generate",
   edit: "graph.output.action.edit",
-  refine: "graph.output.action.refine",
+  rewrite: "graph.output.action.refine",
+  complete: "graph.output.action.complete",
   replace: "graph.output.action.replace",
 };
 

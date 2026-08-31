@@ -105,7 +105,7 @@ func compileInputDigest(graph AppliedGraph, nodeID string, sources map[string]So
 		return "", err
 	}
 	switch node.NodeType {
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		runtime, err := compilePromptRuntime(graph, nodeID, sources)
 		if err != nil {
 			return "", err
@@ -125,7 +125,7 @@ func compilePromptRuntime(graph AppliedGraph, nodeID string, sources map[string]
 	if err != nil {
 		return "", err
 	}
-	if node.NodeType != NodePromptGeneration {
+	if node.NodeType != NodeImagePrompt {
 		return "", apperr.Validation("只有提示词生成节点可以编译为 PromptRuntimeInput")
 	}
 	if err := rejectIncompleteRequiredEdges(graph, node); err != nil {
@@ -502,7 +502,7 @@ func compiledContextTrace(graph AppliedGraph, node AppliedNode, sources map[stri
 		"reference_asset_ids": refIDs,
 	}
 	switch node.NodeType {
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		trace["fact_count"] = len(facts)
 		trace["brief_count"] = len(briefs)
 		if version := incomingVisualVersionID(graph, node.ID, sources); version != nil {
@@ -616,7 +616,7 @@ func inferredArtifactType(nodeType NodeType) *string {
 		return strPtr("creative_brief")
 	case NodeVisualSystem:
 		return strPtr("visual_system")
-	case NodePromptGeneration:
+	case NodeImagePrompt:
 		return strPtr("prompt")
 	case NodeImageGeneration:
 		return strPtr("image")

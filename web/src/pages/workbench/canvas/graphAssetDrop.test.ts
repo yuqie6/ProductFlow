@@ -30,9 +30,9 @@ const catalog: GraphNodeCatalog = {
     { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
     { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
     {
-      node_type: "prompt_generation",
+      node_type: "image_prompt",
       output_data_type: "prompt",
-      kind: "processing",
+      kind: "document",
       accepts: [
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
       ],
@@ -40,7 +40,7 @@ const catalog: GraphNodeCatalog = {
     {
       node_type: "image_generation",
       output_data_type: "image_asset",
-      kind: "processing",
+      kind: "effect",
       accepts: [
         { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
       ],
@@ -111,7 +111,7 @@ describe("resolveGraphAssetDrop", () => {
 
   it("asks before reusing a bound node when dropping onto a processing node", () => {
     const current = graph([
-      node({ id: "prompt", node_type: "prompt_generation" }),
+      node({ id: "prompt", node_type: "image_prompt" }),
       node({ id: "existing", node_type: "image_asset", title: "参考图 1", bound_asset_id: "asset-a" }),
     ]);
     const plan = resolveGraphAssetDrop(current, {
@@ -155,7 +155,7 @@ describe("resolveGraphAssetDrop", () => {
   });
 
   it("rejects drops onto processing nodes until catalog is loaded", () => {
-    const plan = resolveGraphAssetDrop(graph([node({ id: "prompt", node_type: "prompt_generation" })]), {
+    const plan = resolveGraphAssetDrop(graph([node({ id: "prompt", node_type: "image_prompt" })]), {
       assetIds: ["asset-a"],
       position: { x: 0, y: 0 },
       nodeId: "prompt",

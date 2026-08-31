@@ -199,6 +199,7 @@ type AgentTurnProjections struct {
 	InputText                          string     `gorm:"column:input_text;type:text;not null"`
 	InputAssetIdsJSON                  string     `gorm:"column:input_asset_ids_json;type:json;not null"`
 	Status                             string     `gorm:"column:status;type:agentturnstatus;not null"`
+	TerminalReasonCode                 *string    `gorm:"column:terminal_reason_code;type:varchar(40)"`
 	ResumeRequired                     bool       `gorm:"column:resume_required;type:boolean;not null"`
 	OutputText                         *string    `gorm:"column:output_text;type:text"`
 	ThinkingText                       *string    `gorm:"column:thinking_text;type:text"`
@@ -242,6 +243,8 @@ type AgentWorkflowRunRequests struct {
 	RunScope                 *string    `gorm:"column:run_scope;type:varchar(40)"`
 	TargetNodeID             *string    `gorm:"column:target_node_id;type:varchar(36)"`
 	TargetNodeIDsJSON        *string    `gorm:"column:target_node_ids_json;type:json"`
+	Force                    bool       `gorm:"column:force;type:boolean;not null;default:false"`
+	DocumentAction           *string    `gorm:"column:document_action;type:varchar(24)"`
 }
 
 func (AgentWorkflowRunRequests) TableName() string { return "agent_workflow_run_requests" }
@@ -750,6 +753,8 @@ type WorkflowGraphArtifacts struct {
 	PayloadJSON         string    `gorm:"column:payload_json;type:json;not null"`
 	PayloadHash         string    `gorm:"column:payload_hash;type:varchar(64);not null"`
 	InputDigest         string    `gorm:"column:input_digest;type:varchar(64);not null"`
+	DocumentAction      *string   `gorm:"column:document_action;type:varchar(24)"`
+	BaseDocumentHash    *string   `gorm:"column:base_document_hash;type:varchar(64)"`
 	ProductImageAssetID *string   `gorm:"column:product_image_asset_id;type:varchar(36)"`
 	ProviderName        *string   `gorm:"column:provider_name;type:varchar(80)"`
 	ProviderModel       *string   `gorm:"column:provider_model;type:varchar(255)"`
@@ -815,19 +820,20 @@ type WorkflowGraphRunEvents struct {
 func (WorkflowGraphRunEvents) TableName() string { return "workflow_graph_run_events" }
 
 type WorkflowGraphNodes struct {
-	ID                string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	GraphID           string    `gorm:"column:graph_id;type:varchar(36);not null"`
-	NodeType          string    `gorm:"column:node_type;type:varchar(40);not null"`
-	Title             string    `gorm:"column:title;type:varchar(255);not null"`
-	PositionX         int       `gorm:"column:position_x;type:integer;not null"`
-	PositionY         int       `gorm:"column:position_y;type:integer;not null"`
-	ConfigJSON        string    `gorm:"column:config_json;type:json;not null"`
-	BoundImageAssetID *string   `gorm:"column:bound_image_asset_id;type:varchar(36)"`
-	GroupID           *string   `gorm:"column:group_id;type:varchar(36)"`
-	CreatedAt         time.Time `gorm:"column:created_at;type:timestamptz;not null"`
-	UpdatedAt         time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
-	CurrentArtifactID *string   `gorm:"column:current_artifact_id;type:varchar(36)"`
-	DocumentOrigin    *string   `gorm:"column:document_origin;type:varchar(40)"`
+	ID                         string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID                    string    `gorm:"column:graph_id;type:varchar(36);not null"`
+	NodeType                   string    `gorm:"column:node_type;type:varchar(40);not null"`
+	Title                      string    `gorm:"column:title;type:varchar(255);not null"`
+	PositionX                  int       `gorm:"column:position_x;type:integer;not null"`
+	PositionY                  int       `gorm:"column:position_y;type:integer;not null"`
+	ConfigJSON                 string    `gorm:"column:config_json;type:json;not null"`
+	BoundImageAssetID          *string   `gorm:"column:bound_image_asset_id;type:varchar(36)"`
+	GroupID                    *string   `gorm:"column:group_id;type:varchar(36)"`
+	CreatedAt                  time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                  time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	CurrentArtifactID          *string   `gorm:"column:current_artifact_id;type:varchar(36)"`
+	PendingCandidateArtifactID *string   `gorm:"column:pending_candidate_artifact_id;type:varchar(36)"`
+	DocumentOrigin             *string   `gorm:"column:document_origin;type:varchar(40)"`
 }
 
 func (WorkflowGraphNodes) TableName() string { return "workflow_graph_nodes" }

@@ -25,7 +25,7 @@ func BackfillDocumentOrigin(db *gorm.DB) error {
 	err := db.Raw(`
 		SELECT id, node_type, config_json, document_origin
 		FROM workflow_graph_nodes
-		WHERE node_type IN ('creative_brief', 'visual_system', 'prompt_generation')
+		WHERE node_type IN ('creative_brief', 'visual_system', 'image_prompt')
 	`).Scan(&rows).Error
 	if err != nil {
 		return fmt.Errorf("load document_origin rows: %w", err)
