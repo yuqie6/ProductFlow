@@ -19,6 +19,7 @@ import type {
   SubmitAgentTurnInput,
 } from "../../../lib/types";
 import { isAgentTurnSettled } from "./agentEventReducer";
+import { workflowRunRequestRefetchInterval } from "./conversation/helpers";
 import {
   flattenAgentTurnPages,
   selectNewestAgentTurnProjection,
@@ -156,6 +157,7 @@ export function useGlobalAgentConversation({
       conversationId &&
       (workflowRunRequestId || latestTurn?.status === "awaiting_confirmation"),
     ),
+    refetchInterval: (query) => workflowRunRequestRefetchInterval(query.state.data),
   });
   const turns = useMemo(
     () =>

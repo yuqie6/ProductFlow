@@ -10,11 +10,9 @@ import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
-  AgentCanvasFocus,
   AgentConversation,
   AgentPageContextSnapshotInput,
   AgentTaskStatus,
-  AgentTurn,
   AgentWorkflowRunRequest,
   GalleryAsset,
   GraphProjection,
@@ -26,7 +24,7 @@ import {
 } from "../chrome/image-explorer/ProductImageExplorer";
 import { AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
-import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
+import { WorkflowRunRequestTurnSlot } from "./AgentWorkflowRunRequestCard";
 import {
   ConversationWorkbench,
   PanelError,
@@ -35,9 +33,11 @@ import {
   agentConversationSubmitTaskId,
   canSubmitAgentConversationMessage,
   errorDetailOrNull,
+  latestAgentCanvasFocus,
   mergeWorkflowRunRequest,
   resolveAgentCanvasFocusNodeIds,
   workflowRequestFromTurn,
+  workflowRunRequestRefetchInterval,
 } from "./conversation/helpers";
 import { useConversationChrome } from "./conversation/useConversationChrome";
 import { agentProductWorkbenchPath } from "./productWorkbenchRoute";
@@ -82,6 +82,7 @@ export function AgentConversationPanel({
   const workflowRunRequestQuery = useQuery({
     queryKey: workflowRunRequestQueryKey,
     queryFn: () => api.getAgentWorkflowRunRequest(productId, conversation.id),
+    refetchInterval: (query) => workflowRunRequestRefetchInterval(query.state.data),
   });
   const appliedCanvasFocusRef = useRef<string | null>(null);
 
@@ -206,32 +207,20 @@ export function AgentConversationPanel({
   }, [agent.activeTurn, onAgentPresenceChange]);
   useEffect(() => {
     if (!onCanvasFocus) return;
-    const turns = [agent.latestTurn, ...agent.turns].filter((item): item is AgentTurn => Boolean(item));
-    let selected: { created_at: string; focus: AgentCanvasFocus } | null = null;
-    for (const item of turns) {
-      const focus = item.canvas_focus;
-      if (!focus?.request_id) continue;
-      if (
-        !selected
-        || item.created_at > selected.created_at
-        || (item.created_at === selected.created_at && focus.request_id > selected.focus.request_id)
-      ) {
-        selected = { created_at: item.created_at, focus };
-      }
-    }
-    if (!selected || appliedCanvasFocusRef.current === selected.focus.request_id) return;
-    const nodeIds = resolveAgentCanvasFocusNodeIds(selected.focus, graph);
-    if (!nodeIds.length) {
-      const waitingForGraph = selected.focus.node_ids.length > 0
-        || selected.focus.edge_ids.length > 0
-        || selected.focus.group_ids.length > 0;
-      if (waitingForGraph) return;
-      appliedCanvasFocusRef.current = selected.focus.request_id;
+    const selected = latestAgentCanvasFocus(
+      [agent.latestTurn, ...agent.turns],
+      eventStates,
+      graph,
+    );
+    if (!selected || appliedCanvasFocusRef.current === selected.requestId) return;
+    if (!selected.nodeIds.length) {
+      if (selected.waitingForGraph) return;
+      appliedCanvasFocusRef.current = selected.requestId;
       return;
     }
-    appliedCanvasFocusRef.current = selected.focus.request_id;
-    onCanvasFocus(nodeIds);
-  }, [agent.latestTurn, agent.turns, graph, onCanvasFocus]);
+    appliedCanvasFocusRef.current = selected.requestId;
+    onCanvasFocus(selected.nodeIds);
+  }, [agent.latestTurn, agent.turns, eventStates, graph, onCanvasFocus]);
   useEffect(() => {
     if (agent.latestTurn?.status === "awaiting_confirmation" || agent.latestTurn?.workflow_run_request_id) {
       void queryClient.invalidateQueries({ queryKey: workflowRunRequestQueryKey });
@@ -272,10 +261,6 @@ export function AgentConversationPanel({
     ?? errorDetailOrNull(cancelWorkflowRunRequestMutation.error);
   const composerError =
     errorDetailOrNull(agent.submitTurnMutation.error) ?? errorDetailOrNull(uploadAssetsMutation.error);
-  const pendingRequest = mergeWorkflowRunRequest(
-    workflowRunRequestQuery.data,
-    workflowRequestFromTurn(agent.latestTurn, eventStates),
-  );
   const connectionLabel = events.state.terminal_kind
     ? t("agentWorkbench.connection.syncing")
     : events.connectionState === "open"
@@ -379,10 +364,11 @@ export function AgentConversationPanel({
           {controlError ? <PanelError message={controlError} /> : null}
         </>
       )}
-      approval={(
-        <AgentWorkflowRunRequestCard
-          request={pendingRequest}
-          loading={workflowRunRequestQuery.isLoading}
+      renderTurnExtras={(item) => (
+        <WorkflowRunRequestTurnSlot
+          turn={item}
+          fetched={workflowRunRequestQuery.data}
+          eventStates={eventStates}
           busy={confirmWorkflowRunRequestMutation.isPending || cancelWorkflowRunRequestMutation.isPending}
           error={workflowRunRequestError}
           onConfirm={() => confirmWorkflowRunRequestMutation.mutate()}

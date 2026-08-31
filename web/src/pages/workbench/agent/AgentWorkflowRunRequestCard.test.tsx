@@ -90,4 +90,22 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).toContain("查看运行记录");
     expect(markup).not.toContain("确认并执行");
   });
+
+  it("renders a settled request inside the matching turn without chrome spacing", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentWorkflowRunRequestCard, {
+        request: { ...request("succeeded"), workflow_run_status: "succeeded" },
+        loading: false,
+        busy: false,
+        error: null,
+        placement: "turn",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onOpenRuns: vi.fn(),
+      }),
+    );
+    expect(markup).toContain('data-agent-workflow-run-request-placement="turn"');
+    expect(markup).toContain("工作流运行已完成");
+    expect(markup).not.toContain("sm:mx-3");
+  });
 });

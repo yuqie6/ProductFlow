@@ -12,7 +12,12 @@ import {
 
 import { formatDateTime } from "../../../lib/format";
 import { useI18n } from "../../../lib/preferences";
-import type { AgentWorkflowRunRequestView } from "./conversation/helpers";
+import type { AgentTurn } from "../../../lib/types";
+import type { AgentTurnEventState } from "./agentEventReducer";
+import {
+  workflowRunRequestForTurn,
+  type AgentWorkflowRunRequestView,
+} from "./conversation/helpers";
 
 interface AgentWorkflowRunRequestCardProps {
   request: AgentWorkflowRunRequestView | null;
@@ -20,9 +25,50 @@ interface AgentWorkflowRunRequestCardProps {
   busy: boolean;
   error: string | null;
   targetLabel?: string | null;
+  placement?: "chrome" | "turn";
   onConfirm: () => void;
   onCancel: () => void;
   onOpenRuns?: () => void;
+}
+
+export function WorkflowRunRequestTurnSlot({
+  turn,
+  fetched,
+  eventStates,
+  busy,
+  error,
+  targetLabel = null,
+  onConfirm,
+  onCancel,
+  onOpenRuns,
+}: {
+  turn: AgentTurn;
+  fetched: AgentWorkflowRunRequestView | null | undefined;
+  eventStates?: Readonly<Record<string, AgentTurnEventState>>;
+  busy: boolean;
+  error: string | null;
+  targetLabel?: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onOpenRuns?: () => void;
+}) {
+  const request = workflowRunRequestForTurn(turn, fetched, eventStates);
+  if (!request) return null;
+  return (
+    <div className="mt-2" data-agent-turn-workflow-run-request>
+      <AgentWorkflowRunRequestCard
+        request={request}
+        loading={false}
+        busy={busy}
+        error={error}
+        targetLabel={targetLabel}
+        placement="turn"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+        onOpenRuns={onOpenRuns}
+      />
+    </div>
+  );
 }
 
 export function AgentWorkflowRunRequestCard({
@@ -31,13 +77,14 @@ export function AgentWorkflowRunRequestCard({
   busy,
   error,
   targetLabel = null,
+  placement = "chrome",
   onConfirm,
   onCancel,
   onOpenRuns,
 }: AgentWorkflowRunRequestCardProps) {
   const { t } = useI18n();
 
-  if (loading && !request) {
+  if (loading && !request && placement === "chrome") {
     return (
       <div className="shrink-0 border-t border-border-l1 bg-surface-raised px-4 py-3 text-xs text-text-muted">
         <div className="flex items-center gap-2">
@@ -106,11 +153,16 @@ export function AgentWorkflowRunRequestCard({
         ? t("graph.inspector.replace")
         : null;
 
+  const frameClass = placement === "turn"
+    ? `rounded-panel border px-4 py-4 ${statusTone}`
+    : `shrink-0 border-y px-4 py-4 backdrop-blur-sm transition-[border-color,background-color] duration-fast sm:mx-3 sm:my-2 sm:rounded-panel sm:border ${statusTone}`;
+
   return (
     <section
       data-agent-workflow-run-request
+      data-agent-workflow-run-request-placement={placement}
       aria-labelledby={`agent-workflow-run-request-${request.id}`}
-      className={`shrink-0 border-y px-4 py-4 backdrop-blur-sm transition-[border-color,background-color] duration-fast sm:mx-3 sm:my-2 sm:rounded-panel sm:border ${statusTone}`}
+      className={frameClass}
     >
       <div className="mx-auto w-full max-w-3xl">
         <div className="flex items-start gap-3.5">

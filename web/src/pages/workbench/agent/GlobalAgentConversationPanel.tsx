@@ -13,7 +13,7 @@ import type {
 } from "../../../lib/types";
 import { AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMediaLibraryPicker } from "./AgentMediaLibraryPicker";
-import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
+import { WorkflowRunRequestTurnSlot } from "./AgentWorkflowRunRequestCard";
 import { ConversationWorkbench } from "./ConversationPanel";
 import {
   errorDetailOrNull,
@@ -141,6 +141,32 @@ export function GlobalAgentConversationPanel({
           onConfirm={confirmDraft}
         />
       ) : null}
+      <WorkflowRunRequestTurnSlot
+        turn={turn}
+        fetched={agent.workflowRunRequestQuery.data}
+        eventStates={eventStates}
+        busy={
+          agent.confirmWorkflowRunRequestMutation.isPending ||
+          agent.cancelWorkflowRunRequestMutation.isPending
+        }
+        error={errorDetailOrNull(
+          agent.workflowRunRequestQuery.error ??
+          agent.confirmWorkflowRunRequestMutation.error ??
+          agent.cancelWorkflowRunRequestMutation.error,
+          t("globalAgent.requestFailed"),
+        )}
+        targetLabel={
+          pendingRequest?.product_name || pendingRequest?.product_id || null
+        }
+        onConfirm={confirmWorkflowRunRequest}
+        onCancel={cancelWorkflowRunRequest}
+        onOpenRuns={() => {
+          const request = pendingRequest;
+          if (request?.product_id) {
+            navigate(`/products/${encodeURIComponent(request.product_id)}`);
+          }
+        }}
+      />
     </>
   );
   const error = errorDetailOrNull(
@@ -235,33 +261,6 @@ export function GlobalAgentConversationPanel({
         </header>
       )}
       notices={error ? <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-4 py-2 text-xs leading-5 text-state-error">{error}</p> : null}
-      approval={(
-        <AgentWorkflowRunRequestCard
-          request={pendingRequest}
-          loading={agent.workflowRunRequestQuery.isLoading}
-          busy={
-            agent.confirmWorkflowRunRequestMutation.isPending ||
-            agent.cancelWorkflowRunRequestMutation.isPending
-          }
-          error={errorDetailOrNull(
-            agent.workflowRunRequestQuery.error ??
-            agent.confirmWorkflowRunRequestMutation.error ??
-            agent.cancelWorkflowRunRequestMutation.error,
-            t("globalAgent.requestFailed"),
-          )}
-          targetLabel={
-            pendingRequest?.product_name || pendingRequest?.product_id || null
-          }
-          onConfirm={confirmWorkflowRunRequest}
-          onCancel={cancelWorkflowRunRequest}
-          onOpenRuns={() => {
-            const request = pendingRequest;
-            if (request?.product_id) {
-              navigate(`/products/${encodeURIComponent(request.product_id)}`);
-            }
-          }}
-        />
-      )}
       chrome={chrome}
       agent={agent}
       eventStates={eventStates}

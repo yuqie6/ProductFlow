@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { AgentTurn, AgentWorkflowRunRequest } from "../../../../lib/types";
 import { createAgentTurnEventState } from "../agentEventReducer";
 import {
+  latestAgentCanvasFocus,
   mergeWorkflowRunRequest,
   workflowRequestFromTurn,
+  workflowRunRequestForTurn,
+  workflowRunRequestRefetchInterval,
 } from "./helpers";
 
 function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
@@ -106,5 +109,97 @@ describe("workflowRequestFromTurn", () => {
   it("does not require a live event snapshot when the turn already has tool meta", () => {
     const empty = createAgentTurnEventState("projection-1");
     expect(workflowRequestFromTurn(turn(), { "projection-1": empty })?.id).toBe("request-journal");
+  });
+});
+
+describe("workflowRunRequestForTurn", () => {
+  it("pins a fetched request to the turn that created it, including after it finishes", () => {
+    const attached = turn({
+      status: "succeeded",
+      workflow_run_request_id: "request-live",
+      tool_steps: [
+        {
+          step_id: "step-run",
+          kind: "request_workflow_run",
+          summary: "请求执行工作流",
+          status: "succeeded",
+          meta: {
+            pending_confirmation: false,
+            workflow_id: "workflow-1",
+            request_id: "request-live",
+          },
+        },
+      ],
+    });
+    const fetched = {
+      id: "request-live",
+      conversation_id: "conversation-1",
+      task_id: null,
+      product_id: "product-1",
+      product_name: "春季新品",
+      workflow_id: "workflow-1",
+      workflow_title: "春季主图",
+      expected_workflow_revision: 4,
+      run_scope: "graph" as const,
+      target_node_id: null,
+      target_node_ids: [],
+      force: false,
+      document_action: null,
+      status: "succeeded" as const,
+      workflow_run_id: "run-1",
+      workflow_run_status: "succeeded" as const,
+      source_step_id: "step-run",
+      failure_reason: null,
+      confirmed_at: "2026-08-31T00:01:00Z",
+      finished_at: "2026-08-31T00:10:00Z",
+      created_at: "2026-08-31T00:00:00Z",
+      updated_at: "2026-08-31T00:10:00Z",
+    };
+    expect(workflowRunRequestForTurn(attached, fetched)?.id).toBe("request-live");
+    expect(workflowRunRequestForTurn(turn({ id: "projection-other" }), fetched)).toBeNull();
+  });
+
+  it("falls back to journal meta while the request is still waiting on this turn", () => {
+    expect(workflowRunRequestForTurn(turn(), null)?.id).toBe("request-journal");
+  });
+});
+
+describe("workflowRunRequestRefetchInterval", () => {
+  it("polls only while the request is still waiting or running", () => {
+    const hint = workflowRequestFromTurn(turn(), undefined);
+    expect(workflowRunRequestRefetchInterval(hint)).toBe(2000);
+    expect(workflowRunRequestRefetchInterval({
+      ...hint!,
+      status: "confirmed",
+      workflow_run_status: "running",
+    })).toBe(2000);
+    expect(workflowRunRequestRefetchInterval({
+      ...hint!,
+      status: "succeeded",
+      workflow_run_status: "succeeded",
+    })).toBe(false);
+    expect(workflowRunRequestRefetchInterval(null)).toBe(false);
+  });
+});
+
+describe("latestAgentCanvasFocus", () => {
+  it("uses a live focus_canvas tool result before the turn snapshot records canvas_focus", () => {
+    const live = turn({
+      canvas_focus: null,
+      tool_steps: [
+        {
+          step_id: "step-focus",
+          kind: "focus_canvas",
+          summary: "聚焦画布",
+          status: "succeeded",
+          meta: { affected_node_ids: ["node-detail-1"] },
+        },
+      ],
+    });
+    expect(latestAgentCanvasFocus([live], undefined, null)).toEqual({
+      requestId: "projection-1:step-focus",
+      nodeIds: ["node-detail-1"],
+      waitingForGraph: false,
+    });
   });
 });

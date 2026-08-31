@@ -93,6 +93,93 @@ export function mergeWorkflowRunRequest(
   return fetched ?? journal;
 }
 
+export function workflowRunRequestForTurn(
+  turn: AgentTurn,
+  fetched: AgentWorkflowRunRequestView | null | undefined,
+  eventStates?: Readonly<Record<string, AgentTurnEventState>>,
+): AgentWorkflowRunRequestView | null {
+  const journal = workflowRequestFromTurn(turn, eventStates);
+  if (fetched) {
+    if (turn.workflow_run_request_id === fetched.id || journal?.id === fetched.id) {
+      return fetched;
+    }
+    return null;
+  }
+  return journal;
+}
+
+export function workflowRunRequestRefetchInterval(
+  request: AgentWorkflowRunRequestView | null | undefined,
+): number | false {
+  if (!request) return false;
+  if (request.status === "awaiting_confirmation" || request.status === "confirmed") return 2000;
+  if (request.workflow_run_status === "queued" || request.workflow_run_status === "running") return 2000;
+  return false;
+}
+
+export function latestAgentCanvasFocus(
+  turns: readonly (AgentTurn | null | undefined)[],
+  eventStates: Readonly<Record<string, AgentTurnEventState>> | undefined,
+  graph: GraphProjection | null | undefined,
+): { requestId: string; nodeIds: string[]; waitingForGraph: boolean } | null {
+  let selected: {
+    createdAt: string;
+    requestId: string;
+    nodeIds: string[];
+    waitingForGraph: boolean;
+  } | null = null;
+  for (const turn of turns) {
+    if (!turn) continue;
+    for (const candidate of canvasFocusCandidates(turn, eventStates?.[turn.id])) {
+      const nodeIds = resolveAgentCanvasFocusNodeIds(candidate.focus, graph);
+      const waitingForGraph = !nodeIds.length && (
+        candidate.focus.node_ids.length > 0
+        || candidate.focus.edge_ids.length > 0
+        || candidate.focus.group_ids.length > 0
+      );
+      if (
+        !selected
+        || turn.created_at > selected.createdAt
+        || (turn.created_at === selected.createdAt && candidate.requestId > selected.requestId)
+      ) {
+        selected = {
+          createdAt: turn.created_at,
+          requestId: candidate.requestId,
+          nodeIds,
+          waitingForGraph,
+        };
+      }
+    }
+  }
+  return selected
+    ? { requestId: selected.requestId, nodeIds: selected.nodeIds, waitingForGraph: selected.waitingForGraph }
+    : null;
+}
+
+function canvasFocusCandidates(
+  turn: AgentTurn,
+  eventState: AgentTurnEventState | null | undefined,
+): ReadonlyArray<{ requestId: string; focus: Pick<AgentCanvasFocus, "node_ids" | "edge_ids" | "group_ids"> }> {
+  const candidates: { requestId: string; focus: Pick<AgentCanvasFocus, "node_ids" | "edge_ids" | "group_ids"> }[] = [];
+  if (turn.canvas_focus?.request_id) {
+    candidates.push({ requestId: turn.canvas_focus.request_id, focus: turn.canvas_focus });
+  }
+  const steps = selectAgentToolSteps(turn, eventState ?? null);
+  for (const step of steps) {
+    if (step.kind !== "focus_canvas" || step.status !== "succeeded") continue;
+    const meta = step.meta ?? step.details;
+    if (!meta) continue;
+    const focus = {
+      node_ids: meta.affected_node_ids ?? [],
+      edge_ids: meta.affected_edge_ids ?? [],
+      group_ids: meta.affected_group_ids ?? [],
+    };
+    if (!focus.node_ids.length && !focus.edge_ids.length && !focus.group_ids.length) continue;
+    candidates.push({ requestId: `${turn.id}:${step.step_id}`, focus });
+  }
+  return candidates;
+}
+
 export function errorDetail(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
     return error.detail;
