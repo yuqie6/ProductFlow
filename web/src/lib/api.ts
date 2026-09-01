@@ -842,8 +842,12 @@ export const api = {
       body: formData,
     });
   },
-  listImageSessions(): Promise<ImageSessionListResponse> {
-    return request("/api/image-sessions");
+  listImageSessions(options: { after?: string; limit?: number } = {}): Promise<ImageSessionListResponse> {
+    const params = new URLSearchParams();
+    if (options.after) params.set("after", options.after);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return request(`/api/image-sessions${query ? `?${query}` : ""}`);
   },
   createImageSession(input: { title?: string }): Promise<ImageSessionDetail> {
     return request("/api/image-sessions", {

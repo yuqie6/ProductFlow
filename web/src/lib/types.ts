@@ -1331,6 +1331,7 @@ export interface ImageSessionStatus {
 
 export interface ImageSessionListResponse {
   items: ImageSessionSummary[];
+  next_cursor: string | null;
 }
 
 export type ConfigSource = "database" | "env_default";

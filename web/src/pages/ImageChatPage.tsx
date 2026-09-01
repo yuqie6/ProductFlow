@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { InfiniteData } from "@tanstack/react-query";
 import { Drawer } from "vaul";
 import {
   ChevronRight,
@@ -267,12 +268,20 @@ export function ImageChatPage() {
     return () => window.removeEventListener("resize", clampPanelSizesToViewport);
   }, [historyPanelHeight, leftPanelWidth, rightPanelWidth]);
 
-  const sessionsQuery = useQuery({
+  const sessionsQuery = useInfiniteQuery({
     queryKey: ["image-sessions"],
-    queryFn: api.listImageSessions,
+    queryFn: ({ pageParam }) => api.listImageSessions({
+      after: pageParam || undefined,
+      limit: 20,
+    }),
+    initialPageParam: "",
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
   });
 
-  const sessionItems = sessionsQuery.data?.items ?? [];
+  const sessionItems = useMemo(
+    () => sessionsQuery.data?.pages.flatMap((page) => page.items) ?? [],
+    [sessionsQuery.data],
+  );
 
   const productsQuery = useQuery({
     queryKey: ["products"],
@@ -572,9 +581,15 @@ export function ImageChatPage() {
     onSuccess: async (_response, deletedSessionId) => {
       const remainingSessions = sessionItems.filter((item) => item.id !== deletedSessionId);
       setPendingDeleteAction(null);
-      queryClient.setQueryData<ImageSessionListResponse>(
+      queryClient.setQueryData<InfiniteData<ImageSessionListResponse>>(
         ["image-sessions"],
-        (current) => current ? { ...current, items: current.items.filter((item) => item.id !== deletedSessionId) } : current,
+        (current) => current ? {
+          ...current,
+          pages: current.pages.map((page) => ({
+            ...page,
+            items: page.items.filter((item) => item.id !== deletedSessionId),
+          })),
+        } : current,
       );
       queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId] });
       if (selectedSessionId === deletedSessionId) {
@@ -1044,6 +1059,9 @@ export function ImageChatPage() {
             variant="desktop"
             onSelectSession={handleSelectSession}
             onDeleteSession={handleDeleteSession}
+            hasNextPage={sessionsQuery.hasNextPage}
+            isFetchingNextPage={sessionsQuery.isFetchingNextPage}
+            onLoadMore={() => void sessionsQuery.fetchNextPage()}
             t={t}
           />
         </aside>
@@ -1438,6 +1456,9 @@ export function ImageChatPage() {
               variant="mobile"
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
+              hasNextPage={sessionsQuery.hasNextPage}
+              isFetchingNextPage={sessionsQuery.isFetchingNextPage}
+              onLoadMore={() => void sessionsQuery.fetchNextPage()}
               t={t}
             />
           </Drawer.Content>

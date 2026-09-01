@@ -74,20 +74,47 @@ func (s Service) allowedToolFields(ctx context.Context) []string {
 	return runtime.ImageToolAllowedFields
 }
 
-// List 按 updated_at 倒序列出全部会话摘要，不分页。
-// 调用时机：HTTP GET /api/image-sessions。无写入。空库返回 Items=[] 而不是 nil。
-func (s Service) List(ctx context.Context) (ListResponse, error) {
+// List 按 updated_at、id 倒序返回一页会话摘要。
+// 调用时机：HTTP GET /api/image-sessions。无写入。空库返回 Items=[]、NextCursor=null。
+func (s Service) List(ctx context.Context, after string, limit int) (ListResponse, error) {
+	if limit == 0 {
+		limit = imageSessionListDefaultLimit
+	}
+	if limit < 1 || limit > imageSessionListMaxLimit {
+		return ListResponse{}, apperr.Validation("会话列表 limit 必须在 1 到 100 之间")
+	}
+	cursor, cursorAt, hasCursor := decodeImageSessionListCursor(after)
+	if strings.TrimSpace(after) != "" && !hasCursor {
+		return ListResponse{}, apperr.Validation("会话列表游标无效")
+	}
+
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		query := pgxTx.Select("id", "title", "created_at", "updated_at")
+		if hasCursor {
+			query = query.Where("updated_at < ? OR (updated_at = ? AND id < ?)", cursorAt, cursorAt, cursor.ID)
+		}
 		var sessions []schema.ImageSessions
-		if err := pgxTx.Order("updated_at DESC, id DESC").Find(&sessions).Error; err != nil {
+		if err := query.Order("updated_at DESC, id DESC").Limit(limit + 1).Find(&sessions).Error; err != nil {
 			return err
+		}
+		hasMore := len(sessions) > limit
+		if hasMore {
+			sessions = sessions[:limit]
 		}
 		items, err := serializeSessionSummaries(ctx, pgxTx, sessions)
 		if err != nil {
 			return err
 		}
 		out.Items = items
+		if hasMore {
+			last := sessions[len(sessions)-1]
+			next, err := encodeImageSessionListCursor(last.UpdatedAt, last.ID)
+			if err != nil {
+				return err
+			}
+			out.NextCursor = &next
+		}
 		return nil
 	})
 	return out, err

@@ -76,9 +76,18 @@ func (h HTTP) requireDeletion(c *gin.Context) {
 	}
 }
 
-// list 是 GET /api/image-sessions：200 返回 ListResponse。
+// list 是 GET /api/image-sessions：200 返回 ListResponse。limit 默认 20、上限 100；after 是不透明游标。
 func (h HTTP) list(c *gin.Context) {
-	out, err := h.Service.List(c.Request.Context())
+	limit := imageSessionListDefaultLimit
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > imageSessionListMaxLimit {
+			httpx.AbortErr(c, apperr.Validation("会话列表 limit 必须在 1 到 100 之间"))
+			return
+		}
+		limit = parsed
+	}
+	out, err := h.Service.List(c.Request.Context(), c.Query("after"), limit)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

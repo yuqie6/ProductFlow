@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -153,6 +154,73 @@ func (ss *sessionServer) mustStatus(t *testing.T, resp *http.Response, want int)
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		t.Fatalf("status %d want %d %s", resp.StatusCode, want, raw)
+	}
+}
+
+func TestImageSessionListCursorPagination(t *testing.T) {
+	ss := newSessionServer(t)
+	var sessions []DetailResponse
+	for _, title := range []string{"一", "二", "三", "四", "五"} {
+		created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": title})
+		ss.mustStatus(t, created, http.StatusCreated)
+		var session DetailResponse
+		ss.decode(t, created, &session)
+		sessions = append(sessions, session)
+	}
+	base := time.Now().UTC().Add(100*365*24*time.Hour + 24*time.Hour + 10*time.Minute)
+	for i, session := range sessions {
+		if _, err := ss.pool.Exec(context.Background(), `UPDATE image_sessions SET updated_at = $1 WHERE id = $2`, base.Add(time.Duration(len(sessions)-i)*time.Minute), session.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	readPage := func(path string) ListResponse {
+		resp := ss.do(t, http.MethodGet, path, nil, "")
+		ss.mustStatus(t, resp, http.StatusOK)
+		var page ListResponse
+		ss.decode(t, resp, &page)
+		return page
+	}
+	first := readPage("/api/image-sessions?limit=2")
+	if len(first.Items) != 2 || first.Items[0].ID != sessions[0].ID || first.Items[1].ID != sessions[1].ID || first.NextCursor == nil {
+		t.Fatalf("first page %+v", first)
+	}
+	second := readPage("/api/image-sessions?limit=2&after=" + url.QueryEscape(*first.NextCursor))
+	if len(second.Items) != 2 || second.Items[0].ID != sessions[2].ID || second.Items[1].ID != sessions[3].ID || second.NextCursor == nil {
+		t.Fatalf("second page %+v", second)
+	}
+	third := readPage("/api/image-sessions?limit=2&after=" + url.QueryEscape(*second.NextCursor))
+	if len(third.Items) == 0 || third.Items[0].ID != sessions[4].ID {
+		t.Fatalf("third page %+v", third)
+	}
+	seen := map[string]bool{}
+	for _, item := range append(first.Items, second.Items...) {
+		seen[item.ID] = true
+	}
+	page := third
+	for page.Items != nil {
+		for _, item := range page.Items {
+			for _, session := range sessions {
+				if item.ID == session.ID {
+					if seen[item.ID] {
+						t.Fatalf("session %s appeared twice", item.ID)
+					}
+					seen[item.ID] = true
+				}
+			}
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		page = readPage("/api/image-sessions?limit=2&after=" + url.QueryEscape(*page.NextCursor))
+	}
+	if len(seen) != len(sessions) {
+		t.Fatalf("cursor pages missed sessions: %v", seen)
+	}
+	for _, path := range []string{"/api/image-sessions?limit=0", "/api/image-sessions?limit=101", "/api/image-sessions?after=invalid"} {
+		resp := ss.do(t, http.MethodGet, path, nil, "")
+		ss.mustStatus(t, resp, http.StatusBadRequest)
+		resp.Body.Close()
 	}
 }
 

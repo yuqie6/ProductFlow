@@ -124,10 +124,11 @@ type SummaryResponse struct {
 	UpdatedAt            time.Time      `json:"updated_at"`
 }
 
-// ListResponse 是 GET 会话列表的 HTTP 体：不分页，按 updated_at 倒序一次返回。
-// 会话很多时也不要改成 cursor 除非改合同；轮询单会话请用 StatusResponse。
+// ListResponse 是 GET 会话列表的 HTTP 体：按 updated_at、id 倒序返回一页。
+// NextCursor 是不透明游标；轮询单会话请用 StatusResponse。
 type ListResponse struct {
-	Items []SummaryResponse `json:"items"` // 不分页；空库是 [] 不是 null
+	Items      []SummaryResponse `json:"items"`       // 空库是 [] 不是 null
+	NextCursor *string           `json:"next_cursor"` // 没有下一页时为 null
 }
 
 // DetailResponse 是会话详情的 HTTP 投影：素材、轮次、生成任务。

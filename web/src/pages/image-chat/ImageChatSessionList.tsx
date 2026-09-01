@@ -1,4 +1,4 @@
-import { History, Loader2, MessagesSquare, Trash2 } from "lucide-react";
+import { ChevronDown, History, Loader2, MessagesSquare, Trash2 } from "lucide-react";
 
 import { api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -14,6 +14,9 @@ interface ImageChatSessionListProps {
   variant: "desktop" | "mobile";
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  onLoadMore: () => void;
   t: ImageChatTranslate;
 }
 
@@ -26,6 +29,9 @@ export function ImageChatSessionList({
   variant,
   onSelectSession,
   onDeleteSession,
+  hasNextPage,
+  isFetchingNextPage,
+  onLoadMore,
   t,
 }: ImageChatSessionListProps) {
   const containerClassName =
@@ -54,19 +60,32 @@ export function ImageChatSessionList({
           ))}
         </div>
       ) : items.length ? (
-        items.map((item) => (
-          <ImageChatSessionCard
-            key={item.id}
-            item={item}
-            active={item.id === selectedSessionId}
-            deleting={deletingSessionId === item.id}
-            deletionEnabled={deletionEnabled}
-            variant={variant}
-            onSelectSession={onSelectSession}
-            onDeleteSession={onDeleteSession}
-            t={t}
-          />
-        ))
+        <>
+          {items.map((item) => (
+            <ImageChatSessionCard
+              key={item.id}
+              item={item}
+              active={item.id === selectedSessionId}
+              deleting={deletingSessionId === item.id}
+              deletionEnabled={deletionEnabled}
+              variant={variant}
+              onSelectSession={onSelectSession}
+              onDeleteSession={onDeleteSession}
+              t={t}
+            />
+          ))}
+          {hasNextPage ? (
+            <button
+              type="button"
+              onClick={onLoadMore}
+              disabled={isFetchingNextPage}
+              className="inline-flex min-h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/55 dark:text-slate-300 dark:hover:border-violet-400/60 dark:hover:text-violet-100"
+            >
+              {isFetchingNextPage ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} />}
+              <span>{t("chat.loadMoreSessions")}</span>
+            </button>
+          ) : null}
+        </>
       ) : (
         <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
           {t("chat.noSessions")}
