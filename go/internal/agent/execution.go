@@ -405,6 +405,20 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 			Select("COALESCE(MAX(sequence), 0)").Scan(&last).Error; err != nil {
 			return err
 		}
+		sequences := make([]int, 0, len(inputs))
+		for _, input := range inputs {
+			sequences = append(sequences, input.Sequence)
+		}
+		var existingEvents []schema.AgentTurnEvents
+		if err := gdb.Select("id, turn_projection_id, execution_id, run_id, turn_id, schema_version, sequence, attempt, fencing_token, kind, ignorable, payload_json, created_at").
+			Where("turn_projection_id = ? AND sequence IN ?", lease.ProjectionID, sequences).
+			Find(&existingEvents).Error; err != nil {
+			return err
+		}
+		existingBySequence := make(map[int]schema.AgentTurnEvents, len(existingEvents))
+		for _, existing := range existingEvents {
+			existingBySequence[existing.Sequence] = existing
+		}
 		out = make([]EventReceipt, 0, len(inputs))
 		for _, input := range inputs {
 			runID := stringsTrim(input.RunID)
@@ -417,9 +431,8 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				return apperr.Conflict("Agent event run ID 与 Turn runtime 不匹配")
 			}
 
-			var existing schema.AgentTurnEvents
-			scanErr := gdb.Where("turn_projection_id = ? AND sequence = ?", lease.ProjectionID, input.Sequence).Take(&existing).Error
-			if scanErr == nil {
+			existing, hasExisting := existingBySequence[input.Sequence]
+			if hasExisting {
 				if existing.SchemaVersion != input.SchemaVersion || existing.RunID != runID || existing.TurnID != turnID || existing.Kind != kind || existing.Ignorable != input.Ignorable || !sameJSON(existing.PayloadJSON, input.Payload) {
 					metrics.AgentEventSequenceConflicts.Add(1)
 					return apperr.ConflictCode(apperr.CodeEventSequenceConflict, "Agent event sequence 已绑定不同内容")
@@ -444,9 +457,6 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				}
 				continue
 			}
-			if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
-				return scanErr
-			}
 			if input.Sequence != last+1 {
 				metrics.AgentEventSequenceConflicts.Add(1)
 				return apperr.Conflict("Agent event sequence 必须连续提交")
@@ -470,6 +480,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				}
 				return err
 			}
+			existingBySequence[input.Sequence] = ev
 			last = input.Sequence
 			out = append(out, EventReceipt{
 				ID: ev.ID, ProjectionID: lease.ProjectionID, ExecutionID: executionID,

@@ -27,7 +27,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | 异步投递 | API 只写业务行和 `async_dispatches=PENDING`；dispatcher 标 SENT 后写 Redis asynq；worker 回写 PostgreSQL | Redis 丢信封时依赖 PostgreSQL 对账；broker 重试不是业务重试 | `go/internal/platform/queue` |
 | Redis | 当前主要承担 asynq broker 和投递唤醒 | 没有缓存、租户公平队列、限流或分布式 SSE 总线 | `productflow-dispatcher`、`productflow-worker` |
 | Graph 执行 | 一个 GraphRun 由一个 worker 入口处理；互不依赖节点可以并发打 provider | 当前 run advisory lock 会跨整个 execute loop；一个 asynq 槽可能持有整张 DAG | `go/internal/graph` |
-| Agent 执行 | PostgreSQL lease、fencing 和 journal 为权威；Node/Pi 只负责 adapter 和私有 WAL | lease 行锁只在短事务内；journal 批量写入仍需观测 | `go/internal/agent`、`agent-service` |
+| Agent 执行 | PostgreSQL lease、fencing 和 journal 为权威；Node/Pi 只负责 adapter 和私有 WAL | lease 行锁只在短事务内；`AppendEvents` 先批量读取 batch 内已有 sequence，容量 gate P95 需持续观测 | `go/internal/agent`、`agent-service` |
 | 连续生图 | Graph 与 ImageSession 共用全库 `generation_max_concurrent_tasks` 和 advisory capacity lock | 当前默认上限 3，所有商家共享一个 admission 点 | `graph/durability.go`、`imagesession/execute.go` |
 | SSE | Agent、Graph、ImageSession 的 PostgreSQL NOTIFY 在同一进程按 pool 共享 fanout；通知丢失后按游标或状态轮询 | 每个 API 副本至少有一条 listener 连接；不是每个浏览器一条连接 | `platform/notify` 与各 SSE handler |
 | 认证与数据范围 | 管理员 session 是签名 cookie 布尔状态，没有 user/tenant id | 没有挂载租户限流、配额、审计和数据隔离的主键 | `auth`、`httpx/session` |
@@ -70,6 +70,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | PERF-08 | ImageSession 列表 N+1 | 部分完成 | 最新轮次与资产、round count 改成批量查询；`image_sessions(updated_at DESC,id DESC)` 索引已写入并完成本地迁移 | 列表仍全表读取且无分页；详情页任务/effect/队列总览仍有多次查询 |
 | PERF-09 | GraphRun 列表 N+1 与排序 | 部分完成 | run 与 node runs 改成批量读取；`(graph_id, started_at DESC, id DESC)` 索引已写入并完成本地 schema migration | 列表仍加载 snapshot 与 node runs；需要轻量摘要 DTO 或分离详情读取和 query plan 记录 |
 | PERF-12 | Agent Session 列表 N+1 | 部分完成 | 当前页 session、每个 session 最近 20 条 conversation 和 count 改成批量查询；21 条 conversation limit regression 通过 | 需要真实规模 payload/query plan；单条详情路径仍按一个 session 组装三类数据 |
+| PERF-13 | Agent journal batch 写入 P95 | 部分完成 | `AppendEvents` 将 batch 内已有 sequence 从逐条 `Take` 改为一次查询，保留 projection lock、幂等 replay 和逐条 fold；容量 gate 连续两次通过，P95=240ms/211ms，100 SSE 通过 | 需要持续 histogram、目标规模负载与锁等待观测 |
 | PERF-10 | tenant 和真实身份 | 待实施 | 当前明确维持单管理员、单商家合同，不提前给现有 live 表补 tenant_id | SaaS 起点需同时设计 principal、数据范围、配额、审计和存储，不做局部补丁 |
 | PERF-11 | Graph 长生命周期 advisory | 观察 | `pg_try_advisory_lock` 目前保证一个 GraphRun 一个 worker，provider 调用期间持有 session connection | 需要 row lease 或短事务 claim 的完整替代设计；迁移前不能直接删除 advisory |
 
@@ -347,6 +348,7 @@ just web-build
 | 2026-09-01 | ImageSession/GraphRun 排序索引 ExtraDDL | `just go-migrate`；`go test -C go ./internal/platform/db/schema -count=1 -p 1` 通过 | 目标数据规模的 `EXPLAIN (ANALYZE, BUFFERS)` |
 | 2026-09-01 | Graph/ImageSession/Delivery/LocalEdit recovery 有界候选批次与 Agent `has_more` 汇总 | recovery focused tests；dispatcher/Agent focused tests；第二次 `just go-test` 全量通过 | stale-running backlog 分项、批次事务耗时与锁等待 |
 | 2026-09-01 | API queued/stale-running recovery backlog 与 dispatcher recovery duration | metrics snapshot integration；dispatcher/metrics focused tests；最新 `just go-test` 全量通过 | recovery histogram 和锁等待 |
+| 2026-09-01 | Agent `AppendEvents` batch sequence prefetch | Agent 全包回归；`just go-test-agent-journal-capacity` 连续两次通过，P95=240ms、211ms；100 SSE capacity 通过 | 生产 histogram 与更大规模并发 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 
