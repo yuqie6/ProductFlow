@@ -176,7 +176,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 ## 9. 异步与恢复
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
-- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；backlog 指标仍待补齐。
+- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`，Prometheus backlog 指标仍待补齐。
 - Redis 只承担 asynq broker 和投递唤醒；业务状态和生成容量 admission 由 PostgreSQL 负责。asynq worker 默认并发为 4，业务失败不依赖 broker retry。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。

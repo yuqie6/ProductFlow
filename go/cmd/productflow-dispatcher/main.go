@@ -129,12 +129,25 @@ func main() {
 			zap.Int("rendition", rendition.EnqueuedJobs),
 			zap.Int("local_image_edit", localImageEdit.EnqueuedTasks),
 			zap.Int("local_image_edit_unknown", localImageEdit.UnknownTasks),
+			zap.Bool("workflow_more", workflow.HasMore),
+			zap.Bool("image_session_more", imageSession.HasMore),
+			zap.Bool("rendition_more", rendition.HasMore),
+			zap.Bool("local_image_edit_more", localImageEdit.HasMore),
+			zap.Bool("agent_more", agentTurns.HasMore),
 		}
 		recoveryWork := []int{
 			workflow.EnqueuedRuns, workflow.UnknownRuns,
 			imageSession.EnqueuedTasks, imageSession.UnknownTasks,
 			agentTurns.EnqueuedTurns, rendition.EnqueuedJobs,
 			localImageEdit.EnqueuedTasks, localImageEdit.UnknownTasks,
+		}
+		for _, hasMore := range []bool{
+			workflow.HasMore, imageSession.HasMore, rendition.HasMore,
+			localImageEdit.HasMore, agentTurns.HasMore,
+		} {
+			if hasMore {
+				recoveryWork = append(recoveryWork, 1)
+			}
 		}
 		if dispatcherCycleIdle(summary, recoveryWork...) {
 			logger.Debug("dispatcher cycle", fields...)

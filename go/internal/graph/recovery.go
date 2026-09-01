@@ -24,7 +24,8 @@ type RecoverySummary struct {
 	StaleRunningRuns int `json:"stale_running_runs"` // 过期 running 节点被重新 queued
 	EnqueuedRuns     int `json:"enqueued_runs"`      // RestageIfIdle 实际补回 PENDING 的次数
 	// UnknownRuns 是过期且已打 provider、被标 unknown 的 run 数；unknown 不可经 RetryRun 重试。
-	UnknownRuns int `json:"unknown_runs"`
+	UnknownRuns int  `json:"unknown_runs"`
+	HasMore     bool `json:"has_more"` // 本轮批次已填满，下一轮继续探测
 }
 
 // RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
@@ -84,6 +85,9 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 			Limit(graphRecoveryBatchLimit).
 			Find(&running).Error; err != nil {
 			return err
+		}
+		if len(running) >= graphRecoveryBatchLimit {
+			summary.HasMore = true
 		}
 		for _, item := range running {
 			runID := item.ID
@@ -200,9 +204,13 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				Where("NOT EXISTS (SELECT 1 FROM workflow_graph_runs active WHERE active.graph_id = workflow_graph_runs.graph_id AND active.status = ?)", RunStatusRunning).
 				Distinct("graph_id").
 				Order("graph_id ASC").
-				Limit(remaining).
+				Limit(remaining+1).
 				Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
 				return err
+			}
+			if len(queuedGraphIDs) > remaining {
+				summary.HasMore = true
+				queuedGraphIDs = queuedGraphIDs[:remaining]
 			}
 			for _, graphID := range queuedGraphIDs {
 				if err := promoteNextQueuedRun(ctx, pgxTx, graphID); err != nil {

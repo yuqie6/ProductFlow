@@ -99,7 +99,7 @@ func TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate(t *testing.T)
 		go func() {
 			defer wg.Done()
 			err := tx.WithGorm(context.Background(), as.db, func(gdb *gorm.DB) error {
-				_, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 2)
+				_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 2)
 				return recErr
 			})
 			errs <- err
@@ -192,7 +192,7 @@ func TestAppendEventsAndExpiredRecoveryDoNotDeadlock(t *testing.T) {
 	expireClaimedTurn(t, as, claimed)
 	go func() {
 		err := tx.WithGorm(context.Background(), as.db, func(gdb *gorm.DB) error {
-			_, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 25)
+			_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 25)
 			return recErr
 		})
 		results <- result{operation: "recovery", err: err}

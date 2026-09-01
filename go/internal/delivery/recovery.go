@@ -16,9 +16,10 @@ const recoveryBatchLimit = 25
 
 // RecoverySummary 统计 dispatcher 本轮补回的交付任务。
 type RecoverySummary struct {
-	QueuedJobs       int `json:"queued_jobs"`        // 本轮看到的 queued 任务数
-	StaleRunningJobs int `json:"stale_running_jobs"` // 过期 running 被重置为 queued 的数量
-	EnqueuedJobs     int `json:"enqueued_jobs"`      // 成功补回 PENDING dispatch 的数量
+	QueuedJobs       int  `json:"queued_jobs"`        // 本轮看到的 queued 任务数
+	StaleRunningJobs int  `json:"stale_running_jobs"` // 过期 running 被重置为 queued 的数量
+	EnqueuedJobs     int  `json:"enqueued_jobs"`      // 成功补回 PENDING dispatch 的数量
+	HasMore          bool `json:"has_more"`           // 本轮批次已填满，下一轮继续探测
 }
 
 // RecoverUnfinished 把 queued / 过期 running 的交付任务补回 PENDING dispatch。交付没有 unknown。
@@ -48,6 +49,9 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			Limit(recoveryBatchLimit).
 			Find(&jobs).Error; err != nil {
 			return err
+		}
+		if len(jobs) >= recoveryBatchLimit {
+			summary.HasMore = true
 		}
 		now := time.Now().UTC()
 		for _, job := range jobs {

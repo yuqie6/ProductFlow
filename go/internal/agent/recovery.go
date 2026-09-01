@@ -17,10 +17,11 @@ import (
 
 // RecoverySummary 是 dispatcher 本轮崩溃恢复的计数：待同步 Turn、实际补入 PENDING 的条数、为 queued Task 补出的首轮 Turn、以及因过期 lease 标 unknown 的 execution。
 type RecoverySummary struct {
-	PendingTurns       int // 待同步 Turn 数
-	EnqueuedTurns      int // 实际补入 PENDING 的条数
-	RecoveredTaskTurns int // 为 queued Task 补出的首轮 Turn
-	UnknownExecutions  int // 因过期 lease 标 unknown 的 execution
+	PendingTurns       int  `json:"pending_turns"`        // 本轮选中的待同步 Turn 数
+	EnqueuedTurns      int  `json:"enqueued_turns"`       // 实际补入 PENDING 的条数
+	RecoveredTaskTurns int  `json:"recovered_task_turns"` // 为 queued Task 补出的首轮 Turn
+	UnknownExecutions  int  `json:"unknown_executions"`   // 因过期 lease 标 unknown 的 execution
+	HasMore            bool `json:"has_more"`             // 本轮批次已填满，下一轮继续探测
 }
 
 const expiredExecutionBatchLimit = 25
@@ -57,11 +58,12 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 	}
 	var out RecoverySummary
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		n, err := recoverExpiredExecutions(ctx, s, pgxTx, limit)
+		n, hasMore, err := recoverExpiredExecutions(ctx, s, pgxTx, limit)
 		if err != nil {
 			return err
 		}
 		out.UnknownExecutions = n
+		out.HasMore = hasMore
 		if n > 0 {
 			metrics.AgentRecoveryUnknownExecutions.Add(int64(n))
 		}
@@ -71,11 +73,12 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 		return out, err
 	}
 
-	recovered, err := recoverQueuedTaskTurns(ctx, s, limit)
+	recovered, hasMore, err := recoverQueuedTaskTurns(ctx, s, limit)
 	if err != nil {
 		return out, err
 	}
 	out.RecoveredTaskTurns = recovered
+	out.HasMore = hasMore
 
 	var ids []string
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -87,11 +90,15 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 				  AND d.status IN ?
 			)`, queue.ActorAgentTurnSync, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
 			Order("created_at, id").
-			Limit(limit).
+			Limit(limit+1).
 			Pluck("id", &ids).Error
 	})
 	if err != nil {
 		return out, err
+	}
+	if len(ids) > limit {
+		out.HasMore = true
+		ids = ids[:limit]
 	}
 	out.PendingTurns = len(ids)
 
@@ -120,7 +127,10 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 // 幂等键固定为 initial:{conversationID}:{taskID}，崩溃重入走 reserveTurn 回放，不会重复造 projection。reserve 失败的单条跳过，不让一只坏 Task 卡死整批恢复。
 //
 // 写 agent_turn_projections（经 reserveTurn）。不改已处于 goal_loop / 用户终态的 Task。
-func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, error) {
+func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, bool, error) {
+	if limit <= 0 {
+		limit = expiredExecutionBatchLimit
+	}
 	type item struct {
 		ID        string  `gorm:"column:id"`
 		Goal      string  `gorm:"column:goal"`
@@ -135,10 +145,14 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, err
 			Joins("JOIN agent_conversations ON agent_conversations.id = agent_tasks.conversation_id").
 			Where("agent_tasks.status = ? AND agent_tasks.current_turn_id IS NULL AND agent_tasks.conversation_id IS NOT NULL", "queued").
 			Order("agent_tasks.created_at, agent_tasks.id").
-			Limit(limit).
+			Limit(limit + 1).
 			Scan(&tasks).Error
 	}); err != nil {
-		return 0, err
+		return 0, false, err
+	}
+	hasMore := len(tasks) > limit
+	if hasMore {
+		tasks = tasks[:limit]
 	}
 	created := 0
 	for _, task := range tasks {
@@ -160,7 +174,7 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, err
 			created++
 		}
 	}
-	return created, nil
+	return created, hasMore, nil
 }
 
 // recoverExpiredExecutions 回收 lease_expires_at 已过的 execution：递增 fencing_token、清空 owner，无法证明终态则把 Turn 标 unknown。
@@ -170,7 +184,7 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, err
 // journal 已有 turn/end 则 reprojectExistingTerminal，不另写终态。requires_input 且尚未过安全边界则只收 lease。否则 appendInterruptedTurnEvents（含 effect reconcile）并写 projection=unknown、started invocation=interrupted。
 //
 // 禁区：不要把过期当成 failed；不要覆盖用户拥有的 Goal（本函数不写 agent_tasks 终态完成）。
-func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, limit int) (int, error) {
+func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, limit int) (int, bool, error) {
 	if limit <= 0 {
 		limit = expiredExecutionBatchLimit
 	}
@@ -190,8 +204,9 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 		Order("agent_turn_executions.id").
 		Limit(limit).
 		Scan(&candidates).Error; err != nil {
-		return 0, err
+		return 0, false, err
 	}
+	hasMore := len(candidates) >= limit
 	unknown := 0
 	now := time.Now().UTC()
 	for _, item := range candidates {
@@ -201,7 +216,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 			continue
 		}
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		var execution schema.AgentTurnExecutions
 		err = pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
@@ -211,7 +226,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 			continue
 		}
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 			"fencing_token":    gorm.Expr("fencing_token + 1"),
@@ -220,7 +235,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 			"lease_expires_at": nil,
 			"released_at":      now,
 		}).Error; err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		publishLeaseChanged(pgxTx, item.ID, "expired")
 		var existingTerminal schema.AgentTurnEvents
@@ -228,7 +243,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 			Order("sequence DESC").Take(&existingTerminal).Error
 		if scanErr == nil {
 			if err := reprojectExistingTerminal(ctx, s, pgxTx, item.ProjectionID, item.ID, execution, existingTerminal); err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			var payload terminalEventPayload
 			if json.Unmarshal([]byte(existingTerminal.PayloadJSON), &payload) == nil && payload.Status == "unknown" {
@@ -237,7 +252,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 			continue
 		}
 		if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
-			return 0, scanErr
+			return 0, false, scanErr
 		}
 		if projection.Status == "requires_input" || projection.Status == "awaiting_confirmation" {
 			continue
@@ -245,7 +260,7 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 		if inSet(activeTurn, projection.Status) && !(projection.Status == "queued" && execution.Phase == "claimed") {
 			output, err := appendInterruptedTurnEvents(ctx, s, pgxTx, item.ProjectionID, item.ID, now)
 			if err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", item.ProjectionID).Updates(map[string]any{
 				"status":               "unknown",
@@ -256,22 +271,22 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 				"resume_required":      false,
 				"output_text":          nullableString(output),
 			}).Error; err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			if err := pgxTx.Model(&schema.AgentModelInvocations{}).
 				Where("turn_projection_id = ? AND status = ?", item.ProjectionID, "started").
 				Updates(map[string]any{"status": "interrupted", "finished_at": now, "updated_at": now}).Error; err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 				"phase": "terminal",
 			}).Error; err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			unknown++
 		}
 	}
-	return unknown, nil
+	return unknown, hasMore, nil
 }
 
 // reprojectExistingTerminal 在 lease 已过期、但 journal 已有 turn/end 时，用回收后的 fencing_token（原值+1）重跑 projectTerminalEvent。
