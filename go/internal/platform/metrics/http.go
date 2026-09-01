@@ -195,6 +195,46 @@ func snapshot(db *gorm.DB) (string, error) {
 	`).Scan(&recoveryBacklog).Error; err != nil {
 		return "", err
 	}
+	var staleRunning []recoveryBacklogCount
+	if err := db.Raw(`
+		WITH image_threshold AS (
+			SELECT COALESCE(
+				(SELECT CASE WHEN value ~ '^[1-9][0-9]*$' THEN value::integer END
+				 FROM app_settings WHERE key = 'image_session_stale_running_after_minutes'),
+				90
+			) AS image_minutes
+		), candidates AS (
+			SELECT 'graph' AS domain, r.id
+			FROM workflow_graph_runs r
+			WHERE r.status = 'running'
+			  AND EXISTS (
+				SELECT 1 FROM workflow_graph_node_runs n
+				WHERE n.graph_run_id = r.id AND n.status = 'running'
+				  AND COALESCE(n.progress_updated_at, n.started_at) <= NOW() - INTERVAL '30 minutes'
+			  )
+			UNION ALL
+			SELECT 'image_session' AS domain, t.id
+			FROM image_session_generation_tasks t
+			CROSS JOIN image_threshold
+			WHERE t.is_retryable = TRUE AND t.status = 'running'
+			  AND COALESCE(t.progress_updated_at, t.started_at) <= NOW() - image_threshold.image_minutes * INTERVAL '1 minute'
+			UNION ALL
+			SELECT 'delivery' AS domain, j.id
+			FROM delivery_rendition_jobs j
+			WHERE j.is_retryable = TRUE AND j.status = 'running'
+			  AND j.started_at IS NOT NULL AND j.started_at <= NOW() - INTERVAL '30 minutes'
+			UNION ALL
+			SELECT 'local_image_edit' AS domain, t.id
+			FROM local_image_edit_tasks t
+			WHERE t.is_retryable = TRUE AND t.status = 'running'
+			  AND (t.started_at IS NULL OR t.started_at <= NOW() - INTERVAL '10 minutes')
+		)
+		SELECT domain, COUNT(*) AS count
+		FROM candidates
+		GROUP BY domain
+	`).Scan(&staleRunning).Error; err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	b.WriteString("# HELP productflow_agent_sse_connections Current Agent SSE connections.\n")
 	b.WriteString("# TYPE productflow_agent_sse_connections gauge\n")
@@ -239,6 +279,7 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# TYPE productflow_agent_expired_leases gauge\n")
 	fmt.Fprintf(&b, "productflow_agent_expired_leases %d\n", pending.ExpiredLeases)
 	writeRecoveryBacklog(&b, recoveryBacklog)
+	writeRecoveryStaleRunning(&b, pending.ExpiredLeases, staleRunning)
 	return b.String(), nil
 }
 
@@ -251,6 +292,19 @@ func writeRecoveryBacklog(b *strings.Builder, rows []recoveryBacklogCount) {
 	b.WriteString("# TYPE productflow_recovery_queued_backlog gauge\n")
 	for _, domain := range recoveryBacklogDomains {
 		fmt.Fprintf(b, "productflow_recovery_queued_backlog{domain=%q} %d\n", domain, counts[domain])
+	}
+}
+
+func writeRecoveryStaleRunning(b *strings.Builder, agentExpired int64, rows []recoveryBacklogCount) {
+	counts := make(map[string]int64, len(rows))
+	counts["agent"] = agentExpired
+	for _, row := range rows {
+		counts[row.Domain] = row.Count
+	}
+	b.WriteString("# HELP productflow_recovery_stale_running Durable running recovery candidates past their domain threshold.\n")
+	b.WriteString("# TYPE productflow_recovery_stale_running gauge\n")
+	for _, domain := range recoveryBacklogDomains {
+		fmt.Fprintf(b, "productflow_recovery_stale_running{domain=%q} %d\n", domain, counts[domain])
 	}
 }
 

@@ -41,7 +41,7 @@ Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正�
 
 ### 运行时性能治理
 
-跨 Graph、Agent、异步投递、连续生图、SSE、数据库查询和容量 admission 的当前基线、锁序、优化顺序与验收 Gate 维护在 [`audits/performance-governance.md`](audits/performance-governance.md)。当前工作树已收口部分锁序、各域 recovery 批次、dispatcher cadence、SSE fanout、queued recovery backlog 指标和列表摘要查询；Graph 长 advisory、stale-running 指标、列表分页、剩余 N+1 与 SaaS admission 仍待专项验证或新基线设计。
+跨 Graph、Agent、异步投递、连续生图、SSE、数据库查询和容量 admission 的当前基线、锁序、优化顺序与验收 Gate 维护在 [`audits/performance-governance.md`](audits/performance-governance.md)。当前工作树已收口部分锁序、各域 recovery 批次、dispatcher cadence、SSE fanout、queued/stale-running recovery backlog 指标和列表摘要查询；Graph 长 advisory、recovery histogram、列表分页、剩余 N+1 与 SaaS admission 仍待专项验证或新基线设计。
 
 ### 图片生产质量
 

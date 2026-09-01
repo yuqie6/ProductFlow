@@ -31,7 +31,10 @@ func TestSnapshotIncludesRecoveryBacklog(t *testing.T) {
 	}
 	for _, domain := range recoveryBacklogDomains {
 		if !strings.Contains(body, `productflow_recovery_queued_backlog{domain="`+domain+`"}`) {
-			t.Fatalf("missing recovery backlog domain %q in metrics", domain)
+			t.Fatalf("missing queued recovery backlog domain %q in metrics", domain)
+		}
+		if !strings.Contains(body, `productflow_recovery_stale_running{domain="`+domain+`"}`) {
+			t.Fatalf("missing stale recovery backlog domain %q in metrics", domain)
 		}
 	}
 }
