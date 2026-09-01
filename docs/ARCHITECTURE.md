@@ -132,7 +132,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 摄影和信息图每种图片类型落成一层 Group：1 个 `image_prompt` 加 N 个 `image_generation`（N 为该镜头张数）。证据类型（资质、工厂）是未绑定的 `image_asset`，`role=evidence`。创建上传的参考图 `role=product_identity`，接到视觉规范、创作要求和会生图镜头，不接到证据占位。添加面板「添加场景」一次 ChangeSet 创建组 + prompt + 1 张生图。实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`，模板 `go/internal/graph`。
 
-`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 runtime `generation_max_concurrent_tasks`。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。证据：`go/internal/graph` 执行与耐久测试。
+`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 PostgreSQL 权威的 `generation_max_concurrent_tasks` admission。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。运行时的 Graph claim 先取全局 generation capacity advisory，再按 `run -> node -> effect` 的顺序取执行行；修改 live graph 的自动采用路径按 `run -> graph -> node`。证据：`go/internal/graph` 执行与耐久测试。
 
 工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以提交整图、运行到某节点、单节点，或对镜头/失败子集提交一次 `selection`。已有 `running` run 时新请求进入 FIFO 排队，出队时再快照。用户不需要先创建 Agent Conversation。Agent 通过 `go/internal/agent` 创建待确认请求；用户确认后走同一套 `go/internal/graph` 约束。商品路径 Agent Turn 不能提交 Draft artifact。单次可逆改图走 Graph Command（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
 
@@ -176,11 +176,11 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 ## 9. 异步与恢复
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
-- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。
-- Redis 承担 broker 和并发 admission。
+- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；backlog 指标仍待补齐。
+- Redis 只承担 asynq broker 和投递唤醒；业务状态和生成容量 admission 由 PostgreSQL 负责。asynq worker 默认并发为 4，业务失败不依赖 broker retry。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
-- Agent service 使用 Pi session 文件做模型 loop 恢复；本地 JSONL 只作私有 WAL，持有当前 lease/fencing 的 runtime 显式读取未确认连续前缀、批量写入 PostgreSQL `agent_turn_events`，并只在 receipt 匹配后推进 ACK。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 与文/图生图会话 SSE 由 worker 写入后经 `pg_notify` 唤醒 API。浏览器断开不取消 Agent。Go worker 只绑定未启动 Turn 的 harness ID、重试 start，或恢复已持久化答案；已绑定 Turn 的活动状态和摘要由 journal 写入推进。启动只重放尚未开始的 queued Turn；Node 重启只确认或提交可证明的 WAL 连续前缀，不为丢失的 in-flight execution 写终态。Go lease 过期扫描是该类执行的唯一终态作者，`requires_input` 与 `awaiting_confirmation` parked Turn 不会被误标 unknown。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
+- Agent service 使用 Pi session 文件做模型 loop 恢复；本地 JSONL 只作私有 WAL，持有当前 lease/fencing 的 runtime 显式读取未确认连续前缀、批量写入 PostgreSQL `agent_turn_events`，并只在 receipt 匹配后推进 ACK。浏览器 live SSE 只读取 PG journal 并投影为 UI 协议，运行中与终态使用同一游标。`GET /api/v2/agent-control/events` 推送 Session/Task/lease 变更。图运行 SSE 与文/图生图会话 SSE 由 worker 写入后经 `pg_notify` 唤醒 API；同一 API 进程内的 Agent、Graph、ImageSession SSE 通过 `go/internal/platform/notify` 按 pool 共用一条 listener 连接，通知丢失时按 PostgreSQL 游标或状态回读。浏览器断开不取消 Agent。Go worker 只绑定未启动 Turn 的 harness ID、重试 start，或恢复已持久化答案；已绑定 Turn 的活动状态和摘要由 journal 写入推进。启动只重放尚未开始的 queued Turn；Node 重启只确认或提交可证明的 WAL 连续前缀，不为丢失的 in-flight execution 写终态。Go lease 过期扫描是该类执行的唯一终态作者，`requires_input` 与 `awaiting_confirmation` parked Turn 不会被误标 unknown。无法证明的结果保持 `unknown`。后台 durable Task 与全量对账见 `ROADMAP.md`。BFF 边界的历史决策见已被取代的 [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md)；当前全量 journal 与 UI 协议见 [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md)。
 - ProductFlow 的 Turn 命令响应只信任符合 Agent service wire contract 的状态；活动投影只信任 PostgreSQL journal，无法证明的外部结果继续保留 `unknown` 语义。
 
 ## 10. 配置与安全

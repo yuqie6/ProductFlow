@@ -111,8 +111,24 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 	var attemptID, sessionID string
 	var waitingCapacity bool
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		// 容量锁必须先于 task 锁，与 Graph claim 的 capacity -> run -> node 顺序一致。
+		var state schema.ImageSessionGenerationTasks
+		err := pgxTx.Select("id, status").Where("id = ?", taskID).Take(&state).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if state.Status != "queued" {
+			return nil
+		}
+		ok, err := graph.GenerationCapacityAvailable(ctx, pgxTx)
+		if err != nil {
+			return err
+		}
 		var row schema.ImageSessionGenerationTasks
-		err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&row).Error
+		err = pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -122,10 +138,6 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 		sessionID = row.SessionID
 		if row.Status != "queued" {
 			return nil
-		}
-		ok, err := graph.GenerationCapacityAvailable(ctx, pgxTx)
-		if err != nil {
-			return err
 		}
 		now := time.Now().UTC()
 		if !ok {

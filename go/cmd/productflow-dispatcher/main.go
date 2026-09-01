@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -30,11 +31,16 @@ import (
 
 func main() {
 	watch := flag.Bool("watch", false, "持续运行 recovery 和 dispatch loop")
-	interval := flag.Float64("interval", 1, "watch 模式两轮之间的等待秒数")
+	interval := flag.Float64("interval", 1, "watch 模式两轮 dispatch 之间的等待秒数")
+	recoveryInterval := flag.Float64("recovery-interval", 10, "watch 模式两轮 recovery 之间的等待秒数")
 	limit := flag.Int("limit", 100, "每轮最多处理多少条待投递记录")
 	flag.Parse()
 	if *interval <= 0 || *interval > 3600 {
 		fmt.Fprintln(os.Stderr, "--interval 必须大于 0 且不超过 3600 秒")
+		os.Exit(2)
+	}
+	if *recoveryInterval <= 0 || *recoveryInterval > 3600 {
+		fmt.Fprintln(os.Stderr, "--recovery-interval 必须大于 0 且不超过 3600 秒")
 		os.Exit(2)
 	}
 
@@ -72,35 +78,45 @@ func main() {
 	defer client.Close()
 	enqueue := queue.EnqueueWith(client)
 
-	runOnce := func() error {
+	runOnce := func(runRecovery bool) error {
 		bg := context.Background()
-		settingsStore := settings.NewStore(pool, cfg)
-		imageStale := time.Duration(settingsStore.IntSetting(bg, "image_session_stale_running_after_minutes", 90)) * time.Minute
-		workflow, err := graph.RecoverUnfinishedGraphRuns(bg, pool, 0, product.GraphGuard{})
-		if err != nil {
-			return err
-		}
-		imageSession, err := imagesession.RecoverUnfinished(bg, pool, imageStale)
-		if err != nil {
-			return err
-		}
-		rendition, err := delivery.RecoverUnfinished(bg, pool, 0)
-		if err != nil {
-			return err
-		}
-		localImageEdit, err := localedit.RecoverUnfinished(bg, pool, 0)
-		if err != nil {
-			return err
-		}
-		agentTurns, err := agent.RecoverUnfinished(bg, pool, 0)
-		if err != nil {
-			return err
+		var workflow graph.RecoverySummary
+		var imageSession imagesession.RecoverySummary
+		var rendition delivery.RecoverySummary
+		var localImageEdit localedit.RecoverySummary
+		var agentTurns agent.RecoverySummary
+		var recoveryErr error
+		if runRecovery {
+			settingsStore := settings.NewStore(pool, cfg)
+			imageStale := time.Duration(settingsStore.IntSetting(bg, "image_session_stale_running_after_minutes", 90)) * time.Minute
+			var err error
+			workflow, err = graph.RecoverUnfinishedGraphRuns(bg, pool, 0, product.GraphGuard{})
+			if err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("workflow recovery: %w", err))
+			}
+			imageSession, err = imagesession.RecoverUnfinished(bg, pool, imageStale)
+			if err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("image session recovery: %w", err))
+			}
+			rendition, err = delivery.RecoverUnfinished(bg, pool, 0)
+			if err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("delivery recovery: %w", err))
+			}
+			localImageEdit, err = localedit.RecoverUnfinished(bg, pool, 0)
+			if err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("local image edit recovery: %w", err))
+			}
+			agentTurns, err = agent.RecoverUnfinished(bg, pool, 0)
+			if err != nil {
+				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("agent recovery: %w", err))
+			}
 		}
 		summary, err := queue.RunDispatcherOnce(bg, pool, enqueue, *limit)
 		if err != nil {
-			return err
+			return errors.Join(recoveryErr, fmt.Errorf("dispatch: %w", err))
 		}
 		fields := []zap.Field{
+			zap.Bool("recovery", runRecovery),
 			zap.Int("pending", summary.Pending),
 			zap.Int("sent", summary.Sent),
 			zap.Int("reconciled", summary.Reconciled),
@@ -125,11 +141,11 @@ func main() {
 		} else {
 			logger.Info("dispatcher cycle", fields...)
 		}
-		return nil
+		return recoveryErr
 	}
 
 	if !*watch {
-		if err := runOnce(); err != nil {
+		if err := runOnce(true); err != nil {
 			logger.Fatal("dispatcher", zap.Error(err))
 		}
 		return
@@ -137,10 +153,16 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	recoveryEvery := time.Duration(*recoveryInterval * float64(time.Second))
+	var lastRecovery time.Time
 	for {
 		started := time.Now()
-		if err := runOnce(); err != nil {
+		recoveryDue := lastRecovery.IsZero() || time.Since(lastRecovery) >= recoveryEvery
+		if err := runOnce(recoveryDue); err != nil {
 			logger.Error("dispatcher cycle", zap.Error(err))
+		}
+		if recoveryDue {
+			lastRecovery = time.Now()
 		}
 		remaining := time.Duration(*interval*float64(time.Second)) - time.Since(started)
 		if remaining < 0 {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/clockid"
-	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/notify"
 	"gorm.io/gorm"
@@ -42,9 +41,10 @@ var graphRunEventKinds = map[string]struct{}{
 	"node.claimed": {}, "node.started": {}, "node.progress": {}, "node.succeeded": {}, "node.failed": {}, "node.skipped": {}, "node.cancelled": {},
 }
 
-// appendGraphRunEvent 追加 workflow_graph_run_events 并 notify ChannelRun。
-// 须先 FOR UPDATE 住 run。未知 kind 返回普通 error（不是 apperr）。sequence 取 MAX+1。
-func appendGraphRunEvent(ctx context.Context, tx *gorm.DB, runID, kind string, nodeRunID *string, payload map[string]any) error {
+// appendGraphRunEventLocked 追加 workflow_graph_run_events 并 notify ChannelRun。
+// 调用方必须已经按 Graph 锁序 FOR UPDATE 住 run；本函数不再隐式取 run 锁，避免 node -> run 的隐藏反向边。
+// 未知 kind 返回普通 error（不是 apperr）。sequence 取 MAX+1。
+func appendGraphRunEventLocked(ctx context.Context, tx *gorm.DB, runID, kind string, nodeRunID *string, payload map[string]any) error {
 	if _, ok := graphRunEventKinds[kind]; !ok {
 		return errors.New("unsupported graph run event kind")
 	}
@@ -56,7 +56,7 @@ func appendGraphRunEvent(ctx context.Context, tx *gorm.DB, runID, kind string, n
 		return err
 	}
 	var run schema.WorkflowGraphRuns
-	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id").Where("id = ?", runID).Take(&run).Error; err != nil {
+	if err := tx.WithContext(ctx).Select("id").Where("id = ?", runID).Take(&run).Error; err != nil {
 		return err
 	}
 	var last int

@@ -83,13 +83,9 @@ func (s Service) List(ctx context.Context) (ListResponse, error) {
 		if err := pgxTx.Order("updated_at DESC, id DESC").Find(&sessions).Error; err != nil {
 			return err
 		}
-		items := make([]SummaryResponse, 0, len(sessions))
-		for _, sess := range sessions {
-			item, err := s.serializeSummary(ctx, pgxTx, sessionFromModel(sess))
-			if err != nil {
-				return err
-			}
-			items = append(items, item)
+		items, err := serializeSessionSummaries(ctx, pgxTx, sessions)
+		if err != nil {
+			return err
 		}
 		out.Items = items
 		return nil

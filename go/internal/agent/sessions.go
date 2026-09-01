@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"regexp"
 	"strings"
 	"time"
@@ -236,13 +235,9 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 	if hasMore {
 		ids = ids[:limit]
 	}
-	out := make([]SessionResponse, 0, len(ids))
-	for _, id := range ids {
-		item, err := loadSession(ctx, pgxTx, id)
-		if err != nil {
-			return nil, nil, err
-		}
-		out = append(out, item)
+	out, err := loadSessions(ctx, pgxTx, ids)
+	if err != nil {
+		return nil, nil, err
 	}
 	var next *string
 	if hasMore && len(out) > 0 {
@@ -269,44 +264,108 @@ const sessionRankSQL = `GREATEST(
 			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
 		)`
 
-// loadSession 组装一条 Session 投影：标题、摘要、至多 20 条对话。缺失返回 NotFound。只读，不触发 GraphRun 同步。
-func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
-	var row schema.AgentSessions
-	err := pgxTx.WithContext(ctx).Where("id = ?", sessionID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return SessionResponse{}, apperr.NotFound("Agent Session 不存在")
+const sessionConversationLimit = 20
+
+type sessionConversationRow struct {
+	SessionID          string    `gorm:"column:session_id"`
+	ConversationID     string    `gorm:"column:conversation_id"`
+	ScopeType          string    `gorm:"column:scope_type"`
+	ProductID          *string   `gorm:"column:product_id"`
+	ProductName        string    `gorm:"column:product_name"`
+	ConversationStatus string    `gorm:"column:conversation_status"`
+	UpdatedAt          time.Time `gorm:"column:updated_at"`
+	ConversationRank   int       `gorm:"column:conversation_rank"`
+}
+
+// loadSessions 批量组装 Session 投影，避免列表页按 session 逐条读取 conversations 和 count。
+// 每个 session 仍只返回最近 20 条 conversation；调用方传入的 ids 顺序决定返回顺序。
+func loadSessions(ctx context.Context, pgxTx *gorm.DB, ids []string) ([]SessionResponse, error) {
+	if len(ids) == 0 {
+		return []SessionResponse{}, nil
 	}
-	if err != nil {
-		return SessionResponse{}, err
+	var rows []schema.AgentSessions
+	if err := pgxTx.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+		return nil, err
 	}
-	var conversations []SessionConversation
-	err = pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
-		Select(`agent_conversations.id AS conversation_id,
+	sessionByID := make(map[string]schema.AgentSessions, len(rows))
+	for _, row := range rows {
+		sessionByID[row.ID] = row
+	}
+	for _, id := range ids {
+		if _, ok := sessionByID[id]; !ok {
+			return nil, apperr.NotFound("Agent Session 不存在")
+		}
+	}
+
+	conversationQuery := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
+		Select(`agent_conversations.session_id,
+			agent_conversations.id AS conversation_id,
 			agent_conversations.scope_type,
 			agent_conversations.product_id,
 			COALESCE(products.name, '全局 Agent') AS product_name,
 			agent_conversations.status AS conversation_status,
-			agent_conversations.updated_at`).
+			agent_conversations.updated_at,
+			ROW_NUMBER() OVER (
+				PARTITION BY agent_conversations.session_id
+				ORDER BY (agent_conversations.scope_type = 'global'), agent_conversations.updated_at DESC, agent_conversations.id
+			) AS conversation_rank`).
 		Joins("LEFT JOIN products ON products.id = agent_conversations.product_id").
-		Where("agent_conversations.session_id = ?", sessionID).
-		Order("(agent_conversations.scope_type = 'global'), agent_conversations.updated_at DESC, agent_conversations.id").
-		Limit(20).
-		Find(&conversations).Error
+		Where("agent_conversations.session_id IN ?", ids)
+	var conversationRows []sessionConversationRow
+	if err := pgxTx.WithContext(ctx).Table("(?) AS ranked", conversationQuery).
+		Where("conversation_rank <= ?", sessionConversationLimit).
+		Order("session_id, conversation_rank").
+		Scan(&conversationRows).Error; err != nil {
+		return nil, err
+	}
+	conversationsBySession := make(map[string][]SessionConversation, len(ids))
+	for _, row := range conversationRows {
+		conversationsBySession[row.SessionID] = append(conversationsBySession[row.SessionID], SessionConversation{
+			ConversationID: row.ConversationID, ScopeType: row.ScopeType, ProductID: row.ProductID,
+			ProductName: row.ProductName, ConversationStatus: row.ConversationStatus, UpdatedAt: row.UpdatedAt,
+		})
+	}
+
+	type conversationCount struct {
+		SessionID string `gorm:"column:session_id"`
+		Count     int64  `gorm:"column:count"`
+	}
+	var counts []conversationCount
+	if err := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
+		Select("session_id, COUNT(*) AS count").
+		Where("session_id IN ?", ids).
+		Group("session_id").
+		Scan(&counts).Error; err != nil {
+		return nil, err
+	}
+	countBySession := make(map[string]int64, len(counts))
+	for _, item := range counts {
+		countBySession[item.SessionID] = item.Count
+	}
+
+	out := make([]SessionResponse, 0, len(ids))
+	for _, id := range ids {
+		row := sessionByID[id]
+		conversations := conversationsBySession[id]
+		if conversations == nil {
+			conversations = []SessionConversation{}
+		}
+		out = append(out, SessionResponse{
+			ID: row.ID, ProductID: row.ProductID, Title: row.Title, Summary: row.Summary,
+			Status: row.Status, ArchivedAt: row.ArchivedAt, ConversationCount: int(countBySession[id]),
+			Conversations: conversations, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+// loadSession 组装一条 Session 投影：标题、摘要、至多 20 条对话。缺失返回 NotFound。只读，不触发 GraphRun 同步。
+func loadSession(ctx context.Context, pgxTx *gorm.DB, sessionID string) (SessionResponse, error) {
+	items, err := loadSessions(ctx, pgxTx, []string{sessionID})
 	if err != nil {
 		return SessionResponse{}, err
 	}
-	if conversations == nil {
-		conversations = []SessionConversation{}
-	}
-	var count int64
-	if err := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("session_id = ?", sessionID).Count(&count).Error; err != nil {
-		return SessionResponse{}, err
-	}
-	return SessionResponse{
-		ID: row.ID, ProductID: row.ProductID, Title: row.Title, Summary: row.Summary,
-		Status: row.Status, ArchivedAt: row.ArchivedAt, ConversationCount: int(count),
-		Conversations: conversations, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}, nil
+	return items[0], nil
 }
 
 func deriveSessionTitle(input string) string {

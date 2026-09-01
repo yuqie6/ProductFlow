@@ -46,12 +46,15 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 	return recoverUnfinishedTurns(ctx, s, expiredExecutionBatchLimit)
 }
 
-// recoverUnfinishedTurns 在同一事务里：先回收过期 execution，再把未完成 Turn 与 queued Task 的首轮 Turn 补进 dispatch。
+// recoverUnfinishedTurns 分阶段执行 Agent recovery：每个阶段独立提交，避免把 projection、execution、task 和 outbox 锁在同一事务里。
 //
 // 扫描 queued/running/cancel_requested，以及已有答案的 requires_input。waiting_reason=goal_loop 的 Goal 不在这里造新 Turn。RestageIfIdle 只在 dispatch 空闲时写入 PENDING，已在飞的不重复入队。
 //
-// 事务提交后才 CompactExpiredTurnJournals。禁区：不要读 Pi 文件决定「该补哪条」；不要在恢复里把 Goal 标 succeeded。
+// 任一阶段提交后进程退出，下一轮会按 PostgreSQL 状态继续恢复。事务提交后才 CompactExpiredTurnJournals。禁区：不要读 Pi 文件决定「该补哪条」；不要在恢复里把 Goal 标 succeeded。
 func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (RecoverySummary, error) {
+	if limit <= 0 {
+		limit = expiredExecutionBatchLimit
+	}
 	var out RecoverySummary
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		n, err := recoverExpiredExecutions(ctx, s, pgxTx, limit)
@@ -62,20 +65,37 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 		if n > 0 {
 			metrics.AgentRecoveryUnknownExecutions.Add(int64(n))
 		}
-		var ids []string
-		if err := pgxTx.Model(&schema.AgentTurnProjections{}).
+		return nil
+	})
+	if err != nil {
+		return out, err
+	}
+
+	recovered, err := recoverQueuedTaskTurns(ctx, s, limit)
+	if err != nil {
+		return out, err
+	}
+	out.RecoveredTaskTurns = recovered
+
+	var ids []string
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
 			Where("resume_required = FALSE AND (status IN ? OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
+			Where(`NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = ? || ':' || agent_turn_projections.id
+				  AND d.status IN ?
+			)`, queue.ActorAgentTurnSync, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
 			Order("created_at, id").
-			Pluck("id", &ids).Error; err != nil {
-			return err
-		}
-		taskIDs, recovered, err := recoverQueuedTaskTurns(ctx, pgxTx)
-		if err != nil {
-			return err
-		}
-		ids = append(ids, taskIDs...)
-		out.PendingTurns = len(ids)
-		out.RecoveredTaskTurns = recovered
+			Limit(limit).
+			Pluck("id", &ids).Error
+	})
+	if err != nil {
+		return out, err
+	}
+	out.PendingTurns = len(ids)
+
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		for _, id := range ids {
 			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
 			if err != nil {
@@ -96,10 +116,11 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 
 // recoverQueuedTaskTurns 给 status=queued 且 current_turn_id 为空的 Task 补首轮 Turn。
 //
+// 先用短读事务取得候选 Task，再为每个 Task 单独提交 reserveTurn。这样一只坏 Task 或一个长 conversation 锁不会拖住其它 Task 的恢复。
 // 幂等键固定为 initial:{conversationID}:{taskID}，崩溃重入走 reserveTurn 回放，不会重复造 projection。reserve 失败的单条跳过，不让一只坏 Task 卡死整批恢复。
 //
 // 写 agent_turn_projections（经 reserveTurn）。不改已处于 goal_loop / 用户终态的 Task。
-func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int, error) {
+func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, error) {
 	type item struct {
 		ID        string  `gorm:"column:id"`
 		Goal      string  `gorm:"column:goal"`
@@ -108,15 +129,17 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 		ProductID *string `gorm:"column:product_id"`
 	}
 	var tasks []item
-	if err := pgxTx.Model(&schema.AgentTasks{}).
-		Select("agent_tasks.id, agent_tasks.goal, agent_tasks.conversation_id, agent_conversations.scope_type, agent_conversations.product_id").
-		Joins("JOIN agent_conversations ON agent_conversations.id = agent_tasks.conversation_id").
-		Where("agent_tasks.status = ? AND agent_tasks.current_turn_id IS NULL AND agent_tasks.conversation_id IS NOT NULL", "queued").
-		Order("agent_tasks.created_at, agent_tasks.id").
-		Scan(&tasks).Error; err != nil {
-		return nil, 0, err
+	if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		return pgxTx.WithContext(ctx).Model(&schema.AgentTasks{}).
+			Select("agent_tasks.id, agent_tasks.goal, agent_tasks.conversation_id, agent_conversations.scope_type, agent_conversations.product_id").
+			Joins("JOIN agent_conversations ON agent_conversations.id = agent_tasks.conversation_id").
+			Where("agent_tasks.status = ? AND agent_tasks.current_turn_id IS NULL AND agent_tasks.conversation_id IS NOT NULL", "queued").
+			Order("agent_tasks.created_at, agent_tasks.id").
+			Limit(limit).
+			Scan(&tasks).Error
+	}); err != nil {
+		return 0, err
 	}
-	var ids []string
 	created := 0
 	for _, task := range tasks {
 		var productID *string
@@ -124,16 +147,20 @@ func recoverQueuedTaskTurns(ctx context.Context, pgxTx *gorm.DB) ([]string, int,
 			productID = task.ProductID
 		}
 		key := "initial:" + task.ConvID + ":" + task.ID
-		row, wasCreated, err := reserveTurn(ctx, pgxTx, productID, task.ConvID, task.Goal, nil, key, &task.ID, "", nil)
+		var wasCreated bool
+		err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+			_, made, err := reserveTurn(ctx, pgxTx, productID, task.ConvID, task.Goal, nil, key, &task.ID, "", nil)
+			wasCreated = made
+			return err
+		})
 		if err != nil {
 			continue
 		}
-		ids = append(ids, row.ID)
 		if wasCreated {
 			created++
 		}
 	}
-	return ids, created, nil
+	return created, nil
 }
 
 // recoverExpiredExecutions 回收 lease_expires_at 已过的 execution：递增 fencing_token、清空 owner，无法证明终态则把 Turn 标 unknown。

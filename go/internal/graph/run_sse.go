@@ -32,7 +32,8 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	notes, listenErr := notify.Listen(ctx, h.Service.Pool, notify.ChannelRun)
+	notes, unsubscribe := notify.Subscribe(h.Service.Pool, notify.ChannelRun)
+	defer unsubscribe()
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache, no-transform")
@@ -44,8 +45,7 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 		flusher.Flush()
 	}
 	fallback := 2 * time.Second
-	if listenErr != nil {
-		notes = nil
+	if notes == nil {
 		fallback = 250 * time.Millisecond
 	}
 	eventTicker := time.NewTicker(fallback)

@@ -297,7 +297,7 @@ func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, 
 		if res.RowsAffected != 1 {
 			return nil
 		}
-		if err := appendGraphRunEvent(ctx, pgxTx, runID, "node.skipped", &nodeRunID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, pgxTx, runID, "node.skipped", &nodeRunID, map[string]any{
 			"status": NodeRunSkipped, "output": skippedOut,
 		}); err != nil {
 			return err
@@ -418,17 +418,26 @@ func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, att
 }
 
 // finishProviderCall 记录 applied 结果并推进到 provider_result_received。
-// 锁序 run → effect → node。run 已不 running、effect 是 unknown、attempt 过期时 promote=false。
+// 锁序 run → node → effect。run 已不 running、节点围栏失效或 effect 是 unknown 时 promote=false。
 // true 才允许 persist 改 live 节点投影。
 func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, attemptID string, resultJSON map[string]any) (bool, error) {
 	var promote bool
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		// 碰 provider effect 行之前，必须与取消、unknown 围栏同一把锁序：run → node → effect。
 		var run schema.WorkflowGraphRuns
 		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error; err != nil {
 			return err
 		}
 		if run.Status != RunStatusRunning {
+			promote = false
+			return nil
+		}
+		// 先锁 node，再让 recordProviderEffectResult 锁 effect，避免与 prepare 的 node -> effect 反向等待。
+		var node schema.WorkflowGraphNodeRuns
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Where("id = ? AND graph_run_id = ?", nodeRunID, runID).Take(&node).Error; err != nil {
+			return err
+		}
+		if node.Status != NodeRunRunning || node.ActiveAttemptID == nil || *node.ActiveAttemptID != attemptID {
 			promote = false
 			return nil
 		}
@@ -444,15 +453,7 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 		if err != nil {
 			return err
 		}
-		if !ok {
-			promote = false
-			return nil
-		}
-		var node schema.WorkflowGraphNodeRuns
-		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
-			return err
-		}
-		promote = run.Status == RunStatusRunning && node.Status == NodeRunRunning && node.ActiveAttemptID != nil && *node.ActiveAttemptID == attemptID
+		promote = ok
 		return nil
 	})
 	return promote, err
@@ -517,8 +518,8 @@ func (e Executor) persistContentArtifact(
 				return err
 			}
 			productID = id
-			// 采用走 Mutate 会改写整图节点行。先锁 graph，避免与并行内容节点的 artifact/节点行锁形成环。
-			if _, err := loadGraphForUpdate(ctx, pgxTx, productID, run.GraphID); err != nil {
+			// 自动采用会修改 live graph。先锁 run，再锁 graph，随后 lockNodeRunForPromotion 才能按 run -> graph -> node 进入。
+			if err := lockGraphRunAndLiveGraph(ctx, pgxTx, productID, run.GraphID, run.ID); err != nil {
 				return err
 			}
 		}
@@ -585,7 +586,7 @@ func (e Executor) persistContentArtifact(
 			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
 			return err
 		}
-		if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
 			"status": NodeRunSucceeded, "node_id": nodeRun.NodeID, "output": outputPayload,
 		}); err != nil {
 			return err
@@ -724,7 +725,7 @@ func (e Executor) persistImageArtifact(
 			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
 			return err
 		}
-		if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
 			"status": NodeRunSucceeded, "node_id": nodeRun.NodeID, "output": map[string]any{
 				"artifact_id": artifactID, "product_image_asset_id": assetID,
 			},
@@ -1018,7 +1019,7 @@ func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRun
 	if res.RowsAffected != 1 {
 		return nil
 	}
-	if err := appendGraphRunEvent(ctx, pgxTx, runID, "node.cancelled", &nodeRunID, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, pgxTx, runID, "node.cancelled", &nodeRunID, map[string]any{
 		"status": NodeRunCancelled, "reason": reason,
 	}); err != nil {
 		return err

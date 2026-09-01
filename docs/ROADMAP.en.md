@@ -33,6 +33,10 @@ Until these gates pass, do not expand default capability, and do not treat Pi se
 
 Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
 
+### Runtime performance governance
+
+The cross-cutting baseline, lock order, optimization sequence, and acceptance gates for Graph, Agent, async delivery, continuous image generation, SSE, database queries, and capacity admission live in [`audits/performance-governance.md`](audits/performance-governance.md). The current worktree includes lock-order, Agent recovery, dispatcher cadence, SSE fanout, and list projection improvements; Graph recovery batches, the long-lived Graph advisory, list pagination, remaining N+1 paths, and SaaS admission still need focused validation or a new baseline design.
+
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.

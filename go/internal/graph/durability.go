@@ -54,9 +54,11 @@ func runningGenerationCount(ctx context.Context, tx *gorm.DB) (int, error) {
 		return 0, err
 	}
 	var sessionCount int64
-	_ = tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
+	if err := tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
 		Where("status = ?", "running").
-		Count(&sessionCount).Error
+		Count(&sessionCount).Error; err != nil {
+		return 0, err
+	}
 	return int(graphCount) + int(sessionCount), nil
 }
 
@@ -141,12 +143,12 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		if err := dbTx.WithContext(ctx).Select("graph_run_id", "node_id", "attempt_count").Where("id = ?", nodeRunID).Take(&node).Error; err != nil {
 			return err
 		}
-		if err := appendGraphRunEvent(ctx, dbTx, node.GraphRunID, "node.claimed", &nodeRunID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, dbTx, node.GraphRunID, "node.claimed", &nodeRunID, map[string]any{
 			"status": NodeRunRunning, "node_id": node.NodeID, "attempt_id": attemptID, "attempt_count": node.AttemptCount,
 		}); err != nil {
 			return err
 		}
-		if err := appendGraphRunEvent(ctx, dbTx, node.GraphRunID, "node.started", &nodeRunID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, dbTx, node.GraphRunID, "node.started", &nodeRunID, map[string]any{
 			"status": NodeRunRunning, "node_id": node.NodeID, "attempt_id": attemptID, "attempt_count": node.AttemptCount,
 		}); err != nil {
 			return err
@@ -276,7 +278,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 	case RunStatusUnknown:
 		runEventKind = "run.unknown"
 	}
-	if err := appendGraphRunEvent(ctx, tx, runID, runEventKind, nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, runID, runEventKind, nil, map[string]any{
 		"status": runStatus, "failure_reason": failure,
 	}); err != nil {
 		return false, err
@@ -311,7 +313,7 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 		if result.RowsAffected != 1 {
 			continue
 		}
-		if err := appendGraphRunEvent(ctx, tx, runID, "node.failed", &node.ID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, tx, runID, "node.failed", &node.ID, map[string]any{
 			"status": NodeRunFailed, "node_id": node.NodeID, "reason": reason,
 		}); err != nil {
 			return err
@@ -331,7 +333,7 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 	if result.RowsAffected != 1 {
 		return nil
 	}
-	if err := appendGraphRunEvent(ctx, tx, runID, "run.failed", nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, runID, "run.failed", nil, map[string]any{
 		"status": RunStatusFailed, "reason": reason,
 	}); err != nil {
 		return err
@@ -413,7 +415,7 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
 			return err
 		}
-		if err := appendGraphRunEvent(ctx, dbTx, runID, "node.failed", &nodeRunID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, dbTx, runID, "node.failed", &nodeRunID, map[string]any{
 			"status": NodeRunFailed, "node_id": node.NodeID, "reason": reason,
 		}); err != nil {
 			return err

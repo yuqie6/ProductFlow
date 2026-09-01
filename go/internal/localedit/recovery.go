@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const recoveryBatchLimit = 25
+
 // RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的局部编辑任务。
 type RecoverySummary struct {
 	QueuedTasks       int `json:"queued_tasks"`        // 本轮 queued 并补回 PENDING 的数量
@@ -32,8 +34,20 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	}
 	var summary RecoverySummary
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		cutoff := time.Now().UTC().Add(-staleAfter)
 		var tasks []schema.LocalImageEditTasks
-		if err := pgxTx.Where("status IN ?", []string{"queued", "running"}).Find(&tasks).Error; err != nil {
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
+			is_retryable = ? AND (
+				(status = ? AND NOT EXISTS (
+					SELECT 1 FROM async_dispatches d
+					WHERE d.delivery_key = ? || ':' || local_image_edit_tasks.id
+					  AND d.status IN ?
+				))
+				OR (status = ? AND (started_at IS NULL OR started_at <= ?))
+			)`, true, "queued", queue.ActorLocalEdit, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff).
+			Order("updated_at ASC, id ASC").
+			Limit(recoveryBatchLimit).
+			Find(&tasks).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()

@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const recoveryBatchLimit = 25
+
 // RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的连续生图任务。
 type RecoverySummary struct {
 	QueuedTasks       int `json:"queued_tasks"`        // 本轮看到的 queued 任务数
@@ -35,10 +37,18 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		var tasks []schema.ImageSessionGenerationTasks
-		if err := pgxTx.Where(
-			"is_retryable = ? AND (status = ? OR (status = ? AND COALESCE(progress_updated_at, started_at) <= ?))",
-			true, "queued", "running", cutoff,
-		).Find(&tasks).Error; err != nil {
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
+			is_retryable = ? AND (
+				(status = ? AND NOT EXISTS (
+					SELECT 1 FROM async_dispatches d
+					WHERE d.delivery_key = ? || ':' || image_session_generation_tasks.id
+					  AND d.status IN ?
+				))
+				OR (status = ? AND COALESCE(progress_updated_at, started_at) <= ?)
+			)`, true, "queued", queue.ActorImageSession, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff).
+			Order("created_at ASC, id ASC").
+			Limit(recoveryBatchLimit).
+			Find(&tasks).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()

@@ -105,18 +105,6 @@ func projectionIDForWorkflowRequest(ctx context.Context, gdb *gorm.DB, requestID
 	return proj.ID, err
 }
 
-func projectionIDForLibraryRevision(ctx context.Context, gdb *gorm.DB, revisionID string) (string, error) {
-	var proj schema.AgentTurnProjections
-	err := gdb.WithContext(ctx).Select("id").
-		Where("library_organization_draft_revision_id = ?", revisionID).
-		Order("created_at DESC, id DESC").
-		Take(&proj).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
-	}
-	return proj.ID, err
-}
-
 // latestApprovalRequest 从 journal 读最近一条 approval/requested，解析 approval_id / approval_kind。
 //
 // 确认或丢弃前调用。wantKind 非空且不匹配则当作没有。只读 agent_turn_events，不查 Pi。

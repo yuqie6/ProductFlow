@@ -12,6 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const recoveryBatchLimit = 25
+
 // RecoverySummary 统计 dispatcher 本轮补回的交付任务。
 type RecoverySummary struct {
 	QueuedJobs       int `json:"queued_jobs"`        // 本轮看到的 queued 任务数
@@ -33,10 +35,18 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		var jobs []schema.DeliveryRenditionJobs
-		if err := pgxTx.Where(
-			"is_retryable = ? AND (status = ? OR (status = ? AND started_at IS NOT NULL AND started_at <= ?))",
-			true, "queued", "running", cutoff,
-		).Find(&jobs).Error; err != nil {
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
+			is_retryable = ? AND (
+				(status = ? AND NOT EXISTS (
+					SELECT 1 FROM async_dispatches d
+					WHERE d.delivery_key = ? || ':' || delivery_rendition_jobs.id
+					  AND d.status IN ?
+				))
+				OR (status = ? AND started_at IS NOT NULL AND started_at <= ?)
+			)`, true, "queued", queue.ActorDelivery, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff).
+			Order("updated_at ASC, id ASC").
+			Limit(recoveryBatchLimit).
+			Find(&jobs).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()

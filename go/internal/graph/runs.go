@@ -180,7 +180,7 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	if err := insertNodeRunsForSelection(ctx, tx, runID, selected, snapshot, actionByNode, now); err != nil {
 		return graphRunSubmission{}, err
 	}
-	if err := appendGraphRunEvent(ctx, tx, runID, "run.started", nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, runID, "run.started", nil, map[string]any{
 		"status": "running", "run_scope": scope, "graph_revision": row.Revision,
 	}); err != nil {
 		return graphRunSubmission{}, err
@@ -217,7 +217,7 @@ func insertQueuedGraphRun(ctx context.Context, tx *gorm.DB, row graphRow, scope 
 	if err := tx.WithContext(ctx).Create(&rec).Error; err != nil {
 		return schema.WorkflowGraphRuns{}, err
 	}
-	if err := appendGraphRunEvent(ctx, tx, rec.ID, "run.queued", nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, rec.ID, "run.queued", nil, map[string]any{
 		"status": "queued", "run_scope": scope, "graph_revision": row.Revision,
 	}); err != nil {
 		return schema.WorkflowGraphRuns{}, err
@@ -401,7 +401,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 		}).Error; err != nil {
 			return err
 		}
-		return appendGraphRunEvent(ctx, tx, runID, "run.failed", nil, map[string]any{
+		return appendGraphRunEventLocked(ctx, tx, runID, "run.failed", nil, map[string]any{
 			"status": RunStatusFailed, "failure_reason": reason,
 		})
 	}
@@ -430,7 +430,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 	if err := insertNodeRunsForSelection(ctx, tx, runID, selected, snapshot, actionByNode, now); err != nil {
 		return err
 	}
-	if err := appendGraphRunEvent(ctx, tx, runID, "run.started", nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, runID, "run.started", nil, map[string]any{
 		"status": "running", "run_scope": run.RunScope, "graph_revision": row.Revision,
 	}); err != nil {
 		return err
@@ -476,7 +476,7 @@ func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) erro
 }
 
 // listGraphRuns 按 started_at DESC 列出该图的 run。图不属于商品则 NotFound。
-// limit 夹在 1–50，默认 20。每条再 loadGraphRun 带上 node_runs，不要只扫 runs 表。
+// limit 夹在 1–50，默认 20。run 与 node_runs 分批读取，保持列表 response 不变。
 func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, limit int) ([]graphRunRow, error) {
 	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
 		return nil, err
@@ -488,18 +488,39 @@ func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 		limit = 50
 	}
 	var recs []schema.WorkflowGraphRuns
-	if err := tx.WithContext(ctx).Select("id").
+	if err := tx.WithContext(ctx).
 		Where("graph_id = ?", graphID).
 		Order("started_at DESC, id DESC").
 		Limit(limit).
 		Find(&recs).Error; err != nil {
 		return nil, err
 	}
+	if len(recs) == 0 {
+		return []graphRunRow{}, nil
+	}
+
+	runIDs := make([]string, 0, len(recs))
+	for _, rec := range recs {
+		runIDs = append(runIDs, rec.ID)
+	}
+	var nodeRecs []schema.WorkflowGraphNodeRuns
+	if err := tx.WithContext(ctx).
+		Where("graph_run_id IN ?", runIDs).
+		Order("graph_run_id, sort_order, id").
+		Find(&nodeRecs).Error; err != nil {
+		return nil, err
+	}
+	nodesByRun := make(map[string][]graphNodeRunRow, len(runIDs))
+	for _, nodeRec := range nodeRecs {
+		nodesByRun[nodeRec.GraphRunID] = append(nodesByRun[nodeRec.GraphRunID], nodeRunFromSchema(nodeRec))
+	}
+
 	out := make([]graphRunRow, 0, len(recs))
 	for _, rec := range recs {
-		run, err := loadGraphRun(ctx, tx, productID, graphID, rec.ID)
-		if err != nil {
-			return nil, err
+		run := graphRunFromSchema(rec)
+		run.NodeRuns = nodesByRun[run.ID]
+		if run.NodeRuns == nil {
+			run.NodeRuns = []graphNodeRunRow{}
 		}
 		out = append(out, run)
 	}
@@ -526,6 +547,28 @@ func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID st
 	}
 	run.NodeRuns = nodes
 	return run, nil
+}
+
+// lockGraphRunForUpdate 锁住 GraphRun 行并返回最小身份信息。
+// 涉及 node_run 或 live graph 的命令必须先拿这把 run 锁，再按约定继续取其它锁。
+func lockGraphRunForUpdate(ctx context.Context, tx *gorm.DB, runID string) (schema.WorkflowGraphRuns, error) {
+	var rec schema.WorkflowGraphRuns
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&rec).Error
+	return rec, err
+}
+
+// lockGraphRunAndLiveGraph 固定 GraphRun -> workflow_graphs 的取锁顺序。
+// 只有确实要修改 live graph 的运行路径使用它；普通节点状态迁移不应因此锁整张 graph。
+func lockGraphRunAndLiveGraph(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) error {
+	run, err := lockGraphRunForUpdate(ctx, tx, runID)
+	if err != nil {
+		return err
+	}
+	if run.GraphID != graphID {
+		return apperr.NotFound("工作流运行不存在")
+	}
+	_, err = loadGraphForUpdate(ctx, tx, productID, graphID)
+	return err
 }
 
 func loadGraphRunByIDLocked(ctx context.Context, tx *gorm.DB, runID string) (graphRunRow, error) {
@@ -701,13 +744,13 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 		if result.RowsAffected != 1 {
 			continue
 		}
-		if err := appendGraphRunEvent(ctx, tx, run.ID, "node.cancelled", &node.ID, map[string]any{
+		if err := appendGraphRunEventLocked(ctx, tx, run.ID, "node.cancelled", &node.ID, map[string]any{
 			"status": NodeRunCancelled, "node_id": node.NodeID, "reason": reason,
 		}); err != nil {
 			return graphRunRow{}, err
 		}
 	}
-	if err := appendGraphRunEvent(ctx, tx, run.ID, "run.cancelled", nil, map[string]any{
+	if err := appendGraphRunEventLocked(ctx, tx, run.ID, "run.cancelled", nil, map[string]any{
 		"status": RunStatusCancelled, "reason": reason,
 	}); err != nil {
 		return graphRunRow{}, err

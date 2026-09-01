@@ -39,6 +39,10 @@ Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
 Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正在按 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md) 分刀收口。该账本记录所有权目标、S0～S6 checkpoint 和每刀证据；生产可靠性状态仍只由 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md) 裁定。
 
+### 运行时性能治理
+
+跨 Graph、Agent、异步投递、连续生图、SSE、数据库查询和容量 admission 的当前基线、锁序、优化顺序与验收 Gate 维护在 [`audits/performance-governance.md`](audits/performance-governance.md)。当前工作树已收口部分锁序、Agent recovery、dispatcher cadence、SSE fanout 和列表摘要查询；Graph recovery 批次、Graph 长 advisory、列表分页、剩余 N+1 与 SaaS admission 仍待专项验证或新基线设计。
+
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。

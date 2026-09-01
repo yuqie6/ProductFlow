@@ -7,6 +7,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/library"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
@@ -263,8 +264,10 @@ func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft li
 	if draft.CurrentRevision == nil {
 		return nil
 	}
+	// 确认路径与 turn/end 投影路径统一为 projection -> task。
+	// 先锁 projection，避免持 task 等 projection 与 live writer 形成环。
 	var proj schema.AgentTurnProjections
-	err := pgxTx.Select("task_id").
+	err := pgxTx.Clauses(pfdb.ForUpdate()).Select("id, task_id").
 		Where("library_organization_draft_revision_id = ?", draft.CurrentRevision.ID).
 		Order("created_at DESC, id DESC").
 		Take(&proj).Error
@@ -294,10 +297,7 @@ func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft li
 	}).Error; err != nil {
 		return err
 	}
-	projectionID, err := projectionIDForLibraryRevision(ctx, pgxTx, draft.CurrentRevision.ID)
-	if err != nil {
-		return err
-	}
+	projectionID := proj.ID
 	if projectionID != "" {
 		approvalID, kind, err := latestApprovalRequest(ctx, pgxTx, projectionID, "artifact")
 		if err != nil {

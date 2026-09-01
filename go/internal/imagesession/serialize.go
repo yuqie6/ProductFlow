@@ -3,32 +3,80 @@ package imagesession
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
 )
 
-// serializeSummary 投影会话列表项：轮次数与是否仍有 queued/running 任务。
-func (s Service) serializeSummary(ctx context.Context, tx *gorm.DB, sess sessionRow) (SummaryResponse, error) {
+// serializeSessionSummaries 批量组装会话列表项，避免每个 session 单独 Count/Take/loadAsset。
+// 最新轮按 created_at、id 倒序取一条；缺失媒体行时与旧摘要一样省略 latest asset。
+func serializeSessionSummaries(ctx context.Context, tx *gorm.DB, sessions []schema.ImageSessions) ([]SummaryResponse, error) {
+	if len(sessions) == 0 {
+		return []SummaryResponse{}, nil
+	}
 	tx = tx.WithContext(ctx)
-	var rounds int64
-	if err := tx.Model(&schema.ImageSessionRounds{}).Where("session_id = ?", sess.ID).Count(&rounds).Error; err != nil {
-		return SummaryResponse{}, err
+	ids := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		ids = append(ids, session.ID)
 	}
-	var latest *AssetResponse
-	var round schema.ImageSessionRounds
-	err := tx.Where("session_id = ?", sess.ID).Order("created_at DESC, id DESC").Take(&round).Error
-	if err == nil {
-		asset, loadErr := loadAsset(ctx, tx, sess.ID, round.GeneratedAssetID)
-		if loadErr == nil {
-			resp := serializeAsset(asset)
-			latest = &resp
+
+	type roundCount struct {
+		SessionID string `gorm:"column:session_id"`
+		Count     int64  `gorm:"column:count"`
+	}
+	var counts []roundCount
+	if err := tx.Model(&schema.ImageSessionRounds{}).
+		Select("session_id, COUNT(*) AS count").
+		Where("session_id IN ?", ids).
+		Group("session_id").
+		Scan(&counts).Error; err != nil {
+		return nil, err
+	}
+	countBySession := make(map[string]int64, len(counts))
+	for _, item := range counts {
+		countBySession[item.SessionID] = item.Count
+	}
+
+	type latestAsset struct {
+		SessionID        string    `gorm:"column:session_id"`
+		ID               string    `gorm:"column:id"`
+		Kind             string    `gorm:"column:kind"`
+		OriginalFilename string    `gorm:"column:original_filename"`
+		MIMEType         string    `gorm:"column:mime_type"`
+		CreatedAt        time.Time `gorm:"column:created_at"`
+	}
+	var latest []latestAsset
+	if err := tx.Table("image_session_rounds AS r").
+		Select(`DISTINCT ON (r.session_id)
+			r.session_id, a.id, a.kind, a.original_filename, a.mime_type, a.created_at`).
+		Joins("JOIN image_session_assets a ON a.id = r.generated_asset_id AND a.session_id = r.session_id").
+		Joins("JOIN media_objects m ON m.id = a.media_object_id").
+		Where("r.session_id IN ?", ids).
+		Order("r.session_id, r.created_at DESC, r.id DESC").
+		Scan(&latest).Error; err != nil {
+		return nil, err
+	}
+	latestBySession := make(map[string]AssetResponse, len(latest))
+	for _, item := range latest {
+		latestBySession[item.SessionID] = serializeAsset(assetRow{
+			ID: item.ID, SessionID: item.SessionID, Kind: item.Kind,
+			OriginalFilename: item.OriginalFilename, MIMEType: item.MIMEType, CreatedAt: item.CreatedAt,
+		})
+	}
+
+	items := make([]SummaryResponse, 0, len(sessions))
+	for _, session := range sessions {
+		item := SummaryResponse{
+			ID: session.ID, Title: session.Title, RoundsCount: int(countBySession[session.ID]),
+			CreatedAt: session.CreatedAt, UpdatedAt: session.UpdatedAt,
 		}
+		if asset, ok := latestBySession[session.ID]; ok {
+			item.LatestGeneratedAsset = &asset
+		}
+		items = append(items, item)
 	}
-	return SummaryResponse{
-		ID: sess.ID, Title: sess.Title, RoundsCount: int(rounds),
-		LatestGeneratedAsset: latest, CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
-	}, nil
+	return items, nil
 }
 
 // loadDetail 组装会话详情：素材、轮次、任务与队列位置。会话不存在返回 404。

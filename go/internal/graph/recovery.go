@@ -13,7 +13,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultStaleRunningAfter = 30 * time.Minute
+const (
+	defaultStaleRunningAfter = 30 * time.Minute
+	graphRecoveryBatchLimit  = 25
+)
 
 // RecoverySummary 统计补回 dispatch、标 unknown 与仍 queued 的 GraphRun。
 type RecoverySummary struct {
@@ -37,11 +40,51 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	}
 	var summary RecoverySummary
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		cutoff := time.Now().UTC().Add(-staleAfter)
 		var running []schema.WorkflowGraphRuns
-		if err := pgxTx.WithContext(ctx).Select("id").Where("status = ?", "running").Find(&running).Error; err != nil {
+		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdateOfSkipLocked("workflow_graph_runs")).
+			Select("workflow_graph_runs.id").
+			Where(`workflow_graph_runs.status = ? AND (
+				EXISTS (
+					SELECT 1 FROM workflow_graph_node_runs n
+					WHERE n.graph_run_id = workflow_graph_runs.id
+					  AND n.status = ?
+					  AND COALESCE(n.progress_updated_at, n.started_at) <= ?
+				)
+				OR (
+					NOT EXISTS (
+						SELECT 1 FROM workflow_graph_node_runs n
+						WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?
+					)
+					AND (
+						EXISTS (
+							SELECT 1 FROM workflow_graph_node_runs n
+							WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?
+						)
+						OR (
+							EXISTS (
+								SELECT 1 FROM workflow_graph_node_runs n
+								WHERE n.graph_run_id = workflow_graph_runs.id
+							)
+							AND NOT EXISTS (
+								SELECT 1 FROM workflow_graph_node_runs n
+								WHERE n.graph_run_id = workflow_graph_runs.id AND n.status IN ?
+							)
+						)
+					)
+					AND NOT EXISTS (
+						SELECT 1 FROM async_dispatches d
+						WHERE d.delivery_key = ? || ':' || workflow_graph_runs.id
+						  AND d.status IN ?
+					)
+				)
+			)`, RunStatusRunning, NodeRunRunning, cutoff, NodeRunRunning, NodeRunQueued,
+				[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
+			Order("workflow_graph_runs.started_at ASC, workflow_graph_runs.id ASC").
+			Limit(graphRecoveryBatchLimit).
+			Find(&running).Error; err != nil {
 			return err
 		}
-		cutoff := time.Now().UTC().Add(-staleAfter)
 		for _, item := range running {
 			runID := item.ID
 			run, err := loadGraphRunByIDLocked(ctx, pgxTx, runID)
@@ -104,7 +147,7 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 						return result.Error
 					}
 					if result.RowsAffected == 1 {
-						if err := appendGraphRunEvent(ctx, pgxTx, run.ID, "node.progress", &node.ID, map[string]any{
+						if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.progress", &node.ID, map[string]any{
 							"status": "queued", "phase": "requeued_after_idle", "reason": "stale_worker",
 						}); err != nil {
 							return err
@@ -149,16 +192,22 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 		}
 		// 终态迁移与队列晋升是两次独立写。进程若死在中间，不会再有 running 行把 recovery 领到 queued run。
 		// 因此对每个仍有 queued 的 graph 显式 promote 一条，而不是等 running 行来带头。
-		var queuedGraphIDs []string
-		if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
-			Where("status = ?", RunStatusQueued).
-			Distinct("graph_id").
-			Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
-			return err
-		}
-		for _, graphID := range queuedGraphIDs {
-			if err := promoteNextQueuedRun(ctx, pgxTx, graphID); err != nil {
+		remaining := graphRecoveryBatchLimit - len(running)
+		if remaining > 0 {
+			var queuedGraphIDs []string
+			if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
+				Where("status = ?", RunStatusQueued).
+				Where("NOT EXISTS (SELECT 1 FROM workflow_graph_runs active WHERE active.graph_id = workflow_graph_runs.graph_id AND active.status = ?)", RunStatusRunning).
+				Distinct("graph_id").
+				Order("graph_id ASC").
+				Limit(remaining).
+				Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
 				return err
+			}
+			for _, graphID := range queuedGraphIDs {
+				if err := promoteNextQueuedRun(ctx, pgxTx, graphID); err != nil {
+					return err
+				}
 			}
 		}
 		return nil

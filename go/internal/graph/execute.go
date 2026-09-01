@@ -12,6 +12,7 @@ import (
 	sqldb "database/sql"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -178,7 +179,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			if err != nil {
 				return err
 			}
-			if err := failBlockedQueuedNodes(ctx, pgxTx, applied, run.NodeRuns); err != nil {
+			if err := failBlockedQueuedNodes(ctx, pgxTx, runID, applied, run.NodeRuns); err != nil {
 				return err
 			}
 			done, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
@@ -286,9 +287,17 @@ func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error
 }
 
 // failBlockedQueuedNodes 把上游已 failed/unknown/cancelled 的 queued 处理节点级联标 failed。
-// 调用方须已在事务里；只改 status=queued 的行，写 node.failed 事件。不是 unknown：上游失败已证明。
+// 先锁 run，再改 node 并写 node.failed 事件；否则会与取消 / recovery 的 run -> node 形成 node -> run 环。
+// 调用方须已在事务里；只改 status=queued 的行。不是 unknown：上游失败已证明。
 // 循环直到没有新的 blocked，避免漏标间接下游。RowsAffected!=1 表示并发抢先，跳过即可。
-func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
+func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, runID string, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
+	var run schema.WorkflowGraphRuns
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status").Where("id = ?", runID).Take(&run).Error; err != nil {
+		return err
+	}
+	if run.Status != RunStatusRunning {
+		return nil
+	}
 	now := time.Now().UTC()
 	for {
 		progressed := false
@@ -311,7 +320,7 @@ func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, graph AppliedGraph
 			if result.RowsAffected != 1 {
 				continue
 			}
-			if err := appendGraphRunEvent(ctx, tx, item.GraphRunID, "node.failed", &item.ID, map[string]any{
+			if err := appendGraphRunEventLocked(ctx, tx, item.GraphRunID, "node.failed", &item.ID, map[string]any{
 				"status": NodeRunFailed, "node_id": item.NodeID, "reason": "上游处理节点未成功",
 			}); err != nil {
 				return err
@@ -441,7 +450,7 @@ func (e Executor) finishOrLater(ctx context.Context, runID string) error {
 		if err != nil {
 			return err
 		}
-		if err := failBlockedQueuedNodes(ctx, pgxTx, applied, run.NodeRuns); err != nil {
+		if err := failBlockedQueuedNodes(ctx, pgxTx, runID, applied, run.NodeRuns); err != nil {
 			return err
 		}
 		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
