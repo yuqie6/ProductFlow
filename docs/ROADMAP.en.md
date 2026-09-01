@@ -35,7 +35,7 @@ Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
 
 ### Runtime performance governance
 
-The cross-cutting baseline, lock order, optimization sequence, and acceptance gates for Graph, Agent, async delivery, continuous image generation, SSE, database queries, and capacity admission live in [`audits/performance-governance.md`](audits/performance-governance.md). The current worktree includes lock-order, bounded recovery batches, dispatcher cadence, SSE fanout, queued/stale-running recovery backlog metrics, and list projection improvements; the long-lived Graph advisory, recovery histograms, list pagination, remaining N+1 paths, and SaaS admission still need focused validation or a new baseline design.
+The cross-cutting baseline, lock order, optimization sequence, and acceptance gates for Graph, Agent, async delivery, continuous image generation, SSE, database queries, and capacity admission live in [`audits/performance-governance.md`](audits/performance-governance.md). The current worktree includes lock-order, bounded recovery batches, dispatcher cadence, SSE fanout, recovery backlog/duration/lock-wait metrics, ImageSession cursor pagination, and split GraphRun list/detail projections; remaining N+1 paths, target-scale query plans, finer capacity-admission metrics, and SaaS admission still need focused validation or a new baseline design.
 
 ### Image production quality
 

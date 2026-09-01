@@ -132,7 +132,7 @@ Canvas groups are one-level visual folders. You can enter a group and remember i
 
 Photography and infographic image types land as one group: one `image_prompt` plus N `image_generation` nodes (N is that shot's count). Evidence types (certification, factory) are unbound `image_asset` nodes with `role=evidence`. Create-time uploads use `role=product_identity` and connect to visual system, creative brief, and generating shots, not to evidence placeholders. The add panel's "add shot" writes one ChangeSet: group + prompt + one image node. Implementation: `web/src/pages/workbench/canvas/shotChangeSet.ts`; template in `go/internal/graph`.
 
-`WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows. One worker holds a run; independent processing nodes may call providers concurrently, limited by runtime `generation_max_concurrent_tasks`. A failed or unknown node does not stop independent siblings; downstream of a failed upstream is marked failed. Evidence: `go/internal/graph` execution and durability tests.
+`WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows. One worker holds a run; cross-instance ownership uses a token/expiry lease on the GraphRun row, with a 35-minute lease and five-minute renewal; expired leases are claimed with CAS, while the process mutex is only a fast same-process gate. Independent processing nodes may call providers concurrently, limited by runtime `generation_max_concurrent_tasks`. A failed or unknown node does not stop independent siblings; downstream of a failed upstream is marked failed. GraphRun list responses contain status, timestamps, and node-progress summaries; snapshot, input trace, and output are loaded by the single-run detail endpoint. Evidence: `go/internal/graph` execution, lease, list-projection, and durability tests.
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph, run-to-node, a single node, or one `selection` for a shot or failed subset. A `running` run causes further submits to enqueue FIFO and snapshot on dequeue. None of this requires an Agent Conversation first. Agent run requests go through `go/internal/agent`; user confirmation uses the same `go/internal/graph` constraints.
 
@@ -155,7 +155,7 @@ Current origins:
 - `image_session_attach`
 - `local_edit`
 
-The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset.
+The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset. Image-session lists use a versioned keyset cursor ordered by `updated_at DESC, id DESC`, default to 20 items, and cap pages at 100; the list returns latest-asset and round summaries while detail reads rounds and tasks.
 
 DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, resize, and format-specific delivery file. It does not replace the source image. Built-in DeliverySpec templates live in `go/internal/delivery`. The read-only API order is Taobao/Tmall hero 3:4, JD hero 1:1, Amazon hero 1:1, detail portrait 3:4, and scene landscape 4:3. Templates are convenience defaults, not platform-compliance guarantees; users can override size, format, and byte limits. Source label: `docs/ARCHITECTURE.md §7`.
 
@@ -179,8 +179,8 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 
 - The Go worker executes workflow nodes, image-session candidates, delivery renditions, and local edits.
 - The async dispatcher scans durable dispatch/recovery rows in PostgreSQL and delivers them to Redis. `just dev` and Compose both start this process.
-- Redis provides the broker and concurrency admission.
-- PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
+- Redis provides the broker. PostgreSQL remains authoritative for generation-capacity admission and queued/running/terminal state.
+- PostgreSQL stores queued/running/terminal states, attempts, and safe errors. Recovery candidates are bounded to 25 per domain and use stable ordering and `SKIP LOCKED`. When metrics are enabled, the API exposes queued/stale-running backlog and current PostgreSQL lock waiters; the dispatcher exposes per-domain recovery duration and candidate-lock query histograms.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
 - Agent service uses Pi session files for the model loop. Local JSONL is a private WAL; the runtime holding the current lease/fencing token explicitly reads its unconfirmed contiguous prefix, batches it into PostgreSQL `agent_turn_events`, and advances the ACK only after matching receipts. Browser live SSE reads only the PostgreSQL journal and projects the UI protocol; live and settled replay use the same cursor. `GET /api/v2/agent-control/events` pushes Session/Task/lease changes. Graph-run SSE and image-session SSE are woken by `pg_notify` after the worker writes. Browser disconnect does not cancel the Agent. The Go worker only binds harness IDs and retries start for unstarted Turns, or resumes a persisted answer; journal writes advance live status and summaries for bound Turns. Startup recovery only requeues never-started queued Turns; a Node restart only confirms or submits a provable contiguous WAL prefix and does not write a terminal event for a lost in-flight execution. The Go lease-expiry scanner is the sole terminal author for such executions, and it does not mark parked `requires_input` or `awaiting_confirmation` Turns unknown. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md`. Historical BFF boundary: superseded [`adr/0013-agent-live-journal-bff.md`](adr/0013-agent-live-journal-bff.md). Current full journal and UI protocol: [`adr/0017-agent-full-journal-ui-protocol.md`](adr/0017-agent-full-journal-ui-protocol.md).
 - ProductFlow Turn command responses trust only state that satisfies the Agent service wire contract; live projection trusts only the PostgreSQL journal and preserves unprovable outcomes as unknown.
@@ -192,14 +192,14 @@ Environment variables hold infrastructure and secrets required before database a
 - database, Redis, and storage
 - admin, session, and settings tokens
 - Agent service address and internal token
-- optional `METRICS_BEARER_TOKEN`; `/metrics` is not registered when it is absent
+- optional `METRICS_BEARER_TOKEN`; API and dispatcher `/metrics` are not registered when it is absent; `DISPATCHER_METRICS_ADDR` enables the standalone dispatcher scrape endpoint
 - upload, logging, and worker base settings
 
 Provider profiles, purpose bindings, and business runtime settings are stored through `/settings`. The page requires an administrator session and independent `SETTINGS_ACCESS_TOKEN`.
 
 Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 
-API, worker, and dispatcher write readable lines to stderr (time, level, process, message, `key=value`) and rotate JSON files under `STORAGE_ROOT/logs/` (local `storage-dev/logs/`, Compose `/app/storage/logs`): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`, including caller and error stacks. `LOG_DIR` overrides the directory. `LOG_FORMAT=json` also writes JSON to stderr. Idle dispatcher cycles, `/healthz`, and Agent heartbeats go to files only. With a metrics token configured, bearer-authenticated `/metrics` exposes bounded-label Turn, Graph run, dispatch, model invocation, effect reconciliation, and SSE connection metrics. Owner and tests: `go/internal/platform/log`, `go/internal/platform/metrics`.
+API, worker, and dispatcher write readable lines to stderr (time, level, process, message, `key=value`) and rotate JSON files under `STORAGE_ROOT/logs/` (local `storage-dev/logs/`, Compose `/app/storage/logs`): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`, including caller and error stacks. `LOG_DIR` overrides the directory. `LOG_FORMAT=json` also writes JSON to stderr. Idle dispatcher cycles, `/healthz`, and Agent heartbeats go to files only. With a metrics token configured, bearer-authenticated `/metrics` exposes bounded-label Turn, Graph run, dispatch, model invocation, effect reconciliation, recovery histograms, recovery candidate-lock query duration, current PostgreSQL lock waiters, and SSE connection metrics. Owner and tests: `go/internal/platform/log`, `go/internal/platform/metrics`.
 
 ## 11. Schema Evolution
 

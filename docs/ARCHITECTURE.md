@@ -132,7 +132,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 摄影和信息图每种图片类型落成一层 Group：1 个 `image_prompt` 加 N 个 `image_generation`（N 为该镜头张数）。证据类型（资质、工厂）是未绑定的 `image_asset`，`role=evidence`。创建上传的参考图 `role=product_identity`，接到视觉规范、创作要求和会生图镜头，不接到证据占位。添加面板「添加场景」一次 ChangeSet 创建组 + prompt + 1 张生图。实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`，模板 `go/internal/graph`。
 
-`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；互不依赖的处理节点可同时打 provider，上限为 PostgreSQL 权威的 `generation_max_concurrent_tasks` admission。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。运行时的 Graph claim 先取全局 generation capacity advisory，再按 `run -> node -> effect` 的顺序取执行行；修改 live graph 的自动采用路径按 `run -> graph -> node`。证据：`go/internal/graph` 执行与耐久测试。
+`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。同一 run 由一个 worker 持有；跨实例执行权由 GraphRun 行上的 token/expiry lease 提供，默认 35 分钟、每 5 分钟续租，过期后以 CAS 接管；同进程 mutex 只作快速门禁，不钉住长生命周期 SQL connection。互不依赖的处理节点可同时打 provider，上限为 PostgreSQL 权威的 `generation_max_concurrent_tasks` admission。一个节点失败或 unknown 不中止同层独立节点；上游失败的下游标失败。运行时的 Graph claim 先取全局 generation capacity advisory，再按 `run -> node -> effect` 的顺序取执行行；修改 live graph 的自动采用路径按 `run -> graph -> node`。GraphRun 列表返回状态/时间/节点进度摘要；snapshot、input trace 和 output 由单 run 详情读取。证据：`go/internal/graph` 执行、lease、列表投影与耐久测试。
 
 工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以提交整图、运行到某节点、单节点，或对镜头/失败子集提交一次 `selection`。已有 `running` run 时新请求进入 FIFO 排队，出队时再快照。用户不需要先创建 Agent Conversation。Agent 通过 `go/internal/agent` 创建待确认请求；用户确认后走同一套 `go/internal/graph` 约束。商品路径 Agent Turn 不能提交 Draft artifact。单次可逆改图走 Graph Command（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
 
@@ -153,7 +153,7 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 - `image_session_attach`
 - `local_edit`
 
-商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。
+商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。图片会话列表按 `updated_at DESC, id DESC` 使用版本化游标分页，默认 20 条、最多 100 条；列表只返回最新资产和轮次摘要，详情再读取任务与轮次明细。
 
 DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩放和格式规范异步生成交付文件。交付文件不替换源图。内置 DeliverySpec 模板由 `go/internal/delivery` 提供，只读 API 顺序为淘宝/天猫首屏 3:4、京东主图 1:1、Amazon 主图 1:1、详情竖图 3:4、场景横图 4:3。模板是便捷默认值，不构成平台审核或合规保证；用户可以覆盖宽高、格式和体积。来源标记为 `docs/ARCHITECTURE.md §7`。
 
@@ -176,7 +176,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 ## 9. 异步与恢复
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
-- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more` 和 recovery duration；API `/metrics` 直接读取 PostgreSQL 的 queued 与 stale-running recovery backlog；dispatcher 结构化日志记录 recovery duration，histogram 与锁等待指标仍待补齐。
+- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`、recovery duration 和错误；配置 metrics token 后，API `/metrics` 提供 queued/stale-running backlog 与当前 PostgreSQL 锁等待，dispatcher `/metrics` 另提供各域 recovery duration histogram 和候选锁查询耗时。
 - Redis 只承担 asynq broker 和投递唤醒；业务状态和生成容量 admission 由 PostgreSQL 负责。asynq worker 默认并发为 4，业务失败不依赖 broker retry。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
@@ -190,7 +190,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - database、Redis、storage
 - admin/session/settings token
 - Agent service 地址和内部 token
-- 可选的 `METRICS_BEARER_TOKEN`；未配置时不注册 `/metrics`
+- 可选的 `METRICS_BEARER_TOKEN`；未配置时 API 与 dispatcher 都不注册 `/metrics`；dispatcher 可用 `DISPATCHER_METRICS_ADDR` 暴露独立抓取端口
 - 上传限制、日志和 worker 基础参数
 
 Provider profile、purpose binding 和业务运行时设置由 `/settings` 写入数据库。设置页需要管理员 session 和独立 `SETTINGS_ACCESS_TOKEN`。
