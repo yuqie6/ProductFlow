@@ -11,7 +11,7 @@
 // 生成图通过 [GeneratedImageWriter] 写成 ProductImageAsset；交付通过 [DeliveryQueuer] 排队。
 //
 // 错误：revision 不匹配、已有 running、空 inverse 等返回 Conflict；缺图/缺 run 返回 NotFound。
-// 进程锁或 PG advisory lock 未拿到返回 queue.ErrBusy。无法证明的 provider 结果标 unknown
+// 进程锁或 GraphRun execution lease 未拿到返回 queue.ErrBusy。无法证明的 provider 结果标 unknown
 // （IsRetryable=false，不自动当失败重试）；已证明失败标 failed（可 RetryRun）。unknown 不可经 RetryRun 重试。
 //
 // 约束：本包不得 import product、recipe 或 delivery。跨切片走 [ProductGuard]、

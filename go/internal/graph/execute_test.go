@@ -433,6 +433,45 @@ func TestGraphRunLeaseTakesOverExpiredOwner(t *testing.T) {
 	}
 }
 
+func TestGraphRecoveryLeavesAValidExecutionLeaseAlone(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs
+		SET execution_lease_token = 'live-worker', execution_lease_expires_at = NOW() + interval '1 hour'
+		WHERE id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_node_runs
+		SET status = 'running', started_at = NOW() - interval '1 hour', progress_updated_at = NOW() - interval '1 hour'
+		WHERE graph_run_id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := graph.RecoverUnfinishedGraphRuns(context.Background(), gs.pool, time.Minute, product.GraphGuard{}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var current graph.GraphRunResponse
+	gs.decode(t, got, &current)
+	if current.Status != graph.RunStatusRunning || len(current.NodeRuns) != len(run.NodeRuns) {
+		t.Fatalf("valid lease was recovered: status=%s nodes=%+v", current.Status, current.NodeRuns)
+	}
+	for _, nodeRun := range current.NodeRuns {
+		if nodeRun.Status != graph.NodeRunRunning {
+			t.Fatalf("valid lease changed node %s to %s", nodeRun.ID, nodeRun.Status)
+		}
+	}
+}
+
 func TestGraphRunLeaseFencesLateProviderResult(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)

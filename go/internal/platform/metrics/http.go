@@ -215,6 +215,7 @@ func snapshot(db *gorm.DB) (string, error) {
 			SELECT 'graph' AS domain, r.id
 			FROM workflow_graph_runs r
 			WHERE r.status = 'running'
+			  AND (r.execution_lease_expires_at IS NULL OR r.execution_lease_expires_at <= NOW())
 			  AND EXISTS (
 				SELECT 1 FROM workflow_graph_node_runs n
 				WHERE n.graph_run_id = r.id AND n.status = 'running'

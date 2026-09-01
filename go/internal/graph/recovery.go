@@ -47,7 +47,9 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 		candidateScanStarted := time.Now()
 		candidateScanErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdateOfSkipLocked("workflow_graph_runs")).
 			Select("workflow_graph_runs.id").
-			Where(`workflow_graph_runs.status = ? AND (
+			Where(`workflow_graph_runs.status = ?
+			  AND (workflow_graph_runs.execution_lease_expires_at IS NULL OR workflow_graph_runs.execution_lease_expires_at <= NOW())
+			  AND (
 				EXISTS (
 					SELECT 1 FROM workflow_graph_node_runs n
 					WHERE n.graph_run_id = workflow_graph_runs.id
