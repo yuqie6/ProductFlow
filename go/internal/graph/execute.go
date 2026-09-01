@@ -161,9 +161,12 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		var stop bool
+		var (
+			stop bool
+			run  graphRunRow
+		)
 		err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-			run, err := loadGraphRunByID(ctx, pgxTx, runID)
+			loaded, err := loadGraphRunByID(ctx, pgxTx, runID)
 			if isMissingGraphRun(err) {
 				stop = true
 				return nil
@@ -171,6 +174,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			if err != nil {
 				return err
 			}
+			run = loaded
 			if run.Status != RunStatusRunning {
 				stop = true
 				return nil
@@ -196,16 +200,6 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			return err
 		}
 
-		run, err := e.loadRun(ctx, runID)
-		if isMissingGraphRun(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if run.Status != RunStatusRunning {
-			return nil
-		}
 		applied, err := appliedGraphFromSnapshot(run.Snapshot)
 		if err != nil {
 			return err

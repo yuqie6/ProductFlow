@@ -68,7 +68,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch loop 与 recovery cadence 解耦；watch 默认每秒投递、每 10 秒 recovery | 仍需 pg_notify/Redis 唤醒和 recovery 任务分层；需要负载下验证 dispatch latency |
 | PERF-07 | SSE 连接占用 | 部分完成 | `platform/notify.Subscribe` 按 pool 在进程内共享一条 LISTEN，Agent/Graph/ImageSession 共用 fanout；缓冲满时丢通知并依赖 PG 回读 | 每个 API 副本仍有 listener；需要跨副本连接预算和 listener 健康指标 |
 | PERF-08 | ImageSession 列表 N+1 | 部分完成 | 最新轮次与资产、round count 改成批量查询；`image_sessions(updated_at DESC,id DESC)` 索引已写入并完成本地迁移 | 列表仍全表读取且无分页；详情页任务/effect/队列总览仍有多次查询 |
-| PERF-09 | GraphRun 列表 N+1 与排序 | 部分完成 | run 与 node runs 改成批量读取；`(graph_id, started_at DESC, id DESC)` 索引已写入并完成本地 schema migration | 列表仍加载 snapshot 与 node runs；需要轻量摘要 DTO 或分离详情读取和 query plan 记录 |
+| PERF-09 | GraphRun 列表 N+1 与排序 | 部分完成 | run 与 node runs 改成批量读取；`(graph_id, started_at DESC, id DESC)` 索引已写入并完成本地 schema migration；`executeLoop` 复用事务内完整 run 投影，避免每个调度 tick 的第二次完整读取，claim 仍在短事务内重检当前 run 状态；Graph package 与全量 Go gate 通过 | 列表仍加载 snapshot 与 node runs；需要轻量摘要 DTO 或分离详情读取和 query plan 记录 |
 | PERF-12 | Agent Session 列表 N+1 | 部分完成 | 当前页 session、每个 session 最近 20 条 conversation 和 count 改成批量查询；21 条 conversation limit regression 通过 | 需要真实规模 payload/query plan；单条详情路径仍按一个 session 组装三类数据 |
 | PERF-13 | Agent journal batch 写入 P95 | 部分完成 | `AppendEvents` 将 batch 内已有 sequence 从逐条 `Take` 改为一次查询，保留 projection lock、幂等 replay 和逐条 fold；容量 gate 连续两次通过，P95=240ms/211ms，100 SSE 通过 | 需要持续 histogram、目标规模负载与锁等待观测 |
 | PERF-10 | tenant 和真实身份 | 待实施 | 当前明确维持单管理员、单商家合同，不提前给现有 live 表补 tenant_id | SaaS 起点需同时设计 principal、数据范围、配额、审计和存储，不做局部补丁 |
@@ -228,7 +228,7 @@ watch loop
 ### 当前重点查询
 
 - `imagesession.Service.List`：当前保留不分页合同，`image_sessions` 全量读取后使用批量 round count/latest asset 查询。下一刀应先设计 cursor，再处理前端无限列表和删除后的 cursor 行为。
-- `graph.Service.ListRuns`：当前最多 20 条，但每条序列化 node runs 并携带 snapshot-derived data。下一刀应以实际前端字段为依据拆分 summary/detail。
+- `graph.Service.ListRuns`：当前最多 20 条，但每条序列化 node runs 并携带 snapshot-derived data。下一刀应以实际前端字段为依据拆分 summary/detail。执行循环已复用同一 tick 的 run 投影，避免重复完整读取；这不改变列表合同。
 - `agent.listSessions/loadSession`：主查询已经 cursor page，当前页内仍可能产生 conversations/count N+1。批量查询必须保留 global conversation 的补齐逻辑在命令事务边界内。
 - `product.listProducts`：名称包含搜索是 `ILIKE '%q%'`。不要用普通 btree 索引冒充 contains 加速；需要时评估 `pg_trgm` 的部署权限、索引大小、迁移和搜索 SLO。
 - `library.List`：已有 cursor page；搜索、标签 join、归档 predicate 需要以真实 query plan 决定索引，不能为每个筛选组合无限加复合索引。
