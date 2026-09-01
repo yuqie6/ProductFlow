@@ -80,6 +80,7 @@ func main() {
 
 	runOnce := func(runRecovery bool) error {
 		bg := context.Background()
+		recoveryStarted := time.Now()
 		var workflow graph.RecoverySummary
 		var imageSession imagesession.RecoverySummary
 		var rendition delivery.RecoverySummary
@@ -115,8 +116,13 @@ func main() {
 		if err != nil {
 			return errors.Join(recoveryErr, fmt.Errorf("dispatch: %w", err))
 		}
+		recoveryDuration := time.Duration(0)
+		if runRecovery {
+			recoveryDuration = time.Since(recoveryStarted)
+		}
 		fields := []zap.Field{
 			zap.Bool("recovery", runRecovery),
+			zap.Int64("recovery_duration_ms", recoveryDuration.Milliseconds()),
 			zap.Int("pending", summary.Pending),
 			zap.Int("sent", summary.Sent),
 			zap.Int("reconciled", summary.Reconciled),

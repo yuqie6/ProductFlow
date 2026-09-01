@@ -52,6 +52,13 @@ type statusCount struct {
 	Count  int64  `gorm:"column:count"`
 }
 
+type recoveryBacklogCount struct {
+	Domain string `gorm:"column:domain"`
+	Count  int64  `gorm:"column:count"`
+}
+
+var recoveryBacklogDomains = []string{"agent", "graph", "image_session", "delivery", "local_image_edit"}
+
 // Register 仅在 token 非空时挂 GET /metrics。Authorization 必须是 Bearer 且恒定时间比较；
 // 失败只回 401/500 状态码，不写 {"detail"}，避免探测。
 func Register(engine *gin.Engine, db *gorm.DB, token string) {
@@ -132,6 +139,62 @@ func snapshot(db *gorm.DB) (string, error) {
 	`).Scan(&pending).Error; err != nil {
 		return "", err
 	}
+	var recoveryBacklog []recoveryBacklogCount
+	if err := db.Raw(`
+		SELECT domain, COUNT(*) AS count
+		FROM (
+			SELECT 'agent' AS domain
+			FROM agent_tasks t
+			WHERE t.status = 'queued' AND t.current_turn_id IS NULL AND t.conversation_id IS NOT NULL
+			UNION ALL
+			SELECT 'agent' AS domain
+			FROM agent_turn_projections p
+			WHERE p.resume_required = FALSE
+			  AND (p.status IN ('queued', 'running', 'cancel_requested') OR (p.status = 'requires_input' AND p.question_answer_json IS NOT NULL))
+			  AND NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = 'run_agent_turn_sync:' || p.id AND d.status IN ('pending', 'sent', 'dead')
+			  )
+			UNION ALL
+			SELECT 'graph' AS domain
+			FROM (
+				SELECT DISTINCT r.graph_id
+				FROM workflow_graph_runs r
+				WHERE r.status = 'queued'
+				  AND NOT EXISTS (
+					SELECT 1 FROM workflow_graph_runs active
+					WHERE active.graph_id = r.graph_id AND active.status = 'running'
+				  )
+			) graph_candidates
+			UNION ALL
+			SELECT 'image_session' AS domain
+			FROM image_session_generation_tasks t
+			WHERE t.is_retryable = TRUE AND t.status = 'queued'
+			  AND NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = 'run_image_session_generation_task:' || t.id AND d.status IN ('pending', 'sent', 'dead')
+			  )
+			UNION ALL
+			SELECT 'delivery' AS domain
+			FROM delivery_rendition_jobs j
+			WHERE j.is_retryable = TRUE AND j.status = 'queued'
+			  AND NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = 'run_delivery_rendition_job:' || j.id AND d.status IN ('pending', 'sent', 'dead')
+			  )
+			UNION ALL
+			SELECT 'local_image_edit' AS domain
+			FROM local_image_edit_tasks t
+			WHERE t.is_retryable = TRUE AND t.status = 'queued'
+			  AND NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = 'run_local_image_edit_task:' || t.id AND d.status IN ('pending', 'sent', 'dead')
+			  )
+		) candidates
+		GROUP BY domain
+	`).Scan(&recoveryBacklog).Error; err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	b.WriteString("# HELP productflow_agent_sse_connections Current Agent SSE connections.\n")
 	b.WriteString("# TYPE productflow_agent_sse_connections gauge\n")
@@ -175,7 +238,20 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# HELP productflow_agent_expired_leases Active executions whose lease has expired.\n")
 	b.WriteString("# TYPE productflow_agent_expired_leases gauge\n")
 	fmt.Fprintf(&b, "productflow_agent_expired_leases %d\n", pending.ExpiredLeases)
+	writeRecoveryBacklog(&b, recoveryBacklog)
 	return b.String(), nil
+}
+
+func writeRecoveryBacklog(b *strings.Builder, rows []recoveryBacklogCount) {
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Domain] = row.Count
+	}
+	b.WriteString("# HELP productflow_recovery_queued_backlog Durable queued recovery candidates without an active outbox.\n")
+	b.WriteString("# TYPE productflow_recovery_queued_backlog gauge\n")
+	for _, domain := range recoveryBacklogDomains {
+		fmt.Fprintf(b, "productflow_recovery_queued_backlog{domain=%q} %d\n", domain, counts[domain])
+	}
 }
 
 func writeStatusCounts(b *strings.Builder, name, help string, rows []statusCount) {

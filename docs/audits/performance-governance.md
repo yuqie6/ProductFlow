@@ -64,7 +64,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | PERF-02 | Agent Task 与 Turn projection 反向边 | 部分完成 | 全局 Draft 确认先 `FOR UPDATE projection` 再锁 Task，与 journal 终态投影路径一致；Agent lock-order tests 和全量 Go gate 通过 | 需要保留跨事务死锁 gate，并继续核对稳定架构文档的 owner 表 |
 | PERF-03 | node/run 隐式反向边 | 部分完成 | `failBlockedQueuedNodes` 先锁 run，再改 node 并追加事件；事件 helper 不再隐藏获取 run 锁；Graph 全量 Go gate 通过 | 仍需 Graph 并发 regression，覆盖 recovery、cancel、worker tick |
 | PERF-04 | 生图容量锁顺序 | 部分完成 | Graph 为 `capacity advisory -> run -> node`；ImageSession claim 改为 `capacity advisory -> task`，取得 task 锁后重新核对状态 | 全库单钥匙和 noisy neighbor 仍存在；SaaS 前需按 workspace/tenant 重构 |
-| PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 的过期 execution 回收、queued Task reserve、projection 查询、outbox restage 已分阶段提交；所有 recovery owner 默认每轮最多 25 条，业务域使用 `SKIP LOCKED`，queued 行过滤活跃 outbox；summary 的 `has_more` 已进入 dispatcher 结构化日志 | 各域仍在一个有界事务内处理一批聚合；仍需 Prometheus backlog、批次耗时和锁等待指标 |
+| PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 的过期 execution 回收、queued Task reserve、projection 查询、outbox restage 已分阶段提交；所有 recovery owner 默认每轮最多 25 条，业务域使用 `SKIP LOCKED`，queued 行过滤活跃 outbox；summary 的 `has_more` 已进入 dispatcher 结构化日志，API `/metrics` 提供 queued backlog | 各域仍在一个有界事务内处理一批聚合；仍需 stale-running backlog 分项、批次耗时与锁等待指标 |
 | PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch loop 与 recovery cadence 解耦；watch 默认每秒投递、每 10 秒 recovery | 仍需 pg_notify/Redis 唤醒和 recovery 任务分层；需要负载下验证 dispatch latency |
 | PERF-07 | SSE 连接占用 | 部分完成 | `platform/notify.Subscribe` 按 pool 在进程内共享一条 LISTEN，Agent/Graph/ImageSession 共用 fanout；缓冲满时丢通知并依赖 PG 回读 | 每个 API 副本仍有 listener；需要跨副本连接预算和 listener 健康指标 |
 | PERF-08 | ImageSession 列表 N+1 | 部分完成 | 最新轮次与资产、round count 改成批量查询；`image_sessions(updated_at DESC,id DESC)` 索引已写入并完成本地迁移 | 列表仍全表读取且无分页；详情页任务/effect/队列总览仍有多次查询 |
@@ -148,10 +148,10 @@ Recovery 的默认边界：
 
 ### P1：解耦 dispatch、recovery 和容量 admission
 
-状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次和 dispatcher `has_more` 日志已落地；批次内事务拆分、Prometheus backlog 指标和 admission 仍待实施。
+状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次、dispatcher `has_more` 日志和 API queued backlog 指标已落地；批次内事务拆分、stale-running 指标和 admission 仍待实施。
 
 1. dispatcher watch 模式持续以 dispatch interval 处理 outbox；recovery 使用独立 cadence。首轮 recovery 立即运行，失败不推进成功时间戳。
-2. Agent、Graph、ImageSession、Delivery、LocalEdit 已使用默认 25 条上限；业务域使用 `status + stale predicate + SKIP LOCKED` 和稳定时间/id 排序，dispatcher 日志记录每个 owner 的 `has_more`。下一步是 Prometheus backlog、批次耗时和锁等待指标，验证没有稳定排序下的隐性饥饿。
+2. Agent、Graph、ImageSession、Delivery、LocalEdit 已使用默认 25 条上限；业务域使用 `status + stale predicate + SKIP LOCKED` 和稳定时间/id 排序，dispatcher 日志记录每个 owner 的 `has_more`，API `/metrics` 直接读取 PostgreSQL 的 queued backlog。下一步是 stale-running 分项、批次耗时和锁等待指标，验证没有稳定排序下的隐性饥饿。
 3. 把当前每批事务继续拆成候选 claim、单聚合状态迁移、restage 的短事务；不要让批次大小随业务行数增长。
 4. 单商家阶段继续用 PostgreSQL capacity advisory 保证准确 admission，但把查询/锁等待和 running count 记录出来。SaaS 前替换为按 workspace/tenant 的 admission token；PostgreSQL 只做对账。
 5. 评估 GraphRun 长 advisory 的 row lease 替代方案：需要 owner id、lease expiry、fencing 或 CAS、续租、超时接管、迁移期间双 worker 行为和 crash test。没有完整设计时保留现行合同。
@@ -338,14 +338,15 @@ just web-build
 | 日期 | 变化 | 已验证 | 未完成 |
 |---|---|---|---|
 | 2026-09-01 | Graph lock helper、Graph event call sites、Agent Draft confirmation lock order | Graph focused execution tests；Agent focused lock/recovery tests | Graph 专门并发 deadlock test；全量 Go gate |
-| 2026-09-01 | Agent recovery 分阶段事务、per-Task reserve 与有限候选批次 | Agent recovery focused tests；精确 Pi integration 连续 3 次通过；第二次 `just go-test` 全量通过 | 外部 Pi integration 曾在一次受影响包集合中出现时序失败，需保留真实 Agent 环境容量复核；backlog 指标 |
+| 2026-09-01 | Agent recovery 分阶段事务、per-Task reserve、有限候选批次与 `has_more` | Agent recovery focused tests；精确 Pi integration 连续 3 次通过；第二次 `just go-test` 全量通过 | 外部 Pi integration 曾在一次受影响包集合中出现时序失败，需保留真实 Agent 环境容量复核；stale-running backlog 与锁等待 |
 | 2026-09-01 | ImageSession capacity -> task lock order | ImageSession execute/recovery/HTTP focused tests | capacity wait/lock-order专项测试 |
 | 2026-09-01 | `notify.Subscribe` fanout 下沉，Agent/Graph/ImageSession 共用 | notify tests、Agent shared listener test、ImageSession SSE test | Graph SSE 专项命名测试；跨副本连接预算 |
 | 2026-09-01 | ImageSession summary 批量聚合 | ImageSession list/execute HTTP focused tests | 真实规模 query plan、无分页合同改造 |
 | 2026-09-01 | GraphRun 与 Agent Session 列表批量投影 | Graph full package、Agent Session CRUD 和 21 conversation limit regression 通过 | 真实规模 payload/query plan |
 | 2026-09-01 | dispatcher `--recovery-interval` 默认 10 秒与 recovery 错误隔离 | dispatcher package tests；第二次 `just go-test` 全量通过 | watch loop integration 和 dispatch latency load test |
 | 2026-09-01 | ImageSession/GraphRun 排序索引 ExtraDDL | `just go-migrate`；`go test -C go ./internal/platform/db/schema -count=1 -p 1` 通过 | 目标数据规模的 `EXPLAIN (ANALYZE, BUFFERS)` |
-| 2026-09-01 | Graph/ImageSession/Delivery/LocalEdit recovery 有界候选批次与 Agent `has_more` 汇总 | recovery focused tests；dispatcher/Agent focused tests；第二次 `just go-test` 全量通过 | Prometheus backlog 指标、批次事务耗时与锁等待 |
+| 2026-09-01 | Graph/ImageSession/Delivery/LocalEdit recovery 有界候选批次与 Agent `has_more` 汇总 | recovery focused tests；dispatcher/Agent focused tests；第二次 `just go-test` 全量通过 | stale-running backlog 分项、批次事务耗时与锁等待 |
+| 2026-09-01 | API queued recovery backlog 与 dispatcher recovery duration | metrics snapshot integration；dispatcher/metrics focused tests；最新 `just go-test` 全量通过 | stale-running backlog 分项、Prometheus histogram 和锁等待 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 
