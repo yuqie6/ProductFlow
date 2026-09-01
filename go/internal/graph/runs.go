@@ -567,6 +567,9 @@ func lockGraphRunAndLiveGraph(ctx context.Context, tx *gorm.DB, productID, graph
 	if run.GraphID != graphID {
 		return apperr.NotFound("工作流运行不存在")
 	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+		return err
+	}
 	_, err = loadGraphForUpdate(ctx, tx, productID, graphID)
 	return err
 }
@@ -611,16 +614,18 @@ func loadGraphRunByID(ctx context.Context, tx *gorm.DB, runID string) (graphRunR
 // 不在独立列。snapshot JSON 坏了会落成空 map，不要当错误——activate 会覆盖占位 snapshot。
 func graphRunFromSchema(rec schema.WorkflowGraphRuns) graphRunRow {
 	run := graphRunRow{
-		ID:              rec.ID,
-		GraphID:         rec.GraphID,
-		Status:          rec.Status,
-		RunScope:        rec.RunScope,
-		RequestedNodeID: rec.RequestedNodeID,
-		GraphRevision:   rec.GraphRevision,
-		FailureReason:   rec.FailureReason,
-		IsRetryable:     rec.IsRetryable,
-		StartedAt:       rec.StartedAt,
-		FinishedAt:      rec.FinishedAt,
+		ID:                      rec.ID,
+		GraphID:                 rec.GraphID,
+		Status:                  rec.Status,
+		RunScope:                rec.RunScope,
+		RequestedNodeID:         rec.RequestedNodeID,
+		GraphRevision:           rec.GraphRevision,
+		FailureReason:           rec.FailureReason,
+		IsRetryable:             rec.IsRetryable,
+		ExecutionLeaseToken:     rec.ExecutionLeaseToken,
+		ExecutionLeaseExpiresAt: rec.ExecutionLeaseExpiresAt,
+		StartedAt:               rec.StartedAt,
+		FinishedAt:              rec.FinishedAt,
 	}
 	if rec.SnapshotJSON != "" {
 		_ = json.Unmarshal([]byte(rec.SnapshotJSON), &run.Snapshot)

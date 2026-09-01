@@ -84,21 +84,23 @@ type GraphRunListResponse struct {
 }
 
 type graphRunRow struct {
-	ID               string
-	GraphID          string
-	Status           string
-	RunScope         string
-	RequestedNodeID  *string
-	RequestedNodeIDs []string
-	GraphRevision    int
-	Snapshot         map[string]any
-	FailureReason    *string
-	IsRetryable      bool
-	StartedAt        time.Time
-	FinishedAt       *time.Time
-	Force            bool
-	DocumentAction   string
-	NodeRuns         []graphNodeRunRow
+	ID                      string
+	GraphID                 string
+	Status                  string
+	RunScope                string
+	RequestedNodeID         *string
+	RequestedNodeIDs        []string
+	GraphRevision           int
+	Snapshot                map[string]any
+	FailureReason           *string
+	IsRetryable             bool
+	ExecutionLeaseToken     *string
+	ExecutionLeaseExpiresAt *time.Time
+	StartedAt               time.Time
+	FinishedAt              *time.Time
+	Force                   bool
+	DocumentAction          string
+	NodeRuns                []graphNodeRunRow
 }
 
 type graphNodeRunRow struct {

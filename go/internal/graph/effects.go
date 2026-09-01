@@ -65,6 +65,9 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	if isTerminalRun(run.Status) {
 		return nil
 	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+		return err
+	}
 	var node schema.WorkflowGraphNodeRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 		Where("id = ? AND graph_run_id = ?", nodeRunID, runID).
@@ -109,11 +112,14 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 func advanceNodePhase(ctx context.Context, tx *gorm.DB, runID, nodeRunID, attemptID, phase string) (bool, error) {
 	now := time.Now().UTC()
 	var run schema.WorkflowGraphRuns
-	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status").Where("id = ?", runID).Take(&run).Error; err != nil {
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status", "execution_lease_token", "execution_lease_expires_at").Where("id = ?", runID).Take(&run).Error; err != nil {
 		return false, err
 	}
 	if run.Status != RunStatusRunning {
 		return false, nil
+	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+		return false, err
 	}
 	res := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 		Where("id = ? AND active_attempt_id = ? AND status = ?", nodeRunID, attemptID, "running").

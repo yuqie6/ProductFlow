@@ -111,7 +111,7 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		// claim 必须同一顺序，避免取消与 worker 形成 run/node 死锁。
 		var run schema.WorkflowGraphRuns
 		if err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
-			Select("id", "status").Where("id = ?", ref.GraphRunID).Take(&run).Error; err != nil {
+			Select("id", "status", "execution_lease_token", "execution_lease_expires_at").Where("id = ?", ref.GraphRunID).Take(&run).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errNotClaimed
 			}
@@ -119,6 +119,9 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		}
 		if run.Status != RunStatusRunning {
 			return errNotClaimed
+		}
+		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+			return err
 		}
 		now := time.Now().UTC()
 		attemptID := clockid.New()
@@ -237,8 +240,11 @@ func aggregateGraphRunTerminalStatus(statuses, reasons []string) (string, *strin
 // 调用方须已持事务；不要在这里把 unknown 改成 failed。
 func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
 	var run schema.WorkflowGraphRuns
-	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status").Where("id = ?", runID).Take(&run).Error
+	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status", "execution_lease_token", "execution_lease_expires_at").Where("id = ?", runID).Take(&run).Error
 	if err != nil || run.Status != RunStatusRunning {
+		return false, err
+	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
 		return false, err
 	}
 	statuses, reasons, err := loadNodeRunStatuses(ctx, tx, runID)
@@ -366,6 +372,9 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 		if isTerminalRun(run.Status) {
 			return nil
 		}
+		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+			return err
+		}
 		var node schema.WorkflowGraphNodeRuns
 		err = dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 			Where("id = ? AND graph_run_id = ?", nodeRunID, runID).
@@ -436,6 +445,9 @@ func failGraphRun(ctx context.Context, gdb *gorm.DB, runID, reason string) error
 		}
 		if isTerminalRun(run.Status) {
 			return nil
+		}
+		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+			return err
 		}
 		var nodes []schema.WorkflowGraphNodeRuns
 		if err := dbTx.WithContext(ctx).

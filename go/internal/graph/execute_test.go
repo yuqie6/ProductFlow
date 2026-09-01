@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
@@ -389,6 +390,96 @@ func TestExecuteMissingGraphRunConsumes(t *testing.T) {
 	}
 	if err := executor.ExecuteRun(context.Background(), "ffffffffffffffffffffffffffffffff"); err != nil {
 		t.Fatalf("missing graph run must consume, not fail: %v", err)
+	}
+}
+
+func TestGraphRunLeaseTakesOverExpiredOwner(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs
+		SET execution_lease_token = 'crashed-worker', execution_lease_expires_at = NOW() + interval '1 hour'
+		WHERE id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  graph.MockImageProvider{},
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	if err := executor.ExecuteRun(context.Background(), run.ID); !errors.Is(err, queue.ErrBusy) {
+		t.Fatalf("live lease must return busy, got %v", err)
+	}
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs SET execution_lease_expires_at = NOW() - interval '1 second' WHERE id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	gs.executeLocally(t, run.ID, executor)
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var finished graph.GraphRunResponse
+	gs.decode(t, got, &finished)
+	if finished.Status != "succeeded" {
+		t.Fatalf("taken-over run status %s reason %+v", finished.Status, finished.FailureReason)
+	}
+}
+
+func TestGraphRunLeaseFencesLateProviderResult(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	images := &delayedImage{entered: make(chan struct{}), release: make(chan struct{})}
+	executor := graph.Executor{
+		DB:       gs.db,
+		Products: product.GraphGuard{},
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.reclaimRun(t, run.ID)
+	done := make(chan error, 1)
+	go func() { done <- executor.ExecuteRun(context.Background(), run.ID) }()
+	select {
+	case <-images.entered:
+	case <-time.After(8 * time.Second):
+		t.Fatal("image provider was not called")
+	}
+	if _, err := gs.pool.Exec(context.Background(), `
+		UPDATE workflow_graph_runs
+		SET execution_lease_token = 'takeover-worker', execution_lease_expires_at = NOW() + interval '1 hour'
+		WHERE id = $1
+	`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	close(images.release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, queue.ErrBusy) {
+			t.Fatalf("stale executor must retry after fencing, got %v", err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("stale executor did not finish")
+	}
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var current graph.GraphRunResponse
+	gs.decode(t, got, &current)
+	if current.Status != "running" {
+		t.Fatalf("late provider changed run status to %s", current.Status)
 	}
 }
 

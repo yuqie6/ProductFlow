@@ -2,16 +2,12 @@ package graph
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
-	sqldb "database/sql"
-
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
@@ -20,16 +16,12 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	graphRunAdvisoryLockNamespace = 847261
-)
-
 // graphRunLocks 是进程内互斥：同一 runID 只允许一个 ExecuteRun 持锁，另一条返回 queue.ErrBusy。
 var graphRunLocks sync.Map
 
 // Executor 是 GraphRun worker。本包不得 import product；图片写入与交付排队走 [Dependencies]。
 type Executor struct {
-	DB   *gorm.DB     // 命令事务与 advisory lock 入口
+	DB   *gorm.DB     // 命令事务与 GraphRun execution lease 入口
 	Deps Dependencies // Prompt/Image 为 nil 时用 Mock；Delivery 排队失败只记日志，不失败 cook
 	Log  *zap.Logger  // nil 时用 Nop
 	// AfterRunStatus 在 ExecuteRun 到达终态（成功、failed、unknown）后回调，供 Agent 同步 Task。
@@ -42,7 +34,8 @@ type Executor struct {
 
 // ExecuteRun 是 asynq worker 入口：同一 run 只允许一个 worker。
 //
-// 先抢进程内互斥，再抢 PostgreSQL advisory lock；任一把未拿到返回 queue.ErrBusy，让 asynq 稍后再投递。
+// 进程内互斥只做同进程重复提交的快速门禁；跨实例执行权由 GraphRun 行上的 token/expiry lease 决定。
+// lease 丢失时取消本次执行并返回 queue.ErrBusy，旧 worker 不能再收口 run 或晋升产物。
 // 找不到 run 视为已消费，返回 nil。无法证明的 provider 结果标 unknown，返回 nil，不把 run 标 failed、不自动重试。
 // 已证明的节点失败会把 run 标 failed 后仍返回 nil，让 worker 消费任务。
 // 不要在这里打 broker，也不要把 unknown 改成 failed。副作用见 executeLoop / claim / persist。
@@ -54,26 +47,50 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 		return queue.ErrBusy
 	}
 	defer unlock()
+	if e.DB == nil {
+		return errors.New("graph run executor requires database")
+	}
 
-	sqlDB, err := e.DB.DB()
+	token := clockid.New()
+	active, acquired, err := acquireGraphRunLease(ctx, e.DB, runID, token)
 	if err != nil {
 		return err
 	}
-	conn, err := sqlDB.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	acquired, err := tryAdvisoryLock(ctx, conn, runID)
-	if err != nil {
-		return err
+	if !active {
+		e.notifyRunStatus(ctx, runID)
+		return nil
 	}
 	if !acquired {
 		return queue.ErrBusy
 	}
-	defer func() { _ = releaseAdvisoryLock(context.Background(), conn, runID) }()
 
-	if err := e.executeLoop(ctx, runID); err != nil {
+	leaseCtx, cancelLease := context.WithCancel(withGraphRunLease(ctx, token))
+	leaseLost := make(chan struct{})
+	var leaseLostOnce sync.Once
+	markLeaseLost := func() {
+		leaseLostOnce.Do(func() {
+			close(leaseLost)
+			cancelLease()
+		})
+	}
+	leaseDone := maintainGraphRunLease(leaseCtx, e.DB, runID, token, markLeaseLost)
+	defer func() {
+		cancelLease()
+		<-leaseDone
+		releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelRelease()
+		_, _ = releaseGraphRunLease(releaseCtx, e.DB, runID, token)
+	}()
+
+	if err := e.executeLoop(leaseCtx, runID); err != nil {
+		select {
+		case <-leaseLost:
+			return queue.ErrBusy
+		default:
+		}
+		if errors.Is(err, errGraphRunLeaseLost) {
+			return queue.ErrBusy
+		}
 		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
 			return err
 		}
@@ -84,9 +101,12 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 			e.notifyRunStatus(ctx, runID)
 			return nil
 		}
-		if failErr := failGraphRun(ctx, e.DB, runID, "工作流运行失败"); failErr != nil {
+		if failErr := failGraphRun(leaseCtx, e.DB, runID, "工作流运行失败"); failErr != nil {
 			if isMissingGraphRun(failErr) {
 				return nil
+			}
+			if errors.Is(failErr, errGraphRunLeaseLost) {
+				return queue.ErrBusy
 			}
 			return failErr
 		}
@@ -114,7 +134,7 @@ func (e Executor) logger() *zap.Logger {
 }
 
 // executeLoop 是单次 GraphRun 的调度循环：从 snapshot 找上游 ready 的 queued 节点，claim 后并发 cook。
-// 只在 ExecuteRun 已持进程锁 + PG advisory lock 之后调用。循环里再 fail 被挡住的 queued、检查终态。
+// 只在 ExecuteRun 已持进程锁 + execution lease 之后调用。循环里再 fail 被挡住的 queued、检查终态。
 // 容量不足返回 errWaitingCapacity 后短睡再试；真正抢不到锁才把 queue.ErrBusy 抛给 asynq。
 // unknown 不停止 claim（noteNodeOutcome 把它当成功）；已证明失败才 stopClaiming。
 // 不要在这里打 broker，也不要把 missing run 当错误——当作已消费返回 nil。
@@ -286,11 +306,14 @@ func (e Executor) loadRun(ctx context.Context, runID string) (graphRunRow, error
 // 循环直到没有新的 blocked，避免漏标间接下游。RowsAffected!=1 表示并发抢先，跳过即可。
 func failBlockedQueuedNodes(ctx context.Context, tx *gorm.DB, runID string, graph AppliedGraph, nodeRuns []graphNodeRunRow) error {
 	var run schema.WorkflowGraphRuns
-	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status").Where("id = ?", runID).Take(&run).Error; err != nil {
+	if err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "status", "execution_lease_token", "execution_lease_expires_at").Where("id = ?", runID).Take(&run).Error; err != nil {
 		return err
 	}
 	if run.Status != RunStatusRunning {
 		return nil
+	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+		return err
 	}
 	now := time.Now().UTC()
 	for {
@@ -381,49 +404,6 @@ func tryProcessLock(runID string) (func(), bool) {
 		lock.Unlock()
 		graphRunLocks.CompareAndDelete(runID, lock)
 	}, true
-}
-
-func graphRunAdvisoryKeys(runID string) (int32, int32) {
-	hexID := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(runID)), "-", "")
-	mod := uint64(1 << 31)
-	if len(hexID) == 32 {
-		var acc uint64
-		for i := 0; i < 32; i += 2 {
-			var b byte
-			hi := hexNibble(hexID[i])
-			lo := hexNibble(hexID[i+1])
-			b = hi<<4 | lo
-			acc = (acc*256 + uint64(b)) % mod
-		}
-		return graphRunAdvisoryLockNamespace, int32(acc)
-	}
-	sum := sha256.Sum256([]byte(runID))
-	ident := binary.BigEndian.Uint64(sum[:8]) % mod
-	return graphRunAdvisoryLockNamespace, int32(ident)
-}
-
-func hexNibble(ch byte) byte {
-	switch {
-	case ch >= '0' && ch <= '9':
-		return ch - '0'
-	case ch >= 'a' && ch <= 'f':
-		return ch - 'a' + 10
-	default:
-		return 0
-	}
-}
-
-func tryAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) (bool, error) {
-	ns, key := graphRunAdvisoryKeys(runID)
-	var acquired bool
-	err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1, $2)`, ns, key).Scan(&acquired)
-	return acquired, err
-}
-
-func releaseAdvisoryLock(ctx context.Context, conn *sqldb.Conn, runID string) error {
-	ns, key := graphRunAdvisoryKeys(runID)
-	_, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock($1, $2)`, ns, key)
-	return err
 }
 
 // finishOrLater 在没有可 claim 节点且 inflight=0 时收口：再 fail blocked，再 completeGraphRunIfNodesTerminal。

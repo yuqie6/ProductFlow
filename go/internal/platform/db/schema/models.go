@@ -979,18 +979,20 @@ func (WorkflowGraphProviderEffects) TableName() string { return "workflow_graph_
 // WorkflowGraphRuns 对应表 workflow_graph_runs。
 // 独立业务执行记录；用户点运行即可创建，不必先有 Agent Session。
 type WorkflowGraphRuns struct {
-	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	GraphID          string     `gorm:"column:graph_id;type:varchar(36);not null"`
-	Status           string     `gorm:"column:status;type:varchar(40);not null"`
-	RunScope         string     `gorm:"column:run_scope;type:varchar(40);not null"`
-	RequestedNodeID  *string    `gorm:"column:requested_node_id;type:varchar(36)"`
-	GraphRevision    int        `gorm:"column:graph_revision;type:integer;not null"`
-	SnapshotJSON     string     `gorm:"column:snapshot_json;type:json;not null"`
-	FailureReason    *string    `gorm:"column:failure_reason;type:text"`
-	IsRetryable      bool       `gorm:"column:is_retryable;type:boolean;not null"`
-	ProgressMetadata *string    `gorm:"column:progress_metadata;type:json"`
-	StartedAt        time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
-	FinishedAt       *time.Time `gorm:"column:finished_at;type:timestamptz"`
+	ID                      string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	GraphID                 string     `gorm:"column:graph_id;type:varchar(36);not null"`
+	Status                  string     `gorm:"column:status;type:varchar(40);not null"`
+	RunScope                string     `gorm:"column:run_scope;type:varchar(40);not null"`
+	RequestedNodeID         *string    `gorm:"column:requested_node_id;type:varchar(36)"`
+	GraphRevision           int        `gorm:"column:graph_revision;type:integer;not null"`
+	SnapshotJSON            string     `gorm:"column:snapshot_json;type:json;not null"`
+	FailureReason           *string    `gorm:"column:failure_reason;type:text"`
+	IsRetryable             bool       `gorm:"column:is_retryable;type:boolean;not null"`
+	ProgressMetadata        *string    `gorm:"column:progress_metadata;type:json"`
+	ExecutionLeaseToken     *string    `gorm:"column:execution_lease_token;type:varchar(36)"`
+	ExecutionLeaseExpiresAt *time.Time `gorm:"column:execution_lease_expires_at;type:timestamptz"`
+	StartedAt               time.Time  `gorm:"column:started_at;type:timestamptz;not null"`
+	FinishedAt              *time.Time `gorm:"column:finished_at;type:timestamptz"`
 }
 
 func (WorkflowGraphRuns) TableName() string { return "workflow_graph_runs" }

@@ -1649,6 +1649,7 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_provider_effects_reconciliation ON public.workflow_graph_provider_effects USING btree (effect_result, reconciliation_state, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_runs_graph_id ON public.workflow_graph_runs USING btree (graph_id);`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_runs_graph_started ON public.workflow_graph_runs USING btree (graph_id, started_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_runs_execution_lease ON public.workflow_graph_runs USING btree (execution_lease_expires_at, id) WHERE ((status)::text = 'running'::text);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graph_runs_one_active_per_graph ON public.workflow_graph_runs USING btree (graph_id) WHERE ((status)::text = 'running'::text);`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graphs_product_id ON public.workflow_graphs USING btree (product_id);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_graphs_one_active_per_product ON public.workflow_graphs USING btree (product_id) WHERE (active = true);`,
@@ -1683,6 +1684,11 @@ EXCEPTION WHEN undefined_object THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_status CHECK (status::text = ANY (ARRAY['queued'::character varying, 'running'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'cancelled'::character varying, 'unknown'::character varying]::text[]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_graph_runs ADD CONSTRAINT ck_workflow_graph_runs_execution_lease_pair CHECK ((execution_lease_token IS NULL) = (execution_lease_expires_at IS NULL));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,

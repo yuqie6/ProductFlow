@@ -60,6 +60,9 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 	if nodeRun == nil || run.Status != RunStatusRunning || nodeRun.Status != NodeRunRunning {
 		return nil
 	}
+	if err := graphRunLeaseOwned(ctx, run); err != nil {
+		return err
+	}
 	if expectedAttemptID == "" || nodeRun.ActiveAttemptID == nil || *nodeRun.ActiveAttemptID != expectedAttemptID {
 		return errProviderFenced
 	}
@@ -430,6 +433,9 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 		if run.Status != RunStatusRunning {
 			promote = false
 			return nil
+		}
+		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+			return err
 		}
 		// 先锁 node，再让 recordProviderEffectResult 锁 effect，避免与 prepare 的 node -> effect 反向等待。
 		var node schema.WorkflowGraphNodeRuns
@@ -1038,6 +1044,9 @@ func lockNodeRunForPromotion(ctx context.Context, pgxTx *gorm.DB, runID, nodeRun
 	}
 	if run.Status != RunStatusRunning {
 		return false, nil
+	}
+	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
+		return false, err
 	}
 	var node schema.WorkflowGraphNodeRuns
 	if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ? AND graph_run_id = ?", nodeRunID, runID).Take(&node).Error; err != nil {
