@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -43,7 +44,8 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		var running []schema.WorkflowGraphRuns
-		if err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdateOfSkipLocked("workflow_graph_runs")).
+		candidateScanStarted := time.Now()
+		candidateScanErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdateOfSkipLocked("workflow_graph_runs")).
 			Select("workflow_graph_runs.id").
 			Where(`workflow_graph_runs.status = ? AND (
 				EXISTS (
@@ -83,8 +85,10 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 				[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
 			Order("workflow_graph_runs.started_at ASC, workflow_graph_runs.id ASC").
 			Limit(graphRecoveryBatchLimit).
-			Find(&running).Error; err != nil {
-			return err
+			Find(&running).Error
+		metrics.ObserveRecoveryLock("graph", time.Since(candidateScanStarted))
+		if candidateScanErr != nil {
+			return candidateScanErr
 		}
 		if len(running) >= graphRecoveryBatchLimit {
 			summary.HasMore = true

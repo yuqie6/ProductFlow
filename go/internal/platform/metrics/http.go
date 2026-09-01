@@ -195,6 +195,14 @@ func snapshot(db *gorm.DB) (string, error) {
 	`).Scan(&recoveryBacklog).Error; err != nil {
 		return "", err
 	}
+	var postgresLockWaiters int64
+	if err := db.Raw(`
+		SELECT COUNT(*)
+		FROM pg_stat_activity
+		WHERE wait_event_type = 'Lock' AND state <> 'idle'
+	`).Scan(&postgresLockWaiters).Error; err != nil {
+		return "", err
+	}
 	var staleRunning []recoveryBacklogCount
 	if err := db.Raw(`
 		WITH image_threshold AS (
@@ -278,8 +286,12 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# HELP productflow_agent_expired_leases Active executions whose lease has expired.\n")
 	b.WriteString("# TYPE productflow_agent_expired_leases gauge\n")
 	fmt.Fprintf(&b, "productflow_agent_expired_leases %d\n", pending.ExpiredLeases)
+	b.WriteString("# HELP productflow_postgres_lock_waiters PostgreSQL sessions currently waiting on a lock.\n")
+	b.WriteString("# TYPE productflow_postgres_lock_waiters gauge\n")
+	fmt.Fprintf(&b, "productflow_postgres_lock_waiters %d\n", postgresLockWaiters)
 	writeRecoveryBacklog(&b, recoveryBacklog)
 	writeRecoveryStaleRunning(&b, pending.ExpiredLeases, staleRunning)
+	writeRecoveryHistograms(&b)
 	return b.String(), nil
 }
 

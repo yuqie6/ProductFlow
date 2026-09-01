@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -35,6 +36,26 @@ func TestSnapshotIncludesRecoveryBacklog(t *testing.T) {
 		}
 		if !strings.Contains(body, `productflow_recovery_stale_running{domain="`+domain+`"}`) {
 			t.Fatalf("missing stale recovery backlog domain %q in metrics", domain)
+		}
+	}
+}
+
+func TestRecoveryHistogramsEmitStableDomains(t *testing.T) {
+	ObserveRecovery("graph", 25*time.Millisecond, false)
+	ObserveRecovery("graph", 2*time.Second, true)
+	ObserveRecoveryLock("graph", 5*time.Millisecond)
+	var b strings.Builder
+	writeRecoveryHistograms(&b)
+	got := b.String()
+	for _, want := range []string{
+		`# TYPE productflow_recovery_duration_seconds histogram`,
+		`productflow_recovery_duration_seconds_bucket{domain="graph",le="0.025"}`,
+		`productflow_recovery_duration_seconds_count{domain="graph"}`,
+		`productflow_recovery_lock_acquire_duration_seconds_bucket{domain="graph",le="0.01"}`,
+		`productflow_recovery_errors_total{domain="graph"}`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing metric line %q in %s", want, got)
 		}
 	}
 }

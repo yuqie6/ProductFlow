@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,6 +24,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
+	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
@@ -69,6 +71,23 @@ func main() {
 		logger.Fatal("postgres", zap.Error(err))
 	}
 	defer pool.Close()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		logger.Fatal("gorm", zap.Error(err))
+	}
+	metricsServer := pfmetrics.NewServer(cfg.DispatcherMetricsAddr, gdb, cfg.MetricsBearerToken)
+	if metricsServer != nil {
+		go func() {
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("metrics server", zap.Error(err))
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelShutdown()
+			_ = metricsServer.Shutdown(shutdownCtx)
+		}()
+	}
 
 	redisOpt, err := queue.ParseRedis(cfg.RedisURL)
 	if err != nil {
@@ -90,25 +109,45 @@ func main() {
 		if runRecovery {
 			settingsStore := settings.NewStore(pool, cfg)
 			imageStale := time.Duration(settingsStore.IntSetting(bg, "image_session_stale_running_after_minutes", 90)) * time.Minute
-			var err error
-			workflow, err = graph.RecoverUnfinishedGraphRuns(bg, pool, 0, product.GraphGuard{})
-			if err != nil {
+			observeRecovery := func(domain string, recover func() error) error {
+				started := time.Now()
+				err := recover()
+				pfmetrics.ObserveRecovery(domain, time.Since(started), err != nil)
+				return err
+			}
+			if err := observeRecovery("graph", func() error {
+				var err error
+				workflow, err = graph.RecoverUnfinishedGraphRuns(bg, pool, 0, product.GraphGuard{})
+				return err
+			}); err != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("workflow recovery: %w", err))
 			}
-			imageSession, err = imagesession.RecoverUnfinished(bg, pool, imageStale)
-			if err != nil {
+			if err := observeRecovery("image_session", func() error {
+				var err error
+				imageSession, err = imagesession.RecoverUnfinished(bg, pool, imageStale)
+				return err
+			}); err != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("image session recovery: %w", err))
 			}
-			rendition, err = delivery.RecoverUnfinished(bg, pool, 0)
-			if err != nil {
+			if err := observeRecovery("delivery", func() error {
+				var err error
+				rendition, err = delivery.RecoverUnfinished(bg, pool, 0)
+				return err
+			}); err != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("delivery recovery: %w", err))
 			}
-			localImageEdit, err = localedit.RecoverUnfinished(bg, pool, 0)
-			if err != nil {
+			if err := observeRecovery("local_image_edit", func() error {
+				var err error
+				localImageEdit, err = localedit.RecoverUnfinished(bg, pool, 0)
+				return err
+			}); err != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("local image edit recovery: %w", err))
 			}
-			agentTurns, err = agent.RecoverUnfinished(bg, pool, 0)
-			if err != nil {
+			if err := observeRecovery("agent", func() error {
+				var err error
+				agentTurns, err = agent.RecoverUnfinished(bg, pool, 0)
+				return err
+			}); err != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("agent recovery: %w", err))
 			}
 		}

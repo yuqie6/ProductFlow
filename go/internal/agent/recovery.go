@@ -195,7 +195,8 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 	var candidates []candidate
 	// 先 SKIP LOCKED 锁 projection。AppendEvents / heartbeat 同样是投影 → execution；
 	// 这里若先锁 execution，会与已持有投影、正在等 lease 行的 live writer 死锁。
-	if err := pgxTx.WithContext(ctx).
+	candidateScanStarted := time.Now()
+	candidateScanErr := pgxTx.WithContext(ctx).
 		Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_projections")).
 		Model(&schema.AgentTurnExecutions{}).
 		Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id").
@@ -203,8 +204,10 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 		Where("agent_turn_executions.owner_id IS NOT NULL AND agent_turn_executions.lease_expires_at IS NOT NULL AND agent_turn_executions.lease_expires_at <= NOW()").
 		Order("agent_turn_executions.id").
 		Limit(limit).
-		Scan(&candidates).Error; err != nil {
-		return 0, false, err
+		Scan(&candidates).Error
+	metrics.ObserveRecoveryLock("agent", time.Since(candidateScanStarted))
+	if candidateScanErr != nil {
+		return 0, false, candidateScanErr
 	}
 	hasMore := len(candidates) >= limit
 	unknown := 0

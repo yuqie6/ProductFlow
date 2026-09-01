@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -38,7 +39,8 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		cutoff := time.Now().UTC().Add(-staleAfter)
 		var tasks []schema.ImageSessionGenerationTasks
-		if err := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
+		candidateScanStarted := time.Now()
+		candidateScanErr := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
 			is_retryable = ? AND (
 				(status = ? AND NOT EXISTS (
 					SELECT 1 FROM async_dispatches d
@@ -49,8 +51,10 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 			)`, true, "queued", queue.ActorImageSession, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff).
 			Order("created_at ASC, id ASC").
 			Limit(recoveryBatchLimit).
-			Find(&tasks).Error; err != nil {
-			return err
+			Find(&tasks).Error
+		metrics.ObserveRecoveryLock("image_session", time.Since(candidateScanStarted))
+		if candidateScanErr != nil {
+			return candidateScanErr
 		}
 		if len(tasks) >= recoveryBatchLimit {
 			summary.HasMore = true
