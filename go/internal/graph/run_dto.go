@@ -64,6 +64,36 @@ type GraphRunResponse struct {
 	FinishedAt       *time.Time             `json:"finished_at"`
 }
 
+// GraphRunSummaryResponse 是列表项的轻量投影。它只含运行状态和节点进度，不含编译上下文、输入追踪或输出；详情走 GET 单个 run。
+type GraphRunSummaryResponse struct {
+	ID               string                        `json:"id"`
+	GraphID          string                        `json:"graph_id"`
+	Status           string                        `json:"status"`
+	Scope            string                        `json:"scope"`
+	RequestedNodeID  *string                       `json:"requested_node_id"`
+	RequestedNodeIDs []string                      `json:"requested_node_ids"`
+	GraphRevision    int                           `json:"graph_revision"`
+	FailureReason    *string                       `json:"failure_reason"`
+	IsRetryable      bool                          `json:"is_retryable"`
+	NodeRuns         []GraphNodeRunSummaryResponse `json:"node_runs"`
+	StartedAt        time.Time                     `json:"started_at"`
+	FinishedAt       *time.Time                    `json:"finished_at"`
+}
+
+// GraphNodeRunSummaryResponse 是列表中的节点进度投影，不携带 provider 输入/输出大字段。
+type GraphNodeRunSummaryResponse struct {
+	ID            string     `json:"id"`
+	NodeID        *string    `json:"node_id"`
+	Status        string     `json:"status"`
+	SortOrder     int        `json:"sort_order"`
+	FailureReason *string    `json:"failure_reason"`
+	AttemptCount  int        `json:"attempt_count"`
+	ProgressPhase *string    `json:"progress_phase"`
+	PlannedAction *string    `json:"planned_action"`
+	StartedAt     time.Time  `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at"`
+}
+
 // GraphRunPreviewResponse 是 POST .../runs/preview 的 200 体，由 PreviewRun 填写，不创建 workflow_graph_runs。
 // Nodes 只含范围内处理节点的 planned_action（generate/reuse/frozen/blocked）。Force 仅预览显式目标。
 // 不要和 GraphRunResponse（真实 run 行）搞混。改字段只动预览 JSON，不动 runs 表。
@@ -78,9 +108,9 @@ type GraphRunPreviewResponse struct {
 	Nodes          []RunPreviewNode `json:"nodes"` // 空列表是 [] 不是 nil
 }
 
-// GraphRunListResponse 包装最近的 GraphRun 列表。
+// GraphRunListResponse 包装最近的 GraphRun 摘要列表。
 type GraphRunListResponse struct {
-	Items []GraphRunResponse `json:"items"` // 空列表是 [] 不是 nil；最多 20 条，不是游标分页
+	Items []GraphRunSummaryResponse `json:"items"` // 空列表是 [] 不是 nil；最多 20 条，不是游标分页
 }
 
 type graphRunRow struct {
@@ -140,6 +170,43 @@ func serializeGraphRun(run graphRunRow) GraphRunResponse {
 		NodeRuns:         nodeRuns,
 		StartedAt:        run.StartedAt,
 		FinishedAt:       run.FinishedAt,
+	}
+}
+
+// serializeGraphRunSummary 投列表中的轻量运行项；详情字段只在 serializeGraphRun 中读取。
+func serializeGraphRunSummary(run graphRunRow) GraphRunSummaryResponse {
+	nodeRuns := make([]GraphNodeRunSummaryResponse, 0, len(run.NodeRuns))
+	for _, item := range run.NodeRuns {
+		nodeRuns = append(nodeRuns, serializeNodeRunSummary(item))
+	}
+	return GraphRunSummaryResponse{
+		ID:               run.ID,
+		GraphID:          run.GraphID,
+		Status:           run.Status,
+		Scope:            run.RunScope,
+		RequestedNodeID:  run.RequestedNodeID,
+		RequestedNodeIDs: requestedNodeIDsOrEmpty(run.RequestedNodeIDs),
+		GraphRevision:    run.GraphRevision,
+		FailureReason:    run.FailureReason,
+		IsRetryable:      run.IsRetryable,
+		NodeRuns:         nodeRuns,
+		StartedAt:        run.StartedAt,
+		FinishedAt:       run.FinishedAt,
+	}
+}
+
+func serializeNodeRunSummary(nodeRun graphNodeRunRow) GraphNodeRunSummaryResponse {
+	return GraphNodeRunSummaryResponse{
+		ID:            nodeRun.ID,
+		NodeID:        nodeRun.NodeID,
+		Status:        nodeRun.Status,
+		SortOrder:     nodeRun.SortOrder,
+		FailureReason: nodeRun.FailureReason,
+		AttemptCount:  nodeRun.AttemptCount,
+		ProgressPhase: serializedProgressPhase(nodeRun),
+		PlannedAction: nodeRun.PlannedAction,
+		StartedAt:     nodeRun.StartedAt,
+		FinishedAt:    nodeRun.FinishedAt,
 	}
 }
 

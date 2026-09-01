@@ -78,14 +78,47 @@ func TestSubmitRunStagesPendingDispatch(t *testing.T) {
 
 	listed := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", nil, "")
 	gs.mustStatus(t, listed, http.StatusOK)
+	listRaw, err := io.ReadAll(listed.Body)
+	listed.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var list graph.GraphRunListResponse
-	gs.decode(t, listed, &list)
-	if len(list.Items) != 1 {
-		t.Fatalf("list %d", len(list.Items))
+	if err := json.Unmarshal(listRaw, &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 1 || len(list.Items[0].NodeRuns) == 0 {
+		t.Fatalf("list %+v", list)
+	}
+	var listWire struct {
+		Items []struct {
+			NodeRuns []map[string]any `json:"node_runs"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listRaw, &listWire); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := listWire.Items[0].NodeRuns[0]["compiled_context"]; ok {
+		t.Fatalf("summary list leaked compiled_context: %s", listRaw)
+	}
+	if _, ok := listWire.Items[0].NodeRuns[0]["output"]; ok {
+		t.Fatalf("summary list leaked output: %s", listRaw)
 	}
 
 	got := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
 	gs.mustStatus(t, got, http.StatusOK)
+	detailRaw, err := io.ReadAll(got.Body)
+	got.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detail graph.GraphRunResponse
+	if err := json.Unmarshal(detailRaw, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.NodeRuns) == 0 || detail.NodeRuns[0].CompiledContext == nil {
+		t.Fatalf("detail must retain compiled context: %s", detailRaw)
+	}
 
 	cancelled := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID+"/cancel", nil, "")
 	gs.mustStatus(t, cancelled, http.StatusOK)

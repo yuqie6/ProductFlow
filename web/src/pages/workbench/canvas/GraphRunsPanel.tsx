@@ -10,7 +10,7 @@ import {
   RotateCcw,
   Workflow,
 } from "lucide-react";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import { IconButton } from "../../../components/ui/icon-button";
 import { StatusBadge, statusBadgeClass } from "../../../components/ui/status-badge";
@@ -21,7 +21,7 @@ import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphNodeRun, GraphProjection, GraphRun, GraphRunSubmitInput, WorkflowNodeDisplayStatus } from "../../../lib/types";
+import type { GraphNodeRun, GraphNodeRunSummary, GraphProjection, GraphRunSummary, GraphRunSubmitInput, WorkflowNodeDisplayStatus } from "../../../lib/types";
 import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
   graphContextEntries,
@@ -84,7 +84,7 @@ export function GraphRunsPanel({
     }
     retryMutation.mutate(runId);
   }, [onBeforeRun, retryMutation]);
-  const retryFailedNodes = useCallback(async (run: GraphRun) => {
+  const retryFailedNodes = useCallback(async (run: GraphRunSummary) => {
     const input = failedNodesRunInput(run);
     if (!input) return;
     try {
@@ -126,6 +126,7 @@ export function GraphRunsPanel({
       {runs.length ? runs.map((run) => (
         <GraphRunRecord
           key={run.id}
+          productId={productId}
           run={run}
           graph={graph}
           selectedNodeId={selectedNodeId}
@@ -149,6 +150,7 @@ export function GraphRunsPanel({
 }
 
 function GraphRunRecord({
+  productId,
   run,
   graph,
   selectedNodeId,
@@ -164,7 +166,8 @@ function GraphRunRecord({
   onJump,
   onPreviewImage,
 }: {
-  run: GraphRun;
+  productId: string;
+  run: GraphRunSummary;
   graph: GraphProjection;
   selectedNodeId: string | null;
   cancelBusy: boolean;
@@ -180,6 +183,12 @@ function GraphRunRecord({
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailQuery = useQuery({
+    queryKey: ["graph-run", productId, graph.id, run.id],
+    queryFn: () => api.getGraphRun(productId, graph.id, run.id),
+    enabled: detailsOpen,
+  });
   const active = LIVE_RUN_STATUSES.has(run.status);
   const requested = run.requested_node_id
     ? graph.nodes.find((node) => node.id === run.requested_node_id)
@@ -214,6 +223,15 @@ function GraphRunRecord({
             </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
+            <IconButton
+              label={detailsOpen ? t("graph.runs.hideDetails") : t("graph.runs.viewDetails")}
+              variant="secondary"
+              size="sm"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((open) => !open)}
+            >
+              <FileText size={14} />
+            </IconButton>
             {run.node_runs.some((nodeRun) => nodeRun.status === "failed" && nodeRun.node_id) && !active ? (
               <IconButton
                 label={t("graph.runs.retryFailed")}
@@ -246,20 +264,95 @@ function GraphRunRecord({
       </div>
       <div className="divide-y divide-border-l2 border-t border-border-l2">
         {run.node_runs.map((nodeRun) => (
-          <NodeRunRecord
+          <NodeRunSummaryRecord
             key={nodeRun.id}
             nodeRun={nodeRun}
-            title={nodeRun.node_title
-              || graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
-              || t("graph.runs.deletedNode")}
+            title={graph.nodes.find((node) => node.id === nodeRun.node_id)?.title || t("graph.runs.deletedNode")}
             selected={Boolean(nodeRun.node_id && nodeRun.node_id === selectedNodeId)}
-            previewAssetId={graphNodeRunPreviewAssetId(nodeRun, graph)}
             onJump={onJump && nodeRun.node_id ? () => onJump(nodeRun.node_id as string) : undefined}
-            onPreviewImage={onPreviewImage}
           />
         ))}
       </div>
+      {detailsOpen ? (
+        <div className="divide-y divide-border-l2 border-t border-border-l2" data-graph-run-details={run.id}>
+          {detailQuery.isPending ? (
+            <div className="p-3">
+              <PanelSkeleton rows={2} />
+            </div>
+          ) : detailQuery.isError ? (
+            <div className="m-3 rounded-md border border-state-error/30 bg-state-error-soft px-3 py-2 text-[11px] leading-5 text-state-error" role="alert">
+              {detailQuery.error instanceof ApiError ? detailQuery.error.detail : t("graph.runs.detailsFailed")}
+            </div>
+          ) : detailQuery.data ? (
+            detailQuery.data.node_runs.map((nodeRun) => (
+              <NodeRunRecord
+                key={nodeRun.id}
+                nodeRun={nodeRun}
+                title={nodeRun.node_title
+                  || graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
+                  || t("graph.runs.deletedNode")}
+                selected={Boolean(nodeRun.node_id && nodeRun.node_id === selectedNodeId)}
+                previewAssetId={graphNodeRunPreviewAssetId(nodeRun, graph)}
+                onJump={onJump && nodeRun.node_id ? () => onJump(nodeRun.node_id as string) : undefined}
+                onPreviewImage={onPreviewImage}
+              />
+            ))
+          ) : null}
+        </div>
+      ) : null}
     </article>
+  );
+}
+
+function NodeRunSummaryRecord({
+  nodeRun,
+  title,
+  selected,
+  onJump,
+}: {
+  nodeRun: GraphNodeRunSummary;
+  title: string;
+  selected: boolean;
+  onJump?: () => void;
+}) {
+  const { t } = useI18n();
+  const active = LIVE_RUN_STATUSES.has(nodeRun.status);
+  const phaseKey = graphProgressPhaseLabelKey(nodeRun.progress_phase);
+  const elapsed = formatElapsed(nodeRun.started_at, nodeRun.finished_at, nodeRun.status);
+  return (
+    <div className={selected ? "bg-surface-subtle" : ""}>
+      <div className="flex min-w-0 items-start gap-2.5 px-3.5 py-3">
+        <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${statusBadgeClass(nodeRun.status)}`}>
+          {active ? <Loader2 size={12} className="animate-spin" /> : <CircleDot size={12} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {onJump ? (
+              <button type="button" onClick={onJump} className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-text-primary hover:text-accent">
+                {title}
+              </button>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-text-primary">{title}</span>
+            )}
+            <StatusBadge status={nodeRun.status} className="px-1.5 py-0.5 text-[9px]">
+              {t(`detail.nodeStatus.${nodeRun.status}`)}
+            </StatusBadge>
+          </div>
+          {phaseKey || elapsed || nodeRun.attempt_count > 1 ? (
+            <div className="mt-1 space-y-0.5 text-[10px] text-text-muted">
+              {phaseKey ? <div>{t(phaseKey)}</div> : null}
+              {elapsed ? <div>{elapsed}</div> : null}
+              {nodeRun.attempt_count > 1 ? (
+                <div>{t("detail.nodeAttemptSummary", { attempts: nodeRun.attempt_count, retries: Math.max(0, nodeRun.attempt_count - 1) })}</div>
+              ) : null}
+            </div>
+          ) : null}
+          {nodeRun.failure_reason ? (
+            <div className="mt-1.5 text-[10px] leading-4 text-state-error">{nodeRun.failure_reason}</div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   );
 }
 

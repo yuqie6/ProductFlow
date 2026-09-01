@@ -1,4 +1,4 @@
-import type { GraphRun, GraphRunListResponse, WorkflowNodeStatus, WorkflowRunStatus } from "../../../lib/types";
+import type { GraphNodeRunLike, GraphRunLike, GraphRunListResponse, WorkflowNodeStatus, WorkflowRunStatus } from "../../../lib/types";
 
 export interface GraphRunEvent {
   schema_version: 1;
@@ -90,7 +90,7 @@ export function applyGraphRunEvent(
   return { ...previous, items };
 }
 
-export function applyGraphRunEventToRun(run: GraphRun, event: GraphRunEvent): GraphRun {
+export function applyGraphRunEventToRun<T extends GraphRunLike>(run: T, event: GraphRunEvent): T {
   if (run.id !== event.run_id) return run;
   const payload = event.payload;
   if (event.kind.startsWith("run.")) {
@@ -120,20 +120,21 @@ export function applyGraphRunEventToRun(run: GraphRun, event: GraphRunEvent): Gr
   const progressPhase = terminal
     ? null
     : typeof payload.phase === "string" ? payload.phase : current.progress_phase;
-  const output = isRecord(payload.output) ? payload.output : current.output;
-  const next = {
+  const hasOutput = "output" in current;
+  const output = isRecord(payload.output) ? payload.output : "output" in current ? current.output : undefined;
+  const next: GraphNodeRunLike = {
     ...current,
     ...(status ? { status } : {}),
     ...(attemptCount !== current.attempt_count ? { attempt_count: attemptCount } : {}),
     ...(failureReason !== undefined ? { failure_reason: failureReason } : {}),
     ...(progressPhase !== current.progress_phase ? { progress_phase: progressPhase } : {}),
-    ...(output !== current.output ? { output } : {}),
+    ...(hasOutput && output !== current.output ? { output } : {}),
     ...(terminal ? { finished_at: event.created_at } : {}),
   };
   if (sameNodeRun(current, next)) return run;
   const nodeRuns = run.node_runs.slice();
   nodeRuns[nodeIndex] = next;
-  return { ...run, node_runs: nodeRuns };
+  return { ...run, node_runs: nodeRuns } as T;
 }
 
 function parseGraphRunEvent(raw: string): GraphRunEvent {
@@ -195,12 +196,14 @@ function nullableString(value: unknown): string | null | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function sameNodeRun(left: GraphRun["node_runs"][number], right: GraphRun["node_runs"][number]): boolean {
+function sameNodeRun(left: GraphNodeRunLike, right: GraphNodeRunLike): boolean {
+  const outputSame = !(("output" in left) || ("output" in right))
+    || ("output" in left && "output" in right && left.output === right.output);
   return left.status === right.status
     && left.attempt_count === right.attempt_count
     && left.failure_reason === right.failure_reason
     && left.progress_phase === right.progress_phase
-    && left.output === right.output
+    && outputSame
     && left.finished_at === right.finished_at;
 }
 

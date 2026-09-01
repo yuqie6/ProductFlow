@@ -7,9 +7,10 @@
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GraphNodeRun,
+  GraphNodeRunLike,
   GraphPlannedAction,
   GraphProjection,
-  GraphRun,
+  GraphRunLike,
   GraphRunInputTraceEntry,
   GraphRunScope,
   WorkflowNodeStatus,
@@ -29,17 +30,17 @@ export interface GraphNodeRunPresentation {
 
 export const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
 
-export function graphQueuedRuns(runs: readonly GraphRun[] | undefined): GraphRun[] {
+export function graphQueuedRuns(runs: readonly GraphRunLike[] | undefined): GraphRunLike[] {
   return (runs ?? []).filter((run) => run.status === "queued");
 }
 
-export function graphRunningRuns(runs: readonly GraphRun[] | undefined): GraphRun[] {
+export function graphRunningRuns(runs: readonly GraphRunLike[] | undefined): GraphRunLike[] {
   return (runs ?? []).filter((run) => run.status === "running");
 }
 
 /** 历史运行补缺口；进行中的运行覆盖它仍拥有的每个节点。 */
 export function graphNodeRunPresentations(
-  runs: readonly GraphRun[],
+  runs: readonly GraphRunLike[],
 ): Record<string, GraphNodeRunPresentation> {
   const presentations: Record<string, GraphNodeRunPresentation> = {};
   for (const run of runs) {
@@ -61,8 +62,8 @@ export function graphNodeRunPresentations(
 }
 
 function presentationFromNodeRun(
-  run: GraphRun,
-  nodeRun: GraphNodeRun,
+  run: GraphRunLike,
+  nodeRun: GraphNodeRunLike,
 ): GraphNodeRunPresentation {
   const failed = nodeRun.status === "failed";
   return {
@@ -125,10 +126,10 @@ export function graphRunScopeLabelKey(scope: GraphRunScope): TranslationKey {
 }
 
 export function graphNodeRunPreviewAssetId(
-  nodeRun: GraphNodeRun,
+  nodeRun: GraphNodeRunLike,
   graph: GraphProjection,
 ): string | null {
-  const output = nodeRun.output;
+  const output = "output" in nodeRun ? nodeRun.output : null;
   if (output && typeof output.product_image_asset_id === "string" && output.product_image_asset_id) {
     return output.product_image_asset_id;
   }

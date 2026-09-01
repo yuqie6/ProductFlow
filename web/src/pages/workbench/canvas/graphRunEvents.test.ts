@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GraphRun, GraphRunListResponse } from "../../../lib/types";
 import {
   applyGraphRunEvent,
+  applyGraphRunEventToRun,
   subscribeGraphRunEvents,
   type GraphRunEvent,
 } from "./graphRunEvents";
@@ -141,12 +142,16 @@ describe("applyGraphRunEvent", () => {
   });
 
   it("projects terminal node and run events incrementally", () => {
-    const nodeDone = applyGraphRunEvent({ items: [run] }, event({
+    const nodeEvent = event({
       sequence: 2,
       kind: "node.succeeded",
       payload: { status: "succeeded", output: { artifact_id: "a1" } },
       created_at: "2026-08-31T00:00:02.000Z",
-    }));
+    });
+    const detailedNodeDone = applyGraphRunEventToRun(run, nodeEvent);
+    expect(detailedNodeDone.node_runs[0].output).toEqual({ artifact_id: "a1" });
+
+    const nodeDone = applyGraphRunEvent({ items: [run] }, nodeEvent);
     const runDone = applyGraphRunEvent(nodeDone, event({
       sequence: 3,
       kind: "run.completed",
@@ -155,7 +160,6 @@ describe("applyGraphRunEvent", () => {
       created_at: "2026-08-31T00:00:03.000Z",
     }));
     expect(runDone?.items[0].node_runs[0].status).toBe("succeeded");
-    expect(runDone?.items[0].node_runs[0].output).toEqual({ artifact_id: "a1" });
     expect(runDone?.items[0].node_runs[0].progress_phase).toBeNull();
     expect(runDone?.items[0].status).toBe("succeeded");
     expect(runDone?.items[0].finished_at).toBe("2026-08-31T00:00:03.000Z");

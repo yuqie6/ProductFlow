@@ -1773,6 +1773,37 @@ export interface GraphRun {
   finished_at: string | null;
 }
 
+export interface GraphNodeRunSummary {
+  id: string;
+  node_id: string | null;
+  status: WorkflowNodeStatus;
+  sort_order: number;
+  failure_reason: string | null;
+  attempt_count: number;
+  progress_phase?: string | null;
+  planned_action?: GraphPlannedAction | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface GraphRunSummary {
+  id: string;
+  graph_id: string;
+  status: WorkflowRunStatus;
+  scope: GraphRunScope;
+  requested_node_id: string | null;
+  requested_node_ids?: string[];
+  graph_revision: number;
+  failure_reason: string | null;
+  is_retryable: boolean;
+  node_runs: GraphNodeRunSummary[];
+  started_at: string;
+  finished_at: string | null;
+}
+
+export type GraphNodeRunLike = GraphNodeRun | GraphNodeRunSummary;
+export type GraphRunLike = GraphRun | GraphRunSummary;
+
 export interface GraphRunPreviewNode {
   node_id: string;
   title: string;
@@ -1790,5 +1821,5 @@ export interface GraphRunPreviewResponse {
 }
 
 export interface GraphRunListResponse {
-  items: GraphRun[];
+  items: GraphRunSummary[];
 }

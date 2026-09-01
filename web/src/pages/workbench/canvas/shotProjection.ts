@@ -5,9 +5,9 @@
  */
 
 import type {
-  GraphNodeRun,
+  GraphNodeRunLike,
   GraphProjection,
-  GraphRun,
+  GraphRunLike,
   WorkflowNodeDisplayStatus,
 } from "../../../lib/types";
 import {
@@ -34,7 +34,7 @@ export function graphHasImageGenerationGroups(graph: GraphProjection): boolean {
 
 export function projectGraphShots(
   graph: GraphProjection,
-  runs: readonly GraphRun[],
+  runs: readonly GraphRunLike[],
 ): GraphShotProjection[] {
   const latestRuns = latestNodeRuns(runs);
 
@@ -98,7 +98,7 @@ function imageNodesForGroup(graph: GraphProjection, groupId: string) {
 }
 
 interface LatestNodeRun {
-  nodeRun: GraphNodeRun;
+  nodeRun: GraphNodeRunLike;
   activityAt: string;
   runStartedAt: string;
   runFailureReason: string | null;
@@ -106,7 +106,7 @@ interface LatestNodeRun {
   runIsLive: boolean;
 }
 
-function latestNodeRuns(runs: readonly GraphRun[]): Map<string, LatestNodeRun> {
+function latestNodeRuns(runs: readonly GraphRunLike[]): Map<string, LatestNodeRun> {
   const latest = new Map<string, LatestNodeRun>();
   for (const run of runs) {
     for (const nodeRun of run.node_runs) {

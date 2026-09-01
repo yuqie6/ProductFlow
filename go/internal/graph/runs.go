@@ -475,8 +475,8 @@ func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) erro
 	return nil
 }
 
-// listGraphRuns 按 started_at DESC 列出该图的 run。图不属于商品则 NotFound。
-// limit 夹在 1–50，默认 20。run 与 node_runs 分批读取，保持列表 response 不变。
+// listGraphRuns 按 started_at DESC 列出该图的 run 摘要。图不属于商品则 NotFound。
+// limit 夹在 1–50，默认 20。run 与 node_runs 分批读取，只选择列表所需的状态字段。
 func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, limit int) ([]graphRunRow, error) {
 	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
 		return nil, err
@@ -489,6 +489,7 @@ func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	}
 	var recs []schema.WorkflowGraphRuns
 	if err := tx.WithContext(ctx).
+		Select("id", "graph_id", "status", "run_scope", "requested_node_id", "graph_revision", "failure_reason", "is_retryable", "progress_metadata", "started_at", "finished_at").
 		Where("graph_id = ?", graphID).
 		Order("started_at DESC, id DESC").
 		Limit(limit).
@@ -505,6 +506,7 @@ func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	}
 	var nodeRecs []schema.WorkflowGraphNodeRuns
 	if err := tx.WithContext(ctx).
+		Select("id", "graph_run_id", "node_id", "status", "sort_order", "failure_reason", "attempt_count", "progress_phase", "planned_action", "started_at", "finished_at").
 		Where("graph_run_id IN ?", runIDs).
 		Order("graph_run_id, sort_order, id").
 		Find(&nodeRecs).Error; err != nil {

@@ -94,7 +94,7 @@ const run: GraphRun = {
 };
 
 describe("GraphRunsPanel", () => {
-  it("shows node runs, labeled context, and jump/preview affordances", () => {
+  it("shows the compact run summary and keeps technical details behind an explicit action", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["graph-runs", "p1", "g1"], { items: [run] });
     const markup = renderToStaticMarkup(createElement(
@@ -111,24 +111,24 @@ describe("GraphRunsPanel", () => {
     const firstScreen = markup.split("data-graph-run-inputs-technical")[0];
     expect(firstScreen).toContain("运行到这里");
     expect(firstScreen).toContain("主图 1");
-    expect(firstScreen).toContain("主图提示词");
-    expect(firstScreen).toContain("提示词");
+    expect(firstScreen).not.toContain("主图提示词");
     expect(firstScreen).toContain("已收到结果");
     expect(firstScreen).toContain("8.0s");
     expect(firstScreen).not.toContain("asset-a");
-    expect(markup).toContain("运行证据");
+    expect(markup).toContain("查看运行详情");
+    expect(markup).not.toContain("运行证据");
     expect(markup).not.toContain("incoming_edge_ids");
     expect(markup).not.toContain("mystery_digest");
     expect(markup).not.toContain("deadbeef");
     expect(markup).not.toContain("版本 2");
   });
 
-  it("keeps rev N input titles after the live graph is renamed", () => {
+  it("uses the current graph title for compact node summaries", () => {
     const renamed: GraphProjection = {
       ...graph,
       revision: 3,
       nodes: graph.nodes.map((node) => (
-        node.id === "prompt" ? { ...node, title: "改名后的提示词" } : node
+        node.id === "image" ? { ...node, title: "改名后的主图" } : node
       )),
     };
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -145,8 +145,8 @@ describe("GraphRunsPanel", () => {
       }),
     ));
     const firstScreen = markup.split("data-graph-run-inputs-technical")[0];
-    expect(firstScreen).toContain("主图提示词");
-    expect(firstScreen).not.toContain("改名后的提示词");
+    expect(firstScreen).toContain("改名后的主图");
+    expect(firstScreen).not.toContain("主图提示词");
   });
 
   it("does not offer run retry while a run is queued or running", () => {

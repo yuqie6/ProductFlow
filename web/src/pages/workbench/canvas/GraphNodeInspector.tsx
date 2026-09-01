@@ -169,6 +169,19 @@ export function GraphNodeInspector({
     () => graphNodeRunPresentations(runsQuery.data?.items ?? []),
     [runsQuery.data],
   );
+  const lastNodeRunRef = useMemo(() => {
+    if (!node) return null;
+    for (const run of runsQuery.data?.items ?? []) {
+      const nodeRun = run.node_runs.find((item) => item.node_id === node.id);
+      if (nodeRun) return { runId: run.id, nodeRunId: nodeRun.id };
+    }
+    return null;
+  }, [node?.id, runsQuery.data]);
+  const lastNodeRunQuery = useQuery({
+    queryKey: ["graph-run", graph.product_id, graph.id, lastNodeRunRef?.runId],
+    queryFn: () => api.getGraphRun(graph.product_id, graph.id, lastNodeRunRef!.runId),
+    enabled: Boolean(lastNodeRunRef),
+  });
   const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
     ? runsQuery.data?.items.find((run) => run.status === "running" && run.node_runs.some((item) => (
@@ -348,9 +361,9 @@ export function GraphNodeInspector({
     edge,
     related: graph.nodes.find((item) => item.id === edge.node_id) ?? null,
   }));
-  const lastNodeRun = runsQuery.data?.items
-    .flatMap((run) => run.node_runs)
-    .find((item) => item.node_id === node.id && item.compiled_context) ?? null;
+  const lastNodeRun = lastNodeRunQuery.data?.node_runs.find(
+    (item) => item.id === lastNodeRunRef?.nodeRunId,
+  ) ?? null;
 
   return (
     <InspectorFlushContext.Provider value={registerFlush}>

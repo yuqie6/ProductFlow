@@ -433,8 +433,8 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 	return out, err
 }
 
-// ListRuns 给 GET .../runs：按 started_at DESC 列出该图最近最多 20 条 GraphRun（含 node_runs）。
-// 图不属于该商品返回 NotFound。不写库、不入队。完整事件流走 SSE，不要把本列表当游标分页。
+// ListRuns 给 GET .../runs：按 started_at DESC 列出该图最近最多 20 条 GraphRun 摘要。
+// 图不属于该商品返回 NotFound。不写库、不入队。完整 snapshot、node input/output 走单个 run 详情，不要把本列表当详情接口。
 func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
 	var out GraphRunListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -442,9 +442,9 @@ func (s Service) ListRuns(ctx context.Context, productID, graphID string) (Graph
 		if err != nil {
 			return err
 		}
-		items := make([]GraphRunResponse, 0, len(runs))
+		items := make([]GraphRunSummaryResponse, 0, len(runs))
 		for _, run := range runs {
-			items = append(items, serializeGraphRun(run))
+			items = append(items, serializeGraphRunSummary(run))
 		}
 		out = GraphRunListResponse{Items: items}
 		return nil

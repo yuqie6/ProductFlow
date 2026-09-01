@@ -569,6 +569,8 @@ describe("GraphNodeInspector", () => {
         }],
       }],
     });
+    const listRun = client.getQueryData<{ items: Array<Record<string, unknown>> }>(["graph-runs", "p1", "g1"]);
+    client.setQueryData(["graph-run", "p1", "g1", "run-1"], listRun?.items[0]);
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
     const firstScreen = markup.split("data-graph-technical-details")[0];
     expect(firstScreen).toContain("来自");
