@@ -466,6 +466,18 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 	return out, err
 }
 
+// GetRunStatus 只读取指定 GraphRun 的 identity/status，供 SSE 终态兜底检查。
+// 不读取 snapshot、node_runs 或 provider 输入/输出；完整详情仍由 GetRun 提供。
+func (s Service) GetRunStatus(ctx context.Context, productID, graphID, runID string) (string, error) {
+	var status string
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		var err error
+		status, err = loadGraphRunStatus(ctx, pgxTx, productID, graphID, runID)
+		return err
+	})
+	return status, err
+}
+
 // GetRunForProduct 按 run id 读取运行，并校验属于该商品。workflowID 非空时还须匹配 graph_id。
 // run 不存在、不属于该商品或 graph_id 不匹配返回 NotFound。
 func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflowID string) (GraphRunResponse, error) {

@@ -65,8 +65,36 @@ func (cmdTestProducts) LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, 
 	return &out, nil
 }
 
-func (cmdTestProducts) BoundAssetMeta(context.Context, *gorm.DB, string, string) (string, string, error) {
-	return "", "", nil
+func (cmdTestProducts) LoadSources(ctx context.Context, tx *gorm.DB, productIDs []string) (map[string]*SourceProduct, error) {
+	out := map[string]*SourceProduct{}
+	for _, productID := range productIDs {
+		source, err := (cmdTestProducts{}).LoadSource(ctx, tx, productID)
+		if err != nil {
+			return nil, err
+		}
+		if source != nil {
+			out[productID] = source
+		}
+	}
+	return out, nil
+}
+
+func (cmdTestProducts) LoadFactSets(ctx context.Context, tx *gorm.DB, factSetIDs []string) (map[string]*FactSet, error) {
+	out := map[string]*FactSet{}
+	for _, factSetID := range factSetIDs {
+		set, err := (cmdTestProducts{}).LoadFactSet(ctx, tx, factSetID, "")
+		if err != nil {
+			return nil, err
+		}
+		if set != nil {
+			out[factSetID] = set
+		}
+	}
+	return out, nil
+}
+
+func (cmdTestProducts) BoundAssetMetas(context.Context, *gorm.DB, string, []string) (map[string]BoundAssetMetadata, error) {
+	return map[string]BoundAssetMetadata{}, nil
 }
 
 func TestStageNewRequiresZeroBaseRevision(t *testing.T) {

@@ -110,6 +110,7 @@ export function GraphWorkbenchPage({
     queryKey: ["workflow-graph", product.id],
     queryFn: () => api.getCurrentWorkflowGraph(product.id),
     initialData: initialGraph,
+    staleTime: 30_000,
   });
   const catalogQuery = useQuery({
     queryKey: ["graph-node-catalog"],

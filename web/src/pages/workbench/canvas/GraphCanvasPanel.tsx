@@ -386,6 +386,7 @@ export function GraphCanvasPanel({
   const runsQuery = useQuery({
     queryKey: ["graph-runs", productId, graph.id],
     queryFn: () => api.listGraphRuns(productId, graph.id),
+    staleTime: 30_000,
     refetchInterval: runEventsFallback ? 1200 : false,
   });
   const cancelRunMutation = useMutation({

@@ -29,13 +29,22 @@ type FactSet struct {
 	Facts     []map[string]any // payload_json 的 []map；空列表是 [] 不是 nil
 }
 
+// BoundAssetMetadata 是 image_asset 节点绑定的商品图片短投影。
+// ProductGuard 只返回画布需要的字段，不把 media 对象或存储路径带进 graph。
+type BoundAssetMetadata struct {
+	DisplayName string
+	MIMEType    string
+}
+
 // ProductGuard 把商品行锁、绑定资产和资料快照留在 product 包，避免 graph 查询 products。
 type ProductGuard interface {
 	Lock(ctx context.Context, tx *gorm.DB, productID string) error
 	HasAssets(ctx context.Context, tx *gorm.DB, productID string, ids []string) error
 	LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*SourceProduct, error)
+	LoadSources(ctx context.Context, tx *gorm.DB, productIDs []string) (map[string]*SourceProduct, error)
 	LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, productID string) (*FactSet, error)
-	BoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (displayName, mimeType string, err error)
+	LoadFactSets(ctx context.Context, tx *gorm.DB, factSetIDs []string) (map[string]*FactSet, error)
+	BoundAssetMetas(ctx context.Context, tx *gorm.DB, productID string, assetIDs []string) (map[string]BoundAssetMetadata, error)
 }
 
 // WithProductGuard 把守卫挂到 ctx 上，供 StageNew / Mutate / CreateEmpty / Project 使用。

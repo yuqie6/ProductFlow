@@ -551,6 +551,27 @@ func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID st
 	return run, nil
 }
 
+// loadGraphRunStatus 只读取 GraphRun 的 identity/status，供 SSE 终态兜底检查。
+// 商品和工作流校验也只取 graph id，不能把完整 GraphRun 投影带回读路径。
+func loadGraphRunStatus(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (string, error) {
+	var graphRec schema.WorkflowGraphs
+	if err := tx.WithContext(ctx).Select("id").Where("id = ? AND product_id = ?", graphID, productID).Take(&graphRec).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", apperr.NotFound("商品工作流不存在")
+		}
+		return "", err
+	}
+	var runRec schema.WorkflowGraphRuns
+	err := tx.WithContext(ctx).Select("id", "status").Where("id = ? AND graph_id = ?", runID, graphID).Take(&runRec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", apperr.NotFound("工作流运行不存在")
+	}
+	if err != nil {
+		return "", err
+	}
+	return runRec.Status, nil
+}
+
 // lockGraphRunForUpdate 锁住 GraphRun 行并返回最小身份信息。
 // 涉及 node_run 或 live graph 的命令必须先拿这把 run 锁，再按约定继续取其它锁。
 func lockGraphRunForUpdate(ctx context.Context, tx *gorm.DB, runID string) (schema.WorkflowGraphRuns, error) {

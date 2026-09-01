@@ -642,6 +642,8 @@ func assignPersistentIDs(before, after AppliedGraph, newID func() string) Applie
 
 func cloneAppliedNode(node AppliedNode) AppliedNode {
 	node.Config = cloneMap(node.Config)
+	node.CurrentArtifactID = cloneStringPtr(node.CurrentArtifactID)
+	node.PendingCandidateArtifactID = cloneStringPtr(node.PendingCandidateArtifactID)
 	node.BoundAssetID = cloneStringPtr(node.BoundAssetID)
 	node.GroupID = cloneStringPtr(node.GroupID)
 	return node

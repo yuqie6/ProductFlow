@@ -12,12 +12,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/notify"
 	"gorm.io/gorm"
 )
 
 // AgentSSEConnections 是当前 Agent SSE 连接数（gauge，仅本进程）。
 // 连接建立 +1、断开 -1。不要拿它当跨实例总数，也不要和连续生图 SSE 混计。
 var AgentSSEConnections atomic.Int64
+
+// GraphSSEConnections 是当前 GraphRun SSE 连接数（gauge，仅本进程）。
+var GraphSSEConnections atomic.Int64
 
 // AgentEventSequenceConflicts 累计 Turn journal 序号冲突次数。
 var AgentEventSequenceConflicts atomic.Int64
@@ -248,6 +252,12 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# HELP productflow_agent_sse_connections Current Agent SSE connections.\n")
 	b.WriteString("# TYPE productflow_agent_sse_connections gauge\n")
 	fmt.Fprintf(&b, "productflow_agent_sse_connections %d\n", AgentSSEConnections.Load())
+	b.WriteString("# HELP productflow_graph_sse_connections Current GraphRun SSE connections.\n")
+	b.WriteString("# TYPE productflow_graph_sse_connections gauge\n")
+	fmt.Fprintf(&b, "productflow_graph_sse_connections %d\n", GraphSSEConnections.Load())
+	b.WriteString("# HELP productflow_notify_listener_connections Current PostgreSQL LISTEN connections held by this process.\n")
+	b.WriteString("# TYPE productflow_notify_listener_connections gauge\n")
+	fmt.Fprintf(&b, "productflow_notify_listener_connections %d\n", notify.ListenerConnections.Load())
 	writeStatusCounts(&b, "productflow_agent_turns", "Agent Turns by durable status.", turns)
 	writeStatusCounts(&b, "productflow_graph_runs", "Workflow runs by durable status.", runs)
 	writeStatusCounts(&b, "productflow_async_dispatches", "Async dispatch records by durable status.", dispatches)

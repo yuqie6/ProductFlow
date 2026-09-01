@@ -136,6 +136,10 @@ type AppliedNode struct {
 	PositionX int            // 画布像素坐标
 	PositionY int            // 画布像素坐标
 	Config    map[string]any // Catalog 登记的可见配置
+	// CurrentArtifactID / PendingCandidateArtifactID 只由 live-store 读取时填充，供 Project 复用节点行投影。
+	// 它们不是 Apply 的输入，也不直接参与图快照序列化。
+	CurrentArtifactID          *string `json:"-"`
+	PendingCandidateArtifactID *string `json:"-"`
 	// BoundAssetID 是 image_asset 绑定的 ProductImageAsset id；nil 表示未绑定。绑定不是 reference 边。
 	BoundAssetID *string
 	GroupID      *string

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/notify"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -18,10 +19,12 @@ import (
 
 // streamRunEvents 是 GET .../runs/:run_id/events：200 text/event-stream；缺 run 404。
 func (h HTTP) streamRunEvents(c *gin.Context) {
+	pfmetrics.GraphSSEConnections.Add(1)
+	defer pfmetrics.GraphSSEConnections.Add(-1)
 	productID := c.Param("product_id")
 	graphID := c.Param("workflow_id")
 	runID := c.Param("run_id")
-	run, err := h.Service.GetRun(c.Request.Context(), productID, graphID, runID)
+	status, err := h.Service.GetRunStatus(c.Request.Context(), productID, graphID, runID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -77,11 +80,11 @@ func (h HTTP) streamRunEvents(c *gin.Context) {
 			flusher.Flush()
 		}
 		if len(events) == 0 {
-			if isTerminalRun(run.Status) {
+			if isTerminalRun(status) {
 				return
 			}
-			run, err = h.Service.GetRun(ctx, productID, graphID, runID)
-			if err != nil || isTerminalRun(run.Status) {
+			status, err = h.Service.GetRunStatus(ctx, productID, graphID, runID)
+			if err != nil || isTerminalRun(status) {
 				return
 			}
 		}

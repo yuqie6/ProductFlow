@@ -57,8 +57,7 @@ import {
   type ResizeDirection,
 } from "./globalAgentDockState";
 import { GlobalAgentConversationPanel } from "../pages/workbench/agent/GlobalAgentConversationPanel";
-
-type GlobalAgentDockTab = "chat" | "tasks" | "sessions";
+import type { GlobalAgentDockTab } from "../lib/globalAgentEvents";
 
 const GLOBAL_AGENT_MODAL_SELECTOR = "[data-global-agent-modal]";
 
@@ -141,12 +140,6 @@ interface AgentConversationTarget {
   scopeType: "product_workflow" | "global";
   productId: string | null;
   productName: string;
-}
-
-export function openGlobalAgent(options?: { tab?: GlobalAgentDockTab; sessionId?: string; taskId?: string }) {
-  if (typeof window !== "undefined") {
-    window.dispatchEvent(new CustomEvent("productflow:open-agent", { detail: options }));
-  }
 }
 
 /**

@@ -42,6 +42,15 @@ go-test-agent-journal-capacity:
 agent-service-test-local-journal-capacity:
     cd agent-service && PRODUCTFLOW_RUN_AGENT_LOCAL_JOURNAL_CAPACITY=1 pnpm vitest run src/store.test.ts -t "appends and reloads 10k durable WAL events"
 
+# Opt-in read-only HTTP regression gate. Set HTTP_GATE_GO_PRODUCT and HTTP_GATE_GO_GRAPH;
+# set HTTP_GATE_MAIN_BASE and HTTP_GATE_MAIN_PRODUCT to include the legacy comparison.
+http-ab-gates:
+    bash scripts/with_dev_env.sh python3 scripts/bench_workbench_http.py
+
+# Opt-in target-scale GraphRun list EXPLAIN gate in a disposable migrated database.
+go-test-graph-query-plan:
+    PRODUCTFLOW_RUN_GRAPH_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/graph -run TestGraphSummaryQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
+
 go-test-live-providers:
     PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'
 
@@ -78,9 +87,14 @@ web-preview-prod:
 
 web-build:
     pnpm --dir web build
+    python3 scripts/check_web_bundle_budget.py
 
 web-e2e-live-graph:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/direct-create-full-graph.spec.ts --config playwright.config.ts'
+
+# Opt-in browser TTI, duplicate-read, and on-demand rich run-detail gate.
+web-e2e-workbench-performance:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_WORKBENCH_PERF=1 pnpm --dir web exec playwright test e2e/workbench-performance.spec.ts --config playwright.config.ts'
 
 release:
     bash scripts/release.sh

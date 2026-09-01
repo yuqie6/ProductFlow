@@ -3,7 +3,6 @@ package graph
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -300,27 +299,53 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 }
 
 // loadGraphSources 组装编译/投影用的 SourceRecord：商品 facts、绑定图元数据、current artifact digest。
+// 节点行已经由 loadAppliedGraph 展开；商品、fact、绑定资产和视觉版本均按类型批量读取。
 // Guard 缺商品/fact 返回空源，不报 NotFound。同时返回 preview 标题、digest、pending candidate 映射。
 func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, map[string]string, error) {
-	var nodeRecs []schema.WorkflowGraphNodes
-	if err := tx.WithContext(ctx).Where("graph_id = ?", row.ID).Find(&nodeRecs).Error; err != nil {
-		return nil, nil, nil, nil, err
-	}
 	artifactIDs := make([]string, 0)
-	for _, n := range nodeRecs {
-		if n.CurrentArtifactID != nil && *n.CurrentArtifactID != "" {
-			artifactIDs = append(artifactIDs, *n.CurrentArtifactID)
+	boundAssetIDs := make([]string, 0)
+	visualVersionIDs := make([]string, 0)
+	for _, node := range applied.Nodes {
+		if node.CurrentArtifactID != nil && *node.CurrentArtifactID != "" {
+			artifactIDs = append(artifactIDs, *node.CurrentArtifactID)
+		}
+		if node.NodeType == NodeImageAsset && node.BoundAssetID != nil && *node.BoundAssetID != "" {
+			boundAssetIDs = append(boundAssetIDs, *node.BoundAssetID)
+		}
+		if node.NodeType == NodeVisualSystem {
+			if versionID, ok := node.Config["visual_system_version_id"].(string); ok && strings.TrimSpace(versionID) != "" {
+				visualVersionIDs = append(visualVersionIDs, strings.TrimSpace(versionID))
+			}
 		}
 	}
 	artifactByID := map[string]schema.WorkflowGraphArtifacts{}
 	if len(artifactIDs) > 0 {
 		var artifactRecs []schema.WorkflowGraphArtifacts
-		if err := tx.WithContext(ctx).Where("id IN ?", artifactIDs).Find(&artifactRecs).Error; err != nil {
+		if err := tx.WithContext(ctx).Where("id IN ?", uniqueStrings(artifactIDs)).Find(&artifactRecs).Error; err != nil {
 			return nil, nil, nil, nil, err
 		}
 		for _, a := range artifactRecs {
 			artifactByID[a.ID] = a
 		}
+	}
+	boundAssetMetas := map[string]BoundAssetMetadata{}
+	if len(boundAssetIDs) > 0 {
+		guard, err := requireProductGuard(ctx)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		boundAssetMetas, err = guard.BoundAssetMetas(ctx, tx, row.ProductID, uniqueStrings(boundAssetIDs))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+	}
+	visualPayloads, err := loadVisualSystemPayloads(ctx, tx, uniqueStrings(visualVersionIDs))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	productSources, err := loadProductSourceSnapshots(ctx, tx, row.ProductID, applied.Nodes)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 
 	type nodeArtifact struct {
@@ -332,23 +357,23 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 		outputAssetID *string
 	}
 	artifacts := map[string]nodeArtifact{}
-	for _, n := range nodeRecs {
-		rec := nodeArtifact{boundAssetID: n.BoundImageAssetID}
-		if n.NodeType == string(NodeImageGeneration) {
-			rec.artifactID = n.CurrentArtifactID
+	for _, node := range applied.Nodes {
+		rec := nodeArtifact{boundAssetID: node.BoundAssetID}
+		if node.NodeType == NodeImageGeneration {
+			rec.artifactID = node.CurrentArtifactID
 		}
-		if n.CurrentArtifactID != nil {
-			if a, ok := artifactByID[*n.CurrentArtifactID]; ok {
-				digest := a.InputDigest
+		if node.CurrentArtifactID != nil {
+			if artifact, ok := artifactByID[*node.CurrentArtifactID]; ok {
+				digest := artifact.InputDigest
 				rec.digest = &digest
 				if rec.artifactID != nil {
-					rec.artifactType = &a.ArtifactType
-					rec.payload = []byte(a.PayloadJSON)
-					rec.outputAssetID = a.ProductImageAssetID
+					rec.artifactType = &artifact.ArtifactType
+					rec.payload = []byte(artifact.PayloadJSON)
+					rec.outputAssetID = artifact.ProductImageAssetID
 				}
 			}
 		}
-		artifacts[n.ID] = rec
+		artifacts[node.ID] = rec
 	}
 
 	previews := map[string]string{}
@@ -357,11 +382,8 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 	sources := map[string]SourceRecord{}
 	for _, node := range applied.Nodes {
 		rec := artifacts[node.ID]
-		for _, nodeRec := range nodeRecs {
-			if nodeRec.ID == node.ID && nodeRec.PendingCandidateArtifactID != nil {
-				pendingCandidates[node.ID] = *nodeRec.PendingCandidateArtifactID
-				break
-			}
+		if node.PendingCandidateArtifactID != nil {
+			pendingCandidates[node.ID] = *node.PendingCandidateArtifactID
 		}
 		if rec.boundAssetID != nil && *rec.boundAssetID != "" {
 			previews[node.ID] = *rec.boundAssetID
@@ -386,10 +408,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 		}
 		switch node.NodeType {
 		case NodeProductSource:
-			snap, err := loadProductSourceSnapshot(ctx, tx, row.ProductID, node.Config)
-			if err != nil {
-				return nil, nil, nil, nil, err
-			}
+			snap := productSources[node.ID]
 			record.ProductSource = &snap
 			record.Facts = snap.Facts
 		case NodeCreativeBrief:
@@ -399,11 +418,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 			if strings.TrimSpace(versionID) != "" {
 				vid := strings.TrimSpace(versionID)
 				record.VisualSystemVersionID = &vid
-				payload, err := loadVisualSystemPayload(ctx, tx, vid)
-				if err != nil {
-					return nil, nil, nil, nil, err
-				}
-				record.VisualPayload = payload
+				record.VisualPayload = visualPayloads[vid]
 			}
 			if record.VisualPayload == nil {
 				record.VisualPayload = visualOverlayFromConfig(node.Config)
@@ -417,15 +432,13 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 			label := node.Title
 			record.BoundAssetLabel = &label
 			if node.BoundAssetID != nil {
-				display, mime, err := loadBoundAssetMeta(ctx, tx, row.ProductID, *node.BoundAssetID)
-				if err != nil {
-					return nil, nil, nil, nil, err
-				}
-				if display != "" {
-					record.BoundAssetLabel = &display
-				}
-				if mime != "" {
-					record.BoundAssetMIME = &mime
+				if metadata, ok := boundAssetMetas[*node.BoundAssetID]; ok {
+					if metadata.DisplayName != "" {
+						record.BoundAssetLabel = &metadata.DisplayName
+					}
+					if metadata.MIMEType != "" {
+						record.BoundAssetMIME = &metadata.MIMEType
+					}
 				}
 			}
 		}
@@ -442,26 +455,24 @@ func stringMapPtr(values map[string]string, key string) *string {
 	return &value
 }
 
-func loadVisualSystemPayload(ctx context.Context, tx *gorm.DB, versionID string) (map[string]any, error) {
-	var rec schema.VisualSystemVersions
-	err := tx.WithContext(ctx).Select("payload_json").Where("id = ?", versionID).Take(&rec).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+func loadVisualSystemPayloads(ctx context.Context, tx *gorm.DB, versionIDs []string) (map[string]map[string]any, error) {
+	out := map[string]map[string]any{}
+	if len(versionIDs) == 0 {
+		return out, nil
 	}
-	if err != nil {
+	var recs []schema.VisualSystemVersions
+	if err := tx.WithContext(ctx).
+		Select("id, payload_json").
+		Where("id IN ?", versionIDs).
+		Find(&recs).Error; err != nil {
 		return nil, err
 	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(rec.PayloadJSON), &out); err != nil {
-		return nil, err
+	for _, rec := range recs {
+		payload := map[string]any{}
+		if err := json.Unmarshal([]byte(rec.PayloadJSON), &payload); err != nil {
+			return nil, err
+		}
+		out[rec.ID] = payload
 	}
 	return out, nil
-}
-
-func loadBoundAssetMeta(ctx context.Context, tx *gorm.DB, productID, assetID string) (string, string, error) {
-	guard, err := requireProductGuard(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	return guard.BoundAssetMeta(ctx, tx, productID, assetID)
 }

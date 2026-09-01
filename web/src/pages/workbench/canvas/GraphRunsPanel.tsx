@@ -62,6 +62,7 @@ export function GraphRunsPanel({
   const runsQuery = useQuery({
     queryKey,
     queryFn: () => api.listGraphRuns(productId, graph.id),
+    staleTime: 30_000,
     // GraphCanvasPanel owns the shared run SSE and updates this query cache.
   });
   const cancelMutation = useMutation({
@@ -228,6 +229,7 @@ function GraphRunRecord({
               variant="secondary"
               size="sm"
               aria-expanded={detailsOpen}
+              data-graph-run-details-toggle
               onClick={() => setDetailsOpen((open) => !open)}
             >
               <FileText size={14} />

@@ -2,13 +2,13 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { openGlobalAgent } from "../lib/globalAgentEvents";
 import type { AgentTask } from "../lib/types";
 import {
   agentDockListRefetchInterval,
   agentTaskWorkspaceTarget,
   isGlobalAgentDockModalTarget,
   isProductWorkbenchPath,
-  openGlobalAgent,
   reconcileAgentDockListsOnControlOpen,
   shouldRenderGlobalAgentLauncher,
   TaskBoard,

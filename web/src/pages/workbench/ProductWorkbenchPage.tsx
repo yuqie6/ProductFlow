@@ -6,13 +6,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { useI18n } from "../../lib/preferences";
-import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
   agentWorkbenchQueryKey,
   isHttpErrorStatus,
@@ -22,7 +21,13 @@ import {
   resolveProductWorkbenchSurface,
 } from "./agent/productWorkbenchRoute";
 import { keepAgentWorkbenchPlaceholder } from "./chrome/workbenchUiState";
-import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
+
+const AgentProductWorkbenchPage = lazy(() =>
+  import("./agent/AgentProductWorkbenchPage").then((module) => ({ default: module.AgentProductWorkbenchPage })),
+);
+const GraphWorkbenchSurface = lazy(() =>
+  import("./GraphWorkbenchSurface").then((module) => ({ default: module.GraphWorkbenchSurface })),
+);
 
 export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
@@ -42,7 +47,13 @@ export function ProductWorkbenchPage() {
   const graphQuery = useQuery({
     queryKey: ["workflow-graph", productId],
     queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(productId)),
-    enabled: shouldReadCurrentWorkflowGraph(productId, agentQuery.error),
+    enabled: shouldReadCurrentWorkflowGraph(
+      productId,
+      agentQuery.error,
+      agentQuery.isPending,
+      Boolean(agentQuery.data?.graph),
+    ),
+    staleTime: 30_000,
     retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
   const [missingGraphPrimedProductId, setMissingGraphPrimedProductId] = useState<string | null>(null);
@@ -108,26 +119,22 @@ export function ProductWorkbenchPage() {
       );
     }
     return (
-      <GraphWorkbenchPage
+      <GraphWorkbenchSurface
         product={productQuery.data}
         initialGraph={surface.graph}
-        agentContent={(
-          <GraphAgentPanel
-            error={agentQuery.error}
-            onRetry={() => void agentQuery.refetch()}
-            onOpenConversation={() => {
-              void api.ensureAgentWorkbench(productId).then((bootstrap) => {
-                rememberAgentWorkbenchQueryData(
-                  (queryKey, data) => queryClient.setQueryData(queryKey, data),
-                  bootstrap,
-                  agentSessionId,
-                  agentTaskId,
-                );
-                void agentQuery.refetch();
-              });
-            }}
-          />
-        )}
+        agentError={agentQuery.error}
+        onRetryAgent={() => void agentQuery.refetch()}
+        onOpenConversation={() => {
+          void api.ensureAgentWorkbench(productId).then((bootstrap) => {
+            rememberAgentWorkbenchQueryData(
+              (queryKey, data) => queryClient.setQueryData(queryKey, data),
+              bootstrap,
+              agentSessionId,
+              agentTaskId,
+            );
+            void agentQuery.refetch();
+          });
+        }}
       />
     );
   }
@@ -143,9 +150,14 @@ export function ProductWorkbenchPage() {
 }
 
 /** 图画布不依赖 Agent 工作台是否存在。 */
-export function shouldReadCurrentWorkflowGraph(productId: string, _agentError?: unknown): boolean {
+export function shouldReadCurrentWorkflowGraph(
+  productId: string,
+  _agentError?: unknown,
+  agentPending = false,
+  bootstrapHasGraph = false,
+): boolean {
   void _agentError;
-  return Boolean(productId);
+  return Boolean(productId) && !agentPending && !bootstrapHasGraph;
 }
 
 function WorkbenchRouteState({

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -27,6 +28,10 @@ const (
 
 // ErrNoPool 表示 Listen 收到了 nil pgx 池。调用方应改走轮询，不要 panic。
 var ErrNoPool = errors.New("notify: pgx pool is nil")
+
+// ListenerConnections 是当前进程占用的 PostgreSQL LISTEN 连接数（gauge）。
+// Subscribe 按 pool 共享 fanout，正常运行时每个 API 副本每个 pool 为 0 或 1。
+var ListenerConnections atomic.Int64
 
 // Notification 是一条 LISTEN 收到的消息，不是 HTTP 体。
 // Channel 必为本包闭集常量；Payload 在图/会话 SSE 里通常是聚合 id。
@@ -92,7 +97,9 @@ func Listen(ctx context.Context, pool *pgxpool.Pool, channels ...string) (<-chan
 		}
 	}
 	out := make(chan Notification, 32)
+	ListenerConnections.Add(1)
 	go func() {
+		defer ListenerConnections.Add(-1)
 		defer close(out)
 		defer conn.Release()
 		for {

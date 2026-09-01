@@ -127,15 +127,17 @@ func loadAppliedGraph(ctx context.Context, tx *gorm.DB, row graphRow) (AppliedGr
 			}
 		}
 		nodes = append(nodes, AppliedNode{
-			ID:             rec.ID,
-			NodeType:       NodeType(rec.NodeType),
-			Title:          rec.Title,
-			PositionX:      rec.PositionX,
-			PositionY:      rec.PositionY,
-			Config:         config,
-			BoundAssetID:   rec.BoundImageAssetID,
-			GroupID:        rec.GroupID,
-			DocumentOrigin: loadDocumentOrigin(NodeType(rec.NodeType), rec.DocumentOrigin),
+			ID:                         rec.ID,
+			NodeType:                   NodeType(rec.NodeType),
+			Title:                      rec.Title,
+			PositionX:                  rec.PositionX,
+			PositionY:                  rec.PositionY,
+			Config:                     config,
+			CurrentArtifactID:          rec.CurrentArtifactID,
+			PendingCandidateArtifactID: rec.PendingCandidateArtifactID,
+			BoundAssetID:               rec.BoundImageAssetID,
+			GroupID:                    rec.GroupID,
+			DocumentOrigin:             loadDocumentOrigin(NodeType(rec.NodeType), rec.DocumentOrigin),
 		})
 	}
 

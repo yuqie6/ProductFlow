@@ -11,7 +11,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../../components/GalleryImagePreviewDialog";
-import { openGlobalAgent } from "../../../components/GlobalAgentDock";
+import { openGlobalAgent } from "../../../lib/globalAgentEvents";
 import { TopNav } from "../../../components/TopNav";
 import { useRegisterAgentPageContext } from "../../../lib/agentPageContext";
 import { ApiError, api } from "../../../lib/api";
@@ -141,6 +141,7 @@ export function AgentProductWorkbenchPage({
     queryKey: ["workflow-graph", bootstrap.product.id],
     queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(bootstrap.product.id)),
     initialData: bootstrap.graph ?? undefined,
+    staleTime: 30_000,
     retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
   const liveGraph = graphQuery.data ?? bootstrap.graph;

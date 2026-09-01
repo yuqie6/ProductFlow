@@ -38,6 +38,14 @@ func TestSnapshotIncludesRecoveryBacklog(t *testing.T) {
 			t.Fatalf("missing stale recovery backlog domain %q in metrics", domain)
 		}
 	}
+	for _, metric := range []string{
+		"productflow_graph_sse_connections",
+		"productflow_notify_listener_connections",
+	} {
+		if !strings.Contains(body, metric+" ") {
+			t.Fatalf("missing connection metric %q in %s", metric, body)
+		}
+	}
 }
 
 func TestRecoveryHistogramsEmitStableDomains(t *testing.T) {

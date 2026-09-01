@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/product"
+	"gorm.io/gorm"
 )
 
 func TestSubmitRunOnEmptyCanvasReturnsNoProcessingNodes(t *testing.T) {
@@ -145,6 +147,161 @@ func TestSubmitRunStagesPendingDispatch(t *testing.T) {
 
 	retry := gs.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID+"/retry", nil, "")
 	gs.mustStatus(t, retry, http.StatusBadRequest)
+}
+
+type graphQuerySelectRecorder struct {
+	selects [][]string
+}
+
+func (r *graphQuerySelectRecorder) record(db *gorm.DB) {
+	selected := append([]string(nil), db.Statement.Selects...)
+	r.selects = append(r.selects, selected)
+}
+
+type graphQueryTableRecorder struct {
+	tables []string
+	sql    []string
+}
+
+func (r *graphQueryTableRecorder) record(db *gorm.DB) {
+	r.tables = append(r.tables, db.Statement.Table)
+	r.sql = append(r.sql, db.Statement.SQL.String())
+}
+
+func TestGraphProjectionBatchesBoundAssetMetadata(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1},{"key":"detail","quantity":1},{"key":"scene","quantity":1}]`)
+	recorder := &graphQueryTableRecorder{}
+	callbackName := "test:graph_projection_bound_asset_batch"
+	if err := gs.db.Callback().Query().After("gorm:query").Register(callbackName, recorder.record); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gs.db.Callback().Query().Remove(callbackName) })
+
+	resp := gs.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	gs.mustStatus(t, resp, http.StatusOK)
+	resp.Body.Close()
+
+	assetQueries := 0
+	for index, query := range recorder.sql {
+		if strings.Contains(query, "FROM product_image_assets AS a") {
+			assetQueries++
+			if !strings.Contains(query, "a.id") || !strings.Contains(query, " IN ") {
+				t.Fatalf("bound asset lookup was not batched: table=%q sql=%q", recorder.tables[index], query)
+			}
+		}
+	}
+	if assetQueries != 1 {
+		t.Fatalf("expected one bound asset lookup, got %d tables=%v sql=%v", assetQueries, recorder.tables, recorder.sql)
+	}
+}
+
+func TestGraphRunSSETracksActiveConnections(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	created := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, created, http.StatusCreated)
+	var run graph.GraphRunResponse
+	gs.decode(t, created, &run)
+
+	baseline := pfmetrics.GraphSSEConnections.Load()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gs.srv.URL+"/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range gs.cookies {
+		req.AddCookie(cookie)
+	}
+	result := make(chan struct {
+		resp *http.Response
+		err  error
+	}, 1)
+	go func() {
+		resp, err := gs.client.Do(req)
+		result <- struct {
+			resp *http.Response
+			err  error
+		}{resp: resp, err: err}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for pfmetrics.GraphSSEConnections.Load() < baseline+1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := pfmetrics.GraphSSEConnections.Load(); got != baseline+1 {
+		t.Fatalf("Graph SSE gauge %d want %d", got, baseline+1)
+	}
+	var opened struct {
+		resp *http.Response
+		err  error
+	}
+	select {
+	case opened = <-result:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Graph SSE did not open")
+	}
+	if opened.err != nil {
+		t.Fatal(opened.err)
+	}
+	if opened.resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(opened.resp.Body)
+		opened.resp.Body.Close()
+		t.Fatalf("Graph SSE status %d body=%s", opened.resp.StatusCode, raw)
+	}
+	opened.resp.Body.Close()
+	cancel()
+	deadline = time.Now().Add(5 * time.Second)
+	for pfmetrics.GraphSSEConnections.Load() != baseline && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := pfmetrics.GraphSSEConnections.Load(); got != baseline {
+		t.Fatalf("Graph SSE gauge after close %d want %d", got, baseline)
+	}
+}
+
+func TestGraphRunStatusReadUsesOnlyIdentityColumns(t *testing.T) {
+	gs := newGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	created := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, created, http.StatusCreated)
+	var run graph.GraphRunResponse
+	gs.decode(t, created, &run)
+
+	recorder := &graphQuerySelectRecorder{}
+	callbackName := "test:graph_run_status_select"
+	if err := gs.db.Callback().Query().Before("gorm:query").Register(callbackName, recorder.record); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gs.db.Callback().Query().Remove(callbackName) })
+
+	service := graph.Service{DB: gs.db}
+	status, err := service.GetRunStatus(context.Background(), productID, graphID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" {
+		t.Fatalf("status %s", status)
+	}
+
+	var sawGraph, sawRun bool
+	for _, selected := range recorder.selects {
+		for _, field := range selected {
+			if field == "snapshot_json" || field == "compiled_context_json" || field == "output_json" {
+				t.Fatalf("status lookup selected detail column: %+v", selected)
+			}
+		}
+		switch strings.Join(selected, ",") {
+		case "id":
+			sawGraph = true
+		case "id,status":
+			sawRun = true
+		}
+	}
+	if !sawGraph || !sawRun {
+		t.Fatalf("status lookup selections missing graph=%t run=%t: %+v", sawGraph, sawRun, recorder.selects)
+	}
 }
 
 func TestSubmitRunRejectsUnknownFieldsAndMissingNodeID(t *testing.T) {

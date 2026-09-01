@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { Loader2 } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-import { GlobalAgentDock } from "./components/GlobalAgentDock";
 import { AppToaster } from "./components/ui/toast";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { api } from "./lib/api";
@@ -29,6 +28,9 @@ const AgentProductCreatePage = lazy(() =>
 );
 const ProductWorkbenchPage = lazy(() =>
   import("./pages/workbench/ProductWorkbenchPage").then((module) => ({ default: module.ProductWorkbenchPage })),
+);
+const GlobalAgentDock = lazy(() =>
+  import("./components/GlobalAgentDock").then((module) => ({ default: module.GlobalAgentDock })),
 );
 const loadProductListPage = () =>
   import("./pages/ProductListPage").then((module) => ({ default: module.ProductListPage }));
@@ -113,7 +115,11 @@ function AppRoutes() {
           <Route path="*" element={<Navigate to={authenticated ? "/home" : "/login"} replace />} />
         </Routes>
       </Suspense>
-      {authenticated ? <GlobalAgentDock /> : null}
+      {authenticated ? (
+        <Suspense fallback={null}>
+          <GlobalAgentDock />
+        </Suspense>
+      ) : null}
     </>
   );
 }

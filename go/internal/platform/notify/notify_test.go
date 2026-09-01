@@ -56,17 +56,21 @@ func TestSubscribeSharesOneListenerAcrossChannels(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	baseline := pool.Stat().AcquiredConns()
+	listenerBaseline := ListenerConnections.Load()
 	runNotes, stopRun := Subscribe(pool, ChannelRun)
 	imageNotes, stopImage := Subscribe(pool, ChannelImageSession)
 	defer stopRun()
 	defer stopImage()
 
 	deadline := time.Now().Add(2 * time.Second)
-	for pool.Stat().AcquiredConns() < baseline+1 && time.Now().Before(deadline) {
+	for (pool.Stat().AcquiredConns() < baseline+1 || ListenerConnections.Load() < listenerBaseline+1) && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if got := pool.Stat().AcquiredConns(); got != baseline+1 {
 		t.Fatalf("listener connections %d want %d", got, baseline+1)
+	}
+	if got := ListenerConnections.Load(); got != listenerBaseline+1 {
+		t.Fatalf("listener metric %d want %d", got, listenerBaseline+1)
 	}
 	if err := Publish(ctx, gdb, ChannelRun, "run-shared"); err != nil {
 		t.Fatal(err)

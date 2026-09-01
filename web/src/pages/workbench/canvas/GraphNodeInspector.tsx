@@ -159,10 +159,12 @@ export function GraphNodeInspector({
   });
   const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
   const [selectedCandidateSections, setSelectedCandidateSections] = useState<string[]>([]);
+  const [technicalDetailsNodeId, setTechnicalDetailsNodeId] = useState<string | null>(null);
   const runsQueryKey = ["graph-runs", graph.product_id, graph.id] as const;
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
+    staleTime: 30_000,
     // GraphCanvasPanel owns the shared run SSE and updates this query cache.
   });
   const presentations = useMemo(
@@ -177,10 +179,11 @@ export function GraphNodeInspector({
     }
     return null;
   }, [node?.id, runsQuery.data]);
+  const technicalDetailsOpen = Boolean(node && technicalDetailsNodeId === node.id);
   const lastNodeRunQuery = useQuery({
     queryKey: ["graph-run", graph.product_id, graph.id, lastNodeRunRef?.runId],
     queryFn: () => api.getGraphRun(graph.product_id, graph.id, lastNodeRunRef!.runId),
-    enabled: Boolean(lastNodeRunRef),
+    enabled: Boolean(lastNodeRunRef && technicalDetailsOpen),
   });
   const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
@@ -685,7 +688,13 @@ export function GraphNodeInspector({
           onReorder={(role, edgeRefs) => reorderMutation.mutate({ nodeId: node.id, role, edgeRefs })}
         />
         <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
-        <GraphTechnicalDetails node={node} graph={graph} lastRun={lastNodeRun} />
+        <GraphTechnicalDetails
+          node={node}
+          graph={graph}
+          lastRun={lastNodeRun}
+          open={technicalDetailsOpen}
+          onOpenChange={(open) => setTechnicalDetailsNodeId(open ? node.id : null)}
+        />
       </div>
       <ConfirmDialog
         open={replaceConfirmOpen}
@@ -1320,10 +1329,14 @@ function GraphTechnicalDetails({
   node,
   graph,
   lastRun,
+  open,
+  onOpenChange,
 }: {
   node: GraphNode;
   graph: GraphProjection;
   lastRun: GraphNodeRun | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
   const { t } = useI18n();
   const currentSources = graphIncomingSourceEntries(node, graph);
@@ -1341,7 +1354,12 @@ function GraphTechnicalDetails({
     ].filter((item): item is { label: string; value: string } => Boolean(item))),
   ];
   return (
-    <details className="border-b border-border-l1 py-3" data-graph-technical-details>
+    <details
+      className="border-b border-border-l1 py-3"
+      data-graph-technical-details
+      open={open}
+      onToggle={(event) => onOpenChange(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer text-xs font-semibold text-text-primary">
         {t("graph.inspector.runtimeInputsTechnical")}
       </summary>
