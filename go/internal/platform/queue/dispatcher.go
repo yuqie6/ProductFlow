@@ -30,7 +30,7 @@ func RunDispatcherOnce(ctx context.Context, pool *pgxpool.Pool, enqueue EnqueueF
 		if err != nil {
 			return err
 		}
-		stale, err := reconcileStaleSent(ctx, dbTx, now, time.Duration(DefaultSentReconcileAfter)*time.Second, DefaultMaxAttempts)
+		stale, err := reconcileStaleSent(ctx, dbTx, now, time.Duration(DefaultSentReconcileAfter)*time.Second, DefaultMaxAttempts, DefaultStaleSentReconcileLimit)
 		if err != nil {
 			return err
 		}
@@ -76,12 +76,17 @@ func reconcileExpiredLeases(ctx context.Context, dbTx *gorm.DB, now time.Time) (
 
 // reconcileStaleSent 找回「标了 SENT 但没人消费」的信封。只处理 sent_at 早于 cutoff、且没有有效消费 lease 的行。
 // attempts 已到上限标 DEAD，否则清 lease/sent_at 拉回 PENDING。必须先 FOR UPDATE，避免和 worker 抢同一行。
-func reconcileStaleSent(ctx context.Context, dbTx *gorm.DB, now time.Time, sentAfter time.Duration, maxAttempts int) (int, error) {
+func reconcileStaleSent(ctx context.Context, dbTx *gorm.DB, now time.Time, sentAfter time.Duration, maxAttempts, limit int) (int, error) {
+	if limit < 1 {
+		limit = DefaultStaleSentReconcileLimit
+	}
 	cutoff := now.Add(-sentAfter)
 	var items []schema.AsyncDispatches
 	if err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Clauses(pfdb.ForUpdate()).
 		Where("status = ? AND sent_at IS NOT NULL AND sent_at <= ?", StatusSent, cutoff).
 		Where("lease_token IS NULL OR (lease_expires_at IS NOT NULL AND lease_expires_at <= ?)", now).
+		Order("sent_at ASC, id ASC").
+		Limit(limit).
 		Find(&items).Error; err != nil {
 		return 0, err
 	}

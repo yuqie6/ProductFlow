@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
 func TestRunOneShotRecoversThenDispatchesAndJoinsErrors(t *testing.T) {
@@ -152,6 +154,65 @@ func TestRunWatchLoopsDispatchTickerIsNotBlockedByRecovery(t *testing.T) {
 
 	cancel()
 	waitForSignal(t, done, "watch loops to stop")
+}
+
+func TestForwardWakeCoalescesAndExitsWhenInputCloses(t *testing.T) {
+	in := make(chan int, 3)
+	in <- 1
+	in <- 2
+	in <- 3
+	close(in)
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		forwardWake(in, wake)
+	}()
+	waitForSignal(t, done, "forwardWake to exit after input close")
+	select {
+	case <-wake:
+	default:
+		t.Fatal("expected a coalesced wake")
+	}
+	select {
+	case <-wake:
+		t.Fatal("wake flood should drop while a signal is already pending")
+	default:
+	}
+}
+
+func TestDrainWakeEmptiesPendingSignals(t *testing.T) {
+	wake := make(chan struct{}, 4)
+	wake <- struct{}{}
+	wake <- struct{}{}
+	wake <- struct{}{}
+	drainWake(wake)
+	select {
+	case <-wake:
+		t.Fatal("wake channel still has signals after drain")
+	default:
+	}
+	drainWake(nil)
+}
+
+func TestStartDispatchWakeExitsOnCancel(t *testing.T) {
+	pool, _ := testdb.Open(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	wake, waitListen := startDispatchWake(ctx, pool, nil)
+	if wake == nil {
+		t.Fatal("LISTEN failed; cannot assert cancel unblocks the listener")
+	}
+	cancel()
+	done := make(chan struct{})
+	go func() {
+		waitListen()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dispatch LISTEN did not exit after cancel")
+	}
 }
 
 func waitForSignal(t *testing.T, ch <-chan struct{}, description string) {

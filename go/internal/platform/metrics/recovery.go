@@ -21,6 +21,7 @@ type recoveryHistogram struct {
 var recoveryDurations = make(map[string]*recoveryHistogram, len(recoveryBacklogDomains))
 var recoveryLockDurations = make(map[string]*recoveryHistogram, len(recoveryBacklogDomains))
 var recoveryErrors = make(map[string]*atomic.Int64, len(recoveryBacklogDomains))
+var advisoryLockWait = &recoveryHistogram{}
 
 func init() {
 	for _, domain := range recoveryBacklogDomains {
@@ -49,6 +50,16 @@ func ObserveRecoveryLock(domain string, elapsed time.Duration) {
 	}
 }
 
+// ObserveAdvisoryLockWait records wait time for pg_advisory_xact_lock on the generation capacity key.
+func ObserveAdvisoryLockWait(elapsed time.Duration) {
+	advisoryLockWait.observe(elapsed)
+}
+
+// AdvisoryLockWaitCount is the number of observed advisory lock waits in this process.
+func AdvisoryLockWaitCount() int64 {
+	return advisoryLockWait.count.Load()
+}
+
 func (hist *recoveryHistogram) observe(elapsed time.Duration) {
 	if elapsed < 0 {
 		elapsed = 0
@@ -71,6 +82,17 @@ func writeRecoveryHistograms(b *strings.Builder) {
 	for _, domain := range recoveryBacklogDomains {
 		fmt.Fprintf(b, "productflow_recovery_errors_total{domain=%q} %d\n", domain, recoveryErrors[domain].Load())
 	}
+}
+
+func writeUnlabeledHistogram(b *strings.Builder, name, help string, hist *recoveryHistogram) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s histogram\n", name, help, name)
+	for i, bucket := range recoveryDurationBuckets {
+		fmt.Fprintf(b, "%s_bucket{le=%q} %d\n", name, formatMetricFloat(bucket), hist.buckets[i].Load())
+	}
+	count := hist.count.Load()
+	fmt.Fprintf(b, "%s_bucket{le=\"+Inf\"} %d\n", name, count)
+	fmt.Fprintf(b, "%s_sum %s\n", name, formatMetricFloat(float64(hist.sumNanos.Load())/float64(time.Second)))
+	fmt.Fprintf(b, "%s_count %d\n", name, count)
 }
 
 func writeRecoveryHistogramSet(b *strings.Builder, name, help string, values map[string]*recoveryHistogram) {

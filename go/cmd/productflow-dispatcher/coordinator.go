@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/platform/notify"
+	"go.uber.org/zap"
 )
 
 type cycleFunc func(context.Context) error
@@ -69,9 +73,53 @@ func runScheduledLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			drainWake(wake)
 			runAndReport()
 		case <-wake:
+			drainWake(wake)
 			runAndReport()
+		}
+	}
+}
+
+// startDispatchWake LISTENs on ChannelDispatch and coalesces notifications onto a
+// size-1 wake channel. Listen failure falls back to ticker-only (nil wake).
+func startDispatchWake(ctx context.Context, pool *pgxpool.Pool, logger *zap.Logger) (<-chan struct{}, func()) {
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		if logger != nil {
+			logger.Error("dispatcher listen", zap.Error(err))
+		}
+		return nil, func() {}
+	}
+	wake := make(chan struct{}, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		forwardWake(notes, wake)
+	}()
+	return wake, wg.Wait
+}
+
+func forwardWake[T any](in <-chan T, wake chan<- struct{}) {
+	if in == nil {
+		return
+	}
+	for range in {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func drainWake(wake <-chan struct{}) {
+	for {
+		select {
+		case <-wake:
+		default:
+			return
 		}
 	}
 }

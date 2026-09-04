@@ -9,6 +9,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"gorm.io/gorm"
 )
 
@@ -126,7 +127,16 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 // 未知 actor 会 MarkFailed 并返回 nil，不把错误交给 asynq。
 // [ErrBusy]/[ErrLater] 释放 lease 回到 PENDING，不向 asynq 报失败。
 // 其他 error 先 MarkFailed 再返回给 asynq；worker MaxRetry=0，broker 不会重试。
+// 一次处理一条信封，没有 batch size；用 handler 耗时直方图。不 enqueue——PENDING→SENT 只发生在 dispatcher。
 func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, actors map[string]ActorFunc) error {
+	started := time.Now()
+	result := ""
+	defer func() {
+		metrics.ObserveConsumeDuration(time.Since(started))
+		if result != "" {
+			metrics.ObserveConsumeResult(result)
+		}
+	}()
 	gdb, err := gormFrom(pool)
 	if err != nil {
 		return err
@@ -149,6 +159,7 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 	fn := actors[row.ActorName]
 	if fn == nil {
 		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, "unknown async dispatch actor: "+row.ActorName, DefaultMaxAttempts, DefaultBackoffSeconds)
+		result = "unknown"
 		return nil
 	}
 	if err := fn(ctx, aggregateID); err != nil {
@@ -156,15 +167,23 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 			delay := time.Duration(DefaultBusyRetrySeconds) * time.Second
 			if errors.Is(err, ErrLater) {
 				delay = time.Duration(DefaultLaterRetrySeconds) * time.Second
+				result = "later"
+			} else {
+				result = "busy"
 			}
 			_, _ = ReleaseForRetry(ctx, pool, dispatchID, aggregateID, token, delay)
 			return nil
 		}
 		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, err.Error(), DefaultMaxAttempts, DefaultBackoffSeconds)
+		result = "failed"
 		return err
 	}
 	_, err = MarkConsumed(ctx, pool, dispatchID, aggregateID, token)
-	return err
+	if err != nil {
+		return err
+	}
+	result = "consumed"
+	return nil
 }
 
 // ReleaseForRetry 在 [ErrBusy]/[ErrLater] 后清消费 lease，把 SENT 拉回 PENDING。

@@ -39,6 +39,8 @@ const (
 	DefaultSentReconcileAfter = 5 * 60 // 秒
 	// DefaultClaimLimit 是 dispatcher 每轮最多 claim 的 PENDING 条数。
 	DefaultClaimLimit = 100
+	// DefaultStaleSentReconcileLimit 是 dispatcher 每轮最多对账的陈旧 SENT 条数。
+	DefaultStaleSentReconcileLimit = 100
 	// DefaultBusyRetrySeconds 是 [ErrBusy] 后重新 PENDING 的延迟。
 	DefaultBusyRetrySeconds = 2
 	// DefaultLaterRetrySeconds 是 [ErrLater] 后重新 PENDING 的延迟。

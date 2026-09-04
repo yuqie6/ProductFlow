@@ -11,11 +11,13 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/notify"
 	"gorm.io/gorm"
 )
 
 // Stage 按 delivery_key 幂等写入 PENDING。已存在且身份一致则复用；CONSUMED 会重置为 PENDING。
 // 同一 key 绑到不同 actor/aggregate/payload 返回 409。
+// 新建或 resetPending 时在同一事务里 NOTIFY ChannelDispatch；复用已有 PENDING/SENT/DEAD 不通知。
 func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
@@ -91,6 +93,9 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 			}
 			return *existing, nil
 		}
+		return Dispatch{}, err
+	}
+	if err := notifyDispatch(ctx, tx, row.ID); err != nil {
 		return Dispatch{}, err
 	}
 	return fromSchema(row), nil
@@ -181,7 +186,7 @@ func loadByDeliveryKey(ctx context.Context, tx *gorm.DB, deliveryKey string) (*D
 	return &d, nil
 }
 
-// resetPending 把已有信封拉回 PENDING：清 lease、sent_at、consumed_at、last_error。
+// resetPending 把已有信封拉回 PENDING：清 lease、sent_at、consumed_at、last_error，并 NOTIFY ChannelDispatch。
 // resetAttempts 为 true 时把 attempts 归零（用户重试）；dispatcher 对账不要归零，否则死信封会无限复活。
 func resetPending(ctx context.Context, tx *gorm.DB, id string, availableAt, now time.Time, resetAttempts bool) (Dispatch, error) {
 	updates := map[string]any{
@@ -204,7 +209,14 @@ func resetPending(ctx context.Context, tx *gorm.DB, id string, availableAt, now 
 	if err := tx.WithContext(ctx).Where("id = ?", id).Take(&row).Error; err != nil {
 		return Dispatch{}, err
 	}
+	if err := notifyDispatch(ctx, tx, id); err != nil {
+		return Dispatch{}, err
+	}
 	return fromSchema(row), nil
+}
+
+func notifyDispatch(ctx context.Context, tx *gorm.DB, id string) error {
+	return notify.Publish(ctx, tx, notify.ChannelDispatch, id)
 }
 
 func fromSchema(row schema.AsyncDispatches) Dispatch {

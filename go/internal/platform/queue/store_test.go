@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/platform/metrics"
+	"github.com/yuqie6/productflow/internal/platform/notify"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -46,6 +48,93 @@ func TestStageAsyncDispatchIsIdempotentByDeliveryKey(t *testing.T) {
 	}
 	if first.Status != queue.StatusPending {
 		t.Fatalf("status %s", first.Status)
+	}
+}
+
+func TestStagePublishesDispatchNotifyAfterCommit(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agg := uniqueID(t)
+	var staged queue.Dispatch
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-notes:
+		if n.Channel != notify.ChannelDispatch || n.Payload != staged.ID {
+			t.Fatalf("note %+v, want payload %s", n, staged.ID)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive dispatch notify after commit")
+	}
+
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		_, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case n := <-notes:
+		t.Fatalf("no-op pending stage notified %+v", n)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestResetPendingPublishesDispatchNotify(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	agg := uniqueID(t)
+	var staged queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE async_dispatches SET status = $1, consumed_at = NOW(), updated_at = NOW()
+		WHERE id = $2
+	`, queue.StatusConsumed, staged.ID); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restaged queue.Dispatch
+	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		restaged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restaged.Status != queue.StatusPending {
+		t.Fatalf("status %s, want pending", restaged.Status)
+	}
+	select {
+	case n := <-notes:
+		if n.Channel != notify.ChannelDispatch || n.Payload != staged.ID {
+			t.Fatalf("note %+v, want payload %s", n, staged.ID)
+		}
+	case <-ctx.Done():
+		t.Fatal("did not receive dispatch notify after resetPending commit")
 	}
 }
 
@@ -221,6 +310,96 @@ func TestConsumeLaterReleasesToPending(t *testing.T) {
 	if status != queue.StatusPending {
 		t.Fatalf("status %s, want pending", status)
 	}
+}
+
+func TestConsumeRecordsResultCounters(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx := context.Background()
+	stageSent := func(agg string) queue.Dispatch {
+		t.Helper()
+		var dispatch queue.Dispatch
+		err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+			var err error
+			dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+			t.Fatal(err)
+		}
+		return dispatch
+	}
+
+	t.Run("consumed", func(t *testing.T) {
+		agg := uniqueID(t)
+		dispatch := stageSent(agg)
+		before := metrics.ConsumeResultCount("consumed")
+		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+			queue.ActorGraphRun: func(context.Context, string) error { return nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metrics.ConsumeResultCount("consumed") != before+1 {
+			t.Fatalf("consumed counter %d, want %d", metrics.ConsumeResultCount("consumed"), before+1)
+		}
+	})
+	t.Run("busy", func(t *testing.T) {
+		agg := uniqueID(t)
+		dispatch := stageSent(agg)
+		before := metrics.ConsumeResultCount("busy")
+		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+			queue.ActorGraphRun: func(context.Context, string) error { return queue.ErrBusy },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metrics.ConsumeResultCount("busy") != before+1 {
+			t.Fatalf("busy counter %d, want %d", metrics.ConsumeResultCount("busy"), before+1)
+		}
+	})
+	t.Run("later", func(t *testing.T) {
+		agg := uniqueID(t)
+		dispatch := stageSent(agg)
+		before := metrics.ConsumeResultCount("later")
+		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+			queue.ActorGraphRun: func(context.Context, string) error { return queue.ErrLater },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metrics.ConsumeResultCount("later") != before+1 {
+			t.Fatalf("later counter %d, want %d", metrics.ConsumeResultCount("later"), before+1)
+		}
+	})
+	t.Run("failed", func(t *testing.T) {
+		agg := uniqueID(t)
+		dispatch := stageSent(agg)
+		before := metrics.ConsumeResultCount("failed")
+		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+			queue.ActorGraphRun: func(context.Context, string) error { return errors.New("actor failed") },
+		})
+		if err == nil {
+			t.Fatal("expected actor error")
+		}
+		if metrics.ConsumeResultCount("failed") != before+1 {
+			t.Fatalf("failed counter %d, want %d", metrics.ConsumeResultCount("failed"), before+1)
+		}
+	})
+	t.Run("unknown", func(t *testing.T) {
+		agg := uniqueID(t)
+		dispatch := stageSent(agg)
+		before := metrics.ConsumeResultCount("unknown")
+		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metrics.ConsumeResultCount("unknown") != before+1 {
+			t.Fatalf("unknown counter %d, want %d", metrics.ConsumeResultCount("unknown"), before+1)
+		}
+	})
 }
 
 func TestConsumerLeaseExceedsTaskTimeout(t *testing.T) {

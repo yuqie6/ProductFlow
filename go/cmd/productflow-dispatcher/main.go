@@ -218,11 +218,12 @@ func main() {
 
 	watchCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
+	dispatchWake, waitListen := startDispatchWake(watchCtx, pool, logger)
 	runWatchLoops(
 		watchCtx,
 		time.Duration(*interval*float64(time.Second)),
 		time.Duration(*recoveryInterval*float64(time.Second)),
-		nil, // The queue notification slice supplies a transactional PG wake channel here.
+		dispatchWake,
 		runDispatchCycle,
 		runRecoveryCycle,
 		func(err error) {
@@ -236,6 +237,7 @@ func main() {
 			}
 		},
 	)
+	waitListen()
 }
 
 func dispatcherCycleIdle(summary queue.Summary, recovery ...int) bool {

@@ -4,6 +4,7 @@ package metrics
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/notify"
 	"gorm.io/gorm"
 )
@@ -207,6 +209,22 @@ func snapshot(db *gorm.DB) (string, error) {
 	`).Scan(&postgresLockWaiters).Error; err != nil {
 		return "", err
 	}
+	var running runningCounts
+	if err := db.Raw(`
+		SELECT
+			(SELECT COUNT(*) FROM workflow_graph_runs WHERE status = 'running') AS graph,
+			(SELECT COUNT(*) FROM image_session_generation_tasks WHERE status = 'running') AS image_session,
+			(SELECT COUNT(*) FROM delivery_rendition_jobs WHERE status = 'running') AS delivery,
+			(SELECT COUNT(*) FROM local_image_edit_tasks WHERE status = 'running') AS local_image_edit,
+			(SELECT COUNT(*) FROM agent_turn_executions WHERE phase <> 'terminal') AS agent
+	`).Scan(&running).Error; err != nil {
+		return "", err
+	}
+	var generationLimitSetting schema.AppSettings
+	if err := db.Where("key = ?", generation.MaxConcurrentSettingKey).Take(&generationLimitSetting).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+	generationLimit := generation.ParseMaxConcurrent(generationLimitSetting.Value)
 	var staleRunning []recoveryBacklogCount
 	if err := db.Raw(`
 		WITH image_threshold AS (
@@ -260,6 +278,8 @@ func snapshot(db *gorm.DB) (string, error) {
 	fmt.Fprintf(&b, "productflow_notify_listener_connections %d\n", notify.ListenerConnections.Load())
 	writeStatusCounts(&b, "productflow_agent_turns", "Agent Turns by durable status.", turns)
 	writeStatusCounts(&b, "productflow_graph_runs", "Workflow runs by durable status.", runs)
+	// PENDING→SENT enqueue 只发生在 dispatcher。worker 与 API 共用本 snapshot 的
+	// productflow_async_dispatches 状态计数，不另造进程内 enqueue counter。
 	writeStatusCounts(&b, "productflow_async_dispatches", "Async dispatch records by durable status.", dispatches)
 	writeStatusCounts(&b, "productflow_agent_model_invocations", "Model invocations by durable status.", invocations)
 	writeStatusCounts(&b, "productflow_agent_effect_reconciliations", "Effect reconciliations by bounded state.", reconciliations)
@@ -300,10 +320,38 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# HELP productflow_postgres_lock_waiters PostgreSQL sessions currently waiting on a lock.\n")
 	b.WriteString("# TYPE productflow_postgres_lock_waiters gauge\n")
 	fmt.Fprintf(&b, "productflow_postgres_lock_waiters %d\n", postgresLockWaiters)
+	writeRunningGauges(&b, running)
+	b.WriteString("# HELP productflow_generation_max_concurrent_tasks Admission limit from app_settings generation_max_concurrent_tasks.\n")
+	b.WriteString("# TYPE productflow_generation_max_concurrent_tasks gauge\n")
+	fmt.Fprintf(&b, "productflow_generation_max_concurrent_tasks %d\n", generationLimit)
 	writeRecoveryBacklog(&b, recoveryBacklog)
 	writeRecoveryStaleRunning(&b, pending.ExpiredLeases, staleRunning)
 	writeRecoveryHistograms(&b)
+	writeWorkerProcessSeries(&b)
 	return b.String(), nil
+}
+
+type runningCounts struct {
+	Graph          int64 `gorm:"column:graph"`
+	ImageSession   int64 `gorm:"column:image_session"`
+	Delivery       int64 `gorm:"column:delivery"`
+	LocalImageEdit int64 `gorm:"column:local_image_edit"`
+	Agent          int64 `gorm:"column:agent"`
+}
+
+func writeRunningGauges(b *strings.Builder, running runningCounts) {
+	counts := map[string]int64{
+		"agent":            running.Agent,
+		"delivery":         running.Delivery,
+		"graph":            running.Graph,
+		"image_session":    running.ImageSession,
+		"local_image_edit": running.LocalImageEdit,
+	}
+	b.WriteString("# HELP productflow_running Durable running work by domain.\n")
+	b.WriteString("# TYPE productflow_running gauge\n")
+	for _, domain := range recoveryBacklogDomains {
+		fmt.Fprintf(b, "productflow_running{domain=%q} %d\n", domain, counts[domain])
+	}
 }
 
 func writeRecoveryBacklog(b *strings.Builder, rows []recoveryBacklogCount) {
