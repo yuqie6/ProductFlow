@@ -48,7 +48,7 @@ Open guide: [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity
 
 ### Responsibility consolidation
 
-Workflow Experience owns inspector draft version semantics within the existing mid-run editing issue. Platform Reliability owns the [journal assessment](audits/tasks/arch-journal-assessment.md); implementation is not yet authorized. Retain the current structure when a local fix suffices or consolidation has insufficient benefit. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
+Workflow Experience owns inspector draft version semantics within the existing mid-run editing issue. The [journal assessment](audits/tasks/archive/arch-journal-assessment.md) is complete: keep the current structure; implementation is not authorized. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
 
 ### Image production quality
 

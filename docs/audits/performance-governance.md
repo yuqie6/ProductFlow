@@ -10,8 +10,8 @@
 
 - 负责 lease、journal、ACK、恢复、队列、锁序、容量、查询成本和实时通道基础；同一执行链的正确性与性能由本组统一权衡，不拆成两组分别验收后互相覆盖。
 - 生产就绪 S1–S6 和已通过 Gate 保留历史基线，不重新开工。G-06 行为部分引用评测组可采信 run_id；G-07 必须绑定候选 checkout，全量门不能借用旧 HEAD 的结果。主代理汇总全部相关结果作发布裁定。
-- AR-02 由 [arch-journal-assessment](tasks/arch-journal-assessment.md) 调查 `TurnRuntime -> WAL -> batcher -> AppendEvents -> PG -> ACK` 及恢复 confirmation。当前为开放证据任务，未证明数据丢失或重构收益；允许保留现状。维护者接受调查后在本节登记结论与证据，收益成立才发布实现任务。
-- journal 调查须保持 PG 权威、在线 append 的 lease 检查、confirmation 不 claim/续租、不重放丢失模型执行。权限与失败矩阵见该 issue；不重启历史运行时所有权计划。
+- AR-02 由 [arch-journal-assessment](tasks/archive/arch-journal-assessment.md) 于 2026-09-05 完成调查。结论：保留现状，不发布 journal 实现 issue。在线路径已拆出 batcher / 回执等式 / ACK 文件；重启前缀确认与 claim、phase、abandon 同属 `recoverDurableHandoff`，单独吸收 confirm 循环不会删掉 TurnRuntime 必知分支。指定 Node 测试 61 通过 / 1 跳过（10k WAL `runIf`）；未证明数据丢失。Go ConfirmEvents / fencing 与 Node recover claim 409 仍是改协议时才补的缺口，不构成开工许可。
+- journal 合同保持 PG 权威、在线 append 的 lease 检查、confirmation 不 claim/续租、不重放丢失模型执行。权限与失败矩阵见归档 issue；不重启历史运行时所有权计划。
 - 画布草稿基线、文稿采用规则与结果使用行为交工作流体验；Skill 行为交 Agent 能力；题库、grader、图片闸门交评测。跨层修复由维护者指定一张主 issue 的完整因果范围，不按目录拆断事务或权限合同。
 
 ## 使用规则
@@ -560,6 +560,7 @@ PRODUCTFLOW_PERF_PRODUCT_ID=<product-id> WEB_BASE_URL=http://127.0.0.1:<web-port
 | 2026-09-05 | 本地双副本进程级现场闸门 | `just go-test-staging-field`：通知丢失后另一 LISTEN 仍唤醒；两 API pool 独立 LISTEN；两 dispatcher SKIP LOCKED 各入队一次；两真实 dispatcher `--watch` 进程 SIGKILL 其一后另一副本仍 SENT（`TestReplicaFieldDispatcherSIGKILLSurvivor` 9.39s）；生图上限 1 时两 worker 1 running / 1 waiting；Graph 过期 lease 接管与迟到结果围栏测试纳入同一命令 | `just staging-up` 杀容器未跑；SSE 首帧 p95 未测；本账本不可归档 |
 | 2026-09-05 | 连续生图详情任务读取有界，交付 `232e51f7` | 三组实际生产任务 SQL 各 LIMIT 20，去重最多 60；队列排名只返回所需 ID。包内测试 6.694s、目标规模 query-plan 3.141s、新增 HTTP/排名回归 race 三次 2.941s，均通过；详见[归档任务](tasks/archive/perf-imagesession-detail.md) | 首屏关联任务和 rounds COUNT 仍 Seq Scan；未验收生产 payload/延迟，PERF-08 保留部分完成 |
 | 2026-09-05 | dispatcher 负载时延，测试交付 `a0d1ba4f` | queue 包回归 5.098s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 连续三轮 31.652s，每场 500 个有效样本、25 个延期跳过；单副本 p95 2539.869/2567.677/2593.774ms，双副本 775.003/772.495/783.593ms。DB 时钟探针与 Redis 信封核对见[归档任务](tasks/archive/perf-dispatcher-latency.md) | 有效采证完成，单副本建议目标 FAIL；仅本地带探针突发负载，不作为生产 SLO；保留批间等待缺口 |
+| 2026-09-05 | AR-02 journal 职责调查，认领 `324894a6` | 指定 Node 测试 61 passed / 1 skipped（10k WAL `runIf`）；`just docs-check` 通过。结论保留现状，见[归档任务](tasks/archive/arch-journal-assessment.md) | 本轮未跑 Go ConfirmEvents / fencing；Node recover claim 409 缺测；不发实现单 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 

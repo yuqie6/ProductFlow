@@ -40,7 +40,7 @@ Agent 能力组承接 [普通 Skill 修复](audits/tasks/eval-skills.md) 与 [�
 
 ### 运行时性能治理
 
-未完成指导：[`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md)。[连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付；[dispatcher 负载时延采证](audits/tasks/archive/perf-dispatcher-latency.md)已完成，单副本 500 条突发负载的 p95 仍未达到 1s 建议目标。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
+[生图 admission 指标](audits/tasks/archive/perf-capacity-metrics.md)已交付。 [连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付；[dispatcher 负载时延采证](audits/tasks/archive/perf-dispatcher-latency.md)已完成，单副本 500 条突发负载的 p95 仍未达到 1s 建议目标。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
 
 ### 画布文稿权威测试
 
@@ -48,7 +48,7 @@ C0–C3、C5、C6 已落地。C4 空闲检查器改写/候选已进 `just web-e2
 
 ### 职责收拢
 
-检查器草稿版本语义由工作流体验组在既有运行中编辑任务验收；[journal 调查](audits/tasks/arch-journal-assessment.md) 归平台可靠性，只核定收益与合同，尚未授权实现。局部修复足够或收拢收益不足时保留现有结构。[原架构候选记录](history/agent-runtime-timeline.md#architecture-assessment-history) 保留来源与历史证据，不再单独设组或发单。
+检查器草稿版本语义由工作流体验组在既有运行中编辑任务验收。[journal 调查](audits/tasks/archive/arch-journal-assessment.md) 已完成，结论为保留现状，不授权实现。[原架构候选记录](history/agent-runtime-timeline.md#architecture-assessment-history) 保留来源与历史证据，不再单独设组或发单。
 
 ### 图片生产质量
 

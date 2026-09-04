@@ -13,7 +13,7 @@
 | 工作流体验 | [canvas-test-system.md](canvas-test-system.md) | 开工 | 商家编辑、运行与结果使用链的业务正确性；当前交付聚焦文稿权威与检查器草稿保存 | inspector-midrun 同时验收 C4 与 AR-01；剩余 C4 按实际缺口发单，不重复派版本语义任务 |
 | Agent 能力 | [agent-self-harness.md](agent-self-harness.md) | 开工 | Agent 按商品事实和用户意图执行；Skill 修复、领域壳版本化与受控进化 | Skill 修复由评测复核；P1 完成后核对 P2 前置，P2b–P7 按既有阶段门发布，不因合组提前开工 |
 | 评测 | [agent-eval-system.md](agent-eval-system.md) | 开工 | Agent 行为与商品图质量的独立测量；题库、样本池、grader、校准、分数采信 | user-sim 后核对 sim-live；生产 mine 有 Turn 后发 production-tasks；L2/L5 有有效 run_id 后核对 nightly；kappa 达标后发 judge 计入 pass；图片扩池按采集证据发布 |
-| 平台可靠性 | [performance-governance.md](performance-governance.md) | 开工 | 执行不丢、不重复、不越权；lease、journal、恢复、队列、容量与查询成本 | 容量指标验收后结合已归档详情/时延证据核对 PERF-12；journal 调查有收益才发实现单；G-06 汇总评测证据，G-07 按候选基线复核 |
+| 平台可靠性 | [performance-governance.md](performance-governance.md) | 开工 | 执行不丢、不重复、不越权；lease、journal、恢复、队列、容量与查询成本 | 容量指标验收后结合已归档详情/时延证据核对 PERF-12；journal 调查结论为保留现状，不发实现单；G-06 汇总评测证据，G-07 按候选基线复核 |
 
 当前 issue 的状态、执行者和阻塞情况统一看 [Issue 看板](tasks/README.md)，本页不重复维护任务清单。
 
