@@ -61,7 +61,7 @@ describe("EvalRunStorage", () => {
     }
   });
 
-  it("does not write or replace latest.json for an unsuccessful run and throws when publishLatest is true", async () => {
+  it("publishes latest.json for a completed unsuccessful run when publishLatest is true", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-eval-storage-"));
     try {
       const storage = new EvalRunStorage("run-fail", root);
@@ -70,13 +70,11 @@ describe("EvalRunStorage", () => {
       const latestPath = join(root, "agent-evals", "latest.json");
       await writeFile(latestPath, `${JSON.stringify({ schema_version: 1, run_id: "older" }, null, 2)}\n`, "utf8");
 
-      await expect(
-        storage.finish({ passed: 0, total: 1 }, { successful: false, publishLatest: true }),
-      ).rejects.toThrow(/cannot publish latest.json for an unsuccessful Agent eval run/);
+      await storage.finish({ passed: 0, total: 1 }, { successful: false, publishLatest: true });
 
       expect(JSON.parse(await readFile(join(storage.runDir, "summary.json"), "utf8"))).toEqual({ passed: 0, total: 1 });
       expect((await readFile(join(storage.runDir, "trials.jsonl"), "utf8")).trim()).not.toBe("");
-      expect(JSON.parse(await readFile(latestPath, "utf8")).run_id).toBe("older");
+      expect(JSON.parse(await readFile(latestPath, "utf8")).run_id).toBe("run-fail");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

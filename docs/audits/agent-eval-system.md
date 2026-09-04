@@ -91,7 +91,7 @@ flowchart LR
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | L1-01 | runner 通过生产 `PiRuntimeManager` 执行真实模型，桩只替代 ProductFlow 外部世界 | `完成` | `live-runner.ts`；`PRODUCTFLOW_RUN_AGENT_EVALS=1`。 |
-| L1-02 | `stub-world.ts` 从 JSON world 构造响应并记录每次 `{name, params, ts}`；所有 revision 写入校验当前 world，不匹配返回 409 | `完成` | `stub-world.ts` / `stub-world.test.ts`；任务字段 `inject.first_write_409`。 |
+| L1-02 | `stub-world.ts` 从 JSON world 构造响应并记录每次 `{name, params, ts}`；所有 revision 写入校验当前 world，不匹配返回 409 | `完成` | 运行请求在 `execute*` 记分，映射为工具参数并默认空 `scope` 为 `graph`，与 Go `parseRunScopeSpec` 一致。`prepare*` 只做 revision 校验。`inject.first_write_409` 仍由 `stub-world.test.ts` 覆盖。 |
 | L1-03 | runner 支持 `--trials`（默认 3）、`--filter`、`--suite`，并发不超过生产 `maxConcurrentTurns`；每个 trial 隔离 Turn/store | `完成` | `cli.ts run-live`、`live-concurrency.ts`。 |
 | L1-04 | required/forbidden tools、ops、writes、terminal、question、budget 全部由任务 expect 评分；不再执行中文子串对齐 | `完成` | `live-runner.ts gradeTrial` 只调用 graders。 |
 | L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | 两次全量：`20260904T145330Z-30eb3c4d`、`20260904T151838Z-01f25e84`。原始工件在 `STORAGE_ROOT`，不提交仓库。 |
@@ -146,7 +146,7 @@ flowchart LR
 | L6-02 | mine 报告 `requires_input`、`unknown`、`failed` 比例，terminal reason 分布，proposal/run-request confirm/discard 比例及 undo 比例；零分母显式为 unavailable | `部分完成` | `EvalRate.Available` 在分母为 0 时为 false。缺生产窗口报告。 |
 | L6-03 | `export --turn` 只输出脱敏任务骨架到 `agent-evals/inbox/`；密钥、URL token、媒体字节和不必要业务 ID 不得导出 | `部分完成` | `TestMineUndoWindowAndExportSkeleton` 断言密钥被剥。缺真实生产 Turn 导出。 |
 | L6-04 | 每周审 inbox，补全 world/expect 后进入 tasks，`origin=production:<turn_id>`；连续记录每周至少 3 条的新增量 | `缺失` | 任务集尚无 production origin。 |
-| L6-05 | nightly 顺序运行 L1 k=3、L2、L5 和 report，原子更新 `latest.json`；连续 3 晚各有独立 run_id 与可复算结果 | `部分完成` | `just agent-evals-nightly` 存在。`latest.json` 由成功的 live runner 更新。无连续 3 晚记录。仓库无 CI；用 cron/systemd timer 或手动触发，示例见命令合同。 |
+| L6-05 | nightly 顺序运行 L1 k=3、L2、L5 和 report，原子更新 `latest.json`；连续 3 晚各有独立 run_id 与可复算结果 | `部分完成` | `just agent-evals-nightly` 存在。L1 `finish` 在矩阵跑完后更新 `latest.json`，不要求全部 trial pass。无连续 3 晚记录。仓库无 CI；用 cron/systemd timer 或手动触发，示例见命令合同。 |
 | L6-06 | report 标记连续 4 次 100% 的饱和 suite；同任务集的新旧模型各跑独立 run，并通过 diff 比较 | `部分完成` | `saturationWarnings` 与 `cli.ts diff` 的模型对比说明已接线。无四次历史 run、无模型对比 `run_id`。 |
 
 ## 元评测
@@ -278,7 +278,18 @@ ExecStart=/usr/bin/just agent-evals-nightly
 ### 2026-09-04 L3 用户模拟 k=1
 
 - 2026-09-04 | commit=`f0b805dd7981b28c4b6588f44c5c2449bae64bcc` | run_id=`20260904T154151Z-788cb11e` | command=`just agent-evals-sim` | layer=L3 | suite=all | task_hash=`5eac3a5ffb216f6fe44c13c9f843aacfb59494b7caa8c21f3799a490f1f62c19` | skill_hash=`f2b4292cc0716ddc68d3515e1de2bcd205854c7e51ed1bb08dc99b5f8fff65ef` | model=openai/`gpt-5.6-luna` | reasoning=unset | n=5 | k=1 | pass^1=0.0000 | pass^k=0.0000 | wilson95_trial_success=[0.0000,0.4345] | tokens=unavailable（5/5） | duration=wall 456s | artifact=`agent-evals/20260904T154151Z-788cb11e/` | transcript_review=stderr 全失败
-- 为对齐当前 `PiRuntimeManager`（无 `ready()`）删掉了 `user-sim.ts` 里的 `manager.ready()` 调用。5 条均 fail：两条超时未达终态，其余缺 `load_productflow_skill` 或写参不匹配。
+- 为对齐当前 `PiRuntimeManager`（无 `ready()`）删掉了 `user-sim.ts` 里的 `manager.ready()` 调用。5 条均 fail：两条超时未达终态，其余缺 `load_productflow_skill` 或写参不匹配。L3 当时只评桩世界 `stub.calls`，本地 `load_productflow_skill` 不会被记分；该分类在提交前复核中已改用 `mergeToolCalls`，未重跑本 run_id。
+
+### 2026-09-05 提交前复核（未重跑 live）
+
+- checkout：工作树评测切片；HEAD 仍为 `f0b805dd`。未重跑 L1 k=3 / L2 / L3 / L5，不改写已登记 pass^k。
+- 评分假阴：
+  - `stub-world.ts` 曾在 `prepare*` 记录运行请求，`tools.ts` 却在 prepare 返回后才合并 `scope` / `force` / `document_action` / `node_id(s)`。历史 `workflow-run-request-force-rewrite` “缺 force/document_action”不能单独证明模型省略了这些字段。
+  - 全部 world `live_graph.id` 曾为 `g1`，与 `page_context.workflow_id` UUID 不一致；`media-library-organization-link-workflow` 写 `g1` 可能是读了桩图 id。
+  - 多数任务 `page_context.workflow_revision` 为 1，world revision 为 3；L1/L3 runner 现在 overlay 为 live revision。
+  - L3 grader 改为 `mergeToolCalls`，与 L1 一样计入本地 skill 加载。
+  - 完整 L1 矩阵 `finish` 后更新 `latest.json`，不再要求全部 trial pass。
+- P1–P4 仍为 `部分完成`。Agent 分数不采信。
 
 ### 真实运行记录模板
 

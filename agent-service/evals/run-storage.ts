@@ -82,7 +82,6 @@ export class EvalRunStorage {
     await writeJSONAtomic(join(this.runDir, "summary.json"), summary);
     await appendHistory(this.storageRoot, this.runID, summary);
     if (!options.publishLatest) return;
-    if (!options.successful) throw new Error("cannot publish latest.json for an unsuccessful Agent eval run");
     await writeJSONAtomic(
       join(this.storageRoot, "agent-evals", "latest.json"),
       {

@@ -91,6 +91,13 @@ export function validateEvalTask(task: EvalTask, world: EvalWorld, catalog: Skil
     throw new Error(`Agent eval references unknown catalog skill: ${task.skill}`);
   }
   if (world.name !== task.world) throw new Error(`Agent eval world identity mismatch: ${task.id}`);
+  if (typeof task.page_context.workflow_id === "string" && task.page_context.workflow_id !== world.live_graph.id) {
+    throw new Error(`Agent eval ${task.id} page_context.workflow_id does not match world ${world.name} live_graph.id`);
+  }
+  const filterWorkflowID = task.page_context.filters.workflow_id;
+  if (filterWorkflowID && filterWorkflowID !== world.live_graph.id) {
+    throw new Error(`Agent eval ${task.id} filters.workflow_id does not match world ${world.name} live_graph.id`);
+  }
 
   const referencedTools = [
     ...task.reference.scripted_calls.map((call) => call.name),

@@ -19,7 +19,7 @@ import { currentGitProvenance, hashCanonicalJSON } from "./provenance.js";
 import { buildRunReport, formatRunReport, type RunReport } from "./report.js";
 import { EvalRunStorage, newEvalRunID, type EvalRunMetadata } from "./run-storage.js";
 import type { EvalCallRecord, EvalTask, EvalTrialRecord, EvalWorld } from "./schema.js";
-import { createStubWorld } from "./stub-world.js";
+import { createStubWorld, overlayEvalPageContext } from "./stub-world.js";
 import { taskSplit } from "./split.js";
 import { resolveLiveEvalConcurrency } from "./live-concurrency.js";
 
@@ -102,7 +102,7 @@ export async function runLiveEvals(options: LiveEvalOptions = {}): Promise<LiveE
   const metrics = buildRunReport(runID, outcomes.map((outcome) => outcome.record), trials);
   await storage.finish(
     { report: formatEvalReport(report), markdown: formatRunReport(metrics), metrics },
-    { successful: report.ok, publishLatest: report.ok },
+    { successful: report.ok, publishLatest: true },
   );
   return { runID, runDir: storage.runDir, report, metrics };
 }
@@ -139,7 +139,7 @@ async function runTrial(
         input_text: utterance,
         asset_ids: task.page_context.selected_asset_ids,
         idempotency_key: `eval-${task.id}-${trial}`,
-        page_context: task.page_context,
+        page_context: overlayEvalPageContext(task, world),
       },
     });
     terminal = await waitForTerminal(store, harnessRunID, started.turn_id, 180_000);
@@ -241,7 +241,7 @@ function gradeTrial(
   return grades.flatMap((grade) => grade.errors);
 }
 
-function mergeToolCalls(terminal: TurnState | null, recorded: readonly EvalCallRecord[]): EvalCallRecord[] {
+export function mergeToolCalls(terminal: TurnState | null, recorded: readonly EvalCallRecord[]): EvalCallRecord[] {
   const calls = [...recorded];
   const recordedCounts = new Map<string, number>();
   for (const call of recorded) recordedCounts.set(call.name, (recordedCounts.get(call.name) ?? 0) + 1);

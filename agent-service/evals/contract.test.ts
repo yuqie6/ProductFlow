@@ -59,14 +59,24 @@ describe("ProductFlow Agent eval contracts", () => {
   it("aligns task JSON with worlds, page context, catalog, manifest, and progressive disclosure", async () => {
     const catalog = await loadSkillCatalog();
     const { tasks, worlds } = await loadEvalTaskSet({ catalog });
+    for (const world of worlds.values()) {
+      expect(world.live_graph.id, world.name).toBe("33333333-3333-4333-8333-333333333333");
+    }
     for (const task of tasks) {
-      expect(() => validateEvalTask(task, worlds.get(task.world)!, catalog)).not.toThrow();
+      const world = worlds.get(task.world)!;
+      expect(() => validateEvalTask(task, world, catalog)).not.toThrow();
       expect(catalog.names).toContain(task.skill);
       expect(catalog.prompt).toContain(`<name>${task.skill}</name>`);
       expect(task.reference.scripted_calls[0]).toEqual({
         name: "load_productflow_skill",
         params: { skill_name: task.skill },
       });
+      if (typeof task.page_context.workflow_id === "string") {
+        expect(task.page_context.workflow_id, task.id).toBe(world.live_graph.id);
+      }
+      if (task.page_context.filters.workflow_id) {
+        expect(task.page_context.filters.workflow_id, task.id).toBe(world.live_graph.id);
+      }
     }
   });
 

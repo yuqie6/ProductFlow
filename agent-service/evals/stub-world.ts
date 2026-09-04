@@ -21,6 +21,14 @@ export interface StubWorld {
   calls: EvalCallRecord[];
 }
 
+export function overlayEvalPageContext(task: EvalTask, world: EvalWorld): EvalTask["page_context"] {
+  const page = { ...task.page_context, filters: { ...task.page_context.filters } };
+  if (page.workflow_id != null) page.workflow_id = world.live_graph.id;
+  if (page.workflow_revision != null) page.workflow_revision = world.live_graph.revision;
+  if (page.filters.workflow_id) page.filters.workflow_id = world.live_graph.id;
+  return page;
+}
+
 export function createStubWorld(
   task: EvalTask,
   world: EvalWorld,
@@ -283,17 +291,21 @@ export function createStubWorld(
     },
     reconcileProductWorkspace: async () => ({ state: "applied", result: { product_id: EVAL_PRODUCT_ID } }),
     prepareWorkflowRunRequest: async (_conversationID: string, params: Record<string, unknown>) => {
-      record("request_workflow_run_v1", withoutNullTaskID(params));
       validateRevisions(params, graphRevision, world);
       return prepared(params);
     },
     prepareGlobalWorkflowRunRequest: async (_conversationID: string, params: Record<string, unknown>) => {
-      record("request_global_workflow_run_v1", withoutNullTaskID(params));
       validateRevisions(params, graphRevision, world);
       return prepared(params);
     },
-    executeWorkflowRunRequest: async () => ({ request_id: "req-1", status: "awaiting_confirmation" }),
-    executeGlobalWorkflowRunRequest: async () => ({ request_id: "req-1", status: "awaiting_confirmation" }),
+    executeWorkflowRunRequest: async (_conversationID: string, request: Record<string, unknown>) => {
+      record("request_workflow_run_v1", workflowRunToolParams(request, false));
+      return { request_id: "req-1", status: "awaiting_confirmation" };
+    },
+    executeGlobalWorkflowRunRequest: async (_conversationID: string, request: Record<string, unknown>) => {
+      record("request_global_workflow_run_v1", workflowRunToolParams(request, true));
+      return { request_id: "req-1", status: "awaiting_confirmation" };
+    },
     reconcileWorkflowRunRequest: async () => ({ state: "applied", result: { request_id: "req-1" } }),
   } as unknown as ProductFlowClient;
 
@@ -349,4 +361,25 @@ function withoutTaskID(params: JsonObject): JsonObject {
 function withoutNullTaskID(params: Record<string, unknown>): Record<string, unknown> {
   const { task_id, ...rest } = params;
   return task_id === null ? rest : params;
+}
+
+function workflowRunToolParams(prepared: Record<string, unknown>, global: boolean): Record<string, unknown> {
+  const scope = typeof prepared.scope === "string" && prepared.scope.trim() !== "" ? prepared.scope.trim() : "graph";
+  const params: Record<string, unknown> = {
+    expected_workflow_revision: prepared.workflow_revision,
+    source_run_id: prepared.source_run_id ?? null,
+    scope,
+  };
+  if (prepared.task_id != null) params.task_id = prepared.task_id;
+  if (typeof prepared.node_id === "string" && prepared.node_id) params.node_id = prepared.node_id;
+  if (Array.isArray(prepared.node_ids) && prepared.node_ids.length > 0) params.node_ids = prepared.node_ids;
+  if (typeof prepared.force === "boolean") params.force = prepared.force;
+  if (typeof prepared.document_action === "string" && prepared.document_action) {
+    params.document_action = prepared.document_action;
+  }
+  if (global) {
+    if (typeof prepared.product_id === "string") params.product_id = prepared.product_id;
+    if (typeof prepared.workflow_id === "string") params.workflow_id = prepared.workflow_id;
+  }
+  return withoutNullTaskID(params);
 }

@@ -15,12 +15,12 @@ import type { EvalCallRecord as GraderCallRecord } from "./graders/types.js";
 import { formatEvalReport, type EvalReport } from "./harness.js";
 import { loadGlobalDraftSchema } from "./json-schema.js";
 import { loadEvalTaskSet } from "./loader.js";
-import { requireLiveEvalEnv, type LiveEvalResult } from "./live-runner.js";
+import { mergeToolCalls, requireLiveEvalEnv, type LiveEvalResult } from "./live-runner.js";
 import { currentGitProvenance, hashCanonicalJSON } from "./provenance.js";
 import { buildRunReport, formatRunReport } from "./report.js";
 import { EvalRunStorage, newEvalRunID, type EvalRunMetadata } from "./run-storage.js";
 import type { EvalCallRecord, EvalTask, EvalTrialRecord, EvalUserSim, EvalWorld } from "./schema.js";
-import { createStubWorld } from "./stub-world.js";
+import { createStubWorld, overlayEvalPageContext } from "./stub-world.js";
 
 const UNCONFIRMED_WRITE_TOOLS = new Set([
   "apply_graph_change_set_v1",
@@ -165,7 +165,7 @@ async function runSimTrial(
           input_text: utterance,
           asset_ids: task.page_context.selected_asset_ids,
           idempotency_key: `eval-sim-${task.id}-${trial}-${turns}`,
-          page_context: task.page_context,
+          page_context: overlayEvalPageContext(task, world),
         },
       });
       terminal = await waitForTerminal(store, harnessRunID, started.turn_id, 180_000);
@@ -204,7 +204,7 @@ async function runSimTrial(
     }
     const grade = gradeUserSim(task, {
       terminal: terminal?.status ?? null,
-      calls: stub.calls,
+      calls: mergeToolCalls(terminal, stub.calls),
       turns,
       userAgreed,
     });

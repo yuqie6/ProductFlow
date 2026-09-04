@@ -4,7 +4,7 @@
   "intake": null,
   "birth_expandable": false,
   "live_graph": {
-    "id": "g1", "title": "评测图", "revision": 3,
+    "id": "33333333-3333-4333-8333-333333333333", "title": "评测图", "revision": 3,
     "node_count": 1, "edge_count": 0, "group_count": 0,
     "nodes": [{ "id": "source-1", "node_type": "product_source", "title": "商品资料" }]
   },
