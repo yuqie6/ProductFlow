@@ -1,11 +1,10 @@
 /**
- * Agent 优先的商品工作台：对话，加上可选的 live 图。
- *
- * live graph 就是编辑器。Agent 用 ChangeSet 协作，不能再提交一份 Draft 覆盖这张图。
+ * 商品工作台的唯一编排入口：live 图始终由用户直接操作，Agent 对话按商品工作区可选挂载。
+ * Agent 用 ChangeSet 协作，不能提交另一份 Draft 覆盖 live 图。
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, CircleAlert, CircleDot, Eye, Images, Plus, X } from "lucide-react";
+import { Bot, Boxes, CircleAlert, CircleDot, Eye, Images, Plus, RotateCw, Sparkles, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -13,6 +12,7 @@ import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../../components/GalleryImagePreviewDialog";
 import { openGlobalAgent } from "../../../lib/globalAgentEvents";
 import { TopNav } from "../../../components/TopNav";
+import { Button } from "../../../components/ui/button";
 import { useRegisterAgentPageContext } from "../../../lib/agentPageContext";
 import { ApiError, api } from "../../../lib/api";
 import type { DownloadableImage } from "../../../lib/image-downloads";
@@ -20,6 +20,7 @@ import { useI18n } from "../../../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
   AgentWorkbenchBootstrap,
+  CanonicalProductDetail,
   GraphProjection,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
@@ -77,35 +78,45 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   focusNodes: () => undefined,
 };
 
-interface AgentProductWorkbenchPageProps {
-  bootstrap: AgentWorkbenchPageBootstrap;
+interface ProductWorkbenchSurfaceProps {
+  product: CanonicalProductDetail;
+  initialGraph: GraphProjection | null;
+  bootstrap?: AgentWorkbenchPageBootstrap | null;
   agentTaskId?: string | null;
   preferConversation?: boolean;
-  onRefetchBootstrap: () => Promise<unknown>;
+  agentError?: unknown;
+  onRetryAgent?: () => void;
+  onOpenConversation?: () => void;
+  onRefetchBootstrap?: () => Promise<unknown>;
 }
 
-export function AgentProductWorkbenchPage({
+export function ProductWorkbenchSurface({
+  product,
+  initialGraph,
   bootstrap,
   agentTaskId = null,
   preferConversation = false,
+  agentError = null,
+  onRetryAgent,
+  onOpenConversation,
   onRefetchBootstrap,
-}: AgentProductWorkbenchPageProps) {
+}: ProductWorkbenchSurfaceProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>(
     () => initialAgentWorkbenchSidebarTool({
-      hasGraph: Boolean(bootstrap.graph),
+      hasGraph: Boolean(initialGraph),
       hasTask: Boolean(agentTaskId),
       preferConversation,
-      storedTool: readWorkbenchUiState(bootstrap.product.id).sidebarTool,
+      storedTool: readWorkbenchUiState(product.id).sidebarTool,
     }),
   );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>(
     () => existingWorkbenchNodeIds(
-      bootstrap.graph,
-      readWorkbenchUiState(bootstrap.product.id).selectedNodeIds,
+      initialGraph,
+      readWorkbenchUiState(product.id).selectedNodeIds,
     ),
   );
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
@@ -117,7 +128,7 @@ export function AgentProductWorkbenchPage({
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [agentEditing, setAgentEditing] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(
-    () => readWorkbenchUiState(bootstrap.product.id).chromeCollapsed === true,
+    () => readWorkbenchUiState(product.id).chromeCollapsed === true,
   );
   const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
   const [agentOpenRequest, setAgentOpenRequest] = useState(preferConversation ? 1 : 0);
@@ -138,15 +149,15 @@ export function AgentProductWorkbenchPage({
     staleTime: Infinity,
   });
   const graphQuery = useQuery({
-    queryKey: ["workflow-graph", bootstrap.product.id],
-    queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(bootstrap.product.id)),
-    initialData: bootstrap.graph ?? undefined,
+    queryKey: ["workflow-graph", product.id],
+    queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(product.id)),
+    initialData: initialGraph ?? undefined,
     staleTime: 30_000,
     retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
-  const liveGraph = graphQuery.data ?? bootstrap.graph;
+  const liveGraph = graphQuery.data ?? initialGraph;
   const localEdit = useLocalImageEditController({
-    productId: bootstrap.product.id,
+    productId: product.id,
     graphId: liveGraph?.id ?? null,
   });
   const catalog = catalogQuery.data ?? null;
@@ -166,16 +177,16 @@ export function AgentProductWorkbenchPage({
     });
   }, [liveGraph]);
   useEffect(() => {
-    patchWorkbenchUiState(bootstrap.product.id, {
+    patchWorkbenchUiState(product.id, {
       sidebarTool: activeSidebarTool,
       selectedNodeIds,
       chromeCollapsed,
     });
-  }, [activeSidebarTool, bootstrap.product.id, chromeCollapsed, selectedNodeIds]);
+  }, [activeSidebarTool, chromeCollapsed, product.id, selectedNodeIds]);
   const pageContext = useMemo<AgentPageContextSnapshotInput>(() => ({
     route: `${location.pathname}${location.search}`,
     page_type: "product_workbench",
-    product_id: bootstrap.product.id,
+    product_id: product.id,
     workflow_id: liveGraph?.id ?? null,
     selected_asset_ids: [],
     visible_asset_ids: [],
@@ -186,7 +197,7 @@ export function AgentProductWorkbenchPage({
     workflow_revision: liveGraph?.revision ?? null,
     library_revision: null,
     captured_at: new Date().toISOString(),
-  }), [activeSidebarTool, bootstrap.product.id, liveGraph?.id, liveGraph?.revision, location.pathname, location.search, selectedNodeIds]);
+  }), [activeSidebarTool, liveGraph?.id, liveGraph?.revision, location.pathname, location.search, product.id, selectedNodeIds]);
   useRegisterAgentPageContext(pageContext);
 
   const recipesQuery = useQuery({
@@ -196,13 +207,13 @@ export function AgentProductWorkbenchPage({
   });
   const createEmptyGraphMutation = useMutation({
     mutationFn: () => createOrLoadEmptyWorkflowGraph({
-      create: () => api.createEmptyWorkflowGraph(bootstrap.product.id),
-      loadCurrent: () => api.getCurrentWorkflowGraph(bootstrap.product.id),
+      create: () => api.createEmptyWorkflowGraph(product.id),
+      loadCurrent: () => api.getCurrentWorkflowGraph(product.id),
       isConflict: (error) => isHttpErrorStatus(error, 409),
     }),
     onMutate: () => setEmptyGraphError(null),
     onSuccess: (graph) => {
-      queryClient.setQueryData(["workflow-graph", bootstrap.product.id], graph);
+      queryClient.setQueryData(["workflow-graph", product.id], graph);
     },
   });
 
@@ -218,7 +229,7 @@ export function AgentProductWorkbenchPage({
           throw new Error("缺少配方变更预览");
         }
         return api.applyWorkflowRecipe(
-          bootstrap.product.id,
+          product.id,
           operation.recipe.id,
           buildAgentWorkflowRecipeApplyInput(
             operation.recipe,
@@ -240,11 +251,11 @@ export function AgentProductWorkbenchPage({
         recipeApplyKeysRef.current.delete(operation.recipe.id);
         setRecipeApplication(application);
         queryClient.setQueriesData(
-          { queryKey: ["workflow-graph", bootstrap.product.id] },
+          { queryKey: ["workflow-graph", product.id] },
           application.graph,
         );
-        await queryClient.invalidateQueries({ queryKey: ["workflow-graph", bootstrap.product.id] });
-        await onRefetchBootstrap();
+        await queryClient.invalidateQueries({ queryKey: ["workflow-graph", product.id] });
+        await onRefetchBootstrap?.();
       } else {
         await queryClient.invalidateQueries({ queryKey: ["workflow-recipes"] });
       }
@@ -267,6 +278,10 @@ export function AgentProductWorkbenchPage({
     return true;
   }, []);
   const requestAgentOpen = useCallback(() => {
+    if (!bootstrap) {
+      onOpenConversation?.();
+      return;
+    }
     requestAgentWorkbenchOpen(
       (tool) => {
         sidebarToolRef.current = tool;
@@ -274,7 +289,7 @@ export function AgentProductWorkbenchPage({
       },
       () => setAgentOpenRequest((request) => request + 1),
     );
-  }, []);
+  }, [bootstrap, onOpenConversation]);
   const inspectNode = useCallback((nodeId: string) => {
     if (!liveGraph || !inspectableGraphNodeId(liveGraph, nodeId)) return;
     void (async () => {
@@ -345,7 +360,7 @@ export function AgentProductWorkbenchPage({
         <GraphNodeInspector
           graph={liveGraph}
           node={selected}
-          product={bootstrap.product}
+          product={product}
           catalog={catalog}
           catalogError={catalogError}
           onRetryCatalog={() => void catalogQuery.refetch()}
@@ -378,7 +393,7 @@ export function AgentProductWorkbenchPage({
       icon: <CircleDot size={17} />,
       content: (
         <GraphRunsPanel
-          productId={bootstrap.product.id}
+          productId={product.id}
           graph={liveGraph}
           selectedNodeId={selected?.id ?? null}
           structureBusy={canvasBusy}
@@ -397,7 +412,7 @@ export function AgentProductWorkbenchPage({
       contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
       content: (
         <GraphLibraryPanel
-          product={bootstrap.product}
+          product={product}
           graph={liveGraph}
           bindNode={bindNode}
           bindLocked={canvasBusy}
@@ -447,7 +462,7 @@ export function AgentProductWorkbenchPage({
               structureBusy={canvasBusy}
               canAppend={() => Boolean(liveGraph)}
               onRetry={() => void recipesQuery.refetch()}
-              onPreview={(recipe) => api.previewWorkflowRecipe(bootstrap.product.id, recipe.id, {
+              onPreview={(recipe) => api.previewWorkflowRecipe(product.id, recipe.id, {
                 expected_recipe_version: recipe.current_version.version,
               })}
               onApply={(recipe, preview) => {
@@ -476,12 +491,12 @@ export function AgentProductWorkbenchPage({
     <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary">
       {chromeCollapsed ? null : (
         <TopNav
-          breadcrumbs={`${bootstrap.product.name} / ${t("agentWorkbench.breadcrumb")}`}
+          breadcrumbs={`${product.name} / ${t("agentWorkbench.breadcrumb")}`}
           onHome={() => navigate("/home")}
         />
       )}
       <AgentWorkbenchShell
-        productId={bootstrap.product.id}
+        productId={product.id}
         workflowAvailable={workflowAvailable}
         activeSidebarTool={activeSidebarTool}
         onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
@@ -490,12 +505,12 @@ export function AgentProductWorkbenchPage({
         sidebarTools={sidebarTools}
         canvasContent={liveGraph ? (
           <GraphCanvasPanel
-            productId={bootstrap.product.id}
+            productId={product.id}
             graph={liveGraph}
             catalog={catalog}
             selectedNodeIds={selectedNodeIds}
             onSelect={selectCanvasNodes}
-            onGraphChange={(next) => queryClient.setQueryData(["workflow-graph", bootstrap.product.id], next)}
+            onGraphChange={(next) => queryClient.setQueryData(["workflow-graph", product.id], next)}
             onRegisterActions={setActions}
             onBusyChange={setCanvasBusy}
             onBeforeRun={beforeRun}
@@ -516,7 +531,7 @@ export function AgentProductWorkbenchPage({
               </p>
             ) : null}
             <WorkflowOnboardingHero
-              productName={bootstrap.product.name}
+              productName={product.name}
               onOpenAgent={requestAgentOpen}
               onOpenRecipes={() => {
                 void requestSidebarTool("recipes");
@@ -541,11 +556,11 @@ export function AgentProductWorkbenchPage({
             />
           </div>
         )}
-        agentContent={(
+        agentContent={bootstrap ? (
           <AgentConversationPanel
             key={bootstrap.conversation.id}
-            productId={bootstrap.product.id}
-            productName={bootstrap.product.name}
+            productId={product.id}
+            productName={product.name}
             conversation={bootstrap.conversation}
             graph={liveGraph}
             taskId={agentTaskId}
@@ -561,6 +576,12 @@ export function AgentProductWorkbenchPage({
               openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });
             }}
             className="h-full"
+          />
+        ) : (
+          <GraphAgentPanel
+            error={agentError}
+            onRetry={onRetryAgent}
+            onOpenConversation={onOpenConversation}
           />
         )}
       />
@@ -600,6 +621,111 @@ export function AgentProductWorkbenchPage({
       ) : null}
       {localEdit.dialog}
     </div>
+  );
+}
+
+export function GraphAgentPanel({
+  error = null,
+  onRetry,
+  onOpenConversation,
+}: {
+  error?: unknown;
+  onRetry?: () => void;
+  onOpenConversation?: () => void;
+}) {
+  const { t } = useI18n();
+  const missingWorkspace = error instanceof ApiError && error.status === 409;
+  const message = missingWorkspace
+    ? t("graph.workbench.agentOptional")
+    : error instanceof ApiError
+      ? error.detail
+      : error instanceof Error
+        ? error.message
+        : t("graph.workbench.agentUnavailable");
+  return (
+    <section
+      data-graph-agent-panel
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary"
+    >
+      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+          <Bot size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
+          <p className="truncate text-xs text-text-secondary">
+            {t(missingWorkspace ? "graph.workbench.agentStartHeader" : "graph.workbench.agentOptional")}
+          </p>
+        </div>
+      </header>
+      {missingWorkspace && onOpenConversation ? (
+        <div className="agent-start-state min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-6 sm:py-8">
+          <div className="mx-auto flex min-h-full w-full max-w-[30rem] flex-col justify-center">
+            <AgentStartPreview />
+            <div className="agent-start-copy mt-7">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold text-accent">
+                <Sparkles size={13} aria-hidden="true" />
+                {t("graph.workbench.agentStartEyebrow")}
+              </p>
+              <h3 className="mt-2 max-w-[22rem] text-xl font-semibold leading-7 text-text-primary">
+                {t("graph.workbench.agentStartTitle")}
+              </h3>
+              <p role="status" className="mt-2 max-w-[26rem] text-sm leading-6 text-text-secondary">
+                {t("graph.workbench.agentStartDescription")}
+              </p>
+              <Button
+                variant="primary"
+                size="lg"
+                data-open-canvas-conversation
+                onClick={onOpenConversation}
+                className="mt-5 shadow-elev-2"
+              >
+                <Bot size={15} aria-hidden="true" />
+                {t("graph.workbench.openConversation")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 p-4">
+          <p role="status" className="text-sm leading-6 text-text-secondary">{message}</p>
+          {onRetry ? (
+            <Button variant="secondary" size="lg" onClick={onRetry}>
+              <RotateCw size={15} />
+              {t("graph.workbench.agentRetry")}
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AgentStartPreview() {
+  const previewImages = [
+    { src: "/agent-onboarding/ceramic-detail.jpg", className: "agent-start-image agent-start-image-left" },
+    { src: "/agent-onboarding/ceramic-feature.jpg", className: "agent-start-image agent-start-image-center" },
+    { src: "/agent-onboarding/ceramic-craft.jpg", className: "agent-start-image agent-start-image-right" },
+  ];
+
+  return (
+    <figure
+      data-agent-start-preview
+      aria-hidden="true"
+      className="agent-start-preview relative mx-auto h-52 w-full max-w-[27rem] overflow-hidden rounded-lg border border-border-l1 bg-surface-subtle"
+    >
+      <div className="agent-start-grid absolute inset-0" />
+      <div className="agent-start-beam absolute inset-y-0 left-0 w-1/3" />
+      <div className="absolute inset-x-[12%] top-1/2 h-px bg-border-l3/80" />
+      {previewImages.map((image) => (
+        <div key={image.src} className={image.className}>
+          <img src={image.src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        </div>
+      ))}
+      <div className="agent-start-node absolute bottom-4 left-1/2 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-accent/30 bg-surface-raised text-accent shadow-elev-2">
+        <Bot size={17} />
+      </div>
+    </figure>
   );
 }
 

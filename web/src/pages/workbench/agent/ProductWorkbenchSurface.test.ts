@@ -14,7 +14,7 @@ import {
   resolveAgentWorkbenchSidebarTool,
   shouldOpenInspectorForCanvasSelection,
   startEmptyCanvasAdd,
-} from "./AgentProductWorkbenchPage";
+} from "./ProductWorkbenchSurface";
 
 describe("Agent workbench sidebar tool", () => {
   it("opens the conversation when arriving with a Task that needs confirmation", () => {

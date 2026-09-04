@@ -4,19 +4,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import { ApiError } from "../../lib/api";
+import { ApiError } from "../../../lib/api";
 import type {
   CanonicalProductDetail,
   GraphProjection,
   WorkflowRecipePreview,
   WorkflowRecipeSummary,
-} from "../../lib/types";
+} from "../../../lib/types";
 import {
-  buildWorkflowRecipeApplyInput,
-  clearWorkflowRecipeIdempotencyKey,
+  buildAgentWorkflowRecipeApplyInput,
+  clearAgentWorkflowRecipeIdempotencyKey,
   GraphAgentPanel,
-  GraphWorkbenchPage,
-} from "./GraphWorkbenchPage";
+  ProductWorkbenchSurface,
+} from "./ProductWorkbenchSurface";
 
 describe("GraphAgentPanel", () => {
   it("renders the Agent chrome instead of an empty sidebar slot", () => {
@@ -83,7 +83,7 @@ describe("GraphAgentPanel", () => {
     const markup = renderToStaticMarkup(createElement(
       QueryClientProvider,
       { client },
-      createElement(MemoryRouter, null, createElement(GraphWorkbenchPage, {
+      createElement(MemoryRouter, null, createElement(ProductWorkbenchSurface, {
         product,
         initialGraph: graph,
       })),
@@ -106,16 +106,16 @@ describe("Graph recipe apply contract", () => {
     } as WorkflowRecipePreview;
     const keys = new Map([["r1", "key-1"]]);
 
-    expect(buildWorkflowRecipeApplyInput(recipe, preview, "key-1")).toEqual({
+    expect(buildAgentWorkflowRecipeApplyInput(recipe, preview, "key-1")).toEqual({
       expected_recipe_version: 4,
       expected_graph_revision: 12,
       preview_digest: "a".repeat(64),
       idempotency_key: "key-1",
     });
 
-    clearWorkflowRecipeIdempotencyKey(keys, "archive", "r1");
+    clearAgentWorkflowRecipeIdempotencyKey(keys, "archive", "r1");
     expect(keys.get("r1")).toBe("key-1");
-    clearWorkflowRecipeIdempotencyKey(keys, "apply", "r1");
+    clearAgentWorkflowRecipeIdempotencyKey(keys, "apply", "r1");
     expect(keys.has("r1")).toBe(false);
   });
 });

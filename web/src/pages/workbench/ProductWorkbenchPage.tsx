@@ -22,11 +22,8 @@ import {
 } from "./agent/productWorkbenchRoute";
 import { keepAgentWorkbenchPlaceholder } from "./chrome/workbenchUiState";
 
-const AgentProductWorkbenchPage = lazy(() =>
-  import("./agent/AgentProductWorkbenchPage").then((module) => ({ default: module.AgentProductWorkbenchPage })),
-);
-const GraphWorkbenchSurface = lazy(() =>
-  import("./GraphWorkbenchSurface").then((module) => ({ default: module.GraphWorkbenchSurface })),
+const ProductWorkbenchSurface = lazy(() =>
+  import("./agent/ProductWorkbenchSurface").then((module) => ({ default: module.ProductWorkbenchSurface })),
 );
 
 export function ProductWorkbenchPage() {
@@ -119,9 +116,11 @@ export function ProductWorkbenchPage() {
       );
     }
     return (
-      <GraphWorkbenchSurface
+      <ProductWorkbenchSurface
+        key={productQuery.data.id}
         product={productQuery.data}
         initialGraph={surface.graph}
+        bootstrap={null}
         agentError={agentQuery.error}
         onRetryAgent={() => void agentQuery.refetch()}
         onOpenConversation={() => {
@@ -139,8 +138,10 @@ export function ProductWorkbenchPage() {
     );
   }
   return (
-    <AgentProductWorkbenchPage
+    <ProductWorkbenchSurface
       key={surface.bootstrap.product.id}
+      product={surface.bootstrap.product}
+      initialGraph={surface.bootstrap.graph}
       bootstrap={surface.bootstrap}
       agentTaskId={agentTaskId}
       preferConversation={Boolean(agentSessionId)}
