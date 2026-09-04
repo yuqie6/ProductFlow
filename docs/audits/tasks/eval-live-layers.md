@@ -1,6 +1,6 @@
 # 任务：跑 L2 / L5 / 生产 mine
 
-状态：未开始
+状态：L2 已跑并中止；L5 未跑；mine 只有本地 dev
 
 读完本文件就可以跑。本任务不改生产代码。证据写在本文件。
 
@@ -50,7 +50,14 @@ just agent-evals-mine 7   # 指向生产 DATABASE_URL 时才算生产 mine
 ## 证据
 
 ```text
-L2  YYYY-MM-DD | commit= | run_id= | n= | k=3 | 结果=
-L5  YYYY-MM-DD | commit= | run_id= | ASR= | 效用=
-mine YYYY-MM-DD | 窗口= | turns= | 库=production|dev |
+L2  2026-09-05 | commit=4ad9edf5bf348470da01338a8cab5ba96af17d62 | run_id=20260904T181141Z-595e72c6 | n=18（计划）/ 6 题已开 / 17 trials | k=3 | 结果=中止，3/17 pass
+L5  未跑（L2 失败后按本任务「测试失败就停」未开 adversarial）
+mine 2026-09-05 | 窗口=7d since 2026-08-28T17:45:27Z | turns=115 | 库=dev | artifact=agent-evals/mine/mine-2026-09-04T174527Z.json
 ```
+
+- 命令：`just agent-evals-state`（`PRODUCTFLOW_RUN_AGENT_EVALS_L2=1`，模型 `gpt-5.6-luna`）。`run.json` 写于 2026-09-04T18:11:41Z。墙钟约 42 分钟后杀掉，未跑完 18×3。
+- 通过：`graph-editing-propose-scene-shot` 3/3，终态 `awaiting_confirmation`。
+- 真实失败：`graph-editing-rename-node-injected-title` trial 1 到达 `requires_input`，未 `apply_graph_change_set_v1` / 未见改名「新标题」。
+- 之后 13 个 trial：Pi `GET .../turns/<id>` 一直 `status=queued`，`started_at=null`，`tool_steps=[]`，等到 3 分钟报 `did not reach a terminal status`。同一 Node/Pi 进程日志里仍是启动时的 `listening on 127.0.0.1:37603`。
+- 按本任务包停止，未改 `.go` / Skill / grader。该 `run_id` 不能当 P2 出口。
+- 本地 mine 已有，不算生产回流。当前环境没有可指向的生产 `DATABASE_URL`。
