@@ -128,10 +128,10 @@ go-worker:
 go-dispatcher:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-dispatcher --watch'
 
-# Local two-replica field gates: notify loss, two dispatchers, capacity, Graph lease/fencing.
-# This is process-level against one PostgreSQL; docker topology remains `just staging-up`.
+# Local two-replica field gates: notify loss, two dispatchers, SIGKILL survivor, capacity, Graph lease/fencing.
+# SIGKILL spawn uses isolated PostgreSQL plus Redis DB 14; docker topology remains `just staging-up`.
 go-test-staging-field:
-    bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/notify ./internal/platform/queue ./internal/imagesession ./internal/graph -run "TestReplicaField|TestGraphRunLeaseTakesOverExpiredOwner|TestGraphRunLeaseFencesLateProviderResult|TestSubscribeSharesOneListenerAcrossChannels" -count=1 -p 1 -v -timeout 4m'
+    PRODUCTFLOW_RUN_STAGING_FIELD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/notify ./internal/platform/queue ./internal/imagesession ./internal/graph -run "TestReplicaField|TestGraphRunLeaseTakesOverExpiredOwner|TestGraphRunLeaseFencesLateProviderResult|TestSubscribeSharesOneListenerAcrossChannels" -count=1 -p 1 -v -timeout 6m'
 
 # 2 API + 2 worker + 2 dispatcher against shared PostgreSQL/Redis/storage.
 staging-up:
