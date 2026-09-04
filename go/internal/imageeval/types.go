@@ -162,15 +162,15 @@ var CategorySeeds = []struct {
 	Key     string
 	Queries []string
 }{
-	{Key: "3c", Queries: []string{"无线降噪耳机", "机械键盘"}},
-	{Key: "appliance", Queries: []string{"空气炸锅", "无线吸尘器"}},
-	{Key: "home", Queries: []string{"陶瓷马克杯", "实木餐椅"}},
-	{Key: "womenswear", Queries: []string{"真丝衬衫女", "羊毛大衣女"}},
-	{Key: "menswear", Queries: []string{"纯棉T恤男", "休闲西裤男"}},
-	{Key: "beauty", Queries: []string{"玻璃精华瓶", "防晒霜面部"}},
-	{Key: "food", Queries: []string{"坚果礼盒", "罐装茶叶"}},
-	{Key: "baby", Queries: []string{"婴儿推车", "玻璃奶瓶"}},
-	{Key: "sports", Queries: []string{"跑步鞋男", "瑜伽垫加厚"}},
+	{Key: "3c", Queries: []string{"无线降噪耳机", "机械键盘", "无线鼠标"}},
+	{Key: "appliance", Queries: []string{"空气炸锅", "无线吸尘器", "电热水壶"}},
+	{Key: "home", Queries: []string{"陶瓷马克杯", "实木餐椅", "纯棉四件套"}},
+	{Key: "womenswear", Queries: []string{"真丝衬衫女", "羊毛大衣女", "牛仔裤女"}},
+	{Key: "menswear", Queries: []string{"纯棉T恤男", "休闲西裤男", "牛津纺衬衫男"}},
+	{Key: "beauty", Queries: []string{"玻璃精华瓶", "防晒霜面部", "氨基酸洗面奶"}},
+	{Key: "food", Queries: []string{"坚果礼盒", "罐装茶叶", "纯可可脂巧克力"}},
+	{Key: "baby", Queries: []string{"婴儿推车", "玻璃奶瓶", "纯棉纱布浴巾"}},
+	{Key: "sports", Queries: []string{"跑步鞋男", "瑜伽垫加厚", "速干运动T恤"}},
 }
 
 func CaseIDFromURL(raw string) string {

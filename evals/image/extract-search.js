@@ -35,8 +35,9 @@
       tmall,
       text,
     });
-    if (items.length >= 12) break;
+    if (items.length >= 40) break;
   }
+  items.sort((a, b) => Number(b.tmall) - Number(a.tmall));
   window.__pfSearch = items;
-  return JSON.stringify({ n: items.length, items: items.slice(0, 8) });
+  return JSON.stringify({ n: items.length, items: items.slice(0, 16) });
 })

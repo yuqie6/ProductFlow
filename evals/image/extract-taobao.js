@@ -53,6 +53,23 @@
     if (index === 1) return "scene";
     return "detail";
   }
+  function suggestDetail(index, alt, label) {
+    const blob = `${alt || ""} ${label || ""}`;
+    if (/规格|参数|尺寸|成分|尺码|size/.test(blob)) return "specifications";
+    if (/包装|盒装|开箱/.test(blob)) return "packaging";
+    if (/场景|上身|街拍|使用|氛围/.test(blob)) return "scene";
+    if (/细节|材质|特写|纹理/.test(blob)) return "detail";
+    if (index < 4) return "selling_point";
+    if (index < 7) return "scene";
+    if (index < 11) return "detail";
+    if (index < 14) return "specifications";
+    return "selling_point";
+  }
+  function bgUrl(el) {
+    const bg = getComputedStyle(el).backgroundImage || "";
+    const m = bg.match(/url\(["']?(https?:\/\/[^"')]+)/i);
+    return m ? m[1] : "";
+  }
   const title =
     document.querySelector('[class*="ItemHeader"] h1, .tb-main-title, h1')?.textContent?.trim() ||
     document.title.replace(/-淘宝网.*$/, "").replace(/-tmall.com.*$/i, "").trim();
@@ -72,7 +89,7 @@
   const gallery = uniq(
     Array.from(
       document.querySelectorAll(
-        '[class*="thumbnail"] img, [class*="Thumb"] img, .tb-thumb img, ul.thumbnails img, [class*="PicGallery"] img, #J_UlThumb img',
+        '#J_ImgBooth, [class*="MainPic"] img, [class*="mainPic"] img, [class*="thumbnail"] img, [class*="Thumb"] img, .tb-thumb img, ul.thumbnails img, [class*="PicGallery"] img, #J_UlThumb img',
       ),
     ).map((img, index) => ({
       url: pickUrl(img),
@@ -101,15 +118,35 @@
   const detailRoot =
     document.querySelector("#J_DivItemDesc, [class*='descV8'], [class*='DescV8'], [id*='desc'], [class*='desc-root']") ||
     document.body;
-  const detailImages = uniq(
-    Array.from(detailRoot.querySelectorAll("img")).map((img, index) => ({
+  const detailFromImg = Array.from(detailRoot.querySelectorAll("img")).map((img, index) => {
+    const label = img.closest("li, a, p, figcaption, div")?.textContent?.replace(/\s+/g, " ").trim().slice(0, 40) || "";
+    return {
       url: pickUrl(img),
       alt: img.alt || "",
+      label,
       role: "detail",
       index,
-      suggested_type: /规格|参数|尺寸|成分/.test(`${img.alt || ""}`) ? "specifications" : "selling_point",
-    })),
+      suggested_type: suggestDetail(index, img.alt || "", label),
+    };
+  });
+  const detailFromBg = Array.from(detailRoot.querySelectorAll("[style*='background'], [class*='desc'] div")).map(
+    (el, index) => {
+      const label = (el.getAttribute("aria-label") || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+      return {
+        url: bgUrl(el),
+        alt: "",
+        label,
+        role: "detail",
+        index: 100 + index,
+        suggested_type: suggestDetail(index, "", label),
+      };
+    },
   );
+  const detailImages = uniq(detailFromImg.concat(detailFromBg)).map((item, index) => ({
+    ...item,
+    index,
+    suggested_type: suggestDetail(index, item.alt, item.label),
+  }));
   const payload = {
     source: "taobao",
     url: location.href,
