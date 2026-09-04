@@ -20,7 +20,6 @@
 | [harness-artifact.md](harness-artifact.md) | 壳进化 | 实现 | 开放 | — | — |
 | [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 画布 | 实现 | 开放 | — | — |
 | [image-eval-pool.md](image-eval-pool.md) | 生图测评 | 证据 | 开放 | — | — |
-| [perf-imagesession-detail.md](perf-imagesession-detail.md) | 性能 | 实现 | 认领 | 主代理-0905-0336 | 2026-09-05T03:36:11+08:00 |
 | [perf-dispatcher-latency.md](perf-dispatcher-latency.md) | 性能 | 证据 | 开放 | — | — |
 | [perf-capacity-metrics.md](perf-capacity-metrics.md) | 性能 | 实现 | 开放 | — | — |
 

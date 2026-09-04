@@ -44,7 +44,7 @@ C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just 
 
 ### Runtime performance governance
 
-Open guides: [`audits/tasks/perf-imagesession-detail.md`](audits/tasks/perf-imagesession-detail.md), [`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md), [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md). Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
+Open guides: [`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md), [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md). [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
 
 ### Image production quality
 

@@ -40,7 +40,7 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agen
 
 ### 运行时性能治理
 
-未完成指导：[`audits/tasks/perf-imagesession-detail.md`](audits/tasks/perf-imagesession-detail.md)、[`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md)、[`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md)。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
+未完成指导：[`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md)、[`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md)。[连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
 
 ### 画布文稿权威测试
 
