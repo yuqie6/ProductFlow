@@ -289,9 +289,8 @@ describe("GraphNodeInspector", () => {
 
     expect(markup).toContain('data-graph-node-local-edit');
     expect(markup).toContain("局部编辑");
-    expect(markup).toContain('data-image-fidelity-panel="true"');
-    expect(markup).toContain("人工保真检查");
-    expect(markup).toMatch(/data-fidelity-submit[^>]*disabled=""/);
+    expect(markup).not.toContain("data-image-fidelity-panel");
+    expect(markup).not.toContain("人工保真检查");
   });
 
   it("shows pin-as-image-asset when the generation node has a current output", () => {

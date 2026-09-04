@@ -65,9 +65,6 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 }
 
 func deleteRestrictChildren(ctx context.Context, tx *gorm.DB, productID string) error {
-	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.ProductImageFidelityChecks{}).Error; err != nil {
-		return err
-	}
 	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.DeliveryRenditionJobs{}).Error; err != nil {
 		return err
 	}

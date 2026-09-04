@@ -94,41 +94,6 @@ export interface ProductImageAssetListResponse {
   items: ProductImageAsset[];
 }
 
-export type ProductImageFidelityOutcome = "pass" | "fail" | "not_applicable";
-
-export interface ProductImageFidelityCheck {
-  id: string;
-  product_id: string;
-  asset_id: string;
-  version: number;
-  shape_fidelity: ProductImageFidelityOutcome;
-  color_material_fidelity: ProductImageFidelityOutcome;
-  logo_text_legibility: ProductImageFidelityOutcome;
-  text_policy_compliance: ProductImageFidelityOutcome;
-  notes: string | null;
-  checked_by: string;
-  idempotency_key: string;
-  request_hash: string;
-  created_at: string;
-}
-
-export interface ProductImageFidelityCheckListResponse {
-  product_id: string;
-  asset_id: string;
-  latest_version: number;
-  items: ProductImageFidelityCheck[];
-}
-
-export interface CreateProductImageFidelityCheckInput {
-  expected_latest_version: number;
-  idempotency_key: string;
-  shape_fidelity: ProductImageFidelityOutcome;
-  color_material_fidelity: ProductImageFidelityOutcome;
-  logo_text_legibility: ProductImageFidelityOutcome;
-  text_policy_compliance: ProductImageFidelityOutcome;
-  notes: string | null;
-}
-
 export interface GalleryGenerationSummary {
   workflow_id: string;
   node_id: string;

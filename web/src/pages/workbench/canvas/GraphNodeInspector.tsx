@@ -86,8 +86,6 @@ import {
 } from "./graphNodeEditorDrafts";
 import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
-import { ImageFidelityCheckController } from "../fidelity/ImageFidelityCheckController";
-
 type InspectorFlush = () => Promise<unknown>;
 type RegisterInspectorFlush = (id: string, flush: InspectorFlush) => () => void;
 const InspectorFlushContext = createContext<RegisterInspectorFlush>(() => () => undefined);
@@ -668,15 +666,6 @@ export function GraphNodeInspector({
             onSaveStateChange={(status, error) => setSaveState({ status, error })}
           />
         )}
-
-        {node.node_type === "image_generation" && node.preview_asset_id ? (
-          <ImageFidelityCheckController
-            key={`${node.id}:${node.preview_asset_id}`}
-            productId={graph.product_id}
-            assetId={node.preview_asset_id}
-            locale={t.locale ?? "zh-CN"}
-          />
-        ) : null}
 
         <IncomingEdgeList
           heading={t("graph.inspector.inputs")}

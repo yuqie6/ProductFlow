@@ -200,10 +200,6 @@ func ensureAssetNotReferenced(ctx context.Context, tx *gorm.DB, assetID string) 
 			var rec schema.LocalImageEditProviderAttempts
 			return tx.WithContext(ctx).Select("id").Where("late_result_asset_id = ?", assetID).Take(&rec).Error
 		}, "商品图片仍被局部编辑迟到结果审计引用，不能删除"},
-		{func() error {
-			var rec schema.ProductImageFidelityChecks
-			return tx.WithContext(ctx).Select("id").Where("asset_id = ?", assetID).Take(&rec).Error
-		}, "商品图片仍有人工保真检查历史，不能删除"},
 	}
 	for _, item := range checks {
 		err := item.run()

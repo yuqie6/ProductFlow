@@ -717,26 +717,6 @@ type ProductImageAssets struct {
 
 func (ProductImageAssets) TableName() string { return "product_image_assets" }
 
-// ProductImageFidelityChecks 对应表 product_image_fidelity_checks。
-// 商品图相对参考图的保真人工检查。
-type ProductImageFidelityChecks struct {
-	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	ProductID             string    `gorm:"column:product_id;type:varchar(36);not null"`
-	AssetID               string    `gorm:"column:asset_id;type:varchar(36);not null"`
-	Version               int       `gorm:"column:version;type:integer;not null"`
-	ShapeFidelity         string    `gorm:"column:shape_fidelity;type:varchar(20);not null"`
-	ColorMaterialFidelity string    `gorm:"column:color_material_fidelity;type:varchar(20);not null"`
-	LogoTextLegibility    string    `gorm:"column:logo_text_legibility;type:varchar(20);not null"`
-	TextPolicyCompliance  string    `gorm:"column:text_policy_compliance;type:varchar(20);not null"`
-	Notes                 *string   `gorm:"column:notes;type:text"`
-	CheckedBy             string    `gorm:"column:checked_by;type:varchar(80);not null"`
-	IdempotencyKey        string    `gorm:"column:idempotency_key;type:varchar(120);not null"`
-	RequestHash           string    `gorm:"column:request_hash;type:varchar(64);not null"`
-	CreatedAt             time.Time `gorm:"column:created_at;type:timestamptz;not null"`
-}
-
-func (ProductImageFidelityChecks) TableName() string { return "product_image_fidelity_checks" }
-
 // Products 对应表 products。
 // 商品主档：名称、intake、封面与当前 facts 版本。
 type Products struct {
@@ -1137,7 +1117,6 @@ func AllModels() []any {
 		&ProductAssetFolders{},
 		&ProductFactSetVersions{},
 		&ProductImageAssets{},
-		&ProductImageFidelityChecks{},
 		&Products{},
 		&ProviderBindings{},
 		&ProviderProfiles{},

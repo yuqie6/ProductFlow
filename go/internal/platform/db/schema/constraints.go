@@ -1053,71 +1053,7 @@ ALTER TABLE product_image_assets ADD CONSTRAINT fk_product_image_assets_user_fol
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_checked_by_authority CHECK (checked_by::text = 'administrator'::text);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_color_outcome CHECK (color_material_fidelity::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_idempotency_nonempty CHECK (length(idempotency_key::text) > 0);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_logo_outcome CHECK (logo_text_legibility::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_notes_length CHECK (notes IS NULL OR length(notes) <= 4000);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_positive_version CHECK (version >= 1);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_request_hash CHECK (length(request_hash::text) = 64);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_shape_outcome CHECK (shape_fidelity::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT ck_product_image_fidelity_checks_text_policy_outcome CHECK (text_policy_compliance::text = ANY (ARRAY['pass'::character varying, 'fail'::character varying, 'not_applicable'::character varying]::text[]));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT fk_product_image_fidelity_checks_asset_id FOREIGN KEY (asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT fk_product_image_fidelity_checks_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT uq_product_image_fidelity_checks_asset_idempotency UNIQUE (asset_id, idempotency_key);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE product_image_fidelity_checks ADD CONSTRAINT uq_product_image_fidelity_checks_asset_version UNIQUE (asset_id, version);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
+	`DROP TABLE IF EXISTS public.product_image_fidelity_checks;`,
 	`DO $c$ BEGIN
 ALTER TABLE products ADD CONSTRAINT ck_products_intake_pair CHECK (intake_schema_version IS NULL AND intake_json IS NULL OR intake_schema_version = 1 AND intake_json IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1677,7 +1613,6 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_product_image_assets_source_library_asset_id ON public.product_image_assets USING btree (source_library_asset_id);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_product_image_assets_product_library_asset ON public.product_image_assets USING btree (product_id, source_library_asset_id);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_product_image_assets_product_session_asset ON public.product_image_assets USING btree (product_id, source_image_session_asset_id);`,
-	`CREATE INDEX IF NOT EXISTS ix_product_image_fidelity_checks_asset_created ON public.product_image_fidelity_checks USING btree (asset_id, created_at, id);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_bindings_purpose ON public.provider_bindings USING btree (purpose);`,
 	`CREATE INDEX IF NOT EXISTS ix_provider_profiles_archived_at ON public.provider_profiles USING btree (archived_at);`,
 	`CREATE INDEX IF NOT EXISTS ix_provider_profiles_enabled ON public.provider_profiles USING btree (enabled);`,

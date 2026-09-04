@@ -69,9 +69,6 @@ import type {
   ProductListResponse,
   ProductImageAsset,
   ProductImageAssetListResponse,
-  CreateProductImageFidelityCheckInput,
-  ProductImageFidelityCheck,
-  ProductImageFidelityCheckListResponse,
   RuntimeConfig,
   SettingsLockState,
   SettingsExportPayload,
@@ -94,10 +91,6 @@ import {
   parseLocalImageEditTask,
   parseLocalImageEditTaskList,
 } from "./localImageEdits";
-import {
-  parseProductImageFidelityCheck,
-  parseProductImageFidelityCheckList,
-} from "./imageFidelityChecks";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
@@ -686,35 +679,6 @@ export const api = {
     return toApiUrl(
       `/api/v2/product-image-assets/${encodeURIComponent(assetId)}/download${query}`,
     );
-  },
-  listProductImageFidelityChecks(
-    productId: string,
-    assetId: string,
-  ): Promise<ProductImageFidelityCheckListResponse> {
-    return request<unknown>(
-      `/api/v3/products/${encodeURIComponent(productId)}/image-assets/${encodeURIComponent(assetId)}/fidelity-checks`,
-    ).then((payload) => {
-      const parsed = parseProductImageFidelityCheckList(payload);
-      if (!parsed) throw new ApiError(502, "图片保真检查响应格式无效");
-      return parsed;
-    });
-  },
-  createProductImageFidelityCheck(
-    productId: string,
-    assetId: string,
-    input: CreateProductImageFidelityCheckInput,
-  ): Promise<ProductImageFidelityCheck> {
-    return request<unknown>(
-      `/api/v3/products/${encodeURIComponent(productId)}/image-assets/${encodeURIComponent(assetId)}/fidelity-checks`,
-      {
-        method: "POST",
-        body: JSON.stringify(input),
-      },
-    ).then((payload) => {
-      const parsed = parseProductImageFidelityCheck(payload);
-      if (!parsed) throw new ApiError(502, "图片保真检查响应格式无效");
-      return parsed;
-    });
   },
   getMediaLibraryAssetMediaUrl(
     assetId: string,

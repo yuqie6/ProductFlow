@@ -59,8 +59,6 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.DELETE("/v2/products/:product_id", h.requireDeletion, h.deleteProduct)
 	api.GET("/v3/products/:product_id/facts", h.getFacts)
 	api.PUT("/v3/products/:product_id/facts", h.updateFacts)
-	api.GET("/v3/products/:product_id/image-assets/:asset_id/fidelity-checks", h.listFidelityChecks)
-	api.POST("/v3/products/:product_id/image-assets/:asset_id/fidelity-checks", h.createFidelityCheck)
 	api.GET("/v2/product-image-assets/:asset_id/download", h.download)
 	api.DELETE("/v2/product-image-assets/:asset_id", h.requireDeletion, h.deleteAsset)
 	api.POST("/v3/products", h.createV3)
@@ -535,61 +533,6 @@ func (h HTTP) deleteProduct(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// listFidelityChecks 是 GET /api/v3/.../fidelity-checks：200；limit 非法 400。
-func (h HTTP) listFidelityChecks(c *gin.Context) {
-	limit := fidelityCheckMaxLimit
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
-			return
-		}
-		limit = n
-	}
-	out, err := h.Service.ListFidelityChecks(c.Request.Context(), c.Param("product_id"), c.Param("asset_id"), limit)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, out)
-}
-
-// createFidelityCheck 是 POST /api/v3/.../fidelity-checks：201；expected 落后或同 key 哈希不同 409。
-func (h HTTP) createFidelityCheck(c *gin.Context) {
-	var payload struct {
-		ExpectedLatestVersion *int    `json:"expected_latest_version"`
-		IdempotencyKey        *string `json:"idempotency_key"`
-		ShapeFidelity         *string `json:"shape_fidelity"`
-		ColorMaterialFidelity *string `json:"color_material_fidelity"`
-		LogoTextLegibility    *string `json:"logo_text_legibility"`
-		TextPolicyCompliance  *string `json:"text_policy_compliance"`
-		Notes                 *string `json:"notes"`
-	}
-	if err := bindJSON(c, &payload); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	if payload.ExpectedLatestVersion == nil || payload.IdempotencyKey == nil || payload.ShapeFidelity == nil ||
-		payload.ColorMaterialFidelity == nil || payload.LogoTextLegibility == nil || payload.TextPolicyCompliance == nil {
-		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
-		return
-	}
-	out, err := h.Service.CreateFidelityCheck(c.Request.Context(), c.Param("product_id"), c.Param("asset_id"), CreateFidelityInput{
-		ExpectedLatestVersion: *payload.ExpectedLatestVersion,
-		IdempotencyKey:        *payload.IdempotencyKey,
-		ShapeFidelity:         *payload.ShapeFidelity,
-		ColorMaterialFidelity: *payload.ColorMaterialFidelity,
-		LogoTextLegibility:    *payload.LogoTextLegibility,
-		TextPolicyCompliance:  *payload.TextPolicyCompliance,
-		Notes:                 payload.Notes,
-	})
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, out)
 }
 
 // bindJSON 用 DisallowUnknownFields 解码 JSON。多字段或尾随内容一律 400「请求体无效」，不要改成忽略未知键。
