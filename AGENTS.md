@@ -32,11 +32,11 @@ Implementation sub-agents receive one bounded causal slice at a time. Each task 
 - files or modules the agent owns and boundaries it must not edit;
 - required wire, persistence and runtime invariants;
 - focused tests and completion evidence;
-- known concurrent work and prohibited cleanup, commit or destructive Git actions.
+- known concurrent work; sub-agents must not push, reset, revert, or declare the overall task complete.
 
 Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
 
-Sub-agents do not commit, push, reset, revert unrelated changes or declare the overall task complete. They report changed files, behavior, tests, unresolved risks and assumptions. The primary agent reads the resulting diff, runs integration checks at the shared boundary and may return a focused correction task to the same agent.
+When an owned slice is done, the owner reviews that exclusive diff against the task packet. Sub-agents do not commit, push, reset, or revert; they report changed files, review outcome, tests, unresolved risks, and whether the slice is ready to commit. The primary agent re-reads the diff, runs shared-boundary checks, and if the slice is clean, commits only those owned files in the same turn. Parallel slices may finish in any order; the primary serializes git so one writer touches the index. Do not leave a reviewed slice uncommitted while starting another slice for the same owner. Procedure: `.cursor/rules/module-review-commit.mdc`.
 
 The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another implementation task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
 
@@ -70,7 +70,7 @@ Go packages under `go/internal/` use the module layout in `go/AGENTS.md`. React 
 Go tests live under `go/` and are the default backend gate: `just go-test` (needs `DATABASE_URL` for packages that use PostgreSQL). Run `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes go through GORM models plus constraint patches in `go/internal/platform/db/schema` and a focused migrate regression. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
 
 ## Commit & Pull Request Guidelines
-Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.
+Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. A reviewed exclusive module slice is committed in the same turn; that is standing authorization for this repo. Do not wait for a separate commit request, and do not commit unresolved work, secrets, or files outside the slice. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.
 
 ## Documentation Style
 Official docs, release notes, PR descriptions, and contribution guidance must stay concrete and verifiable. Avoid templated delivery copy and empty contrast/progress scaffolding:
