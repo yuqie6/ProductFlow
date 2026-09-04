@@ -29,6 +29,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/providers"
+	"github.com/yuqie6/productflow/internal/providers/adapt"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
@@ -109,7 +110,7 @@ func main() {
 		ImageSession: imagesession.HTTP{
 			Service: imagesession.Service{
 				DB: gdb, Pool: pool, Media: mediaStore, Settings: settingsStore,
-				Reconciler: liveImage,
+				Reconciler: adapt.Reconciler(liveImage),
 			},
 			Settings: settingsStore,
 		},
@@ -118,7 +119,7 @@ func main() {
 			Settings: settingsStore,
 		},
 		LocalEdit: localedit.HTTP{
-			Service:  localedit.Service{DB: gdb, Media: mediaStore, Provider: liveImage},
+			Service:  localedit.Service{DB: gdb, Media: mediaStore, Provider: adapt.LocalEdit(liveImage)},
 			Settings: settingsStore,
 		},
 		Agent: agent.HTTP{

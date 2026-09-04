@@ -13,8 +13,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
-	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/settings"
 )
@@ -128,8 +126,8 @@ func TestLiveImageSuccessFailUnknown(t *testing.T) {
 	live := requireLiveBindings(t)
 	image := LiveImage{Store: live.store}
 	direct := liveImageAdapter(live.image, live.image.Model)
-	req := graph.ImageRequest{
-		NodeTitle:      "white ceramic mug on wood, ecommerce product photo",
+	req := GenerateRequest{
+		Prompt:         "white ceramic mug on wood, ecommerce product photo",
 		GenerationSpec: map[string]any{"aspect_ratio": "1:1"},
 	}
 
@@ -148,7 +146,7 @@ func TestLiveImageSuccessFailUnknown(t *testing.T) {
 	t.Run("unknown", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 		defer cancel()
-		_, err := direct.GenerateImage(ctx, req)
+		_, err := direct.Generate(ctx, req)
 		if err == nil {
 			t.Fatal("expected live image unknown from timed-out request")
 		}
@@ -160,7 +158,7 @@ func TestLiveImageSuccessFailUnknown(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 		defer cancel()
-		got, err := image.GenerateImage(ctx, req)
+		got, err := image.Generate(ctx, req)
 		if err != nil {
 			t.Fatalf("live image success: %v", err)
 		}
@@ -176,7 +174,7 @@ func TestLiveChatSessionGenerate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	start := time.Now()
-	got, err := image.Generate(ctx, imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := image.Generate(ctx, GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	t.Logf("elapsed=%s err=%v bytes=%d mime=%s id=%s unknown=%v", time.Since(start), err, len(got.Bytes), got.MIME, got.ResponseID, err != nil && isUnknown(err))
 	if err != nil {
 		t.Fatalf("live chat generate: %v", err)
@@ -199,7 +197,7 @@ func TestLiveLocalImageEdit(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	request := localedit.EditRequest{
+	request := EditRequest{
 		SourceBytes: source, SourceMIME: "image/png", MaskPNG: mask,
 		Instruction: "Keep the cup unchanged and replace only the masked background with plain white.",
 		Operation:   "inpaint", Size: "256x256",
@@ -250,31 +248,31 @@ func livePromptFail(ctx context.Context, good OpenAIPrompt, req graph.PromptRequ
 	return err
 }
 
-func liveImageFail(ctx context.Context, binding settings.ModelBinding, req graph.ImageRequest) error {
+func liveImageFail(ctx context.Context, binding settings.ModelBinding, req GenerateRequest) error {
 	rejected := liveImageAdapter(binding, binding.Model)
 	switch img := rejected.(type) {
 	case OpenAIImages:
 		img.APIKey = "sk-productflow-live-gate-invalid"
-		_, err := img.GenerateImage(ctx, req)
+		_, err := img.Generate(ctx, req)
 		if err != nil && !isUnknown(err) {
 			return err
 		}
 		img.APIKey = binding.APIKey
 		img.Transport = liveRefuseTransport()
-		_, err = img.GenerateImage(ctx, req)
+		_, err = img.Generate(ctx, req)
 		return err
 	case OpenAIResponses:
 		img.APIKey = "sk-productflow-live-gate-invalid"
-		_, err := img.GenerateImage(ctx, req)
+		_, err := img.Generate(ctx, req)
 		if err != nil && !isUnknown(err) {
 			return err
 		}
 		img.APIKey = binding.APIKey
 		img.Transport = liveRefuseTransport()
-		_, err = img.GenerateImage(ctx, req)
+		_, err = img.Generate(ctx, req)
 		return err
 	default:
-		_, err := rejected.GenerateImage(ctx, req)
+		_, err := rejected.Generate(ctx, req)
 		return err
 	}
 }
@@ -289,7 +287,7 @@ func liveRefuseTransport() jsonRoundTrip {
 	}
 }
 
-func liveImageAdapter(binding settings.ModelBinding, model string) graph.ImageProvider {
+func liveImageAdapter(binding settings.ModelBinding, model string) ImageClient {
 	base := OpenAIImages{
 		Kind: binding.Kind, APIKey: binding.APIKey, BaseURL: binding.BaseURL, Model: model,
 		Quality: binding.ImagesQuality, Style: binding.ImagesStyle, MaskEdit: binding.MaskEdit,

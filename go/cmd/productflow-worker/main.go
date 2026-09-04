@@ -27,6 +27,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/providers"
+	"github.com/yuqie6/productflow/internal/providers/adapt"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
@@ -77,7 +78,7 @@ func main() {
 		DB: gdb,
 		Deps: graph.Dependencies{
 			Prompt:   providers.LivePrompt{Store: settingsStore},
-			Image:    liveImage,
+			Image:    adapt.GraphImage(liveImage),
 			Assets:   productService,
 			Delivery: deliveryService,
 		},
@@ -85,9 +86,9 @@ func main() {
 		AfterRunStatus: agent.SyncGraphRunToTasks,
 		Products:       product.GraphGuard{},
 	}
-	imageExecutor := imagesession.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
+	imageExecutor := imagesession.Executor{DB: gdb, Media: mediaStore, Provider: adapt.Chat(liveImage, settingsStore)}
 	deliveryExecutor := delivery.Executor{DB: gdb, Media: mediaStore}
-	localExecutor := localedit.Executor{DB: gdb, Media: mediaStore, Provider: liveImage}
+	localExecutor := localedit.Executor{DB: gdb, Media: mediaStore, Provider: adapt.LocalEdit(liveImage)}
 	poll := time.Duration(int(cfg.AgentTurnSyncPollSeconds*1000)) * time.Millisecond
 	if poll < time.Millisecond {
 		poll = time.Millisecond

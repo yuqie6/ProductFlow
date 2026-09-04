@@ -12,8 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
@@ -48,7 +46,7 @@ func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return 0, nil, graph.ErrProviderUnknown()
+		return 0, nil, ErrUnknown
 	}
 	if contentType == "" {
 		contentType = "application/json"
@@ -62,10 +60,10 @@ func doJSON(ctx context.Context, client *http.Client, method, url, apiKey string
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxProviderJSONBytes+1))
 	if readErr != nil {
-		return resp.StatusCode, raw, graph.ErrProviderUnknown()
+		return resp.StatusCode, raw, ErrUnknown
 	}
 	if int64(len(raw)) > maxProviderJSONBytes {
-		return resp.StatusCode, raw[:maxProviderJSONBytes], graph.ErrProviderUnknown()
+		return resp.StatusCode, raw[:maxProviderJSONBytes], ErrUnknown
 	}
 	return resp.StatusCode, raw, nil
 }
@@ -75,12 +73,12 @@ func mapTransport(err error) error {
 		return nil
 	}
 	if isTimeoutTransport(err) {
-		return retryableTransportError{sentinel: imagesession.ErrTimeout}
+		return retryableTransportError{sentinel: ErrTimeout}
 	}
 	if isConnectionTransport(err) {
-		return retryableTransportError{sentinel: imagesession.ErrConnection}
+		return retryableTransportError{sentinel: ErrConnection}
 	}
-	return graph.ErrProviderUnknown()
+	return ErrUnknown
 }
 
 // retryableTransportError 让 Chat 能按超时/断连重试，图路径仍能 errors.As 成 unknown。
@@ -91,7 +89,7 @@ type retryableTransportError struct {
 func (e retryableTransportError) Error() string { return e.sentinel.Error() }
 
 func (e retryableTransportError) Unwrap() []error {
-	return []error{e.sentinel, graph.ErrProviderUnknown()}
+	return []error{e.sentinel, ErrUnknown}
 }
 
 func isTimeoutTransport(err error) bool {
@@ -119,44 +117,44 @@ func isConnectionTransport(err error) bool {
 	return false
 }
 
-func asGraphUnknown(err error) error {
+func asUnknown(err error) error {
 	if err == nil {
 		return nil
 	}
-	if imagesession.IsRetryableProviderFailure(err) {
-		return graph.ErrProviderUnknown()
+	if errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx) || errors.Is(err, ErrRateLimit) {
+		return ErrUnknown
 	}
 	return err
 }
 
-func mapGraphStatus(status int, body []byte) error {
+func mapWorkflowStatus(status int, body []byte) error {
 	if status >= 500 || status == http.StatusTooManyRequests {
-		return graph.ErrProviderUnknown()
+		return ErrUnknown
 	}
 	if status >= 400 {
 		return fmt.Errorf("供应商拒绝请求（HTTP %d）", status)
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
-		return graph.ErrProviderUnknown()
+		return ErrUnknown
 	}
 	return nil
 }
 
 func mapChatStatus(status int, body []byte) error {
 	if status == http.StatusTooManyRequests {
-		return imagesession.ErrRateLimit
+		return ErrRateLimit
 	}
 	if status >= 500 {
-		return imagesession.ErrProvider5xx
+		return ErrProvider5xx
 	}
 	if status >= 400 {
 		if chatBodyRateLimited(body) {
-			return imagesession.ErrRateLimit
+			return ErrRateLimit
 		}
 		return apperr.Validation("图片供应商拒绝了本次请求，请调整提示词、参考图或参数后重试")
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
-		return imagesession.ErrUnknown()
+		return ErrUnknown
 	}
 	return nil
 }

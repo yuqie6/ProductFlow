@@ -10,9 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
-	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
@@ -28,7 +25,7 @@ type OpenAIImages struct {
 	Transport jsonRoundTrip // 可注入 HTTP；测试用
 }
 
-// Name 实现 graph.ImageProvider；Kind 为空时返回 "openai-images"。
+// Name 实现 ImageClient；Kind 为空时返回 "openai-images"。
 func (p OpenAIImages) Name() string {
 	if p.Kind != "" {
 		return providerDisplayName(p.Kind)
@@ -36,74 +33,64 @@ func (p OpenAIImages) Name() string {
 	return "openai-images"
 }
 
-// GenerateImage 实现 graph.ImageProvider。有参考图走 /v1/images/edits；不可证明的失败经 asGraphUnknown 标 unknown。
-func (p OpenAIImages) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
-	size := openaiSizeFromSpec(req.GenerationSpec)
-	prompt := graph.CompileImageModelPrompt(req)
-	quality := openaiQualityFromSpec(req.GenerationSpec)
-	var bytesData []byte
-	var mime, model, id string
-	var err error
-	if len(req.References) > 0 {
-		bytesData, mime, model, id, err = p.edit(ctx, prompt, size, quality, graphRefsToParts(req.References), nil, 1, mapGraphStatus)
-	} else {
-		bytesData, mime, model, id, err = p.generate(ctx, prompt, size, quality, mapGraphStatus)
-	}
-	if err != nil {
-		return graph.ImageResult{}, asGraphUnknown(err)
-	}
-	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
+func (p OpenAIImages) ReconcileResponse(context.Context, string) (string, error) {
+	return "unsupported", nil
 }
 
-// Generate 实现 imagesession.ChatProvider。有参考图走 edits；否则走 generations。
-// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p OpenAIImages) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
-	size := req.Size
-	if size == "" {
-		size = "1024x1024"
-	}
-	n := clampImageN(req.Count)
+// Generate 实现 ImageClient。有参考图走 /v1/images/edits；否则走 /v1/images/generations。
+func (p OpenAIImages) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+	size := req.resolvedSize(openaiSizeFromSpec)
+	classify := req.statusMapper()
+	n := 1
 	call := p
-	call.Model, call.Quality = chatImagesOverrides(req.ToolOptions, p.Model, p.Quality)
-	parts := chatImageParts(req, true)
+	quality := openaiQualityFromSpec(req.GenerationSpec)
+	if req.chat() {
+		n = clampImageN(req.Count)
+		call.Model, call.Quality = chatImagesOverrides(req.ToolOptions, p.Model, p.Quality)
+		quality = call.Quality
+	}
+	parts := refsToParts(req.Refs)
 	var images [][]byte
 	var mime, model, id string
 	var err error
 	if len(parts) > 0 {
-		images, mime, model, id, err = call.editN(ctx, req.Prompt, size, call.Quality, parts, nil, n, mapChatStatus)
+		images, mime, model, id, err = call.editN(ctx, req.Prompt, size, quality, parts, nil, n, classify)
 	} else {
-		images, mime, model, id, err = call.generateN(ctx, req.Prompt, size, call.Quality, n, mapChatStatus)
+		images, mime, model, id, err = call.generateN(ctx, req.Prompt, size, quality, n, classify)
 	}
 	if err != nil {
-		return imagesession.ChatResult{}, err
+		if !req.chat() {
+			return GenerateResult{}, asUnknown(err)
+		}
+		return GenerateResult{}, err
 	}
 	first := []byte(nil)
 	if len(images) > 0 {
 		first = images[0]
 	}
-	_ = id
-	return imagesession.ChatResult{
-		Bytes: first, Images: images, MIME: mime, Model: model,
-		ProviderStatus: "completed", OutputJSON: map[string]any{"status": "completed"},
-	}, nil
-}
-
-// Capability 实现 localedit.Provider；仅 MaskEdit 为 true 时声明 masked local edit。
-func (p OpenAIImages) Capability() localedit.Capability {
-	if p.MaskEdit {
-		return localedit.SupportedCapability(p.Name())
+	out := finishGenerateResult(p.Name(), first, mime, model, id, size, quality, len(req.Refs))
+	out.Images = images
+	if req.chat() {
+		out.ResponseID = ""
 	}
-	return localedit.UnsupportedCapability(p.Name())
+	return out, nil
 }
 
-// Edit 实现 localedit.Provider，走 /v1/images/edits；未声明 mask 能力时拒绝且不打网。
-// 未声明 mask 或缺少遮罩返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
+// Capability 实现 ImageClient；仅 MaskEdit 为 true 时声明 masked local edit。
+func (p OpenAIImages) Capability() EditCapability {
+	if p.MaskEdit {
+		return SupportedEditCapability(p.Name())
+	}
+	return UnsupportedEditCapability(p.Name())
+}
+
+// Edit 实现 ImageClient，走 /v1/images/edits；未声明 mask 能力时拒绝且不打网。
+func (p OpenAIImages) Edit(ctx context.Context, req EditRequest) (EditResult, error) {
 	if !p.MaskEdit {
-		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
+		return EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
 	}
 	if len(req.MaskPNG) == 0 {
-		return localedit.EditResult{}, apperr.Validation("局部编辑缺少遮罩")
+		return EditResult{}, apperr.Validation("局部编辑缺少遮罩")
 	}
 	parts := []imagePart{{Bytes: req.SourceBytes, MIME: req.SourceMIME, Filename: "source.png"}}
 	for i, ref := range req.ReferenceBytes {
@@ -115,9 +102,9 @@ func (p OpenAIImages) Edit(ctx context.Context, req localedit.EditRequest) (loca
 	}
 	bytesData, mime, model, id, err := p.edit(ctx, req.Instruction, size, p.Quality, parts, req.MaskPNG, 1, mapChatStatus)
 	if err != nil {
-		return localedit.EditResult{}, err
+		return EditResult{}, err
 	}
-	return localedit.EditResult{Bytes: bytesData, MIME: mime, Model: model, ResponseID: id, ProviderStatus: "completed"}, nil
+	return EditResult{Bytes: bytesData, MIME: mime, Model: model, ResponseID: id, ProviderStatus: "completed"}, nil
 }
 
 func (p OpenAIImages) generate(ctx context.Context, prompt, size, quality string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
@@ -194,7 +181,7 @@ func parseImageResponses(raw []byte, fallbackModel string) ([][]byte, string, st
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, "", "", "", graph.ErrProviderUnknown()
+		return nil, "", "", "", ErrUnknown
 	}
 	if len(parsed.Data) == 0 {
 		return nil, "", "", "", fmt.Errorf("图片供应商没有返回图片结果，请稍后重试")
@@ -284,7 +271,7 @@ type OpenAIResponses struct {
 	AllowedFields []string       // image tool 允许字段白名单
 }
 
-// Name 实现 graph.ImageProvider，返回 "openai-responses"。
+// Name 实现 ImageClient，返回 "openai-responses"。
 func (p OpenAIResponses) Name() string { return "openai-responses" }
 
 // ReconcileResponse 查询 /v1/responses/{id}。空 id 返回 "unsupported"；4xx/5xx 或证据不足返回 "unknown"。
@@ -327,57 +314,47 @@ var (
 
 const imageToolInputMaskKey = "input_image_mask"
 
-// GenerateImage 实现 graph.ImageProvider，只用 /v1/responses；不可证明的失败标 unknown。
-func (p OpenAIResponses) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
-	size := openaiSizeFromSpec(req.GenerationSpec)
-	prompt := graph.CompileImageModelPrompt(req)
-	opts := WorkflowImageToolOptions(req, p.ToolRuntime, p.AllowedFields)
-	bytesData, mime, model, id, err := p.generateResponses(ctx, prompt, size, opts, req.References, nil, mapGraphStatus)
+// Generate 实现 ImageClient，只用 /v1/responses。
+func (p OpenAIResponses) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+	size := req.resolvedSize(openaiSizeFromSpec)
+	classify := req.statusMapper()
+	var opts map[string]any
+	if req.chat() {
+		opts = filterImageToolOptions(mergeToolOptions(p.ToolRuntime, req.ToolOptions), p.AllowedFields)
+	} else {
+		opts = WorkflowImageToolOptions(req, p.ToolRuntime, p.AllowedFields)
+	}
+	bytesData, mime, model, id, err := p.generateResponses(ctx, req.Prompt, size, opts, req.Refs, req.PreviousResponseID, classify)
 	if err != nil {
-		return graph.ImageResult{}, asGraphUnknown(err)
+		if !req.chat() {
+			return GenerateResult{}, asUnknown(err)
+		}
+		return GenerateResult{}, err
 	}
 	quality := openaiQualityFromSpec(req.GenerationSpec)
-	return finishImageResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.References)), nil
+	out := finishGenerateResult(p.Name(), bytesData, mime, model, id, size, quality, len(req.Refs))
+	out.Images = [][]byte{bytesData}
+	return out, nil
 }
 
-// Generate 实现 imagesession.ChatProvider，只用 /v1/responses。
-// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p OpenAIResponses) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
-	size := req.Size
-	if size == "" {
-		size = "1024x1024"
-	}
-	refs := chatGraphRefs(req, true)
-	opts := filterImageToolOptions(mergeToolOptions(p.ToolRuntime, req.ToolOptions), p.AllowedFields)
-	bytesData, mime, model, id, err := p.generateResponses(ctx, req.Prompt, size, opts, refs, req.PreviousResponseID, mapChatStatus)
-	if err != nil {
-		return imagesession.ChatResult{}, err
-	}
-	return imagesession.ChatResult{
-		Bytes: bytesData, MIME: mime, Model: model, ResponseID: id,
-		ProviderStatus: "completed", OutputJSON: map[string]any{"status": "completed"},
-	}, nil
-}
-
-// Edit 实现 localedit.Provider，走 Responses image tool；未声明 mask 能力时拒绝且不打网。
-// 未声明 mask、缺遮罩或原图返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p OpenAIResponses) Edit(ctx context.Context, req localedit.EditRequest) (localedit.EditResult, error) {
+// Edit 实现 ImageClient，走 Responses image tool；未声明 mask 能力时拒绝且不打网。
+func (p OpenAIResponses) Edit(ctx context.Context, req EditRequest) (EditResult, error) {
 	if !p.MaskEdit {
-		return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
+		return EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
 	}
 	if len(req.MaskPNG) == 0 {
-		return localedit.EditResult{}, apperr.Validation("局部编辑缺少遮罩")
+		return EditResult{}, apperr.Validation("局部编辑缺少遮罩")
 	}
 	if len(req.SourceBytes) == 0 {
-		return localedit.EditResult{}, apperr.Validation("局部编辑缺少原图")
+		return EditResult{}, apperr.Validation("局部编辑缺少原图")
 	}
 	size := openaiSizeFromPixels(req.Size)
 	if size == "" {
 		size = "1024x1024"
 	}
-	refs := []graph.ReferenceImage{{Bytes: req.SourceBytes, MIME: req.SourceMIME, Filename: "source.png"}}
+	refs := []ImageRef{{Bytes: req.SourceBytes, MIME: req.SourceMIME, Filename: "source.png"}}
 	for i, value := range req.ReferenceBytes {
-		refs = append(refs, graph.ReferenceImage{
+		refs = append(refs, ImageRef{
 			Bytes: value, MIME: sniffMIME(value), Filename: fmt.Sprintf("reference-%d.png", i+1),
 		})
 	}
@@ -390,9 +367,9 @@ func (p OpenAIResponses) Edit(ctx context.Context, req localedit.EditRequest) (l
 		ctx, req.Instruction, size, opts, refs, nil, mapChatStatus, required,
 	)
 	if err != nil {
-		return localedit.EditResult{}, err
+		return EditResult{}, err
 	}
-	return localedit.EditResult{
+	return EditResult{
 		Bytes: bytesData, MIME: mime, Model: model, ResponseID: id, ProviderStatus: "completed",
 	}, nil
 }
@@ -483,12 +460,12 @@ func isBackgroundUnsupported(status int, body []byte) bool {
 	return false
 }
 
-func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+func (p OpenAIResponses) generateResponses(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []ImageRef, previousID *string, classify func(int, []byte) error) ([]byte, string, string, string, error) {
 	return p.generateResponsesRequired(ctx, prompt, size, toolOptions, refs, previousID, classify, nil)
 }
 
 // generateResponsesRequired 调 Responses 出图。4xx 不回退 Images API；证据不足标 unknown。
-func (p OpenAIResponses) generateResponsesRequired(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []graph.ReferenceImage, previousID *string, classify func(int, []byte) error, requiredToolOptions map[string]any) ([]byte, string, string, string, error) {
+func (p OpenAIResponses) generateResponsesRequired(ctx context.Context, prompt, size string, toolOptions map[string]any, refs []ImageRef, previousID *string, classify func(int, []byte) error, requiredToolOptions map[string]any) ([]byte, string, string, string, error) {
 	input := responsesInput(prompt, refs)
 	status, raw, err := p.createResponsesRequired(ctx, input, size, toolOptions, previousID, requiredToolOptions)
 	if err != nil {
@@ -539,7 +516,7 @@ func (p OpenAIResponses) generateResponsesRequired(ctx context.Context, prompt, 
 		}
 		if status >= 400 {
 			if responsesNeedsPoll(parsed) {
-				return nil, "", "", "", graph.ErrProviderUnknown()
+				return nil, "", "", "", ErrUnknown
 			}
 			return nil, "", "", "", responsesNoImageError(parsed)
 		}
@@ -569,7 +546,7 @@ func decodeProviderObject(raw []byte) (map[string]any, error) {
 			return unwrapResponse(parsed), nil
 		}
 	}
-	return nil, graph.ErrProviderUnknown()
+	return nil, ErrUnknown
 }
 
 func unwrapResponse(parsed map[string]any) map[string]any {
@@ -673,9 +650,9 @@ func imageCallResult(obj map[string]any) string {
 
 func responsesNoImageError(parsed map[string]any) error {
 	if responsesHasTextOutput(parsed) {
-		return imagesession.ErrTextOutput
+		return ErrTextOutput
 	}
-	return imagesession.ErrMissingOutput
+	return ErrMissingOutput
 }
 
 // responsesHasTextOutput 报告响应是否只有文字没有图。有字无图时调用方应标 failed 而不是 unknown。

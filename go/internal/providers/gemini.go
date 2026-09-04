@@ -12,9 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
-	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
 
@@ -56,52 +53,44 @@ func geminiRejectCustomBaseURL(baseURL string) error {
 	return nil
 }
 
-// Name 实现 graph.ImageProvider，返回 "google-gemini-image"。
+// Name 实现 ImageClient，返回 "google-gemini-image"。
 func (p GeminiImage) Name() string { return "google-gemini-image" }
 
-// Capability 实现 localedit.Provider；Gemini 未声明 masked local edit。
-func (p GeminiImage) Capability() localedit.Capability {
-	return localedit.UnsupportedCapability(p.Name())
+func (p GeminiImage) ReconcileResponse(context.Context, string) (string, error) {
+	return "unsupported", nil
 }
 
-// Edit 实现 localedit.Provider，拒绝 masked local edit，不打网。
-// 未声明 mask 能力时返回 Validation。
-func (p GeminiImage) Edit(context.Context, localedit.EditRequest) (localedit.EditResult, error) {
-	return localedit.EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
+// Capability 实现 ImageClient；Gemini 未声明 masked local edit。
+func (p GeminiImage) Capability() EditCapability {
+	return UnsupportedEditCapability(p.Name())
 }
 
-// GenerateImage 实现 graph.ImageProvider，调用 Google generateContent。
-// 已证明 4xx 可为失败；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p GeminiImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
-	size := pixelSizeFromSpec(req.GenerationSpec)
-	prompt := graph.CompileImageModelPrompt(req)
-	bytesData, mime, model, id, err := p.generateContent(ctx, prompt, size, req.References, mapGraphStatus)
+// Edit 实现 ImageClient，拒绝 masked local edit，不打网。
+func (p GeminiImage) Edit(context.Context, EditRequest) (EditResult, error) {
+	return EditResult{}, apperr.Validation("图片 provider 未显式声明 masked local edit 能力")
+}
+
+// Generate 实现 ImageClient，调用 Google generateContent。
+func (p GeminiImage) Generate(ctx context.Context, req GenerateRequest) (GenerateResult, error) {
+	fallback := openaiSizeFromSpec
+	if !req.chat() {
+		fallback = pixelSizeFromSpec
+	}
+	size := req.resolvedSize(fallback)
+	bytesData, mime, model, id, err := p.generateContent(ctx, req.Prompt, size, req.Refs, req.statusMapper())
 	if err != nil {
-		return graph.ImageResult{}, err
+		return GenerateResult{}, err
 	}
-	return finishImageResult(p.Name(), bytesData, mime, model, id, size, "", len(req.References)), nil
-}
-
-// Generate 实现 imagesession.ChatProvider，调用 Google generateContent。
-// 已证明 4xx 返回 Validation；超时/断流/非图响应走 unknown，调用方不得当失败自动重试。
-func (p GeminiImage) Generate(ctx context.Context, req imagesession.ChatRequest) (imagesession.ChatResult, error) {
-	size := req.Size
-	if size == "" {
-		size = "1024x1024"
+	out := finishGenerateResult(p.Name(), bytesData, mime, model, id, size, "", len(req.Refs))
+	out.Images = [][]byte{bytesData}
+	if req.chat() {
+		out.PromptVersion = "gemini-poster-image-v1"
 	}
-	refs := chatGraphRefs(req, true)
-	bytesData, mime, model, id, err := p.generateContent(ctx, req.Prompt, size, refs, mapChatStatus)
-	if err != nil {
-		return imagesession.ChatResult{}, err
-	}
-	return imagesession.ChatResult{
-		Bytes: bytesData, MIME: mime, Model: model, ResponseID: id, PromptVersion: "gemini-poster-image-v1",
-		ProviderStatus: "completed", OutputJSON: map[string]any{"status": "completed"},
-	}, nil
+	return out, nil
 }
 
 // generateContent 调 Google generateContent，参考图当 inlineData。classify 把 HTTP 状态收成 unknown/failed。
-func (p GeminiImage) generateContent(ctx context.Context, prompt, size string, refs []graph.ReferenceImage, classify func(int, []byte) error) ([]byte, string, string, string, error) {
+func (p GeminiImage) generateContent(ctx context.Context, prompt, size string, refs []ImageRef, classify func(int, []byte) error) ([]byte, string, string, string, error) {
 	parts := []map[string]any{{"text": prompt}}
 	for _, ref := range refs {
 		mime := ref.MIME
@@ -165,7 +154,7 @@ func (p GeminiImage) post(ctx context.Context, target string, body []byte) (int,
 	client := &http.Client{Timeout: 15 * time.Minute}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, graph.ErrProviderUnknown()
+		return 0, nil, ErrUnknown
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", p.APIKey)
@@ -176,10 +165,10 @@ func (p GeminiImage) post(ctx context.Context, target string, body []byte) (int,
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxProviderJSONBytes+1))
 	if readErr != nil {
-		return resp.StatusCode, raw, graph.ErrProviderUnknown()
+		return resp.StatusCode, raw, ErrUnknown
 	}
 	if int64(len(raw)) > maxProviderJSONBytes {
-		return resp.StatusCode, raw[:maxProviderJSONBytes], graph.ErrProviderUnknown()
+		return resp.StatusCode, raw[:maxProviderJSONBytes], ErrUnknown
 	}
 	return resp.StatusCode, raw, nil
 }
@@ -228,7 +217,7 @@ func geminiImageConfig(size, model string) (aspect, imageSize string) {
 func parseGeminiImage(raw []byte, fallbackModel string) ([]byte, string, string, string, error) {
 	var parsed map[string]any
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, "", "", "", graph.ErrProviderUnknown()
+		return nil, "", "", "", ErrUnknown
 	}
 	responseID, _ := parsed["responseId"].(string)
 	if responseID == "" {

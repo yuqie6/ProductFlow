@@ -3,8 +3,6 @@ package providers
 import (
 	"strconv"
 	"strings"
-
-	"github.com/yuqie6/productflow/internal/graph"
 )
 
 var imageToolFieldKeys = []string{
@@ -31,7 +29,7 @@ func providerDisplayName(kind string) string {
 }
 
 // WorkflowImageToolOptions 对齐 Python _workflow_responses_tool_options：卖点图强制 low fidelity。
-func WorkflowImageToolOptions(req graph.ImageRequest, runtime map[string]any, allowed []string) map[string]any {
+func WorkflowImageToolOptions(req GenerateRequest, runtime map[string]any, allowed []string) map[string]any {
 	spec := req.GenerationSpec
 	if spec == nil {
 		spec = map[string]any{}
@@ -46,7 +44,7 @@ func WorkflowImageToolOptions(req graph.ImageRequest, runtime map[string]any, al
 	if background, _ := spec["background_intent"].(string); background != "" && background != "auto" {
 		request["background"] = background
 	}
-	if len(req.References) > 0 {
+	if len(req.Refs) > 0 {
 		family := imageTypeFamilyOf(req.ImageTypeKey)
 		if family == "infographic" {
 			request["input_fidelity"] = "low"

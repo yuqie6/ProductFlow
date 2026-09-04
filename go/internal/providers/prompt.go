@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/settings"
 	"github.com/yuqie6/productflow/prompts"
 )
 
@@ -21,6 +23,85 @@ type OpenAIPrompt struct {
 	BaseURL   string        // 空则用 OpenAI 默认
 	Model     string        // Responses 模型 id
 	Transport jsonRoundTrip // 可注入 HTTP；测试用
+}
+
+// LivePrompt 每次调用按当前 PostgreSQL 绑定解析提示词供应商。
+type LivePrompt struct {
+	// Store 每次调用重新 Resolve，不要缓存过期 Key；nil 时回落 MockPromptProvider，不报错。
+	Store *settings.Store
+}
+
+func (l LivePrompt) resolve(ctx context.Context) (graph.PromptProvider, error) {
+	return Prompt(ctx, l.Store)
+}
+
+// Name 实现 graph.PromptProvider。每次从 settings 解析当前绑定；无法解析时返回 "unconfigured"。
+func (l LivePrompt) Name() string {
+	p, err := l.resolve(context.Background())
+	if err != nil || p == nil {
+		return "unconfigured"
+	}
+	return p.Name()
+}
+
+// GenerateCreativeBrief 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+func (l LivePrompt) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	return p.GenerateCreativeBrief(ctx, req)
+}
+
+// GenerateVisualOverlay 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+func (l LivePrompt) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	return p.GenerateVisualOverlay(ctx, req)
+}
+
+// GeneratePrompt 实现 graph.PromptProvider，按当前 settings 绑定调用底层供应商。
+func (l LivePrompt) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	return p.GeneratePrompt(ctx, req)
+}
+
+// GenerateSourceNote 实现 graph.PromptProvider。底层没有该方法时回退 MockSourceNotePayload，不打网。
+func (l LivePrompt) GenerateSourceNote(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p, err := l.resolve(ctx)
+	if err != nil {
+		return graph.PromptResult{}, err
+	}
+	if g, ok := p.(interface {
+		GenerateSourceNote(context.Context, graph.PromptRequest) (graph.PromptResult, error)
+	}); ok {
+		return g.GenerateSourceNote(ctx, req)
+	}
+	return graph.PromptResult{Payload: MockSourceNotePayload(), Model: "mock-source-note"}, nil
+}
+
+// Prompt 按当前 prompt 用途绑定构造图运行提示词供应商。
+// store 为 nil 或 Kind=mock 返回 MockPromptProvider（不打网）。
+func Prompt(ctx context.Context, store *settings.Store) (graph.PromptProvider, error) {
+	if store == nil {
+		return graph.MockPromptProvider{}, nil
+	}
+	binding, err := store.ResolvePrompt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if binding.Kind == "" || binding.Kind == "mock" {
+		return graph.MockPromptProvider{}, nil
+	}
+	if binding.Kind != "openai" {
+		return nil, apperr.Unavailable(fmt.Sprintf("暂不支持的 prompt provider: %s", binding.Kind))
+	}
+	return OpenAIPrompt{APIKey: binding.APIKey, BaseURL: binding.BaseURL, Model: binding.Model}, nil
 }
 
 // Name 实现 graph.PromptProvider，返回 "openai"。
@@ -89,7 +170,7 @@ func (p OpenAIPrompt) parseStructured(
 	if err != nil {
 		return nil, "", "", err
 	}
-	if err := mapGraphStatus(status, raw); err != nil {
+	if err := mapWorkflowStatus(status, raw); err != nil {
 		return nil, "", "", err
 	}
 	payload, model, id, err := parseResponsesStructured(raw, p.Model, schema)

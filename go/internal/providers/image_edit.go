@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
 	"github.com/yuqie6/productflow/internal/media"
 )
 
@@ -136,7 +134,7 @@ func partMIME(img imagePart) string {
 	return sniffMIME(img.Bytes)
 }
 
-func graphRefsToParts(refs []graph.ReferenceImage) []imagePart {
+func refsToParts(refs []ImageRef) []imagePart {
 	out := make([]imagePart, 0, len(refs))
 	for _, ref := range refs {
 		out = append(out, imagePart{Bytes: ref.Bytes, MIME: ref.MIME, Filename: ref.Filename})
@@ -144,27 +142,7 @@ func graphRefsToParts(refs []graph.ReferenceImage) []imagePart {
 	return out
 }
 
-func chatImageParts(req imagesession.ChatRequest, includeBase bool) []imagePart {
-	var out []imagePart
-	if includeBase && len(req.BaseBytes) > 0 {
-		out = append(out, imagePart{Bytes: req.BaseBytes, MIME: sniffMIME(req.BaseBytes), Filename: "base.png"})
-	}
-	for i, data := range req.ReferenceBytes {
-		out = append(out, imagePart{Bytes: data, MIME: sniffMIME(data), Filename: fmt.Sprintf("reference-%d.png", i+1)})
-	}
-	return out
-}
-
-func chatGraphRefs(req imagesession.ChatRequest, includeBase bool) []graph.ReferenceImage {
-	parts := chatImageParts(req, includeBase)
-	out := make([]graph.ReferenceImage, 0, len(parts))
-	for _, part := range parts {
-		out = append(out, graph.ReferenceImage{Bytes: part.Bytes, MIME: part.MIME, Filename: part.Filename})
-	}
-	return out
-}
-
-func responsesInput(prompt string, refs []graph.ReferenceImage) any {
+func responsesInput(prompt string, refs []ImageRef) any {
 	if len(refs) == 0 {
 		return prompt
 	}
@@ -182,8 +160,8 @@ func responsesInput(prompt string, refs []graph.ReferenceImage) any {
 	return []map[string]any{{"role": "user", "content": content}}
 }
 
-// finishImageResult 用 Inspect 补宽高和真实 MIME，写成 graph.ImageResult。Inspect 失败仍返回原字节，宽高为 0。
-func finishImageResult(adapter string, data []byte, mime, model, id, size, quality string, refCount int) graph.ImageResult {
+// finishGenerateResult 用 Inspect 补宽高和真实 MIME。Inspect 失败仍返回原字节，宽高为 0。
+func finishGenerateResult(adapter string, data []byte, mime, model, id, size, quality string, refCount int) GenerateResult {
 	width, height := 0, 0
 	if verified, err := media.Inspect(data, ""); err == nil {
 		width, height = verified.Width, verified.Height
@@ -204,7 +182,7 @@ func finishImageResult(adapter string, data []byte, mime, model, id, size, quali
 		effective["measured_width"] = width
 		effective["measured_height"] = height
 	}
-	return graph.ImageResult{
+	return GenerateResult{
 		Bytes: data, MIME: mime, Model: model, ResponseID: id,
 		ProviderStatus: "completed", Width: width, Height: height,
 		EffectiveParameters: effective,

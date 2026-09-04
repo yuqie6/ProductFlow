@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/imagesession"
-	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/prompts"
 )
 
@@ -109,7 +107,7 @@ func TestImageSuccessFailUnknown(t *testing.T) {
 			}))
 			defer srv.Close()
 			img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-			got, err := img.GenerateImage(context.Background(), graph.ImageRequest{NodeTitle: "hero"})
+			got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "hero"})
 			if tc.wantOK {
 				if err != nil {
 					t.Fatal(err)
@@ -139,7 +137,7 @@ func TestChatFourHundredIsFailedNotUnknown(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -182,7 +180,7 @@ func TestResponsesImagePollsUntilResult(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "gpt-5.6-luna"}}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +211,7 @@ func TestResponsesImageRetrievesWhenCreateOmitsBytes(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +241,7 @@ func TestResponsesImageReadsBodyLargerThanEightMiB(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +269,7 @@ func TestResponsesImageReadsCompletedSSE(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +310,8 @@ func TestResponsesImageSendsGenerateAction(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	if _, err := img.GenerateImage(context.Background(), graph.ImageRequest{
-		NodeTitle: "hero", ImageTypeKey: "hero",
+	if _, err := img.Generate(context.Background(), GenerateRequest{
+		Prompt: "hero", ImageTypeKey: "hero",
 		GenerationSpec: map[string]any{"quality_intent": "high"},
 	}); err != nil {
 		t.Fatal(err)
@@ -339,8 +337,8 @@ func TestResponsesImageTreatsTextOnlyCompletedAsFailure(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
-	if !errors.Is(err, imagesession.ErrTextOutput) {
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
+	if !errors.Is(err, ErrTextOutput) {
 		t.Fatalf("got %v", err)
 	}
 	if isUnknown(err) {
@@ -356,11 +354,11 @@ func TestResponsesTerminalFailureWithoutTextIsMissingOutput(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
-	if !errors.Is(err, imagesession.ErrMissingOutput) {
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
+	if !errors.Is(err, ErrMissingOutput) {
 		t.Fatalf("got %v", err)
 	}
-	if imagesession.IsConfirmedProviderFailure(err) {
+	if errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit) {
 		t.Fatalf("missing output must not be confirmed: %v", err)
 	}
 }
@@ -376,11 +374,11 @@ func TestResponsesTerminalFailureWithTextIsTextOutput(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
-	if !errors.Is(err, imagesession.ErrTextOutput) {
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
+	if !errors.Is(err, ErrTextOutput) {
 		t.Fatalf("got %v", err)
 	}
-	if !imagesession.IsConfirmedProviderFailure(err) {
+	if !(errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit)) {
 		t.Fatalf("text output must be confirmed: %v", err)
 	}
 }
@@ -413,7 +411,7 @@ func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +421,7 @@ func TestResponsesImageRetriesWithoutToolChoiceOn400(t *testing.T) {
 }
 
 func isUnknown(err error) bool {
-	return errors.Is(err, graph.ErrProviderUnknown()) || errors.Is(err, imagesession.ErrUnknown())
+	return errors.Is(err, ErrUnknown) || errors.Is(err, graph.ErrProviderUnknown())
 }
 
 func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
@@ -467,7 +465,7 @@ func TestImagesEditSendsMultipartSourceMaskAndReferences(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "gpt-image", MaskEdit: true}
-	got, err := img.Edit(context.Background(), localedit.EditRequest{
+	got, err := img.Edit(context.Background(), EditRequest{
 		SourceBytes: png, SourceMIME: "image/png", MaskPNG: png,
 		ReferenceBytes: [][]byte{png}, Instruction: "去掉水印", Operation: "remove",
 		Size: "768x1024",
@@ -509,7 +507,7 @@ func TestResponsesMaskedEditSendsSourceAndProtectedMaskContract(t *testing.T) {
 		},
 		ToolRuntime: map[string]any{"model": "gpt-image-1", "quality": "high"},
 	}
-	got, err := img.Edit(context.Background(), localedit.EditRequest{
+	got, err := img.Edit(context.Background(), EditRequest{
 		SourceBytes: png, SourceMIME: "image/png", MaskPNG: png,
 		Instruction: "replace only the masked area", Operation: "inpaint", Size: "1024x1024",
 	})
@@ -562,12 +560,12 @@ func TestResponsesSellingPointSendsLowFidelityOnWire(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	_, err = img.GenerateImage(context.Background(), graph.ImageRequest{
+	_, err = img.Generate(context.Background(), GenerateRequest{
 		ImageTypeKey: "selling_point",
 		GenerationSpec: map[string]any{
 			"quality_intent": "high", "reference_fidelity": "high",
 		},
-		References: []graph.ReferenceImage{{AssetID: "a1", Bytes: png, MIME: "image/png"}},
+		Refs: []ImageRef{{Bytes: png, MIME: "image/png"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -583,14 +581,14 @@ func TestResponsesSellingPointSendsLowFidelityOnWire(t *testing.T) {
 }
 
 func TestWorkflowInfographicUsesLowInputFidelity(t *testing.T) {
-	opts := WorkflowImageToolOptions(graph.ImageRequest{
+	opts := WorkflowImageToolOptions(GenerateRequest{
 		ImageTypeKey: "selling_point",
 		GenerationSpec: map[string]any{
 			"quality_intent":     "high",
 			"reference_fidelity": "high",
 			"background_intent":  "auto",
 		},
-		References: []graph.ReferenceImage{{AssetID: "a1"}},
+		Refs: []ImageRef{{}},
 	}, nil, nil)
 	if opts["input_fidelity"] != "low" {
 		t.Fatalf("infographic fidelity %+v", opts)
@@ -601,13 +599,13 @@ func TestWorkflowInfographicUsesLowInputFidelity(t *testing.T) {
 	if opts["action"] != "generate" {
 		t.Fatalf("action %+v", opts)
 	}
-	photo := WorkflowImageToolOptions(graph.ImageRequest{
+	photo := WorkflowImageToolOptions(GenerateRequest{
 		ImageTypeKey: "hero",
 		GenerationSpec: map[string]any{
 			"quality_intent":     "high",
 			"reference_fidelity": "high",
 		},
-		References: []graph.ReferenceImage{{AssetID: "a1"}},
+		Refs: []ImageRef{{}},
 	}, nil, nil)
 	if photo["input_fidelity"] != "high" {
 		t.Fatalf("photography fidelity %+v", photo)
@@ -652,7 +650,7 @@ func TestImagesAPIBatchesCandidateCount(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024", Count: 2})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Count: 2, Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,9 +689,9 @@ func TestChatGenerateEditSendsCandidateCount(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{
-		Prompt: "x", Size: "1024x1024", Count: 3,
-		BaseBytes: png, ReferenceBytes: [][]byte{png},
+	got, err := img.Generate(context.Background(), GenerateRequest{
+		Prompt: "x", Size: "1024x1024", Count: 3, Mode: ModeChat,
+		Refs: []ImageRef{{Bytes: png, Filename: "base.png"}, {Bytes: png, Filename: "reference-1.png"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -720,7 +718,7 @@ func TestChatGenerateDoesNotFallbackToN1(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024", Count: 4})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Count: 4, Mode: ModeChat})
 	if err == nil {
 		t.Fatal("4xx with n>1 must not succeed via n=1 retry")
 	}
@@ -748,8 +746,9 @@ func TestChatGenerateEditDoesNotFallbackToN1(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
-		Prompt: "x", Size: "1024x1024", Count: 3, BaseBytes: png,
+	_, err = img.Generate(context.Background(), GenerateRequest{
+		Prompt: "x", Size: "1024x1024", Count: 3, Mode: ModeChat,
+		Refs: []ImageRef{{Bytes: png, Filename: "base.png"}},
 	})
 	if err == nil {
 		t.Fatal("edit 4xx with n>1 must not succeed via n=1 retry")
@@ -820,11 +819,10 @@ func TestGenerateImageWithReferencesUsesEdits(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	got, err := img.GenerateImage(context.Background(), graph.ImageRequest{
-		NodeTitle: "hero", ImageTypeKey: "hero",
-		Prompt: map[string]any{"design_goal": "展示商品"},
-		References: []graph.ReferenceImage{{
-			AssetID: "a1", Bytes: png, MIME: "image/png", Filename: "ref.png", Role: "product_identity",
+	got, err := img.Generate(context.Background(), GenerateRequest{
+		Prompt: "hero", ImageTypeKey: "hero",
+		Refs: []ImageRef{{
+			Bytes: png, MIME: "image/png", Filename: "ref.png",
 		}},
 	})
 	if err != nil {
@@ -862,9 +860,9 @@ func TestResponsesChatBranchOmitsPreviousResponseID(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
-		Prompt: "换成蓝色", Size: "1024x1024",
-		BaseBytes: png, ReferenceBytes: [][]byte{png},
+	_, err = img.Generate(context.Background(), GenerateRequest{
+		Prompt: "换成蓝色", Size: "1024x1024", Mode: ModeChat,
+		Refs: []ImageRef{{Bytes: png, Filename: "base.png"}, {Bytes: png, Filename: "reference-1.png"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -899,9 +897,9 @@ func TestResponsesAdapterForwardsPreviousResponseIDAndKeepsBaseImage(t *testing.
 	defer srv.Close()
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
 	prev := "prev-1"
-	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
-		Prompt: "继续", Size: "1024x1024",
-		BaseBytes: png, ReferenceBytes: [][]byte{png},
+	_, err = img.Generate(context.Background(), GenerateRequest{
+		Prompt: "继续", Size: "1024x1024", Mode: ModeChat,
+		Refs:               []ImageRef{{Bytes: png, Filename: "base.png"}, {Bytes: png, Filename: "reference-1.png"}},
 		PreviousResponseID: &prev,
 	})
 	if err != nil {
@@ -934,8 +932,10 @@ func TestResponsesFourHundredDoesNotFallbackToImages(t *testing.T) {
 	defer srv.Close()
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
 	prev := "resp-from-other-key"
-	_, err = img.Generate(context.Background(), imagesession.ChatRequest{
-		Prompt: "继续", Size: "1024x1024", BaseBytes: png, PreviousResponseID: &prev,
+	_, err = img.Generate(context.Background(), GenerateRequest{
+		Prompt: "继续", Size: "1024x1024", Mode: ModeChat,
+		Refs:               []ImageRef{{Bytes: png, Filename: "base.png"}},
+		PreviousResponseID: &prev,
 	})
 	if err == nil {
 		t.Fatal("expected responses 400")
@@ -946,9 +946,9 @@ func TestResponsesFourHundredDoesNotFallbackToImages(t *testing.T) {
 	if imagesHits != 0 {
 		t.Fatalf("responses 400 fell back to images %d times", imagesHits)
 	}
-	_, err = img.GenerateImage(context.Background(), graph.ImageRequest{
-		NodeTitle: "hero", ImageTypeKey: "hero",
-		References: []graph.ReferenceImage{{AssetID: "a1", Bytes: png, MIME: "image/png"}},
+	_, err = img.Generate(context.Background(), GenerateRequest{
+		Prompt: "hero", ImageTypeKey: "hero",
+		Refs: []ImageRef{{Bytes: png, MIME: "image/png"}},
 	})
 	if err == nil {
 		t.Fatal("expected responses 400")
@@ -969,7 +969,7 @@ func TestImagesChatDoesNotPersistResponseID(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,9 +1204,9 @@ func TestGeminiGenerateContentSendsInlineData(t *testing.T) {
 	}))
 	defer srv.Close()
 	g := GeminiImage{APIKey: "key", BaseURL: srv.URL, Model: "gemini-2.5-flash-image", APIVersion: "v1beta"}
-	got, err := g.GenerateImage(context.Background(), graph.ImageRequest{
-		NodeTitle: "hero", ImageTypeKey: "hero",
-		References: []graph.ReferenceImage{{Bytes: png, MIME: "image/png"}},
+	got, err := g.Generate(context.Background(), GenerateRequest{
+		Prompt: "hero", ImageTypeKey: "hero",
+		Refs: []ImageRef{{Bytes: png, MIME: "image/png"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1268,7 +1268,7 @@ func TestResponsesDropsBackgroundWhenUnsupported(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}, Background: true}
-	got, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "小猫", Size: "1024x1024"})
+	got, err := img.Generate(context.Background(), GenerateRequest{Prompt: "小猫", Size: "1024x1024", Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1323,8 +1323,8 @@ func TestResponsesRetriesWithTypeSizeOnlyTool(t *testing.T) {
 	defer srv.Close()
 
 	img := OpenAIResponses{OpenAIImages: OpenAIImages{Kind: "openai_responses", APIKey: "sk", BaseURL: srv.URL, Model: "m"}}
-	got, err := img.GenerateImage(context.Background(), graph.ImageRequest{
-		NodeTitle: "hero", ImageTypeKey: "hero",
+	got, err := img.Generate(context.Background(), GenerateRequest{
+		Prompt: "hero", ImageTypeKey: "hero",
 		GenerationSpec: map[string]any{"quality_intent": "high"},
 	})
 	if err != nil {
@@ -1438,8 +1438,8 @@ func TestImagesChatAppliesToolOptionsModelAndQuality(t *testing.T) {
 		}))
 		defer srv.Close()
 		img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3", Quality: "standard"}
-		if _, err := img.Generate(context.Background(), imagesession.ChatRequest{
-			Prompt: "x", Size: "1024x1024",
+		if _, err := img.Generate(context.Background(), GenerateRequest{
+			Prompt: "x", Size: "1024x1024", Mode: ModeChat,
 			ToolOptions: map[string]any{"model": " gpt-image-1 ", "quality": "high"},
 		}); err != nil {
 			t.Fatal(err)
@@ -1468,8 +1468,9 @@ func TestImagesChatAppliesToolOptionsModelAndQuality(t *testing.T) {
 		}))
 		defer srv.Close()
 		img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3", Quality: "standard"}
-		if _, err := img.Generate(context.Background(), imagesession.ChatRequest{
-			Prompt: "x", Size: "1024x1024", BaseBytes: png,
+		if _, err := img.Generate(context.Background(), GenerateRequest{
+			Prompt: "x", Size: "1024x1024", Mode: ModeChat,
+			Refs:        []ImageRef{{Bytes: png, Filename: "base.png"}},
 			ToolOptions: map[string]any{"model": "gpt-image-1", "quality": "low"},
 		}); err != nil {
 			t.Fatal(err)
@@ -1487,17 +1488,17 @@ func TestChat429IsConfirmedRetryableFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
 	if err == nil {
 		t.Fatal("expected 429")
 	}
 	if isUnknown(err) {
 		t.Fatalf("chat 429 should not be unknown: %v", err)
 	}
-	if !imagesession.IsConfirmedProviderFailure(err) {
+	if !(errors.Is(err, ErrTextOutput) || errors.Is(err, ErrRateLimit)) {
 		t.Fatalf("chat 429 should be confirmed: %v", err)
 	}
-	if !imagesession.IsRetryableProviderFailure(err) {
+	if !(errors.Is(err, ErrRateLimit) || errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx)) {
 		t.Fatalf("chat 429 should be retryable: %v", err)
 	}
 }
@@ -1509,7 +1510,7 @@ func TestGraph429StaysUnknown(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.GenerateImage(context.Background(), graph.ImageRequest{NodeTitle: "hero"})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "hero"})
 	if err == nil {
 		t.Fatal("expected 429")
 	}
@@ -1525,17 +1526,17 @@ func TestChat503IsProvider5xxNotUnknown(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
 	if err == nil {
 		t.Fatal("expected 503")
 	}
 	if isUnknown(err) {
 		t.Fatalf("chat 503 should not be unknown: %v", err)
 	}
-	if !errors.Is(err, imagesession.ErrProvider5xx) {
+	if !errors.Is(err, ErrProvider5xx) {
 		t.Fatalf("got %v", err)
 	}
-	if !imagesession.IsRetryableProviderFailure(err) {
+	if !(errors.Is(err, ErrRateLimit) || errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx)) {
 		t.Fatalf("chat 503 should be retryable: %v", err)
 	}
 }
@@ -1547,8 +1548,8 @@ func TestChat400QuotaIsRateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
-	if !errors.Is(err, imagesession.ErrRateLimit) {
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
+	if !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -1560,35 +1561,35 @@ func TestChat400QuotaWordIsNotRateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 	img := OpenAIImages{Kind: "openai_images", APIKey: "sk", BaseURL: srv.URL, Model: "dall-e-3"}
-	_, err := img.Generate(context.Background(), imagesession.ChatRequest{Prompt: "x", Size: "1024x1024"})
+	_, err := img.Generate(context.Background(), GenerateRequest{Prompt: "x", Size: "1024x1024", Mode: ModeChat})
 	if err == nil {
 		t.Fatal("expected 400")
 	}
-	if errors.Is(err, imagesession.ErrRateLimit) {
+	if errors.Is(err, ErrRateLimit) {
 		t.Fatal("bare quota in a 400 message is not a rate limit")
 	}
 }
 
 func TestMapTransportClassifiesTimeoutAndConnection(t *testing.T) {
 	timeoutErr := mapTransport(context.DeadlineExceeded)
-	if !errors.Is(timeoutErr, imagesession.ErrTimeout) {
+	if !errors.Is(timeoutErr, ErrTimeout) {
 		t.Fatalf("timeout %v", timeoutErr)
 	}
-	if !errors.Is(timeoutErr, graph.ErrProviderUnknown()) {
+	if !errors.Is(timeoutErr, ErrUnknown) {
 		t.Fatalf("graph path must still see unknown: %v", timeoutErr)
 	}
 	connErr := mapTransport(fmt.Errorf("read: connection reset by peer"))
-	if !errors.Is(connErr, imagesession.ErrConnection) {
+	if !errors.Is(connErr, ErrConnection) {
 		t.Fatalf("connection %v", connErr)
 	}
-	if !imagesession.IsRetryableProviderFailure(timeoutErr) || !imagesession.IsRetryableProviderFailure(connErr) {
+	if !errors.Is(timeoutErr, ErrTimeout) || !errors.Is(connErr, ErrConnection) {
 		t.Fatal("timeout/connection should be retryable")
 	}
 	other := mapTransport(fmt.Errorf("tls handshake failed"))
-	if !errors.Is(other, graph.ErrProviderUnknown()) {
+	if !errors.Is(other, ErrUnknown) {
 		t.Fatalf("unclassifiable %v", other)
 	}
-	if imagesession.IsRetryableProviderFailure(other) {
+	if errors.Is(other, ErrTimeout) || errors.Is(other, ErrConnection) || errors.Is(other, ErrRateLimit) || errors.Is(other, ErrProvider5xx) {
 		t.Fatalf("unclassifiable must not be retryable: %v", other)
 	}
 }
