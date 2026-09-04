@@ -28,7 +28,7 @@
 | [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [arch-journal-assessment.md](arch-journal-assessment.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [image-eval-pool.md](image-eval-pool.md) | 评测 | 证据 | 开放 | — | — |
-| [perf-capacity-metrics.md](perf-capacity-metrics.md) | 平台可靠性 | 实现 | 开放 | — | — |
+| [perf-capacity-metrics.md](perf-capacity-metrics.md) | 平台可靠性 | 实现 | 认领 | 主代理-0905-0437 | 2026-09-05T04:37:17+08:00 |
 
 ## 职责与适用范围
 
