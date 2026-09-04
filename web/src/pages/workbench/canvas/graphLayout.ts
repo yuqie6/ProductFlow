@@ -329,6 +329,6 @@ export function graphNodeTitleKey(nodeType: GraphNode["node_type"]): Translation
     case "image_generation":
       return "graph.node.imageGeneration";
     default:
-      return "graph.node.productSource";
+      return "graph.node.unknown";
   }
 }

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import {
-  GRAPH_NODE_TYPE_ORDER,
   graphConnectionInvalidReason,
   graphDataTypeLabelKey,
   graphNodeHasInput,
@@ -11,9 +10,12 @@ import {
   inspectableGraphNodeId,
   isGraphConnectionValid,
   graphHasRunnableProcessingNode,
+  graphRunBlock,
+  isProcessingNode,
   missingRequiredRunNodes,
   missingRequiredRunRoles,
   missingRunNodesSummary,
+  unknownGraphNodeTypes,
 } from "./graphCatalog";
 
 const catalog: GraphNodeCatalog = {
@@ -260,6 +262,11 @@ describe("graphHasRunnableProcessingNode", () => {
     };
     expect(graphHasRunnableProcessingNode(unwiredImage, catalog)).toBe(false);
   });
+
+  it("does not treat processing types as runnable without catalog kind", () => {
+    expect(graphHasRunnableProcessingNode(graph, null)).toBe(false);
+    expect(isProcessingNode(graph.nodes.find((node) => node.id === "image")!, null)).toBe(false);
+  });
 });
 
 describe("missingRunNodesSummary", () => {
@@ -282,9 +289,49 @@ describe("graphNodeHasInput", () => {
 });
 
 describe("graphNodeTypeOrder", () => {
-  it("falls back to the display order when catalog is missing", () => {
-    expect(graphNodeTypeOrder(null)).toEqual(GRAPH_NODE_TYPE_ORDER);
-    expect(graphNodeTypeOrder(catalog)).toEqual(GRAPH_NODE_TYPE_ORDER);
+  it("follows catalog node order and stays empty without a catalog", () => {
+    expect(graphNodeTypeOrder(null)).toEqual([]);
+    expect(graphNodeTypeOrder(catalog)).toEqual([
+      "product_source",
+      "image_asset",
+      "creative_brief",
+      "visual_system",
+      "image_prompt",
+      "image_generation",
+    ]);
+    expect(graphNodeTypeOrder({
+      version: 1,
+      nodes: [catalog.nodes[5]!, catalog.nodes[0]!],
+    })).toEqual(["image_generation", "product_source"]);
+  });
+});
+
+describe("unknownGraphNodeTypes", () => {
+  it("lists graph types the loaded catalog does not define", () => {
+    const partial: GraphNodeCatalog = {
+      version: 1,
+      nodes: catalog.nodes.filter((node) => node.node_type !== "image_generation"),
+    };
+    expect(unknownGraphNodeTypes(graph, catalog)).toEqual([]);
+    expect(unknownGraphNodeTypes(graph, null)).toEqual([]);
+    expect(unknownGraphNodeTypes(graph, partial)).toEqual(["image_generation"]);
+  });
+});
+
+describe("graphRunBlock", () => {
+  it("blocks on missing catalog before inventing processing nodes", () => {
+    expect(graphRunBlock(graph, null)).toEqual({ kind: "catalog_missing" });
+  });
+
+  it("blocks unknown types instead of falling back to a hardcoded set", () => {
+    const partial: GraphNodeCatalog = {
+      version: 1,
+      nodes: catalog.nodes.filter((node) => node.node_type !== "image_generation"),
+    };
+    expect(graphRunBlock(graph, partial)).toEqual({
+      kind: "unknown_nodes",
+      types: ["image_generation"],
+    });
   });
 });
 

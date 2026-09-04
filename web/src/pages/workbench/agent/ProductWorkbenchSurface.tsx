@@ -331,6 +331,8 @@ export function ProductWorkbenchSurface({
       content: (
         <GraphAddNodePanel
           catalog={catalog}
+          catalogError={catalogError}
+          onRetryCatalog={() => void catalogQuery.refetch()}
           busy={canvasBusy}
           onCreate={actions.createNode}
           onCreateShot={actions.createShot}

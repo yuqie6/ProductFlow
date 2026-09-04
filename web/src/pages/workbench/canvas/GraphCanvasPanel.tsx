@@ -65,7 +65,7 @@ import { applyGraphRunEvent, subscribeGraphRunEvents } from "./graphRunEvents";
 import { withGraphRunSubmit } from "./graphRunLock";
 import { plannedActionsFromPreview } from "./graphRunPreview";
 import { isMoveNodesOnly } from "./graphChangeSetQueue";
-import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
+import { graphEdgeRoleLabelKey, graphRunBlock, graphRunBlockMessage, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
   buildCreateShotOperations,
   shotRunRequest,
@@ -418,19 +418,12 @@ export function GraphCanvasPanel({
   const runningRuns = graphRunningRuns(runsQuery.data?.items);
   const liveRun = runningRuns[0] ?? queuedRuns[0] ?? null;
   const liveRunId = liveRun?.id ?? null;
-  const missingRunNodes = useMemo(
-    () => missingRequiredRunNodes(graph, catalog),
-    [catalog, graph],
-  );
-  const graphRunBlocked = !graphHasRunnableProcessingNode(graph, catalog);
-  const graphRunBlockedReason = useMemo(() => {
-    if (!graphRunBlocked) return undefined;
-    const missing = missingRunNodesSummary(missingRunNodes, (role) => {
-      const key = graphEdgeRoleLabelKey(role);
-      return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
-    });
-    return missing || t("graph.runs.noRunnableNodes");
-  }, [graphRunBlocked, missingRunNodes, t]);
+  const runBlock = useMemo(() => graphRunBlock(graph, catalog), [catalog, graph]);
+  const graphRunBlocked = runBlock != null;
+  const graphRunBlockedReason = useMemo(() => graphRunBlockMessage(runBlock, t, (role) => {
+    const key = graphEdgeRoleLabelKey(role);
+    return t("graph.missingRunInput", { role: key ? t(key) : t("graph.edgeRole.unknown") });
+  }), [runBlock, t]);
   const blockedShotReasons = useMemo(() => {
     const reasons: Record<string, string> = {};
     for (const group of graph.groups) {

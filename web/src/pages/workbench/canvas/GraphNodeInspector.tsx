@@ -64,7 +64,7 @@ import {
 import { documentCandidateCatalogFields } from "./documentCandidateView";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
-import { graphEdgeRoleLabelKey, graphHasRunnableProcessingNode, graphNodeConfigFields, missingRequiredRunNodes, missingRequiredRunRoles, missingRunNodesSummary } from "./graphCatalog";
+import { graphCatalogNode, graphEdgeRoleLabelKey, graphNodeConfigFields, graphRunBlock, graphRunBlockMessage, missingRequiredRunRoles } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
 import { graphArtifactTypeLabelKey, graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphOutputActionLabelKey, graphOutputQualityLabelKey, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
 import { withGraphRunSubmit } from "./graphRunLock";
@@ -193,19 +193,12 @@ export function GraphNodeInspector({
     : null;
   const nodeStatus: WorkflowNodeDisplayStatus = presentation?.status ?? "idle";
   const inspectorDisplayState = node ? displayNodeState(node, nodeStatus) : null;
-  const missingRunNodes = useMemo(
-    () => missingRequiredRunNodes(graph, catalog),
-    [catalog, graph],
-  );
-  const graphRunBlocked = !graphHasRunnableProcessingNode(graph, catalog);
-  const graphRunBlockedReason = useMemo(() => {
-    if (!graphRunBlocked) return undefined;
-    const missing = missingRunNodesSummary(missingRunNodes, (role) => {
-      const key = graphEdgeRoleLabelKey(role);
-      return t("graph.missingRunInput", { role: key ? t(key) : role });
-    });
-    return missing || t("graph.runs.noRunnableNodes");
-  }, [graphRunBlocked, missingRunNodes, t]);
+  const runBlock = useMemo(() => graphRunBlock(graph, catalog), [catalog, graph]);
+  const graphRunBlocked = runBlock != null;
+  const graphRunBlockedReason = useMemo(() => graphRunBlockMessage(runBlock, t, (role) => {
+    const key = graphEdgeRoleLabelKey(role);
+    return t("graph.missingRunInput", { role: key ? t(key) : role });
+  }), [runBlock, t]);
   const runMutation = useMutation({
     mutationFn: (input: GraphRunSubmitInput) =>
       api.submitGraphRun(graph.product_id, graph.id, input),
@@ -614,6 +607,13 @@ export function GraphNodeInspector({
         ) : !catalog && catalogLoadError ? (
           <CatalogLoadError
             message={catalogLoadError}
+            busy={busy}
+            retrying={catalogQuery.isFetching}
+            onRetry={retryCatalog}
+          />
+        ) : catalog && !graphCatalogNode(catalog, node.node_type) ? (
+          <CatalogLoadError
+            message={t("graph.catalog.unknownNodes")}
             busy={busy}
             retrying={catalogQuery.isFetching}
             onRetry={retryCatalog}

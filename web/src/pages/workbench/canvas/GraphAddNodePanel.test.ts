@@ -4,6 +4,19 @@ import { describe, expect, it } from "vitest";
 
 import { GraphAddNodePanel } from "./GraphAddNodePanel";
 import { humanizeCatalogKey } from "./CatalogConfigFields";
+import type { GraphNodeCatalog } from "../../../lib/types";
+
+const catalog: GraphNodeCatalog = {
+  version: 1,
+  nodes: [
+    { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
+    { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
+    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "document", accepts: [] },
+    { node_type: "visual_system", output_data_type: "visual_system", kind: "document", accepts: [] },
+    { node_type: "image_prompt", output_data_type: "prompt", kind: "document", accepts: [] },
+    { node_type: "image_generation", output_data_type: "image_asset", kind: "effect", accepts: [] },
+  ],
+};
 
 describe("humanizeCatalogKey", () => {
   it("turns unknown catalog keys into readable labels", () => {
@@ -14,6 +27,7 @@ describe("humanizeCatalogKey", () => {
 describe("GraphAddNodePanel", () => {
   it("lists every v3 node type with a purpose line and no JSON dump", () => {
     const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
+      catalog,
       busy: false,
       onCreate: () => undefined,
     }));
@@ -25,6 +39,19 @@ describe("GraphAddNodePanel", () => {
     expect(markup).toContain("图片生成");
     expect(markup).toContain("提供商品名称、类目和卖点");
     expect(markup).not.toContain("product_source");
+  });
+
+  it("shows a recoverable error instead of a hardcoded palette when catalog is missing", () => {
+    const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
+      catalog: null,
+      catalogError: "配置暂时加载失败。",
+      onRetryCatalog: () => undefined,
+      busy: false,
+      onCreate: () => undefined,
+    }));
+    expect(markup).toContain("配置暂时加载失败。");
+    expect(markup).toContain("role=\"alert\"");
+    expect(markup).not.toContain("提供商品名称、类目和卖点");
   });
 
   it("shows selection commands only when they apply, including dissolve", () => {

@@ -18,15 +18,6 @@ import type {
 import type { WorkflowCanvasPortVisualState } from "../chrome/WorkflowCanvasChrome";
 import type { WorkflowNodePresentationKind } from "../chrome/WorkflowNodeCard";
 
-export const GRAPH_NODE_TYPE_ORDER: GraphNodeType[] = [
-  "product_source",
-  "image_asset",
-  "creative_brief",
-  "visual_system",
-  "image_prompt",
-  "image_generation",
-];
-
 export function graphNodeConfigFields(
   catalog: GraphNodeCatalog | null | undefined,
   nodeType: GraphNodeType,
@@ -42,12 +33,7 @@ export function graphCatalogNode(
 }
 
 export function graphNodeTypeOrder(catalog: GraphNodeCatalog | null | undefined): GraphNodeType[] {
-  if (!catalog?.nodes.length) return GRAPH_NODE_TYPE_ORDER;
-  const known = new Set<GraphNodeType>(GRAPH_NODE_TYPE_ORDER);
-  const ordered = catalog.nodes
-    .map((node) => node.node_type)
-    .filter((nodeType): nodeType is GraphNodeType => known.has(nodeType));
-  return ordered.length ? ordered : GRAPH_NODE_TYPE_ORDER;
+  return catalog?.nodes.map((node) => node.node_type) ?? [];
 }
 
 /** Catalog 按源节点输出类型接受连线，不看标题或资产路径。 */
@@ -175,20 +161,62 @@ export function missingRequiredRunNodes(
     .filter((item) => item.roles.length > 0);
 }
 
-const FALLBACK_PROCESSING_TYPES = new Set<GraphNodeType>([
-  "creative_brief",
-  "visual_system",
-  "image_prompt",
-  "image_generation",
-]);
-
 function nodeIsProcessing(
   node: GraphNode,
   catalog: GraphNodeCatalog | null | undefined,
 ): boolean {
   const spec = graphCatalogNode(catalog, node.node_type);
-  if (spec) return spec.kind === "document" || spec.kind === "effect";
-  return FALLBACK_PROCESSING_TYPES.has(node.node_type);
+  return spec?.kind === "document" || spec?.kind === "effect";
+}
+
+export function unknownGraphNodeTypes(
+  graph: GraphProjection,
+  catalog: GraphNodeCatalog | null | undefined,
+): GraphNodeType[] {
+  if (!catalog?.nodes.length) return [];
+  const known = new Set(catalog.nodes.map((item) => item.node_type));
+  const seen = new Set<GraphNodeType>();
+  for (const node of graph.nodes) {
+    if (!known.has(node.node_type)) seen.add(node.node_type);
+  }
+  return [...seen];
+}
+
+export type GraphRunBlock =
+  | { kind: "catalog_missing" }
+  | { kind: "unknown_nodes"; types: GraphNodeType[] }
+  | { kind: "missing_inputs"; items: Array<{ node: GraphNode; roles: GraphEdgeRole[] }> }
+  | { kind: "no_runnable" };
+
+export function graphRunBlock(
+  graph: GraphProjection,
+  catalog: GraphNodeCatalog | null | undefined,
+): GraphRunBlock | null {
+  if (!catalog?.nodes.length) return { kind: "catalog_missing" };
+  const unknown = unknownGraphNodeTypes(graph, catalog);
+  if (unknown.length) return { kind: "unknown_nodes", types: unknown };
+  if (graphHasRunnableProcessingNode(graph, catalog)) return null;
+  const missing = missingRequiredRunNodes(graph, catalog);
+  if (missing.length) return { kind: "missing_inputs", items: missing };
+  return { kind: "no_runnable" };
+}
+
+export function graphRunBlockMessage(
+  block: GraphRunBlock | null,
+  t: (key: TranslationKey) => string,
+  roleLabel: (role: GraphEdgeRole) => string,
+): string | undefined {
+  if (!block) return undefined;
+  switch (block.kind) {
+    case "catalog_missing":
+      return t("graph.connect.catalogMissing");
+    case "unknown_nodes":
+      return t("graph.catalog.unknownNodes");
+    case "missing_inputs":
+      return missingRunNodesSummary(block.items, roleLabel);
+    case "no_runnable":
+      return t("graph.runs.noRunnableNodes");
+  }
 }
 
 /** 整图入队条件与后端一致：至少有一个具备必需输入的处理节点。 */

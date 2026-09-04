@@ -1,4 +1,4 @@
-import { BookmarkPlus, Boxes, CopyPlus, FolderPlus, Ungroup } from "lucide-react";
+import { AlertCircle, BookmarkPlus, Boxes, CopyPlus, FolderPlus, RotateCcw, Ungroup } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { Button } from "../../../components/ui/button";
@@ -25,6 +25,8 @@ const NODE_DESCRIPTIONS: Record<GraphNodeType, TranslationKey> = {
 
 export function GraphAddNodePanel({
   catalog = null,
+  catalogError = null,
+  onRetryCatalog,
   busy,
   onCreate,
   onCreateShot,
@@ -58,11 +60,14 @@ export function GraphAddNodePanel({
   onSaveGroup?: () => void;
   onSaveSelection?: () => void;
   catalog?: GraphNodeCatalog | null;
+  catalogError?: string | null;
+  onRetryCatalog?: () => void;
   onOpenRecipesTab?: () => void;
 }) {
   const { t } = useI18n();
   const shotKeys = generatingImageTypeKeys();
   const [shotKey, setShotKey] = useState<AgentProductImageTypeKey>(shotKeys[0] ?? "hero");
+  const paletteTypes = graphNodeTypeOrder(catalog);
   return (
     <div className="space-y-4 p-3.5 pb-6 text-left" data-graph-add-node-panel>
       {canDuplicate && onDuplicate ? (
@@ -159,9 +164,33 @@ export function GraphAddNodePanel({
       </div>
 
       <div className="flex flex-col gap-2.5">
-        {graphNodeTypeOrder(catalog).map((nodeType) => {
+        {paletteTypes.length === 0 ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error"
+          >
+            <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p>{catalogError || t("graph.connect.catalogMissing")}</p>
+              {onRetryCatalog ? (
+                <Button
+                  variant="dangerSoft"
+                  size="sm"
+                  className="mt-2"
+                  onClick={onRetryCatalog}
+                  disabled={busy}
+                  aria-label={t("workbench.retry")}
+                >
+                  <RotateCcw size={12} aria-hidden="true" />
+                  {t("workbench.retry")}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        ) : paletteTypes.map((nodeType) => {
           const theme = workflowNodeKindTheme(nodeType);
           const Icon = theme.icon;
+          const descriptionKey = NODE_DESCRIPTIONS[nodeType];
           return (
             <button
               key={nodeType}
@@ -183,7 +212,7 @@ export function GraphAddNodePanel({
                   </span>
                 </div>
                 <p className="mt-1 text-[11px] leading-4 text-text-muted">
-                  {t(NODE_DESCRIPTIONS[nodeType])}
+                  {descriptionKey ? t(descriptionKey) : humanizeCatalogKey(nodeType)}
                 </p>
               </div>
             </button>
