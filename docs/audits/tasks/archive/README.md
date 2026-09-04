@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [harness-container-validation.md](harness-container-validation.md) | 完成 | 固定提交原 Dockerfile 完整构建；断网 UID 10001、服务启停和新轨迹卷验证通过，构建临时固定 registry IPv4 |
 | [eval-collection-isolation.md](eval-collection-isolation.md) | 完成 | 场景清单可哈希，L1 单集合运行与只含开发材料的导出边界通过；没有真实隐藏/独立验收集证据 |
 | [harness-traces.md](harness-traces.md) | 完成 | 默认关闭的结构化轨迹；独立有界队列、敏感内容排除与写盘失败不影响业务的回归通过，未采生产样本 |
 | [harness-attribution.md](harness-attribution.md) | 完成 | 同一冻结 hash 贯穿 Pi、checkpoint、invocation、健康与评测；新请求严格验证，历史 NULL 不回填 |
