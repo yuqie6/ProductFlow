@@ -62,6 +62,11 @@ func uniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func postgresDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
+}
+
 func inSet(set map[string]struct{}, value string) bool {
 	_, ok := set[value]
 	return ok

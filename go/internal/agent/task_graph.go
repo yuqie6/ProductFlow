@@ -257,6 +257,32 @@ func resolveWorkflowRequestApproval(ctx context.Context, pgxTx *gorm.DB, request
 	})
 }
 
+// lockProjectionForLinkedDraft 在 Draft 确认写 conversation 之前锁住关联 projection。
+// 与 AppendEvents 的 projection → conversation 顺序对齐，避免 conversation → projection 死锁。
+func lockProjectionForLinkedDraft(ctx context.Context, pgxTx *gorm.DB, conversationID string) error {
+	var draft schema.LibraryOrganizationDrafts
+	err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("current_revision_id").
+		Where("conversation_id = ?", conversationID).Take(&draft).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if draft.CurrentRevisionID == nil || *draft.CurrentRevisionID == "" {
+		return nil
+	}
+	var proj schema.AgentTurnProjections
+	err = pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id").
+		Where("library_organization_draft_revision_id = ?", *draft.CurrentRevisionID).
+		Order("created_at DESC, id DESC").
+		Take(&proj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
+
 // completeOrganizationDraftTask 在用户确认图库整理 Draft 后，把仍 awaiting_confirmation 的全局 Task 标 succeeded，并向 journal 写 approval/resolved。
 //
 // 这是全局整理 Goal 的用户完成路径，不是商品 goal_loop。找不到关联 Turn 则只跳过。写 agent_tasks、agent_turn_events、conversation。

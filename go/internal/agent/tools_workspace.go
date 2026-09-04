@@ -315,6 +315,7 @@ func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string,
 }
 
 // ConfirmLibraryDraftHTTP 按幂等键确认素材整理 Draft。idempotency key 为空返回 Validation。conversation 或 Draft 不存在返回 NotFound；非全局、版本变化或不在待确认状态返回 Conflict/NotPending。
+// 同一事务先锁关联 projection，再确认 Draft 并写 conversation，避免与 turn/end 的 projection → conversation 顺序死锁。
 func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID string, expectedVersion int, idempotencyKey string) (any, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if key == "" {
@@ -327,6 +328,9 @@ func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID str
 			return err
 		}
 		if err := requireGlobalScope(conv); err != nil {
+			return err
+		}
+		if err := lockProjectionForLinkedDraft(ctx, pgxTx, conversationID); err != nil {
 			return err
 		}
 		draft, err := s.Library.ConfirmOrganizationDraftTx(ctx, pgxTx, conversationID, expectedVersion, key)

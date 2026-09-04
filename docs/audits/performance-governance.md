@@ -60,11 +60,11 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 
 | ID | 项目 | 状态 | 当前措施与证据 | 剩余缺口 |
 |---|---|---|---|---|
-| PERF-01 | Graph 行锁反向边 | 部分完成 | Graph 事件追加收口为 `appendGraphRunEventLocked`；run mutation 使用 `run -> graph -> node` 或 `run -> node -> effect`；文稿自动采用改为先锁 run 再锁 live graph；当前全量 Go gate 通过 | 需要专门的并发取消/自动采用 regression，不只依赖普通执行测试 |
-| PERF-02 | Agent Task 与 Turn projection 反向边 | 部分完成 | 全局 Draft 确认先 `FOR UPDATE projection` 再锁 Task，与 journal 终态投影路径一致；Agent lock-order tests 和全量 Go gate 通过 | 需要保留跨事务死锁 gate，并继续核对稳定架构文档的 owner 表 |
-| PERF-03 | node/run 隐式反向边 | 部分完成 | `failBlockedQueuedNodes` 先锁 run，再改 node 并追加事件；事件 helper 不再隐藏获取 run 锁；Graph 全量 Go gate 通过 | 仍需 Graph 并发 regression，覆盖 recovery、cancel、worker tick |
+| PERF-01 | Graph 行锁反向边 | 部分完成 | Graph 事件追加收口为 `appendGraphRunEventLocked`；run mutation 使用 `run -> graph -> node` 或 `run -> node -> effect`；文稿自动采用改为先锁 run 再锁 live graph；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` `-count=20` 通过 | 未单独断言自动采用结果；目标规模锁等待仍缺 |
+| PERF-02 | Agent Task 与 Turn projection 反向边 | 部分完成 | 全局 Draft 确认先锁关联 projection，再写 conversation / Task；`TestConfirmDraftAndAppendTerminalDoNotDeadlock` 与既有 append/claim 锁序测试 `-count=20` 通过 | 继续核对稳定架构文档的 owner 表 |
+| PERF-03 | node/run 隐式反向边 | 部分完成 | `failBlockedQueuedNodes` 先锁 run，再改 node 并追加事件；事件 helper 不再隐藏获取 run 锁；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` 覆盖 cancel、ExecuteRun、recovery，`-count=20` 通过 | 目标规模锁等待仍缺 |
 | PERF-04 | 生图容量锁顺序 | 部分完成 | Graph 为 `capacity advisory -> run -> node`；ImageSession claim 改为 `capacity advisory -> task`，取得 task 锁后重新核对状态 | 全库单钥匙和 noisy neighbor 仍存在；SaaS 前需按 workspace/tenant 重构 |
-| PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 过期 execution / queued Task / pending restage 已分阶段且每聚合一事务；`HasMore` 为各阶段 OR。Graph/ImageSession/Delivery/LocalEdit 为发现快照 → 单聚合状态 → 单聚合 outbox；每轮最多 25 条，`SKIP LOCKED`，单条失败不回滚整批 | 仍需目标规模锁等待分布；Graph 取消/自动采用/worker tick 锁序 `-count=20` 未跑 |
+| PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 过期 execution / queued Task / pending restage 已分阶段且每聚合一事务；`HasMore` 为各阶段 OR。Graph/ImageSession/Delivery/LocalEdit 为发现快照 → 单聚合状态 → 单聚合 outbox；每轮最多 25 条，`SKIP LOCKED`，单条失败不回滚整批。Graph 取消/执行/recovery 锁序 `-count=20` 已跑 | 仍需目标规模锁等待分布 |
 | PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch loop 与 recovery cadence 解耦；watch 默认每秒投递、每 10 秒 recovery；`Stage`/`resetPending`/`MarkFailed` 回 PENDING/`ReleaseForRetry` 在同一事务 `NOTIFY productflow_dispatch`；标 DEAD 不通知；陈旧 SENT 对账每轮最多 100 条 | 退避未到期时唤醒仍会跳过该行，继续依赖 ticker；缺负载下 dispatch latency |
 | PERF-07 | SSE 连接占用 | 完成 | `platform/notify.Subscribe` 按 pool 在进程内共享一条 LISTEN，Agent/Graph/ImageSession 共用 fanout；`ListenerConnections`、`GraphSSEConnections`、Agent SSE gauge 已接入 API metrics；缓冲满时丢通知并依赖 PG 回读；notify/metrics/Agent shared-listener tests 通过 | 指标是单进程 gauge；部署仍需按副本抓取并用 `replicas * (listener + SSE) + pool` 做容量告警，真实多副本观测保持观察项 |
 | PERF-08 | ImageSession 列表 N+1 | 部分完成 | 列表批量摘要与游标分页仍在。详情 GET 只带首屏 history；`GET /history` 做 keyset；status/详情队列总览走 `LoadQueueOverview`，不再付 admission 节点 COUNT | 详情任务/effect 仍有多次查询；需要真实规模 query plan 与 payload 记录 |
