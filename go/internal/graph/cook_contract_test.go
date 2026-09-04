@@ -384,9 +384,13 @@ func TestForceRewritePromptDoesNotChangeLiveUntilApply(t *testing.T) {
 func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
+	view := loadProjection(t, gs, productID, graphID)
+	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
 	prompt := &midRunBriefEditor{gs: gs, t: t, productID: productID, graphID: graphID}
 	images := &countingImage{}
-	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": brief.ID,
+	})
 	gs.mustStatus(t, resp, 201)
 	var run graph.GraphRunResponse
 	gs.decode(t, resp, &run)
@@ -402,8 +406,8 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	if !prompt.edited {
 		t.Fatal("expected mid-run brief edit")
 	}
-	view := loadProjection(t, gs, productID, graphID)
-	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
+	view = loadProjection(t, gs, productID, graphID)
+	brief = nodeOfType(t, view, graph.NodeCreativeBrief)
 	if brief.Config["goal"] != "用户中途改过" {
 		t.Fatalf("goal %+v", brief.Config["goal"])
 	}

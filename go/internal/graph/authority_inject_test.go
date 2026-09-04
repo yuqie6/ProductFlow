@@ -11,9 +11,13 @@ import (
 func TestAdoptSkipsOverwriteWhenPromptEditedDuringBriefCook(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
+	view := loadProjection(t, gs, productID, graphID)
+	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
 	prompt := &midRunSiblingEditor{gs: gs, t: t, productID: productID, graphID: graphID, target: graph.NodeImagePrompt}
 	images := &countingImage{}
-	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": brief.ID,
+	})
 	gs.mustStatus(t, resp, 201)
 	var run graph.GraphRunResponse
 	gs.decode(t, resp, &run)
@@ -28,7 +32,7 @@ func TestAdoptSkipsOverwriteWhenPromptEditedDuringBriefCook(t *testing.T) {
 	if !prompt.edited {
 		t.Fatal("expected mid-run prompt edit")
 	}
-	view := loadProjection(t, gs, productID, graphID)
+	view = loadProjection(t, gs, productID, graphID)
 	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
 	got, _ := promptNode.Config["prompt"].(map[string]any)
 	composition, _ := got["composition"].(map[string]any)
@@ -38,7 +42,17 @@ func TestAdoptSkipsOverwriteWhenPromptEditedDuringBriefCook(t *testing.T) {
 	if promptNode.DocumentOrigin == nil || *promptNode.DocumentOrigin != graph.OriginAuthored {
 		t.Fatalf("origin %+v", promptNode.DocumentOrigin)
 	}
-	if promptNode.PendingCandidateArtifactID == nil {
+	executeGraphRun(t, gs, productID, graphID, map[string]any{
+		"scope": "node", "node_id": promptNode.ID, "force": true, "document_action": "complete",
+	}, &prompt.countingPrompt, images)
+	after := loadProjection(t, gs, productID, graphID)
+	cooked := nodeOfType(t, after, graph.NodeImagePrompt)
+	got, _ = cooked.Config["prompt"].(map[string]any)
+	composition, _ = got["composition"].(map[string]any)
+	if composition["layout"] != "用户中途改构图" {
+		t.Fatalf("prompt cook overwrote sibling edit %+v", got)
+	}
+	if cooked.PendingCandidateArtifactID == nil {
 		t.Fatal("prompt cook after sibling edit must remain a candidate")
 	}
 }
