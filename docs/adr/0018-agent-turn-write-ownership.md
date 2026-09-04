@@ -49,7 +49,7 @@ agent-service 拥有：
 - 工具 intent schema 与 manifest `recovery_policy` 保持 wire 兼容，但恢复策略只由 Go mutation ledger/reconciler 解释。
 - `unknown`、`terminal_reason_code`、approval、Goal 和画布编辑语义不变。
 
-迁移按 [`../audits/agent-runtime-ownership.md`](../audits/agent-runtime-ownership.md) 的 S1-S6 和 checkpoint 协议执行。该账本不替代生产就绪账本。
+迁移按 [`../history/agent-runtime-timeline.md#runtime-ownership-evidence`](../history/agent-runtime-timeline.md#runtime-ownership-evidence) 的 S1-S6 和 checkpoint 协议执行。该账本不替代生产就绪账本。
 
 ## 后果
 
@@ -70,5 +70,5 @@ agent-service 拥有：
 
 - [`0007-pi-agent-runtime-boundary.md`](0007-pi-agent-runtime-boundary.md)
 - [`0017-agent-full-journal-ui-protocol.md`](0017-agent-full-journal-ui-protocol.md)
-- [`../audits/agent-runtime-ownership.md`](../audits/agent-runtime-ownership.md)
-- [`../audits/agent-production-readiness.md`](../audits/agent-production-readiness.md)
+- [`../history/agent-runtime-timeline.md#runtime-ownership-evidence`](../history/agent-runtime-timeline.md#runtime-ownership-evidence)
+- [`../audits/performance-governance.md#production-gates`](../audits/performance-governance.md#production-gates)

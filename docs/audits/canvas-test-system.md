@@ -1,8 +1,17 @@
-# 画布文稿权威测试体系验收账本
+# 工作流体验组与画布文稿权威账本
 
-本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的 Agent 生产 Gate。
+本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的 Agent 生产 Gate。
 
-**画布组章程。执行以已发布 issue 为界。** C0–C3、C5、C6 已完成。C4 空闲改写/候选已进门禁。当前任务与认领见 [Issue 看板](tasks/README.md)；运行中检查器任务验收后，由维护者核对并发布 `canvas-c4-remainder`。
+**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C3、C5、C6 已完成。C4 空闲改写/候选已进门禁。当前任务与认领见 [Issue 看板](tasks/README.md)；运行中检查器任务验收后，由维护者核对剩余 C4 再发布任务。
+
+## 组职责与交接
+
+- 负责商家从编辑、运行到使用商品素材的业务行为，保留关闭 Agent 后仍可独立操作的合同。图片是否达质量门槛由评测组的图片质量验收裁定；生成链缺陷由本组修复，不用改评委掩盖。
+- AR-01 与 C4 由同一 [canvas-inspector-midrun](tasks/canvas-inspector-midrun.md) 交付。2026-09-05 源码复核仍见整图 revision 使 dirty 草稿冲突、Inspector 丢弃 save 第二参、`commitNode` 读取发送时最新 revision；尚未修复或完成浏览器验收。
+- AR-01-A：真实编辑基线贯穿 autosave、Inspector、Surface、Canvas 到 Graph Command；仅兄弟节点配置变更可由服务端安全 rebase，不以最新 revision 遮蔽过期编辑。
+- AR-01-B：同节点变更仍拒绝过期保存；409 保留草稿、提示冲突并停止自动重放，不以当前值相等绕过历史裁定。
+- AR-01-C：保存串行，失败阻止运行，较早响应不能清掉保存期间的新输入。AR-01-D：实际 run 仍 in-flight 时手填保存，运行完成后 live 保持用户稿，按 O2/O3 验证。
+- 以上四条与 C4 分别记录覆盖证据，由本组一次审核，不再等待架构组第二次签收；局部修复足够时不强制新模块。journal、lease、锁序与容量归平台可靠性；Agent 工具使用行为归 Agent 能力。
 
 ## 来源与使用规则
 

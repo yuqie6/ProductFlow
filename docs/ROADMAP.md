@@ -2,7 +2,7 @@
 
 尚未成为产品事实、或尚未被真实验证的方向。当前能力见 [`PRD.md`](PRD.md)，结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，操作见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
-跨层验收按业务组运转：章程在 [`audits/README.md`](audits/README.md)，issue 看板在 [`audits/tasks/README.md`](audits/tasks/README.md)。先认领再开工，一人一份。总账本只留合同与证据。没有验收章程的产品项不走该板。
+跨层验收由工作流体验、Agent 能力、评测、平台可靠性四组承接：一组一份文档，职责与投入顺序在 [`audits/README.md`](audits/README.md)，issue 看板在 [`audits/tasks/README.md`](audits/tasks/README.md)。先认领再开工，一人一份。组文档保存合同和证据；用户独立交办任务也可进入同一看板，无需建组。
 
 ## 近期
 
@@ -26,7 +26,7 @@
 
 ### Agent 耐久
 
-lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。S1–S6 与 G-01–G-05、G-07 已关闭。运行时所有权 S0–S6 已关闭，证据在 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)。
+lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/performance-governance.md#production-gates`](audits/performance-governance.md#production-gates)。S1–S6 与 G-01–G-05、G-07 已关闭。运行时所有权 S0–S6 已关闭，证据在 [`history/agent-runtime-timeline.md#runtime-ownership-evidence`](history/agent-runtime-timeline.md#runtime-ownership-evidence)。
 
 剩余：G-06 的行为门槛由 [评测组章程](audits/agent-eval-system.md) 根据已审核的 `run_id` 裁定，执行进度见 [Issue 看板](audits/tasks/README.md)。采证 issue 关闭不等于门槛通过。未过门前不扩大默认能力，也不把 Pi session 文件当作 durable 证明。background 模型调用仍按生产账本 D-03 不接。旧 Go Agent 留在 `exp`。Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
@@ -36,7 +36,7 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agen
 
 ### Agent Self-Harness
 
-当前开工：[`audits/tasks/harness-artifact.md`](audits/tasks/harness-artifact.md)。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。进化不得改评测 grader 刷分。
+Agent 能力组承接 [普通 Skill 修复](audits/tasks/eval-skills.md) 与 [壳工件 P1](audits/tasks/harness-artifact.md)。优先处理已知行为失败，不必等待进化控制器；P1 仍开放，P2 以后按阶段门发布。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。题库与 grader 由评测组独立维护。
 
 ### 运行时性能治理
 
@@ -46,14 +46,14 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agen
 
 C0–C3、C5、C6 已落地。C4 空闲检查器改写/候选已进 `just web-e2e-canvas-document`。剩余运行中打字：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
 
-### 架构重构
+### 职责收拢
 
-[架构重构组](audits/architecture-refactoring.md) 跟进检查器草稿版本语义与 Agent journal 发布/确认职责。画布项复用既有运行中编辑任务；[journal 调查](audits/tasks/arch-journal-assessment.md) 只核定收益与合同，尚未授权实现。局部修复足够或收拢收益不足时保留现有结构。
+检查器草稿版本语义由工作流体验组在既有运行中编辑任务验收；[journal 调查](audits/tasks/arch-journal-assessment.md) 归平台可靠性，只核定收益与合同，尚未授权实现。局部修复足够或收拢收益不足时保留现有结构。[原架构候选记录](history/agent-runtime-timeline.md#architecture-assessment-history) 保留来源与历史证据，不再单独设组或发单。
 
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
-- 内部淘宝套图对照：[`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md)。
+- 内部淘宝套图对照由评测组承接：[`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md)，图片闸门与 Agent 分数分别验收。
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 

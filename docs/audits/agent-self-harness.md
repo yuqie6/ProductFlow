@@ -1,15 +1,23 @@
-# Agent Self-Harness 验收账本
+# Agent 能力组与 Self-Harness 验收账本
 
-本账本管理 ProductFlow 领域壳的版本化、失败挖掘、同模型提案、评测接受与生产热切。它衡量「壳会不会按声明面进化」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的行为分数，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的可靠性 Gate。lease、journal、SSE、确认协议仍走生产就绪账本。
+本账本管理 ProductFlow 领域壳的版本化、失败挖掘、同模型提案、评测接受与生产热切。它衡量「壳会不会按声明面进化」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的行为分数，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的可靠性 Gate。lease、journal、SSE、确认协议仍走生产就绪账本。
 
-**壳进化组章程。执行以已发布 issue 为界。** 当前任务与认领见 [Issue 看板](tasks/README.md)。P2 及以后由维护者按 P1 交付和对应阶段门发布。
+**Agent 能力组章程。执行以已发布 issue 为界。** 本组接收原壳进化方向与普通 Skill 缺陷修复；当前任务与认领见 [Issue 看板](tasks/README.md)。P2 及以后由维护者按 P1 交付和对应阶段门发布。
+
+## 组职责与交接
+
+- 对 Agent 能否遵守商品事实、用户意图、确认权限并正确使用既有工具负责。普通 Skill 修复与 Self-Harness 进化分别验收；修好产品缺陷不等于 P1–P7 或 G1/G2 完成。
+- [eval-skills](tasks/eval-skills.md) 从评测组转入，当前仍开放、未交付。只修生产 Skill，不改题目、world 或 grader；能力改善由评测组按冻结输入复核。普通修复优先于控制器建设，无需等待 P1。
+- 本组拥有壳版本与候选行为，不拥有评分规则。题目过时交评测组独立处理；共享 runtime 或 policy 的 live 输入按看板冻结，不能边修改边采信旧结果。
+- lease、journal、恢复与 SSE 基础交平台可靠性；Graph Command 与人工编辑合同交工作流体验。工具使用错误由本组修，工具业务实现错误按根因移交，不用 Skill 绕开。
+- Skill 修复交付后，本组记录修复结果，评测账本记录分数与门槛；同一 run_id 通过链接复用，不复制第二套评分结论。Self-Harness 后续门槛保持下文合同。
 
 Cursor Canvas 与会话纪要不是合同。合同只在本账本；未完成方向由 [`../ROADMAP.md`](../ROADMAP.md) 索引。阶段完成后，已接线事实写回 `docs/ARCHITECTURE.md`（Turn 带 `harness_hash` 等）；商家可见操作（清空 playbook）进 P6 才写 `docs/USER_GUIDE.md` 与 HelpPage。CONTEXT 词汇等代码落地再迁。
 
 ## 来源与使用规则
 
 - 来源：2026-09-05 当前会话将 Self-Harness 设计冻成仓库合同。原始消息没有可在仓库中复核的 thread ID 或独立附件，因此本账本不登记伪造的来源 ID 或文本哈希。
-- 适用范围：未来的 `agent-service/harness/`、Skill overlay、`runtime-policy` 行为段、Pi 钩子 Steer、商家 playbook、进化控制器（Miner / Proposer / Validator / Promoter）、演化轨迹与 `harness_hash` 归因。当前生产 loop 仍是 `PiRuntimeManager`。
+- 适用范围：生产 `agent-service/.pi/skills/` 的普通修复，以及未来的 `agent-service/harness/`、Skill overlay、`runtime-policy` 行为段、Pi 钩子 Steer、商家 playbook、进化控制器（Miner / Proposer / Validator / Promoter）、演化轨迹与 `harness_hash` 归因。当前生产 loop 仍是 `PiRuntimeManager`。
 - 本账本允许同时写目标合同、当前代码事实和缺口。当前能力只写入 `docs/ARCHITECTURE.md`；未完成方向由 ROADMAP 索引。
 - 状态变更必须引用当前代码、自动化测试或真实运行结果。真实模型结果还要登记 `run_id`、模型、`harness_hash`、`task_hash`、`skill_hash`、试验次数和结果目录；没有这些字段不得补写「已通过」。
 - 评测原始转录仍只进入 `STORAGE_ROOT/agent-evals/`，不提交仓库。演化轨迹（P2b）同样只落 `STORAGE_ROOT`，不进 git，不进 PostgreSQL 对话 journal。
@@ -112,7 +120,7 @@ G1 / G2 当前均为 `缺失`。
 - 在 G1 / P5 / P6、评测 D-08 或 L5 未满足时开 P7，或用 D-03 达标豁免 D-08
 - 复用候选筛选成绩当作独立复跑，或反复重跑直到通过
 
-产品缺陷仍可按普通 Skill 修补推进，且必须同步评测 `expect`；那种修补要在提交说明里写「产品合同 / Skill 缺陷」，不得写入本账本的 lineage 当进化成果。
+产品缺陷仍可按普通 Skill 修补推进；若评测 `expect` 已过时，交评测组独立修订并冻结后再比较。普通修补的提交说明写「产品合同 / Skill 缺陷」，不得写入本账本的 lineage 当进化成果。
 
 ## 阶段门
 

@@ -4,8 +4,8 @@
 类型：证据
 认领者：—
 认领于：—
-业务组：架构重构
-父账本：architecture-refactoring.md
+业务组：平台可靠性
+父账本：performance-governance.md
 完成后可拆：维护者接受收益、权限矩阵和独占范围后发布 journal 实现 issue；允许裁定保留现状而不发单
 
 任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。
@@ -48,7 +48,7 @@
 - `agent-service/src/pi-runtime.test.ts`：错误回执与 5xx 测试通过强转取得 runtime 并调用私有发布方法；另查该文件的恢复、分叉和 fencing 用例。
 - `agent-service/src/journal-publisher.test.ts`、`store.test.ts`、`process-restart.e2e.test.ts`：队列、实际 WAL 与进程重启的已有测试入口。进程测试使用 fake 远端，不冒充真实 Go/PostgreSQL。
 
-完整调用链与候选背景见 [父章程 AR-02](../architecture-refactoring.md#ar-02journal-发布与确认)。
+在线调用链：`TurnRuntime -> TurnStore WAL -> JournalEventBatcher -> appendPublishedBatch -> ProductFlowClient -> Go AppendEvents -> PG journal -> 回执校验 -> WAL ACK`。恢复从 `confirmPublishedPrefix` / `confirmMatchingUnpublishedPrefix` 进入 `confirmTurnEvents`，只比对 PG 已提交前缀后推进 ACK。候选来源与原复核基线保留在 [架构候选历史记录](../../history/agent-runtime-timeline.md#architecture-assessment-history)，当前职责归父章程。
 
 ## 合同
 

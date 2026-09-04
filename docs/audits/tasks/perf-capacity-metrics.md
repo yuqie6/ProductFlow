@@ -4,7 +4,7 @@
 类型：实现
 认领者：—
 认领于：—
-业务组：性能
+业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：无
 
@@ -36,7 +36,7 @@ ImageSession 已经调用 `graph.GenerationCapacityAvailable`。指标加在这�
 - `go/internal/platform/metrics/`（新低基数名 + `http_test.go` 断言）
 - 本文件
 
-不要改 `go/internal/imagesession/`（避免和「详情有界」任务抢包）。不要改 claim 的 `run → node` 锁序。
+不要改 `go/internal/imagesession/`：本任务在现有共享容量入口打点即可，详情有界任务已经归档。不要改 claim 的 `run → node` 锁序。
 
 ## 不要碰
 

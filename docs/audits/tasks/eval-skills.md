@@ -1,12 +1,12 @@
-# 任务：Skill 与既有评测题硬化
+# 任务：修复 Skill 系统性失败并用冻结评测复验
 
 状态：开放
 类型：实现
 认领者：—
 认领于：—
-业务组：评测
-父账本：agent-eval-system.md
-完成后可拆：无（regression 仍未过门时由评测组章程再发下一轮 Skill 刀，本组员不私自发单）
+业务组：Agent 能力
+父账本：agent-self-harness.md
+完成后可拆：无（维护者根据评测结论在 Agent 能力组决定下一轮修复，执行者不私自发单）
 
 本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。
 
@@ -18,7 +18,7 @@
 
 ## 做成什么样
 
-既有 L1 任务在真模型下能复现地提高 pass，并且四条 Skill 变异至少能杀死一部分。提交说明写「产品合同 / Skill 缺陷」；Self-Harness 进化与 overlay lineage 不在本任务范围。
+既有 L1 任务在真模型下能复现地提高 pass，并且四条 Skill 变异至少能杀死一部分。提交说明写「产品合同 / Skill 缺陷」；Self-Harness 进化与 overlay lineage 不在本任务范围。2026-09-05 归属转入 Agent 能力，ID 保留；评测组负责题库与结果复核，不在本任务中同时修改被测行为和考题。
 
 当前可复算基线（同 task_hash `71d48f47…`，模型 `gpt-5.6-luna`）：
 
@@ -37,12 +37,11 @@
 ## 只改这些文件
 
 - `agent-service/.pi/skills/`
-- 已有的 `agent-service/evals/tasks/*.json`
-- 已有的 `agent-service/evals/worlds/*.json`（仅当 world 与任务 id 对不上时）
 - 本文件（状态与证据）
 
 ## 不要碰
 
+- `agent-service/evals/tasks/`、`worlds/`；发现过时 expect 或 world 错配时提交合同依据给维护者，由评测组独立修订并冻结后再复验
 - `agent-service/evals/graders/`、`schema.ts`、`loader.ts`、`live-runner.ts`、`user-sim.ts`、`injections.ts`
 - `agent-service/evals/labels/`
 - `agent-service/src/`、`agent-service/harness/`
@@ -59,7 +58,7 @@
 - `scope=node` 却打错 `node_id`
 - 变异 `swap-apply-propose-guidance` 基线任务本身失败，突变体反而过
 
-先读失败任务的 `expect` 和对应 `SKILL.md`，改指导或改过时的 expect。不要为了过题放宽 grader，也不要只加会过的新题。
+读取失败任务的 `expect`、对应 `SKILL.md` 与产品合同，修有依据的指导缺陷。不要为了过题改 expect、放宽 grader 或只加会过的新题。题目失真影响验收时暂停本次比较并记录阻塞；评测修订题目后须用新 task_hash 重跑未修补基线与候选，历史分数不作跨题集改善证据。
 
 ## 合同
 
@@ -85,7 +84,7 @@ just agent-evals-mutate
 
 ## 证据
 
-把 run 记在这里，不要改总账本。
+把 run 记在这里，不要改总账本。维护者验收时同步 Agent 能力章程的修复结论与评测章程的分数/门槛；本任务完成不改变 Self-Harness 阶段状态。
 
 ```text
 YYYY-MM-DD | commit=<sha> | run_id=<id> | command=just agent-evals-live | n= | k=3 | pass^1= | pass^3= | task_hash= | skill_hash= | model= | artifact=

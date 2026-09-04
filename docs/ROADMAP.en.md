@@ -2,7 +2,7 @@
 
 Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
 
-Cross-layer audits run as business groups: charters in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Ledgers keep contracts and evidence. Product items without an audit charter stay off that board.
+Four groups own cross-layer audits: Workflow Experience, Agent Capability, Evaluation, and Platform Reliability. Each group has one document. Responsibilities and priorities live in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Group documents keep contracts and evidence; independent user requests may use the same board without a group.
 
 ## Near term
 
@@ -26,7 +26,7 @@ Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe lib
 
 ### Agent durability
 
-Lease, journal, effect reconciliation, SSE gap repair, and capacity-gate evidence live in [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md). S1–S6 and G-01–G-05, G-07 are closed. Runtime-ownership S0–S6 is closed; evidence is in [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md).
+Lease, journal, effect reconciliation, SSE gap repair, and capacity-gate evidence live in [`audits/performance-governance.md#production-gates`](audits/performance-governance.md#production-gates). S1–S6 and G-01–G-05, G-07 are closed. Runtime-ownership S0–S6 is closed; evidence is in [`history/agent-runtime-timeline.md#runtime-ownership-evidence`](history/agent-runtime-timeline.md#runtime-ownership-evidence).
 
 Remaining: the [evaluation charter](audits/agent-eval-system.md) decides G-06 behavior gates from reviewed `run_id` evidence; execution progress lives on the [issue board](audits/tasks/README.md). Closing an evidence issue does not pass the gate. Until the gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
 
@@ -36,7 +36,7 @@ Active execution issues and blockers live on the [issue board](audits/tasks/READ
 
 ### Agent Self-Harness
 
-Start here: [`audits/tasks/harness-artifact.md`](audits/tasks/harness-artifact.md). Full program contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evolution must not edit graders to inflate scores.
+Agent Capability owns [ordinary Skill fixes](audits/tasks/eval-skills.md) and [harness artifact P1](audits/tasks/harness-artifact.md). Known behavior failures take priority without waiting for an evolution controller. P1 remains open; later phases retain their gates. Full contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evaluation independently owns tasks and graders.
 
 ### Canvas document-authority tests
 
@@ -46,14 +46,14 @@ C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just 
 
 Open guide: [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md). [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. [Dispatcher load-latency evidence](audits/tasks/archive/perf-dispatcher-latency.md) is complete; a single dispatcher handling a 500-item burst still misses the suggested 1s p95 target. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
 
-### Architecture refactoring
+### Responsibility consolidation
 
-The [architecture refactoring group](audits/architecture-refactoring.md) tracks inspector draft version semantics and Agent journal publication/confirmation responsibilities. Canvas work reuses the existing mid-run editing issue. The [journal assessment](audits/tasks/arch-journal-assessment.md) evaluates benefits and contracts; implementation is not yet authorized. Retain the current structure when a local fix suffices or consolidation has insufficient benefit.
+Workflow Experience owns inspector draft version semantics within the existing mid-run editing issue. Platform Reliability owns the [journal assessment](audits/tasks/arch-journal-assessment.md); implementation is not yet authorized. Retain the current structure when a local fix suffices or consolidation has insufficient benefit. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
 
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.
-- Internal Taobao listing eval: [`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md).
+- Evaluation owns the internal Taobao listing eval: [`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md). Image gates and Agent scores remain separate.
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 

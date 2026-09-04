@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 里每个总账本是一个业务组章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。独立任务无需归组或父章程；认领由主代理确认，组内交付经审核后同步章程结论。当前会话直接处理的小修无需建单。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
+[`audits/README.md`](audits/README.md) 索引工作流体验、Agent 能力、评测、平台可靠性四组。**一组一份文档**，各组的职责、合同、门槛与证据集中维护；合并时迁入有效内容并删除旧组文档，不保留独立专题账本。历史证据收入现有 history 文档。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。独立任务无需归组或父章程；认领由主代理确认，组内交付经审核后同步唯一组文档。当前会话直接处理的小修无需建单。
 
 ## 历史叙事
 
