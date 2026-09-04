@@ -56,6 +56,6 @@
 
 - 命令 / 日期 / 结果：
 - 基线 commit / run_id / artifact（适用时）：
-- 交付 commit（关闭提交自身无需填写）：
+- 交付定位：随本任务提交（用 `git log --follow -- <归档任务路径>` 查询）；已有独立候选 commit 时填写其 hash，不为回填本次 hash 另提 commit。
 - 审核者 / 结论（自审须注明）：
 - Issue 结果 / 业务门槛结果 / 剩余缺口：

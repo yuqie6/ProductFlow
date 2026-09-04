@@ -7,8 +7,8 @@ alwaysApply: true
 
 负责切片的人在验证后审自己的完整 diff（含未跟踪文件）：行为符合合同、测试覆盖修改边界、无越界文件、密钥或调试残留。主代理审核子代理交付及并发影响；主代理自己执行时明确记录自审。
 
-已审核交付由指定 Git 写者及时提交，不攒成多个主题的大提交。共享工作区同时只有一个 Git 写者，默认主代理。只 `git add` 本切片路径，提交前用 `git diff --cached --name-only` 核对暂存区，不纳入用户或其他任务的改动。message 用 Conventional Commit + 中文写 why。不 push、不 amend 他人提交、不跳过 hook。
+每次提交前重读本文件；看板任务同时重读当前任务协议。默认一项完成的 task 一个交付 commit，包含成果、测试、必要活文档、最终证据及归档；认领、进度、阻塞、释放占用和例行归档都不单独产生 commit。已审核交付由指定 Git 写者及时提交，不攒成多个任务的大提交。共享工作区同时只有一个 Git 写者，默认主代理。按已审核的任务 diff 暂存，共享看板或章程只暂存本任务对应变更，不用整文件 `git add` 混入其他任务的状态。提交前核对 `git diff --cached` 和 `git diff --cached --name-only`，不纳入用户或其他任务的改动。message 用 Conventional Commit + 中文写 why。不 push、不 amend 他人提交、不跳过 hook。
 
-内部 issue 的候选实现提交、live 采证、阻塞、审核和归档遵循 [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md)。证据类可登记有效 FAIL，代码修改仍须通过确定性回归。需要固定 commit 的 live 验证允许先提交已审候选实现，issue 保持认领直至全部完成条件满足；缺验证不声称完成。
+内部 issue 的验收与关闭遵循 [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md)。证据类可登记有效 FAIL，代码修改仍须通过确定性回归。仅当任务合同明确要求固定候选 commit 做后续 live 验证时，允许候选实现和最终验收分两次提交；任务中记录原因，候选提交后仍保持认领，缺验证不声称完成。不得为凑交付 hash、保持协调工作树干净或记录状态而额外提交；不要重写既有认领提交。
 
 普通小修不走看板，验证和自审通过后提交。无论是否使用看板，都保留他人的未提交改动，不 reset、不 revert。执行者完成已分配任务后停下，由主代理决定后续发布和分配。
