@@ -2,12 +2,12 @@
 
 本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的 Agent 生产 Gate。
 
-**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C3、C5、C6 已完成。C4 空闲改写/候选已进门禁。当前任务与认领见 [Issue 看板](tasks/README.md)；运行中检查器任务验收后，由维护者核对剩余 C4 再发布任务。
+**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C6 已完成。当前任务与认领见 [Issue 看板](tasks/README.md)；维护者核对整图跑中途撤销与浏览器 409 剩余缺口后再决定是否发单，不重复派版本语义修复。
 
 ## 组职责与交接
 
 - 负责商家从编辑、运行到使用商品素材的业务行为，保留关闭 Agent 后仍可独立操作的合同。图片是否达质量门槛由评测组的图片质量验收裁定；生成链缺陷由本组修复，不用改评委掩盖。
-- AR-01 与 C4 由同一 [canvas-inspector-midrun](tasks/canvas-inspector-midrun.md) 交付。2026-09-05 源码复核仍见整图 revision 使 dirty 草稿冲突、Inspector 丢弃 save 第二参、`commitNode` 读取发送时最新 revision；尚未修复或完成浏览器验收。
+- AR-01 与 C4 由同一 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md) 交付。2026-09-05 检查器草稿基线沿 autosave → Inspector → Surface → `commitNode` 传到 Graph Command；兄弟节点配置变更不再把未改节点的脏草稿标冲突。mock 浏览器门覆盖空闲改写/补全/替换与运行中打字。
 - AR-01-A：真实编辑基线贯穿 autosave、Inspector、Surface、Canvas 到 Graph Command；仅兄弟节点配置变更可由服务端安全 rebase，不以最新 revision 遮蔽过期编辑。
 - AR-01-B：同节点变更仍拒绝过期保存；409 保留草稿、提示冲突并停止自动重放，不以当前值相等绕过历史裁定。
 - AR-01-C：保存串行，失败阻止运行，较早响应不能清掉保存期间的新输入。AR-01-D：实际 run 仍 in-flight 时手填保存，运行完成后 live 保持用户稿，按 O2/O3 验证。
@@ -61,7 +61,7 @@
 | C-01 | C1 mock HTTP cook | `graphServer` + `Executor`；O4 在 apply 前 live 不变；O2 mid-run 不覆盖 | `完成` | `cook_contract_test.go`；`TestForceRewritePromptDoesNotChangeLiveUntilApply` |
 | C-02 | C2 有界搜索 | 默认 8 条随机 walk（深度 ≤ 3）+ 6 类动作深度 2 穷举；失败 shrink；缺节点动作跳过 | `完成` | `authority_search_test.go`；`just go-test`；加深 `just go-test-canvas-search` |
 | C-03 | C3 回调插入写 | Mock provider 回调里发一次 HTTP ChangeSet（开跑时的 `base_graph_revision`，不重试 409）。整图跑中途改本节点 / 兄弟文稿 / 视觉 overlay / undo / 保存后取消。整图跑期间点改写必须排队且不得盖 live。同节点已采用后一次过期保存 409。`to_node` 与 `selection` 在手填提示词后不得盖 live。cook 协程不得 `t.Fatal` | `完成` | `authority_inject_test.go`；`TestAdoptSkipsOverwriteWhenUserEditsDuringRun`；`TestAdoptSkipsOverwriteWhenVisualEditedDuringGraphRun`；`TestCancelGraphRunKeepsMidRunInspectorSave`；`TestRewriteQueuedDuringGraphRunKeepsAuthoredLive`；`TestInspectorSaveAfterSameNodeAdoptConflicts`；`TestToNodeAndSelectionAfterAuthoredPromptKeepLive` |
-| C-04 | C4 浏览器 + mock 供应商 | 空闲时在检查器手填提示词，再点改写/补全/替换与按 section 应用。整图或节点 cook **正在跑**时检查器打字保存，adopt 不得盖 live（O2） | `部分完成` | 空闲路径：`web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；2026-09-05 Chromium 2 passed（门禁临时切 mock 后恢复）。运行中打字未进 Playwright，C3 HTTP 插入写不代替本层；指导 [`tasks/canvas-inspector-midrun.md`](tasks/canvas-inspector-midrun.md) |
+| C-04 | C4 浏览器 + mock 供应商 | 空闲时在检查器手填提示词，再点改写/补全/替换与按 section 应用。整图或节点 cook **正在跑**时检查器打字保存，adopt 不得盖 live（O2） | `完成` | `web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；2026-09-05 Chromium 3 passed（门禁临时切 mock 后恢复）。运行中打字：`mid-run inspector typing keeps live authored copy after graph adopt`。AR-01 基线/409/串行/失败阻止运行见 `useNodeDraftAutosave.test.ts` 等。指导 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md) |
 | C-05 | C5 真 provider 整图 | skip-Agent 出一张真图；不覆盖 rewrite/候选 | `完成` | `just web-e2e-live-graph` → `direct-create-full-graph.spec.ts` |
 | C-06 | C6 Agent × 画布 | `ApplyAgentChangeSet` / `apply_graph_change_set_v1` 与整图 GraphRun 交错仍守 O2/O3 | `完成` | `authority_agent_interleave_test.go`；`go/internal/agent/canvas_authority_interleave_test.go` |
 

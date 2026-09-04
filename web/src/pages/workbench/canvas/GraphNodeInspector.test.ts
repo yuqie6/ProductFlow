@@ -12,6 +12,7 @@ import type {
   WorkflowDeliverySpec,
 } from "../../../lib/types";
 import { applyDeliveryPresetToCatalogDraft, GraphNodeInspector } from "./GraphNodeInspector";
+import graphNodeInspectorSource from "./GraphNodeInspector.tsx?raw";
 
 function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
   return {
@@ -714,6 +715,13 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("data-aspect-matched=\"false\"");
     expect(markup).toContain("未按 3:4 出图，实际 1448×1086");
     expect(markup).toContain("data-preview-aspect=\"3:4\"");
+  });
+
+  it("forwards the autosave baseline through persist instead of the live graph revision", () => {
+    expect(graphNodeInspectorSource).toContain("save: (draft, expectedEditVersion) => onSave({");
+    expect(graphNodeInspectorSource.match(/expectedEditVersion,/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(graphNodeInspectorSource).toContain("return { edit_version: next?.revision ?? input.expectedEditVersion }");
+    expect(graphNodeInspectorSource).not.toContain("return { edit_version: next?.revision ?? graph.revision }");
   });
 });
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { zhCN } from "../../../lib/i18n";
 import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import { GraphCanvasNotice, graphHistoryShortcutAction } from "./GraphCanvasPanel";
+import graphCanvasPanelSource from "./GraphCanvasPanel.tsx?raw";
 import { graphConnectionInvalidReason } from "./graphCatalog";
 
 describe("graphHistoryShortcutAction", () => {
@@ -54,5 +55,14 @@ describe("GraphCanvasNotice", () => {
     expect(markup).toContain("data-graph-canvas-notice");
     expect(markup).toContain("这两种节点不能相连");
     expect(renderToStaticMarkup(createElement(GraphCanvasNotice, { notice: null }))).toBe("");
+  });
+});
+
+describe("commitNode baseline", () => {
+  it("sends the inspector draft revision and does not replay document saves on 409", () => {
+    expect(graphCanvasPanelSource).toContain("baseGraphRevision: input.baseGraphRevision");
+    expect(graphCanvasPanelSource).toContain("return await applyMutation.mutateAsync(changeSet);");
+    expect(graphCanvasPanelSource).not.toMatch(/commitNode[\s\S]{0,1200}base_graph_revision:\s*graphRef\.current\.revision/);
+    expect(graphCanvasPanelSource).not.toMatch(/commitNode[\s\S]{0,1200}executeApply\(/);
   });
 });

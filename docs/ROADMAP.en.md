@@ -40,7 +40,7 @@ Agent Capability owns [ordinary Skill fixes](audits/tasks/eval-skills.md) and [h
 
 ### Canvas document-authority tests
 
-C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just web-e2e-canvas-document`. Remaining mid-run typing: [`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md).
+C0–C6 are landed. C4 idle rewrite/candidate and mid-run inspector typing are in `just web-e2e-canvas-document`. Browser evidence for undo during a full-graph run and document-save 409 remains a follow-up if still missing; do not republish version-semantics work.
 
 ### Runtime performance governance
 
@@ -48,7 +48,7 @@ C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just 
 
 ### Responsibility consolidation
 
-Workflow Experience owns inspector draft version semantics within the existing mid-run editing issue. The [journal assessment](audits/tasks/archive/arch-journal-assessment.md) is complete: keep the current structure; implementation is not authorized. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
+Workflow Experience owns inspector draft version semantics. The mid-run inspector save and AR-01 baseline contract are delivered in [canvas-inspector-midrun](audits/tasks/archive/canvas-inspector-midrun.md). The [journal assessment](audits/tasks/archive/arch-journal-assessment.md) is complete: keep the current structure; implementation is not authorized. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
 
 ### Image production quality
 

@@ -44,11 +44,11 @@ Agent 能力组承接 [普通 Skill 修复](audits/tasks/eval-skills.md) 与 [�
 
 ### 画布文稿权威测试
 
-C0–C3、C5、C6 已落地。C4 空闲检查器改写/候选已进 `just web-e2e-canvas-document`。剩余运行中打字：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
+C0–C6 已落地。C4 空闲改写/候选与运行中检查器打字已进 `just web-e2e-canvas-document`。整图跑中途撤销与浏览器 409 交互若仍缺浏览器证据，由工作流体验组按缺口发单，不重复派版本语义任务。
 
 ### 职责收拢
 
-检查器草稿版本语义由工作流体验组在既有运行中编辑任务验收。[journal 调查](audits/tasks/archive/arch-journal-assessment.md) 已完成，结论为保留现状，不授权实现。[原架构候选记录](history/agent-runtime-timeline.md#architecture-assessment-history) 保留来源与历史证据，不再单独设组或发单。
+检查器草稿版本语义已由 [canvas-inspector-midrun](audits/tasks/archive/canvas-inspector-midrun.md) 交付。[journal 调查](audits/tasks/archive/arch-journal-assessment.md) 已完成，结论为保留现状，不授权实现。[原架构候选记录](history/agent-runtime-timeline.md#architecture-assessment-history) 保留来源与历史证据，不再单独设组或发单。
 
 ### 图片生产质量
 

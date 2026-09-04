@@ -29,7 +29,7 @@ import type {
 } from "../../../lib/types";
 import { inspectableGraphNodeId } from "../canvas/graphCatalog";
 import { GraphAddNodePanel } from "../canvas/GraphAddNodePanel";
-import { GraphCanvasPanel, type GraphCanvasActions } from "../canvas/GraphCanvasPanel";
+import { GraphCanvasPanel, type GraphCanvasActions, type GraphCanvasCommitNodeInput } from "../canvas/GraphCanvasPanel";
 import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
@@ -51,6 +51,24 @@ import { isHttpErrorStatus, readWorkflowGraphOrNull } from "./productWorkbenchRo
 import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
 
 export type CanvasSelectionSource = "pointer" | "agent";
+
+export function inspectorSaveToCommitNode(
+  nodeId: string,
+  input: {
+    title: string;
+    config: Record<string, unknown>;
+    boundAssetId: string | null;
+    expectedEditVersion: number;
+  },
+): GraphCanvasCommitNodeInput {
+  return {
+    nodeId,
+    title: input.title,
+    config: input.config,
+    boundAssetId: input.boundAssetId,
+    baseGraphRevision: input.expectedEditVersion,
+  };
+}
 
 export function shouldOpenInspectorForCanvasSelection(
   source: CanvasSelectionSource,
@@ -370,7 +388,7 @@ export function ProductWorkbenchSurface({
           onRegisterFlush={registerInspectorFlush}
           onCommit={async (input) => {
             if (!selected) return;
-            return actions.commitNode({ nodeId: selected.id, ...input });
+            return actions.commitNode(inspectorSaveToCommitNode(selected.id, input));
           }}
           onBind={selected?.node_type === "image_asset" ? () => {
             setBindNodeId(selected.id);
@@ -426,6 +444,7 @@ export function ProductWorkbenchSurface({
               nodeId: bindNode.id,
               config: bindNode.config,
               boundAssetId: assetId,
+              baseGraphRevision: liveGraph.revision,
             });
           }}
           onBound={() => setBindNodeId(null)}

@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   CANVAS_DOCUMENT_SWITCH,
@@ -29,6 +31,52 @@ interface GraphPayload {
   id: string;
   revision: number;
   nodes: GraphNodePayload[];
+}
+
+interface GraphRunListPayload {
+  items: Array<{ status: string }>;
+}
+
+function findGraphWorkerPids(): number[] {
+  const pids: number[] = [];
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const cmd = readFileSync(path.join("/proc", entry, "cmdline"), "utf8").replace(/\0/g, " ");
+      if (cmd.includes("productflow-worker") || cmd.includes("cmd/productflow-worker")) {
+        pids.push(Number(entry));
+      }
+    } catch {
+      continue;
+    }
+  }
+  return pids;
+}
+
+async function withPausedGraphWorker<T>(run: () => Promise<T>): Promise<T> {
+  const pids = findGraphWorkerPids();
+  expect(pids.length, "just dev 的 productflow-worker 必须在跑").toBeGreaterThan(0);
+  for (const pid of pids) process.kill(pid, "SIGSTOP");
+  try {
+    return await run();
+  } finally {
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGCONT");
+      } catch {
+        // worker 可能已经退出
+      }
+    }
+  }
+}
+
+async function latestRunStatus(page: Page, productID: string, graphID: string): Promise<string | null> {
+  const response = await page.request.get(
+    `/api/v3/products/${encodeURIComponent(productID)}/workflows/${encodeURIComponent(graphID)}/runs`,
+  );
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const payload = await response.json() as GraphRunListPayload;
+  return payload.items[0]?.status ?? null;
 }
 
 async function createWorkbench(page: Page): Promise<string> {
@@ -177,6 +225,56 @@ test.describe("canvas document mock provider", () => {
     const replaceNode = afterReplace.nodes.find((node) => node.id === prompt.id);
     expect(replaceNode?.config.prompt?.design_goal).toBe("人工目标-不要被构图应用改掉");
     expect(replaceNode?.config.prompt?.composition?.layout).toBe("人工左侧留白");
+    });
+  });
+
+  test("mid-run inspector typing keeps live authored copy after graph adopt", async ({ page }) => {
+    await lockLocale(page);
+    await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+      const productID = await createWorkbench(page);
+      const graph = await currentGraph(page, productID);
+      const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
+      expect(prompt).toBeTruthy();
+      await selectNode(page, prompt!.id);
+      await expect(page.getByLabel("设计目标")).toBeVisible();
+      const authoredGoal = `运行中手填-${Date.now()}`;
+      let savedWhileInFlight: string | null = null;
+
+      await withPausedGraphWorker(async () => {
+        const runPosted = page.waitForRequest((request) => {
+          if (request.method() !== "POST") return false;
+          const url = new URL(request.url());
+          return /\/runs$/.test(url.pathname) && !url.pathname.includes("/preview");
+        });
+        await page.locator("[data-graph-run-all]").click();
+        const posted = await runPosted;
+        expect(JSON.parse(posted.postData() ?? "{}")).toMatchObject({ scope: "graph" });
+        await expect.poll(async () => latestRunStatus(page, productID, graph.id)).toMatch(/^(running|queued)$/);
+        await selectNode(page, prompt!.id);
+        await page.getByRole("button", { name: "详情" }).click();
+        await expect(page.getByLabel("设计目标")).toBeVisible();
+        await page.getByLabel("设计目标").fill(authoredGoal);
+        await page.getByLabel("商品占比（%）").fill("55");
+        await page.getByLabel("布局").fill("运行中左侧留白");
+        await expect.poll(async () => {
+          const latest = await currentGraph(page, productID);
+          const authored = latest.nodes.find((node) => node.id === prompt!.id);
+          return authored?.config.prompt?.design_goal === authoredGoal
+            && authored.config.prompt?.composition?.layout === "运行中左侧留白"
+            && authored.config.prompt?.composition?.product_share_percent === 55;
+        }).toBeTruthy();
+        savedWhileInFlight = await latestRunStatus(page, productID, graph.id);
+      });
+
+      expect(savedWhileInFlight).toMatch(/^(running|queued)$/);
+      await waitForGraphRunSucceeded(page.request, productID, graph.id);
+      const after = await currentGraph(page, productID);
+      const afterNode = after.nodes.find((node) => node.id === prompt!.id);
+      expect(afterNode?.config.prompt?.design_goal).toBe(authoredGoal);
+      expect(afterNode?.config.prompt?.composition?.layout).toBe("运行中左侧留白");
+      expect(afterNode?.config.prompt?.composition?.product_share_percent).toBe(55);
+      expect(afterNode?.document_origin).toBe("authored");
     });
   });
 });

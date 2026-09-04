@@ -62,9 +62,9 @@ import {
 } from "./graphLayout";
 import { graphNodeRunPresentations, graphQueuedRuns, graphRunningRuns } from "./graphRunDisplay";
 import { applyGraphRunEvent, subscribeGraphRunEvents } from "./graphRunEvents";
-import { withGraphRunSubmit } from "./graphRunLock";
+import { submitAfterSuccessfulFlush, withGraphRunSubmit } from "./graphRunLock";
 import { plannedActionsFromPreview } from "./graphRunPreview";
-import { isMoveNodesOnly } from "./graphChangeSetQueue";
+import { buildNodeCommitChangeSet, isMoveNodesOnly } from "./graphChangeSetQueue";
 import { graphEdgeRoleLabelKey, graphRunBlock, graphRunBlockMessage, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
   buildCreateShotOperations,
@@ -73,6 +73,14 @@ import {
 import { GraphShotFilmstrip } from "./GraphShotFilmstrip";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { projectGraphShots, type GraphShotProjection } from "./shotProjection";
+
+export interface GraphCanvasCommitNodeInput {
+  nodeId: string;
+  title?: string;
+  config?: Record<string, unknown>;
+  boundAssetId?: string | null;
+  baseGraphRevision: number;
+}
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
@@ -87,12 +95,7 @@ export interface GraphCanvasActions {
     title: string;
     description: string | null;
   }) => void;
-  commitNode: (input: {
-    nodeId: string;
-    title?: string;
-    config?: Record<string, unknown>;
-    boundAssetId?: string | null;
-  }) => Promise<GraphProjection | void>;
+  commitNode: (input: GraphCanvasCommitNodeInput) => Promise<GraphProjection | void>;
   pinCurrentOutput: (nodeId: string) => void;
   previewRun: (input: GraphRunSubmitInput) => void;
   hideRunPreview: () => void;
@@ -738,37 +741,23 @@ export function GraphCanvasPanel({
     onSelect([]);
   }, [apply, onSelect, pendingDeleteIds]);
 
-  const commitNode = useCallback(async (input: {
-    nodeId: string;
-    title?: string;
-    config?: Record<string, unknown>;
-    boundAssetId?: string | null;
-  }) => {
+  const commitNode = useCallback(async (input: GraphCanvasCommitNodeInput) => {
     const current = graphRef.current.nodes.find((node) => node.id === input.nodeId);
     if (!current) return graphRef.current;
-    const operations: GraphChangeSet["operations"] = [];
-    if (input.title && input.title !== current.title) {
-      operations.push({ op: "rename_node", node_ref: input.nodeId, title: input.title });
-    }
-    if (input.config || input.boundAssetId !== undefined) {
-      operations.push({
-        op: "update_node_config",
-        node_ref: input.nodeId,
-        config: input.config ?? current.config,
-        bound_asset_id: input.boundAssetId === undefined ? current.bound_asset_id : input.boundAssetId,
-      });
-    }
-    if (!operations.length) return graphRef.current;
+    const changeSet = buildNodeCommitChangeSet({
+      node: current,
+      title: input.title,
+      config: input.config,
+      boundAssetId: input.boundAssetId,
+      baseGraphRevision: input.baseGraphRevision,
+    });
+    if (!changeSet) return graphRef.current;
     if (applyInFlightRef.current || historyInFlightRef.current || applyMutation.isPending) {
       throw new Error("图正在保存，请稍后重试");
     }
     applyInFlightRef.current = true;
     try {
-      return await applyMutation.mutateAsync({
-        base_graph_revision: graphRef.current.revision,
-        summary: "更新节点",
-        operations,
-      });
+      return await applyMutation.mutateAsync(changeSet);
     } finally {
       applyInFlightRef.current = false;
       pumpApplyQueue();
@@ -786,12 +775,11 @@ export function GraphCanvasPanel({
 
   const submitRun = useCallback(async (input: GraphRunSubmitInput) => {
     await withGraphRunSubmit(async () => {
-      try {
-        await onBeforeRun?.();
-      } catch {
-        return;
-      }
-      await runMutation.mutateAsync(input);
+      const submitted = await submitAfterSuccessfulFlush(
+        () => onBeforeRun?.() ?? Promise.resolve(),
+        () => runMutation.mutateAsync(input),
+      );
+      if (!submitted) return;
     });
   }, [onBeforeRun, runMutation]);
 

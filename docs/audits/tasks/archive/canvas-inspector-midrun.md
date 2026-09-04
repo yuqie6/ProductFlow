@@ -1,6 +1,6 @@
 # 任务：运行中检查器保存与编辑基线贯通（C4 / AR-01）
 
-状态：认领
+状态：完成
 类型：实现
 认领者：主代理-0905-0438
 认领于：2026-09-05T04:39:28+08:00
@@ -8,7 +8,7 @@
 父账本：canvas-test-system.md
 完成后可拆：canvas-c4-remainder.md（维护者扣除本单已覆盖项后核对整图跑中途撤销与浏览器 409 剩余缺口，不重复发版本语义修复）
 
-本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。
+本任务已关闭。认领与归档步骤见 [Issue 协议](../README.md)，业务组结论见[父账本](../../canvas-test-system.md)。
 
 ## 前置与并行
 
@@ -87,8 +87,24 @@ just web-e2e-canvas-document
 
 ```text
 spec 用例名：
+  rewrite stages a candidate and section apply keeps unselected fields
+  complete and replace stage candidates without writing live config
+  mid-run inspector typing keeps live authored copy after graph adopt
 保存链实际修改路径 / 对应回归：
-AR-01-A/B/C/D 各项证据：
-日期 / 结果：
-保存时 run status：
+  useNodeDraftAutosave.ts：createNodeDraftSession / applyServerToNodeDraft / flushNodeDraft
+  GraphNodeInspector persist 传递 expectedEditVersion；三处 editor.save 第二参
+  ProductWorkbenchSurface inspectorSaveToCommitNode
+  GraphCanvasPanel commitNode → buildNodeCommitChangeSet(baseGraphRevision)
+  graphRunLock.submitAfterSuccessfulFlush
+  回归：useNodeDraftAutosave.test.ts、graphChangeSetQueue.test.ts、graphRunLock.test.ts、
+  GraphCanvasPanel.test.ts、GraphNodeInspector.test.ts、ProductWorkbenchSurface.test.ts
+AR-01-A：inspectorSaveToCommitNode / buildNodeCommitChangeSet 使用草稿基线；兄弟 refetch 不改 editVersion
+AR-01-B：409 保留草稿与原基线；commitNode 走 mutateAsync 不走 executeApply 重放
+AR-01-C：flush 串行且保存中继续输入会再发后一次快照；flush 失败不 submit run
+AR-01-D：mid-run 用例在 SIGSTOP productflow-worker 后 POST scope=graph，保存当时断言 run 为 running|queued，恢复 worker 后 live 仍为手填稿且 document_origin=authored
+日期 / 结果：2026-09-05 自审通过。just web-e2e-canvas-document 3 passed（29.5s，临时 mock 后恢复）。pnpm --dir web test:run / lint / build 通过。测试期间暂停 worker 二进制 /tmp/go-build*/exe/productflow-worker，finally SIGCONT；采证后该进程仍在。
+保存时 run status：用例断言 running|queued（worker 暂停后为 queued/running，未改断言）
+审核者 / 结论：主代理-0905-0438 自审通过，非独立审核。
+Issue 结果：完成。C4 空闲改写/补全/替换与运行中打字已进 mock 浏览器门。整图跑中途撤销与浏览器 409 交互未纳入本单 Playwright，留给维护者核对是否发 canvas-c4-remainder。
+业务门槛结果：工作流体验 C-04 与 AR-01 本单合同已验收；不代表其它组门槛。
 ```

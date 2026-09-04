@@ -24,7 +24,6 @@
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 开放 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
 | [harness-artifact.md](harness-artifact.md) | Agent 能力 | 实现 | 开放 | — | — |
-| [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 工作流体验 | 实现 | 认领 | 主代理-0905-0438 | 2026-09-05T04:39:28+08:00 |
 | [image-eval-pool.md](image-eval-pool.md) | 评测 | 证据 | 开放 | — | — |
 
 ## 职责与适用范围

@@ -10,6 +10,7 @@ import {
   createOrLoadEmptyWorkflowGraph,
   focusVisibleAgentComposer,
   initialAgentWorkbenchSidebarTool,
+  inspectorSaveToCommitNode,
   requestAgentWorkbenchOpen,
   resolveAgentWorkbenchSidebarTool,
   shouldOpenInspectorForCanvasSelection,
@@ -188,5 +189,22 @@ describe("Agent canvas selection", () => {
     expect(shouldOpenInspectorForCanvasSelection("pointer", 1, true)).toBe(true);
     expect(shouldOpenInspectorForCanvasSelection("pointer", 2, true)).toBe(false);
     expect(shouldOpenInspectorForCanvasSelection("pointer", 1, false)).toBe(false);
+  });
+});
+
+describe("inspector inspectorSaveToCommitNode", () => {
+  it("forwards the draft baseline instead of spreading a later graph revision", () => {
+    expect(inspectorSaveToCommitNode("prompt", {
+      title: "提示词",
+      config: { prompt: { design_goal: "运行中手填" } },
+      boundAssetId: null,
+      expectedEditVersion: 4,
+    })).toEqual({
+      nodeId: "prompt",
+      title: "提示词",
+      config: { prompt: { design_goal: "运行中手填" } },
+      boundAssetId: null,
+      baseGraphRevision: 4,
+    });
   });
 });

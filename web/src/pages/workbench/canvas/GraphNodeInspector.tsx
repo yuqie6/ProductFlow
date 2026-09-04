@@ -67,7 +67,7 @@ import { replaceDeliverySpec } from "./deliveryRenditions";
 import { graphCatalogNode, graphEdgeRoleLabelKey, graphNodeConfigFields, graphRunBlock, graphRunBlockMessage, missingRequiredRunRoles } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
 import { graphArtifactTypeLabelKey, graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphOutputActionLabelKey, graphOutputQualityLabelKey, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
-import { withGraphRunSubmit } from "./graphRunLock";
+import { submitAfterSuccessfulFlush, withGraphRunSubmit } from "./graphRunLock";
 import { runPreviewPointerHandlers } from "./graphRunPreview";
 import { displayNodeState } from "./graphOperationalState";
 import {
@@ -84,11 +84,18 @@ import {
   type ProductFactRowDraft,
   type GraphTitleDraft,
 } from "./graphNodeEditorDrafts";
-import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
+import { nodeDraftSaveError, useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 type InspectorFlush = () => Promise<unknown>;
 type RegisterInspectorFlush = (id: string, flush: InspectorFlush) => () => void;
 const InspectorFlushContext = createContext<RegisterInspectorFlush>(() => () => undefined);
+
+export type InspectorNodeCommitInput = {
+  title: string;
+  config: Record<string, unknown>;
+  boundAssetId: string | null;
+  expectedEditVersion: number;
+};
 
 export function GraphNodeInspector({
   graph,
@@ -116,11 +123,7 @@ export function GraphNodeInspector({
   catalog?: GraphNodeCatalog | null;
   catalogError?: string | null;
   onRetryCatalog?: () => void;
-  onCommit: (input: {
-    title: string;
-    config: Record<string, unknown>;
-    boundAssetId: string | null;
-  }) => Promise<GraphProjection | void> | GraphProjection | void;
+  onCommit: (input: InspectorNodeCommitInput) => Promise<GraphProjection | void> | GraphProjection | void;
   onBind?: () => void;
   onPinAsset?: () => void;
   onJump?: (nodeId: string) => void;
@@ -269,14 +272,14 @@ export function GraphNodeInspector({
     setSelectedCandidateSections(candidate.sections.filter((section) => section.changed).map((section) => section.key));
   }, [candidateQuery.data?.artifact_id]);
 
-  const persist = useCallback(async (input: {
-    title: string;
-    config: Record<string, unknown>;
-    boundAssetId: string | null;
-  }) => {
-    const next = await onCommit(input);
-    return { edit_version: next?.revision ?? graph.revision };
-  }, [graph.revision, onCommit]);
+  const persist = useCallback(async (input: InspectorNodeCommitInput) => {
+    try {
+      const next = await onCommit(input);
+      return { edit_version: next?.revision ?? input.expectedEditVersion };
+    } catch (error) {
+      throw nodeDraftSaveError(error, t("graph.inspector.draftConflict"));
+    }
+  }, [onCommit, t]);
 
   const flushesRef = useRef(new Map<string, InspectorFlush>());
   const registerFlush = useCallback<RegisterInspectorFlush>((id, flush) => {
@@ -294,20 +297,18 @@ export function GraphNodeInspector({
     onRegisterFlush?.(flushInspector);
   }, [flushInspector, onRegisterFlush]);
   const submitInspectorRun = useCallback((input: GraphRunSubmitInput) => {
-    void flushInspector()
-      .then(() => withGraphRunSubmit(() => runMutation.mutateAsync(input)))
-      .catch(() => undefined);
+    void submitAfterSuccessfulFlush(
+      flushInspector,
+      () => withGraphRunSubmit(() => runMutation.mutateAsync(input)),
+    ).catch(() => undefined);
   }, [flushInspector, runMutation]);
 
   const retryRun = useCallback(async () => {
     const runId = presentation?.runId;
     if (!runId) return;
-    try {
-      await flushInspector();
+    await submitAfterSuccessfulFlush(flushInspector, async () => {
       retryMutation.mutate(runId);
-    } catch {
-      // 编辑器继续展示校验或保存错误
-    }
+    });
   }, [flushInspector, presentation?.runId, retryMutation]);
 
   if (!node) {
@@ -842,7 +843,7 @@ function ProductSourceEditor({
   graphProductId: string;
   busy: boolean;
   graphRevision: number;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
+  onSave: (input: InspectorNodeCommitInput) => Promise<{ edit_version: number }>;
   onSaveStateChange: (status: SaveStatus, error: string | null) => void;
 }) {
   const { t } = useI18n();
@@ -873,7 +874,12 @@ function ProductSourceEditor({
     versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => ({ title: draft.title.trim() }),
     validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({ title: draft.title, config: node.config, boundAssetId: node.bound_asset_id }),
+    save: (draft, expectedEditVersion) => onSave({
+      title: draft.title,
+      config: node.config,
+      boundAssetId: node.bound_asset_id,
+      expectedEditVersion,
+    }),
     onStateChange: onSaveStateChange,
   });
 
@@ -905,12 +911,13 @@ function ProductSourceEditor({
         title: nextTitle,
         config: graphProductSourceConfig(node, nextDraft),
         boundAssetId: node.bound_asset_id,
+        expectedEditVersion: graphRevision,
       });
       onSaveStateChange("saved", null);
     } catch (error) {
       onSaveStateChange("failed", errorMessage(error, t("workbench.error.structure")));
     }
-  }, [node, onSave, onSaveStateChange, sourceDraft.fact_set_version_id, sourceProductId, t]);
+  }, [graphRevision, node, onSave, onSaveStateChange, sourceDraft.fact_set_version_id, sourceProductId, t]);
 
   const saveFacts = async () => {
     if (!sourceProductId || !factsForm || factsQuery.isPending) return;
@@ -1128,7 +1135,7 @@ function ImageAssetEditor({
   busy: boolean;
   graphRevision: number;
   onBind?: () => void;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
+  onSave: (input: InspectorNodeCommitInput) => Promise<{ edit_version: number }>;
   onSaveStateChange: (status: SaveStatus, error: string | null) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
@@ -1141,20 +1148,22 @@ function ImageAssetEditor({
     versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => normalizeCatalogDraft(draft, fields),
     validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({
+    save: (draft, expectedEditVersion) => onSave({
       title: draft.title,
       config: catalogConfigForSave(fields, draft.config),
       boundAssetId: node.bound_asset_id,
+      expectedEditVersion,
     }),
     onStateChange: onSaveStateChange,
   });
   const unbind = useCallback(async () => {
     try {
-      await editor.flush(true);
+      const expectedEditVersion = await editor.flush(true);
       await onSave({
         title: editor.draft.title.trim() || node.title,
         config: catalogConfigForSave(fields, editor.draft.config),
         boundAssetId: null,
+        expectedEditVersion,
       });
       onSaveStateChange("saved", null);
     } catch (error) {
@@ -1219,7 +1228,7 @@ function CatalogNodeEditor({
   sourceAssetId: string | null;
   onPreviewImage?: (image: DownloadableImage) => void;
   header?: ReactNode;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
+  onSave: (input: InspectorNodeCommitInput) => Promise<{ edit_version: number }>;
   onSaveStateChange: (status: SaveStatus, error: string | null) => void;
 }) {
   const { t } = useI18n();
@@ -1231,10 +1240,11 @@ function CatalogNodeEditor({
     versionConflictMessage: t("graph.inspector.draftConflict"),
     normalize: (draft) => normalizeCatalogDraft(draft, fields),
     validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({
+    save: (draft, expectedEditVersion) => onSave({
       title: draft.title,
       config: catalogConfigForSave(fields, draft.config),
       boundAssetId: node.bound_asset_id,
+      expectedEditVersion,
     }),
     onStateChange: onSaveStateChange,
   });

@@ -9,3 +9,16 @@ export async function withGraphRunSubmit<T>(run: () => Promise<T>): Promise<T | 
     inflight = false;
   }
 }
+
+export async function submitAfterSuccessfulFlush(
+  flush: () => Promise<unknown>,
+  submit: () => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await flush();
+  } catch {
+    return false;
+  }
+  await submit();
+  return true;
+}

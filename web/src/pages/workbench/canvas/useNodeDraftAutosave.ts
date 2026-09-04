@@ -2,6 +2,7 @@
  * 按 `edit_version` 做 inspector 乐观自动保存。
  *
  * 409 表示 live 图已变，草稿不会强行合并。运行前 flush，让 Graph Command 看到最新配置。
+ * 草稿基线是开始编辑时的图 revision：兄弟节点配置变更不改写该基线，也不在客户端判冲突。
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -34,9 +35,151 @@ export interface NodeDraftAutosave<T> {
   flush: (forceRetry?: boolean) => Promise<number>;
 }
 
-interface BlockedSave {
+export interface NodeDraftSession<T> {
+  draft: T;
+  baseline: T;
+  editVersion: number;
+  lastServerSignature: string;
   sequence: number;
-  error: Error;
+  blocked: { sequence: number; error: Error } | null;
+  savePromise: Promise<number> | null;
+}
+
+export function createNodeDraftSession<T>(serverValue: T, serverEditVersion: number): NodeDraftSession<T> {
+  return {
+    draft: serverValue,
+    baseline: serverValue,
+    editVersion: serverEditVersion,
+    lastServerSignature: stableJson(serverValue),
+    sequence: 0,
+    blocked: null,
+    savePromise: null,
+  };
+}
+
+export function isVersionConflictStatus(error: unknown): boolean {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "status" in error
+    && (error as { status: unknown }).status === 409,
+  );
+}
+
+export function nodeDraftSaveError(error: unknown, versionConflictMessage: string): Error {
+  if (isVersionConflictStatus(error)) {
+    return new Error(versionConflictMessage);
+  }
+  return normalizeError(error);
+}
+
+export function applyServerToNodeDraft<T>(
+  session: NodeDraftSession<T>,
+  serverValue: T,
+  serverEditVersion: number,
+  versionConflictMessage: string,
+): { conflict: boolean; adopted: boolean } {
+  const nextSignature = stableJson(serverValue);
+  const versionAdvanced = serverEditVersion > session.editVersion;
+  const serverUnchanged = nextSignature === session.lastServerSignature;
+  if (!versionAdvanced && serverUnchanged) {
+    return { conflict: false, adopted: false };
+  }
+
+  const hadLocalChanges = !sameJson(session.draft, session.baseline);
+  const thisNodeUnchanged = serverUnchanged || sameJson(serverValue, session.baseline);
+  session.lastServerSignature = nextSignature;
+
+  if (thisNodeUnchanged) {
+    return { conflict: false, adopted: false };
+  }
+
+  if (!hadLocalChanges || sameJson(session.draft, serverValue)) {
+    session.editVersion = Math.max(serverEditVersion, session.editVersion);
+    session.baseline = serverValue;
+    session.draft = serverValue;
+    session.blocked = null;
+    return { conflict: false, adopted: true };
+  }
+
+  session.blocked = { sequence: session.sequence, error: new Error(versionConflictMessage) };
+  return { conflict: true, adopted: false };
+}
+
+export function updateNodeDraft<T>(session: NodeDraftSession<T>, nextDraft: T): void {
+  session.sequence += 1;
+  session.blocked = null;
+  session.draft = nextDraft;
+}
+
+export function discardNodeDraft<T>(session: NodeDraftSession<T>): void {
+  session.sequence += 1;
+  session.blocked = null;
+  session.draft = session.baseline;
+}
+
+export async function flushNodeDraft<T>(
+  session: NodeDraftSession<T>,
+  deps: {
+    save: (draft: T, expectedEditVersion: number) => Promise<VersionedSaveResult>;
+    normalize: (draft: T) => T;
+    validate: (draft: T) => string | null;
+    versionConflictMessage: string;
+    forceRetry?: boolean;
+    onChange?: () => void;
+  },
+): Promise<number> {
+  let allowBlockedRetry = deps.forceRetry === true;
+  while (!sameJson(session.draft, session.baseline)) {
+    const blocked = session.blocked;
+    if (blocked && blocked.sequence === session.sequence && !allowBlockedRetry) {
+      throw blocked.error;
+    }
+    allowBlockedRetry = false;
+
+    if (session.savePromise) {
+      await session.savePromise;
+      continue;
+    }
+
+    const snapshot = deps.normalize(session.draft);
+    const snapshotSequence = session.sequence;
+    if (!sameJson(snapshot, session.draft)) {
+      session.draft = snapshot;
+      deps.onChange?.();
+    }
+    const validationError = deps.validate(snapshot);
+    if (validationError) {
+      const nextError = new Error(validationError);
+      session.blocked = { sequence: snapshotSequence, error: nextError };
+      deps.onChange?.();
+      throw nextError;
+    }
+
+    const expectedEditVersion = session.editVersion;
+    const pending = deps.save(snapshot, expectedEditVersion).then((result) => {
+      session.editVersion = result.edit_version;
+      session.baseline = snapshot;
+      session.lastServerSignature = stableJson(snapshot);
+      session.blocked = null;
+      return result.edit_version;
+    });
+    session.savePromise = pending;
+    deps.onChange?.();
+    try {
+      await pending;
+    } catch (cause) {
+      const nextError = nodeDraftSaveError(cause, deps.versionConflictMessage);
+      session.blocked = { sequence: snapshotSequence, error: nextError };
+      deps.onChange?.();
+      throw nextError;
+    } finally {
+      if (session.savePromise === pending) {
+        session.savePromise = null;
+      }
+    }
+  }
+  return session.editVersion;
 }
 
 export function useNodeDraftAutosave<T>({
@@ -50,29 +193,39 @@ export function useNodeDraftAutosave<T>({
   save,
   onStateChange,
 }: UseNodeDraftAutosaveOptions<T>): NodeDraftAutosave<T> {
-  const [draft, setDraft] = useState(serverValue);
+  const sessionRef = useRef<NodeDraftSession<T> | null>(null);
+  if (sessionRef.current === null) {
+    sessionRef.current = createNodeDraftSession(serverValue, serverEditVersion);
+  }
+  const session = sessionRef.current;
+  const [draft, setDraft] = useState(session.draft);
   const [status, setStatus] = useState<SaveStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const draftRef = useRef(serverValue);
-  const baselineRef = useRef(serverValue);
-  const editVersionRef = useRef(serverEditVersion);
-  const sequenceRef = useRef(0);
-  const blockedRef = useRef<BlockedSave | null>(null);
-  const savePromiseRef = useRef<Promise<number> | null>(null);
   const saveRef = useRef(save);
   const normalizeRef = useRef(normalize);
   const validateRef = useRef(validate);
   const onStateChangeRef = useRef(onStateChange);
-  const lastServerSignatureRef = useRef(stableJson(serverValue));
+  const conflictMessageRef = useRef(versionConflictMessage);
   const mountedRef = useRef(true);
 
   saveRef.current = save;
   normalizeRef.current = normalize;
   validateRef.current = validate;
   onStateChangeRef.current = onStateChange;
+  conflictMessageRef.current = versionConflictMessage;
+
+  const syncView = useCallback((nextStatus?: SaveStatus, nextError?: string | null) => {
+    if (!mountedRef.current) return;
+    setDraft(session.draft);
+    if (nextStatus !== undefined) {
+      setStatus(nextStatus);
+    }
+    if (nextError !== undefined) {
+      setError(nextError);
+    }
+  }, [session]);
 
   useEffect(() => {
-    // 开发环境下 React StrictMode 会重放 effect，每次 setup 都要恢复 mounted 状态
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
@@ -84,128 +237,71 @@ export function useNodeDraftAutosave<T>({
   }, [error, status]);
 
   useEffect(() => {
-    const nextSignature = stableJson(serverValue);
-    const versionAdvanced = serverEditVersion > editVersionRef.current;
-    if (!versionAdvanced && nextSignature === lastServerSignatureRef.current) {
+    const result = applyServerToNodeDraft(session, serverValue, serverEditVersion, conflictMessageRef.current);
+    if (result.conflict) {
+      syncView("failed", session.blocked?.error.message ?? versionConflictMessage);
       return;
     }
-    if (serverEditVersion >= editVersionRef.current) {
-      editVersionRef.current = serverEditVersion;
+    if (result.adopted) {
+      syncView(session.blocked ? undefined : "saved", session.blocked ? undefined : null);
     }
-    lastServerSignatureRef.current = nextSignature;
-    const hadLocalChanges = !sameJson(draftRef.current, baselineRef.current);
-    baselineRef.current = serverValue;
-    if (versionAdvanced && hadLocalChanges && !sameJson(draftRef.current, serverValue)) {
-      const conflict = new Error(versionConflictMessage);
-      blockedRef.current = { sequence: sequenceRef.current, error: conflict };
-      setError(conflict.message);
-      setStatus("failed");
-      return;
-    }
-    if (!hadLocalChanges || sameJson(draftRef.current, serverValue)) {
-      draftRef.current = serverValue;
-      setDraft(serverValue);
-      if (!blockedRef.current) {
-        setStatus("saved");
-        setError(null);
-      }
-    }
-  }, [serverEditVersion, serverValue, versionConflictMessage]);
+  }, [serverEditVersion, serverValue, session, syncView, versionConflictMessage]);
 
   const update = useCallback((nextDraft: T) => {
-    sequenceRef.current += 1;
-    blockedRef.current = null;
-    draftRef.current = nextDraft;
-    setDraft(nextDraft);
-    setError(null);
-    setStatus(sameJson(nextDraft, baselineRef.current) ? "saved" : "saving");
-  }, []);
+    updateNodeDraft(session, nextDraft);
+    syncView(sameJson(nextDraft, session.baseline) ? "saved" : "saving", null);
+  }, [session, syncView]);
 
   const discard = useCallback(() => {
-    sequenceRef.current += 1;
-    blockedRef.current = null;
-    const baseline = baselineRef.current;
-    draftRef.current = baseline;
-    setDraft(baseline);
-    setError(null);
-    setStatus("saved");
-  }, []);
+    discardNodeDraft(session);
+    syncView("saved", null);
+  }, [session, syncView]);
 
   const flush = useCallback(async (forceRetry = false): Promise<number> => {
-    let allowBlockedRetry = forceRetry;
-    while (!sameJson(draftRef.current, baselineRef.current)) {
-      const blocked = blockedRef.current;
-      if (blocked && blocked.sequence === sequenceRef.current && !allowBlockedRetry) {
-        throw blocked.error;
+    try {
+      if (mountedRef.current && !sameJson(session.draft, session.baseline)) {
+        setError(null);
+        setStatus("saving");
       }
-      allowBlockedRetry = false;
-
-      if (savePromiseRef.current) {
-        await savePromiseRef.current;
-        continue;
-      }
-
-      const snapshot = normalizeRef.current(draftRef.current);
-      const snapshotSequence = sequenceRef.current;
-      if (!sameJson(snapshot, draftRef.current)) {
-        draftRef.current = snapshot;
-        if (mountedRef.current) {
-          setDraft(snapshot);
-        }
-      }
-      const validationError = validateRef.current(snapshot);
-      if (validationError) {
-        const nextError = new Error(validationError);
-        blockedRef.current = { sequence: snapshotSequence, error: nextError };
-        setError(validationError);
-        setStatus("failed");
-        throw nextError;
-      }
-
-      setError(null);
-      setStatus("saving");
-      const pending = saveRef.current(snapshot, editVersionRef.current).then((result) => {
-        editVersionRef.current = result.edit_version;
-        baselineRef.current = snapshot;
-        lastServerSignatureRef.current = stableJson(snapshot);
-        blockedRef.current = null;
-        if (mountedRef.current) {
-          if (sameJson(draftRef.current, snapshot)) {
-            setError(null);
-            setStatus("saved");
-          } else {
-            setStatus("saving");
-          }
-        }
-        return result.edit_version;
+      const version = await flushNodeDraft(session, {
+        save: (snapshot, expectedEditVersion) => saveRef.current(snapshot, expectedEditVersion),
+        normalize: (value) => normalizeRef.current(value),
+        validate: (value) => validateRef.current(value),
+        versionConflictMessage: conflictMessageRef.current,
+        forceRetry,
+        onChange: () => {
+          if (!mountedRef.current) return;
+          setDraft(session.draft);
+        },
       });
-      savePromiseRef.current = pending;
-      try {
-        await pending;
-      } catch (cause) {
-        const nextError = normalizeError(cause);
-        blockedRef.current = { sequence: snapshotSequence, error: nextError };
-        if (mountedRef.current) {
-          setError(nextError.message);
-          setStatus("failed");
-        }
-        throw nextError;
-      } finally {
-        if (savePromiseRef.current === pending) {
-          savePromiseRef.current = null;
+      if (mountedRef.current) {
+        setDraft(session.draft);
+        if (sameJson(session.draft, session.baseline)) {
+          setError(null);
+          setStatus("saved");
+        } else {
+          setStatus("saving");
         }
       }
+      return version;
+    } catch (cause) {
+      const nextError = session.blocked?.error ?? nodeDraftSaveError(cause, conflictMessageRef.current);
+      if (mountedRef.current) {
+        setDraft(session.draft);
+        setError(nextError.message);
+        setStatus("failed");
+      }
+      throw nextError;
     }
-    return editVersionRef.current;
-  }, []);
+  }, [session]);
 
-  const dirty = !sameJson(draft, baselineRef.current);
+  const dirty = !sameJson(draft, session.baseline);
   useEffect(() => {
-    const blocked = blockedRef.current;
+    const blocked = session.blocked;
     if (
       disabled
       || !dirty
-      || (blocked && blocked.sequence === sequenceRef.current)
+      || (blocked && blocked.sequence === session.sequence)
     ) {
       return;
     }
@@ -213,7 +309,7 @@ export function useNodeDraftAutosave<T>({
       void flush().catch(() => undefined);
     }, debounceMs);
     return () => window.clearTimeout(timer);
-  }, [debounceMs, disabled, dirty, draft, flush]);
+  }, [debounceMs, disabled, dirty, draft, flush, session]);
 
   return { draft, dirty, status, error, update, discard, flush };
 }
