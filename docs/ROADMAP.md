@@ -40,7 +40,7 @@ Agent 能力组承接 [普通 Skill 修复](audits/tasks/eval-skills.md) 与 [�
 
 ### 运行时性能治理
 
-[生图 admission 指标](audits/tasks/archive/perf-capacity-metrics.md)已交付。 [连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付；[dispatcher 负载时延采证](audits/tasks/archive/perf-dispatcher-latency.md)已完成，单副本 500 条突发负载的 p95 仍未达到 1s 建议目标。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
+[生图 admission 指标](audits/tasks/archive/perf-capacity-metrics.md)已交付。[连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付；[dispatcher 负载时延采证](audits/tasks/archive/perf-dispatcher-latency.md)已完成，单副本 500 条突发负载的 p95 仍未达到 1s 建议目标。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
 
 ### 画布文稿权威测试
 

@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -44,6 +47,7 @@ func TestSnapshotIncludesRecoveryBacklog(t *testing.T) {
 		"productflow_graph_sse_connections",
 		"productflow_notify_listener_connections",
 		"productflow_generation_max_concurrent_tasks",
+		"productflow_generation_admission_running",
 		"productflow_advisory_lock_wait_seconds_count",
 		"productflow_consume_duration_seconds_count",
 	} {
@@ -59,6 +63,11 @@ func TestSnapshotIncludesRecoveryBacklog(t *testing.T) {
 	for _, result := range consumeResultNames {
 		if !strings.Contains(body, `productflow_consume_results_total{result="`+result+`"}`) {
 			t.Fatalf("missing consume result %q in metrics", result)
+		}
+	}
+	for _, domain := range generationAdmissionDomains {
+		if !strings.Contains(body, `productflow_generation_admission_denied_total{domain="`+domain+`"}`) {
+			t.Fatalf("missing generation admission denied domain %q in metrics", domain)
 		}
 	}
 }
@@ -95,6 +104,8 @@ func TestWorkerProcessSeriesHaveStableNames(t *testing.T) {
 		`# TYPE productflow_advisory_lock_wait_seconds histogram`,
 		`productflow_advisory_lock_wait_seconds_bucket{le="0.01"}`,
 		`productflow_advisory_lock_wait_seconds_count`,
+		`productflow_generation_admission_denied_total{domain="graph"}`,
+		`productflow_generation_admission_denied_total{domain="imagesession"}`,
 		`productflow_consume_results_total{result="consumed"}`,
 		`productflow_consume_results_total{result="busy"}`,
 		`productflow_consume_results_total{result="later"}`,
@@ -132,6 +143,43 @@ func TestSnapshotGenerationLimitUsesSharedParser(t *testing.T) {
 	}
 	if !strings.Contains(body, "productflow_generation_max_concurrent_tasks 20\n") {
 		t.Fatalf("expected clamped generation limit 20 in %s", body)
+	}
+}
+
+func TestSnapshotGenerationAdmissionRunningUsesSharedCount(t *testing.T) {
+	_, gdb := testdb.Open(t)
+	ctx := context.Background()
+	before, err := generation.CountAdmissionRunning(ctx, gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	productID, graphID, runID := clockid.New(), clockid.New(), clockid.New()
+	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'admission-metric', ?, ?)`, productID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at) VALUES (?, ?, 'admission-metric', TRUE, 3, 1, ?, ?)`, graphID, productID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`INSERT INTO workflow_graph_runs (id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at) VALUES (?, ?, 'running', 'graph', 1, '{}', TRUE, ?)`, runID, graphID, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`INSERT INTO workflow_graph_node_runs (id, graph_run_id, status, sort_order, started_at, attempt_count) VALUES (?, ?, 'running', 0, ?, 0)`, clockid.New(), runID, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = gdb.Exec(`DELETE FROM workflow_graph_node_runs WHERE graph_run_id = ?`, runID).Error
+		_ = gdb.Exec(`DELETE FROM workflow_graph_runs WHERE id = ?`, runID).Error
+		_ = gdb.Exec(`DELETE FROM workflow_graphs WHERE id = ?`, graphID).Error
+		_ = gdb.Exec(`DELETE FROM products WHERE id = ?`, productID).Error
+	})
+	body, err := snapshot(gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("productflow_generation_admission_running %d\n", before+1)
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected %q in %s", want, body)
 	}
 }
 

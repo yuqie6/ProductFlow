@@ -3,6 +3,7 @@
 package metrics
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -225,6 +226,14 @@ func snapshot(db *gorm.DB) (string, error) {
 		return "", err
 	}
 	generationLimit := generation.ParseMaxConcurrent(generationLimitSetting.Value)
+	admissionCtx := context.Background()
+	if db.Statement != nil && db.Statement.Context != nil {
+		admissionCtx = db.Statement.Context
+	}
+	admissionRunning, err := generation.CountAdmissionRunning(admissionCtx, db)
+	if err != nil {
+		return "", err
+	}
 	var staleRunning []recoveryBacklogCount
 	if err := db.Raw(`
 		WITH image_threshold AS (
@@ -324,6 +333,9 @@ func snapshot(db *gorm.DB) (string, error) {
 	b.WriteString("# HELP productflow_generation_max_concurrent_tasks Admission limit from app_settings generation_max_concurrent_tasks.\n")
 	b.WriteString("# TYPE productflow_generation_max_concurrent_tasks gauge\n")
 	fmt.Fprintf(&b, "productflow_generation_max_concurrent_tasks %d\n", generationLimit)
+	b.WriteString("# HELP productflow_generation_admission_running Shared generation admission slots currently running.\n")
+	b.WriteString("# TYPE productflow_generation_admission_running gauge\n")
+	fmt.Fprintf(&b, "productflow_generation_admission_running %d\n", admissionRunning)
 	writeRecoveryBacklog(&b, recoveryBacklog)
 	writeRecoveryStaleRunning(&b, pending.ExpiredLeases, staleRunning)
 	writeRecoveryHistograms(&b)

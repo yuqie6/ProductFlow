@@ -41,6 +41,7 @@ func ObserveConsumeDuration(elapsed time.Duration) {
 
 func writeWorkerProcessSeries(b *strings.Builder) {
 	writeUnlabeledHistogram(b, "productflow_advisory_lock_wait_seconds", "Wait time for pg_advisory_xact_lock on the generation capacity key.", advisoryLockWait)
+	writeGenerationAdmissionDenied(b)
 	b.WriteString("# HELP productflow_consume_results_total Worker Consume outcomes by bounded result.\n")
 	b.WriteString("# TYPE productflow_consume_results_total counter\n")
 	for _, name := range consumeResultNames {

@@ -4,7 +4,7 @@
 
 生产 Gate 的详细合同保存在本文 [生产 Gate](#production-gates) 节；[历史时间线](../history/agent-runtime-timeline.md#runtime-ownership-evidence) 保留已关闭所有权重构的证据。当前代码、测试和真实运行仍是最终证据；账本中的目标、预算和未验证项必须标明状态。
 
-**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情与时延采证已归档，容量指标验收后核对 PERF-12 发布条件；时延采证完成不表示单副本 p95 达标。
+**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情、时延与容量指标已归档；PERF-12 仍缺目标规模 payload，本轮不发后续单。时延采证完成不表示单副本 p95 达标。
 
 ## 组职责与交接
 
@@ -314,12 +314,12 @@ Recovery 的默认边界：
 
 ### P1：解耦 dispatch、recovery 和容量 admission
 
-状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次、dispatcher `has_more`/duration/error 日志、dispatcher 各域 recovery histogram、候选锁查询耗时、API 当前 PostgreSQL 锁等待和 queued/stale-running backlog 指标已落地；批次内事务拆分、capacity wait/running count 和负载验证仍待实施。
+状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次、dispatcher `has_more`/duration/error 日志、dispatcher 各域 recovery histogram、候选锁查询耗时、API 当前 PostgreSQL 锁等待和 queued/stale-running backlog 指标已落地；capacity wait/running/denied 指标已落地；批次内事务拆分和负载验证仍待实施。
 
 1. dispatcher watch 模式持续以 dispatch interval 处理 outbox；recovery 使用独立 cadence。首轮 recovery 立即运行，失败不推进成功时间戳。
 2. Agent、Graph、ImageSession、Delivery、LocalEdit 已使用默认 25 条上限；业务域使用 `status + stale predicate + SKIP LOCKED` 和稳定时间/id 排序，dispatcher 日志记录每个 owner 的 `has_more`、recovery duration 与错误，dispatcher `/metrics` 提供各域 recovery histogram/候选锁查询耗时，API `/metrics` 提供当前 PostgreSQL 锁等待和 queued/stale-running backlog。下一步是拆分批次内状态迁移与 restage，并用目标规模验证没有隐性饥饿。
 3. 把当前每批事务继续拆成候选 claim、单聚合状态迁移、restage 的短事务；不要让批次大小随业务行数增长。
-4. 单商家阶段继续用 PostgreSQL capacity advisory 保证准确 admission；当前已记录 recovery 锁等待，capacity wait、running count 和 admission denied 仍需补指标。SaaS 前替换为按 workspace/tenant 的 admission token；PostgreSQL 只做对账。
+4. 单商家阶段继续用 PostgreSQL capacity advisory 保证准确 admission；capacity wait 用 `productflow_advisory_lock_wait_seconds`，running/denied 用 `productflow_generation_admission_*`。SaaS 前替换为按 workspace/tenant 的 admission token；PostgreSQL 只做对账。
 5. GraphRun 行 lease 已替代执行 loop 的长 advisory：token/expiry CAS、5 分钟续租、过期接管、迟到 provider 结果 fencing 和 recovery 的 lease 过期条件已落地。继续观察续租失败、接管和 worker consumer lease 的时间预算。
 
 ### P2：查询、列表和实时通道
@@ -452,7 +452,7 @@ LIMIT 20;
 
 - dispatch PENDING backlog、SENT stale 数、claim batch size、mark-SENT 到 enqueue 耗时。
 - recovery 每域 processed/changed/unknown/skipped/has_more、事务耗时、候选锁查询耗时和错误次数。
-- Graph capacity advisory wait、running count、capacity denied 次数；当前 recovery 锁等待已单独提供，不能代替 admission 指标。
+- Graph capacity advisory wait、running count、capacity denied 次数：`productflow_advisory_lock_wait_seconds`、`productflow_generation_admission_running`、`productflow_generation_admission_denied_total`。denied 是进程内计数，跨副本按 instance 抓取。
 - PostgreSQL pool acquired/idle/max、listener count、query latency 和 deadlock/serialization error count。当前 API metrics 已有 `productflow_notify_listener_connections`，pool 原始计数仍以 PostgreSQL/client exporter 为准。
 - SSE active connections、listener reconnect、poll fallback、subscriber drop；当前 API metrics 已有 `productflow_graph_sse_connections` 和 Agent SSE gauge，跨副本指标要带 instance，不能把进程内 gauge 当总数。
 - ImageSession/Graph/Agent 列表 rows、query time、payload bytes 和 cursor page hit rate。
@@ -561,6 +561,7 @@ PRODUCTFLOW_PERF_PRODUCT_ID=<product-id> WEB_BASE_URL=http://127.0.0.1:<web-port
 | 2026-09-05 | 连续生图详情任务读取有界，交付 `232e51f7` | 三组实际生产任务 SQL 各 LIMIT 20，去重最多 60；队列排名只返回所需 ID。包内测试 6.694s、目标规模 query-plan 3.141s、新增 HTTP/排名回归 race 三次 2.941s，均通过；详见[归档任务](tasks/archive/perf-imagesession-detail.md) | 首屏关联任务和 rounds COUNT 仍 Seq Scan；未验收生产 payload/延迟，PERF-08 保留部分完成 |
 | 2026-09-05 | dispatcher 负载时延，测试交付 `a0d1ba4f` | queue 包回归 5.098s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 连续三轮 31.652s，每场 500 个有效样本、25 个延期跳过；单副本 p95 2539.869/2567.677/2593.774ms，双副本 775.003/772.495/783.593ms。DB 时钟探针与 Redis 信封核对见[归档任务](tasks/archive/perf-dispatcher-latency.md) | 有效采证完成，单副本建议目标 FAIL；仅本地带探针突发负载，不作为生产 SLO；保留批间等待缺口 |
 | 2026-09-05 | AR-02 journal 职责调查，认领 `324894a6` | 指定 Node 测试 61 passed / 1 skipped（10k WAL `runIf`）；`just docs-check` 通过。结论保留现状，见[归档任务](tasks/archive/arch-journal-assessment.md) | 本轮未跑 Go ConfirmEvents / fencing；Node recover claim 409 缺测；不发实现单 |
+| 2026-09-05 | 生图 admission running/denied 指标 | `generationCapacityAvailable` 容量满打点；`/metrics` 输出 `productflow_generation_admission_running` 与带 `graph`/`imagesession` domain 的 `productflow_generation_admission_denied_total`。metrics 0.856s、graph 78.394s 通过，见[归档任务](tasks/archive/perf-capacity-metrics.md) | 未跑 imagesession replica field；入队路径满容量也会增加 denied；denied 非跨副本合计 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 

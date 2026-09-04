@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -147,8 +148,10 @@ func TestGenerationCapacityUsesAdmissionNodeCount(t *testing.T) {
 		}
 	})
 	denied := false
+	beforeGraphDenied := metrics.GenerationAdmissionDeniedCount("graph")
+	beforeSessionDenied := metrics.GenerationAdmissionDeniedCount("imagesession")
 	if err := gdb.WithContext(ctx).Transaction(func(dbTx *gorm.DB) error {
-		ok, err := GenerationCapacityAvailable(ctx, dbTx)
+		ok, err := generationCapacityAvailable(ctx, dbTx, "graph")
 		if err != nil {
 			return err
 		}
@@ -159,5 +162,26 @@ func TestGenerationCapacityUsesAdmissionNodeCount(t *testing.T) {
 	}
 	if !denied {
 		t.Fatal("limit 1 with 2 running nodes must deny admission")
+	}
+	if got := metrics.GenerationAdmissionDeniedCount("graph"); got != beforeGraphDenied+1 {
+		t.Fatalf("graph denied count %d, want %d", got, beforeGraphDenied+1)
+	}
+	if got := metrics.GenerationAdmissionDeniedCount("imagesession"); got != beforeSessionDenied {
+		t.Fatalf("imagesession denied count %d, want unchanged %d", got, beforeSessionDenied)
+	}
+	if err := gdb.WithContext(ctx).Transaction(func(dbTx *gorm.DB) error {
+		ok, err := GenerationCapacityAvailable(ctx, dbTx)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return fmt.Errorf("exported ImageSession admission must also deny")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := metrics.GenerationAdmissionDeniedCount("imagesession"); got != beforeSessionDenied+1 {
+		t.Fatalf("imagesession denied count %d, want %d", got, beforeSessionDenied+1)
 	}
 }

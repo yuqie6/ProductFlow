@@ -30,11 +30,12 @@ func runningGenerationCount(ctx context.Context, tx *gorm.DB) (int, error) {
 
 // GenerationCapacityAvailable 与连续生图共用同一把容量锁。
 // advisory lock 或计数查询失败原样返回；容量满返回 false, nil，不当错误。
+// 导出入口供 ImageSession claim 使用，denied 记在 domain=imagesession。
 func GenerationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error) {
-	return generationCapacityAvailable(ctx, tx)
+	return generationCapacityAvailable(ctx, tx, "imagesession")
 }
 
-func generationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error) {
+func generationCapacityAvailable(ctx context.Context, tx *gorm.DB, domain string) (bool, error) {
 	lockStarted := time.Now()
 	err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(?)", generationCapacityLockKey).Error
 	metrics.ObserveAdvisoryLockWait(time.Since(lockStarted))
@@ -46,7 +47,11 @@ func generationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	return count < limit, nil
+	if count >= limit {
+		metrics.ObserveGenerationAdmissionDenied(domain)
+		return false, nil
+	}
+	return true, nil
 }
 
 var (
@@ -62,7 +67,7 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 	claimed := false
 	claimedAttemptID := ""
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
-		ok, err := generationCapacityAvailable(ctx, dbTx)
+		ok, err := generationCapacityAvailable(ctx, dbTx, "graph")
 		if err != nil {
 			return err
 		}
