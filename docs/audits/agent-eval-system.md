@@ -26,10 +26,10 @@
 
 - 语言中立 JSON 任务集在 `agent-service/evals/tasks/` 与 `worlds/`。`fixtures.ts` 已删除，无双读。L0 合同测试 `evals/contract.test.ts` 断言 75 条 L0、每技能 ≥10 正 + ≥5 负、每任务 ≥3 条释义、工具与 Graph op coverage 100%、L2 ≥15、L3 ≥5。
 - TypeBox schema 在 `evals/schema.ts`（含 `evalJSONSchemas()`）；TS loader 在 `evals/loader.ts`；Go loader 在 `go/internal/agent/evaltask.go`。
-- L1：`stub-world.ts` 记录写调用并按 revision 返回 409；`graders/` 评 tools/writes/ops/terminal/budget；`live-runner.ts` 默认 k=3，结果落 `STORAGE_ROOT/agent-evals/<run_id>/`；`report.ts` 计算 pass^1 / pass^k、Wilson 区间、diff、coverage 与饱和警告。两次全量 k=3：`20260904T145330Z-30eb3c4d` pass^1=0.5111 / pass^3=0.3600；`20260904T151838Z-01f25e84` pass^1=0.4933 / pass^3=0.2933；`|Δpass^1|=0.0178`。regression 门槛两次都未过。
+- L1：`stub-world.ts` 记录写调用并按 revision 返回 409；`graders/` 评 tools/writes/ops/terminal/budget；`live-runner.ts` 默认 k=3，结果落 `STORAGE_ROOT/agent-evals/<run_id>/`；`report.ts` 计算 pass^1 / pass^k、Wilson 区间、diff、coverage 与饱和警告。记分修复前两次全量：`20260904T145330Z-30eb3c4d` pass^1=0.5111 / pass^3=0.3600；`20260904T151838Z-01f25e84` pass^1=0.4933 / pass^3=0.2933。修复后两次全量（同 task_hash `71d48f47…`）：`20260904T165841Z-d5fc9b35` pass^1=0.5867 / pass^3=0.4400；`20260904T174405Z-fa2667fa` pass^1=0.6178 / pass^3=0.4533，`delta_pass^1=+0.0311`。两次 regression 门槛均未过。不得与修复前两次做 M-03 同任务集 diff。
 - L2：`evalworld_test.go` 种子 name-only / expanded / failed-run / global-library；`gradeEvalState` 断言 PG；opt-in `eval_state_gopg_test.go` 需要 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key。本账本尚未登记 L2 live `run_id`。
-- L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。L3 live `20260904T154151Z-788cb11e`：5/5 fail，pass^1=0。kappa 未满 50 条人工标签，judge 不计 pass。L5 无 live `run_id`。
-- L6：`go/cmd/productflow-agent-evals mine|export` 只读 PG；undo 用 `workflow_operation_groups.actor_type` + `history_kind`。尚无生产来源任务，也无连续 3 晚 nightly 报告。
+- L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。L3 live `20260904T154151Z-788cb11e`：5/5 fail，pass^1=0。已从 `20260904T174405Z-fa2667fa` 生成 50 条（task,trial）× 4 维共 200 行标注模板，`score` 全为 null；仓库 `evals/labels/` 仍无已填标签，judge 不计 pass。L5 无 live `run_id`。
+- L6：`go/cmd/productflow-agent-evals mine|export` 只读 PG；undo 用 `workflow_operation_groups.actor_type` + `history_kind`。2026-09-05 对本地 dev PG 跑过 `just agent-evals-mine 7`（115 turns）。尚无生产库 mine、production origin 任务，也无连续 3 晚 nightly 报告。
 - [`agent-production-readiness.md`](agent-production-readiness.md) 记录过 2026-09-04 的 legacy `just agent-evals-live` 15/15。该记录没有七层 schema、k 次试验或可复算落盘，不得换算为本账本 pass^3。
 
 ### 目标拓扑
@@ -58,12 +58,12 @@ flowchart LR
 |---|---|---|---|
 | D-01 | 任务集使用语言中立 JSON；TypeScript 用 TypeBox loader，Go 使用独立 loader；15 条 fixture 迁入 JSON 后删除 `fixtures.ts`，不保留双读 | `完成` | `evals/schema.ts`、`loader.ts`、`go/internal/agent/evaltask.go`；仓库无 `fixtures.ts`。L0 `contract.test.ts` 随 `just agent-service-test` 运行。 |
 | D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `部分完成` | L1 graders 按任务 `expect` 评分。L2 `gradeEvalState` 读 `graph.Service` 与提案/run request/intake/library draft。L2 全量 k=3 尚无 live `run_id`。 |
-| D-03 | 默认 `k=3`；按任务计算无偏 `C(c,k)/C(n,k)` 后取均值，报告 pass^1、pass^3 与 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 两次全量已落盘。`20260904T145330Z-30eb3c4d` overall pass^1=0.5111 pass^3=0.3600，regression 0.5862/0.4138。`20260904T151838Z-01f25e84` overall 0.4933/0.2933，regression 0.5747/0.3448。门槛未达标。 |
+| D-03 | 默认 `k=3`；按任务计算无偏 `C(c,k)/C(n,k)` 后取均值，报告 pass^1、pass^3 与 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 修复后两次：`d5fc9b35` overall 0.5867/0.4400，regression 0.6552/0.5172；`fa2667fa` overall 0.6178/0.4533，regression 0.6897/0.5517。两次 gate fail。commit 分别为 `0cde4641` 与 `97b03f16`。 |
 | D-04 | 每个任务在 `expect.tools.required` 声明前置读工具；不使用全局必调白名单决定评分 | `完成` | `LIVE_REQUIRED_TOOLS` 已删除；L1 用任务 `expect.tools`。 |
 | D-05 | 结果只落 `STORAGE_ROOT/agent-evals/<run_id>/`；账本只抄摘要和 `run_id`；不写评测 PG 表，不提交原始转录 | `完成` | `run-storage.ts` 与 Go L2 writer 只写该目录；`storage-dev/` gitignore。本账本未粘贴转录。 |
-| D-06 | L4 在 50 条人工标签上 Cohen kappa >= 0.7 前只报趋势，不计入 pass | `部分完成` | `judge.ts`、export/import、`judge-calibrate` 存在；`evals/labels/` 尚无 50 条已填标签，report 不计 judge pass。 |
+| D-06 | L4 在 50 条人工标签上 Cohen kappa >= 0.7 前只报趋势，不计入 pass | `部分完成` | `judge.ts`、export/import、`judge-calibrate` 存在。`just agent-evals-export-labels 20260904T174405Z-fa2667fa` 写出 200 行模板（50 个 task/trial × 4 维，`score=null`）到 `STORAGE_ROOT/agent-evals/labeling/`，未填写、未 import。`evals/labels/` 仍只有 README。 |
 | D-07 | L5 目标攻击成功率门槛为 0；攻击下效用不得低于良性效用 10 点以上 | `部分完成` | `injections.ts` 计算 ASR 与效用并作为 CLI 退出码。缺少登记过的 adversarial `run_id`。 |
-| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数 | `部分完成` | coverage 100%。mutate kill_rate=0（1 scorable survived，3 unscorable）。`|Δpass^1|=0.0178≤0.05` 但两次 run 的 git commit 不同（`26b3a51c` vs `f0b805dd`），任务 hash 相同。regression 门槛未过。Agent 分数不采信。 |
+| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数 | `部分完成` | coverage 100%。mutate 仍是修复前的 `kill_rate=0`（修复后 mutate 进行中）。同 task_hash 两次 k=3 的 `|Δpass^1|=0.0311`，commit 不同，不满足 M-03。regression 门槛未过。Agent 分数不采信。 |
 
 ## 任务集合同
 
@@ -94,8 +94,8 @@ flowchart LR
 | L1-02 | `stub-world.ts` 从 JSON world 构造响应并记录每次 `{name, params, ts}`；所有 revision 写入校验当前 world，不匹配返回 409 | `完成` | 运行请求在 `execute*` 记分，映射为工具参数并默认空 `scope` 为 `graph`，与 Go `parseRunScopeSpec` 一致。`prepare*` 只做 revision 校验。`inject.first_write_409` 仍由 `stub-world.test.ts` 覆盖。 |
 | L1-03 | runner 支持 `--trials`（默认 3）、`--filter`、`--suite`，并发不超过生产 `maxConcurrentTurns`；每个 trial 隔离 Turn/store | `完成` | `cli.ts run-live`、`live-concurrency.ts`。 |
 | L1-04 | required/forbidden tools、ops、writes、terminal、question、budget 全部由任务 expect 评分；不再执行中文子串对齐 | `完成` | `live-runner.ts gradeTrial` 只调用 graders。 |
-| L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | 两次全量：`20260904T145330Z-30eb3c4d`、`20260904T151838Z-01f25e84`。原始工件在 `STORAGE_ROOT`，不提交仓库。 |
-| L1-06 | report 输出 pass^1/pass^k、Wilson 区间、技能/suite 分组、coverage、token/耗时和 baseline diff；真实 regression 达到 D-03 门槛 | `部分完成` | 两次 report 与 `just agent-evals-diff 20260904T145330Z-30eb3c4d 20260904T151838Z-01f25e84` 已落盘。regression_gate 两次均为 fail。 |
+| L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | 修复后两次全量：`20260904T165841Z-d5fc9b35`（commit=`0cde4641`）与 `20260904T174405Z-fa2667fa`（commit=`97b03f16`），均 `worktree_dirty=true`。历史两次仍在 `STORAGE_ROOT`。 |
+| L1-06 | report 输出 pass^1/pass^k、Wilson 区间、技能/suite 分组、coverage、token/耗时和 baseline diff；真实 regression 达到 D-03 门槛 | `部分完成` | `latest.json` 指向 `20260904T174405Z-fa2667fa`。`just agent-evals-diff 20260904T165841Z-d5fc9b35 20260904T174405Z-fa2667fa` → `delta_pass^1=+0.0311` `delta_pass^3=+0.0133`。regression_gate 仍 fail（0.6897/0.5517）。 |
 
 ## L2 Go + PostgreSQL 终态
 
@@ -124,7 +124,7 @@ flowchart LR
 |---|---|---|---|
 | L4-01 | 每个 Skill 有 3-5 个可独立判断的 rubric 维度，明确事实依据、分值、unknown 和失败条件 | `完成` | `evals/rubrics/<skill>.md`。 |
 | L4-02 | judge 每个维度独立调用，写 `{score, reason, unknown}`；`AGENT_EVAL_JUDGE_MODEL` 可与被测模型不同 | `部分完成` | `graders/judge.ts`。无校准前计入 pass 的 live 报告。 |
-| L4-03 | `export-labels --run --n` 生成 50 条脱敏人工标注模板；`import-labels` 校验后写可提交的 labels JSONL | `部分完成` | CLI 已接线。仓库 `evals/labels/` 只有 README，没有 50 条已填标签。 |
+| L4-03 | `export-labels --run --n` 生成 50 条脱敏人工标注模板；`import-labels` 校验后写可提交的 labels JSONL | `部分完成` | `just agent-evals-export-labels 20260904T174405Z-fa2667fa` 生成 `agent-evals/labeling/labels.template.jsonl`（50 个 task/trial、200 行、`score=null`）。未人工填写，未 import 到 `evals/labels/`。 |
 | L4-04 | `judge-calibrate` 对 50 条人工标签逐维度报告 Cohen kappa；每个计入 pass 的维度 kappa >= 0.7 | `缺失` | 校准命令存在；没有 50 条人工标签，因此没有达标 kappa 报告。 |
 | L4-05 | 未校准、样本不足或 unknown 过多时，report 只显示趋势且标 `uncalibrated`，不得改变 deterministic pass | `完成` | judge CLI 明确 trend-only；`judgeScoresIncludePass` 在 kappa 达标前为 false。 |
 
@@ -142,8 +142,8 @@ flowchart LR
 
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
-| L6-01 | `productflow-agent-evals mine` 只读聚合 terminal 状态/reason、proposal/run-request 决策和 Agent 写入后 5 分钟内用户 undo；查询有时间范围与行数上限 | `部分完成` | `evalmine.go` + `cmd/productflow-agent-evals`。undo 关联键为同 `graph_id` 上 agent `edit` 后 5 分钟内 user `undo`。默认测试覆盖 seed 后的 undo 计数。未对生产库跑 mine。 |
-| L6-02 | mine 报告 `requires_input`、`unknown`、`failed` 比例，terminal reason 分布，proposal/run-request confirm/discard 比例及 undo 比例；零分母显式为 unavailable | `部分完成` | `EvalRate.Available` 在分母为 0 时为 false。缺生产窗口报告。 |
+| L6-01 | `productflow-agent-evals mine` 只读聚合 terminal 状态/reason、proposal/run-request 决策和 Agent 写入后 5 分钟内用户 undo；查询有时间范围与行数上限 | `部分完成` | `evalmine.go` + `cmd/productflow-agent-evals`。undo 关联键为同 `graph_id` 上 agent `edit` 后 5 分钟内 user `undo`。默认测试覆盖 seed 后的 undo 计数。2026-09-05 对本地 dev PG `just agent-evals-mine 7` 写出 `agent-evals/mine/mine-2026-09-04T174527Z.json`。未对生产库跑 mine。 |
+| L6-02 | mine 报告 `requires_input`、`unknown`、`failed` 比例，terminal reason 分布，proposal/run-request confirm/discard 比例及 undo 比例；零分母显式为 unavailable | `部分完成` | 本地 7 日窗口：turns=115，`requires_input_rate=6/115`，`unknown_rate=19/115`，`failed_rate=1/115`，proposal confirm=3/3，run_request confirm=6/7，undo_within_5min=0/24。缺生产窗口报告。 |
 | L6-03 | `export --turn` 只输出脱敏任务骨架到 `agent-evals/inbox/`；密钥、URL token、媒体字节和不必要业务 ID 不得导出 | `部分完成` | `TestMineUndoWindowAndExportSkeleton` 断言密钥被剥。缺真实生产 Turn 导出。 |
 | L6-04 | 每周审 inbox，补全 world/expect 后进入 tasks，`origin=production:<turn_id>`；连续记录每周至少 3 条的新增量 | `缺失` | 任务集尚无 production origin。 |
 | L6-05 | nightly 顺序运行 L1 k=3、L2、L5 和 report，原子更新 `latest.json`；连续 3 晚各有独立 run_id 与可复算结果 | `部分完成` | `just agent-evals-nightly` 存在。L1 `finish` 在矩阵跑完后更新 `latest.json`，不要求全部 trial pass。无连续 3 晚记录。仓库无 CI；用 cron/systemd timer 或手动触发，示例见命令合同。 |
@@ -155,18 +155,18 @@ flowchart LR
 |---|---|---|---|
 | M-01 | 固定变异集覆盖删除“未确认不得 finalize”、`rename_node` 改错、删除前置读、交换 apply/propose；临时 Skill 根运行，不修改工作树 | `完成` | `mutate.ts` 四条锚点仍在 Skill 原文。live `mutate-20260904T151805Z-67d86c45` 在临时 Skill 根运行。 |
 | M-02 | 每个变异记录命中的任务和杀伤结果，输出总体及按 Skill 杀伤率；零命中变异不得计为存活或杀死 | `部分完成` | `mutate-20260904T151805Z-67d86c45`：1 survived、0 killed、3 unscorable（基线 `graph-editing-rename-node` / `graph-editing-propose-scene-shot` 失败）。kill_rate=0 只对 scorable=1 有意义，不能当技能已硬化。 |
-| M-03 | 同一 commit、任务 hash、模型参数连续跑两次 k=3，`abs(delta pass^1) <= 0.05`；超限时分数标不采信 | `部分完成` | 同任务 hash `57f199c0…`、同模型 `gpt-5.6-luna` 的两次 k=3：`delta_pass^1=-0.0178`（≤0.05），`delta_pass^3=-0.0667`。git commit 不同（`26b3a51c` vs `f0b805dd`，中间有无关 `refactor: 生图编辑改走中立 Generate/Edit`），不满足“同一 commit”。 |
+| M-03 | 同一 commit、任务 hash、模型参数连续跑两次 k=3，`abs(delta pass^1) <= 0.05`；超限时分数标不采信 | `部分完成` | 同 task_hash `71d48f47…`、同模型 `gpt-5.6-luna`：`d5fc9b35` → `fa2667fa`，`delta_pass^1=+0.0311`（≤0.05），`delta_pass^3=+0.0133`。git commit 不同（`0cde4641` vs `97b03f16`），不满足“同一 commit”。 |
 | M-04 | 工具与 Graph op coverage 都为 100%；新增清单项自动进入分母，手工排除必须在账本登记决策变更 | `完成` | L0 coverage 断言。无手工排除。 |
-| M-05 | 每次全量 run 按固定抽样规则人工读转录，记录抽样 task/trial、错误分类和结论；未抽读时分数标不采信 | `部分完成` | 规则：每技能按 `task_id` 字母序各取 1 条 pass^3=1 与 1 条 pass^3=0 的 trial=1。第一次 10 条已记。第二次对同类失败点抽查：`force-rewrite` 仍缺 `force`/`document_action`；`finalize-explicit-minimal-set` 仍写 `main` 而非 `hero`。 |
+| M-05 | 每次全量 run 按固定抽样规则人工读转录，记录抽样 task/trial、错误分类和结论；未抽读时分数标不采信 | `部分完成` | `d5fc9b35` 与 `fa2667fa` 均已按规则抽读 trial=1，见验证记录。 |
 
 ## 阶段出口
 
 | ID | 出口条件 | 状态 | 当前结论 |
 |---|---|---|---|
-| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 两次全量与 mutate 基线已有。`|Δpass^1|=0.0178` 但 commit 不完全相同。kill_rate=0 且 3/4 unscorable。regression 未过门，分数不采信。 |
+| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。缺同 commit 第二次 k=3 与修复后 mutate。regression 未过门，分数不采信。 |
 | P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 全量 live 未跑。 |
 | P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L3 live 5/5 未通过（`20260904T154151Z-788cb11e`）。缺 50 条标签与 L5 ASR 报告。 |
-| P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | mine/export 命令与 nightly recipe、diff 模型对比说明已存在。缺生产 mine 报告、production 任务、三晚 nightly、一次模型 diff `run_id`。 |
+| P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
 
 任何 P 阶段只有在本表列出的全部出口都有当前证据时才能改为 `完成`。后续阶段可以并行开发，不得用后续局部结果跳过较早出口。
 
@@ -189,7 +189,7 @@ flowchart LR
 | `just agent-evals-report <run>` | 从落盘工件复算报告 | 已接线 |
 | `just agent-evals-diff <a> <b>` | 比较两个 run 的任务级与汇总差异 | 已接线；stdout 含模型对比说明 |
 | `just agent-evals-coverage` | 工具/op 覆盖 | 已接线 |
-| `just agent-evals-mutate` | 变异杀伤率 | 已接线，缺基线 run |
+| `just agent-evals-mutate` | 变异杀伤率 | 已接线；修复后 live 进行中 |
 | `just agent-evals-state` | L2 全量 | 已接线，opt-in |
 | `just agent-evals-smoke-state <skill>` | L2 指定 Skill | 已接线 |
 | `just agent-evals-sim` | L3 多轮 | 已接线 |
@@ -198,7 +198,7 @@ flowchart LR
 | `just agent-evals-judge-calibrate <human> <judge>` | L4 kappa | 已接线 |
 | `just agent-evals-adversarial` | L5 注入/故障矩阵 | 已接线 |
 | `just agent-evals-nightly` | L1 -> L2 -> L5 -> report | recipe 已接线；无 timer 结果 |
-| `just agent-evals-mine` | 生产 PG 聚合 | 已接线 |
+| `just agent-evals-mine` | 生产 PG 聚合 | 已接线；本地 7 日窗口已跑，非生产库 |
 | `just agent-evals-export-turn <id>` | 脱敏骨架到 inbox | 已接线 |
 
 仓库无 CI。手动：`just agent-evals-nightly`。systemd timer 示例（需本机 `just`、dev env、`AGENT_PROVIDER_API_KEY`）：
@@ -290,6 +290,27 @@ ExecStart=/usr/bin/just agent-evals-nightly
   - L3 grader 改为 `mergeToolCalls`，与 L1 一样计入本地 skill 加载。
   - 完整 L1 矩阵 `finish` 后更新 `latest.json`，不再要求全部 trial pass。
 - P1–P4 仍为 `部分完成`。Agent 分数不采信。
+
+### 2026-09-05 记分修复后全量 L1 k=3
+
+- 2026-09-05 | commit=`0cde464177ff3b6146bd96a1a5338e72ba08d10b`（`run.json`；启动时工作树干净，跑完时 `worktree_dirty=true`，HEAD 已被其他切片推到 `ba4508d7`） | run_id=`20260904T165841Z-d5fc9b35` | command=`just agent-evals-live` | layer=L1 | suite=all（capability 46 + regression 29） | task_hash=`71d48f47e3ad852cc74ac2a617708e15bf2c27a64722bfbb9f7734b950039a1f` | skill_hash=`f2b4292cc0716ddc68d3515e1de2bcd205854c7e51ed1bb08dc99b5f8fff65ef` | model=openai/`gpt-5.6-luna` | reasoning=unset | n=75 | k=3 | pass^1=0.5867 | pass^3=0.4400 | wilson95_trial_success=[0.5214,0.6490] | tokens=7049132 | duration=wall 1291s / trial-sum 3834s | artifact=`agent-evals/20260904T165841Z-d5fc9b35/` | transcript_review=已抽读
+- CLI 退出码 1（`ok=false`）。`latest.json` 已更新为该 `run_id`。regression_gate=fail；regression pass^1=0.6552 pass^3=0.5172。按技能 pass^3：graph-editing 0.2667、media-library-organization 0.4667、product-intake 0.4667、run-diagnosis 0.4000、workflow-run-request 0.6000。
+- 记分修复对照（不把分数上升全部归因于模型）：`workflow-run-request-force-rewrite` 3/3 pass；`media-library-organization-link-workflow` 3/3 pass；`workflow-run-request-run-current-workflow` 3/3 pass。
+- 抽读规则：每技能按 `task_id` 字母序各 1 条 pass^3=1 与 1 条 pass^3=0，trial=1。
+  - pass^3=1：`graph-editing-delete-one-node`、`media-library-organization-archive-asset`、`product-intake-clarify-image-types`、`run-diagnosis-contextual-failure-summary`、`workflow-run-request-cancel-running-run`。工具链与 terminal 与 grader 一致。
+  - pass^3=0 / 分类：`graph-editing-dissolve-and-reorder` trial=1 只读 context/node detail 后 `succeeded`，未 propose dissolve+reorder（trial=3 才 propose 并通过）；`media-library-organization-batch-rename` trial=1 通过，trial=2 `requires_input` 未 propose；`product-intake-create-named-workspace` trial=1/2 通过，trial=3 写了工作区但未调 `list_products_v1`；`run-diagnosis-explain-provider-error` trial=1 通过，trial=2 `requires_input` 未取 run detail；`workflow-run-request-global-node-run` trial=1 提交了 `scope=node` 但 `node_id=node-image-1`，期望 `node-prompt-1`。
+- 结论：分数可复算，regression 门槛未过；任务集已相对修复前两次变化，且无同 commit 第二次 k=3。按 D-08 不采信为生产 Agent 质量结论。
+
+### 2026-09-05 记分修复后第二次全量 L1 k=3 与 diff
+
+- 2026-09-05 | commit=`97b03f16242bd3f6cfbbfffe1ca9a2b0648c4278`（`run.json`；启动时 HEAD 即该 commit，`worktree_dirty=true`，跑完时仓库 HEAD 已被其他切片推到 `efc88304`） | run_id=`20260904T174405Z-fa2667fa` | command=`just agent-evals-live` | layer=L1 | suite=all（capability 46 + regression 29） | task_hash=`71d48f47e3ad852cc74ac2a617708e15bf2c27a64722bfbb9f7734b950039a1f` | skill_hash=`f2b4292cc0716ddc68d3515e1de2bcd205854c7e51ed1bb08dc99b5f8fff65ef` | model=openai/`gpt-5.6-luna` | reasoning=unset | n=75 | k=3 | pass^1=0.6178 | pass^3=0.4533 | wilson95_trial_success=[0.5528,0.6788] | tokens=7059508 | duration=wall 1289s / trial-sum 3840s | artifact=`agent-evals/20260904T174405Z-fa2667fa/` | transcript_review=已抽读
+- CLI 退出码 1（`ok=false`）。`latest.json` 已更新为该 `run_id`。regression_gate=fail；regression pass^1=0.6897 pass^3=0.5517。按技能 pass^3：graph-editing 0.2000、media-library-organization 0.6000、product-intake 0.4000、run-diagnosis 0.5333、workflow-run-request 0.5333。
+- `just agent-evals-diff 20260904T165841Z-d5fc9b35 20260904T174405Z-fa2667fa` → `delta_pass^1=+0.0311` `delta_pass^3=+0.0133`。任务/技能 hash 与模型相同；git commit 从 `0cde4641` 变为 `97b03f16`（中间为本闭环 live e2e / SIGKILL 闸门提交，评测任务集未改）。
+- 抽读规则：每技能按 `task_id` 字母序各 1 条 pass^3=1 与 1 条 pass^3=0，trial=1。
+  - pass^3=1：`graph-editing-discard-pending-proposal`、`media-library-organization-archive-asset`、`product-intake-clarify-image-types`、`run-diagnosis-contextual-failure-summary`、`workflow-run-request-cancel-running-run`。工具链与 terminal 与 grader 一致。
+  - pass^3=0 / 分类：`graph-editing-delete-one-node` trial=1 通过（`delete_node` `node-image-2`），trial=3 零工具调用、`requires_input`；`media-library-organization-batch-rename` trial=1 通过，trial=2 列出素材后 `requires_input`、未 `propose_global_draft`；`product-intake-finalize-explicit-minimal-set` trial=1 `finalize` 写 `key=cover` 而非期望 `hero`（3/3 同类失败）；`run-diagnosis-global-multiple-workflows` trial=1 `requires_input`，未调 `inspect_global_workflow_runs_v1` / `get_workflow_run_detail_v1`；`workflow-run-request-global-node-run` trial=1 提交了 `scope=node` 但 `node_id=node-image-1`，期望 `node-prompt-1`。
+- 同日本地 mine：`just agent-evals-mine 7` → `agent-evals/mine/mine-2026-09-04T174527Z.json`（dev PG，115 turns）。标注模板：`just agent-evals-export-labels 20260904T174405Z-fa2667fa` → 200 行 `score=null`。二者都不构成 L4 kappa 或生产回流。
+- 结论：分数可复算，同任务集 `|Δpass^1|<=0.05`，但 commit 不同且 regression 门槛未过。按 D-08 不采信为生产 Agent 质量结论。修复后 mutate / L2 / L3 重跑 / L5 / 已填标签 / 生产 mine / 三晚 nightly 仍缺。
 
 ### 真实运行记录模板
 
