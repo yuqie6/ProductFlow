@@ -44,6 +44,7 @@ type Config struct {
 	AgentTurnSyncPollSeconds          float64 // env AGENT_TURN_SYNC_POLL_SECONDS
 	MetricsBearerToken                string  // 空则不注册 GET /metrics
 	DispatcherMetricsAddr             string  // env DISPATCHER_METRICS_ADDR；空则不启动 dispatcher metrics server
+	WorkerMetricsAddr                 string  // env WORKER_METRICS_ADDR；空则不启动 worker metrics server
 }
 
 // Load 用 viper AutomaticEnv 读进程环境，并填开发默认值。
@@ -112,6 +113,7 @@ func Load() (Config, error) {
 		AgentTurnSyncPollSeconds:          v.GetFloat64("AGENT_TURN_SYNC_POLL_SECONDS"),
 		MetricsBearerToken:                strings.TrimSpace(v.GetString("METRICS_BEARER_TOKEN")),
 		DispatcherMetricsAddr:             strings.TrimSpace(v.GetString("DISPATCHER_METRICS_ADDR")),
+		WorkerMetricsAddr:                 strings.TrimSpace(v.GetString("WORKER_METRICS_ADDR")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")

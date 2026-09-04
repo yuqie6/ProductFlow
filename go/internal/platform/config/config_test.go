@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,5 +66,22 @@ func TestResolveLogDirRelativeUsesRepoRoot(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, filepath.Join("storage-dev", "logs")) {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLoadWorkerMetricsAddr(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" {
+		t.Setenv("DATABASE_URL", "postgres://productflow:secret@127.0.0.1:15432/productflow")
+	}
+	if os.Getenv("SESSION_SECRET") == "" {
+		t.Setenv("SESSION_SECRET", "test-session-secret-for-worker-metrics")
+	}
+	t.Setenv("WORKER_METRICS_ADDR", "  0.0.0.0:29286  ")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WorkerMetricsAddr != "0.0.0.0:29286" {
+		t.Fatalf("WorkerMetricsAddr=%q", cfg.WorkerMetricsAddr)
 	}
 }

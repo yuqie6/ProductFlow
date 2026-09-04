@@ -100,7 +100,11 @@ services:
       context: .
       dockerfile: go/Dockerfile
     restart: unless-stopped
-    environment: *productflow-go-env
+    environment:
+      <<: *productflow-go-env
+      WORKER_METRICS_ADDR: ${WORKER_METRICS_ADDR:-0.0.0.0:29286}
+    ports:
+      - "${WORKER_METRICS_HOST_PORT:-29286}:29286"
     command: ["productflow-worker"]
     volumes:
       - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage

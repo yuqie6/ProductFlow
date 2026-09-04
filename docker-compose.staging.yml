@@ -1,0 +1,31 @@
+# Local multi-replica overlay: 2 API, 2 worker, 2 dispatcher, shared PostgreSQL/Redis/storage.
+# Usage:
+#   just staging-up
+#   just staging-down
+#
+# Replica B publishes API on STAGING_API_B_HOST_PORT (default 29290),
+# dispatcher metrics on STAGING_DISPATCHER_B_METRICS_HOST_PORT (default 29295),
+# worker metrics on STAGING_WORKER_B_METRICS_HOST_PORT (default 29296).
+# Do not use --scale on the primary services: host metrics ports would collide.
+
+services:
+  productflow-go-api-b:
+    extends:
+      file: docker-compose.yml
+      service: productflow-go-api
+    ports: !override
+      - "${STAGING_API_B_HOST_PORT:-29290}:29280"
+
+  productflow-go-worker-b:
+    extends:
+      file: docker-compose.yml
+      service: productflow-go-worker
+    ports: !override
+      - "${STAGING_WORKER_B_METRICS_HOST_PORT:-29296}:29286"
+
+  productflow-go-dispatcher-b:
+    extends:
+      file: docker-compose.yml
+      service: productflow-go-dispatcher
+    ports: !override
+      - "${STAGING_DISPATCHER_B_METRICS_HOST_PORT:-29295}:29285"

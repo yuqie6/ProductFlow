@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// NewServer builds the optional dispatcher metrics server. An empty address or token disables it.
+// NewServer builds the optional metrics HTTP server (dispatcher or worker). An empty address or token disables it.
 func NewServer(addr string, db *gorm.DB, token string) *http.Server {
 	addr = strings.TrimSpace(addr)
 	if addr == "" || db == nil || strings.TrimSpace(token) == "" {

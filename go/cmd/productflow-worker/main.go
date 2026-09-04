@@ -7,6 +7,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -23,6 +25,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db"
 	applog "github.com/yuqie6/productflow/internal/platform/log"
+	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/product"
@@ -61,6 +64,19 @@ func main() {
 	gdb, err := db.OpenGorm(pool)
 	if err != nil {
 		logger.Fatal("gorm", zap.Error(err))
+	}
+	metricsServer := pfmetrics.NewServer(cfg.WorkerMetricsAddr, gdb, cfg.MetricsBearerToken)
+	if metricsServer != nil {
+		go func() {
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("metrics server", zap.Error(err))
+			}
+		}()
+		defer func() {
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelShutdown()
+			_ = metricsServer.Shutdown(shutdownCtx)
+		}()
 	}
 
 	redisOpt, err := queue.ParseRedis(cfg.RedisURL)
