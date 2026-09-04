@@ -1,16 +1,13 @@
 package product
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"io"
-	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/mediaarchive"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -29,21 +26,36 @@ var archiveExtensions = map[string]string{
 	"image/webp": ".webp",
 }
 
-// GalleryArchive 是 POST .../download-archive 200 的内存 ZIP，不落库。
-// Filename 来自商品名；Bytes 是已核验原图。最多 100 张、合计 512MiB。不要当成 MediaObject。
+// GalleryArchive 指向已写好的临时 ZIP，不落库。
+// 调用方（HTTP downloadArchive）必须 FileAttachment 之后删 Path。Filename 给 Content-Disposition。
 type GalleryArchive struct {
+	Path     string
 	Filename string
-	Bytes    []byte // 已核验原图打成的 ZIP，不落库
+}
+
+type frozenGalleryFile struct {
+	name        string
+	mediaID     string
+	storagePath string
+	mime        string
+	byteSize    int
+	width       int
+	height      int
+	sha256      string
 }
 
 // BuildGalleryArchive 按资产 id 打包已核验原图；ZIP 条目名来自显示名。
+// 事务内只冻结条目与期望身份；事务外逐文件 ReadVerified 再写入临时 ZIP。
 // 数量非法或未核验返回 Validation；缺图或缺文件返回 NotFound。
 func (s Service) BuildGalleryArchive(ctx context.Context, productID string, assetIDs []string) (GalleryArchive, error) {
 	normalized, err := normalizeArchiveIDs(assetIDs)
 	if err != nil {
 		return GalleryArchive{}, err
 	}
-	var archive GalleryArchive
+	var (
+		filename string
+		files    []frozenGalleryFile
+	)
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		product, err := loadProduct(ctx, pgxTx, productID)
 		if err != nil {
@@ -60,8 +72,9 @@ func (s Service) BuildGalleryArchive(ctx context.Context, productID string, asse
 		for _, asset := range assets {
 			byID[asset.ID] = asset
 		}
-		ordered := make([]ImageAsset, 0, len(normalized))
+		used := map[string]struct{}{}
 		total := 0
+		ordered := make([]frozenGalleryFile, 0, len(normalized))
 		for _, id := range normalized {
 			asset, ok := byID[id]
 			if !ok {
@@ -70,52 +83,89 @@ func (s Service) BuildGalleryArchive(ctx context.Context, productID string, asse
 			if asset.VerificationStatus != media.StatusVerified {
 				return apperr.Validation("只有已核验图片可以批量下载")
 			}
-			if asset.ByteSize != nil {
-				total += *asset.ByteSize
-			}
-			ordered = append(ordered, asset)
-		}
-		if total > galleryArchiveMaxBytes {
-			return apperr.Validation("批量下载图片总大小不能超过 512 MiB")
-		}
-		var buf bytes.Buffer
-		writer := zip.NewWriter(&buf)
-		used := map[string]struct{}{}
-		for _, asset := range ordered {
-			abs, err := s.Media.Files.Resolve(asset.StoragePath)
+			obj, err := s.Media.Get(ctx, pgxTx, asset.MediaObjectID)
 			if err != nil {
-				return apperr.NotFound("商品图片文件不存在")
+				return mapGalleryArchiveRead(err)
 			}
-			file, err := os.Open(abs)
-			if err != nil {
-				return apperr.NotFound("商品图片文件不存在")
+			if obj.VerificationStatus != media.StatusVerified {
+				return apperr.Validation("只有已核验图片可以批量下载")
+			}
+			if obj.ByteSize <= 0 || strings.TrimSpace(obj.MIMEType) == "" {
+				return apperr.Validation("只有已核验图片可以批量下载")
+			}
+			total += obj.ByteSize
+			if total > galleryArchiveMaxBytes {
+				return apperr.Validation("批量下载图片总大小不能超过 512 MiB")
 			}
 			entryName, err := archiveEntryName(asset, used)
 			if err != nil {
-				_ = file.Close()
 				return err
 			}
-			entry, err := writer.Create(entryName)
-			if err != nil {
-				_ = file.Close()
-				return err
-			}
-			if _, err := io.Copy(entry, file); err != nil {
-				_ = file.Close()
-				return err
-			}
-			_ = file.Close()
+			ordered = append(ordered, frozenGalleryFile{
+				name:        entryName,
+				mediaID:     obj.ID,
+				storagePath: obj.StoragePath,
+				mime:        obj.MIMEType,
+				byteSize:    obj.ByteSize,
+				width:       obj.Width,
+				height:      obj.Height,
+				sha256:      obj.SHA256,
+			})
 		}
-		if err := writer.Close(); err != nil {
-			return err
-		}
-		archive = GalleryArchive{
-			Filename: cleanFilename(product.Name, "product") + "-images.zip",
-			Bytes:    buf.Bytes(),
-		}
+		files = ordered
+		filename = cleanFilename(product.Name, "product") + "-images.zip"
 		return nil
 	})
-	return archive, err
+	if err != nil {
+		return GalleryArchive{}, err
+	}
+
+	w, err := mediaarchive.Begin(ctx, mediaarchive.Options{
+		Filename: filename,
+		Pattern:  "gallery-archive-*.zip",
+	})
+	if err != nil {
+		return GalleryArchive{}, err
+	}
+	defer w.Abort()
+	for _, f := range files {
+		content, err := s.Media.ReadVerified(ctx, s.DB, f.mediaID)
+		if err != nil {
+			return GalleryArchive{}, mapGalleryArchiveRead(err)
+		}
+		meta := content.Verified
+		if content.Object.StoragePath != f.storagePath ||
+			meta.MIMEType != f.mime ||
+			meta.ByteSize != f.byteSize ||
+			(f.sha256 != "" && meta.SHA256 != f.sha256) ||
+			meta.Width != f.width ||
+			meta.Height != f.height {
+			return GalleryArchive{}, apperr.Conflict("商品图片在打包时发生变化")
+		}
+		if err := w.Add(ctx, mediaarchive.File{Name: f.name, Data: content.Bytes}); err != nil {
+			return GalleryArchive{}, err
+		}
+	}
+	out, err := w.Finish()
+	if err != nil {
+		return GalleryArchive{}, err
+	}
+	return GalleryArchive{Path: out.Path, Filename: out.Filename}, nil
+}
+
+func mapGalleryArchiveRead(err error) error {
+	if apperr.IsNotFound(err) {
+		return apperr.NotFound("商品图片文件不存在")
+	}
+	if re, ok := media.AsReadError(err); ok {
+		switch re.Kind {
+		case media.ReadNotVerified:
+			return apperr.Validation("只有已核验图片可以批量下载")
+		case media.ReadNotFound, media.ReadMissingFile, media.ReadCorrupt, media.ReadIO, media.ReadIdentity:
+			return apperr.NotFound("商品图片文件不存在")
+		}
+	}
+	return err
 }
 
 func normalizeArchiveIDs(assetIDs []string) ([]string, error) {

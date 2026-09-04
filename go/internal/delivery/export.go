@@ -1,21 +1,16 @@
 package delivery
 
 import (
-	"archive/zip"
-	"bytes"
-	"compress/flate"
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/crc32"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/mediaarchive"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -105,13 +100,18 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if source.ProductID != productID {
 				return apperr.Conflict("交付图原图不属于当前商品")
 			}
-			content, err := s.Media.ReadVerified(ctx, pgxTx, asset.MediaObjectID)
+			obj, err := s.Media.Get(ctx, pgxTx, asset.MediaObjectID)
 			if err != nil {
 				return mapExportRead(err)
 			}
-			meta := content.Verified
-			resultSHA := meta.SHA256
-			total += meta.ByteSize
+			if obj.VerificationStatus != media.StatusVerified {
+				return apperr.Conflict("交付图结果媒体不可用")
+			}
+			if obj.ByteSize <= 0 || obj.Width <= 0 || obj.Height <= 0 || obj.SHA256 == "" || strings.TrimSpace(obj.MIMEType) == "" {
+				return apperr.Conflict("交付图结果缺少核验元数据")
+			}
+			resultSHA := obj.SHA256
+			total += obj.ByteSize
 			if total > exportMaxBytes {
 				return apperr.Validation("交付导出图片总大小不能超过 512 MiB")
 			}
@@ -119,16 +119,16 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if source.ImageTypeKey != nil && strings.TrimSpace(*source.ImageTypeKey) != "" {
 				imageType = safeName(*source.ImageTypeKey, "image")
 			}
-			ext := media.ExtensionForMIME(meta.MIMEType)
-			name := deduplicateFilename(exportImageFilename(safeProduct, imageType, index+1, meta.Width, meta.Height, ext), used)
+			ext := media.ExtensionForMIME(obj.MIMEType)
+			name := deduplicateFilename(exportImageFilename(safeProduct, imageType, index+1, obj.Width, obj.Height, ext), used)
 			sourceObj, err := s.Media.Get(ctx, pgxTx, source.MediaObjectID)
 			if err != nil {
 				return err
 			}
 			files = append(files, fileItem{
-				name: name, mediaObjectID: asset.MediaObjectID, expectedByteSize: meta.ByteSize,
-				expectedMIME: meta.MIMEType, expectedWidth: meta.Width, expectedHeight: meta.Height,
-				expectedSHA: meta.SHA256,
+				name: name, mediaObjectID: asset.MediaObjectID, expectedByteSize: obj.ByteSize,
+				expectedMIME: obj.MIMEType, expectedWidth: obj.Width, expectedHeight: obj.Height,
+				expectedSHA: obj.SHA256,
 			})
 			finishedAt = append(finishedAt, *row.FinishedAt)
 			var spec any
@@ -155,8 +155,8 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 				"result_asset":  assetMetadata(asset, resultSHA),
 				"delivery_spec": spec,
 				"measured": map[string]any{
-					"mime_type": meta.MIMEType, "width": meta.Width, "height": meta.Height,
-					"byte_size": meta.ByteSize, "sha256": meta.SHA256,
+					"mime_type": obj.MIMEType, "width": obj.Width, "height": obj.Height,
+					"byte_size": obj.ByteSize, "sha256": obj.SHA256,
 				},
 				"generated_at": row.FinishedAt,
 			})
@@ -190,25 +190,6 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		return ExportArchive{}, err
 	}
 
-	packed := make([]struct {
-		name string
-		data []byte
-	}, 0, len(files))
-	for _, f := range files {
-		content, err := s.Media.ReadVerified(ctx, s.DB, f.mediaObjectID)
-		if err != nil {
-			return ExportArchive{}, apperr.Conflict("交付图结果文件在打包时发生变化")
-		}
-		meta := content.Verified
-		if meta.MIMEType != f.expectedMIME || meta.ByteSize != f.expectedByteSize || meta.Width != f.expectedWidth || meta.Height != f.expectedHeight || meta.SHA256 != f.expectedSHA {
-			return ExportArchive{}, apperr.Conflict("交付图结果在打包时发生变化")
-		}
-		packed = append(packed, struct {
-			name string
-			data []byte
-		}{name: f.name, data: content.Bytes})
-	}
-
 	if manifest == nil {
 		manifest = map[string]any{}
 	}
@@ -218,81 +199,35 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	}
 	manifestBytes = append(manifestBytes, '\n')
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
-		return flate.NewWriter(out, 9)
+	w, err := mediaarchive.Begin(ctx, mediaarchive.Options{
+		Filename: filename,
+		Pattern:  "delivery-export-*.zip",
 	})
-	if err := writeZipEntry(zw, "manifest.json", manifestBytes); err != nil {
+	if err != nil {
 		return ExportArchive{}, err
 	}
-	for _, f := range packed {
-		if err := writeZipEntry(zw, f.name, f.data); err != nil {
+	defer w.Abort()
+	if err := w.Add(ctx, mediaarchive.File{Name: "manifest.json", Data: manifestBytes}); err != nil {
+		return ExportArchive{}, err
+	}
+	for _, f := range files {
+		content, err := s.Media.ReadVerified(ctx, s.DB, f.mediaObjectID)
+		if err != nil {
+			return ExportArchive{}, mapExportRead(err)
+		}
+		meta := content.Verified
+		if meta.MIMEType != f.expectedMIME || meta.ByteSize != f.expectedByteSize || meta.Width != f.expectedWidth || meta.Height != f.expectedHeight || meta.SHA256 != f.expectedSHA {
+			return ExportArchive{}, apperr.Conflict("交付图结果在打包时发生变化")
+		}
+		if err := w.Add(ctx, mediaarchive.File{Name: f.name, Data: content.Bytes}); err != nil {
 			return ExportArchive{}, err
 		}
 	}
-	if err := zw.Close(); err != nil {
-		return ExportArchive{}, err
-	}
-	tmp, err := os.CreateTemp("", "delivery-export-*.zip")
+	out, err := w.Finish()
 	if err != nil {
 		return ExportArchive{}, err
 	}
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return ExportArchive{}, err
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return ExportArchive{}, err
-	}
-	return ExportArchive{Path: tmp.Name(), Filename: filename}, nil
-}
-
-// writeZipEntry 用预计算 CRC/大小写入 Deflate 条目，mtime 固定 1980-01-01，保证重复导出哈希稳定。
-func writeZipEntry(zw *zip.Writer, name string, data []byte) error {
-	var compressed bytes.Buffer
-	fw, err := flate.NewWriter(&compressed, 9)
-	if err != nil {
-		return err
-	}
-	if _, err := fw.Write(data); err != nil {
-		return err
-	}
-	if err := fw.Close(); err != nil {
-		return err
-	}
-	header := &zip.FileHeader{
-		Name:               name,
-		Method:             zip.Deflate,
-		CreatorVersion:     (3 << 8) | 20,
-		ReaderVersion:      20,
-		ExternalAttrs:      0o600 << 16,
-		ModifiedTime:       0,
-		ModifiedDate:       0x0021, // 1980-01-01
-		CRC32:              crc32.ChecksumIEEE(data),
-		CompressedSize64:   uint64(compressed.Len()),
-		UncompressedSize64: uint64(len(data)),
-	}
-	if zipNameNeedsUTF8(name) {
-		header.Flags |= 0x800
-	}
-	w, err := zw.CreateRaw(header)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(compressed.Bytes())
-	return err
-}
-
-func zipNameNeedsUTF8(name string) bool {
-	for i := 0; i < len(name); i++ {
-		if name[i] >= 0x80 {
-			return true
-		}
-	}
-	return false
+	return ExportArchive{Path: out.Path, Filename: out.Filename}, nil
 }
 
 func exportImageFilename(productName, imageType string, index, width, height int, ext string) string {
@@ -351,6 +286,9 @@ func assetMetadata(asset product.ImageAsset, sha256 string) map[string]any {
 }
 
 func mapExportRead(err error) error {
+	if apperr.IsNotFound(err) {
+		return apperr.Conflict("交付图结果媒体不可用")
+	}
 	if re, ok := media.AsReadError(err); ok {
 		switch re.Kind {
 		case media.ReadNotVerified:

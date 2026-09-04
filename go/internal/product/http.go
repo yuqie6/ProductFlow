@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -467,8 +468,9 @@ func (h HTTP) downloadArchive(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	c.Header("Content-Disposition", "attachment; filename="+strconv.Quote(archive.Filename))
-	c.Data(http.StatusOK, "application/zip", archive.Bytes)
+	defer os.Remove(archive.Path)
+	c.Header("Content-Type", "application/zip")
+	c.FileAttachment(archive.Path, archive.Filename)
 }
 
 // listGalleryAssets 是 GET .../image-assets：200 分页；cursor 与筛选不匹配 400。
