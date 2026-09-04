@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -296,19 +297,33 @@ func (s Service) serializeDetailTasks(ctx context.Context, tx *gorm.DB, sessionI
 		seenGroup[*item.GenerationGroupID] = struct{}{}
 		groupIDs = append(groupIDs, *item.GenerationGroupID)
 	}
-	query := tx.WithContext(ctx).Where("session_id = ?", sessionID)
-	filters := tx.Where("status IN ?", imageSessionDetailTaskStatuses)
-	if len(groupIDs) > 0 {
-		filters = filters.Or("result_generation_group_id IN ?", groupIDs)
-	}
-	filters = filters.Or(
+	terminalFilter := tx.Where("status IN ?", imageSessionDetailTerminalTaskStatuses).Or(
 		"status = ? AND (result_generation_group_id IS NULL OR NOT EXISTS (SELECT 1 FROM image_session_rounds r WHERE r.session_id = image_session_generation_tasks.session_id AND r.generation_group_id = image_session_generation_tasks.result_generation_group_id))",
 		"succeeded",
 	)
-	var scannedTaskModels []schema.ImageSessionGenerationTasks
-	if err := query.Where(filters).Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
-		return nil, err
+	// 分别限量，避免近期终态挤掉旧的活动任务或首屏轮次所需任务。
+	queries := []*gorm.DB{
+		tx.Where("status IN ?", imageSessionActiveTaskStatuses),
+		tx.Where(terminalFilter),
 	}
+	if len(groupIDs) > 0 {
+		queries = append(queries, tx.Where("result_generation_group_id IN ?", groupIDs))
+	}
+	scannedTaskModels := make([]schema.ImageSessionGenerationTasks, 0, len(queries)*imageSessionDetailTaskLimit)
+	for _, query := range queries {
+		var page []schema.ImageSessionGenerationTasks
+		if err := query.WithContext(ctx).Where("session_id = ?", sessionID).
+			Order("created_at DESC, id DESC").Limit(imageSessionDetailTaskLimit).Find(&page).Error; err != nil {
+			return nil, err
+		}
+		scannedTaskModels = append(scannedTaskModels, page...)
+	}
+	sort.Slice(scannedTaskModels, func(i, j int) bool {
+		if scannedTaskModels[i].CreatedAt.Equal(scannedTaskModels[j].CreatedAt) {
+			return scannedTaskModels[i].ID > scannedTaskModels[j].ID
+		}
+		return scannedTaskModels[i].CreatedAt.After(scannedTaskModels[j].CreatedAt)
+	})
 	scannedTasks := make([]taskRow, 0, len(scannedTaskModels))
 	taskIDs := make([]string, 0, len(scannedTaskModels))
 	seenTask := map[string]struct{}{}
@@ -450,23 +465,23 @@ func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
 
 func queuedPositions(ctx context.Context, tx *gorm.DB, neededIDs []string) map[string]int {
 	out := map[string]int{}
-	wanted := map[string]struct{}{}
-	for _, id := range neededIDs {
-		if id != "" {
-			wanted[id] = struct{}{}
-		}
-	}
-	if len(wanted) == 0 {
+	neededIDs = uniqueIDs(neededIDs)
+	if len(neededIDs) == 0 {
 		return out
 	}
-	var tasks []schema.ImageSessionGenerationTasks
-	if err := tx.WithContext(ctx).Select("id").Where("status = ?", "queued").Order("created_at ASC, id ASC").Find(&tasks).Error; err != nil {
+	var positions []struct {
+		ID       string
+		Position int
+	}
+	// 先在完整队列内排名，再筛所需 ID，避免把全库 queued ID 装入 Go。
+	queue := tx.Model(&schema.ImageSessionGenerationTasks{}).
+		Select("id, ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) AS position").Where("status = ?", "queued")
+	if err := tx.WithContext(ctx).Table("(?) AS queued", queue).
+		Where("id IN ?", neededIDs).Scan(&positions).Error; err != nil {
 		return out
 	}
-	for i, task := range tasks {
-		if _, ok := wanted[task.ID]; ok {
-			out[task.ID] = i + 1
-		}
+	for _, item := range positions {
+		out[item.ID] = item.Position
 	}
 	return out
 }

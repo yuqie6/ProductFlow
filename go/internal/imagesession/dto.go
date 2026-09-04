@@ -138,7 +138,7 @@ type DetailResponse struct {
 	Title            string          `json:"title"`
 	Assets           []AssetResponse `json:"assets"`             // 仅 reference_upload，最多 6 张
 	Rounds           []RoundResponse `json:"rounds"`             // 首屏最新一轮页；queued 任务还没有 Round
-	GenerationTasks  []TaskResponse  `json:"generation_tasks"`   // 活动任务 + 首屏轮次所需任务；轮询请用 StatusResponse
+	GenerationTasks  []TaskResponse  `json:"generation_tasks"`   // 最新活动、近期终态/无轮次成功、首屏轮次任务各最多 20 条，去重后最多 60；轮询用 StatusResponse
 	RoundsCount      int             `json:"rounds_count"`       // 已成功落盘的轮次总数
 	HistoryNextAfter *string         `json:"history_next_after"` // 还有更早历史时的不透明游标；没有下一页为 null
 	CreatedAt        time.Time       `json:"created_at"`

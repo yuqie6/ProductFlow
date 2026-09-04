@@ -16,12 +16,13 @@ const (
 	imageSessionHistoryCursorVersion = 1
 	imageSessionHistoryCursorKind    = "history"
 	imageSessionDetailRoundLimit     = 20
+	imageSessionDetailTaskLimit      = 20
 	imageSessionReferenceAssetLimit  = 6
 )
 
 var (
-	imageSessionActiveTaskStatuses = []string{"queued", "running"}
-	imageSessionDetailTaskStatuses = []string{"queued", "running", "failed", "unknown", "cancelled"}
+	imageSessionActiveTaskStatuses         = []string{"queued", "running"}
+	imageSessionDetailTerminalTaskStatuses = []string{"failed", "unknown", "cancelled"}
 )
 
 type imageSessionListCursor struct {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -626,6 +627,138 @@ func TestImageSessionHistoryMissingSessionIs404(t *testing.T) {
 	ss.decode(t, resp, &body)
 	if body.Detail != "连续生图会话不存在" {
 		t.Fatalf("%s", body.Detail)
+	}
+}
+
+func TestImageSessionGetBoundsTasksWithoutCrowdingActiveOrFirstScreen(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	roundIDs := ss.seedGeneratedRounds(t, session.ID, 25, start)
+	wantIDs := map[string]bool{}
+	var rows []schema.ImageSessionGenerationTasks
+	for i, roundID := range roundIDs {
+		groupID := clockid.New()
+		if err := ss.db.Model(&schema.ImageSessionRounds{}).Where("id = ?", roundID).
+			Update("generation_group_id", groupID).Error; err != nil {
+			t.Fatal(err)
+		}
+		row := schema.ImageSessionGenerationTasks{
+			ID: clockid.New(), SessionID: session.ID, Status: "succeeded", Prompt: "first screen",
+			Size: "1024x1024", GenerationCount: 1, CompletedCandidates: 1,
+			ResultGenerationGroupID: &groupID, CreatedAt: start.Add(time.Duration(i) * time.Second),
+		}
+		// 此任务同时属于活动集和首屏轮次集，结果必须去重。
+		if i == 24 {
+			row.Status = "running"
+			row.CreatedAt = start.Add(200 * time.Second)
+			attemptID := clockid.New()
+			row.ActiveAttemptID, row.StartedAt = &attemptID, &row.CreatedAt
+		}
+		rows = append(rows, row)
+		if i >= 5 {
+			wantIDs[row.ID] = true
+		}
+	}
+	for i := 0; i < 25; i++ {
+		row := schema.ImageSessionGenerationTasks{
+			ID: clockid.New(), SessionID: session.ID, Status: imageSessionActiveTaskStatuses[i%2],
+			Prompt: "active", Size: "1024x1024", GenerationCount: 1,
+			CreatedAt: start.Add(time.Duration(100+i) * time.Second),
+		}
+		if row.Status == "running" {
+			attemptID := clockid.New()
+			row.ActiveAttemptID, row.StartedAt = &attemptID, &row.CreatedAt
+		}
+		rows = append(rows, row)
+		if i >= 6 {
+			wantIDs[row.ID] = true
+		}
+	}
+	statuses := []string{"failed", "unknown", "cancelled", "succeeded", "succeeded"}
+	terminalPrefix := clockid.New()[:24]
+	retryID := fmt.Sprintf("%s-%02d", terminalPrefix, 25)
+	for i := 0; i < 30; i++ {
+		row := schema.ImageSessionGenerationTasks{
+			ID: fmt.Sprintf("%s-%02d", terminalPrefix, i), SessionID: session.ID, Status: statuses[i%len(statuses)],
+			Prompt: "recent terminal", Size: "1024x1024", GenerationCount: 1,
+			CreatedAt: start.Add(300 * time.Second), IsRetryable: statuses[i%len(statuses)] == "failed",
+		}
+		if i%len(statuses) == 4 {
+			missingGroup := clockid.New()
+			row.ResultGenerationGroupID = &missingGroup
+		}
+		rows = append(rows, row)
+		if i >= 10 {
+			wantIDs[row.ID] = true
+		}
+	}
+	if err := ss.db.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherSession := schema.ImageSessions{ID: clockid.New(), Title: "other", CreatedAt: start, UpdatedAt: start}
+	if err := ss.db.Create(&otherSession).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherTask := rows[24]
+	otherTask.ID, otherTask.SessionID = clockid.New(), otherSession.ID
+	if err := ss.db.Create(&otherTask).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ss.dropDispatch(t, retryID)
+		if err := ss.db.Where("session_id IN ?", []string{session.ID, otherSession.ID}).Delete(&schema.ImageSessionGenerationTasks{}).Error; err != nil {
+			t.Error(err)
+		}
+	})
+
+	response := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID, nil, "")
+	ss.mustStatus(t, response, http.StatusOK)
+	ss.decode(t, response, &session)
+	if len(session.GenerationTasks) != 59 {
+		t.Fatalf("tasks=%d, want 59 (three bounded sets with one overlap)", len(session.GenerationTasks))
+	}
+	for i, task := range session.GenerationTasks {
+		if !wantIDs[task.ID] {
+			t.Fatalf("unexpected or duplicate task: %+v", task)
+		}
+		delete(wantIDs, task.ID)
+		if i > 0 {
+			previous := session.GenerationTasks[i-1]
+			if previous.CreatedAt.Before(task.CreatedAt) || (previous.CreatedAt.Equal(task.CreatedAt) && previous.ID < task.ID) {
+				t.Fatalf("unstable task ordering: %s before %s", previous.ID, task.ID)
+			}
+		}
+	}
+	if len(wantIDs) != 0 {
+		t.Fatalf("missing active/terminal/first-screen tasks: %v", wantIDs)
+	}
+	if len(session.Rounds) != 20 || session.RoundsCount != 25 || session.HistoryNextAfter == nil {
+		t.Fatalf("task bound changed round pagination: %+v", session)
+	}
+	statusResponse := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID+"/status", nil, "")
+	ss.mustStatus(t, statusResponse, http.StatusOK)
+	var status StatusResponse
+	ss.decode(t, statusResponse, &status)
+	if !status.HasActiveGenerationTask || len(status.GenerationTasks) != 26 {
+		t.Fatalf("detail limit must not change status/SSE active set: %+v", status)
+	}
+
+	// 重试旧任务不改变 created_at，仍须进入单独的活动集。
+	retry := ss.do(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generation-tasks/"+retryID+"/retry", nil, "")
+	ss.mustStatus(t, retry, http.StatusAccepted)
+	ss.decode(t, retry, &session)
+	foundRetried := false
+	for _, task := range session.GenerationTasks {
+		if task.ID == retryID {
+			foundRetried = task.Status == "queued"
+		}
+	}
+	if !foundRetried {
+		t.Fatal("retry response lost queued task")
 	}
 }
 

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
+	"gorm.io/gorm"
 )
 
 const (
@@ -21,7 +23,7 @@ func TestImageSessionQueryPlanTargetScale(t *testing.T) {
 		t.Skip("set PRODUCTFLOW_RUN_IMAGE_SESSION_QUERY_PLAN=1 to run the target-scale PostgreSQL plan gate")
 	}
 	name := fmt.Sprintf("pf_iplan_%d", time.Now().UnixNano()%1_000_000_000)
-	pool, _ := testdb.IsolatedMigrated(t, name)
+	pool, gdb := testdb.IsolatedMigrated(t, name)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	seedTargetScaleImageSessions(t, ctx, pool)
@@ -78,22 +80,46 @@ func TestImageSessionQueryPlanTargetScale(t *testing.T) {
 	testdb.AssertNoSeqScan(t, "task first page", taskPagePlan, float64(queryPlanHistoryLimit))
 	testdb.AssertIndexUsed(t, "task first page", taskPagePlan, "ix_image_session_generation_tasks_session_created")
 
-	// 热会话独占全部 rounds/tasks 时，无 LIMIT 的 COUNT/详情扫描会读完整张表；planner 选 Seq Scan。
-	// 这些计划只记录，不作为无 Seq Scan 闸门。GET 详情仍会装入全部匹配任务，payload 仍是缺口。
+	// 对生产 serializer 实际发出的 SQL 做 EXPLAIN，避免只验另写的一条示例分页 SQL。
+	type taskQuery struct {
+		sql  string
+		args []any
+	}
+	var taskQueries []taskQuery
+	callbackName := "test:image_session_detail_task_queries"
+	if err := gdb.Callback().Query().After("gorm:query").Register(callbackName, func(db *gorm.DB) {
+		if _, ok := db.Statement.Dest.(*[]schema.ImageSessionGenerationTasks); ok {
+			taskQueries = append(taskQueries, taskQuery{db.Statement.SQL.String(), append([]any(nil), db.Statement.Vars...)})
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gdb.Callback().Query().Remove(callbackName) })
+	var roundRows []schema.ImageSessionRounds
+	if err := gdb.Where("session_id = ?", queryPlanHotSessionID).
+		Order("created_at DESC, id DESC").Limit(imageSessionDetailRoundLimit).Find(&roundRows).Error; err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := (Service{}).serializeDetailTasks(ctx, gdb, queryPlanHotSessionID, roundRows, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(taskQueries) != 3 || len(tasks) != 50 {
+		t.Fatalf("detail queries=%d tasks=%d, want 3 queries / 50 tasks", len(taskQueries), len(tasks))
+	}
+	for i, query := range taskQueries {
+		plan := testdb.ExplainAnalyze(t, ctx, pool, query.sql, query.args...)
+		if plan.Plan.NodeType != "Limit" || plan.Plan.ActualRows > imageSessionDetailTaskLimit {
+			t.Fatalf("detail task query %d must be bounded: %+v", i, plan)
+		}
+		t.Logf("detail task set=%d rows=%.0f execution=%.3fms", i, plan.Plan.ActualRows, plan.ExecutionTime)
+	}
+
+	// COUNT 仍需遍历热会话的所有轮次，不将详情任务有界等同于整个详情常数成本。
 	_ = testdb.ExplainAnalyze(t, ctx, pool, `
 		SELECT COUNT(*)
 		FROM image_session_rounds
 		WHERE session_id = $1
-	`, queryPlanHotSessionID)
-	_ = testdb.ExplainAnalyze(t, ctx, pool, `
-		SELECT id
-		FROM image_session_generation_tasks
-		WHERE session_id = $1
-		  AND (
-		        status IN ('queued', 'running', 'failed', 'unknown', 'cancelled')
-		     OR (status = 'succeeded' AND result_generation_group_id IS NULL)
-		  )
-		ORDER BY created_at DESC, id DESC
 	`, queryPlanHotSessionID)
 }
 
@@ -196,6 +222,12 @@ func seedTargetScaleImageSessions(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
+		UPDATE image_session_generation_tasks
+		SET result_generation_group_id = 'plan-igroup-' || right(id, 4)
+		WHERE id >= 'plan-itask-0980';
+		UPDATE image_session_rounds
+		SET generation_group_id = 'plan-igroup-' || lpad((980 + right(id, 5)::integer)::text, 4, '0')
+		WHERE id < 'plan-iround-00020';
 		ANALYZE image_sessions;
 		ANALYZE image_session_rounds;
 		ANALYZE image_session_assets;
