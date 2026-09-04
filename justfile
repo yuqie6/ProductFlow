@@ -83,6 +83,10 @@ docs-check:
 go-test:
     bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -p 1'
 
+# Opt-in deeper document-authority action search (default gate uses 8 walks).
+go-test-canvas-search:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_CANVAS_SEARCH_WALKS=80 go test -C go ./internal/graph -run "^TestDocumentAuthoritySearch$" -count=1 -p 1 -timeout 20m'
+
 # Opt-in PostgreSQL journal depth/concurrency/P95 and 100-SSE connection gate.
 go-test-agent-journal-capacity:
     bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY=1 go test -C go ./internal/agent -run "^(TestAgentJournalCapacityGate|TestAgentSSEHTTPConnectionCapacityGate)$" -count=1 -v -timeout 6m'
@@ -124,6 +128,11 @@ go-worker:
 go-dispatcher:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-dispatcher --watch'
 
+# Local two-replica field gates: notify loss, two dispatchers, capacity, Graph lease/fencing.
+# This is process-level against one PostgreSQL; docker topology remains `just staging-up`.
+go-test-staging-field:
+    bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/notify ./internal/platform/queue ./internal/imagesession ./internal/graph -run "TestReplicaField|TestGraphRunLeaseTakesOverExpiredOwner|TestGraphRunLeaseFencesLateProviderResult|TestSubscribeSharesOneListenerAcrossChannels" -count=1 -p 1 -v -timeout 4m'
+
 # 2 API + 2 worker + 2 dispatcher against shared PostgreSQL/Redis/storage.
 staging-up:
     bash scripts/with_dev_env.sh docker compose -p productflow-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --wait
@@ -159,6 +168,10 @@ web-build:
 
 web-e2e-live-graph:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/direct-create-full-graph.spec.ts --config playwright.config.ts'
+
+# Chromium document rewrite/candidate: mock prompt/image providers; just dev must be running.
+web-e2e-canvas-document:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_CANVAS_DOCUMENT=1 pnpm --dir web exec playwright test e2e/canvas-document-mock.spec.ts --config playwright.config.ts'
 
 # Chromium Agent SSE: duplicate seq1 then seq2 on one generation; connection stays open.
 web-e2e-agent-sse:
