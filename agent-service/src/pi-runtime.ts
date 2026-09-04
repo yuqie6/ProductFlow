@@ -31,6 +31,7 @@ import {
   type StartTurnInput,
   byteLength,
   safeErrorMessage,
+  sha256,
 } from "./contracts.js";
 import type { Config } from "./config.js";
 import type { ProductFlowClient } from "./productflow.js";
@@ -74,6 +75,24 @@ export class PiSessionAdapter {
 
   get model(): Model<any> | undefined {
     return this._model;
+  }
+
+  get requestConfiguration(): JsonObject {
+    const model = this._model;
+    if (!model) throw new RuntimeError(409, "model_unavailable", "Pi model configuration has not been resolved");
+    return {
+      schema_version: 1,
+      provider: model.provider,
+      model: model.id,
+      api: model.api,
+      base_url_hash: sha256(model.baseUrl),
+      thinking_level: thinkingLevel(this.providerReasoningEffort),
+      reasoning_summary: this.providerRequestOptions.reasoningSummary?.trim() || null,
+      text_verbosity: this.providerRequestOptions.textVerbosity?.trim() || null,
+      service_tier: this.providerRequestOptions.serviceTier?.trim() || null,
+      context_window: model.contextWindow,
+      max_tokens: model.maxTokens,
+    };
   }
 
   async loadInputImages(input: StartTurnInput): Promise<ImageContent[]> {

@@ -1338,6 +1338,8 @@ export class TurnRuntime implements ToolRuntime {
       provider: this.pi.model?.provider ?? "unknown",
       model: this.pi.model?.id ?? "unknown",
       harness_hash: DEPLOYED_HARNESS.hash,
+      skill_catalog_hash: this.manager.skills.hash,
+      model_configuration: this.pi.requestConfiguration,
       execution_mode: "foreground",
     });
     this.modelRequestSequence = sequence;

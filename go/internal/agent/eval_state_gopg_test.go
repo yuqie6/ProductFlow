@@ -2,14 +2,11 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -62,7 +59,8 @@ func TestAgentEvalStateL2Live(t *testing.T) {
 	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeEvalRunJSON(runDir, runID, k, tasks, pi.baseURL); err != nil {
+	meta, err := startL2Run(runDir, runID, k, tasks, worlds, pi.baseURL)
+	if err != nil {
 		t.Fatal(err)
 	}
 	trialsPath := filepath.Join(runDir, "trials.jsonl")
@@ -73,10 +71,15 @@ func TestAgentEvalStateL2Live(t *testing.T) {
 	defer trialsFile.Close()
 
 	var failed int
+	var records []map[string]any
 	for _, task := range tasks {
 		world := worlds[task.World]
 		for trial := 1; trial <= k; trial++ {
 			record := runL2Trial(t, as, pi, task, world, runID, trial, transcriptDir)
+			if err := attachL2TrialProvenance(as, record, runDir, meta); err != nil {
+				t.Fatal(err)
+			}
+			records = append(records, record)
 			raw, err := json.Marshal(record)
 			if err != nil {
 				t.Fatal(err)
@@ -89,6 +92,12 @@ func TestAgentEvalStateL2Live(t *testing.T) {
 				t.Errorf("%s trial %d: %v", task.ID, trial, record["errors"])
 			}
 		}
+	}
+	if err := trialsFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := finishL2Run(runDir, meta, records, pi.baseURL); err != nil {
+		t.Error(err)
 	}
 	t.Logf("L2 run_id=%s dir=%s tasks=%d k=%d failed_trials=%d", runID, runDir, len(tasks), k, failed)
 }
@@ -209,7 +218,7 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 		"passed":          len(errors) == 0,
 		"errors":          errors,
 		"terminal":        terminal,
-		"details":         map[string]any{"observation": observation},
+		"details":         map[string]any{"observation": observation, "turn_projection_id": turnID},
 		"tool_calls":      toolCalls,
 		"token_count":     nil,
 		"transcript_path": relative,
@@ -323,52 +332,4 @@ func evalTrialCountFromEnv() int {
 func newEvalRunID() string {
 	stamp := time.Now().UTC().Format("20060102T150405Z")
 	return stamp + "-" + clockid.New()[:8]
-}
-
-func writeEvalRunJSON(runDir, runID string, k int, tasks []EvalTask, agentURL string) error {
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(agentURL + "/healthz")
-	if err != nil {
-		return fmt.Errorf("read eval Agent identity: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("read eval Agent identity: HTTP %d", resp.StatusCode)
-	}
-	var identity struct {
-		HarnessHash string `json:"harness_hash"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil {
-		return err
-	}
-	digest, err := hex.DecodeString(identity.HarnessHash)
-	if err != nil || len(digest) != 32 || identity.HarnessHash != strings.ToLower(identity.HarnessHash) {
-		return fmt.Errorf("eval Agent returned invalid harness_hash")
-	}
-	commit := "unknown"
-	if out, err := exec.Command("git", "rev-parse", "HEAD").Output(); err == nil {
-		commit = strings.TrimSpace(string(out))
-	}
-	sum := sha256.New()
-	for _, task := range tasks {
-		sum.Write([]byte(task.ID))
-		sum.Write([]byte{0})
-	}
-	meta := map[string]any{
-		"schema_version": 1,
-		"run_id":         runID,
-		"created_at":     time.Now().UTC().Format(time.RFC3339),
-		"commit":         commit,
-		"harness_hash":   identity.HarnessHash,
-		"task_set_hash":  hex.EncodeToString(sum.Sum(nil)),
-		"model":          os.Getenv("AGENT_PROVIDER_MODEL"),
-		"trials":         k,
-		"layers":         []string{"l2"},
-		"task_count":     len(tasks),
-	}
-	raw, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(runDir, "run.json"), append(raw, '\n'), 0o644)
 }

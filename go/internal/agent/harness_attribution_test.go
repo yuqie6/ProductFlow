@@ -133,11 +133,11 @@ func TestL2MetadataUsesRunningAgentHarness(t *testing.T) {
 				if r.URL.Path != "/healthz" {
 					t.Errorf("unexpected identity path %s", r.URL.Path)
 				}
-				_ = json.NewEncoder(w).Encode(map[string]string{"harness_hash": hash})
+				_ = json.NewEncoder(w).Encode(map[string]string{"harness_hash": hash, "skill_catalog_hash": testHarnessHash})
 			}))
 			defer server.Close()
 			dir := t.TempDir()
-			err := writeEvalRunJSON(dir, "run-harness", 1, nil, server.URL)
+			_, err := startL2Run(dir, "run-harness", 1, []EvalTask{{ID: "fixture", World: "world"}}, map[string]EvalWorld{"world": {}}, server.URL)
 			if hash != testHarnessHash {
 				if err == nil {
 					t.Fatal("accepted missing or noncanonical Agent identity")
@@ -164,18 +164,8 @@ func TestL2MetadataUsesRunningAgentHarness(t *testing.T) {
 
 func assertProductionHarnessAttribution(t *testing.T, as *agentServer, projectionID, agentURL string) {
 	t.Helper()
-	dir := t.TempDir()
-	if err := writeEvalRunJSON(dir, "run-production-identity", 1, nil, agentURL); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "run.json"))
+	meta, err := readL2AgentIdentity(agentURL)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var meta struct {
-		HarnessHash string `json:"harness_hash"`
-	}
-	if err := json.Unmarshal(raw, &meta); err != nil {
 		t.Fatal(err)
 	}
 	var matched, total int
@@ -189,5 +179,30 @@ func assertProductionHarnessAttribution(t *testing.T, as *agentServer, projectio
 	}
 	if total < 2 || matched != total {
 		t.Fatalf("production health/eval/checkpoint/invocation identity mismatch: matched=%d total=%d", matched, total)
+	}
+	requests, err := readL2RequestIdentities(as, projectionID, map[string]any{"harness_hash": meta.HarnessHash, "skill_catalog_hash": meta.SkillHash})
+	if err != nil || len(requests) != total {
+		t.Fatalf("L2 actual SDK identity missing: requests=%d total=%d err=%v", len(requests), total, err)
+	}
+	dir := t.TempDir()
+	record := map[string]any{"passed": true, "errors": []string{}, "transcript_path": "trial.json", "details": map[string]any{"turn_projection_id": projectionID}}
+	if err := writeL2JSON(filepath.Join(dir, "trial.json"), map[string]any{"turn_id": projectionID}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := attachL2TrialProvenance(as, record, dir, map[string]any{"harness_hash": meta.HarnessHash, "skill_catalog_hash": meta.SkillHash}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "trial.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var transcript struct {
+		Provenance struct {
+			Valid    bool                `json:"valid"`
+			Requests []l2RequestIdentity `json:"model_requests"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(raw, &transcript); err != nil || !transcript.Provenance.Valid || len(transcript.Provenance.Requests) != total {
+		t.Fatalf("L2 exported request identity incomplete: %s err=%v", raw, err)
 	}
 }

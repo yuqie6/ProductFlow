@@ -16,7 +16,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
 });
 
 describe("Pi production harness assembly", () => {
-  it("passes the deployed frozen artifact to the existing Pi resource loader", async () => {
+  it.each([false, true])("passes the frozen harness and reports resolved SDK config (overrides=%s)", async (overrides) => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-harness-"));
     try {
       const store = new TurnStore(root);
@@ -64,7 +64,16 @@ describe("Pi production harness assembly", () => {
         setCurrentPageType: vi.fn(),
         setJournalToolStep: vi.fn().mockResolvedValue(undefined),
       } as unknown as PiSessionHost;
+      if (overrides) {
+        host.config.providerModel = "override-model";
+        host.config.providerBaseURL = "https://fixture.invalid/v1?token=endpoint-secret";
+        host.config.providerReasoningEffort = "HIGH";
+        host.config.providerReasoningSummary = "none";
+        host.config.providerTextVerbosity = "low";
+        host.config.providerServiceTier = "priority";
+      }
       const adapter = new PiSessionAdapter(host);
+      expect(() => adapter.requestConfiguration).toThrow("has not been resolved");
       const onEvent = vi.fn();
       await adapter.createSession("turn-harness", {} as RuntimeContext, {
         input_text: "Inspect the workflow", asset_ids: [], idempotency_key: "harness-assembly", page_context: null,
@@ -77,6 +86,16 @@ describe("Pi production harness assembly", () => {
       expect(prompt).toContain("<productflow_context");
       expect(options?.noTools).toBe("all");
       expect(subscribe).toHaveBeenCalledWith(onEvent);
+      expect(adapter.requestConfiguration).toMatchObject({
+        schema_version: 1, provider: "openai", model: overrides ? "override-model" : "fixture-model", api: "openai-responses",
+        thinking_level: overrides ? "high" : "medium", reasoning_summary: overrides ? "none" : null,
+        text_verbosity: overrides ? "low" : null, service_tier: overrides ? "priority" : null,
+      });
+      expect(adapter.requestConfiguration.base_url_hash).toMatch(/^[a-f0-9]{64}$/u);
+      expect(JSON.stringify(adapter.requestConfiguration)).not.toContain("test-key");
+      expect(JSON.stringify(adapter.requestConfiguration)).not.toContain("endpoint-secret");
+      host.config.providerModel = "later-config-change";
+      expect(adapter.requestConfiguration.model).toBe(overrides ? "override-model" : "fixture-model");
     } finally {
       await rm(root, { recursive: true, force: true });
       vi.clearAllMocks();

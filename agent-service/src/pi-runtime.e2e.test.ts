@@ -103,6 +103,10 @@ describe("Pi runtime fake provider E2E", () => {
       await expect.poll(() => releasedPhases).toEqual(["terminal"]);
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
       expect(checkpoints[0].payload.harness_hash).toBe(DEPLOYED_HARNESS.hash);
+      expect(checkpoints[0].payload.skill_catalog_hash).toBe(skills.hash);
+      expect(checkpoints[0].payload.model_configuration).toMatchObject({
+        schema_version: 1, provider: "openai", api: "openai-responses", thinking_level: "medium",
+      });
       expect(manager.health().harness_hash).toBe(checkpoints[0].payload.harness_hash);
       expect(events.map((event) => event.kind)).toEqual([
         "turn/start",
