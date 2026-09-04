@@ -20,7 +20,7 @@
 | D-01 | Turn 继续使用 `unknown`；中断通过 `terminal_reason_code` 和 `assistant/message.interrupted=true` 表达 | 完成 | 2026-08-31：`recovery.go` 按 `attempt_id` 组装 interrupted `assistant/message`；`AgentTurnTail` 用 `terminal_reason_code` 区分文案；`TestCrashAfterModelStartRecoversUnknownAndInterruptsInvocation` 与 compact 多 attempt 测试通过。 |
 | D-02 | 工具恢复先对账；`applied` 自动收敛；`not_applied` 仅对 `reconcile_then_retry` 使用原幂等键重试；`conflict/unknown` 停止自动执行 | 完成 | 2026-08-31：HTTP 与 scanner 共用 `reconcileEffectIntent`；`TestReconcileEffectIntentEightToolStateMatrix` 覆盖八工具 applied/conflict/unknown/retry；二次 not_applied 不再持久化 `not_applied`；`TestReconcileTurnEffectAndScannerShareInterpreter` 通过。 |
 | D-03 | 当前 provider 走 foreground；建立 `background_resumable` 合同和持久化结构；不增加绕过 Pi 的官方 OpenAI 执行器 | 完成 | 2026-08-31：Go `BackgroundResumable` = profile ∩ `agentAdapterBackgroundResumable=false`；Agent `effectiveBackgroundResumable`；`before_model_request` 拒绝 `execution_mode=background`；checkpoint 含 `model_response_bound/cursor`。无旁路 OpenAI 执行器。 |
-| D-04 | 完成标准是单管理员、单商家生产就绪；保留 7 天 chunk 压缩；不含 SaaS tenant、计费和对象归档 | 部分完成 | 产品边界和 7 天压缩已按 attempt 绑定 `sourceEventSeqs`；G-03 与 G-05 的证据通过。G-06 的真实 skill eval 与图片图 gate 已在 2026-09-04 当前 HEAD 通过，但真实 Agent 审批到 WorkflowRun 的完整链仍只有 2026-09-01 的历史证据，需在当前 HEAD 重做。G-07 的 clean/no-cache 全量 gate 已通过；尚不能宣告生产就绪。 |
+| D-04 | 完成标准是单管理员、单商家生产就绪；保留 7 天 chunk 压缩；不含 SaaS tenant、计费和对象归档 | 部分完成 | 产品边界和 7 天压缩已按 attempt 绑定 `sourceEventSeqs`；G-03、G-04、G-05 有证据。G-06：2026-09-05 `just web-e2e-live-agent-workflow` 1 passed（审批卡 → 单一 WorkflowRun → 真实出图，7.4m）。评测 L1–L6 门槛仍以 [`agent-eval-system.md`](agent-eval-system.md) 的 `run_id` 为准，未过不得采信分数。G-07 干净 checkout 全量门尚未在本 HEAD 重跑。 |
 | D-05 | 容量 gate 是 25 个并发 Turn、100 条 SSE、单 Turn 1 万事件、单会话 1000 Turn | 完成 | 2026-09-04 当前 HEAD 复核：`just go-test-agent-journal-capacity` 10k 事件 P95=232.800884ms、25 Turn×128、100 SSE overflow 503；`just agent-service-test-local-journal-capacity` 本地 10k WAL P95=0.81ms。2026-09-01 已有 `TestLastFiftyTurnsQueryP95`、`TestAgentSSETimeToFirstEventP95` 和 Chromium gap repair 证据，均在阈值内。 |
 
 ## 协议与数据合同
@@ -107,7 +107,7 @@
 | G-03 | `kill -9` 四点故障注入：模型开始后、mutation 成功/result 前、approval 后、turn/end 落库/响应前；验证连续 seq、至多一次副作用、诚实终态、无永久活动 Turn | 完成 | 2026-09-01：`TestSIGKILLLeaseHolderAgainstGoPG` 对真实 httptest Go+PG 四点 SIGKILL helper：`model_start` / `mutation` / `approval` / `turn_end`；连续 journal、mutation 副作用至多一次、诚实终态。含在 `just go-test`。 |
 | G-04 | 浏览器：普通断线、gap、重复帧、旧 generation 迟到帧、buffer overflow、terminal gap、approval 刷新；无错误断线 toast | 完成 | 2026-09-05 HEAD `ebc7630d` 工作树：`just web-e2e-agent-sse` 5 passed（PG 事件页补洞 ≤5s；原地事件页补洞不丢 live EventSource；generation/overflow/terminal gap/parked approval；duplicate seq1 再 seq2；raw EventSource cursor 重连）。 |
 | G-05 | 标准容量：25 Turn、100 SSE、1 万事件/Turn、1000 Turn/会话；零洞、零重复副作用、零永久活动；P95 batch PG <=300ms、SSE <=1s、gap repair <=5s、最近 50 Turn <=500ms | 完成 | 2026-09-04 当前 HEAD 复核：`just go-test-agent-journal-capacity` deep_events=10000 concurrent_turns=25 batches=207 p95=232.800884ms；100 SSE overflow 503；`just agent-service-test-local-journal-capacity` 本地 10k WAL duration=6351.4ms p95=0.81ms。2026-09-01 的 `TestLastFiftyTurnsQueryP95`、`TestAgentSSETimeToFirstEventP95` 与 Chromium gap repair 证据仍在阈值内。 |
-| G-06 | 真实 gate 使用 `gpt-5.6-luna`：完整 skill eval、真实审批到 WorkflowRun、真实图片图运行、真实 Chromium；确认 `background:true` unsupported | 部分完成 | 2026-09-04 当前 HEAD：legacy `just agent-evals-live` 15/15，58 calls，511745 tokens，`usage_unavailable=0`。JSON 任务集、L0 合同与 k 次试验 runner 已接线；全量 k=3 / pass^k / Wilson / L2–L6 出口仍只以 [`agent-eval-system.md`](agent-eval-system.md) 登记的 `run_id` 为准，历史 15/15 冒烟不自动满足该账本阶段出口。`just web-e2e-live-graph` 真实 Chromium/真实图片 provider 1 passed；Go/Pi 的 `background:true` 拒绝测试在无缓存 Go 全量门中通过。真实 Agent 审批到 WorkflowRun 的 UI 链没有仓库自动 gate，只有 2026-09-01 的人工证据；需在当前 HEAD 重做该链后才能完成。 |
+| G-06 | 真实 gate 使用 `gpt-5.6-luna`：完整 skill eval、真实审批到 WorkflowRun、真实图片图运行、真实 Chromium；确认 `background:true` unsupported | 部分完成 | 2026-09-05：`just web-e2e-live-agent-workflow` 1 passed（7.4m）；skip-Agent 建画布后打开对话，审批卡「确认并执行」，单一 WorkflowRun succeeded，生成图为真实 PNG/JPEG/WEBP。`just web-e2e-live-graph` 此前已通过。JSON 任务集 L1–L6 出口仍只以 [`agent-eval-system.md`](agent-eval-system.md) 登记的 `run_id` 与门槛为准；历史 15/15 冒烟不满足该账本阶段出口。Go/Pi 的 `background:true` 拒绝测试仍以无缓存 Go 全量门为准。 |
 | G-07 | 全量：Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、`git diff --check`、干净 checkout 重跑 | 完成 | 2026-09-04 当前 HEAD `fb658633`：全量 gate 启动时代码工作树干净；随后本次账本更新仅修改三份 `docs/audits/` 文档。无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed / 2 skipped）、`pnpm --dir web test:run`（637 passed）、`pnpm --dir web lint`、`just web-build`、`just docs-check`、`just go-migrate`、`git diff --check` 均通过。schema fresh/upgrade 由 `TestApplyEmptyDatabaseMatchesHeadConstraints`、`TestApplyTwiceDoesNotDeleteRows`、`TestApplyExistingHeadKeepsSchema` 覆盖并通过。 |
 
 ## 持久日志提交语义
@@ -120,7 +120,7 @@
 4. 本地 append-only journal 可以辅助 Pi loop 和进程内恢复，但不得使 PostgreSQL 降级为无限期 eventual sink。
 5. 生产 gate 约束批量写入 P95 不超过 300ms。实现必须同时证明有界等待、结构性 flush barrier、终态 flush 和失败传播；“每原始 token 单独一次 PG”与“本地返回后无界后台提交”都不是计划目标。
 
-当前结论：`完成`（提交语义与容量 P95）。G-07 已在 2026-09-04 账本更新前的 clean HEAD 以无缓存全量门复核；G-06 的真实 Agent 审批到 WorkflowRun 链仍见测试 Gate 表中的缺口。
+当前结论：`完成`（提交语义与容量 P95）。G-07 已在 2026-09-04 账本更新前的 clean HEAD 以无缓存全量门复核；G-06 的审批到 WorkflowRun Chromium 链已在 2026-09-05 重跑通过，评测 L1–L6 门槛仍缺。
 
 - 当前不是逐事件等待 PG。`JournalEventBatcher` 使用 20ms、64 events、768 KiB 三个上限；普通 chunk 先入队，tool/question/approval/assistant message/terminal 是等待 drain 的结构屏障；每个 batch 调一次 `/events/batch`。
 - Go 的 batch append 在同一事务校验连续 seq、写事件并更新终态投影；浏览器 SSE 只查询 PG。失败批次保留在队首，屏障和 terminal 失败会传播并中止 Turn。
@@ -134,6 +134,11 @@
 - 2026-09-01 锁顺序：过期 execution 扫描改为先 `FOR UPDATE OF agent_turn_projections SKIP LOCKED` 再锁 execution，与 `AppendEvents`/`HeartbeatExecution` 一致。`TestAppendEventsAndExpiredRecoveryDoNotDeadlock` 在 live writer 持有 projection 时扫描跳过且无 `40P01`。Agent `appendPublishedBatch` 对 ProductFlow 5xx 按 250ms 起步、最高 30s 原序重试；`pi-runtime.test.ts`「retries a 5xx journal batch then ACKs the original sequence」通过。
 
 ## 验证记录
+
+### 2026-09-05 Agent 审批到 WorkflowRun Chromium
+
+- HEAD：`ba4508d7` 之后工作树含本闸门 spec 修正；他人 fidelity / image-eval WIP 未纳入。
+- `just web-e2e-live-agent-workflow`：1 passed，墙钟 7.4m。路径：只建画布 → 「创建并打开对话」→ 发送「请执行当前工作流」→ 审批卡「确认并执行」→ GraphRun succeeded → 图库真实生成图。
 
 ### 2026-09-05 Agent SSE Chromium
 

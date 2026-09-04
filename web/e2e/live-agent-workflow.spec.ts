@@ -47,8 +47,14 @@ test("Agent approval card submits one real WorkflowRun with generated images", a
   const graph = (await graphResponse.json()) as { id: string };
   expect(graph.id).toBeTruthy();
 
+  await page.locator('[data-sidebar-tool="agent"]').click();
   const composer = page.locator("[data-agent-composer] textarea");
-  await expect(composer).toBeVisible();
+  const openConversation = page.locator("[data-open-canvas-conversation]");
+  await expect(openConversation.or(composer)).toBeVisible({ timeout: 20_000 });
+  if (await openConversation.isVisible()) {
+    await openConversation.click();
+  }
+  await expect(composer).toBeVisible({ timeout: 20_000 });
   await composer.fill("请执行当前工作流，提交一次完整图运行。不要只改节点。");
   await page.getByRole("button", { name: "发送消息" }).click();
 
