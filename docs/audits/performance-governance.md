@@ -67,7 +67,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 过期 execution / queued Task / pending restage 已分阶段且每聚合一事务；`HasMore` 为各阶段 OR。Graph/ImageSession/Delivery/LocalEdit 为发现快照 → 单聚合状态 → 单聚合 outbox；每轮最多 25 条，`SKIP LOCKED`，单条失败不回滚整批。Graph 取消/执行/recovery 锁序 `-count=20` 已跑 | 仍需目标规模锁等待分布 |
 | PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch loop 与 recovery cadence 解耦；watch 默认每秒投递、每 10 秒 recovery；`Stage`/`resetPending`/`MarkFailed` 回 PENDING/`ReleaseForRetry` 在同一事务 `NOTIFY productflow_dispatch`；标 DEAD 不通知；陈旧 SENT 对账每轮最多 100 条 | 退避未到期时唤醒仍会跳过该行，继续依赖 ticker；缺负载下 dispatch latency |
 | PERF-07 | SSE 连接占用 | 完成 | `platform/notify.Subscribe` 按 pool 在进程内共享一条 LISTEN，Agent/Graph/ImageSession 共用 fanout；`ListenerConnections`、`GraphSSEConnections`、Agent SSE gauge 已接入 API metrics；缓冲满时丢通知并依赖 PG 回读；notify/metrics/Agent shared-listener tests 通过 | 指标是单进程 gauge；部署仍需按副本抓取并用 `replicas * (listener + SSE) + pool` 做容量告警，真实多副本观测保持观察项 |
-| PERF-08 | ImageSession 列表 N+1 | 部分完成 | 列表批量摘要与游标分页仍在。详情 GET 只带首屏 history；`GET /history` 做 keyset；status/详情队列总览走 `LoadQueueOverview`，不再付 admission 节点 COUNT。25k 会话列表 `just go-test-imagesession-query-plan` 走 `ix_image_sessions_updated`，execution 0.016ms | 详情任务/effect 仍有多次查询；1k 任务 / 10k 轮次 history 规模闸门未跑 |
+| PERF-08 | ImageSession 列表 N+1 | 部分完成 | 列表批量摘要与游标分页仍在。详情 GET 只带首屏 history；`GET /history` 做 keyset；status/详情队列总览走 `LoadQueueOverview`。25k 会话列表走 `ix_image_sessions_updated`，execution 0.019ms。10k 轮次 history 首页/keyset 走 `ix_image_session_rounds_session_created`，execution 0.084ms / 0.022ms；1k 任务 LIMIT 21 走 `ix_image_session_generation_tasks_session_created`，execution 0.025ms。命令 `just go-test-imagesession-query-plan`（2026-09-05） | 热会话独占整表时 COUNT/详情无 LIMIT 仍 Seq Scan；GET 详情仍装入全部匹配任务，未测 payload |
 | PERF-09 | GraphRun 列表 N+1 与排序 | 完成 | run/node 摘要批量读取；`(graph_id, started_at DESC, id DESC)` 索引已写入并完成本地 schema migration；列表 DTO 排除 snapshot、compiled context、input trace、output，单 run 详情按需读取；Graph projection 的 artifact、商品资料/fact、绑定资产和视觉版本改为批量投影；执行 loop 复用事务内完整 run；Graph SSE 建连/fallback 只读 status；HTTP 100 样本、目标规模 EXPLAIN、Playwright TTI/重复读取/详情打开和 Web bundle budget 均通过 | 生产详情打开率和跨副本连接预算需要部署后按 metrics/trace 观察；摘要仍按最近 20 条返回，`progress_metadata` 仍是列表所需的 JSON 读取 |
 | PERF-12 | Agent Session 列表 N+1 | 部分完成 | 当前页 session、每个 session 最近 20 条 conversation 和 count 改成批量查询；21 条 conversation limit regression 通过。列表按维护列 `activity_at` 排序；25k 会话 `just go-test-agent-query-plan` dock/product 列表无 Seq Scan，execution 0.040ms / 0.042ms | 未测目标规模 payload；单条详情路径仍按一个 session 组装三类数据 |
 | PERF-13 | Agent journal batch 写入 P95 | 部分完成 | `AppendEvents` 将 batch 内已有 sequence 从逐条 `Take` 改为一次查询，保留 projection lock、幂等 replay 和逐条 fold；历史容量 gate P95=240ms/211ms，实现基线 `fb658633` 在 2026-09-04 复核 P95=232.800884ms，100 SSE 通过 | 需要持续 batch histogram、目标规模负载与锁等待观测 |
@@ -224,7 +224,7 @@ Web route split 和预算也已通过：bundle entry 为 928.6KB raw/253.2KiB gz
 | GRAPH-READ-01 | 摘要 wire 禁止详情字段、详情保留字段 | `go/internal/graph`、`web/src/pages/workbench/canvas` | focused HTTP contract、100 样本 validator、Web detail path 已过 |
 | GRAPH-READ-02 | SSE 建连/fallback 不读取大字段 | `go/internal/graph/run_sse.go`、`runs.go` | `TestGraphRunStatusReadUsesOnlyIdentityColumns`、`TestGraphRunSSETracksActiveConnections` 与 Graph package gate 已过 |
 | GRAPH-READ-03 | 修复后 HTTP p95/payload 与同 Go 版本 A/B | `scripts/bench_workbench_http.py`、`justfile` | 2026-09-04 实现基线 `fb658633`：summary/detail p95=4.09/4.71ms，最大 payload=15,629/2,623B，current→runs 串行 p95=13.59ms，商品列表 page 20/100 串行 p95=3.73/4.34ms、20 并发 p95=12.39ms，100/100 且字段合同通过；2026-09-01 的同一 fixture `HEAD -> dirty` A/B 与拆分前对照保留在验证记录中 | 旧 Python A/B 未启用；生产详情打开率和跨副本容量仍观察 |
-| GRAPH-READ-04 | 目标规模 query plan 和 buffers | `go/internal/graph/query_plan_test.go`、`cmd/productflow-migrate` | `just go-test-graph-query-plan` 已过：25,000 runs、100,000 target node-runs；摘要/详情实际行数 20/400/1/20，使用 `ix_workflow_graph_runs_graph_started`、`ix_workflow_graph_node_runs_run_node`，无 Seq Scan |
+| GRAPH-READ-04 | 目标规模 query plan 和 buffers | `go/internal/graph/query_plan_test.go`、`cmd/productflow-migrate` | 2026-09-05 `just go-test-graph-query-plan` 在本 HEAD 复跑通过：25,000 runs、100,000 target node-runs；摘要 run Index Scan `ix_workflow_graph_runs_graph_started` execution 0.022ms（20 行）；node 摘要 Incremental Sort + Index Scan `ix_workflow_graph_node_runs_run_node` execution 0.248ms（400 行）；详情 run PK execution 0.016ms、node Index Scan + Sort execution 0.022ms；无 Seq Scan |
 | GRAPH-READ-05 | 浏览器 TTI、重复请求、SSE 连接数和 bundle 成本 | `web/src/pages/workbench`、Web e2e、`platform/metrics` | `just web-e2e-workbench-performance` 已过：2026-09-04 cold/warm=2,159/2,247ms，current/runs 各 1，初始 detail=0，显式 run detail=1，Graph SSE=0；4 条预期 Agent bootstrap 409 已白名单，其它 HTTP/page/network failure=0；bundle budget 已接入 `just web-build`；跨副本汇总仍需部署观测 |
 | GRAPH-READ-06 | Graph detail/project 读取中的剩余 N+1 | `go/internal/graph/project.go`、`product/graph_guard.go` 和对应页面 owner | 节点行复用、artifact/asset/visual/source/fact 按集合读取；`TestGraphProjectionBatchesBoundAssetMetadata`、`TestLoadProductSourceSnapshotsBatchesProductAndFactReads` 与 Graph package gate 已过 |
 | GRAPH-READ-07 | 生产详情打开率 | `web/src/pages/workbench/canvas`、部署 metrics/trace | 代码 gate 已证明初始不读、显式动作最多一条 detail；当前没有用户级行为埋点，真实打开率标为部署后观察项，不用 synthetic action 冒充 |
@@ -318,17 +318,17 @@ Recovery 的默认边界：
 
 - 高频列表采用 keyset cursor；cursor 必须绑定筛选条件、排序版本和 tie-breaker id。不要用大 offset 代替 cursor。
 - 轻量列表只选择摘要列；snapshot、full node runs、全部 rounds、全部 effect ledger 和大 JSON 通过详情路由或按需页读取。
-- ImageSession 列表使用批量 count/latest asset 查询和 `(updated_at,id)` keyset cursor；Go DTO、HTTP query、`web/src/lib/api.ts`、React Query infinite pages、load-more 和列表测试必须一起维护。
+- ImageSession 列表使用批量 count/latest asset 查询和 `(updated_at,id)` keyset cursor；history 使用 `(session_id, created_at DESC, id DESC)`。Go DTO、HTTP query、`web/src/lib/api.ts`、React Query infinite pages、load-more 和列表测试必须一起维护。
 - GraphRun 列表与详情分开：列表最多取 run 状态、时间、范围和 node progress 摘要；详情再读取 snapshot、node input trace 和 output。工作台列表使用摘要，运行详情按钮和节点检查器按需读完整 run；共享 runs observer 使用 30 秒 stale window，避免组件稍后挂载时重复 refetch。Graph SSE 建连和无事件兜底只读取 graph/run identity 与 status；事件仍按 cursor 回放。目标规模 query plan、`progress_metadata` 字节、payload 和浏览器重复读 gate 已有记录。
 - Agent Session 列表已经分页，当前页的 session、conversation 摘要和 count 已批量取；单条 `loadSession` 仍保持同一投影 helper，保持 global conversation 补齐的写边界不变。真实数据规模下仍需检查 payload 和 query plan。
 - SSE 使用共享 fanout；每条连接必须 `defer unsubscribe`。listener 关闭或池不可用时切换有限轮询。每个副本的 listener 和连接池预算都要纳入部署容量。
-- 索引只服务于已确认的 predicate + order：当前补充 `image_sessions(updated_at DESC,id DESC)` 和 `workflow_graph_runs(graph_id,started_at DESC,id DESC)`，通过 `just go-migrate` 后用 `EXPLAIN (ANALYZE, BUFFERS)` 验证；无证据不新增大范围复合索引。
+- 索引只服务于已确认的 predicate + order：当前有 `image_sessions(updated_at DESC,id DESC)`、`image_session_rounds(session_id, created_at DESC, id DESC)`、`image_session_generation_tasks(session_id, created_at DESC, id DESC)` 和 `workflow_graph_runs(graph_id,started_at DESC,id DESC)`，通过 `just go-migrate` 后用 `EXPLAIN (ANALYZE, BUFFERS)` 验证；无证据不新增大范围复合索引。
 
 ### 媒体和内存
 
 当前性能风险集中在媒体 bytes 和大 JSON：
 
-- `product/gallery_archive.go` 可能把整个 ZIP 聚合在 `bytes.Buffer`；目标是受限流式写出或明确总字节预算，超过预算返回可理解错误。
+- `product/gallery_archive.go` 与 `delivery/export.go` 在事务内只冻结条目身份，事务外经 `mediaarchive.Begin`/`Add`/`Finish` 逐文件写入临时 ZIP。2026-09-05 `just go-test-zip-rss`：100 张 `GenerationMaxImageBytes`（10MiB）近上限图，额外 HeapInuse=0、额外 MaxRSS=13,205,504B（约 12.6MiB），低于 64MiB；两次写出 SHA-256 `76cde9973fbe74db086a4ea61d6817d85318442945cf3d1a5c71bafbf3773227`。图库 HTTP 仍有 100 张 / 512MiB 总上限，因此该闸门测共享写入器，不走 `BuildGalleryArchive` 的 100×10MiB 路径。
 - 上传和变体生成要维持真实 MIME、像素、单图和批量限制；优化不能绕过验证。
 - 连续生图调用前读取 base/reference 图片时要按当前最大输入数和字节预算控制峰值；不要让 `generation_count` 线性放大未受限的内存。
 - Graph snapshot、Agent journal event 和 provider JSON 应保持有界；分页不能通过把大 JSON 复制到第二个 projection 解决。
@@ -382,7 +382,7 @@ watch loop
 
 ### 当前重点查询
 
-- `imagesession.Service.List`：按 `updated_at DESC, id DESC` 使用版本化 keyset cursor，页面读取 `limit+1` 并批量查询 round count/latest asset；前端把 pages 合并为 infinite list。仍需真实规模 query plan 和删除/并发更新下的 page hit rate。
+- `imagesession.Service.List`：按 `updated_at DESC, id DESC` 使用版本化 keyset cursor，页面读取 `limit+1` 并批量查询 round count/latest asset；前端把 pages 合并为 infinite list。25k 会话列表与 10k 轮次 history keyset 的 query plan 已由 `just go-test-imagesession-query-plan` 记录；删除/并发更新下的 page hit rate 仍缺。
 - `graph.Service.ListRuns`：当前最多 20 条，run 与 node runs 批量读取为状态/进度摘要；snapshot、input trace、compiled context 和 output 由单 run 详情读取。执行循环已复用同一 tick 的 run 投影，避免重复完整读取；`run_sse.go` 的建连/fallback 只读 status；目标规模摘要/详情 query plan 与修复后 payload/P95 已由 `just go-test-graph-query-plan` 和 `just http-ab-gates` 记录。
 - `agent.listSessions/loadSession`：主查询已经 cursor page，当前页的 conversations/count 已批量读取；单条详情仍按一个 session 组装三类数据。后续需要目标规模 payload/query plan，并保持 global conversation 的补齐逻辑在命令事务边界内。
 - `product.listProducts`：名称包含搜索是 `ILIKE '%q%'`。不要用普通 btree 索引冒充 contains 加速；需要时评估 `pg_trgm` 的部署权限、索引大小、迁移和搜索 SLO。
@@ -543,7 +543,10 @@ PRODUCTFLOW_PERF_PRODUCT_ID=<product-id> WEB_BASE_URL=http://127.0.0.1:<web-port
 
 | 2026-09-04 | 实现基线 `fb658633` GraphRun HTTP、浏览器、bundle 与 query-plan 复核 | `just http-ab-gates` summary/detail 100/100，p95=4.09/4.71ms、最大 payload=15,629/2,623B，current→runs 串行 p95=13.59ms，商品列表串行/并发 p95=3.73/4.34/12.39ms；`just go-test-graph-query-plan` 通过，25,000 runs/100,000 node-runs 且无 Seq Scan；`just web-e2e-workbench-performance` 1 passed，cold/warm TTI=2,159/2,247ms，current/runs 各 1，初始 detail=0，显式 run detail=1，Graph SSE=0，4 条 console error 均为预期 Agent bootstrap 409；`just web-build` 与 bundle budget 通过，entry=928599B/253252B gzip，shell=501341B/146787B gzip；journal P95=232.800884ms、local WAL P95=0.81ms 另见 Agent 账本 | 旧 Python A/B、active-run Graph SSE、生产详情打开率和跨副本连接预算仍为观察项；Graph 性能 fixture 没有 active run |
 | 2026-09-04 | 归档复核 | 只读核对 Graph、ImageSession、Agent、Delivery、LocalEdit recovery 与 metrics/list 查询 owner；未重跑性能专项 gate | 当时 HasMore 覆盖、详情 N+1、事务内整包 ZIP 仍为缺口；本账本不可归档 |
-| 2026-09-04 | 恢复拆事务、NOTIFY、读路径与 ZIP | Agent `HasMore` 改为各阶段 OR；业务域单聚合 recovery；dispatcher `NOTIFY productflow_dispatch`；ImageSession history keyset；`mediaarchive` 事务外逐文件写临时 ZIP | 目标规模 query plan、ZIP MaxRSS、staging 故障注入未跑；本账本不可归档 |
+| 2026-09-04 | 恢复拆事务、NOTIFY、读路径与 ZIP | Agent `HasMore` 改为各阶段 OR；业务域单聚合 recovery；dispatcher `NOTIFY productflow_dispatch`；ImageSession history keyset；`mediaarchive` 事务外逐文件写临时 ZIP | 当时目标规模 query plan、ZIP MaxRSS、staging 故障注入未跑；本账本不可归档 |
+| 2026-09-05 | 本 HEAD 复跑 Graph 目标规模 query plan | `just go-test-graph-query-plan`：25,000 runs / 100,000 node-runs；摘要 20/400 行 execution 0.022ms / 0.248ms，详情 1/20 行 0.016ms / 0.022ms；索引 `ix_workflow_graph_runs_graph_started`、`ix_workflow_graph_node_runs_run_node`；无 Seq Scan | 生产 buffers/p95 仍观察 |
+| 2026-09-05 | 100 张近上限图 ZIP MaxRSS | `just go-test-zip-rss`：`TestStreamingZipNearLimitImagesKeepsExtraRSSUnderBudget` 通过；额外 MaxRSS=12.6MiB、额外 heap=0；ZIP 哈希稳定 | 图库 HTTP 512MiB 总上限仍阻止 100×10MiB 走 `BuildGalleryArchive` |
+| 2026-09-05 | ImageSession 10k 轮次 / 1k 任务 history 索引与 query plan | ExtraDDL `ix_image_session_rounds_session_created`、`ix_image_session_generation_tasks_session_created`；`just go-test-imagesession-query-plan`：列表 0.019ms，history 首页/keyset 0.084ms/0.022ms，任务 LIMIT 21 为 0.025ms | 热会话独占整表时 COUNT/详情无 LIMIT 仍 Seq Scan；GET 详情仍装入全部匹配任务；staging 现场闸门未跑；本账本不可归档 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 

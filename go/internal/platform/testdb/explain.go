@@ -18,6 +18,7 @@ type ExplainResult struct {
 // ExplainNode 是计划树节点。只解析闸门需要的字段。
 type ExplainNode struct {
 	NodeType   string        `json:"Node Type"`
+	IndexName  string        `json:"Index Name"`
 	ActualRows float64       `json:"Actual Rows"`
 	Plans      []ExplainNode `json:"Plans"`
 }
@@ -52,6 +53,26 @@ func AssertNoSeqScan(t *testing.T, name string, result ExplainResult, wantRows f
 			t.Fatalf("%s used Seq Scan at target scale: %v", name, nodes)
 		}
 	}
+}
+
+// AssertIndexUsed 要求计划树中至少有一个节点使用给定索引。
+func AssertIndexUsed(t *testing.T, name string, result ExplainResult, index string) {
+	t.Helper()
+	if !indexUsed(result.Plan, index) {
+		t.Fatalf("%s did not use index %s: nodes=%v", name, index, explainNodeTypes(result.Plan))
+	}
+}
+
+func indexUsed(node ExplainNode, index string) bool {
+	if node.IndexName == index {
+		return true
+	}
+	for _, child := range node.Plans {
+		if indexUsed(child, index) {
+			return true
+		}
+	}
+	return false
 }
 
 func explainNodeTypes(node ExplainNode) []string {
