@@ -44,6 +44,7 @@ func TestAgentEvalStateL2Live(t *testing.T) {
 		"AGENT_MAX_ITERATIONS":           "12",
 		"AGENT_PROVIDER_REQUEST_TIMEOUT": "180s",
 		"PRODUCTFLOW_REQUEST_TIMEOUT":    "180s",
+		"AGENT_QUESTION_TIMEOUT":         "8s",
 		"AGENT_MAX_CONCURRENT_TURNS":     "1",
 		"AGENT_PROVIDER_API_KEY":         os.Getenv("AGENT_PROVIDER_API_KEY"),
 		"AGENT_PROVIDER_MODEL":           os.Getenv("AGENT_PROVIDER_MODEL"),
