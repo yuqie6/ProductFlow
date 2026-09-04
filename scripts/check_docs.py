@@ -166,16 +166,31 @@ def _check_task_board(errors: list[str], root: Path = ROOT) -> None:
         content = path.read_text(encoding="utf-8")
         header = content.split("\n## ", maxsplit=1)[0]
         metadata: dict[str, str] = {}
+        affiliation_fields = {"业务组", "父账本"}
+        present_affiliation: set[str] = set()
         for key in (*fields, "父账本", "完成后可拆"):
-            values = re.findall(rf"^{key}：([^\n]+)$", header, re.M)
+            values = re.findall(rf"^{key}：([^\n]*)$", header, re.M)
+            if key in affiliation_fields:
+                if not values:
+                    metadata[key] = "—"
+                    continue
+                present_affiliation.add(key)
             if len(values) != 1 or not values[0].strip():
                 errors.append(f"{path.name}: expected one nonempty {key} field")
             metadata[key] = values[0].strip() if values else ""
         if metadata["类型"] not in {"实现", "证据"}:
             errors.append(f"{path.name}: invalid issue type")
         parent = metadata["父账本"]
-        if groups.get(metadata["业务组"]) != parent or not (tasks.parent / parent).is_file():
+        if present_affiliation and present_affiliation != affiliation_fields:
+            errors.append(f"{path.name}: group and parent must be specified together")
+        elif present_affiliation and (
+            groups.get(metadata["业务组"]) != parent or not (tasks.parent / parent).is_file()
+        ):
             errors.append(f"{path.name}: business group/parent ledger mismatch")
+        elif not present_affiliation:
+            source = re.search(r"^## 问题来源\n(.*?)(?=^## |\Z)", content, re.M | re.S)
+            if source is None or not source.group(1).strip():
+                errors.append(f"{path.name}: independent issue needs problem source")
         is_archived = path.parent == tasks / "archive"
         status = metadata["状态"]
         allowed = {"完成", "取消"} if is_archived else {"开放", "认领", "阻塞", "完成"}

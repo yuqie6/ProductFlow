@@ -1,6 +1,6 @@
 # Issue Trackers
 
-Product requests, PRDs and externally reported problems live in GitHub Issues. Bounded execution issues for the internal audit groups live in [`../audits/tasks/`](../audits/tasks/README.md). Use the local board when the user asks to publish or claim a business-group task; use GitHub for product triage and PRDs. Ordinary fixes and read-only investigations need neither unless requested.
+Product triage and PRDs use GitHub Issues. Delegated execution tasks share [`../audits/tasks/`](../audits/tasks/README.md), whether produced by a business group or requested directly by the user. "Record a task for another agent" means the local board unless GitHub is explicitly requested; independent tasks need no group, charter or GitHub issue. "Fix it directly" means investigate and fix in the current session without requiring a ticket. Read-only investigations also need no ticket unless requested.
 
 An execution issue can link its originating GitHub issue. Keep detailed execution evidence locally and post only the outcome/link to GitHub when requested. Local closure does not close a product issue or pass a business-group gate. Do not maintain two copies of one execution status.
 
@@ -19,7 +19,7 @@ Infer the repo from `git remote -v` - `gh` does this automatically when run insi
 
 ## When a skill says "publish to the issue tracker"
 
-Create a GitHub issue for a product request or PRD. For an explicitly requested internal business-group execution issue, follow the local board protocol instead; no GitHub issue is required.
+Create a GitHub issue for product triage or a PRD. For a requested local execution task, grouped or independent, follow the local board protocol instead; no GitHub issue is required.
 
 ## When a skill says "fetch the relevant ticket"
 

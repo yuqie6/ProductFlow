@@ -4,6 +4,8 @@
 
 组对问题方向和验收口径负责，代码修改范围由每张 issue 的真实因果决定。跨组成果通过具体 issue、条款和证据引用交接。主代理维护发布和集成，不按组建立永久代码领地。
 
+业务组只组织长期方向。用户直接提出、希望交给其他 Agent 的问题可以作为独立任务进入同一看板，不需要业务组或父章程；请求当前会话直接修复时无需建单。任务来源与交办方式见 [公共任务池](tasks/README.md#用户怎么交办)。
+
 ## 业务组
 
 | 组 | 章程 | 组状态 | 管什么 | 后续发布条件（未发布不构成开工许可） |
@@ -23,4 +25,4 @@
 
 稳定事实写回 `CONTEXT.md`、`docs/ARCHITECTURE.md`、`docs/PRD.md` 或 `docs/USER_GUIDE.md`；未完成产品方向由 [`../ROADMAP.md`](../ROADMAP.md) 索引。历史叙事在 [`../history/agent-runtime-timeline.md`](../history/agent-runtime-timeline.md)。
 
-GitHub Issues 承接产品需求、PRD 和对外问题；本地 issue 承接这些业务组的有界执行任务，规则见 [`../agents/issue-tracker.md`](../agents/issue-tracker.md)。关联时互记链接，任务关闭不自动关闭 GitHub 产品 issue，也不自动完成章程阶段门。普通小修、只读调查无需建单；新增专项方向由维护者确认章程后发布任务。
+GitHub Issues 承接产品需求、PRD 和对外问题；本地 issue 承接业务组任务和用户独立交办的执行任务，规则见 [`../agents/issue-tracker.md`](../agents/issue-tracker.md)。关联时互记链接，任务关闭不自动关闭 GitHub 产品 issue，也不自动完成章程阶段门。只有需要长期组织的新专项方向才建立章程，独立问题不以归组为执行前提。

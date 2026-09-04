@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 里每个总账本是一个业务组章程。内部执行 issue 使用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。认领由主代理确认，交付经审核后同步章程结论。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
+[`audits/`](audits/) 里每个总账本是一个业务组章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。独立任务无需归组或父章程；认领由主代理确认，组内交付经审核后同步章程结论。当前会话直接处理的小修无需建单。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
 
 ## 历史叙事
 
@@ -53,7 +53,7 @@
 
 ## 协作元数据
 
-[`agents/`](agents/) 管产品 GitHub Issues 与本地执行 issue 的分工、triage 和 domain 阅读约定。仓库内业务组 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)，详细证据留在任务，章程保留验收结论和证据链接。
+[`agents/`](agents/) 管产品 GitHub Issues 与本地执行 issue 的分工、triage 和 domain 阅读约定。仓库内公共任务池是 [`audits/tasks/README.md`](audits/tasks/README.md)，详细证据留在任务；有关联业务组时，章程保留验收结论和证据链接。
 
 ## 写作规则
 

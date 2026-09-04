@@ -4,7 +4,7 @@
 
 Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/PRD.md` / `docs/ARCHITECTURE.md` / `docs/USER_GUIDE.md` for current product and runtime shape, and `docs/ROADMAP.md` for unfinished directions. Do not treat `docs/adr/` as current design, and do not write new ADRs. When documentation conflicts with code or tests, verify the live behavior and correct the living documentation.
 
-Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. Planned parallel slices use the audit task board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md); each `docs/audits/*.md` ledger is a business-group charter. For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
+Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. When the user asks to fix a problem directly, investigate and fix it in the current session without requiring a business group or issue. When asked to record a task for another agent, use the shared board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md): it accepts both business-group tasks and independent user requests. Independent tasks omit group/parent metadata and record the reported problem and expected outcome. For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
 Keep modifications at the real causal boundary. Reuse existing models, enums, exceptions, query helpers, fixtures, and UI components. Add guards or abstractions only for a demonstrated failure mode or invariant. Never revive retired V1 runtime behavior as a fallback. Do not add compatibility shims, dual serializers, or old-data migration commands; delete leftover paths.
 
@@ -37,7 +37,7 @@ Implementation sub-agents receive one bounded causal slice at a time. For work o
 
 Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their write scopes, frozen inputs and runtime resources do not conflict and each slice is claimed on the board. With four total agent slots, use at most three implementation agents alongside the primary agent. The primary agent confirms claims in one coordinating workspace; local commits in separate worktrees do not provide mutual exclusion.
 
-The executor self-reviews its exclusive diff and reports evidence; the primary agent reviews every sub-agent delivery before acceptance. One designated Git writer (the primary agent by default) serializes claim, delivery and closure commits. Closing an issue updates the parent ledger's affected conclusions and evidence links, then archives the issue. Only the primary agent publishes follow-up issues after checking prerequisites. The executor **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents must not push, reset, revert, or declare the overall program complete.
+The executor self-reviews its exclusive diff and reports evidence; the primary agent reviews every sub-agent delivery before acceptance. One designated Git writer (the primary agent by default) serializes claim, delivery and closure commits. Closing a group issue updates its parent ledger's affected conclusions and evidence links; independent issues record the outcome in the issue without creating a ledger. Both follow the same review and archive rules. Only the primary agent publishes follow-up issues after checking prerequisites. The executor **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents must not push, reset, revert, or declare the overall program complete.
 
 The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is filed as a new `开放` board task, not started in the same turn. Ordinary small fixes and read-only investigations do not use the board unless the user asks to file a task.
 
@@ -88,7 +88,7 @@ Do not commit `.env`, `web/.env`, generated storage, caches, or build output. Ke
 
 ### Issue tracker
 
-Product issues and PRDs are tracked in GitHub Issues for `yuqie6/ProductFlow`; bounded audit-group execution issues live in `docs/audits/tasks/`. See `docs/agents/issue-tracker.md` for routing and cross-links.
+Product issues and PRDs are tracked in GitHub Issues for `yuqie6/ProductFlow`; delegated execution tasks, including independent user requests, share `docs/audits/tasks/`. A local execution task does not require a GitHub issue. See `docs/agents/issue-tracker.md` for routing and cross-links.
 
 ### Triage labels
 
@@ -100,4 +100,4 @@ Domain documentation uses a single-context layout: root `CONTEXT.md`. `docs/adr/
 
 ### Audit task board
 
-Each `docs/audits/*.md` ledger is a business-group charter. Agents claim issues on [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md).
+Business-group charters are indexed in [`docs/audits/README.md`](docs/audits/README.md). Group tasks and independent user requests share [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md); claiming and conflict checks apply to both.

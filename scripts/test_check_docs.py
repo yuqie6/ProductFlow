@@ -21,10 +21,17 @@ class TaskBoardTests(unittest.TestCase):
         self.archive.write_text("# Archive\n", encoding="utf-8")
         self.write_issue()
 
-    def write_issue(self, name="one.md", status="开放", owner="—", time="—", blocked=""):
+    def write_issue(self, name="one.md", status="开放", owner="—", time="—", blocked="",
+                    group="评测", parent="eval.md", source=None):
+        affiliation = ""
+        if group is not None:
+            affiliation += f"业务组：{group}\n"
+        if parent is not None:
+            affiliation += f"父账本：{parent}\n"
+        origin = f"## 问题来源\n{source}\n\n" if source is not None else ""
         content = (
             f"# Task\n\n状态：{status}\n类型：证据\n认领者：{owner}\n认领于：{time}\n"
-            "业务组：评测\n父账本：eval.md\n完成后可拆：无\n\n"
+            f"{affiliation}完成后可拆：无\n\n{origin}"
             f"## 阻塞与交接\n{blocked}\n\n## 证据\n"
         )
         (self.tasks / name).write_text(content, encoding="utf-8")
@@ -36,7 +43,7 @@ class TaskBoardTests(unittest.TestCase):
             if path.name == "README.md":
                 continue
             metadata = dict(line.split("：", 1) for line in path.read_text(encoding="utf-8").splitlines() if "：" in line)
-            cells = [metadata[key] for key in ("业务组", "类型", "状态", "认领者", "认领于")]
+            cells = [metadata.get("业务组", "—"), *[metadata[key] for key in ("类型", "状态", "认领者", "认领于")]]
             rows.append(f"| [{path.name}]({path.name}) | " + " | ".join(cells) + " |")
         self.board.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -105,6 +112,52 @@ class TaskBoardTests(unittest.TestCase):
     def test_open_issue_cannot_keep_claim(self):
         self.write_issue(owner="session-a", time="2026-09-05T03:00:00Z")
         self.assertIn("open issue cannot retain an owner", self.errors())
+
+    def test_independent_issue_shares_board_with_group_issue(self):
+        self.write_issue(name="export-name.md", group=None, parent=None,
+                         source="用户报告导出文件名错误，期望使用商品名称；根因尚未确认。")
+        self.assertEqual(self.errors(), "")
+        self.assertIn("[export-name.md](export-name.md) | — |", self.board.read_text(encoding="utf-8"))
+
+    def test_independent_issue_requires_problem_source(self):
+        for source in (None, "", "   "):
+            with self.subTest(source=source):
+                self.write_issue(group=None, parent=None, source=source)
+                self.assertIn("independent issue needs problem source", self.errors())
+
+    def test_affiliation_fields_must_be_paired(self):
+        for group, parent in ((None, "eval.md"), ("评测", None)):
+            with self.subTest(group=group, parent=parent):
+                self.write_issue(group=group, parent=parent, source="用户报告问题。")
+                self.assertIn("group and parent must be specified together", self.errors())
+
+    def test_independent_issue_cannot_hide_invalid_affiliation(self):
+        for group, parent in (("不存在的组", "eval.md"), ("", ""), ("—", "—")):
+            with self.subTest(group=group, parent=parent):
+                self.write_issue(group=group, parent=parent, source="用户报告问题。")
+                self.assertNotEqual(self.errors(), "")
+
+    def test_duplicate_optional_field_fails(self):
+        path = self.tasks / "one.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("业务组：评测", "业务组：评测\n业务组：评测"), encoding="utf-8")
+        self.assertIn("expected one nonempty 业务组", self.errors())
+
+    def test_independent_issue_still_checks_board_and_claims(self):
+        self.write_issue(group=None, parent=None, source="用户报告问题。", status="认领")
+        self.assertIn("needs an owner", self.errors())
+        self.write_issue(group=None, parent=None, source="用户报告问题。")
+        self.board.write_text(self.board.read_text(encoding="utf-8").replace("| — | 证据", "| 评测 | 证据"), encoding="utf-8")
+        self.assertIn("out of sync", self.errors())
+
+    def test_independent_issue_can_be_archived(self):
+        for status in ("完成", "取消"):
+            with self.subTest(status=status):
+                self.write_issue(group=None, parent=None, source="用户报告问题。", status=status,
+                                 owner="session-a", time="2026-09-05T03:00:00Z")
+                (self.tasks / "one.md").replace(self.tasks / "archive/one.md")
+                self.board.write_text("", encoding="utf-8")
+                self.archive.write_text(f"| [one.md](one.md) | {status} | outcome |\n", encoding="utf-8")
+                self.assertEqual(self.errors(), "")
 
 
 if __name__ == "__main__":
