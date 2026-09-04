@@ -244,7 +244,7 @@ describe("Pi runtime fake provider E2E", () => {
       expect(events.map((event) => event.kind)).toEqual(
         expect.arrayContaining(["turn/start", "turn/end"]),
       );
-      expect(releasedPhases).toEqual(["terminal"]);
+      await expect.poll(() => releasedPhases).toEqual(["terminal"]);
     } finally {
       await manager?.close();
       await provider.close();
@@ -732,6 +732,7 @@ async function runProviderFailureScenario(
       },
     });
     const terminal = await waitForTerminal(store, scope.run_id, started.turn_id);
+    await expect.poll(() => releasedPhases).toEqual(["terminal"]);
     return {
       terminal,
       requestCount: provider.requestCount,

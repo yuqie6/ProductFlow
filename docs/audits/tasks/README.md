@@ -24,7 +24,6 @@
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 开放 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
-| [harness-artifact.md](harness-artifact.md) | Agent 能力 | 实现 | 开放 | — | — |
 | [image-eval-pool.md](image-eval-pool.md) | 评测 | 证据 | 开放 | — | — |
 
 ## 职责与适用范围

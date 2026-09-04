@@ -34,7 +34,7 @@ import {
 } from "./contracts.js";
 import type { Config } from "./config.js";
 import type { ProductFlowClient } from "./productflow.js";
-import { loadRuntimePolicy } from "./runtime-policy.js";
+import { loadHarness } from "./harness.js";
 import { prepareSessionForTurn } from "./session-retry.js";
 import { type SkillCatalog } from "./skills.js";
 import { RuntimeError, type TurnStore } from "./store.js";
@@ -42,7 +42,7 @@ import { createProductFlowTools, type ToolRuntime } from "./tools.js";
 import { buildContextStepDetails } from "./tool-step-projection.js";
 import { effectiveBackgroundResumable } from "./provider-capability.js";
 
-const RUNTIME_POLICY = loadRuntimePolicy();
+const HARNESS = loadHarness();
 
 export interface PiSessionHost extends ToolRuntime {
   readonly config: Config;
@@ -126,7 +126,7 @@ export class PiSessionAdapter {
     });
     const staticPrompt = [
       this.host.scope.system_prompt,
-      RUNTIME_POLICY,
+      HARNESS.systemPrompt,
       this.host.scope.task_goal?.trim() ? `Authoritative ProductFlow Task goal:\n${this.host.scope.task_goal.trim()}` : "",
       `Runtime: ${RUNTIME_NAME}; API contract: ${API_VERSION}; context schema: ${CONTEXT_SCHEMA_VERSION}; skill catalog: ${this.host.skills.hash}.`,
       this.host.skills.promptForScope(this.host.scope.scope_type),

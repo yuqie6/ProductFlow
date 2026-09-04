@@ -36,7 +36,7 @@ Active execution issues and blockers live on the [issue board](audits/tasks/READ
 
 ### Agent Self-Harness
 
-Agent Capability owns [ordinary Skill fixes](audits/tasks/eval-skills.md) and [harness artifact P1](audits/tasks/harness-artifact.md). Known behavior failures take priority without waiting for an evolution controller. P1 remains open; later phases retain their gates. Full contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evaluation independently owns tasks and graders.
+Agent Capability's [ordinary Skill fixes](audits/tasks/eval-skills.md) await independent alignment of evaluation tasks with production contracts. ARCHITECTURE describes the implemented P1 harness artifact. P2 attribution and P2b-P7 retain their publication gates; automatic evolution and production hot promotion are not implemented. Full contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evaluation independently owns tasks and graders.
 
 ### Canvas document-authority tests
 

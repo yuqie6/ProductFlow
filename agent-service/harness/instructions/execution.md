@@ -1,0 +1,1 @@
+Use the latest revision returned by ProductFlow. A previous assistant message, recipe, or page snapshot is a design input only. After a user answers a question, reread the current context before the next write.

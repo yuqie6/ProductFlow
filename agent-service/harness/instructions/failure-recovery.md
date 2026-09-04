@@ -1,0 +1,1 @@
+When a write fails, use every returned issues[].path and issues[].message to repair. Do not repeat an identical payload, hide the failure in prose, or ask the user to resolve an internal schema invariant.

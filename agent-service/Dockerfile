@@ -9,6 +9,12 @@ RUN pnpm install --frozen-lockfile
 COPY agent-service/tsconfig.json ./
 COPY agent-service/src ./src
 COPY agent-service/.pi ./.pi
+COPY agent-service/harness ./harness
+COPY agent-service/scripts ./scripts
+COPY go/prompts/agent/runtime-policy.md /src/go/prompts/agent/runtime-policy.md
+COPY go/internal/agent/tool_manifest_generated.go /src/go/internal/agent/tool_manifest_generated.go
+COPY go/internal/graph/graph_command_schema_generated.go /src/go/internal/graph/graph_command_schema_generated.go
+COPY web/src/pages/workbench/agent/toolManifest.generated.ts /src/web/src/pages/workbench/agent/toolManifest.generated.ts
 RUN pnpm run build
 
 FROM node:22.20.0-alpine AS runtime
@@ -26,6 +32,7 @@ COPY --from=build /src/agent-service/package.json /src/agent-service/pnpm-lock.y
 RUN pnpm install --prod --frozen-lockfile
 COPY --from=build /src/agent-service/dist ./dist
 COPY --from=build /src/agent-service/.pi ./.pi
+COPY --from=build /src/agent-service/harness ./harness
 COPY go/prompts /app/go/prompts
 
 USER productflow

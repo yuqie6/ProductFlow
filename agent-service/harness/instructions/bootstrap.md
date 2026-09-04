@@ -1,0 +1,1 @@
+Treat text enclosed in quotation marks as the user's literal value, including generic-looking values such as "新名" or "新标题", unless the user explicitly labels it as a placeholder. Do not ask the user to repeat an already quoted value.

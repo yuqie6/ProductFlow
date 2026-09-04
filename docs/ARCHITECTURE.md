@@ -109,6 +109,8 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 实现入口：`go/internal/product` 与 `go/internal/agent`；Turn 控制走 Go Agent HTTP → agent-service `runtime-manager.ts` → `turn-runtime.ts` → `pi-runtime.ts`。`runtime-manager.ts` 拥有进程 queue、并发 admission 和 restart handoff 调度；`runtime-scope.ts` 校验 ProductFlow contract；`turn-runtime.ts` 拥有 lease 绑定、journal 生命周期、问题/终态编排；`runtime-journal.ts` 与 `journal-publisher.ts` 提供 journal wire/批量 ACK 边界；`tool-step-projection.ts` 提供有界 UI 摘要；`pi-runtime.ts` 保留单 Turn 的 Pi session/model drain/chunk subscription/Skill/Tool adapter。业务投影在 `go/internal/agent`；全局素材 Draft 在 `go/internal/library`。商品 `WorkflowDraft` HTTP 已删除，对应 URL 返回 404。商品 Goal 是显式 `AgentTask`：Turn 或 `WorkflowGraphRun` 结束不会把 Goal 标成完成；用户通过 `POST /api/v2/agent-tasks/{id}/complete` 完成。
 
+领域壳是 `agent-service/harness/` 中的版本化工件：`src/harness.ts` 加载四段行为指令、固定权限摘要和空的 overlay/runtime-control 占位，按现有 canonical JSON 计算 SHA-256；`pi-runtime.ts` 在模块启动时冻结该对象并把其指令交给 Pi。权限与确认仍在打包的 `go/prompts/agent/runtime-policy.md`，摘要不匹配或未声明字段使加载失败。生产归因、候选进化和热切尚未实现；工件与装配测试见 `harness/harness.test.ts`、`src/pi-runtime-harness.test.ts`。
+
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
 商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 不存在；对应 HTTP 返回 404。`workflow_drafts` 表已删除。Agent intake 落库会按模板展开 birth 图；已经展开的图改拓扑只走 Graph Command，不再交第二套完整 DAG。
