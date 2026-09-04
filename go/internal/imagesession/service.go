@@ -146,8 +146,8 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 	return s.Get(ctx, id)
 }
 
-// Get 读取会话详情（素材、轮次、任务）。找不到返回 NotFound。
-// 调用时机：HTTP GET 详情，以及 Create/Update/Generate 成功后的回读。无写入。
+// Get 读取会话首屏详情（参考图、最新一轮页、活动任务）。找不到返回 NotFound。
+// 调用时机：HTTP GET 详情，以及 Create/Update/Generate 成功后的回读。无写入。完整历史请用 History。
 func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, error) {
 	var out DetailResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -158,39 +158,42 @@ func (s Service) Get(ctx context.Context, sessionID string) (DetailResponse, err
 	return out, err
 }
 
+// History 按 created_at、id 倒序返回一页已落盘轮次。after 是不透明游标。
+// 调用时机：HTTP GET /history。找不到会话 NotFound；游标无效 Validation。
+func (s Service) History(ctx context.Context, sessionID, after string, limit int) (HistoryResponse, error) {
+	if limit == 0 {
+		limit = imageSessionHistoryDefaultLimit
+	}
+	if limit < 1 || limit > imageSessionHistoryMaxLimit {
+		return HistoryResponse{}, apperr.Validation("会话历史 limit 必须在 1 到 100 之间")
+	}
+	cursor, cursorAt, hasCursor := decodeImageSessionHistoryCursor(after)
+	if strings.TrimSpace(after) != "" && !hasCursor {
+		return HistoryResponse{}, apperr.Validation("会话历史游标无效")
+	}
+	var out HistoryResponse
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		page, err := s.loadHistory(ctx, pgxTx, sessionID, cursor, cursorAt, hasCursor, limit)
+		out = page
+		return err
+	})
+	if err != nil {
+		return HistoryResponse{}, err
+	}
+	if out.Items == nil {
+		out.Items = []RoundResponse{}
+	}
+	return out, nil
+}
+
 // Status 读取会话轻量状态，含是否仍有 queued/running 任务。
 // 调用时机：HTTP GET /status 与 SSE。找不到 NotFound。不要把本结果当 DetailResponse 用。
 func (s Service) Status(ctx context.Context, sessionID string) (StatusResponse, error) {
 	var out StatusResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		sess, err := loadSession(ctx, pgxTx, sessionID)
-		if err != nil {
-			return err
-		}
-		detail, err := s.loadDetail(ctx, pgxTx, sessionID)
-		if err != nil {
-			return err
-		}
-		var latestRoundID, latestGroup *string
-		if len(detail.Rounds) > 0 {
-			last := detail.Rounds[len(detail.Rounds)-1]
-			latestRoundID = &last.ID
-			latestGroup = last.GenerationGroupID
-		}
-		active := false
-		for _, task := range detail.GenerationTasks {
-			if task.Status == "queued" || task.Status == "running" {
-				active = true
-				break
-			}
-		}
-		out = StatusResponse{
-			ID: sess.ID, Title: sess.Title, RoundsCount: len(detail.Rounds),
-			LatestRoundID: latestRoundID, LatestGenerationGroupID: latestGroup,
-			HasActiveGenerationTask: active, GenerationTasks: detail.GenerationTasks,
-			CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
-		}
-		return nil
+		status, err := s.loadStatus(ctx, pgxTx, sessionID)
+		out = status
+		return err
 	})
 	return out, err
 }

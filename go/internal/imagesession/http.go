@@ -46,6 +46,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.GET("/image-session-assets/:asset_id/download", h.download)
 	api.GET("/image-sessions/:image_session_id/status", h.status)
 	api.GET("/image-sessions/:image_session_id/events", h.streamEvents)
+	api.GET("/image-sessions/:image_session_id/history", h.history)
 	api.GET("/image-sessions/:image_session_id", h.get)
 	api.PATCH("/image-sessions/:image_session_id", h.update)
 	api.DELETE("/image-sessions/:image_session_id", h.requireDeletion, h.delete)
@@ -110,9 +111,29 @@ func (h HTTP) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, out)
 }
 
-// get 是 GET /api/image-sessions/:image_session_id：200 返回 DetailResponse。
+// get 是 GET /api/image-sessions/:image_session_id：200 返回首屏 DetailResponse。
 func (h HTTP) get(c *gin.Context) {
 	out, err := h.Service.Get(c.Request.Context(), c.Param("image_session_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// history 是 GET /api/image-sessions/:image_session_id/history：200 返回 HistoryResponse。
+// limit 默认 20、上限 100；after 是不透明游标。
+func (h HTTP) history(c *gin.Context) {
+	limit := imageSessionHistoryDefaultLimit
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > imageSessionHistoryMaxLimit {
+			httpx.AbortErr(c, apperr.Validation("会话历史 limit 必须在 1 到 100 之间"))
+			return
+		}
+		limit = parsed
+	}
+	out, err := h.Service.History(c.Request.Context(), c.Param("image_session_id"), c.Query("after"), limit)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

@@ -9,6 +9,8 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/generation"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -18,48 +20,12 @@ const generationCapacityLockKey = 42630001
 // generationMaxConcurrent 读 app_settings.generation_max_concurrent_tasks。
 // 空值或非正整数回落到 3；结果夹在 1–20。与连续生图共用同一把容量锁，改上限两边一起生效。
 func generationMaxConcurrent(ctx context.Context, q *gorm.DB) int {
-	var rec schema.AppSettings
-	_ = q.WithContext(ctx).Where("key = ?", "generation_max_concurrent_tasks").Take(&rec).Error
-	n := 3
-	raw := rec.Value
-	if raw != "" {
-		parsed := 0
-		for _, ch := range raw {
-			if ch < '0' || ch > '9' {
-				parsed = 0
-				break
-			}
-			parsed = parsed*10 + int(ch-'0')
-		}
-		if parsed > 0 {
-			n = parsed
-		}
-	}
-	if n < 1 {
-		n = 1
-	}
-	if n > 20 {
-		n = 20
-	}
+	n, _ := generation.LoadMaxConcurrent(ctx, q)
 	return n
 }
 
 func runningGenerationCount(ctx context.Context, tx *gorm.DB) (int, error) {
-	var graphCount int64
-	err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
-		Joins("JOIN workflow_graph_runs r ON r.id = workflow_graph_node_runs.graph_run_id").
-		Where("r.status = ? AND workflow_graph_node_runs.status = ?", "running", "running").
-		Count(&graphCount).Error
-	if err != nil {
-		return 0, err
-	}
-	var sessionCount int64
-	if err := tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
-		Where("status = ?", "running").
-		Count(&sessionCount).Error; err != nil {
-		return 0, err
-	}
-	return int(graphCount) + int(sessionCount), nil
+	return generation.CountAdmissionRunning(ctx, tx)
 }
 
 // GenerationCapacityAvailable 与连续生图共用同一把容量锁。
@@ -69,7 +35,10 @@ func GenerationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error)
 }
 
 func generationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error) {
-	if err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(?)", generationCapacityLockKey).Error; err != nil {
+	lockStarted := time.Now()
+	err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(?)", generationCapacityLockKey).Error
+	metrics.ObserveAdvisoryLockWait(time.Since(lockStarted))
+	if err != nil {
 		return false, err
 	}
 	limit := generationMaxConcurrent(ctx, tx)

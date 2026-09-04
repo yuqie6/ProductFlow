@@ -20,7 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -159,6 +161,9 @@ func (ss *sessionServer) mustStatus(t *testing.T, resp *http.Response, want int)
 
 func TestImageSessionListCursorPagination(t *testing.T) {
 	ss := newSessionServer(t)
+	if _, err := ss.pool.Exec(context.Background(), `DELETE FROM image_sessions`); err != nil {
+		t.Fatal(err)
+	}
 	var sessions []DetailResponse
 	for _, title := range []string{"一", "二", "三", "四", "五"} {
 		created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": title})
@@ -167,7 +172,7 @@ func TestImageSessionListCursorPagination(t *testing.T) {
 		ss.decode(t, created, &session)
 		sessions = append(sessions, session)
 	}
-	base := time.Now().UTC().Add(100*365*24*time.Hour + 24*time.Hour + 10*time.Minute)
+	base := time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(time.Now().UnixNano()))
 	for i, session := range sessions {
 		if _, err := ss.pool.Exec(context.Background(), `UPDATE image_sessions SET updated_at = $1 WHERE id = $2`, base.Add(time.Duration(len(sessions)-i)*time.Minute), session.ID); err != nil {
 			t.Fatal(err)
@@ -235,6 +240,9 @@ func TestImageSessionCreateGenerateAndUnknown(t *testing.T) {
 	}
 	if session.Assets == nil || session.Rounds == nil || session.GenerationTasks == nil {
 		t.Fatalf("null lists %+v", session)
+	}
+	if session.RoundsCount != 0 || session.HistoryNextAfter != nil {
+		t.Fatalf("empty session history %+v", session)
 	}
 
 	listed := ss.do(t, http.MethodGet, "/api/image-sessions", nil, "")
@@ -484,6 +492,143 @@ func TestImageSessionCreateRejectsUnknownFields(t *testing.T) {
 	resp.Body.Close()
 }
 
+func (ss *sessionServer) seedGeneratedRounds(t *testing.T, sessionID string, n int, start time.Time) []string {
+	t.Helper()
+	ids := make([]string, 0, n)
+	byteSize := int64(1024)
+	width, height := 8, 8
+	sha := strings.Repeat("a", 64)
+	for i := 0; i < n; i++ {
+		created := start.Add(time.Duration(i) * time.Second)
+		mediaID := clockid.New()
+		assetID := clockid.New()
+		roundID := clockid.New()
+		storagePath := "image-session-seed/" + mediaID + ".png"
+		verifiedAt := created
+		if err := ss.db.Create(&schema.MediaObjects{
+			ID: mediaID, StoragePath: storagePath, MIMEType: "image/png", ByteSize: &byteSize,
+			Width: &width, Height: &height, SHA256: &sha, VerificationStatus: "verified",
+			CreatedAt: created, VerifiedAt: &verifiedAt,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := ss.db.Create(&schema.ImageSessionAssets{
+			ID: assetID, SessionID: sessionID, Kind: kindGenerated, OriginalFilename: "seed.png",
+			MIMEType: "image/png", StoragePath: storagePath, CreatedAt: created, MediaObjectID: mediaID,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := ss.db.Create(&schema.ImageSessionRounds{
+			ID: roundID, SessionID: sessionID, Prompt: "种子轮次", AssistantMessage: defaultAssistant,
+			Size: "1024x1024", ModelName: "mock", ProviderName: "mock", PromptVersion: "seed",
+			GeneratedAssetID: assetID, CreatedAt: created, CandidateIndex: 1, CandidateCount: 1,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, roundID)
+	}
+	return ids
+}
+
+func TestImageSessionGetReturnsFirstScreenAndHistoryPages(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{"title": "分页会话"})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+	ids := ss.seedGeneratedRounds(t, session.ID, 25, time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC))
+
+	got := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID, nil, "")
+	ss.mustStatus(t, got, http.StatusOK)
+	ss.decode(t, got, &session)
+	if session.RoundsCount != 25 {
+		t.Fatalf("rounds_count %d", session.RoundsCount)
+	}
+	if len(session.Rounds) != 20 || session.HistoryNextAfter == nil {
+		t.Fatalf("first screen rounds %d next %+v", len(session.Rounds), session.HistoryNextAfter)
+	}
+	for _, asset := range session.Assets {
+		if asset.Kind != kindReference {
+			t.Fatalf("detail assets must be references only: %+v", asset)
+		}
+	}
+	latestIDs := ids[len(ids)-20:]
+	gotIDs := make([]string, 0, len(session.Rounds))
+	for i, round := range session.Rounds {
+		gotIDs = append(gotIDs, round.ID)
+		want := latestIDs[len(latestIDs)-1-i]
+		if round.ID != want {
+			t.Fatalf("round %d got %s want %s", i, round.ID, want)
+		}
+	}
+
+	statusResp := ss.do(t, http.MethodGet, "/api/image-sessions/"+session.ID+"/status", nil, "")
+	ss.mustStatus(t, statusResp, http.StatusOK)
+	var status StatusResponse
+	ss.decode(t, statusResp, &status)
+	if status.RoundsCount != 25 || status.LatestRoundID == nil || *status.LatestRoundID != ids[len(ids)-1] {
+		t.Fatalf("status %+v latest want %s", status, ids[len(ids)-1])
+	}
+	if len(status.GenerationTasks) != 0 {
+		t.Fatalf("status must not dump historical tasks: %+v", status.GenerationTasks)
+	}
+
+	readHistory := func(path string) HistoryResponse {
+		t.Helper()
+		resp := ss.do(t, http.MethodGet, path, nil, "")
+		ss.mustStatus(t, resp, http.StatusOK)
+		var page HistoryResponse
+		ss.decode(t, resp, &page)
+		return page
+	}
+	older := readHistory("/api/image-sessions/" + session.ID + "/history?after=" + url.QueryEscape(*session.HistoryNextAfter) + "&limit=20")
+	if len(older.Items) != 5 || older.NextAfter != nil {
+		t.Fatalf("older page %+v", older)
+	}
+	seen := map[string]bool{}
+	for _, round := range session.Rounds {
+		seen[round.ID] = true
+	}
+	for _, round := range older.Items {
+		if seen[round.ID] {
+			t.Fatalf("round %s duplicated across pages", round.ID)
+		}
+		seen[round.ID] = true
+	}
+	if len(seen) != 25 {
+		t.Fatalf("pages missed rounds: %d", len(seen))
+	}
+	for i, round := range older.Items {
+		want := ids[len(ids)-21-i]
+		if round.ID != want {
+			t.Fatalf("older %d got %s want %s", i, round.ID, want)
+		}
+	}
+
+	for _, path := range []string{
+		"/api/image-sessions/" + session.ID + "/history?limit=0",
+		"/api/image-sessions/" + session.ID + "/history?limit=101",
+		"/api/image-sessions/" + session.ID + "/history?after=invalid",
+	} {
+		resp := ss.do(t, http.MethodGet, path, nil, "")
+		ss.mustStatus(t, resp, http.StatusBadRequest)
+		resp.Body.Close()
+	}
+}
+
+func TestImageSessionHistoryMissingSessionIs404(t *testing.T) {
+	ss := newSessionServer(t)
+	resp := ss.do(t, http.MethodGet, "/api/image-sessions/00000000-0000-4000-8000-000000000001/history", nil, "")
+	ss.mustStatus(t, resp, http.StatusNotFound)
+	var body struct {
+		Detail string `json:"detail"`
+	}
+	ss.decode(t, resp, &body)
+	if body.Detail != "连续生图会话不存在" {
+		t.Fatalf("%s", body.Detail)
+	}
+}
+
 func productMultipart(t *testing.T) (*bytes.Buffer, string) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -574,17 +719,13 @@ func TestImageSessionEventsStreamTerminalStatus(t *testing.T) {
 		if status.HasActiveGenerationTask {
 			continue
 		}
-		if status.RoundsCount < 1 {
-			t.Fatalf("terminal rounds %d", status.RoundsCount)
+		if status.RoundsCount < 1 || status.LatestRoundID == nil {
+			t.Fatalf("terminal rounds %d latest %+v", status.RoundsCount, status.LatestRoundID)
 		}
-		found := false
 		for _, task := range status.GenerationTasks {
-			if task.ID == taskID && task.Status == "succeeded" {
-				found = true
+			if task.ID == taskID && (task.Status == "queued" || task.Status == "running") {
+				t.Fatalf("terminal status still lists active task %+v", task)
 			}
-		}
-		if !found {
-			t.Fatalf("terminal tasks %+v", status.GenerationTasks)
 		}
 		break
 	}

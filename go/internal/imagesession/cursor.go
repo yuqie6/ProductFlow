@@ -8,9 +8,20 @@ import (
 )
 
 const (
-	imageSessionListDefaultLimit = 20
-	imageSessionListMaxLimit     = 100
-	imageSessionCursorVersion    = 1
+	imageSessionListDefaultLimit     = 20
+	imageSessionListMaxLimit         = 100
+	imageSessionCursorVersion        = 1
+	imageSessionHistoryDefaultLimit  = 20
+	imageSessionHistoryMaxLimit      = 100
+	imageSessionHistoryCursorVersion = 1
+	imageSessionHistoryCursorKind    = "history"
+	imageSessionDetailRoundLimit     = 20
+	imageSessionReferenceAssetLimit  = 6
+)
+
+var (
+	imageSessionActiveTaskStatuses = []string{"queued", "running"}
+	imageSessionDetailTaskStatuses = []string{"queued", "running", "failed", "unknown", "cancelled"}
 )
 
 type imageSessionListCursor struct {
@@ -49,4 +60,44 @@ func decodeImageSessionListCursor(raw string) (imageSessionListCursor, time.Time
 		return imageSessionListCursor{}, time.Time{}, false
 	}
 	return cursor, updatedAt.UTC(), true
+}
+
+type imageSessionHistoryCursor struct {
+	Version   int    `json:"v"`
+	Kind      string `json:"k"`
+	CreatedAt string `json:"created_at"`
+	ID        string `json:"id"`
+}
+
+func encodeImageSessionHistoryCursor(createdAt time.Time, id string) (string, error) {
+	payload, err := json.Marshal(imageSessionHistoryCursor{
+		Version:   imageSessionHistoryCursorVersion,
+		Kind:      imageSessionHistoryCursorKind,
+		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
+		ID:        id,
+	})
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decodeImageSessionHistoryCursor(raw string) (imageSessionHistoryCursor, time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return imageSessionHistoryCursor{}, time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return imageSessionHistoryCursor{}, time.Time{}, false
+	}
+	var cursor imageSessionHistoryCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Version != imageSessionHistoryCursorVersion || cursor.Kind != imageSessionHistoryCursorKind || cursor.ID == "" {
+		return imageSessionHistoryCursor{}, time.Time{}, false
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
+	if err != nil {
+		return imageSessionHistoryCursor{}, time.Time{}, false
+	}
+	return cursor, createdAt.UTC(), true
 }

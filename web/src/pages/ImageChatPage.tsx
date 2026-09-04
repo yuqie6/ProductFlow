@@ -63,6 +63,7 @@ import {
   isImageSessionGenerationTaskCancelable,
   isImageSessionGenerationTaskRegeneratable,
   isImageSessionGenerationTaskRetryable,
+  mergeImageSessionHistoryRounds,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   reconcileImageSessionSelection,
@@ -79,6 +80,7 @@ import type {
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
+  ImageSessionHistoryPage,
   ImageSessionAsset,
   ImageSessionRound,
   ImageSessionGenerationTask,
@@ -363,14 +365,41 @@ export function ImageChatPage() {
     queryFn: () => api.getImageSession(selectedSessionId!),
     enabled: Boolean(selectedSessionId),
   });
+  const extraHistoryQuery = useQuery({
+    queryKey: ["image-session-history", selectedSessionId],
+    queryFn: async (): Promise<ImageSessionHistoryPage[]> => [],
+    enabled: false,
+    initialData: [],
+    staleTime: Infinity,
+  });
+  const accumulatedRoundsQuery = useQuery({
+    queryKey: ["image-session-accumulated-rounds", selectedSessionId],
+    queryFn: async (): Promise<ImageSessionRound[]> => [],
+    enabled: false,
+    initialData: [],
+    staleTime: Infinity,
+  });
 
   const imageSession = sessionDetailQuery.data;
+  const extraHistoryPages = extraHistoryQuery.data ?? [];
+  const historyRounds = useMemo(
+    () =>
+      mergeImageSessionHistoryRounds(
+        accumulatedRoundsQuery.data,
+        imageSession?.rounds,
+        ...extraHistoryPages.map((page) => page.items),
+      ),
+    [accumulatedRoundsQuery.data, extraHistoryPages, imageSession?.rounds],
+  );
+  const historyNextAfter = extraHistoryPages.length
+    ? extraHistoryPages.at(-1)?.next_after ?? null
+    : imageSession?.history_next_after ?? null;
   const historyBranches = useMemo(
-    () => buildImageSessionHistoryTree(imageSession?.rounds ?? [], imageSession?.generation_tasks ?? []),
-    [imageSession],
+    () => buildImageSessionHistoryTree(historyRounds, imageSession?.generation_tasks ?? []),
+    [historyRounds, imageSession?.generation_tasks],
   );
   const requiresGenerationBase = requiresImageSessionGenerationBase(
-    imageSession?.rounds ?? [],
+    historyRounds,
     imageSession?.generation_tasks ?? [],
   );
   const sessionReferenceAssets = useMemo(() => getSessionReferenceAssets(imageSession), [imageSession]);
@@ -381,6 +410,17 @@ export function ImageChatPage() {
   );
   const submitGenerationCount = effectiveImageGenerationSubmitCount(generationCount);
   const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
+  const detailRounds = imageSession?.rounds;
+
+  useEffect(() => {
+    if (!selectedSessionId || !detailRounds) {
+      return;
+    }
+    queryClient.setQueryData<ImageSessionRound[]>(
+      ["image-session-accumulated-rounds", selectedSessionId],
+      (current) => mergeImageSessionHistoryRounds(current, detailRounds),
+    );
+  }, [detailRounds, queryClient, selectedSessionId]);
 
   const sessionStatusQuery = useQuery({
     queryKey: ["image-session-status", selectedSessionId],
@@ -427,7 +467,8 @@ export function ImageChatPage() {
     }
     setTitleDraft(imageSession.title);
     const reconciled = reconcileImageSessionSelection({
-      rounds: imageSession.rounds,
+      rounds: historyRounds,
+      roundsCount: imageSession.rounds_count,
       generationTasks: imageSession.generation_tasks,
       historyBranches,
       selectedGeneratedAssetId,
@@ -460,6 +501,7 @@ export function ImageChatPage() {
   }, [
     branchBaseAssetId,
     historyBranches,
+    historyRounds,
     imageSession,
     maxSelectedReferenceCount,
     selectedReferenceAssetIds,
@@ -472,27 +514,27 @@ export function ImageChatPage() {
     if (selectedTaskPlaceholderId) {
       return null;
     }
-    if (!imageSession?.rounds.length) {
+    if (!historyRounds.length) {
       return null;
     }
     return (
-      imageSession.rounds.find((round) => round.generated_asset.id === selectedGeneratedAssetId) ?? imageSession.rounds.at(-1) ?? null
+      historyRounds.find((round) => round.generated_asset.id === selectedGeneratedAssetId) ?? historyRounds[0] ?? null
     );
-  }, [imageSession, selectedGeneratedAssetId, selectedTaskPlaceholderId]);
+  }, [historyRounds, selectedGeneratedAssetId, selectedTaskPlaceholderId]);
 
   const selectedPlaceholder = useMemo(
     () => findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
     [historyBranches, selectedTaskPlaceholderId],
   );
   const activePreviewRound =
-    previewRound && imageSession?.rounds.some((round) => round.id === previewRound.id) ? previewRound : null;
+    previewRound && historyRounds.some((round) => round.id === previewRound.id) ? previewRound : null;
 
   const branchBaseRound = useMemo(() => {
-    if (!imageSession?.rounds.length || !branchBaseAssetId) {
+    if (!historyRounds.length || !branchBaseAssetId) {
       return null;
     }
-    return imageSession.rounds.find((round) => round.generated_asset.id === branchBaseAssetId) ?? null;
-  }, [branchBaseAssetId, imageSession]);
+    return historyRounds.find((round) => round.generated_asset.id === branchBaseAssetId) ?? null;
+  }, [branchBaseAssetId, historyRounds]);
   const baseRequirementMessage =
     requiresGenerationBase && !branchBaseRound ? t("chat.baseRequired") : "";
 
@@ -592,6 +634,8 @@ export function ImageChatPage() {
         } : current,
       );
       queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId] });
+      queryClient.removeQueries({ queryKey: ["image-session-history", deletedSessionId] });
+      queryClient.removeQueries({ queryKey: ["image-session-accumulated-rounds", deletedSessionId] });
       if (selectedSessionId === deletedSessionId) {
         setSelectedSessionId(remainingSessions[0]?.id ?? null);
         resetImageSessionSelection();
@@ -678,6 +722,24 @@ export function ImageChatPage() {
     },
   });
 
+  const loadHistoryMutation = useMutation({
+    mutationFn: (input: { sessionId: string; after: string }) =>
+      api.getImageSessionHistory(input.sessionId, { after: input.after, limit: 20 }),
+    onSuccess: (page, input) => {
+      queryClient.setQueryData<ImageSessionHistoryPage[]>(
+        ["image-session-history", input.sessionId],
+        (current) => [...(current ?? []), page],
+      );
+      queryClient.setQueryData<ImageSessionRound[]>(
+        ["image-session-accumulated-rounds", input.sessionId],
+        (current) => mergeImageSessionHistoryRounds(current, page.items),
+      );
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof ApiError ? error.detail : t("chat.loadMoreHistoryFailed"));
+    },
+  });
+
   const generateDisabled =
     !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
 
@@ -750,7 +812,7 @@ export function ImageChatPage() {
       return;
     }
     duplicateSubmitGuardRef.current = { signature, submittedAt: now };
-    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
+    pendingGeneratedRoundCountRef.current = imageSession?.rounds_count ?? 0;
     generateMutation.mutate(payload);
   }
 
@@ -758,7 +820,7 @@ export function ImageChatPage() {
     if (!selectedSessionId || retryGenerationTaskMutation.isPending || !isImageSessionGenerationTaskRetryable(task)) {
       return;
     }
-    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
+    pendingGeneratedRoundCountRef.current = imageSession?.rounds_count ?? 0;
     retryGenerationTaskMutation.mutate({ sessionId: selectedSessionId, taskId: task.id });
   }
 
@@ -782,7 +844,7 @@ export function ImageChatPage() {
     ) {
       return;
     }
-    pendingGeneratedRoundCountRef.current = imageSession.rounds.length;
+    pendingGeneratedRoundCountRef.current = imageSession.rounds_count;
     generateMutation.mutate(imageGenerationTaskSubmitPayload(task));
   }
 
@@ -814,6 +876,13 @@ export function ImageChatPage() {
       return;
     }
     saveMediaLibraryMutation.mutate(selectedRound.generated_asset.id);
+  }
+
+  function handleLoadMoreHistory() {
+    if (!selectedSessionId || !historyNextAfter || loadHistoryMutation.isPending) {
+      return;
+    }
+    loadHistoryMutation.mutate({ sessionId: selectedSessionId, after: historyNextAfter });
   }
 
   function handleSelectHistoryRound(assetId: string) {
@@ -1241,6 +1310,9 @@ export function ImageChatPage() {
             branchBaseAssetId={branchBaseAssetId}
             branchBaseSelected={Boolean(branchBaseRound)}
             style={historyPanelStyle}
+            hasMoreHistory={Boolean(historyNextAfter)}
+            isLoadingMoreHistory={loadHistoryMutation.isPending}
+            onLoadMoreHistory={handleLoadMoreHistory}
             onResizeStart={(event) => handlePanelResizeStart("history", event)}
             onSelectRound={handleSelectHistoryRound}
             onSelectPlaceholder={handleSelectHistoryPlaceholder}
@@ -1502,6 +1574,9 @@ export function ImageChatPage() {
               branchBaseAssetId={branchBaseAssetId}
               branchBaseSelected={Boolean(branchBaseRound)}
               variant="mobileDrawer"
+              hasMoreHistory={Boolean(historyNextAfter)}
+              isLoadingMoreHistory={loadHistoryMutation.isPending}
+              onLoadMoreHistory={handleLoadMoreHistory}
               onSelectRound={handleSelectHistoryRound}
               onSelectPlaceholder={handleSelectHistoryPlaceholder}
               onPreviewPrompt={setPromptPreview}

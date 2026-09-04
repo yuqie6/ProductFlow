@@ -131,16 +131,25 @@ type ListResponse struct {
 	NextCursor *string           `json:"next_cursor"` // 没有下一页时为 null
 }
 
-// DetailResponse 是会话详情的 HTTP 投影：素材、轮次、生成任务。
-// 轮询请用 StatusResponse，不要反复拉本类型。
+// DetailResponse 是会话详情的 HTTP 投影：参考图、首屏轮次、活动任务。
+// 完整历史请用 HistoryResponse；轮询请用 StatusResponse，不要反复拉本类型。
 type DetailResponse struct {
-	ID              string          `json:"id"`
-	Title           string          `json:"title"`
-	Assets          []AssetResponse `json:"assets"`           // 参考图与已生成图
-	Rounds          []RoundResponse `json:"rounds"`           // 已落盘轮次；queued 任务还没有 Round
-	GenerationTasks []TaskResponse  `json:"generation_tasks"` // 含队列位置；轮询请用 StatusResponse
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID               string          `json:"id"`
+	Title            string          `json:"title"`
+	Assets           []AssetResponse `json:"assets"`             // 仅 reference_upload，最多 6 张
+	Rounds           []RoundResponse `json:"rounds"`             // 首屏最新一轮页；queued 任务还没有 Round
+	GenerationTasks  []TaskResponse  `json:"generation_tasks"`   // 活动任务 + 首屏轮次所需任务；轮询请用 StatusResponse
+	RoundsCount      int             `json:"rounds_count"`       // 已成功落盘的轮次总数
+	HistoryNextAfter *string         `json:"history_next_after"` // 还有更早历史时的不透明游标；没有下一页为 null
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+// HistoryResponse 是 GET 会话历史页的 HTTP 体：按 created_at、id 倒序返回一页已落盘轮次。
+// NextAfter 是不透明游标；空页是 Items=[]、NextAfter=null。
+type HistoryResponse struct {
+	Items     []RoundResponse `json:"items"`      // 空页是 [] 不是 null
+	NextAfter *string         `json:"next_after"` // 没有下一页时为 null
 }
 
 // StatusResponse 是会话轻量状态的 HTTP 投影，供轮询和 SSE，不带全量轮次/素材。

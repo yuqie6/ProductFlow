@@ -16,6 +16,7 @@ import {
   isImageSessionGenerationTaskAutoRetrying,
   isImageSessionGenerationTaskRegeneratable,
   isImageSessionGenerationTaskRetryable,
+  mergeImageSessionHistoryRounds,
   mergeImageSessionStatusIntoDetail,
   reconcileImageSessionSelection,
   requiresImageSessionGenerationBase,
@@ -109,6 +110,8 @@ function detail(overrides: Partial<ImageSessionDetail>): ImageSessionDetail {
     assets: [],
     rounds: [],
     generation_tasks: [],
+    rounds_count: 0,
+    history_next_after: null,
     created_at: createdAt,
     updated_at: createdAt,
     ...overrides,
@@ -415,6 +418,7 @@ describe("image chat branching helpers", () => {
     expect(
       reconcileImageSessionSelection({
         rounds,
+        roundsCount: 1,
         generationTasks: [],
         historyBranches: buildImageSessionHistoryTree(rounds, []),
         selectedGeneratedAssetId: null,
@@ -431,6 +435,32 @@ describe("image chat branching helpers", () => {
       branchBaseAssetId: "asset-1",
       pendingGeneratedRoundCount: null,
       generatedRoundCompleted: true,
+    });
+  });
+
+  it("does not treat loading older history as a newly completed generation", () => {
+    const rounds = [
+      round({ id: "round-2", generated_asset: asset("asset-2"), created_at: "2026-04-27T00:01:00Z" }),
+      round({ id: "round-1", generated_asset: asset("asset-1"), created_at: "2026-04-27T00:00:00Z" }),
+    ];
+    expect(
+      reconcileImageSessionSelection({
+        rounds,
+        roundsCount: 25,
+        generationTasks: [],
+        historyBranches: buildImageSessionHistoryTree(rounds, []),
+        selectedGeneratedAssetId: "asset-2",
+        selectedTaskPlaceholderId: null,
+        branchBaseAssetId: "asset-2",
+        selectedReferenceAssetIds: [],
+        availableReferenceAssetIds: [],
+        maxSelectedReferenceCount: 6,
+        pendingGeneratedRoundCount: 25,
+      }),
+    ).toMatchObject({
+      generatedRoundCompleted: false,
+      pendingGeneratedRoundCount: 25,
+      selectedGeneratedAssetId: "asset-2",
     });
   });
 
@@ -642,6 +672,7 @@ describe("image chat branching helpers", () => {
       title: "缓存标题",
       assets: [asset("asset-1")],
       rounds: [round({ id: "round-1" })],
+      rounds_count: 1,
       generation_tasks: [task({ id: "task-1", status: "queued" })],
       updated_at: "2026-04-27T00:00:00Z",
     });
@@ -649,6 +680,7 @@ describe("image chat branching helpers", () => {
       cached,
       status({
         title: "最新标题",
+        rounds_count: 1,
         generation_tasks: [
           task({
             id: "task-1",
@@ -665,6 +697,7 @@ describe("image chat branching helpers", () => {
     expect(merged.title).toBe("最新标题");
     expect(merged.assets).toBe(cached.assets);
     expect(merged.rounds).toBe(cached.rounds);
+    expect(merged.rounds_count).toBe(1);
     expect(merged.generation_tasks[0].status).toBe("queued");
     expect(merged.generation_tasks[0].progress_metadata).toEqual({
       last_failure_reason: "timeout",
@@ -674,9 +707,31 @@ describe("image chat branching helpers", () => {
     expect(merged.updated_at).toBe("2026-04-27T00:00:10Z");
   });
 
+  it("keeps cached generation tasks that the lightweight status omitted", () => {
+    const cached = detail({
+      rounds: [round({ id: "round-1" })],
+      rounds_count: 1,
+      generation_tasks: [
+        task({ id: "task-old", status: "succeeded", created_at: "2026-04-27T00:00:00Z" }),
+        task({ id: "task-1", status: "running", created_at: "2026-04-27T00:01:00Z" }),
+      ],
+    });
+    const merged = mergeImageSessionStatusIntoDetail(
+      cached,
+      status({
+        rounds_count: 1,
+        generation_tasks: [task({ id: "task-1", status: "running", progress_phase: "candidate_saved" })],
+      }),
+    );
+    expect(merged.generation_tasks.map((item) => item.id).sort()).toEqual(["task-1", "task-old"]);
+    expect(merged.generation_tasks.find((item) => item.id === "task-1")?.progress_phase).toBe("candidate_saved");
+    expect(merged.generation_tasks.find((item) => item.id === "task-old")?.status).toBe("succeeded");
+  });
+
   it("refreshes full detail when lightweight status reaches terminal state or new rounds", () => {
     const cached = detail({
       rounds: [round({ id: "round-1" })],
+      rounds_count: 1,
       generation_tasks: [task({ id: "task-1", status: "running" })],
     });
 
@@ -698,6 +753,52 @@ describe("image chat branching helpers", () => {
         status({ rounds_count: 2, latest_round_id: "round-2", generation_tasks: [task({ id: "task-1", status: "succeeded" })] }),
       ),
     ).toBe(true);
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({ rounds_count: 1, latest_round_id: "round-1", generation_tasks: [] }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not refetch detail when paginated rounds_count exceeds the first screen", () => {
+    const cached = detail({
+      rounds: [round({ id: "round-20" }), round({ id: "round-19" })],
+      rounds_count: 25,
+      generation_tasks: [task({ id: "task-1", status: "running" })],
+    });
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({
+          rounds_count: 25,
+          latest_round_id: "round-20",
+          generation_tasks: [task({ id: "task-1", status: "running", progress_phase: "candidate_saved" })],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("merges history pages by round id without dropping overlapping or concurrent inserts", () => {
+    const firstScreen = [
+      round({ id: "r3", created_at: "2026-04-27T00:03:00Z" }),
+      round({ id: "r2", created_at: "2026-04-27T00:02:00Z" }),
+    ];
+    const olderPage = [
+      round({ id: "r2", created_at: "2026-04-27T00:02:00Z", prompt: "stale" }),
+      round({ id: "r1", created_at: "2026-04-27T00:01:00Z" }),
+    ];
+    const concurrentInsert = [round({ id: "r4", created_at: "2026-04-27T00:04:00Z" })];
+
+    const merged = mergeImageSessionHistoryRounds(firstScreen, olderPage, concurrentInsert);
+    expect(merged.map((item) => item.id)).toEqual(["r4", "r3", "r2", "r1"]);
+    expect(merged.find((item) => item.id === "r2")?.prompt).toBe("stale");
+    expect(mergeImageSessionHistoryRounds(merged, firstScreen, olderPage, concurrentInsert).map((item) => item.id)).toEqual([
+      "r4",
+      "r3",
+      "r2",
+      "r1",
+    ]);
   });
 
   it("builds duplicate-submit signatures from every generation input that changes output", () => {

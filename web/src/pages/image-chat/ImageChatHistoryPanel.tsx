@@ -1,10 +1,37 @@
 import { useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { ChevronDown, Loader2 } from "lucide-react";
 
 import type { PromptPreview } from "../../components/PromptPreviewDialog";
 import { getVerticalWheelMappedScrollLeft } from "./resizableLayout";
 import type { ImageHistoryBranch } from "./branching";
 import type { ImageChatTranslate } from "./display";
 import { HistoryBranchStrip } from "./HistoryBranchStrip";
+
+function LoadMoreHistoryButton({
+  compact,
+  loading,
+  onLoadMore,
+  t,
+}: {
+  compact?: boolean;
+  loading: boolean;
+  onLoadMore: () => void;
+  t: ImageChatTranslate;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onLoadMore}
+      disabled={loading}
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/55 dark:text-slate-300 dark:hover:border-violet-400/60 dark:hover:text-violet-100 ${
+        compact ? "min-h-9 px-2.5" : "min-h-10 w-full px-3"
+      }`}
+    >
+      {loading ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} />}
+      <span>{t("chat.loadMoreHistory")}</span>
+    </button>
+  );
+}
 
 function handleHistoryWheelScroll(event: WheelEvent, container: HTMLDivElement) {
   if (event.ctrlKey) {
@@ -26,6 +53,9 @@ interface ImageChatHistoryPanelProps {
   branchBaseSelected: boolean;
   variant?: "desktop" | "mobileDrawer";
   style?: CSSProperties;
+  hasMoreHistory?: boolean;
+  isLoadingMoreHistory?: boolean;
+  onLoadMoreHistory?: () => void;
   onResizeStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onSelectRound: (assetId: string) => void;
   onSelectPlaceholder: (placeholderId: string) => void;
@@ -41,6 +71,9 @@ export function ImageChatHistoryPanel({
   branchBaseSelected,
   variant = "desktop",
   style,
+  hasMoreHistory = false,
+  isLoadingMoreHistory = false,
+  onLoadMoreHistory,
   onResizeStart,
   onSelectRound,
   onSelectPlaceholder,
@@ -66,6 +99,9 @@ export function ImageChatHistoryPanel({
       <div className="flex min-h-0 flex-1 flex-col bg-white dark:bg-[#0f1726]">
         {historyBranches.length ? (
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-3">
+            {hasMoreHistory && onLoadMoreHistory ? (
+              <LoadMoreHistoryButton loading={isLoadingMoreHistory} onLoadMore={onLoadMoreHistory} t={t} />
+            ) : null}
             {historyBranches.map((branch) => (
               <HistoryBranchStrip
                 key={branch.id}
@@ -112,11 +148,16 @@ export function ImageChatHistoryPanel({
         <div>
           <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.history")}</div>
         </div>
-        {branchBaseSelected ? (
-          <div className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 dark:border-violet-400/40 dark:bg-violet-500/15 dark:text-violet-100">
-            {t("chat.clickHistoryBase")}
-          </div>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {hasMoreHistory && onLoadMoreHistory ? (
+            <LoadMoreHistoryButton compact loading={isLoadingMoreHistory} onLoadMore={onLoadMoreHistory} t={t} />
+          ) : null}
+          {branchBaseSelected ? (
+            <div className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 dark:border-violet-400/40 dark:bg-violet-500/15 dark:text-violet-100">
+              {t("chat.clickHistoryBase")}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {historyBranches.length ? (

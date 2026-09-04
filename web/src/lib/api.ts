@@ -35,6 +35,7 @@ import type {
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
   ImageSessionDetail,
+  ImageSessionHistoryPage,
   ImageSessionListResponse,
   ImageSessionStatus,
   ImageToolOptions,
@@ -856,7 +857,17 @@ export const api = {
     });
   },
   getImageSession(sessionId: string): Promise<ImageSessionDetail> {
-    return request(`/api/image-sessions/${sessionId}`);
+    return request(`/api/image-sessions/${encodeURIComponent(sessionId)}`);
+  },
+  getImageSessionHistory(
+    sessionId: string,
+    options: { after?: string; limit?: number } = {},
+  ): Promise<ImageSessionHistoryPage> {
+    const params = new URLSearchParams();
+    if (options.after) params.set("after", options.after);
+    if (options.limit !== undefined) params.set("limit", String(options.limit));
+    const query = params.toString();
+    return request(`/api/image-sessions/${encodeURIComponent(sessionId)}/history${query ? `?${query}` : ""}`);
   },
   getImageSessionStatus(sessionId: string): Promise<ImageSessionStatus> {
     return request(`/api/image-sessions/${sessionId}/status`);

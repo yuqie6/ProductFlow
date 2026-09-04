@@ -1313,8 +1313,15 @@ export interface ImageSessionDetail {
   assets: ImageSessionAsset[];
   rounds: ImageSessionRound[];
   generation_tasks: ImageSessionGenerationTask[];
+  rounds_count: number;
+  history_next_after: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ImageSessionHistoryPage {
+  items: ImageSessionRound[];
+  next_after: string | null;
 }
 
 export interface ImageSessionStatus {

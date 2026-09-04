@@ -97,6 +97,7 @@ export interface ImageSessionSelectionState {
 
 export interface ImageSessionSelectionReconciliationInput extends ImageSessionSelectionState {
   rounds: ImageSessionRound[];
+  roundsCount?: number;
   generationTasks: ImageSessionGenerationTask[];
   historyBranches: ImageHistoryBranch[];
   availableReferenceAssetIds: string[];
@@ -134,6 +135,27 @@ export function groupImageSessionRounds(rounds: ImageSessionRound[]): ImageRound
 
 function compareCreatedAt(left: string, right: string): number {
   return Date.parse(left) - Date.parse(right);
+}
+
+export function compareImageSessionRoundKeyset(left: ImageSessionRound, right: ImageSessionRound): number {
+  const timeDelta = Date.parse(right.created_at) - Date.parse(left.created_at);
+  if (timeDelta !== 0) {
+    return timeDelta;
+  }
+  return right.id.localeCompare(left.id);
+}
+
+export function mergeImageSessionHistoryRounds(...pages: Array<ImageSessionRound[] | undefined>): ImageSessionRound[] {
+  const byId = new Map<string, ImageSessionRound>();
+  for (const page of pages) {
+    if (!page) {
+      continue;
+    }
+    for (const round of page) {
+      byId.set(round.id, round);
+    }
+  }
+  return [...byId.values()].sort(compareImageSessionRoundKeyset);
 }
 
 function getRoundGroupId(round: ImageSessionRound): string {
@@ -451,7 +473,8 @@ function sameStringList(left: readonly string[], right: readonly string[]): bool
 }
 
 function latestGeneratedAssetId(rounds: ImageSessionRound[]): string | null {
-  return rounds.at(-1)?.generated_asset.id ?? null;
+  const latest = [...rounds].sort(compareImageSessionRoundKeyset)[0];
+  return latest?.generated_asset.id ?? null;
 }
 
 function generatedAssetIds(rounds: ImageSessionRound[]): Set<string> {
@@ -460,6 +483,7 @@ function generatedAssetIds(rounds: ImageSessionRound[]): Set<string> {
 
 export function reconcileImageSessionSelection({
   rounds,
+  roundsCount,
   generationTasks,
   historyBranches,
   selectedGeneratedAssetId,
@@ -510,7 +534,7 @@ export function reconcileImageSessionSelection({
     maxSelectedReferenceCount,
   );
 
-  if (pendingGeneratedRoundCount !== null && rounds.length > pendingGeneratedRoundCount) {
+  if (pendingGeneratedRoundCount !== null && (roundsCount ?? rounds.length) > pendingGeneratedRoundCount) {
     nextPendingGeneratedRoundCount = null;
     generatedRoundCompleted = true;
     if (!selectedTaskPlaceholderId || selectedPlaceholderWasReplaced) {
@@ -609,11 +633,18 @@ export function mergeImageSessionStatusIntoDetail(
   detail: ImageSessionDetail,
   status: ImageSessionStatus,
 ): ImageSessionDetail {
+  const mergedTasks = new Map(detail.generation_tasks.map((task) => [task.id, task]));
+  for (const task of status.generation_tasks) {
+    mergedTasks.set(task.id, task);
+  }
   return {
     ...detail,
     title: status.title,
     updated_at: status.updated_at,
-    generation_tasks: status.generation_tasks,
+    rounds_count: status.rounds_count,
+    generation_tasks: [...mergedTasks.values()].sort(
+      (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at) || right.id.localeCompare(left.id),
+    ),
   };
 }
 
@@ -624,16 +655,19 @@ export function shouldRefreshImageSessionDetailFromStatus(
   if (!detail) {
     return false;
   }
-  if (status.rounds_count > detail.rounds.length) {
+  if (status.rounds_count > detail.rounds_count) {
     return true;
   }
   if (status.latest_round_id && !detail.rounds.some((round) => round.id === status.latest_round_id)) {
     return true;
   }
-  const previousTasksById = new Map(detail.generation_tasks.map((task) => [task.id, task]));
-  return status.generation_tasks.some((task) => {
-    const previousTask = previousTasksById.get(task.id);
-    return Boolean(previousTask && isImageSessionGenerationTaskActive(previousTask) && !isImageSessionGenerationTaskActive(task));
+  const statusTasksById = new Map(status.generation_tasks.map((task) => [task.id, task]));
+  return detail.generation_tasks.some((previousTask) => {
+    if (!isImageSessionGenerationTaskActive(previousTask)) {
+      return false;
+    }
+    const nextTask = statusTasksById.get(previousTask.id);
+    return !nextTask || !isImageSessionGenerationTaskActive(nextTask);
   });
 }
 

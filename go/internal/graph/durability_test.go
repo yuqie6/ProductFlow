@@ -1,9 +1,17 @@
 package graph
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/generation"
+	"github.com/yuqie6/productflow/internal/platform/metrics"
+	"github.com/yuqie6/productflow/internal/platform/testdb"
+	"gorm.io/gorm"
 )
 
 func TestTerminalNodeRunUpdatesClearLiveProgress(t *testing.T) {
@@ -56,5 +64,100 @@ func TestAggregateGraphRunTerminalStatusPriority(t *testing.T) {
 				t.Fatalf("got reason=%v, want %q", reason, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestGenerationCapacityAvailableRecordsAdvisoryLockWait(t *testing.T) {
+	_, gdb := testdb.Open(t)
+	ctx := context.Background()
+	before := metrics.AdvisoryLockWaitCount()
+	if err := gdb.WithContext(ctx).Transaction(func(dbTx *gorm.DB) error {
+		_, err := GenerationCapacityAvailable(ctx, dbTx)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := metrics.AdvisoryLockWaitCount(); got <= before {
+		t.Fatalf("advisory lock wait count %d, want > %d", got, before)
+	}
+}
+
+func TestGenerationCapacityUsesAdmissionNodeCount(t *testing.T) {
+	_, gdb := testdb.Open(t)
+	ctx := context.Background()
+	beforeAdmission, err := generation.CountAdmissionRunning(ctx, gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSnap, err := generation.LoadSnapshot(ctx, gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	productID, graphID, runID := clockid.New(), clockid.New(), clockid.New()
+	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'capacity', ?, ?)`, productID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at) VALUES (?, ?, 'capacity', TRUE, 3, 1, ?, ?)`, graphID, productID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec(`INSERT INTO workflow_graph_runs (id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at) VALUES (?, ?, 'running', 'graph', 1, '{}', TRUE, ?)`, runID, graphID, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := gdb.Exec(`INSERT INTO workflow_graph_node_runs (id, graph_run_id, status, sort_order, started_at, attempt_count) VALUES (?, ?, 'running', ?, ?, 0)`, clockid.New(), runID, i, now).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = gdb.Exec(`DELETE FROM workflow_graph_node_runs WHERE graph_run_id = ?`, runID).Error
+		_ = gdb.Exec(`DELETE FROM workflow_graph_runs WHERE id = ?`, runID).Error
+		_ = gdb.Exec(`DELETE FROM workflow_graphs WHERE id = ?`, graphID).Error
+		_ = gdb.Exec(`DELETE FROM products WHERE id = ?`, productID).Error
+	})
+	afterAdmission, err := generation.CountAdmissionRunning(ctx, gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSnap, err := generation.LoadSnapshot(ctx, gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterAdmission-beforeAdmission != 2 {
+		t.Fatalf("admission delta=%d want 2 (node count, not run count)", afterAdmission-beforeAdmission)
+	}
+	if afterSnap.OverviewRunning-beforeSnap.OverviewRunning != 1 {
+		t.Fatalf("overview running delta=%d want 1 (run count)", afterSnap.OverviewRunning-beforeSnap.OverviewRunning)
+	}
+
+	prev := schema.AppSettings{}
+	hadPrev := gdb.Where("key = ?", generation.MaxConcurrentSettingKey).Take(&prev).Error == nil
+	if err := gdb.Where("key = ?", generation.MaxConcurrentSettingKey).Delete(&schema.AppSettings{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&schema.AppSettings{
+		Key: generation.MaxConcurrentSettingKey, Value: "1", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = gdb.Where("key = ?", generation.MaxConcurrentSettingKey).Delete(&schema.AppSettings{}).Error
+		if hadPrev {
+			_ = gdb.Create(&prev).Error
+		}
+	})
+	denied := false
+	if err := gdb.WithContext(ctx).Transaction(func(dbTx *gorm.DB) error {
+		ok, err := GenerationCapacityAvailable(ctx, dbTx)
+		if err != nil {
+			return err
+		}
+		denied = !ok
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !denied {
+		t.Fatal("limit 1 with 2 running nodes must deny admission")
 	}
 }

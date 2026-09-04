@@ -44,6 +44,7 @@ var goOpsExtras = map[string]bool{
 	"GET /api/v2/products/{}/agent-conversations/{}/turns/{}/events/page":               true,
 	"GET /api/internal/v1/agent-conversations/{}/workflow-runs/{}":                      true,
 	"GET /api/image-sessions/{}/events":                                                 true,
+	"GET /api/image-sessions/{}/history":                                                true,
 	"GET /api/v3/products/{}/workflows/{}/runs/{}/events":                               true,
 	"GET /api/v3/products/{}/workflows/{}/nodes/{}/candidate":                           true,
 	"POST /api/internal/v1/agent-conversations/{}/turn-executions/{}/events/batch":      true,

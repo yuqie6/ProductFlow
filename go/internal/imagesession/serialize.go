@@ -3,9 +3,12 @@ package imagesession
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/generation"
 	"gorm.io/gorm"
 )
 
@@ -79,37 +82,185 @@ func serializeSessionSummaries(ctx context.Context, tx *gorm.DB, sessions []sche
 	return items, nil
 }
 
-// loadDetail 组装会话详情：素材、轮次、任务与队列位置。会话不存在返回 404。
+// loadDetail 组装会话首屏：参考图、最新一页轮次、活动任务与队列位置。会话不存在返回 404。
 func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) (DetailResponse, error) {
 	sess, err := loadSession(ctx, tx, sessionID)
 	if err != nil {
 		return DetailResponse{}, err
 	}
-	assets, err := listAssets(ctx, tx, sessionID)
+	refs, err := listReferenceAssets(ctx, tx, sessionID, imageSessionReferenceAssetLimit)
 	if err != nil {
 		return DetailResponse{}, err
 	}
-	assetByID := map[string]assetRow{}
-	assetResp := make([]AssetResponse, 0, len(assets))
-	for _, a := range assets {
-		assetByID[a.ID] = a
+	assetResp := make([]AssetResponse, 0, len(refs))
+	for _, a := range refs {
 		assetResp = append(assetResp, serializeAsset(a))
 	}
-	var scannedRounds []schema.ImageSessionRounds
-	if err := tx.Where("session_id = ?", sessionID).Order("created_at ASC, candidate_index ASC, id ASC").Find(&scannedRounds).Error; err != nil {
+
+	var roundsCount int64
+	if err := tx.WithContext(ctx).Model(&schema.ImageSessionRounds{}).Where("session_id = ?", sessionID).Count(&roundsCount).Error; err != nil {
 		return DetailResponse{}, err
 	}
-	rounds := make([]RoundResponse, 0, len(scannedRounds))
+	roundRows, hasMore, err := listRoundPage(ctx, tx, sessionID, nil, time.Time{}, imageSessionDetailRoundLimit)
+	if err != nil {
+		return DetailResponse{}, err
+	}
+	rounds, notesByGroup, err := serializeRoundPage(ctx, tx, sessionID, roundRows)
+	if err != nil {
+		return DetailResponse{}, err
+	}
+	var historyNextAfter *string
+	if hasMore {
+		last := roundRows[len(roundRows)-1]
+		next, err := encodeImageSessionHistoryCursor(last.CreatedAt, last.ID)
+		if err != nil {
+			return DetailResponse{}, err
+		}
+		historyNextAfter = &next
+	}
+
+	tasks, err := s.serializeDetailTasks(ctx, tx, sessionID, roundRows, notesByGroup)
+	if err != nil {
+		return DetailResponse{}, err
+	}
+	return DetailResponse{
+		ID: sess.ID, Title: sess.Title, Assets: assetResp, Rounds: rounds, GenerationTasks: tasks,
+		RoundsCount: int(roundsCount), HistoryNextAfter: historyNextAfter,
+		CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
+	}, nil
+}
+
+// loadStatus 用计数、最新轮次和活动任务组装轻量状态，不加载完整历史。
+func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) (StatusResponse, error) {
+	sess, err := loadSession(ctx, tx, sessionID)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	var roundsCount int64
+	if err := tx.WithContext(ctx).Model(&schema.ImageSessionRounds{}).Where("session_id = ?", sessionID).Count(&roundsCount).Error; err != nil {
+		return StatusResponse{}, err
+	}
+	var latest schema.ImageSessionRounds
+	err = tx.WithContext(ctx).Where("session_id = ?", sessionID).Order("created_at DESC, id DESC").Take(&latest).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return StatusResponse{}, err
+	}
+	var latestRoundID, latestGroup *string
+	if err == nil {
+		latestRoundID = &latest.ID
+		latestGroup = latest.GenerationGroupID
+	}
+
+	var activeCount int64
+	if err := tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
+		Where("session_id = ? AND status IN ?", sessionID, imageSessionActiveTaskStatuses).
+		Count(&activeCount).Error; err != nil {
+		return StatusResponse{}, err
+	}
+	var scannedTaskModels []schema.ImageSessionGenerationTasks
+	if err := tx.WithContext(ctx).Where("session_id = ? AND status IN ?", sessionID, imageSessionActiveTaskStatuses).
+		Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
+		return StatusResponse{}, err
+	}
+	taskIDs := make([]string, 0, len(scannedTaskModels))
+	scannedTasks := make([]taskRow, 0, len(scannedTaskModels))
+	groupIDs := make([]string, 0, len(scannedTaskModels))
+	for _, m := range scannedTaskModels {
+		row := taskFromModel(m)
+		scannedTasks = append(scannedTasks, row)
+		taskIDs = append(taskIDs, row.ID)
+		if row.ResultGenerationGroupID != nil && *row.ResultGenerationGroupID != "" {
+			groupIDs = append(groupIDs, *row.ResultGenerationGroupID)
+		}
+	}
+	notesByGroup, err := loadNotesByGroupIDs(ctx, tx, sessionID, groupIDs)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	effectsByTask, err := listEffectsByTaskIDs(ctx, tx, taskIDs)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	overview := s.queueOverview(ctx, tx)
+	positions := queuedPositions(ctx, tx, taskIDs)
+	tasks := make([]TaskResponse, 0, len(scannedTasks))
+	for _, row := range scannedTasks {
+		notes := []string{}
+		if row.ResultGenerationGroupID != nil {
+			notes = notesByGroup[*row.ResultGenerationGroupID]
+			if notes == nil {
+				notes = []string{}
+			}
+		}
+		tasks = append(tasks, serializeTask(row, effectsByTask[row.ID], notes, overview, positions))
+	}
+	return StatusResponse{
+		ID: sess.ID, Title: sess.Title, RoundsCount: int(roundsCount),
+		LatestRoundID: latestRoundID, LatestGenerationGroupID: latestGroup,
+		HasActiveGenerationTask: activeCount > 0, GenerationTasks: tasks,
+		CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
+	}, nil
+}
+
+func (s Service) loadHistory(ctx context.Context, tx *gorm.DB, sessionID string, cursor imageSessionHistoryCursor, cursorAt time.Time, hasCursor bool, limit int) (HistoryResponse, error) {
+	if _, err := loadSession(ctx, tx, sessionID); err != nil {
+		return HistoryResponse{}, err
+	}
+	var decoded *imageSessionHistoryCursor
+	if hasCursor {
+		decoded = &cursor
+	}
+	roundRows, hasMore, err := listRoundPage(ctx, tx, sessionID, decoded, cursorAt, limit)
+	if err != nil {
+		return HistoryResponse{}, err
+	}
+	items, _, err := serializeRoundPage(ctx, tx, sessionID, roundRows)
+	if err != nil {
+		return HistoryResponse{}, err
+	}
+	out := HistoryResponse{Items: items}
+	if hasMore {
+		last := roundRows[len(roundRows)-1]
+		next, err := encodeImageSessionHistoryCursor(last.CreatedAt, last.ID)
+		if err != nil {
+			return HistoryResponse{}, err
+		}
+		out.NextAfter = &next
+	}
+	return out, nil
+}
+
+func listRoundPage(ctx context.Context, tx *gorm.DB, sessionID string, cursor *imageSessionHistoryCursor, cursorAt time.Time, limit int) ([]schema.ImageSessionRounds, bool, error) {
+	query := tx.WithContext(ctx).Where("session_id = ?", sessionID)
+	if cursor != nil {
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", cursorAt, cursorAt, cursor.ID)
+	}
+	var rows []schema.ImageSessionRounds
+	if err := query.Order("created_at DESC, id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		return nil, false, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	return rows, hasMore, nil
+}
+
+func serializeRoundPage(ctx context.Context, tx *gorm.DB, sessionID string, rows []schema.ImageSessionRounds) ([]RoundResponse, map[string][]string, error) {
+	assetIDs := make([]string, 0, len(rows))
+	for _, item := range rows {
+		assetIDs = append(assetIDs, item.GeneratedAssetID)
+	}
+	assetByID, err := loadAssetsByIDs(ctx, tx, sessionID, assetIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	rounds := make([]RoundResponse, 0, len(rows))
 	notesByGroup := map[string][]string{}
-	for _, item := range scannedRounds {
+	for _, item := range rows {
 		gen, ok := assetByID[item.GeneratedAssetID]
 		if !ok {
-			loaded, err := loadAsset(ctx, tx, sessionID, item.GeneratedAssetID)
-			if err != nil {
-				return DetailResponse{}, err
-			}
-			gen = loaded
-			assetByID[item.GeneratedAssetID] = gen
+			return nil, nil, apperr.NotFound("会话图片不存在")
 		}
 		outputJSON := ptrBytes(item.ProviderOutputJSON)
 		notes := extractNotes(outputJSON)
@@ -126,23 +277,58 @@ func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) 
 			ActualSize: actual, ProviderNotes: notes, GeneratedAsset: serializeAsset(gen), CreatedAt: item.CreatedAt,
 		})
 	}
+	if rounds == nil {
+		rounds = []RoundResponse{}
+	}
+	return rounds, notesByGroup, nil
+}
 
-	overview := s.queueOverview(ctx, tx)
-	positions := queuedPositions(ctx, tx)
+func (s Service) serializeDetailTasks(ctx context.Context, tx *gorm.DB, sessionID string, roundRows []schema.ImageSessionRounds, notesByGroup map[string][]string) ([]TaskResponse, error) {
+	groupIDs := make([]string, 0, len(roundRows))
+	seenGroup := map[string]struct{}{}
+	for _, item := range roundRows {
+		if item.GenerationGroupID == nil || *item.GenerationGroupID == "" {
+			continue
+		}
+		if _, ok := seenGroup[*item.GenerationGroupID]; ok {
+			continue
+		}
+		seenGroup[*item.GenerationGroupID] = struct{}{}
+		groupIDs = append(groupIDs, *item.GenerationGroupID)
+	}
+	query := tx.WithContext(ctx).Where("session_id = ?", sessionID)
+	filters := tx.Where("status IN ?", imageSessionDetailTaskStatuses)
+	if len(groupIDs) > 0 {
+		filters = filters.Or("result_generation_group_id IN ?", groupIDs)
+	}
+	filters = filters.Or(
+		"status = ? AND (result_generation_group_id IS NULL OR NOT EXISTS (SELECT 1 FROM image_session_rounds r WHERE r.session_id = image_session_generation_tasks.session_id AND r.generation_group_id = image_session_generation_tasks.result_generation_group_id))",
+		"succeeded",
+	)
 	var scannedTaskModels []schema.ImageSessionGenerationTasks
-	if err := tx.Where("session_id = ?", sessionID).Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
-		return DetailResponse{}, err
+	if err := query.Where(filters).Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
+		return nil, err
 	}
 	scannedTasks := make([]taskRow, 0, len(scannedTaskModels))
+	taskIDs := make([]string, 0, len(scannedTaskModels))
+	seenTask := map[string]struct{}{}
 	for _, m := range scannedTaskModels {
-		scannedTasks = append(scannedTasks, taskFromModel(m))
+		if _, ok := seenTask[m.ID]; ok {
+			continue
+		}
+		seenTask[m.ID] = struct{}{}
+		row := taskFromModel(m)
+		scannedTasks = append(scannedTasks, row)
+		taskIDs = append(taskIDs, row.ID)
 	}
+	effectsByTask, err := listEffectsByTaskIDs(ctx, tx, taskIDs)
+	if err != nil {
+		return nil, err
+	}
+	overview := s.queueOverview(ctx, tx)
+	positions := queuedPositions(ctx, tx, taskIDs)
 	tasks := make([]TaskResponse, 0, len(scannedTasks))
 	for _, row := range scannedTasks {
-		effects, err := listEffects(ctx, tx, row.ID)
-		if err != nil {
-			return DetailResponse{}, err
-		}
 		notes := []string{}
 		if row.ResultGenerationGroupID != nil {
 			notes = notesByGroup[*row.ResultGenerationGroupID]
@@ -150,31 +336,95 @@ func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) 
 				notes = []string{}
 			}
 		}
-		tasks = append(tasks, serializeTask(row, effects, notes, overview, positions))
-	}
-	if rounds == nil {
-		rounds = []RoundResponse{}
+		tasks = append(tasks, serializeTask(row, effectsByTask[row.ID], notes, overview, positions))
 	}
 	if tasks == nil {
 		tasks = []TaskResponse{}
 	}
-	return DetailResponse{
-		ID: sess.ID, Title: sess.Title, Assets: assetResp, Rounds: rounds, GenerationTasks: tasks,
-		CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
-	}, nil
+	return tasks, nil
 }
 
-func listEffects(ctx context.Context, tx *gorm.DB, taskID string) ([]EffectResponse, error) {
-	var rows []schema.ImageSessionProviderEffects
-	if err := tx.WithContext(ctx).Where("generation_task_id = ?", taskID).Order("candidate_start_index ASC, id ASC").Find(&rows).Error; err != nil {
+func listReferenceAssets(ctx context.Context, tx *gorm.DB, sessionID string, limit int) ([]assetRow, error) {
+	var assets []schema.ImageSessionAssets
+	query := tx.WithContext(ctx).Where("session_id = ? AND kind = ?", sessionID, kindReference).Order("created_at ASC, id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	out := make([]EffectResponse, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, effectFromModel(row))
+	rows, err := assetsFromModels(tx, assets)
+	if err != nil {
+		return nil, err
 	}
-	if out == nil {
-		out = []EffectResponse{}
+	if rows == nil {
+		return []assetRow{}, nil
+	}
+	return rows, nil
+}
+
+func loadAssetsByIDs(ctx context.Context, tx *gorm.DB, sessionID string, ids []string) (map[string]assetRow, error) {
+	out := map[string]assetRow{}
+	ids = uniqueIDs(ids)
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var assets []schema.ImageSessionAssets
+	if err := tx.WithContext(ctx).Where("session_id = ? AND id IN ?", sessionID, ids).Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	rows, err := assetsFromModels(tx, assets)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.ID] = row
+	}
+	return out, nil
+}
+
+func loadNotesByGroupIDs(ctx context.Context, tx *gorm.DB, sessionID string, groupIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	groupIDs = uniqueIDs(groupIDs)
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+	var rows []schema.ImageSessionRounds
+	if err := tx.WithContext(ctx).
+		Select("generation_group_id", "provider_output_json").
+		Where("session_id = ? AND generation_group_id IN ?", sessionID, groupIDs).
+		Order("created_at DESC, id DESC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row.GenerationGroupID == nil || *row.GenerationGroupID == "" {
+			continue
+		}
+		if _, ok := out[*row.GenerationGroupID]; ok {
+			continue
+		}
+		out[*row.GenerationGroupID] = extractNotes(ptrBytes(row.ProviderOutputJSON))
+	}
+	return out, nil
+}
+
+func listEffectsByTaskIDs(ctx context.Context, tx *gorm.DB, taskIDs []string) (map[string][]EffectResponse, error) {
+	out := map[string][]EffectResponse{}
+	taskIDs = uniqueIDs(taskIDs)
+	for _, id := range taskIDs {
+		out[id] = []EffectResponse{}
+	}
+	if len(taskIDs) == 0 {
+		return out, nil
+	}
+	var rows []schema.ImageSessionProviderEffects
+	if err := tx.WithContext(ctx).Where("generation_task_id IN ?", taskIDs).
+		Order("generation_task_id ASC, candidate_start_index ASC, id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.GenerationTaskID] = append(out[row.GenerationTaskID], effectFromModel(row))
 	}
 	return out, nil
 }
@@ -183,75 +433,40 @@ type queueOverview struct {
 	Active, Running, Queued, Max int
 }
 
-// queueOverview 扫当前 queued/running 任务算占用。查询失败返回零值，详情页仍能渲染，只是队列位可能过时。
+// queueOverview 用共享队列总览统计当前 queued/running 占用，不取 admission 节点计数。查询失败返回零值（仍尽量带上 Max），详情页仍能渲染，只是队列位可能过时。
 func (s Service) queueOverview(ctx context.Context, tx *gorm.DB) queueOverview {
-	max := 3
-	if s.Settings != nil {
-		if runtime, err := s.Settings.Runtime(ctx); err == nil && runtime.ImageGenerationMaxDimension > 0 {
-			// 容量上限来自 app_settings generation_max_concurrent_tasks，这里读 graph 共用函数的默认。
-		}
+	snap, err := generation.LoadQueueOverview(ctx, tx)
+	if err != nil {
+		max, _ := generation.LoadMaxConcurrent(ctx, tx)
+		return queueOverview{Max: max}
 	}
-	var setting schema.AppSettings
-	if err := tx.Where("key = ?", "generation_max_concurrent_tasks").Take(&setting).Error; err == nil && setting.Value != "" {
-		n := 0
-		for _, ch := range setting.Value {
-			if ch < '0' || ch > '9' {
-				n = 0
-				break
-			}
-			n = n*10 + int(ch-'0')
-		}
-		if n > 0 {
-			max = n
-		}
+	return queueOverview{
+		Active:  snap.OverviewActive(),
+		Running: snap.OverviewRunning,
+		Queued:  snap.OverviewQueued,
+		Max:     snap.Max,
 	}
-	var sessionRunning, sessionQueued int64
-	_ = tx.Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "running").Count(&sessionRunning).Error
-	_ = tx.Model(&schema.ImageSessionGenerationTasks{}).Where("status = ?", "queued").Count(&sessionQueued).Error
-	var runs []schema.WorkflowGraphRuns
-	_ = tx.Where("status = ?", "running").Find(&runs).Error
-	runIDs := make([]string, 0, len(runs))
-	for _, r := range runs {
-		runIDs = append(runIDs, r.ID)
-	}
-	byRun := map[string][]string{}
-	if len(runIDs) > 0 {
-		var nodes []schema.WorkflowGraphNodeRuns
-		_ = tx.Where("graph_run_id IN ?", runIDs).Find(&nodes).Error
-		for _, n := range nodes {
-			byRun[n.GraphRunID] = append(byRun[n.GraphRunID], n.Status)
-		}
-	}
-	graphRunning, graphQueued := 0, 0
-	for _, r := range runs {
-		hasRunning, hasQueued := false, false
-		for _, st := range byRun[r.ID] {
-			if st == "running" {
-				hasRunning = true
-			}
-			if st == "queued" {
-				hasQueued = true
-			}
-		}
-		if hasRunning {
-			graphRunning++
-		} else if hasQueued {
-			graphQueued++
-		}
-	}
-	running := int(sessionRunning) + graphRunning
-	queued := int(sessionQueued) + graphQueued
-	return queueOverview{Active: running + queued, Running: running, Queued: queued, Max: max}
 }
 
-func queuedPositions(ctx context.Context, tx *gorm.DB) map[string]int {
-	var tasks []schema.ImageSessionGenerationTasks
-	if err := tx.WithContext(ctx).Where("status = ?", "queued").Order("created_at ASC, id ASC").Find(&tasks).Error; err != nil {
-		return map[string]int{}
-	}
+func queuedPositions(ctx context.Context, tx *gorm.DB, neededIDs []string) map[string]int {
 	out := map[string]int{}
+	wanted := map[string]struct{}{}
+	for _, id := range neededIDs {
+		if id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		return out
+	}
+	var tasks []schema.ImageSessionGenerationTasks
+	if err := tx.WithContext(ctx).Select("id").Where("status = ?", "queued").Order("created_at ASC, id ASC").Find(&tasks).Error; err != nil {
+		return out
+	}
 	for i, task := range tasks {
-		out[task.ID] = i + 1
+		if _, ok := wanted[task.ID]; ok {
+			out[task.ID] = i + 1
+		}
 	}
 	return out
 }
