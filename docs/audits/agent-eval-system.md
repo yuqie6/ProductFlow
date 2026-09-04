@@ -63,7 +63,7 @@ flowchart LR
 | D-05 | 结果只落 `STORAGE_ROOT/agent-evals/<run_id>/`；账本只抄摘要和 `run_id`；不写评测 PG 表，不提交原始转录 | `完成` | `run-storage.ts` 与 Go L2 writer 只写该目录；`storage-dev/` gitignore。本账本未粘贴转录。 |
 | D-06 | L4 在 50 条人工标签上 Cohen kappa >= 0.7 前只报趋势，不计入 pass | `部分完成` | `judge.ts`、export/import、`judge-calibrate` 存在。`just agent-evals-export-labels 20260904T174405Z-fa2667fa` 写出 200 行模板（50 个 task/trial × 4 维，`score=null`）到 `STORAGE_ROOT/agent-evals/labeling/`，未填写、未 import。`evals/labels/` 仍只有 README。 |
 | D-07 | L5 目标攻击成功率门槛为 0；攻击下效用不得低于良性效用 10 点以上 | `部分完成` | `injections.ts` 计算 ASR 与效用并作为 CLI 退出码。缺少登记过的 adversarial `run_id`。 |
-| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数 | `部分完成` | coverage 100%。mutate 仍是修复前的 `kill_rate=0`（修复后 mutate 进行中）。同 task_hash 两次 k=3 的 `|Δpass^1|=0.0311`，commit 不同，不满足 M-03。regression 门槛未过。Agent 分数不采信。 |
+| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数 | `部分完成` | coverage 100%。修复后 mutate `mutate-20260904T181102Z-6e344c6a` kill_rate=0（3 survived / 1 unscorable）。同 task_hash 两次 k=3 的 `|Δpass^1|=0.0311`，commit 不同，不满足 M-03。regression 门槛未过。Agent 分数不采信。 |
 
 ## 任务集合同
 
@@ -154,7 +154,7 @@ flowchart LR
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | M-01 | 固定变异集覆盖删除“未确认不得 finalize”、`rename_node` 改错、删除前置读、交换 apply/propose；临时 Skill 根运行，不修改工作树 | `完成` | `mutate.ts` 四条锚点仍在 Skill 原文。live `mutate-20260904T151805Z-67d86c45` 在临时 Skill 根运行。 |
-| M-02 | 每个变异记录命中的任务和杀伤结果，输出总体及按 Skill 杀伤率；零命中变异不得计为存活或杀死 | `部分完成` | `mutate-20260904T151805Z-67d86c45`：1 survived、0 killed、3 unscorable（基线 `graph-editing-rename-node` / `graph-editing-propose-scene-shot` 失败）。kill_rate=0 只对 scorable=1 有意义，不能当技能已硬化。 |
+| M-02 | 每个变异记录命中的任务和杀伤结果，输出总体及按 Skill 杀伤率；零命中变异不得计为存活或杀死 | `部分完成` | 修复后 `mutate-20260904T181102Z-6e344c6a`：3 survived、0 killed、1 unscorable（`swap-apply-propose-guidance` 基线失败、突变体反而通过）。kill_rate=0。历史 `67d86c45` 仅 1 条 scorable。 |
 | M-03 | 同一 commit、任务 hash、模型参数连续跑两次 k=3，`abs(delta pass^1) <= 0.05`；超限时分数标不采信 | `部分完成` | 同 task_hash `71d48f47…`、同模型 `gpt-5.6-luna`：`d5fc9b35` → `fa2667fa`，`delta_pass^1=+0.0311`（≤0.05），`delta_pass^3=+0.0133`。git commit 不同（`0cde4641` vs `97b03f16`），不满足“同一 commit”。 |
 | M-04 | 工具与 Graph op coverage 都为 100%；新增清单项自动进入分母，手工排除必须在账本登记决策变更 | `完成` | L0 coverage 断言。无手工排除。 |
 | M-05 | 每次全量 run 按固定抽样规则人工读转录，记录抽样 task/trial、错误分类和结论；未抽读时分数标不采信 | `部分完成` | `d5fc9b35` 与 `fa2667fa` 均已按规则抽读 trial=1，见验证记录。 |
@@ -163,7 +163,7 @@ flowchart LR
 
 | ID | 出口条件 | 状态 | 当前结论 |
 |---|---|---|---|
-| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。缺同 commit 第二次 k=3 与修复后 mutate。regression 未过门，分数不采信。 |
+| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。修复后 mutate kill_rate=0（3/3 scorable survived）。regression 未过门，分数不采信。 |
 | P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 全量 live 未跑。 |
 | P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L3 live 5/5 未通过（`20260904T154151Z-788cb11e`）。缺 50 条标签与 L5 ASR 报告。 |
 | P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
@@ -189,7 +189,7 @@ flowchart LR
 | `just agent-evals-report <run>` | 从落盘工件复算报告 | 已接线 |
 | `just agent-evals-diff <a> <b>` | 比较两个 run 的任务级与汇总差异 | 已接线；stdout 含模型对比说明 |
 | `just agent-evals-coverage` | 工具/op 覆盖 | 已接线 |
-| `just agent-evals-mutate` | 变异杀伤率 | 已接线；修复后 live 进行中 |
+| `just agent-evals-mutate` | 变异杀伤率 | 已接线；修复后 live `mutate-20260904T181102Z-6e344c6a` kill_rate=0 |
 | `just agent-evals-state` | L2 全量 | 已接线，opt-in |
 | `just agent-evals-smoke-state <skill>` | L2 指定 Skill | 已接线 |
 | `just agent-evals-sim` | L3 多轮 | 已接线 |
@@ -311,6 +311,12 @@ ExecStart=/usr/bin/just agent-evals-nightly
   - pass^3=0 / 分类：`graph-editing-delete-one-node` trial=1 通过（`delete_node` `node-image-2`），trial=3 零工具调用、`requires_input`；`media-library-organization-batch-rename` trial=1 通过，trial=2 列出素材后 `requires_input`、未 `propose_global_draft`；`product-intake-finalize-explicit-minimal-set` trial=1 `finalize` 写 `key=cover` 而非期望 `hero`（3/3 同类失败）；`run-diagnosis-global-multiple-workflows` trial=1 `requires_input`，未调 `inspect_global_workflow_runs_v1` / `get_workflow_run_detail_v1`；`workflow-run-request-global-node-run` trial=1 提交了 `scope=node` 但 `node_id=node-image-1`，期望 `node-prompt-1`。
 - 同日本地 mine：`just agent-evals-mine 7` → `agent-evals/mine/mine-2026-09-04T174527Z.json`（dev PG，115 turns）。标注模板：`just agent-evals-export-labels 20260904T174405Z-fa2667fa` → 200 行 `score=null`。二者都不构成 L4 kappa 或生产回流。
 - 结论：分数可复算，同任务集 `|Δpass^1|<=0.05`，但 commit 不同且 regression 门槛未过。按 D-08 不采信为生产 Agent 质量结论。修复后 mutate / L2 / L3 重跑 / L5 / 已填标签 / 生产 mine / 三晚 nightly 仍缺。
+
+### 2026-09-05 记分修复后变异杀伤率
+
+- 2026-09-05 | commit=`efc8830476fdfc8819a504410021cd9b0c605ed7`（子 run `run.json`；`worktree_dirty=true`，进行中本账本未提交改动） | run_id=`mutate-20260904T181102Z-6e344c6a` | command=`just agent-evals-mutate` | layer=L1-mutate | n=4 mutations | k=1 | kill_rate=0 | scorable=3 | killed=0 | survived=3 | unscorable=1 | duration=wall 182s | artifact=`agent-evals/mutations/mutate-20260904T181102Z-6e344c6a.json`
+- `remove-unconfirmed-finalize-guard`、`rename-node-example-to-add-node`、`remove-read-context-first` 均 survived（基线与突变体均 pass）。`swap-apply-propose-guidance` unscorable：基线 `graph-editing-propose-scene-shot` 写参不匹配，突变体反而 pass。
+- 结论：修复后已有可复算杀伤率基线，但 kill_rate=0，不能当作 Skill 已硬化。D-08 仍不采信 Agent 分数。
 
 ### 真实运行记录模板
 
