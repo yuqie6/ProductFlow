@@ -109,7 +109,9 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 	}()
 	status := "failed"
 	var toolNames []string
-	var toolCalls []map[string]any
+	toolCalls := []map[string]any{}
+	var terminal any
+	var nodeStatus, goStatus string
 	var turnID string
 	if len(errors) == 0 {
 		revision := 0
@@ -143,13 +145,23 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 					errors = append(errors, "missing harness turn id")
 				} else {
 					agentState, waitErr := waitAgentTurnAnyTerminal(t, pi.baseURL, seeded.ConvID, *submitted.Turn.HarnessTurnID, 3*time.Minute, pi)
+					nodeStatus, _ = agentState["status"].(string)
 					if waitErr != nil {
+						status = "observation_failed"
 						errors = append(errors, waitErr.Error())
 					} else {
-						status, _ = agentState["status"].(string)
-						synced := evalSyncTurn(t, as, seeded, submitted.Turn.ID)
-						status = synced.Status
-						toolNames, toolCalls = toolCallsFromSteps(synced.ToolSteps)
+						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						synced, observeErr := waitEvalGoTurnTerminal(ctx, as, seeded, submitted.Turn.ID, nodeStatus)
+						cancel()
+						goStatus = synced.Status
+						if observeErr != nil {
+							status = "observation_failed"
+							errors = append(errors, observeErr.Error())
+						} else {
+							status = synced.Status
+							terminal = status
+							toolNames, toolCalls = toolCallsFromSteps(synced.ToolSteps)
+						}
 					}
 				}
 			}
@@ -164,13 +176,15 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 	}
 	durationMS := time.Since(started).Seconds() * 1000
 	relative := filepath.Join("transcripts", fmt.Sprintf("%s-%d.json", task.ID, trial))
+	observation := map[string]any{"node_status": nodeStatus, "go_status": goStatus}
 	transcript := map[string]any{
 		"schema_version":  1,
 		"run_id":          runID,
 		"task_id":         task.ID,
 		"trial":           trial,
 		"utterance":       utterance,
-		"terminal_status": status,
+		"terminal_status": terminal,
+		"observation":     observation,
 		"tool_calls":      toolCalls,
 		"errors":          errors,
 		"product_id":      seeded.ProductID,
@@ -180,10 +194,6 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 	}
 	raw, _ := json.MarshalIndent(transcript, "", "  ")
 	_ = os.WriteFile(filepath.Join(filepath.Dir(transcriptDir), relative), append(raw, '\n'), 0o644)
-	var terminal any
-	if status != "" {
-		terminal = status
-	}
 	return map[string]any{
 		"schema_version":  1,
 		"run_id":          runID,
@@ -199,9 +209,57 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 		"passed":          len(errors) == 0,
 		"errors":          errors,
 		"terminal":        terminal,
+		"details":         map[string]any{"observation": observation},
 		"tool_calls":      toolCalls,
 		"token_count":     nil,
 		"transcript_path": relative,
+	}
+}
+
+// Node's local terminal can precede the journal fold observed by the Go API.
+func waitEvalGoTurnTerminal(ctx context.Context, as *agentServer, seeded seededEvalWorld, turnID, nodeStatus string) (TurnResponse, error) {
+	var last TurnResponse
+	failure := func(err error) (TurnResponse, error) {
+		return last, fmt.Errorf("L2 observation failed for turn %s: Node status=%q Go status=%q: %w", turnID, nodeStatus, last.Status, err)
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return failure(err)
+		}
+		resp, err := as.doContext(ctx, http.MethodGet, evalTurnCollectionPath(seeded)+"/"+turnID, nil, "", nil)
+		if err != nil {
+			return failure(err)
+		}
+		var current TurnResponse
+		if resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("Go turn GET HTTP %d", resp.StatusCode)
+		} else {
+			err = json.NewDecoder(resp.Body).Decode(&current)
+		}
+		resp.Body.Close()
+		if err != nil {
+			return failure(err)
+		}
+		last = current
+		if evalTurnTerminal(last.Status) {
+			return last, nil
+		}
+		timer := time.NewTimer(200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return failure(ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func evalTurnTerminal(status string) bool {
+	switch status {
+	case "succeeded", "failed", "canceled", "unknown", "requires_input", "awaiting_confirmation":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -223,8 +281,7 @@ func waitAgentTurnAnyTerminal(t *testing.T, agentURL, convID, harnessTurnID stri
 			last = map[string]any{}
 			if json.Unmarshal(raw, &last) == nil {
 				status, _ := last["status"].(string)
-				switch status {
-				case "succeeded", "failed", "canceled", "unknown", "requires_input", "awaiting_confirmation":
+				if evalTurnTerminal(status) {
 					return last, nil
 				}
 			}

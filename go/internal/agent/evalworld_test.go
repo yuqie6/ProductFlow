@@ -431,15 +431,6 @@ func evalTurnCollectionPath(seeded seededEvalWorld) string {
 	return "/api/v2/agent-conversations/" + seeded.ConvID + "/turns"
 }
 
-func evalSyncTurn(t *testing.T, as *agentServer, seeded seededEvalWorld, turnID string) TurnResponse {
-	t.Helper()
-	resp := as.do(t, http.MethodGet, evalTurnCollectionPath(seeded)+"/"+turnID, nil, "", nil)
-	as.mustStatus(t, resp, http.StatusOK)
-	var out TurnResponse
-	as.decode(t, resp, &out)
-	return out
-}
-
 func stringify(value any) string {
 	switch typed := value.(type) {
 	case string:
