@@ -104,9 +104,13 @@ go-test-graph-query-plan:
 go-test-agent-query-plan:
     PRODUCTFLOW_RUN_AGENT_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run TestAgentSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
 
-# Opt-in target-scale ImageSession list EXPLAIN gate in a disposable migrated database.
+# Opt-in target-scale ImageSession list/history EXPLAIN gate in a disposable migrated database.
 go-test-imagesession-query-plan:
     PRODUCTFLOW_RUN_IMAGE_SESSION_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/imagesession -run TestImageSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
+
+# Opt-in 100 near-limit image ZIP extra MaxRSS/heap gate (mediaarchive streaming writer).
+go-test-zip-rss:
+    PRODUCTFLOW_RUN_ZIP_RSS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/mediaarchive -run TestStreamingZipNearLimitImagesKeepsExtraRSSUnderBudget -count=1 -p 1 -v -timeout 4m'
 
 go-test-live-providers:
     PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'
