@@ -219,6 +219,18 @@ Empty and existing databases both run `productflow-migrate`: GORM `CreateTable`/
 - Image quality: `just image-evals-ingest` writes the admitted pool; `just image-evals-run` needs `PRODUCTFLOW_RUN_IMAGE_EVALS=1`, a running API/worker, and real prompt/image bindings. Pixels stay under `STORAGE_ROOT/image-evals/`. Acceptance: [`audits/agent-eval-system.md#image-quality`](audits/agent-eval-system.md#image-quality).
 - Cross-layer changes add real browser, database, or provider validation according to risk.
 
+### Frozen Collections and Development Inputs
+
+`agent-service/evals/collections.ts` owns scene manifests and development projection. An evaluator-owned JSON plan has `schema_version=1` and `groups`; each group declares `scene_id`, `source_ids`, `purpose` (`development`, `regression`, `acceptance`), `exposed`, grouping `evidence`, and `task_ids`. Plans cover the entire loaded task set. Repeated scenes are rejected; shared sources or task origins cannot cross purposes, and exposed groups must remain development material. All utterances travel with their task. Reviewers still own the correctness of source grouping and non-exposure claims; the code cannot prove semantic independence.
+
+`just agent-evals-freeze-collection <absolute-plan-path>` pins loaded task/world content and grouping under `STORAGE_ROOT/agent-evals/collections/<hash>.json`, without overwriting previous manifests. Changed inputs require a new manifest. Public repository tasks and previously inspected transcripts are exposed development material. Historical `held_in/held_out` labels do not grant collection access. Empty hidden or acceptance collections are missing evidence, not a passed gate.
+
+`just agent-evals-run-collection <absolute-manifest-path> <purpose>` uses the existing L1 runner for the complete selected purpose, with k=3. Filters, suite selection, task replacement and other layers are rejected. `run.json.collection` records the actual manifest hash, purpose and task IDs; ordinary runs do not receive invented identity. Real model credentials remain required.
+
+`just agent-evals-export-development <run_id> <absolute-manifest-path>` accepts only finalized, identity-matching development batches. Collection and run checks precede trial reads; all trial counts, IDs, utterances and paths are validated before transcripts are opened. Mixed purposes, legacy runs, missing/duplicate trials and symlinks fail. A 0600 packet under `agent-evals/development-inputs/` retains development task/world, passing and failing trials, selected output/tool/error transcript fields and version identity, without the transcript's top-level thinking field. Global history and summary bodies are never read. Packets remain sensitive development material, not anonymized data.
+
+This is an application boundary inside a trusted evaluator, not same-OS-user isolation. Inputs and finalized runs must remain immutable during export. Future proposers may receive only the exported packet, without evaluation filesystem or command tools. Miner/proposer logic, real hidden-set evidence, independent acceptance and candidate comparison are not implemented. Tests: `evals/collections.test.ts`, `evals/cli.test.ts`.
+
 Code/document synchronization rules:
 
 - Route changes update `App.tsx`, `lib/api.ts`, the PRD page table, and the user guide together.

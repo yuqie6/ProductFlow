@@ -28,6 +28,15 @@ agent-evals-diff baseline candidate:
 agent-evals-coverage:
     pnpm --dir agent-service exec tsx evals/cli.ts coverage
 
+agent-evals-freeze-collection plan:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts freeze-collection "$1"' -- '{{plan}}'
+
+agent-evals-run-collection manifest purpose:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts run-live --collection "$1" --purpose "$2" --trials 3' -- '{{manifest}}' '{{purpose}}'
+
+agent-evals-export-development run manifest:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts export-development "$1" --collection "$2"' -- '{{run}}' '{{manifest}}'
+
 agent-evals-mutate:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts mutate'
 

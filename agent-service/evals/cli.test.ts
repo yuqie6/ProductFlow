@@ -10,7 +10,20 @@ describe("agent eval CLI", () => {
     expect(capture.stdout()).toContain("run-sim");
     expect(capture.stdout()).toContain("run-adversarial");
     expect(capture.stdout()).toContain("judge-calibrate");
+    expect(capture.stdout()).toContain("freeze-collection");
+    expect(capture.stdout()).toContain("export-development");
     expect(capture.stderr()).toBe("");
+  });
+
+  it("passes explicit collection identity to the existing live runner", async () => {
+    const capture = capturedIO();
+    let options: unknown;
+    expect(await runCLI(["run-live", "--collection", "/fixture/manifest.json", "--purpose", "development"], capture.io, {
+      runLiveEvals: async (input) => { options = input; return { report: { ok: true } }; },
+    })).toBe(0);
+    expect(options).toMatchObject({ collectionPath: "/fixture/manifest.json", collectionPurpose: "development" });
+    expect(await runCLI(["export-development", "run"], capture.io)).toBe(1);
+    expect(capture.stderr()).toContain("--collection is required");
   });
 
   it("rejects missing arguments and invalid numeric options", async () => {

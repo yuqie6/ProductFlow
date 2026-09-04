@@ -217,6 +217,18 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 - 生图质量：`just image-evals-ingest` 写入过线池，`just image-evals-run` 需要 `PRODUCTFLOW_RUN_IMAGE_EVALS=1`、已起的 API/worker 与真实 prompt/image 绑定。像素只落 `STORAGE_ROOT/image-evals/`。验收口径见 [`audits/agent-eval-system.md#image-quality`](audits/agent-eval-system.md#image-quality)。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 
+### 冻结集合与开发输入
+
+`agent-service/evals/collections.ts` 拥有场景集合清单与开发材料投影。评测维护者提供 JSON plan：`schema_version=1` 和 `groups`，每组含 `scene_id`、`source_ids`、`purpose`（`development` / `regression` / `acceptance`）、`exposed`、分组依据 `evidence`、`task_ids`。清单须覆盖完整题集，同场景、同 source 或同 task origin 不得跨用途；已暴露组只能是 development。全部释义随任务保留。声明的来源与未暴露性仍需维护者审查，代码不能自动证明语义独立。
+
+`just agent-evals-freeze-collection <绝对 plan 路径>` 钉住当前 loader 读出的 task/world 内容与分组 hash，写 `STORAGE_ROOT/agent-evals/collections/<hash>.json`，不覆盖旧清单。改题、world 或分组须重新冻结。当前公开题库和已读旧转录只能作为已暴露开发材料，旧 `held_in/held_out` 是历史报告标签，不具备集合访问授权。没有真实隐藏/验收材料时必须保持缺失，不把空集合当验收通过。
+
+`just agent-evals-run-collection <绝对 manifest 路径> <用途>` 沿现有 L1 runner 执行该用途的完整 L1 任务，默认 k=3；禁止叠加 filter、suite、替换 tasks 或其它 layer。`run.json.collection` 记录实际 manifest hash、用途及任务 ID；普通 run 不补造此身份。需要与现有 live 相同的真实模型凭据，命令本身不证明一次运行已完成。
+
+`just agent-evals-export-development <run_id> <绝对 manifest 路径>` 只接收已结束且身份完整匹配的开发批次。验证集合与 run 后才读 trial，所有 trial 的数量、身份、表述和路径均通过后才读转录；混合用途、旧 run、缺失/重复试验和符号链接被拒绝。输出 `agent-evals/development-inputs/` 的 0600 文件，包含开发 task/world、成功与失败 trial、转录的回答/工具/错误字段及版本身份，不含转录顶层 thinking 字段；不读取全局 history 或 summary 正文，不能从这些入口把隐藏摘要带入提案。该输出仍是敏感开发材料，不是匿名化产物。
+
+这是可信评测进程中的应用边界，不隔离同一 OS 用户；维护者须固定输入和已结束 run，避免并发篡改。未来提案器只能接导出的开发包，不得获得评测文件系统或命令工具。P3/P4、隐藏集采证、独立验收和候选比较尚未实现。测试见 `evals/collections.test.ts`、`evals/cli.test.ts`。
+
 代码与文档同步规则：
 
 - 路由变化同时核对 `App.tsx`、`lib/api.ts`、PRD 页面表和用户指南。

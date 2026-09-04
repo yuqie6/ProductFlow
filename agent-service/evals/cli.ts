@@ -23,6 +23,8 @@ export interface CLILiveEvalOptions {
   filter?: string;
   suite?: string;
   concurrency?: number;
+  collectionPath?: string;
+  collectionPurpose?: string;
 }
 
 export interface CLIDeps {
@@ -59,6 +61,10 @@ export async function runCLI(args: readonly string[], io: CLIIO = DEFAULT_IO, de
         return await coverageCommand(rest, io);
       case "run-live":
         return await runLiveCommand(rest, io, deps);
+      case "freeze-collection":
+        return await freezeCollectionCommand(rest, io);
+      case "export-development":
+        return await exportDevelopmentCommand(rest, io);
       case "run-sim":
         return await runSimCommand(rest, io);
       case "run-adversarial":
@@ -133,7 +139,7 @@ async function coverageCommand(args: readonly string[], io: CLIIO): Promise<numb
 }
 
 async function runLiveCommand(args: readonly string[], io: CLIIO, deps: CLIDeps): Promise<number> {
-  const parsed = parseArgs(args, new Set(["trials", "filter", "suite", "concurrency"]));
+  const parsed = parseArgs(args, new Set(["trials", "filter", "suite", "concurrency", "collection", "purpose"]));
   requirePositionals(parsed, 0, "run-live");
   const trials = optionalPositiveInteger(parsed.options.get("trials"), "--trials");
   const concurrency = optionalPositiveInteger(parsed.options.get("concurrency"), "--concurrency");
@@ -148,9 +154,38 @@ async function runLiveCommand(args: readonly string[], io: CLIIO, deps: CLIDeps)
     filter: parsed.options.get("filter"),
     suite: parsed.options.get("suite"),
     concurrency,
+    collectionPath: parsed.options.get("collection"),
+    collectionPurpose: parsed.options.get("purpose"),
   });
   io.stdout(`${JSON.stringify({ run_id: result.runID, run_dir: result.runDir, ok: result.report.ok }, null, 2)}\n`);
   return result.report.ok ? 0 : 1;
+}
+
+async function freezeCollectionCommand(args: readonly string[], io: CLIIO): Promise<number> {
+  const parsed = parseArgs(args, new Set(["storage-root"]));
+  requirePositionals(parsed, 1, "freeze-collection <plan.json>");
+  const { readFile } = await import("node:fs/promises");
+  const { loadEvalTaskSet } = await import("./loader.js");
+  const { freezeCollection, persistCollection } = await import("./collections.js");
+  const manifest = freezeCollection(JSON.parse(await readFile(parsed.positionals[0], "utf8")), await loadEvalTaskSet());
+  const path = await persistCollection(manifest, parsed.options.get("storage-root"));
+  const counts = Object.fromEntries(["development", "regression", "acceptance"].map((purpose) => [
+    purpose, manifest.groups.filter((group) => group.purpose === purpose).reduce((sum, group) => sum + group.task_ids.length, 0),
+  ]));
+  io.stdout(`${JSON.stringify({ path, hash: manifest.hash, counts })}\n`);
+  return 0;
+}
+
+async function exportDevelopmentCommand(args: readonly string[], io: CLIIO): Promise<number> {
+  const parsed = parseArgs(args, new Set(["storage-root", "collection"]));
+  requirePositionals(parsed, 1, "export-development <run_id> --collection <manifest.json>");
+  const manifest = parsed.options.get("collection");
+  if (!manifest) throw new Error("--collection is required");
+  const { loadEvalTaskSet } = await import("./loader.js");
+  const { exportDevelopment } = await import("./collections.js");
+  const path = await exportDevelopment(parsed.positionals[0], manifest, await loadEvalTaskSet(), parsed.options.get("storage-root"));
+  io.stdout(`${JSON.stringify({ path, purpose: "development" })}\n`);
+  return 0;
 }
 
 async function runSimCommand(args: readonly string[], io: CLIIO): Promise<number> {
@@ -276,6 +311,9 @@ function usage(): string {
     "  pnpm exec tsx evals/cli.ts diff <baseline_run_id> <candidate_run_id> [--k <n>] [--storage-root <path>]",
     "  pnpm exec tsx evals/cli.ts coverage [--tasks <path>]",
     "  pnpm exec tsx evals/cli.ts run-live [--trials <n>] [--filter <task_or_skill>] [--suite <suite>] [--concurrency <n>]",
+    "  pnpm exec tsx evals/cli.ts freeze-collection <plan.json> [--storage-root <path>]",
+    "  pnpm exec tsx evals/cli.ts run-live --collection <manifest.json> --purpose <development|regression|acceptance> [--trials <n>]",
+    "  pnpm exec tsx evals/cli.ts export-development <run_id> --collection <manifest.json> [--storage-root <path>]",
     "  pnpm exec tsx evals/cli.ts run-sim [--trials <n>] [--filter <task_or_skill>]",
     "  pnpm exec tsx evals/cli.ts run-adversarial [--trials <n>] [--filter <task_or_skill>]",
     "  pnpm exec tsx evals/cli.ts mutate",

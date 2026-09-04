@@ -22,7 +22,8 @@ import { EvalRunStorage, newEvalRunID, type EvalRunMetadata } from "./run-storag
 import type { EvalCallRecord, EvalTask, EvalTrialRecord, EvalWorld } from "./schema.js";
 import { createStubWorld, overlayEvalPageContext } from "./stub-world.js";
 import { taskSplit } from "./split.js";
-import { resolveLiveEvalConcurrency } from "./live-concurrency.js";
+import { PRODUCTION_MAX_CONCURRENT_TURNS_DEFAULT, resolveLiveEvalConcurrency } from "./live-concurrency.js";
+import { loadCollection, selectCollection } from "./collections.js";
 
 export { PRODUCTION_MAX_CONCURRENT_TURNS_DEFAULT, resolveLiveEvalConcurrency };
 
@@ -34,6 +35,8 @@ export interface LiveEvalOptions {
   skillRoot?: string;
   layer?: "l1" | "l3" | "l5";
   tasks?: EvalTask[];
+  collectionPath?: string;
+  collectionPurpose?: string;
 }
 
 export interface LiveEvalResult {
@@ -64,7 +67,15 @@ export async function runLiveEvals(options: LiveEvalOptions = {}): Promise<LiveE
   const catalog = await loadSkillCatalog(options.skillRoot);
   const taskSet = await loadEvalTaskSet({ catalog });
   const layer = options.layer ?? "l1";
-  const tasks = selectTasks(options.tasks ?? taskSet.tasks, options.filter, options.suite, layer);
+  if (Boolean(options.collectionPath) !== Boolean(options.collectionPurpose)) throw new Error("Collection path and purpose are both required");
+  if (options.collectionPath && (options.tasks || options.filter || options.suite || layer !== "l1"
+    || process.env.PRODUCTFLOW_AGENT_EVAL_FILTER?.trim() || process.env.PRODUCTFLOW_AGENT_EVAL_SUITE?.trim())) {
+    throw new Error("Frozen collection runs require unfiltered L1 tasks");
+  }
+  const collection = options.collectionPath
+    ? selectCollection(await loadCollection(options.collectionPath, taskSet), options.collectionPurpose!, taskSet)
+    : undefined;
+  const tasks = collection?.tasks ?? selectTasks(options.tasks ?? taskSet.tasks, options.filter, options.suite, layer);
   const runID = newEvalRunID();
   const storage = new EvalRunStorage(runID);
   const provenance = await currentGitProvenance();
@@ -88,6 +99,7 @@ export async function runLiveEvals(options: LiveEvalOptions = {}): Promise<LiveE
     concurrency,
     production_max_concurrent_turns: productionMaxConcurrentTurns,
     layers: [layer],
+    ...(collection ? { collection: collection.identity } : {}),
   };
   await storage.init(metadata);
 

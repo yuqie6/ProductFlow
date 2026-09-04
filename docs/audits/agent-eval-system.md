@@ -87,7 +87,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | T-04 | L0 coverage 对生产工具清单与 12 个 Graph op 做 100% 双向覆盖断言；新增工具/op 时无任务即失败 | `完成` | `report.ts collectCoverage` + `contract.test.ts`。 |
 | T-05 | 每个任务至少 3 条语义等价 `utterances`；`origin` 区分 migrated、handwritten、production；生产来源保留可追溯 ID，但不得含密钥和未脱敏内容 | `部分完成` | 每任务 ≥3 条释义已由 L0 断言。`origin` 现有 `legacy:fixtures.ts` / `handwritten:*`。尚无 `production:<turn_id>` 任务。 |
 | T-06 | 迁移任务保留 `reference` 作为合同参考解，但 live pass 只由 task expect grader 判定；任务 hash 由 canonical JSON 计算并写入 run metadata | `完成` | `reference.scripted_calls` 仅 L0；live 用 expect graders；`provenance.ts` 写入 `run.json`。 |
-| T-07 | 开发集、隐藏回归集、独立验收集按原始任务 / 场景分组隔离；集合清单与访问边界可审计 | `部分完成` | `evals/schema.ts` 支持可选 `held_in` / `held_out`，`loader.ts` / `split.ts` 按任务 ID 分配并有 registry；尚无场景级隔离、提案器访问隔离及独立验收集证据 |
+| T-07 | 开发集、隐藏回归集、独立验收集按原始任务 / 场景分组隔离；集合清单与访问边界可审计 | `部分完成` | [eval-collection-isolation](tasks/archive/eval-collection-isolation.md)：`evals/collections.ts` 冻结 scene/source/origin 与 task/world hash，L1 单用途运行，开发导出在读转录前检查身份与完整性。253 passed / 2 skipped。现有 split 仅历史报告标签；实际分组与未暴露性须人工审核，真实隐藏/独立验收集和提案器受限部署仍缺 |
 | T-08 | G1 / G2 阶段以不参与日常搜索的独立验收集比较冻结候选与基线，登记完整结果及暴露后的退役记录 | `缺失` | 无独立验收运行或隔离验收入口；由后续评测切片实现，不在 Self-Harness P1 扩 scope |
 
 ### Self-Harness 评测用途
@@ -104,7 +104,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 - 已进入提案上下文或用于手工修补的题目不能重新包装为隐藏回归或独立验收题。当前双集合标签本身不证明访问隔离或独立性。
 - 独立验收前冻结最终候选、基线、集合清单、试验次数与判定规则；双方各跑 `k=3`。默认要求独立集聚合通过数不劣于基线、负例不劣化，任何越权或未确认副作用直接失败；成本与体积仍按 Self-Harness P4 门槛检查。登记任务级结果、差异与审查结论，不能临场降低门槛或挑选另一候选冒充同一次验收。
 - 独立验收失败不得标记对应 G1 / G2 出口完成。若验收题目或结果已用于诊断并指导后续修改，相关场景组转入开发材料，下一次独立验收换用未暴露材料并记录划分变更。不得反复筛选同一验收集后仍声称结果独立。
-- 不要求本次立即扩建三套大题库或改 wire schema。集合表示、访问隔离、分组断言与验收入口由后续评测切片实现；P3 / P4 消费证据前须具备相应合同。没有独立验收证据时，只能报告开发 / 回归结果。
+- 不要求立即扩建三套大题库或改 Task/Trial wire schema。集合表示、分组断言、L1 单用途运行与开发投影已有实现，操作见 ARCHITECTURE「冻结集合与开发输入」。P3 消费真实材料前仍需评测维护者批准分组和冻结新开发批次；P4 的隐藏验证材料、独立验收与复跑入口仍待后续切片。没有独立验收证据时，只能报告开发 / 回归结果。
 
 ### Self-Harness 独立复跑
 

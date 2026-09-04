@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Value } from "typebox/value";
 
 import { EvalTrialRecordSchema, type EvalTrialRecord } from "./schema.js";
+import type { CollectionRun } from "./collections.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -26,6 +27,7 @@ export interface EvalRunMetadata {
   concurrency: number;
   production_max_concurrent_turns: number;
   layers: string[];
+  collection?: CollectionRun;
 }
 
 export interface EvalRunFinishOptions {
