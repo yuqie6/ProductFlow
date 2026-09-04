@@ -92,6 +92,23 @@ func TestStagePublishesDispatchNotifyAfterCommit(t *testing.T) {
 	}
 }
 
+func waitDispatchNotify(t *testing.T, ctx context.Context, notes <-chan notify.Notification, dispatchID string) {
+	t.Helper()
+	for {
+		select {
+		case n, ok := <-notes:
+			if !ok {
+				t.Fatal("dispatch notify channel closed")
+			}
+			if n.Channel == notify.ChannelDispatch && n.Payload == dispatchID {
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("did not receive dispatch notify")
+		}
+	}
+}
+
 func TestResetPendingPublishesDispatchNotify(t *testing.T) {
 	pool, gdb := testdb.Open(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -135,6 +152,118 @@ func TestResetPendingPublishesDispatchNotify(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("did not receive dispatch notify after resetPending commit")
+	}
+}
+
+func TestConsumeBusyPublishesDispatchNotify(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	agg := uniqueID(t)
+	var dispatch queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			return queue.ErrBusy
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitDispatchNotify(t, ctx, notes, dispatch.ID)
+}
+
+func TestMarkFailedPublishesDispatchNotifyWhenPending(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	agg := uniqueID(t)
+	var dispatch queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			return errors.New("provider boom")
+		},
+	})
+	if err == nil {
+		t.Fatal("expected consume error")
+	}
+	waitDispatchNotify(t, ctx, notes, dispatch.ID)
+}
+
+func TestMarkFailedDoesNotNotifyWhenDead(t *testing.T) {
+	pool, gdb := testdb.Open(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	agg := uniqueID(t)
+	var dispatch queue.Dispatch
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE async_dispatches SET attempts = $1 WHERE id = $2`, queue.DefaultMaxAttempts, dispatch.ID); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := notify.Listen(ctx, pool, notify.ChannelDispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+			return errors.New("exhausted")
+		},
+	})
+	if err == nil {
+		t.Fatal("expected consume error")
+	}
+	select {
+	case n := <-notes:
+		if n.Channel == notify.ChannelDispatch && n.Payload == dispatch.ID {
+			t.Fatalf("dead dispatch notified %+v", n)
+		}
+	case <-time.After(250 * time.Millisecond):
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE id = $1`, dispatch.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != queue.StatusDead {
+		t.Fatalf("status %s, want dead", status)
 	}
 }
 

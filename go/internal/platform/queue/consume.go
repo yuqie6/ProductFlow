@@ -68,6 +68,7 @@ func MarkConsumed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregate
 }
 
 // MarkFailed 按 attempts 把信封标 DEAD 或带退避回到 PENDING。lease 不匹配时返回 (false, nil)。
+// 回到 PENDING 时在同一事务 NOTIFY ChannelDispatch；标 DEAD 不通知。
 func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken, errMsg string, maxAttempts, backoffSeconds int) (bool, error) {
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxAttempts
@@ -113,8 +114,14 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 		if res.Error != nil {
 			return res.Error
 		}
-		ok = res.RowsAffected == 1
-		return nil
+		if res.RowsAffected != 1 {
+			return nil
+		}
+		ok = true
+		if row.Attempts >= maxAttempts {
+			return nil
+		}
+		return notifyDispatch(ctx, tx, dispatchID)
 	})
 	if err != nil {
 		return false, err
@@ -187,6 +194,7 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 }
 
 // ReleaseForRetry 在 [ErrBusy]/[ErrLater] 后清消费 lease，把 SENT 拉回 PENDING。
+// 更新成功时在同一事务 NOTIFY ChannelDispatch。lease 不匹配时返回 (false, nil)。
 func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID, leaseToken string, delay time.Duration) (bool, error) {
 	if delay < 0 {
 		delay = 0
@@ -196,19 +204,30 @@ func ReleaseForRetry(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggreg
 		return false, err
 	}
 	now := time.Now().UTC()
-	res := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).
-		Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).
-		Updates(map[string]any{
-			"status":           StatusPending,
-			"lease_token":      nil,
-			"lease_expires_at": nil,
-			"sent_at":          nil,
-			"consumed_at":      nil,
-			"available_at":     now.Add(delay),
-			"updated_at":       now,
-		})
-	if res.Error != nil {
-		return false, res.Error
+	ok := false
+	err = gdb.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+			Where("id = ? AND aggregate_id = ? AND status = ? AND lease_token = ?", dispatchID, aggregateID, StatusSent, leaseToken).
+			Updates(map[string]any{
+				"status":           StatusPending,
+				"lease_token":      nil,
+				"lease_expires_at": nil,
+				"sent_at":          nil,
+				"consumed_at":      nil,
+				"available_at":     now.Add(delay),
+				"updated_at":       now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return nil
+		}
+		ok = true
+		return notifyDispatch(ctx, tx, dispatchID)
+	})
+	if err != nil {
+		return false, err
 	}
-	return res.RowsAffected == 1, nil
+	return ok, nil
 }
