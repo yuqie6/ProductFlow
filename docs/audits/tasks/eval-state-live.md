@@ -1,6 +1,6 @@
 # 任务：L2 PostgreSQL 终态采证
 
-状态：开放
+状态：阻塞
 类型：证据
 认领者：—
 认领于：—
@@ -56,3 +56,22 @@ PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 just agent-evals-state
 - run_id=`20260904T185620Z-87f8a800`，commit=`a321efddab622af261e9aa4d47d109092c5890be`，18×k=3，28/54 pass，26 failed，墙钟 1441s。
 - 旧记录指出 media-library、intake 及部分终态投影失败；state 断言未过，不能当 P2 出口。
 - 待补：产物核验日期、完整 hash/模型字段、审核者、issue 结果与剩余缺口。
+- 认领确认：2026-09-05 主代理在协调工作树登记并复核；仅核验已登记历史批次，无源码 diff，不申请 live 资源。图片组的浏览器/provider/storage 占用不变，考题校正仍未认领；本任务由主代理自审，不冒充独立考题审核。
+
+### 2026-09-05 产物核验
+
+- 核验基线 `077ade66`；读取 `storage-dev/agent-evals/20260904T185620Z-87f8a800/{run.json,trials.jsonl,transcripts/}`。原始产物未修改，未重新调用 provider。
+- 18 题、54 条 trial、54 份 transcript，task/trial 无重复；逐条 run/task/trial/utterance/errors 身份一致。28 pass、26 failed 与旧摘要一致。该 Go runner 不生成 summary.json，缺此文件本身不证明中止。
+- Skill 分布及通过数：graph-editing 4 题、7/12；media-library-organization 4 题、0/12；product-intake 3 题、4/9；run-diagnosis 4 题、9/12；workflow-run-request 3 题、8/9。数量满足规模要求，不能据此认定批次有效。
+- run.json 记录 commit=`a321efddab622af261e9aa4d47d109092c5890be`、model=`gpt-5.6-luna`、task_set_hash=`250fce5dac7dd0fbd89b4e6a313a94f5680bf0dad1c9ccf584d6876efe9e96b4`。以记录中任务 ID 顺序加 NUL 复算即得到该 hash；未覆盖题目正文、expect 或 world。未记录 Skill hash、有效 provider/reasoning 或工作树身份；历史缺少 harness_hash 属于归因功能上线前的事实，不回填。当前 P2 实现仅补齐 harness，其他缺口仍在。
+- 五条 trial 将非终态 `running` 记录为 terminal：场景组提案、注入标题改名、素材归档、注入名称素材改名、诊断后重试各一次。代码链为 `runL2Trial -> waitAgentTurnAnyTerminal(Node) -> evalSyncTurn(一次 Go GET)`；`GetTurn` 只读 PG，`writeJournalTerminal` 更新 Node store 后才发布 journal。存在可观察窗口；旧产物没有双侧状态与 journal 时序，不能断言五次均由同一竞态导致。
+- 其他失败包括素材 pending draft 缺失 12 次、intake image type spec 缺失 3 次、graph 改名/工具缺失、run request 缺失，以及 requires_input 与预期不符。计数可重算，但工具契约误判、Agent 行为失败与未收敛投影需分别复核，暂不转成 Skill 优化输入。
+- PG 判读入口 `gradeEvalState` 确实读取 graph projection、pending graph proposal、run request/source_run_id、library draft 与 intake；transcript 只保留错误和资源 ID，没有当时实际 state 快照。旧测试 DB 不是可依赖的历史快照，不能从当前 DB 追认旧值。
+- 审核者：主代理-agent-0905-0458（自审）。结论：历史数量与文件完整性核验完成，但本 issue 尚未完成有效采证，P2 业务出口仍未通过。
+
+## 阻塞与交接
+
+- 原因：运行身份不足且含非终态样本，不能作为当前合同要求的有效全量 FAIL 签收。
+- 解除条件：[L2 批次身份](eval-l2-provenance.md) 与 [PG 终态观察](eval-l2-terminal-observation.md) 交付后，维护者复核考题合同、冻结完整输入并安排新批次；不得补写旧批次缺失身份或删除失败项。
+- 跟进者：主代理-agent-0905-0458。
+- 交接：无源码 diff、live 进程或冻结资源；协调记录随新任务发布移交，释放本 issue 占用。图片组资源保持不变。

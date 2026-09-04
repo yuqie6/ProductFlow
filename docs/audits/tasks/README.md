@@ -23,7 +23,9 @@
 | [eval-contract-alignment.md](eval-contract-alignment.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-user-sim.md](eval-user-sim.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 开放 | — | — |
+| [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 阻塞 | — | — |
+| [eval-l2-terminal-observation.md](eval-l2-terminal-observation.md) | 评测 | 实现 | 开放 | — | — |
+| [eval-l2-provenance.md](eval-l2-provenance.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
 | [image-eval-pool.md](image-eval-pool.md) | 评测 | 证据 | 开放 | — | — |
 
