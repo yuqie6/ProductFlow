@@ -28,11 +28,11 @@ Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe lib
 
 Lease, journal, effect reconciliation, SSE gap repair, and capacity-gate evidence live in [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md). S1–S6 and G-01–G-05, G-07 are closed. Runtime-ownership S0–S6 is closed; evidence is in [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md).
 
-Remaining: G-06 behavior gates are the `run_id` recorded in [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md) and [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md). Until those pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
+Remaining: the [evaluation charter](audits/agent-eval-system.md) decides G-06 behavior gates from reviewed `run_id` evidence; execution progress lives on the [issue board](audits/tasks/README.md). Closing an evidence issue does not pass the gate. Until the gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
 
 ### Agent evaluation system
 
-Open guides (read one): [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md), [`audits/tasks/eval-user-sim.md`](audits/tasks/eval-user-sim.md), [`audits/tasks/eval-labels.md`](audits/tasks/eval-labels.md), [`audits/tasks/eval-go-loader.md`](audits/tasks/eval-go-loader.md), [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md). Frozen decisions and historical `run_id`: [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Do not record pass^k as product fact without a ledger `run_id`.
+Active execution issues and blockers live on the [issue board](audits/tasks/README.md); follow-up publication conditions live in the [business-group index](audits/README.md). The assigned issue bounds the delivery; live code and tests must still be read. Frozen decisions and historical `run_id`: [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Do not record pass^k as product fact without a ledger `run_id`.
 
 ### Agent Self-Harness
 

@@ -1,13 +1,20 @@
 # 任务：运行中检查器打字（画布 C4 尾项）
 
 状态：开放
+类型：实现
 认领者：—
 认领于：—
 业务组：画布
 父账本：canvas-test-system.md
 完成后可拆：canvas-c4-remainder.md（整图跑中途撤销 + 浏览器文稿 409 即停；仍只动 canvas-document-mock.spec.ts）
 
-读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。
+本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。
+
+## 前置与并行
+
+- 前置：已起的 `just dev` 与对应浏览器测试环境。
+- 冻结输入：测试期间固定画布代码与 mock 配置。
+- 运行资源：本测试临时切换 provider，可能暂停 worker。共享 dev 时必须独占该窗口；不得与生图或 Agent live、dispatcher 压测同时运行，结束后恢复原 provider 与 worker 状态并登记。
 
 ## 做成什么样
 

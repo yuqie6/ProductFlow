@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 里每个总账本是一个业务组章程。并行 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)：先认领再开工，一人一份。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
+[`audits/`](audits/) 里每个总账本是一个业务组章程。内部执行 issue 使用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。认领由主代理确认，交付经审核后同步章程结论。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
 
 ## 历史叙事
 
@@ -53,7 +53,7 @@
 
 ## 协作元数据
 
-[`agents/`](agents/) 只管 GitHub issue tracker、triage、domain 阅读约定。仓库内业务组 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)。
+[`agents/`](agents/) 管产品 GitHub Issues 与本地执行 issue 的分工、triage 和 domain 阅读约定。仓库内业务组 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)，详细证据留在任务，章程保留验收结论和证据链接。
 
 ## 写作规则
 
@@ -64,4 +64,4 @@
 5. 实现敏感声明指向当前代码所有者或测试。
 6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`../CONTEXT.md`](../CONTEXT.md) Mainline Scope。
 
-`just docs-check` 校验索引、前端路由、code owner 路径和仓库内链接。规格目录若重新出现才检查状态标注。它不检查「同一句话是否写了六遍」。
+`just docs-check` 校验索引、前端路由、code owner 路径、仓库内链接，以及内部 issue 元数据、看板同步和归档索引。规格目录若重新出现才检查状态标注。它不裁定验收证据是否充分，也不自动判断文件写入或运行资源冲突。

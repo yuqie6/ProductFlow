@@ -2,7 +2,7 @@
 
 本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的 Agent 生产 Gate。
 
-**画布组章程。不要从本文件开工。** C0–C3、C5、C6 已完成。C4 空闲改写/候选已进门禁。当前开放：[`tasks/canvas-inspector-midrun.md`](tasks/canvas-inspector-midrun.md)。下一刀 `canvas-c4-remainder` 等该任务归档再发。
+**画布组章程。执行以已发布 issue 为界。** C0–C3、C5、C6 已完成。C4 空闲改写/候选已进门禁。当前任务与认领见 [Issue 看板](tasks/README.md)；运行中检查器任务验收后，由维护者核对并发布 `canvas-c4-remainder`。
 
 ## 来源与使用规则
 

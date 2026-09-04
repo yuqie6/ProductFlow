@@ -12,7 +12,7 @@ Before a cross-layer change, trace `input -> wire schema -> application use case
 
 Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. Audit parallel work is the issue board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md): claim one open task in the doc, then implement; after review and commit, archive it, open the next task file from the parent ledger, and stop.
+Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. For publishing, claiming, blocking, reviewing or closing an internal issue, follow [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md). The issue file owns its status; the board is a checked index. Read the assigned issue plus live code, tests and applicable repository rules.
 
 ## Multi-Agent Delivery
 
@@ -32,11 +32,12 @@ Implementation sub-agents receive one bounded causal slice at a time. For work o
 - files or modules the agent owns and boundaries it must not edit;
 - required wire, persistence and runtime invariants;
 - focused tests and completion evidence;
+- prerequisites, frozen evaluation inputs and exclusive runtime resources where applicable;
 - claim fields (`状态` / `认领者` / `认领于`) so other agents can see occupancy.
 
-Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap and each slice is claimed on the board. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
+Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their write scopes, frozen inputs and runtime resources do not conflict and each slice is claimed on the board. With four total agent slots, use at most three implementation agents alongside the primary agent. The primary agent confirms claims in one coordinating workspace; local commits in separate worktrees do not provide mutual exclusion.
 
-When an owned board task is done, the claiming agent reviews that exclusive diff against the task packet, commits only those owned files, archives the task, opens the next `开放` task from the parent ledger if the packet names one, and **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents still must not push, reset, revert, or declare the overall program complete.
+The executor self-reviews its exclusive diff and reports evidence; the primary agent reviews every sub-agent delivery before acceptance. One designated Git writer (the primary agent by default) serializes claim, delivery and closure commits. Closing an issue updates the parent ledger's affected conclusions and evidence links, then archives the issue. Only the primary agent publishes follow-up issues after checking prerequisites. The executor **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents must not push, reset, revert, or declare the overall program complete.
 
 The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is filed as a new `开放` board task, not started in the same turn. Ordinary small fixes and read-only investigations do not use the board unless the user asks to file a task.
 
@@ -57,7 +58,7 @@ Use the root `justfile` whenever possible:
 - `just agent-service-test` — run Agent service tests.
 - `just dev` — stop leftover API/worker/dispatcher/Agent/Web processes, start local PostgreSQL/Redis, apply migrations, then run Go API, worker, dispatcher, Pi Agent, and Web in parallel.
 - `just dev-stop` — stop leftover API/worker/dispatcher/Agent/Web processes from a previous `just dev`.
-- `just docs-check` — verify documented routes, code-owner paths, and local Markdown links.
+- `just docs-check` — verify documented routes, code-owner paths, local Markdown links, and internal issue/board consistency.
 - `just web-install` — install frontend dependencies with pnpm.
 - `just web-dev` — run Vite with the API proxy configured.
 - `just web-build` — type-check and build the frontend.
@@ -87,7 +88,7 @@ Do not commit `.env`, `web/.env`, generated storage, caches, or build output. Ke
 
 ### Issue tracker
 
-Issues and PRDs are tracked in GitHub Issues for `yuqie6/ProductFlow`. See `docs/agents/issue-tracker.md`.
+Product issues and PRDs are tracked in GitHub Issues for `yuqie6/ProductFlow`; bounded audit-group execution issues live in `docs/audits/tasks/`. See `docs/agents/issue-tracker.md` for routing and cross-links.
 
 ### Triage labels
 

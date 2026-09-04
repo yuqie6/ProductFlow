@@ -1,13 +1,20 @@
 # 任务：可哈希的领域壳工件（Self-Harness P1）
 
 状态：开放
+类型：实现
 认领者：—
 认领于：—
 业务组：壳进化
 父账本：agent-self-harness.md
 完成后可拆：harness-attribution.md（P2 归因；合同从父账本 P2 抄齐）。P2b–P7 不要在本任务归档时一起发
 
-读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要去读 Self-Harness 总账本开工。本阶段做完之前不要开 P2–P7。
+本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。本阶段完成前不实施 P2–P7。
+
+## 前置与并行
+
+- 前置：无；P1 不以评测分数达标作为开工条件。
+- 冻结输入：本任务改动被测 runtime/policy，不能与共享该 checkout 的 Skill/L2/L5/user-sim live 同时执行。
+- 运行资源：单测使用隔离夹具；`docs/ARCHITECTURE.md` 属共享文档，变更交 Git 写者排队整合，保留已有用户 diff。
 
 ## 做成什么样
 

@@ -28,11 +28,11 @@
 
 lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。S1–S6 与 G-01–G-05、G-07 已关闭。运行时所有权 S0–S6 已关闭，证据在 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)。
 
-剩余：G-06 的行为门槛由 [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md) 与 [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md) 登记的 `run_id` 裁定。未过门前不扩大默认能力，也不把 Pi session 文件当作 durable 证明。background 模型调用仍按生产账本 D-03 不接。旧 Go Agent 留在 `exp`。Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
+剩余：G-06 的行为门槛由 [评测组章程](audits/agent-eval-system.md) 根据已审核的 `run_id` 裁定，执行进度见 [Issue 看板](audits/tasks/README.md)。采证 issue 关闭不等于门槛通过。未过门前不扩大默认能力，也不把 Pi session 文件当作 durable 证明。background 模型调用仍按生产账本 D-03 不接。旧 Go Agent 留在 `exp`。Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
 ### Agent 评测体系
 
-未完成指导（各读一份）：[`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md)、[`audits/tasks/eval-user-sim.md`](audits/tasks/eval-user-sim.md)、[`audits/tasks/eval-labels.md`](audits/tasks/eval-labels.md)、[`audits/tasks/eval-go-loader.md`](audits/tasks/eval-go-loader.md)、[`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md)。冻结决策与历史 `run_id` 在 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。未登记 `run_id` 前不把 pass^k 写成产品事实。
+未完成执行任务与阻塞统一见 [Issue 看板](audits/tasks/README.md)，业务组后续发布条件见 [业务组索引](audits/README.md)。任务文件限定本次交付，仍需读取现场代码与测试。冻结决策与历史 `run_id` 在 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。未登记 `run_id` 前不把 pass^k 写成产品事实。
 
 ### Agent Self-Harness
 

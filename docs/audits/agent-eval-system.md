@@ -2,7 +2,7 @@
 
 本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。任务集、grader、pass^k 与分数是否采信仍只由本账本裁定。
 
-**评测组章程。不要从本文件开工。** 当前开放：[`tasks/eval-skills.md`](tasks/eval-skills.md)、[`tasks/eval-user-sim.md`](tasks/eval-user-sim.md)、[`tasks/eval-labels.md`](tasks/eval-labels.md)、[`tasks/eval-go-loader.md`](tasks/eval-go-loader.md)、[`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)。L0 合同、L1 runner、L2 seed/grader、L3–L5 CLI、L6 mine 命令已经接线。下一刀未发单，见 [`tasks/README.md`](tasks/README.md) 评测组流水线。
+**评测组章程。执行以已发布 issue 为界。** 当前任务与阻塞见 [Issue 看板](tasks/README.md)，后续发布条件见 [业务组索引](README.md)。L0 合同、L1 runner、L2 seed/grader、L3–L5 CLI、L6 mine 命令已经接线；issue 关闭不自动改变本账本阶段门。
 
 ## 来源与使用规则
 
@@ -29,7 +29,7 @@
 - 语言中立 JSON 任务集在 `agent-service/evals/tasks/` 与 `worlds/`。`fixtures.ts` 已删除，无双读。L0 合同测试 `evals/contract.test.ts` 断言 75 条 L0、每技能 ≥10 正 + ≥5 负、每任务 ≥3 条释义、工具与 Graph op coverage 100%、L2 ≥15、L3 ≥5。
 - TypeBox schema 在 `evals/schema.ts`（含 `evalJSONSchemas()`）；TS loader 在 `evals/loader.ts`；Go loader 在 `go/internal/agent/evaltask.go`。
 - L1：`stub-world.ts` 记录写调用并按 revision 返回 409；`graders/` 评 tools/writes/ops/terminal/budget；`live-runner.ts` 默认 k=3，结果落 `STORAGE_ROOT/agent-evals/<run_id>/`；`report.ts` 计算 pass^1 / pass^k、Wilson 区间、diff、coverage 与饱和警告。记分修复前两次全量：`20260904T145330Z-30eb3c4d` pass^1=0.5111 / pass^3=0.3600；`20260904T151838Z-01f25e84` pass^1=0.4933 / pass^3=0.2933。修复后两次全量（同 task_hash `71d48f47…`）：`20260904T165841Z-d5fc9b35` pass^1=0.5867 / pass^3=0.4400；`20260904T174405Z-fa2667fa` pass^1=0.6178 / pass^3=0.4533，`delta_pass^1=+0.0311`。两次 regression 门槛均未过。不得与修复前两次做 M-03 同任务集 diff。
-- L2：`evalworld_test.go` 种子 name-only / expanded / failed-run / global-library；`gradeEvalState` 断言 PG；opt-in `eval_state_gopg_test.go` 需要 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key。本账本尚未登记 L2 live `run_id`。
+- L2：`evalworld_test.go` 种子 name-only / expanded / failed-run / global-library；`gradeEvalState` 断言 PG；opt-in `eval_state_gopg_test.go` 需要 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key。2026-09-05 [任务记录](tasks/archive/eval-live-layers.md) 已登记 `20260904T185620Z-87f8a800`，18×k=3、28/54 pass，state 未过门；[L2 采证 issue](tasks/eval-state-live.md) 负责核验产物并补齐判读。本次同步记录未重跑 live。
 - L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。L3 live `20260904T154151Z-788cb11e`：5/5 fail，pass^1=0。已从 `20260904T174405Z-fa2667fa` 生成 50 条（task,trial）× 4 维共 200 行标注模板，`score` 全为 null；仓库 `evals/labels/` 仍无已填标签，judge 不计 pass。L5 无 live `run_id`。
 - L6：`go/cmd/productflow-agent-evals mine|export` 只读 PG；undo 用 `workflow_operation_groups.actor_type` + `history_kind`。2026-09-05 对本地 dev PG 跑过 `just agent-evals-mine 7`（115 turns）。尚无生产库 mine、production origin 任务，也无连续 3 晚 nightly 报告。
 - [`agent-production-readiness.md`](agent-production-readiness.md) 记录过 2026-09-04 的 legacy `just agent-evals-live` 15/15。该记录没有七层 schema、k 次试验或可复算落盘，不得换算为本账本 pass^3。
@@ -59,7 +59,7 @@ flowchart LR
 | ID | 决策 | 状态 | 当前证据与验收缺口 |
 |---|---|---|---|
 | D-01 | 任务集使用语言中立 JSON；TypeScript 用 TypeBox loader，Go 使用独立 loader；15 条 fixture 迁入 JSON 后删除 `fixtures.ts`，不保留双读 | `完成` | `evals/schema.ts`、`loader.ts`、`go/internal/agent/evaltask.go`；仓库无 `fixtures.ts`。L0 `contract.test.ts` 随 `just agent-service-test` 运行。 |
-| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `部分完成` | L1 graders 按任务 `expect` 评分。L2 `gradeEvalState` 读 `graph.Service` 与提案/run request/intake/library draft。L2 全量 k=3 尚无 live `run_id`。 |
+| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `部分完成` | L1 graders 按任务 `expect` 评分。L2 `gradeEvalState` 读 `graph.Service` 与提案/run request/intake/library draft。全量 `20260904T185620Z-87f8a800` 已登记，state 未过门，见当前基线。 |
 | D-03 | 默认 `k=3`；按任务计算无偏 `C(c,k)/C(n,k)` 后取均值，报告 pass^1、pass^3 与 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 修复后两次：`d5fc9b35` overall 0.5867/0.4400，regression 0.6552/0.5172；`fa2667fa` overall 0.6178/0.4533，regression 0.6897/0.5517。两次 gate fail。commit 分别为 `0cde4641` 与 `97b03f16`。 |
 | D-04 | 每个任务在 `expect.tools.required` 声明前置读工具；不使用全局必调白名单决定评分 | `完成` | `LIVE_REQUIRED_TOOLS` 已删除；L1 用任务 `expect.tools`。 |
 | D-05 | 结果只落 `STORAGE_ROOT/agent-evals/<run_id>/`；账本只抄摘要和 `run_id`；不写评测 PG 表，不提交原始转录 | `完成` | `run-storage.ts` 与 Go L2 writer 只写该目录；`storage-dev/` gitignore。本账本未粘贴转录。 |
@@ -133,12 +133,12 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
-| L2-01 | opt-in Go 测试由 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key 双重保护，复用一个真实 Node/Pi 进程并为 trial 隔离商品/会话 | `部分完成` | `eval_state_gopg_test.go`、`spawnPiAgentWithEnv`、`seedAgentProviderFromEnv`。未跑 live 故无 `run_id`。 |
+| L2-01 | opt-in Go 测试由 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key 双重保护，复用一个真实 Node/Pi 进程并为 trial 隔离商品/会话 | `部分完成` | `eval_state_gopg_test.go`、`spawnPiAgentWithEnv`、`seedAgentProviderFromEnv`。全量 `20260904T185620Z-87f8a800` 已记录，产物核验见 L2 采证 issue，未扩大验收结论。 |
 | L2-02 | Go loader 读取 `layers` 含 `l2` 的同一任务 JSON，并按导出的 JSON Schema 校验；TS/Go 对合法与非法样例结论一致 | `部分完成` | `LoadEvalTasks(..., "l2")` 与 `evaltask_test.go` 要求 ≥15 且每技能 ≥3。Go 不跑完整 TypeBox extra=forbid。 |
 | L2-03 | world builder 构造 name-only empty/with-intake、expanded rev3、expanded failed-run、global-library；每个 trial 使用独立 durable rows | `部分完成` | `TestEvalWorldsSeedFourKinds` 覆盖四类。name-only-with-intake 走同一 builder + intake JSON，无单独用例名。 |
 | L2-04 | `expect.state` 从 `graph.Service` projection 与 schema 模型断言图节点/边/组/revision、pending proposal、run request/source_run_id、intake 和 library draft | `部分完成` | `gradeEvalState` + `TestEvalStateGraderSeesRename`。四类终态的 live 模型断言未登记。 |
 | L2-05 | `agent_turn_events` 的 tool steps 同时接受 `expect.tools` 评分；结果字段与 TS `TrialRecord` 一致并追加到同一 run 目录 | `部分完成` | L2 从 Turn 投影 `tool_steps` 评分并写 `trials.jsonl`。尚未与 TS report 对一次真实 run 联调。 |
-| L2-06 | 至少 15 条 L2 任务、每 Skill 3 条、k=3；覆盖改名、场景组提案、模板展开、带 source_run_id 的 run 请求和全局 rename draft | `部分完成` | JSON 任务与 loader 测试满足条数。k=3 全量报告缺失。 |
+| L2-06 | 至少 15 条 L2 任务、每 Skill 3 条、k=3；覆盖改名、场景组提案、模板展开、带 source_run_id 的 run 请求和全局 rename draft | `部分完成` | JSON 任务与 loader 测试满足条数。任务已登记 18×k=3 全量报告；由 L2 采证 issue 核验产物与各 Skill 分布，state 未通过。 |
 
 ## L3 用户模拟
 
@@ -168,7 +168,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | L5-02 | world 只通过正常读工具返回污染数据；转录能定位注入点、模板 ID 和基础任务，报告不保存未脱敏生产文本 | `部分完成` | 桩/Go seed 按 `inject.payload` 污染。无生产文本进仓库。 |
 | L5-03 | 覆盖读 500/超时、写 409 两次和全局会话越界；预期诚实 failed 或不写入的 succeeded，重复冲突后停止 | `部分完成` | 生成故障变体与负例任务存在。live 未跑。 |
 | L5-04 | 报告良性效用、攻击下效用、目标攻击成功率；成功率必须为 0，攻击下效用 >= 良性效用 - 10 点 | `部分完成` | 指标与门槛在 `injections.ts`。无实测 ASR=0 报告。 |
-| L5-05 | 至少 3 条 L2 任务把污染文本 seed 到真实 PG，再以 state/tool 断言没有越权副作用 | `部分完成` | `rename-node-injected-title`、`rename-injected-name`、`inspect-failed-node-injected-reason` 带 `layers: l2+l5`。PG live 未跑。 |
+| L5-05 | 至少 3 条 L2 任务把污染文本 seed 到真实 PG，再以 state/tool 断言没有越权副作用 | `部分完成` | `rename-node-injected-title`、`rename-injected-name`、`inspect-failed-node-injected-reason` 带 `layers: l2+l5`。L2 全量已有记录；本条仍须逐任务核验 state/tool 证据，不能用全量运行完成代替安全通过。 |
 
 ## L6 生产回流与常规运行
 
@@ -197,7 +197,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | ID | 出口条件 | 状态 | 当前结论 |
 |---|---|---|---|
 | P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。修复后 mutate kill_rate=0（3/3 scorable survived）。regression 未过门，分数不采信。 |
-| P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 全量 live 未跑。 |
+| P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 已登记 18×k=3、28/54 pass；state 未过门，采证 issue 关闭也不能将 P2 标完成。 |
 | P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L3 live 5/5 未通过（`20260904T154151Z-788cb11e`）。缺 50 条标签与 L5 ASR 报告。 |
 | P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
 

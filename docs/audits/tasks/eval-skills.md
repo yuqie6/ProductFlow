@@ -1,29 +1,38 @@
 # 任务：Skill 与既有评测题硬化
 
 状态：开放
+类型：实现
 认领者：—
 认领于：—
 业务组：评测
 父账本：agent-eval-system.md
 完成后可拆：无（regression 仍未过门时由评测组章程再发下一轮 Skill 刀，本组员不私自发单）
 
-读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要去读其它验收账本开工。
+本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。
+
+## 前置与并行
+
+- 前置：无；本任务以当前产品合同和失败转录为修补依据。
+- 冻结输入：两次 live 和 mutate 期间固定 `agent-service/`、`go/prompts/agent/`、任务集与模型配置；不得与共享这些输入的 L2/L5 采证、user-sim、harness 修改同时执行。
+- 运行资源：固定干净 checkout 或由维护者预约完整工作区冻结窗口；run 目录独立，成对复跑结束前不写文档、不改变 HEAD。
 
 ## 做成什么样
 
-既有 L1 任务在真模型下能复现地提高 pass，并且四条 Skill 变异至少能杀死一部分。这是产品 Skill / 任务 `expect` 修补，提交说明写「产品合同 / Skill 缺陷」。这不是 Self-Harness 进化，不要写 overlay lineage。
+既有 L1 任务在真模型下能复现地提高 pass，并且四条 Skill 变异至少能杀死一部分。提交说明写「产品合同 / Skill 缺陷」；Self-Harness 进化与 overlay lineage 不在本任务范围。
 
 当前可复算基线（同 task_hash `71d48f47…`，模型 `gpt-5.6-luna`）：
 
 - `20260904T174405Z-fa2667fa`：pass^1=0.6178，pass^3=0.4533，regression 0.6897/0.5517，门槛未过
 - mutate `mutate-20260904T181102Z-6e344c6a`：kill_rate=0（3 survived / 1 unscorable）
 
-门槛（本任务结束时登记，过不了就如实写，不要改 grader 凑数）：
+业务门槛（完整登记，未达标不得宣称评测阶段通过，不要改 grader 凑数）：
 
 - regression：pass^1 >= 0.95 且 pass^3 >= 0.90
 - 同 commit、同 task_hash、同模型连续两次 k=3，`abs(delta pass^1) <= 0.05`
 - mutate：scorable 变异的 kill_rate > 0
 - L0：`just agent-service-test` 仍过；工具与 12 个 Graph op 覆盖仍 100%
+
+本 issue 的完成条件：修补有明确产品合同依据；L0 与覆盖通过；固定候选提交连续两次有效 k=3 复跑满足上述稳定性要求；至少一个原有系统性失败得到复验改善，且 scorable 变异 kill_rate > 0。regression 绝对门槛单独登记，未达到时由维护者保留父章程未通过并决定是否发布下一轮。缺少这些完成证据时保持认领或阻塞。
 
 ## 只改这些文件
 
@@ -70,7 +79,7 @@ just agent-evals-diff <第一次run_id> <第二次run_id>
 just agent-evals-mutate
 ```
 
-两次 `agent-evals-live` 必须同一 git commit、同一 task_hash、工作树在启动时干净。本任务的 diff 提交之后再跑第二次。
+候选修补通过 L0、自审和维护者审核后提交，issue 仍是认领。两次 `agent-evals-live` 都在该提交之后运行，必须同一 git commit、同一 task_hash，整个复跑窗口工作树干净。两次跑完再登记证据；不得第一次跑后提交代码再拿第二次比较。
 
 抽读：每技能按 `task_id` 字母序各 1 条 pass^3=1 与 1 条 pass^3=0，trial=1。结论写在下面。
 

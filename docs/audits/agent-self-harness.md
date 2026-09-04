@@ -2,7 +2,7 @@
 
 本账本管理 ProductFlow 领域壳的版本化、失败挖掘、同模型提案、评测接受与生产热切。它衡量「壳会不会按声明面进化」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的行为分数，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的可靠性 Gate。lease、journal、SSE、确认协议仍走生产就绪账本。
 
-**壳进化组章程。不要从本文件开工。** 当前开放：P1 [`tasks/harness-artifact.md`](tasks/harness-artifact.md)。P2 及以后等 P1 完成再拆指导。
+**壳进化组章程。执行以已发布 issue 为界。** 当前任务与认领见 [Issue 看板](tasks/README.md)。P2 及以后由维护者按 P1 交付和对应阶段门发布。
 
 Cursor Canvas 与会话纪要不是合同。合同只在本账本；未完成方向由 [`../ROADMAP.md`](../ROADMAP.md) 索引。阶段完成后，已接线事实写回 `docs/ARCHITECTURE.md`（Turn 带 `harness_hash` 等）；商家可见操作（清空 playbook）进 P6 才写 `docs/USER_GUIDE.md` 与 HelpPage。CONTEXT 词汇等代码落地再迁。
 

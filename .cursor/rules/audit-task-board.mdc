@@ -1,15 +1,8 @@
 ---
-description: 验收任务板：一人一任务，先认领再改代码，做完归档后停下
+description: 内部 issue 的发布、认领、阻塞、审核和关闭入口
 alwaysApply: true
 ---
 
-# 验收任务板
+# 内部 Issue
 
-每个 `docs/audits/*.md` 是一个业务组的章程。组员只从看板里已发布的 `开放` 任务接活，一人同一时刻只认领一份：
-
-1. 只挑看板里 `开放` 的任务；独占文件与已 `认领` 的任务相交则不准接。
-2. 在任务文件和 `docs/audits/tasks/README.md` 写下认领者，**先提交认领**，再改代码。
-3. 只读那一份指导。不要从总账本开工，也不要去做「下一刀（未发单）」。
-4. 做完自审 → 提交功能 → `git mv` 到 `tasks/archive/` → 按「完成后可拆」新建下一份 `开放` 任务（不要认领它）→ 提交归档 → **停下等分配**。
-
-协议全文：[`docs/audits/tasks/README.md`](docs/audits/tasks/README.md)。用户随口修的 bug 不走看板。
+发布、认领、遇阻塞、提交审核或关闭业务组任务时，读取 [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md)。状态以任务文件为准，看板同提交同步；主代理确认认领并协调唯一 Git 写者。任务包限定交付范围，执行者仍须读当前代码、测试和适用仓库规则。普通小修和只读调查无需建单。

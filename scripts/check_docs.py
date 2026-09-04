@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,7 @@ def main() -> int:
     _check_spec_status(errors)
     _check_live_aegis_path(errors)
     _check_skill_tool_names(errors)
+    _check_task_board(errors)
     if errors:
         print("Documentation contract check failed:")
         for error in errors:
@@ -108,6 +110,108 @@ def _check_required_paths(errors: list[str]) -> None:
     for path in (*PRIMARY_DOCS, *(ROOT / path for path in CODE_OWNERS)):
         if not path.exists():
             errors.append(f"required path is missing: {path.relative_to(ROOT)}")
+
+
+def _check_task_board(errors: list[str], root: Path = ROOT) -> None:
+    tasks = root / "docs/audits/tasks"
+    board_path = tasks / "README.md"
+    archive_index = tasks / "archive/README.md"
+    groups_path = tasks.parent / "README.md"
+    for path in (board_path, archive_index, groups_path):
+        if not path.is_file():
+            errors.append(f"internal issue index is missing: {path.relative_to(root)}")
+    if not all(path.is_file() for path in (board_path, archive_index, groups_path)):
+        return
+
+    fields = ("业务组", "类型", "状态", "认领者", "认领于")
+    groups = dict(re.findall(
+        r"^\| ([^|]+?) \| \[[^\]]+\]\(([^)]+\.md)\) \|",
+        groups_path.read_text(encoding="utf-8"), re.M,
+    ))
+    board: dict[str, list[str]] = {}
+    for line in board_path.read_text(encoding="utf-8").splitlines():
+        if not re.match(r"^\|\s*\[", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        match = re.fullmatch(r"\[([^\]]+)\]\(([a-z0-9-]+\.md)\)", cells[0])
+        if match is None or len(cells) != 6:
+            errors.append(f"invalid internal issue board row: {line}")
+            continue
+        name = match.group(2)
+        if match.group(1) != name:
+            errors.append(f"issue board label must match ID: {name}")
+        if name in board:
+            errors.append(f"duplicate issue board row: {name}")
+        board[name] = cells[1:]
+
+    active = {p.name: p for p in tasks.glob("*.md") if p.name not in {"README.md", "_template.md"}}
+    archived = {p.name: p for p in (tasks / "archive").glob("*.md") if p.name != "README.md"}
+    for name in sorted(active.keys() ^ board.keys()):
+        errors.append(f"issue board/file mismatch: {name}")
+    for name in sorted(active.keys() & archived.keys()):
+        errors.append(f"issue ID reused after archive: {name}")
+
+    archive_rows = re.findall(
+        r"^\| \[[^\]]+\]\(([a-z0-9-]+\.md)\) \| ([^|]+?) \|",
+        archive_index.read_text(encoding="utf-8"), re.M,
+    )
+    archive_status = dict(archive_rows)
+    if len(archive_rows) != len(archive_status):
+        errors.append("duplicate archived issue index row")
+    for name in sorted(archived.keys() ^ archive_status.keys()):
+        errors.append(f"archive index/file mismatch: {name}")
+
+    owners: dict[str, str] = {}
+    for path in (*active.values(), *archived.values()):
+        content = path.read_text(encoding="utf-8")
+        header = content.split("\n## ", maxsplit=1)[0]
+        metadata: dict[str, str] = {}
+        for key in (*fields, "父账本", "完成后可拆"):
+            values = re.findall(rf"^{key}：([^\n]+)$", header, re.M)
+            if len(values) != 1 or not values[0].strip():
+                errors.append(f"{path.name}: expected one nonempty {key} field")
+            metadata[key] = values[0].strip() if values else ""
+        if metadata["类型"] not in {"实现", "证据"}:
+            errors.append(f"{path.name}: invalid issue type")
+        parent = metadata["父账本"]
+        if groups.get(metadata["业务组"]) != parent or not (tasks.parent / parent).is_file():
+            errors.append(f"{path.name}: business group/parent ledger mismatch")
+        is_archived = path.parent == tasks / "archive"
+        status = metadata["状态"]
+        allowed = {"完成", "取消"} if is_archived else {"开放", "认领", "阻塞", "完成"}
+        if status not in allowed:
+            errors.append(f"{path.name}: invalid status for {'archive' if is_archived else 'active board'}")
+        if is_archived:
+            if archive_status.get(path.name) != status:
+                errors.append(f"{path.name}: archive status is out of sync")
+        elif path.name in board and board[path.name] != [metadata[key] for key in fields]:
+            errors.append(f"{path.name}: board metadata is out of sync")
+
+        owner, claimed_at = metadata["认领者"], metadata["认领于"]
+        if (owner == "—") != (claimed_at == "—"):
+            errors.append(f"{path.name}: claim owner/time must be set or cleared together")
+        if status == "开放" and owner != "—":
+            errors.append(f"{path.name}: open issue cannot retain an owner")
+        if status in {"认领", "完成"} and owner in {"", "—"}:
+            errors.append(f"{path.name}: claimed/completed issue needs an owner")
+        if claimed_at not in {"", "—"}:
+            try:
+                timestamp = datetime.fromisoformat(claimed_at.replace("Z", "+00:00"))
+                if timestamp.utcoffset() is None:
+                    raise ValueError("timezone required")
+            except ValueError:
+                errors.append(f"{path.name}: claim time must be ISO with timezone")
+        if not is_archived and owner not in {"", "—"}:
+            if owner in owners:
+                errors.append(f"{owner} occupies multiple issues: {owners[owner]}, {path.name}")
+            owners[owner] = path.name
+        if status == "阻塞":
+            section = re.search(r"^## 阻塞与交接\n(.*?)(?=^## |\Z)", content, re.M | re.S)
+            if section is None or any(
+                not re.search(rf"^- {key}：\S.*$", section.group(1), re.M)
+                for key in ("原因", "解除条件", "跟进者", "交接")
+            ):
+                errors.append(f"{path.name}: blocked issue needs reason, release condition, contact and handoff")
 
 
 def _check_routes(errors: list[str]) -> None:

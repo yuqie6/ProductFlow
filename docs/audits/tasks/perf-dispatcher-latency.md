@@ -1,13 +1,20 @@
 # 任务：dispatcher PENDING→SENT 负载时延
 
 状态：开放
+类型：证据
 认领者：—
 认领于：—
 业务组：性能
 父账本：performance-governance.md
 完成后可拆：无
 
-读完本文件就可以改测试/测量。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要改业务投递语义。
+本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、调用链、测试和 diff。业务投递语义保持不变。
+
+## 前置与并行
+
+- 前置：可隔离的 PostgreSQL/Redis 与 dispatcher 测试进程。
+- 冻结输入：测量期间固定 queue/dispatcher 代码、cadence 和负载参数。
+- 运行资源：使用隔离 DB/Redis namespace，或独占共享服务的测量窗口；不得与同库 live、画布 worker 暂停、其他压测混跑。记录环境和其他负载。
 
 ## 做成什么样
 
@@ -44,6 +51,8 @@
 ```bash
 go test -C go ./internal/platform/queue -count=1 -p 1
 ```
+
+完成条件：测试代码通过确定性回归；单/双 dispatcher 的有效负载报告齐全，写明 N、测量起止点、分位数和样本基线。p95 未达建议目标仍可关闭本次测量 issue，父章程保留性能缺口，由维护者决定后续因果修复。
 
 ## 证据
 

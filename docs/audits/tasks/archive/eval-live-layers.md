@@ -1,14 +1,17 @@
 # 任务：跑 L2 / L5 / 生产 mine
 
-状态：开放
+状态：取消
+类型：证据
 认领者：—
 认领于：—
 业务组：评测
 父账本：agent-eval-system.md
-完成后可拆：生产 mine 已有 Turn 时发 eval-production-tasks.md（只新增 production origin 任务文件）；L2 与 L5 都已有 run_id 时发 eval-nightly.md（连续三晚 nightly，不改代码）
+完成后可拆：无（已由三个独立 issue 替代）
 进展：L2 全量 18×k=3 已落盘未过门；L5 未跑；mine 只有本地 dev
 
-读完本文件就可以跑。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。本任务不改生产代码。证据写在本文件。
+关闭原因：2026-09-05 按独立验收与外部依赖拆分为 [L2 state](../eval-state-live.md)、[L5 adversarial](../eval-adversarial-live.md)、[生产 mine](../eval-production-mine.md)。旧任务未完成，不作为能力通过证据。审核：主代理自审拆分合同与历史记录保留；本次未重跑 live。以下正文和运行记录保留为拆分前历史。
+
+历史认领协议入口：[Issue 协议](../README.md)。本归档文件不再授权执行。
 
 ## 做成什么样
 
