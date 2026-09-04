@@ -18,6 +18,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [harness-container-validation.md](harness-container-validation.md) | Agent 能力 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 阻塞 | — | — |
 | [eval-contract-alignment.md](eval-contract-alignment.md) | 评测 | 实现 | 开放 | — | — |
