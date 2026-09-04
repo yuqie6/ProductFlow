@@ -76,6 +76,31 @@ func TestRecoverExpiredExecutionsRejectsStaleFencingWriter(t *testing.T) {
 	}
 }
 
+func TestRecoverUnfinishedTurnsPreservesExpiredHasMore(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
+		t.Fatal(err)
+	}
+	turns := []claimedJournalTurn{
+		createClaimedJournalTurn(t, as),
+		createClaimedJournalTurn(t, as),
+	}
+	for _, claimed := range turns {
+		expireClaimedTurn(t, as, claimed)
+	}
+
+	summary, err := recoverUnfinishedTurns(context.Background(), as.svc, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UnknownExecutions != 1 {
+		t.Fatalf("unknown executions %d want 1", summary.UnknownExecutions)
+	}
+	if !summary.HasMore {
+		t.Fatalf("has_more=false after expired recovery filled its batch: %+v", summary)
+	}
+}
+
 func TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {

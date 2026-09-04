@@ -78,7 +78,7 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 		return out, err
 	}
 	out.RecoveredTaskTurns = recovered
-	out.HasMore = hasMore
+	out.HasMore = out.HasMore || hasMore
 
 	var ids []string
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
