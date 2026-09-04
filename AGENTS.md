@@ -4,7 +4,7 @@
 
 Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/PRD.md` / `docs/ARCHITECTURE.md` / `docs/USER_GUIDE.md` for current product and runtime shape, and `docs/ROADMAP.md` for unfinished directions. Do not treat `docs/adr/` as current design, and do not write new ADRs. When documentation conflicts with code or tests, verify the live behavior and correct the living documentation.
 
-Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. Planned parallel slices use the audit task board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md). For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
+Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. Planned parallel slices use the audit task board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md); each `docs/audits/*.md` ledger is a business-group charter. For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
 Keep modifications at the real causal boundary. Reuse existing models, enums, exceptions, query helpers, fixtures, and UI components. Add guards or abstractions only for a demonstrated failure mode or invariant. Never revive retired V1 runtime behavior as a fallback. Do not add compatibility shims, dual serializers, or old-data migration commands; delete leftover paths.
 
@@ -99,4 +99,4 @@ Domain documentation uses a single-context layout: root `CONTEXT.md`. `docs/adr/
 
 ### Audit task board
 
-Agent-facing issue board for parallel audit work: [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md).
+Each `docs/audits/*.md` ledger is a business-group charter. Agents claim issues on [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md).

@@ -3,8 +3,9 @@
 状态：开放
 认领者：—
 认领于：—
+业务组：评测
 父账本：agent-eval-system.md
-完成后可拆：无
+完成后可拆：eval-sim-live.md（L3 全量 live，只登记 run_id，不改代码）
 
 读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要去读其它验收账本开工。
 

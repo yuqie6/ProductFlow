@@ -2,7 +2,7 @@
 
 尚未成为产品事实、或尚未被真实验证的方向。当前能力见 [`PRD.md`](PRD.md)，结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，操作见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
-跨层验收未完成工作在 [`audits/tasks/README.md`](audits/tasks/README.md) 看板：先认领再开工，一人一份。总账本只留合同与证据。
+跨层验收按业务组运转：章程在 [`audits/README.md`](audits/README.md)，issue 看板在 [`audits/tasks/README.md`](audits/tasks/README.md)。先认领再开工，一人一份。总账本只留合同与证据。没有验收章程的产品项不走该板。
 
 ## 近期
 
@@ -44,7 +44,7 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agen
 
 ### 画布文稿权威测试
 
-C0–C3、C5、C6 已落地。剩余：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
+C0–C3、C5、C6 已落地。C4 空闲检查器改写/候选已进 `just web-e2e-canvas-document`。剩余运行中打字：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
 
 ### 图片生产质量
 

@@ -2,7 +2,7 @@
 
 本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。任务集、grader、pass^k 与分数是否采信仍只由本账本裁定。
 
-**不要从本文件开工。** 未完成工作各有一份指导：[`tasks/eval-skills.md`](tasks/eval-skills.md)、[`tasks/eval-user-sim.md`](tasks/eval-user-sim.md)、[`tasks/eval-labels.md`](tasks/eval-labels.md)、[`tasks/eval-go-loader.md`](tasks/eval-go-loader.md)、[`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)。L0 合同、L1 runner、L2 seed/grader、L3–L5 CLI、L6 mine 命令已经接线。
+**评测组章程。不要从本文件开工。** 当前开放：[`tasks/eval-skills.md`](tasks/eval-skills.md)、[`tasks/eval-user-sim.md`](tasks/eval-user-sim.md)、[`tasks/eval-labels.md`](tasks/eval-labels.md)、[`tasks/eval-go-loader.md`](tasks/eval-go-loader.md)、[`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)。L0 合同、L1 runner、L2 seed/grader、L3–L5 CLI、L6 mine 命令已经接线。下一刀未发单，见 [`tasks/README.md`](tasks/README.md) 评测组流水线。
 
 ## 来源与使用规则
 

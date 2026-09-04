@@ -2,7 +2,7 @@
 
 Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
 
-Remaining audit work is the board at [`audits/tasks/README.md`](audits/tasks/README.md): claim one open task before coding. The ledgers keep contracts and evidence.
+Cross-layer audits run as business groups: charters in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Ledgers keep contracts and evidence. Product items without an audit charter stay off that board.
 
 ## Near term
 
@@ -40,7 +40,7 @@ Start here: [`audits/tasks/harness-artifact.md`](audits/tasks/harness-artifact.m
 
 ### Canvas document-authority tests
 
-C0–C3, C5, and C6 are landed. Remaining: [`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md).
+C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just web-e2e-canvas-document`. Remaining mid-run typing: [`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md).
 
 ### Runtime performance governance
 

@@ -3,8 +3,9 @@
 状态：开放
 认领者：—
 认领于：—
+业务组：壳进化
 父账本：agent-self-harness.md
-完成后可拆：harness-attribution.md（P2 归因；合同从父账本 P2 抄齐）
+完成后可拆：harness-attribution.md（P2 归因；合同从父账本 P2 抄齐）。P2b–P7 不要在本任务归档时一起发
 
 读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要去读 Self-Harness 总账本开工。本阶段做完之前不要开 P2–P7。
 

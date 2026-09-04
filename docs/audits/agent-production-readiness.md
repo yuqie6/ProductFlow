@@ -1,6 +1,6 @@
 # Agent 单商家生产就绪验收账本
 
-**实现切片已关闭。** S1–S6 与 G-01–G-05、G-07 已完成。剩余 G-06 的 L1–L6 行为门槛走 [`tasks/eval-skills.md`](tasks/eval-skills.md) 与 [`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)，本账本只引用其 `run_id`。
+**生产可靠性组值班。实现切片已关闭。** S1–S6 与 G-01–G-05、G-07 已完成。本组不再发实现刀。剩余 G-06 的 L1–L6 行为门槛走评测组 [`tasks/eval-skills.md`](tasks/eval-skills.md) 与 [`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)，本账本只引用其 `run_id`。
 
 本账本是 ProductFlow Agent 生产可靠性工作的唯一验收指标。实现、测试、ADR、ROADMAP 或会话摘要与本账本冲突时，不得通过缩小本账本范围来宣告完成；应修正实现，或把经过用户确认的新决策写入本账本的“决策变更”后再执行。
 

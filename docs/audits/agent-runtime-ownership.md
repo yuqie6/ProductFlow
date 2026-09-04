@@ -1,6 +1,6 @@
 # Agent 运行时所有权重构账本
 
-**账本状态：已关闭。** S0–S6 与 R-01–R-08 均已完成。不要再开所有权迁移刀。证据留在本文件；稳定边界在 `CONTEXT.md` 与 `docs/ARCHITECTURE.md`。
+**运行时所有权组已关闭。** S0–S6 与 R-01–R-08 均已完成。不要再开所有权迁移刀，也不再发单。证据留在本文件；稳定边界在 `CONTEXT.md` 与 `docs/ARCHITECTURE.md`。
 
 本账本管理 Agent 运行时职责的归属和迁移顺序。它不替代、不缩小 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性合同。
 

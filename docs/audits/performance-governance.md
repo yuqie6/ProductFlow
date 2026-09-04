@@ -4,7 +4,7 @@
 
 本文不是用户功能说明，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 或 [`agent-runtime-ownership.md`](agent-runtime-ownership.md)。当前代码、测试和真实运行仍是最终证据；账本中的目标、预算和未验证项必须标明状态。
 
-**不要从本文件开工。** 未完成工作：[`tasks/perf-imagesession-detail.md`](tasks/perf-imagesession-detail.md)、[`tasks/perf-dispatcher-latency.md`](tasks/perf-dispatcher-latency.md)、[`tasks/perf-capacity-metrics.md`](tasks/perf-capacity-metrics.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。
+**性能组章程。不要从本文件开工。** 当前开放：[`tasks/perf-imagesession-detail.md`](tasks/perf-imagesession-detail.md)、[`tasks/perf-dispatcher-latency.md`](tasks/perf-dispatcher-latency.md)、[`tasks/perf-capacity-metrics.md`](tasks/perf-capacity-metrics.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。PERF-12 等这三份归档后再发。
 
 ## 使用规则
 

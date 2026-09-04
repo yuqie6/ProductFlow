@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 保存跨层验收账本。并行开发看板是 [`audits/tasks/README.md`](audits/tasks/README.md)：先认领再开工，一人一份；总账本只留合同与历史证据。生产可靠性合同见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)（实现切片已关闭）。
+[`audits/`](audits/) 里每个总账本是一个业务组章程。并行 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)：先认领再开工，一人一份。生产可靠性组值班，见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。
 
 ## 历史叙事
 
@@ -53,7 +53,7 @@
 
 ## 协作元数据
 
-[`agents/`](agents/) 只管 GitHub issue tracker、triage、domain 阅读约定。仓库内 agent 并行开发看板是 [`audits/tasks/README.md`](audits/tasks/README.md)。
+[`agents/`](agents/) 只管 GitHub issue tracker、triage、domain 阅读约定。仓库内业务组 issue 看板是 [`audits/tasks/README.md`](audits/tasks/README.md)。
 
 ## 写作规则
 

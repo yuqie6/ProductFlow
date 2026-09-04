@@ -3,8 +3,9 @@
 状态：开放
 认领者：—
 认领于：—
+业务组：评测
 父账本：agent-eval-system.md
-完成后可拆：生产 mine 已有 Turn 时可拆 eval-production-tasks.md（只新增 production origin 任务文件）
+完成后可拆：生产 mine 已有 Turn 时发 eval-production-tasks.md（只新增 production origin 任务文件）；L2 与 L5 都已有 run_id 时发 eval-nightly.md（连续三晚 nightly，不改代码）
 进展：L2 已跑并中止；L5 未跑；mine 只有本地 dev
 
 读完本文件就可以跑。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。本任务不改生产代码。证据写在本文件。

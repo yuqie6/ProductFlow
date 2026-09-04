@@ -3,8 +3,9 @@
 状态：开放
 认领者：—
 认领于：—
+业务组：性能
 父账本：performance-governance.md
-完成后可拆：无
+完成后可拆：无（PERF-12 Agent Session 目标规模由性能组章程在当前三份都归档后再发）
 
 读完本文件就可以改代码。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。
 
