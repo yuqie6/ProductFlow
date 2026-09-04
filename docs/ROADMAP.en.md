@@ -37,6 +37,10 @@ Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
 
 The JSON task set, graders, live runner, and artifacts live in `agent-service/evals/`. Go L2 worlds and state assertions live in `go/internal/agent/eval*_test.go`; production mining is `go/cmd/productflow-agent-evals`. Held-in / held-out assignment is [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Full k=3 live matrices, L2/L5 nightly, and kappa calibration remain opt-in and are not product fact until the ledger records `run_id`, model, task-set hash, and k.
 
+### Canvas document-authority tests
+
+The layered contract, bounded action search, mid-run injection, mock-provider browser document actions, and Agent interleaving ledger is [`audits/canvas-test-system.md`](audits/canvas-test-system.md). C0–C3 and C6 run with `just go-test`; deeper search is `just go-test-canvas-search`. C4 is the opt-in Chromium gate `just web-e2e-canvas-document` and needs a running `just dev` stack with mock prompt/image bindings. C5 remains `just web-e2e-live-graph` and does not cover rewrite or candidate review.
+
 ### Runtime performance governance
 
 The cross-cutting baseline, lock order, optimization sequence, and acceptance gates for Graph, Agent, async delivery, continuous image generation, SSE, database queries, and capacity admission live in [`audits/performance-governance.md`](audits/performance-governance.md). The current worktree includes lock-order, bounded recovery batches, dispatcher cadence, SSE fanout, recovery backlog/duration/lock-wait metrics, ImageSession cursor pagination, and split GraphRun list/detail projections; remaining N+1 paths, target-scale query plans, finer capacity-admission metrics, and SaaS admission still need focused validation or a new baseline design.

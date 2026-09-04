@@ -86,6 +86,40 @@ export async function assertRealImageProviders(request: APIRequestContext, setti
   }
 }
 
+export const CANVAS_DOCUMENT_SWITCH = "PRODUCTFLOW_RUN_CANVAS_DOCUMENT";
+
+export function assertCanvasDocumentEnabled(): void {
+  if (process.env[CANVAS_DOCUMENT_SWITCH] !== "1") {
+    throw new Error(
+      `set ${CANVAS_DOCUMENT_SWITCH}=1, start just dev, bind mock prompt/image providers, then run just web-e2e-canvas-document`,
+    );
+  }
+}
+
+export async function assertMockImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
+  const unlock = await request.post("/api/settings/unlock", {
+    data: { token: settingsToken },
+  });
+  if (!unlock.ok()) {
+    throw new Error(`settings unlock failed: ${unlock.status()} ${await unlock.text()}`);
+  }
+  const response = await request.get("/api/settings/provider-config");
+  if (!response.ok()) {
+    throw new Error(`provider-config failed: ${response.status()} ${await response.text()}`);
+  }
+  const payload = (await response.json()) as {
+    bindings: Array<{ purpose: string; provider_kind: string }>;
+  };
+  const prompt = payload.bindings.find((binding) => binding.purpose === "prompt");
+  const image = payload.bindings.find((binding) => binding.purpose === "image");
+  if (!prompt || prompt.provider_kind !== "mock") {
+    throw new Error("prompt purpose must be bound to mock for the canvas document gate");
+  }
+  if (!image || image.provider_kind !== "mock") {
+    throw new Error("image purpose must be bound to mock for the canvas document gate");
+  }
+}
+
 export async function waitForGraphRunSucceeded(
   request: APIRequestContext,
   productId: string,

@@ -47,6 +47,10 @@ Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正�
 
 跨 Graph、Agent、异步投递、连续生图、SSE、数据库查询和容量 admission 的当前基线、锁序、优化顺序与验收 Gate 维护在 [`audits/performance-governance.md`](audits/performance-governance.md)。当前工作树已收口部分锁序、各域 recovery 批次、dispatcher cadence、SSE fanout、recovery backlog/耗时/锁等待观测、ImageSession 游标分页、GraphRun 列表摘要与详情分离；剩余 N+1、目标规模 query plan、capacity admission 细指标和 SaaS admission 仍待专项验证或新基线设计。
 
+### 画布文稿权威测试
+
+分层合同、有界动作搜索、运行中插入写、mock 浏览器文稿动作与 Agent 交错的验收账本见 [`audits/canvas-test-system.md`](audits/canvas-test-system.md)。C0–C3 与 C6 随 `just go-test`；加深搜索 `just go-test-canvas-search`。C4 是 opt-in Chromium 门：`just web-e2e-canvas-document`，需要已起的 `just dev` 与 mock prompt/image 绑定。C5 仍是 `just web-e2e-live-graph`，不覆盖 rewrite/候选。
+
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。

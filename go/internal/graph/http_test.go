@@ -150,6 +150,13 @@ func (gs *graphServer) reclaimRun(t *testing.T, runID string) {
 
 func (gs *graphServer) executeLocally(t *testing.T, runID string, exec graph.Executor) {
 	t.Helper()
+	if err := gs.tryExecuteLocally(t, runID, exec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (gs *graphServer) tryExecuteLocally(t *testing.T, runID string, exec graph.Executor) error {
+	t.Helper()
 	if exec.Products == nil {
 		exec.Products = product.GraphGuard{}
 	}
@@ -157,15 +164,15 @@ func (gs *graphServer) executeLocally(t *testing.T, runID string, exec graph.Exe
 		gs.reclaimRun(t, runID)
 		err := exec.ExecuteRun(context.Background(), runID)
 		if err == nil {
-			return
+			return nil
 		}
 		if errors.Is(err, queue.ErrBusy) || errors.Is(err, queue.ErrLater) {
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		t.Fatal(err)
+		return err
 	}
-	t.Fatal("could not execute graph run locally")
+	return errors.New("could not execute graph run locally")
 }
 
 func (gs *graphServer) do(t *testing.T, method, path string, body io.Reader, contentType string) *http.Response {
@@ -218,6 +225,16 @@ func (gs *graphServer) mustStatus(t *testing.T, resp *http.Response, want int) {
 		resp.Body.Close()
 		t.Fatalf("status %d want %d %s", resp.StatusCode, want, raw)
 	}
+}
+
+func (gs *graphServer) graphService() graph.Service {
+	return graph.Service{DB: gs.db, Pool: gs.pool, Products: product.GraphGuard{}}
+}
+
+func (gs *graphServer) readStatus(resp *http.Response) int {
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
 }
 
 func (gs *graphServer) createProduct(t *testing.T, name string) string {

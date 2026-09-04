@@ -207,7 +207,7 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 ## 12. 质量门
 
 - Backend：Go `go test ./...`、`productflow-migrate`，以及 opt-in PostgreSQL/Redis live tests。
-- Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。
+- Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。画布文稿权威的有界动作搜索随 `just go-test`（`go/internal/graph/authority_search_test.go`）；加深搜索 `just go-test-canvas-search`。mock 供应商下的 Inspector 改写/候选浏览器门是 opt-in：`just web-e2e-canvas-document`。验收口径见 [`audits/canvas-test-system.md`](audits/canvas-test-system.md)。
 - Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`。`agent-service/evals/` 保存 JSON 任务集、评分器、L1/L3/L5 runner 与报告。`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`，默认 k=3）对 L1 任务跑真实模型并落盘 `STORAGE_ROOT/agent-evals/`。`just agent-evals-state` 是 opt-in L2（Go httptest + PostgreSQL + 真实 Pi）。`just agent-evals-sim`、`just agent-evals-adversarial`、`just agent-evals-judge`、`just agent-evals-nightly` 是对应层的 opt-in 入口。生产回流：`just agent-evals-mine` / `go run ./cmd/productflow-agent-evals`。验收口径见 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 

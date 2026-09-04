@@ -6,6 +6,7 @@
 - [`agent-eval-system.md`](agent-eval-system.md)：Agent L0-L6 评测体系、任务合同、统计口径与生产样本回流的逐项验收账本；它提供 G-06 的行为质量证据，不替代生产就绪指标。
 - [`agent-runtime-ownership.md`](agent-runtime-ownership.md)：Agent 运行时职责归属与分刀重构账本；它不改变或缩小生产就绪账本的可靠性范围。
 - [`performance-governance.md`](performance-governance.md)：Graph、Agent、异步投递、连续生图、SSE、查询和容量 admission 的性能治理账本。
+- [`canvas-test-system.md`](canvas-test-system.md)：schema-v3 画布文稿权威测试体系（cook / 候选 / 有界搜索 / 运行中插入写 / mock 浏览器 / Agent 交错）；不替代 Agent 评测或生产就绪账本。
 
 相关历史叙事（不是验收指标）：[`../history/agent-runtime-timeline.md`](../history/agent-runtime-timeline.md)。
 

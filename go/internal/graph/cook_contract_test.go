@@ -359,10 +359,32 @@ func TestTwoImageNodeRunsDoNotCallPromptProvider(t *testing.T) {
 	}
 }
 
+func TestForceRewritePromptDoesNotChangeLiveUntilApply(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	prompts := &countingPrompt{varyPrompt: true}
+	images := &countingImage{}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
+	view := loadProjection(t, gs, productID, graphID)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
+	before := cloneConfig(t, promptNode.Config)
+	executeGraphRun(t, gs, productID, graphID, map[string]any{
+		"scope": "node", "node_id": promptNode.ID, "force": true, "document_action": "rewrite",
+	}, prompts, images)
+	after := loadProjection(t, gs, productID, graphID)
+	rewritten := nodeOfType(t, after, graph.NodeImagePrompt)
+	if rewritten.PendingCandidateArtifactID == nil {
+		t.Fatal("rewrite must stage a document candidate")
+	}
+	if pythonish(rewritten.Config["prompt"]) != pythonish(before["prompt"]) {
+		t.Fatalf("live prompt changed before apply: %+v vs %+v", rewritten.Config["prompt"], before["prompt"])
+	}
+}
+
 func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
-	prompt := &midRunBriefEditor{gs: gs, t: t, graphID: graphID}
+	prompt := &midRunBriefEditor{gs: gs, t: t, productID: productID, graphID: graphID}
 	images := &countingImage{}
 	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
 	gs.mustStatus(t, resp, 201)
@@ -411,26 +433,20 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 
 type midRunBriefEditor struct {
 	countingPrompt
-	gs      *graphServer
-	t       *testing.T
-	graphID string
-	edited  bool
+	gs        *graphServer
+	t         *testing.T
+	productID string
+	graphID   string
+	edited    bool
 }
 
 func (p *midRunBriefEditor) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	_, err := p.gs.pool.Exec(context.Background(), `
-		UPDATE workflow_graph_nodes
-		SET config_json = (jsonb_set(config_json::jsonb, '{goal}', to_jsonb('用户中途改过'::text)))::json,
-		    document_origin = 'authored'
-		WHERE graph_id = $1 AND node_type = 'creative_brief'`, p.graphID)
-	if err != nil {
-		p.t.Fatal(err)
-	}
-	_, err = p.gs.pool.Exec(context.Background(), `
-		UPDATE workflow_graphs SET revision = revision + 1, updated_at = NOW() WHERE id = $1`, p.graphID)
-	if err != nil {
-		p.t.Fatal(err)
-	}
+	view := loadProjection(p.t, p.gs, p.productID, p.graphID)
+	brief := nodeOfType(p.t, view, graph.NodeCreativeBrief)
+	cfg := cloneConfig(p.t, brief.Config)
+	delete(cfg, "document_origin")
+	cfg["goal"] = "用户中途改过"
+	patchNodeConfig(p.t, p.gs, p.productID, p.graphID, brief.ID, "中途改 brief", view.Revision, cfg)
 	p.edited = true
 	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
 }
