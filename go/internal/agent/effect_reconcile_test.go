@@ -155,9 +155,7 @@ func TestLiveManualAndScannerEffectReconciliationShareInterpreter(t *testing.T) 
 
 func TestExpiredExecutionRecoveryUsesBoundedSkipLockedBatch(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	first := createClaimedJournalTurn(t, as)
 	second := createClaimedJournalTurn(t, as)
 	expireClaimedTurn(t, as, first)

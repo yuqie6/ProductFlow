@@ -214,10 +214,7 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 		t.Fatal("missing harness turn ID")
 	}
 	parkedAgent := waitAgentTurnStatus(t, first.baseURL, convID, *submitted.Turn.HarnessTurnID, "requires_input", 45*time.Second, first)
-	parked := syncTurnFromAgent(t, as, convID, submitted.Turn.ID)
-	if parked.Status != "requires_input" {
-		t.Fatalf("Go projection after Agent park: %s logs=%s", parked.Status, first.logs())
-	}
+	parked := waitGoTurnStatus(t, as, convID, submitted.Turn.ID, "requires_input", 10*time.Second)
 	if len(parked.Question) == 0 {
 		t.Fatalf("parked turn missing question: %+v agent=%+v", parked, parkedAgent)
 	}
@@ -333,6 +330,10 @@ func (p piAgentProc) logs() string {
 }
 
 func spawnPiAgent(t *testing.T, dataRoot, productFlowURL, providerURL, token string) piAgentProc {
+	return spawnPiAgentWithEnv(t, dataRoot, productFlowURL, providerURL, token, nil)
+}
+
+func spawnPiAgentWithEnv(t *testing.T, dataRoot, productFlowURL, providerURL, token string, extra map[string]string) piAgentProc {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -344,14 +345,11 @@ func spawnPiAgent(t *testing.T, dataRoot, productFlowURL, providerURL, token str
 	buf := &syncBuffer{}
 	cmd := exec.Command("node", "--import", "tsx/esm", "src/main.ts")
 	cmd.Dir = agentServiceDir(t)
-	cmd.Env = mergeEnv(os.Environ(), map[string]string{
+	env := map[string]string{
 		"AGENT_LISTEN_ADDRESS":           addr,
 		"AGENT_DATA_ROOT":                dataRoot,
 		"PRODUCTFLOW_INTERNAL_BASE_URL":  productFlowURL,
 		"AGENT_SERVICE_INTERNAL_TOKEN":   token,
-		"AGENT_PROVIDER_API_KEY":         "fake-provider-key",
-		"AGENT_PROVIDER_BASE_URL":        providerURL,
-		"AGENT_PROVIDER_MODEL":           "fake-model",
 		"PRODUCTFLOW_REQUEST_TIMEOUT":    "30s",
 		"AGENT_PROVIDER_REQUEST_TIMEOUT": "15s",
 		"AGENT_QUESTION_TIMEOUT":         "900s",
@@ -359,7 +357,21 @@ func spawnPiAgent(t *testing.T, dataRoot, productFlowURL, providerURL, token str
 		"AGENT_MODEL_CONTEXT_WINDOW":     "128000",
 		"AGENT_AUTO_COMPACT_TOKEN_LIMIT": "96000",
 		"AGENT_MAX_ITERATIONS":           "4",
-	})
+	}
+	if providerURL != "" {
+		env["AGENT_PROVIDER_API_KEY"] = "fake-provider-key"
+		env["AGENT_PROVIDER_BASE_URL"] = providerURL
+		env["AGENT_PROVIDER_MODEL"] = "fake-model"
+	}
+	for key, value := range extra {
+		if strings.TrimSpace(value) != "" {
+			env[key] = value
+		}
+	}
+	if env["AGENT_PROVIDER_API_KEY"] == "" {
+		env["AGENT_PROVIDER_API_KEY"] = "fake-provider-key"
+	}
+	cmd.Env = mergeEnv(os.Environ(), env)
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	if err := cmd.Start(); err != nil {
@@ -483,6 +495,21 @@ func syncTurnFromAgent(t *testing.T, as *agentServer, convID, turnID string) Tur
 	return out
 }
 
+func waitGoTurnStatus(t *testing.T, as *agentServer, convID, turnID, want string, timeout time.Duration) TurnResponse {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last TurnResponse
+	for time.Now().Before(deadline) {
+		last = syncTurnFromAgent(t, as, convID, turnID)
+		if last.Status == want {
+			return last
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("Go turn %s status=%s want=%s", turnID, last.Status, want)
+	return last
+}
+
 func waitDurableTurnTerminal(t *testing.T, as *agentServer, projectionID string, timeout time.Duration, agent piAgentProc) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -509,6 +536,53 @@ func waitDurableTurnTerminal(t *testing.T, as *agentServer, projectionID string,
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("durable terminal not committed: status=%s phase=%s turn_ends=%d\n%s", status, phase, turnEnds, agent.logs())
+}
+
+func seedAgentProviderFromEnv(t *testing.T, as *agentServer) {
+	t.Helper()
+	apiKey := strings.TrimSpace(os.Getenv("AGENT_PROVIDER_API_KEY"))
+	if apiKey == "" {
+		t.Fatal("AGENT_PROVIDER_API_KEY is required for L2 agent evals")
+	}
+	model := strings.TrimSpace(os.Getenv("AGENT_PROVIDER_MODEL"))
+	if model == "" {
+		model = "gpt-4.1"
+	}
+	baseURL := strings.TrimSpace(os.Getenv("AGENT_PROVIDER_BASE_URL"))
+	profileID := clockid.New()
+	bindingID := clockid.New()
+	var base any
+	if baseURL != "" {
+		base = baseURL
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO provider_profiles (
+			id, name, provider_type, api_key, base_url, capabilities_json, default_models_json, config_json,
+			enabled, created_at, updated_at
+		) VALUES (
+			$1, 'Agent eval live provider', 'openai_compatible', $2, $3,
+			'["text_responses"]'::json, $4::json, '{}'::json,
+			TRUE, NOW(), NOW()
+		)
+	`, profileID, apiKey, base, fmt.Sprintf(`{"agent_model":%q}`, model)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(context.Background(), `DELETE FROM provider_bindings WHERE purpose = 'agent'`); err != nil {
+		t.Fatal(err)
+	}
+	configJSON := "{}"
+	if effort := strings.TrimSpace(os.Getenv("AGENT_PROVIDER_REASONING_EFFORT")); effort != "" {
+		configJSON = fmt.Sprintf(`{"reasoning_effort":%q}`, effort)
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO provider_bindings (
+			id, purpose, provider_kind, provider_profile_id, model_settings_json, config_json, created_at, updated_at
+		) VALUES (
+			$1, 'agent', 'openai', $2, $3::json, $4::json, NOW(), NOW()
+		)
+	`, bindingID, profileID, fmt.Sprintf(`{"model":%q}`, model), configJSON); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func seedFakeAgentProvider(t *testing.T, as *agentServer) {

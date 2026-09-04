@@ -45,7 +45,7 @@
 | G-04 | S4 保持断线、gap、重复帧、generation、overflow、terminal、approval 浏览器合同。 |
 | G-05 | S1 若改 batch/WAL，重跑 journal 容量门。 |
 | G-06 | 本重构不扩大真实 provider 能力；已完成的 Luna/WorkflowRun/图片链不得退化。 |
-| G-07 | 每刀记录局部门；S6 跑全量门。2026-09-04 账本更新前的 clean HEAD 已通过无缓存全量门；随后仅有三份审计文档未提交。生产就绪仍由生产账本独立决定。 |
+| G-07 | 每刀记录局部门；S6 跑全量门。实现基线 `fb658633` 已于 2026-09-04 在 clean checkout 通过无缓存全量门；该记录不表示之后的 checkout 自动通过。生产就绪仍由生产账本独立决定。 |
 
 重构切片标为 `完成` 的前提是相关条目保持 `完成` 或 `部分完成`，且本刀 Gate 有 2026-09-01 或之后的新证据。若生产就绪账本出现 `违背`，相关重构切片不得标为完成。
 
@@ -55,7 +55,7 @@
 |---|---|---|---|---|
 | D-R01 | PostgreSQL `agent_turn_events` 是浏览器与列表的 journal 权威；本地文件不得成为第二事实源。 | 完成 | Go `go/internal/agent/journal.go`、`sse.go`；ADR 0017 | 2026-09-01：生产就绪 C-07/C-08 已完成；S1 已由 TurnRuntime 和 journal publisher 收口 Node 的 lease-aware 写路径。 |
 | D-R02 | 本地磁盘只做有界 WAL 与 Pi session；ACK 失败原序重试或诚实终止，不跳 seq；保留批量提交，不退回每 token await PG。 | 完成 | `agent-service/src/store.ts`、`turn-runtime.ts`、`journal-publisher.ts` | 2026-09-01：S1 删除 Store publisher；TurnRuntime 显式读取未入 batch 的 WAL 连续前缀，receipt 匹配后推进 ACK。阈值保持 20ms/64/768KiB；Agent 166 passed，10k WAL P95=0.98ms，PG batch P95=221.27ms。 |
-| D-R03 | 丢失的 in-flight 执行只由 Go lease 过期扫描写终态；Node 重启只 confirm 可证明前缀。 | 完成 | `go/internal/agent/recovery.go`；`agent-service/src/turn-runtime.ts` | 2026-09-01：Node handoff 只 confirm/drain WAL 或采用 PG terminal，不再生成 recovery approval/unknown `turn/end`；drain 后保留 in-flight lease 给 Go scanner。Go 显式跳过 `requires_input`/`awaiting_confirmation`。Agent 166 passed；Go agent 通过；G-03 四点 SIGKILL 通过。 |
+| D-R03 | 丢失的 in-flight 执行只由 Go lease 过期扫描写终态；Node 重启只 confirm 可证明前缀。 | 完成 | `go/internal/agent/recovery.go`；`agent-service/src/turn-runtime.ts` | 2026-09-01：带 durable execution identity 的 Node handoff 只 confirm/drain WAL 或采用 PG terminal，不生成第二业务终态；drain 后保留 in-flight lease 给 Go scanner。无 execution identity 的旧本地 snapshot 仍可由 Store 写本地 unknown，但不会与 Go 已 claim execution 竞争。Go 显式跳过 `requires_input`/`awaiting_confirmation`。Agent 166 passed；Go agent 通过；G-03 四点 SIGKILL 通过。 |
 | D-R04 | 工具副作用证明只在 `agent_tool_mutations`；TypeScript 与 Go 不各自运行 `recovery_policy` 解释器。 | 完成 | `go/internal/agent/effect_reconcile.go`、`agent-service/src/tool-effect.ts` | 2026-09-01：S5 增加 lease-scoped live reconcile 命令；Node 只写 intent、单次 mutation、5xx 查询 Go 并消费终态，policy 查询/重试/二次对账只在 Go。 |
 | D-R05 | 提问续跑保持同一 Turn 的 answer + Pi resume；删除 `ContinuationTurnID` 残留。 | 完成 | `go/internal/agent/turns.go`、`sync.go`、schema、Web Agent projection | 2026-09-01：S3 删除 DB 列/索引、Go DTO/reader/cleanup、OpenAPI 字段和 Web orphan filter；`just go-migrate`、`just go-test`、Agent question/restart 29 tests、Web 634 tests/build 通过。答案 route 仍把两个既有响应成员指向同一 Turn。 |
 | D-R06 | agent-service 只拥有 Pi session、Skill、chunk 合帧和 Tool HTTP，不拥有商品、图或确认事务。 | 完成 | `agent-service/src/pi-runtime.ts`、`turn-runtime.ts`、`runtime-manager.ts`、`runtime-scope.ts`、`runtime-journal.ts`、`tool-step-projection.ts`、`tools.ts` | 2026-09-01：`pi-runtime.ts` 已收敛为单 Turn 的 Pi session/model、drain、chunk 订阅和 Skill/Tool adapter；进程调度、scope 校验、lease/journal/question/terminal 编排、有界工具步骤投影分别由提取模块拥有。业务事务与 effect policy 仍在 Go。 |
@@ -92,7 +92,7 @@ flowchart LR
 | 诊断 | 当前证据 | 目标 owner | 处理切片 |
 |---|---|---|---|
 | journal publisher 循环注入（已收口） | 2026-09-01：`setEventPublisher` 与 Store publisher 字段已删除；`turn-runtime.ts` 的显式 WAL handoff 是唯一 lease-aware batch/ACK writer | 单一 lease-aware batch/ACK writer；本地 WAL 私有 | S1 |
-| 丢失执行双终态作者（已收口） | 2026-09-01：Node startup/handoff 删除 recovery `turn/end`；`go/internal/agent/recovery.go` 是 lease-expiry terminal owner | Go lease expiry scanner | S2 |
+| 丢失执行双终态作者（已收口） | 2026-09-01：带 durable execution identity 的 Node startup/handoff 不写 recovery `turn/end`；`go/internal/agent/recovery.go` 是 lease-expiry terminal owner。Store 对无 execution identity 的旧本地 snapshot 仍有本地 unknown 收敛分支 | Go lease expiry scanner | S2 |
 | same-Turn 提问 continuation 身份残留（已删除） | 2026-09-01：运行时代码/wire/UI 已无 `ContinuationTurnID` 或 orphan cleanup；仅 migration DDL 保留列名用于 `DROP COLUMN IF EXISTS` | 原 Turn answer + Pi resume | S3 |
 | worker 读取 Node Turn 快照更新活投影（已收口） | 2026-09-01：Gateway/worker/read route 的 `GetTurn` snapshot path 已删除；`AppendEvents` 同事务增量 fold active status 与三列摘要 | PG journal fold；worker 只绑定 harness ID、重试 start 或恢复持久化答案 | S4 |
 | effect policy 两侧解释（已收口） | 2026-09-01：Node 删除 `not_applied -> retry -> second reconcile` 与 per-tool reconcile callbacks；live/manual/scanner 共用 Go `reconcileEffectIntent` | Go mutation ledger/reconciler | S5 |
@@ -104,18 +104,18 @@ flowchart LR
 |---|---|---|---|---|
 | R-01 | Agent-first 创建继续通过 `finalize_product_intake_v1` 完成 intake。 | C-01、C-02、G-06 | `agent-service/src/tools.test.ts`、`skills.test.ts`；创建页 Agent 流程 | 完成 |
 | R-02 | 单步图修改直接 apply，多步修改 propose ChangeSet，均走 Graph Command。 | D-02、C-01、S2-04 | `agent-service/src/graph-command-schema.test.ts`、`tools.test.ts`；工作台画布 | 完成 |
-| R-03 | `ask_user` 在同一 Turn 写答案并恢复同一 Pi session，不创建 continuation Turn。 | S2-02、S3-03 | `go/internal/agent/question_resume_gopg_test.go`、`agent-service/src/question-resume.test.ts` | 完成 |
+| R-03 | `ask_user` 在同一 Turn 写答案并恢复同一 Pi session，不创建 continuation Turn。 | S2-02、S3-03 | `go/internal/agent/question_resume_gopg_test.go`、`agent-service/src/question-resume.test.ts` | 完成：`waitDurableTurnTerminal` 轮询 PostgreSQL projection `succeeded`、execution `terminal` 且恰好一条 `turn/end` 后再断言；2026-09-04 `TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult -count=10` 通过。 |
 | R-04 | workflow run、graph proposal、全局 Draft 的确认只产生一次业务副作用。 | D-02、S3-01～S3-04、G-02/G-03 | `task_graph_test.go`、`recovery_proposal_draft_test.go`、`pending_identity_test.go` | 完成 |
 | R-05 | Turn `unknown` 和各 `terminal_reason_code` 继续显示准确中断/对账文案。 | D-01、C-03、C-08、S2-07 | `web/src/pages/workbench/agent/AgentConversationComponents.test.ts` | 完成 |
 | R-06 | 浏览器 SSE 只读 PG journal；断线、关闭页面不取消 Agent。 | C-07、S4-01～S4-06、G-04 | `web/src/pages/workbench/agent/conversation/runtime.test.ts`、live browser recovery spec | 完成 |
 | R-07 | Product Goal 仍只由用户 complete/cancel；Turn 或 graph run 终态只把 Goal 留在 `waiting_user/goal_loop`。 | D-04 | `go/internal/agent/task_graph_test.go`、`sync_task_contract_test.go` | 完成 |
-| R-08 | Turn running 时画布仍可编辑，Agent 不持有画布编辑锁。 | D-04、G-06 | 工作台画布交互；`web/src/pages/workbench/chrome/workflowCanvasInteraction.test.ts` | 部分完成：现有交互测试覆盖锁/只读，S6 全量 Web gate 防回归；缺专门 running-Turn 用例。 |
+| R-08 | Turn running 时画布仍可编辑，Agent 不持有画布编辑锁。 | D-04、G-06 | 工作台画布交互；`web/src/pages/workbench/chrome/workflowCanvasInteraction.test.ts`；`web/e2e/running-turn-canvas.spec.ts` | 部分完成：规格与 `just web-e2e-running-turn-canvas` 已落地；尚未在活浏览器上执行该 opt-in 闸门。 |
 
 ## 实施切片
 
 | ID | 验收要求 | 代码 owner | 状态 | 测试/实测证据 | 缺口 |
 |---|---|---|---|---|---|
-| S0 | 建立本账本、索引、ADR 0018、ROADMAP 入口；0007 仅状态行指向后继。 | `docs/audits/`、`docs/adr/`、`docs/ROADMAP.md` | 完成 | 2026-09-01：`just docs-check` 通过；checkpoint-0 提交前 staged 范围核对。 | 无；代码切片仍按 S1-S6 保持缺失。 |
+| S0 | 建立本账本、索引、ADR 0018、ROADMAP 入口；0007 仅状态行指向后继。 | `docs/audits/`、`docs/adr/`、`docs/ROADMAP.md` | 完成 | 2026-09-01：`just docs-check` 通过；checkpoint-0 提交前 staged 范围核对。 | 无；S1-S6 后续均已完成。 |
 | S1 | 删除 `store.setEventPublisher -> runtime.publishDurableEvent` 回环；WAL 私有；lease-aware batch/ACK 单一作者；保持 20ms/64/768KiB。 | `agent-service/src/main.ts`、`store.ts`、`turn-runtime.ts`、`journal-publisher.ts`、runtime tests | 完成 | 2026-09-01：`just agent-service-test` 20 files、166 passed/2 skipped；带 dev env 的 `go test -C go ./internal/agent -count=1` 通过（86.1s）；10k WAL P95=0.98ms；PG 10k/25 Turn/100 SSE 容量门通过，batch P95=221.27ms。 | 无；S2 继续收口 recovery 终态作者。 |
 | S2 | Go lease 过期扫描是丢失 in-flight 的唯一终态作者；Node 只 drain/confirm 证明前缀；parked 状态不误标 unknown。 | `go/internal/agent/recovery.go`、`agent-service/src/turn-runtime.ts`、process restart tests | 完成 | 2026-09-01：`just agent-service-test` 20 files、166 passed/2 skipped；Go agent（dev env）通过，87.8s；聚焦 recovery 35.5s；`TestSIGKILLLeaseHolderAgainstGoPG` 四点全过。进程重启 E2E 断言不重放模型、不写 Node terminal、confirm 已提交前缀。 | 无；S3 删除 question continuation 残留。 |
 | S3 | 删除 `ContinuationTurnID`、`cancelUnusedContinuation` 及 schema 残留；same-Turn 行为不变。 | Go turns/sync/DTO/schema、OpenAPI、Web types/projection | 完成 | 2026-09-01：`just go-migrate` 通过；`just go-test` 整树通过（agent 90.7s）；Agent question/restart 29 passed/1 skipped；Web 92 files、634 passed及 build 通过。全树 scan 仅在本账本和 idempotent `DROP COLUMN` DDL 中保留删除目标名称。 | 无；ADR 0007 冻结正文不重写，0018 已说明后继合同。 |
@@ -154,7 +154,7 @@ flowchart LR
 - Question/schema：`just go-test`、Agent question tests；删 schema 列时 `just go-migrate`。
 - Projection：Go agent tests、`pnpm --dir web test:run` 中对话/runtime/SSE 覆盖。
 - Tool effect：Go 八工具四态矩阵和共享解释器测试、`just agent-service-test`。
-- 最终：checkpoint-6 全量命令；G-07 的 clean/no-cache 全量门已于 2026-09-04 账本更新前的当前 HEAD 重跑并通过，随后仅修改三份审计文档。G-06 的真实 Agent 审批到 WorkflowRun 链仍由生产就绪账本单独跟踪。
+- 最终：checkpoint-6 全量命令；实现基线 `fb658633` 的 clean/no-cache 全量门已于 2026-09-04 重跑并通过。之后的 checkout 必须重新验证；G-06 的真实 Agent 审批到 WorkflowRun 链仍由生产就绪账本单独跟踪。
 
 ### 验证记录
 
@@ -167,7 +167,9 @@ flowchart LR
 | 2026-09-01 | checkpoint-4 | Go agent 全包：通过，87.5s；PG fold 聚焦测试与 SSE TTFB：通过，P95=15.87ms；Web：92 files、634 passed | snapshot reader residue scan 为空；exact replay 不重复摘要，bound running worker dispatch 被消费。 |
 | 2026-09-01 | checkpoint-5 | 八工具四态矩阵：通过；live/manual/scanner 共享解释器：通过；Go agent 全包：通过，92.8s；Agent：166 passed/2 skipped；`just docs-check`：通过 | Node policy/retry branch residue scan 为空；网络丢响应测试断言一次 mutation、一次 Go reconcile。 |
 | 2026-09-01 | checkpoint-6 | Agent TypeScript 编译通过；`just go-test`（整树，99.8s）、`just agent-service-test`（167 passed/2 skipped）、`pnpm --dir web test:run`（92 files、635 passed）、`pnpm --dir web build`、`just docs-check`、`git diff --check` 通过 | Pi runtime 拆分完成；effect reconcile sealed route contract 已补齐；并发工作区中的 Graph lock 改动未纳入本 checkpoint。 |
-| 2026-09-04 | current HEAD gate verification | 账本更新前的 clean HEAD 执行无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed/2 skipped）、Web 637 tests/lint/build、schema fresh/upgrade、`just go-migrate`、`just docs-check`、`git diff --check` 全部通过；journal/WAL/Graph query-plan 专项也通过 | G-07 的 clean/no-cache gate 已具备完成证据；随后仅修改三份审计文档。G-06 的真实 Agent 审批到 WorkflowRun 完整 UI 链尚未在当前 HEAD 重跑，生产账本仍保持部分完成。 |
+| 2026-09-04 | 实现基线 `fb658633` gate verification | 该 clean checkout 执行无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed/2 skipped）、Web 637 tests/lint/build、schema fresh/upgrade、`just go-migrate`、`just docs-check`、`git diff --check` 全部通过；journal/WAL/Graph query-plan 专项也通过 | G-07 在该实现基线具备 clean/no-cache 证据；G-06 的真实 Agent 审批到 WorkflowRun 完整 UI 链未在该基线重跑，生产账本仍保持部分完成。 |
+| 2026-09-04 | 归档复核 | Agent focused 38/38、Web focused 47/47、`just docs-check` 通过；`go test -C go ./internal/agent -count=1` 失败 2 项。单独复跑 effect reconciliation 通过；durable answer 用例 `-count=3` 为 2 通过、1 次在 PG projection 仍为 `running` 时失败 | 当时 R-03 等待边界不稳定、R-08 缺专门用例；本账本不可归档。 |
+| 2026-09-04 | durable-answer 与 running-Turn 规格 | `waitDurableTurnTerminal` 后 `TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult -count=10` 通过；新增 `web/e2e/running-turn-canvas.spec.ts` | R-03 闭合。R-08 仍待活浏览器执行。评测改写与恢复/容量切片未使本账本可归档。 |
 
 ## 明确不做
 

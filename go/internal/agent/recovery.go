@@ -57,68 +57,35 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 		limit = expiredExecutionBatchLimit
 	}
 	var out RecoverySummary
-	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		n, hasMore, err := recoverExpiredExecutions(ctx, s, pgxTx, limit)
-		if err != nil {
-			return err
-		}
-		out.UnknownExecutions = n
-		out.HasMore = hasMore
-		if n > 0 {
-			metrics.AgentRecoveryUnknownExecutions.Add(int64(n))
-		}
-		return nil
-	})
+	var batchErr error
+
+	n, hasMore, err := recoverExpiredExecutions(ctx, s, limit)
 	if err != nil {
-		return out, err
+		batchErr = errors.Join(batchErr, err)
+	}
+	out.UnknownExecutions = n
+	out.HasMore = hasMore
+	if n > 0 {
+		metrics.AgentRecoveryUnknownExecutions.Add(int64(n))
 	}
 
 	recovered, hasMore, err := recoverQueuedTaskTurns(ctx, s, limit)
 	if err != nil {
-		return out, err
+		batchErr = errors.Join(batchErr, err)
 	}
 	out.RecoveredTaskTurns = recovered
 	out.HasMore = out.HasMore || hasMore
 
-	var ids []string
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
-			Where("resume_required = FALSE AND (status IN ? OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
-			Where(`NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = ? || ':' || agent_turn_projections.id
-				  AND d.status IN ?
-			)`, queue.ActorAgentTurnSync, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
-			Order("created_at, id").
-			Limit(limit+1).
-			Pluck("id", &ids).Error
-	})
+	enqueued, pending, hasMore, err := restagePendingTurns(ctx, s, limit)
 	if err != nil {
-		return out, err
+		batchErr = errors.Join(batchErr, err)
 	}
-	if len(ids) > limit {
-		out.HasMore = true
-		ids = ids[:limit]
-	}
-	out.PendingTurns = len(ids)
+	out.EnqueuedTurns = enqueued
+	out.PendingTurns = pending
+	out.HasMore = out.HasMore || hasMore
 
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		for _, id := range ids {
-			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
-			if err != nil {
-				return err
-			}
-			if changed {
-				out.EnqueuedTurns++
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return out, err
-	}
 	_, _ = CompactExpiredTurnJournals(ctx, s, time.Now().UTC())
-	return out, nil
+	return out, batchErr
 }
 
 // recoverQueuedTaskTurns 给 status=queued 且 current_turn_id 为空的 Task 补首轮 Turn。
@@ -177,95 +144,200 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, boo
 	return created, hasMore, nil
 }
 
+func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, pending int, hasMore bool, err error) {
+	var ids []string
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
+			Where("resume_required = FALSE AND (status IN ? OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
+			Where(`NOT EXISTS (
+				SELECT 1 FROM async_dispatches d
+				WHERE d.delivery_key = ? || ':' || agent_turn_projections.id
+				  AND d.status IN ?
+			)`, queue.ActorAgentTurnSync, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
+			Order("created_at, id").
+			Limit(limit+1).
+			Pluck("id", &ids).Error
+	})
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if len(ids) > limit {
+		hasMore = true
+		ids = ids[:limit]
+	}
+	pending = len(ids)
+	var batchErr error
+	for _, id := range ids {
+		var changed bool
+		restageErr := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+			var projection schema.AgentTurnProjections
+			if takeErr := pgxTx.WithContext(ctx).Select("id", "status", "resume_required", "question_answer_json").
+				Where("id = ?", id).Take(&projection).Error; takeErr != nil {
+				if errors.Is(takeErr, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return takeErr
+			}
+			needsSync := !projection.ResumeRequired && (inSet(inFlightTurn, projection.Status) ||
+				(projection.Status == "requires_input" && projection.QuestionAnswerJSON != nil))
+			if !needsSync {
+				return nil
+			}
+			ok, restageErr := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
+			changed = ok
+			return restageErr
+		})
+		if restageErr != nil {
+			batchErr = errors.Join(batchErr, restageErr)
+			continue
+		}
+		if changed {
+			enqueued++
+		}
+	}
+	return enqueued, pending, hasMore, batchErr
+}
+
 // recoverExpiredExecutions 回收 lease_expires_at 已过的 execution：递增 fencing_token、清空 owner，无法证明终态则把 Turn 标 unknown。
 //
-// 由 recoverUnfinishedTurns 调用。必须先 SKIP LOCKED 锁 projection，再锁 execution；AppendEvents / heartbeat 用同一顺序。先锁 execution 会与已持有投影、正在等 lease 行的 live writer 死锁。
+// 每条 execution 单独提交。必须先 SKIP LOCKED 锁 projection，再锁 execution；AppendEvents / heartbeat 用同一顺序。先锁 execution 会与已持有投影、正在等 lease 行的 live writer 死锁。
 //
 // journal 已有 turn/end 则 reprojectExistingTerminal，不另写终态。requires_input 且尚未过安全边界则只收 lease。否则 appendInterruptedTurnEvents（含 effect reconcile）并写 projection=unknown、started invocation=interrupted。
 //
 // 禁区：不要把过期当成 failed；不要覆盖用户拥有的 Goal（本函数不写 agent_tasks 终态完成）。
-func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, limit int) (int, bool, error) {
+func recoverExpiredExecutions(ctx context.Context, s Service, limit int) (int, bool, error) {
 	if limit <= 0 {
 		limit = expiredExecutionBatchLimit
 	}
-	type candidate struct {
-		ID           string `gorm:"column:id"`
-		ProjectionID string `gorm:"column:turn_projection_id"`
+	unknown := 0
+	processed := 0
+	skipped := map[string]struct{}{}
+	var batchErr error
+	for processed < limit {
+		n, id, found, err := recoverNextExpiredExecution(ctx, s, skipped)
+		if err != nil {
+			if id != "" {
+				skipped[id] = struct{}{}
+				batchErr = errors.Join(batchErr, err)
+				continue
+			}
+			return unknown, false, errors.Join(batchErr, err)
+		}
+		if !found {
+			break
+		}
+		processed++
+		unknown += n
 	}
-	var candidates []candidate
-	// 先 SKIP LOCKED 锁 projection。AppendEvents / heartbeat 同样是投影 → execution；
-	// 这里若先锁 execution，会与已持有投影、正在等 lease 行的 live writer 死锁。
-	candidateScanStarted := time.Now()
-	candidateScanErr := pgxTx.WithContext(ctx).
-		Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_projections")).
-		Model(&schema.AgentTurnExecutions{}).
-		Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id").
+	hasMore, err := expiredExecutionsRemain(ctx, s)
+	if err != nil {
+		return unknown, false, errors.Join(batchErr, err)
+	}
+	return unknown, hasMore, batchErr
+}
+
+func expiredExecutionsRemain(ctx context.Context, s Service) (bool, error) {
+	var ids []string
+	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		return expiredExecutionQuery(pgxTx.WithContext(ctx)).Limit(1).Pluck("agent_turn_executions.id", &ids).Error
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(ids) > 0, nil
+}
+
+func expiredExecutionQuery(db *gorm.DB) *gorm.DB {
+	return db.Model(&schema.AgentTurnExecutions{}).
 		Joins("JOIN agent_turn_projections ON agent_turn_projections.id = agent_turn_executions.turn_projection_id").
 		Where("agent_turn_executions.owner_id IS NOT NULL AND agent_turn_executions.lease_expires_at IS NOT NULL AND agent_turn_executions.lease_expires_at <= NOW()").
-		Order("agent_turn_executions.id").
-		Limit(limit).
-		Scan(&candidates).Error
-	metrics.ObserveRecoveryLock("agent", time.Since(candidateScanStarted))
-	if candidateScanErr != nil {
-		return 0, false, candidateScanErr
-	}
-	hasMore := len(candidates) >= limit
-	unknown := 0
+		Order("agent_turn_executions.id")
+}
+
+func recoverNextExpiredExecution(ctx context.Context, s Service, skipped map[string]struct{}) (unknown int, executionID string, found bool, err error) {
 	now := time.Now().UTC()
-	for _, item := range candidates {
-		var projection schema.AgentTurnProjections
-		err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", item.ProjectionID).Take(&projection).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			continue
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		type candidate struct {
+			ID           string `gorm:"column:id"`
+			ProjectionID string `gorm:"column:turn_projection_id"`
 		}
-		if err != nil {
-			return 0, false, err
+		query := pgxTx.WithContext(ctx).
+			Clauses(pfdb.ForUpdateOfSkipLocked("agent_turn_projections")).
+			Select("agent_turn_executions.id, agent_turn_executions.turn_projection_id")
+		query = expiredExecutionQuery(query)
+		if len(skipped) > 0 {
+			ids := make([]string, 0, len(skipped))
+			for id := range skipped {
+				ids = append(ids, id)
+			}
+			query = query.Where("agent_turn_executions.id NOT IN ?", ids)
+		}
+		var candidates []candidate
+		candidateScanStarted := time.Now()
+		scanErr := query.Limit(1).Scan(&candidates).Error
+		metrics.ObserveRecoveryLock("agent", time.Since(candidateScanStarted))
+		if scanErr != nil {
+			return scanErr
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		item := candidates[0]
+		found = true
+		executionID = item.ID
+
+		var projection schema.AgentTurnProjections
+		if takeErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", item.ProjectionID).Take(&projection).Error; takeErr != nil {
+			if errors.Is(takeErr, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return takeErr
 		}
 		var execution schema.AgentTurnExecutions
-		err = pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+		takeErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 			Where("id = ? AND owner_id IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at <= NOW()", item.ID).
 			Take(&execution).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			continue
+		if errors.Is(takeErr, gorm.ErrRecordNotFound) {
+			return nil
 		}
-		if err != nil {
-			return 0, false, err
+		if takeErr != nil {
+			return takeErr
 		}
-		if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
+		if updErr := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 			"fencing_token":    gorm.Expr("fencing_token + 1"),
 			"owner_id":         nil,
 			"lease_token":      nil,
 			"lease_expires_at": nil,
 			"released_at":      now,
-		}).Error; err != nil {
-			return 0, false, err
+		}).Error; updErr != nil {
+			return updErr
 		}
 		publishLeaseChanged(pgxTx, item.ID, "expired")
 		var existingTerminal schema.AgentTurnEvents
-		scanErr := pgxTx.Where("turn_projection_id = ? AND kind = ?", item.ProjectionID, "turn/end").
+		scanErr = pgxTx.Where("turn_projection_id = ? AND kind = ?", item.ProjectionID, "turn/end").
 			Order("sequence DESC").Take(&existingTerminal).Error
 		if scanErr == nil {
-			if err := reprojectExistingTerminal(ctx, s, pgxTx, item.ProjectionID, item.ID, execution, existingTerminal); err != nil {
-				return 0, false, err
+			if projErr := reprojectExistingTerminal(ctx, s, pgxTx, item.ProjectionID, item.ID, execution, existingTerminal); projErr != nil {
+				return projErr
 			}
 			var payload terminalEventPayload
 			if json.Unmarshal([]byte(existingTerminal.PayloadJSON), &payload) == nil && payload.Status == "unknown" {
-				unknown++
+				unknown = 1
 			}
-			continue
+			return nil
 		}
 		if !errors.Is(scanErr, gorm.ErrRecordNotFound) {
-			return 0, false, scanErr
+			return scanErr
 		}
 		if projection.Status == "requires_input" || projection.Status == "awaiting_confirmation" {
-			continue
+			return nil
 		}
 		if inSet(activeTurn, projection.Status) && !(projection.Status == "queued" && execution.Phase == "claimed") {
-			output, err := appendInterruptedTurnEvents(ctx, s, pgxTx, item.ProjectionID, item.ID, now)
-			if err != nil {
-				return 0, false, err
+			output, appendErr := appendInterruptedTurnEvents(ctx, s, pgxTx, item.ProjectionID, item.ID, now)
+			if appendErr != nil {
+				return appendErr
 			}
-			if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", item.ProjectionID).Updates(map[string]any{
+			if updErr := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", item.ProjectionID).Updates(map[string]any{
 				"status":               "unknown",
 				"terminal_reason_code": "execution_interrupted",
 				"error_text":           "Agent execution lease expired before this Turn reached a provable terminal state",
@@ -273,23 +345,24 @@ func recoverExpiredExecutions(ctx context.Context, s Service, pgxTx *gorm.DB, li
 				"updated_at":           now,
 				"resume_required":      false,
 				"output_text":          nullableString(output),
-			}).Error; err != nil {
-				return 0, false, err
+			}).Error; updErr != nil {
+				return updErr
 			}
-			if err := pgxTx.Model(&schema.AgentModelInvocations{}).
+			if updErr := pgxTx.Model(&schema.AgentModelInvocations{}).
 				Where("turn_projection_id = ? AND status = ?", item.ProjectionID, "started").
-				Updates(map[string]any{"status": "interrupted", "finished_at": now, "updated_at": now}).Error; err != nil {
-				return 0, false, err
+				Updates(map[string]any{"status": "interrupted", "finished_at": now, "updated_at": now}).Error; updErr != nil {
+				return updErr
 			}
-			if err := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
+			if updErr := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 				"phase": "terminal",
-			}).Error; err != nil {
-				return 0, false, err
+			}).Error; updErr != nil {
+				return updErr
 			}
-			unknown++
+			unknown = 1
 		}
-	}
-	return unknown, hasMore, nil
+		return nil
+	})
+	return unknown, executionID, found, err
 }
 
 // reprojectExistingTerminal 在 lease 已过期、但 journal 已有 turn/end 时，用回收后的 fencing_token（原值+1）重跑 projectTerminalEvent。

@@ -4,28 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
 
 func TestRecoverExpiredExecutionsRejectsStaleFencingWriter(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	claimed := createClaimedJournalTurn(t, as)
 	oldLease := claimed.lease.LeaseToken
 	oldFence := claimed.lease.FencingToken
 	expireClaimedTurn(t, as, claimed)
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	var fencing int
 	var owner *string
 	if err := as.pool.QueryRow(context.Background(), `
@@ -76,11 +74,23 @@ func TestRecoverExpiredExecutionsRejectsStaleFencingWriter(t *testing.T) {
 	}
 }
 
+func drainAgentRecovery(t *testing.T, as *agentServer) {
+	t.Helper()
+	for range 20 {
+		summary, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !summary.HasMore {
+			return
+		}
+	}
+	t.Fatal("recovery still has more after 20 drain rounds")
+}
+
 func TestRecoverUnfinishedTurnsPreservesExpiredHasMore(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	turns := []claimedJournalTurn{
 		createClaimedJournalTurn(t, as),
 		createClaimedJournalTurn(t, as),
@@ -99,13 +109,112 @@ func TestRecoverUnfinishedTurnsPreservesExpiredHasMore(t *testing.T) {
 	if !summary.HasMore {
 		t.Fatalf("has_more=false after expired recovery filled its batch: %+v", summary)
 	}
+
+	second, err := recoverUnfinishedTurns(context.Background(), as.svc, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.UnknownExecutions != 1 {
+		t.Fatalf("second round unknown executions %d want 1", second.UnknownExecutions)
+	}
+	if second.HasMore {
+		t.Fatalf("has_more=true after second expired round: %+v", second)
+	}
+}
+
+func TestRecoverUnfinishedTurnsPreservesQueuedTaskHasMore(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	drainAgentRecovery(t, as)
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var created SessionResponse
+	as.decode(t, session, &created)
+	convID := created.Conversations[0].ConversationID
+	for i := range 2 {
+		if _, err := as.svc.CreateTask(context.Background(), created.ID, "queued-recovery-"+string(rune('a'+i)), "补首轮 Turn", &convID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := recoverUnfinishedTurns(context.Background(), as.svc, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.RecoveredTaskTurns != 1 {
+		t.Fatalf("recovered task turns %d want 1: %+v", summary.RecoveredTaskTurns, summary)
+	}
+	if !summary.HasMore {
+		t.Fatalf("has_more=false after queued task recovery filled its batch: %+v", summary)
+	}
+}
+
+func TestRecoverUnfinishedTurnsPreservesPendingRestageHasMore(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	drainAgentRecovery(t, as)
+	turns := []claimedJournalTurn{
+		createClaimedJournalTurn(t, as),
+		createClaimedJournalTurn(t, as),
+	}
+	for _, claimed := range turns {
+		if _, err := as.pool.Exec(context.Background(), `
+			UPDATE async_dispatches
+			SET status = $1, consumed_at = NOW(), updated_at = NOW()
+			WHERE actor_name = $2 AND aggregate_id = $3
+		`, queue.StatusConsumed, queue.ActorAgentTurnSync, claimed.turn.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := recoverUnfinishedTurns(context.Background(), as.svc, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.EnqueuedTurns != 1 {
+		t.Fatalf("enqueued turns %d want 1: %+v", summary.EnqueuedTurns, summary)
+	}
+	if !summary.HasMore {
+		t.Fatalf("has_more=false after pending restage filled its batch: %+v", summary)
+	}
+}
+
+func TestRecoverUnfinishedTurnsHasMoreORsExpiredQueuedAndPending(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	drainAgentRecovery(t, as)
+	expired := createClaimedJournalTurn(t, as)
+	expireClaimedTurn(t, as, expired)
+	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, session, http.StatusCreated)
+	var created SessionResponse
+	as.decode(t, session, &created)
+	convID := created.Conversations[0].ConversationID
+	if _, err := as.svc.CreateTask(context.Background(), created.ID, "queued-or", "补首轮 Turn", &convID); err != nil {
+		t.Fatal(err)
+	}
+	pending := createClaimedJournalTurn(t, as)
+	if _, err := as.pool.Exec(context.Background(), `
+		UPDATE async_dispatches
+		SET status = $1, consumed_at = NOW(), updated_at = NOW()
+		WHERE actor_name = $2 AND aggregate_id = $3
+	`, queue.StatusConsumed, queue.ActorAgentTurnSync, pending.turn.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UnknownExecutions < 1 {
+		t.Fatalf("expected expired unknown: %+v", summary)
+	}
+	if summary.RecoveredTaskTurns < 1 {
+		t.Fatalf("expected queued task recovery: %+v", summary)
+	}
+	if summary.EnqueuedTurns < 1 {
+		t.Fatalf("expected pending restage: %+v", summary)
+	}
 }
 
 func TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	turns := make([]claimedJournalTurn, 4)
 	for i := range turns {
 		turns[i] = createClaimedJournalTurn(t, as)
@@ -123,11 +232,10 @@ func TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate(t *testing.T)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := tx.WithGorm(context.Background(), as.db, func(gdb *gorm.DB) error {
-				_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 2)
+			errs <- func() error {
+				_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, 2)
 				return recErr
-			})
-			errs <- err
+			}()
 		}()
 	}
 	wg.Wait()
@@ -172,9 +280,7 @@ func TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate(t *testing.T)
 
 func TestAppendEventsAndExpiredRecoveryDoNotDeadlock(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	claimed := createClaimedJournalTurn(t, as)
 	appendProjectionLocked := make(chan struct{})
 	releaseAppend := make(chan struct{})
@@ -216,11 +322,8 @@ func TestAppendEventsAndExpiredRecoveryDoNotDeadlock(t *testing.T) {
 	}
 	expireClaimedTurn(t, as, claimed)
 	go func() {
-		err := tx.WithGorm(context.Background(), as.db, func(gdb *gorm.DB) error {
-			_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, gdb, 25)
-			return recErr
-		})
-		results <- result{operation: "recovery", err: err}
+		_, _, recErr := recoverExpiredExecutions(context.Background(), as.svc, 25)
+		results <- result{operation: "recovery", err: recErr}
 	}()
 	select {
 	case outcome := <-results:
@@ -248,9 +351,7 @@ func TestAppendEventsAndExpiredRecoveryDoNotDeadlock(t *testing.T) {
 	if errors.As(appendOutcome.err, &pgErr) && pgErr.Code == "40P01" {
 		t.Fatalf("append deadlocked: %v", appendOutcome.err)
 	}
-	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
-		t.Fatal(err)
-	}
+	drainAgentRecovery(t, as)
 	var status string
 	if err := as.pool.QueryRow(context.Background(), `
 		SELECT status FROM agent_turn_projections WHERE id = $1

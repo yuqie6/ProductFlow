@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,28 +27,127 @@ type RecoverySummary struct {
 	EnqueuedRuns     int `json:"enqueued_runs"`      // RestageIfIdle 实际补回 PENDING 的次数
 	// UnknownRuns 是过期且已打 provider、被标 unknown 的 run 数；unknown 不可经 RetryRun 重试。
 	UnknownRuns int  `json:"unknown_runs"`
-	HasMore     bool `json:"has_more"` // 本轮批次已填满，下一轮继续探测
+	HasMore     bool `json:"has_more"` // unlocked snapshot 仍有未处理候选
+}
+
+type graphRunRecoverResult struct {
+	restage bool
+	queued  bool
+	stale   bool
+	unknown bool
 }
 
 // RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
 // GORM 打开或写库失败原样返回。无法证明的供应商结果标 unknown，不得当失败自动重试。
+// 单条聚合失败计入返回 error，不回滚本轮已提交的其它 run。
 func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, products ProductGuard) (RecoverySummary, error) {
+	return recoverUnfinishedGraphRuns(ctx, pool, staleAfter, products, graphRecoveryBatchLimit)
+}
+
+func recoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, products ProductGuard, limit int) (RecoverySummary, error) {
 	if staleAfter <= 0 {
 		staleAfter = defaultStaleRunningAfter
+	}
+	if limit <= 0 {
+		limit = graphRecoveryBatchLimit
 	}
 	ctx = WithProductGuard(ctx, products)
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
 		return RecoverySummary{}, err
 	}
-	var summary RecoverySummary
+	cutoff := time.Now().UTC().Add(-staleAfter)
+	runningIDs, queuedGraphIDs, hasMore, err := discoverGraphRecoveryCandidates(ctx, gdb, cutoff, limit)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
+	summary := RecoverySummary{HasMore: hasMore}
+	var errs []error
+	for _, runID := range runningIDs {
+		result, recErr := recoverGraphRunState(ctx, gdb, runID, cutoff)
+		if recErr != nil {
+			errs = append(errs, fmt.Errorf("graph run %s: %w", runID, recErr))
+			continue
+		}
+		if result.queued {
+			summary.QueuedRuns++
+		}
+		if result.stale {
+			summary.StaleRunningRuns++
+		}
+		if result.unknown {
+			summary.UnknownRuns++
+		}
+		if !result.restage {
+			continue
+		}
+		changed, restageErr := restageGraphRun(ctx, gdb, runID)
+		if restageErr != nil {
+			errs = append(errs, fmt.Errorf("graph run %s restage: %w", runID, restageErr))
+			continue
+		}
+		if changed {
+			summary.EnqueuedRuns++
+		}
+	}
+	for _, graphID := range queuedGraphIDs {
+		if recErr := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+			return promoteNextQueuedRun(ctx, pgxTx, graphID)
+		}); recErr != nil {
+			errs = append(errs, fmt.Errorf("graph %s promote: %w", graphID, recErr))
+		}
+	}
+	return summary, errors.Join(errs...)
+}
+
+func discoverGraphRecoveryCandidates(ctx context.Context, gdb *gorm.DB, cutoff time.Time, limit int) (runningIDs, queuedGraphIDs []string, hasMore bool, err error) {
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		cutoff := time.Now().UTC().Add(-staleAfter)
-		var running []schema.WorkflowGraphRuns
 		candidateScanStarted := time.Now()
-		candidateScanErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdateOfSkipLocked("workflow_graph_runs")).
+		scanErr := graphRunningRecoveryScope(pgxTx.WithContext(ctx), cutoff).
 			Select("workflow_graph_runs.id").
-			Where(`workflow_graph_runs.status = ?
+			Order("workflow_graph_runs.started_at ASC, workflow_graph_runs.id ASC").
+			Limit(limit+1).
+			Pluck("id", &runningIDs).Error
+		metrics.ObserveRecoveryLock("graph", time.Since(candidateScanStarted))
+		if scanErr != nil {
+			return scanErr
+		}
+		if len(runningIDs) > limit {
+			hasMore = true
+			runningIDs = runningIDs[:limit]
+			return nil
+		}
+		remaining := limit - len(runningIDs)
+		if remaining == 0 {
+			var probe []string
+			if err := graphQueuedPromotionScope(pgxTx.WithContext(ctx)).Limit(1).Pluck("graph_id", &probe).Error; err != nil {
+				return err
+			}
+			hasMore = len(probe) > 0
+			return nil
+		}
+		if err := graphQueuedPromotionScope(pgxTx.WithContext(ctx)).Limit(remaining+1).Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
+			return err
+		}
+		if len(queuedGraphIDs) > remaining {
+			hasMore = true
+			queuedGraphIDs = queuedGraphIDs[:remaining]
+		}
+		return nil
+	})
+	return runningIDs, queuedGraphIDs, hasMore, err
+}
+
+func graphQueuedPromotionScope(tx *gorm.DB) *gorm.DB {
+	return tx.Model(&schema.WorkflowGraphRuns{}).
+		Where("status = ?", RunStatusQueued).
+		Where("NOT EXISTS (SELECT 1 FROM workflow_graph_runs active WHERE active.graph_id = workflow_graph_runs.graph_id AND active.status = ?)", RunStatusRunning).
+		Distinct("graph_id").
+		Order("graph_id ASC")
+}
+
+func graphRunningRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
+	return tx.Model(&schema.WorkflowGraphRuns{}).Where(`workflow_graph_runs.status = ?
 			  AND (workflow_graph_runs.execution_lease_expires_at IS NULL OR workflow_graph_runs.execution_lease_expires_at <= NOW())
 			  AND (
 				EXISTS (
@@ -84,149 +184,141 @@ func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 					)
 				)
 			)`, RunStatusRunning, NodeRunRunning, cutoff, NodeRunRunning, NodeRunQueued,
-				[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
-			Order("workflow_graph_runs.started_at ASC, workflow_graph_runs.id ASC").
-			Limit(graphRecoveryBatchLimit).
-			Find(&running).Error
-		metrics.ObserveRecoveryLock("graph", time.Since(candidateScanStarted))
-		if candidateScanErr != nil {
-			return candidateScanErr
+		[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead})
+}
+
+func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutoff time.Time) (graphRunRecoverResult, error) {
+	var result graphRunRecoverResult
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		run, locked, err := loadGraphRunSkipLocked(ctx, pgxTx, runID)
+		if err != nil {
+			return err
 		}
-		if len(running) >= graphRecoveryBatchLimit {
-			summary.HasMore = true
+		if !locked {
+			return nil
 		}
-		for _, item := range running {
-			runID := item.ID
-			run, err := loadGraphRunByIDLocked(ctx, pgxTx, runID)
-			if err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					continue
-				}
-				return err
-			}
-			if run.Status != RunStatusRunning {
+		if run.Status != RunStatusRunning {
+			return nil
+		}
+		if run.ExecutionLeaseExpiresAt != nil && run.ExecutionLeaseExpiresAt.After(time.Now().UTC()) {
+			return nil
+		}
+		state := classifyDelivery(run)
+		if state == "queued" {
+			result.queued = true
+			result.restage = true
+			return nil
+		}
+		if state != "running" {
+			return nil
+		}
+		var stale []graphNodeRunRow
+		for _, node := range run.NodeRuns {
+			if node.Status != NodeRunRunning {
 				continue
 			}
-			state := classifyDelivery(run)
-			if state == "queued" {
-				summary.QueuedRuns++
-				changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, runID, nil)
-				if err != nil {
-					return err
-				}
-				if changed {
-					summary.EnqueuedRuns++
-				}
-				continue
+			stamp := node.StartedAt
+			if node.ProgressUpdated != nil {
+				stamp = *node.ProgressUpdated
 			}
-			if state != "running" {
-				continue
+			if !stamp.After(cutoff) {
+				stale = append(stale, node)
 			}
-			var stale []graphNodeRunRow
-			for _, node := range run.NodeRuns {
-				if node.Status != NodeRunRunning {
-					continue
+		}
+		if len(stale) == 0 {
+			return nil
+		}
+		markedUnknown := false
+		requeued := false
+		now := time.Now().UTC()
+		for _, node := range stale {
+			if nodeSafeToRequeue(node) {
+				update := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+					Where("id = ? AND status = ?", node.ID, "running").
+					Updates(map[string]any{
+						"status":              "queued",
+						"active_attempt_id":   nil,
+						"failure_reason":      nil,
+						"finished_at":         nil,
+						"progress_phase":      "requeued_after_idle",
+						"progress_updated_at": now,
+					})
+				if update.Error != nil {
+					return update.Error
 				}
-				stamp := node.StartedAt
-				if node.ProgressUpdated != nil {
-					stamp = *node.ProgressUpdated
-				}
-				if !stamp.After(cutoff) {
-					stale = append(stale, node)
-				}
-			}
-			if len(stale) == 0 {
-				continue
-			}
-			markedUnknown := false
-			requeued := false
-			now := time.Now().UTC()
-			for _, node := range stale {
-				if nodeSafeToRequeue(node) {
-					result := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
-						Where("id = ? AND status = ?", node.ID, "running").
-						Updates(map[string]any{
-							"status":              "queued",
-							"active_attempt_id":   nil,
-							"failure_reason":      nil,
-							"finished_at":         nil,
-							"progress_phase":      "requeued_after_idle",
-							"progress_updated_at": now,
-						})
-					if result.Error != nil {
-						return result.Error
+				if update.RowsAffected == 1 {
+					if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.progress", &node.ID, map[string]any{
+						"status": "queued", "phase": "requeued_after_idle", "reason": "stale_worker",
+					}); err != nil {
+						return err
 					}
-					if result.RowsAffected == 1 {
-						if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.progress", &node.ID, map[string]any{
-							"status": "queued", "phase": "requeued_after_idle", "reason": "stale_worker",
-						}); err != nil {
-							return err
-						}
-						requeued = true
-					}
-					_ = pgxTx.WithContext(ctx).Where("node_run_id = ? AND effect_result = ?", node.ID, "pending").
-						Delete(&schema.WorkflowGraphProviderEffects{}).Error
-					continue
+					requeued = true
 				}
-				if err := markNodeUnknown(ctx, pgxTx, run.ID, node.ID, node.ActiveAttemptID, ProviderUnknownDetail); err != nil {
-					return err
-				}
-				markedUnknown = true
-			}
-			if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
-				return err
-			}
-			var statusRec schema.WorkflowGraphRuns
-			if err := pgxTx.WithContext(ctx).Select("status").Where("id = ?", run.ID).Take(&statusRec).Error; err != nil {
-				return err
-			}
-			if isTerminalRun(statusRec.Status) {
-				if markedUnknown {
-					summary.UnknownRuns++
-				}
+				_ = pgxTx.WithContext(ctx).Where("node_run_id = ? AND effect_result = ?", node.ID, "pending").
+					Delete(&schema.WorkflowGraphProviderEffects{}).Error
 				continue
 			}
-			changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, run.ID, nil)
-			if err != nil {
+			if err := markNodeUnknown(ctx, pgxTx, run.ID, node.ID, node.ActiveAttemptID, ProviderUnknownDetail); err != nil {
 				return err
 			}
-			if changed {
-				summary.EnqueuedRuns++
-			}
-			if markedUnknown {
-				summary.UnknownRuns++
-			}
-			if requeued {
-				summary.StaleRunningRuns++
-			}
+			markedUnknown = true
 		}
-		// 终态迁移与队列晋升是两次独立写。进程若死在中间，不会再有 running 行把 recovery 领到 queued run。
-		// 因此对每个仍有 queued 的 graph 显式 promote 一条，而不是等 running 行来带头。
-		remaining := graphRecoveryBatchLimit - len(running)
-		if remaining > 0 {
-			var queuedGraphIDs []string
-			if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
-				Where("status = ?", RunStatusQueued).
-				Where("NOT EXISTS (SELECT 1 FROM workflow_graph_runs active WHERE active.graph_id = workflow_graph_runs.graph_id AND active.status = ?)", RunStatusRunning).
-				Distinct("graph_id").
-				Order("graph_id ASC").
-				Limit(remaining+1).
-				Pluck("graph_id", &queuedGraphIDs).Error; err != nil {
-				return err
-			}
-			if len(queuedGraphIDs) > remaining {
-				summary.HasMore = true
-				queuedGraphIDs = queuedGraphIDs[:remaining]
-			}
-			for _, graphID := range queuedGraphIDs {
-				if err := promoteNextQueuedRun(ctx, pgxTx, graphID); err != nil {
-					return err
-				}
-			}
+		if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
+			return err
 		}
+		var statusRec schema.WorkflowGraphRuns
+		if err := pgxTx.WithContext(ctx).Select("status").Where("id = ?", run.ID).Take(&statusRec).Error; err != nil {
+			return err
+		}
+		if isTerminalRun(statusRec.Status) {
+			result.unknown = markedUnknown
+			return nil
+		}
+		result.restage = true
+		result.unknown = markedUnknown
+		result.stale = requeued
 		return nil
 	})
-	return summary, err
+	return result, err
+}
+
+func restageGraphRun(ctx context.Context, gdb *gorm.DB, runID string) (bool, error) {
+	var changed bool
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var rec schema.WorkflowGraphRuns
+		err := pgxTx.WithContext(ctx).Select("id", "status").Where("id = ?", runID).Take(&rec).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if rec.Status != RunStatusRunning {
+			return nil
+		}
+		var restageErr error
+		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, runID, nil)
+		return restageErr
+	})
+	return changed, err
+}
+
+func loadGraphRunSkipLocked(ctx context.Context, tx *gorm.DB, runID string) (graphRunRow, bool, error) {
+	var rec schema.WorkflowGraphRuns
+	err := tx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where("id = ?", runID).Take(&rec).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return graphRunRow{}, false, nil
+	}
+	if err != nil {
+		return graphRunRow{}, false, err
+	}
+	run := graphRunFromSchema(rec)
+	nodes, err := loadNodeRuns(ctx, tx, run.ID)
+	if err != nil {
+		return graphRunRow{}, false, err
+	}
+	run.NodeRuns = nodes
+	return run, true, nil
 }
 
 // classifyDelivery 决定 recovery 对仍 running 的 run 补 dispatch 还是只 promote。

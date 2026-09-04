@@ -2,6 +2,8 @@ package localedit
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,25 +23,89 @@ type RecoverySummary struct {
 	StaleRunningTasks int  `json:"stale_running_tasks"` // 过期 claimed 被重排队
 	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
 	UnknownTasks      int  `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown
-	HasMore           bool `json:"has_more"`            // 本轮批次已填满，下一轮继续探测
+	HasMore           bool `json:"has_more"`            // unlocked snapshot 仍有未处理候选
 }
 
 // RecoverUnfinished 把 queued 任务补回 PENDING；过期且已打 provider 的 running 标 unknown。
 // pool 为 nil 或写库失败时返回 error；已过 provider 边界标 unknown，不得当失败自动重试。
+// 单条任务失败计入返回 error，不回滚本轮已提交的其它任务。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
+	return recoverUnfinished(ctx, pool, staleAfter, recoveryBatchLimit)
+}
+
+func recoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, limit int) (RecoverySummary, error) {
 	if staleAfter <= 0 {
 		staleAfter = 10 * time.Minute
+	}
+	if limit <= 0 {
+		limit = recoveryBatchLimit
 	}
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
 		return RecoverySummary{}, err
 	}
-	var summary RecoverySummary
-	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		cutoff := time.Now().UTC().Add(-staleAfter)
-		var tasks []schema.LocalImageEditTasks
+	cutoff := time.Now().UTC().Add(-staleAfter)
+	ids, hasMore, err := discoverLocalEditCandidates(ctx, gdb, cutoff, limit)
+	if err != nil {
+		return RecoverySummary{}, err
+	}
+	summary := RecoverySummary{HasMore: hasMore}
+	var errs []error
+	now := time.Now().UTC()
+	for _, taskID := range ids {
+		outcome, recErr := recoverLocalEditState(ctx, gdb, taskID, staleAfter, now)
+		if recErr != nil {
+			errs = append(errs, fmt.Errorf("local edit task %s: %w", taskID, recErr))
+			continue
+		}
+		switch outcome {
+		case "queued":
+			changed, restageErr := restageLocalEditTask(ctx, gdb, taskID)
+			if restageErr != nil {
+				errs = append(errs, fmt.Errorf("local edit task %s restage: %w", taskID, restageErr))
+				continue
+			}
+			if changed {
+				summary.QueuedTasks++
+				summary.EnqueuedTasks++
+			}
+		case "requeued":
+			summary.StaleRunningTasks++
+			if _, restageErr := restageLocalEditTask(ctx, gdb, taskID); restageErr != nil {
+				errs = append(errs, fmt.Errorf("local edit task %s restage: %w", taskID, restageErr))
+				continue
+			}
+			summary.EnqueuedTasks++
+		case "unknown":
+			summary.UnknownTasks++
+		}
+	}
+	return summary, errors.Join(errs...)
+}
+
+func discoverLocalEditCandidates(ctx context.Context, gdb *gorm.DB, cutoff time.Time, limit int) ([]string, bool, error) {
+	var ids []string
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		candidateScanStarted := time.Now()
-		candidateScanErr := pgxTx.WithContext(ctx).Clauses(pfdb.SkipLocked()).Where(`
+		scanErr := localEditRecoveryScope(pgxTx.WithContext(ctx), cutoff).
+			Order("updated_at ASC, id ASC").
+			Limit(limit+1).
+			Pluck("id", &ids).Error
+		metrics.ObserveRecoveryLock("local_image_edit", time.Since(candidateScanStarted))
+		return scanErr
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
+	}
+	return ids, hasMore, nil
+}
+
+func localEditRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
+	return tx.Model(&schema.LocalImageEditTasks{}).Where(`
 			is_retryable = ? AND (
 				(status = ? AND NOT EXISTS (
 					SELECT 1 FROM async_dispatches d
@@ -47,54 +113,54 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 					  AND d.status IN ?
 				))
 				OR (status = ? AND (started_at IS NULL OR started_at <= ?))
-			)`, true, "queued", queue.ActorLocalEdit, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff).
-			Order("updated_at ASC, id ASC").
-			Limit(recoveryBatchLimit).
-			Find(&tasks).Error
-		metrics.ObserveRecoveryLock("local_image_edit", time.Since(candidateScanStarted))
-		if candidateScanErr != nil {
-			return candidateScanErr
-		}
-		if len(tasks) >= recoveryBatchLimit {
-			summary.HasMore = true
-		}
-		now := time.Now().UTC()
-		for _, task := range tasks {
-			outcome, err := recoverOne(ctx, pgxTx, task.ID, true, staleAfter, now)
-			if err != nil {
-				return err
-			}
-			switch outcome {
-			case "queued":
-				summary.QueuedTasks++
-				summary.EnqueuedTasks++
-			case "requeued":
-				summary.StaleRunningTasks++
-				summary.EnqueuedTasks++
-			case "unknown":
-				summary.UnknownTasks++
-			}
-		}
-		return nil
-	})
-	return summary, err
+			)`, true, "queued", queue.ActorLocalEdit, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff)
 }
 
-// recoverOne 处理一条 queued/running 任务。queued 补 PENDING；running 过期且尚未打 provider 可重排队；
-// 已过 provider 边界只能标 unknown。resetStale=false 时只观察不改行。
+func recoverLocalEditState(ctx context.Context, gdb *gorm.DB, taskID string, staleAfter time.Duration, now time.Time) (string, error) {
+	var outcome string
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var recErr error
+		outcome, recErr = recoverOne(ctx, pgxTx, taskID, true, staleAfter, now)
+		return recErr
+	})
+	return outcome, err
+}
+
+func restageLocalEditTask(ctx context.Context, gdb *gorm.DB, taskID string) (bool, error) {
+	var changed bool
+	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
+		var task schema.LocalImageEditTasks
+		err := pgxTx.WithContext(ctx).Where("id = ?", taskID).Take(&task).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if task.Status != "queued" {
+			return nil
+		}
+		var restageErr error
+		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(taskFromModel(task)))
+		return restageErr
+	})
+	return changed, err
+}
+
+// recoverOne 处理一条 queued/running 任务的状态。queued 只确认仍 queued；running 过期且尚未打 provider 可重排队；
+// 已过 provider 边界只能标 unknown。RestageIfIdle 由调用方在状态事务提交后另开 outbox 事务。
+// resetStale=false 时只观察不改行。SKIP LOCKED 跳过仍被 live worker 持有的行。
 func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
-	task, err := loadTaskByID(ctx, pgxTx, taskID)
+	var row schema.LocalImageEditTasks
+	err := pgxTx.Clauses(pfdb.SkipLocked()).Where("id = ?", taskID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "skipped", nil
+	}
 	if err != nil {
 		return "", err
 	}
+	task := taskFromModel(row)
 	if task.Status == "queued" {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(task))
-		if err != nil {
-			return "", err
-		}
-		if !changed {
-			return "idle", nil
-		}
 		return "queued", nil
 	}
 	if task.Status != "running" {
@@ -110,9 +176,6 @@ func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale b
 	}
 	if phase == "claimed" {
 		if err := markStaleClaimed(ctx, pgxTx, task); err != nil {
-			return "", err
-		}
-		if _, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(task)); err != nil {
 			return "", err
 		}
 		return "requeued", nil
