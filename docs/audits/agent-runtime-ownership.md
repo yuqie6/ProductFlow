@@ -45,7 +45,7 @@
 | G-04 | S4 保持断线、gap、重复帧、generation、overflow、terminal、approval 浏览器合同。 |
 | G-05 | S1 若改 batch/WAL，重跑 journal 容量门。 |
 | G-06 | 本重构不扩大真实 provider 能力；已完成的 Luna/WorkflowRun/图片链不得退化。 |
-| G-07 | 每刀记录局部门；S6 跑全量门。干净 checkout 当前仍缺，不因重构而标完成。 |
+| G-07 | 每刀记录局部门；S6 跑全量门。2026-09-04 账本更新前的 clean HEAD 已通过无缓存全量门；随后仅有三份审计文档未提交。生产就绪仍由生产账本独立决定。 |
 
 重构切片标为 `完成` 的前提是相关条目保持 `完成` 或 `部分完成`，且本刀 Gate 有 2026-09-01 或之后的新证据。若生产就绪账本出现 `违背`，相关重构切片不得标为完成。
 
@@ -154,7 +154,7 @@ flowchart LR
 - Question/schema：`just go-test`、Agent question tests；删 schema 列时 `just go-migrate`。
 - Projection：Go agent tests、`pnpm --dir web test:run` 中对话/runtime/SSE 覆盖。
 - Tool effect：Go 八工具四态矩阵和共享解释器测试、`just agent-service-test`。
-- 最终：checkpoint-6 全量命令；G-07 的干净 checkout 仍单独保持 `部分完成`，除非确实在干净 checkout 重跑。
+- 最终：checkpoint-6 全量命令；G-07 的 clean/no-cache 全量门已于 2026-09-04 账本更新前的当前 HEAD 重跑并通过，随后仅修改三份审计文档。G-06 的真实 Agent 审批到 WorkflowRun 链仍由生产就绪账本单独跟踪。
 
 ### 验证记录
 
@@ -167,11 +167,12 @@ flowchart LR
 | 2026-09-01 | checkpoint-4 | Go agent 全包：通过，87.5s；PG fold 聚焦测试与 SSE TTFB：通过，P95=15.87ms；Web：92 files、634 passed | snapshot reader residue scan 为空；exact replay 不重复摘要，bound running worker dispatch 被消费。 |
 | 2026-09-01 | checkpoint-5 | 八工具四态矩阵：通过；live/manual/scanner 共享解释器：通过；Go agent 全包：通过，92.8s；Agent：166 passed/2 skipped；`just docs-check`：通过 | Node policy/retry branch residue scan 为空；网络丢响应测试断言一次 mutation、一次 Go reconcile。 |
 | 2026-09-01 | checkpoint-6 | Agent TypeScript 编译通过；`just go-test`（整树，99.8s）、`just agent-service-test`（167 passed/2 skipped）、`pnpm --dir web test:run`（92 files、635 passed）、`pnpm --dir web build`、`just docs-check`、`git diff --check` 通过 | Pi runtime 拆分完成；effect reconcile sealed route contract 已补齐；并发工作区中的 Graph lock 改动未纳入本 checkpoint。 |
+| 2026-09-04 | current HEAD gate verification | 账本更新前的 clean HEAD 执行无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed/2 skipped）、Web 637 tests/lint/build、schema fresh/upgrade、`just go-migrate`、`just docs-check`、`git diff --check` 全部通过；journal/WAL/Graph query-plan 专项也通过 | G-07 的 clean/no-cache gate 已具备完成证据；随后仅修改三份审计文档。G-06 的真实 Agent 审批到 WorkflowRun 完整 UI 链尚未在当前 HEAD 重跑，生产账本仍保持部分完成。 |
 
 ## 明确不做
 
 - 后台 durable Task、模型请求原地续跑、跨进程 `not_applied` 自动重试。
-- 用本重构宣告生产就绪或把 G-07 改成完成。
+- 用本重构宣告生产就绪；G-07 必须由生产账本定义的独立 clean/no-cache 全量 Gate 证明，不能凭重构自动改为完成。
 - 新对话壳、建议 chip、新 Tool 等用户可见扩面。
 - 给 `ProductFlowClient` 增加无行为的包装层；把 Skill 当权限层；浏览器直连 agent-service；替换 Pi；在 Node 写 Graph Command。
 

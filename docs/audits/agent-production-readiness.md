@@ -20,8 +20,8 @@
 | D-01 | Turn 继续使用 `unknown`；中断通过 `terminal_reason_code` 和 `assistant/message.interrupted=true` 表达 | 完成 | 2026-08-31：`recovery.go` 按 `attempt_id` 组装 interrupted `assistant/message`；`AgentTurnTail` 用 `terminal_reason_code` 区分文案；`TestCrashAfterModelStartRecoversUnknownAndInterruptsInvocation` 与 compact 多 attempt 测试通过。 |
 | D-02 | 工具恢复先对账；`applied` 自动收敛；`not_applied` 仅对 `reconcile_then_retry` 使用原幂等键重试；`conflict/unknown` 停止自动执行 | 完成 | 2026-08-31：HTTP 与 scanner 共用 `reconcileEffectIntent`；`TestReconcileEffectIntentEightToolStateMatrix` 覆盖八工具 applied/conflict/unknown/retry；二次 not_applied 不再持久化 `not_applied`；`TestReconcileTurnEffectAndScannerShareInterpreter` 通过。 |
 | D-03 | 当前 provider 走 foreground；建立 `background_resumable` 合同和持久化结构；不增加绕过 Pi 的官方 OpenAI 执行器 | 完成 | 2026-08-31：Go `BackgroundResumable` = profile ∩ `agentAdapterBackgroundResumable=false`；Agent `effectiveBackgroundResumable`；`before_model_request` 拒绝 `execution_mode=background`；checkpoint 含 `model_response_bound/cursor`。无旁路 OpenAI 执行器。 |
-| D-04 | 完成标准是单管理员、单商家生产就绪；保留 7 天 chunk 压缩；不含 SaaS tenant、计费和对象归档 | 部分完成 | 产品边界和 7 天压缩已按 attempt 绑定 `sourceEventSeqs`；G-03/G-05/G-06 本轮已过。仍缺 G-07 干净 checkout，不能宣告生产就绪。 |
-| D-05 | 容量 gate 是 25 个并发 Turn、100 条 SSE、单 Turn 1 万事件、单会话 1000 Turn | 完成 | 2026-09-01：`just go-test-agent-journal-capacity` 10k 事件 P95=226.3ms、25 Turn×128、100 SSE overflow 503；`TestLastFiftyTurnsQueryP95` 1000 Turn 会话 cursor 零洞；`TestAgentSSETimeToFirstEventP95` P95=24.82ms；本地 10k WAL P95=1.01ms；Chromium gap repair 既有 ≤5s。 |
+| D-04 | 完成标准是单管理员、单商家生产就绪；保留 7 天 chunk 压缩；不含 SaaS tenant、计费和对象归档 | 部分完成 | 产品边界和 7 天压缩已按 attempt 绑定 `sourceEventSeqs`；G-03 与 G-05 的证据通过。G-06 的真实 skill eval 与图片图 gate 已在 2026-09-04 当前 HEAD 通过，但真实 Agent 审批到 WorkflowRun 的完整链仍只有 2026-09-01 的历史证据，需在当前 HEAD 重做。G-07 的 clean/no-cache 全量 gate 已通过；尚不能宣告生产就绪。 |
+| D-05 | 容量 gate 是 25 个并发 Turn、100 条 SSE、单 Turn 1 万事件、单会话 1000 Turn | 完成 | 2026-09-04 当前 HEAD 复核：`just go-test-agent-journal-capacity` 10k 事件 P95=232.800884ms、25 Turn×128、100 SSE overflow 503；`just agent-service-test-local-journal-capacity` 本地 10k WAL P95=0.81ms。2026-09-01 已有 `TestLastFiftyTurnsQueryP95`、`TestAgentSSETimeToFirstEventP95` 和 Chromium gap repair 证据，均在阈值内。 |
 
 ## 协议与数据合同
 
@@ -102,13 +102,13 @@
 
 | ID | 必须通过的 Gate | 状态 | 最近命令/环境/结果 |
 |---|---|---|---|
-| G-01 | 单元/合同：manifest policy codegen、checkpoint payload、invocation 幂等、reason code、事件分页、unknown ignorable、usage 去重 | 完成 | 2026-09-01：`just go-test` 整树通过（`./internal/agent` 83.8s 含 durable-answer E2E 与死锁锁顺序）；`just agent-service-test` 19 files、159 passed / 2 skipped（含 content-409、5xx journal 重试、SIGTERM flush）；`pnpm --dir web test:run` 89 files、613 passed。 |
+| G-01 | 单元/合同：manifest policy codegen、checkpoint payload、invocation 幂等、reason code、事件分页、unknown ignorable、usage 去重 | 完成 | 2026-09-04 当前 HEAD：无缓存 `go test -C go ./... -count=1 -p 1` 通过；`just agent-service-test` 20 files passed、1 skipped，167 passed / 2 skipped；`pnpm --dir web test:run` 93 files、637 passed。Agent contract artifact check 在 pretest 中通过。 |
 | G-02 | PostgreSQL：八类工具 effect 状态矩阵、同幂等键重复 scanner、多 dispatcher、旧 fencing writer | 完成 | 2026-09-01：八工具四态矩阵与共享解释器；`TestRecoverExpiredExecutionsRejectsStaleFencingWriter` 拒绝旧 lease writer 与过期 fencing；`TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate` 两个 scanner 并发 SKIP LOCKED，4 条 Turn 各一 `turn/end`。含在 `just go-test`。 |
 | G-03 | `kill -9` 四点故障注入：模型开始后、mutation 成功/result 前、approval 后、turn/end 落库/响应前；验证连续 seq、至多一次副作用、诚实终态、无永久活动 Turn | 完成 | 2026-09-01：`TestSIGKILLLeaseHolderAgainstGoPG` 对真实 httptest Go+PG 四点 SIGKILL helper：`model_start` / `mutation` / `approval` / `turn_end`；连续 journal、mutation 副作用至多一次、诚实终态。含在 `just go-test`。 |
 | G-04 | 浏览器：普通断线、gap、重复帧、旧 generation 迟到帧、buffer overflow、terminal gap、approval 刷新；无错误断线 toast | 完成 | 2026-08-31：真实 Chromium `PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1` `e2e/agent-conversation-runtime.spec.ts` 3 passed（PG 事件页补洞 ≤5s、关闭旧 EventSource、generation/overflow/terminal gap/parked approval）；`agent-sse-reconnect.spec.ts` 仍覆盖 raw EventSource cursor。 |
-| G-05 | 标准容量：25 Turn、100 SSE、1 万事件/Turn、1000 Turn/会话；零洞、零重复副作用、零永久活动；P95 batch PG <=300ms、SSE <=1s、gap repair <=5s、最近 50 Turn <=500ms | 完成 | 2026-09-01：`just go-test-agent-journal-capacity` deep_events=10000 concurrent_turns=25 batches=207 p95=226.300005ms；100 SSE overflow 503。`TestLastFiftyTurnsQueryP95` 1000 Turn cursor 读满零洞。`TestAgentSSETimeToFirstEventP95` P95=24.82251ms n=20。`just agent-service-test-local-journal-capacity` 10k WAL duration=7352.8ms p95=1.01ms。Chromium gap repair 既有 1.6s。 |
-| G-06 | 真实 gate 使用 `gpt-5.6-luna`：完整 skill eval、真实审批到 WorkflowRun、真实图片图运行、真实 Chromium；确认 `background:true` unsupported | 完成 | 2026-09-01：`just agent-evals-live` 15/15（Luna，calls=60，tokens=530621）。Cursor 独立标签页（不占用秋季女装工作台）：Agent 提交 `e2e-live-graph` 整图待审批后点「确认并执行」，PG `workflow_graph_runs` `cd57c363-63ff-4505-b910-8a342b2863f7` succeeded/graph。同标签再发 `scope=node` `force=true` 请求节点 `2829ff95-9509-4005-83a6-7c16191d884d`（细节展示图 1），确认后 `workflow_graph_runs` `cb6e3185-4438-431b-90f9-001f212259ee` succeeded/node/`force=true`，节点 `planned_action=generate`（非 skipped），新 `workflow_generation` 资产 `2e9faa8a-4ea0-4241-8080-e02da026e695` PNG 1 551 082 字节、1122×1402。画布节点文案从「已跳过」变为「成功」。Go/Pi 拒绝 `background:true`。 |
-| G-07 | 全量：Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、`git diff --check`、干净 checkout 重跑 | 部分完成 | 2026-09-01 死锁修复后重跑：`just go-test` 通过（`./internal/agent` 83.8s）；`just agent-service-test` 19 files、159 passed / 2 skipped（含 SIGTERM ask_user / unknown flush）；`pnpm --dir web test:run` 89 files、613 passed；`pnpm --dir web lint` 与 `build` 通过；`just docs-check`、`just go-migrate`、整树 `git diff --check` 通过。未做干净 checkout 全量重跑（工作区有未提交变更，用户未要求 commit）。 |
+| G-05 | 标准容量：25 Turn、100 SSE、1 万事件/Turn、1000 Turn/会话；零洞、零重复副作用、零永久活动；P95 batch PG <=300ms、SSE <=1s、gap repair <=5s、最近 50 Turn <=500ms | 完成 | 2026-09-04 当前 HEAD 复核：`just go-test-agent-journal-capacity` deep_events=10000 concurrent_turns=25 batches=207 p95=232.800884ms；100 SSE overflow 503；`just agent-service-test-local-journal-capacity` 本地 10k WAL duration=6351.4ms p95=0.81ms。2026-09-01 的 `TestLastFiftyTurnsQueryP95`、`TestAgentSSETimeToFirstEventP95` 与 Chromium gap repair 证据仍在阈值内。 |
+| G-06 | 真实 gate 使用 `gpt-5.6-luna`：完整 skill eval、真实审批到 WorkflowRun、真实图片图运行、真实 Chromium；确认 `background:true` unsupported | 部分完成 | 2026-09-04 当前 HEAD：`just agent-evals-live` 15/15，58 calls，511745 tokens，`usage_unavailable=0`；`just web-e2e-live-graph` 真实 Chromium/真实图片 provider 1 passed；Go/Pi 的 `background:true` 拒绝测试在无缓存 Go 全量门中通过。真实 Agent 审批到 WorkflowRun 的 UI 链没有仓库自动 gate，只有 2026-09-01 的人工证据；需在当前 HEAD 重做该链后才能完成。 |
+| G-07 | 全量：Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、`git diff --check`、干净 checkout 重跑 | 完成 | 2026-09-04 当前 HEAD `fb658633`：全量 gate 启动时代码工作树干净；随后本次账本更新仅修改三份 `docs/audits/` 文档。无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed / 2 skipped）、`pnpm --dir web test:run`（637 passed）、`pnpm --dir web lint`、`just web-build`、`just docs-check`、`just go-migrate`、`git diff --check` 均通过。schema fresh/upgrade 由 `TestApplyEmptyDatabaseMatchesHeadConstraints`、`TestApplyTwiceDoesNotDeleteRows`、`TestApplyExistingHeadKeepsSchema` 覆盖并通过。 |
 
 ## 持久日志提交语义
 
@@ -120,7 +120,7 @@
 4. 本地 append-only journal 可以辅助 Pi loop 和进程内恢复，但不得使 PostgreSQL 降级为无限期 eventual sink。
 5. 生产 gate 约束批量写入 P95 不超过 300ms。实现必须同时证明有界等待、结构性 flush barrier、终态 flush 和失败传播；“每原始 token 单独一次 PG”与“本地返回后无界后台提交”都不是计划目标。
 
-当前结论：`完成`（提交语义与容量 P95）。G-07 干净 checkout 仍见测试 Gate 表，不缩小该节合同。
+当前结论：`完成`（提交语义与容量 P95）。G-07 已在 2026-09-04 账本更新前的 clean HEAD 以无缓存全量门复核；G-06 的真实 Agent 审批到 WorkflowRun 链仍见测试 Gate 表中的缺口。
 
 - 当前不是逐事件等待 PG。`JournalEventBatcher` 使用 20ms、64 events、768 KiB 三个上限；普通 chunk 先入队，tool/question/approval/assistant message/terminal 是等待 drain 的结构屏障；每个 batch 调一次 `/events/batch`。
 - Go 的 batch append 在同一事务校验连续 seq、写事件并更新终态投影；浏览器 SSE 只查询 PG。失败批次保留在队首，屏障和 terminal 失败会传播并中止 Turn。
@@ -134,6 +134,17 @@
 - 2026-09-01 锁顺序：过期 execution 扫描改为先 `FOR UPDATE OF agent_turn_projections SKIP LOCKED` 再锁 execution，与 `AppendEvents`/`HeartbeatExecution` 一致。`TestAppendEventsAndExpiredRecoveryDoNotDeadlock` 在 live writer 持有 projection 时扫描跳过且无 `40P01`。Agent `appendPublishedBatch` 对 ProductFlow 5xx 按 250ms 起步、最高 30s 原序重试；`pi-runtime.test.ts`「retries a 5xx journal batch then ACKs the original sequence」通过。
 
 ## 验证记录
+
+### 2026-09-04 当前 HEAD
+
+- HEAD：`fb658633`；全量 gate 启动时 `git status --short` 为空、代码工作树干净；随后本次审计更新仅留下三份 `docs/audits/` 文档未提交修改。
+- 无缓存 Go 全量：`go test -C go ./... -count=1 -p 1` 通过；包含 Agent、Graph、schema fresh/upgrade 测试。
+- Agent service：`just agent-service-test`，20 files passed、1 skipped；167 passed / 2 skipped；contract artifact check 通过。
+- Web：`pnpm --dir web test:run`，93 files、637 passed；`pnpm --dir web lint` 通过；`just web-build` 通过，bundle budget 通过。
+- Schema/docs：`just go-migrate`、`just docs-check`、`git diff --check` 通过。
+- 容量：journal 10k/25 Turn/100 SSE P95=232.800884ms；local WAL 10k P95=0.81ms；Graph target-scale query plan 通过且无 Seq Scan。
+- Graph read gate：`just http-ab-gates` summary/detail 100/100，p95=4.09/4.71ms；workbench performance Chromium 1 passed，cold/warm TTI=2159/2247ms，初始 detail=0，显式 run detail=1，预期 Agent bootstrap 409 之外无 page/network/HTTP failure。
+- 真实 provider：`just agent-evals-live` 15/15；`just web-e2e-live-graph` 1 passed。当前 HEAD 尚未重跑真实 Agent 审批到 WorkflowRun 的完整 UI 链，因此保留 G-06 为部分完成。
 
 ### 2026-09-01 当前 checkout
 
