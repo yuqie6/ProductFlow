@@ -67,12 +67,13 @@ func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 		id := newID()
 		now := time.Now().UTC()
 		session := schema.AgentSessions{
-			ID:        id,
-			Title:     sessionDefaultTitle,
-			Summary:   ptr("暂无 Agent Task"),
-			Status:    "active",
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:         id,
+			Title:      sessionDefaultTitle,
+			Summary:    ptr("暂无 Agent Task"),
+			Status:     "active",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			ActivityAt: now,
 		}
 		if err := pgxTx.WithContext(ctx).Create(&session).Error; err != nil {
 			return err
@@ -200,7 +201,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 	return nil
 }
 
-// listSessions 按 Session 与其对话的最近更新时间分页。productID=nil 只列全局 Dock；否则只列该商品画布 Session。
+// listSessions 按 Session.activity_at 分页。productID=nil 只列全局 Dock；否则只列该商品画布 Session。
 //
 // cursor 无效返回 Validation。不写表，不改 Goal。
 func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string, cursor *sessionCursor, limit int) ([]SessionResponse, *string, error) {
@@ -213,7 +214,6 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 	if !includeArchived {
 		q = q.Where("status = ?", "active")
 	}
-	rankSQL := sessionRankSQL
 	if cursor != nil {
 		rankAt, err := time.Parse(time.RFC3339Nano, cursor.RankAt)
 		if err != nil {
@@ -222,10 +222,10 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 				return nil, nil, apperr.Validation("Agent Session 分页 cursor 无效")
 			}
 		}
-		q = q.Where("("+rankSQL+" < ? OR ("+rankSQL+" = ? AND agent_sessions.id < ?))", rankAt, rankAt, cursor.ID)
+		q = q.Where("(activity_at < ? OR (activity_at = ? AND agent_sessions.id < ?))", rankAt, rankAt, cursor.ID)
 	}
 	var ids []string
-	err := q.Order(rankSQL+` DESC, agent_sessions.id DESC`).
+	err := q.Order(`activity_at DESC, agent_sessions.id DESC`).
 		Limit(limit+1).
 		Pluck("id", &ids).Error
 	if err != nil {
@@ -242,14 +242,8 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 	var next *string
 	if hasMore && len(out) > 0 {
 		oldest := out[len(out)-1]
-		rankAt := oldest.UpdatedAt
-		for _, conv := range oldest.Conversations {
-			if conv.UpdatedAt.After(rankAt) {
-				rankAt = conv.UpdatedAt
-			}
-		}
 		encoded, err := encodeCursor(sessionCursor{
-			V: sessionCursorVersion, RankAt: rankAt.UTC().Format(time.RFC3339Nano), ID: oldest.ID,
+			V: sessionCursorVersion, RankAt: oldest.ActivityAt.UTC().Format(time.RFC3339Nano), ID: oldest.ID,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -258,11 +252,6 @@ func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, pro
 	}
 	return out, next, nil
 }
-
-const sessionRankSQL = `GREATEST(
-			agent_sessions.updated_at,
-			COALESCE((SELECT MAX(c.updated_at) FROM agent_conversations c WHERE c.session_id = agent_sessions.id), agent_sessions.updated_at)
-		)`
 
 const sessionConversationLimit = 20
 
@@ -354,6 +343,7 @@ func loadSessions(ctx context.Context, pgxTx *gorm.DB, ids []string) ([]SessionR
 			ID: row.ID, ProductID: row.ProductID, Title: row.Title, Summary: row.Summary,
 			Status: row.Status, ArchivedAt: row.ArchivedAt, ConversationCount: int(countBySession[id]),
 			Conversations: conversations, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+			ActivityAt: row.ActivityAt,
 		})
 	}
 	return out, nil

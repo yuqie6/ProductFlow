@@ -61,13 +61,14 @@ func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID str
 	now := time.Now().UTC()
 	pid := productID
 	rec := schema.AgentSessions{
-		ID:        id,
-		ProductID: &pid,
-		Title:     title,
-		Summary:   ptr("暂无 Agent Task"),
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         id,
+		ProductID:  &pid,
+		Title:      title,
+		Summary:    ptr("暂无 Agent Task"),
+		Status:     "active",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		ActivityAt: now,
 	}
 	return id, tx.WithContext(ctx).Create(&rec).Error
 }

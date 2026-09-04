@@ -116,13 +116,14 @@ func createProductBoundSession(ctx context.Context, pgxTx *gorm.DB, productID st
 	now := time.Now().UTC()
 	pid := productID
 	rec := schema.AgentSessions{
-		ID:        id,
-		ProductID: &pid,
-		Title:     product.Name,
-		Summary:   ptr("暂无 Agent Task"),
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         id,
+		ProductID:  &pid,
+		Title:      product.Name,
+		Summary:    ptr("暂无 Agent Task"),
+		Status:     "active",
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		ActivityAt: now,
 	}
 	return id, pgxTx.WithContext(ctx).Create(&rec).Error
 }

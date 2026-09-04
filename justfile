@@ -100,6 +100,14 @@ http-ab-gates:
 go-test-graph-query-plan:
     PRODUCTFLOW_RUN_GRAPH_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/graph -run TestGraphSummaryQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
 
+# Opt-in target-scale Agent Session list EXPLAIN gate in a disposable migrated database.
+go-test-agent-query-plan:
+    PRODUCTFLOW_RUN_AGENT_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run TestAgentSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
+
+# Opt-in target-scale ImageSession list EXPLAIN gate in a disposable migrated database.
+go-test-imagesession-query-plan:
+    PRODUCTFLOW_RUN_IMAGE_SESSION_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/imagesession -run TestImageSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
+
 go-test-live-providers:
     PRODUCTFLOW_RUN_LIVE_PROVIDERS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/providers -count=1 -timeout 8m -run Live'
 

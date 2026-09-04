@@ -192,6 +192,48 @@ func rewriteDatabase(raw, name string) (string, error) {
 	return parsed.String(), nil
 }
 
+// IsolatedMigrated 新建一次性已迁移库，测完 DROP DATABASE。name 必须是安全 ident。
+// 给目标规模 query plan 等不能污染包级 gotest 库的闸门用。CREATE DATABASE 失败则 Skip。
+func IsolatedMigrated(t *testing.T, name string) (*pgxpool.Pool, *gorm.DB) {
+	t.Helper()
+	if !safeIdent(name) {
+		t.Fatalf("unsafe isolated database name %q", name)
+	}
+	raw := os.Getenv("DATABASE_URL")
+	if raw == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+	head := Pool(t)
+	normalized := config.NormalizePostgresURL(raw)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if _, err := head.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Skipf("cannot create database: %v", err)
+	}
+	t.Cleanup(func() {
+		dropCtx, dropCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer dropCancel()
+		_, _ = head.Exec(dropCtx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	})
+	dbURL, err := rewriteDatabase(normalized, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	return pool, gdb
+}
+
 func safeIdent(name string) bool {
 	if name == "" {
 		return false

@@ -1580,6 +1580,49 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_page_context_snapshots_task_created ON public.agent_page_context_snapshots USING btree (task_id, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_product_status_updated ON public.agent_sessions USING btree (product_id, status, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_status_updated ON public.agent_sessions USING btree (status, updated_at, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_product_status_activity ON public.agent_sessions USING btree (product_id, status, activity_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_status_activity ON public.agent_sessions USING btree (status, activity_at DESC, id DESC);`,
+	`UPDATE public.agent_sessions AS s
+	 SET activity_at = v.rank
+	 FROM (
+	   SELECT s2.id,
+	          GREATEST(s2.updated_at, COALESCE(MAX(c.updated_at), s2.updated_at)) AS rank
+	     FROM public.agent_sessions s2
+	     LEFT JOIN public.agent_conversations c ON c.session_id = s2.id
+	    GROUP BY s2.id, s2.updated_at
+	 ) v
+	 WHERE s.id = v.id AND s.activity_at IS DISTINCT FROM v.rank;`,
+	`CREATE OR REPLACE FUNCTION public.productflow_session_activity_from_session() RETURNS trigger
+	 LANGUAGE plpgsql AS $$
+	 BEGIN
+	   IF TG_OP = 'INSERT' THEN
+	     NEW.activity_at := GREATEST(NEW.updated_at, COALESCE(NEW.activity_at, NEW.updated_at));
+	     RETURN NEW;
+	   END IF;
+	   NEW.activity_at := GREATEST(COALESCE(OLD.activity_at, NEW.updated_at), NEW.updated_at);
+	   RETURN NEW;
+	 END;
+	 $$;`,
+	`CREATE OR REPLACE FUNCTION public.productflow_session_activity_from_conversation() RETURNS trigger
+	 LANGUAGE plpgsql AS $$
+	 BEGIN
+	   IF NEW.session_id IS NOT NULL THEN
+	     UPDATE public.agent_sessions
+	        SET activity_at = GREATEST(activity_at, NEW.updated_at)
+	      WHERE id = NEW.session_id
+	        AND activity_at < NEW.updated_at;
+	   END IF;
+	   RETURN NEW;
+	 END;
+	 $$;`,
+	`DROP TRIGGER IF EXISTS trg_agent_sessions_activity ON public.agent_sessions;`,
+	`CREATE TRIGGER trg_agent_sessions_activity
+	 BEFORE INSERT OR UPDATE OF updated_at ON public.agent_sessions
+	 FOR EACH ROW EXECUTE FUNCTION public.productflow_session_activity_from_session();`,
+	`DROP TRIGGER IF EXISTS trg_agent_conversations_session_activity ON public.agent_conversations;`,
+	`CREATE TRIGGER trg_agent_conversations_session_activity
+	 AFTER INSERT OR UPDATE OF updated_at, session_id ON public.agent_conversations
+	 FOR EACH ROW EXECUTE FUNCTION public.productflow_session_activity_from_conversation();`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_conversation_updated ON public.agent_tasks USING btree (conversation_id, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_session_status_updated ON public.agent_tasks USING btree (session_id, status, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_status_updated ON public.agent_tasks USING btree (status, updated_at, id);`,

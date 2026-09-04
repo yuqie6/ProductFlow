@@ -58,6 +58,7 @@ type AgentSessions struct {
 	UpdatedAt  time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
 	Summary    *string    `gorm:"column:summary;type:text"`
 	ProductID  *string    `gorm:"column:product_id;type:varchar(36)"`
+	ActivityAt time.Time  `gorm:"column:activity_at;type:timestamptz;not null;default:now()"`
 }
 
 func (AgentSessions) TableName() string { return "agent_sessions" }

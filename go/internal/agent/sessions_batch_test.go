@@ -70,3 +70,36 @@ func TestLoadSessionsKeepsConversationCountAndPerSessionLimit(t *testing.T) {
 		t.Fatalf("oldest returned conversation %s want %s", items[0].Conversations[len(items[0].Conversations)-1].ConversationID, createdIDs[1])
 	}
 }
+
+func TestConversationUpdateBumpsSessionActivityAt(t *testing.T) {
+	_, gdb := testdb.Open(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Add(-time.Hour)
+	sessionID := clockid.New()
+	convID := clockid.New()
+	if err := gdb.WithContext(ctx).Create(&schema.AgentSessions{
+		ID: sessionID, Title: "活动时间", Status: "active",
+		CreatedAt: now, UpdatedAt: now, ActivityAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = gdb.WithContext(ctx).Where("id = ?", convID).Delete(&schema.AgentConversations{}).Error
+		_ = gdb.WithContext(ctx).Where("id = ?", sessionID).Delete(&schema.AgentSessions{}).Error
+	})
+	later := now.Add(30 * time.Minute)
+	if err := gdb.WithContext(ctx).Create(&schema.AgentConversations{
+		ID: convID, HarnessRunID: convID, Status: "collecting",
+		CreatedAt: later, UpdatedAt: later, SessionID: &sessionID, ScopeType: "global",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var session schema.AgentSessions
+	if err := gdb.WithContext(ctx).Select("activity_at").Where("id = ?", sessionID).Take(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	delta := session.ActivityAt.Sub(later)
+	if delta < -time.Second || delta > time.Second {
+		t.Fatalf("activity_at %s, want conversation time %s", session.ActivityAt, later)
+	}
+}

@@ -12,7 +12,7 @@ const (
 	sessionTitleMax         = 160
 	sessionListDefaultLimit = 20
 	sessionListMax          = 100
-	sessionCursorVersion    = 1
+	sessionCursorVersion    = 2
 	sessionDefaultTitle     = "新会话"
 	taskTitleMax            = 160
 	taskGoalMax             = 20_000
@@ -64,6 +64,7 @@ type SessionResponse struct {
 	Conversations     []SessionConversation `json:"conversations"`      // 摘要列表，不是完整 Turn
 	CreatedAt         time.Time             `json:"created_at"`
 	UpdatedAt         time.Time             `json:"updated_at"`
+	ActivityAt        time.Time             `json:"-"`
 }
 
 // SessionListResponse 给浏览器 Dock / 会话列表用的分页壳，不是内部工具面合同。
