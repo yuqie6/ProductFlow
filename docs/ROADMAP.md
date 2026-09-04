@@ -36,7 +36,7 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/perf
 
 ### Agent Self-Harness
 
-Agent 能力组的 [普通 Skill 修复](audits/tasks/eval-skills.md) 等待评测题与生产合同独立校正后复验。壳工件 P1 的当前实现见 ARCHITECTURE；P2 归因及 P2b–P7 仍按阶段门发布，尚无自动进化或生产热切。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。题库与 grader 由评测组独立维护。
+Agent 能力组的 [普通 Skill 修复](audits/tasks/eval-skills.md) 等待评测题与生产合同独立校正后复验。壳工件 P1 与归因 P2 的当前实现见 ARCHITECTURE；P2b–P7 仍按阶段门发布，尚无自动进化或生产热切。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。题库与 grader 由评测组独立维护。
 
 ### 运行时性能治理
 

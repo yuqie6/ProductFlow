@@ -23,6 +23,7 @@ import {
   validatePageContext,
 } from "./contracts.js";
 import type { Config } from "./config.js";
+import { DEPLOYED_HARNESS } from "./harness.js";
 import type { ProductFlowClient } from "./productflow.js";
 import { TurnRuntime } from "./turn-runtime.js";
 import { scopeFromContract } from "./runtime-scope.js";
@@ -205,6 +206,7 @@ export class PiRuntimeManager {
       tool_contract_version: TOOL_CONTRACT_VERSION,
       context_schema_version: CONTEXT_SCHEMA_VERSION,
       skill_catalog_hash: this.skills.hash,
+      harness_hash: DEPLOYED_HARNESS.hash,
       os_tools: [],
       background_durable_tasks: false,
       active_turns: this.running,

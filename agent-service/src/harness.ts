@@ -57,3 +57,5 @@ export function loadHarness(root = harnessRoot()): Harness {
     systemPrompt: [RUNTIME_POLICY, ...instructionSections.map((section) => instructions[section].trim())].join("\n\n"),
   });
 }
+
+export const DEPLOYED_HARNESS = loadHarness();

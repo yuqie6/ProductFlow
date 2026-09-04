@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -577,6 +578,7 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 		Provider       string `json:"provider"`
 		Model          string `json:"model"`
 		ExecutionMode  string `json:"execution_mode"`
+		HarnessHash    string `json:"harness_hash"`
 	}
 	if err := json.Unmarshal(payload, &doc); err != nil {
 		return apperr.Validation("Agent model request checkpoint 无效")
@@ -588,16 +590,21 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 	if doc.ExecutionMode != "foreground" {
 		return apperr.Validation("当前 Agent adapter 不支持 background 模型调用")
 	}
+	digest, err := hex.DecodeString(doc.HarnessHash)
+	if err != nil || len(digest) != 32 || doc.HarnessHash != strings.ToLower(doc.HarnessHash) {
+		return apperr.Validation("Agent model request checkpoint harness_hash 必须为小写 SHA-256")
+	}
 	row := schema.AgentModelInvocations{
 		ID: newID(), TurnProjectionID: lease.ProjectionID, ExecutionID: lease.ExecutionID,
 		ModelRequestID: doc.ModelRequestID, Attempt: lease.Attempt, FencingToken: lease.FencingToken,
 		Provider: doc.Provider, Model: doc.Model, ExecutionMode: doc.ExecutionMode,
-		Status: "started", UsageSource: "unavailable", StartedAt: now, CreatedAt: now, UpdatedAt: now,
+		HarnessHash: &doc.HarnessHash,
+		Status:      "started", UsageSource: "unavailable", StartedAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	var existing schema.AgentModelInvocations
-	err := gdb.Where("turn_projection_id = ? AND model_request_id = ?", lease.ProjectionID, doc.ModelRequestID).Take(&existing).Error
+	err = gdb.Where("turn_projection_id = ? AND model_request_id = ?", lease.ProjectionID, doc.ModelRequestID).Take(&existing).Error
 	if err == nil {
-		if existing.ExecutionID != lease.ExecutionID || existing.Attempt != lease.Attempt || existing.FencingToken != lease.FencingToken || existing.Provider != doc.Provider || existing.Model != doc.Model || existing.ExecutionMode != doc.ExecutionMode {
+		if existing.ExecutionID != lease.ExecutionID || existing.Attempt != lease.Attempt || existing.FencingToken != lease.FencingToken || existing.Provider != doc.Provider || existing.Model != doc.Model || existing.ExecutionMode != doc.ExecutionMode || ptrString(existing.HarnessHash) != doc.HarnessHash {
 			return apperr.Conflict("Agent model request ID 已绑定不同调用")
 		}
 		return nil

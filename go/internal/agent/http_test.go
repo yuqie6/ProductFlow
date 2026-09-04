@@ -1600,7 +1600,7 @@ func TestClaimNewAttemptResetsCheckpointSequence(t *testing.T) {
 
 	first := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, first, http.StatusOK)
 	first.Body.Close()
@@ -1658,7 +1658,7 @@ func TestClaimNewAttemptResetsCheckpointSequence(t *testing.T) {
 
 	stale := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-2", "lease_token": next.LeaseToken, "sequence": 3,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2-stale","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2-stale","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	if stale.StatusCode != http.StatusConflict {
 		body, _ := io.ReadAll(stale.Body)
@@ -1669,7 +1669,7 @@ func TestClaimNewAttemptResetsCheckpointSequence(t *testing.T) {
 
 	fresh := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-2", "lease_token": next.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-attempt-2","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, fresh, http.StatusOK)
 	fresh.Body.Close()

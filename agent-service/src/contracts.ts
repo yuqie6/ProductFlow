@@ -360,6 +360,7 @@ export interface RuntimeStatus {
   tool_contract_version: typeof TOOL_CONTRACT_VERSION;
   context_schema_version: typeof CONTEXT_SCHEMA_VERSION;
   skill_catalog_hash: string;
+  harness_hash: string;
   os_tools: string[];
   /** main 上固定为 false：后台 durable Task 仍是实验方向。 */
   background_durable_tasks: false;

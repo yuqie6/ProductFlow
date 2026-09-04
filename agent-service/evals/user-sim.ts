@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Config } from "../src/config.js";
+import { DEPLOYED_HARNESS } from "../src/harness.js";
 import type { TurnAnswer, TurnState } from "../src/contracts.js";
 import { PiRuntimeManager } from "../src/runtime-manager.js";
 import { loadSkillCatalog, type SkillCatalog } from "../src/skills.js";
@@ -84,6 +85,7 @@ export async function runUserSimEvals(options: { trials?: number; filter?: strin
     worktree_dirty: provenance.worktree_dirty,
     worktree_hash: provenance.worktree_hash,
     skill_catalog_hash: catalog.hash,
+    harness_hash: DEPLOYED_HARNESS.hash,
     task_set_hash: hashCanonicalJSON({ tasks }),
     model: process.env.AGENT_PROVIDER_MODEL?.trim() || "gpt-4.1",
     provider_kind: process.env.AGENT_PROVIDER_KIND?.trim() || "openai",

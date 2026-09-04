@@ -52,6 +52,7 @@ import {
 import { isJournalFlushBarrier, JournalEventBatcher } from "./journal-publisher.js";
 import type { PiRuntimeManager } from "./runtime-manager.js";
 import { PiSessionAdapter } from "./pi-runtime.js";
+import { DEPLOYED_HARNESS } from "./harness.js";
 import {
   artifactFromPendingApproval,
   eventReceiptMatches,
@@ -1321,6 +1322,7 @@ export class TurnRuntime implements ToolRuntime {
       model_request_sequence: sequence,
       provider: this.pi.model?.provider ?? "unknown",
       model: this.pi.model?.id ?? "unknown",
+      harness_hash: DEPLOYED_HARNESS.hash,
       execution_mode: "foreground",
     });
     this.modelRequestSequence = sequence;

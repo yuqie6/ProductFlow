@@ -402,6 +402,7 @@ func runSIGKILLHelper() error {
 			"provider":         "openai-responses",
 			"model":            "test-model",
 			"execution_mode":   "foreground",
+			"harness_hash":     testHarnessHash,
 		})
 		raw, status, err := postJSON("/api/internal/v1/agent-conversations/"+conv+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 			"owner_id": "sigkill-helper", "lease_token": lease.LeaseToken,

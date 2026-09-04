@@ -21,6 +21,7 @@ func TestCrashAfterModelStartRecoversUnknownAndInterruptsInvocation(t *testing.T
 		"provider":         "openai-responses",
 		"model":            "test-model",
 		"execution_mode":   "foreground",
+		"harness_hash":     testHarnessHash,
 	})
 	if err != nil {
 		t.Fatal(err)

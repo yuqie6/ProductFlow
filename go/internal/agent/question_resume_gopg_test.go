@@ -273,6 +273,7 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 	if terminal.Status != "succeeded" {
 		t.Fatalf("status %s logs=%s", terminal.Status, second.logs())
 	}
+	assertProductionHarnessAttribution(t, as, submitted.Turn.ID, second.baseURL)
 
 	var attempt int
 	var kinds []string

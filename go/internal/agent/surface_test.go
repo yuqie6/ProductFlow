@@ -127,7 +127,7 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 
 	cp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:test-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:test-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, cp, http.StatusOK)
 	cp.Body.Close()

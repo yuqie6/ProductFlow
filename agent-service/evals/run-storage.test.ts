@@ -6,6 +6,7 @@ import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 
 import { EvalRunStorage, type EvalRunMetadata } from "./run-storage.js";
+import { DEPLOYED_HARNESS } from "../src/harness.js";
 import { EvalTrialRecordSchema, type EvalTrialRecord } from "./schema.js";
 
 describe("EvalRunStorage", () => {
@@ -24,6 +25,7 @@ describe("EvalRunStorage", () => {
       const lines = (await readFile(join(storage.runDir, "trials.jsonl"), "utf8")).trim().split("\n");
       expect(lines.map((line) => JSON.parse(line).task_id)).toEqual(["a", "b"]);
       expect(transcript).toBe("transcripts/task-unsafe-1.json");
+      expect(JSON.parse(await readFile(join(storage.runDir, "run.json"), "utf8")).harness_hash).toBe(DEPLOYED_HARNESS.hash);
       expect(JSON.parse(await readFile(join(storage.runDir, "summary.json"), "utf8"))).toEqual({ passed: 1, total: 2 });
       await expect(pathExists(join(root, "agent-evals", "latest.json"))).resolves.toBe(false);
     } finally {
@@ -105,6 +107,7 @@ function sampleMetadata(overrides: Partial<EvalRunMetadata> = {}): EvalRunMetada
     worktree_dirty: false,
     worktree_hash: "hash",
     skill_catalog_hash: "skills",
+    harness_hash: DEPLOYED_HARNESS.hash,
     task_set_hash: "tasks",
     model: "model",
     provider_kind: "openai",

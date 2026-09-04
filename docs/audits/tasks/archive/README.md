@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [harness-attribution.md](harness-attribution.md) | 完成 | 同一冻结 hash 贯穿 Pi、checkpoint、invocation、健康与评测；新请求严格验证，历史 NULL 不回填 |
 | [harness-artifact.md](harness-artifact.md) | 完成 | 可哈希冻结指令工件由现有 Pi 加载；默认测试、构建与无网络容器加载通过，归因与进化待后续阶段 |
 | [perf-dispatcher-latency.md](perf-dispatcher-latency.md) | 完成 | 三轮 500 条真实投递采证；单副本 p95 2.54–2.59s 未达建议目标，双副本 0.77–0.78s；无重复信封 |
 | [perf-imagesession-detail.md](perf-imagesession-detail.md) | 完成 | 详情三组任务各 LIMIT 20；队列位置只返回所需 ID，包内测试与目标规模 query-plan 通过 |

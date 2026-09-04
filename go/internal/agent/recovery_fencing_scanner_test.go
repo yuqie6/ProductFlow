@@ -408,7 +408,7 @@ func TestAppendEventsAndCheckpointDoNotDeadlock(t *testing.T) {
 	checkpointCtx, cancelCheckpoint := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancelCheckpoint()
 	go func() {
-		_, err := as.svc.AppendCheckpoint(checkpointCtx, claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, 1, "before_model_request", json.RawMessage(`{"model_request_id":"req-checkpoint-lock","provider":"openai","model":"test","execution_mode":"foreground"}`))
+		_, err := as.svc.AppendCheckpoint(checkpointCtx, claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, 1, "before_model_request", json.RawMessage(`{"model_request_id":"req-checkpoint-lock","provider":"openai","model":"test","execution_mode":"foreground","harness_hash":"`+testHarnessHash+`"}`))
 		results <- result{operation: "checkpoint", err: err}
 	}()
 

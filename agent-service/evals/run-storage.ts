@@ -17,6 +17,7 @@ export interface EvalRunMetadata {
   worktree_dirty: boolean;
   worktree_hash: string;
   skill_catalog_hash: string;
+  harness_hash: string;
   task_set_hash: string;
   model: string;
   provider_kind: string;

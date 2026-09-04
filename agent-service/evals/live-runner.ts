@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Config } from "../src/config.js";
+import { DEPLOYED_HARNESS } from "../src/harness.js";
 import type { TurnState } from "../src/contracts.js";
 import { PiRuntimeManager } from "../src/runtime-manager.js";
 import { loadSkillCatalog, type SkillCatalog } from "../src/skills.js";
@@ -75,6 +76,7 @@ export async function runLiveEvals(options: LiveEvalOptions = {}): Promise<LiveE
     worktree_dirty: provenance.worktree_dirty,
     worktree_hash: provenance.worktree_hash,
     skill_catalog_hash: catalog.hash,
+    harness_hash: DEPLOYED_HARNESS.hash,
     task_set_hash: hashCanonicalJSON({
       tasks,
       worlds: Object.fromEntries(taskSet.worlds),

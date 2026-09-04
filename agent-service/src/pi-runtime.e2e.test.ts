@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolvedToolContractVersion, type Scope, type TurnState } from "./contracts.js";
 import { PiRuntimeManager } from "./runtime-manager.js";
+import { DEPLOYED_HARNESS } from "./harness.js";
 import type { SkillCatalog } from "./skills.js";
 import { TurnStore } from "./store.js";
 
@@ -101,6 +102,8 @@ describe("Pi runtime fake provider E2E", () => {
       expect(claimCount).toBe(1);
       await expect.poll(() => releasedPhases).toEqual(["terminal"]);
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual(["before_model_request"]);
+      expect(checkpoints[0].payload.harness_hash).toBe(DEPLOYED_HARNESS.hash);
+      expect(manager.health().harness_hash).toBe(checkpoints[0].payload.harness_hash);
       expect(events.map((event) => event.kind)).toEqual([
         "turn/start",
         "tool/call",

@@ -135,6 +135,7 @@ type AgentModelInvocations struct {
 	Provider           string     `gorm:"column:provider;type:varchar(80);not null"`
 	Model              string     `gorm:"column:model;type:varchar(160);not null"`
 	ExecutionMode      string     `gorm:"column:execution_mode;type:varchar(24);not null"`
+	HarnessHash        *string    `gorm:"column:harness_hash;type:varchar(64)"`
 	ProviderResponseID *string    `gorm:"column:provider_response_id;type:varchar(200)"`
 	ProviderCursor     *string    `gorm:"column:provider_cursor;type:text"`
 	Status             string     `gorm:"column:status;type:varchar(24);not null"`

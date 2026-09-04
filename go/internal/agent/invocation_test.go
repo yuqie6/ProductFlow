@@ -11,11 +11,13 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
+const testHarnessHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func TestModelInvocationIdempotentCreateAndUsageDedup(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	claimed := claimOpenTurn(t, as)
 	auth := http.Header{"Authorization": []string{"Bearer tok"}}
-	payload := json.RawMessage(`{"model_request_id":"model:req-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`)
+	payload := json.RawMessage(`{"model_request_id":"model:req-1","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`)
 	cp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 1,
 		"kind": "before_model_request", "payload": payload,
@@ -93,7 +95,7 @@ func TestModelInvocationMissingUsageStaysUnavailable(t *testing.T) {
 	auth := http.Header{"Authorization": []string{"Bearer tok"}}
 	start := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-missing","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-missing","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, start, http.StatusOK)
 	start.Body.Close()
@@ -127,7 +129,7 @@ func TestModelInvocationEstimatedUsagePersists(t *testing.T) {
 	auth := http.Header{"Authorization": []string{"Bearer tok"}}
 	start := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-est","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-est","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, start, http.StatusOK)
 	start.Body.Close()
@@ -161,7 +163,7 @@ func TestAppendCheckpointAcceptsModelResponseKindsWithoutWritingThemInForeground
 	auth := http.Header{"Authorization": []string{"Bearer tok"}}
 	start := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 1,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-fg","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-fg","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustStatus(t, start, http.StatusOK)
 	start.Body.Close()
@@ -179,7 +181,7 @@ func TestAppendCheckpointAcceptsModelResponseKindsWithoutWritingThemInForeground
 	cursor.Body.Close()
 	background := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 		"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 4,
-		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-bg","provider":"openai-responses","model":"test-model","execution_mode":"background"}`),
+		"kind": "before_model_request", "payload": json.RawMessage(`{"model_request_id":"model:req-bg","provider":"openai-responses","model":"test-model","execution_mode":"background","harness_hash":"` + testHarnessHash + `"}`),
 	}, auth)
 	as.mustDetail(t, background, http.StatusBadRequest, "当前 Agent adapter 不支持 background 模型调用")
 }
@@ -193,7 +195,7 @@ func TestProviderResponseIDUniqueAcrossInvocations(t *testing.T) {
 		cp := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+claimed.conversationID+"/turn-executions/"+claimed.lease.ExecutionID+"/checkpoints", map[string]any{
 			"owner_id": "worker-1", "lease_token": claimed.lease.LeaseToken, "sequence": 1,
 			"kind":    "before_model_request",
-			"payload": json.RawMessage(`{"model_request_id":"model:` + claimed.turnID[:12] + `","provider":"openai-responses","model":"test-model","execution_mode":"foreground"}`),
+			"payload": json.RawMessage(`{"model_request_id":"model:` + claimed.turnID[:12] + `","provider":"openai-responses","model":"test-model","execution_mode":"foreground","harness_hash":"` + testHarnessHash + `"}`),
 		}, auth)
 		as.mustStatus(t, cp, http.StatusOK)
 		cp.Body.Close()

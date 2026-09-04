@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProductFlowClient } from "./productflow.js";
+import { DEPLOYED_HARNESS } from "./harness.js";
 import { PiRuntimeManager } from "./runtime-manager.js";
 import { createHTTPServer } from "./server.js";
 import { loadSkillCatalog } from "./skills.js";
@@ -45,6 +46,7 @@ describe("ProductFlow Pi HTTP contract", () => {
       expect(health.status).toBe(200);
       expect(await health.json()).toMatchObject({
         runtime: "productflow-pi",
+        harness_hash: DEPLOYED_HARNESS.hash,
         pi_sdk_version: "0.83.0",
         os_tools: [],
         background_durable_tasks: false,

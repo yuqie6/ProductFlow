@@ -62,7 +62,7 @@ func TestAgentEvalStateL2Live(t *testing.T) {
 	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeEvalRunJSON(runDir, runID, k, tasks); err != nil {
+	if err := writeEvalRunJSON(runDir, runID, k, tasks, pi.baseURL); err != nil {
 		t.Fatal(err)
 	}
 	trialsPath := filepath.Join(runDir, "trials.jsonl")
@@ -268,7 +268,26 @@ func newEvalRunID() string {
 	return stamp + "-" + clockid.New()[:8]
 }
 
-func writeEvalRunJSON(runDir, runID string, k int, tasks []EvalTask) error {
+func writeEvalRunJSON(runDir, runID string, k int, tasks []EvalTask, agentURL string) error {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(agentURL + "/healthz")
+	if err != nil {
+		return fmt.Errorf("read eval Agent identity: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("read eval Agent identity: HTTP %d", resp.StatusCode)
+	}
+	var identity struct {
+		HarnessHash string `json:"harness_hash"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&identity); err != nil {
+		return err
+	}
+	digest, err := hex.DecodeString(identity.HarnessHash)
+	if err != nil || len(digest) != 32 || identity.HarnessHash != strings.ToLower(identity.HarnessHash) {
+		return fmt.Errorf("eval Agent returned invalid harness_hash")
+	}
 	commit := "unknown"
 	if out, err := exec.Command("git", "rev-parse", "HEAD").Output(); err == nil {
 		commit = strings.TrimSpace(string(out))
@@ -283,6 +302,7 @@ func writeEvalRunJSON(runDir, runID string, k int, tasks []EvalTask) error {
 		"run_id":         runID,
 		"created_at":     time.Now().UTC().Format(time.RFC3339),
 		"commit":         commit,
+		"harness_hash":   identity.HarnessHash,
 		"task_set_hash":  hex.EncodeToString(sum.Sum(nil)),
 		"model":          os.Getenv("AGENT_PROVIDER_MODEL"),
 		"trials":         k,
