@@ -80,6 +80,41 @@ describe("ConversationRuntime", () => {
     close();
   });
 
+  it("applies duplicate seq1 then seq2 on the same generation without a stream error", async () => {
+    const source = new FakeEventSource();
+    const received: number[] = [];
+    const streamErrors: Array<string | null> = [];
+    const states: string[] = [];
+    const close = subscribeToConversationEvents({
+      url: "/api/v2/agent-conversations/c/turns/t/events?after=0",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => source,
+      fetchEventPage: async () => {
+        throw new Error("duplicate seq1 must not open a gap repair");
+      },
+      onEvent: (value) => received.push(value.sequence),
+      onConnectionState: (state) => states.push(state),
+      onStreamError: (message) => streamErrors.push(message),
+      onProtocolError: (error) => {
+        throw error;
+      },
+    });
+
+    source.emit("open");
+    source.emit("turn.started", event(1));
+    source.emit("turn.started", event(1));
+    source.emit("turn.started", event(2));
+    await flushAsyncWork();
+
+    expect(received).toEqual([1, 2]);
+    expect(streamErrors.filter((message) => message)).toEqual([]);
+    expect(states).toContain("open");
+    expect(states).not.toContain("closed");
+    expect(states).not.toContain("reconnecting");
+    expect(source.closed).toBe(false);
+    close();
+  });
+
   it("follows has_more across multiple repair pages using the previous cursor", async () => {
     const source = new FakeEventSource();
     const received: number[] = [];

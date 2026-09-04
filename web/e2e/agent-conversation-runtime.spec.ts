@@ -398,3 +398,88 @@ test("Chromium ConversationRuntime closes the old EventSource while repairing a 
   expect(result.firstClosed).toBe(true);
   expect(result.secondURL).toContain("after=3");
 });
+
+test("Chromium ConversationRuntime applies duplicate seq1 then seq2 without dropping the connection", async ({ page }) => {
+  assertLiveBrowserGraphEnabled();
+  await lockLocale(page);
+  await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+  await page.goto("/products");
+
+  const result = await page.evaluate(async () => {
+    const mod = await import(
+      // @ts-expect-error Vite serves this workbench module to Chromium.
+      "/src/pages/workbench/agent/conversation/runtime.ts"
+    ) as {
+      subscribeToConversationEvents: (input: {
+        url: string;
+        scope: { run_id: string; turn_id: string };
+        createEventSource: (url: string) => EventSource;
+        fetchEventPage: () => Promise<never>;
+        onEvent: (event: { sequence: number }) => void;
+        onConnectionState?: (state: string) => void;
+        onStreamError?: (message: string | null) => void;
+        onProtocolError?: (error: Error) => void;
+      }) => () => void;
+    };
+
+    class FakeSource extends EventTarget {
+      closed = false;
+      constructor(readonly url: string) {
+        super();
+      }
+      close() {
+        this.closed = true;
+      }
+      emit(type: string, data?: string) {
+        this.dispatchEvent(data === undefined ? new Event(type) : new MessageEvent(type, { data }));
+      }
+    }
+
+    const sources: FakeSource[] = [];
+    const received: number[] = [];
+    const states: string[] = [];
+    const streamErrors: Array<string | null> = [];
+    const protocolErrors: string[] = [];
+    const envelope = (sequence: number, kind: string, payload: Record<string, unknown>) => JSON.stringify({
+      schema_version: 1,
+      run_id: "run-1",
+      turn_id: "turn-1",
+      sequence,
+      created_at: "2026-08-31T00:00:00Z",
+      kind,
+      payload,
+    });
+    const close = mod.subscribeToConversationEvents({
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: (url) => {
+        const source = new FakeSource(url);
+        sources.push(source);
+        return source as unknown as EventSource;
+      },
+      fetchEventPage: async () => {
+        throw new Error("duplicate seq1 must not open a gap repair");
+      },
+      onEvent: (value) => received.push(value.sequence),
+      onConnectionState: (state) => states.push(state),
+      onStreamError: (message) => streamErrors.push(message),
+      onProtocolError: (error) => protocolErrors.push(error.message),
+    });
+    sources[0].emit("open");
+    sources[0].emit("turn.started", envelope(1, "turn.started", { status: "running" }));
+    sources[0].emit("turn.started", envelope(1, "turn.started", { status: "running" }));
+    sources[0].emit("turn.started", envelope(2, "turn.started", { status: "running" }));
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+    const stillOpen = sources[0]?.closed === false && sources.length === 1;
+    close();
+    return { received, states, streamErrors, protocolErrors, stillOpen, generationCount: sources.length };
+  });
+
+  expect(result.protocolErrors).toEqual([]);
+  expect(result.streamErrors.filter((message) => message)).toEqual([]);
+  expect(result.received).toEqual([1, 2]);
+  expect(result.states).toContain("open");
+  expect(result.states).not.toContain("reconnecting");
+  expect(result.stillOpen).toBe(true);
+  expect(result.generationCount).toBe(1);
+});
