@@ -210,6 +210,34 @@ describe("ConversationRuntime", () => {
     close();
   });
 
+  it("reports a protocol error when stream.complete repair skips the next sequence", async () => {
+    const source = new FakeEventSource();
+    const protocolErrors: Error[] = [];
+    const close = subscribeToConversationEvents({
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => source,
+      fetchEventPage: async () => ({
+        items: [JSON.parse(event(3)) as AgentTurnEvent],
+        next_after: 3,
+        has_more: false,
+        stream_state: "terminal",
+      }),
+      onEvent: vi.fn(),
+      onProtocolError: (error) => protocolErrors.push(error),
+    });
+
+    source.emit("turn.started", event(1));
+    source.emit("turn.started", event(3));
+    source.emit("stream.complete");
+    await flushAsyncWork();
+
+    expect(protocolErrors).toHaveLength(1);
+    expect(protocolErrors[0]?.message).toContain("未返回 sequence 2");
+    expect(source.closed).toBe(true);
+    close();
+  });
+
   it("closes after three repair generations fail", async () => {
     vi.useFakeTimers();
     const sources: FakeEventSource[] = [];

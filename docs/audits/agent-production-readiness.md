@@ -74,9 +74,9 @@
 | ID | 验收要求 | 状态 | 证据与缺口 |
 |---|---|---|---|
 | S4-01 | Runtime 有 connection generation；新连接后忽略旧 generation 的 open/error/message | 完成 | 2026-08-31：`runtime.test.ts` 与 Chromium `agent-conversation-runtime.spec.ts` 均忽略旧代 open/error/message。 |
-| S4-02 | `sequence > cursor + 1` 进入 repairing，缓冲新事件、关闭旧 SSE、从 cursor 分页补齐 | 完成 | 2026-08-31：repair 关闭旧 EventSource；Chromium 断言 `firstClosed` 且重连 URL 带新 cursor；真实事件页补洞 ≤5s。 |
-| S4-03 | 补齐后按 seq 去重并连续应用，排空 buffer，再从新 cursor 连接；未变化 Item 引用稳定 | 完成 | 2026-09-01：`runtime.test.ts` 与 Chromium `agent-conversation-runtime.spec.ts` 证明 repair 去重、连续 apply、按新 cursor 重建 SSE。`agentEventReducer.test.ts`「keeps unchanged tool step object identity across later text deltas」断言未变化 tool step 引用稳定。 |
-| S4-04 | buffer 上限 512 条或 1 MiB；超过上限、连续三代补洞失败或服务端事件矛盾才进入 protocol error | 完成 | 2026-08-31：UTF-8 1 MiB + 512 条；5s AbortController；矛盾 terminal page 报「未返回 sequence」；Chromium overflow/terminal gap 通过。 |
+| S4-02 | `sequence > cursor + 1` 进入 repairing，缓冲新事件、从 cursor 分页补齐；补洞期间保持当前 generation 的 EventSource（见决策变更 2026-09-05） | 完成 | 2026-09-05：`runtime.test.ts` 断言补洞后 `source.closed=false`；Chromium `just web-e2e-agent-sse` 5 passed，其中 gap 用例 `generationCount=1`、`liveClosed=false`、`received=[1,2,3]`、事件页调用 1 次；真实 PG 事件页补洞 ≤5s 仍通过。 |
+| S4-03 | 补齐后按 seq 去重并连续应用，排空 buffer；未变化 Item 引用稳定 | 完成 | 2026-09-05：Chromium 与 `runtime.test.ts` 证明 repair 去重、连续 apply，并保持同一 EventSource。`agentEventReducer.test.ts`「keeps unchanged tool step object identity across later text deltas」断言未变化 tool step 引用稳定。 |
+| S4-04 | buffer 上限 512 条或 1 MiB；超过上限、连续三代补洞失败或服务端事件矛盾才进入 protocol error | 完成 | 2026-09-05：`runtime.test.ts` 512 条上限；`stream.complete` 后事件页跳过下一 seq 立即 protocol error「未返回 sequence 2」，不再重连。Chromium matrix：overflow / terminal gap / parked approval 通过（`just web-e2e-agent-sse`）。 |
 | S4-05 | terminal/finite 流也补洞到终态或 `stream_state=terminal`；正常 complete 不显示断线 toast | 完成 | 2026-08-31：finite/stream.complete 先 probe 再关闭；`onStreamError(null)`；Chromium terminal gap 与 parked approval 不误关。 |
 | S4-06 | 同 Turn Runtime 单例；Workbench 和全局 Dock 不产生第二 EventSource | 完成 | 2026-09-01：registry/consumer 单例与 `loadHistory` 无 EventSource 已有单元覆盖。Chromium `agent-workbench-recovery.spec.ts` 工作台侧栏 Agent + 「放大至全局主控台」后，同一 live Turn 的 EventSource 路径集合 size=1。 |
 
@@ -105,7 +105,7 @@
 | G-01 | 单元/合同：manifest policy codegen、checkpoint payload、invocation 幂等、reason code、事件分页、unknown ignorable、usage 去重 | 完成 | 2026-09-04 当前 HEAD：无缓存 `go test -C go ./... -count=1 -p 1` 通过；`just agent-service-test` 20 files passed、1 skipped，167 passed / 2 skipped；`pnpm --dir web test:run` 93 files、637 passed。Agent contract artifact check 在 pretest 中通过。 |
 | G-02 | PostgreSQL：八类工具 effect 状态矩阵、同幂等键重复 scanner、多 dispatcher、旧 fencing writer | 完成 | 2026-09-01：八工具四态矩阵与共享解释器；`TestRecoverExpiredExecutionsRejectsStaleFencingWriter` 拒绝旧 lease writer 与过期 fencing；`TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate` 两个 scanner 并发 SKIP LOCKED，4 条 Turn 各一 `turn/end`。含在 `just go-test`。 |
 | G-03 | `kill -9` 四点故障注入：模型开始后、mutation 成功/result 前、approval 后、turn/end 落库/响应前；验证连续 seq、至多一次副作用、诚实终态、无永久活动 Turn | 完成 | 2026-09-01：`TestSIGKILLLeaseHolderAgainstGoPG` 对真实 httptest Go+PG 四点 SIGKILL helper：`model_start` / `mutation` / `approval` / `turn_end`；连续 journal、mutation 副作用至多一次、诚实终态。含在 `just go-test`。 |
-| G-04 | 浏览器：普通断线、gap、重复帧、旧 generation 迟到帧、buffer overflow、terminal gap、approval 刷新；无错误断线 toast | 完成 | 2026-08-31：真实 Chromium `PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1` `e2e/agent-conversation-runtime.spec.ts` 3 passed（PG 事件页补洞 ≤5s、关闭旧 EventSource、generation/overflow/terminal gap/parked approval）；`agent-sse-reconnect.spec.ts` 仍覆盖 raw EventSource cursor。 |
+| G-04 | 浏览器：普通断线、gap、重复帧、旧 generation 迟到帧、buffer overflow、terminal gap、approval 刷新；无错误断线 toast | 完成 | 2026-09-05 HEAD `ebc7630d` 工作树：`just web-e2e-agent-sse` 5 passed（PG 事件页补洞 ≤5s；原地事件页补洞不丢 live EventSource；generation/overflow/terminal gap/parked approval；duplicate seq1 再 seq2；raw EventSource cursor 重连）。 |
 | G-05 | 标准容量：25 Turn、100 SSE、1 万事件/Turn、1000 Turn/会话；零洞、零重复副作用、零永久活动；P95 batch PG <=300ms、SSE <=1s、gap repair <=5s、最近 50 Turn <=500ms | 完成 | 2026-09-04 当前 HEAD 复核：`just go-test-agent-journal-capacity` deep_events=10000 concurrent_turns=25 batches=207 p95=232.800884ms；100 SSE overflow 503；`just agent-service-test-local-journal-capacity` 本地 10k WAL duration=6351.4ms p95=0.81ms。2026-09-01 的 `TestLastFiftyTurnsQueryP95`、`TestAgentSSETimeToFirstEventP95` 与 Chromium gap repair 证据仍在阈值内。 |
 | G-06 | 真实 gate 使用 `gpt-5.6-luna`：完整 skill eval、真实审批到 WorkflowRun、真实图片图运行、真实 Chromium；确认 `background:true` unsupported | 部分完成 | 2026-09-04 当前 HEAD：legacy `just agent-evals-live` 15/15，58 calls，511745 tokens，`usage_unavailable=0`。JSON 任务集、L0 合同与 k 次试验 runner 已接线；全量 k=3 / pass^k / Wilson / L2–L6 出口仍只以 [`agent-eval-system.md`](agent-eval-system.md) 登记的 `run_id` 为准，历史 15/15 冒烟不自动满足该账本阶段出口。`just web-e2e-live-graph` 真实 Chromium/真实图片 provider 1 passed；Go/Pi 的 `background:true` 拒绝测试在无缓存 Go 全量门中通过。真实 Agent 审批到 WorkflowRun 的 UI 链没有仓库自动 gate，只有 2026-09-01 的人工证据；需在当前 HEAD 重做该链后才能完成。 |
 | G-07 | 全量：Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、`git diff --check`、干净 checkout 重跑 | 完成 | 2026-09-04 当前 HEAD `fb658633`：全量 gate 启动时代码工作树干净；随后本次账本更新仅修改三份 `docs/audits/` 文档。无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed / 2 skipped）、`pnpm --dir web test:run`（637 passed）、`pnpm --dir web lint`、`just web-build`、`just docs-check`、`just go-migrate`、`git diff --check` 均通过。schema fresh/upgrade 由 `TestApplyEmptyDatabaseMatchesHeadConstraints`、`TestApplyTwiceDoesNotDeleteRows`、`TestApplyExistingHeadKeepsSchema` 覆盖并通过。 |
@@ -134,6 +134,12 @@
 - 2026-09-01 锁顺序：过期 execution 扫描改为先 `FOR UPDATE OF agent_turn_projections SKIP LOCKED` 再锁 execution，与 `AppendEvents`/`HeartbeatExecution` 一致。`TestAppendEventsAndExpiredRecoveryDoNotDeadlock` 在 live writer 持有 projection 时扫描跳过且无 `40P01`。Agent `appendPublishedBatch` 对 ProductFlow 5xx 按 250ms 起步、最高 30s 原序重试；`pi-runtime.test.ts`「retries a 5xx journal batch then ACKs the original sequence」通过。
 
 ## 验证记录
+
+### 2026-09-05 Agent SSE Chromium
+
+- HEAD：`ebc7630d`；工作树另有他人 fidelity / image-eval WIP，未纳入本闸门。
+- `just web-e2e-agent-sse`：5 passed（7.5s）。Vitest conversation runtime 12 passed。
+- `stream.complete` 后事件页跳过下一 seq 立即 protocol error，不再 scheduleReconnect。
 
 ### 2026-09-04 当前 HEAD
 
@@ -190,4 +196,13 @@
 
 ## 决策变更
 
-暂无。任何变更必须记录日期、提出者、替代条款、迁移影响和验收 Gate；不得直接覆盖旧条款。
+### 2026-09-05 S4-02 / S4-03：补洞保持 live EventSource
+
+- 日期：2026-09-05
+- 提出者：验收闭环对照 `runtime.test.ts` 与 Chromium 闸门
+- 原条款：`sequence > cursor + 1` 时关闭旧 SSE，再从新 cursor 重连
+- 替代条款：补洞期间保持当前 generation 的 EventSource，用事件页填洞并排空 buffer；仅在 protocol error、终态或退订时关闭
+- 迁移影响：无持久化变更；浏览器只消费已提交 PostgreSQL 事件的合同不变
+- 验收 Gate：`pnpm --dir web exec vitest run src/pages/workbench/agent/conversation/runtime.test.ts` 12 passed；`just web-e2e-agent-sse` 5 passed
+
+暂无其它变更。任何变更必须记录日期、提出者、替代条款、迁移影响和验收 Gate；不得直接覆盖旧条款。

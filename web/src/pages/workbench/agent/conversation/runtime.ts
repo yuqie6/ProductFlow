@@ -244,7 +244,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       if (finiteReconciliationRequested || seenTerminal || streamComplete) close();
     } catch (error) {
       if (closed || repairGeneration !== generation) return;
-      if (finiteReconciliationRequested) {
+      if (finiteReconciliationRequested || streamComplete) {
         protocolFailure(error instanceof Error ? error : new AgentEventProtocolError("Agent 历史事件补齐失败"));
         return;
       }

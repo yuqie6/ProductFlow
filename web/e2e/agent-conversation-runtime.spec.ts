@@ -258,7 +258,10 @@ test("Chromium ConversationRuntime matrix covers generation, overflow, terminal 
       onEvent: () => undefined,
       onProtocolError: (error: Error) => overflowErrors.push(error.message),
     });
-    overflowSource.emit("turn.started", envelope(2, "turn.started", { status: "界".repeat(400_000) }));
+    overflowSource.emit("turn.started", envelope(2));
+    for (let sequence = 3; sequence <= 514; sequence += 1) {
+      overflowSource.emit("turn.started", envelope(sequence));
+    }
     closeOverflow();
 
     const terminalErrors: string[] = [];
@@ -277,6 +280,7 @@ test("Chromium ConversationRuntime matrix covers generation, overflow, terminal 
       onProtocolError: (error: Error) => terminalErrors.push(error.message),
     });
     terminalSource.emit("turn.started", envelope(1));
+    terminalSource.emit("turn.started", envelope(3));
     terminalSource.emit("stream.complete");
     await sleep(50);
     closeTerminal();
@@ -310,7 +314,7 @@ test("Chromium ConversationRuntime matrix covers generation, overflow, terminal 
   expect(result.parkedStayedOpen).toBe(true);
 });
 
-test("Chromium ConversationRuntime closes the old EventSource while repairing a gap", async ({ page }) => {
+test("Chromium ConversationRuntime repairs a sequence gap from the event page without dropping the live EventSource", async ({ page }) => {
   assertLiveBrowserGraphEnabled();
   await lockLocale(page);
   await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
@@ -367,6 +371,7 @@ test("Chromium ConversationRuntime closes the old EventSource while repairing a 
       kind: "turn.started",
       payload: { status: "running" },
     });
+    let pageCalls = 0;
     const close = mod.subscribeToConversationEvents({
       url: "/events",
       scope: { run_id: "run-1", turn_id: "turn-1" },
@@ -375,28 +380,35 @@ test("Chromium ConversationRuntime closes the old EventSource while repairing a 
         sources.push(source);
         return source as unknown as EventSource;
       },
-      fetchEventPage: async () => ({
-        items: [JSON.parse(event(2))],
-        next_after: 2,
-        has_more: false,
-        stream_state: "live",
-      }),
+      fetchEventPage: async () => {
+        pageCalls += 1;
+        return {
+          items: [JSON.parse(event(2))],
+          next_after: 2,
+          has_more: false,
+          stream_state: "live",
+        };
+      },
       onEvent: (value) => received.push(value.sequence),
     });
     sources[0].emit("turn.started", event(1));
     sources[0].emit("turn.started", event(3));
     await new Promise((resolve) => window.setTimeout(resolve, 50));
+    const liveClosed = sources[0]?.closed === true;
+    const generationCount = sources.length;
     close();
     return {
       received,
-      firstClosed: sources[0]?.closed === true,
-      secondURL: sources[1]?.url ?? "",
+      liveClosed,
+      generationCount,
+      pageCalls,
     };
   });
 
   expect(result.received).toEqual([1, 2, 3]);
-  expect(result.firstClosed).toBe(true);
-  expect(result.secondURL).toContain("after=3");
+  expect(result.pageCalls).toBe(1);
+  expect(result.generationCount).toBe(1);
+  expect(result.liveClosed).toBe(false);
 });
 
 test("Chromium ConversationRuntime applies duplicate seq1 then seq2 without dropping the connection", async ({ page }) => {
