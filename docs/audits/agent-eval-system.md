@@ -38,7 +38,7 @@
 - TypeBox schema 在 `evals/schema.ts`（含 `evalJSONSchemas()`）；TS loader 在 `evals/loader.ts`；Go loader 在 `go/internal/agent/evaltask.go`。
 - L1：`stub-world.ts` 记录写调用并按 revision 返回 409；`graders/` 评 tools/writes/ops/terminal/budget；`live-runner.ts` 默认 k=3，结果落 `STORAGE_ROOT/agent-evals/<run_id>/`；`report.ts` 计算 pass^1 / pass^k、Wilson 区间、diff、coverage 与饱和警告。记分修复前两次全量：`20260904T145330Z-30eb3c4d` pass^1=0.5111 / pass^3=0.3600；`20260904T151838Z-01f25e84` pass^1=0.4933 / pass^3=0.2933。修复后两次全量（同 task_hash `71d48f47…`）：`20260904T165841Z-d5fc9b35` pass^1=0.5867 / pass^3=0.4400；`20260904T174405Z-fa2667fa` pass^1=0.6178 / pass^3=0.4533，`delta_pass^1=+0.0311`。两次 regression 门槛均未过。不得与修复前两次做 M-03 同任务集 diff。
 - L2：`evalworld_test.go` 种子 name-only / expanded / failed-run / global-library；`gradeEvalState` 断言 PG；opt-in `eval_state_gopg_test.go` 需要 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key。2026-09-05 [产物核验](tasks/eval-state-live.md) 确认历史 `20260904T185620Z-87f8a800` 的 18×k=3、28/54 pass 数量一致，但缺内容/Skill/有效配置身份且含 5 条非终态 running；不能签收为当前有效全量 FAIL。[PG 终态观察](tasks/archive/eval-l2-terminal-observation.md) 与 [批次身份](tasks/archive/eval-l2-provenance.md) 已交付确定性回归；新 run 保存内容快照和真实请求配置，缺样本/身份漂移不能 complete。采证仍等待独立考题合同校正和冻结新批次，state 出口未通过。
-- L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。L3 live `20260904T154151Z-788cb11e`：5/5 fail，pass^1=0。已从 `20260904T174405Z-fa2667fa` 生成 50 条（task,trial）× 4 维共 200 行标注模板，`score` 全为 null；仓库 `evals/labels/` 仍无已填标签，judge 不计 pass。L5 live：良性 `20260904T192501Z-eb5958cf`、攻击 `20260904T192633Z-2c14bf86`，244 条，ASR=0，效用 0.75/0.75。
+- L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。[独立用户模型](tasks/archive/eval-user-sim.md) 的 L3 live `20260904T234034Z-93b42b6d`：2/5 pass，4 次独立用户请求；阶段未通过，历史 5/5 fail 不覆写。已从 `20260904T174405Z-fa2667fa` 生成 50 条（task,trial）× 4 维共 200 行标注模板，`score` 全为 null；仓库 `evals/labels/` 仍无已填标签，judge 不计 pass。L5 live：良性 `20260904T192501Z-eb5958cf`、攻击 `20260904T192633Z-2c14bf86`，244 条，ASR=0，效用 0.75/0.75。
 - L6：`go/cmd/productflow-agent-evals mine|export` 只读 PG；undo 用 `workflow_operation_groups.actor_type` + `history_kind`。2026-09-05 对本地 dev PG 跑过 `just agent-evals-mine 7`（115 turns）。尚无生产库 mine、production origin 任务，也无连续 3 晚 nightly 报告。
 - [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 记录过 2026-09-04 的 legacy `just agent-evals-live` 15/15。该记录没有七层 schema、k 次试验或可复算落盘，不得换算为本账本 pass^3。
 
@@ -152,11 +152,11 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
-| L3-01 | `user-sim.ts` 用独立模型扮演具有隐藏目标、事实表和应答策略的用户；被测 Agent 仍走生产 manager/Go 路径 | `部分完成` | 被测路径仍是 `PiRuntimeManager`。当前回答来自任务 `scripted_answers`，不是每次另调 `complete()` 生成话语。 |
-| L3-02 | `requires_input` 通过 manager 或 Go question-answer API 回答，同一问题/Turn 的恢复语义保持生产合同 | `部分完成` | L1 路径走 `manager.answerQuestion`。Go HTTP 回答留给 L2 变体，尚未 live。 |
+| L3-01 | `user-sim.ts` 用独立模型扮演具有隐藏目标、事实表和应答策略的用户；被测 Agent 仍走生产 manager/Go 路径 | `完成`（模型与 manager） | [eval-user-sim](tasks/archive/eval-user-sim.md)：每次话语独立 `complete()`，隐藏上下文不给 Agent，不回退脚本；15 项聚焦回归通过。固定 live `20260904T234034Z-93b42b6d` 实际完成 4 次用户请求，Agent 仍走生产 PiRuntimeManager。 |
+| L3-02 | `requires_input` 通过 manager 或 Go question-answer API 回答，同一问题/Turn 的恢复语义保持生产合同 | `部分完成` | 模拟器补齐 `answerQuestion -> resume`；live 重命名在同一 turn 恢复执行。intake 第二个不同 question ID 的回答被生产运行时误报已有不同答案，交 [agent-question-answer-identity](tasks/agent-question-answer-identity.md)。Go HTTP 变体未验收。 |
 | L3-03 | graph proposal、global draft、workflow run request 通过生产 confirm/discard API 做用户决策 | `部分完成` | 脚本策略含 confirm/discard；L1 桩世界没有 Go HTTP 确认面，L2 变体未跑。 |
 | L3-04 | 首批 5 条流程覆盖 intake 两轮追问、提案拒绝后改口、run request 确认、全局草案确认和缺信息改名 | `完成` | 5 条 `layers` 含 `l3` 的任务已入集，L0 断言 ≥5。 |
-| L3-05 | grader 断言终态、轮数上限和“用户同意前没有 finalize/apply”；未确认写入单独计数并可阻断 pass | `部分完成` | live `20260904T154151Z-788cb11e` k=1：5/5 fail，pass^1=0。失败含超时未达终态与缺少 `load_productflow_skill`。 |
+| L3-05 | grader 断言终态、轮数上限和“用户同意前没有 finalize/apply”；未确认写入单独计数并可阻断 pass | `部分完成` | 最新固定 live `20260904T234034Z-93b42b6d` k=1：2/5 pass；跨 turn 本地 Skill 现已计入。其余失败为提案终态、既有全局同意计数与第二问题答案冲突。未更改 grader；不能把显式重命名答案后的 `unconfirmed writes: 1` 直接认定为生产越权，也不能据此放宽规则。 |
 
 ## L4 文本质量评审与校准
 
@@ -206,7 +206,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 |---|---|---|---|
 | P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。修复后 mutate kill_rate=0（3/3 scorable survived）。regression 未过门，分数不采信。 |
 | P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 已登记 18×k=3、28/54 pass；state 未过门，采证 issue 关闭也不能将 P2 标完成。 |
-| P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L5 ASR=0 已登记（`2c14bf86`）。L3 live 5/5 未通过（`20260904T154151Z-788cb11e`）。缺 50 条标签。 |
+| P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L5 ASR=0 已登记（`2c14bf86`）。L3 最新 `20260904T234034Z-93b42b6d` 为 2/5 pass，未过五流程门；实现完成不代表能力涨分。缺 50 条标签。 |
 | P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
 
 任何 P 阶段只有在本表列出的全部出口都有当前证据时才能改为 `完成`。不得用后续局部结果跳过较早出口。未完成工作按 [`tasks/`](tasks/) 各指导推进，证据先写在对应任务文件。

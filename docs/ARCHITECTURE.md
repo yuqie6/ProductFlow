@@ -221,6 +221,8 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 
 ### 冻结集合与开发输入
 
+L3 的 `evals/user-sim.ts` 使用独立 Pi SDK `complete()` 生成用户回答和后续话语，模型可由 `AGENT_EVAL_USER_SIM_MODEL` 覆盖，默认与被测模型同名但另发请求。隐藏目标、事实与策略仅供用户侧模型使用；被测对象仍是生产 `PiRuntimeManager`。问题回答按 `answerQuestion -> resume` 恢复同一 turn，跨 turn 观察保留本地工具记录。确认/丢弃仍是脚本决定，未接 Go HTTP 确认；问题请求上限 90 秒，模拟器等待问题 120 秒，失败不回退脚本。转录记录独立用户侧回答、用量和各 turn 状态，用户侧 tokens 不代替 Agent 用量；回归见 `evals/user-sim.test.ts`。
+
 `agent-service/evals/collections.ts` 拥有场景集合清单与开发材料投影。评测维护者提供 JSON plan：`schema_version=1` 和 `groups`，每组含 `scene_id`、`source_ids`、`purpose`（`development` / `regression` / `acceptance`）、`exposed`、分组依据 `evidence`、`task_ids`。清单须覆盖完整题集，同场景、同 source 或同 task origin 不得跨用途；已暴露组只能是 development。全部释义随任务保留。声明的来源与未暴露性仍需维护者审查，代码不能自动证明语义独立。
 
 `just agent-evals-freeze-collection <绝对 plan 路径>` 钉住当前 loader 读出的 task/world 内容与分组 hash，写 `STORAGE_ROOT/agent-evals/collections/<hash>.json`，不覆盖旧清单。改题、world 或分组须重新冻结。当前公开题库和已读旧转录只能作为已暴露开发材料，旧 `held_in/held_out` 是历史报告标签，不具备集合访问授权。没有真实隐藏/验收材料时必须保持缺失，不把空集合当验收通过。

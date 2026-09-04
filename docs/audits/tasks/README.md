@@ -21,7 +21,7 @@
 | [eval-development-baseline.md](eval-development-baseline.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 阻塞 | — | — |
 | [eval-contract-alignment.md](eval-contract-alignment.md) | 评测 | 实现 | 开放 | — | — |
-| [eval-user-sim.md](eval-user-sim.md) | 评测 | 实现 | 开放 | — | — |
+| [agent-question-answer-identity.md](agent-question-answer-identity.md) | 平台可靠性 | 实现 | 开放 | — | — |
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |

@@ -12,6 +12,7 @@
 - 生产就绪 S1–S6 和已通过 Gate 保留历史基线，不重新开工。G-06 行为部分引用评测组可采信 run_id；G-07 必须绑定候选 checkout，全量门不能借用旧 HEAD 的结果。主代理汇总全部相关结果作发布裁定。
 - AR-02 由 [arch-journal-assessment](tasks/archive/arch-journal-assessment.md) 于 2026-09-05 完成调查。结论：保留现状，不发布 journal 实现 issue。在线路径已拆出 batcher / 回执等式 / ACK 文件；重启前缀确认与 claim、phase、abandon 同属 `recoverDurableHandoff`，单独吸收 confirm 循环不会删掉 TurnRuntime 必知分支。指定 Node 测试 61 通过 / 1 跳过（10k WAL `runIf`）；未证明数据丢失。Go ConfirmEvents / fencing 与 Node recover claim 409 仍是改协议时才补的缺口，不构成开工许可。
 - journal 合同保持 PG 权威、在线 append 的 lease 检查、confirmation 不 claim/续租、不重放丢失模型执行。权限与失败矩阵见归档 issue；不重启历史运行时所有权计划。
+- 2026-09-05 新发现：[agent-question-answer-identity](tasks/agent-question-answer-identity.md) 承接 L3 live `20260904T234034Z-93b42b6d` 中同一 turn 第二个不同问题的答案被报冲突。首个回答已恢复执行，第二问仍未通过；既有单问题恢复证据不覆盖此场景，待生产答案身份边界修复。该发布没有修改生产代码，不改变历史 Gate 采证基线。
 - 画布草稿基线、文稿采用规则与结果使用行为交工作流体验；Skill 行为交 Agent 能力；题库、grader、图片闸门交评测。跨层修复由维护者指定一张主 issue 的完整因果范围，不按目录拆断事务或权限合同。
 
 ## 使用规则
