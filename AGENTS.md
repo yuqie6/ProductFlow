@@ -12,7 +12,7 @@ Before a cross-layer change, trace `input -> wire schema -> application use case
 
 Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`.
+Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. Before changing Skills, `runtime-policy`, or the Self-Harness evolution loop, read [`docs/audits/agent-self-harness.md`](docs/audits/agent-self-harness.md) and implement only the phase marked in progress there.
 
 ## Multi-Agent Delivery
 

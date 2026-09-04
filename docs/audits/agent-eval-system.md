@@ -1,6 +1,6 @@
 # Agent 评测体系验收账本
 
-本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。
+本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。改 Skill 追分、Skill overlay、runtime-policy 行为段或进化壳时读 [`agent-self-harness.md`](agent-self-harness.md)；任务集、grader、pass^k 与分数是否采信仍只由本账本裁定。
 
 ## 来源与使用规则
 

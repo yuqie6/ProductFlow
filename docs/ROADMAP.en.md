@@ -36,6 +36,10 @@ Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
 
 The JSON task set, graders, live runner, and artifacts live in `agent-service/evals/`. Go L2 worlds and state assertions live in `go/internal/agent/eval*_test.go`; production mining is `go/cmd/productflow-agent-evals`. Held-in / held-out assignment is [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Full k=3 live matrices, L2/L5 nightly, and kappa calibration remain opt-in and are not product fact until the ledger records `run_id`, model, task-set hash, and k.
 
+### Agent Self-Harness
+
+A versioned domain shell, failure mining, same-model proposals, eval acceptance, and production promotion are not wired yet. The contract, two production exits (G1 human cut / G2 automatic cut), phase gates, and anti-local-optima rules live in [`audits/agent-self-harness.md`](audits/agent-self-harness.md). That ledger is the only acceptance record for this direction; this section is the roadmap pointer. Evolution must not edit graders to inflate scores. Production reliability remains owned by [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md).
+
 ### Canvas document-authority tests
 
 The layered contract, bounded action search, mid-run injection, mock-provider browser document actions, and Agent interleaving ledger is [`audits/canvas-test-system.md`](audits/canvas-test-system.md). C0–C3 and C6 run with `just go-test`; deeper search is `just go-test-canvas-search`. C4 is the opt-in Chromium gate `just web-e2e-canvas-document` and needs a running `just dev` stack with mock prompt/image bindings. C5 remains `just web-e2e-live-graph` and does not cover rewrite or candidate review.

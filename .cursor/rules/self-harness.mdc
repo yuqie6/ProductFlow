@@ -1,0 +1,23 @@
+---
+description: Self-Harness 阶段门与防打钻；改 Skill、runtime-policy 或进化壳时读取验收账本
+globs: agent-service/.pi/skills/**,agent-service/src/runtime-policy*,go/prompts/agent/runtime-policy.md,agent-service/harness/**,docs/audits/agent-self-harness.md
+alwaysApply: false
+---
+
+# Self-Harness
+
+改 Skill、`runtime-policy`、未来的 `agent-service/harness/` 或本账本时，先读 [`docs/audits/agent-self-harness.md`](docs/audits/agent-self-harness.md)。只实现账本里标「进行中」的那一个阶段。P0 之后下一刀是 P1（可哈希壳），不是提案器、Steer、playbook 或热切。
+
+```text
+✅ 任务包引用阶段 ID（P1…P7 / P2b）；一次只打一个可编辑面
+✅ 产品 Skill 缺陷按评测 expect 同步修补，提交说明写明「产品合同 / Skill 缺陷」
+✅ 评测分数是否采信以 docs/audits/agent-eval-system.md 为准
+
+❌ 手改一条 SKILL.md 把单题刷绿并当作进化完成
+❌ 改 grader 或只加会过的新题来抬进化分
+❌ 同一变更混 Steer、playbook、全局 Skill
+❌ 没有 harness_hash 就热切生产
+❌ 再实现 Pi loop 或复活 Go agent-harness
+❌ 用未校准 pass^k 宣称 Agent 质量
+❌ 评测 D-03/D-08/L5 未满足时开 P7
+```
