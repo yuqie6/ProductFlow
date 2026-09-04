@@ -54,7 +54,7 @@
 
 | 任务 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|
-| [perf-imagesession-detail.md](perf-imagesession-detail.md) | 开放 | — | — |
+| [perf-imagesession-detail.md](perf-imagesession-detail.md) | 认领 | 主代理-0905-0336 | 2026-09-05T03:36:11+08:00 |
 | [perf-dispatcher-latency.md](perf-dispatcher-latency.md) | 开放 | — | — |
 | [perf-capacity-metrics.md](perf-capacity-metrics.md) | 开放 | — | — |
 
