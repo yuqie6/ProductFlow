@@ -15,7 +15,6 @@
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-go-loader.md](eval-go-loader.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 开放 | — | — |
-| [eval-adversarial-live.md](eval-adversarial-live.md) | 评测 | 证据 | 开放 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
 | [harness-artifact.md](harness-artifact.md) | 壳进化 | 实现 | 开放 | — | — |
 | [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 画布 | 实现 | 开放 | — | — |
