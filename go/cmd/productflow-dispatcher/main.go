@@ -96,76 +96,65 @@ func main() {
 	client := asynq.NewClient(redisOpt)
 	defer client.Close()
 	enqueue := queue.EnqueueWith(client)
+	settingsStore := settings.NewStore(pool, cfg)
 
-	runOnce := func(runRecovery bool) error {
-		bg := context.Background()
+	runRecoveryCycle := func(ctx context.Context) error {
 		recoveryStarted := time.Now()
 		var workflow graph.RecoverySummary
 		var imageSession imagesession.RecoverySummary
 		var rendition delivery.RecoverySummary
 		var localImageEdit localedit.RecoverySummary
 		var agentTurns agent.RecoverySummary
-		var recoveryErr error
-		if runRecovery {
-			settingsStore := settings.NewStore(pool, cfg)
-			imageStale := time.Duration(settingsStore.IntSetting(bg, "image_session_stale_running_after_minutes", 90)) * time.Minute
-			observeRecovery := func(domain string, recover func() error) error {
-				started := time.Now()
-				err := recover()
-				pfmetrics.ObserveRecovery(domain, time.Since(started), err != nil)
-				return err
+		imageStale := time.Duration(settingsStore.IntSetting(ctx, "image_session_stale_running_after_minutes", 90)) * time.Minute
+		recoveryErr := runRecoverySteps(ctx, []recoveryStep{
+			{
+				domain: "graph", errorContext: "workflow recovery",
+				run: func(ctx context.Context) (err error) {
+					workflow, err = graph.RecoverUnfinishedGraphRuns(ctx, pool, 0, product.GraphGuard{})
+					return err
+				},
+			},
+			{
+				domain: "image_session", errorContext: "image session recovery",
+				run: func(ctx context.Context) (err error) {
+					imageSession, err = imagesession.RecoverUnfinished(ctx, pool, imageStale)
+					return err
+				},
+			},
+			{
+				domain: "delivery", errorContext: "delivery recovery",
+				run: func(ctx context.Context) (err error) {
+					rendition, err = delivery.RecoverUnfinished(ctx, pool, 0)
+					return err
+				},
+			},
+			{
+				domain: "local_image_edit", errorContext: "local image edit recovery",
+				run: func(ctx context.Context) (err error) {
+					localImageEdit, err = localedit.RecoverUnfinished(ctx, pool, 0)
+					return err
+				},
+			},
+			{
+				domain: "agent", errorContext: "agent recovery",
+				run: func(ctx context.Context) (err error) {
+					agentTurns, err = agent.RecoverUnfinished(ctx, pool, 0)
+					return err
+				},
+			},
+		}, func(result recoveryStepResult) {
+			pfmetrics.ObserveRecovery(result.domain, result.duration, result.err != nil)
+			if result.err != nil {
+				logger.Error("dispatcher recovery domain",
+					zap.String("domain", result.domain),
+					zap.Int64("duration_ms", result.duration.Milliseconds()),
+					zap.Error(result.err),
+				)
 			}
-			if err := observeRecovery("graph", func() error {
-				var err error
-				workflow, err = graph.RecoverUnfinishedGraphRuns(bg, pool, 0, product.GraphGuard{})
-				return err
-			}); err != nil {
-				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("workflow recovery: %w", err))
-			}
-			if err := observeRecovery("image_session", func() error {
-				var err error
-				imageSession, err = imagesession.RecoverUnfinished(bg, pool, imageStale)
-				return err
-			}); err != nil {
-				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("image session recovery: %w", err))
-			}
-			if err := observeRecovery("delivery", func() error {
-				var err error
-				rendition, err = delivery.RecoverUnfinished(bg, pool, 0)
-				return err
-			}); err != nil {
-				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("delivery recovery: %w", err))
-			}
-			if err := observeRecovery("local_image_edit", func() error {
-				var err error
-				localImageEdit, err = localedit.RecoverUnfinished(bg, pool, 0)
-				return err
-			}); err != nil {
-				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("local image edit recovery: %w", err))
-			}
-			if err := observeRecovery("agent", func() error {
-				var err error
-				agentTurns, err = agent.RecoverUnfinished(bg, pool, 0)
-				return err
-			}); err != nil {
-				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("agent recovery: %w", err))
-			}
-		}
-		summary, err := queue.RunDispatcherOnce(bg, pool, enqueue, *limit)
-		if err != nil {
-			return errors.Join(recoveryErr, fmt.Errorf("dispatch: %w", err))
-		}
-		recoveryDuration := time.Duration(0)
-		if runRecovery {
-			recoveryDuration = time.Since(recoveryStarted)
-		}
+		})
+		recoveryDuration := time.Since(recoveryStarted)
 		fields := []zap.Field{
-			zap.Bool("recovery", runRecovery),
 			zap.Int64("recovery_duration_ms", recoveryDuration.Milliseconds()),
-			zap.Int("pending", summary.Pending),
-			zap.Int("sent", summary.Sent),
-			zap.Int("reconciled", summary.Reconciled),
-			zap.Int("dead", summary.Dead),
 			zap.Int("workflow", workflow.EnqueuedRuns),
 			zap.Int("workflow_unknown", workflow.UnknownRuns),
 			zap.Int("image_session", imageSession.EnqueuedTasks),
@@ -194,46 +183,59 @@ func main() {
 				recoveryWork = append(recoveryWork, 1)
 			}
 		}
-		if dispatcherCycleIdle(summary, recoveryWork...) {
-			logger.Debug("dispatcher cycle", fields...)
+		if dispatcherCycleIdle(queue.Summary{}, recoveryWork...) {
+			logger.Debug("dispatcher recovery cycle", fields...)
 		} else {
-			logger.Info("dispatcher cycle", fields...)
+			logger.Info("dispatcher recovery cycle", fields...)
 		}
 		return recoveryErr
 	}
+	runDispatchCycle := func(ctx context.Context) error {
+		summary, err := queue.RunDispatcherOnce(ctx, pool, enqueue, *limit)
+		if err != nil {
+			return fmt.Errorf("dispatch: %w", err)
+		}
+		fields := []zap.Field{
+			zap.Int("pending", summary.Pending),
+			zap.Int("sent", summary.Sent),
+			zap.Int("reconciled", summary.Reconciled),
+			zap.Int("dead", summary.Dead),
+		}
+		if dispatcherCycleIdle(summary) {
+			logger.Debug("dispatcher dispatch cycle", fields...)
+		} else {
+			logger.Info("dispatcher dispatch cycle", fields...)
+		}
+		return nil
+	}
 
 	if !*watch {
-		if err := runOnce(true); err != nil {
+		if err := runOneShot(context.Background(), runRecoveryCycle, runDispatchCycle); err != nil {
 			logger.Fatal("dispatcher", zap.Error(err))
 		}
 		return
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	recoveryEvery := time.Duration(*recoveryInterval * float64(time.Second))
-	var lastRecovery time.Time
-	for {
-		started := time.Now()
-		recoveryDue := lastRecovery.IsZero() || time.Since(lastRecovery) >= recoveryEvery
-		if err := runOnce(recoveryDue); err != nil {
-			logger.Error("dispatcher cycle", zap.Error(err))
-		}
-		if recoveryDue {
-			lastRecovery = time.Now()
-		}
-		remaining := time.Duration(*interval*float64(time.Second)) - time.Since(started)
-		if remaining < 0 {
-			remaining = 0
-		}
-		timer := time.NewTimer(remaining)
-		select {
-		case <-stop:
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
+	watchCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	runWatchLoops(
+		watchCtx,
+		time.Duration(*interval*float64(time.Second)),
+		time.Duration(*recoveryInterval*float64(time.Second)),
+		nil, // The queue notification slice supplies a transactional PG wake channel here.
+		runDispatchCycle,
+		runRecoveryCycle,
+		func(err error) {
+			if err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("dispatcher dispatch loop", zap.Error(err))
+			}
+		},
+		func(err error) {
+			if err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("dispatcher recovery loop", zap.Error(err))
+			}
+		},
+	)
 }
 
 func dispatcherCycleIdle(summary queue.Summary, recovery ...int) bool {
