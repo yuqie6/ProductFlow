@@ -208,6 +208,9 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		for _, edge := range incomingSorted(applied, node.ID) {
 			imgReq.IncomingEdgeIDs = append(imgReq.IncomingEdgeIDs, edge.ID)
 		}
+		if err := media.RejectGenerationInput(referenceImageBytes(imgReq.References)); err != nil {
+			return err
+		}
 		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
 			return image.GenerateImage(ctx, imgReq)
 		})
@@ -218,7 +221,11 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			return err
 		}
 		if len(img.Bytes) == 0 {
+			// 空 Bytes 是已证明失败（供应商完成但没图），不是 invoke 出错那种 unknown。
 			return fmt.Errorf("图片 provider 未返回图片结果")
+		}
+		if err := media.RejectGenerationOutput([][]byte{img.Bytes}, img.MIME); err != nil {
+			return err
 		}
 		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID)
 	default:
@@ -775,6 +782,15 @@ func (e Executor) loadReferences(ctx context.Context, productID string, refs []c
 		})
 	}
 	return out, nil
+}
+
+// referenceImageBytes 抽出交给供应商的参考图像素，供生成输入闸门求和。
+func referenceImageBytes(refs []ReferenceImage) [][]byte {
+	out := make([][]byte, len(refs))
+	for i, ref := range refs {
+		out[i] = ref.Bytes
+	}
+	return out
 }
 
 // upsertArtifact 按 node_run_id 唯一写入 workflow_graph_artifacts。已有行则覆盖 payload/digest/资产，不换 id。

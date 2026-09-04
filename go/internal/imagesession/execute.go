@@ -200,6 +200,7 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 }
 
 // runGeneration 按 count 调 ChatProvider 并逐张 saveCandidate。attempt 已失效返回 errStale，调用方停手。
+// 输入合计超 50MiB 不打网；输出整批先过 10/50MiB 与 MIME 闸门再 saveCandidate，避免部分写入。
 // 无法证明的供应商错误走 finishFailed 标 unknown，不要自动当 failed 重试。
 func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionID string) error {
 	var prompt, size string
@@ -256,6 +257,9 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 
 	chatCtx, err := e.loadChatContext(ctx, sessionID, baseID, refs)
 	if err != nil {
+		return err
+	}
+	if err := media.RejectGenerationInput(append([][]byte{chatCtx.BaseBytes}, chatCtx.ReferenceBytes...)); err != nil {
 		return err
 	}
 
@@ -331,6 +335,15 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 		if len(images) != batch {
 			_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)
 			return unknownErr{}
+		}
+		if err := media.RejectGenerationOutput(images, result.MIME); err != nil {
+			detail := err.Error()
+			var ae apperr.Error
+			if errors.As(err, &ae) {
+				detail = ae.Detail
+			}
+			_ = e.markEffect(ctx, taskID, candidate, "failed", detail)
+			return err
 		}
 		for i, data := range images {
 			one := result

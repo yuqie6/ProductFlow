@@ -10,8 +10,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/product"
 )
 
 type countingProvider struct {
@@ -247,7 +249,7 @@ func TestExecuteFillsChatRequestContextFromSession(t *testing.T) {
 		t.Fatalf("history %q", req.HistoryBlock)
 	}
 	session = loadSessionDetail(t, ss, session.ID)
-	last := session.Rounds[len(session.Rounds)-1]
+	last := session.Rounds[0]
 	if last.PreviousResponseID != nil {
 		t.Fatalf("persisted previous_response_id %+v", last.PreviousResponseID)
 	}
@@ -707,5 +709,92 @@ func TestExecuteSkipsAppliedImagesBatchByCandidateCount(t *testing.T) {
 	}
 	if len(got.Rounds) != 0 {
 		t.Fatalf("rounds %d", len(got.Rounds))
+	}
+}
+
+func oversizedPNG(t *testing.T, extra int) []byte {
+	t.Helper()
+	base := grayPNG(8, 8)
+	out := make([]byte, len(base)+extra)
+	copy(out, base)
+	return out
+}
+
+func TestExecuteRejectsOversizedInputBeforeGenerate(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+
+	padded := oversizedPNG(t, media.GenerationMaxBatchBytes+1-len(grayPNG(8, 8)))
+	detail, err := ss.svc.AddReferences(context.Background(), session.ID, []product.Upload{{
+		Content: padded, Filename: "big.png", MIMEType: "image/png",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refID string
+	for _, asset := range detail.Assets {
+		if asset.Kind == kindReference {
+			refID = asset.ID
+			break
+		}
+	}
+	if refID == "" {
+		t.Fatal("missing reference")
+	}
+
+	gen := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "超限输入", "size": "1024x1024", "generation_count": 1,
+		"selected_reference_asset_ids": []string{refID},
+	})
+	ss.mustStatus(t, gen, http.StatusAccepted)
+	ss.decode(t, gen, &session)
+	taskID := session.GenerationTasks[0].ID
+	ss.dropDispatch(t, taskID)
+
+	prov := &countingProvider{}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 0 {
+		t.Fatalf("generate calls %d want 0", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "failed" {
+		t.Fatalf("status %s reason %+v", got.GenerationTasks[0].Status, got.GenerationTasks[0].FailureReason)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d want 0", len(got.Rounds))
+	}
+}
+
+func TestExecuteRejectsOversizedBatchBeforeSaveCandidate(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "第二张超限", "size": "1024x1024", "generation_count": 2,
+	})
+	png := grayPNG(32, 32)
+	prov := &scriptedImagesProvider{
+		name:   "openai-images",
+		images: [][]byte{png, make([]byte, media.GenerationMaxImageBytes+1)},
+	}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("generate calls %d want 1", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	if got.GenerationTasks[0].Status != "failed" {
+		t.Fatalf("status %s reason %+v", got.GenerationTasks[0].Status, got.GenerationTasks[0].FailureReason)
+	}
+	if len(got.Rounds) != 0 {
+		t.Fatalf("rounds %d want 0", len(got.Rounds))
+	}
+	result, _, recon := loadEffectAt(t, ss, taskID, 1)
+	if result != "failed" || recon == "applied" {
+		t.Fatalf("effect %s recon %s", result, recon)
 	}
 }

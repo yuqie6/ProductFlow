@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
@@ -779,5 +781,121 @@ func TestImagePreviewPromotesAfterLayoutRevisionBump(t *testing.T) {
 	}
 	if live.Revision <= view.Revision {
 		t.Fatalf("expected layout to bump revision, got %d -> %d", view.Revision, live.Revision)
+	}
+}
+
+type paddedRefAssets struct {
+	graph.GeneratedImageWriter
+}
+
+func (p paddedRefAssets) ReadAssetBytes(ctx context.Context, tx *gorm.DB, productID, assetID string) ([]byte, string, string, error) {
+	data, mime, filename, err := p.GeneratedImageWriter.ReadAssetBytes(ctx, tx, productID, assetID)
+	if err != nil {
+		return nil, "", "", err
+	}
+	out := make([]byte, media.GenerationMaxBatchBytes+1)
+	copy(out, data)
+	return out, mime, filename, nil
+}
+
+func countGraphImageArtifacts(t *testing.T, gs *graphServer, runID, productID string) (artifacts, generatedAssets int) {
+	t.Helper()
+	if err := gs.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM workflow_graph_artifacts a
+		JOIN workflow_graph_node_runs n ON n.id = a.node_run_id
+		WHERE a.artifact_type = 'image' AND n.graph_run_id = $1
+	`, runID).Scan(&artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if err := gs.pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM product_image_assets WHERE product_id = $1 AND origin_type = 'workflow_generation'
+	`, productID).Scan(&generatedAssets); err != nil {
+		t.Fatal(err)
+	}
+	return artifacts, generatedAssets
+}
+
+func TestExecuteGraphRunRejectsOversizedReferenceBeforeGenerateImage(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	images := &countingImage{}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  images,
+			Assets: paddedRefAssets{GeneratedImageWriter: product.Service{DB: gs.db, Media: gs.media}},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	if images.imageCalls() != 0 {
+		t.Fatalf("GenerateImage calls %d want 0", images.imageCalls())
+	}
+	artifacts, generated := countGraphImageArtifacts(t, gs, run.ID, productID)
+	if artifacts != 0 || generated != 0 {
+		t.Fatalf("image artifacts %d generated assets %d", artifacts, generated)
+	}
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var finished graph.GraphRunResponse
+	gs.decode(t, got, &finished)
+	if finished.Status != "failed" {
+		t.Fatalf("status %s reason %+v nodes %+v", finished.Status, finished.FailureReason, finished.NodeRuns)
+	}
+	var imageFailed bool
+	for _, node := range finished.NodeRuns {
+		if node.Output["product_image_asset_id"] != nil {
+			t.Fatalf("image node persisted %+v", node.Output)
+		}
+		if node.FailureReason != nil && strings.Contains(*node.FailureReason, "发给供应商的图片总大小超过限制") {
+			imageFailed = true
+		}
+	}
+	if !imageFailed && (finished.FailureReason == nil || !strings.Contains(*finished.FailureReason, "发给供应商的图片总大小超过限制")) {
+		t.Fatalf("reason %+v nodes %+v", finished.FailureReason, finished.NodeRuns)
+	}
+}
+
+func TestExecuteGraphRunRejectsOversizedOutputBeforePersist(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": "graph"})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	images := &countingImage{MockImageProvider: graph.MockImageProvider{
+		PNG: make([]byte, media.GenerationMaxImageBytes+1),
+	}}
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: graph.MockPromptProvider{},
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocally(t, run.ID, executor)
+	if images.imageCalls() != 1 {
+		t.Fatalf("GenerateImage calls %d want 1", images.imageCalls())
+	}
+	artifacts, generated := countGraphImageArtifacts(t, gs, run.ID, productID)
+	if artifacts != 0 || generated != 0 {
+		t.Fatalf("image artifacts %d generated assets %d", artifacts, generated)
+	}
+	got := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
+	gs.mustStatus(t, got, 200)
+	var finished graph.GraphRunResponse
+	gs.decode(t, got, &finished)
+	if finished.Status == "succeeded" {
+		t.Fatalf("status %s nodes %+v", finished.Status, finished.NodeRuns)
+	}
+	for _, node := range finished.NodeRuns {
+		if node.Output["product_image_asset_id"] != nil {
+			t.Fatalf("oversized output persisted %+v", node.Output)
+		}
 	}
 }
