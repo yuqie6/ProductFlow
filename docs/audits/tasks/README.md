@@ -21,7 +21,6 @@
 | [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 开放 | — | — |
 | [eval-user-sim.md](eval-user-sim.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-go-loader.md](eval-go-loader.md) | 评测 | 实现 | 认领 | 主代理-0905-0431 | 2026-09-05T04:31:07+08:00 |
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 开放 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
 | [harness-artifact.md](harness-artifact.md) | Agent 能力 | 实现 | 开放 | — | — |

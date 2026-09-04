@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "fixture-world",
+  "intake": null,
+  "birth_expandable": true,
+  "live_graph": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "title": "评测图",
+    "revision": 0,
+    "node_count": 0,
+    "edge_count": 0,
+    "group_count": 0,
+    "nodes": []
+  }
+}

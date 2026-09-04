@@ -81,7 +81,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 
 | ID | 验收要求 | 状态 | Owner / 证据 / 缺口 |
 |---|---|---|---|
-| T-01 | `Task`、`World`、`Expect`、`TrialRecord` 由 TypeBox 定义并导出 JSON Schema；TS 与 Go loader 拒绝未知字段、无效枚举、重复 ID、缺失 world 和层级不匹配 | `部分完成` | TS TypeBox extra=forbid。Go 用 `encoding/json` 忽略未知字段，按必填 id/skill/world 与 world 引用校验。跨语言非法样例对照未做成共享 fixture 测试。 |
+| T-01 | `Task`、`World`、`Expect`、`TrialRecord` 由 TypeBox 定义并导出 JSON Schema；TS 与 Go loader 拒绝未知字段、无效枚举、重复 ID、缺失 world 和层级不匹配 | `部分完成` | TS TypeBox extra=forbid。Go `LoadEvalTasks`/`LoadEvalWorlds` 用 `DisallowUnknownFields` 拒绝未知字段，并校验枚举、重复 ID、缺失 world、L2 缺 `expect.state` / L3 缺 `user_sim`。对照 `evals/fixtures/invalid/`，见 [eval-go-loader](tasks/archive/eval-go-loader.md)。TrialRecord 的 Go 读取仍未 extra=forbid。 |
 | T-02 | Task 至少包含 `id`、`skill`、`scope`、`suite`、`layers`、`utterances`、`world`、`expect`、`origin`；expect 可按层声明 terminal/tools/ops/writes/state/question/budget/rubric | `完成` | schema 与 loader 强制这些字段；L2 任务带 `expect.state`，L3 带 `user_sim`。 |
 | T-03 | 5 个 Skill 每个至少 10 条正例和 5 条负例；负例覆盖缺信息、越界、破坏性请求与超范围闲聊 | `完成` | `contract.test.ts` 按技能计数并抽查点名负例。 |
 | T-04 | L0 coverage 对生产工具清单与 12 个 Graph op 做 100% 双向覆盖断言；新增工具/op 时无任务即失败 | `完成` | `report.ts collectCoverage` + `contract.test.ts`。 |
@@ -142,7 +142,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | L2-01 | opt-in Go 测试由 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key 双重保护，复用一个真实 Node/Pi 进程并为 trial 隔离商品/会话 | `部分完成` | `eval_state_gopg_test.go`、`spawnPiAgentWithEnv`、`seedAgentProviderFromEnv`。全量 `20260904T185620Z-87f8a800` 已记录，产物核验见 L2 采证 issue，未扩大验收结论。 |
-| L2-02 | Go loader 读取 `layers` 含 `l2` 的同一任务 JSON，并按导出的 JSON Schema 校验；TS/Go 对合法与非法样例结论一致 | `部分完成` | `LoadEvalTasks(..., "l2")` 与 `evaltask_test.go` 要求 ≥15 且每技能 ≥3。Go 不跑完整 TypeBox extra=forbid。 |
+| L2-02 | Go loader 读取 `layers` 含 `l2` 的同一任务 JSON，并按导出的 JSON Schema 校验；TS/Go 对合法与非法样例结论一致 | `部分完成` | `LoadEvalTasks(..., "l2")` 与 `evaltask_test.go` 要求 ≥15 且每技能 ≥3，并对 `evals/fixtures/invalid/` 与 TypeBox extra=forbid 对照。Go 仍不加载导出的 JSON Schema 文档做运行时校验。见 [eval-go-loader](tasks/archive/eval-go-loader.md)。 |
 | L2-03 | world builder 构造 name-only empty/with-intake、expanded rev3、expanded failed-run、global-library；每个 trial 使用独立 durable rows | `部分完成` | `TestEvalWorldsSeedFourKinds` 覆盖四类。name-only-with-intake 走同一 builder + intake JSON，无单独用例名。 |
 | L2-04 | `expect.state` 从 `graph.Service` projection 与 schema 模型断言图节点/边/组/revision、pending proposal、run request/source_run_id、intake 和 library draft | `部分完成` | `gradeEvalState` + `TestEvalStateGraderSeesRename`。四类终态的 live 模型断言未登记。 |
 | L2-05 | `agent_turn_events` 的 tool steps 同时接受 `expect.tools` 评分；结果字段与 TS `TrialRecord` 一致并追加到同一 run 目录 | `部分完成` | L2 从 Turn 投影 `tool_steps` 评分并写 `trials.jsonl`。尚未与 TS report 对一次真实 run 联调。 |

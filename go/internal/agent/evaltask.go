@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -10,7 +11,49 @@ import (
 	"strings"
 )
 
-// EvalTask is the language-neutral Agent eval task JSON (subset used by Go L2/L6).
+var (
+	evalScopes = map[string]struct{}{
+		"product_workflow": {},
+		"global":           {},
+	}
+	evalSuites = map[string]struct{}{
+		"regression":  {},
+		"capability":  {},
+		"adversarial": {},
+	}
+	evalCaseTypes = map[string]struct{}{
+		"positive": {},
+		"negative": {},
+	}
+	evalLayers = map[string]struct{}{
+		"l0": {}, "l1": {}, "l2": {}, "l3": {}, "l4": {}, "l5": {}, "l6": {},
+	}
+	evalSplits = map[string]struct{}{
+		"held_in":  {},
+		"held_out": {},
+	}
+	evalTerminals = map[string]struct{}{
+		"queued":                {},
+		"running":               {},
+		"requires_input":        {},
+		"awaiting_confirmation": {},
+		"succeeded":             {},
+		"failed":                {},
+		"cancel_requested":      {},
+		"canceled":              {},
+		"unknown":               {},
+	}
+	evalRecentRunStatuses = map[string]struct{}{
+		"queued":    {},
+		"running":   {},
+		"succeeded": {},
+		"failed":    {},
+		"cancelled": {},
+		"unknown":   {},
+	}
+)
+
+// EvalTask is the language-neutral Agent eval task JSON used by Go L2/L6.
 type EvalTask struct {
 	SchemaVersion int            `json:"schema_version"`
 	ID            string         `json:"id"`
@@ -19,21 +62,40 @@ type EvalTask struct {
 	Suite         string         `json:"suite"`
 	CaseType      string         `json:"case_type"`
 	Layers        []string       `json:"layers"`
+	Split         string         `json:"split"`
 	Utterances    []string       `json:"utterances"`
 	World         string         `json:"world"`
 	PageContext   map[string]any `json:"page_context"`
 	Expect        EvalExpect     `json:"expect"`
 	Origin        string         `json:"origin"`
+	Reference     EvalReference  `json:"reference"`
 	Inject        *EvalInject    `json:"inject"`
+	UserSim       *EvalUserSim   `json:"user_sim"`
 }
 
 // EvalExpect is the per-layer expectation block.
 type EvalExpect struct {
-	Terminal []string         `json:"terminal"`
-	Tools    EvalNameSet      `json:"tools"`
-	Ops      EvalNameSet      `json:"ops"`
-	Writes   []map[string]any `json:"writes"`
-	State    *EvalStateExpect `json:"state"`
+	Terminal []string          `json:"terminal"`
+	Tools    EvalNameSet       `json:"tools"`
+	Ops      EvalNameSet       `json:"ops"`
+	Writes   []EvalWriteExpect `json:"writes"`
+	State    *EvalStateExpect  `json:"state"`
+	Question json.RawMessage   `json:"question"`
+	Budget   *EvalBudgetExpect `json:"budget"`
+	Rubric   json.RawMessage   `json:"rubric"`
+}
+
+// EvalWriteExpect is one expected tool write.
+type EvalWriteExpect struct {
+	Tool  string         `json:"tool"`
+	Match map[string]any `json:"match"`
+}
+
+// EvalBudgetExpect is an optional live-run budget.
+type EvalBudgetExpect struct {
+	MaxToolCalls  *int `json:"max_tool_calls"`
+	MaxTokens     *int `json:"max_tokens"`
+	MaxDurationMS *int `json:"max_duration_ms"`
 }
 
 // EvalNameSet is required/forbidden tool or op names.
@@ -56,11 +118,78 @@ type EvalStateExpect struct {
 	ProductNameContains  string            `json:"product_name_contains"`
 }
 
+// EvalReference is the scripted L0 contract; live pass still uses expect graders.
+type EvalReference struct {
+	ScriptedCalls []EvalReferenceCall `json:"scripted_calls"`
+	Repair        *EvalRepair         `json:"repair"`
+}
+
+// EvalReferenceCall is one scripted tool invocation.
+type EvalReferenceCall struct {
+	Name   string          `json:"name"`
+	Params json.RawMessage `json:"params"`
+}
+
+// EvalRepair records an illegal first attempt and the repaired retry.
+type EvalRepair struct {
+	ToolName       string          `json:"tool_name"`
+	IllegalParams  json.RawMessage `json:"illegal_params"`
+	RepairedParams json.RawMessage `json:"repaired_params"`
+}
+
+// EvalUserSim is the L3 simulated-user contract.
+type EvalUserSim struct {
+	Persona         string              `json:"persona"`
+	HiddenGoal      string              `json:"hidden_goal"`
+	Facts           map[string]string   `json:"facts"`
+	Policy          string              `json:"policy"`
+	MaxTurns        int                 `json:"max_turns"`
+	ScriptedAnswers []EvalUserSimAnswer `json:"scripted_answers"`
+}
+
+// EvalUserSimAnswer is one scripted or live simulated-user turn.
+type EvalUserSimAnswer struct {
+	When   string          `json:"when"`
+	Action string          `json:"action"`
+	Text   string          `json:"text"`
+	Answer json.RawMessage `json:"answer"`
+}
+
 // EvalInject overlays adversarial or fault payloads onto a seeded world.
 type EvalInject struct {
-	FirstWrite409 string            `json:"first_write_409"`
-	Write409Count int               `json:"write_409_count"`
-	Payload       map[string]string `json:"payload"`
+	FirstWrite409 string               `json:"first_write_409"`
+	Write409Count int                  `json:"write_409_count"`
+	ReadError     *EvalInjectReadError `json:"read_error"`
+	Payload       map[string]string    `json:"payload"`
+}
+
+// EvalInjectReadError forces a read tool to fail.
+type EvalInjectReadError struct {
+	Tool   string          `json:"tool"`
+	Status json.RawMessage `json:"status"`
+}
+
+type evalPageContextJSON struct {
+	SnapshotID       string            `json:"snapshot_id"`
+	Route            string            `json:"route"`
+	PageType         string            `json:"page_type"`
+	ProductID        *string           `json:"product_id"`
+	WorkflowID       *string           `json:"workflow_id"`
+	SelectedAssetIDs []string          `json:"selected_asset_ids"`
+	VisibleAssetIDs  []string          `json:"visible_asset_ids"`
+	Filters          map[string]string `json:"filters"`
+	WorkflowRevision *int              `json:"workflow_revision"`
+	LibraryRevision  *int              `json:"library_revision"`
+	Digest           string            `json:"digest"`
+	CapturedAt       string            `json:"captured_at"`
+}
+
+type evalInjectPayloadJSON struct {
+	DisplayName   string `json:"display_name"`
+	ProductName   string `json:"product_name"`
+	NodeTitle     string `json:"node_title"`
+	FailureReason string `json:"failure_reason"`
+	FolderTitle   string `json:"folder_title"`
 }
 
 // EvalWorld is a named ProductFlow world used to seed PostgreSQL or the TS stub.
@@ -71,6 +200,7 @@ type EvalWorld struct {
 	BirthExpandable bool               `json:"birth_expandable"`
 	LiveGraph       EvalWorldGraph     `json:"live_graph"`
 	FailedRun       *EvalFailedRun     `json:"failed_run"`
+	RecentRun       *EvalRecentRun     `json:"recent_run"`
 	ListedAssets    []EvalListedAsset  `json:"listed_assets"`
 	ListedFolders   []EvalListedFolder `json:"listed_folders"`
 }
@@ -118,6 +248,12 @@ type EvalFailedRun struct {
 	FailedNodeID string `json:"failed_node_id"`
 }
 
+// EvalRecentRun is an optional in-progress or completed GraphRun seed.
+type EvalRecentRun struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
 // EvalListedAsset is a global library asset in the world.
 type EvalListedAsset struct {
 	ID          string   `json:"id"`
@@ -156,8 +292,8 @@ func LoadEvalWorlds(root string) (map[string]EvalWorld, error) {
 		if err := readJSON(file, &world); err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
-		if world.Name == "" {
-			return nil, fmt.Errorf("%s: missing world name", file)
+		if err := validateEvalWorld(world, file); err != nil {
+			return nil, err
 		}
 		if _, exists := worlds[world.Name]; exists {
 			return nil, fmt.Errorf("duplicate eval world %s", world.Name)
@@ -184,8 +320,8 @@ func LoadEvalTasks(root, layer string) ([]EvalTask, map[string]EvalWorld, error)
 		if err := readJSON(file, &task); err != nil {
 			return nil, worlds, fmt.Errorf("%s: %w", file, err)
 		}
-		if task.ID == "" || task.Skill == "" || task.World == "" {
-			return nil, worlds, fmt.Errorf("%s: missing id, skill, or world", file)
+		if err := validateEvalTaskDocument(task, file); err != nil {
+			return nil, worlds, err
 		}
 		if _, exists := seen[task.ID]; exists {
 			return nil, worlds, fmt.Errorf("duplicate eval task id %s", task.ID)
@@ -237,7 +373,103 @@ func readJSON(path string, dest any) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(raw, dest)
+	return decodeJSONBytes(raw, dest)
+}
+
+func decodeJSONBytes(raw []byte, dest any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dest); err != nil {
+		return err
+	}
+	if dec.More() {
+		return fmt.Errorf("trailing JSON content")
+	}
+	return nil
+}
+
+func decodeStrict(value any, dest any) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return decodeJSONBytes(raw, dest)
+}
+
+func validateEvalWorld(world EvalWorld, file string) error {
+	if world.SchemaVersion != 1 {
+		return fmt.Errorf("%s: schema_version must be 1", file)
+	}
+	if world.Name == "" {
+		return fmt.Errorf("%s: missing world name", file)
+	}
+	if world.FailedRun != nil && world.FailedRun.Status != "failed" {
+		return fmt.Errorf("%s: invalid failed_run.status %q", file, world.FailedRun.Status)
+	}
+	if world.RecentRun != nil {
+		if err := requireEnum("recent_run.status", world.RecentRun.Status, evalRecentRunStatuses); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+	}
+	return nil
+}
+
+func validateEvalTaskDocument(task EvalTask, file string) error {
+	if task.SchemaVersion != 1 {
+		return fmt.Errorf("%s: schema_version must be 1", file)
+	}
+	if task.ID == "" || task.Skill == "" || task.World == "" {
+		return fmt.Errorf("%s: missing id, skill, or world", file)
+	}
+	if err := requireEnum("scope", task.Scope, evalScopes); err != nil {
+		return fmt.Errorf("%s: %w", file, err)
+	}
+	if err := requireEnum("suite", task.Suite, evalSuites); err != nil {
+		return fmt.Errorf("%s: %w", file, err)
+	}
+	if err := requireEnum("case_type", task.CaseType, evalCaseTypes); err != nil {
+		return fmt.Errorf("%s: %w", file, err)
+	}
+	if task.Split != "" {
+		if err := requireEnum("split", task.Split, evalSplits); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+	}
+	if len(task.Layers) == 0 {
+		return fmt.Errorf("%s: missing layers", file)
+	}
+	for _, layer := range task.Layers {
+		if err := requireEnum("layers", layer, evalLayers); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+	}
+	for _, terminal := range task.Expect.Terminal {
+		if err := requireEnum("expect.terminal", terminal, evalTerminals); err != nil {
+			return fmt.Errorf("%s: %w", file, err)
+		}
+	}
+	if containsString(task.Layers, "l2") && task.Expect.State == nil {
+		return fmt.Errorf("%s: layer l2 requires expect.state", file)
+	}
+	if containsString(task.Layers, "l3") && task.UserSim == nil {
+		return fmt.Errorf("%s: layer l3 requires user_sim", file)
+	}
+	if err := decodeStrict(task.PageContext, new(evalPageContextJSON)); err != nil {
+		return fmt.Errorf("%s: page_context: %w", file, err)
+	}
+	if task.Inject != nil && task.Inject.Payload != nil {
+		if err := decodeStrict(task.Inject.Payload, new(evalInjectPayloadJSON)); err != nil {
+			return fmt.Errorf("%s: inject.payload: %w", file, err)
+		}
+	}
+	return nil
+}
+
+func requireEnum(field, value string, allowed map[string]struct{}) error {
+	if _, ok := allowed[value]; ok {
+		return nil
+	}
+	return fmt.Errorf("invalid %s %q", field, value)
 }
 
 func containsString(values []string, want string) bool {

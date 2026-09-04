@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,6 +47,95 @@ func TestLoadEvalTasksIncludesL2Contract(t *testing.T) {
 	for _, task := range filtered {
 		if task.Skill != "graph-editing" && !strings.Contains(task.ID, "graph-editing") {
 			t.Fatalf("filter leaked %s", task.ID)
+		}
+	}
+}
+
+func TestLoadEvalTasksRejectsInvalidSharedFixtures(t *testing.T) {
+	fixtureRoot := filepath.Join(DefaultEvalRoot(), "fixtures", "invalid")
+	cases := []struct {
+		name   string
+		worlds []string
+		tasks  []string
+		want   string
+	}{
+		{
+			name:   "extra field",
+			worlds: []string{"world.json"},
+			tasks:  []string{"extra-field-task.json"},
+			want:   `unknown field "unexpected_field"`,
+		},
+		{
+			name:   "extra page_context field",
+			worlds: []string{"world.json"},
+			tasks:  []string{"extra-field-page-context-task.json"},
+			want:   `unknown field "unexpected_field"`,
+		},
+		{
+			name:   "extra world field",
+			worlds: []string{"extra-field-world.json"},
+			tasks:  []string{"unknown-world-task.json"},
+			want:   `unknown field "unexpected_field"`,
+		},
+		{
+			name:   "unknown enum",
+			worlds: []string{"world.json"},
+			tasks:  []string{"unknown-enum-task.json"},
+			want:   `invalid suite "nightly"`,
+		},
+		{
+			name:   "duplicate id",
+			worlds: []string{"world.json"},
+			tasks:  []string{"duplicate-id-a.json", "duplicate-id-b.json"},
+			want:   "duplicate eval task id fixture-duplicate-id",
+		},
+		{
+			name:   "unknown world",
+			worlds: []string{"world.json"},
+			tasks:  []string{"unknown-world-task.json"},
+			want:   "references unknown world does-not-exist",
+		},
+		{
+			name:   "layer mismatch",
+			worlds: []string{"world.json"},
+			tasks:  []string{"layer-mismatch-task.json"},
+			want:   "layer l2 requires expect.state",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := installEvalFixtures(t, fixtureRoot, tc.worlds, tc.tasks)
+			_, _, err := LoadEvalTasks(root, "")
+			if err == nil {
+				t.Fatal("expected load error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func installEvalFixtures(t *testing.T, fixtureRoot string, worlds, tasks []string) string {
+	t.Helper()
+	root := t.TempDir()
+	copyNamedJSON(t, filepath.Join(root, "worlds"), fixtureRoot, worlds)
+	copyNamedJSON(t, filepath.Join(root, "tasks"), fixtureRoot, tasks)
+	return root
+}
+
+func copyNamedJSON(t *testing.T, destDir, srcDir string, names []string) {
+	t.Helper()
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(srcDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(destDir, name), raw, 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
