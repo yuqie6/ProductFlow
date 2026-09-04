@@ -169,6 +169,10 @@ web-build:
 web-e2e-live-graph:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/direct-create-full-graph.spec.ts --config playwright.config.ts'
 
+# Chromium: real Agent approval card → one WorkflowRun → real generated image. just dev must be running.
+web-e2e-live-agent-workflow:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_AGENT_WORKFLOW=1 pnpm --dir web exec playwright test e2e/live-agent-workflow.spec.ts --config playwright.config.ts'
+
 # Chromium document rewrite/candidate: mock prompt/image providers; just dev must be running.
 web-e2e-canvas-document:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_CANVAS_DOCUMENT=1 pnpm --dir web exec playwright test e2e/canvas-document-mock.spec.ts --config playwright.config.ts'
