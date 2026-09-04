@@ -126,7 +126,7 @@ func writeProviderAskUserSSE(w http.ResponseWriter) {
 		"usage":  map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
 	}
 	writeSSE(w, "response.created", map[string]any{
-		"type": "response.created",
+		"type":     "response.created",
 		"response": map[string]any{"id": "resp-question", "object": "response", "status": "in_progress", "output": []any{}},
 	})
 	writeSSE(w, "response.output_item.added", map[string]any{
@@ -158,7 +158,7 @@ func writeProviderTextSSE(w http.ResponseWriter, n int) {
 		"usage":  map[string]any{"input_tokens": 1, "output_tokens": 3, "total_tokens": 4},
 	}
 	writeSSE(w, "response.created", map[string]any{
-		"type": "response.created",
+		"type":     "response.created",
 		"response": map[string]any{"id": respID, "object": "response", "status": "in_progress", "output": []any{}},
 	})
 	writeSSE(w, "response.output_item.added", map[string]any{
@@ -271,6 +271,7 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 	}
 
 	waitAgentTurnStatus(t, second.baseURL, convID, *submitted.Turn.HarnessTurnID, "succeeded", 45*time.Second, second)
+	waitDurableTurnTerminal(t, as, submitted.Turn.ID, 45*time.Second, second)
 	terminal := syncTurnFromAgent(t, as, convID, submitted.Turn.ID)
 	if terminal.Status != "succeeded" {
 		t.Fatalf("status %s logs=%s", terminal.Status, second.logs())
@@ -344,20 +345,20 @@ func spawnPiAgent(t *testing.T, dataRoot, productFlowURL, providerURL, token str
 	cmd := exec.Command("node", "--import", "tsx/esm", "src/main.ts")
 	cmd.Dir = agentServiceDir(t)
 	cmd.Env = mergeEnv(os.Environ(), map[string]string{
-		"AGENT_LISTEN_ADDRESS":            addr,
-		"AGENT_DATA_ROOT":                 dataRoot,
-		"PRODUCTFLOW_INTERNAL_BASE_URL":   productFlowURL,
-		"AGENT_SERVICE_INTERNAL_TOKEN":    token,
-		"AGENT_PROVIDER_API_KEY":          "fake-provider-key",
-		"AGENT_PROVIDER_BASE_URL":         providerURL,
-		"AGENT_PROVIDER_MODEL":            "fake-model",
-		"PRODUCTFLOW_REQUEST_TIMEOUT":     "30s",
-		"AGENT_PROVIDER_REQUEST_TIMEOUT":  "15s",
-		"AGENT_QUESTION_TIMEOUT":          "900s",
-		"AGENT_MAX_CONCURRENT_TURNS":      "1",
-		"AGENT_MODEL_CONTEXT_WINDOW":      "128000",
-		"AGENT_AUTO_COMPACT_TOKEN_LIMIT":  "96000",
-		"AGENT_MAX_ITERATIONS":            "4",
+		"AGENT_LISTEN_ADDRESS":           addr,
+		"AGENT_DATA_ROOT":                dataRoot,
+		"PRODUCTFLOW_INTERNAL_BASE_URL":  productFlowURL,
+		"AGENT_SERVICE_INTERNAL_TOKEN":   token,
+		"AGENT_PROVIDER_API_KEY":         "fake-provider-key",
+		"AGENT_PROVIDER_BASE_URL":        providerURL,
+		"AGENT_PROVIDER_MODEL":           "fake-model",
+		"PRODUCTFLOW_REQUEST_TIMEOUT":    "30s",
+		"AGENT_PROVIDER_REQUEST_TIMEOUT": "15s",
+		"AGENT_QUESTION_TIMEOUT":         "900s",
+		"AGENT_MAX_CONCURRENT_TURNS":     "1",
+		"AGENT_MODEL_CONTEXT_WINDOW":     "128000",
+		"AGENT_AUTO_COMPACT_TOKEN_LIMIT": "96000",
+		"AGENT_MAX_ITERATIONS":           "4",
 	})
 	cmd.Stdout = buf
 	cmd.Stderr = buf
@@ -480,6 +481,34 @@ func syncTurnFromAgent(t *testing.T, as *agentServer, convID, turnID string) Tur
 	var out TurnResponse
 	as.decode(t, resp, &out)
 	return out
+}
+
+func waitDurableTurnTerminal(t *testing.T, as *agentServer, projectionID string, timeout time.Duration, agent piAgentProc) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var status, phase string
+	var turnEnds int
+	for time.Now().Before(deadline) {
+		err := as.pool.QueryRow(context.Background(), `
+			SELECT p.status, e.phase,
+			       (SELECT COUNT(*) FROM agent_turn_events ev
+			        WHERE ev.turn_projection_id = p.id AND ev.kind = 'turn/end')
+			FROM agent_turn_projections p
+			JOIN agent_turn_executions e ON e.turn_projection_id = p.id
+			WHERE p.id = $1
+		`, projectionID).Scan(&status, &phase, &turnEnds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status == "succeeded" && phase == "terminal" && turnEnds == 1 {
+			return
+		}
+		if turnEnds > 1 {
+			t.Fatalf("durable turn has %d turn/end events", turnEnds)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("durable terminal not committed: status=%s phase=%s turn_ends=%d\n%s", status, phase, turnEnds, agent.logs())
 }
 
 func seedFakeAgentProvider(t *testing.T, as *agentServer) {
