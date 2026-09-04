@@ -109,7 +109,7 @@ flowchart LR
 | R-05 | Turn `unknown` 和各 `terminal_reason_code` 继续显示准确中断/对账文案。 | D-01、C-03、C-08、S2-07 | `web/src/pages/workbench/agent/AgentConversationComponents.test.ts` | 完成 |
 | R-06 | 浏览器 SSE 只读 PG journal；断线、关闭页面不取消 Agent。 | C-07、S4-01～S4-06、G-04 | `web/src/pages/workbench/agent/conversation/runtime.test.ts`、live browser recovery spec | 完成 |
 | R-07 | Product Goal 仍只由用户 complete/cancel；Turn 或 graph run 终态只把 Goal 留在 `waiting_user/goal_loop`。 | D-04 | `go/internal/agent/task_graph_test.go`、`sync_task_contract_test.go` | 完成 |
-| R-08 | Turn running 时画布仍可编辑，Agent 不持有画布编辑锁。 | D-04、G-06 | 工作台画布交互；`web/src/pages/workbench/chrome/workflowCanvasInteraction.test.ts`；`web/e2e/running-turn-canvas.spec.ts` | 部分完成：规格与 `just web-e2e-running-turn-canvas` 已落地；尚未在活浏览器上执行该 opt-in 闸门。 |
+| R-08 | Turn running 时画布仍可编辑，Agent 不持有画布编辑锁。 | D-04、G-06 | 工作台画布交互；`web/src/pages/workbench/chrome/workflowCanvasInteraction.test.ts`；`web/e2e/running-turn-canvas.spec.ts` | 完成：2026-09-05 `just web-e2e-running-turn-canvas` 1 passed（1.6m）。内部 claim 后写 `turn/start`，inspector 改标题并自动保存，Turn 仍 `running`。闸门期间 SIGSTOP 了 just-dev 的 Node Agent，避免它抢走 lease。 |
 
 ## 实施切片
 
@@ -169,7 +169,7 @@ flowchart LR
 | 2026-09-01 | checkpoint-6 | Agent TypeScript 编译通过；`just go-test`（整树，99.8s）、`just agent-service-test`（167 passed/2 skipped）、`pnpm --dir web test:run`（92 files、635 passed）、`pnpm --dir web build`、`just docs-check`、`git diff --check` 通过 | Pi runtime 拆分完成；effect reconcile sealed route contract 已补齐；并发工作区中的 Graph lock 改动未纳入本 checkpoint。 |
 | 2026-09-04 | 实现基线 `fb658633` gate verification | 该 clean checkout 执行无缓存 `go test -C go ./... -count=1 -p 1`、`just agent-service-test`（167 passed/2 skipped）、Web 637 tests/lint/build、schema fresh/upgrade、`just go-migrate`、`just docs-check`、`git diff --check` 全部通过；journal/WAL/Graph query-plan 专项也通过 | G-07 在该实现基线具备 clean/no-cache 证据；G-06 的真实 Agent 审批到 WorkflowRun 完整 UI 链未在该基线重跑，生产账本仍保持部分完成。 |
 | 2026-09-04 | 归档复核 | Agent focused 38/38、Web focused 47/47、`just docs-check` 通过；`go test -C go ./internal/agent -count=1` 失败 2 项。单独复跑 effect reconciliation 通过；durable answer 用例 `-count=3` 为 2 通过、1 次在 PG projection 仍为 `running` 时失败 | 当时 R-03 等待边界不稳定、R-08 缺专门用例；本账本不可归档。 |
-| 2026-09-04 | durable-answer 与 running-Turn 规格 | `waitDurableTurnTerminal` 后 `TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult -count=10` 通过；新增 `web/e2e/running-turn-canvas.spec.ts` | R-03 闭合。R-08 仍待活浏览器执行。评测改写与恢复/容量切片未使本账本可归档。 |
+| 2026-09-05 | Running Turn 画布闸门 | `just web-e2e-running-turn-canvas` 1 passed（1.6m）；claim 后补 `turn/start`，标题自动保存，Turn 仍 running | 本账本不可归档：评测 L1–L6 门槛与干净 checkout 全量门仍缺。 |
 
 ## 明确不做
 

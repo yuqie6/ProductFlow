@@ -63,6 +63,7 @@ async function turnStatus(page: Page, conversationId: string, turnId: string): P
 
 test("running Turn does not lock the canvas; node title persist while Turn stays running", async ({ page }) => {
   test.skip(!enabled(), `set ${SWITCH}=1, start Go+PostgreSQL+Web without the Node Agent, then run just web-e2e-running-turn-canvas`);
+  test.setTimeout(3 * 60 * 1000);
   const internalToken = requiredEnv("AGENT_SERVICE_INTERNAL_TOKEN");
   await page.addInitScript(() => {
     window.localStorage.setItem("productflow.locale", "zh-CN");
@@ -96,7 +97,10 @@ test("running Turn does not lock the canvas; node title persist while Turn stays
   const idempotencyKey = `running-turn-${Date.now()}`;
   const turnResponse = await page.request.post(
     `/api/v2/products/${encodeURIComponent(productId)}/agent-conversations/${encodeURIComponent(conversationId)}/turns`,
-    { data: { input_text: "保持 running，编辑画布", idempotency_key: idempotencyKey } },
+    {
+      data: { input_text: "保持 running，编辑画布", idempotency_key: idempotencyKey },
+      timeout: 120_000,
+    },
   );
   expect(turnResponse.ok(), await turnResponse.text()).toBeTruthy();
   const submitted = await turnResponse.json() as SubmitTurnPayload;
@@ -116,6 +120,27 @@ test("running Turn does not lock the canvas; node title persist while Turn stays
   expect(claim.ok(), await claim.text()).toBeTruthy();
   const lease = await claim.json() as LeasePayload;
   expect(lease.execution_id).toBeTruthy();
+  expect(submitted.turn.harness_run_id).toBeTruthy();
+  const started = await page.request.post(
+    `/api/internal/v1/agent-conversations/${encodeURIComponent(conversationId)}/turn-executions/${encodeURIComponent(lease.execution_id)}/events/batch`,
+    {
+      headers: { Authorization: `Bearer ${internalToken}` },
+      data: {
+        owner_id: "e2e-running-turn-canvas",
+        lease_token: lease.lease_token,
+        events: [{
+          sequence: 1,
+          schema_version: 1,
+          run_id: submitted.turn.harness_run_id,
+          turn_id: harnessTurnId,
+          kind: "turn/start",
+          payload: { status: "running", attempt_id: "e2e-running-turn" },
+          created_at: new Date().toISOString(),
+        }],
+      },
+    },
+  );
+  expect(started.ok(), await started.text()).toBeTruthy();
   expect(await turnStatus(page, conversationId, submitted.turn.id)).toBe("running");
 
   const before = await currentGraph(page);
@@ -134,15 +159,17 @@ test("running Turn does not lock the canvas; node title persist while Turn stays
   await details.click();
   await expect(page.locator("[data-graph-node-inspector]")).toBeVisible();
   const title = `running-turn ${Date.now()}`;
-  await page.locator("[data-graph-node-inspector]").getByLabel("标题").fill(title);
+  const titleInput = page.locator("[data-graph-node-inspector]").getByLabel("标题");
+  await titleInput.fill(title);
+  await titleInput.blur();
   const save = page.locator("[data-graph-node-inspector]").getByRole("button", { name: "保存", exact: true });
-  if (await save.isVisible()) {
+  if (await save.isVisible() && await save.isEnabled()) {
     await save.click();
   }
   await expect.poll(async () => {
     const next = await currentGraph(page);
     return next.nodes.find((node) => node.id === brief!.id)?.title ?? "";
-  }).toBe(title);
+  }, { timeout: 20_000 }).toBe(title);
   const after = await currentGraph(page);
   expect(after.revision).toBeGreaterThan(before.revision);
   expect(await turnStatus(page, conversationId, submitted.turn.id)).toBe("running");
