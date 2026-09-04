@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -702,7 +701,7 @@ type chatContext struct {
 	ReferenceBytes [][]byte
 }
 
-// loadChatContext 读底图和参考图字节。素材不属于本会话或文件缺失返回 error，不要用空字节继续打网。
+// loadChatContext 读底图和参考图已核验字节。素材不属于本会话或未通过核验返回 error，不要用空字节继续打网。
 func (e Executor) loadChatContext(ctx context.Context, sessionID string, baseID *string, refIDs []string) (chatContext, error) {
 	out := chatContext{}
 	if baseID != nil && strings.TrimSpace(*baseID) != "" {
@@ -710,7 +709,7 @@ func (e Executor) loadChatContext(ctx context.Context, sessionID string, baseID 
 		if err != nil {
 			return chatContext{}, err
 		}
-		bytesData, err := readStoredFile(e.Media.Files, asset.StoragePath)
+		bytesData, err := e.readVerifiedBytes(ctx, asset.MediaObjectID)
 		if err != nil {
 			return chatContext{}, err
 		}
@@ -724,7 +723,7 @@ func (e Executor) loadChatContext(ctx context.Context, sessionID string, baseID 
 		if err != nil {
 			return chatContext{}, err
 		}
-		bytesData, err := readStoredFile(e.Media.Files, asset.StoragePath)
+		bytesData, err := e.readVerifiedBytes(ctx, asset.MediaObjectID)
 		if err != nil {
 			return chatContext{}, err
 		}
@@ -733,10 +732,20 @@ func (e Executor) loadChatContext(ctx context.Context, sessionID string, baseID 
 	return out, nil
 }
 
-func readStoredFile(files storage.Local, rel string) ([]byte, error) {
-	abs, err := files.Resolve(rel)
+func (e Executor) readVerifiedBytes(ctx context.Context, mediaObjectID string) ([]byte, error) {
+	content, err := e.Media.ReadVerified(ctx, e.DB, mediaObjectID)
 	if err != nil {
-		return nil, err
+		return nil, mapSessionMediaRead(err)
 	}
-	return os.ReadFile(abs)
+	return content.Bytes, nil
+}
+
+func mapSessionMediaRead(err error) error {
+	if re, ok := media.AsReadError(err); ok {
+		if re.Kind == media.ReadNotFound {
+			return apperr.NotFound("会话图片不存在")
+		}
+		return apperr.Validation("会话图片文件不可用")
+	}
+	return err
 }

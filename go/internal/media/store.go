@@ -34,6 +34,7 @@ type Object struct {
 }
 
 // Store 把校验后的字节写入 [storage.Local] 并登记 media_objects。
+// 业务模块读已核验字节走 [Store.ReadVerified]，不要自己 Resolve + os.ReadFile。
 type Store struct {
 	Files storage.Local // STORAGE_ROOT 本地落盘；变体也走这里
 }

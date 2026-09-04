@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -367,6 +368,51 @@ func TestLocalEditExecuteUsesInspectedSize(t *testing.T) {
 	if provider.lastSize != "8x6" {
 		t.Fatalf("size %q", provider.lastSize)
 	}
+}
+
+func TestLocalEditFailsWhenSourceFileMissing(t *testing.T) {
+	provider := &capturingEditProvider{MockProvider: MockProvider{Cap: SupportedCapability("mock-local")}}
+	es := newEditServer(t, provider)
+	created := es.createProduct(t)
+	form := createForm(t, created.CreatedAssets[0].ID, false)
+	draft := es.do(t, http.MethodPost, "/api/v3/products/"+created.Product.ID+"/image-edits", form.body, form.contentType)
+	es.mustStatus(t, draft, http.StatusCreated)
+	var task TaskResponse
+	es.decode(t, draft, &task)
+	submitted := es.doJSON(t, http.MethodPost, "/api/v3/products/"+created.Product.ID+"/image-edits/"+task.ID+"/submit", map[string]any{
+		"idempotency_key": "k-missing-source",
+	})
+	es.mustStatus(t, submitted, http.StatusAccepted)
+	abs := resolveProductMedia(t, es, created.CreatedAssets[0].MediaObjectID)
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	es.executeLocally(t, task.ID, Executor{DB: es.db, Media: es.media, Provider: provider})
+	got := es.do(t, http.MethodGet, "/api/v3/products/"+created.Product.ID+"/image-edits/"+task.ID, nil, "")
+	es.mustStatus(t, got, http.StatusOK)
+	es.decode(t, got, &task)
+	if task.Status != "failed" {
+		t.Fatalf("status %s", task.Status)
+	}
+	if task.FailureReason == nil || *task.FailureReason != "局部编辑媒体读取失败" {
+		t.Fatalf("failure_reason %v", task.FailureReason)
+	}
+	if provider.lastSize != "" {
+		t.Fatalf("provider must not receive missing source, size %q", provider.lastSize)
+	}
+}
+
+func resolveProductMedia(t *testing.T, es *editServer, mediaObjectID string) string {
+	t.Helper()
+	var path string
+	if err := es.pool.QueryRow(context.Background(), `SELECT storage_path FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	abs, err := es.media.Files.Resolve(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
 }
 
 func TestSourceEditSizeRejectsInvalid(t *testing.T) {

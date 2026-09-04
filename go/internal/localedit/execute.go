@@ -2,12 +2,9 @@ package localedit
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/media"
@@ -264,43 +261,16 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 		if err != nil {
 			return err
 		}
-		var sourceObj schema.MediaObjects
-		if err := pgxTx.Where("id = ?", source.MediaObjectID).Take(&sourceObj).Error; err != nil {
-			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
-		}
-		sourcePath, sourceMIME := sourceObj.StoragePath, sourceObj.MIMEType
-		var maskObj schema.MediaObjects
-		if err := pgxTx.Where("id = ?", task.MaskMediaID).Take(&maskObj).Error; err != nil {
-			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
-		}
-		maskSHA, maskPath, maskMIME := "", maskObj.StoragePath, maskObj.MIMEType
-		if maskObj.SHA256 != nil {
-			maskSHA = *maskObj.SHA256
-		}
-		sourceBytes, err := readFile(e.Media.Files, sourcePath)
+		sourceContent, err := e.Media.ReadVerified(ctx, pgxTx, source.MediaObjectID)
 		if err != nil {
-			return apperr.Validation("局部编辑媒体读取失败")
+			return mapLocalEditSourceRead(err)
 		}
-		maskBytes, err := readFile(e.Media.Files, maskPath)
-		if err != nil {
-			return apperr.Validation("局部编辑媒体读取失败")
-		}
-		if hexSHA(sourceBytes) != task.SourceSHA {
+		if sourceContent.Verified.SHA256 != task.SourceSHA {
 			return apperr.Validation("局部编辑源图版本已变化")
 		}
-		if maskSHA == "" || hexSHA(maskBytes) != maskSHA {
-			return apperr.Validation("局部编辑 mask 版本已变化")
-		}
-		sourceMeta, err := media.Inspect(sourceBytes, sourceMIME)
+		maskContent, err := e.Media.ReadVerified(ctx, pgxTx, task.MaskMediaID)
 		if err != nil {
-			return apperr.Validation("局部编辑源图未通过媒体核验")
-		}
-		if maskMIME == "" {
-			maskMIME = "image/png"
-		}
-		maskMeta, err := media.Inspect(maskBytes, maskMIME)
-		if err != nil {
-			return apperr.Validation("局部编辑 mask 版本已变化")
+			return mapLocalEditMaskRead(err)
 		}
 		var refBytes [][]byte
 		for _, refID := range task.ReferenceIDs {
@@ -308,23 +278,19 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 			if err != nil {
 				return err
 			}
-			var refObj schema.MediaObjects
-			if err := pgxTx.Where("id = ?", refAsset.MediaObjectID).Take(&refObj).Error; err != nil {
-				return apperr.Validation("局部编辑参考图媒体不存在")
-			}
-			data, err := readFile(e.Media.Files, refObj.StoragePath)
+			refContent, err := e.Media.ReadVerified(ctx, pgxTx, refAsset.MediaObjectID)
 			if err != nil {
-				return apperr.Validation("局部编辑媒体读取失败")
+				return mapLocalEditRefRead(err)
 			}
-			refBytes = append(refBytes, data)
+			refBytes = append(refBytes, refContent.Bytes)
 		}
 		out = snapshot{
-			taskRow: task, SourceBytes: sourceBytes, SourceMIME: sourceMIME,
-			SourceWidth: sourceMeta.Width, SourceHeight: sourceMeta.Height,
-			MaskBytes: maskBytes, MaskMIME: maskMeta.MIMEType,
-			MaskWidth: maskMeta.Width, MaskHeight: maskMeta.Height, MaskSHA: maskSHA,
+			taskRow: task, SourceBytes: sourceContent.Bytes, SourceMIME: sourceContent.Verified.MIMEType,
+			SourceWidth: sourceContent.Verified.Width, SourceHeight: sourceContent.Verified.Height,
+			MaskBytes: maskContent.Bytes, MaskMIME: maskContent.Verified.MIMEType,
+			MaskWidth: maskContent.Verified.Width, MaskHeight: maskContent.Verified.Height, MaskSHA: maskContent.Verified.SHA256,
 			ReferenceBytes: refBytes,
-			SourcePath:     sourcePath, SourceName: source.OriginalFilename, ImageType: source.ImageTypeKey, Display: source.DisplayName,
+			SourcePath:     sourceContent.Object.StoragePath, SourceName: source.OriginalFilename, ImageType: source.ImageTypeKey, Display: source.DisplayName,
 		}
 		return nil
 	})
@@ -561,17 +527,42 @@ func markUnknownLocked(ctx context.Context, tx *gorm.DB, task taskRow, detail st
 	}).Error
 }
 
-func readFile(files storage.Local, rel string) ([]byte, error) {
-	abs, err := files.Resolve(rel)
-	if err != nil {
-		return nil, err
+func mapLocalEditSourceRead(err error) error {
+	if re, ok := media.AsReadError(err); ok {
+		switch re.Kind {
+		case media.ReadNotFound:
+			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
+		case media.ReadNotVerified, media.ReadCorrupt, media.ReadIdentity:
+			return apperr.Validation("局部编辑源图未通过媒体核验")
+		default:
+			return apperr.Validation("局部编辑媒体读取失败")
+		}
 	}
-	return os.ReadFile(abs)
+	return err
 }
 
-func hexSHA(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+func mapLocalEditMaskRead(err error) error {
+	if re, ok := media.AsReadError(err); ok {
+		switch re.Kind {
+		case media.ReadNotFound:
+			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
+		case media.ReadNotVerified, media.ReadCorrupt, media.ReadIdentity:
+			return apperr.Validation("局部编辑 mask 版本已变化")
+		default:
+			return apperr.Validation("局部编辑媒体读取失败")
+		}
+	}
+	return err
+}
+
+func mapLocalEditRefRead(err error) error {
+	if re, ok := media.AsReadError(err); ok {
+		if re.Kind == media.ReadNotFound {
+			return apperr.Validation("局部编辑参考图媒体不存在")
+		}
+		return apperr.Validation("局部编辑媒体读取失败")
+	}
+	return err
 }
 
 func truncStatus(s string) string {

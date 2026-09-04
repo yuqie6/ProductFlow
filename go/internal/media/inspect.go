@@ -1,7 +1,7 @@
 // Package media 负责 MediaObject 字节校验、落盘与变体下载。
 //
 // 职责：不可变媒体身份（哈希+字节）。商品图、图库、交付、会话附件都指向它，不各存一份路径字符串。
-// 调用时机：上传 Validate* → Store.Put；下载走 ServeVariant（preview/thumbnail 缺则现生成）。
+// 调用时机：上传 Validate* → Store.Stage；业务读字节走 Store.ReadVerified；下载走 ServeVariant。
 // 副作用：写 media_objects 行和 STORAGE_ROOT 文件。删除要先确认无引用，见 prune。
 // 错误：类型/像素/体积超限 Validation 或 TooLarge。不要把存储路径泄漏到 HTTP 合同。
 package media

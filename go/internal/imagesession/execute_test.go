@@ -7,6 +7,7 @@ import (
 	"errors"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -249,6 +250,89 @@ func TestExecuteFillsChatRequestContextFromSession(t *testing.T) {
 	last := session.Rounds[len(session.Rounds)-1]
 	if last.PreviousResponseID != nil {
 		t.Fatalf("persisted previous_response_id %+v", last.PreviousResponseID)
+	}
+}
+
+func TestExecuteFailsWhenReferenceMediaCorrupt(t *testing.T) {
+	ss := newSessionServer(t)
+	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
+	ss.mustStatus(t, created, http.StatusCreated)
+	var session DetailResponse
+	ss.decode(t, created, &session)
+
+	first := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "一只杯子", "size": "1024x1024", "generation_count": 1,
+	})
+	ss.mustStatus(t, first, http.StatusAccepted)
+	ss.decode(t, first, &session)
+	firstID := session.GenerationTasks[0].ID
+	ss.dropDispatch(t, firstID)
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{ResponseID: "resp-base"}}).Execute(context.Background(), firstID); err != nil {
+		t.Fatal(err)
+	}
+	session = loadSessionDetail(t, ss, session.ID)
+	baseID := session.Rounds[0].GeneratedAsset.ID
+	refID := uploadSessionRef(t, ss, session.ID, pngBytes(t, 8, 6))
+	corruptSessionMedia(t, ss, refID)
+
+	branch := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generate", map[string]any{
+		"prompt": "换成蓝色", "size": "1024x1024", "generation_count": 1,
+		"base_asset_id": baseID, "selected_reference_asset_ids": []string{refID},
+	})
+	ss.mustStatus(t, branch, http.StatusAccepted)
+	ss.decode(t, branch, &session)
+	var branchID string
+	for _, task := range session.GenerationTasks {
+		if task.Status == "queued" {
+			branchID = task.ID
+			break
+		}
+	}
+	if branchID == "" {
+		t.Fatal("missing branch task")
+	}
+	ss.dropDispatch(t, branchID)
+	prov := &countingProvider{MockChatProvider: MockChatProvider{ResponseID: "resp-branch"}}
+	if err := (Executor{DB: ss.db, Media: ss.media, Provider: prov}).Execute(context.Background(), branchID); err != nil {
+		t.Fatal(err)
+	}
+	if prov.calls != 0 {
+		t.Fatalf("provider must not receive corrupt bytes, calls %d", prov.calls)
+	}
+	got := loadSessionDetail(t, ss, session.ID)
+	var task TaskResponse
+	for _, item := range got.GenerationTasks {
+		if item.ID == branchID {
+			task = item
+			break
+		}
+	}
+	if task.Status != "failed" || task.IsRetryable {
+		t.Fatalf("status %+v", task)
+	}
+	if task.FailureReason == nil || *task.FailureReason != "会话图片文件不可用" {
+		t.Fatalf("failure_reason %v", task.FailureReason)
+	}
+}
+
+func corruptSessionMedia(t *testing.T, ss *sessionServer, assetID string) {
+	t.Helper()
+	var path string
+	var size int
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT mo.storage_path, mo.byte_size
+		FROM image_session_assets a
+		JOIN media_objects mo ON mo.id = a.media_object_id
+		WHERE a.id = $1
+	`, assetID).Scan(&path, &size); err != nil {
+		t.Fatal(err)
+	}
+	abs, err := ss.media.Files.Resolve(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, bytes.Repeat([]byte("x"), size), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

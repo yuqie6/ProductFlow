@@ -6,7 +6,6 @@ import (
 	"compress/flate"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -20,7 +19,6 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
-	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
@@ -54,7 +52,7 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 
 	type fileItem struct {
 		name             string
-		rel              string
+		mediaObjectID    string
 		expectedByteSize int
 		expectedMIME     string
 		expectedWidth    int
@@ -107,10 +105,12 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			if source.ProductID != productID {
 				return apperr.Conflict("交付图原图不属于当前商品")
 			}
-			_, meta, resultSHA, err := readVerifiedResultMedia(ctx, pgxTx, s.Media.Files, asset)
+			content, err := s.Media.ReadVerified(ctx, pgxTx, asset.MediaObjectID)
 			if err != nil {
-				return err
+				return mapExportRead(err)
 			}
+			meta := content.Verified
+			resultSHA := meta.SHA256
 			total += meta.ByteSize
 			if total > exportMaxBytes {
 				return apperr.Validation("交付导出图片总大小不能超过 512 MiB")
@@ -121,12 +121,12 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 			}
 			ext := media.ExtensionForMIME(meta.MIMEType)
 			name := deduplicateFilename(exportImageFilename(safeProduct, imageType, index+1, meta.Width, meta.Height, ext), used)
-			sourceSHA, err := loadMediaSHA256(ctx, pgxTx, source.MediaObjectID)
+			sourceObj, err := s.Media.Get(ctx, pgxTx, source.MediaObjectID)
 			if err != nil {
 				return err
 			}
 			files = append(files, fileItem{
-				name: name, rel: asset.StoragePath, expectedByteSize: meta.ByteSize,
+				name: name, mediaObjectID: asset.MediaObjectID, expectedByteSize: meta.ByteSize,
 				expectedMIME: meta.MIMEType, expectedWidth: meta.Width, expectedHeight: meta.Height,
 				expectedSHA: meta.SHA256,
 			})
@@ -141,7 +141,7 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 				"graph":        lineage["graph"],
 				"run":          lineage["run"],
 				"node_run_id":  lineage["node_run_id"],
-				"source_asset": assetMetadata(source, sourceSHA),
+				"source_asset": assetMetadata(source, sourceObj.SHA256),
 				"rendition_job": map[string]any{
 					"id":                  row.ID,
 					"status":              row.Status,
@@ -195,21 +195,18 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		data []byte
 	}, 0, len(files))
 	for _, f := range files {
-		data, err := readExactBoundedFile(s.Media.Files, f.rel, f.expectedByteSize)
+		content, err := s.Media.ReadVerified(ctx, s.DB, f.mediaObjectID)
 		if err != nil {
 			return ExportArchive{}, apperr.Conflict("交付图结果文件在打包时发生变化")
 		}
-		meta, err := media.Inspect(data, f.expectedMIME)
-		if err != nil {
-			return ExportArchive{}, apperr.Conflict("交付图结果文件在打包时发生变化")
-		}
+		meta := content.Verified
 		if meta.MIMEType != f.expectedMIME || meta.ByteSize != f.expectedByteSize || meta.Width != f.expectedWidth || meta.Height != f.expectedHeight || meta.SHA256 != f.expectedSHA {
 			return ExportArchive{}, apperr.Conflict("交付图结果在打包时发生变化")
 		}
 		packed = append(packed, struct {
 			name string
 			data []byte
-		}{name: f.name, data: data})
+		}{name: f.name, data: content.Bytes})
 	}
 
 	if manifest == nil {
@@ -353,55 +350,26 @@ func assetMetadata(asset product.ImageAsset, sha256 string) map[string]any {
 	}
 }
 
-var errFileSizeChanged = errors.New("delivery result file size changed")
-
-// readVerifiedResultMedia 读盘并对照 MediaObject 核验字段。状态非 verified、字节变化或元数据漂移返回 409。
-func readVerifiedResultMedia(ctx context.Context, q *gorm.DB, files storage.Local, asset product.ImageAsset) ([]byte, media.Verified, string, error) {
-	if asset.VerificationStatus != media.StatusVerified {
-		return nil, media.Verified{}, "", apperr.Conflict("交付图结果媒体不可用")
-	}
-	sha, err := loadMediaSHA256(ctx, q, asset.MediaObjectID)
-	if err != nil {
-		return nil, media.Verified{}, "", err
-	}
-	if asset.ByteSize == nil || asset.Width == nil || asset.Height == nil || sha == "" || strings.TrimSpace(asset.MIMEType) == "" {
-		return nil, media.Verified{}, "", apperr.Conflict("交付图结果缺少核验元数据")
-	}
-	data, err := readExactBoundedFile(files, asset.StoragePath, *asset.ByteSize)
-	if err != nil {
-		if errors.Is(err, errFileSizeChanged) {
-			return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件大小已变化")
+func mapExportRead(err error) error {
+	if re, ok := media.AsReadError(err); ok {
+		switch re.Kind {
+		case media.ReadNotVerified:
+			if re.Field == media.FieldMetadata {
+				return apperr.Conflict("交付图结果缺少核验元数据")
+			}
+			return apperr.Conflict("交付图结果媒体不可用")
+		case media.ReadNotFound:
+			return apperr.Conflict("交付图结果媒体不可用")
+		case media.ReadMissingFile, media.ReadCorrupt, media.ReadIO:
+			return apperr.Conflict("交付图结果文件不可用")
+		case media.ReadIdentity:
+			if re.Field == media.FieldByteSize {
+				return apperr.Conflict("交付图结果文件大小已变化")
+			}
+			return apperr.Conflict("交付图结果核验元数据已变化")
 		}
-		return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件不可用")
 	}
-	meta, err := media.Inspect(data, asset.MIMEType)
-	if err != nil {
-		return nil, media.Verified{}, "", apperr.Conflict("交付图结果文件不可用")
-	}
-	if meta.MIMEType != asset.MIMEType || meta.ByteSize != *asset.ByteSize || meta.Width != *asset.Width || meta.Height != *asset.Height || meta.SHA256 != sha {
-		return nil, media.Verified{}, "", apperr.Conflict("交付图结果核验元数据已变化")
-	}
-	return data, meta, sha, nil
-}
-
-func readExactBoundedFile(files storage.Local, rel string, expectedByteSize int) ([]byte, error) {
-	abs, err := files.Resolve(rel)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Open(abs)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	content, err := io.ReadAll(io.LimitReader(f, int64(expectedByteSize)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(content) != expectedByteSize {
-		return nil, errFileSizeChanged
-	}
-	return content, nil
+	return err
 }
 
 func deduplicateFilename(filename string, used map[string]struct{}) string {

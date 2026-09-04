@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/media"
@@ -284,4 +285,57 @@ func TestReadAssetBytesRequiresProductMatch(t *testing.T) {
 	if len(data) == 0 || mime == "" {
 		t.Fatalf("owned asset mime %s bytes %d", mime, len(data))
 	}
+}
+
+func TestReadAssetBytesRejectsCorruptFile(t *testing.T) {
+	ps := newProductServer(t)
+	owned := ps.createV2(t, "损坏参考图", nil, 1)
+	asset := owned.CreatedAssets[0]
+	abs := resolveMediaPath(t, ps, asset.MediaObjectID)
+	size := mediaFileSize(t, ps, asset.MediaObjectID)
+	if err := os.WriteFile(abs, bytes.Repeat([]byte("x"), size), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := ps.svc.ReadAssetBytes(context.Background(), nil, owned.Product.ID, asset.ID)
+	var ae apperr.Error
+	if !errors.As(err, &ae) || ae.Status != 400 || ae.Detail != "参考图文件不可读取" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestReadAssetBytesRejectsMissingFile(t *testing.T) {
+	ps := newProductServer(t)
+	owned := ps.createV2(t, "缺失参考图", nil, 1)
+	asset := owned.CreatedAssets[0]
+	abs := resolveMediaPath(t, ps, asset.MediaObjectID)
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := ps.svc.ReadAssetBytes(context.Background(), nil, owned.Product.ID, asset.ID)
+	var ae apperr.Error
+	if !errors.As(err, &ae) || ae.Detail != "参考图文件不可读取" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func resolveMediaPath(t *testing.T, ps *productServer, mediaObjectID string) string {
+	t.Helper()
+	var path string
+	if err := ps.pool.QueryRow(context.Background(), `SELECT storage_path FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	abs, err := ps.svc.Media.Files.Resolve(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}
+
+func mediaFileSize(t *testing.T, ps *productServer, mediaObjectID string) int {
+	t.Helper()
+	var size int
+	if err := ps.pool.QueryRow(context.Background(), `SELECT byte_size FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&size); err != nil {
+		t.Fatal(err)
+	}
+	return size
 }

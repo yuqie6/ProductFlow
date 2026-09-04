@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -347,6 +348,53 @@ func TestExecuteFailsQueuedJobWhenSourceNotVerified(t *testing.T) {
 	if reason == nil || *reason != "交付派生原图媒体尚未通过核验" {
 		t.Fatalf("failure_reason %v", reason)
 	}
+}
+
+func TestExecuteFailsWhenSourceFileMissing(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifact(t, created.Product.ID, assetID)
+	submitted := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{
+		"width": 64, "height": 64, "format": "png", "fit": "contain",
+	})
+	ds.mustStatus(t, submitted, http.StatusAccepted)
+	var job JobResponse
+	ds.decode(t, submitted, &job)
+
+	abs := resolveDeliveryMedia(t, ds, created.CreatedAssets[0].MediaObjectID)
+	if err := os.Remove(abs); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var reason *string
+	if err := ds.pool.QueryRow(context.Background(), `
+		SELECT status, failure_reason FROM delivery_rendition_jobs WHERE id = $1
+	`, job.ID).Scan(&status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("status %s", status)
+	}
+	if reason == nil || *reason != sourceMissingDetail {
+		t.Fatalf("failure_reason %v", reason)
+	}
+}
+
+func resolveDeliveryMedia(t *testing.T, ds *deliveryServer, mediaObjectID string) string {
+	t.Helper()
+	var path string
+	if err := ds.pool.QueryRow(context.Background(), `SELECT storage_path FROM media_objects WHERE id = $1`, mediaObjectID).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	abs, err := ds.media.Files.Resolve(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
 }
 
 func TestDeliveryUnknownSpecFieldRejected(t *testing.T) {

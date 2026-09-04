@@ -298,3 +298,40 @@ func TestExportRejectsUnknownJobWithoutWritingZip(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestExportRejectsResultFileSizeChange(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifact(t, created.Product.ID, assetID)
+	submitted := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{
+		"width": 64, "height": 64, "format": "png", "fit": "contain",
+	})
+	ds.mustStatus(t, submitted, http.StatusAccepted)
+	var job JobResponse
+	ds.decode(t, submitted, &job)
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := ds.do(t, http.MethodGet, "/api/v2/delivery-rendition-jobs/"+job.ID, nil, "")
+	ds.mustStatus(t, got, http.StatusOK)
+	ds.decode(t, got, &job)
+	if job.ResultAsset == nil {
+		t.Fatal("missing result asset")
+	}
+	abs := resolveDeliveryMedia(t, ds, job.ResultAsset.MediaObjectID)
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, append(raw, 0x00), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = (Service{DB: ds.db, Media: ds.media}).Export(context.Background(), created.Product.ID, []string{job.ID}, false)
+	if err == nil {
+		t.Fatal("expected size-change conflict")
+	}
+	if !strings.Contains(err.Error(), "交付图结果文件大小已变化") {
+		t.Fatalf("err %v", err)
+	}
+}

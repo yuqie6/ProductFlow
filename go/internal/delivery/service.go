@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +23,6 @@ import (
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
-	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
@@ -340,21 +338,6 @@ func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (
 	return &out, nil
 }
 
-func loadMediaSHA256(ctx context.Context, q *gorm.DB, mediaObjectID string) (string, error) {
-	var row schema.MediaObjects
-	err := q.WithContext(ctx).Where("id = ?", mediaObjectID).Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if row.SHA256 == nil {
-		return "", nil
-	}
-	return *row.SHA256, nil
-}
-
 func jobFromModel(m schema.DeliveryRenditionJobs) jobRow {
 	return jobRow{
 		ID: m.ID, ProductID: m.ProductID, SourceAssetID: m.SourceAssetID, ResultAssetID: m.ResultAssetID,
@@ -363,14 +346,6 @@ func jobFromModel(m schema.DeliveryRenditionJobs) jobRow {
 		CreatedAt: m.CreatedAt, StartedAt: m.StartedAt, FinishedAt: m.FinishedAt, UpdatedAt: m.UpdatedAt,
 		ActiveAttempt: m.ActiveAttemptID,
 	}
-}
-
-func readStorage(files storage.Local, rel string) ([]byte, error) {
-	abs, err := files.Resolve(rel)
-	if err != nil {
-		return nil, err
-	}
-	return os.ReadFile(abs)
 }
 
 func trimFilename(stem, suffix string) string {

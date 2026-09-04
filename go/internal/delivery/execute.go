@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -36,21 +35,20 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 	if !claimed.ok {
 		return e.releaseIdle(ctx, jobID)
 	}
-	sourceBytes, err := readStorage(e.Media.Files, claimed.sourcePath)
+	source, err := e.Media.ReadVerified(ctx, e.DB, claimed.sourceMediaID)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if re, ok := media.AsReadError(err); ok {
+			if re.Kind == media.ReadIO {
+				e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
+				return nil
+			}
 			e.fail(ctx, jobID, attemptID, apperr.Validation(sourceMissingDetail), false)
 			return nil
 		}
 		e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
 		return nil
 	}
-	meta, err := media.Inspect(sourceBytes, claimed.sourceMIME)
-	if err != nil || meta.ByteSize != claimed.sourceBytes || meta.SHA256 != claimed.sourceSHA {
-		e.fail(ctx, jobID, attemptID, apperr.Validation(sourceMissingDetail), false)
-		return nil
-	}
-	rendered, err := Render(sourceBytes, claimed.spec)
+	rendered, err := Render(source.Bytes, claimed.spec)
 	if err != nil {
 		retryable := true
 		var ae apperr.Error
@@ -84,18 +82,15 @@ func (e Executor) releaseIdle(ctx context.Context, jobID string) error {
 }
 
 type claim struct {
-	ok           bool
-	jobID        string
-	attemptID    string
-	productID    string
-	sourceID     string
-	sourcePath   string
-	sourceMIME   string
-	sourceBytes  int
-	sourceSHA    string
-	sourceName   string
-	imageTypeKey *string
-	spec         Spec
+	ok            bool
+	jobID         string
+	attemptID     string
+	productID     string
+	sourceID      string
+	sourceMediaID string
+	sourceName    string
+	imageTypeKey  *string
+	spec          Spec
 }
 
 // claim 把 queued 作业标 running 并带上 attemptID。RowsAffected≠1 表示已被别人抢走，返回 ok=false 且 error=nil。
@@ -135,18 +130,17 @@ func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, er
 		if err != nil {
 			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
 		}
-		sha, err := loadMediaSHA256(ctx, pgxTx, source.MediaObjectID)
+		obj, err := e.Media.Get(ctx, pgxTx, source.MediaObjectID)
 		if err != nil {
 			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, err)
 		}
-		if source.ByteSize == nil || sha == "" {
+		if source.ByteSize == nil || obj.SHA256 == "" {
 			return failClaimIfClient(ctx, pgxTx, jobID, attemptID, apperr.Validation("交付派生原图缺少核验元数据"))
 		}
 		out = claim{
 			ok: true, jobID: jobID, attemptID: attemptID, productID: row.ProductID,
-			sourceID: source.ID, sourcePath: source.StoragePath, sourceMIME: source.MIMEType,
+			sourceID: source.ID, sourceMediaID: source.MediaObjectID,
 			sourceName: source.DisplayName, imageTypeKey: source.ImageTypeKey, spec: spec,
-			sourceBytes: *source.ByteSize, sourceSHA: sha,
 		}
 		return nil
 	})
