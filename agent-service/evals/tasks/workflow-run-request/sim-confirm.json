@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "id": "workflow-run-request-sim-confirm",
+  "skill": "workflow-run-request",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l3"
+  ],
+  "utterances": [
+    "运行当前工作流，我确认这次请求",
+    "提交全图运行，随后确认",
+    "发起运行请求并在确认环节同意"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "request_workflow_run_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "request_workflow_run_v1",
+        "match": {
+          "expected_workflow_revision": 3,
+          "scope": "graph"
+        }
+      }
+    ]
+  },
+  "origin": "handwritten:l3",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "request_workflow_run_v1",
+        "params": {
+          "expected_workflow_revision": 3,
+          "scope": "graph"
+        }
+      }
+    ]
+  },
+  "user_sim": {
+    "persona": "愿意跑图的商家",
+    "hidden_goal": "确认 workflow run request",
+    "facts": {
+      "scope": "graph"
+    },
+    "policy": "confirm_run",
+    "max_turns": 3,
+    "scripted_answers": [
+      {
+        "when": "run_request",
+        "action": "confirm"
+      }
+    ]
+  }
+}

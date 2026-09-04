@@ -62,7 +62,7 @@ describe("ProductFlow Skill catalog", () => {
     expect(catalog.promptForScope("product_workflow")).toContain("graph-editing");
     const readme = await readFile(join(catalog.root, "README.md"), "utf8");
     expect(readme).toContain("何时使用");
-    expect(readme).toContain("evals/fixtures.ts");
+    expect(readme).toContain("evals/tasks");
   });
 
   it("loads static references only inside the skill references directory", async () => {

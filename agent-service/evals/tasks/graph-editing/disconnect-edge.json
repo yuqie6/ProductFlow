@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-disconnect-edge",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "断开创意简报到主图提示词的连线",
+    "移除 edge-brief-prompt 这条边",
+    "取消简报节点对主图提示词的连接"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "apply_graph_change_set_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [
+        "disconnect_edge"
+      ],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "apply_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "disconnect_edge",
+          "operations[0].edge_ref": "edge-brief-prompt"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "apply_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "断开简报连线",
+          "operations": [
+            {
+              "op": "disconnect_edge",
+              "edge_ref": "edge-brief-prompt"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

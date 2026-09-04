@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-move-node-positions",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把主图提示词和生成节点移动到新位置",
+    "调整两个主图节点的画布坐标",
+    "将 node-prompt-1 与 node-image-1 排到右侧"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "apply_graph_change_set_v1",
+        "focus_canvas_items_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [
+        "move_nodes"
+      ],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "apply_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "move_nodes",
+          "operations[0].nodes[1]": [
+            "node-image-1",
+            920,
+            240
+          ]
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "apply_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "调整主图节点位置",
+          "operations": [
+            {
+              "op": "move_nodes",
+              "nodes": [
+                [
+                  "node-prompt-1",
+                  640,
+                  240
+                ],
+                [
+                  "node-image-1",
+                  920,
+                  240
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "focus_canvas_items_v1",
+        "params": {
+          "node_ids": ["node-prompt-1", "node-image-1"]
+        }
+      }
+    ]
+  }
+}

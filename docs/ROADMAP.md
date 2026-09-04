@@ -35,6 +35,10 @@
 
 Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
+### Agent 评测体系
+
+JSON 任务集、评分器、live runner 与落盘在 `agent-service/evals/`。Go L2 世界与状态断言在 `go/internal/agent/eval*_test.go`；生产回流命令是 `go/cmd/productflow-agent-evals`。held-in / held-out 划分见 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。真实模型全量 k=3、L2/L5 nightly 与 kappa 校准仍是 opt-in；未在账本登记 `run_id` 前不把 pass^k 写成产品事实。
+
 ### Agent 运行时所有权
 
 Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正在按 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md) 分刀收口。该账本记录所有权目标、S0～S6 checkpoint 和每刀证据；生产可靠性状态仍只由 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md) 裁定。

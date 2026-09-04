@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-batch-rename",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "把两张选中图分别改名为秋季主图和秋季细节",
+    "批量提交两张素材的明确重命名草案",
+    "第一张叫秋季主图，第二张叫秋季细节"
+  ],
+  "world": "global-library-multi",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111",
+      "66666666-6666-4666-8666-666666666666"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "library_payload.operations[0].target.display_name": "秋季主图",
+          "library_payload.operations[1].target.display_name": "秋季细节"
+        }
+      }
+    ],
+    "state": {
+      "pending_library_drafts": 1
+    }
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "批量重命名两张素材",
+            "operations": [
+              {
+                "operation": "rename",
+                "asset_id": "11111111-1111-4111-8111-111111111111",
+                "expected_revision": 1,
+                "reason": "更新素材名称",
+                "before": {
+                  "revision": 1,
+                  "display_name": "商品主图",
+                  "folder_id": null,
+                  "tag_names": [],
+                  "is_archived": false
+                },
+                "target": {
+                  "display_name": "秋季主图"
+                }
+              },
+              {
+                "operation": "rename",
+                "asset_id": "66666666-6666-4666-8666-666666666666",
+                "expected_revision": 2,
+                "reason": "更新素材名称",
+                "before": {
+                  "revision": 2,
+                  "display_name": "商品细节图",
+                  "folder_id": "55555555-5555-4555-8555-555555555555",
+                  "tag_names": [
+                    "旧标签"
+                  ],
+                  "is_archived": false
+                },
+                "target": {
+                  "display_name": "秋季细节"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

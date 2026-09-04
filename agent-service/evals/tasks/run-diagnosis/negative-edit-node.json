@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "id": "run-diagnosis-negative-edit-node",
+  "skill": "run-diagnosis",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "negative",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "诊断完直接替我改掉失败节点",
+    "查到原因后自动修改主图提示词",
+    "不用询问，修复报错节点配置"
+  ],
+  "world": "expanded-failed-run",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_workflow_run_detail_v1",
+        "get_node_detail_v1"
+      ],
+      "forbidden": [
+        "request_workflow_run_v1",
+        "request_global_workflow_run_v1"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": []
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "run-diagnosis"
+        }
+      },
+      {
+        "name": "get_workflow_run_detail_v1",
+        "params": {
+          "run_id": "44444444-4444-4444-8444-444444444444"
+        }
+      },
+      {
+        "name": "get_node_detail_v1",
+        "params": {
+          "node_id": "node-prompt-1"
+        }
+      }
+    ]
+  }
+}

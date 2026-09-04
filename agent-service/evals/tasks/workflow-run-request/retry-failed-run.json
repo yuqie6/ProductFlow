@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "id": "workflow-run-request-retry-failed-run",
+  "skill": "workflow-run-request",
+  "scope": "product_workflow",
+  "suite": "regression",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "只重试刚才失败的那一轮",
+    "基于上一次失败的运行再发起一次",
+    "重新执行刚刚报错的那次任务"
+  ],
+  "world": "expanded-failed-run",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "inspect_workflow_runs_v1",
+        "request_workflow_run_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "request_workflow_run_v1",
+        "match": {
+          "expected_workflow_revision": 3,
+          "source_run_id": "44444444-4444-4444-8444-444444444444",
+          "scope": "graph"
+        }
+      }
+    ],
+    "state": {
+      "pending_run_requests": 1,
+      "require_source_run_id": true
+    }
+  },
+  "origin": "legacy:fixtures.ts",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "inspect_workflow_runs_v1",
+        "params": {
+          "limit": 10
+        }
+      },
+      {
+        "name": "request_workflow_run_v1",
+        "params": {
+          "expected_workflow_revision": 3,
+          "source_run_id": "44444444-4444-4444-8444-444444444444",
+          "scope": "graph"
+        }
+      }
+    ]
+  }
+}

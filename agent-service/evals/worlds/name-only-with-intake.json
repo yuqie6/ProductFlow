@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "name": "name-only-with-intake",
+  "intake": {
+    "schema_version": 1,
+    "image_types": [
+      { "key": "hero", "quantity": 2, "order": 0 },
+      { "key": "detail", "quantity": 2, "order": 1 }
+    ]
+  },
+  "birth_expandable": true,
+  "live_graph": {
+    "id": "g1",
+    "title": "评测图",
+    "revision": 1,
+    "node_count": 1,
+    "edge_count": 0,
+    "group_count": 0,
+    "nodes": [
+      { "id": "source-1", "node_type": "product_source", "title": "商品资料" }
+    ]
+  }
+}

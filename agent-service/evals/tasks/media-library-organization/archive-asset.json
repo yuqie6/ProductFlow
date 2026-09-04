@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-archive-asset",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "regression",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "把选中素材归档",
+    "提交隐藏这张商品图的归档草案",
+    "将当前选中图片设为已归档"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "library_payload.operations[0].operation": "archive",
+          "library_payload.operations[0].target.is_archived": true
+        }
+      }
+    ],
+    "state": {
+      "pending_library_drafts": 1
+    }
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "归档选中素材",
+            "operations": [
+              {
+                "operation": "archive",
+                "asset_id": "11111111-1111-4111-8111-111111111111",
+                "expected_revision": 1,
+                "reason": "改为归档状态",
+                "before": {
+                  "revision": 1,
+                  "display_name": "商品图",
+                  "folder_id": null,
+                  "tag_names": [],
+                  "is_archived": false
+                },
+                "target": {
+                  "is_archived": true
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

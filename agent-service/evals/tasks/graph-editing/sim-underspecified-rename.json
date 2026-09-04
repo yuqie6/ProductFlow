@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-sim-underspecified-rename",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l3"
+  ],
+  "utterances": [
+    "把那个节点改个名字",
+    "帮我改一下节点标题",
+    "这个提示词节点名字不太对，改一下"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "requires_input",
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "ask_user"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": [
+        "add_node"
+      ]
+    },
+    "writes": [],
+    "question": {
+      "required": true
+    }
+  },
+  "origin": "handwritten:l3",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      }
+    ]
+  },
+  "user_sim": {
+    "persona": "说不清需求的商家",
+    "hidden_goal": "把主图提示词改成新标题",
+    "facts": {
+      "node": "主图提示词",
+      "title": "新标题"
+    },
+    "policy": "answer_on_question",
+    "max_turns": 3,
+    "scripted_answers": [
+      {
+        "when": "question",
+        "action": "answer",
+        "text": "主图提示词改成新标题",
+        "answer": {
+          "selected_option": 0
+        }
+      }
+    ]
+  }
+}

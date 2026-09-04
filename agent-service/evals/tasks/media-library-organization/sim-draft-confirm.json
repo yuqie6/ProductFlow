@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-sim-draft-confirm",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l3"
+  ],
+  "utterances": [
+    "把商品图改名为新名，我确认这份草案",
+    "提交重命名草案并确认",
+    "拟改名草案后同意生效"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "draft_kind": "library_organization",
+          "library_payload.operations[0].operation": "rename",
+          "library_payload.operations[0].asset_id": "11111111-1111-4111-8111-111111111111",
+          "library_payload.operations[0].target.display_name": "新名"
+        }
+      }
+    ]
+  },
+  "origin": "handwritten:l3",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "把这张图改名",
+            "operations": [
+              {
+                "operation": "rename",
+                "asset_id": "11111111-1111-4111-8111-111111111111",
+                "expected_revision": 1,
+                "reason": "更清晰的商品名",
+                "before": {
+                  "revision": 1,
+                  "display_name": "旧名",
+                  "folder_id": null,
+                  "tag_names": [],
+                  "is_archived": false
+                },
+                "target": {
+                  "display_name": "新名"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "user_sim": {
+    "persona": "整理素材的商家",
+    "hidden_goal": "确认库整理草案",
+    "facts": {
+      "new_name": "新名"
+    },
+    "policy": "confirm_library_draft",
+    "max_turns": 3,
+    "scripted_answers": [
+      {
+        "when": "library_draft",
+        "action": "confirm"
+      }
+    ]
+  }
+}

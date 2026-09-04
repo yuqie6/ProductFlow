@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-move-to-root",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把季节文件夹里的细节图移回根目录",
+    "将选中的商品细节图移出文件夹",
+    "提交把当前素材移动到未归类目录的草案"
+  ],
+  "world": "global-library-multi",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "66666666-6666-4666-8666-666666666666"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "library_payload.operations[0].asset_id": "66666666-6666-4666-8666-666666666666",
+          "library_payload.operations[0].target.folder_id": null
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "移回根目录",
+            "operations": [
+              {
+                "operation": "move",
+                "asset_id": "66666666-6666-4666-8666-666666666666",
+                "expected_revision": 2,
+                "reason": "调整素材目录",
+                "before": {
+                  "revision": 2,
+                  "display_name": "商品细节图",
+                  "folder_id": "55555555-5555-4555-8555-555555555555",
+                  "tag_names": [
+                    "旧标签"
+                  ],
+                  "is_archived": false
+                },
+                "target": {
+                  "folder_id": null
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "id": "product-intake-create-named-workspace",
+  "skill": "product-intake",
+  "scope": "global",
+  "suite": "regression",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "新建名为秋季咖啡杯的商品工作区",
+    "创建一个秋季咖啡杯商品和对应画布",
+    "我确认要建立新的秋季咖啡杯工作区"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_products_v1",
+        "create_product_workspace_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "create_product_workspace_v1",
+        "match": {
+          "name": "秋季咖啡杯"
+        }
+      }
+    ],
+    "state": {
+      "product_name_contains": "秋季咖啡杯"
+    }
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "list_products_v1",
+        "params": {
+          "query": "秋季咖啡杯",
+          "limit": 20
+        }
+      },
+      {
+        "name": "create_product_workspace_v1",
+        "params": {
+          "name": "秋季咖啡杯"
+        }
+      }
+    ]
+  }
+}

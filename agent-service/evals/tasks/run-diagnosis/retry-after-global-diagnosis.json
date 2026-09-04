@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "id": "run-diagnosis-retry-after-global-diagnosis",
+  "skill": "run-diagnosis",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "全局诊断这个失败运行后为同一商品重试",
+    "查看指定工作流失败详情并提交全局重跑",
+    "从全局会话解释错误后创建待确认重试"
+  ],
+  "world": "expanded-failed-run",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "inspect_global_workflow_runs_v1",
+        "get_workflow_run_detail_v1",
+        "request_global_workflow_run_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "request_global_workflow_run_v1",
+        "match": {
+          "source_run_id": "44444444-4444-4444-8444-444444444444"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "run-diagnosis"
+        }
+      },
+      {
+        "name": "inspect_global_workflow_runs_v1",
+        "params": {
+          "workflow_ids": [
+            "33333333-3333-4333-8333-333333333333"
+          ],
+          "limit": 5
+        }
+      },
+      {
+        "name": "get_workflow_run_detail_v1",
+        "params": {
+          "run_id": "44444444-4444-4444-8444-444444444444"
+        }
+      },
+      {
+        "name": "request_global_workflow_run_v1",
+        "params": {
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "workflow_id": "33333333-3333-4333-8333-333333333333",
+          "expected_workflow_revision": 3,
+          "source_run_id": "44444444-4444-4444-8444-444444444444",
+          "scope": "graph"
+        }
+      }
+    ]
+  }
+}

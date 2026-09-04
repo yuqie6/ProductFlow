@@ -42,6 +42,7 @@ Current code ownership:
 | Fixed model prompt copy | `go/prompts` | API/worker embed; agent-service packs `runtime-policy.md` at build | `go/prompts`, graph listing/prompt tests, `go/internal/providers`, `go/internal/agent`, agent-service |
 | Async dispatch | `go/internal/platform/queue` | `productflow-dispatcher`, `productflow-worker` | `go/internal/platform/queue`, graph/image-session delivery tests |
 | Schema evolution | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
+| Agent eval mining | `go/internal/agent`, `go/cmd/productflow-agent-evals` | read-only CLI | `go/internal/agent/evalmine_test.go`, `evaltask_test.go`, `evalworld_test.go` |
 | Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
 
 ## 3. Frontend Structure
@@ -209,7 +210,7 @@ Empty and existing databases both run `productflow-migrate`: GORM `CreateTable`/
 
 - Backend: Go `go test ./...`, `productflow-migrate`, and opt-in PostgreSQL/Redis live tests.
 - Frontend: Vitest, ESLint, TypeScript, and Vite production build. The skip-Agent full-graph browser gate against real prompt/image providers is opt-in: `just web-e2e-live-graph`.
-- Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`. Scripted tool/skill evals (`agent-service/evals/`: schema, guards, bans, repair within two attempts) run inside `just agent-service-test`. The real-model eval gate is opt-in: `just agent-evals-live` (requires `AGENT_PROVIDER_API_KEY`).
+- Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`. `agent-service/evals/` holds the JSON task set, graders, L1/L3/L5 runners, and reports. `just agent-evals-live` (requires `AGENT_PROVIDER_API_KEY`, default k=3) runs L1 against the real model and writes `STORAGE_ROOT/agent-evals/`. `just agent-evals-state` is opt-in L2 (Go httptest + PostgreSQL + real Pi). `just agent-evals-sim`, `just agent-evals-adversarial`, `just agent-evals-judge`, and `just agent-evals-nightly` are the other opt-in layer entry points. Production mining: `just agent-evals-mine` / `go run ./cmd/productflow-agent-evals`. Acceptance criteria: [`audits/agent-eval-system.md`](audits/agent-eval-system.md).
 - Cross-layer changes add real browser, database, or provider validation according to risk.
 
 Code/document synchronization rules:

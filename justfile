@@ -13,9 +13,58 @@ agent-service-check-contracts:
     pnpm --dir agent-service run check-contract-artifacts
 
 # Opt-in real-model skill/tool evals. Requires AGENT_PROVIDER_API_KEY.
-# Scripted fixtures always run in agent-service-test.
 agent-evals-live:
-    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_EVALS=1 pnpm --dir agent-service exec vitest run evals/live.test.ts'
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts run-live --trials 3'
+
+agent-evals-smoke skill:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts run-live --trials 1 --filter "$1"' -- '{{skill}}'
+
+agent-evals-report run:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts report "$1"' -- '{{run}}'
+
+agent-evals-diff baseline candidate:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts diff "$1" "$2"' -- '{{baseline}}' '{{candidate}}'
+
+agent-evals-coverage:
+    pnpm --dir agent-service exec tsx evals/cli.ts coverage
+
+agent-evals-mutate:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts mutate'
+
+agent-evals-state:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 go test -C go ./internal/agent -run "^TestAgentEvalStateL2Live$" -count=1 -timeout 4h -v'
+
+agent-evals-smoke-state skill:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 PRODUCTFLOW_AGENT_EVAL_TRIALS=1 PRODUCTFLOW_AGENT_EVAL_FILTER="$1" go test -C go ./internal/agent -run "^TestAgentEvalStateL2Live$" -count=1 -timeout 30m -v' -- '{{skill}}'
+
+agent-evals-sim:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts run-sim --trials 1'
+
+agent-evals-judge run:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts judge "$1"' -- '{{run}}'
+
+agent-evals-export-labels run:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts export-labels "$1"' -- '{{run}}'
+
+agent-evals-import-labels file:
+    pnpm --dir agent-service exec tsx evals/cli.ts import-labels "$1"
+
+agent-evals-judge-calibrate human judge:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts judge-calibrate --human "$1" --judge "$2"' -- '{{human}}' '{{judge}}'
+
+agent-evals-adversarial:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service exec tsx evals/cli.ts run-adversarial --trials 1'
+
+agent-evals-mine days="7":
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-agent-evals mine --days "$1"' -- '{{days}}'
+
+agent-evals-export-turn turn:
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-agent-evals export --turn "$1"' -- '{{turn}}'
+
+# Opt-in nightly: L1 k=3, L2, L5, then report whatever latest.json points at.
+# Failures in an earlier layer do not skip later layers. Requires AGENT_PROVIDER_API_KEY.
+agent-evals-nightly:
+    bash scripts/with_dev_env.sh bash -lc 'status=0; pnpm --dir agent-service exec tsx evals/cli.ts run-live --trials 3 || status=1; PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 go test -C go ./internal/agent -run "^TestAgentEvalStateL2Live$" -count=1 -timeout 4h -v || status=1; pnpm --dir agent-service exec tsx evals/cli.ts run-adversarial --trials 1 || status=1; root="${STORAGE_ROOT:-storage-dev}"; if [ -f "$root/agent-evals/latest.json" ]; then run_id=$(python3 -c "import json,os; print(json.load(open(os.path.join(os.environ.get(\"STORAGE_ROOT\",\"storage-dev\"), \"agent-evals\", \"latest.json\")))[\"run_id\"])"); pnpm --dir agent-service exec tsx evals/cli.ts report "$run_id" || status=1; fi; exit $status'
 
 go-migrate:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-migrate'
@@ -63,6 +112,13 @@ go-worker:
 go-dispatcher:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-dispatcher --watch'
 
+# 2 API + 2 worker + 2 dispatcher against shared PostgreSQL/Redis/storage.
+staging-up:
+    bash scripts/with_dev_env.sh docker compose -p productflow-staging -f docker-compose.yml -f docker-compose.staging.yml up -d --wait
+
+staging-down:
+    bash scripts/with_dev_env.sh docker compose -p productflow-staging -f docker-compose.yml -f docker-compose.staging.yml down
+
 web-install:
     pnpm --dir web install
 
@@ -91,6 +147,14 @@ web-build:
 
 web-e2e-live-graph:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/direct-create-full-graph.spec.ts --config playwright.config.ts'
+
+# Chromium Agent SSE: duplicate seq1 then seq2 on one generation; connection stays open.
+web-e2e-agent-sse:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/agent-conversation-runtime.spec.ts e2e/agent-sse-reconnect.spec.ts --config playwright.config.ts'
+
+# Go+PostgreSQL+Web, Node Agent off: claim a running Turn then persist a canvas node title.
+web-e2e-running-turn-canvas:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_RUNNING_TURN_CANVAS=1 pnpm --dir web exec playwright test e2e/running-turn-canvas.spec.ts --config playwright.config.ts'
 
 # Opt-in browser TTI, duplicate-read, and on-demand rich run-detail gate.
 web-e2e-workbench-performance:

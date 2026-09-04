@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "id": "product-intake-finalize-recommended-set",
+  "skill": "product-intake",
+  "scope": "product_workflow",
+  "suite": "regression",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "我确认用这张参考图生成推荐套图",
+    "按推荐的六类图片配置保存需求",
+    "参考图已选，采用完整推荐套图并展开画布"
+  ],
+  "world": "name-only-empty-intake",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "inspect_product_image_assets_v1",
+        "finalize_product_intake_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "finalize_product_intake_v1",
+        "match": {
+          "selection.image_types[1].key": "selling_point",
+          "selection.image_types[1].quantity": 4,
+          "reference_asset_ids[0]": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    ],
+    "state": {
+      "min_node_count": 10,
+      "intake_image_type_keys": [
+        "hero",
+        "selling_point",
+        "spec",
+        "sku",
+        "scene",
+        "detail"
+      ]
+    }
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "inspect_product_image_assets_v1",
+        "params": {
+          "asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
+        }
+      },
+      {
+        "name": "finalize_product_intake_v1",
+        "params": {
+          "selection": {
+            "schema_version": 1,
+            "image_types": [
+              {
+                "key": "hero",
+                "quantity": 2,
+                "order": 0
+              },
+              {
+                "key": "selling_point",
+                "quantity": 4,
+                "order": 1
+              },
+              {
+                "key": "spec",
+                "quantity": 1,
+                "order": 2
+              },
+              {
+                "key": "sku",
+                "quantity": 1,
+                "order": 3
+              },
+              {
+                "key": "scene",
+                "quantity": 1,
+                "order": 4
+              },
+              {
+                "key": "detail",
+                "quantity": 1,
+                "order": 5
+              }
+            ]
+          },
+          "reference_asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
+        }
+      }
+    ]
+  }
+}

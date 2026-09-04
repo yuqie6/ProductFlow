@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-move-selected-asset",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "regression",
+  "case_type": "positive",
+  "layers": ["l0", "l1"],
+  "utterances": [
+    "把选中的图移到季节文件夹",
+    "请将当前素材归入季节目录",
+    "为选中图片提交移动到季节文件夹的整理草案"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent", "route": "/media-library", "page_type": "global_agent", "product_id": null, "workflow_id": null,
+    "selected_asset_ids": ["11111111-1111-4111-8111-111111111111"], "visible_asset_ids": [],
+    "filters": { "folder_id": "55555555-5555-4555-8555-555555555555", "folder_title": "季节" },
+    "workflow_revision": null, "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": ["awaiting_confirmation"],
+    "tools": {
+      "required": ["load_productflow_skill", "list_global_media_library_assets_v1", "propose_global_draft"],
+      "forbidden": ["apply_graph_change_set_v1"]
+    },
+    "ops": { "required": [], "forbidden": [] },
+    "writes": [{ "tool": "propose_global_draft", "match": {
+      "library_payload.operations[0].operation": "move",
+      "library_payload.operations[0].asset_id": "11111111-1111-4111-8111-111111111111",
+      "library_payload.operations[0].target.folder_id": "55555555-5555-4555-8555-555555555555"
+    } }]
+  },
+  "origin": "legacy:fixtures.ts",
+  "reference": {
+    "scripted_calls": [
+      { "name": "load_productflow_skill", "params": { "skill_name": "media-library-organization" } },
+      { "name": "list_global_media_library_assets_v1", "params": { "limit": 20 } },
+      { "name": "propose_global_draft", "params": {
+        "schema_version": 1, "draft_kind": "library_organization",
+        "library_payload": {
+          "schema_version": 1, "confirmation_summary": "把选中图移到季节文件夹",
+          "operations": [{
+            "operation": "move", "asset_id": "11111111-1111-4111-8111-111111111111", "expected_revision": 1,
+            "reason": "归档到季节文件夹",
+            "before": { "revision": 1, "display_name": "商品图", "folder_id": null, "tag_names": [], "is_archived": false },
+            "target": { "folder_id": "55555555-5555-4555-8555-555555555555" }
+          }]
+        }
+      } }
+    ],
+    "repair": {
+      "tool_name": "propose_global_draft",
+      "illegal_params": {
+        "schema_version": 1, "draft_kind": "library_organization",
+        "library_payload": { "schema_version": 1, "confirmation_summary": "空操作", "operations": [] }
+      },
+      "repaired_params": {
+        "schema_version": 1, "draft_kind": "library_organization",
+        "library_payload": {
+          "schema_version": 1, "confirmation_summary": "把选中图移到季节文件夹",
+          "operations": [{
+            "operation": "move", "asset_id": "11111111-1111-4111-8111-111111111111", "expected_revision": 1,
+            "reason": "归档到季节文件夹",
+            "before": { "revision": 1, "display_name": "商品图", "folder_id": null, "tag_names": [], "is_archived": false },
+            "target": { "folder_id": "55555555-5555-4555-8555-555555555555" }
+          }]
+        }
+      }
+    }
+  }
+}

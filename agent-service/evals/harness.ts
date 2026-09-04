@@ -1,22 +1,18 @@
-/**
- * 脚本化工具/技能评测。不启动 Pi。
- * fixture.scriptedCalls 是与用户话语对齐的脚本化模型应答；harness 校验
- * 作用域、TypeBox / draft schema、guards、禁令、话语约束，以及两次内修复。
- */
+/** Scripted L0 tool and skill contract evaluation. This never starts Pi. */
+
+import { isDeepStrictEqual } from "node:util";
 
 import { Value } from "typebox/value";
 
 import { expectedToolNamesForScope, toolManifestEntry, type ToolName } from "../src/tool-manifest.js";
+import { gradeOperations, gradeTools, gradeWrites } from "./graders/index.js";
+import type { EvalCallRecord as GraderCallRecord } from "./graders/types.js";
 import { loadSkillCatalog, type SkillCatalog } from "../src/skills.js";
-import {
-  SKILL_EVAL_FIXTURES,
-  validateSkillEvalFixture,
-  type EvalCall,
-  type SkillEvalFixture,
-} from "./fixtures.js";
+import { loadEvalTaskSet, validateEvalTask } from "./loader.js";
 import { checkJSONSchema, loadGlobalDraftSchema } from "./json-schema.js";
+import type { EvalReferenceCall, EvalTask } from "./schema.js";
 
-export type { EvalCall };
+export type { EvalReferenceCall };
 
 export interface EvalReportRow {
   id: string;
@@ -34,24 +30,23 @@ export interface EvalReport {
 
 export async function runScriptedSkillEvals(catalog?: SkillCatalog): Promise<EvalReport> {
   const loaded = catalog ?? await loadSkillCatalog();
+  const { tasks, worlds } = await loadEvalTaskSet({ catalog: loaded });
   const rows: EvalReportRow[] = [];
-  for (const [index, fixture] of SKILL_EVAL_FIXTURES.entries()) {
-    const id = `${fixture.skillName}-${index + 1}`;
+  for (const task of tasks.filter((candidate) => candidate.layers.includes("l0"))) {
+    const calls = [...task.reference.scripted_calls];
     try {
-      validateSkillEvalFixture(fixture, loaded);
-      const calls = [...fixture.scriptedCalls];
-      assertRegistered(fixture, calls);
+      validateEvalTask(task, worlds.get(task.world)!, loaded);
+      assertRegistered(task, calls);
       assertSchemas(calls);
-      assertForbidden(fixture, calls);
-      assertUtteranceAlignment(fixture, calls);
-      assertRepair(fixture);
-      rows.push({ id, skillName: fixture.skillName, ok: true, callCount: calls.length, tokenCount: 0 });
+      assertTaskExpectations(task, calls);
+      assertRepair(task);
+      rows.push({ id: task.id, skillName: task.skill, ok: true, callCount: calls.length, tokenCount: 0 });
     } catch (error) {
       rows.push({
-        id,
-        skillName: fixture.skillName,
+        id: task.id,
+        skillName: task.skill,
         ok: false,
-        callCount: fixture.scriptedCalls.length,
+        callCount: calls.length,
         tokenCount: 0,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -60,19 +55,18 @@ export async function runScriptedSkillEvals(catalog?: SkillCatalog): Promise<Eva
   return { ok: rows.every((row) => row.ok), rows };
 }
 
-function assertRegistered(fixture: SkillEvalFixture, calls: EvalCall[]): void {
-  const expected = new Set(expectedToolNamesForScope(fixture.contractScope, true));
+function assertRegistered(task: EvalTask, calls: EvalReferenceCall[]): void {
+  const expected = new Set(expectedToolNamesForScope(task.scope, true));
   expected.add("load_productflow_skill");
   expected.add("ask_user");
   for (const call of calls) {
-    if (call.name === "load_productflow_skill") continue;
     if (!expected.has(call.name as ToolName) && !expected.has(call.name)) {
-      throw new Error(`Tool ${call.name} is not registered for ${fixture.contractScope}`);
+      throw new Error(`Tool ${call.name} is not registered for ${task.scope}`);
     }
   }
 }
 
-function assertSchemas(calls: EvalCall[]): void {
+function assertSchemas(calls: EvalReferenceCall[]): void {
   for (const call of calls) {
     if (!paramsMatchSchema(call.name, call.params)) {
       throw new Error(`Params for ${call.name} do not match the manifest schema`);
@@ -89,130 +83,42 @@ export function paramsMatchSchema(name: string, params: unknown): boolean {
   return Value.Check(entry.input_schema, params);
 }
 
-function assertForbidden(fixture: SkillEvalFixture, calls: EvalCall[]): void {
-  const names = new Set(calls.map((call) => call.name));
-  for (const toolName of fixture.neverTools ?? []) {
-    if (names.has(toolName)) throw new Error(`Forbidden tool was selected: ${toolName}`);
-  }
-  const ops = graphOps(calls);
-  for (const op of fixture.neverOps ?? []) {
-    if (ops.includes(op)) throw new Error(`Forbidden Graph Command op was used: ${op}`);
-  }
+export function assertTaskExpectations(task: EvalTask, calls: EvalReferenceCall[]): void {
+  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "reference" }));
+  const checks = [
+    ["expect.tools", gradeTools(task.expect.tools, recorded)],
+    ["expect.ops", gradeOperations(task.expect.ops, recorded)],
+    ["expect.writes", gradeWrites(task.expect.writes, recorded)],
+  ] as const;
+  const errors = checks.flatMap(([name, grade]) => grade.errors.map((error) => `${name}: ${error}`));
+  if (errors.length > 0) throw new Error(errors.join("; "));
 }
 
-function graphOps(calls: EvalCall[]): string[] {
-  return calls.flatMap((call) => {
-    if (!call.params || typeof call.params !== "object") return [];
-    const operations = (call.params as { operations?: Array<{ op?: string }> }).operations;
-    if (!Array.isArray(operations)) return [];
-    return operations.map((operation) => operation.op).filter((op): op is string => typeof op === "string");
-  });
-}
-
-export function assertUtteranceAlignment(fixture: SkillEvalFixture, calls: EvalCall[]): void {
-  const request = fixture.userRequest;
-  if (/主图\s*2/.test(request) && request.includes("细节")) {
-    const types = intakeTypes(calls);
-    const askedWithoutFinalize = calls.some((call) => call.name === "ask_user") && types.length === 0;
-    if (!askedWithoutFinalize) {
-      if (!types.some((row) => row.key === "hero" && row.quantity === 2)) {
-        throw new Error("utterance asked for 主图2张 but finalize selection does not match");
-      }
-      if (!types.some((row) => row.key === "detail" && row.quantity === 2)) {
-        throw new Error("utterance asked for 细节图2张 but finalize selection does not match");
-      }
-    }
-  }
-  if (request.includes("展开模板")) {
-    const types = intakeTypes(calls);
-    const worldTypes = (fixture.world.intake?.image_types ?? []) as Array<{ key: string; quantity: number }>;
-    if (worldTypes.length === 0 || types.length !== worldTypes.length) {
-      throw new Error("expand-template fixture must finalize the existing intake selection");
-    }
-    for (const row of worldTypes) {
-      if (!types.some((item) => item.key === row.key && item.quantity === row.quantity)) {
-        throw new Error(`expand-template selection missing ${row.key}:${row.quantity}`);
-      }
-    }
-  }
-  if (request.includes("改名为新标题") || request.includes("改个名字")) {
-    const ops = graphOps(calls.filter((call) => call.name === "apply_graph_change_set_v1"));
-    if (ops.length !== 1 || ops[0] !== "rename_node") {
-      throw new Error("rename utterance must apply exactly one rename_node");
-    }
-  }
-  if (request.includes("场景镜头")) {
-    const ops = graphOps(calls.filter((call) => call.name === "propose_graph_change_set_v1"));
-    for (const required of ["create_group", "create_node", "connect_nodes"]) {
-      if (!ops.includes(required)) throw new Error(`add-shot utterance must propose ${required}`);
-    }
-  }
-  if (request.includes("季节文件夹")) {
-    const draft = calls.find((call) => call.name === "propose_global_draft");
-    const operations = draftLibraryOps(draft?.params);
-    if (!operations.some((op) => op === "move" || op === "archive")) {
-      throw new Error("seasonal-folder utterance must propose move or archive");
-    }
-  }
-  if (request.includes("重试")) {
-    const run = calls.find((call) => call.name === "request_workflow_run_v1");
-    const source = run && typeof run.params === "object" && run.params
-      ? (run.params as { source_run_id?: unknown }).source_run_id
-      : undefined;
-    if (typeof source !== "string" || source.length === 0) {
-      throw new Error("retry utterance must set source_run_id");
-    }
-  }
-  for (const call of calls) {
-    if (call.name === "apply_graph_change_set_v1" || call.name === "propose_graph_change_set_v1") {
-      const revision = call.params && typeof call.params === "object"
-        ? (call.params as { base_graph_revision?: unknown }).base_graph_revision
-        : undefined;
-      if (revision !== fixture.world.liveGraph.revision) {
-        throw new Error(`${call.name} must use world liveGraph.revision`);
-      }
-    }
-  }
-}
-
-function intakeTypes(calls: EvalCall[]): Array<{ key: string; quantity: number }> {
-  const finalize = calls.find((call) => call.name === "finalize_product_intake_v1");
-  if (!finalize || !finalize.params || typeof finalize.params !== "object") return [];
-  const selection = (finalize.params as { selection?: { image_types?: unknown } }).selection;
-  const rows = selection?.image_types;
-  if (!Array.isArray(rows)) return [];
-  return rows.flatMap((row) => {
-    if (!row || typeof row !== "object") return [];
-    const key = (row as { key?: unknown }).key;
-    const quantity = (row as { quantity?: unknown }).quantity;
-    if (typeof key !== "string" || typeof quantity !== "number") return [];
-    return [{ key, quantity }];
-  });
-}
-
-function draftLibraryOps(params: unknown): string[] {
-  if (!params || typeof params !== "object") return [];
-  const payload = (params as { library_payload?: { operations?: Array<{ operation?: string }> } }).library_payload;
-  if (!payload || !Array.isArray(payload.operations)) return [];
-  return payload.operations.map((row) => row.operation).filter((op): op is string => typeof op === "string");
-}
-
-function assertRepair(fixture: SkillEvalFixture): void {
-  const repair = fixture.repair;
+function assertRepair(task: EvalTask): void {
+  const repair = task.reference.repair;
   if (!repair) return;
-  if (!toolManifestEntry(repair.toolName)) throw new Error(`Unknown repair tool ${repair.toolName}`);
-  if (paramsMatchSchema(repair.toolName, repair.illegalParams)) {
-    throw new Error(`Illegal params for ${repair.toolName} were accepted on attempt 1`);
+  if (!toolManifestEntry(repair.tool_name)) throw new Error(`Unknown repair tool ${repair.tool_name}`);
+  if (paramsMatchSchema(repair.tool_name, repair.illegal_params)) {
+    throw new Error(`Illegal params for ${repair.tool_name} were accepted on attempt 1`);
   }
-  if (!paramsMatchSchema(repair.toolName, repair.repairedParams)) {
-    throw new Error(`Repaired params for ${repair.toolName} failed schema on attempt 2`);
+  if (!paramsMatchSchema(repair.tool_name, repair.repaired_params)) {
+    throw new Error(`Repaired params for ${repair.tool_name} failed schema on attempt 2`);
   }
-  const gold = fixture.scriptedCalls.find((call) => call.name === repair.toolName);
-  if (!gold) throw new Error(`repair tool ${repair.toolName} is missing from scriptedCalls`);
-  if (JSON.stringify(gold.params) !== JSON.stringify(repair.repairedParams)) {
-    throw new Error(`repair.repairedParams must equal the scripted gold call for ${repair.toolName}`);
+  const gold = task.reference.scripted_calls.find((call) => call.name === repair.tool_name);
+  if (!gold) throw new Error(`repair tool ${repair.tool_name} is missing from reference.scripted_calls`);
+  if (!isDeepStrictEqual(gold.params, repair.repaired_params)) {
+    throw new Error(`reference.repair.repaired_params must equal the scripted gold call for ${repair.tool_name}`);
   }
-  assertForbidden(fixture, [{ name: repair.toolName, params: repair.repairedParams }]);
+  const isolatedTask = {
+    ...task,
+    expect: {
+      ...task.expect,
+      tools: { required: [repair.tool_name], forbidden: task.expect.tools.forbidden },
+      ops: { required: [], forbidden: task.expect.ops.forbidden },
+      writes: task.expect.writes.filter((write) => write.tool === repair.tool_name),
+    },
+  };
+  assertTaskExpectations(isolatedTask, [{ name: repair.tool_name, params: repair.repaired_params }]);
 }
 
 export function formatEvalReport(report: EvalReport): string {

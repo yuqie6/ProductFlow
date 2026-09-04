@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-move-node-to-group",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把细节提示词节点移到主图组",
+    "将 node-prompt-2 加入 group-main",
+    "调整分组，让细节提示词归入主图组"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "apply_graph_change_set_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [
+        "move_nodes_to_group"
+      ],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "apply_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "move_nodes_to_group",
+          "operations[0].group_ref": "group-main"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "apply_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "移动节点到主图组",
+          "operations": [
+            {
+              "op": "move_nodes_to_group",
+              "node_refs": [
+                "node-prompt-2"
+              ],
+              "group_ref": "group-main"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

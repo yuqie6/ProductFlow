@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "id": "product-intake-sim-two-round-clarify",
+  "skill": "product-intake",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l3"
+  ],
+  "utterances": [
+    "这个商品还没定套图，先问我再展开",
+    "先确认图片种类，我第一次会拒绝推荐套图",
+    "需求还不完整，请追问两轮后再保存"
+  ],
+  "world": "name-only-empty-intake",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "ask_user"
+      ],
+      "forbidden": [
+        "propose_graph_change_set_v1"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": [
+        "add_node",
+        "connect"
+      ]
+    },
+    "writes": [],
+    "question": {
+      "required": true
+    }
+  },
+  "origin": "handwritten:l3",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "ask_user",
+        "params": {
+          "header": "图片类型",
+          "question": "需要哪些图片类型、各几张？参考图是否已经上传？",
+          "options": [
+            {
+              "label": "推荐套图：封面2、卖点4、规格1、选款1、场景1、细节1"
+            },
+            {
+              "label": "只要封面和细节"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "user_sim": {
+    "persona": "谨慎的商家",
+    "hidden_goal": "最终确认推荐套图并 finalize",
+    "facts": {
+      "image_types": "推荐套图",
+      "reference": "已上传"
+    },
+    "policy": "refuse_first_then_accept",
+    "max_turns": 4,
+    "scripted_answers": [
+      {
+        "when": "question",
+        "action": "answer",
+        "text": "先不要推荐套图，只要封面",
+        "answer": {
+          "selected_option": 1
+        }
+      },
+      {
+        "when": "question",
+        "action": "answer",
+        "text": "还是用推荐套图吧",
+        "answer": {
+          "selected_option": 0
+        }
+      },
+      {
+        "when": "follow_up",
+        "action": "follow_up",
+        "text": "按推荐套图保存"
+      }
+    ]
+  }
+}

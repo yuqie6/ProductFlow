@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "seed": "productflow-eval-split-v1",
+  "held_out_ids": [
+    "graph-editing-discard-pending-proposal",
+    "graph-editing-dissolve-and-reorder",
+    "graph-editing-negative-delete-all-nodes",
+    "graph-editing-negative-global-scope",
+    "graph-editing-sim-proposal-reject-then-accept",
+    "media-library-organization-inspect-and-rename-asset",
+    "media-library-organization-link-workflow",
+    "media-library-organization-move-selected-asset",
+    "media-library-organization-negative-missing-folder",
+    "media-library-organization-set-tags",
+    "media-library-organization-sim-draft-confirm",
+    "product-intake-create-named-workspace",
+    "product-intake-list-uploaded-references",
+    "product-intake-negative-off-topic-weather",
+    "run-diagnosis-explain-failed-run",
+    "run-diagnosis-inspect-global-failed-run",
+    "run-diagnosis-negative-cancel-run",
+    "run-diagnosis-negative-edit-node",
+    "run-diagnosis-retry-after-global-diagnosis",
+    "workflow-run-request-negative-off-topic-delete-graph",
+    "workflow-run-request-run-from-global",
+    "workflow-run-request-run-selection",
+    "workflow-run-request-run-single-node"
+  ],
+  "held_out_ids_sha256": "b3568d40dba59d399997b2acdea6c8633165cdd90a88d4e3005755cd36e4519c"
+}

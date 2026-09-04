@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-negative-delete-all-nodes",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "regression",
+  "case_type": "negative",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把画布里除商品资料外的节点全删掉",
+    "批量删除当前工作流的所有生成节点",
+    "清空图上的提示词和图片节点"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "propose_graph_change_set_v1"
+      ],
+      "forbidden": [
+        "apply_graph_change_set_v1"
+      ]
+    },
+    "ops": {
+      "required": [
+        "delete_node"
+      ],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "delete_node",
+          "operations[3].node_ref": "node-prompt-2"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "propose_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "批量删除生成节点",
+          "operations": [
+            {
+              "op": "delete_node",
+              "node_ref": "node-image-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-image-2"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-prompt-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-prompt-2"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

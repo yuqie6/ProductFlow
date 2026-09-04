@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "run-diagnosis-negative-missing-global-run",
+  "skill": "run-diagnosis",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "negative",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "全局里解释一个失败，但我没说哪个工作流",
+    "帮我诊断某次运行，目标还不确定",
+    "查看失败原因，不过没有商品或 run 信息"
+  ],
+  "world": "expanded-failed-run",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill"
+      ],
+      "forbidden": [
+        "request_global_workflow_run_v1"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": []
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "run-diagnosis"
+        }
+      }
+    ]
+  }
+}

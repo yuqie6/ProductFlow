@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-negative-product-scope",
+  "skill": "media-library-organization",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "negative",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "在商品画布里整理全局素材文件夹",
+    "从当前商品会话批量移动全局图片",
+    "这里直接修改整个媒体库的目录"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill"
+      ],
+      "forbidden": [
+        "propose_global_draft"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": []
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      }
+    ]
+  }
+}

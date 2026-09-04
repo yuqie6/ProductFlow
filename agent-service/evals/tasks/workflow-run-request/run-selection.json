@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "id": "workflow-run-request-run-selection",
+  "skill": "workflow-run-request",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1",
+    "l2"
+  ],
+  "utterances": [
+    "运行我选的主图和细节图节点",
+    "为两个选中生成节点发起运行",
+    "提交 node-image-1 与 node-image-2 的选择运行"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "request_workflow_run_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "request_workflow_run_v1",
+        "match": {
+          "scope": "selection",
+          "node_ids": [
+            "node-image-1",
+            "node-image-2"
+          ]
+        }
+      }
+    ],
+    "state": {
+      "pending_run_requests": 1
+    }
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "request_workflow_run_v1",
+        "params": {
+          "expected_workflow_revision": 3,
+          "scope": "selection",
+          "node_ids": [
+            "node-image-1",
+            "node-image-2"
+          ]
+        }
+      }
+    ]
+  }
+}

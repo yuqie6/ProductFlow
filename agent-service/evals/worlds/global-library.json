@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "global-library",
+  "intake": null,
+  "birth_expandable": false,
+  "live_graph": {
+    "id": "g1",
+    "title": "评测图",
+    "revision": 1,
+    "node_count": 1,
+    "edge_count": 0,
+    "group_count": 0,
+    "nodes": [
+      { "id": "source-1", "node_type": "product_source", "title": "商品资料" }
+    ]
+  },
+  "listed_assets": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "display_name": "商品图",
+      "revision": 1,
+      "folder_id": null,
+      "tag_names": [],
+      "is_archived": false
+    }
+  ],
+  "listed_folders": [
+    { "id": "55555555-5555-4555-8555-555555555555", "title": "季节" }
+  ]
+}

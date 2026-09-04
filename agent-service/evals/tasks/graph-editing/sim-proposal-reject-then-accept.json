@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "id": "graph-editing-sim-proposal-reject-then-accept",
+  "skill": "graph-editing",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l3"
+  ],
+  "utterances": [
+    "再加一组场景镜头，我先拒绝再改口同意",
+    "提交场景组提案，第一次丢掉，第二次确认",
+    "加场景镜头组，先否决再同意"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "propose_graph_change_set_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [
+        "create_group",
+        "create_node",
+        "connect_nodes"
+      ],
+      "forbidden": [
+        "add_node"
+      ]
+    },
+    "writes": [
+      {
+        "tool": "propose_graph_change_set_v1",
+        "match": {
+          "base_graph_revision": 3,
+          "operations[0].op": "create_group",
+          "operations[1].op": "create_node",
+          "operations[1].config.image_type_key": "scene",
+          "operations[2].op": "create_node",
+          "operations[3].op": "connect_nodes",
+          "operations[4].op": "connect_nodes"
+        }
+      }
+    ],
+    "state": {
+      "pending_proposals": 1
+    }
+  },
+  "origin": "handwritten:l3",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "propose_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "加一组场景镜头",
+          "operations": [
+            {
+              "op": "create_group",
+              "client_ref": "g-scene",
+              "title": "场景"
+            },
+            {
+              "op": "create_node",
+              "client_ref": "p-scene",
+              "node_type": "image_prompt",
+              "title": "场景提示词",
+              "group_ref": "g-scene",
+              "config": {
+                "image_type_key": "scene",
+                "prompt": {
+                  "design_goal": "场景镜头"
+                }
+              }
+            },
+            {
+              "op": "create_node",
+              "client_ref": "i-scene-1",
+              "node_type": "image_generation",
+              "title": "场景 1",
+              "group_ref": "g-scene",
+              "config": {
+                "image_type_key": "scene"
+              }
+            },
+            {
+              "op": "connect_nodes",
+              "client_ref": "e-p-i",
+              "source_ref": "p-scene",
+              "target_ref": "i-scene-1"
+            },
+            {
+              "op": "connect_nodes",
+              "client_ref": "e-s-p",
+              "source_ref": "source-1",
+              "target_ref": "p-scene"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "user_sim": {
+    "persona": "会改口的商家",
+    "hidden_goal": "最终确认场景组提案",
+    "facts": {
+      "shot": "scene"
+    },
+    "policy": "discard_then_confirm",
+    "max_turns": 4,
+    "scripted_answers": [
+      {
+        "when": "proposal",
+        "action": "discard"
+      },
+      {
+        "when": "follow_up",
+        "action": "follow_up",
+        "text": "还是加上那组场景镜头吧"
+      },
+      {
+        "when": "proposal",
+        "action": "confirm"
+      }
+    ]
+  }
+}

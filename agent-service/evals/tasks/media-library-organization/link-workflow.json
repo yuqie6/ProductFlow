@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "id": "media-library-organization-link-workflow",
+  "skill": "media-library-organization",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把这张素材关联到评测工作流",
+    "提交选中图片与指定工作流的关联草案",
+    "让评测工作流可以使用当前素材"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "library_payload.operations[0].operation": "link_workflow",
+          "library_payload.operations[0].target.workflow_id": "33333333-3333-4333-8333-333333333333"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "关联素材到工作流",
+            "operations": [
+              {
+                "operation": "link_workflow",
+                "asset_id": "11111111-1111-4111-8111-111111111111",
+                "expected_revision": 1,
+                "reason": "关联到指定工作流",
+                "before": {
+                  "revision": 1,
+                  "display_name": "商品图",
+                  "folder_id": null,
+                  "tag_names": [],
+                  "is_archived": false
+                },
+                "target": {
+                  "workflow_id": "33333333-3333-4333-8333-333333333333",
+                  "workflow_title": "评测工作流",
+                  "expected_workflow_revision": 1,
+                  "expected_linked": false
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

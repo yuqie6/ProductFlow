@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "id": "workflow-run-request-negative-run-all-products",
+  "skill": "workflow-run-request",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "negative",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "把所有商品的工作流都跑一遍",
+    "全局批量启动每个商品",
+    "无需选择，运行库里全部工作流"
+  ],
+  "world": "expanded-rev3",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "requires_input"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "ask_user"
+      ],
+      "forbidden": [
+        "request_global_workflow_run_v1"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": []
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "ask_user",
+        "params": {
+          "header": "缩小范围",
+          "question": "请选择一个要运行的商品工作流。",
+          "options": [
+            {
+              "label": "选择单个商品"
+            },
+            {
+              "label": "取消"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -57,6 +57,7 @@ CODE_OWNERS = (
     "go/internal/platform/queue",
     "go/internal/platform/db/schema",
     "go/cmd/productflow-migrate",
+    "go/cmd/productflow-agent-evals",
     "web/src/App.tsx",
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",

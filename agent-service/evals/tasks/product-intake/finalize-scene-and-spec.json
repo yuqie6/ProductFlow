@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "product-intake-finalize-scene-and-spec",
+  "skill": "product-intake",
+  "scope": "product_workflow",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "只需要三张场景图和一张规格图，用选中参考图",
+    "按场景图三张、规格图一张保存需求",
+    "参考素材已确认，生成三张场景和一张规格参数图"
+  ],
+  "world": "name-only-empty-intake",
+  "page_context": {
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "finalize_product_intake_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "finalize_product_intake_v1",
+        "match": {
+          "selection.image_types[0].key": "scene",
+          "selection.image_types[0].quantity": 3,
+          "selection.image_types[1].key": "spec"
+        }
+      }
+    ]
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "finalize_product_intake_v1",
+        "params": {
+          "selection": {
+            "schema_version": 1,
+            "image_types": [
+              {
+                "key": "scene",
+                "quantity": 3,
+                "order": 0
+              },
+              {
+                "key": "spec",
+                "quantity": 1,
+                "order": 1
+              }
+            ]
+          },
+          "reference_asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
+        }
+      }
+    ]
+  }
+}

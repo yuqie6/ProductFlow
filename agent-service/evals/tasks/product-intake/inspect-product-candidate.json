@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "id": "product-intake-inspect-product-candidate",
+  "skill": "product-intake",
+  "scope": "global",
+  "suite": "capability",
+  "case_type": "positive",
+  "layers": [
+    "l0",
+    "l1"
+  ],
+  "utterances": [
+    "检查搜索到的这个商品是不是我要的工作区",
+    "查看候选商品的工作流摘要以便确认",
+    "进一步检查这个商品候选的详情"
+  ],
+  "world": "global-library",
+  "page_context": {
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
+  },
+  "expect": {
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_products_v1",
+        "inspect_products_v1"
+      ],
+      "forbidden": [
+        "create_product_workspace_v1"
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": []
+  },
+  "origin": "planned:p1-task-expansion",
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "list_products_v1",
+        "params": {
+          "query": "评测商品",
+          "limit": 20
+        }
+      },
+      {
+        "name": "inspect_products_v1",
+        "params": {
+          "product_ids": [
+            "22222222-2222-4222-8222-222222222222"
+          ]
+        }
+      }
+    ]
+  }
+}

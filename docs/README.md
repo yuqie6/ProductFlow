@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/`](audits/) 保存进行中的逐项验收账本。账本可以同时记录目标合同、当前证据和缺口，但不是当前能力声明；完成项仍回到 PRD / ARCHITECTURE / USER_GUIDE，未完成项仍由 ROADMAP 索引。Agent 生产就绪的唯一验收指标见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)；运行时职责迁移和分刀证据见 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)；跨领域性能、容量、锁序和查询证据见 [`audits/performance-governance.md`](audits/performance-governance.md)。所有权重构账本不改变或缩小生产就绪范围。
+[`audits/`](audits/) 保存进行中的逐项验收账本。账本可以同时记录目标合同、当前证据和缺口，但不是当前能力声明；完成项仍回到 PRD / ARCHITECTURE / USER_GUIDE，未完成项仍由 ROADMAP 索引。Agent 生产就绪的唯一验收指标见 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)；L0-L6 行为评测、任务合同和统计口径见 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)；运行时职责迁移和分刀证据见 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)；跨领域性能、容量、锁序和查询证据见 [`audits/performance-governance.md`](audits/performance-governance.md)。评测和所有权账本都不改变或缩小生产就绪范围。
 
 ## 历史叙事
 

@@ -42,6 +42,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 发给模型的固定文案 | `go/prompts` | API/worker embed；agent-service 构建时把 `runtime-policy.md` 打包进产物 | `go/prompts`、graph listing/prompt 测试、`go/internal/providers`、`go/internal/agent`、agent-service |
 | 异步投递 | `go/internal/platform/queue` | `productflow-dispatcher`、`productflow-worker` | `go/internal/platform/queue`、graph/imagesession 投递测试 |
 | schema 演进 | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
+| Agent 评测回流 | `go/internal/agent`、`go/cmd/productflow-agent-evals` | 只读 CLI | `go/internal/agent/evalmine_test.go`、`evaltask_test.go`、`evalworld_test.go` |
 | 错误与日志 | `go/internal/platform/apperr`、`httpx`、`log` | 中间件与 worker | platform 与各包 HTTP 测试 |
 
 ## 3. 前端结构
@@ -207,7 +208,7 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 
 - Backend：Go `go test ./...`、`productflow-migrate`，以及 opt-in PostgreSQL/Redis live tests。
 - Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。
-- Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`。脚本化工具/技能评测（`agent-service/evals/`：schema、guards、禁令、两次内修复）在 `just agent-service-test` 内；真实模型档是 opt-in：`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`）。
+- Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`。`agent-service/evals/` 保存 JSON 任务集、评分器、L1/L3/L5 runner 与报告。`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`，默认 k=3）对 L1 任务跑真实模型并落盘 `STORAGE_ROOT/agent-evals/`。`just agent-evals-state` 是 opt-in L2（Go httptest + PostgreSQL + 真实 Pi）。`just agent-evals-sim`、`just agent-evals-adversarial`、`just agent-evals-judge`、`just agent-evals-nightly` 是对应层的 opt-in 入口。生产回流：`just agent-evals-mine` / `go run ./cmd/productflow-agent-evals`。验收口径见 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 
 代码与文档同步规则：
