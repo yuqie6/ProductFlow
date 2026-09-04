@@ -1,6 +1,6 @@
 # 任务：修复 Skill 系统性失败并用冻结评测复验
 
-状态：开放
+状态：阻塞
 类型：实现
 认领者：—
 认领于：—
@@ -15,6 +15,7 @@
 - 前置：无；本任务以当前产品合同和失败转录为修补依据。
 - 冻结输入：两次 live 和 mutate 期间固定 `agent-service/`、`go/prompts/agent/`、任务集与模型配置；不得与共享这些输入的 L2/L5 采证、user-sim、harness 修改同时执行。
 - 运行资源：固定干净 checkout 或由维护者预约完整工作区冻结窗口；run 目录独立，成对复跑结束前不写文档、不改变 HEAD。
+- 后续候选 live 使用独立固定 checkout 和独立 run 目录，不修改共享 provider 设置、不暂停 worker、不重建共享数据库。2026-09-05 本轮已释放 Skill 文件与运行资源占用，详见阻塞与交接。
 
 ## 做成什么样
 
@@ -83,6 +84,22 @@ just agent-evals-mutate
 抽读：每技能按 `task_id` 字母序各 1 条 pass^3=1 与 1 条 pass^3=0，trial=1。结论写在下面。
 
 ## 证据
+
+2026-09-05T05:00+08:00，主代理-agent-0905-0458 认领后复核冻结题集与原始转录，尚未修改任何 Skill、runtime 或评测源码，未启动 live。旧 run `20260904T174405Z-fa2667fa` 的 trial=1 有以下可复核冲突：
+
+- `graph-editing-negative-unknown-node`：读 context 后调用 `ask_user`，终态 `requires_input`，只因 expect 要求 `succeeded` 失败；生产 `runtime-policy.md` 规定缺信息用 `ask_user`，graph-editing 规定零匹配提问。
+- `workflow-run-request-negative-off-topic-delete-graph`：用户要求清空画布，加载图编辑 Skill 并提交批量删除提案，终态 `awaiting_confirmation`，只因 expect 要求 `succeeded` 失败。生产运行时加载当前 scope 的完整 Skill catalog，不以题目的 `skill` 字段限制路由；批量删除的确认合同见 graph-editing。
+- `graph-editing-negative-off-topic-weather`：未写入业务数据，明确说明无法访问实时天气；只因要求加载无关 Skill 失败。`src/skills.ts` 的目录指令只要求匹配 description/triggers 时加载。
+- `run-diagnosis-inspect-failed-node`：已读 run detail 并报告返回的节点/错误；仍强制要求 `get_node_detail_v1`。现有 Skill 允许详情已充分时不重复读，是否需要节点配置取决于建议内容，应由评测组按产品合同裁定，不能为过题强加无条件读取。
+
+证据目录：`storage-dev/agent-evals/20260904T174405Z-fa2667fa/`，对应 `trials.jsonl` 与 `transcripts/<task_id>-1.json`。这是历史运行的当前文件复核，不冒充本轮 live。审核：主代理自审，判定题目失真影响验收，暂停比较，不采信旧分数为能力结论。
+
+## 阻塞与交接
+
+- 原因：现有冻结 expect 与生产按意图路由、结构化提问、按需加载 Skill 的合同冲突。
+- 解除条件：[eval-contract-alignment.md](eval-contract-alignment.md) 独立审核并冻结修订题集；以新 task_hash 重跑未修补基线和候选，不能跨题集比较历史分数。P1 若已交付，基线与候选须使用同一 P1 runtime/policy。
+- 跟进者：Agent 能力组主代理协调评测组；题目/评分归评测组，不在本任务修改。
+- 交接：主代理-agent-0905-0458 于 2026-09-05T04:57:57+08:00 认领，05:00 完成有界复核后确认无源码 diff、无运行进程、无冻结资源，清空认领者并释放占用。当前只有本任务协调记录，未形成 Skill 候选提交。
 
 把 run 记在这里，不要改总账本。维护者验收时同步 Agent 能力章程的修复结论与评测章程的分数/门槛；本任务完成不改变 Self-Harness 阶段状态。
 
