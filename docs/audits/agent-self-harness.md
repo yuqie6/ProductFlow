@@ -132,7 +132,7 @@ P0–P2b 已按各自合同验收；后续阶段保留未完成状态。
 | P1 | Harness 工件 | `完成` | `agent-service/harness/` 可哈希的 `h_t`；policy 权限段冻结、行为段可编；`pi-runtime` 读入；测试钉 hash | 提案器、热切 | [harness-artifact](tasks/archive/harness-artifact.md)：默认测试 218 passed / 2 skipped，build 与容器工件加载通过；完整镜像构建受 npm 网络超时阻塞，不宣称发布镜像已验收 |
 | P2 | 归因 | `完成` | eval `run.json` 与生产 `agent_model_invocations` / checkpoint 写 `harness_hash`；现有 `/healthz` 可观察 | 为挖矿改浏览器 journal / UI 协议去存完整工具参数 | [harness-attribution](tasks/archive/harness-attribution.md)：Node 221 passed / 2 skipped，Go Agent/schema、build、docs-check 通过；无共享 dev 部署，历史 hash 不回填 |
 | P2b | 演化轨迹 | `完成`（实现） | 可选、默认关的有界结构轨迹，落 `STORAGE_ROOT`，不进 git、不进 PG 对话协议 | 把用户原文写入 Skill | [harness-traces](tasks/archive/harness-traces.md)：容量、隐私、慢盘与失败隔离验证通过。未采生产样本；结构元数据不足以独立判用户意图/正确性，P6 / G2 仍须合格反馈与生产证据 |
-| P3 | Miner | `缺失` | 封闭失败签名 φ；仅开发集 L1 trials → 证据包；簇抽读合格才给提案器 | 自动改文件；读取隐藏回归或独立验收轨迹 | [集合隔离机制](tasks/archive/eval-collection-isolation.md) 已交付；真实输入仍须考题合同独立校正、批准分组和新冻结开发批次。φ 词表见下节，Miner 未实现 |
+| P3 | Miner | `缺失` | 封闭失败签名 φ；仅开发集 L1 trials → 证据包；簇抽读合格才给提案器 | 自动改文件；读取隐藏回归或独立验收轨迹 | [集合隔离机制](tasks/archive/eval-collection-isolation.md) 已交付；[冻结开发批次](tasks/eval-development-baseline.md) 因考题合同独立校正未完成而阻塞。φ 词表见下节，Miner 未实现 |
 | P4 | 第一环 | `缺失` | 同模型（生产 Agent 模型）对 overlay + failure-recovery 出最小 diff；初筛、合并再评、独立复跑、人审；谱系按 provider/model 分叉；落 lineage；G1 独立验收 | Steer、playbook、P7、subagent | 第一块可证明工作；依赖评测账本的集合隔离与复跑合同，缺证据不得标完成 |
 | P5 | Steer | `缺失` | Pi `tool_result` 钩子拦截同参重放 / 缺 `load_productflow_skill` / 非法 op | 换 loop | 现有 extension 未注册这些钩子 |
 | P6 | 商家 playbook | `缺失` | 按下方反馈规则形成该商家后续 context；可清空；Turn 及 eval 记录实际 playbook 版本；商家可见时同步 USER_GUIDE / HelpPage | 升全局 Skill；仅凭确认 / 丢弃 / undo 写长期规则 | 依赖 P2b 或 L6 脱敏样本 |
