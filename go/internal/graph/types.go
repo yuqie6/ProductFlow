@@ -11,7 +11,7 @@
 // workflow_graph_node_runs、workflow_graph_provider_effects、run events，并 Stage asynq。
 // 生成图通过 [GeneratedImageWriter] 写成 ProductImageAsset；交付通过 [DeliveryQueuer] 排队。
 //
-// 错误：revision 不匹配、已有 running、空 inverse 等返回 Conflict；缺图/缺 run 返回 NotFound。
+// 错误：同节点丢失更新、拓扑 revision 不匹配、已有 running、空 inverse 等返回 Conflict；缺图/缺 run 返回 NotFound。
 // 进程锁或 GraphRun execution lease 未拿到返回 queue.ErrBusy。无法证明的 provider 结果标 unknown
 // （IsRetryable=false，不自动当失败重试）；已证明失败标 failed（可 RetryRun）。unknown 不可经 RetryRun 重试。
 //
@@ -310,7 +310,7 @@ var GraphCommandOpNames = generatedGraphCommandOpNames
 
 // ChangeSet 是一次可逆图命令。Apply 成功后 [Invert] 生成 inverse，供 Undo/Redo。
 type ChangeSet struct {
-	BaseGraphRevision int         // 必须等于当前 live revision，否则 Conflict
+	BaseGraphRevision int         // 客户端观察到的 live revision。拓扑/改名/移动必须精确匹配。仅含 update_node_config 且其后历史只改了其它节点时，mutate 会 rebase 到当前 revision。
 	Summary           string      // 历史摘要，给撤销栈展示
 	ActorType         ActorType   // user|agent|recipe|system；HTTP 固定 ActorUser
 	Operations        []Operation // 封闭 op 表；空列表是 [] 不是 nil

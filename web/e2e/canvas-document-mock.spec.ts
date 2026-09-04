@@ -58,33 +58,20 @@ async function authorPrompt(page: Page, productID: string): Promise<GraphNodePay
   const graph = await currentGraph(page, productID);
   const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
   expect(prompt).toBeTruthy();
-  const config = {
-    ...prompt!.config,
-    prompt: {
-      ...(prompt!.config.prompt ?? {}),
-      design_goal: "人工目标-不要被构图应用改掉",
-      composition: {
-        ...(prompt!.config.prompt?.composition ?? {}),
-        layout: "人工左侧留白",
-        product_share_percent: 55,
-      },
-    },
-  };
-  const patched = await page.request.post(
-    `/api/v3/products/${encodeURIComponent(productID)}/workflows/${encodeURIComponent(graph.id)}/changesets`,
-    {
-      data: {
-        base_graph_revision: graph.revision,
-        summary: "手填提示词",
-        operations: [{ op: "update_node_config", node_ref: prompt!.id, config }],
-      },
-    },
-  );
-  expect(patched.ok(), await patched.text()).toBeTruthy();
+  await selectNode(page, prompt!.id);
+  await page.getByLabel("设计目标").fill("人工目标-不要被构图应用改掉");
+  await page.getByLabel("商品占比（%）").fill("55");
+  await page.getByLabel("布局").fill("人工左侧留白");
+  await expect.poll(async () => {
+    const latest = await currentGraph(page, productID);
+    const authored = latest.nodes.find((node) => node.id === prompt!.id);
+    return authored?.document_origin === "authored"
+      && authored.config.prompt?.design_goal === "人工目标-不要被构图应用改掉"
+      && authored.config.prompt?.composition?.layout === "人工左侧留白"
+      && authored.config.prompt?.composition?.product_share_percent === 55;
+  }).toBeTruthy();
   const after = await currentGraph(page, productID);
-  const authored = after.nodes.find((node) => node.id === prompt!.id);
-  expect(authored?.document_origin).toBe("authored");
-  return authored!;
+  return after.nodes.find((node) => node.id === prompt!.id)!;
 }
 
 async function selectNode(page: Page, nodeID: string): Promise<void> {

@@ -130,7 +130,7 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 - `image_prompt`：运行时根据上游上下文生成提示词，结果写入节点并可以再编辑。
 - `image_generation`：根据正式提示词文稿和 GenerationSpec 生成图片。运行此节点（`scope=node`）只入队目标；需要连带仍需生成的上游时使用“运行到此节点”。跑文稿节点不会自动跑下游生图。文稿、候选、`document_origin` 与生成范围见 [`adr/0014-canvas-document-cook.md`](adr/0014-canvas-document-cook.md)。端口、`selection` 运行、运行队列与 `skipped` 见 [`adr/0015-canvas-ports-run-queue.md`](adr/0015-canvas-ports-run-queue.md)。
 
-画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。
+画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。检查器或 Agent 一次 `update_node_config` 若 `base_graph_revision` 落后于并行 cook 采用，只要中间历史没改过该节点，服务端 rebase 到当前 revision；同节点丢失更新、拓扑和过期 `create_node` 仍 409。浏览器只对纯 `move_nodes` 自动重放，文稿保存失败会提示版本冲突。
 
 摄影和信息图每种图片类型落成一层 Group：1 个 `image_prompt` 加 N 个 `image_generation`（N 为该镜头张数）。证据类型（资质、工厂）是未绑定的 `image_asset`，`role=evidence`。创建上传的参考图 `role=product_identity`，接到视觉规范、创作要求和会生图镜头，不接到证据占位。添加面板「添加场景」一次 ChangeSet 创建组 + prompt + 1 张生图。实现：`web/src/pages/workbench/canvas/shotChangeSet.ts`，模板 `go/internal/graph`。
 

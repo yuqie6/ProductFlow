@@ -363,21 +363,29 @@ func (e *searchEnv) staleWrite(before graph.Projection) []string {
 	if !ok {
 		return nil
 	}
-	cfg := cloneConfig(e.t, node.Config)
-	delete(cfg, "document_origin")
-	cfg["goal"] = "stale-revision-write"
-	base := before.Revision - 1
-	if base < 1 {
-		base = before.Revision + 1
-		if base < 1 {
-			base = 2
-		}
+	freshCfg := cloneConfig(e.t, node.Config)
+	delete(freshCfg, "document_origin")
+	freshCfg["goal"] = "fresh-same-node"
+	first := e.gs.doJSON(e.t, "POST", "/api/v3/products/"+e.productID+"/workflows/"+e.graphID+"/changesets", map[string]any{
+		"base_graph_revision": before.Revision,
+		"summary":             "同节点先写",
+		"operations": []map[string]any{
+			{"op": "update_node_config", "node_ref": node.ID, "config": freshCfg},
+		},
+	})
+	if first.StatusCode != 200 {
+		return []string{fmt.Sprintf("O7 same-node first write status %d", e.gs.readStatus(first))}
 	}
+	e.gs.decode(e.t, first, &graph.Projection{})
+
+	lostCfg := cloneConfig(e.t, node.Config)
+	delete(lostCfg, "document_origin")
+	lostCfg["goal"] = "stale-revision-write"
 	resp := e.gs.doJSON(e.t, "POST", "/api/v3/products/"+e.productID+"/workflows/"+e.graphID+"/changesets", map[string]any{
-		"base_graph_revision": base,
+		"base_graph_revision": before.Revision,
 		"summary":             "过期 revision",
 		"operations": []map[string]any{
-			{"op": "update_node_config", "node_ref": node.ID, "config": cfg},
+			{"op": "update_node_config", "node_ref": node.ID, "config": lostCfg},
 		},
 	})
 	code := e.gs.readStatus(resp)
@@ -388,6 +396,9 @@ func (e *searchEnv) staleWrite(before graph.Projection) []string {
 	got := nodeByID(after, node.ID)
 	if jsonEqual(got.Config["goal"], "stale-revision-write") {
 		return []string{"O7 stale changeset wrote live config"}
+	}
+	if !jsonEqual(got.Config["goal"], "fresh-same-node") {
+		return []string{fmt.Sprintf("O7 first write not kept: %+v", got.Config["goal"])}
 	}
 	return nil
 }

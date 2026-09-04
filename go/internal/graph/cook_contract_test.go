@@ -139,8 +139,9 @@ func cloneJSONMap(config map[string]any) map[string]any {
 	return out
 }
 
-func injectAuthoredNodeConfig(ctx context.Context, gs *graphServer, productID, graphID string, nodeType graph.NodeType, summary string, edit func(map[string]any) map[string]any) error {
-	for range 10 {
+func waitGraphRevisionGreater(ctx context.Context, gs *graphServer, productID, graphID string, baseRevision int) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -156,37 +157,63 @@ func injectAuthoredNodeConfig(ctx context.Context, gs *graphServer, productID, g
 		if err := decodeHTTP(resp, &view); err != nil {
 			return err
 		}
-		var node *graph.NodeView
-		for i := range view.Nodes {
-			if view.Nodes[i].NodeType == nodeType {
-				node = &view.Nodes[i]
-				break
-			}
-		}
-		if node == nil {
-			return fmt.Errorf("missing %s", nodeType)
-		}
-		cfg := edit(cloneJSONMap(node.Config))
-		patch, err := gs.doJSONContext(ctx, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
-			"base_graph_revision": view.Revision,
-			"summary":             summary,
-			"operations": []map[string]any{
-				{"op": "update_node_config", "node_ref": node.ID, "config": cfg},
-			},
-		})
-		if err != nil {
-			return err
-		}
-		status := gs.readStatus(patch)
-		if status == http.StatusOK {
+		if view.Revision > baseRevision {
 			return nil
 		}
-		if status == http.StatusConflict {
-			continue
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("graph revision still %d, want > %d", view.Revision, baseRevision)
 		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// injectAuthoredNodeConfig 模拟检查器一次保存：用开跑时的 base_graph_revision 发一次 ChangeSet，不重试 409。
+func injectAuthoredNodeConfig(ctx context.Context, gs *graphServer, productID, graphID, nodeID, summary string, baseRevision int, edit func(map[string]any) map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	resp, err := gs.doContext(ctx, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		gs.readStatus(resp)
+		return fmt.Errorf("load graph status %d", resp.StatusCode)
+	}
+	var view graph.Projection
+	if err := decodeHTTP(resp, &view); err != nil {
+		return err
+	}
+	var node *graph.NodeView
+	for i := range view.Nodes {
+		if view.Nodes[i].ID == nodeID {
+			node = &view.Nodes[i]
+			break
+		}
+	}
+	if node == nil {
+		return fmt.Errorf("missing node %s", nodeID)
+	}
+	cfg := edit(cloneJSONMap(node.Config))
+	patch, err := gs.doJSONContext(ctx, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
+		"base_graph_revision": baseRevision,
+		"summary":             summary,
+		"operations": []map[string]any{
+			{"op": "update_node_config", "node_ref": node.ID, "config": cfg},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	status := gs.readStatus(patch)
+	if status != http.StatusOK {
 		return fmt.Errorf("changeset status %d", status)
 	}
-	return fmt.Errorf("changeset still conflicted")
+	return nil
 }
 
 func decodeHTTP(resp *http.Response, dest any) error {
@@ -291,6 +318,59 @@ func TestGraphRunAfterAuthoredLayoutEditSkipsPromptProvider(t *testing.T) {
 	composition, _ = images.last.Prompt["composition"].(map[string]any)
 	if composition["layout"] != "左侧留白" {
 		t.Fatalf("image prompt %+v", images.last.Prompt)
+	}
+}
+
+func TestToNodeAndSelectionAfterAuthoredPromptKeepLive(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	view := loadProjection(t, gs, productID, graphID)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
+	imageNode := nodeOfType(t, view, graph.NodeImageGeneration)
+	cfg := cloneConfig(t, promptNode.Config)
+	delete(cfg, "document_origin")
+	prompt, _ := cfg["prompt"].(map[string]any)
+	if prompt == nil {
+		prompt = map[string]any{}
+	}
+	composition, _ := prompt["composition"].(map[string]any)
+	if composition == nil {
+		composition = map[string]any{}
+	}
+	composition["layout"] = "手填后再跑到此"
+	prompt["composition"] = composition
+	cfg["prompt"] = prompt
+	patchNodeConfig(t, gs, productID, graphID, promptNode.ID, "手填提示词", view.Revision, cfg)
+	prompts := &countingPrompt{}
+	images := &countingImage{}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{
+		"scope": "to_node", "node_id": imageNode.ID,
+	}, prompts, images)
+	if prompts.promptCalls() != 0 {
+		t.Fatalf("to_node after authored prompt called provider %d", prompts.promptCalls())
+	}
+	afterToNode := loadProjection(t, gs, productID, graphID)
+	got := nodeOfType(t, afterToNode, graph.NodeImagePrompt)
+	gotPrompt, _ := got.Config["prompt"].(map[string]any)
+	gotComp, _ := gotPrompt["composition"].(map[string]any)
+	if gotComp["layout"] != "手填后再跑到此" {
+		t.Fatalf("to_node overwrote prompt %+v", gotPrompt)
+	}
+	if got.DocumentOrigin == nil || *got.DocumentOrigin != graph.OriginAuthored {
+		t.Fatalf("origin %+v", got.DocumentOrigin)
+	}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{
+		"scope": "selection", "node_ids": []string{imageNode.ID},
+	}, prompts, images)
+	if prompts.promptCalls() != 0 {
+		t.Fatalf("selection after authored prompt called provider %d", prompts.promptCalls())
+	}
+	afterSelection := loadProjection(t, gs, productID, graphID)
+	again := nodeOfType(t, afterSelection, graph.NodeImagePrompt)
+	againPrompt, _ := again.Config["prompt"].(map[string]any)
+	againComp, _ := againPrompt["composition"].(map[string]any)
+	if againComp["layout"] != "手填后再跑到此" {
+		t.Fatalf("selection overwrote prompt %+v", againPrompt)
 	}
 }
 
@@ -463,7 +543,12 @@ func TestForceRewritePromptDoesNotChangeLiveUntilApply(t *testing.T) {
 func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
-	prompt := &midRunBriefEditor{gs: gs, productID: productID, graphID: graphID}
+	before := loadProjection(t, gs, productID, graphID)
+	brief := nodeOfType(t, before, graph.NodeCreativeBrief)
+	prompt := &midRunBriefEditor{
+		gs: gs, productID: productID, graphID: graphID,
+		nodeID: brief.ID, baseRevision: before.Revision,
+	}
 	images := &countingImage{}
 	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
 		"scope": "graph",
@@ -487,25 +572,25 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 		t.Fatal("expected mid-run brief edit")
 	}
 	view := loadProjection(t, gs, productID, graphID)
-	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
-	if brief.Config["goal"] != "用户中途改过" {
-		t.Fatalf("goal %+v", brief.Config["goal"])
+	got := nodeOfType(t, view, graph.NodeCreativeBrief)
+	if got.Config["goal"] != "用户中途改过" {
+		t.Fatalf("goal %+v", got.Config["goal"])
 	}
-	if brief.DocumentOrigin == nil || *brief.DocumentOrigin != graph.OriginAuthored {
-		t.Fatalf("origin %+v", brief.DocumentOrigin)
+	if got.DocumentOrigin == nil || *got.DocumentOrigin != graph.OriginAuthored {
+		t.Fatalf("origin %+v", got.DocumentOrigin)
 	}
-	if brief.CurrentArtifactID != nil || brief.PendingCandidateArtifactID == nil {
-		t.Fatalf("generated result must remain a candidate: current=%v pending=%v", brief.CurrentArtifactID, brief.PendingCandidateArtifactID)
+	if got.CurrentArtifactID != nil || got.PendingCandidateArtifactID == nil {
+		t.Fatalf("generated result must remain a candidate: current=%v pending=%v", got.CurrentArtifactID, got.PendingCandidateArtifactID)
 	}
-	if brief.ConfigStatus != graph.ConfigReady {
-		t.Fatalf("status %s", brief.ConfigStatus)
+	if got.ConfigStatus != graph.ConfigReady {
+		t.Fatalf("status %s", got.ConfigStatus)
 	}
 	finishedResp := gs.do(t, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs/"+run.ID, nil, "")
 	gs.mustStatus(t, finishedResp, 200)
 	var finished graph.GraphRunResponse
 	gs.decode(t, finishedResp, &finished)
 	for _, nodeRun := range finished.NodeRuns {
-		if nodeRun.NodeID != nil && *nodeRun.NodeID == brief.ID {
+		if nodeRun.NodeID != nil && *nodeRun.NodeID == got.ID {
 			if nodeRun.Output["disposition"] != "candidate" {
 				t.Fatalf("content adoption output %+v", nodeRun.Output)
 			}
@@ -517,15 +602,21 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 
 type midRunBriefEditor struct {
 	countingPrompt
-	gs        *graphServer
-	productID string
-	graphID   string
-	edited    bool
-	err       error
+	gs           *graphServer
+	productID    string
+	graphID      string
+	nodeID       string
+	baseRevision int
+	edited       bool
+	err          error
 }
 
 func (p *midRunBriefEditor) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	err := injectAuthoredNodeConfig(ctx, p.gs, p.productID, p.graphID, graph.NodeCreativeBrief, "中途改 brief", func(cfg map[string]any) map[string]any {
+	if err := waitGraphRevisionGreater(ctx, p.gs, p.productID, p.graphID, p.baseRevision); err != nil {
+		p.err = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	err := injectAuthoredNodeConfig(ctx, p.gs, p.productID, p.graphID, p.nodeID, "中途改 brief", p.baseRevision, func(cfg map[string]any) map[string]any {
 		delete(cfg, "document_origin")
 		cfg["goal"] = "用户中途改过"
 		return cfg

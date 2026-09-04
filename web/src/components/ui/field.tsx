@@ -84,9 +84,12 @@ export function NumberInput({
     setDraft(value === null ? "" : String(value));
   }, [value]);
 
+  const generatedId = useId();
+
   return (
-    <Field label={label}>
+    <Field label={label} htmlFor={generatedId}>
       <input
+        id={generatedId}
         type="number"
         value={draft}
         min={min}

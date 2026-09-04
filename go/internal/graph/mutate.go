@@ -69,6 +69,9 @@ func mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeS
 	if row.SchemaVersion != SchemaVersion {
 		return CommandResult{}, apperr.Conflict("画布修改只支持 schema-v3 工作流")
 	}
+	if err := rebaseStaleNodeConfigIfSafe(ctx, tx, row, &changeSet); err != nil {
+		return CommandResult{}, err
+	}
 	before, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
 		return CommandResult{}, err

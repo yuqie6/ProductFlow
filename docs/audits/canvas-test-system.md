@@ -40,8 +40,8 @@
 | C-00 | C0 单步合同 | origin、merge、section apply、何时 cook | `完成` | `document_test.go`、`document_candidate_test.go`、`select_test.go`、`ops_parse_test.go` |
 | C-01 | C1 mock HTTP cook | `graphServer` + `Executor`；O4 在 apply 前 live 不变；O2 mid-run 不覆盖 | `完成` | `cook_contract_test.go`；`TestForceRewritePromptDoesNotChangeLiveUntilApply` |
 | C-02 | C2 有界搜索 | 默认 8 条随机 walk（深度 ≤ 3）+ 6 类动作深度 2 穷举；失败 shrink；缺节点动作跳过 | `完成` | `authority_search_test.go`；`just go-test`；加深 `just go-test-canvas-search` |
-| C-03 | C3 回调插入写 | Mock provider 回调里发 HTTP ChangeSet（改本节点 / 改兄弟 / undo）。整图跑中途插入写；cook 协程不得 `t.Fatal`；并行 adopt 顶 revision 时按 409 重试 | `完成` | `authority_inject_test.go`；O2 钉在 `TestAdoptSkipsOverwriteWhenUserEditsDuringRun`（`scope=graph`） |
-| C-04 | C4 浏览器 + mock 供应商 | Playwright 点改写/补全/替换与按 section 应用；prompt/image 必须为 mock | `完成` | `web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；2026-09-05 本机 Chromium 2 passed（prompt/image 临时 mock，跑完已恢复 openai） |
+| C-03 | C3 回调插入写 | Mock provider 回调里发一次 HTTP ChangeSet（开跑时的 `base_graph_revision`，不重试 409）。整图跑中途改本节点 / 兄弟文稿 / 视觉 overlay / undo / 保存后取消。`to_node` 与 `selection` 在手填提示词后不得盖 live。cook 协程不得 `t.Fatal` | `完成` | `authority_inject_test.go`；`TestAdoptSkipsOverwriteWhenUserEditsDuringRun`；`TestAdoptSkipsOverwriteWhenVisualEditedDuringGraphRun`；`TestCancelGraphRunKeepsMidRunInspectorSave`；`TestToNodeAndSelectionAfterAuthoredPromptKeepLive` |
+| C-04 | C4 浏览器 + mock 供应商 | Playwright 在检查器里手填提示词，再点改写/补全/替换与按 section 应用；prompt/image 必须为 mock | `部分完成` | `web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；手填走 Inspector 自动保存，尚未覆盖运行中打字 |
 | C-05 | C5 真 provider 整图 | skip-Agent 出一张真图；不覆盖 rewrite/候选 | `完成` | `just web-e2e-live-graph` → `direct-create-full-graph.spec.ts` |
 | C-06 | C6 Agent × 画布 | `ApplyAgentChangeSet` / `apply_graph_change_set_v1` 与整图 GraphRun 交错仍守 O2/O3 | `完成` | `authority_agent_interleave_test.go`；`go/internal/agent/canvas_authority_interleave_test.go` |
 
@@ -55,7 +55,7 @@
 | O4 | `complete\|rewrite\|replace` 必须 `scope=node`+`force`；成功后 pending 非空，apply 前 live 不变；`graph`+`force` 4xx | `TestForceRewritePromptDoesNotChangeLiveUntilApply`；`TestSubmitGraphRunRejectsForce` |
 | O5 | apply 前 live 哈希或 revision 变了 → apply 拒绝 | C2 `stale` / 先 `author` 再 `apply`；`ApplyDocumentCandidate` 409 |
 | O6 | section apply 只改选中业务 section | `TestApplyDocumentSectionsOnlyReplacesSelectedBusinessSection`；C2 `apply_objective`；C4 |
-| O7 | ChangeSet 过期 `base_graph_revision` 必须 409 | C2 `stale`；`TestChangeSetStaleRevisionConflict` |
+| O7 | 同节点丢失更新必须 409；仅兄弟节点 `update_node_config` 时检查器/Agent 一次保存可 rebase | C2 `stale`（先写同节点再过期写）；`TestChangeSetStaleRevisionConflict`；`TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged`；`TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged` |
 
 ## 命令
 
