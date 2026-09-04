@@ -3,13 +3,13 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   CANVAS_DOCUMENT_SWITCH,
   REFERENCE_PRODUCT_IMAGE,
-  assertMockImageProviders,
   lockLocale,
   loginAsAdmin,
   openCanvasView,
   requiredEnv,
   selectCreateImageType,
   waitForGraphRunSucceeded,
+  withMockDocumentProviders,
 } from "./liveGraph";
 
 interface GraphNodePayload {
@@ -93,7 +93,7 @@ test.describe("canvas document mock provider", () => {
   test("rewrite stages a candidate and section apply keeps unselected fields", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
     const productID = await createWorkbench(page);
     const prompt = await authorPrompt(page, productID);
     await page.reload();
@@ -133,12 +133,13 @@ test.describe("canvas document mock provider", () => {
     const appliedNode = applied.nodes.find((node) => node.id === prompt.id);
     expect(appliedNode?.config.prompt?.design_goal).toBe("人工目标-不要被构图应用改掉");
     expect(appliedNode?.config.prompt?.composition?.layout).not.toBe("人工左侧留白");
+    });
   });
 
   test("complete and replace stage candidates without writing live config", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
     const productID = await createWorkbench(page);
     const prompt = await authorPrompt(page, productID);
     await page.reload();
@@ -176,5 +177,6 @@ test.describe("canvas document mock provider", () => {
     const replaceNode = afterReplace.nodes.find((node) => node.id === prompt.id);
     expect(replaceNode?.config.prompt?.design_goal).toBe("人工目标-不要被构图应用改掉");
     expect(replaceNode?.config.prompt?.composition?.layout).toBe("人工左侧留白");
+    });
   });
 });

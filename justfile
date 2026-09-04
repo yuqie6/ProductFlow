@@ -187,7 +187,7 @@ web-e2e-live-graph:
 web-e2e-live-agent-workflow:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_AGENT_WORKFLOW=1 pnpm --dir web exec playwright test e2e/live-agent-workflow.spec.ts --config playwright.config.ts'
 
-# Chromium document rewrite/candidate: mock prompt/image providers; just dev must be running.
+# Chromium document rewrite/candidate: temporarily binds mock prompt/image then restores; just dev must be running.
 web-e2e-canvas-document:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_CANVAS_DOCUMENT=1 pnpm --dir web exec playwright test e2e/canvas-document-mock.spec.ts --config playwright.config.ts'
 

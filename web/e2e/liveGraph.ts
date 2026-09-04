@@ -91,27 +91,94 @@ export const CANVAS_DOCUMENT_SWITCH = "PRODUCTFLOW_RUN_CANVAS_DOCUMENT";
 export function assertCanvasDocumentEnabled(): void {
   if (process.env[CANVAS_DOCUMENT_SWITCH] !== "1") {
     throw new Error(
-      `set ${CANVAS_DOCUMENT_SWITCH}=1, start just dev, bind mock prompt/image providers, then run just web-e2e-canvas-document`,
+      `set ${CANVAS_DOCUMENT_SWITCH}=1, start just dev, then run just web-e2e-canvas-document (gate temporarily binds mock prompt/image and restores)`,
     );
   }
 }
 
-export async function assertMockImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
+interface ProviderBindingSnapshot {
+  purpose: string;
+  provider_kind: string;
+  provider_profile_id: string | null;
+  model_settings: Record<string, unknown>;
+  config: Record<string, unknown>;
+}
+
+async function unlockSettings(request: APIRequestContext, settingsToken: string): Promise<void> {
   const unlock = await request.post("/api/settings/unlock", {
     data: { token: settingsToken },
   });
   if (!unlock.ok()) {
     throw new Error(`settings unlock failed: ${unlock.status()} ${await unlock.text()}`);
   }
+}
+
+async function loadProviderBindings(request: APIRequestContext): Promise<ProviderBindingSnapshot[]> {
   const response = await request.get("/api/settings/provider-config");
   if (!response.ok()) {
     throw new Error(`provider-config failed: ${response.status()} ${await response.text()}`);
   }
-  const payload = (await response.json()) as {
-    bindings: Array<{ purpose: string; provider_kind: string }>;
-  };
-  const prompt = payload.bindings.find((binding) => binding.purpose === "prompt");
-  const image = payload.bindings.find((binding) => binding.purpose === "image");
+  const payload = await response.json() as { bindings: ProviderBindingSnapshot[] };
+  return payload.bindings;
+}
+
+async function patchProviderBinding(
+  request: APIRequestContext,
+  purpose: string,
+  binding: Omit<ProviderBindingSnapshot, "purpose">,
+): Promise<void> {
+  const response = await request.patch(`/api/settings/provider-bindings/${encodeURIComponent(purpose)}`, {
+    data: {
+      provider_kind: binding.provider_kind,
+      provider_profile_id: binding.provider_profile_id,
+      model_settings: binding.model_settings ?? {},
+      config: binding.config ?? {},
+    },
+  });
+  if (!response.ok()) {
+    throw new Error(`bind ${purpose} failed: ${response.status()} ${await response.text()}`);
+  }
+}
+
+/** 文稿 mock 门禁临时切 prompt/image 为 mock，函数返回后恢复原绑定。不改 agent。 */
+export async function withMockDocumentProviders(
+  request: APIRequestContext,
+  settingsToken: string,
+  run: () => Promise<void>,
+): Promise<void> {
+  await unlockSettings(request, settingsToken);
+  const bindings = await loadProviderBindings(request);
+  const prompt = bindings.find((binding) => binding.purpose === "prompt");
+  const image = bindings.find((binding) => binding.purpose === "image");
+  if (!prompt || !image) {
+    throw new Error("provider-config missing prompt or image binding");
+  }
+  try {
+    await patchProviderBinding(request, "prompt", {
+      provider_kind: "mock",
+      provider_profile_id: null,
+      model_settings: { model: "mock-prompt-v2" },
+      config: {},
+    });
+    await patchProviderBinding(request, "image", {
+      provider_kind: "mock",
+      provider_profile_id: null,
+      model_settings: { model: "mock-image-v2" },
+      config: {},
+    });
+    await run();
+  } finally {
+    await unlockSettings(request, settingsToken);
+    await patchProviderBinding(request, "prompt", prompt);
+    await patchProviderBinding(request, "image", image);
+  }
+}
+
+export async function assertMockImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
+  await unlockSettings(request, settingsToken);
+  const bindings = await loadProviderBindings(request);
+  const prompt = bindings.find((binding) => binding.purpose === "prompt");
+  const image = bindings.find((binding) => binding.purpose === "image");
   if (!prompt || prompt.provider_kind !== "mock") {
     throw new Error("prompt purpose must be bound to mock for the canvas document gate");
   }

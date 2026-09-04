@@ -171,6 +171,44 @@ func waitGraphRevisionGreater(ctx context.Context, gs *graphServer, productID, g
 	}
 }
 
+func waitNodeOrigin(ctx context.Context, gs *graphServer, productID, graphID, nodeID, origin string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, err := gs.doContext(ctx, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			gs.readStatus(resp)
+			return fmt.Errorf("load graph status %d", resp.StatusCode)
+		}
+		var view graph.Projection
+		if err := decodeHTTP(resp, &view); err != nil {
+			return err
+		}
+		for i := range view.Nodes {
+			if view.Nodes[i].ID != nodeID {
+				continue
+			}
+			if view.Nodes[i].DocumentOrigin != nil && *view.Nodes[i].DocumentOrigin == origin {
+				return nil
+			}
+			break
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("node %s origin still not %s", nodeID, origin)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 // injectAuthoredNodeConfig 模拟检查器一次保存：用开跑时的 base_graph_revision 发一次 ChangeSet，不重试 409。
 func injectAuthoredNodeConfig(ctx context.Context, gs *graphServer, productID, graphID, nodeID, summary string, baseRevision int, edit func(map[string]any) map[string]any) error {
 	if err := ctx.Err(); err != nil {

@@ -200,6 +200,109 @@ func TestCancelGraphRunKeepsMidRunInspectorSave(t *testing.T) {
 	}
 }
 
+func TestRewriteQueuedDuringGraphRunKeepsAuthoredLive(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	view := loadProjection(t, gs, productID, graphID)
+	promptNode := nodeOfType(t, view, graph.NodeImagePrompt)
+	cfg := cloneConfig(t, promptNode.Config)
+	delete(cfg, "document_origin")
+	promptCfg, _ := cfg["prompt"].(map[string]any)
+	if promptCfg == nil {
+		promptCfg = map[string]any{}
+	}
+	composition, _ := promptCfg["composition"].(map[string]any)
+	if composition == nil {
+		composition = map[string]any{}
+	}
+	composition["layout"] = "整图跑时点改写"
+	promptCfg["composition"] = composition
+	cfg["prompt"] = promptCfg
+	patchNodeConfig(t, gs, productID, graphID, promptNode.ID, "手填后再整图", view.Revision, cfg)
+	rewriter := &midRunRewriteQueuer{gs: gs, productID: productID, graphID: graphID, promptID: promptNode.ID}
+	images := &countingImage{}
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "graph",
+	})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	executor := graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: rewriter,
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}
+	gs.executeLocallyWithTimeout(t, run.ID, executor, canvasInjectExecuteTimeout)
+	if rewriter.err != nil {
+		t.Fatal(rewriter.err)
+	}
+	if rewriter.rewriteRunID == "" {
+		t.Fatal("expected inspector rewrite to queue during graph run")
+	}
+	if rewriter.rewriteStatus != "queued" {
+		t.Fatalf("rewrite during graph run must queue, got %s", rewriter.rewriteStatus)
+	}
+	gs.executeLocallyWithTimeout(t, rewriter.rewriteRunID, executor, canvasInjectExecuteTimeout)
+	after := loadProjection(t, gs, productID, graphID)
+	got := nodeOfType(t, after, graph.NodeImagePrompt)
+	gotPrompt, _ := got.Config["prompt"].(map[string]any)
+	gotComp, _ := gotPrompt["composition"].(map[string]any)
+	if gotComp["layout"] != "整图跑时点改写" {
+		t.Fatalf("queued rewrite overwrote live prompt %+v", gotPrompt)
+	}
+	if got.DocumentOrigin == nil || *got.DocumentOrigin != graph.OriginAuthored {
+		t.Fatalf("origin %+v", got.DocumentOrigin)
+	}
+	if got.PendingCandidateArtifactID == nil {
+		t.Fatal("queued rewrite must stage a candidate without writing live")
+	}
+}
+
+func TestInspectorSaveAfterSameNodeAdoptConflicts(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	before := loadProjection(t, gs, productID, graphID)
+	visual := nodeOfType(t, before, graph.NodeVisualSystem)
+	prompt := &midRunStaleSameNodeEditor{
+		gs: gs, productID: productID, graphID: graphID,
+		nodeID: visual.ID, baseRevision: before.Revision,
+	}
+	images := &countingImage{}
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "graph",
+	})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	gs.executeLocallyWithTimeout(t, run.ID, graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: prompt,
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}, canvasInjectExecuteTimeout)
+	if prompt.conflict == nil {
+		t.Fatal("same-node save after adopt must 409 once; user does not retry")
+	}
+	if prompt.edited {
+		t.Fatal("409 must not write the stale inspector draft")
+	}
+	view := loadProjection(t, gs, productID, graphID)
+	got := nodeOfType(t, view, graph.NodeVisualSystem)
+	if got.DocumentOrigin == nil || *got.DocumentOrigin != graph.OriginGenerated {
+		t.Fatalf("origin %+v", got.DocumentOrigin)
+	}
+	overlay, _ := got.Config["visual_overlay"].(map[string]any)
+	style, _ := overlay["style"].([]any)
+	if len(style) == 0 || style[0] == "过期手填" {
+		t.Fatalf("stale save must not replace generated overlay %+v", overlay)
+	}
+}
+
 type midRunSiblingEditor struct {
 	countingPrompt
 	gs                 *graphServer
@@ -323,5 +426,71 @@ func (p *midRunBriefCancelEditor) GenerateCreativeBrief(ctx context.Context, req
 		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
 	}
 	p.cancelled = true
+	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+}
+
+type midRunRewriteQueuer struct {
+	countingPrompt
+	gs                 *graphServer
+	productID, graphID string
+	promptID           string
+	rewriteRunID       string
+	rewriteStatus      string
+	err                error
+}
+
+func (p *midRunRewriteQueuer) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	resp, err := p.gs.doJSONContext(ctx, "POST", "/api/v3/products/"+p.productID+"/workflows/"+p.graphID+"/runs", map[string]any{
+		"scope": "node", "node_id": p.promptID, "force": true, "document_action": "rewrite",
+	})
+	if err != nil {
+		p.err = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		p.err = fmt.Errorf("rewrite submit status %d", p.gs.readStatus(resp))
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	var queued graph.GraphRunResponse
+	if err := decodeHTTP(resp, &queued); err != nil {
+		p.err = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	p.rewriteRunID = queued.ID
+	p.rewriteStatus = queued.Status
+	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+}
+
+type midRunStaleSameNodeEditor struct {
+	countingPrompt
+	gs                 *graphServer
+	productID, graphID string
+	nodeID             string
+	baseRevision       int
+	edited             bool
+	conflict           error
+	err                error
+}
+
+func (p *midRunStaleSameNodeEditor) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	if err := waitNodeOrigin(ctx, p.gs, p.productID, p.graphID, p.nodeID, graph.OriginGenerated); err != nil {
+		p.err = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	err := injectAuthoredNodeConfig(ctx, p.gs, p.productID, p.graphID, p.nodeID, "过期手填已采用节点", p.baseRevision, func(cfg map[string]any) map[string]any {
+		delete(cfg, "document_origin")
+		overlay, _ := cfg["visual_overlay"].(map[string]any)
+		if overlay == nil {
+			overlay = map[string]any{}
+		}
+		overlay["style"] = []any{"过期手填"}
+		cfg["visual_overlay"] = overlay
+		return cfg
+	})
+	if err != nil {
+		p.conflict = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
+	p.edited = true
 	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
 }
