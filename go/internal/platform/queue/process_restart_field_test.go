@@ -103,14 +103,15 @@ func buildDispatcher(t *testing.T) string {
 	return bin
 }
 
-func startDispatcher(t *testing.T, bin, pgURL, redisURL, storage, metricsAddr, logPath string) *exec.Cmd {
+func startDispatcher(t *testing.T, bin, pgURL, redisURL, storage, metricsAddr, logPath string, extraArgs ...string) *exec.Cmd {
 	t.Helper()
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = logFile.Close() })
-	cmd := exec.Command(bin, "--watch", "--interval", "0.2", "--recovery-interval", "60")
+	args := append([]string{"--watch", "--interval", "0.2", "--recovery-interval", "60"}, extraArgs...)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = append(os.Environ(),
 		"DATABASE_URL="+pgURL,
 		"REDIS_URL="+redisURL,
