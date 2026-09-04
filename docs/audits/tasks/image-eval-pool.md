@@ -1,8 +1,12 @@
 # 任务：淘宝过线池与生图闸门 live
 
-状态：未开始
+状态：开放
+认领者：—
+认领于：—
+父账本：image-quality-eval.md
+完成后可拆：无
 
-读完本文件就可以做。不要重写 ingest/admit/harness。
+读完本文件就可以做。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。不要重写 ingest/admit/harness。
 
 ## 做成什么样
 

@@ -1,8 +1,13 @@
 # 任务：跑 L2 / L5 / 生产 mine
 
-状态：L2 已跑并中止；L5 未跑；mine 只有本地 dev
+状态：开放
+认领者：—
+认领于：—
+父账本：agent-eval-system.md
+完成后可拆：生产 mine 已有 Turn 时可拆 eval-production-tasks.md（只新增 production origin 任务文件）
+进展：L2 已跑并中止；L5 未跑；mine 只有本地 dev
 
-读完本文件就可以跑。本任务不改生产代码。证据写在本文件。
+读完本文件就可以跑。认领前不要改「只改这些文件」。认领步骤见 [README.md](README.md)。本任务不改生产代码。证据写在本文件。
 
 ## 做成什么样
 

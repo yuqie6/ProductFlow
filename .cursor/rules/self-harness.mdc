@@ -1,12 +1,12 @@
 ---
-description: Self-Harness 与 Skill 追分：只读对应任务指导
+description: Self-Harness 与 Skill 追分：只读对应任务指导，先认领
 globs: agent-service/.pi/skills/**,agent-service/src/runtime-policy*,go/prompts/agent/runtime-policy.md,agent-service/harness/**,docs/audits/agent-self-harness.md,docs/audits/tasks/harness-artifact.md,docs/audits/tasks/eval-skills.md
 alwaysApply: false
 ---
 
 # Self-Harness 与 Skill
 
-改这些文件时**只打开一份任务指导**，不要从总账本开工：
+改这些文件时先在 [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md) 认领，然后**只打开一份任务指导**：
 
 - 追 L1 分数、改 Skill / 既有 `evals/tasks`：[`docs/audits/tasks/eval-skills.md`](docs/audits/tasks/eval-skills.md)
 - 做可哈希壳（P1）：[`docs/audits/tasks/harness-artifact.md`](docs/audits/tasks/harness-artifact.md)

@@ -2,7 +2,7 @@
 
 尚未成为产品事实、或尚未被真实验证的方向。当前能力见 [`PRD.md`](PRD.md)，结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，操作见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
-跨层验收未完成工作在 [`audits/tasks/`](audits/tasks/)：选一份指导，只读那一份。总账本只留合同与证据。
+跨层验收未完成工作在 [`audits/tasks/README.md`](audits/tasks/README.md) 看板：先认领再开工，一人一份。总账本只留合同与证据。
 
 ## 近期
 

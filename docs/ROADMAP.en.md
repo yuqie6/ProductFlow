@@ -2,7 +2,7 @@
 
 Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
 
-Remaining audit work lives in [`audits/tasks/`](audits/tasks/): pick one guide and read only that file. The ledgers keep contracts and evidence.
+Remaining audit work is the board at [`audits/tasks/README.md`](audits/tasks/README.md): claim one open task before coding. The ledgers keep contracts and evidence.
 
 ## Near term
 

@@ -4,7 +4,7 @@
 
 Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/PRD.md` / `docs/ARCHITECTURE.md` / `docs/USER_GUIDE.md` for current product and runtime shape, and `docs/ROADMAP.md` for unfinished directions. Do not treat `docs/adr/` as current design, and do not write new ADRs. When documentation conflicts with code or tests, verify the live behavior and correct the living documentation.
 
-Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. For broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
+Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. Planned parallel slices use the audit task board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md). For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
 Keep modifications at the real causal boundary. Reuse existing models, enums, exceptions, query helpers, fixtures, and UI components. Add guards or abstractions only for a demonstrated failure mode or invariant. Never revive retired V1 runtime behavior as a fallback. Do not add compatibility shims, dual serializers, or old-data migration commands; delete leftover paths.
 
@@ -12,7 +12,7 @@ Before a cross-layer change, trace `input -> wire schema -> application use case
 
 Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. To implement an unfinished audit item, open exactly one file under [`docs/audits/tasks/`](docs/audits/tasks/) and follow only that guide.
+Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. Audit parallel work is the issue board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md): claim one open task in the doc, then implement; after review and commit, archive it, open the next task file from the parent ledger, and stop.
 
 ## Multi-Agent Delivery
 
@@ -25,20 +25,20 @@ The primary agent owns:
 - cross-slice integration, deletion of obsolete paths and final verification;
 - user-facing status, risk and completion claims.
 
-Implementation sub-agents receive one bounded causal slice at a time. Each task packet must state:
+Implementation sub-agents receive one bounded causal slice at a time. For work on the audit task board, that slice is exactly one claimed file under `docs/audits/tasks/`. Each task packet must state:
 
 - the concrete outcome and user-visible behavior;
 - current implementation and contract anchors to inspect;
 - files or modules the agent owns and boundaries it must not edit;
 - required wire, persistence and runtime invariants;
 - focused tests and completion evidence;
-- known concurrent work; sub-agents must not push, reset, revert, or declare the overall task complete.
+- claim fields (`状态` / `认领者` / `认领于`) so other agents can see occupancy.
 
-Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
+Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap and each slice is claimed on the board. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
 
-When an owned slice is done, the owner reviews that exclusive diff against the task packet. Sub-agents do not commit, push, reset, or revert; they report changed files, review outcome, tests, unresolved risks, and whether the slice is ready to commit. The primary agent re-reads the diff, runs shared-boundary checks, and if the slice is clean, commits only those owned files in the same turn. Parallel slices may finish in any order; the primary serializes git so one writer touches the index. Do not leave a reviewed slice uncommitted while starting another slice for the same owner. Procedure: `.cursor/rules/module-review-commit.mdc`.
+When an owned board task is done, the claiming agent reviews that exclusive diff against the task packet, commits only those owned files, archives the task, opens the next `开放` task from the parent ledger if the packet names one, and **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents still must not push, reset, revert, or declare the overall program complete.
 
-The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another implementation task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
+The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is filed as a new `开放` board task, not started in the same turn. Ordinary small fixes and read-only investigations do not use the board unless the user asks to file a task.
 
 ## Project Structure & Module Organization
 ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, asynq). Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `go/README.md` or `web/AGENTS.md` before editing that package. The retired FastAPI tree is on `retired/python`; do not merge it back.
@@ -96,3 +96,7 @@ Triage uses the default five-label vocabulary: `needs-triage`, `needs-info`, `re
 ### Domain docs
 
 Domain documentation uses a single-context layout: root `CONTEXT.md`. `docs/adr/` is a historical archive, not live design. See `docs/agents/domain.md`.
+
+### Audit task board
+
+Agent-facing issue board for parallel audit work: [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md).
