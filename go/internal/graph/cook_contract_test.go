@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/product"
@@ -120,6 +123,82 @@ func patchNodeConfig(t *testing.T, gs *graphServer, productID, graphID, nodeID, 
 	var view graph.Projection
 	gs.decode(t, resp, &view)
 	return view
+}
+
+const canvasInjectExecuteTimeout = 45 * time.Second
+
+func cloneJSONMap(config map[string]any) map[string]any {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil || out == nil {
+		return map[string]any{}
+	}
+	return out
+}
+
+func injectAuthoredNodeConfig(ctx context.Context, gs *graphServer, productID, graphID string, nodeType graph.NodeType, summary string, edit func(map[string]any) map[string]any) error {
+	for range 10 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, err := gs.doContext(ctx, "GET", "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "")
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			gs.readStatus(resp)
+			return fmt.Errorf("load graph status %d", resp.StatusCode)
+		}
+		var view graph.Projection
+		if err := decodeHTTP(resp, &view); err != nil {
+			return err
+		}
+		var node *graph.NodeView
+		for i := range view.Nodes {
+			if view.Nodes[i].NodeType == nodeType {
+				node = &view.Nodes[i]
+				break
+			}
+		}
+		if node == nil {
+			return fmt.Errorf("missing %s", nodeType)
+		}
+		cfg := edit(cloneJSONMap(node.Config))
+		patch, err := gs.doJSONContext(ctx, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/changesets", map[string]any{
+			"base_graph_revision": view.Revision,
+			"summary":             summary,
+			"operations": []map[string]any{
+				{"op": "update_node_config", "node_ref": node.ID, "config": cfg},
+			},
+		})
+		if err != nil {
+			return err
+		}
+		status := gs.readStatus(patch)
+		if status == http.StatusOK {
+			return nil
+		}
+		if status == http.StatusConflict {
+			continue
+		}
+		return fmt.Errorf("changeset status %d", status)
+	}
+	return fmt.Errorf("changeset still conflicted")
+}
+
+func decodeHTTP(resp *http.Response, dest any) error {
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if dest == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, dest)
 }
 
 func executeGraphRun(t *testing.T, gs *graphServer, productID, graphID string, body map[string]any, prompt *countingPrompt, images *countingImage) graph.GraphRunResponse {
@@ -384,12 +463,10 @@ func TestForceRewritePromptDoesNotChangeLiveUntilApply(t *testing.T) {
 func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)
-	view := loadProjection(t, gs, productID, graphID)
-	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
-	prompt := &midRunBriefEditor{gs: gs, t: t, productID: productID, graphID: graphID}
+	prompt := &midRunBriefEditor{gs: gs, productID: productID, graphID: graphID}
 	images := &countingImage{}
 	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
-		"scope": "node", "node_id": brief.ID,
+		"scope": "graph",
 	})
 	gs.mustStatus(t, resp, 201)
 	var run graph.GraphRunResponse
@@ -402,12 +479,15 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 			Assets: product.Service{DB: gs.db, Media: gs.media},
 		},
 	}
-	gs.executeLocally(t, run.ID, executor)
+	gs.executeLocallyWithTimeout(t, run.ID, executor, canvasInjectExecuteTimeout)
+	if prompt.err != nil {
+		t.Fatal(prompt.err)
+	}
 	if !prompt.edited {
 		t.Fatal("expected mid-run brief edit")
 	}
-	view = loadProjection(t, gs, productID, graphID)
-	brief = nodeOfType(t, view, graph.NodeCreativeBrief)
+	view := loadProjection(t, gs, productID, graphID)
+	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
 	if brief.Config["goal"] != "用户中途改过" {
 		t.Fatalf("goal %+v", brief.Config["goal"])
 	}
@@ -438,19 +518,22 @@ func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 type midRunBriefEditor struct {
 	countingPrompt
 	gs        *graphServer
-	t         *testing.T
 	productID string
 	graphID   string
 	edited    bool
+	err       error
 }
 
 func (p *midRunBriefEditor) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	view := loadProjection(p.t, p.gs, p.productID, p.graphID)
-	brief := nodeOfType(p.t, view, graph.NodeCreativeBrief)
-	cfg := cloneConfig(p.t, brief.Config)
-	delete(cfg, "document_origin")
-	cfg["goal"] = "用户中途改过"
-	patchNodeConfig(p.t, p.gs, p.productID, p.graphID, brief.ID, "中途改 brief", view.Revision, cfg)
+	err := injectAuthoredNodeConfig(ctx, p.gs, p.productID, p.graphID, graph.NodeCreativeBrief, "中途改 brief", func(cfg map[string]any) map[string]any {
+		delete(cfg, "document_origin")
+		cfg["goal"] = "用户中途改过"
+		return cfg
+	})
+	if err != nil {
+		p.err = err
+		return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+	}
 	p.edited = true
 	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
 }

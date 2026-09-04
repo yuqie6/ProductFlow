@@ -597,6 +597,16 @@ func lockGraphRunAndLiveGraph(ctx context.Context, tx *gorm.DB, productID, graph
 	return err
 }
 
+// lockRunningGraphRunsForUpdate 在改 live 图之前按 id 锁住该图所有 running GraphRun。
+// persist 自动采用是 run → graph；Inspector / Agent 若只锁 graph，会和并行内容节点 adopt 交叉等待。
+func lockRunningGraphRunsForUpdate(ctx context.Context, tx *gorm.DB, graphID string) error {
+	var rows []schema.WorkflowGraphRuns
+	return tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+		Where("graph_id = ? AND status = ?", graphID, RunStatusRunning).
+		Order("id").
+		Find(&rows).Error
+}
+
 func loadGraphRunByIDLocked(ctx context.Context, tx *gorm.DB, runID string) (graphRunRow, error) {
 	var rec schema.WorkflowGraphRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&rec).Error

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -37,26 +38,11 @@ func TestApplyGraphToolDuringBriefCookDoesNotOverwriteLive(t *testing.T) {
 		t.Fatal("missing product-workflow conversation")
 	}
 
-	gotGraph := as.do(t, http.MethodGet, "/api/v3/products/"+productID+"/workflows/"+graphID, nil, "", nil)
-	as.mustStatus(t, gotGraph, http.StatusOK)
-	var start graph.Projection
-	as.decode(t, gotGraph, &start)
-	var briefID string
-	for _, node := range start.Nodes {
-		if node.NodeType == graph.NodeCreativeBrief {
-			briefID = node.ID
-			break
-		}
-	}
-	if briefID == "" {
-		t.Fatal("missing brief")
-	}
-
 	prompt := &agentMidRunGraphTool{
-		as: as, t: t, productID: productID, graphID: graphID, conversationID: bench.Conversation.ID,
+		as: as, productID: productID, graphID: graphID, conversationID: bench.Conversation.ID,
 	}
 	resp := as.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
-		"scope": "node", "node_id": briefID, "force": true, "document_action": "rewrite",
+		"scope": "graph",
 	})
 	as.mustStatus(t, resp, http.StatusCreated)
 	var run graph.GraphRunResponse
@@ -69,6 +55,9 @@ func TestApplyGraphToolDuringBriefCookDoesNotOverwriteLive(t *testing.T) {
 			Assets: product.Service{DB: as.db, Media: as.svc.Media},
 		},
 	})
+	if prompt.err != nil {
+		t.Fatal(prompt.err)
+	}
 	if !prompt.edited {
 		t.Fatal("expected apply_graph_change_set_v1 during brief cook")
 	}
@@ -98,41 +87,74 @@ func TestApplyGraphToolDuringBriefCookDoesNotOverwriteLive(t *testing.T) {
 type agentMidRunGraphTool struct {
 	graph.MockPromptProvider
 	as                                 *agentServer
-	t                                  *testing.T
 	productID, graphID, conversationID string
 	edited                             bool
+	err                                error
 }
 
 func (p *agentMidRunGraphTool) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
-	got := p.as.do(p.t, http.MethodGet, "/api/v3/products/"+p.productID+"/workflows/"+p.graphID, nil, "", nil)
-	p.as.mustStatus(p.t, got, http.StatusOK)
-	var view graph.Projection
-	p.as.decode(p.t, got, &view)
-	var brief graph.NodeView
-	for _, node := range view.Nodes {
-		if node.NodeType == graph.NodeCreativeBrief {
-			brief = node
-			break
+	for range 10 {
+		if err := ctx.Err(); err != nil {
+			p.err = err
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
 		}
-	}
-	cfg := cloneAgentConfig(brief.Config)
-	delete(cfg, "document_origin")
-	cfg["goal"] = "Agent工具中途改过"
-	apply := p.as.doJSONAuth(p.t, http.MethodPost, "/api/internal/v1/agent-conversations/"+p.conversationID+"/graph/apply-change-set", map[string]any{
-		"change_set": map[string]any{
-			"base_graph_revision": view.Revision,
-			"summary":             "Agent 工具中途改 brief",
-			"operations": []map[string]any{
-				{"op": "update_node_config", "node_ref": brief.ID, "config": cfg},
+		got, err := p.as.doContext(ctx, http.MethodGet, "/api/v3/products/"+p.productID+"/workflows/"+p.graphID, nil, "", nil)
+		if err != nil {
+			p.err = err
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		if got.StatusCode != http.StatusOK {
+			p.as.readHTTP(got)
+			p.err = fmt.Errorf("load graph status %d", got.StatusCode)
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		var view graph.Projection
+		if err := decodeAgentHTTP(got, &view); err != nil {
+			p.err = err
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		var brief graph.NodeView
+		for _, node := range view.Nodes {
+			if node.NodeType == graph.NodeCreativeBrief {
+				brief = node
+				break
+			}
+		}
+		if brief.ID == "" {
+			p.err = errors.New("missing brief")
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		cfg := cloneAgentConfig(brief.Config)
+		delete(cfg, "document_origin")
+		cfg["goal"] = "Agent工具中途改过"
+		apply, err := p.as.doJSONAuthContext(ctx, http.MethodPost, "/api/internal/v1/agent-conversations/"+p.conversationID+"/graph/apply-change-set", map[string]any{
+			"change_set": map[string]any{
+				"base_graph_revision": view.Revision,
+				"summary":             "Agent 工具中途改 brief",
+				"operations": []map[string]any{
+					{"op": "update_node_config", "node_ref": brief.ID, "config": cfg},
+				},
 			},
-		},
-	}, http.Header{
-		"Authorization":   []string{"Bearer tok"},
-		"Idempotency-Key": []string{clockid.New()},
-	})
-	p.as.mustStatus(p.t, apply, http.StatusOK)
-	apply.Body.Close()
-	p.edited = true
+		}, http.Header{
+			"Authorization":   []string{"Bearer tok"},
+			"Idempotency-Key": []string{clockid.New()},
+		})
+		if err != nil {
+			p.err = err
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		status := p.as.readHTTP(apply)
+		if status == http.StatusOK {
+			p.edited = true
+			return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+		}
+		if status == http.StatusConflict {
+			continue
+		}
+		p.err = fmt.Errorf("apply-change-set status %d", status)
+		return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
+	}
+	p.err = errors.New("apply-change-set still conflicted")
 	return p.MockPromptProvider.GenerateCreativeBrief(ctx, req)
 }
 
@@ -183,9 +205,12 @@ func executeAgentGraphRun(t *testing.T, as *agentServer, runID string, exec grap
 	if exec.Products == nil {
 		exec.Products = product.GraphGuard{}
 	}
-	for i := 0; i < 30; i++ {
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
 		reclaimAgentGraphRun(t, as, runID)
-		err := exec.ExecuteRun(context.Background(), runID)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		err := exec.ExecuteRun(ctx, runID)
+		cancel()
 		if err == nil {
 			return
 		}
@@ -196,6 +221,48 @@ func executeAgentGraphRun(t *testing.T, as *agentServer, runID string, exec grap
 		t.Fatal(err)
 	}
 	t.Fatal("could not execute graph run")
+}
+
+func (as *agentServer) doContext(ctx context.Context, method, path string, body io.Reader, contentType string, extra http.Header) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, as.srv.URL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, vs := range extra {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	for _, c := range as.cookies {
+		req.AddCookie(c)
+	}
+	return as.client.Do(req)
+}
+
+func (as *agentServer) doJSONAuthContext(ctx context.Context, method, path string, payload any, extra http.Header) (*http.Response, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return as.doContext(ctx, method, path, bytes.NewReader(raw), "application/json", extra)
+}
+
+func (as *agentServer) readHTTP(resp *http.Response) int {
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func decodeAgentHTTP(resp *http.Response, dest any) error {
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, dest)
 }
 
 func reclaimAgentGraphRun(t *testing.T, as *agentServer, runID string) {

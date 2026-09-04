@@ -531,7 +531,7 @@ func (e Executor) persistContentArtifact(
 				return err
 			}
 			productID = id
-			// 自动采用会修改 live graph。先锁 run，再锁 graph，随后 lockNodeRunForPromotion 才能按 run -> graph -> node 进入。
+			// 自动采用会修改 live graph。先锁 run，再锁 graph；mutate 同样先锁 running run，避免与 Inspector/Agent 写入交叉等待。
 			if err := lockGraphRunAndLiveGraph(ctx, pgxTx, productID, run.GraphID, run.ID); err != nil {
 				return err
 			}

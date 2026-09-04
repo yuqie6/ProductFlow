@@ -155,14 +155,29 @@ func (gs *graphServer) executeLocally(t *testing.T, runID string, exec graph.Exe
 	}
 }
 
+func (gs *graphServer) executeLocallyWithTimeout(t *testing.T, runID string, exec graph.Executor, timeout time.Duration) {
+	t.Helper()
+	if err := gs.tryExecuteLocallyWithTimeout(t, runID, exec, timeout); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (gs *graphServer) tryExecuteLocally(t *testing.T, runID string, exec graph.Executor) error {
+	t.Helper()
+	return gs.tryExecuteLocallyWithTimeout(t, runID, exec, 2*time.Minute)
+}
+
+func (gs *graphServer) tryExecuteLocallyWithTimeout(t *testing.T, runID string, exec graph.Executor, timeout time.Duration) error {
 	t.Helper()
 	if exec.Products == nil {
 		exec.Products = product.GraphGuard{}
 	}
-	for i := 0; i < 30; i++ {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		gs.reclaimRun(t, runID)
-		err := exec.ExecuteRun(context.Background(), runID)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		err := exec.ExecuteRun(ctx, runID)
+		cancel()
 		if err == nil {
 			return nil
 		}
@@ -177,9 +192,17 @@ func (gs *graphServer) tryExecuteLocally(t *testing.T, runID string, exec graph.
 
 func (gs *graphServer) do(t *testing.T, method, path string, body io.Reader, contentType string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(method, gs.srv.URL+path, body)
+	resp, err := gs.doContext(context.Background(), method, path, body, contentType)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return resp
+}
+
+func (gs *graphServer) doContext(ctx context.Context, method, path string, body io.Reader, contentType string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, gs.srv.URL+path, body)
+	if err != nil {
+		return nil, err
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -187,20 +210,24 @@ func (gs *graphServer) do(t *testing.T, method, path string, body io.Reader, con
 	for _, c := range gs.cookies {
 		req.AddCookie(c)
 	}
-	resp, err := gs.client.Do(req)
+	return gs.client.Do(req)
+}
+
+func (gs *graphServer) doJSON(t *testing.T, method, path string, payload any) *http.Response {
+	t.Helper()
+	resp, err := gs.doJSONContext(context.Background(), method, path, payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp
 }
 
-func (gs *graphServer) doJSON(t *testing.T, method, path string, payload any) *http.Response {
-	t.Helper()
+func (gs *graphServer) doJSONContext(ctx context.Context, method, path string, payload any) (*http.Response, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	return gs.do(t, method, path, bytes.NewReader(raw), "application/json")
+	return gs.doContext(ctx, method, path, bytes.NewReader(raw), "application/json")
 }
 
 func (gs *graphServer) decode(t *testing.T, resp *http.Response, dest any) {
