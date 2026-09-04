@@ -24,6 +24,7 @@ import {
 } from "./contracts.js";
 import type { Config } from "./config.js";
 import { DEPLOYED_HARNESS } from "./harness.js";
+import { EvolutionTraceStore } from "./evolution-traces.js";
 import type { ProductFlowClient } from "./productflow.js";
 import { TurnRuntime } from "./turn-runtime.js";
 import { scopeFromContract } from "./runtime-scope.js";
@@ -54,6 +55,7 @@ export class PiRuntimeManager {
   readonly instanceID: string;
   private running = 0;
   private closed = false;
+  readonly evolutionTraces: EvolutionTraceStore;
 
   constructor(
     readonly config: Config,
@@ -63,6 +65,7 @@ export class PiRuntimeManager {
     instanceID: string = randomUUID(),
   ) {
     this.instanceID = instanceID;
+    this.evolutionTraces = new EvolutionTraceStore(config.evolutionTraceRoot);
   }
 
   /** 只把本地能证明尚未被 claim 的 Turn 重新入队。 */
@@ -197,7 +200,7 @@ export class PiRuntimeManager {
   }
 
   /** `background_durable_tasks` 固定为 false：本进程只做交互式 Turn。 */
-  health(): RuntimeStatus & { active_turns: number; queued_turns: number } {
+  health(): RuntimeStatus & { active_turns: number; queued_turns: number; evolution_traces: ReturnType<EvolutionTraceStore["health"]> } {
     return {
       runtime: RUNTIME_NAME,
       runtime_version: RUNTIME_VERSION,
@@ -207,6 +210,7 @@ export class PiRuntimeManager {
       context_schema_version: CONTEXT_SCHEMA_VERSION,
       skill_catalog_hash: this.skills.hash,
       harness_hash: DEPLOYED_HARNESS.hash,
+      evolution_traces: this.evolutionTraces.health(),
       os_tools: [],
       background_durable_tasks: false,
       active_turns: this.running,
@@ -221,6 +225,7 @@ export class PiRuntimeManager {
     await Promise.allSettled([...this.runs.values()].map((runtime) => runtime.close()));
     this.pending.length = 0;
     await Promise.allSettled([...this.activeExecutions]);
+    await this.evolutionTraces.close();
   }
 
   private async runtimeForLookup(lookup: RuntimeLookup): Promise<TurnRuntime> {

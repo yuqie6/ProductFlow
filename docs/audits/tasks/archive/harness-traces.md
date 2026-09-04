@@ -1,14 +1,14 @@
 # 任务：有界且默认关闭的演化诊断轨迹（Self-Harness P2b）
 
-状态：开放
+状态：完成
 类型：实现
-认领者：—
-认领于：—
+认领者：主代理-agent-0905-0458
+认领于：2026-09-05T05:41:22+08:00
 业务组：Agent 能力
 父账本：agent-self-harness.md
 完成后可拆：P3 需评测 T-07 集合隔离合同；本任务不自动解锁 P4–P7
 
-任务合同以本文件为准；认领与验收遵循 [Issue 协议](README.md)。确认所有权后读取当前实现，不在认领前预研。
+任务合同以本文件为准；认领与验收遵循 [Issue 协议](../README.md)。确认所有权后读取当前实现，不在认领前预研。
 
 ## 问题来源
 
@@ -25,12 +25,16 @@
 - P2 已完成并提交；不依赖真实生产样本、人工标签或分数校准。
 - 不改生产 Skill、行为指令、工具 schema、评测题目、grader、模型配置。不能与同 checkout 的 Agent live 采证并行。
 - 只用临时目录、临时端口、fake provider 与包级测试库。图片采池会话占用的浏览器、共享 provider、storage 路径不受影响。不得开启共享 dev 采集或读取未授权生产内容。
+- 认领确认：本会话主代理已核对 P2 已提交、无剩余源码 diff，图片组仍保留其记录与资源占用，无轨迹源码交集；本任务自行执行并自审。
 
 ## 修改边界
 
 - `agent-service/src/`：轨迹唯一 owner、配置、现有 Pi/Turn/tool 观察接线与直接测试。沿现有实际回调确定最小接线，不重构调度、lease、journal、question/resume。
+- 已核对实际 owner：新增 `src/evolution-traces.ts` / 直接测试，`config.ts` / 新配置测试，`runtime-manager.ts` 与 `turn-runtime.ts` 只接观察点，`pi-runtime.e2e.test.ts` 验证开/关的工具 Turn；沿用现有 Pi 事件，不加另一运行器。
 - 配置范例、部署配置与当前架构文档：只记录新增 opt-in 配置和存储/隐私限制；确认实际 owner 后在本任务补齐路径。
+- 部署 owner：根 `.env.example`、`docker-compose.yml`、`agent-service/Dockerfile`。Agent 非 root 用户使用独立 trace 卷挂载到其 `STORAGE_ROOT/agent-evolution-traces`，不扩大到整个商品素材卷；不改真实 `.env`。稳定文档为 ARCHITECTURE 中英文及 harness README。
 - 新诊断产物只写 `STORAGE_ROOT` 下独立子目录；允许临时测试目录，不写 git，不写 PG，不复用业务 session/WAL 文件。
+- `.gitignore` 排除任何位置的 `agent-evolution-traces/`，避免自定义仓库内 STORAGE_ROOT 时误入 Git。
 - 父章程与任务索引由维护者同步。
 
 ## 合同
@@ -55,4 +59,12 @@
 ## 证据
 
 - 发布：2026-09-05，核对 P2 归档与当前看板，无重复轨迹实现任务；L6 生产采证任务因生产访问缺失阻塞，与本任务代码/资源不重叠。
-- 待认领后记录实际设计、公开资料借鉴依据、测试结果与自审。
+- 实现：`src/evolution-traces.ts` 是结构投影、独立异步队列和保留策略的唯一 owner。现有 `TurnRuntime` 在 claim 后建立 attempt，观察实际 Pi model/tool 事件，在 journal 终态发布获确认后记 terminal，清理结束后记 footer。不改变模型输入、工具结果、lease 或 journal 协议。
+- 限额：单条 4 KiB、单 attempt 64 KiB、待写 128 条（含在途）、最多 256 个自有文件和 16 MiB 预留容量。活动文件不淘汰；空间全被活动 attempt 占用时拒绝新轨迹。部分首次写入失败仍占容量。缺 header/footer、序号缺口、截断或写盘失败不能作为完整证据。
+- 隐私：只保留哈希关联键、冻结身份、模型标识、封闭工具/操作名、计数、revision、usage 和终态；原文、结果正文、任意错误文本、路径、URL、媒体与推理不进入记录。参考 [OpenTelemetry GenAI 规范](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md) 的操作元数据与敏感内容分离，不引入遥测后端，也不宣称符合其完整 schema。
+- 配置：默认 `AGENT_EVOLUTION_TRACES=0`。启用须有绝对 `STORAGE_ROOT`，每目录一个 writer。Compose 独立 trace 卷按 Agent UID 10001 初始化；不挂载商品素材卷，不修改共享 dev 的配置或运行进程。
+- 2026-09-05：`just agent-service-test`：34 文件、233 passed / 2 skipped；`pnpm --dir agent-service build` 通过。定向 3 文件 21 passed 覆盖关闭不读内容/文件、字段排除、容量/队列、慢盘、部分写盘失败、并发保留与开/关/故障三模式真实 Pi fake-provider 工具 Turn。
+- `bash scripts/with_dev_env.sh go test -C go ./internal/agent -run 'TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult|TestSIGKILL|TestModelInvocationHarnessIdentity' -count=1 -timeout 3m` 通过（9.063s），验证已覆盖的真实 Pi/Go 归因及恢复边界；不把正则表达式本身当作全套 crash gate 通过证据。
+- `bash scripts/with_dev_env.sh docker compose config --quiet`、`just docs-check`、`git diff --check` 通过；自定义仓库内 storage 的轨迹路径被 `.gitignore` 排除。Docker 完整镜像重建未验收，此前 P1 的依赖下载阻塞仍未解除；Compose 静态验证不代替容器部署验收。
+- 冻结工件 hash 保持 `13e8e19ae0ba1cadc732f5f4ba6d0ffba0da08d5a859671ccb67d72bf52dae21`；无生产 Skill、题目、grader 或模型配置 diff，未采集真实生产内容。
+- 自审：主代理-agent-0905-0458；完整源码、未跟踪测试、部署与文档 diff 已检查，其他会话的图片池账本/issue/看板状态不纳入交付。自审补上首次部分写入的容量预留回归。结果满足 P2b 实现合同，随本任务提交；不宣称独立审核、生产部署、G1/G2 或线上学习验收通过。

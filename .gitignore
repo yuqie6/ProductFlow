@@ -23,6 +23,7 @@ web/test-results/
 web/blob-report/
 .env.dev
 agent-service/data/
+agent-evolution-traces/
 # Method-pack dumps named aegis/ at any path, including docs/archive/aegis/.
 aegis/
 # Root-level .agents/ and .codex/ helper definitions should be visible to git;

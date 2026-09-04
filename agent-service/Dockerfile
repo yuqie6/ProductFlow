@@ -24,8 +24,9 @@ WORKDIR /app/agent-service
 RUN apk add --no-cache ca-certificates flock \
     && addgroup -S -g 10001 productflow \
     && adduser -S -D -H -u 10001 -G productflow productflow \
-    && mkdir -p /data \
-    && chown productflow:productflow /data
+    && mkdir -p /data /app/storage/agent-evolution-traces \
+    && chown productflow:productflow /data /app/storage/agent-evolution-traces \
+    && chmod 700 /app/storage/agent-evolution-traces
 
 RUN corepack enable
 COPY --from=build /src/agent-service/package.json /src/agent-service/pnpm-lock.yaml ./

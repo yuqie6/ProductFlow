@@ -2,7 +2,7 @@
 
 本账本管理 ProductFlow 领域壳的版本化、失败挖掘、同模型提案、评测接受与生产热切。它衡量「壳会不会按声明面进化」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的行为分数，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的可靠性 Gate。lease、journal、SSE、确认协议仍走生产就绪账本。
 
-**Agent 能力组章程。执行以已发布 issue 为界。** 本组接收原壳进化方向与普通 Skill 缺陷修复；当前任务与认领见 [Issue 看板](tasks/README.md)。P2b 及以后由维护者按 P2 交付和对应阶段门发布。
+**Agent 能力组章程。执行以已发布 issue 为界。** 本组接收原壳进化方向与普通 Skill 缺陷修复；当前任务与认领见 [Issue 看板](tasks/README.md)。P3 及以后由维护者按已交付前置和对应阶段门发布。
 
 ## 组职责与交接
 
@@ -40,7 +40,7 @@ Cursor Canvas 与会话纪要不是合同。合同只在本账本；未完成方
 - 模型 loop 由 `@earendil-works/pi-coding-agent` 承担：`agent-service/src/pi-runtime.ts` 装配 Skill catalog、`runtime-policy.md`、动态上下文和 ProductFlow 工具。Pi `InlineExtension` 目前只用 `before_provider_request`。
 - `agent-service/harness/` 是可哈希工件，`src/harness.ts` 读取并冻结；四段原有行为指导已从 policy 拆入 instructions。`runtime-policy.md` 保留冻结权限/确认/问题协议，manifest 钉住其摘要。Skill 在 `.pi/skills/`（独立 `skills.hash`）；工具清单保留 `TOOL_MANIFEST_VERSION`。
 - 评测 L0–L6 在 [`agent-eval-system.md`](agent-eval-system.md)。L1 有 live `run_id`，regression 门槛未过，D-08 分数不可采信。本账本不得把那些 pass^k 写成 Self-Harness 成果。
-- 工件 hash=`13e8e19ae0ba1cadc732f5f4ba6d0ffba0da08d5a859671ccb67d72bf52dae21`。P2 已将同一冻结身份写入生产新 invocation/checkpoint、eval `run.json` 与 `/healthz`；历史 invocation 保留 NULL。Miner / Proposer / Promoter、Steer、playbook 与演化轨迹仍缺失。[P1](tasks/archive/harness-artifact.md) / [P2](tasks/archive/harness-attribution.md) 交付不证明能力分数提高；共享 dev 尚未部署本次归因协议。
+- 工件 hash=`13e8e19ae0ba1cadc732f5f4ba6d0ffba0da08d5a859671ccb67d72bf52dae21`。P2 已将同一冻结身份写入生产新 invocation/checkpoint、eval `run.json` 与 `/healthz`；历史 invocation 保留 NULL。P2b 提供默认关闭的结构诊断轨迹，不记录对话正文，未接消费者。Miner / Proposer / Promoter、Steer 与 playbook 仍缺失。[P1](tasks/archive/harness-artifact.md) / [P2](tasks/archive/harness-attribution.md) / [P2b](tasks/archive/harness-traces.md) 交付不证明能力分数提高；共享 dev 尚未部署本次归因与轨迹实现。
 
 ### 目标拓扑（G2 全开时）
 
@@ -84,7 +84,7 @@ G1 / G2 当前均为 `缺失`。
 | D-05 | 用户句子只进矿，不直接写全局 Skill | `完成`（决策） | 当前也没有运行时写 Skill 的路径；P6/P7 不得打开这条路径 |
 | D-06 | 第一块可证明工作是 P4：只动 failure-recovery 与一条 Skill overlay；Steer 与 playbook 不得与 P4 同切片 | `完成`（决策） | P4 实现缺失 |
 | D-07 | G1 = P1–P4 人切版本；G2 = 再加 P5–P7。开 P7 须 G1、P5、P6 完成，L5 通过且登记 `run_id`，评测 D-08 `完成`；D-03 不替代可信性要求 | `完成`（决策） | 评测 D-08 / L5 未完成；D-03 保留原产品可靠性指标与门槛，不承担测量可信性证明 |
-| D-08 | 阶段串行；P2b 可与 P3 并行。一次 PR 只打一个可编辑面 | `完成`（决策） | P0–P2 已交付；P2b 及以后仍按前置发布 |
+| D-08 | 阶段串行；P2b 可与 P3 并行。一次 PR 只打一个可编辑面 | `完成`（决策） | P0–P2b 已交付；P3 及以后仍按前置发布 |
 | D-09 | 标 `完成` 必须有代码 owner + 测试或 `run_id`（`harness_hash` / `task_hash` / `skill_hash` / 模型）。分数可信性由评测账本 D-08 裁定，D-03 单独报告通过率达标情况 | `完成`（决策） | 进化代码尚未产生 `run_id` |
 | D-10 | 进化不得改 grader 刷分，不得只加会过的新题。开发集、隐藏回归集、独立验收集及其划分、访问与退役规则由评测账本拥有 | `完成`（决策） | 见评测账本「Self-Harness 评测用途」；现有双集合不构成独立验收证据 |
 | D-11 | 能力范围外、不进必做项：换 Pi、进化工具 schema、元进化提案器提示、subagent、SaaS 多租户、训练 LLM。以后要做必须先改本表 | `完成`（决策） | — |
@@ -131,7 +131,7 @@ P0–P2 已按各自合同验收；后续阶段保留未完成状态。
 | P0 | 转向文档 | `完成` | 本账本、ROADMAP / README 索引、AGENTS.md 与 Skill README 指针、`.cursor/rules/self-harness.mdc` | 任何进化代码 | 2026-09-05：本文件与索引、规则。`just docs-check` 为证据。CONTEXT / PRD / ARCHITECTURE 不得把 Self-Harness 写成已交付 |
 | P1 | Harness 工件 | `完成` | `agent-service/harness/` 可哈希的 `h_t`；policy 权限段冻结、行为段可编；`pi-runtime` 读入；测试钉 hash | 提案器、热切 | [harness-artifact](tasks/archive/harness-artifact.md)：默认测试 218 passed / 2 skipped，build 与容器工件加载通过；完整镜像构建受 npm 网络超时阻塞，不宣称发布镜像已验收 |
 | P2 | 归因 | `完成` | eval `run.json` 与生产 `agent_model_invocations` / checkpoint 写 `harness_hash`；现有 `/healthz` 可观察 | 为挖矿改浏览器 journal / UI 协议去存完整工具参数 | [harness-attribution](tasks/archive/harness-attribution.md)：Node 221 passed / 2 skipped，Go Agent/schema、build、docs-check 通过；无共享 dev 部署，历史 hash 不回填 |
-| P2b | 演化轨迹 | `缺失` | 可选、默认关的有界轨迹，落 `STORAGE_ROOT`，不进 git、不进 PG 对话协议，供 P3 / P6 挖生产失败 | 把用户原文写入 Skill | 可与 P3 并行。P6 / G2 依赖本阶段或评测 L6 脱敏样本；不得只靠 L1 桩世界宣称「线上在学」 |
+| P2b | 演化轨迹 | `完成`（实现） | 可选、默认关的有界结构轨迹，落 `STORAGE_ROOT`，不进 git、不进 PG 对话协议 | 把用户原文写入 Skill | [harness-traces](tasks/archive/harness-traces.md)：容量、隐私、慢盘与失败隔离验证通过。未采生产样本；结构元数据不足以独立判用户意图/正确性，P6 / G2 仍须合格反馈与生产证据 |
 | P3 | Miner | `缺失` | 封闭失败签名 φ；仅开发集 L1 trials → 证据包；簇抽读合格才给提案器 | 自动改文件；读取隐藏回归或独立验收轨迹 | φ 词表见下节，实现缺失 |
 | P4 | 第一环 | `缺失` | 同模型（生产 Agent 模型）对 overlay + failure-recovery 出最小 diff；初筛、合并再评、独立复跑、人审；谱系按 provider/model 分叉；落 lineage；G1 独立验收 | Steer、playbook、P7、subagent | 第一块可证明工作；依赖评测账本的集合隔离与复跑合同，缺证据不得标完成 |
 | P5 | Steer | `缺失` | Pi `tool_result` 钩子拦截同参重放 / 缺 `load_productflow_skill` / 非法 op | 换 loop | 现有 extension 未注册这些钩子 |

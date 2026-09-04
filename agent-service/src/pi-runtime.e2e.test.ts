@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -281,7 +281,7 @@ describe("Pi runtime fake provider E2E", () => {
     expect(result.releasedPhases).toEqual(["terminal"]);
   });
 
-  it("runs a ProductFlow side-effect tool through intent and result checkpoints", async () => {
+  it.each(["off", "on", "io_failure"])("runs a ProductFlow side-effect tool with structural traces mode=%s", async (traceMode) => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-tool-e2e-"));
     const provider = await createFakeResponsesServer("workspace");
     const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
@@ -314,7 +314,9 @@ describe("Pi runtime fake provider E2E", () => {
         promptForScope: () => "",
         load: async () => "",
       } satisfies SkillCatalog;
-      manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, productFlow, skills);
+      const traceRoot = join(root, "traces");
+      if (traceMode === "io_failure") await writeFile(traceRoot, "not a directory");
+      manager = new PiRuntimeManager({ ...config, dataRoot: root, ...(traceMode !== "off" ? { evolutionTraceRoot: traceRoot } : {}) }, store, productFlow, skills);
 
       const started = await manager.start({
         lookup: { conversationID: scope.conversation_id },
@@ -332,6 +334,29 @@ describe("Pi runtime fake provider E2E", () => {
       expect(provider.requestPaths).toEqual(["/v1/responses", "/v1/responses"]);
       expect(createdWorkspace).toMatchObject({ name: "演示商品" });
       expect(createdWorkspace?.idempotencyKey).toBe(`pi:${scope.run_id}:${started.turn_id}:call-fake|fc-fake`);
+      await expect.poll(() => releasedPhases).toEqual(["terminal"]);
+      await manager.close();
+      if (traceMode === "on") {
+        const files = await readdir(traceRoot);
+        expect(files).toHaveLength(1);
+        const raw = await readFile(join(traceRoot, files[0]), "utf8");
+        const trace = raw.trim().split("\n").map((line) => JSON.parse(line));
+        expect(trace.map((row) => row.kind)).toEqual([
+          "attempt_start", "model_start", "model_end", "tool_start", "tool_end",
+          "model_start", "model_end", "terminal", "attempt_end",
+        ]);
+        expect(trace[0].harness_hash).toBe(checkpoints[0].payload.harness_hash);
+        expect(trace[1]).toMatchObject({ provider: "openai", model: "fake-model" });
+        expect(trace.at(-1)).toMatchObject({ complete: true, terminal: "succeeded" });
+        expect(raw).not.toContain("演示商品");
+        expect(raw).not.toContain("创建一个商品工作区并确认");
+        expect(raw).not.toContain("fake provider response");
+      } else if (traceMode === "io_failure") {
+        expect(manager.health().evolution_traces.io_errors).toBeGreaterThan(0);
+        expect(await readFile(traceRoot, "utf8")).toBe("not a directory");
+      } else {
+        await expect(readdir(traceRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      }
       expect(checkpoints.map((checkpoint) => checkpoint.kind)).toEqual([
         "before_model_request",
         "tool_effect_intent",

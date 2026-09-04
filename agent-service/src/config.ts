@@ -3,7 +3,7 @@
  * 商品、图和任务的业务权威仍是 ProductFlow。
  */
 
-import { resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 export interface Config {
   listenAddress: string;
@@ -25,6 +25,7 @@ export interface Config {
   providerTextVerbosity: string | null;
   providerServiceTier: string | null;
   questionTimeoutMS: number;
+  evolutionTraceRoot?: string;
 }
 
 function env(key: string, fallback = ""): string {
@@ -65,9 +66,14 @@ export function loadConfig(): Config {
     throw new Error("AGENT_AUTO_COMPACT_TOKEN_LIMIT must be below AGENT_MODEL_CONTEXT_WINDOW");
   }
   const dataRoot = resolve(env("AGENT_DATA_ROOT", "./data"));
+  const traceEnabled = env("AGENT_EVOLUTION_TRACES", "0");
+  if (traceEnabled !== "0" && traceEnabled !== "1") throw new Error("AGENT_EVOLUTION_TRACES must be 0 or 1");
+  const storageRoot = env("STORAGE_ROOT");
+  if (traceEnabled === "1" && !isAbsolute(storageRoot)) throw new Error("Evolution traces require an absolute STORAGE_ROOT");
   return {
     listenAddress: env("AGENT_LISTEN_ADDRESS", "127.0.0.1:29284"),
     dataRoot,
+    ...(traceEnabled === "1" ? { evolutionTraceRoot: join(storageRoot, "agent-evolution-traces") } : {}),
     productFlowBaseURL,
     internalToken,
     requestTimeoutMS: durationMS("PRODUCTFLOW_REQUEST_TIMEOUT", 30_000),

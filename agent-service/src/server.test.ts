@@ -47,6 +47,7 @@ describe("ProductFlow Pi HTTP contract", () => {
       expect(await health.json()).toMatchObject({
         runtime: "productflow-pi",
         harness_hash: DEPLOYED_HARNESS.hash,
+        evolution_traces: { enabled: false, pending_records: 0, dropped_records: 0, io_errors: 0, evicted_traces: 0 },
         pi_sdk_version: "0.83.0",
         os_tools: [],
         background_durable_tasks: false,

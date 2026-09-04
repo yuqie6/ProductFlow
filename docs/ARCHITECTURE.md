@@ -111,6 +111,8 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 领域壳是 `agent-service/harness/` 中的版本化工件：`src/harness.ts` 加载四段行为指令、固定权限摘要和空的 overlay/runtime-control 占位，按现有 canonical JSON 计算 SHA-256，并在模块启动时冻结为 `DEPLOYED_HARNESS`；`pi-runtime.ts` 把该对象的指令交给 Pi。权限与确认仍在打包的 `go/prompts/agent/runtime-policy.md`，摘要不匹配或未声明字段使加载失败。每个新模型请求的 `before_model_request` checkpoint 与 `agent_model_invocations.harness_hash` 在 Go 同一事务内登记身份；新请求缺失或使用非规范小写 SHA-256 会被拒绝，历史行保留 NULL，重放不能覆盖身份。现有 `/healthz` 和 Node L1/L3/L5 eval `run.json` 引用同一冻结 hash；Go L2 从实际启动的 Pi 健康端点取值。基础 Skill hash 与 provider/model 保持独立归因。候选进化、谱系和热切尚未实现。工件与装配测试见 `harness/harness.test.ts`、`src/pi-runtime-harness.test.ts`；归因回归见 `src/pi-runtime.e2e.test.ts`、`evals/harness-attribution.test.ts`、`go/internal/agent/harness_attribution_test.go`。部署须迁移新增列，并协调更新 Go 与 Node，旧 Node 的无 hash 请求不受兼容。
 
+演化诊断由 `agent-service/src/evolution-traces.ts` 提供，`AGENT_EVOLUTION_TRACES=1` 显式开启，默认关闭。已认领的执行 attempt 从现有 Pi 事件观察模型/工具边界，记录冻结壳/Skill 身份、模型标识、白名单操作结构、usage 和确认终态，不记录用户/模型原文、工具正文、媒体或推理。独立异步队列不进入 lease/journal promise chain；单条 4 KiB、单 attempt 64 KiB、待写 128 条，目录最多 256 个自有文件并预留总计不超过 16 MiB，满额淘汰非活动旧记录或拒绝新轨迹。输出位于绝对 `STORAGE_ROOT/agent-evolution-traces/`，Compose 使用独立 trace 卷；每目录只支持一个 Agent writer。`/healthz.evolution_traces` 暴露丢弃、I/O 错误和淘汰计数。缺尾记录或 `complete=false` 不得作为完整证据；`complete` 不等于业务成功。没有自动 Miner/playbook 消费或线上学习结论。配置、限额、脱敏和执行结果不受影响的回归见 `src/config.test.ts`、`src/evolution-traces.test.ts`、`src/pi-runtime.e2e.test.ts`。
+
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
 商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 不存在；对应 HTTP 返回 404。`workflow_drafts` 表已删除。Agent intake 落库会按模板展开 birth 图；已经展开的图改拓扑只走 Graph Command，不再交第二套完整 DAG。

@@ -156,8 +156,11 @@ services:
       AGENT_MODEL_CONTEXT_WINDOW: ${AGENT_MODEL_CONTEXT_WINDOW:-128000}
       AGENT_AUTO_COMPACT_TOKEN_LIMIT: ${AGENT_AUTO_COMPACT_TOKEN_LIMIT:-96000}
       AGENT_MAX_CONCURRENT_TURNS: ${AGENT_MAX_CONCURRENT_TURNS:-3}
+      AGENT_EVOLUTION_TRACES: ${AGENT_EVOLUTION_TRACES:-0}
+      STORAGE_ROOT: /app/storage
     volumes:
       - productflow-agent-data:/data
+      - productflow-agent-traces:/app/storage/agent-evolution-traces
     depends_on:
       productflow-go-api:
         condition: service_healthy
@@ -186,3 +189,4 @@ volumes:
   productflow-redis-data:
   productflow-storage:
   productflow-agent-data:
+  productflow-agent-traces:

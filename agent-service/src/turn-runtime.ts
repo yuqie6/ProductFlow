@@ -53,6 +53,7 @@ import { isJournalFlushBarrier, JournalEventBatcher } from "./journal-publisher.
 import type { PiRuntimeManager } from "./runtime-manager.js";
 import { PiSessionAdapter } from "./pi-runtime.js";
 import { DEPLOYED_HARNESS } from "./harness.js";
+import type { EvolutionTrace } from "./evolution-traces.js";
 import {
   artifactFromPendingApproval,
   eventReceiptMatches,
@@ -123,6 +124,7 @@ export class TurnRuntime implements ToolRuntime {
   private modelRequestStartedAt?: number;
   private readonly completedModelRequestIDs = new Set<string>();
   private currentPageType: string | null = null;
+  private evolutionTrace?: EvolutionTrace;
   constructor(
     private readonly manager: PiRuntimeManager,
     readonly scope: Scope,
@@ -463,6 +465,11 @@ export class TurnRuntime implements ToolRuntime {
       this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
       this.executionPhase = this.executionLease.phase;
       executionClaimed = true;
+      this.evolutionTrace = this.manager.evolutionTraces.start({
+        runID: this.scope.run_id, turnID, attempt: this.executionLease.attempt,
+        fencingToken: this.executionLease.fencing_token,
+        harnessHash: DEPLOYED_HARNESS.hash, skillHash: this.skills.hash,
+      }, this.skills.names);
       await this.manager.store.saveDurableHandoff(this.scope.run_id, turnID, this.executionLease);
       this.startExecutionHeartbeat();
       this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
@@ -599,7 +606,12 @@ export class TurnRuntime implements ToolRuntime {
         });
       }
     } finally {
-      await this.cleanupAfterTurn();
+      try {
+        await this.cleanupAfterTurn();
+      } finally {
+        this.evolutionTrace?.finish();
+        this.evolutionTrace = undefined;
+      }
     }
   }
 
@@ -1110,6 +1122,7 @@ export class TurnRuntime implements ToolRuntime {
   ): Promise<TurnState> {
     const state = await this.manager.store.terminal(this.scope.run_id, turnID, status, details);
     await this.publishUnpublishedEvents(turnID);
+    this.evolutionTrace?.confirmTerminal(state.status);
     return state;
   }
 
@@ -1241,6 +1254,7 @@ export class TurnRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "tool_execution_start") {
+        this.evolutionTrace?.toolStart(event.toolName, event.toolCallId, event.args);
         this.flushStreamChunks();
         void this.updateExecutionPhase("tool").catch(() => undefined);
         this.toolCount += 1;
@@ -1265,6 +1279,7 @@ export class TurnRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "tool_execution_end") {
+        this.evolutionTrace?.toolEnd(event.toolName, event.toolCallId, event.isError);
         this.flushStreamChunks();
         void this.updateExecutionPhase("model").catch(() => undefined);
       }
@@ -1328,6 +1343,7 @@ export class TurnRuntime implements ToolRuntime {
     this.modelRequestSequence = sequence;
     this.currentModelRequestID = requestID;
     this.modelRequestStartedAt = Date.now();
+    this.evolutionTrace?.modelStart(requestID, this.pi.model?.provider, this.pi.model?.id);
     return requestID;
   }
 
@@ -1443,6 +1459,7 @@ export class TurnRuntime implements ToolRuntime {
       ...(durationMS !== undefined ? { duration_ms: durationMS } : {}),
       ...(usage ? { usage, usage_source: "provider" } : {}),
     };
+    this.evolutionTrace?.modelEnd(modelRequestID, reason, durationMS, usage);
     this.flushStreamChunks();
     this.enqueue(() => this.appendJournalEvent(turnID, "assistant/message", {
       ...finish,
