@@ -53,9 +53,9 @@ func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (gra
 	}}, nil
 }
 
-// Mutate 把 ChangeSet 应用到已有 active schema-v3 图；只 flush 不 commit。
-// 非 active 或非 schema-v3 返回 Conflict；缺图返回 NotFound；Apply 失败原样返回。
-func Mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
+// mutate 把 ChangeSet 应用到已有 active schema-v3 图；只 flush 不 commit。
+// 跨包写入走 WriteTx。非 active 或非 schema-v3 返回 Conflict；缺图返回 NotFound。
+func mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err

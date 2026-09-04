@@ -13,9 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// StageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
-// base_graph_revision 非 0 或商品已有 active 图返回 Conflict；Apply / 绑定校验失败原样返回。
-func StageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
+// stageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
+// 跨包写入走 WriteTx。base_graph_revision 非 0 或商品已有 active 图返回 Conflict。
+func stageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
 	if changeSet.BaseGraphRevision != 0 {
 		return CommandResult{}, apperr.Conflict("新建图的 base_graph_revision 必须为 0")
 	}
@@ -257,7 +257,7 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 	return nil
 }
 
-// insertGraphContents 给新图插入 groups/nodes/edges。只用于 StageNew 空表，已有内容须走 replaceGraphContents。
+// insertGraphContents 给新图插入 groups/nodes/edges。只用于 stageNew 空表，已有内容须走 replaceGraphContents。
 // DocumentOrigin 经 documentOriginPtr 写入；空 config 写成 {}。不改 revision。
 func insertGraphContents(ctx context.Context, tx *gorm.DB, graphID string, applied AppliedGraph) error {
 	now := time.Now().UTC()

@@ -7,7 +7,7 @@
 // 不得反向 import 本包。创建页看图起草走 [SourceNoteGenerator]，不走画布 cook。
 //
 // 副作用：写 products、product_image_assets、fact 版本、intake JSON、用户文件夹；
-// 直连/Agent 出生还会经 graph.StageNew 写 workflow_graphs。媒体先 stage 再 commit，
+// 直连/Agent 出生还会经 graph.WriteTx 写 workflow_graphs。媒体先 stage 再 commit，
 // after 失败必须 Rollback 已 stage 的文件。Idempotency-Key 去重工作区与保真检查。
 //
 // 错误：缺行 NotFound；乐观锁/重复 key 哈希不一致 Conflict；未知字段 extra=forbid 为 Validation。
@@ -30,7 +30,7 @@ import (
 )
 
 // Service 拥有商品出生、facts、封面与商品图库命令，给 HTTP 与 Agent 工具调用。
-// 必须注入 DB 与 Media；Canvas/SourceNote 直连测试可空。改图经 graph.StageNew，本结构不写 workflow_* 表。
+// 必须注入 DB 与 Media；Canvas/SourceNote 直连测试可空。改图经 graph.WriteTx，本结构不写 workflow_* 表。
 // 媒体先 stage 再 commit，after 失败必须 Rollback。不要在 handler 里绕过本入口直接插 products。
 type Service struct {
 	DB    *gorm.DB    // 命令事务入口
@@ -88,7 +88,7 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 }
 
 // CreateDirect 是 v3 直连创建：同一事务写商品、参考图与 schema-v3 模板图，不创建 Agent 对话。
-// 名称、资料、图种或参考图非法返回 Validation；已有 active 图时 StageNew 返回 Conflict。
+// 名称、资料、图种或参考图非法返回 Validation；已有 active 图时 WriteTx 返回 Conflict。
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
 	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	var result DirectCreateResponse
@@ -108,7 +108,11 @@ func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []
 		if err != nil {
 			return err
 		}
-		cmd, err := graph.StageNew(ctx, tx, creation.product.ID, creation.product.Name, changeSet)
+		cmd, err := graph.WriteTx(ctx, tx, graph.Command{
+			ProductID: creation.product.ID,
+			Title:     creation.product.Name,
+			ChangeSet: changeSet,
+		})
 		if err != nil {
 			return err
 		}
@@ -182,7 +186,7 @@ func (s Service) createCanonical(ctx context.Context, in CreateInput, setCover, 
 	return created, err
 }
 
-// createWithGraph 在同一事务里写 products、参考图身份，并调用 after（直连/Agent 在此 StageNew 图）。
+// createWithGraph 在同一事务里写 products、参考图身份，并调用 after（直连/Agent 在此 WriteTx 图）。
 // 媒体先 stage 再 commit；after 或写库失败必须 Rollback compensation，否则磁盘会留无主文件。
 // 不 commit——调用方 tx.WithGorm 负责。不要在 after 里另开事务。
 func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, writeFacts bool, after func(*gorm.DB, canonicalCreation) error) error {

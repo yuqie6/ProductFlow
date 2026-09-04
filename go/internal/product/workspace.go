@@ -37,7 +37,11 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 		if err != nil {
 			return canonicalCreation{}, Conversation{}, err
 		}
-		if _, err := graph.StageNew(ctx, pgxTx, creation.product.ID, creation.product.Name, changeSet); err != nil {
+		if _, err := graph.WriteTx(ctx, pgxTx, graph.Command{
+			ProductID: creation.product.ID,
+			Title:     creation.product.Name,
+			ChangeSet: changeSet,
+		}); err != nil {
 			return canonicalCreation{}, Conversation{}, err
 		}
 		conversation, err := s.openCanvas(ctx, pgxTx, creation.product, key, requestHash, agentSessionID)
@@ -108,7 +112,11 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 			compensation.Rollback()
 			return canonicalCreation{}, Conversation{}, err
 		}
-		if _, err := graph.StageNew(ctx, pgxTx, creation.product.ID, creation.product.Name, changeSet); err != nil {
+		if _, err := graph.WriteTx(ctx, pgxTx, graph.Command{
+			ProductID: creation.product.ID,
+			Title:     creation.product.Name,
+			ChangeSet: changeSet,
+		}); err != nil {
 			compensation.Rollback()
 			return canonicalCreation{}, Conversation{}, err
 		}
@@ -287,17 +295,14 @@ func (s Service) appendUploads(ctx context.Context, pgxTx *gorm.DB, compensation
 
 // expandBirthGraphFromIntake 只在名称-only（仅一个 product_source）图上按模板展开套图。
 // 已有其它节点则不改图并返回 false，避免二次 finalize 覆盖用户编辑。
-// 副作用：graph.Mutate 写 workflow_graphs。失败由调用方 Rollback。
+// 副作用：graph.ExpandBirth 写 workflow_graphs。失败由调用方 Rollback。
 func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Product, selection Selection, assetIDs []string) (bool, error) {
-	if len(selection.ImageTypes) == 0 || len(assetIDs) == 0 {
-		return false, nil
-	}
 	sourceID := product.ID
 	deliverySpec, err := selectionDeliverySpec(selection)
 	if err != nil {
 		return false, err
 	}
-	in := graph.DirectCreateInput{
+	expanded, _, err := graph.ExpandBirth(ctx, pgxTx, product.ID, product.Name, graph.DirectCreateInput{
 		ImageTypes:        selectionToImageTypes(selection),
 		ReferenceAssetIDs: assetIDs,
 		ProductTitle:      product.Name,
@@ -305,52 +310,16 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 		FactSetVersionID:  product.FactSetVersionID,
 		SourceNote:        product.SourceNote,
 		DeliverySpec:      deliverySpec,
-	}
-	identity, err := graph.LoadActiveGraphForUpdate(ctx, pgxTx, product.ID)
-	if err != nil {
-		return false, err
-	}
-	if identity == nil {
-		changeSet, err := graph.BuildDirectCreateTemplate(in)
-		if err != nil {
-			return false, err
-		}
-		_, err = graph.StageNew(ctx, pgxTx, product.ID, product.Name, changeSet)
-		return err == nil, err
-	}
-	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, *identity)
-	if err != nil {
-		return false, err
-	}
-	var productSources []graph.AppliedNode
-	for _, node := range applied.Nodes {
-		if node.NodeType == graph.NodeProductSource {
-			productSources = append(productSources, node)
-			continue
-		}
-		return false, nil
-	}
-	if len(productSources) != 1 {
-		return false, nil
-	}
-	changeSet, err := graph.TemplateForExistingProductSource(productSources[0].ID, applied.Revision, in)
-	if err != nil {
-		return false, err
-	}
-	_, err = graph.Mutate(ctx, pgxTx, product.ID, identity.ID, changeSet, graph.HistoryEdit)
-	return err == nil, err
+	})
+	return expanded, err
 }
 
 func liveGraphCounts(ctx context.Context, pgxTx *gorm.DB, productID string) (revision, nodeCount, groupCount int, err error) {
-	identity, err := graph.TryLoadActiveGraph(ctx, pgxTx, productID)
-	if err != nil || identity == nil {
+	live, err := graph.TryLive(ctx, pgxTx, productID)
+	if err != nil || live == nil {
 		return 0, 0, 0, err
 	}
-	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, *identity)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	return applied.Revision, len(applied.Nodes), len(applied.Groups), nil
+	return live.Applied.Revision, len(live.Applied.Nodes), len(live.Applied.Groups), nil
 }
 
 // upsertWorkspace 按 Idempotency-Key 复用已有对话。

@@ -477,7 +477,7 @@ func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID str
 
 // persistContentArtifact 写入文稿 artifact；seed 且非显式 document_action 时才 auto-adopt 进 live config。
 // promote=false 走 finishUnpromoted，不改节点投影。adopt 前先锁 graph，避免与并行内容节点死锁。
-// 副作用：workflow_graph_artifacts、node_runs succeeded、可能 Mutate 节点 config、run.graph_revision。
+// 副作用：workflow_graph_artifacts、node_runs succeeded、可能 WriteTx 节点 config、run.graph_revision。
 func (e Executor) persistContentArtifact(
 	ctx context.Context,
 	run graphRunRow,
@@ -1071,7 +1071,7 @@ func adoptSummary(artifactType string) string {
 	}
 }
 
-// adoptGeneratedDocument 用 ActorSystem Mutate 把生成文稿写回 live 节点 config。
+// adoptGeneratedDocument 用 ActorSystem WriteTx 把生成文稿写回 live 节点 config。
 // snapshot 对不上当前 revision 则不 adopt（返回 false），避免覆盖用户后来的编辑。
 // 写 workflow_graphs 节点 config + 历史。返回新 revision 与是否采用。
 func adoptGeneratedDocument(
@@ -1105,16 +1105,21 @@ func adoptGeneratedDocument(
 		return row.Revision, false, nil
 	}
 	merged := writeback(originConfigForInvert(node))
-	result, err := Mutate(ctx, pgxTx, productID, graphID, ChangeSet{
-		BaseGraphRevision: row.Revision,
-		Summary:           summary,
-		ActorType:         ActorSystem,
-		Operations: []Operation{UpdateNodeConfigOp{
-			NodeRef:        nodeID,
-			Config:         merged,
-			DocumentOrigin: strPtr(OriginGenerated),
-		}},
-	}, HistoryEdit)
+	result, err := WriteTx(ctx, pgxTx, Command{
+		ProductID: productID,
+		GraphID:   &graphID,
+		ChangeSet: ChangeSet{
+			BaseGraphRevision: row.Revision,
+			Summary:           summary,
+			ActorType:         ActorSystem,
+			Operations: []Operation{UpdateNodeConfigOp{
+				NodeRef:        nodeID,
+				Config:         merged,
+				DocumentOrigin: strPtr(OriginGenerated),
+			}},
+		},
+		Kind: HistoryEdit,
+	})
 	if err == nil {
 		return result.Revision, true, nil
 	}

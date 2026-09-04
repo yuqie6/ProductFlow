@@ -3,7 +3,8 @@
 // 职责：在线图只存在 workflow_graphs，schema 只能是 v3。Node Catalog 拥有连线规则与可编辑 config key；
 // ChangeSet 的 config 不能引入未注册或退役 plan key。空画布合法，可编辑、撤销、配方预览。
 //
-// 调用时机：Web/Agent HTTP 改图走 [Service]；asynq worker 执行走 [Executor.ExecuteRun]。
+// 调用时机：Web/Agent HTTP 改图走 [Service]；已有事务的跨包写入走 [WriteTx]；
+// asynq worker 执行走 [Executor.ExecuteRun]。
 // 提交运行只写 PENDING dispatch，不在 HTTP 请求里打 broker。
 //
 // 副作用：改图写 workflow_graphs / 节点 / 边 / 分组 / 历史；跑图写 workflow_graph_runs、
@@ -315,12 +316,12 @@ type ChangeSet struct {
 	Operations        []Operation // 封闭 op 表；空列表是 [] 不是 nil
 }
 
-// CommandResult 是 StageNew / Mutate 写入后的图身份与已应用快照。
+// CommandResult 是 WriteTx 写入后的图身份与已应用快照。
 type CommandResult struct {
 	GraphID          string
 	ProductID        string
 	Title            string
-	Active           bool         // StageNew / Mutate 写入后的 active 位
+	Active           bool         // WriteTx 写入后的 active 位
 	SchemaVersion    int          // 在线图固定为 3
 	Revision         int          // 应用后的 live revision
 	Applied          AppliedGraph // 写入后的内存快照，不是 HTTP Projection

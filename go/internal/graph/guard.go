@@ -47,7 +47,7 @@ type ProductGuard interface {
 	BoundAssetMetas(ctx context.Context, tx *gorm.DB, productID string, assetIDs []string) (map[string]BoundAssetMetadata, error)
 }
 
-// WithProductGuard 把守卫挂到 ctx 上，供 StageNew / Mutate / CreateEmpty / Project 使用。
+// WithProductGuard 把守卫挂到 ctx 上，供 WriteTx / CreateEmpty / Project 使用。
 func WithProductGuard(ctx context.Context, g ProductGuard) context.Context {
 	if g == nil {
 		return ctx

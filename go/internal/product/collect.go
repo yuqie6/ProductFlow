@@ -57,7 +57,7 @@ func AssetIDsExist(ctx context.Context, tx *gorm.DB, productID string, ids []str
 	return nil
 }
 
-// GraphGuard 供 graph.Service / StageNew 注入，SQL 留在本包。
+// GraphGuard 供 graph.Service / WriteTx 注入，SQL 留在本包。
 type GraphGuard struct{}
 
 // Lock 实现 graph.ProductGuard：锁商品行。SQL 留在本包，避免 graph import product 循环。

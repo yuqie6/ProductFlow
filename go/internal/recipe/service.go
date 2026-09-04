@@ -332,11 +332,12 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 		if err != nil {
 			return err
 		}
-		if _, err := graph.LoadActiveGraphForUpdate(ctx, pgxTx, in.ProductID); err != nil {
+		live, err := graph.TryLiveForUpdate(ctx, pgxTx, in.ProductID)
+		if err != nil {
 			return err
 		}
 		expectedRev := in.ExpectedGraphRevision
-		plan, err := s.planFromRecipe(ctx, pgxTx, target, rec, in.ExpectedRecipeVersion, &expectedRev)
+		plan, err := s.planFromRecipe(target, rec, in.ExpectedRecipeVersion, live, &expectedRev)
 		if err != nil {
 			return err
 		}
@@ -435,17 +436,20 @@ func (s Service) planForProduct(
 	if err != nil {
 		return applyPlan{}, err
 	}
-	return s.planFromRecipe(ctx, pgxTx, target, rec, expectedVersion, expectedGraphRevision)
+	live, err := graph.TryLive(ctx, pgxTx, target.ID)
+	if err != nil {
+		return applyPlan{}, err
+	}
+	return s.planFromRecipe(target, rec, expectedVersion, live, expectedGraphRevision)
 }
 
-// planFromRecipe 从已加载的配方行算出 applyPlan。已归档或 current 版本对不上 expectedVersion 返回 409。
-// 目标没有 live 图时 existing 是空图，后面会走 create 而不是 merge。
+// planFromRecipe 从已加载的配方行与 live 快照算出 applyPlan。预览纯计算；确认写入走 applyPlanCommand。
+// 已归档或 current 版本对不上 expectedVersion 返回 409。目标没有 live 图时 existing 是空图，后面走 create。
 func (s Service) planFromRecipe(
-	ctx context.Context,
-	pgxTx *gorm.DB,
 	target productTarget,
 	rec recipeRecord,
 	expectedVersion int,
+	live *graph.Live,
 	expectedGraphRevision *int,
 ) (applyPlan, error) {
 	if rec.ArchivedAt != nil {
@@ -462,20 +466,16 @@ func (s Service) planFromRecipe(
 	if err != nil {
 		return applyPlan{}, err
 	}
-	live, err := graph.TryLoadActiveGraph(ctx, pgxTx, target.ID)
-	if err != nil {
-		return applyPlan{}, err
-	}
+	var identity *graph.Identity
 	existing := graph.EmptyGraph
 	if live != nil {
-		existing, err = graph.LoadAppliedGraph(ctx, pgxTx, *live)
-		if err != nil {
-			return applyPlan{}, err
-		}
+		id := live.Identity
+		identity = &id
+		existing = live.Applied
 	}
 	return planPayload(
 		target,
-		live,
+		identity,
 		existing,
 		rec.ID,
 		rec.Kind,
@@ -488,36 +488,30 @@ func (s Service) planFromRecipe(
 	)
 }
 
-// applyPlanCommand 把计划交给 Graph Command：ModeCreate 走 StageNew，否则 Mutate。
-// live 图没了或 GraphID 对不上返回 409，禁止对着过期预览写入。
+// applyPlanCommand 把已确认的 change intent 交给 Graph Command。
+// create 走新建；merge 要求当前 active 图 id 仍是预览时的 GraphID，否则 409 重新预览。
 func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, plan applyPlan) (graph.CommandResult, error) {
+	cmd := graph.Command{
+		ProductID: productID,
+		ChangeSet: plan.ChangeSet,
+		Kind:      graph.HistoryEdit,
+	}
 	if plan.Mode == ModeCreate {
 		title := limitRunes(plan.ChangeSet.Summary, 255)
 		if title == "" {
 			title = graph.DefaultGraphTitle
 		}
-		return graph.StageNew(ctx, pgxTx, productID, title, plan.ChangeSet)
+		cmd.Title = title
+		return graph.WriteTx(ctx, pgxTx, cmd)
 	}
-	live, err := graph.TryLoadActiveGraph(ctx, pgxTx, productID)
-	if err != nil {
-		return graph.CommandResult{}, err
-	}
-	if live == nil {
-		return graph.CommandResult{}, apperr.Conflict("商品没有可写入的 schema-v3 工作流")
-	}
-	if plan.GraphID == nil || *plan.GraphID != live.ID {
-		return graph.CommandResult{}, apperr.Conflict("工作流已变化，请重新预览后重试")
-	}
-	return graph.Mutate(ctx, pgxTx, productID, live.ID, plan.ChangeSet, graph.HistoryEdit)
+	cmd.GraphID = plan.GraphID
+	cmd.RequireActive = true
+	return graph.WriteTx(ctx, pgxTx, cmd)
 }
 
 // applicationResult 在同一事务里投影刚写入的图。Created 表示这次是新确认还是幂等回放。
 func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec applicationRecord, created bool) (ApplicationResult, error) {
-	row, err := graph.LoadGraph(ctx, pgxTx, rec.ProductID, rec.GraphID)
-	if err != nil {
-		return ApplicationResult{}, err
-	}
-	proj, err := graph.Project(ctx, pgxTx, row)
+	proj, err := graph.ProjectGraph(ctx, pgxTx, rec.ProductID, rec.GraphID)
 	if err != nil {
 		return ApplicationResult{}, err
 	}
@@ -539,21 +533,11 @@ func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec appl
 
 // extractLive FOR UPDATE 锁 live 图再提取。非 active 或 revision 对不上返回 409，避免从过期画布存配方。
 func extractLive(ctx context.Context, pgxTx *gorm.DB, in CreateInput) (Payload, error) {
-	row, err := graph.LoadGraphForUpdate(ctx, pgxTx, in.ProductID, in.WorkflowID)
+	live, err := graph.LoadLiveForUpdate(ctx, pgxTx, in.ProductID, in.WorkflowID, in.ExpectedGraphRevision)
 	if err != nil {
 		return Payload{}, err
 	}
-	if !row.Active {
-		return Payload{}, apperr.Conflict("只能从 active schema-v3 工作流保存配方")
-	}
-	if row.Revision != in.ExpectedGraphRevision {
-		return Payload{}, apperr.Conflict("工作流已变化，请刷新后重试")
-	}
-	applied, err := graph.LoadAppliedGraph(ctx, pgxTx, row)
-	if err != nil {
-		return Payload{}, err
-	}
-	return extractPayload(applied, ExtractInput{
+	return extractPayload(live.Applied, ExtractInput{
 		SourceType: in.SourceType,
 		GroupID:    in.GroupID,
 		NodeIDs:    in.NodeIDs,

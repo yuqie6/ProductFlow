@@ -97,18 +97,22 @@ func (cmdTestProducts) BoundAssetMetas(context.Context, *gorm.DB, string, []stri
 	return map[string]BoundAssetMetadata{}, nil
 }
 
-func TestStageNewRequiresZeroBaseRevision(t *testing.T) {
-	_, err := StageNew(context.Background(), nil, "prod", "标题", ChangeSet{
-		BaseGraphRevision: 1,
-		Summary:           "非法出生",
-		Operations: []Operation{
-			CreateNodeOp{ClientRef: "product-source", NodeType: NodeProductSource, Title: "商品"},
+func TestWriteTxRequiresZeroBaseRevision(t *testing.T) {
+	_, err := WriteTx(context.Background(), nil, Command{
+		ProductID: "prod",
+		Title:     "标题",
+		ChangeSet: ChangeSet{
+			BaseGraphRevision: 1,
+			Summary:           "非法出生",
+			Operations: []Operation{
+				CreateNodeOp{ClientRef: "product-source", NodeType: NodeProductSource, Title: "商品"},
+			},
 		},
 	})
 	assertAppErr(t, err, 409, "新建图的 base_graph_revision 必须为 0")
 }
 
-func TestStageNewProductSourceTemplate(t *testing.T) {
+func TestWriteTxProductSourceTemplate(t *testing.T) {
 	_, gdb := testdb.Open(t)
 	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
 	tx := gdb.WithContext(ctx).Begin()
@@ -130,7 +134,11 @@ func TestStageNewProductSourceTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := StageNew(ctx, tx, productID, "名称出生商品", cs)
+	result, err := WriteTx(ctx, tx, Command{
+		ProductID: productID,
+		Title:     "名称出生商品",
+		ChangeSet: cs,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +200,48 @@ func TestStageNewProductSourceTemplate(t *testing.T) {
 		t.Fatalf("inverse %s", inverseRaw)
 	}
 
-	_, err = StageNew(ctx, tx, productID, "第二次", cs)
+	_, err = WriteTx(ctx, tx, Command{
+		ProductID: productID,
+		Title:     "第二次",
+		ChangeSet: cs,
+	})
 	assertAppErr(t, err, 409, "商品已有 active schema-v3 工作流")
+}
+
+func beginCommandTx(t *testing.T) (context.Context, *gorm.DB) {
+	t.Helper()
+	_, gdb := testdb.Open(t)
+	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	tx := gdb.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		t.Fatal(tx.Error)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return ctx, tx
+}
+
+func insertCommandProduct(t *testing.T, ctx context.Context, tx *gorm.DB, name string) string {
+	t.Helper()
+	productID := clockid.New()
+	_, err := pfdb.Exec(ctx, tx, `
+		INSERT INTO products (id, name, created_at, updated_at)
+		VALUES ($1, $2, NOW(), NOW())
+	`, productID, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return productID
+}
+
+func writeProductSource(t *testing.T, ctx context.Context, tx *gorm.DB, productID, title string) CommandResult {
+	t.Helper()
+	cs, err := BuildProductSourceCreateGraph(title, productID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := WriteTx(ctx, tx, Command{ProductID: productID, Title: title, ChangeSet: cs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

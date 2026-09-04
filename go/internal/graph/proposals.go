@@ -95,7 +95,7 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 	}, nil
 }
 
-// ConfirmProposal 把 PENDING 提案 Mutate 进 live 图。非 pending 返回 NotPending。
+// ConfirmProposal 把 PENDING 提案写入 live 图。非 pending 返回 NotPending。
 func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) (graphRow, error) {
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
@@ -117,7 +117,12 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	}
 	parsed.BaseGraphRevision = row.Revision
 	parsed.ActorType = ActorAgent
-	result, err := Mutate(ctx, tx, productID, row.ID, parsed, HistoryEdit)
+	result, err := WriteTx(ctx, tx, Command{
+		ProductID: productID,
+		GraphID:   &graphID,
+		ChangeSet: parsed,
+		Kind:      HistoryEdit,
+	})
 	if err != nil {
 		return graphRow{}, err
 	}

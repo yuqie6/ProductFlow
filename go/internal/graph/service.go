@@ -3,7 +3,9 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +16,7 @@ import (
 )
 
 // Service 是 schema-v3 图的应用入口：空画布、ChangeSet、提案、文稿候选与 GraphRun。
-// 改图走 Mutate（只 flush）；跑图走 SubmitRun 写 PENDING dispatch，不在请求里打 broker。
+// 改图走 WriteTx（只 flush）；跑图走 SubmitRun 写 PENDING dispatch，不在请求里打 broker。
 // 必须注入 ProductGuard。本包不得 import product。
 type Service struct {
 	DB   *gorm.DB      // 命令事务入口；改图与提交运行都走 tx.WithGorm
@@ -84,7 +86,7 @@ func (s Service) ApplyChangeSet(ctx context.Context, productID, graphID string, 
 }
 
 // ApplyAgentChangeSet 立即写入一条 Agent 可逆命令；actor 固定为 agent。多步改图须走提案。
-// operations 不是恰好一条返回 Validation；Mutate 失败原样返回。
+// operations 不是恰好一条返回 Validation；WriteTx 失败原样返回。
 func (s Service) ApplyAgentChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet) (Projection, error) {
 	if len(changeSet.Operations) != 1 {
 		return Projection{}, apperr.Validation("立即写入只接受一条可逆改图命令；多步改图请提交提案")
@@ -97,15 +99,16 @@ func (s Service) applyChangeSet(ctx context.Context, productID, graphID string, 
 	changeSet.ActorType = actor
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		result, err := Mutate(ctx, pgxTx, productID, graphID, changeSet, HistoryEdit)
+		result, err := WriteTx(ctx, pgxTx, Command{
+			ProductID: productID,
+			GraphID:   &graphID,
+			ChangeSet: changeSet,
+			Kind:      HistoryEdit,
+		})
 		if err != nil {
 			return err
 		}
-		row, err := loadGraph(ctx, pgxTx, productID, result.GraphID)
-		if err != nil {
-			return err
-		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = ProjectCommand(ctx, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -141,14 +144,15 @@ func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection,
 	ctx = s.guardCtx(ctx)
 	var out *Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := TryLoadActiveGraph(ctx, pgxTx, productID)
+		row, err := loadActiveGraph(ctx, pgxTx, productID)
 		if err != nil {
+			var e apperr.Error
+			if errors.As(err, &e) && e.Status == http.StatusNotFound {
+				return nil
+			}
 			return err
 		}
-		if row == nil {
-			return nil
-		}
-		proj, err := Project(ctx, pgxTx, *row)
+		proj, err := Project(ctx, pgxTx, row.Identity)
 		if err != nil {
 			return err
 		}
@@ -167,11 +171,7 @@ func (s Service) Undo(ctx context.Context, productID, graphID string) (Projectio
 		if err != nil {
 			return err
 		}
-		row, err := loadGraph(ctx, pgxTx, productID, result.GraphID)
-		if err != nil {
-			return err
-		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = ProjectCommand(ctx, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -186,11 +186,7 @@ func (s Service) Redo(ctx context.Context, productID, graphID string) (Projectio
 		if err != nil {
 			return err
 		}
-		row, err := loadGraph(ctx, pgxTx, productID, result.GraphID)
-		if err != nil {
-			return err
-		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = ProjectCommand(ctx, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -303,14 +299,19 @@ func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID,
 		} else if DocumentOrigin(node) == OriginSeed {
 			origin = OriginGenerated
 		}
-		result, err := Mutate(ctx, pgxTx, productID, graphID, ChangeSet{
-			BaseGraphRevision: row.Revision,
-			Summary:           "采用 AI 文稿建议",
-			ActorType:         ActorUser,
-			Operations: []Operation{UpdateNodeConfigOp{
-				NodeRef: nodeID, Config: config, DocumentOrigin: strPtr(origin),
-			}},
-		}, HistoryEdit)
+		result, err := WriteTx(ctx, pgxTx, Command{
+			ProductID: productID,
+			GraphID:   &graphID,
+			ChangeSet: ChangeSet{
+				BaseGraphRevision: row.Revision,
+				Summary:           "采用 AI 文稿建议",
+				ActorType:         ActorUser,
+				Operations: []Operation{UpdateNodeConfigOp{
+					NodeRef: nodeID, Config: config, DocumentOrigin: strPtr(origin),
+				}},
+			},
+			Kind: HistoryEdit,
+		})
 		if err != nil {
 			return err
 		}
@@ -319,11 +320,7 @@ func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID,
 			Update("pending_candidate_artifact_id", nil).Error; err != nil {
 			return err
 		}
-		updated, err := loadGraph(ctx, pgxTx, productID, result.GraphID)
-		if err != nil {
-			return err
-		}
-		out, err = Project(ctx, pgxTx, updated.Identity)
+		out, err = ProjectCommand(ctx, pgxTx, result)
 		return err
 	})
 	return out, err
