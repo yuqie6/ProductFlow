@@ -1,0 +1,12 @@
+---
+description: 当前设计以代码和活文档为准；不把 ADR 当现状，也不为演进中的设计新开 ADR
+alwaysApply: true
+---
+
+# 活设计，不读旧 ADR
+
+当前事实只在：代码、测试、`CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/USER_GUIDE.md`。未做的事只在 `docs/ROADMAP.md`。
+
+`docs/adr/` 是考古档案。改功能前不要去读它，也不要用旧 ADR 否决新设计。文档和代码冲突时改活文档。
+
+不要新写 ADR。设计变了就原地更新 CONTEXT / ARCHITECTURE / PRD / USER_GUIDE。不可逆的产品边界（例如主线不保兼容）写进 `CONTEXT.md`，不要再冻一份决策文。

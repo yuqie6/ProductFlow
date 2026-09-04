@@ -14,11 +14,11 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 浏览器只访问 Web 和业务 API。Agent service 使用独立 bearer token 调用业务 API 的 internal 路由；API 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。默认进程是 `go/cmd/productflow-api`、`productflow-worker`、`productflow-dispatcher`。schema 由 `productflow-migrate` 在启动前应用。退休的 FastAPI 树在 `retired/python`。
 
-本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md`。未过的耐久 gate 见 `ROADMAP.md`。
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`。未过的耐久 gate 见 `ROADMAP.md`。
 
 ## 2. 后端分层
 
-业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`adr/0012-gorm-command-writes.md`](adr/0012-gorm-command-writes.md)。
+业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`go/AGENTS.md`](../go/AGENTS.md)。
 
 机器可读合同在仓库根 `contracts/`：`http-routes.json` 与 `openapi.json` 是 2026-08-29 历史封印快照，默认不重生。Go 对未知 JSON 字段 `DisallowUnknownFields` → 400。HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。
 
@@ -203,7 +203,7 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 
 ## 11. Schema 演进
 
-空库和已有库都跑 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 建/补表和列，随后 ExtraDDL 幂等补上 CHECK、PostgreSQL enum、部分唯一索引和 FK。不使用 AutoMigrate（它会改写已有库的 unique 索引名）。该命令不删除已退休表或列；退休表按 ADR 0010 用显式 SQL 删除。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
+空库和已有库都跑 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 建/补表和列，随后 ExtraDDL 幂等补上 CHECK、PostgreSQL enum、部分唯一索引和 FK。不使用 AutoMigrate（它会改写已有库的 unique 索引名）。该命令不删除已退休表或列；退休表用显式 SQL 删除。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
 
 ## 12. 质量门
 

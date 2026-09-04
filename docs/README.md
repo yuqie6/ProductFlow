@@ -24,32 +24,32 @@
 
 ## 历史叙事
 
-[`history/`](history/) 保存已经发生的开发线，不是当前能力声明，也不替代 ADR。Agent 从自研 harness 到 Pi SDK、直播协议和写入所有权的时间线见 [`history/agent-runtime-timeline.md`](history/agent-runtime-timeline.md)。
+[`history/`](history/) 保存已经发生的开发线，不是当前能力声明。Agent 从自研 harness 到 Pi SDK、直播协议和写入所有权的时间线见 [`history/agent-runtime-timeline.md`](history/agent-runtime-timeline.md)。
 
-## 已接受决策
+## 历史决策档案
 
-[`adr/`](adr/) 正文冻结。被取代的部分在状态行标明后继 ADR，不把旧 ADR 改写成今天的实现。
+[`adr/`](adr/) 不是当前设计。改代码、改合同、做新功能时不要读它，也不要新写 ADR。当前事实只维护 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。下表只索引已有文件名。
 
-| 文档 | 状态 | 何时读 |
-|---|---|---|
-| `adr/0001-agent-draft-authority.md` | Accepted；直播 journal 见 0017 | PostgreSQL 权威、unknown、全局库 Draft |
-| `adr/0002-canonical-product-images.md` | Accepted | 媒体身份、商品图片、封面、lineage |
-| `adr/0003-schema-v2-workflow.md` | Historical；在线图见 0008 | GenerationSpec / DeliverySpec / 一层分组仍有效 |
-| `adr/0004-legacy-v1-cutover.md` | Superseded by 0010 | 原 V1 归档闸门；主线不再执行 |
-| `adr/0005-agent-workbench-ui.md` | Accepted；直播路径见 0017 | 工作台交互与工具步骤投影 |
-| `adr/0006-media-library-authority.md` | Accepted；§7 superseded by 0010 | 全局图库、子图库、来源生命周期 |
-| `adr/0007-pi-agent-runtime-boundary.md` | Accepted；耐久 gate 见 ROADMAP | Pi adapter、Skill、Tool |
-| `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | 为什么是 live graph 与 Graph Command |
-| `adr/0009-agent-canvas-sandbox.md` | Accepted；第 1～4 刀已落地 | 人是画布主控、会话归属、可选 Goal |
-| `adr/0010-mainline-no-compatibility.md` | Accepted | 主仓库不保兼容、不写旧数据迁移 |
-| `adr/0011-go-vertical-slice-rewrite.md` | Accepted；cutover 已完成；封印树见 0016 | 业务后端按垂直切片迁 Go |
-| `adr/0012-gorm-command-writes.md` | Accepted | 命令路径用 GORM 模型写库，不用手写 INSERT |
-| `adr/0013-agent-live-journal-bff.md` | Accepted；全量 journal 见 0017 | Go 是浏览器 BFF；浏览器不直连 agent-service |
-| `adr/0014-canvas-document-cook.md` | Accepted；端口/队列/origin 列见 0015 | 文稿 vs 产物、cook 范围、`delivery_spec` 不进 digest |
-| `adr/0015-canvas-ports-run-queue.md` | Accepted | 按角色分端口、selection scope、运行队列、skipped |
-| `adr/0016-retire-python-backend.md` | Accepted | Python 业务后端离开主线，树在 `retired/python` |
-| `adr/0017-agent-full-journal-ui-protocol.md` | Accepted；取代 0013 的 live-only journal | 全量事件落 PG、Turn/Item 协议、控制流 SSE |
-| `adr/0018-agent-turn-write-ownership.md` | Accepted；收紧 0007 的运行时职责 | Go Turn 写权威、Node Pi loop 适配边界 |
+| 文档 |
+|---|
+| `adr/0001-agent-draft-authority.md` |
+| `adr/0002-canonical-product-images.md` |
+| `adr/0003-schema-v2-workflow.md` |
+| `adr/0004-legacy-v1-cutover.md` |
+| `adr/0005-agent-workbench-ui.md` |
+| `adr/0006-media-library-authority.md` |
+| `adr/0007-pi-agent-runtime-boundary.md` |
+| `adr/0008-free-canvas-agent-graph-authority.md` |
+| `adr/0009-agent-canvas-sandbox.md` |
+| `adr/0010-mainline-no-compatibility.md` |
+| `adr/0011-go-vertical-slice-rewrite.md` |
+| `adr/0012-gorm-command-writes.md` |
+| `adr/0013-agent-live-journal-bff.md` |
+| `adr/0014-canvas-document-cook.md` |
+| `adr/0015-canvas-ports-run-queue.md` |
+| `adr/0016-retire-python-backend.md` |
+| `adr/0017-agent-full-journal-ui-protocol.md` |
+| `adr/0018-agent-turn-write-ownership.md` |
 
 ## 协作元数据
 
@@ -59,9 +59,9 @@
 
 1. 当前事实写在 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。未验证方向写在 ROADMAP，不把已接线能力再抄一遍。
 2. 规格不复述已交付合同。只写相对 PRD 多出来的能力、验收和不做。
-3. ADR 不更新成现状仪表盘。
+3. 不再新增 ADR。已有 `adr/` 当档案；当前设计只维护 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。
 4. 用户操作变化必须同时改 USER_GUIDE 和 HelpPage。
 5. 实现敏感声明指向当前代码所有者或测试。
-6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`adr/0010-mainline-no-compatibility.md`](adr/0010-mainline-no-compatibility.md)。
+6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`../CONTEXT.md`](../CONTEXT.md) Mainline Scope。
 
 `just docs-check` 校验索引、前端路由、code owner 路径和仓库内链接。规格目录若重新出现才检查状态标注。它不检查「同一句话是否写了六遍」。

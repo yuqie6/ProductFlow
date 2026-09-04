@@ -1,6 +1,6 @@
 # Go 业务后端
 
-默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM `CreateTable`/`AddColumn` + ExtraDDL，不使用 AutoMigrate）。竖切与当前形状见 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)；决策见 [`docs/adr/0011-go-vertical-slice-rewrite.md`](../docs/adr/0011-go-vertical-slice-rewrite.md)。退休的 FastAPI 树在 `retired/python`。
+默认运行时是 `just go-api` / `just go-worker` / `just go-dispatcher`。schema 用 `just go-migrate`（GORM `CreateTable`/`AddColumn` + ExtraDDL，不使用 AutoMigrate）。竖切与当前形状见 [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)。退休的 FastAPI 树在 `retired/python`。
 
 ```bash
 just go-test

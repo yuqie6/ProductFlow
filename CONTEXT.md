@@ -68,7 +68,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 
 - 收藏画廊是连续生图结果的收藏视图。它保存一条图片结果引用，并展示该结果所属轮次的提示词、尺寸、模型、供应商和候选信息；它不是独立的提示词参数库。
 - 工作流子图库是全局图库的工作流作用域关联和使用集合。`WorkflowMediaLibraryAsset` 只保存关联；工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份，不复制媒体 bytes。
-- 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是全局入口。旧 `/gallery` 路由和 `ImageGalleryEntry` 不是当前产品；残留重定向、物理表和 bridge 按 ADR 0010 删除，不写回填。
+- 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是全局入口。旧 `/gallery` 路由和 `ImageGalleryEntry` 不是当前产品；残留重定向、物理表和 bridge 删除，不写回填。
 - 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。关闭或从未打开 Agent 对话时，添加节点、连线、检查器、绑定、运行、取消、重试、撤销和配方必须保持可用。Turn 的 running / unknown / failed 不得锁整张画布。Agent 写入与人写入走同一套 Graph Command；人可以立刻继续改刚被 Agent 改过的节点。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
@@ -77,7 +77,7 @@ The current repository is a personal live demo and a rapid-development mainline.
 
 ## Mainline Scope
 
-The online product is schema-v3 graphs, Agent-first create, the workbench, media library, and current provider settings. Retired V1/v2 editors, executors, WorkflowDraft writes, archive/cutover gates, Gallery backfill, and old-JSON readers are not product requirements. Do not add compatibility shims, dual serializers, or migration commands. Delete leftover paths instead of wrapping them. See `docs/adr/0010-mainline-no-compatibility.md`.
+The online product is schema-v3 graphs, Agent-first create, the workbench, media library, and current provider settings. Retired V1/v2 editors, executors, WorkflowDraft writes, archive/cutover gates, Gallery backfill, and old-JSON readers are not product requirements. Do not add compatibility shims, dual serializers, or migration commands. Delete leftover paths instead of wrapping them.
 
 ## Documentation Map
 
@@ -86,7 +86,7 @@ The online product is schema-v3 graphs, Agent-first create, the workbench, media
 - `docs/USER_GUIDE.md`: page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
 - `docs/ARCHITECTURE.md`: current implementation structure and data flow.
 - `docs/ROADMAP.md`: directions that are not yet product fact.
-- `docs/adr/`: frozen decisions. ADR 0011 records the Go vertical-slice rewrite; ADR 0016 records the Python tree leaving mainline (`retired/python`). Current runtime shape is `docs/ARCHITECTURE.md`.
+- `docs/adr/`: historical archive only. Do not read it for current design. Current runtime shape is `docs/ARCHITECTURE.md`.
 - `AGENTS.md`, `go/AGENTS.md`, `web/AGENTS.md`: how to change this repository.
 
 Code, tests, migrations, and runtime behavior remain the final source of current implementation truth. Documentation must be corrected when they disagree.

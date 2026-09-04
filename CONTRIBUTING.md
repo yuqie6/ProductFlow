@@ -10,7 +10,7 @@
 2. 阅读 `docs/README.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解文档职责与当前功能边界。
 3. 如果要改后端，读取 `go/AGENTS.md`。退休的 FastAPI 树在 `retired/python`，不要合并回主线。
 4. 如果要改前端，读取 `web/AGENTS.md`。
-5. 跨层或产品语义变更先核对 `CONTEXT.md` 与 `docs/adr/`；未完成方向写在 `docs/ROADMAP.md`。
+5. 跨层或产品语义变更先核对 `CONTEXT.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`；未完成方向写在 `docs/ROADMAP.md`。不要把 `docs/adr/` 当当前设计。
 6. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
 
 ## 本地开发
@@ -112,4 +112,4 @@ Boundaries:
 
 ## 工程知识位置
 
-`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界，`docs/adr/` 保存需要长期解释的架构决策。任务状态由 GitHub Issues 与实际 Git 状态承担。
+`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界。`docs/adr/` 是历史档案，不是当前设计。任务状态由 GitHub Issues 与实际 Git 状态承担。

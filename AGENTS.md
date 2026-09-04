@@ -2,7 +2,7 @@
 
 ## Working Method
 
-Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/adr/` for accepted architecture decisions, and `docs/ROADMAP.md` for unfinished directions. When documentation conflicts with code or tests, verify the live behavior and correct the documentation.
+Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/PRD.md` / `docs/ARCHITECTURE.md` / `docs/USER_GUIDE.md` for current product and runtime shape, and `docs/ROADMAP.md` for unfinished directions. Do not treat `docs/adr/` as current design, and do not write new ADRs. When documentation conflicts with code or tests, verify the live behavior and correct the living documentation.
 
 Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. For broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
@@ -95,4 +95,4 @@ Triage uses the default five-label vocabulary: `needs-triage`, `needs-info`, `re
 
 ### Domain docs
 
-Domain documentation uses a single-context layout: root `CONTEXT.md` plus `docs/adr/` when they exist. See `docs/agents/domain.md`.
+Domain documentation uses a single-context layout: root `CONTEXT.md`. `docs/adr/` is a historical archive, not live design. See `docs/agents/domain.md`.

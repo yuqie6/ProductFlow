@@ -9,7 +9,7 @@ paths: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css
 改用户能看见的界面时先读本技能，再读专项技能。权威顺序：
 
 1. `.cursor/rules/ui-language.mdc` — 文案、图标、转译（项目法）
-2. `web/src/index.css` `@theme` + `docs/adr/0005-agent-workbench-ui.md` — 已有 token 与工作台结构
+2. `web/src/index.css` `@theme` — 已有 token 与工作台结构
 3. `web/AGENTS.md` — 工程合同（无障碍、状态、复用 chrome）
 4. [frontend-app-ui](../frontend-app-ui/SKILL.md) — 运营工作台构图
 5. [frontend-design](../frontend-design/SKILL.md) — 反模板审美，但必须先读 [PRODUCTFLOW.md](../frontend-design/PRODUCTFLOW.md)

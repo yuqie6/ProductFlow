@@ -1,6 +1,6 @@
 # Go Backend Guidelines
 
-Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (`just go-migrate`). AutoMigrate is not used. Command transactions use `tx.WithGorm` and schema models (`Create` / `Updates` / `Take` plus `platform/db` locking clauses). Partial updates use `map[string]any` or `Select`, never a zero-value struct. Do not add `pfdb.Exec`/`Query`/`QueryRow` on command paths. PostgreSQL pool remains for health checks and recovery entrypoints. Do not use GORM associations to replace existing delete paths. See `docs/adr/0012-gorm-command-writes.md`.
+Default runtime: `just go-api`, `just go-worker`, `just go-dispatcher`. Schema authority is `productflow-migrate`: GORM `CreateTable`/`AddColumn` plus ExtraDDL (`just go-migrate`). AutoMigrate is not used. Command transactions use `tx.WithGorm` and schema models (`Create` / `Updates` / `Take` plus `platform/db` locking clauses). Partial updates use `map[string]any` or `Select`, never a zero-value struct. Do not add `pfdb.Exec`/`Query`/`QueryRow` on command paths. PostgreSQL pool remains for health checks and recovery entrypoints. Do not use GORM associations to replace existing delete paths.
 
 ## Layout
 

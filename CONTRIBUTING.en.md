@@ -10,7 +10,7 @@ Thank you for considering contributing code, documentation, or issue reports to 
 2. Read `docs/README.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md` to understand documentation ownership and current feature boundaries.
 3. If you change the backend, read `go/AGENTS.md`. The retired FastAPI tree is on `retired/python`; do not merge it back.
 4. If you change the frontend, read `web/AGENTS.md`.
-5. For cross-layer or product-semantic changes, check `CONTEXT.md` and `docs/adr/`; unfinished directions belong in `docs/ROADMAP.md`.
+5. For cross-layer or product-semantic changes, check `CONTEXT.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md`; unfinished directions belong in `docs/ROADMAP.en.md`. Do not treat `docs/adr/` as current design.
 6. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or local database dumps.
 
 ## Local Development
@@ -112,5 +112,5 @@ Boundaries:
 
 ## Engineering Knowledge
 
-`AGENTS.md` holds repository and layer-specific engineering constraints, `CONTEXT.md` records current domain boundaries,
-and `docs/adr/` records architecture decisions that need durable rationale. GitHub Issues and the actual Git state carry task status.
+`AGENTS.md` holds repository and layer-specific engineering constraints, `CONTEXT.md` records current domain boundaries.
+`docs/adr/` is a historical archive, not live design. GitHub Issues and the actual Git state carry task status.
