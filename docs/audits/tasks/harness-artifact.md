@@ -13,7 +13,7 @@
 
 出现一份可哈希的 `h_t`：
 
-- 新目录 `agent-service/harness/` 装壳工件（指令段、以后 overlay 的位置、runtime-control 占位）
+- 新目录 `agent-service/harness/` 装壳工件（指令段、以后 overlay 的位置、仅执行行为配置的 runtime-control 占位）
 - `go/prompts/agent/runtime-policy.md` 拆成权限/确认（冻结）与行为段（可编）
 - `agent-service/src/pi-runtime.ts` 改为读入该工件，而不是只拼散落 Skill + 整份 policy
 - 测试钉住规范哈希：改可编辑段则 hash 变，改冻结段的测试应失败或拒绝
@@ -44,6 +44,7 @@
 - 执行时 `h_t` 冻结。本阶段还没有热切。
 - 权限与确认段保持「禁止代点确认 / 物化；page snapshot 不是授权」。
 - 工具 JSON schema 与 Graph Command 不动。
+- 明确可演化文件 / 字段与冻结段的边界。`runtime-control` 仅允许声明的执行行为配置；控制器预算、接受规则、评分 / 记录 / 谱系逻辑不属于可演化工件。P1 不实现控制器配置或候选校验器，后续阶段不得把它们塞进可编辑占位。
 - hash 算法写进测试；规范序列化，不要随 JSON 键序漂移。
 
 ## 怎么验收
@@ -53,7 +54,7 @@ just agent-service-test
 just docs-check
 ```
 
-断言：同一工件两次 hash 相同；改行为段 hash 变；生产路径加载的是 harness 目录而不是只读旧整文件。
+断言：同一工件两次 hash 相同；改行为段 hash 变；生产路径加载 harness 目录；`runtime-control` 占位不包含控制器预算或接受规则。
 
 ## 证据
 

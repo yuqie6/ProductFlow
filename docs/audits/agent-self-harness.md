@@ -43,8 +43,9 @@ flowchart LR
   mine --> propose["P4 同模型最小 diff"]
   propose --> gate["held-in 且 held-out 且变异且 L5 且成本且体积"]
   gate --> merge["相容候选合并后再评"]
-  merge --> human["G1 人切版本"]
-  merge --> auto["G2 Promoter 热切"]
+  merge --> rerun["基线与最终候选独立复跑"]
+  rerun --> human["G1 人审后切版本"]
+  rerun --> auto["G2 Promoter 热切"]
   human --> prod["生产 h_tplus1"]
   auto --> prod
   prod --> live
@@ -57,8 +58,8 @@ Self-Harness「生产可用」分两档。它不等于生产就绪账本的 G-06
 
 | ID | 出口 | 阶段 | 商家可见 | 评测依赖 |
 |---|---|---|---|---|
-| G1 | 辅助进化：生产 Turn 带着 `harness_hash` 执行冻结的 `h_t`；候选过评测门后**人**切版本（hash 指针或仓库引用） | P1–P4 均 `完成` | 无新 UI | 允许评测 D-08 仍为分数不可采信；结果必须标明 verifier 未校准；禁止用 pass^k 对外宣称 Agent 质量 |
-| G2 | 自动进化：Steer、playbook、自动热切、一键回滚、kill switch | G1 + P5 + P6 + P7 均 `完成` | playbook 可清空（P6 起写 USER_GUIDE） | 评测账本已登记 L5 `run_id`，攻击成功率不劣于当前 `h_t`（目标 0）；且 D-03 回归门或 D-08「分数可采信」至少一项为 `完成`。未满足不得开 P7 |
+| G1 | 辅助进化：生产 Turn 带着 `harness_hash` 执行冻结的 `h_t`；候选初筛、独立复跑后**人**审查并切版本（hash 指针或仓库引用） | P1–P4 均 `完成` | 无新 UI | 阶段验收登记独立验收集结果；允许评测 D-08 仍为分数不可采信，但必须标 `uncalibrated`，仅作辅助实验；分数不足以证明能力提高，禁止用 pass^k 对外宣称 Agent 质量 |
+| G2 | 自动进化：Steer、playbook、自动热切、一键回滚、kill switch | G1 + P5 + P6 + P7 均 `完成` | playbook 可清空（P6 起写 USER_GUIDE） | 开 P7 前须 G1、P5、P6 完成，评测账本已登记通过 L5 的 `run_id` 且 D-08「分数可采信」为 `完成`；G2 阶段验收另登记独立验收集结果。D-03 通过率达标不得替代 D-08 |
 
 G1 / G2 当前均为 `缺失`。
 
@@ -71,13 +72,13 @@ G1 / G2 当前均为 `缺失`。
 | D-01 | 自研对象是 ProductFlow 领域壳 + 进化控制器。Pi 继续当模型 loop。不复活 Go `agent-harness`，不并行第二套生产 loop | `完成`（决策） | 当前代码只有 Pi adapter。P1 起禁止新增旁路执行器。缺口：harness 目录尚未存在 |
 | D-02 | 三层：L1 loop（Pi）/ L2 壳（Skill、policy、工具、上下文、确认）/ L3 控制器（挖失败 → 提案 → 评测门 → 热切） | `完成`（决策） | L2 部件散落在 Skill 与 runtime-policy。L3 缺失 |
 | D-03 | 三时钟、分写权：回合内只 Steer；商家 playbook 只进该商家 context；全局 Skill / 指令只从过门 diff 升。执行时 `h_t` 冻结 | `完成`（决策） | 实现缺失 |
-| D-04 | 同模型提案。工具 JSON schema、Graph Command、确认/物化、held-out、graders、控制器自己的提示全部冻结 | `完成`（决策） | 评测任务与 grader 所有权在评测账本 |
+| D-04 | 同模型提案。工具 JSON schema、Graph Command、确认/物化、任务划分、评分与汇总、接受规则、结果记录、版本谱系、控制器提示与预算均禁止提案器修改 | `完成`（决策） | 评测任务与 grader 所有权在评测账本；控制器按固定规则写记录与谱系，不授予候选写权 |
 | D-05 | 用户句子只进矿，不直接写全局 Skill | `完成`（决策） | 当前也没有运行时写 Skill 的路径；P6/P7 不得打开这条路径 |
 | D-06 | 第一块可证明工作是 P4：只动 failure-recovery 与一条 Skill overlay；Steer 与 playbook 不得与 P4 同切片 | `完成`（决策） | P4 实现缺失 |
-| D-07 | G1 = P1–P4 人切版本；G2 = 再加 P5–P7。G2 依赖评测账本已登记的 L5 `run_id`，以及 D-03 或 D-08 可采信 | `完成`（决策） | 评测 D-03 / D-08 / L5 仍为部分完成或缺失，见评测账本 |
+| D-07 | G1 = P1–P4 人切版本；G2 = 再加 P5–P7。开 P7 须 G1、P5、P6 完成，L5 通过且登记 `run_id`，评测 D-08 `完成`；D-03 不替代可信性要求 | `完成`（决策） | 评测 D-08 / L5 未完成；D-03 保留原产品可靠性指标与门槛，不承担测量可信性证明 |
 | D-08 | 阶段串行；P2b 可与 P3 并行。一次 PR 只打一个可编辑面 | `完成`（决策） | 本切片只开 P0 |
-| D-09 | 标 `完成` 必须有代码 owner + 测试或 `run_id`（`harness_hash` / `task_hash` / `skill_hash` / 模型）。评测分数是否采信只由评测账本 D-03 / D-08 裁定 | `完成`（决策） | 进化代码尚未产生 `run_id` |
-| D-10 | 进化不得改 grader 刷分，不得只加会过的新题。Grader、held-out、任务集所有权在评测账本 | `完成`（决策） | 互指已建立；后续切片不得改评测冻结决策 |
+| D-09 | 标 `完成` 必须有代码 owner + 测试或 `run_id`（`harness_hash` / `task_hash` / `skill_hash` / 模型）。分数可信性由评测账本 D-08 裁定，D-03 单独报告通过率达标情况 | `完成`（决策） | 进化代码尚未产生 `run_id` |
+| D-10 | 进化不得改 grader 刷分，不得只加会过的新题。开发集、隐藏回归集、独立验收集及其划分、访问与退役规则由评测账本拥有 | `完成`（决策） | 见评测账本「Self-Harness 评测用途」；现有双集合不构成独立验收证据 |
 | D-11 | 能力范围外、不进必做项：换 Pi、进化工具 schema、元进化提案器提示、subagent、SaaS 多租户、训练 LLM。以后要做必须先改本表 | `完成`（决策） | — |
 | D-12 | 生产归因：`harness_hash` 写入 eval `run.json` 与生产 `agent_model_invocations` / checkpoint（新列不回填）。浏览器 journal 不因此改成存完整工具参数 | `完成`（决策） | P2 实现缺失 |
 
@@ -89,13 +90,14 @@ G1 / G2 当前均为 `缺失`。
 |---|---|---|
 | bootstrap / execution / verification / failure-recovery 指令 | 可编辑 | P1 从 runtime-policy 行为段拆出；各段字节上限见 P4 接受门 |
 | Skill overlay（追加，不改 frontmatter） | 可编辑 | P4 第一环只允许一条 overlay |
-| runtime-control 阈值与 Steer 文案 | 可编辑 | 钩子实现由人写、由测试钉死；文案可进化 |
-| 商家 playbook | 可编辑 | 按商家隔离，不进全局 `harness_hash` |
+| runtime-control 执行行为阈值与 Steer 文案 | 可编辑 | 仅限声明的执行行为字段；钩子实现由人写、由测试钉死。控制器预算不在此面 |
+| 商家 playbook | 可编辑 | P6 按反馈解释规则修订，按商家隔离，不进全局 `harness_hash`；每轮另记实际使用版本 |
 | runtime-policy 权限与确认段 | 冻结 | 禁止代点确认 / 物化；page snapshot 不是授权 |
 | 工具 JSON schema、Graph Command、幂等键、effect 对账 | 冻结 | 走普通产品开发 |
 | ask_user 协议、lease、journal UI 合同 | 冻结 | 生产就绪账本 |
-| held-out、graders、评测任务所有权 | 冻结 | 评测账本 |
-| Miner / Proposer / Validator 自身提示 | 冻结 | 禁止元进化 |
+| 任务集及划分、graders、评分汇总 | 冻结 | 评测账本拥有；候选不得删除任务或试验、改变分母、改写分数 |
+| 接受规则、结果记录、版本谱系 | 冻结 | 由控制器按固定协议维护；候选不得篡改结果、父版本、晋升决定或隐藏拒绝记录 |
+| Miner / Proposer / Validator / Promoter 提示与控制器预算 | 冻结 | 禁止元进化；预算在壳工件外由人工配置并记录版本 |
 
 ## 防局部打钻
 
@@ -107,7 +109,8 @@ G1 / G2 当前均为 `缺失`。
 - 没有 `harness_hash` 就开始热切生产
 - 把再实现一遍 Pi 或复活 Go harness 当成 Self-Harness
 - 用未校准 pass^k 对外宣称 Agent 质量
-- 在评测 D-03 / D-08 / L5 未满足时开 P7
+- 在 G1 / P5 / P6、评测 D-08 或 L5 未满足时开 P7，或用 D-03 达标豁免 D-08
+- 复用候选筛选成绩当作独立复跑，或反复重跑直到通过
 
 产品缺陷仍可按普通 Skill 修补推进，且必须同步评测 `expect`；那种修补要在提交说明里写「产品合同 / Skill 缺陷」，不得写入本账本的 lineage 当进化成果。
 
@@ -121,26 +124,41 @@ G1 / G2 当前均为 `缺失`。
 | P1 | Harness 工件 | `缺失` | `agent-service/harness/` 可哈希的 `h_t`；policy 权限段冻结、行为段可编；`pi-runtime` 读入；测试钉 hash | 提案器、热切 | 目录不存在 |
 | P2 | 归因 | `缺失` | eval `run.json` 与生产 `agent_model_invocations` / checkpoint 写 `harness_hash`；`/health` 可观察 | 为挖矿改浏览器 journal / UI 协议去存完整工具参数 | 列与字段不存在 |
 | P2b | 演化轨迹 | `缺失` | 可选、默认关的有界轨迹，落 `STORAGE_ROOT`，不进 git、不进 PG 对话协议，供 P3 / P6 挖生产失败 | 把用户原文写入 Skill | 可与 P3 并行。P6 / G2 依赖本阶段或评测 L6 脱敏样本；不得只靠 L1 桩世界宣称「线上在学」 |
-| P3 | Miner | `缺失` | 封闭失败签名 φ；L1 trials → 证据包；簇抽读合格才给提案器 | 自动改文件 | φ 词表见下节，实现缺失 |
-| P4 | 第一环 | `缺失` | 同模型（生产 Agent 模型）对 overlay + failure-recovery 出最小 diff；按下方接受门自动 accept / reject；谱系按 provider/model 分叉；落 lineage | Steer、playbook、P7、subagent | 第一块可证明工作 |
+| P3 | Miner | `缺失` | 封闭失败签名 φ；仅开发集 L1 trials → 证据包；簇抽读合格才给提案器 | 自动改文件；读取隐藏回归或独立验收轨迹 | φ 词表见下节，实现缺失 |
+| P4 | 第一环 | `缺失` | 同模型（生产 Agent 模型）对 overlay + failure-recovery 出最小 diff；初筛、合并再评、独立复跑、人审；谱系按 provider/model 分叉；落 lineage；G1 独立验收 | Steer、playbook、P7、subagent | 第一块可证明工作；依赖评测账本的集合隔离与复跑合同，缺证据不得标完成 |
 | P5 | Steer | `缺失` | Pi `tool_result` 钩子拦截同参重放 / 缺 `load_productflow_skill` / 非法 op | 换 loop | 现有 extension 未注册这些钩子 |
-| P6 | 商家 playbook | `缺失` | 确认 / 丢弃 / undo → 该商家下轮 context；可清空；商家可见时同步 USER_GUIDE / HelpPage | 升全局 Skill | 依赖 P2b 或 L6 脱敏样本 |
-| P7 | 生产热切 | `缺失` | 影子评测通过后切 `harness_revision`；`parent_hash` 回滚；kill switch 冻结晋升；战役预算（次数 / token 上限）。单商家没有租户 canary，爆破半径用「只影子不切」或「下 N 个 Turn」 | 无门热改 | 前置：G1 已完成，且评测 L5 `run_id` +（D-03 或 D-08 `完成`） |
+| P6 | 商家 playbook | `缺失` | 按下方反馈规则形成该商家后续 context；可清空；Turn 及 eval 记录实际 playbook 版本；商家可见时同步 USER_GUIDE / HelpPage | 升全局 Skill；仅凭确认 / 丢弃 / undo 写长期规则 | 依赖 P2b 或 L6 脱敏样本 |
+| P7 | 生产热切 | `缺失` | 影子评测与独立复跑通过后切 `harness_revision`；G2 独立验收；`parent_hash` 回滚；kill switch 冻结晋升；独立控制器配置限制战役次数 / token。单商家用「只影子不切」或「下 N 个 Turn」限制影响范围 | 无门热改；候选提高控制器预算 | 前置：G1、P5、P6 已完成，且评测 L5 已通过并登记 `run_id`、D-08 `完成` |
 
 ### P4 接受门
 
-候选必须同时满足，缺一项即拒绝：
+候选初筛必须同时满足，缺一项即拒绝。初筛通过只获得复跑资格，不直接切版本；以下条款均为待实现合同：
 
 | 规则 | 内容 |
 |---|---|
 | 涨分 | k=3 聚合：Δᵢₙ ≥ 0 且 Δₒᵤₜ ≥ 0，且至少一项 > 0 |
-| 最小改进 | 合计至少 2 个任务·试验 |
+| 最小改进 | 净增合计至少 2 个通过的任务·试验；属于筛选门槛，不构成统计显著性保证 |
 | 成本 | 中位 tokens 增幅 ≤ 15% |
 | 体积 | 可编辑指令合计 ≤ 16 KiB；overlay 合计 ≤ 10 KiB |
-| 边界 | diff 碰到冻结面、或没有审计记录 → 拒绝 |
+| 边界 | 由候选校验器核对声明的文件与字段；触及未声明面 / 冻结面、或没有审计记录 → 拒绝 |
 | 合并再评 | 同轮多个通过的候选合并后作为新候选再过一次门 |
-| 安全（G1） | 负例任务不得劣化；L5 未登记时标明 uncalibrated，仍禁止 ASR 明显变差的候选进入人切 |
-| 安全（G2 / P7） | 必须引用评测账本已登记 L5 `run_id`；ASR 不劣于当前 `h_t`，目标 0 |
+| 安全（G1） | 负例任务不得劣化；任何越权或未确认副作用直接拒绝，不得由其他涨分抵消。L5 未登记时安全证据不足，标 `uncalibrated`，不得据此宣称安全通过 |
+| 安全（G2 / P7） | 引用评测账本已登记且通过的 L5 `run_id`，满足其 D-07 的 ASR 与效用门槛，且 ASR 不劣于当前 `h_t` |
+
+最终候选（有合并时使用合并版本）与父版本各做一批新的 `k=3` 独立复跑，再应用上述门槛。复跑输入、完整性、失败处置及证据字段由评测账本「Self-Harness 独立复跑」定义。复跑失败不得晋升；G1 由人审查完整结果后决定切版本，G2 才由 Promoter 按固定规则执行。G1 / G2 阶段验收另使用独立验收集，不能用隐藏回归集或复跑结果替代。
+
+### P6 反馈与归因
+
+本节为待实现合同。playbook 的修订范围限定在当前商家：
+
+| 反馈 | 写入规则 |
+|---|---|
+| 用户明确表达长期偏好，如「以后都这样」 | 可写入长期条目，保留来源与适用范围 |
+| 当前任务要求，如「这次不要文字」 | 只约束当前任务，不自动写入长期偏好 |
+| confirm / discard / undo | 作为带上下文的待分析证据，单独出现不能推出长期规则 |
+| 与已有偏好冲突 | 区分临时例外与长期修订；记录修订来源，禁止静默叠加矛盾指令 |
+
+playbook 不进入全局 `harness_hash`。P6 起每个 Turn 固定其实际使用的 playbook 版本，并在生产归因与 eval 记录中关联；无 playbook 显式记录为空。清空后后续 Turn 使用空版本，已开始的 Turn 不变。记录不得阻止清空内容。候选比较固定同一 playbook 版本；不得把记忆变化带来的效果差异计作壳进化。
 
 ## 失败签名 φ
 
@@ -157,8 +175,9 @@ P3 使用封闭词表。新词必须先加入本表再给 Miner 使用。三元�
 ## 评测账本依赖
 
 - pass^1 / pass^k / Wilson / 变异 / kappa / L2 / L5 / L6 的条款与 `run_id` 只登记在 [`agent-eval-system.md`](agent-eval-system.md)。
-- G1 可以用未校准 L1 当门，结果在本账本记 `uncalibrated`。
-- G2 晋升必须引用评测账本已登记的 L5 `run_id`，以及该账本 D-03 或 D-08 的当前状态。
+- G1 可以用未校准 L1 辅助实验，结果记 `uncalibrated`；仍需独立复跑、人审和阶段独立验收记录，不得据分数宣称能力提升。
+- G2 晋升必须引用评测账本已登记且通过的 L5 `run_id` 与 D-08 `完成` 的证据；D-03 仍单独报告，不得豁免 D-08。
+- 三类任务集、分组隔离、独立验收与复跑证据只由评测账本维护；P3 / P4 / P7 读取对应结果，不得自行改题、改分组或改变试验分母。
 - 评测剩余工作（同 commit 复跑、kappa、L2 live）走评测切片。Self-Harness 任务包只声明依赖，不顺手改评测冻结决策或任务合同。
 
 ## 运维合同
@@ -173,7 +192,7 @@ P3 使用封闭词表。新词必须先加入本表再给 Miner 使用。三元�
 | 审计 | 列出最近被接受 / 被拒绝的 diff 与评测 `run_id` | `缺失`（P4） |
 | 清空 playbook | 商家侧清除该商家记忆（P6 起进 USER_GUIDE） | `缺失`（P6） |
 
-战役预算（P7）：单次进化战役的候选评测次数与 token 上限写入 harness `runtime-control`，超限停止晋升并留审计记录。
+战役预算（P7）：单次进化战役的候选评测次数与 token 上限由壳工件外的控制器配置持有，人工设定并记录版本。候选无写权；超限停止晋升并留审计记录。`runtime-control` 仅持有声明的执行行为配置，不含控制器自己的预算或接受规则。
 
 ## 词汇表
 
