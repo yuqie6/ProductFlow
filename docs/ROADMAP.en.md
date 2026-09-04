@@ -46,6 +46,10 @@ C0–C3, C5, and C6 are landed. C4 idle inspector rewrite/candidate is in `just 
 
 Open guides: [`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md), [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md). [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
 
+### Architecture refactoring
+
+The [architecture refactoring group](audits/architecture-refactoring.md) tracks inspector draft version semantics and Agent journal publication/confirmation responsibilities. Canvas work reuses the existing mid-run editing issue. The [journal assessment](audits/tasks/arch-journal-assessment.md) evaluates benefits and contracts; implementation is not yet authorized. Retain the current structure when a local fix suffices or consolidation has insufficient benefit.
+
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.

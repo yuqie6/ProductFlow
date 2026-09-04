@@ -11,6 +11,7 @@
 | 评测 | [agent-eval-system.md](agent-eval-system.md) | 开工 | L0–L6、grader、pass^k、分数采信 | user-sim 完成后核对是否仍需独立 sim-live；生产 mine 有 Turn 后发 production-tasks；L2/L5 有有效 run_id 后发 nightly；kappa 达标后发 judge 计入 pass |
 | 壳进化 | [agent-self-harness.md](agent-self-harness.md) | 开工 | 领域壳版本化与进化控制器 | P1 完成后发 harness-attribution（P2）；P2b–P7 按阶段门逐步发布 |
 | 画布 | [canvas-test-system.md](canvas-test-system.md) | 开工 | 文稿权威、用户已发布稿保护 | inspector-midrun 完成后发 canvas-c4-remainder；C0–C3、C5、C6 已收工 |
+| 架构重构 | [architecture-refactoring.md](architecture-refactoring.md) | 开工 | 检查器草稿版本语义、journal 发布与确认职责 | 画布项复用 inspector-midrun，范围不足时调整原单；journal 调查获采信且收益成立后发实现单，允许保留现状 |
 | 生图测评 | [image-quality-eval.md](image-quality-eval.md) | 开工 | 淘宝套图池、工作台/直调/金标闸门 | 池规模不足时按本轮采集证据发扩池；闸门未过须按失败原因裁定，不发纯刷分任务 |
 | 性能 | [performance-governance.md](performance-governance.md) | 开工 | 锁序、投递时延、查询有界、admission | 当前详情、时延、指标三项验收后发 PERF-12 session plan；SaaS 分租户不在本组当前范围 |
 | 生产可靠性 | [agent-production-readiness.md](agent-production-readiness.md) | 值班 | G-06 引用评测组可采信 run_id | 实现切片已关闭，当前不发实现 issue |

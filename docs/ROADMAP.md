@@ -46,6 +46,10 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agen
 
 C0–C3、C5、C6 已落地。C4 空闲检查器改写/候选已进 `just web-e2e-canvas-document`。剩余运行中打字：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
 
+### 架构重构
+
+[架构重构组](audits/architecture-refactoring.md) 跟进检查器草稿版本语义与 Agent journal 发布/确认职责。画布项复用既有运行中编辑任务；[journal 调查](audits/tasks/arch-journal-assessment.md) 只核定收益与合同，尚未授权实现。局部修复足够或收拢收益不足时保留现有结构。
+
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
