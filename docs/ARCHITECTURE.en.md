@@ -43,6 +43,7 @@ Current code ownership:
 | Async dispatch | `go/internal/platform/queue` | `productflow-dispatcher`, `productflow-worker` | `go/internal/platform/queue`, graph/image-session delivery tests |
 | Schema evolution | `go/internal/platform/db/schema` | `productflow-migrate` | `go/internal/platform/db/schema` |
 | Agent eval mining | `go/internal/agent`, `go/cmd/productflow-agent-evals` | read-only CLI | `go/internal/agent/evalmine_test.go`, `evaltask_test.go`, `evalworld_test.go` |
+| Image quality eval | `go/internal/imageeval`, `go/cmd/productflow-image-evals` | read-only CLI; opt-in live | `go/internal/imageeval` |
 | Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
 
 ## 3. Frontend Structure
@@ -211,6 +212,7 @@ Empty and existing databases both run `productflow-migrate`: GORM `CreateTable`/
 - Backend: Go `go test ./...`, `productflow-migrate`, and opt-in PostgreSQL/Redis live tests.
 - Frontend: Vitest, ESLint, TypeScript, and Vite production build. The skip-Agent full-graph browser gate against real prompt/image providers is opt-in: `just web-e2e-live-graph`. Bounded document-authority action search runs with `just go-test` (`go/internal/graph/authority_search_test.go`); deeper search is `just go-test-canvas-search`. The Inspector rewrite/candidate browser gate against mock providers is opt-in: `just web-e2e-canvas-document`. Acceptance: [`audits/canvas-test-system.md`](audits/canvas-test-system.md).
 - Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`. `agent-service/evals/` holds the JSON task set, graders, L1/L3/L5 runners, and reports. `just agent-evals-live` (requires `AGENT_PROVIDER_API_KEY`, default k=3) runs L1 against the real model and writes `STORAGE_ROOT/agent-evals/`. `just agent-evals-state` is opt-in L2 (Go httptest + PostgreSQL + real Pi). `just agent-evals-sim`, `just agent-evals-adversarial`, `just agent-evals-judge`, and `just agent-evals-nightly` are the other opt-in layer entry points. Production mining: `just agent-evals-mine` / `go run ./cmd/productflow-agent-evals`. Acceptance criteria: [`audits/agent-eval-system.md`](audits/agent-eval-system.md).
+- Image quality: `just image-evals-ingest` writes the admitted pool; `just image-evals-run` needs `PRODUCTFLOW_RUN_IMAGE_EVALS=1`, a running API/worker, and real prompt/image bindings. Pixels stay under `STORAGE_ROOT/image-evals/`. Acceptance: [`audits/image-quality-eval.md`](audits/image-quality-eval.md).
 - Cross-layer changes add real browser, database, or provider validation according to risk.
 
 Code/document synchronization rules:

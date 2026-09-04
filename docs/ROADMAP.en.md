@@ -13,7 +13,6 @@ Do not write these into CONTEXT / PRD / ARCHITECTURE until they land.
 | Shot list as default surface | Workbench opens on shot rows (type, count, status, thumbnail, run this shot); same schema-v3 canvas remains available | A Shot table or a second executor |
 | Generate-set copy | One merchant action runs the existing DAG (content nodes first, then each shot); progress projected per shot | A second run model |
 | Post-generation local edit | Inpaint / replace text / local redraw on an existing `ProductImageAsset`; new asset keeps lineage; failure does not replace the node's current result | A seventh node type, watermark-removal shelf, batch 200 |
-| Human fidelity checklist | People check form, color, and text on the result; then local-edit or rerun that shot | Auto quality scores as a formal gate |
 
 Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe library lists only recipes the user saved from a live graph.
 
@@ -48,7 +47,7 @@ The cross-cutting baseline, lock order, optimization sequence, and acceptance ga
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.
-- Samples for product fidelity, text accuracy, and visual consistency.
+- Internal Taobao full-listing image-quality eval: admitted pool, stratified sample, workbench vs naive one-liner vs gold. Ledger and live `run_id`: [`audits/image-quality-eval.md`](audits/image-quality-eval.md). Do not record a gate pass without a `run_id`.
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 

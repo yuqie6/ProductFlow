@@ -13,7 +13,6 @@
 | 镜头列表默认主区 | 工作台打开先看镜头行（图种、张数、状态、缩略图、运行此镜头），可切到同一张 schema-v3 画布 | 新 Shot 表、第二套执行器 |
 | 生成套图文案 | 商家按钮跑现有整图 DAG（先内容节点，后各镜头生图），进度按镜头投影 | 另一套 run 模型 |
 | 出图后局部修 | 对已有 `ProductImageAsset` 消除 / 换字 / 局部重绘；新资产保留谱系；失败不改节点当前结果 | 第七类节点、去水印货架、批量 200 张 |
-| 结果保真核对清单 | 人在结果上核对外形、颜色、文字，不满意则局部修或重跑该镜头 | 自动质量评分当作正式闸门 |
 
 内置 DeliverySpec 模板已在 ARCHITECTURE §7。配方库只列用户从 live graph 保存的配方。
 
@@ -54,7 +53,7 @@ Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正�
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
-- 商品形态保真、文字准确度、视觉统一性的评估样本。
+- 内部淘宝完整套图对照测评：过线池、分层抽样、工作台 vs 一句直调 vs 金标。验收口径与 live `run_id` 见 [`audits/image-quality-eval.md`](audits/image-quality-eval.md)。未登记 `run_id` 前不把闸门写成产品事实。
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 

@@ -58,6 +58,8 @@ CODE_OWNERS = (
     "go/internal/platform/db/schema",
     "go/cmd/productflow-migrate",
     "go/cmd/productflow-agent-evals",
+    "go/internal/imageeval",
+    "go/cmd/productflow-image-evals",
     "web/src/App.tsx",
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",
