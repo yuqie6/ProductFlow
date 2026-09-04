@@ -105,7 +105,6 @@ export class PiRuntimeManager {
       deferred_turns: recovered.deferred,
       waiting_input_turns: recovered.waitingInput,
       restored_terminal_turns: recovered.restoredTerminal,
-      unknown_turns: recovered.unknown,
     };
   }
 
@@ -356,5 +355,4 @@ export interface RuntimeRecoverySummary {
   deferred_turns: number;
   waiting_input_turns: number;
   restored_terminal_turns: number;
-  unknown_turns: number;
 }

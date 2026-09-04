@@ -852,7 +852,7 @@ describe("PiRuntimeManager turn state", () => {
       );
 
       const summary = await manager.recoverAfterRestart();
-      expect(summary).toMatchObject({ replayed_handoffs: 1, queued_turns: 1, unknown_turns: 0 });
+      expect(summary).toMatchObject({ replayed_handoffs: 1, queued_turns: 1 });
       expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: "queued" });
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toEqual([
         "question/requested", "question/answered",

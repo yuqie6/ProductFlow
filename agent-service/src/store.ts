@@ -2,7 +2,7 @@
  * 本 Agent-service 实例的文件型 Turn 存储。
  *
  * session/event 文件是交互式运行时状态。业务权威仍是 ProductFlow PostgreSQL：
- * 重启不得把已经 claim 的 Turn 再入队；无法证明的进行中 Turn 记 unknown，不是 failed。
+ * 重启不得把已经 claim 的 Turn 再入队；claim 后的恢复和终态提交由 ProductFlow 持有。
  */
 
 import { appendFile, mkdir, open, readdir, readFile, rename, truncate, unlink, writeFile } from "node:fs/promises";
@@ -86,10 +86,7 @@ export interface TurnRecoverySummary {
   deferred: number;
   waitingInput: number;
   restoredTerminal: number;
-  unknown: number;
 }
-
-const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached a provable terminal state";
 
 /** 本进程的 Turn 文件。不是第二份业务 transcript。 */
 export class TurnStore {
@@ -246,18 +243,17 @@ export class TurnStore {
     return result;
   }
 
-  /** 扫描本地 Turn，分别标成重新入队、等待、还原终态或 unknown。 */
+  /** 扫描本地 Turn，分别标成重新入队、等待、还原终态或交回 ProductFlow。 */
   async recoverAfterRestart(): Promise<TurnRecoverySummary> {
     const queued: TurnRecoveryCandidate[] = [];
     let deferred = 0;
     let waitingInput = 0;
     let restoredTerminal = 0;
-    let unknown = 0;
     let runEntries: import("node:fs").Dirent[] = [];
     try {
       runEntries = await readdir(join(this.root, "runs"), { withFileTypes: true });
     } catch (error: unknown) {
-      if (isENOENT(error)) return { queued, deferred, waitingInput, restoredTerminal, unknown };
+      if (isENOENT(error)) return { queued, deferred, waitingInput, restoredTerminal };
       throw error;
     }
     for (const entry of runEntries.filter((candidate) => candidate.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
@@ -271,10 +267,9 @@ export class TurnStore {
         else if (result === "deferred") deferred += 1;
         else if (result === "waiting_input") waitingInput += 1;
         else if (result === "restored_terminal") restoredTerminal += 1;
-        else if (result === "unknown") unknown += 1;
       }
     }
-    return { queued, deferred, waitingInput, restoredTerminal, unknown };
+    return { queued, deferred, waitingInput, restoredTerminal };
   }
 
   /**
@@ -346,13 +341,13 @@ export class TurnStore {
 
   /**
    * 终态事件优先于快照。本地仍是 queued 但已被 claim 的快照交给 ProductFlow；
-   * 进行中的工具步骤改成 unknown。
+   * 无 execution identity 的非终态旧快照无法安全恢复，直接拒绝启动且不改写本地状态。
    */
   private async recoverTurnAfterRestart(
     scope: Scope,
     state: TurnState,
     events: TurnEvent[],
-  ): Promise<"queued" | "deferred" | "waiting_input" | "terminal" | "restored_terminal" | "unknown"> {
+  ): Promise<"queued" | "deferred" | "waiting_input" | "terminal" | "restored_terminal"> {
     return this.serial(this.eventKey(scope.run_id, state.turn_id), async () => {
       const current = await this.getState(scope.run_id, state.turn_id);
       const terminalEvent = [...events].reverse().find((event) => terminalStatusFromEvent(event) !== null);
@@ -401,30 +396,11 @@ export class TurnStore {
       if (current.status === "queued") {
         return "queued";
       }
-      const recoveredToolSteps = unknownRunningToolSteps(current.tool_steps);
-      for (const step of recoveredToolSteps ?? []) {
-        if (current.tool_steps?.some((candidate) => candidate.step_id === step.step_id && candidate.status !== step.status)) {
-          await this.appendEventUnlocked(
-            scope.run_id,
-            state.turn_id,
-            "tool/result",
-            step as unknown as JsonObject,
-          );
-        }
-      }
-      await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn/end", {
-        reason: "unknown",
-        status: "unknown",
-        error: RESTART_UNKNOWN_ERROR,
-      });
-      await this.updateStateUnlocked(scope.run_id, state.turn_id, {
-        status: "unknown",
-        error: RESTART_UNKNOWN_ERROR,
-        question: undefined,
-        tool_steps: recoveredToolSteps,
-        finished_at: nowISO(),
-      });
-      return "unknown";
+      throw new RuntimeError(
+        409,
+        "turn_execution_identity_missing",
+        `Agent Turn ${state.turn_id} is ${current.status} without a durable execution identity`,
+      );
     });
   }
 
@@ -888,11 +864,6 @@ function parseArtifact(value: JsonValue | undefined): TurnArtifact | undefined {
 
 function stringPayload(value: JsonValue | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-/** 进程重启后，进行中的工具步骤无法证明成败。 */
-function unknownRunningToolSteps(steps: ToolStep[] | undefined): ToolStep[] | undefined {
-  return steps?.map((step) => (step.status === "running" ? { ...step, status: "unknown" } : step));
 }
 
 function normalizeTurnID(value: string): string {

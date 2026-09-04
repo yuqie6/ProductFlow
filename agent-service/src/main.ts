@@ -36,8 +36,7 @@ async function main(): Promise<void> {
       recovery.queued_turns > 0 ||
       recovery.deferred_turns > 0 ||
       recovery.waiting_input_turns > 0 ||
-      recovery.restored_terminal_turns > 0 ||
-      recovery.unknown_turns > 0
+      recovery.restored_terminal_turns > 0
     ) {
       process.stdout.write(`Recovered Agent runtime state: ${JSON.stringify(recovery)}\n`);
     }

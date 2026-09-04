@@ -264,20 +264,14 @@ describe("TurnStore", () => {
     }
   });
 
-  it("requeues untouched queued turns and marks interrupted turns unknown", async () => {
+  it("requeues untouched queued turns and preserves parked questions", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-recovery-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const queuedScope = { ...scope, run_id: "queued-run" };
-      const runningScope = { ...scope, run_id: "running-run" };
       const waitingScope = { ...scope, run_id: "waiting-run" };
       const queued = await store.createTurn(queuedScope, input);
-      const running = await store.createTurn(runningScope, input);
-      await store.updateState(runningScope.run_id, running.state.turn_id, {
-        status: "running",
-        tool_steps: [{ step_id: "step-1", kind: "inspect_context", summary: "Read context", status: "running" }],
-      });
       const waiting = await store.createTurn(waitingScope, input);
       const question = {
         id: "question-restart-1",
@@ -292,12 +286,34 @@ describe("TurnStore", () => {
 
       expect(result.queued).toEqual([{ scope: queuedScope, turnID: queued.state.turn_id }]);
       expect(result.waitingInput).toBe(1);
-      expect(result.unknown).toBe(1);
-      const recoveredRunning = await store.getState(runningScope.run_id, running.state.turn_id);
-      expect(recoveredRunning.status).toBe("unknown");
-      expect(recoveredRunning.tool_steps?.[0]?.status).toBe("unknown");
+      expect(result.deferred).toBe(0);
+      expect(result.restoredTerminal).toBe(0);
       expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("requires_input");
-      expect((await store.events(runningScope.run_id, running.state.turn_id, 0)).at(-1)?.kind).toBe("turn/end");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a running snapshot without an execution identity without changing state or events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-invalid-running-recovery-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const runningScope = { ...scope, run_id: "running-without-execution-run" };
+      const running = await store.createTurn(runningScope, input);
+      await store.updateState(runningScope.run_id, running.state.turn_id, {
+        status: "running",
+        tool_steps: [{ step_id: "step-1", kind: "inspect_context", summary: "Read context", status: "running" }],
+      });
+      const beforeState = await store.getState(runningScope.run_id, running.state.turn_id);
+      const beforeEvents = await store.events(runningScope.run_id, running.state.turn_id, 0);
+
+      await expect(store.recoverAfterRestart()).rejects.toMatchObject({
+        code: "turn_execution_identity_missing",
+        status: 409,
+      });
+      expect(await store.getState(runningScope.run_id, running.state.turn_id)).toEqual(beforeState);
+      expect(await store.events(runningScope.run_id, running.state.turn_id, 0)).toEqual(beforeEvents);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -334,13 +350,14 @@ describe("TurnStore", () => {
     }
   });
 
-  it("defers a queued snapshot that already has a durable execution identity", async () => {
+  it("defers a running snapshot that already has a durable execution identity", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-deferred-recovery-"));
     try {
       const store = new TurnStore(root);
       await store.init();
       const turn = await store.createTurn({ ...scope, run_id: "deferred-run" }, input);
       await store.updateState("deferred-run", turn.state.turn_id, {
+        status: "running",
         execution_attempt: 1,
         execution_fencing_token: 1,
       });
@@ -349,9 +366,8 @@ describe("TurnStore", () => {
 
       expect(result.queued).toEqual([]);
       expect(result.deferred).toBe(1);
-      expect(result.unknown).toBe(0);
       await expect(store.getState("deferred-run", turn.state.turn_id)).resolves.toMatchObject({
-        status: "queued",
+        status: "running",
         execution_attempt: 1,
         execution_fencing_token: 1,
       });
