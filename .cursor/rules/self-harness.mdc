@@ -1,23 +1,22 @@
 ---
-description: Self-Harness 阶段门与防打钻；改 Skill、runtime-policy 或进化壳时读取验收账本
-globs: agent-service/.pi/skills/**,agent-service/src/runtime-policy*,go/prompts/agent/runtime-policy.md,agent-service/harness/**,docs/audits/agent-self-harness.md
+description: Self-Harness 与 Skill 追分：只读对应任务指导
+globs: agent-service/.pi/skills/**,agent-service/src/runtime-policy*,go/prompts/agent/runtime-policy.md,agent-service/harness/**,docs/audits/agent-self-harness.md,docs/audits/tasks/harness-artifact.md,docs/audits/tasks/eval-skills.md
 alwaysApply: false
 ---
 
-# Self-Harness
+# Self-Harness 与 Skill
 
-改 Skill、`runtime-policy`、未来的 `agent-service/harness/` 或本账本时，先读 [`docs/audits/agent-self-harness.md`](docs/audits/agent-self-harness.md)。只实现账本里标「进行中」的那一个阶段。P0 之后下一刀是 P1（可哈希壳），不是提案器、Steer、playbook 或热切。
+改这些文件时**只打开一份任务指导**，不要从总账本开工：
+
+- 追 L1 分数、改 Skill / 既有 `evals/tasks`：[`docs/audits/tasks/eval-skills.md`](docs/audits/tasks/eval-skills.md)
+- 做可哈希壳（P1）：[`docs/audits/tasks/harness-artifact.md`](docs/audits/tasks/harness-artifact.md)
+
+产品 Skill 修补不是进化：提交说明写「产品合同 / Skill 缺陷」。P1 不做提案器、Steer、playbook、热切。
 
 ```text
-✅ 任务包引用阶段 ID（P1…P7 / P2b）；一次只打一个可编辑面
-✅ 产品 Skill 缺陷按评测 expect 同步修补，提交说明写明「产品合同 / Skill 缺陷」
-✅ 评测分数是否采信以 docs/audits/agent-eval-system.md 为准
-
 ❌ 手改一条 SKILL.md 把单题刷绿并当作进化完成
-❌ 改 grader 或只加会过的新题来抬进化分
+❌ 改 grader 或只加会过的新题
 ❌ 同一变更混 Steer、playbook、全局 Skill
 ❌ 没有 harness_hash 就热切生产
 ❌ 再实现 Pi loop 或复活 Go agent-harness
-❌ 用未校准 pass^k 宣称 Agent 质量
-❌ 评测 D-03/D-08/L5 未满足时开 P7
 ```

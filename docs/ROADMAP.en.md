@@ -2,6 +2,8 @@
 
 Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
 
+Remaining audit work lives in [`audits/tasks/`](audits/tasks/): pick one guide and read only that file. The ledgers keep contracts and evidence.
+
 ## Near term
 
 ### Studio increments
@@ -24,34 +26,30 @@ Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe lib
 
 ### Agent durability
 
-Until these gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md). The old Go Agent on `exp` is not an implicit fallback on main.
+Lease, journal, effect reconciliation, SSE gap repair, and capacity-gate evidence live in [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md). S1–S6 and G-01–G-05, G-07 are closed. Runtime-ownership S0–S6 is closed; evidence is in [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md).
 
-- Real provider, PostgreSQL / Redis, and browser.
-- Background durable Tasks, cross-process claim, and full effect reconciliation.
-- An independent Fresh Observation harness (re-read before/after side effects is already a rule).
-
-Session, Task, and WorkflowRun stay separate objects (`CONTEXT.md`).
+Remaining: G-06 behavior gates are the `run_id` recorded in [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md) and [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md). Until those pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
 
 ### Agent evaluation system
 
-The JSON task set, graders, live runner, and artifacts live in `agent-service/evals/`. Go L2 worlds and state assertions live in `go/internal/agent/eval*_test.go`; production mining is `go/cmd/productflow-agent-evals`. Held-in / held-out assignment is [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Full k=3 live matrices, L2/L5 nightly, and kappa calibration remain opt-in and are not product fact until the ledger records `run_id`, model, task-set hash, and k.
+Open guides (read one): [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md), [`audits/tasks/eval-user-sim.md`](audits/tasks/eval-user-sim.md), [`audits/tasks/eval-labels.md`](audits/tasks/eval-labels.md), [`audits/tasks/eval-go-loader.md`](audits/tasks/eval-go-loader.md), [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md). Frozen decisions and historical `run_id`: [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Do not record pass^k as product fact without a ledger `run_id`.
 
 ### Agent Self-Harness
 
-A versioned domain shell, failure mining, same-model proposals, eval acceptance, and production promotion are not wired yet. The contract, two production exits (G1 human cut / G2 automatic cut), phase gates, and anti-local-optima rules live in [`audits/agent-self-harness.md`](audits/agent-self-harness.md). That ledger is the only acceptance record for this direction; this section is the roadmap pointer. Evolution must not edit graders to inflate scores. Production reliability remains owned by [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md).
+Start here: [`audits/tasks/harness-artifact.md`](audits/tasks/harness-artifact.md). Full program contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evolution must not edit graders to inflate scores.
 
 ### Canvas document-authority tests
 
-The layered contract, bounded action search, mid-run injection, mock-provider browser document actions, and Agent interleaving ledger is [`audits/canvas-test-system.md`](audits/canvas-test-system.md). C0–C3 and C6 run with `just go-test`; deeper search is `just go-test-canvas-search`. C4 is the opt-in Chromium gate `just web-e2e-canvas-document` and needs a running `just dev` stack with mock prompt/image bindings. C5 remains `just web-e2e-live-graph` and does not cover rewrite or candidate review.
+C0–C3, C5, and C6 are landed. Remaining: [`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md).
 
 ### Runtime performance governance
 
-The cross-cutting baseline, lock order, optimization sequence, and acceptance gates for Graph, Agent, async delivery, continuous image generation, SSE, database queries, and capacity admission live in [`audits/performance-governance.md`](audits/performance-governance.md). The current worktree includes lock-order, bounded recovery batches, dispatcher cadence, SSE fanout, recovery backlog/duration/lock-wait metrics, ImageSession cursor pagination, and split GraphRun list/detail projections; remaining N+1 paths, target-scale query plans, finer capacity-admission metrics, and SaaS admission still need focused validation or a new baseline design.
+Open guides: [`audits/tasks/perf-imagesession-detail.md`](audits/tasks/perf-imagesession-detail.md), [`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md), [`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md). Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
 
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.
-- Internal Taobao full-listing image-quality eval: admitted pool, stratified sample, workbench vs naive one-liner vs gold. Ledger and live `run_id`: [`audits/image-quality-eval.md`](audits/image-quality-eval.md). Do not record a gate pass without a `run_id`.
+- Internal Taobao listing eval: [`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md).
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 

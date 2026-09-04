@@ -1,15 +1,37 @@
-# 验收账本
+# 验收
 
-本目录保存仍在推进的跨层验收账本。账本记录目标合同、当前代码与实测证据、未完成缺口和验证命令，不等同于当前产品能力声明。
+未完成工作在 [`tasks/`](tasks/)。**选一份打开，只读那一份，只改它列出的文件，证据写回那一份。** 不要从本页下面的总账本开工。
 
-- [`agent-production-readiness.md`](agent-production-readiness.md)：ProductFlow Agent 单商家生产就绪的唯一验收指标。
-- [`agent-eval-system.md`](agent-eval-system.md)：Agent L0-L6 评测体系、任务合同、统计口径与生产样本回流的逐项验收账本；它提供 G-06 的行为质量证据，不替代生产就绪指标。
-- [`agent-self-harness.md`](agent-self-harness.md)：ProductFlow 领域壳自进化（Self-Harness）的冻结决策、阶段门、两档生产出口与运维合同；它使用评测当 verifier，不替代评测分数或生产就绪指标。
-- [`agent-runtime-ownership.md`](agent-runtime-ownership.md)：Agent 运行时职责归属与分刀重构账本；它不改变或缩小生产就绪账本的可靠性范围。
-- [`performance-governance.md`](performance-governance.md)：Graph、Agent、异步投递、连续生图、SSE、查询和容量 admission 的性能治理账本。
-- [`canvas-test-system.md`](canvas-test-system.md)：schema-v3 画布文稿权威测试体系（cook / 候选 / 有界搜索 / 运行中插入写 / mock 浏览器 / Agent 交错）；不替代 Agent 评测或生产就绪账本。
-- [`image-quality-eval.md`](image-quality-eval.md)：内部淘宝完整套图对照、一句直调对照与视觉评委闸门。像素不进 git。
+总账本是合同与历史证据，不是任务说明书。
 
-相关历史叙事（不是验收指标）：[`../history/agent-runtime-timeline.md`](../history/agent-runtime-timeline.md)。
+## 可开工（互不改对方文件）
 
-状态更新必须引用当前代码、测试或真实环境结果。方向完成后，把稳定事实写回 `CONTEXT.md`、`docs/ARCHITECTURE.md`、`docs/PRD.md` 或 `docs/USER_GUIDE.md`，并从 `docs/ROADMAP.md` 移除已完成方向；账本保留为验收证据。
+| 指导 | 做什么 |
+|---|---|
+| [`tasks/eval-skills.md`](tasks/eval-skills.md) | 改 Skill 与既有评测题，提高 L1 可复现 pass，让变异能杀 |
+| [`tasks/eval-user-sim.md`](tasks/eval-user-sim.md) | 模拟用户改走独立模型生成话语 |
+| [`tasks/eval-labels.md`](tasks/eval-labels.md) | 填 50 条人工标签并算出 kappa |
+| [`tasks/eval-go-loader.md`](tasks/eval-go-loader.md) | Go 评测 loader 拒绝未知字段 |
+| [`tasks/eval-live-layers.md`](tasks/eval-live-layers.md) | 跑 L2/L5/生产 mine（不改生产代码） |
+| [`tasks/harness-artifact.md`](tasks/harness-artifact.md) | 做出可哈希的 Agent 领域壳工件 |
+| [`tasks/canvas-inspector-midrun.md`](tasks/canvas-inspector-midrun.md) | mock 浏览器门覆盖运行中检查器打字 |
+| [`tasks/image-eval-pool.md`](tasks/image-eval-pool.md) | 扩淘宝过线池并登记 live 闸门 |
+| [`tasks/perf-imagesession-detail.md`](tasks/perf-imagesession-detail.md) | 连续生图详情读取有界 |
+| [`tasks/perf-dispatcher-latency.md`](tasks/perf-dispatcher-latency.md) | 测 PENDING→SENT 负载时延 |
+| [`tasks/perf-capacity-metrics.md`](tasks/perf-capacity-metrics.md) | 生图 admission 的 wait/running/denied 指标 |
+
+一次最多派三个实现代理，且他们选的指导「只改这些文件」不能相交。
+
+## 总账本（证据，不开工）
+
+| 文件 | 用途 |
+|---|---|
+| [`agent-production-readiness.md`](agent-production-readiness.md) | 生产可靠性合同。实现切片已关闭。 |
+| [`agent-runtime-ownership.md`](agent-runtime-ownership.md) | 运行时职责迁移证据。已关闭。 |
+| [`agent-eval-system.md`](agent-eval-system.md) | 评测冻结决策与历史 `run_id`。 |
+| [`agent-self-harness.md`](agent-self-harness.md) | 壳进化全程合同。当前开工用 `tasks/harness-artifact.md`。 |
+| [`canvas-test-system.md`](canvas-test-system.md) | 画布文稿权威合同。当前开工用 `tasks/canvas-inspector-midrun.md`。 |
+| [`image-quality-eval.md`](image-quality-eval.md) | 生图测评合同。当前开工用 `tasks/image-eval-pool.md`。 |
+| [`performance-governance.md`](performance-governance.md) | 性能基线与锁序。当前开工用上面三份 perf 指导。 |
+
+稳定事实写回 `CONTEXT.md`、`docs/ARCHITECTURE.md`、`docs/PRD.md` 或 `docs/USER_GUIDE.md`。未完成方向由 [`../ROADMAP.md`](../ROADMAP.md) 索引。历史叙事：[`../history/agent-runtime-timeline.md`](../history/agent-runtime-timeline.md)。

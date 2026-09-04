@@ -2,7 +2,7 @@
 
 本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的 Agent 生产 Gate。
 
-**剩余实现刀只有 `C-C4`。** C0–C3、C5、C6 已完成。开刀与互斥见 [`README.md`](README.md)。`C-C4` 默认只改 `web/e2e/canvas-document-mock.spec.ts`；若必须改检查器组件，与 ROADMAP 工作室「镜头列表」互斥。
+**不要从本文件开工。** C0–C3、C5、C6 已完成。剩余指导：[`tasks/canvas-inspector-midrun.md`](tasks/canvas-inspector-midrun.md)。
 
 ## 来源与使用规则
 

@@ -2,7 +2,7 @@
 
 技能是带 frontmatter 的 Markdown。目录提示词只暴露 name、description、triggers、owns_tools、scope；正文按需用 `load_productflow_skill` 加载。
 
-语言中立 JSON 任务集在 `agent-service/evals/tasks/`，世界描述在 `evals/worlds/`。改技能必须同步对应任务的 `expect` 与 `reference.scripted_calls`。`just agent-service-test` 跑 L0 合同（schema、owns_tools、禁令、参数路径、非法参数两次内修复、工具/op 覆盖）。真实模型档是 opt-in：`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`，默认 k=3）；`just agent-evals-smoke <skill>` 按技能 k=1 冒烟。分层验收见 [`../../../docs/audits/agent-eval-system.md`](../../../docs/audits/agent-eval-system.md)。为追 L1 分数改 Skill 前，对 [`../../../docs/audits/agent-self-harness.md`](../../../docs/audits/agent-self-harness.md) 的阶段门：当前进行中阶段之外，手改单题刷绿不算进化完成。`just docs-check` 校验技能引用的工具名在清单内。
+语言中立 JSON 任务集在 `agent-service/evals/tasks/`，世界描述在 `evals/worlds/`。改技能必须同步对应任务的 `expect` 与 `reference.scripted_calls`。追 L1 分数只读 [`../../../docs/audits/tasks/eval-skills.md`](../../../docs/audits/tasks/eval-skills.md)。`just agent-service-test` 跑 L0 合同。真实模型档是 opt-in：`just agent-evals-live`（需要 `AGENT_PROVIDER_API_KEY`，默认 k=3）；`just agent-evals-smoke <skill>` 按技能 k=1 冒烟。`just docs-check` 校验技能引用的工具名在清单内。
 
 `load_productflow_skill` 返回原始 Markdown 指令，不用 `{ schema_version, data, guidance }` 信封。
 

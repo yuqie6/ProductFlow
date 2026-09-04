@@ -1,6 +1,8 @@
 # Agent 评测体系验收账本
 
-本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。改 Skill 追分、Skill overlay、runtime-policy 行为段或进化壳时读 [`agent-self-harness.md`](agent-self-harness.md)；任务集、grader、pass^k 与分数是否采信仍只由本账本裁定。
+本账本管理 ProductFlow Agent 从合同回归扩展到 L0-L6 七层评测体系的目标合同、当前证据和逐项验收。它衡量 Agent 行为质量与回归可信度，不替代 [`agent-production-readiness.md`](agent-production-readiness.md) 的生产可靠性 Gate。任务集、grader、pass^k 与分数是否采信仍只由本账本裁定。
+
+**不要从本文件开工。** 未完成工作各有一份指导：[`tasks/eval-skills.md`](tasks/eval-skills.md)、[`tasks/eval-user-sim.md`](tasks/eval-user-sim.md)、[`tasks/eval-labels.md`](tasks/eval-labels.md)、[`tasks/eval-go-loader.md`](tasks/eval-go-loader.md)、[`tasks/eval-live-layers.md`](tasks/eval-live-layers.md)。L0 合同、L1 runner、L2 seed/grader、L3–L5 CLI、L6 mine 命令已经接线。
 
 ## 来源与使用规则
 
@@ -168,17 +170,7 @@ flowchart LR
 | P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L3 live 5/5 未通过（`20260904T154151Z-788cb11e`）。缺 50 条标签与 L5 ASR 报告。 |
 | P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
 
-任何 P 阶段只有在本表列出的全部出口都有当前证据时才能改为 `完成`。后续阶段可以并行开发，不得用后续局部结果跳过较早出口。
-
-## 实施顺序与所有权
-
-| Slice | 目标改动边界 | 依赖与完成证据 |
-|---|---|---|
-| A. 任务合同 | `agent-service/evals/schema.ts`、`loader.ts`、`tasks/`、`worlds/`，迁移并删除 `fixtures.ts` | L0 loader/coverage 测试通过，无旧 reader。 |
-| B. L1 评分与运行 | `stub-world.ts`、`graders/`、`live-runner.ts`、`report.ts`、`cli.ts` | 统一 TrialRecord 落盘、k=3、报告与 diff 单测通过。全量 live 仍 opt-in。 |
-| C. L2 状态 | Go Agent eval test/loader/world builder | JSON 任务；PG state 断言和统一结果格式。live 仍 opt-in。 |
-| D. L3/L4/L5 | `user-sim.ts`、rubrics/judge/labels、`injections.ts` | trial/report 合同；deterministic grader 与 judge 分数分栏。 |
-| E. L6/常规运行 | 只读 mine/export 命令、nightly recipe、饱和/模型 diff | 脱敏测试已有；连续 run 和手工抽读仍缺。 |
+任何 P 阶段只有在本表列出的全部出口都有当前证据时才能改为 `完成`。不得用后续局部结果跳过较早出口。未完成工作按 [`tasks/`](tasks/) 各指导推进，证据先写在对应任务文件。
 
 ## 命令合同
 

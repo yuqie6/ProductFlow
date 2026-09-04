@@ -2,6 +2,8 @@
 
 尚未成为产品事实、或尚未被真实验证的方向。当前能力见 [`PRD.md`](PRD.md)，结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，操作见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
+跨层验收未完成工作在 [`audits/tasks/`](audits/tasks/)：选一份指导，只读那一份。总账本只留合同与证据。
+
 ## 近期
 
 ### 工作室增量
@@ -24,40 +26,30 @@
 
 ### Agent 耐久
 
-通过下列 gate 之前，不扩大默认能力，也不把 Pi session 文件当作 durable 证明。边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md)。旧 Go Agent 留在 `exp`，不是 main 的隐式 fallback。
+lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。S1–S6 与 G-01–G-05、G-07 已关闭。运行时所有权 S0–S6 已关闭，证据在 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md)。
 
-详细合同、逐项状态、证据和生产 Gate 统一维护在 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md)。该账本是本方向的唯一验收指标；本节只保留路线图入口，不以当前实现或会话摘要缩减账本范围。
-
-- 真实 provider、PostgreSQL / Redis、浏览器。
-- 后台 durable Task、跨进程 claim、全量 effect reconciliation。
-- 独立的 Fresh Observation harness（副作用前后端重读已是规则）。
-
-Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
+剩余：G-06 的行为门槛由 [`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md) 与 [`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md) 登记的 `run_id` 裁定。未过门前不扩大默认能力，也不把 Pi session 文件当作 durable 证明。background 模型调用仍按生产账本 D-03 不接。旧 Go Agent 留在 `exp`。Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
 ### Agent 评测体系
 
-JSON 任务集、评分器、live runner 与落盘在 `agent-service/evals/`。Go L2 世界与状态断言在 `go/internal/agent/eval*_test.go`；生产回流命令是 `go/cmd/productflow-agent-evals`。held-in / held-out 划分见 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。真实模型全量 k=3、L2/L5 nightly 与 kappa 校准仍是 opt-in；未在账本登记 `run_id` 前不把 pass^k 写成产品事实。
+未完成指导（各读一份）：[`audits/tasks/eval-skills.md`](audits/tasks/eval-skills.md)、[`audits/tasks/eval-user-sim.md`](audits/tasks/eval-user-sim.md)、[`audits/tasks/eval-labels.md`](audits/tasks/eval-labels.md)、[`audits/tasks/eval-go-loader.md`](audits/tasks/eval-go-loader.md)、[`audits/tasks/eval-live-layers.md`](audits/tasks/eval-live-layers.md)。冻结决策与历史 `run_id` 在 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。未登记 `run_id` 前不把 pass^k 写成产品事实。
 
 ### Agent Self-Harness
 
-版本化领域壳、失败挖掘、同模型提案、评测接受与生产热切尚未接线。合同、两档出口（G1 人切版本 / G2 自动热切）、阶段门和防打钻纪律见 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。该账本是本方向的唯一验收指标；本节只保留路线图入口。进化不得改评测 grader 刷分；生产可靠性仍只由 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md) 裁定。
-
-### Agent 运行时所有权
-
-Go 的 AgentTurn/journal/lease/effect 写权威与 Node.js/Pi adapter 职责正在按 [`audits/agent-runtime-ownership.md`](audits/agent-runtime-ownership.md) 分刀收口。该账本记录所有权目标、S0～S6 checkpoint 和每刀证据；生产可靠性状态仍只由 [`audits/agent-production-readiness.md`](audits/agent-production-readiness.md) 裁定。
+当前开工：[`audits/tasks/harness-artifact.md`](audits/tasks/harness-artifact.md)。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。进化不得改评测 grader 刷分。
 
 ### 运行时性能治理
 
-跨 Graph、Agent、异步投递、连续生图、SSE、数据库查询和容量 admission 的当前基线、锁序、优化顺序与验收 Gate 维护在 [`audits/performance-governance.md`](audits/performance-governance.md)。当前工作树已收口部分锁序、各域 recovery 批次、dispatcher cadence、SSE fanout、recovery backlog/耗时/锁等待观测、ImageSession 游标分页、GraphRun 列表摘要与详情分离；剩余 N+1、目标规模 query plan、capacity admission 细指标和 SaaS admission 仍待专项验证或新基线设计。
+未完成指导：[`audits/tasks/perf-imagesession-detail.md`](audits/tasks/perf-imagesession-detail.md)、[`audits/tasks/perf-dispatcher-latency.md`](audits/tasks/perf-dispatcher-latency.md)、[`audits/tasks/perf-capacity-metrics.md`](audits/tasks/perf-capacity-metrics.md)。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
 
 ### 画布文稿权威测试
 
-分层合同、有界动作搜索、运行中插入写、mock 浏览器文稿动作与 Agent 交错的验收账本见 [`audits/canvas-test-system.md`](audits/canvas-test-system.md)。C0–C3 与 C6 随 `just go-test`；加深搜索 `just go-test-canvas-search`。C4 是 opt-in Chromium 门：`just web-e2e-canvas-document`，需要已起的 `just dev` 与 mock prompt/image 绑定。C5 仍是 `just web-e2e-live-graph`，不覆盖 rewrite/候选。
+C0–C3、C5、C6 已落地。剩余：[`audits/tasks/canvas-inspector-midrun.md`](audits/tasks/canvas-inspector-midrun.md)。
 
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
-- 内部淘宝完整套图对照测评：过线池、分层抽样、工作台 vs 一句直调 vs 金标。验收口径与 live `run_id` 见 [`audits/image-quality-eval.md`](audits/image-quality-eval.md)。未登记 `run_id` 前不把闸门写成产品事实。
+- 内部淘宝套图对照：[`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md)。
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 
