@@ -1338,3 +1338,23 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 修复后两条均通过：新连接发起第二次请求，旧 signal 已取消、新 signal 未取消；旧请求迟到成功/失败均不投递事件。新请求仍在等待时再收到 sequence=4，总请求数保持 2，不出现第三次重叠补洞。随后第二次请求返回 sequence=1，按序投递 [1,2,3,4] 各一次，无协议错误、无多余重连 timer，当前流保持打开。测试使用 fake timer 推进原有 250ms 首次退避，该值不是实测恢复延迟，不计算 p95 或签收 5s 容量门。
 
 最终前端全量 `pnpm --dir web test:run` PASS，92 个文件、660 项（3.55s）；`pnpm --dir web lint`、`just web-build` PASS，包含 app/node/e2e 类型检查和 bundle 预算，Vite >500kB 提示保留。运行时 Git blob=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`，测试=`b829840c8470e85ca4b7eb57e38cb016da8a6b58`。主代理自审新旧 controller 身份、abort 后 catch/finally、失败计数及原共享订阅回归；没有运行浏览器、API 或真实 provider，不将当前含他人改动的工作树构建视为 G-07 固定候选验收。持续活跃且网络不返回的请求 deadline、浏览器 5s 补洞和多副本容量仍未由本轮证明。
+
+## 2026-09-06 Agent 隔离浏览器补洞容量
+
+新增 `just go-test-agent-browser-gap`，要求 dev PostgreSQL、已安装的 Web 依赖及 Playwright Chromium。Go 复用 `testdb.IsolatedMigrated`、Agent HTTP cookie 鉴权、mock Gateway 和 journal 夹具，创建 3/10,000 个连续事件并验证终态、序列和 lease 释放。随后通过 stdin 将一次性测试地址、cookie 和 Turn 身份交给 `web/scripts/agent-gap-capacity.mjs`，不写凭据文件。Node 启动随机本机端口 Vite、独立临时缓存和 Chromium，退出时关闭浏览器/服务、清除本次缓存；Go cleanup 关闭 HTTP 并删除独立库。无 worker、dispatcher、Redis 或真实模型，也不占用其他任务的固定端口。
+
+浏览器加载真实 conversation runtime，在空白测试页注入唯一的末尾 turn.completed 帧，使 sequence=1 至末尾前一条全部缺失。只有 SSE 输入被模拟；补洞请求经浏览器 fetch、同源代理、真实 Go 路由和 PG，使用真实 cookie。每页 limit=250，断言请求 cursor 恰好为 0,250,...，最终全部序号按顺序且只投递一次，全部 text.chunk 投影为内容 x 的 item.delta，末尾关闭流。此门专门测分页恢复，不证明真实 SSE 丢包、完整 React 渲染或 Node/WAL 崩溃恢复。
+
+计时在模块已加载、事件已落库之后，从创建订阅前到最终事件投递完成，包含浏览器分页网络、Go 查询/投影、JSON 解析及 runtime 顺序处理；不包含造数、浏览器启动或模块下载。每个进程先测 3 事件，再测 10k，没有额外同规模预热，数据库及 OS 缓存可温暖。每个请求的正文为小型固定 chunk，不推广成任意工具结果大小。
+
+首次运行 PASS（14.739s），3/10k 补洞为 18.60/691.20ms。之后将 Vite 缓存隔离并修正脚本 lint 的混合 Node/浏览器全局声明，末版经 dev env wrapper 执行 `PRODUCTFLOW_RUN_AGENT_BROWSER_GAP=1 go test -C go ./internal/agent -run "^TestAgentBrowserGapCapacity$" -count=3 -v -timeout 3m`，三轮 PASS（43.606s）：
+
+| 轮次 | 3 事件，1 页 | 10k 事件，40 页 | 10k 分页 JSON 总字节 |
+| --- | --- | --- | --- |
+| 1 | 31.8ms | 595.0ms | 3,810,382 |
+| 2 | 35.3ms | 587.3ms | 3,810,408 |
+| 3 | 18.6ms | 664.3ms | 3,810,428 |
+
+每轮两场景均满足原有 <5s 断言，分别校验 1/9,998 个文本增量，所有事件按序一次交付。JSON 字节包括所有分页响应，时间戳导致少量宽度变化；它不是单响应大小或传输协议总字节。只有三轮，不报告 p95。该单浏览器有限终态恢复结果不能乘成 100 路同时补洞，也不签持续流或慢网络容量。
+
+最终测试 Git blob：Go=`7ee88c2beb6e1b797e0e4bfab48969fcdf578c8c`，Node=`fcb664195045e43e9429dcc0a7f6ec47ef674188`；被测 runtime=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`。脚本定向 eslint PASS，主代理自审输入隔离、真实分页/鉴权、序号与正文断言、测量起止和清理；运行完成后未发现本次 gate 的 Node/Go 测试进程残留。未重跑完整 Go 包、前端全量或 G-07，运行时代码未在本轮修改。

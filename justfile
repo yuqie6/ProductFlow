@@ -114,6 +114,10 @@ go-test-canvas-search:
 go-test-agent-journal-capacity:
     bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY=1 go test -C go ./internal/agent -run "^(TestAgentJournalCapacityGate|TestAgentSSEHTTPConnectionCapacityGate)$" -count=1 -v -timeout 6m'
 
+# Isolated PG + real Chromium event-page repair; no model or shared dev stack.
+go-test-agent-browser-gap:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_AGENT_BROWSER_GAP=1 go test -C go ./internal/agent -run "^TestAgentBrowserGapCapacity$" -count=1 -v -timeout 3m'
+
 # Opt-in local fsync WAL depth/P95 gate.
 agent-service-test-local-journal-capacity:
     cd agent-service && PRODUCTFLOW_RUN_AGENT_LOCAL_JOURNAL_CAPACITY=1 pnpm vitest run src/store.test.ts -t "appends and reloads 10k durable WAL events"
