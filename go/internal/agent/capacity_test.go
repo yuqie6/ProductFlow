@@ -209,9 +209,10 @@ func TestAgentJournalCapacityGate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	latencies := &appendLatencyRecorder{}
+	deepLatencies := &appendLatencyRecorder{}
 
 	deepTurn := createClaimedJournalTurn(t, as)
-	if err := appendCapacityJournalTurn(ctx, as, deepTurn, agentJournalCapacityEventCount, latencies); err != nil {
+	if err := appendCapacityJournalTurn(ctx, as, deepTurn, agentJournalCapacityEventCount, deepLatencies); err != nil {
 		t.Fatalf("append 10k-event Turn: %v", err)
 	}
 	if err := assertCapacityJournalTurn(ctx, as, deepTurn, agentJournalCapacityEventCount); err != nil {
@@ -253,16 +254,25 @@ func TestAgentJournalCapacityGate(t *testing.T) {
 
 	samples := latencies.snapshot()
 	p95 := durationPercentile(samples, 95)
+	deepSamples := deepLatencies.snapshot()
+	deepP95 := durationPercentile(deepSamples, 95)
 	t.Logf(
-		"Agent journal capacity passed: deep_events=%d concurrent_turns=%d concurrent_events_per_turn=%d batches=%d p95=%s",
+		"Agent journal capacity: deep_events=%d concurrent_turns=%d concurrent_events_per_turn=%d concurrent_batches=%d concurrent_p50=%s concurrent_p95=%s deep_batches=%d deep_p50=%s deep_p95=%s",
 		agentJournalCapacityEventCount,
 		agentJournalCapacityConcurrentTurns,
 		agentJournalCapacityEventsPerTurn,
 		len(samples),
+		durationPercentile(samples, 50),
 		p95,
+		len(deepSamples),
+		durationPercentile(deepSamples, 50),
+		deepP95,
 	)
 	if p95 > agentJournalCapacityP95Limit {
-		t.Fatalf("AppendEvents batch P95=%s, want <=%s", p95, agentJournalCapacityP95Limit)
+		t.Errorf("concurrent AppendEvents batch P95=%s, want <=%s", p95, agentJournalCapacityP95Limit)
+	}
+	if deepP95 > agentJournalCapacityP95Limit {
+		t.Errorf("deep AppendEvents batch P95=%s, want <=%s", deepP95, agentJournalCapacityP95Limit)
 	}
 }
 
@@ -300,6 +310,7 @@ func TestAgentSSEHTTPConnectionCapacityGate(t *testing.T) {
 		response *http.Response
 		cancel   context.CancelFunc
 		err      error
+		reader   *bufio.Reader
 	}
 	opened := make(chan openResult, maxSSEConnections)
 	for index := range maxSSEConnections {
@@ -336,6 +347,7 @@ func TestAgentSSEHTTPConnectionCapacityGate(t *testing.T) {
 				closeStreams()
 				t.Fatalf("open SSE stream %d: %v", result.index, result.err)
 			}
+			result.reader = bufio.NewReader(result.response.Body)
 			streams = append(streams, result)
 		case <-ctx.Done():
 			closeStreams()
@@ -358,7 +370,7 @@ func TestAgentSSEHTTPConnectionCapacityGate(t *testing.T) {
 	for _, stream := range streams {
 		stream := stream
 		go func() {
-			frame, err := readCapacitySSEFrame(stream.response.Body)
+			frame, err := readCapacitySSEFrame(stream.reader)
 			if err != nil {
 				frames <- fmt.Errorf("SSE stream %d read persisted event: %w", stream.index, err)
 				return
@@ -405,6 +417,68 @@ func TestAgentSSEHTTPConnectionCapacityGate(t *testing.T) {
 	}
 	if overflow.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("101st SSE status=%d body=%s, want %d", overflow.StatusCode, overflowBody, http.StatusServiceUnavailable)
+	}
+
+	started := time.Now()
+	if _, err := as.svc.AppendEvents(ctx, claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken,
+		[]EventAppendInput{capacityJournalEvent(claimed, 2, 3)}); err != nil {
+		t.Fatal(err)
+	}
+	liveLatencies := &appendLatencyRecorder{}
+	for _, stream := range streams {
+		go func() {
+			for {
+				frame, err := readCapacitySSEFrame(stream.reader)
+				if err != nil {
+					frames <- fmt.Errorf("live stream %d: %w", stream.index, err)
+					return
+				}
+				if strings.HasPrefix(frame, ":") {
+					continue
+				}
+				if !strings.Contains(frame, "id: 2\n") || !strings.Contains(frame, "event: item.delta\n") {
+					frames <- fmt.Errorf("live stream %d unexpected frame %q", stream.index, frame)
+					return
+				}
+				var event struct {
+					Sequence int `json:"sequence"`
+					Payload  struct {
+						Delta string `json:"delta"`
+					} `json:"payload"`
+				}
+				for _, line := range strings.Split(frame, "\n") {
+					if data, ok := strings.CutPrefix(line, "data: "); ok {
+						if err := json.Unmarshal([]byte(data), &event); err != nil {
+							frames <- fmt.Errorf("live stream %d invalid JSON: %w", stream.index, err)
+							return
+						}
+					}
+				}
+				if event.Sequence != 2 || event.Payload.Delta != "x" {
+					frames <- fmt.Errorf("live stream %d wrong projection %+v", stream.index, event)
+					return
+				}
+				liveLatencies.observe(time.Since(started))
+				frames <- nil
+				return
+			}
+		}()
+	}
+	for range streams {
+		select {
+		case err := <-frames:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("live fanout: %v", ctx.Err())
+		}
+	}
+	samples := liveLatencies.snapshot()
+	p95 := durationPercentile(samples, 95)
+	t.Logf("Agent SSE live fanout: streams=%d events=1 append_to_frame_p50=%s append_to_frame_p95=%s", len(samples), durationPercentile(samples, 50), p95)
+	if p95 > time.Second {
+		t.Errorf("live SSE P95=%s exceeds 1s", p95)
 	}
 
 	closeStreams()

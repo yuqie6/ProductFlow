@@ -1294,3 +1294,25 @@ queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recover
 自审补充：测试退出时取消请求并等待 handler 后再移除 Query callback，避免失败清理与仍在运行的 handler 竞争。最终完整 `just go-test-zip-http-rss` PASS（13.496s）：10/100 张完整下载、传输中断、打包期取消、鉴权及数量/总字节拒绝全部通过。普通构建的取消到 handler 完成与清理为 4.074ms；100 张响应仍为 492,146,522B，额外 RSS 上界 40,955,904B（约 39.06MiB），响应头等待 7.252s、全文读取 8.945s。与前次运行的波动不作为优化收益，运行时代码没有变化。
 
 最终 HTTP 测试 SHA-256 为 `a28885ab3a3191b679fd990f4f26a6563d257dcef486a49eff24879be452b4b7`。主代理自审同步屏障、成功读取计数、客户端取消错误、handler 生命周期及临时文件清理；`just docs-check`、diff check PASS。未启动共享服务、使用真实 provider 或重跑整树发布门；并发导出和临时存储容量仍未由该单请求取消测试证明。
+
+## 2026-09-06 Agent 容量分场景与实时 SSE
+
+本轮只修改 `go/internal/agent/capacity_test.go` 的验收口径，不修改运行时。原 journal 门混合统计 1×10,000 事件深度和 25×128 事件并发写的 207 个批次；原百路 HTTP SSE 门只回放连接前已有的 turn.started。修改前同机 `just go-test-agent-journal-capacity` PASS（12.940s），混合 batch p95 205.866112ms；这个结果不能说明每个写入场景各自满足预算，也没有覆盖连接后的新事件推送。
+
+深度和并发写现分别采样、分别执行原有 p95 ≤300ms 断言，保留事件连续性、终态及 lease 释放检查。每批最多 64 个事件，深度场景 157 批，并发场景 50 批；顺序执行深度与并发，无额外预热。测量从调用 Go AppendEvents 到返回，包含 PG 事务，不包含 Node publisher、WAL 或模型。普通正文为固定小型 text.chunk，不能推广成任意事件宽度。
+
+SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连接返回 503 和取消后连接数归零。保持这 100 个连接打开，再追加一个 sequence=2 的 text.chunk，逐连接校验 SSE id=2、event=item.delta 及 JSON sequence=2、delta=x。复用每个连接的 buffered reader，防止初始帧读取预取的字节丢失。延迟从 AppendEvents 调用前到客户端完成新帧读取和校验，含写事务和读协程调度；读协程在 append 返回后启动，该数值不是提交后纯网络延迟。
+
+最终 `just go-test-agent-journal-capacity` PASS（12.232s）：
+
+| 场景 | 样本口径 | p50 | p95 | 固定预算 |
+| --- | --- | --- | --- | --- |
+| 单 Turn 10k 事件 | 157 次 batch append | 63.977332ms | 68.573183ms | ≤300ms |
+| 25 Turn ×128 事件 | 50 次并发 batch append | 130.731311ms | 203.296907ms | ≤300ms |
+| 100 已连接 SSE | 同一个新事件的 100 次客户端接收 | 31.690740ms | 37.520007ms | ≤1s |
+
+中间版分场景运行也 PASS（12.146s），并发 p95 292.894406ms、深度 p95 67.524078ms，保留靠近 300ms 边界的样本；末版额外加强了实时帧类型和 JSON 内容断言。运行时未变，两轮波动不记为性能收益。100 个接收样本共用一次追加，不能视为 100 次独立事件试验，也未覆盖持续推送、慢客户端、多副本或 gap repair。
+
+`PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY=1 go test -C go ./internal/agent -run TestAgentSSEHTTPConnectionCapacityGate -race -count=5 -v -timeout 2m` 经 dev env wrapper 执行，PASS（3.404s）。5 轮每轮 100 条连接，实时接收 p95 分别为 35.337712/33.664361/34.785850/32.430484/35.094687ms；每轮超限拒绝和取消归零均通过。另经同一 wrapper 运行 `go test -C go ./internal/agent -run "^(TestLastFiftyTurnsQueryP95|TestAgentSSETimeToFirstEventP95)$" -count=1 -v -timeout 2m` PASS（1.372s）：1000 条短正文 Turn 的最近 50 条服务层读取 40 次满足 500ms，分页不重不漏；该测试未输出具体 p95，不补造数值。20 次单连接初始事件回放 p95 14.599490ms，与百路实时推送分开记录。
+
+被测 Git blob：`execution.go`=`204c71d902e348f531bdeee227d769b77bc2ee4d`、`sse.go`=`b5b2635c28ef86eeec322a6e80e7368fd075ce1d`，最终 `capacity_test.go`=`7a1752d687946af9b7b0c1f6f42a12a3751612d0`。主代理自审独立预算、reader 生命周期、帧内容、计时边界和完整 diff。未运行真实 provider、浏览器或整树发布门，未重跑完整 Agent 包；此前完整包的 catalog fixture 漂移仍是未解决的独立验证缺口。G-05 继续按维度采证，不标记全组完成。
