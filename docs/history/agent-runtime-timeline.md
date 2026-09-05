@@ -1261,3 +1261,24 @@ queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recover
 上述四个顶层测试 `-race -count=10 -timeout 1m` PASS（15.737s）：140 个状态/入口组合、10 次读取交错、30 个正常启动场景、10 次 PG 消费。量化的是调用次数和状态正确性，不是 HTTP p95 或费用。`sync.go` / `turns.go` SHA-256 为 `a9d0ce236e5d57a0d6cc76213255f332de4b86c6d9d2fb3b8c5123602b5336b9` / `dfd4485038392c9a1cb2b5cc50115b53910c2685205f2913960c0a269312d311`；新增测试为 `3170684daede98d34815764d2a2332d084a6822f7580c43661e8ec2492592ab0`。
 
 最终完整 Agent 包 `-race -count=1 -timeout 4m` FAIL（104.352s），唯一报告失败为已有 `TestEvalObservationFixtures` catalog 漂移；本轮及其他默认启用测试未报告失败。未修改评测夹具或调用真实 provider。`just docs-check`、diff check PASS；主代理自审 worker/SubmitTurn 两个调用入口、重读窗口、正常启动与 PG 消费断言，提交仅包含本轮改动。
+
+## 2026-09-05 商品图库 ZIP HTTP 内存与传输
+
+原 `just go-test-zip-rss` 只测共享 writer；实际批量接口属于商品图库，路径为 `POST /api/v2/products/:product_id/image-assets/download-archive`，并非全局 media-library 单文件 GET。源码先在事务冻结元数据，再逐文件核验、写临时 ZIP，整个 ZIP 完成后才发送响应头和文件；defer 删除临时包。该实现逐文件占用内存，但仍占整包临时空间，首响应要等待全部打包。本轮无运行时修改。
+
+新增 `just go-test-zip-http-rss`，测试文件为外部 `mediaarchive_test`，调用真实 product HTTP、cookie 鉴权、PG、Local storage、ReadVerified 与 ZIP writer。使用独立迁移数据库、独立 TMPDIR、本机 httptest 服务和 HTTP 客户端，不改商品模块或共享 dev 服务。Go 1.26.5、linux/amd64。固定 PCG(1,2) 生成 1280×1280 不透明随机 RGB PNG，可实际解码；单图 4,919,853B。100 个不同媒体对象/路径与资产使用同源文件硬链接，逐路径重新核验 SHA/尺寸/MIME；内容相同、文件缓存温暖，不把结果当随机磁盘读取吞吐或真实图片分布。
+
+内存预算在运行前固定为额外 RSS 上界 ≤128MiB。每场景请求前 `debug.FreeOSMemory`，以 `/proc/self/statm` 取当前 RSS；响应正文完整复制到临时文件后读取 `getrusage` 的进程 MaxRSS，减去当前基线。MaxRSS 包含夹具准备及此前请求的历史峰值，得到保守上界；不以两次高水位差隐藏请求分配，也不宣称服务器独占 RSS。服务端和流式客户端在同进程，ZIP 校验在测量之后逐条 io.Copy 到 SHA-256，不把整包读入内存。临时文件及文件缓存不计入进程 RSS，该门不限制宿主机总内存或临时磁盘用量。
+
+最终 `just go-test-zip-http-rss` PASS（12.478s），10/100 张各 1 个完整请求，无额外同规模预热，不报告 p50/p95：
+
+| 图片数 | 源总字节 | ZIP 响应字节 | 响应头等待 / 全文读取 | RSS 基线 / 进程历史峰值 / 额外上界 |
+| --- | --- | --- | --- | --- |
+| 10 | 49,198,530 | 49,214,672 | 0.757 / 0.791s | 33.83 / 63.51 / 29.68MiB |
+| 100 | 491,985,300 | 492,146,522 | 7.357 / 7.978s | 35.98 / 73.34 / 37.37MiB |
+
+100 张源内容 469.19MiB、响应 469.35MiB；条目数、顺序、文件名、解压字节数、每条 SHA-256 和下载附件头均通过。未登录返回 401。另完整打包 10 张、客户端只读 32KiB 后关闭响应，临时包在 2s 验收窗口内清除；该场景覆盖传输中断，不覆盖打包中取消。101 张请求及数据库声明单图 byte_size=512MiB+1 返回 400，后者验证元数据总量拒绝，不伪造为实际读取超大图片。所有正常/拒绝请求结束后临时 ZIP 无残留。初版夹具曾误用 uploaded 枚举及 422 状态预期，已按现行 upload / apperr.Validation=400 修正；未修改生产合同或放宽内存预算。
+
+`mediaarchive` 默认全包 `-race -count=1` PASS（1.052s），不启用 opt-in 内存测试；内存门使用普通构建，避免把 race 开销当生产内存。被测 Git blob：`product/gallery_archive.go`=`5eecc5d51600fa74b73a40379ed16e6dfc13f175`，`product/http.go`=`ad887f546e7461cec623f1e78341ca19050352eb`，`media/read.go`=`96a2a1075b2176415dd21edecafa3c38e1b68ed9`，`mediaarchive/archive.go`=`c637471132f8b9e4618bddf0b5a831e480adaaa5`；新增 HTTP 测试 SHA-256=`c28ac0c7e8889bc4a4a643dab64910b3d1414924d05d2ded87a3dc5f73d5aea2`。
+
+结论：商品图库在该固定 PNG 单客户端场景无需新增内存缓存或打包重构。并发导出、临时存储饱和、JPEG/WebP 解码、打包中取消以及 Delivery 导出 HTTP 仍分别保留。主代理自审测量起止、RSS 口径、文件/连接 cleanup、来源身份及全部 diff；不将此局部门当成整树发布通过。

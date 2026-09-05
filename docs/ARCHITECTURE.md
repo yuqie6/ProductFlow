@@ -193,6 +193,8 @@ GenerationSpec 保存模型生成意图；provider effective values 和解码后
 
 全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `go/internal/library`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。商品工作台中的 `workbench/chrome/image-explorer/` 继续负责商品作用域的人工选图和绑定。
 
+商品图库批量下载通过 `POST /api/v2/products/:product_id/image-assets/download-archive`，最多 100 张且总元数据字节不超过 512MiB。事务只冻结条目身份，事务外逐文件 `ReadVerified` 核验、写入临时 ZIP；完成 ZIP 后 HTTP 才发送附件，返回或传输中断后删除临时文件。内存不持整包，但首响应要等待打包完成，并需要整包临时存储。`just go-test-zip-http-rss` 覆盖鉴权、10/100 张有效 PNG、条目哈希、传输中断清理与数量/总字节拒绝；该单客户端下载门不代表并发磁盘或内存容量。
+
 ## 8. Provider 架构
 
 `ProviderProfile` 保存 endpoint、secret、能力、默认模型和 provider 级配置。`ProviderBinding` 把一个 profile 绑定到用途：

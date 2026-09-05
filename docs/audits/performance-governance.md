@@ -97,7 +97,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 连续生图读取，PERF-08 | 详情任务三组各最多 20、去重最多 60；history keyset；[目标规模 HTTP gate](tasks/archive/perf-imagesession-http-load.md) 已交付。Status/SSE 返回该会话全部 queued/running，省略 `prompt`，固定宽度 300 条活动任务仍 `<1MiB`。 | 25k 会话 HTTP：详情 258,037B、p95 16.33ms。活动集：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 26/100/300 条 queued+running+effect，查询次数恒为 8；修改前 300 条 Status ≥1MiB，省略 prompt 后包内 HTTP 与隔离规模门通过 | COUNT/关联扫描、真实 prompt 宽度超过夹具、多订阅并发和生产分布仍待评估 |
 | Agent Session 读取，PERF-12 | cursor page、批量会话摘要/count、`activity_at` 排序；每会话最多返回 20 conversation 摘要。Turn 列表改为批量关联读取 | [目标规模 HTTP](../history/agent-runtime-timeline.md#2026-09-05-agent-读取容量与-turn-批量投影)：25k sessions、27k conversations、单对话 1000 Turns，四条真实读取路径通过固定宽度门；50 条 Turn 页查询 54→5，p95 28.70→8.93ms，正文不变 | 无独立 Session GET 详情接口，详情成本按实际 Turn GET 测量。并发、更长正文、journal/SSE 与真实访问分布不由该单客户端门推定 |
 | journal/ACK 与可观测性，PERF-13 | 批量 PG append、WAL/ACK、恢复前缀确认；[journal 调查](tasks/archive/arch-journal-assessment.md)结论为保留现状 | 标准容量历史 PG batch p95 232.8ms，本地 WAL p95 0.81ms；[问题答案身份修复](tasks/archive/agent-question-answer-identity.md)含第二问 SIGKILL | 当前 batch 指标是 count 和 `last_ms` gauge，不能计算持续 p95；histogram、锁等待和告警是否需要补，跟随具体诊断/部署需求 |
-| 媒体内存 | 共享 ZIP writer 流式逐文件写入，事务只冻结条目身份 | `just go-test-zip-rss` 历史 100×10MiB 写入器额外 MaxRSS 约 12.6MiB | 图库 HTTP 总字节上限不同，该测试未经过整条 HTTP 下载路径；参考图解码与真实传输另看工作量 |
+| 媒体内存 | 共享 ZIP writer 逐文件写临时包，事务只冻结条目身份；商品图库 HTTP 在打包完成后发送文件并清理 | writer 历史门保留；[真实 HTTP 门](../history/agent-runtime-timeline.md#2026-09-05-商品图库-zip-http-内存与传输)：100 张有效 PNG 共 469.19MiB，ZIP 469.35MiB，额外进程 RSS 上界 37.37MiB；鉴权、哈希、传输中断清理与限制拒绝通过 | 单客户端、同内容硬链接、暖文件缓存；不覆盖并发导出、临时存储饱和、打包中取消、JPEG/WebP 或交付导出 HTTP |
 | SaaS，PERF-10 | 现行合同明确为单商家 | [ROADMAP](../ROADMAP.md#saas) | 产品基线扩展时统一设计身份、范围、配额、存储与审计；当前不发布局部补丁 |
 
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
@@ -157,7 +157,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | Agent 读取 | `just go-test-agent-query-plan`、`just go-test-agent-read-load`、`agent/capacity_test.go` | 固定宽度下 Session 列表 p95 <300ms、Turn 页/详情 <500ms、正文 <1MiB；50 条 Turn 页每次 5 个 Query/Row 回调，1000 条分页不重不漏。事件/journal 深度另测 |
 | Agent batch/WAL/恢复 | `just go-test-agent-journal-capacity`、`just agent-service-test-local-journal-capacity`；`event_confirm_test.go`、`sigkill_gopg_test.go`、Node journal/turn 测试 | 连续 seq、ACK、fencing、结构/终态屏障、恢复和诚实终态 |
 | Agent SSE/页面恢复 | `just web-e2e-agent-sse` 与对应 conversation runtime 测试 | gap 保持 live 流、重复/迟到帧、终态补洞、parked approval、共享订阅 |
-| 媒体内存 | `just go-test-zip-rss` 与受影响上传/导出测试 | 峰值内存、总字节/像素限制、事务外 IO；明确 writer 与完整 HTTP 的范围 |
+| 媒体内存 | `just go-test-zip-rss`、`just go-test-zip-http-rss` 与受影响上传/导出测试 | HTTP 门固定 10/100 张有效 PNG、额外 RSS 保守上界 ≤128MiB，校验 ZIP 字节身份、鉴权和临时文件清理；明确 writer、商品图库 HTTP 与交付导出的范围 |
 
 Go 包测需要 PG 时通过 `bash scripts/with_dev_env.sh bash -lc 'go test -C go ...'` 运行。使用测试库/隔离库，不重建 dev DB；故障或 provider 测试必须确认共享服务、浏览器和配置占用。
 

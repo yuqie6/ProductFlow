@@ -185,6 +185,8 @@ GenerationSpec records model-generation intent. Provider-effective values and de
 
 Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `go/internal/library`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. The product workbench's `workbench/chrome/image-explorer/` continues to own product-scoped manual selection and binding.
 
+Product gallery batch download uses `POST /api/v2/products/:product_id/image-assets/download-archive`, limited to 100 assets and 512MiB of declared media bytes. The transaction freezes entry identities; outside it, `ReadVerified` validates one file at a time while writing a temporary ZIP. HTTP sends the attachment only after the archive is complete and removes it after transfer or disconnection. Memory does not retain the whole archive, but response headers wait for packing and temporary storage must hold the archive. `just go-test-zip-http-rss` covers authentication, 10/100 valid PNGs, entry hashes, interrupted-transfer cleanup and count/byte-limit rejection. This single-client gate does not establish concurrent disk or memory capacity.
+
 ## 8. Provider Architecture
 
 `ProviderProfile` stores endpoint, secret, capabilities, default models, and provider configuration. `ProviderBinding` maps one profile to a purpose:
