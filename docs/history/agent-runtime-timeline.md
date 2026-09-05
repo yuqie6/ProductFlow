@@ -1358,3 +1358,21 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 每轮两场景均满足原有 <5s 断言，分别校验 1/9,998 个文本增量，所有事件按序一次交付。JSON 字节包括所有分页响应，时间戳导致少量宽度变化；它不是单响应大小或传输协议总字节。只有三轮，不报告 p95。该单浏览器有限终态恢复结果不能乘成 100 路同时补洞，也不签持续流或慢网络容量。
 
 最终测试 Git blob：Go=`7ee88c2beb6e1b797e0e4bfab48969fcdf578c8c`，Node=`fcb664195045e43e9429dcc0a7f6ec47ef674188`；被测 runtime=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`。脚本定向 eslint PASS，主代理自审输入隔离、真实分页/鉴权、序号与正文断言、测量起止和清理；运行完成后未发现本次 gate 的 Node/Go 测试进程残留。未重跑完整 Go 包、前端全量或 G-07，运行时代码未在本轮修改。
+
+## 2026-09-06 Agent 原生 SSE 连接截断恢复
+
+扩展 `just go-test-agent-browser-gap` 的既有隔离栈，新增原生 EventSource 场景，不修改运行时。测试代理对三事件 Turn 的首次真实 Go SSE 响应只转发完整 sequence=1 帧，然后保持连接打开。Chromium runtime 确认收到第一帧后请求本机测试控制端点，代理销毁 SSE 响应连接；第二次 SSE 请求直接交给正常 Go 路由。控制端点仅存在于测试 Vite 插件，未添加业务 API。cookie、事件序列和响应帧来自真实 HTTP/PG，浏览器使用默认 EventSource 工厂，没有伪造 error 回调。
+
+断言代理观察到请求 after=[0,1]，客户端 received=[1,2,3] 各一次，连接状态严格为 connecting→open→reconnecting→connecting→open→closed，runtime 的非空 onStreamError 为零。此项验证协议层无错误提示，不等于完整 React 页面或浏览器控制台没有网络中断日志。测量起点为客户端收到首帧并发起截断控制请求之前，终点为最后事件交付；包含控制请求、真实连接失败和默认 250ms 退避。整个场景还受 5s 失败计时器约束，该局部门限不是生产 SLO。
+
+首次完整门 PASS（16.825s），恢复 263.5ms；末版脚本修正 Node 全局 lint 声明后定向 eslint PASS。经 dev env wrapper 运行 `PRODUCTFLOW_RUN_AGENT_BROWSER_GAP=1 go test -C go ./internal/agent -run "^TestAgentBrowserGapCapacity$" -count=3 -v -timeout 3m`，最终三轮 PASS（44.843s）：
+
+| 轮次 | 原生 SSE 截断到恢复 | 3 事件分页补洞 | 10k 事件分页补洞 |
+| --- | --- | --- | --- |
+| 1 | 262.8ms | 34.6ms | 580.5ms |
+| 2 | 262.6ms | 16.0ms | 666.7ms |
+| 3 | 261.7ms | 25.2ms | 560.4ms |
+
+每轮均验证真实重连 cursor、事件唯一性、状态序列和无运行时错误；原 40 页/9,998 文本增量断言保持。三次单次观测不报告 p95，也不把与上一轮的差异解释为性能优化。所有事件在测试前已落库且 Turn 已终态，此结果不证明活跃生成期间、长时间离线、反复断网、整机网络切换或服务重启后的恢复。
+
+最终脚本 Git blob=`ad49c91987ce5e2c2d2ff0181c6b396a914b7cf0`，被测 runtime=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`、Go SSE=`b5b2635c28ef86eeec322a6e80e7368fd075ce1d`。主代理自审真实首帧转发、服务端销毁时序、第二请求直通、异常清理及完整 diff；不调用真实 provider，不重跑整树发布门。G-04 的其他矩阵继续按候选与变更分别复验。
