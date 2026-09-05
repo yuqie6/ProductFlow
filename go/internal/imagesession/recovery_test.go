@@ -229,6 +229,56 @@ func TestRecoverUnfinishedContinuesAfterOneRestageFailure(t *testing.T) {
 	}
 }
 
+func TestRecoverUnfinishedSkipsLockedCandidatePrefix(t *testing.T) {
+	ss := newSessionServer(t)
+	drainImageRecovery(t, ss)
+	var ids []string
+	for i := 0; i < recoveryBatchLimit+1; i++ {
+		_, id := createQueuedGeneration(t, ss, map[string]any{
+			"prompt": "locked recovery prefix", "size": "1024x1024", "generation_count": 1,
+		})
+		stampCreatedAt(t, ss, id, time.Unix(int64(i+1), 0).UTC())
+		ids = append(ids, id)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lock, err := ss.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback(context.Background())
+	if _, err := lock.Exec(ctx, `SELECT id FROM image_session_generation_tasks WHERE id=ANY($1) FOR UPDATE`, ids[:recoveryBatchLimit]); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		summary, err := RecoverUnfinished(ctx, ss.pool, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if i == 0 {
+			want = 1
+		}
+		if summary.EnqueuedTasks != want {
+			t.Fatalf("cycle %d enqueued %d tasks, want %d", i, summary.EnqueuedTasks, want)
+		}
+	}
+	if got := pendingDispatchCount(t, ss, ids[recoveryBatchLimit]); got != 1 {
+		t.Fatalf("unlocked task after %d locked candidates has %d dispatches after 3 cycles, want 1", recoveryBatchLimit, got)
+	}
+	for _, id := range ids[:recoveryBatchLimit] {
+		if pendingDispatchCount(t, ss, id) != 0 {
+			t.Fatal("locked task was restaged")
+		}
+	}
+	if err := lock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := RecoverUnfinished(ctx, ss.pool, time.Minute); err != nil || summary.EnqueuedTasks != recoveryBatchLimit {
+		t.Fatalf("released tasks were not recovered: %+v err=%v", summary, err)
+	}
+}
+
 func TestRecoverUnfinishedLeavesRecentHeartbeatRunning(t *testing.T) {
 	ss := newSessionServer(t)
 	drainImageRecovery(t, ss)

@@ -1156,3 +1156,17 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 自审补充：取消检查移入每次批次启动前，避免 ticker/wake 与取消同时就绪时再次调用；新增取消回归，最终 dispatcher 全包 `-race -count=20` PASS（2.809s）。最终进程四场景再跑 PASS（14.445s）：空恢复单/双副本 p95 376.735/238.319ms，慢恢复 363.348/237.403ms；状态、延期、唯一信封和恢复跨度断言全部保留。最终 main/coordinator SHA-256 为 `5b65868deabb786c3fcb16667941570a0fbe4483e4c2acf6172786d875c00f55` / `8a0fb38594dc3a70f0f0144c2e26ab2794d220b6c0ed1ead440b391a2c8ecd0b`。
 
 `just go-test` 完整执行但整树 FAIL：路由合同漂移、Agent eval catalog fixture、两项配方 409/200 和 prompt art-direction 断言。dispatcher、Graph（68.110s）、ImageSession（7.844s）、Delivery（1.431s）、LocalEdit（1.286s）、queue（4.322s）通过。全量运行后只补上述取消边界与测试，已由最终包级 race 和进程门覆盖；未借此宣称完整候选 PASS。`just docs-check` 与 diff check PASS。中英文架构仅暂存独立调度段落，其他任务的 Graph 文稿改动不纳入本交付。
+
+## 2026-09-05 连续生图恢复跳过锁定前缀
+
+`1a700271` 后 ImageSession 恢复仍在无锁发现查询中按 created_at/id 固定取前 25 个候选，之后逐条状态事务才 SKIP LOCKED。若该前缀持续被锁住，后续任务不会进入处理列表。本轮仅在 `discoverImageSessionCandidates` 的查询增加已有 `pfdb.SkipLocked()`；发现事务返回候选 ID 后立即结束，处理仍逐条重查状态和锁行，不持整个发现批次的锁执行 restage，不改变 admission 的 capacity→task 顺序。发现阶段不请求 capacity 锁，也不调用 provider。
+
+真实 PG 回归使用现有 HTTP 流程创建 26 个 queued 任务并移除 outbox，按创建时间排定顺序；独立事务持有前 25 条任务的行锁。原实现连续 3 轮恢复后，第 26 条 outbox 数仍为 0，FAIL（1.324s）。修改后第一轮 enqueue=1，后两轮=0，第 26 条唯一 outbox 保留；持锁的 25 条均无 outbox，释放锁后的下一轮 enqueue=25。新回归首次 PASS（1.628s）。该结果量化的是恢复机会与唯一投递，不把测试总时长当业务延迟或 p95。
+
+`HasMore` 现在按跳锁后的可选行 `limit+1` 判断；持锁候选存在时也可为 false，dispatcher 不应把它当全库精确 backlog 或停止定时恢复的依据。默认返回上限仍为 26 个 ID，不表示数据库只检查 26 行；跳过长锁定前缀仍有扫描成本。此修复没有处理持续错误但未持锁的前缀，也没有修改 Graph、Agent、Delivery、LocalEdit 的候选选择。
+
+验证：ImageSession 全包 `-race -count=1` PASS（25.990s），含 existing 单错误邻居提交、batch/HasMore、provider unknown、迟到 writer 回归；`just go-test-dispatch-latency` 四场景 PASS（15.739s）。空恢复单/双副本 PENDING→SENT p95 391.026/251.967ms，慢恢复 388.732/244.478ms；500 个正常唯一信封、25 条延期未提前投递、unknown 不重新入队的断言保留。不按前后独立运行差值宣称性能收益。
+
+运行时/测试 SHA-256：`recovery.go`=`c61bd9af76cc54d79452ba811d54d39d962733648d08f9fde842589b92c75c91`，`recovery_test.go`=`a68bf3c034d47e982311d43d0b4f464d55d45363143b96f5c8a1d07a6e0ed9da`。只改本域发现查询与相关文档，不改 schema、provider、共享配置或运行服务；共享工作树不是固定候选，本轮不声称 G-07 通过。
+
+锁定前缀回归 `-race -count=10` PASS（11.265s）。`just docs-check`、diff check PASS；主代理自审查询锁作用域、limit+1 语义、逐条复核与所有新增断言。中英文架构仅暂存 ImageSession 恢复段落，其他组未提交文稿不纳入交付。

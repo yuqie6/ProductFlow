@@ -66,7 +66,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 这些是当前机制，不是用户等待时间的承诺。35 分钟 lease 不能直接解释为“重启很快恢复”；恢复时间要计入 lease 剩余时间、扫描 cadence、积压和副作用对账。是否调整须用故障现场和晚到 writer 回归共同证明。
 
-`has_more` 不统一解释为“满批”或“精确 backlog”：queue 的 `Summary.HasMore` 使用满 claim 批次提示；Graph 候选用 `limit+1` 和剩余额度探测；Agent 合并各阶段结果。它们都不提供跨副本精确计数。锁竞争、发现后状态变化和不同阶段的候选范围分别看源码。
+`has_more` 不统一解释为“满批”或“精确 backlog”：queue 的 `Summary.HasMore` 使用满 claim 批次提示；Graph 候选用 `limit+1` 和剩余额度探测；ImageSession 候选发现用 `FOR UPDATE SKIP LOCKED`，跳过锁定行后按 `limit+1` 判断；Agent 合并各阶段结果。它们都不提供跨副本精确计数；锁定候选仍可留在库中而 `HasMore=false`。锁竞争、发现后状态变化和不同阶段的候选范围分别看源码。
 
 ## 如何判读证据
 
@@ -117,6 +117,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 2026-09-05 连续生图活动 Status：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 在真实 HTTP 上测量 26/100/300 条 queued/running（各一条 effect、2160B prompt、512B 进度注记）。查询次数恒为 8，不随活动集线性增加。修改前 300 条 Status 超过 `<1MiB`；根因是每 2s 回读重复下发 prompt。Status/SSE 改为不下发 prompt，详情与提交响应仍带完整提示词；前端 overlay 保留缓存 prompt，新任务 id 触发详情回源。未分页丢掉活动任务，未加缓存。
 
 ## 下一步如何选择
+
+2026-09-05 [连续生图恢复锁定前缀](../history/agent-runtime-timeline.md#2026-09-05-连续生图恢复跳过锁定前缀)：最早 25 个候选持锁时，原实现连续 3 轮均未恢复第 26 条正常任务。候选发现阶段前移 `SKIP LOCKED` 后，第一轮即为后续任务补回唯一 outbox；持锁任务不变，解锁后全部恢复。发现查询默认返回至多 26 个候选 ID 并短暂锁行，事务结束即释放；状态迁移仍逐条重新锁行和复核。此结论只覆盖 ImageSession 行锁前缀，持续错误条目和其他域候选公平性未据此关闭。
 
 2026-09-05 [恢复域独立调度](../history/agent-runtime-timeline.md#2026-09-05-watch-恢复域独立调度)：原实现首域阻塞时，后续域无法启动或按 cadence 再次运行。watch 改为五个独立串行恢复循环，域内不重入、取消等待全部退出；one-shot 顺序与既有锁/状态合同保留。20 次 race 重复验证慢域、健康域和失败域并存。真实四场景投递门通过，慢恢复单/双副本 p95 385.253/244.671ms。最多并发恢复批次由 1 增至 5；未新增连接池、缓存或超时，资源饱和与域内坏条目仍待验证。
 

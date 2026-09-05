@@ -28,7 +28,7 @@ type RecoverySummary struct {
 	StaleRunningTasks int  `json:"stale_running_tasks"` // 过期且未打 provider 的 running 被重排队
 	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
 	UnknownTasks      int  `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown 且不可自动重试
-	HasMore           bool `json:"has_more"`            // unlocked snapshot 仍有未处理候选
+	HasMore           bool `json:"has_more"`            // 跳过锁定行后仍有超过本批额度的候选
 }
 
 type imageTaskRecoverResult struct {
@@ -103,6 +103,7 @@ func discoverImageSessionCandidates(ctx context.Context, gdb *gorm.DB, cutoff ti
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		candidateScanStarted := time.Now()
 		scanErr := imageSessionRecoveryScope(pgxTx.WithContext(ctx), cutoff).
+			Clauses(pfdb.SkipLocked()).
 			Order("created_at ASC, id ASC").
 			Limit(limit+1).
 			Pluck("id", &ids).Error
