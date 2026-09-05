@@ -1376,3 +1376,15 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 每轮均验证真实重连 cursor、事件唯一性、状态序列和无运行时错误；原 40 页/9,998 文本增量断言保持。三次单次观测不报告 p95，也不把与上一轮的差异解释为性能优化。所有事件在测试前已落库且 Turn 已终态，此结果不证明活跃生成期间、长时间离线、反复断网、整机网络切换或服务重启后的恢复。
 
 最终脚本 Git blob=`ad49c91987ce5e2c2d2ff0181c6b396a914b7cf0`，被测 runtime=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`、Go SSE=`b5b2635c28ef86eeec322a6e80e7368fd075ce1d`。主代理自审真实首帧转发、服务端销毁时序、第二请求直通、异常清理及完整 diff；不调用真实 provider，不重跑整树发布门。G-04 的其他矩阵继续按候选与变更分别复验。
+
+## 2026-09-06 连续生图部分完成时限边界
+
+当前 `platform/queue/asynq.go` 对整个信封设置 30 分钟 TaskTimeout，consumer lease 为其加 5 分钟，Graph lease 也使用这一合同。ImageSession `runGeneration` 对非 openai-images provider 在同一 handler 中顺序调用多次 Generate；progress_updated_at 影响闲置恢复，不重置 handler context 的 deadline。不能仅增加全局时限或缩短闲置恢复阈值来解决多候选累计耗时。
+
+新增真实 PG/HTTP 回归 `TestExecuteDeadlinePreservesCompletedCandidate`：申请两张图，mock provider 首次返回有效图片并正常落库；第二次进入时通过真实详情 GET 确认 status=running、completed_candidates=1、active_candidate_index=2、最近一分钟内更新过进度，并记录首张资产身份。第二次调用等待真实 context 的 5s deadline 到期，再返回 DeadlineExceeded。这里缩短的是测试 handler 的 deadline，没有改生产 30 分钟配置，也没有真实等待 30 分钟或启动 asynq；不把它称为完整队列时限现场复现。
+
+到期后的真实详情仍保留相同首张资产、仅一条 round、completed_candidates=1；任务 unknown 且 IsRetryable=false，两个 effect 分别为 applied/unknown。再次调用 Execute 不重打 provider，总调用数保持 2。新鲜进度没有使 context 延期；已完成素材未丢失，第二候选结果不可证明时也未被自动重试。它确认部分完成的损失边界，未实现健康长任务连续完成。
+
+最终经 dev env wrapper 运行 `go test -C go ./internal/imagesession -run "TestExecuteDeadlinePreservesCompletedCandidate|TestExecuteCanceledContextMarksUnknown|TestExecuteTimeoutIsUnknown|TestRecoverUnfinishedLeavesRecentHeartbeatRunning" -race -count=2 -v -timeout 1m` PASS（12.830s），四类场景各两次。新测试两次均为 1/2 已保存、2 个 effect、2 次 provider 调用且重入无增加；不报告性能 p95。测试 Git blob=`cf08ddaa413120c6f459b1b5f31f00b95fde07fa`，执行器=`897544eea9a8787d0ebaa227d2e14c0a5eaec58f`，asynq 配置=`11e1b51a8fbb1853c17437af6cdf1134737cfc17`。
+
+后续待实现方向是在已确认的候选/批次边界交还执行权，避免多个合法 provider 调用累积占满单个信封时限。必须一起核对 completed/group/effect 的持久化、任务 queued/running 投影、attempt 计数、ErrLater 重投与消费 lease；不得重放未知 effect 或把排队切片伪装成用户失败重试。本轮未改这些共享行为，也未提高超时、自动重试或替换未知状态。主代理自审现有状态断言、素材身份保留及测试超时清理；量化证据不作为长任务风险关闭依据。
