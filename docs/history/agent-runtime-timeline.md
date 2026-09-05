@@ -1231,3 +1231,19 @@ queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recover
 运行时 `recovery.go` SHA-256 为 `5d3f21443b86e365a11a0f03dee32132aa53ebc730e8479e1c7258075d83d534`。Task 行锁、autoNameSession 更新锁、持续错误前缀与 pending Turn restage 未由此修复；不宣称 queued 恢复已具备全部公平性或发布门通过。主代理自审锁作用域、事务释放与重查窗口、取消返回和幂等断言；没有修改共享服务、schema 或 provider 配置。
 
 最终自审把唯一性断言从 current_turn_id 关联计数加强为每个 Task 的总 projection 数与 current 关联数均为 1。加强后的两种锁竞争及取消回归 `-race -count=3` PASS（9.077s）。`just docs-check`、diff check PASS；中英文架构仅纳入本轮恢复说明。
+
+## 2026-09-05 Agent 补投递与 worker 同步资格对齐
+
+`restagePendingTurns` 原来按活动状态选择候选，不检查 harness_turn_id；worker 的 `turnNeedsSync` 已排除已绑定的 queued/running/cancel_requested。已绑定活动 Turn 的信封消费为 CONSUMED 后，下一次扫描又能补回无效 PENDING，消耗候选窗口和投递资源。基线为 `784b69f8` 中的 `recovery.go`，本轮只收紧恢复资格，不改 provider、worker 或 journal 合同。
+
+新增真实 PG 资格矩阵：9 个状态 × 是否绑定 × resume_required × 是否有答案，共 72 个组合，与已有 `turnNeedsSync` 逐条比较。基线实际 pending/enqueued=14，合同期望 8，FAIL（1.250s）；多出的 6 条为已绑定活动 Turn。修改后 SQL 发现增加 harness_turn_id IS NULL，逐条读取增加该字段并直接调用 `turnNeedsSync`，72 个组合各自信封有无符合合同。该夹具新建信封 14→8（减少 42.86%），未将状态组合占比当作真实用户分布，也未测 broker 吞吐或生产 p95。首次夹具运行曾误写 cancelled 枚举，改为当前 canceled 后才得到上述有效基线；夹具错误不记为产品失败。
+
+边界保留：未绑定活动 Turn、已有答案的 requires_input 仍可同步；resume_required、无答案等待、审批等待及其他终态不补投递。已有 PENDING/SENT/DEAD 排除条件不变。新增交错回归通过 HTTP 创建暂时启动失败的 Turn，设其信封 CONSUMED，在候选发现后、逐条读取前提交 harness 绑定，要求 pending=1、enqueued=0 且信封仍为 CONSUMED。它证明逐条复核生效，不证明读取到 outbox 写入之间的原子性或锁等待已经解决。
+
+原 HTTP consumed 补投递和 pending HasMore 测试使用了启动成功的 mock，实际已绑定却期待重新同步；现改用已有 questionGateway 的 startErr，冻结为真实待启动输入，保留原补回与 limit+1 断言。初轮整包 FAIL（90.916s）包括 catalog 漂移、这两个旧夹具，以及一次 `TestRecoverUnfinishedTurnsPreservesExpiredHasMore` unknown=0/want=1。后者没有修改源码或断言，定向复跑通过，原因未确认，不归因为本轮修复或环境。
+
+最终定向命令：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run "TestRestage|TestRecoverUnfinishedTurnsRestagesConsumedDispatch|TestRecoverUnfinishedTurnsPreservesExpiredHasMore|TestRecoverUnfinishedTurnsPreservesPendingRestageHasMore" -race -count=10 -timeout 2m'` PASS（36.768s）。资格矩阵累计 720 个组合，另含 10 次发现后绑定与原有恢复边界；过期批次异常未重现。运行时 `recovery.go` SHA-256 为 `67ec4556a7ba81d015b2f727333d863ab69f088aaf31e1a15e8cbfddd9c9977a`，新增测试为 `93d26f1f215f3889bd5937bbed46091a4308fe0701d84a9997429b167c35e17c`。
+
+后续整包再次出现过期批次第二轮 unknown=0/want=1（95.938s）。增加扫描前候选诊断后第三次整包复现（91.934s）：预期 execution 为 `b534df08-20c3-4435-b406-a1312d822be0` / `0eca0e53-e589-4a0e-b647-8f8ba417f1d1`，候选中另有其他夹具留下的 `7026bb6d-836a-448e-97c4-c3f4f31abd3f`（queued/claimed）及 `e0e8b4b4-95b6-4e5e-b000-aff98036c842`（unknown/claimed）。按 ID 排序，第二轮先回收前者 lease，按合同不新增 unknown，因此计数为 0。Agent lease 默认 60s，包级共享测试库中的其他 lease 可以在 drain 之后到期；预先清理无法固定两条候选。该测试改用现有 `testdb.IsolatedMigrated` 独立迁移库，原两轮 1/1 与 HasMore true/false 断言不变，删除临时候选日志，不改运行时为测试排除真实候选。
+
+独立库修正后的最终完整 Agent 包 `-race -count=1 -timeout 4m` FAIL（90.036s），唯一报告失败为已有 `TestEvalObservationFixtures` 的 catalog 漂移；其他默认启用测试未报告失败。没有重生成评测夹具，未执行真实 provider 或整树发布门。`just docs-check`、diff check PASS；主代理自审 SQL/worker 资格一致性、发现后复核、旧夹具修正与独立库 cleanup，交付不包含其他任务改动。

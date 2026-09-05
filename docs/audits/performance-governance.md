@@ -118,6 +118,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 ## 下一步如何选择
 
+2026-09-05 Agent pending Turn 补投递与 worker 同步条件对齐，见 [资格矩阵](../history/agent-runtime-timeline.md#2026-09-05-agent-补投递与-worker-同步资格对齐)：72 种状态组合原来补 14 个信封，实际仅 8 个需要 worker 同步；SQL 发现排除已绑定活动 Turn，逐条复核复用 `turnNeedsSync`，消除该夹具的 6 个无效信封。已回答问题、未绑定启动、resume_required 和终态边界保留。绑定后复核已覆盖，读取后到 outbox 写入的竞态与 outbox 行锁仍不由本轮保证。
+
 2026-09-05 Agent queued Task 补首轮：[conversation 锁跳过](../history/agent-runtime-timeline.md#2026-09-05-agent-queued-task-恢复跳过-conversation-锁)。原实现前 25 条共用被锁 conversation 时，首轮在等待中取消，第 26 条未恢复且错误被吞；发现和逐条处理均跳锁后，发现前持锁时第 26 条首轮恢复，发现后持锁时第二轮恢复。解锁后前缀各补唯一首轮，取消返回 context 错误。Task/Session 行锁、持续错误前缀与 pending Turn 补投递仍待验证。
 
 2026-09-05 Agent 过期 execution 的锁定前缀已有直接回归，见 [扫描证据](../history/agent-runtime-timeline.md#2026-09-05-agent-过期-execution-锁定前缀)：25 条 projection 持锁时，第 26 条仍在第一轮收敛；此路径已在候选查询跳锁，无需套用其他域的修复。`HasMore` 仍探测全部过期 owner，持锁前缀存在时为 true。queued Task 补首轮、pending Turn 补投递、execution 单独持锁与持续错误候选未由此关闭。

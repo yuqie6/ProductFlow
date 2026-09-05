@@ -129,6 +129,8 @@ Agent Turn 列表先按游标选择本页 ID，再用单条关联查询批量读
 
 Agent queued Task 补首轮恢复在候选发现及逐条处理时跳过锁定 conversation；发现事务只锁 conversation 并立即释放，处理事务重新取得同一锁后调用原 `reserveTurn`，保持既有幂等键、作用域和 Task 校验。候选 `HasMore` 只反映跳锁后可选任务，锁定候选存在时也可为 false；下一轮仍按 cadence 扫描。取消返回 context 错误，不继续把取消当成单条业务失败忽略。该机制不跳过 Task/Session 行锁。实现与回归：`go/internal/agent/recovery.go`、`recovery_queued_lock_test.go`。
 
+Agent pending Turn 补投递与 worker 的 `turnNeedsSync` 对齐：仅未绑定 harness 的 queued/running/cancel_requested，或已有答案的 requires_input，且 resume_required=false，才需要同步。已绑定的活动 Turn 由 PG journal 推进，不周期性补无效信封；SQL 发现与逐条读取后复核均检查绑定状态。该复核不是跨读取与 outbox 写入的原子快照。实现与回归：`go/internal/agent/recovery.go`、`helpers.go`、`recovery_sync_eligibility_test.go`。
+
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
 商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 不存在；对应 HTTP 返回 404。`workflow_drafts` 表已删除。Agent intake 落库会按模板展开 birth 图；已经展开的图改拓扑只走 Graph Command，不再交第二套完整 DAG。

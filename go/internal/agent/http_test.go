@@ -950,7 +950,7 @@ func TestAnswerQuestionNotResumableDoesNotCreateSecondTurn(t *testing.T) {
 }
 
 func TestRecoverUnfinishedTurnsRestagesConsumedDispatch(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "")
+	as := newAgentServer(t, &questionGateway{startErr: errors.New("start unavailable")}, "")
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
 	var sess SessionResponse

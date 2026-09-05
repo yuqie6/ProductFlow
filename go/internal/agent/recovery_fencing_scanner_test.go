@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/queue"
+	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -89,8 +91,8 @@ func drainAgentRecovery(t *testing.T, as *agentServer) {
 }
 
 func TestRecoverUnfinishedTurnsPreservesExpiredHasMore(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
-	drainAgentRecovery(t, as)
+	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_agent_expired_%d", time.Now().UnixNano()))
+	as := newAgentServerOnDB(t, mockGateway{}, "tok", pool, db)
 	turns := []claimedJournalTurn{
 		createClaimedJournalTurn(t, as),
 		createClaimedJournalTurn(t, as),
@@ -148,18 +150,29 @@ func TestRecoverUnfinishedTurnsPreservesQueuedTaskHasMore(t *testing.T) {
 }
 
 func TestRecoverUnfinishedTurnsPreservesPendingRestageHasMore(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
+	as := newAgentServer(t, &questionGateway{startErr: errors.New("start unavailable")}, "")
 	drainAgentRecovery(t, as)
-	turns := []claimedJournalTurn{
-		createClaimedJournalTurn(t, as),
-		createClaimedJournalTurn(t, as),
+	resp := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
+	as.mustStatus(t, resp, http.StatusCreated)
+	var session SessionResponse
+	as.decode(t, resp, &session)
+	var turns [2]SubmitTurnResponse
+	for i := range turns {
+		resp := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+session.Conversations[0].ConversationID+"/turns", map[string]any{
+			"input_text": "pending recovery", "idempotency_key": session.ID + string(rune('a'+i)),
+		})
+		as.mustStatus(t, resp, http.StatusAccepted)
+		as.decode(t, resp, &turns[i])
+		if turns[i].Turn.HarnessTurnID != nil {
+			t.Fatal("pending recovery fixture must be unbound")
+		}
 	}
-	for _, claimed := range turns {
+	for _, submitted := range turns {
 		if _, err := as.pool.Exec(context.Background(), `
 			UPDATE async_dispatches
 			SET status = $1, consumed_at = NOW(), updated_at = NOW()
 			WHERE actor_name = $2 AND aggregate_id = $3
-		`, queue.StatusConsumed, queue.ActorAgentTurnSync, claimed.turn.ID); err != nil {
+		`, queue.StatusConsumed, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
 			t.Fatal(err)
 		}
 	}

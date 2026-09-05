@@ -165,7 +165,7 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 	var ids []string
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
-			Where("resume_required = FALSE AND (status IN ? OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
+			Where("resume_required = FALSE AND ((harness_turn_id IS NULL AND status IN ?) OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
 			Where(`NOT EXISTS (
 				SELECT 1 FROM async_dispatches d
 				WHERE d.delivery_key = ? || ':' || agent_turn_projections.id
@@ -188,16 +188,17 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 		var changed bool
 		restageErr := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 			var projection schema.AgentTurnProjections
-			if takeErr := pgxTx.WithContext(ctx).Select("id", "status", "resume_required", "question_answer_json").
+			if takeErr := pgxTx.WithContext(ctx).Select("id", "status", "harness_turn_id", "resume_required", "question_answer_json").
 				Where("id = ?", id).Take(&projection).Error; takeErr != nil {
 				if errors.Is(takeErr, gorm.ErrRecordNotFound) {
 					return nil
 				}
 				return takeErr
 			}
-			needsSync := !projection.ResumeRequired && (inSet(inFlightTurn, projection.Status) ||
-				(projection.Status == "requires_input" && projection.QuestionAnswerJSON != nil))
-			if !needsSync {
+			if !turnNeedsSync(turnRow{
+				ID: projection.ID, Status: projection.Status, HarnessTurnID: projection.HarnessTurnID,
+				ResumeRequired: projection.ResumeRequired, QuestionAnswerJSON: jsonPtrBytes(projection.QuestionAnswerJSON),
+			}) {
 				return nil
 			}
 			ok, restageErr := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
