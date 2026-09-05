@@ -62,6 +62,7 @@ describe("commitNode baseline", () => {
   it("sends the inspector draft revision and does not replay document saves on 409", () => {
     expect(graphCanvasPanelSource).toContain("baseGraphRevision: input.baseGraphRevision");
     expect(graphCanvasPanelSource).toContain("return await applyMutation.mutateAsync(changeSet);");
+    expect(graphCanvasPanelSource).toMatch(/commitNode[\s\S]{0,1600}graph\.canvas\.revisionConflict/);
     expect(graphCanvasPanelSource).not.toMatch(/commitNode[\s\S]{0,1200}base_graph_revision:\s*graphRef\.current\.revision/);
     expect(graphCanvasPanelSource).not.toMatch(/commitNode[\s\S]{0,1200}executeApply\(/);
   });

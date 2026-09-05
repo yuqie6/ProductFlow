@@ -1,23 +1,25 @@
 # 任务：浏览器整图跑中途撤销与文稿保存 409 停止
 
-状态：开放
+状态：完成
 类型：实现
-认领者：—
-认领于：—
+认领者：主代理-0905-1436
+认领于：2026-09-05T14:36:17+08:00
 业务组：工作流体验
 父账本：canvas-test-system.md
 完成后可拆：无
 
-任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](README.md)。按 [所有权前置规则](README.md#认领与并行) 取得已确认的认领后，才开始读取当前实现、追踪调用链、调查根因或设计方案；修改前核对适用仓库规则、测试和 diff。
+本任务已关闭。认领与归档步骤见 [Issue 协议](../README.md)，业务组结论见[父账本](../../canvas-test-system.md)。
+
+任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](../README.md)。按 [所有权前置规则](../README.md#认领与并行) 取得已确认的认领后，才开始读取当前实现、追踪调用链、调查根因或设计方案；修改前核对适用仓库规则、测试和 diff。
 
 ## 问题来源
 
-[canvas-inspector-midrun](archive/canvas-inspector-midrun.md) 关闭时声明：整图跑中途撤销与浏览器 409 交互未纳入该单 Playwright。父账本用法矩阵对应两行仍为未单独覆盖 / 部分完成。维护者 2026-09-05 核对现场：
+[canvas-inspector-midrun](canvas-inspector-midrun.md) 关闭时声明：整图跑中途撤销与浏览器 409 交互未纳入该单 Playwright。父账本用法矩阵对应两行仍为未单独覆盖 / 部分完成。维护者 2026-09-05 核对现场：
 
 - C4 运行中检查器打字已有 `mid-run inspector typing keeps live authored copy after graph adopt`，不重复派。
 - AR-01 版本语义已交付，不重复派基线传递修复。
 - C3 HTTP 同节点过期保存 409 已有 `TestInspectorSaveAfterSameNodeAdoptConflicts`；浏览器层没有看到 `graph.canvas.revisionConflict` 后停止重放的用例。
-- 整图跑中途撤销的 HTTP 具名钉死已由 [canvas-graph-run-undo.md](archive/canvas-graph-run-undo.md) 交付；本单补用户点击工具栏「撤销」的浏览器证据。两单可分别验收。关闭本单时不得把 C3 HTTP 缺口写成未覆盖。
+- 整图跑中途撤销的 HTTP 具名钉死已由 [canvas-graph-run-undo.md](canvas-graph-run-undo.md) 交付；本单补用户点击工具栏「撤销」的浏览器证据。两单可分别验收。关闭本单时不得把 C3 HTTP 缺口写成未覆盖。
 
 ## 做成什么样
 
@@ -32,7 +34,7 @@
 
 - 前置：已起的 `just dev`。不依赖 canvas-graph-run-undo 关闭。
 - 冻结输入：测试期间固定画布代码与 mock 配置；不得改 AR-01 已交付的草稿基线语义来让 409 消失。
-- 运行资源：本测试临时切换 provider，可能暂停 `productflow-worker`。共享 dev 必须独占该窗口；**不得与 [image-eval-pool.md](image-eval-pool.md) 的 `image-evals-run` 或任何真实生图/Agent live 同时切 mock、暂停 worker**。image-eval-pool 当前只做淘宝采集、live 未跑时，仍须在开跑本门前与其执行者确认未进入 live，并在结束后恢复 provider 与 worker。不得覆盖 `STORAGE_ROOT/image-evals/`。
+- 运行资源：本测试临时切换 provider，可能暂停 `productflow-worker`。共享 dev 必须独占该窗口；**不得与 [image-eval-pool.md](../image-eval-pool.md) 的 `image-evals-run` 或任何真实生图/Agent live 同时切 mock、暂停 worker**。image-eval-pool 当前只做淘宝采集、live 未跑时，仍须在开跑本门前与其执行者确认未进入 live，并在结束后恢复 provider 与 worker。不得覆盖 `STORAGE_ROOT/image-evals/`。
 
 ## 只改这些文件
 
@@ -84,13 +86,26 @@ just web-e2e-canvas-document
 
 - 原因：无
 - 解除条件：无
-- 跟进者：无
-- 交接：尚未认领；无未提交 diff。开跑前须确认未占用 image-eval-pool 的 live/provider 窗口。
+- 跟进者：主代理-0905-1436
+- 交接：已关闭。开跑时 image-eval-pool live 未跑、仅淘宝采集；本单占用 mock/provider 窗口与暂停 worker 的窗口已结束。未改 dispatcher / Skill / 图片池文件。
 
 ## 证据
 
-- 命令 / 日期 / 结果：
-- 基线 commit / run_id / artifact（适用时）：
-- 交付定位：随本任务提交（用 `git log --follow -- <归档任务路径>` 查询）；已有独立候选 commit 时填写其 hash，不为回填本次 hash 另提 commit。
-- 审核者 / 结论（自审须注明）：
-- Issue 结果 / 业务门槛结果 / 剩余缺口：
+```text
+测试：mid-run undo keeps reverted live copy after graph adopt；document save 409 shows revision conflict and does not replay
+夹具：withPausedGraphWorker + data-graph-run-all（scope=graph）后工具栏撤销；检查器手填后 page.request 同节点 update_node_config，自动保存 409。
+断言：撤销当时 run 仍为 running|queued；adopt 后 live 回到 seed，不是手填稿。409 后 data-graph-canvas-notice 为 graph.canvas.revisionConflict 文案；其后无 update_node_config 重放。
+实现：commitNode 在 ApiError 409 时 showNotice(revisionConflict) 再抛出，不走 executeApply。selectNode 先打开详情侧栏再点节点，避免合成 click 未选中。
+命令：just web-e2e-canvas-document
+日期 / 结果：2026-09-05 Chromium 5 passed (44.5s)
+单测：pnpm --dir web exec vitest run src/pages/workbench/canvas/GraphCanvasPanel.test.ts → 3 passed
+eslint：GraphCanvasPanel.tsx / GraphCanvasPanel.test.ts / canvas-document-mock.spec.ts 通过
+just docs-check：pass
+审核者 / 结论：主代理-0905-1436 自审通过，非独立审核。
+Issue 结果：完成。C4 浏览器整图跑中途撤销与文稿 409 停止已进 just web-e2e-canvas-document。
+业务门槛结果：工作流体验用法矩阵「整图跑中途撤销」「浏览器看到文稿 409 后停止」两行完成。
+```
+
+- 交付定位：随本任务提交（用 `git log --follow -- docs/audits/tasks/archive/canvas-c4-remainder.md` 查询）；已有独立候选 commit 时填写其 hash，不为回填本次 hash 另提 commit。
+- 审核者 / 结论（自审须注明）：主代理-0905-1436 自审通过，非独立审核。
+- Issue 结果 / 业务门槛结果 / 剩余缺口：完成。本组章程已明确的 C4 剩余缺口已落地；无本单拆出后续。

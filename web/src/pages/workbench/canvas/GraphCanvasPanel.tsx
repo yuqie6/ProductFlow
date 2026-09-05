@@ -758,11 +758,16 @@ export function GraphCanvasPanel({
     applyInFlightRef.current = true;
     try {
       return await applyMutation.mutateAsync(changeSet);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        showNotice(t("graph.canvas.revisionConflict"));
+      }
+      throw error;
     } finally {
       applyInFlightRef.current = false;
       pumpApplyQueue();
     }
-  }, [applyMutation, pumpApplyQueue]);
+  }, [applyMutation, pumpApplyQueue, showNotice, t]);
 
   const pinCurrentOutput = useCallback((nodeId: string) => {
     const before = graphRef.current;

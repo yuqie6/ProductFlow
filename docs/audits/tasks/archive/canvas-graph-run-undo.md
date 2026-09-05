@@ -6,7 +6,7 @@
 认领于：2026-09-05T14:25:00+08:00
 业务组：工作流体验
 父账本：canvas-test-system.md
-完成后可拆：无（浏览器侧整图跑中途撤销由 [canvas-c4-remainder.md](../canvas-c4-remainder.md) 单独验收）
+完成后可拆：无（浏览器侧整图跑中途撤销由 [canvas-c4-remainder.md](canvas-c4-remainder.md) 单独验收）
 
 本任务已关闭。认领与归档步骤见 [Issue 协议](../README.md)，业务组结论见[父账本](../../canvas-test-system.md)。
 

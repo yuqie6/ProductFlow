@@ -123,16 +123,20 @@ async function authorPrompt(page: Page, productID: string): Promise<GraphNodePay
 }
 
 async function selectNode(page: Page, nodeID: string): Promise<void> {
+  await page.locator('[data-sidebar-tool="details"]').click();
   const card = page.locator(`[data-workflow-node-id="${nodeID}"]`);
   await expect(card).toBeVisible();
-  await card.evaluate((element: HTMLElement) => {
-    element.dispatchEvent(new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      buttons: 1,
-    }));
-  });
+  await expect.poll(async () => {
+    await card.evaluate((element: HTMLElement) => {
+      element.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        buttons: 1,
+      }));
+    });
+    return page.getByLabel("设计目标").isVisible();
+  }).toBeTruthy();
 }
 
 test.describe("canvas document mock provider", () => {
@@ -275,6 +279,110 @@ test.describe("canvas document mock provider", () => {
       expect(afterNode?.config.prompt?.composition?.layout).toBe("运行中左侧留白");
       expect(afterNode?.config.prompt?.composition?.product_share_percent).toBe(55);
       expect(afterNode?.document_origin).toBe("authored");
+    });
+  });
+
+  test("mid-run undo keeps reverted live copy after graph adopt", async ({ page }) => {
+    await lockLocale(page);
+    await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+      const productID = await createWorkbench(page);
+      const graph = await currentGraph(page, productID);
+      const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
+      expect(prompt).toBeTruthy();
+      const seedGoal = prompt!.config.prompt?.design_goal ?? null;
+      const authored = await authorPrompt(page, productID);
+      expect(authored.config.prompt?.design_goal).toBe("人工目标-不要被构图应用改掉");
+      let undoneWhileInFlight: string | null = null;
+
+      await withPausedGraphWorker(async () => {
+        const runPosted = page.waitForRequest((request) => {
+          if (request.method() !== "POST") return false;
+          const url = new URL(request.url());
+          return /\/runs$/.test(url.pathname) && !url.pathname.includes("/preview");
+        });
+        await page.locator("[data-graph-run-all]").click();
+        const posted = await runPosted;
+        expect(JSON.parse(posted.postData() ?? "{}")).toMatchObject({ scope: "graph" });
+        await expect.poll(async () => latestRunStatus(page, productID, graph.id)).toMatch(/^(running|queued)$/);
+        const undo = page.locator("[data-graph-canvas-toolbar]").getByLabel("撤销");
+        await expect(undo).toBeEnabled();
+        await undo.click();
+        await expect.poll(async () => {
+          const latest = await currentGraph(page, productID);
+          return latest.nodes.find((node) => node.id === prompt!.id)?.config.prompt?.design_goal ?? null;
+        }).toBe(seedGoal);
+        undoneWhileInFlight = await latestRunStatus(page, productID, graph.id);
+      });
+
+      expect(undoneWhileInFlight).toMatch(/^(running|queued)$/);
+      await waitForGraphRunSucceeded(page.request, productID, graph.id);
+      const after = await currentGraph(page, productID);
+      const afterNode = after.nodes.find((node) => node.id === prompt!.id);
+      expect(afterNode?.config.prompt?.design_goal).toBe(seedGoal);
+      expect(afterNode?.config.prompt?.design_goal).not.toBe("人工目标-不要被构图应用改掉");
+      expect(afterNode?.config.prompt?.composition?.layout).not.toBe("人工左侧留白");
+    });
+  });
+
+  test("document save 409 shows revision conflict and does not replay", async ({ page }) => {
+    await lockLocale(page);
+    await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+      const productID = await createWorkbench(page);
+      const graph = await currentGraph(page, productID);
+      const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
+      expect(prompt).toBeTruthy();
+      await selectNode(page, prompt!.id);
+      await expect(page.getByLabel("设计目标")).toBeVisible();
+
+      const documentSaves: Array<{ status: number }> = [];
+      page.on("response", (response) => {
+        if (response.request().method() !== "POST") return;
+        const url = new URL(response.url());
+        if (!url.pathname.endsWith("/changesets")) return;
+        let body: { operations?: Array<{ op?: string }> } = {};
+        try {
+          body = response.request().postDataJSON() as typeof body;
+        } catch {
+          return;
+        }
+        if (!(body.operations ?? []).some((operation) => operation.op === "update_node_config")) return;
+        documentSaves.push({ status: response.status() });
+      });
+
+      const dirtyGoal = `冲突草稿-${Date.now()}`;
+      await page.getByLabel("设计目标").fill(dirtyGoal);
+      const beforeConflict = await currentGraph(page, productID);
+      const liveNode = beforeConflict.nodes.find((node) => node.id === prompt!.id);
+      expect(liveNode).toBeTruthy();
+      const config = JSON.parse(JSON.stringify(liveNode!.config)) as {
+        prompt?: { composition?: { layout?: string } };
+      };
+      if (!config.prompt) config.prompt = {};
+      if (!config.prompt.composition) config.prompt.composition = {};
+      config.prompt.composition.layout = `服务端同节点-${Date.now()}`;
+      const patched = await page.request.post(
+        `/api/v3/products/${encodeURIComponent(productID)}/workflows/${encodeURIComponent(beforeConflict.id)}/changesets`,
+        {
+          data: {
+            base_graph_revision: beforeConflict.revision,
+            summary: "e2e 同节点冲突",
+            operations: [{ op: "update_node_config", node_ref: prompt!.id, config }],
+          },
+        },
+      );
+      expect(patched.ok(), await patched.text()).toBeTruthy();
+
+      await expect.poll(() => documentSaves.some((save) => save.status === 409)).toBeTruthy();
+      await expect(page.locator("[data-graph-canvas-notice]")).toContainText(
+        "画布版本已更新，这次修改无法自动合并，请重做",
+      );
+      const conflictIndex = documentSaves.findIndex((save) => save.status === 409);
+      const afterConflict = Date.now() + 1600;
+      await expect.poll(() => Date.now() >= afterConflict).toBeTruthy();
+      expect(documentSaves.filter((save) => save.status === 409)).toHaveLength(1);
+      expect(documentSaves.slice(conflictIndex + 1)).toEqual([]);
     });
   });
 });
