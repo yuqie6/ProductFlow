@@ -1,148 +1,146 @@
-# 工作流体验组与画布文稿权威账本
+# 工作流体验组
 
-本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的 Agent 生产 Gate。
+本组负责商家把参考素材和出图要求变成可使用商品图片的操作体验：能表达和修改要求，明确控制运行范围，遇到失败可以修复，找到正确结果并交付或复用。关闭 Agent 后，已有手动工作流仍须可独立操作。
 
-**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C6 已完成。当前任务与认领见 [Issue 看板](tasks/README.md)。C3 整图跑中途撤销具名钉死已归档为 [canvas-graph-run-undo](tasks/archive/canvas-graph-run-undo.md)；C4 浏览器整图撤销与文稿 409 停止已归档为 [canvas-c4-remainder](tasks/archive/canvas-c4-remainder.md)；检查器运行该节点、运行到这里与运行中取消已归档为 [canvas-c4-run-controls](tasks/archive/canvas-c4-run-controls.md)，不重复派版本语义修复。
+文稿不被覆盖是这条操作链的基础合同。它已有较完整的分层测试，但不能单独证明商家能顺畅完成工作，也不能代表本组全部职责已经完成。
+
+本文件是本组唯一章程、合同与证据索引，保留原文件名以维持历史链接。产品能力以 [PRD](../PRD.md)、领域约束以 [CONTEXT](../../CONTEXT.md)、操作入口以 [USER_GUIDE](../USER_GUIDE.md) 为准；未实现方向归 [ROADMAP](../ROADMAP.md)。任务状态由 [Issue 看板](tasks/README.md) 及其任务文件维护。
 
 ## 组职责与交接
 
-- 负责商家从编辑、运行到使用商品素材的业务行为，保留关闭 Agent 后仍可独立操作的合同。组内按“操作复现 → 必要前后端修复 → 浏览器与业务状态验收”串行交付；使用固定 Graph/provider 合同，不依赖模型涨分。
-- 图片质量差距及相应生成链优化由图片质量组完整交付；本组的保存/运行/资产操作缺陷由本组完整修复。两个目标遇到同一根因时由协调者指定一张主任务，不按代码目录重复接单或中途转交。
-- AR-01 与 C4 空闲改写/运行中打字由 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md) 交付。2026-09-05 检查器草稿基线沿 autosave → Inspector → Surface → `commitNode` 传到 Graph Command；兄弟节点配置变更不再把未改节点的脏草稿标冲突。mock 浏览器门另覆盖整图跑中途撤销与文稿 409 停止，见 [canvas-c4-remainder](tasks/archive/canvas-c4-remainder.md)。
-- AR-01-A：真实编辑基线贯穿 autosave、Inspector、Surface、Canvas 到 Graph Command；仅兄弟节点配置变更可由服务端安全 rebase，不以最新 revision 遮蔽过期编辑。
-- AR-01-B：同节点变更仍拒绝过期保存；409 保留草稿、提示冲突并停止自动重放，不以当前值相等绕过历史裁定。
-- AR-01-C：保存串行，失败阻止运行，较早响应不能清掉保存期间的新输入。AR-01-D：实际 run 仍 in-flight 时手填保存，运行完成后 live 保持用户稿，按 O2/O3 验证。
-- 以上四条与 C4 分别记录覆盖证据，由本组完成验收；局部修复足够时不强制新模块。固定 journal/lease 合同继续适用，普通 Agent 行为由 Agent 质量组负责；本组必要的跨层修改和测试纳入同一交付序列，不等待其它组逐层实现。
+本组按商家结果承担必要的前后端完整修复，不按页面或代码目录切断责任。以下是调查与交付边界，不要求每次任务遍历全部模块。前端入口主要位于 `web/src/pages/workbench/`。
 
-## 来源与使用规则
-
-- 来源：2026-09-05 会话中的《企业级画布测试体系》实施计划。
-- 适用范围：`go/internal/graph` 文稿 cook / ChangeSet / 候选 API、有界动作搜索、运行中插入写、opt-in 浏览器 mock 文稿动作、Agent `apply_graph_change_set_v1` 与 GraphRun 交错。
-- 裁判是不变量，不是模型文采。C0–C4 与 C6 使用 `MockPromptProvider` / `MockImageProvider`。真 LLM 只出现在既有 C5（`just web-e2e-live-graph`），不当覆盖判定。
-- 本账本允许同时写目标合同、当前代码事实和缺口。当前能力写回 [`../ARCHITECTURE.md`](../ARCHITECTURE.md) 测试段；未接线层由 [`../ROADMAP.md`](../ROADMAP.md) 索引。
-
-### 测试纪律
-
-文稿权威测试按检查器和运行按钮的真实路径写，不按当前实现改断言。
-
-- C4 必须在检查器里打字或点检查器/工具栏按钮。禁止用 ChangeSet HTTP 代替手填。
-- 用户点的是整图跑就提交 `scope=graph`。禁止改成 `scope=node` 来躲开挂起或 409。
-- 禁止循环重试 409。浏览器文稿保存 409 只提示 `graph.canvas.revisionConflict`，仅纯 `move_nodes` 自动重放。
-- `MockPromptProvider` 瞬时返回，不构成把「运行中保存」改成「跑完再填」的理由。保存落地时 run 仍须是 `running` 或 `queued`。
-
-### 状态四值
-
-| 状态 | 判定规则 |
-|---|---|
-| `完成` | 当前实现、贴近合同的自动化测试和条款要求的运行证据都存在。 |
-| `部分完成` | 已有可执行实现或既有证据，但规模、opt-in 实测或文档对齐不全。 |
-| `缺失` | 实现不存在，或当前证据不足以判断。 |
-| `违背` | 当前实现明确采用冻结决策禁止的合同。 |
-
-## 冻结决策
-
-| ID | 决策 | 状态 | 证据 |
-|---|---|---|---|
-| D-01 | 裁判是 live `config_json` / `document_origin` / `pending_candidate_artifact_id` 与 node-run `disposition`，不是生成稿质量 | `完成` | oracle 在 `go/internal/graph/authority_search_test.go` |
-| D-02 | 搜索动作集只含文稿权威动作；`move_nodes`、分组、配方、纯布局不进搜索器 | `完成` | 动作表见 C2 |
-| D-03 | 发现与钉死分离：搜索 shrink 最短轨迹；稳定违法写成 `cook_contract_test.go` 具名测试 | `完成` | C1 钉死 + C2 shrink |
-| D-04 | 夹具经 HTTP ChangeSet / runs / candidate + `executeLocally`；禁止 SQL 改 `config_json` | `完成` | C3 已替换 `TestAdoptSkipsOverwriteWhenUserEditsDuringRun` |
-| D-05 | C2 进 `just go-test` 但有 walk/深度预算；更深搜索 `just go-test-canvas-search` | `完成` | `PRODUCTFLOW_CANVAS_SEARCH_WALKS` |
-| D-06 | 不扩大 `just web-e2e-live-graph`。rewrite 浏览器路径是独立 mock gate | `完成` | `just web-e2e-canvas-document` |
-
-## 文档对齐缺口
-
-[ADR 0015](../adr/0015-canvas-ports-run-queue.md) 曾写：live 相对快照分叉时「生成 artifact 仍保留并成为 `current_artifact_id`」。live 执行器 [`execute_node.go`](../../go/internal/graph/execute_node.go) `persistContentArtifact` 把文稿建议写入 `pending_candidate_artifact_id`，并把 `current_artifact_id` 清掉；`current_artifact_id` 留给效果节点。本账本 oracle 跟代码。ADR 正文冻结，不在此改写成仪表盘。
-
-## 层与验收
-
-| ID | 层 | 验收 | 状态 | Owner / 证据 |
-|---|---|---|---|---|
-| C-00 | C0 单步合同 | origin、merge、section apply、何时 cook | `完成` | `document_test.go`、`document_candidate_test.go`、`select_test.go`、`ops_parse_test.go` |
-| C-01 | C1 mock HTTP cook | `graphServer` + `Executor`；O4 在 apply 前 live 不变；O2 mid-run 不覆盖 | `完成` | `cook_contract_test.go`；`TestForceRewritePromptDoesNotChangeLiveUntilApply` |
-| C-02 | C2 有界搜索 | 默认 8 条随机 walk（深度 ≤ 3）+ 6 类动作深度 2 穷举；失败 shrink；缺节点动作跳过 | `完成` | `authority_search_test.go`；`just go-test`；加深 `just go-test-canvas-search` |
-| C-03 | C3 回调插入写 | Mock provider 回调里发一次 HTTP ChangeSet（开跑时的 `base_graph_revision`，不重试 409）。整图跑中途改本节点 / 兄弟文稿 / 视觉 overlay / undo / 保存后取消。整图跑期间点改写必须排队且不得盖 live。同节点已采用后一次过期保存 409。`to_node` 与 `selection` 在手填提示词后不得盖 live。cook 协程不得 `t.Fatal` | `完成` | `authority_inject_test.go`；`TestAdoptSkipsOverwriteWhenUserEditsDuringRun`；`TestAdoptSkipsOverwriteWhenVisualEditedDuringGraphRun`；`TestAdoptSkipsOverwriteWhenUndoDuringBriefCook`；`TestAdoptSkipsOverwriteWhenUndoDuringGraphRun`；`TestCancelGraphRunKeepsMidRunInspectorSave`；`TestRewriteQueuedDuringGraphRunKeepsAuthoredLive`；`TestInspectorSaveAfterSameNodeAdoptConflicts`；`TestToNodeAndSelectionAfterAuthoredPromptKeepLive` |
-| C-04 | C4 浏览器 + mock 供应商 | 空闲时在检查器手填提示词，再点改写/补全/替换与按 section 应用。整图或节点 cook **正在跑**时检查器打字或工具栏撤销，adopt 不得盖 live（O2）。文稿保存 409 提示 `graph.canvas.revisionConflict` 且不重放。检查器运行该节点 / 运行到这里提交对应 scope，运行尚未结束时取消保持手填稿 | `完成` | `web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；2026-09-05 Chromium 8 passed（门禁临时切 mock 后恢复）。指导 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md)、[canvas-c4-remainder](tasks/archive/canvas-c4-remainder.md)、[canvas-c4-run-controls](tasks/archive/canvas-c4-run-controls.md) |
-| C-05 | C5 真 provider 整图 | skip-Agent 出一张真图；不覆盖 rewrite/候选 | `完成` | `just web-e2e-live-graph` → `direct-create-full-graph.spec.ts` |
-| C-06 | C6 Agent × 画布 | `ApplyAgentChangeSet` / `apply_graph_change_set_v1` 与整图 GraphRun 交错仍守 O2/O3 | `完成` | `authority_agent_interleave_test.go`；`go/internal/agent/canvas_authority_interleave_test.go` |
-
-## 不变量
-
-| ID | 合同 | 钉死测试 |
+| 商家结果 | 本组责任 | 主要实现入口 |
 |---|---|---|
-| O1 | 无 `document_action`、snapshot origin=`seed`、live 未分叉 → cook 后 origin=`generated`，可 adopt | `TestGeneratedContentNodeRemainsReadyAfterAdopt` |
-| O2 | live 相对 run snapshot 已分叉 → 不改 live config；生成进 `pending_candidate`；`disposition=candidate` | `TestAdoptSkipsOverwriteWhenUserEditsDuringRun` |
-| O3 | origin 为 `authored\|generated\|collaborative` 时，无 `force` 的 graph 跑不得把 provider 结果写进 live config | `TestGraphRunAfterAuthoredLayoutEditSkipsPromptProvider`；C2 `run_graph` |
-| O4 | `complete\|rewrite\|replace` 必须 `scope=node`+`force`；成功后 pending 非空，apply 前 live 不变；`graph`+`force` 4xx | `TestForceRewritePromptDoesNotChangeLiveUntilApply`；`TestSubmitGraphRunRejectsForce` |
-| O5 | apply 前 live 哈希或 revision 变了 → apply 拒绝 | C2 `stale` / 先 `author` 再 `apply`；`ApplyDocumentCandidate` 409 |
-| O6 | section apply 只改选中业务 section | `TestApplyDocumentSectionsOnlyReplacesSelectedBusinessSection`；C2 `apply_objective`；C4 |
-| O7 | 同节点丢失更新必须 409；仅兄弟节点 `update_node_config` 时检查器/Agent 一次保存可 rebase | C2 `stale`（先写同节点再过期写）；`TestChangeSetStaleRevisionConflict`；`TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged`；`TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged` |
+| 开始制作 | 创建商品、输入要求、上传并使用参考；手动创建不依赖 Agent 自动执行 | `web/src/pages/product-create/`、`go/internal/product/` |
+| 修改方案 | 节点与连接、场景组织、检查器保存、候选审阅、撤销重做；能识别实际生效的要求 | `GraphCanvasPanel.tsx`、`GraphNodeInspector.tsx`、`go/internal/graph/` |
+| 控制生成与恢复 | 保存后运行、整图或选定范围、取消、修正后重试；区分旧失败与新结果 | `GraphRunsPanel.tsx`、`graphRunPreview.ts`、`go/internal/graph/runs.go` |
+| 使用结果 | 预览、定位与选择资产、局部编辑入口、原图和交付图下载、交付包 | `ProductImageExplorer.tsx`、`DeliveryRenditionPanel.tsx`、`LocalImageEditController.tsx`、`go/internal/delivery/` |
+| 复用工作 | 明确资产绑定、固定当前结果、配方预览与确认，避免带入错误来源或覆盖目标商品 | `graphAssetDrop.ts`、`recipeSave.ts`、`RecipeLibraryPanel.tsx`、`go/internal/recipe/` |
 
-## 命令
+- 图片质量组负责图片内容与视觉要求及其生成链优化；本组负责选择、修改、运行和取用是否符合用户意图。下载文件正确不等于图片质量合格。
+- Agent 质量组负责模型理解、决策与工具行为；本组验证既有 Agent 写入与手动编辑、运行的交错合同，不以模型评分作为确定性操作修复的前置。
+- 平台可靠性组负责执行基础设施、故障收敛与资源成本；本组负责相应用户状态与恢复入口。同一根因只指定一张主任务，必要跨层修复由该任务交付。
+- 连续图片会话、全局素材组织等相邻能力不因共用资产就全部并入本组；按具体问题协调所有权。路线图中的新界面不自动成为本次实现范围。
+
+## 验收怎样判断
+
+本组同时关心操作正确性与完成工作的负担。前者核实实际写入和文件结果；后者观察是否需要反复找入口、重复输入、无效运行或猜测状态。目前已有证据主要覆盖正确性，尚无足够的商家任务耗时、导航成本和可理解性观察，不能宣称整体体验达标。
+
+记录结论时分开写 **实现事实、证据范围、剩余未知**。缺少浏览器测试不直接判定功能缺失；历史通过不自动代表当前整树通过；测试数不作为组完成度。
+
+| 证据 | 可以回答 | 不能替代 |
+|---|---|---|
+| 代码与调用链 | 入口是否接线、字段与决策点在哪里 | 实际运行成功、用户能否理解 |
+| 确定性单元测试 | 选点、状态过滤、变更计划与局部边界 | HTTP、事务和浏览器完整链路 |
+| HTTP / PostgreSQL 回归 | 校验、并发写入、持久化与返回投影 | 用户是否能从界面触达 |
+| mock 浏览器与业务状态 | 真实点击、保存与提交、资产身份、下载字节 | 真实供应商质量、全部设备和故障条件 |
+| 真实 provider 操作链 | 当前环境下外部调用与实际结果可用 | 全面稳定性、视觉质量合格、商家效率 |
+| 明确任务的用户操作观察 | 找入口、理解状态、修复和取用的成本 | 数据一致性和所有并发边界 |
+
+验证强度随风险扩大。纯选点逻辑就近回归；跨层变更追踪输入、wire、用例、持久化或外部效果、响应和前端投影。涉及真实界面的验收须点击真实入口并检查业务结果，截图或成功提示不足以签收。
+
+## 业务合同
+
+### 编辑与运行
+
+- AR-01-A：真实编辑基线沿 autosave → Inspector → Surface → `commitNode` → Graph Command 传递。服务端可按历史安全 rebase 仅兄弟节点的配置变化；客户端不能用最新 revision 掩盖过期编辑。
+- AR-01-B：同节点过期保存仍返回 409；保留草稿、显示冲突、停止自动重放，不以当前值相等绕过历史裁定。
+- AR-01-C：保存串行，较早响应不能清掉保存期间的新输入；运行前 flush 失败就不提交 run。
+- AR-01-D：运行中仍可编辑；验证必须在 run 为 queued 或 running 时落地保存，结束后保持用户稿。
+- 运行范围符合按钮含义。“运行此场景”由 `shotRunRequest` 提交一次 selection，选择该组生图节点；分组没有独立运行引擎。检查器节点、运行到这里和工具栏整图保留各自 scope。
+- 修正后重试使用当前图创建新 run，保留旧 run 历史；“仅重试失败节点”不得包含成功、unknown、cancelled、skipped 或仍在执行的节点。取消不能回滚用户已保存的文稿。
+
+AR-01 已交付于 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md)。前端写入链见 `ProductWorkbenchSurface.tsx` 与 `GraphCanvasPanel.tsx`，服务端裁定见 `go/internal/graph/`。
+
+### 不变量
+
+O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；数据库字段及搜索预算是当前实现与验证方法，不能反过来定义正确行为。
+
+| ID | 合同 | 当前证据锚点 |
+|---|---|---|
+| O1 | 无文稿动作、快照 origin 为 seed，且 live 未分叉时，符合发布条件的首次 cook 可采用生成文稿 | `TestGeneratedContentNodeRemainsReadyAfterAdopt`、`execute_node.go` |
+| O2 | live 相对运行快照分叉后，生成不得覆盖 live；仍满足发布条件的结果保留为待审候选。已取消或失去发布资格的结果另受运行 fencing 约束 | `TestAdoptSkipsOverwriteWhenUserEditsDuringRun`、`persistContentArtifact` |
+| O3 | authored、generated、collaborative 文稿不被普通无 force 整图运行覆盖 | `TestGraphRunAfterAuthoredLayoutEditSkipsPromptProvider`、C2 run_graph |
+| O4 | complete / rewrite / replace 使用 node scope 与 force；生成先进入候选，采用前 live 不变；graph + force 被拒绝 | `TestForceRewritePromptDoesNotChangeLiveUntilApply`、`TestSubmitGraphRunRejectsForce` |
+| O5 | 文稿基线哈希或上游输入 digest 变化使候选过期；采用请求还须匹配当前 graph revision 和候选 artifact。无关 revision 变化本身不等于候选内容过期，过期请求仍须拒绝 | `document_candidate.go` 的 `loadDocumentCandidate`、`service.go` 的 `ApplyDocumentCandidate`、C2 stale / author → apply |
+| O6 | 按 section 采用只改所选业务 section | `TestApplyDocumentSectionsOnlyReplacesSelectedBusinessSection`、C2 apply_objective、C4 |
+| O7 | 同节点丢失更新必须 409；仅兄弟节点配置写入的过期保存可按历史安全 rebase | `TestChangeSetStaleRevisionConflict`、`TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged`、`TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged` |
+
+当前文稿候选使用 `pending_candidate_artifact_id`，采用状态可由 node-run disposition 观察；`persistContentArtifact` 清除文稿节点的 `current_artifact_id`。这些是现场代码事实，历史 ADR 不作为现行存储或采用合同的依据。
+
+### 结果与复用
+
+- 预览、绑定、固定结果和下载必须指向明确资产；后续生成不能悄悄改变已固定资产身份。
+- 交付图按保存的 DeliverySpec 从来源资产确定性生成，保留谱系，不替换原图或重新跑图。验收核实际尺寸、格式、字节与 manifest，不能只核预设按钮名字。当前预设按规格匹配，未独立持久化所选 preset key。
+- 配方预览与取消不写目标图；确认后的结构和绑定遵守 Recipe 合同。片段复用不携带原商品身份及生成结果；完整配方应用于已有图应明确冲突。
+- 局部编辑已有 `ProductWorkbenchSurface` → `LocalImageEditController` 入口；接线事实不足以签收完整体验，也不应被写成“功能尚不存在”。
+
+## 当前证据与未知
+
+2026-09-05 核对当前实现并重述本组结论。初始核查基线与详情留在 [canvas-workflow-coverage](tasks/archive/canvas-workflow-coverage.md)，不把历史基线扩展为当前整树结论。
+
+| 操作链 | 已有实现与证据 | 验收边界与未知 |
+|---|---|---|
+| 手动创建 → 整图 → 图库 | `product/http_test.go`、C5 `direct-create-full-graph.spec.ts` | 存在既有真实 provider 证据；本次重述未复跑 C5 |
+| 图结构编辑与撤销 | `workbench-v3-actions.spec.ts` 已核添加、复制、分组、边和 undo/redo 的持久结果 | 当前有实现及测试；本次未复跑该浏览器文件，不能据此判定功能未完成 |
+| 保存、候选与并发运行 | AR-01、O1-O7、C0-C4/C6 的已归档交付 | 覆盖具体文稿权威组合，未证明全部工作台可用性 |
+| 场景运行与失败修复 | [canvas-run-recovery-proof](tasks/archive/canvas-run-recovery-proof.md)：隔离 mock Chromium 4 passed，34.9s | 核 selection、保存失败不提交、选图修复后新 run 成功、只重试失败节点；保存 409 为浏览器注入，状态排除另有单元回归 |
+| 预览、下载和交付包 | [canvas-delivery-proof](tasks/archive/canvas-delivery-proof.md)：隔离 mock Chromium 2 passed，16.8s；Go delivery 24 tests passed | 核两种 PNG 规格、原图不变、实际文件及 ZIP 谱系/hash；503 为浏览器注入，未覆盖所有格式和真实存储故障 |
+| 资产与配方复用 | `graphAssetDrop.test.ts`、actions 绑定检查、运行恢复中的选图绑定、`recipe/http_test.go` | 绑定已有部分浏览器证据；固定结果、拖入后的身份和配方确认后的整条浏览器链未完整核验，尚无据此确认的生产缺陷 |
+| 局部编辑与日常操作效率 | 局部编辑已接线，现有 shot filmstrip 可选场景 | 未进行本组完整局部编辑验收或商家任务观察；现有 filmstrip 不等于路线图中的镜头列表主界面已经交付 |
+
+两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
+
+### 层与验收
+
+C0-C6 是已交付的文稿权威测试体系及外部链路补充，保留编号用于追溯。“已交付”指对应任务证据存在；本次文档重述未重跑这些层，不构成最新全量门禁记录。
+
+| ID | 层与作用 | 测试 / 证据 |
+|---|---|---|
+| C-00 | C0 单步：origin、merge、section apply、cook 选择 | `document_test.go`、`document_candidate_test.go`、`select_test.go`、`ops_parse_test.go` |
+| C-01 | C1 mock HTTP cook：生成与采用分离、运行中编辑 | `cook_contract_test.go` |
+| C-02 | C2 有界动作搜索与失败轨迹缩减 | `authority_search_test.go`；默认 8 walks、深度 ≤ 3，另有六类动作深度 2 穷举 |
+| C-03 | C3 provider 回调插入写：本节点、兄弟、overlay、撤销、取消和排队 | `authority_inject_test.go`；[整图撤销交付](tasks/archive/canvas-graph-run-undo.md) |
+| C-04 | C4 浏览器 mock：检查器输入、文稿动作、运行、撤销、409 和取消 | `web/e2e/canvas-document-mock.spec.ts`；既有 Chromium 8 passed，详见下节归档 |
+| C-05 | C5 skip-Agent 真实 provider 整图出图 | `web/e2e/direct-create-full-graph.spec.ts`；不覆盖改写与候选合同 |
+| C-06 | C6 Agent 写入与整图运行交错 | `authority_agent_interleave_test.go`、`go/internal/agent/canvas_authority_interleave_test.go` |
+
+### 真实用法矩阵
+
+此标题保留历史链接。重复的“全部完成”组合表收敛为以下证据入口：
+
+- 检查器空闲文稿动作、运行中手填与保存基线：[canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md)。
+- 整图运行中撤销与文稿 409 停止：[canvas-c4-remainder](tasks/archive/canvas-c4-remainder.md)；HTTP 具名整图撤销另见 [canvas-graph-run-undo](tasks/archive/canvas-graph-run-undo.md)。
+- 检查器运行该节点、运行到这里、运行中取消：[canvas-c4-run-controls](tasks/archive/canvas-c4-run-controls.md)。
+- 场景选点、修正后重试和仅重试失败节点：[canvas-run-recovery-proof](tasks/archive/canvas-run-recovery-proof.md)。
+- 预览、原图和交付图下载、交付包：[canvas-delivery-proof](tasks/archive/canvas-delivery-proof.md)。
+
+## 测试方法与运行资源
+
+原 D-01 至 D-06 作为文稿测试方法保留：D-01 用 live 文稿、origin、候选及 disposition 观察不变量；D-02 搜索仅含文稿权威动作；D-03 搜索失败 shrink 后写具名回归；D-04 夹具走 HTTP ChangeSet / runs / candidate 与本地 executor，不用 SQL 覆写被测 config；D-05 搜索预算可控；D-06 mock 文稿门与真实 provider 门分离。分组、配方和布局不进文稿搜索器，但仍属于相应业务行为验收范围。
+
+- 浏览器验证手填必须在检查器输入；整图按钮必须提交 graph scope。不得换成 HTTP 写入或 node scope 来回避问题。文稿 409 不循环重放；当前只有纯 `move_nodes` 自动重放。
+- mock 快速返回不允许把运行中编辑改成运行后编辑；验收要记录保存时 run 仍在执行的证据。
+- mock/live 使用独立环境或明确授权的共享窗口，不改其他组 provider、数据库和 worker。**现有 C4 `findGraphWorkerPids` 扫描全机匹配的 worker 并暂停，独立端口或 browser context 不足以隔离该副作用。运行前必须限定 worker 目标或取得所有受影响资源的独占窗口。**
+- 本次运行恢复与交付证据使用独立 API/Web、PostgreSQL、Redis 和 mock 绑定；临时栈已在转入文档重述时停止，证据文件保留，未停止共享开发栈。
 
 ```bash
 just go-test
 just go-test-canvas-search
 just web-e2e-canvas-document
+just web-e2e-canvas-run-recovery
+just web-e2e-canvas-delivery
 just web-e2e-live-graph
 just docs-check
 ```
 
-C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-search` 设为 80。
+这些是按风险选择的入口，不要求每项工作全部运行。PostgreSQL 测试须具备数据库环境；浏览器门须具备相应运行栈与资源窗口；交付 ZIP 验收依赖 `unzip`。C2 加深命令把 `PRODUCTFLOW_CANVAS_SEARCH_WALKS` 从默认 8 提高到 80。真实 provider 门为 opt-in，不并入默认确定性回归。
 
-## 真实用法矩阵
+## 后续工作如何选择
 
-按钮以 USER_GUIDE §3.4 / 检查器为准：工具栏 `data-graph-run-all`（整图）、检查器「运行该节点」「运行到这里」、补全/改写/重新生成、字段手填、撤销、取消。裁判仍是 O1–O7。
+优先处理已复现的丢稿、错误运行目标、错误资产身份、结果无法取用与无法恢复等业务故障；其次处理有操作证据的重复劳动与理解成本。证据补强必须说明它阻碍哪项业务判断，不按测试空白数量排优先级。
 
-| 组合 | 层 | 状态 |
-|---|---|---|
-| 空闲检查器手填 → 改写/补全/替换 → 按 section 应用 | C4 | 完成（`canvas-document-mock.spec.ts`） |
-| 手填提示词后 `to_node` / `selection` | C3 | 完成（`TestToNodeAndSelectionAfterAuthoredPromptKeepLive`） |
-| 整图跑中途 HTTP 改本节点 / 兄弟文稿 / 视觉 overlay | C3 | 完成（`authority_inject_test.go`，一次 PATCH，开跑时的 `base_graph_revision`） |
-| 整图跑中途点改写 | C3 | 完成（排队且不盖 live） |
-| 同节点已采用后一次过期保存 | C3 | 完成（409，不重试） |
-| 保存后取消整图跑 | C3 | 完成 |
-| Agent 整图跑中途写入 | C6 | 完成 |
-| 节点 rewrite 中途 undo | C3 | 完成 |
-| 整图或节点 cook 进行中，检查器打字保存 | C4 | 完成（`mid-run inspector typing keeps live authored copy after graph adopt`） |
-| 整图跑中途撤销 | C3 HTTP 完成（`TestAdoptSkipsOverwriteWhenUndoDuringGraphRun`）；C4 浏览器完成（`mid-run undo keeps reverted live copy after graph adopt`） | 完成 |
-| 浏览器看到文稿 409 后停止 | C3 有 409 断言；C4 Playwright 完成（`document save 409 shows revision conflict and does not replay`） | 完成 |
-| 检查器运行该节点 | C4 完成（`inspector run-this-node keeps authored live copy`） | 完成 |
-| 检查器运行到这里 | C3 HTTP 完成（`TestToNodeAndSelectionAfterAuthoredPromptKeepLive`）；C4 浏览器完成（`inspector run-to-here keeps authored prompt live copy`） | 完成 |
-| 运行中取消 | C3 HTTP 完成（`TestCancelGraphRunKeepsMidRunInspectorSave`）；C4 浏览器完成（`mid-run cancel keeps authored live copy`） | 完成 |
+[资产复用与配方确认](tasks/canvas-asset-recipe-proof.md) 仍为已发布、未认领的开放任务。它记录身份与确认写入的证据缺口，未证明存在生产 bug，也没有必须紧随下载验收执行的代码依赖。执行前按当前合同复核范围、占用与验收价值，已有选图绑定证据应复用，不重复计为缺失。本次重述不领取或执行该任务。
 
-当前实现事实：`ProductWorkbenchSurface` 传给检查器的 `busy` 是结构保存，不是 GraphRun，运行中输入框与撤销按钮按理可操作。检查器草稿基线沿 autosave → Inspector → Surface → `commitNode` 传递；兄弟节点配置变更不再把未改节点的脏草稿标冲突。文稿 `commitNode` 遇 409 提示 `graph.canvas.revisionConflict` 且不重放；`executeApply` 仅纯 `move_nodes` 自动重放。Mock 瞬时返回，自动保存 debounce 700ms。
-
-## 完整操作链验收
-
-2026-09-05 用户授权本组负责完整落地。以下核查基线为 `1dccfb59a09802eab194ee0d568079c9c4c8b8e5`，目标 Web/Graph/Delivery/Product/Recipe 文件无在途 diff；Agent、图片池和 imagesession 的其它会话改动不纳入本组。核查记录见 [canvas-workflow-coverage](tasks/archive/canvas-workflow-coverage.md)。
-
-文稿权威 C0-C6 保持已交付结论。下表的「部分完成」表示已有实现或分层测试，尚未收齐该完整操作链的浏览器与业务状态证据，不直接判定产品有 bug。既有浏览器文件本轮只核对代码，未重跑。
-
-| 用户操作 | 当前入口与业务效果 | 当前证据及边界 | 状态 |
-|---|---|---|---|
-| 只建画布并上传参考 | 创建表单 → `POST /api/v3/products` → 商品、资产与 schema-v3 图事务创建 | `product/http_test.go`；`direct-create-full-graph.spec.ts` 浏览器创建、整图成功、图库图片和真实 bytes；本轮未重跑真实 provider | 完成（既有 C5） |
-| 添加、连线、复制、分组、撤销重做 | `GraphCanvasPanel` → Graph ChangeSet → 持久图与操作组 | `workbench-v3-actions.spec.ts` 检查添加六类节点、场景、删边、复制内部边、分组与 undo/redo 的持久结果；现有合同不重建 | 部分完成（待完整操作链复跑） |
-| 检查器保存与运行交错 | autosave → Inspector → Surface → `commitNode` → Graph Command | AR-01、C0-C4、C6 的已归档证据 | 完成 |
-| 运行此场景 | `GraphShotFilmstrip` / 画布分组 → `shotRunRequest` → 一次 `selection`，只含该组生图节点；保存 flush 后提交 | `canvas-run-recovery.spec.ts` 核一次 selection、两张 detail 成功、hero 未运行、全部 config 与 authored 不变；另验保存失败不提交 | 完成 |
-| 失败后修正并重试、仅重试失败节点 | Inspector / RunsPanel → `/runs/:id/retry` 或 `selection` → 按当前图重新提交；原 run 保留 | `canvas-run-recovery.spec.ts` 核真实选图修复、POST 原 run retry、新 run 成功、旧 run failed；混合结果只重试失败节点且保留成功兄弟资产；unknown/cancelled/live 排除有确定性回归 | 完成 |
-| 结果预览与原图下载 | GraphRunsPanel / ProductImageExplorer → 明确资产预览和 download URL | `canvas-delivery.spec.ts` 实际预览图片非空，浏览器下载原图并核 SHA256；C5 保留真实 provider bytes 证据 | 完成 |
-| 交付规格、生成交付图和交付包 | `DeliveryRenditionPanel` → rendition job → 确定性渲染；Explorer → delivery export | `canvas-delivery.spec.ts` 两规格保存/渲染、原图不变、下载 PNG 尺寸与 ZIP 文件/manifest lineage/hash；混选原图拒绝和 503 可见反馈；Go delivery 24 tests passed | 完成 |
-| 绑定、拖入参考与固定当前结果 | Explorer / Canvas → 明确 asset id 的 ChangeSet；固定结果创建独立 image_asset，不自动连边 | `graphAssetDrop.test.ts` 验操作计划；actions 浏览器验绑定但不连线显示 unused；固定结果、拖入端口后的持久身份未有完整浏览器证据 | 部分完成 |
-| 保存配方、预览并确认应用 | `recipeSave` / `RecipeLibraryPanel` → `/recipes` → Graph Command | `recipe/http_test.go` 验 fragment 保存/预览/应用及 full 冲突；现有 proof/actions 浏览器到确认预览或取消为止，未确认后核新图/合并图 | 部分完成 |
-
-本轮确定性回归：`pnpm --dir web test:run src/pages/product-create src/pages/workbench/canvas src/pages/workbench/chrome/image-explorer`，39 files / 274 tests passed（2026-09-05 16:48:49，1.36s）。本轮未执行 Go PG 回归、浏览器或真实 provider；不以单元测试通过替代这些门槛。
-
-### 后续交付次序
-
-1. [场景运行与失败恢复](tasks/archive/canvas-run-recovery-proof.md)：已完成，`just web-e2e-canvas-run-recovery` 隔离 mock 浏览器 4 passed（34.9s）。场景选点、修复参考后重试成功、只重试失败节点、保存失败不提交均核真实业务状态；原失败历史、成功兄弟结果和手填文稿保持。
-2. [结果交付](tasks/archive/canvas-delivery-proof.md)：已完成，`just web-e2e-canvas-delivery` 隔离 mock 浏览器 2 passed（16.8s）；原图/交付图下载、规格、ZIP manifest/lineage/hash 与失败反馈通过。图片视觉质量仍由图片质量组验收。
-3. [资产复用与配方确认](tasks/canvas-asset-recipe-proof.md)：绑定、固定当前结果、片段确认合并及完整配方冲突；复跑既有图编辑动作。优先级 P2，不重复实现编辑器。
-
-以上为测量与交付缺口，根因未证实前不预设需要改生产代码。mock/live 必须使用隔离环境或已确认的共享 provider/worker 窗口；不能覆盖图片组资源。路线图中的新交互设计不自动成为本批次实现要求。
-
-## 明确不做
-
-- 无界 12-op DFS
-- 用真模型当搜索步进
-- 把视觉矩阵、性能 e2e、Agent L1 桩世界并进本文稿权威门
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
