@@ -83,11 +83,12 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 操作链 | 已有实现与证据 | 验收边界与未知 |
 |---|---|---|
 | 手动创建 → 整图 → 图库 | `product/http_test.go`、C5 `direct-create-full-graph.spec.ts` | 存在既有真实 provider 证据；本次重述未复跑 C5 |
-| 图结构编辑与撤销 | `workbench-v3-actions.spec.ts` 已核添加、复制、分组、边和 undo/redo 的持久结果 | 当前有实现及测试；本次未复跑该浏览器文件，不能据此判定功能未完成 |
+| 图结构编辑与撤销 | `workbench-v3-actions.spec.ts` 核添加、复制、分组、绑定、连线与 undo/redo 的持久结果；[资产与配方验收](tasks/archive/canvas-asset-recipe-proof.md) 固定构建复跑 78 passed | 1440/1024/390 各明暗模式；修正测试的 SVG 外接矩形中心误点，不代表所有图规模和交互组合已验 |
 | 保存、候选与并发运行 | AR-01、O1-O7、C0-C4/C6 的已归档交付 | 覆盖具体文稿权威组合，未证明全部工作台可用性 |
 | 场景运行与失败修复 | [canvas-run-recovery-proof](tasks/archive/canvas-run-recovery-proof.md)：隔离 mock Chromium 4 passed，34.9s | 核 selection、保存失败不提交、选图修复后新 run 成功、只重试失败节点；保存 409 为浏览器注入，状态排除另有单元回归 |
 | 预览、下载和交付包 | [canvas-delivery-proof](tasks/archive/canvas-delivery-proof.md)：隔离 mock Chromium 2 passed，16.8s；Go delivery 24 tests passed | 核两种 PNG 规格、原图不变、实际文件及 ZIP 谱系/hash；503 为浏览器注入，未覆盖所有格式和真实存储故障 |
-| 资产与配方复用 | `graphAssetDrop.test.ts`、actions 绑定检查、运行恢复中的选图绑定、`recipe/http_test.go` | 绑定已有部分浏览器证据；固定结果、拖入后的身份和配方确认后的整条浏览器链未完整核验，尚无据此确认的生产缺陷 |
+| 资产与片段配方复用 | [canvas-asset-recipe-proof](tasks/archive/canvas-asset-recipe-proof.md)：固定结果后再生成不换绑定，图库拖到 reference 端口，片段保存/取消/确认及目标配置保留；Recipe PG 12 passed | 专属浏览器门 3 passed / 1 skipped；跳过项是单独启用的未解决入口诊断，不计通过。未覆盖全部拖放组合或商家效率 |
+| 完整配方创建入口 | 后端 create 回归通过；已有图的完整配方冲突浏览器通过；无图商品入口诊断 1 failed | 当前创建流程都会建图，无图 API 商品又被缺 Agent 工作区挡住；商家套用完整配方链未通过，交 [canvas-full-recipe-entry](tasks/canvas-full-recipe-entry.md) |
 | 局部编辑与日常操作效率 | 局部编辑已接线，现有 shot filmstrip 可选场景 | 未进行本组完整局部编辑验收或商家任务观察；现有 filmstrip 不等于路线图中的镜头列表主界面已经交付 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
@@ -115,6 +116,7 @@ C0-C6 是已交付的文稿权威测试体系及外部链路补充，保留编�
 - 检查器运行该节点、运行到这里、运行中取消：[canvas-c4-run-controls](tasks/archive/canvas-c4-run-controls.md)。
 - 场景选点、修正后重试和仅重试失败节点：[canvas-run-recovery-proof](tasks/archive/canvas-run-recovery-proof.md)。
 - 预览、原图和交付图下载、交付包：[canvas-delivery-proof](tasks/archive/canvas-delivery-proof.md)。
+- 固定资产、拖入参考、片段确认与完整配方入口失败：[canvas-asset-recipe-proof](tasks/archive/canvas-asset-recipe-proof.md)。
 
 ## 测试方法与运行资源
 
@@ -131,6 +133,7 @@ just go-test-canvas-search
 just web-e2e-canvas-document
 just web-e2e-canvas-run-recovery
 just web-e2e-canvas-delivery
+just web-e2e-canvas-asset-recipe
 just web-e2e-live-graph
 just docs-check
 ```
@@ -141,6 +144,6 @@ just docs-check
 
 优先处理已复现的丢稿、错误运行目标、错误资产身份、结果无法取用与无法恢复等业务故障；其次处理有操作证据的重复劳动与理解成本。证据补强必须说明它阻碍哪项业务判断，不按测试空白数量排优先级。
 
-[资产复用与配方确认](tasks/canvas-asset-recipe-proof.md) 仍为已发布、未认领的开放任务。它记录身份与确认写入的证据缺口，未证明存在生产 bug，也没有必须紧随下载验收执行的代码依赖。执行前按当前合同复核范围、占用与验收价值，已有选图绑定证据应复用，不重复计为缺失。本次重述不领取或执行该任务。
+[资产复用与片段确认](tasks/archive/canvas-asset-recipe-proof.md) 已按现场边界交付，完整配方入口拆分为 [canvas-full-recipe-entry](tasks/canvas-full-recipe-entry.md)，状态见任务看板。下一项优先恢复商家从当前创建界面预览、确认完整配方的路径；保持已有图不可覆盖、取消不写图及目标身份正确。该缺口有真实失败证据，不继续用增加测试数代替修复。设置 `PRODUCTFLOW_PROBE_FULL_RECIPE_ENTRY=1` 并运行专属门的 `--grep @known-gap` 可单独复现当前 FAIL。
 
 其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

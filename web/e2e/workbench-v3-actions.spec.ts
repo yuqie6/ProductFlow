@@ -293,6 +293,24 @@ async function expectLocatorHitTarget(locator: Locator, expectedClass: string): 
   }, expectedClass)).toBe(true);
 }
 
+async function clickVisibleEdge(page: Page, path: Locator): Promise<void> {
+  // An SVG bounding-box center can belong to a crossing edge instead of this curve.
+  const hitPoint = () => path.evaluate((element: SVGPathElement) => {
+    const matrix = element.getScreenCTM();
+    if (!matrix) return null;
+    for (const ratio of [0.5, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9]) {
+      const local = element.getPointAtLength(element.getTotalLength() * ratio);
+      const screen = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+      if (document.elementFromPoint(screen.x, screen.y) === element) return { x: screen.x, y: screen.y };
+    }
+    return null;
+  });
+  await expect.poll(hitPoint).not.toBeNull();
+  const target = await hitPoint();
+  expect(target).not.toBeNull();
+  await page.mouse.click(target!.x, target!.y);
+}
+
 for (const preset of PRESETS) {
   test.describe(`v3 workbench actions ${preset.name}`, () => {
     test.use({
@@ -700,7 +718,7 @@ for (const preset of PRESETS) {
       }
       await enableMobileEditMode(page);
       const edge = page.locator(`.react-flow__edge[data-id="${connectedEdge!.id}"]`);
-      await edge.locator("[data-edge-emphasis]").click();
+      await clickVisibleEdge(page, edge.locator("[data-edge-emphasis]"));
       await expect(edge).toHaveClass(/selected/);
       const targetUpdater = edge.locator(".react-flow__edgeupdater-target");
       const visualReference = page.locator(`[data-id="${visual!.id}"] [data-handleid="reference"]`);
