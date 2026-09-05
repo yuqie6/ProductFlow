@@ -40,7 +40,7 @@ Agent Capability's [ordinary Skill fixes](audits/tasks/eval-skills.md) await ind
 
 ### Canvas document-authority tests
 
-C0–C6 are landed. C4 idle rewrite/candidate, mid-run inspector typing, undo during a full-graph run, and document-save 409 stop are in `just web-e2e-canvas-document`. The named C3 pin for undo during a full-graph run is [canvas-graph-run-undo](audits/tasks/archive/canvas-graph-run-undo.md). Browser evidence is [canvas-c4-remainder](audits/tasks/archive/canvas-c4-remainder.md); do not republish version-semantics work.
+C0–C6 are landed. C4 idle rewrite/candidate, mid-run inspector typing, undo during a full-graph run, document-save 409 stop, inspector run-this-node, run-to-here, and in-flight cancel are in `just web-e2e-canvas-document`. The named C3 pin for undo during a full-graph run is [canvas-graph-run-undo](audits/tasks/archive/canvas-graph-run-undo.md). Browser undo and 409 evidence is [canvas-c4-remainder](audits/tasks/archive/canvas-c4-remainder.md). Inspector run-control evidence is [canvas-c4-run-controls](audits/tasks/archive/canvas-c4-run-controls.md); do not republish version-semantics work.
 
 ### Runtime performance governance
 

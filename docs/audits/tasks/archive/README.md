@@ -26,3 +26,4 @@
 | [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 完成 | 运行中检查器保存与 AR-01 基线贯通；mock 浏览器门 3 passed |
 | [canvas-graph-run-undo.md](canvas-graph-run-undo.md) | 完成 | 整图跑中途 HTTP undo 具名钉死；live 回到撤销后文稿 |
 | [canvas-c4-remainder.md](canvas-c4-remainder.md) | 完成 | 浏览器整图跑中途撤销与文稿 409 停止；mock 门 5 passed |
+| [canvas-c4-run-controls.md](canvas-c4-run-controls.md) | 完成 | 检查器运行该节点、运行到这里与运行中取消；mock 门 8 passed |

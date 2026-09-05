@@ -537,6 +537,7 @@ export function GraphNodeInspector({
               {activeRun ? (
                 <IconButton
                   label={t("detail.cancel")}
+                  data-graph-inspector-cancel
                   variant="danger"
                   onClick={() => cancelMutation.mutate(activeRun.id)}
                   disabled={cancelMutation.isPending}

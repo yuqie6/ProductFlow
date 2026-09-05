@@ -44,7 +44,7 @@ Agent 能力组的 [普通 Skill 修复](audits/tasks/eval-skills.md) 等待评�
 
 ### 画布文稿权威测试
 
-C0–C6 已落地。C4 空闲改写/候选、运行中检查器打字、整图跑中途撤销与文稿 409 停止已进 `just web-e2e-canvas-document`。C3 整图跑中途撤销具名钉死见 [canvas-graph-run-undo](audits/tasks/archive/canvas-graph-run-undo.md)。浏览器证据见 [canvas-c4-remainder](audits/tasks/archive/canvas-c4-remainder.md)，不重复派版本语义任务。
+C0–C6 已落地。C4 空闲改写/候选、运行中检查器打字、整图跑中途撤销、文稿 409 停止、检查器运行该节点/运行到这里与运行中取消已进 `just web-e2e-canvas-document`。C3 整图跑中途撤销具名钉死见 [canvas-graph-run-undo](audits/tasks/archive/canvas-graph-run-undo.md)。浏览器撤销与 409 见 [canvas-c4-remainder](audits/tasks/archive/canvas-c4-remainder.md)。检查器运行按钮证据见 [canvas-c4-run-controls](audits/tasks/archive/canvas-c4-run-controls.md)，不重复派版本语义任务。
 
 ### 职责收拢
 
