@@ -753,6 +753,7 @@ Web route split 和预算也已通过：bundle entry 为 928.6KB raw/253.2KiB gz
 | 2026-09-05 | 生图 admission running/denied 指标 | `generationCapacityAvailable` 容量满打点；`/metrics` 输出 `productflow_generation_admission_running` 与带 `graph`/`imagesession` domain 的 `productflow_generation_admission_denied_total`。metrics 0.856s、graph 78.394s 通过，见[归档任务](../audits/tasks/archive/perf-capacity-metrics.md) | 未跑 imagesession replica field；当时入队路径满容量也会增加 denied；denied 非跨副本合计 |
 | 2026-09-05 | Graph 自动采用并发 Gate，见[归档任务](../audits/tasks/archive/perf-graph-adopt-concurrent.md) | `TestConcurrentAdoptCancelMutateDoesNotDeadlock` 与既有 cancel/recovery 测试 `-count=20` 58.757s 通过；`go test -C go ./internal/graph -count=1 -p 1` 85.024s 通过。未改 cook/adopt 生产路径 | 目标规模锁等待仍缺；未把 P0 整项标完成 |
 | 2026-09-05 | 连续生图入队不再占用 admission，见[归档任务](../audits/tasks/archive/perf-imagesession-enqueue-admission.md) | `TestGenerateWhenCapacityFullStillQueuesWithoutDenied` 先红（入队 denied 0→1）后绿；claim 满容量才 denied+1。包回归 9.096s | 全库单钥匙仍在；未跑 tenant 分钥匙 |
+| 2026-09-05 | 连续生图活动 Status 省略 prompt，交付见 [归档任务](../audits/tasks/archive/perf-imagesession-active-status.md) | 修改前 26/100/300 条 Status 为 107,272 / 411,976 / ≥1,048,577B；省略 prompt 后隔离门 50,784 / 194,751 / 584,030B，300 条 100 样本 p50 16.24ms / p95 18.16ms，每请求 8 次查询，SSE 快照 584,030B。包回归 8.340s | 真实 prompt 宽于夹具、多订阅并发、COUNT/关联扫描与生产分布仍观察 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 

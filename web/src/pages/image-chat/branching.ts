@@ -635,7 +635,8 @@ export function mergeImageSessionStatusIntoDetail(
 ): ImageSessionDetail {
   const mergedTasks = new Map(detail.generation_tasks.map((task) => [task.id, task]));
   for (const task of status.generation_tasks) {
-    mergedTasks.set(task.id, task);
+    const previous = mergedTasks.get(task.id);
+    mergedTasks.set(task.id, previous ? overlayImageSessionStatusTask(previous, task) : task);
   }
   return {
     ...detail,
@@ -645,6 +646,17 @@ export function mergeImageSessionStatusIntoDetail(
     generation_tasks: [...mergedTasks.values()].sort(
       (left, right) => Date.parse(right.created_at) - Date.parse(left.created_at) || right.id.localeCompare(left.id),
     ),
+  };
+}
+
+function overlayImageSessionStatusTask(
+  previous: ImageSessionGenerationTask,
+  incoming: ImageSessionGenerationTask,
+): ImageSessionGenerationTask {
+  return {
+    ...previous,
+    ...incoming,
+    prompt: incoming.prompt || previous.prompt,
   };
 }
 
@@ -659,6 +671,10 @@ export function shouldRefreshImageSessionDetailFromStatus(
     return true;
   }
   if (status.latest_round_id && !detail.rounds.some((round) => round.id === status.latest_round_id)) {
+    return true;
+  }
+  const knownTaskIds = new Set(detail.generation_tasks.map((task) => task.id));
+  if (status.generation_tasks.some((task) => !knownTaskIds.has(task.id))) {
     return true;
   }
   const statusTasksById = new Map(status.generation_tasks.map((task) => [task.id, task]));

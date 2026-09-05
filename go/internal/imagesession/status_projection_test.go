@@ -1,6 +1,7 @@
 package imagesession
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -106,24 +107,30 @@ func TestImageSessionStatusSkipsRawProviderPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(body, []byte(`"prompt":`)) {
+		t.Fatal("status repeated task prompts on the wire")
+	}
 	for i, got := range status.GenerationTasks {
 		index := len(tasks) - 1 - i
 		for j := range got.ProviderEffects {
 			got.ProviderEffects[j].CreatedAt = got.ProviderEffects[j].CreatedAt.UTC()
 			got.ProviderEffects[j].UpdatedAt = got.ProviderEffects[j].UpdatedAt.UTC()
 		}
-		if got.ID != tasks[index].ID || got.Status != tasks[index].Status || got.Prompt != tasks[index].Prompt ||
+		if got.ID != tasks[index].ID || got.Status != tasks[index].Status || got.Prompt != "" ||
 			!reflect.DeepEqual(got.ProviderEffects, []EffectResponse{effectFromModel(effects[index])}) {
 			t.Fatalf("task/effect projection changed for %s", got.ID)
 		}
 	}
 	t.Logf("STATUS_PROJECTION active_tasks=26 effects=26 unused_provider_bytes=%d response_bytes=%d", len(raw)*54, len(body))
-	// The shared effect reader also serves bounded detail responses.
-	if _, err := ss.svc.Get(ctx, session.ID); err != nil {
+	detail, err := ss.svc.Get(ctx, session.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if effectReads != 2 {
 		t.Fatalf("detail did not exercise shared effect projection: reads=%d", effectReads)
+	}
+	if len(detail.GenerationTasks) == 0 || detail.GenerationTasks[0].Prompt == "" {
+		t.Fatal("detail lost active-task prompts")
 	}
 }
 

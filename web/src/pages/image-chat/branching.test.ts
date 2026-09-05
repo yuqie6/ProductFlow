@@ -707,6 +707,37 @@ describe("image chat branching helpers", () => {
     expect(merged.updated_at).toBe("2026-04-27T00:00:10Z");
   });
 
+  it("keeps cached prompts when lightweight status omits them", () => {
+    const cached = detail({
+      generation_tasks: [task({ id: "task-1", status: "queued", prompt: "完整提示词" })],
+    });
+    const slim = task({ id: "task-1", status: "queued", progress_phase: "candidate_saved" });
+    delete (slim as { prompt?: string }).prompt;
+    const merged = mergeImageSessionStatusIntoDetail(
+      cached,
+      status({ generation_tasks: [slim] }),
+    );
+    expect(merged.generation_tasks[0].prompt).toBe("完整提示词");
+    expect(merged.generation_tasks[0].progress_phase).toBe("candidate_saved");
+  });
+
+  it("refreshes full detail when lightweight status introduces a new task id", () => {
+    const cached = detail({
+      generation_tasks: [task({ id: "task-1", status: "running" })],
+    });
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({
+          generation_tasks: [
+            task({ id: "task-1", status: "running" }),
+            task({ id: "task-2", status: "queued" }),
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps cached generation tasks that the lightweight status omitted", () => {
     const cached = detail({
       rounds: [round({ id: "round-1" })],

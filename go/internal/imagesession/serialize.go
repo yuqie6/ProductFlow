@@ -132,6 +132,7 @@ func (s Service) loadDetail(ctx context.Context, tx *gorm.DB, sessionID string) 
 }
 
 // loadStatus 用计数、最新轮次和活动任务组装轻量状态，不加载完整历史。
+// 活动任务 JSON 省略 prompt：轮询/SSE 只更新进度与队列，提示词以详情为准。
 func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) (StatusResponse, error) {
 	sess, err := loadSession(ctx, tx, sessionID)
 	if err != nil {
@@ -191,7 +192,7 @@ func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) 
 				notes = []string{}
 			}
 		}
-		tasks = append(tasks, serializeTask(row, effectsByTask[row.ID], notes, overview, positions))
+		tasks = append(tasks, serializeStatusTask(row, effectsByTask[row.ID], notes, overview, positions))
 	}
 	return StatusResponse{
 		ID: sess.ID, Title: sess.Title, RoundsCount: int(roundsCount),
@@ -485,6 +486,13 @@ func queuedPositions(ctx context.Context, tx *gorm.DB, neededIDs []string) map[s
 	for _, item := range positions {
 		out[item.ID] = item.Position
 	}
+	return out
+}
+
+// serializeStatusTask 与详情共用任务进度/队列/effects，但不下发 prompt。
+func serializeStatusTask(row taskRow, effects []EffectResponse, notes []string, overview queueOverview, positions map[string]int) TaskResponse {
+	out := serializeTask(row, effects, notes, overview, positions)
+	out.Prompt = ""
 	return out
 }
 

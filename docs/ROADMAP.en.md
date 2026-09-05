@@ -43,7 +43,7 @@ C0–C6 are landed. C4 idle rewrite/candidate, mid-run inspector typing, undo du
 
 ### Runtime performance governance
 
-Unverified directions: time from a fault to user-visible recovery, ImageSession Status/SSE cost as active tasks grow, dispatch tail latency alongside recovery backlog, and deployed connection/lock-wait behavior. Select work using the risks and publication conditions in the [Platform Reliability charter](audits/performance-governance.md#下一步如何选择). Previous detail, dispatch, and capacity gates do not cover these workloads. Do not repeatedly run full release gates before freezing the candidate. SaaS tenant admission belongs to a separate product baseline.
+Unverified directions: time from a Graph/Agent fault to user-visible recovery, dispatch tail latency alongside recovery backlog, and deployed connection/lock-wait behavior. ImageSession Status/SSE cost at the fixed active-set fixture is delivered by [perf-imagesession-active-status](audits/tasks/archive/perf-imagesession-active-status.md). Select work using the risks and publication conditions in the [Platform Reliability charter](audits/performance-governance.md#下一步如何选择). Do not repeatedly run full release gates before freezing the candidate. SaaS tenant admission belongs to a separate product baseline.
 
 ### Responsibility consolidation
 

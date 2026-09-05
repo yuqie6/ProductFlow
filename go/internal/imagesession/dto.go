@@ -82,8 +82,8 @@ type TaskResponse struct {
 	ID                        string           `json:"id"`
 	SessionID                 string           `json:"session_id"`
 	Status                    string           `json:"status"`
-	Prompt                    string           `json:"prompt"` // 本任务提示词
-	Size                      string           `json:"size"`   // 规范化后的宽x高
+	Prompt                    string           `json:"prompt,omitempty"` // 详情必有；Status/SSE 省略，避免活动集轮询重复下发
+	Size                      string           `json:"size"`             // 规范化后的宽x高
 	BaseAssetID               *string          `json:"base_asset_id"`
 	SelectedReferenceAssetIDs []string         `json:"selected_reference_asset_ids"` // 参考图，不是节点绑定
 	GenerationCount           int              `json:"generation_count"`             // 计划候选张数，1–10
@@ -161,7 +161,7 @@ type StatusResponse struct {
 	LatestRoundID           *string        `json:"latest_round_id"`
 	LatestGenerationGroupID *string        `json:"latest_generation_group_id"`
 	HasActiveGenerationTask bool           `json:"has_active_generation_task"` // 任一任务 queued 或 running
-	GenerationTasks         []TaskResponse `json:"generation_tasks"`           // 轻量轮询用，不含全量轮次/素材
+	GenerationTasks         []TaskResponse `json:"generation_tasks"`           // 该会话全部 queued/running；不含 prompt，提示词以详情为准
 	CreatedAt               time.Time      `json:"created_at"`
 	UpdatedAt               time.Time      `json:"updated_at"`
 }

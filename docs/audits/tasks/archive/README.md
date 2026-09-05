@@ -6,6 +6,7 @@
 |---|---|---|
 | [eval-graph-clear-intent.md](eval-graph-clear-intent.md) | 完成 | 三种删节点问法明确保留分组；120 种删除排列及额外写入拒绝回归；新身份须完整重采开发基线 |
 | [canvas-local-edit-flow.md](canvas-local-edit-flow.md) | 完成 | mock 绑定下检查器局部编辑可提交、保留谱系、采用/撤销；失败不覆盖节点当前图；隔离 Chromium 2 passed |
+| [perf-imagesession-active-status.md](perf-imagesession-active-status.md) | 完成 | 活动 Status/SSE 保持全量 queued/running；省略 prompt 后 300 条固定夹具 584,030B / p95 18.16ms，查询次数恒为 8 |
 | [perf-imagesession-recovery-visible.md](perf-imagesession-recovery-visible.md) | 完成 | 连续生图故障可见状态：取消 ctx 仍落 unknown，心跳未过期不恢复，晚到 writer 拒绝；崩溃等待默认 90 分钟 |
 | [canvas-full-recipe-entry.md](canvas-full-recipe-entry.md) | 完成 | 创建页完整配方预览/取消/事务确认与丢响应重试；PG 59、Web 650、浏览器 7 passed，24 组语言主题布局 |
 | [eval-library-observation-refresh.md](eval-library-observation-refresh.md) | 完成 | Go 素材快照与 L1/L3 观察对齐，修正标签错题，12 条输入阻塞解除；独立审核与哈希一致，开发基线开放待采证 |

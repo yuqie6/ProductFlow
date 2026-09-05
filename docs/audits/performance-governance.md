@@ -94,7 +94,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT p95 0.438/0.279s；25 条延期未认领 | 重 recovery 与正常投递共存时的尾延迟；全库槽是现行单商家设计，不能用加 worker 代替容量推导 |
 | 实时通道，PERF-07 | 共享 LISTEN、退订释放、通知丢失回 PG、Agent gap repair | `platform/notify/replica_field_test.go`；历史 `web-e2e-agent-sse` 5 passed | 多副本订阅回读、fallback、连接池和慢客户端总成本；LISTEN 数与浏览器 SSE 数分别计量 |
 | Graph 工作台读取，PERF-09 | 摘要/详情、批量投影、轻量 status read 与 bundle gate | [Graph 专项原始记录](../history/agent-runtime-timeline.md#platform-graph-read-history)：25k runs/100k node-runs；HTTP、TTI、按需详情各有证据 | 历史浏览器 fixture 无 active run，Graph SSE=0；活跃执行与真实详情打开分布不能借用该结果 |
-| 连续生图读取，PERF-08 | 详情任务三组各最多 20、去重最多 60；history keyset；[目标规模 HTTP gate](tasks/archive/perf-imagesession-http-load.md) 已交付 | 25k 会话/10k 轮次/1k 任务，单热会话、单客户端：详情 258,037B、p95 16.33ms；每路径 100 样本。只读元数据 | `serialize.go:loadStatus` 仍全量读取 queued/running 并组装 effects，SSE 复用它；详情 gate 未测这条活动集放大路径。COUNT/关联扫描和真实并发仍待评估 |
+| 连续生图读取，PERF-08 | 详情任务三组各最多 20、去重最多 60；history keyset；[目标规模 HTTP gate](tasks/archive/perf-imagesession-http-load.md) 已交付。Status/SSE 返回该会话全部 queued/running，省略 `prompt`，固定宽度 300 条活动任务仍 `<1MiB`。 | 25k 会话 HTTP：详情 258,037B、p95 16.33ms。活动集：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 26/100/300 条 queued+running+effect，查询次数恒为 8；修改前 300 条 Status ≥1MiB，省略 prompt 后包内 HTTP 与隔离规模门通过 | COUNT/关联扫描、真实 prompt 宽度超过夹具、多订阅并发和生产分布仍待评估 |
 | Agent Session 读取，PERF-12 | cursor page、批量会话摘要/count、`activity_at` 排序；每会话最多 20 conversations | `agent/query_plan_test.go` 的 25k 会话列表计划；[历史记录](../history/agent-runtime-timeline.md#platform-reliability-evidence) | 目标规模 payload 与单会话详情成本；需先固定 conversation 摘要宽度和真实访问形状，不能只增加总行数 |
 | journal/ACK 与可观测性，PERF-13 | 批量 PG append、WAL/ACK、恢复前缀确认；[journal 调查](tasks/archive/arch-journal-assessment.md)结论为保留现状 | 标准容量历史 PG batch p95 232.8ms，本地 WAL p95 0.81ms；[问题答案身份修复](tasks/archive/agent-question-answer-identity.md)含第二问 SIGKILL | 当前 batch 指标是 count 和 `last_ms` gauge，不能计算持续 p95；histogram、锁等待和告警是否需要补，跟随具体诊断/部署需求 |
 | 媒体内存 | 共享 ZIP writer 流式逐文件写入，事务只冻结条目身份 | `just go-test-zip-rss` 历史 100×10MiB 写入器额外 MaxRSS 约 12.6MiB | 图库 HTTP 总字节上限不同，该测试未经过整条 HTTP 下载路径；参考图解码与真实传输另看工作量 |
@@ -102,7 +102,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
 
-2026-09-05 连续生图状态读取窄修：`serialize.go:loadStatus` 的最新轮次查询仅取 `id/generation_group_id`，状态与详情共用的 effect 摘要查询不再加载 `request_json/result_json`。`status_projection_test.go` 在真实 PG 查询结果上检查字段未加载，并验证 26 个 queued/running 任务不截断、effect 响应字段不变；fixture 中排除的原始 JSON 共 3,539,646 字节。原始数据仍存于 PG，执行/对账读取未改。ImageSession 包测、race 与原目标规模 HTTP gate 通过；该 gate 的历史页面形状不构成活动 SSE 负载验收，也不据此前后两次跑分宣称延迟收益。活动集数量、必要响应字节、轮次计数和每订阅回读仍需独立评估。
+2026-09-05 连续生图状态读取窄修：`serialize.go:loadStatus` 的最新轮次查询仅取 `id/generation_group_id`，状态与详情共用的 effect 摘要查询不再加载 `request_json/result_json`。`status_projection_test.go` 在真实 PG 查询结果上检查字段未加载，并验证 26 个 queued/running 任务不截断、effect 响应字段不变；fixture 中排除的原始 JSON 共 3,539,646 字节。原始数据仍存于 PG，执行/对账读取未改。ImageSession 包测、race 与原目标规模 HTTP gate 通过；该 gate 的历史页面形状不构成活动 SSE 负载验收，也不据此前后两次跑分宣称延迟收益。活动集数量与必要响应字节见 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md)；轮次计数和每订阅回读仍随活动会话存在。
 
 连续生图 SSE 重复快照已过滤，量化见 [2026-09-05 对照记录](../history/agent-runtime-timeline.md#2026-09-05-连续生图-sse-重复快照对照)：4 订阅、26 个 queued 任务、15.25s 静默窗口，状态帧 32→4，SSE 正文 2,875,352→359,468B（约 -87.50%），PG 状态回读仍为 32 次。心跳、无通知进度更新、终态与重连均保留；每连接额外保留一份序列化快照。该优化不消除活动集查询/编码放大，也未证明生产容量。
 
@@ -114,12 +114,14 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 2026-09-05 连续生图故障可见状态：[perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 钉死四类结果。未过 provider 边界则重排队；已 applied 不重放；不可证明结果为 `unknown` 且不可自动重试；无 parked question。asynq 取消 handler ctx 后 worker 仍写 `unknown`。心跳未过期不恢复；晚到 `finishSucceeded` 不能覆盖 `unknown`。进程崩溃后 running 上限为最后一次 heartbeat + 默认 90 分钟 + recovery 10s / 25 条批次。asynq 30 分钟墙钟仍可能打断顺序多候选任务。未改全局 `TaskTimeout`。
 
+2026-09-05 连续生图活动 Status：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 在真实 HTTP 上测量 26/100/300 条 queued/running（各一条 effect、2160B prompt、512B 进度注记）。查询次数恒为 8，不随活动集线性增加。修改前 300 条 Status 超过 `<1MiB`；根因是每 2s 回读重复下发 prompt。Status/SSE 改为不下发 prompt，详情与提交响应仍带完整提示词；前端 overlay 保留缓存 prompt，新任务 id 触发详情回源。未分页丢掉活动任务，未加缓存。
+
 ## 下一步如何选择
 
 后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件；具体认领只维护在看板。
 
 1. **明确故障后的用户可见结果。** 连续生图执行链已由 [perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 交付。另选 Graph 或 Agent 链时仍定义故障点、等待上限和四种边界；与工作流体验组运行/重试入口重叠时先交接。
-2. **验证活动负载，不只验证历史页面。** 连续生图优先调查 queued/running 增长时 Status/SSE 的任务、effects、字节与回读次数；dispatch 优先调查恢复积压和正常提交共存时的投递尾延迟。当前只确认了潜在放大路径，未确认生产故障，不预设分页或缓存方案。
+2. **验证活动负载，不只验证历史页面。** 连续生图活动 Status/SSE 已由 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 交付：固定宽度下保持全量活动任务，省略 prompt 使 300 条仍低于 `<1MiB`。dispatch 优先调查恢复积压和正常提交共存时的投递尾延迟。不预设分页或缓存方案。
 3. **补足可解释的测量。** 确定慢在锁等待、查询、JSON、队列还是 provider；只有现有指标无法回答已选问题时才补 histogram/trace。`last_ms`、瞬时 waiter 数和局部 query duration 不能互相替代。
 4. **准备候选发布证据。** 候选 checkout、测试输入与运行资源固定后执行受影响门和全量门；Agent 行为消费质量组可采信版本。没有冻结候选时不反复跑 G-07 追逐移动的 HEAD。
 
@@ -135,6 +137,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 投递、恢复、admission | queue/dispatcher/受影响领域包；已有 `dispatch_latency_test.go`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；进程测试不替代容器拓扑 |
 | Graph 读取 | `just go-test-graph-query-plan`、`just http-ab-gates`、`just web-e2e-workbench-performance`、`just web-build` | 实际 SQL、响应字段/字节、TTI、按需请求、active-run fixture |
 | ImageSession 读取 | `just go-test-imagesession-query-plan`、`just go-test-imagesession-http-load`、包内 HTTP/SSE 回归 | 详情、历史、Status 各自的数据形状；静态页面 gate 不覆盖活动 SSE 成本 |
+| ImageSession 活动 Status | `just go-test-imagesession-active-status`；包内 `TestImageSessionStatusActiveSetHTTP` | 26/100/300 活动任务不截断、`has_active` 与列表一致、无原始 JSON、固定夹具 `<1MiB`；查询次数不随活动集线性增加 |
 | ImageSession SSE 重复快照 | `just go-test-imagesession-sse-load` | 固定订阅/字段宽度下的帧数、正文、PG 回读、心跳、无通知变化、终态及重连；不等同完整容量门 |
 | Agent 读取 | `just go-test-agent-query-plan`、`agent/capacity_test.go` | conversation 宽度、事件深度、分页、payload 和读取时延分别记录 |
 | Agent batch/WAL/恢复 | `just go-test-agent-journal-capacity`、`just agent-service-test-local-journal-capacity`；`event_confirm_test.go`、`sigkill_gopg_test.go`、Node journal/turn 测试 | 连续 seq、ACK、fencing、结构/终态屏障、恢复和诚实终态 |

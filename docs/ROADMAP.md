@@ -39,7 +39,7 @@ Agent 质量组在组内串行完成考题校正与 [普通 Skill 修复复验](
 
 ### 运行时性能治理
 
-待验证方向：故障到用户可见收敛的时间预算、连续生图活动任务增长时的 Status/SSE 成本、恢复积压与正常投递共存的尾延迟，以及实际部署中的连接与锁等待。按 [平台可靠性章程](audits/performance-governance.md#下一步如何选择) 的风险与发布条件选题；先前详情、投递和容量局部门不覆盖这些负载。候选尚未固定时不反复跑全量门；SaaS tenant admission 另属新产品基线。
+待验证方向：Graph/Agent 故障到用户可见收敛的时间预算、恢复积压与正常投递共存的尾延迟，以及实际部署中的连接与锁等待。连续生图活动 Status/SSE 在固定夹具下已由 [perf-imagesession-active-status](audits/tasks/archive/perf-imagesession-active-status.md) 交付。按 [平台可靠性章程](audits/performance-governance.md#下一步如何选择) 的风险与发布条件选题。候选尚未固定时不反复跑全量门；SaaS tenant admission 另属新产品基线。
 
 ### 画布文稿权威测试
 
