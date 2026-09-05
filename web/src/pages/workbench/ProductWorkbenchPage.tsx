@@ -81,6 +81,7 @@ export function ProductWorkbenchPage() {
   });
   const missingGraphNeedsPrime = surface.kind === "agent"
     && !surface.bootstrap.graph
+    && graphQuery.data === undefined
     && missingGraphPrimedProductId !== productId;
 
   if (surface.kind === "loading" || missingGraphNeedsPrime || (surface.kind === "graph" && (productQuery.isLoading || !productQuery.data))) {

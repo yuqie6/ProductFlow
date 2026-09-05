@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { startTransition, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, CircleAlert, Loader2, RotateCw, Settings2, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -10,7 +10,7 @@ import type {
   AgentProductImageTypeKey,
   AgentProductWorkspaceSnapshot,
 } from "../lib/types";
-import { agentProductWorkbenchPath } from "./workbench/agent/productWorkbenchRoute";
+import { agentProductWorkbenchPath, agentWorkbenchQueryKey } from "./workbench/agent/productWorkbenchRoute";
 import { AgentProductCreateForm } from "./product-create/AgentProductCreateForm";
 import {
   isAmbiguousFinalizeError,
@@ -382,8 +382,9 @@ export function AgentProductCreatePage() {
         ...(agentTaskId ? { agentTaskId } : {}),
         ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       } satisfies PendingDraftState;
-      if (workspace) {
-        return workspace;
+      const retainedWorkspace = workspace ?? submissionWorkspaceRef.current;
+      if (retainedWorkspace) {
+        return retainedWorkspace;
       }
       writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
       return api.createAgentProductDraftWorkspace({
@@ -392,22 +393,30 @@ export function AgentProductCreatePage() {
         agent_session_id: pending.agentSessionId,
       });
     },
-    onSuccess: (createdWorkspace) => {
+    onSuccess: async (createdWorkspace) => {
       setError("");
+      submissionWorkspaceRef.current = createdWorkspace;
+      const productId = createdWorkspace.product.id;
+      const sessionId = createdWorkspace.conversation.session_id;
+      const taskId = createdWorkspace.task_id || agentTaskId;
+      const [bootstrap] = await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: agentWorkbenchQueryKey(productId, sessionId, taskId),
+          queryFn: () => api.getAgentWorkbench(productId, sessionId, taskId),
+        }),
+        import("./workbench/agent/ProductWorkbenchSurface"),
+      ]);
+      // The destination must not enter its missing-graph loading state on handoff.
+      if (!bootstrap.graph) {
+        queryClient.setQueryDefaults(["workflow-graph", productId], { staleTime: Infinity });
+      }
+      queryClient.setQueryData(["workflow-graph", productId], bootstrap.graph);
       removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
       void queryClient.invalidateQueries({ queryKey: ["products"] });
-      void queryClient.invalidateQueries({
-        queryKey: ["agent-workbench", createdWorkspace.product.id],
-      });
       navigationScheduledRef.current = true;
-      navigate(
-        agentProductWorkbenchPath(
-          createdWorkspace.product.id,
-          createdWorkspace.conversation.session_id,
-          createdWorkspace.task_id || agentTaskId,
-        ),
-        { replace: true },
-      );
+      startTransition(() => {
+        navigate(agentProductWorkbenchPath(productId, sessionId, taskId), { replace: true });
+      });
     },
     onError: (mutationError) => {
       setError(errorDetail(mutationError, t("agentCreate.error.failed")));
