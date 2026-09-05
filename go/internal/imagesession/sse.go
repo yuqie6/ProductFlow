@@ -1,6 +1,7 @@
 package imagesession
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,7 +42,8 @@ func (h HTTP) streamEvents(c *gin.Context) {
 	heartbeatTicker := time.NewTicker(15 * time.Second)
 	defer heartbeatTicker.Stop()
 
-	if err := writeSessionStatus(c, status); err != nil {
+	lastPayload, err := writeSessionStatus(c, status, nil)
+	if err != nil {
 		return
 	}
 	if !status.HasActiveGenerationTask {
@@ -74,7 +76,8 @@ func (h HTTP) streamEvents(c *gin.Context) {
 		if err != nil {
 			return
 		}
-		if err := writeSessionStatus(c, status); err != nil {
+		lastPayload, err = writeSessionStatus(c, status, lastPayload)
+		if err != nil {
 			return
 		}
 		if !status.HasActiveGenerationTask {
@@ -90,18 +93,21 @@ func sessionNotesOrNil(notes <-chan notify.Notification) <-chan notify.Notificat
 	return notes
 }
 
-// writeSessionStatus 写 SSE event=session.status。不要改事件名；失败时让上层关流，不要写半帧。
-func writeSessionStatus(c *gin.Context, status StatusResponse) error {
+// Compare the complete wire snapshot, since task progress and queue positions can change without session.updated_at.
+func writeSessionStatus(c *gin.Context, status StatusResponse, previous []byte) ([]byte, error) {
 	body, err := json.Marshal(status)
 	if err != nil {
-		return err
+		return previous, err
+	}
+	if bytes.Equal(body, previous) {
+		return previous, nil
 	}
 	_, err = fmt.Fprintf(c.Writer, "retry: 1000\nevent: session.status\ndata: %s\n\n", body)
 	if err != nil {
-		return err
+		return previous, err
 	}
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	return nil
+	return body, nil
 }

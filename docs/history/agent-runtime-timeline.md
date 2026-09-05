@@ -971,3 +971,29 @@ Web route split 和预算也已通过：bundle entry 为 928.6KB raw/253.2KiB gz
 - 验收 Gate：`pnpm --dir web exec vitest run src/pages/workbench/agent/conversation/runtime.test.ts` 12 passed；`just web-e2e-agent-sse` 5 passed
 
 暂无其它变更。任何变更必须记录日期、提出者、替代条款、迁移影响和验收 Gate；不得直接覆盖旧条款。
+
+## 2026-09-05 连续生图 SSE 重复快照对照
+
+本次按平台可靠性组活动负载调查落地同连接重复快照过滤。运行时代码基线为 `d542e60a` 的 `go/internal/imagesession/sse.go`，修改后版本随本记录提交。两轮使用相同 `sse_load_test.go`，SHA-256 为 `815e268f75b9d5f23a4ee5a39b3608b2685eda602757f16c28a4d5fdb35a8a0e`；共享工作树其他模块存在并发修改，这不是干净候选发布验收。
+
+- 固定输入：独立迁移 PG 库、loopback HTTP、真实 cookie 鉴权、4 个并行 SSE 订阅；1 个会话、26 个 queued 任务、0 rounds/effects，每任务 prompt 2,160B、progress note 512B；不执行 provider，不修改共享 dev 库或服务。
+- 静默窗口：全部订阅收到首帧后等待 15.25s，覆盖正常 2s fallback 和 15s heartbeat。帧数/正文累计含各连接首帧；正文按读取的 UTF-8 行加换行统计，包含 SSE 字段、空行和心跳，不包含 HTTP header、chunked framing、TCP 或 TLS。
+- 正确性：全量 26 个活动任务保留；直接提交 task progress 变化，不发 NOTIFY、不更新会话时间；每个订阅仍通过 fallback 发现变化。随后取消全部任务，验证终态与 EOF；新连接仍得到首份终态。
+
+| 实测项 | 修改前 | 修改后 |
+|---|---:|---:|
+| 静默窗口状态快照，4 个订阅合计 | 32 | 4 |
+| 静默窗口 SSE 正文字节 | 2,875,352 | 359,468 |
+| 注释心跳 | 4 | 4 |
+| Status 回读次数，按最新轮次查询计数 | 32 | 32 |
+| 4 订阅中进度变化最长送达 | 755.48ms | 756.50ms |
+| 4 订阅中终态最长送达 | 1,999.00ms | 1,997.66ms |
+| 重连收到的首份终态 | 1 | 1 |
+
+同窗口减少 2,515,884B SSE 正文，约 87.50%；这是固定静默窗口的实测传输差，不是生产月流量或 CPU 降幅。进度/终态时间从发起 DB 更新到客户端解析 data 行，样本各 4 个，只报告最大值，不报告 p95 或延迟改进。3s 是本地 fallback 回归上限，非生产 SLO。
+
+过滤比较完整序列化字节，客户端不再重复处理相同快照；PG 查询和 JSON 编码未减少。每连接额外保留一份前次 JSON，fixture 约 90KB/连接，这是序列化大小而非实测堆/RSS。活动集更大时仍会增加读、编码、传输及保留内存；本次未测慢客户端、多副本或真实网络。
+
+复跑入口：`just go-test-imagesession-sse-load`。修改前测试走完完整场景后因 32 个重复快照而 FAIL；修改后 PASS（20.084s）。`go test -C go ./internal/imagesession -count=1` PASS（7.152s）；通过 dev env wrapper 设置 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1` 后执行同包 `-race -count=1 -v -timeout 2m` PASS（43.493s），专项静默窗口仍为 4 帧 / 359,468B / 32 次回读。默认测试跳过专项；race 本轮显式开启。单元回归 `TestWriteSessionStatusOnlySuppressesIdenticalSnapshots` 覆盖 map 顺序不变、进度变化、仅队列变化、编码失败不写半帧、终态和新连接首帧。
+
+文档校验：共享工作树 `docs-check` 当时因并发登记的 `eval-library-observation-refresh.md` 看板/文件状态不一致失败，未改动该任务。用 `git checkout-index` 导出本次暂存快照后，独立目录 `just docs-check` PASS；本任务 diff check PASS。主代理自审，仅提交本次 SSE、测试、命令与文档变更。

@@ -80,6 +80,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 一次有效测量至少记录：被测服务/测试代码版本、配置、数据总量与热数据分布、字段字节规模、并发、预热/样本数、计时起止、p50/p95、payload、错误和状态断言。脚本自己的 HEAD 不自动证明远端 API 版本；临时日志路径失效时不能只凭路径重复宣称已复验。
 
+能量化的性能改动保留同输入的修改前后对照，同时记录绝对值、变化比例、未改善的成本与新增代价。样本不足不报分位数；字段体积、实际传输、查询次数、CPU/堆/RSS 分别取证，不能相互换算为未经测量的收益。
+
 ## 当前风险与证据
 
 保留 PERF 编号作为历史交叉引用。以下按交付结果合并，不再把同一锁问题拆成多项进度百分比。
@@ -100,6 +102,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
 
 2026-09-05 连续生图状态读取窄修：`serialize.go:loadStatus` 的最新轮次查询仅取 `id/generation_group_id`，状态与详情共用的 effect 摘要查询不再加载 `request_json/result_json`。`status_projection_test.go` 在真实 PG 查询结果上检查字段未加载，并验证 26 个 queued/running 任务不截断、effect 响应字段不变；fixture 中排除的原始 JSON 共 3,539,646 字节。原始数据仍存于 PG，执行/对账读取未改。ImageSession 包测、race 与原目标规模 HTTP gate 通过；该 gate 的历史页面形状不构成活动 SSE 负载验收，也不据此前后两次跑分宣称延迟收益。活动集数量、必要响应字节、轮次计数和每订阅回读仍需独立评估。
+
+连续生图 SSE 重复快照已过滤，量化见 [2026-09-05 对照记录](../history/agent-runtime-timeline.md#2026-09-05-连续生图-sse-重复快照对照)：4 订阅、26 个 queued 任务、15.25s 静默窗口，状态帧 32→4，SSE 正文 2,875,352→359,468B（约 -87.50%），PG 状态回读仍为 32 次。心跳、无通知进度更新、终态与重连均保留；每连接额外保留一份序列化快照。该优化不消除活动集查询/编码放大，也未证明生产容量。
 
 ## 下一步如何选择
 
@@ -122,6 +126,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 投递、恢复、admission | queue/dispatcher/受影响领域包；已有 `dispatch_latency_test.go`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；进程测试不替代容器拓扑 |
 | Graph 读取 | `just go-test-graph-query-plan`、`just http-ab-gates`、`just web-e2e-workbench-performance`、`just web-build` | 实际 SQL、响应字段/字节、TTI、按需请求、active-run fixture |
 | ImageSession 读取 | `just go-test-imagesession-query-plan`、`just go-test-imagesession-http-load`、包内 HTTP/SSE 回归 | 详情、历史、Status 各自的数据形状；静态页面 gate 不覆盖活动 SSE 成本 |
+| ImageSession SSE 重复快照 | `just go-test-imagesession-sse-load` | 固定订阅/字段宽度下的帧数、正文、PG 回读、心跳、无通知变化、终态及重连；不等同完整容量门 |
 | Agent 读取 | `just go-test-agent-query-plan`、`agent/capacity_test.go` | conversation 宽度、事件深度、分页、payload 和读取时延分别记录 |
 | Agent batch/WAL/恢复 | `just go-test-agent-journal-capacity`、`just agent-service-test-local-journal-capacity`；`event_confirm_test.go`、`sigkill_gopg_test.go`、Node journal/turn 测试 | 连续 seq、ACK、fencing、结构/终态屏障、恢复和诚实终态 |
 | Agent SSE/页面恢复 | `just web-e2e-agent-sse` 与对应 conversation runtime 测试 | gap 保持 live 流、重复/迟到帧、终态补洞、parked approval、共享订阅 |
