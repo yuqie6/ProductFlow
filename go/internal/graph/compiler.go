@@ -260,7 +260,7 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 	if promptEdge == nil {
 		return "", apperr.Validation("图片生成节点缺少 prompt 边，不能运行")
 	}
-	promptPayload, _, err := incomingPromptDocument(graph, nodeID, sources)
+	promptPayload, effectiveSpec, _, err := resolveImageDocument(graph, nodeID, sources)
 	if err != nil {
 		return "", err
 	}
@@ -301,14 +301,19 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 	for _, edge := range edges {
 		incomingIDs = append(incomingIDs, edge.ID)
 	}
+	configInput := requestConfigForDigest(node.NodeType, normalized)
+	delete(configInput, "prompt_overrides")
+	delete(configInput, "text_override")
+	delete(configInput, "generation_spec")
 	return inputDigest(map[string]any{
-		"node_id":                  nodeID,
-		"config":                   requestConfigForDigest(node.NodeType, normalized),
-		"prompt_document":          stripV3Prompt(promptPayload),
-		"references":               referenceDigestInputs(references),
-		"visual_system_version_id": visualVersionID,
-		"visual_overlay":           visualOverlay,
-		"incoming_edge_ids":        incomingIDs,
+		"node_id":                   nodeID,
+		"config":                    configInput,
+		"prompt_document":           stripV3Prompt(promptPayload),
+		"effective_generation_spec": effectiveSpec,
+		"references":                referenceDigestInputs(references),
+		"visual_system_version_id":  visualVersionID,
+		"visual_overlay":            visualOverlay,
+		"incoming_edge_ids":         incomingIDs,
 	}), nil
 }
 

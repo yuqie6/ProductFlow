@@ -199,7 +199,7 @@ func TestCompileImageRuntimeHashesPromptDocumentNotArtifactID(t *testing.T) {
 				"image_type_key": "hero",
 				"generation_spec": map[string]any{
 					"aspect_ratio": "1:1", "resolution_tier": "high", "quality_intent": "high",
-					"reference_fidelity": "high", "background_intent": "auto", "text_policy": "none",
+					"reference_fidelity": "high", "background_intent": "auto",
 				},
 			}},
 		},
@@ -228,7 +228,7 @@ func TestCompileImageRuntimeHashesPromptDocumentNotArtifactID(t *testing.T) {
 func TestCompileImageRuntimeHashesUpstreamVisualOverlay(t *testing.T) {
 	spec := map[string]any{
 		"aspect_ratio": "1:1", "resolution_tier": "high", "quality_intent": "high",
-		"reference_fidelity": "high", "background_intent": "auto", "text_policy": "none",
+		"reference_fidelity": "high", "background_intent": "auto",
 	}
 	g := AppliedGraph{
 		Revision: 1,
@@ -294,7 +294,7 @@ func TestIncomingPromptDocumentUsesConfigWithoutArtifact(t *testing.T) {
 
 func TestCatalogBriefFieldsAffectDigest(t *testing.T) {
 	keys := catalogDigestKeys(NodeCreativeBrief)
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
+	for _, key := range []string{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"} {
 		if _, ok := keys[key]; !ok {
 			t.Fatalf("missing %s in %+v", key, keys)
 		}

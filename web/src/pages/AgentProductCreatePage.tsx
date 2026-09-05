@@ -34,6 +34,7 @@ import {
 } from "./product-create/imageTypeSelection";
 import {
   buildCreateGenerationSpec,
+  buildCreateTextSettings,
   defaultCreateOutputDraft,
   isCreateBriefReady,
   isCreateOutputReady,
@@ -488,6 +489,7 @@ export function AgentProductCreatePage() {
         })),
         sourceNote: formatSourceNote(sourceNote).trim(),
         generationSpec: buildCreateGenerationSpec(outputDraft) ?? undefined,
+        textSettings: buildCreateTextSettings(outputDraft),
         ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       });
     },

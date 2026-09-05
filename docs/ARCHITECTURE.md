@@ -164,6 +164,10 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 
 参考输入按入边顺序携带资产 ID、用途 `role` 与说明 `label`；节点 `config.label` 非空时优先于绑定资产名称。三项共同进入消费节点的输入摘要，用途或说明改变会使相关结果需要更新，断开参考边后不再影响该目标。生图 adapter 发出的参考像素顺序与最终提示词中的编号一致。此摘要算法变更可能使带参考图的既有结果显示过期，不删除历史结果，也不自动提交运行。实现与回归：`go/internal/graph/compiler.go`、`go/internal/graph/reference_contract_test.go`、`go/internal/providers/adapt/adapt_test.go`。
 
+画面文字由 `image_prompt.config.text_settings` 拥有（`policy: none|required`、`language`）；`generation_spec` 不再保存文字参数。图片生成的 `prompt_overrides` 仅允许构图、内容与氛围的叶字段，显式空字符串/列表保留，缺省叶字段继承；`text_override` 是本图完整文字设置。`graph/image_document.go` 统一解析执行、摘要和检查器输入，摘要使用生效内容，不因空覆盖或被覆盖的上游字段变化而过期。连接到方案的创作要求将必须包含和禁用要求传给生图，不能通过局部覆盖键删除。此合同不提供自然语言冲突的确定性检测。
+
+创作要求字段为 `goal`、`key_messages`、`required_elements`、`prohibitions`、`fact_gaps`；系列风格仅有 `style` 和 `colors`。文稿候选不拥有方案文字设置，采用时保留用户配置。本次字段变更不提供旧配置转换或双读路径。生成与交付仍分离，交付参数不进入模型输入摘要。
+
 ## 7. 图片模型
 
 `MediaObject` 保存 storage 路径、MIME、字节数、尺寸、哈希和核验状态。`ProductImageAsset` 保存商品作用域内的显示名、来源、文件夹、父图和图片类型。

@@ -1,4 +1,5 @@
 import type {
+  GraphTextSettings,
   AgentProductWorkspaceCreateResponse,
   AgentProductWorkspaceOptions,
   AgentProductWorkspaceSnapshot,
@@ -1064,6 +1065,7 @@ export const api = {
     price?: string;
     sourceNote?: string;
     generationSpec?: WorkflowGenerationSpec;
+    textSettings?: GraphTextSettings;
     deliveryPresetKey?: string;
   }): Promise<DirectCreateProductResponse> {
     const body = new FormData();
@@ -1073,6 +1075,7 @@ export const api = {
     if (input.price) body.append("price", input.price);
     if (input.sourceNote) body.append("source_note", input.sourceNote);
     if (input.generationSpec) body.append("generation_spec", JSON.stringify(input.generationSpec));
+    if (input.textSettings) body.append("text_settings", JSON.stringify(input.textSettings));
     if (input.deliveryPresetKey) body.append("delivery_preset_key", input.deliveryPresetKey);
     for (const image of input.images) {
       body.append("images", image);

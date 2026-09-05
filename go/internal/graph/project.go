@@ -47,13 +47,21 @@ type NodeView struct {
 	// DocumentOrigin 是内容节点 seed|generated|authored|collaborative；非内容节点为 nil。
 	DocumentOrigin *string `json:"document_origin"`
 	// BindingStatus 仅 image_asset：bound|unbound；其他类型省略。
-	BindingStatus              *string        `json:"binding_status,omitempty"`
-	CurrentArtifactID          *string        `json:"current_artifact_id"`
-	CurrentArtifactType        *string        `json:"current_artifact_type"`    // 如 image；无产物为 nil
-	CurrentArtifactPayload     map[string]any `json:"current_artifact_payload"` // 无产物为空 map
-	PendingCandidateArtifactID *string        `json:"pending_candidate_artifact_id"`
-	Incoming                   []EdgeSummary  `json:"incoming"` // 空列表是 [] 不是 nil
-	Outgoing                   []EdgeSummary  `json:"outgoing"` // 空列表是 [] 不是 nil
+	BindingStatus              *string         `json:"binding_status,omitempty"`
+	CurrentArtifactID          *string         `json:"current_artifact_id"`
+	CurrentArtifactType        *string         `json:"current_artifact_type"`    // 如 image；无产物为 nil
+	CurrentArtifactPayload     map[string]any  `json:"current_artifact_payload"` // 无产物为空 map
+	PendingCandidateArtifactID *string         `json:"pending_candidate_artifact_id"`
+	Incoming                   []EdgeSummary   `json:"incoming"` // 空列表是 [] 不是 nil
+	Outgoing                   []EdgeSummary   `json:"outgoing"` // 空列表是 [] 不是 nil
+	ImageInput                 *ImageInputView `json:"image_input,omitempty"`
+}
+
+type ImageInputView struct {
+	Prompt                map[string]any `json:"prompt"`
+	TextSettings          map[string]any `json:"text_settings"`
+	InheritedPrompt       map[string]any `json:"inherited_prompt"`
+	InheritedTextSettings map[string]any `json:"inherited_text_settings"`
 }
 
 // EdgeSummary 是 NodeView.incoming / outgoing 里的短边，给检查器画端口用，不是整图边列表。
@@ -215,6 +223,26 @@ func buildProjection(
 		}
 		status = configStatusWithStale(applied, node, artifactDigests[node.ID], sources, status)
 		var binding *string
+		var imageInput *ImageInputView
+		if node.NodeType == NodeImageGeneration {
+			if prompt, spec, _, err := resolveImageDocument(applied, node.ID, sources); err == nil {
+				imageInput = &ImageInputView{Prompt: prompt, TextSettings: map[string]any{"policy": spec["text_policy"], "language": spec["text_language"]}}
+				inherited := applied
+				inherited.Nodes = append([]AppliedNode(nil), applied.Nodes...)
+				for index, candidate := range inherited.Nodes {
+					if candidate.ID == node.ID {
+						candidate.Config = cloneMap(candidate.Config)
+						delete(candidate.Config, "prompt_overrides")
+						delete(candidate.Config, "text_override")
+						inherited.Nodes[index] = candidate
+						break
+					}
+				}
+				base, baseSpec, _, _ := resolveImageDocument(inherited, node.ID, sources)
+				imageInput.InheritedPrompt = base
+				imageInput.InheritedTextSettings = map[string]any{"policy": baseSpec["text_policy"], "language": baseSpec["text_language"]}
+			}
+		}
 		if node.NodeType == NodeImageAsset {
 			if node.BoundAssetID != nil && *node.BoundAssetID != "" {
 				bound := "bound"
@@ -246,6 +274,7 @@ func buildProjection(
 			PendingCandidateArtifactID: stringMapPtr(pendingCandidates, node.ID),
 			Incoming:                   incoming,
 			Outgoing:                   outgoing,
+			ImageInput:                 imageInput,
 		})
 	}
 	edges := make([]EdgeView, 0, len(applied.Edges))

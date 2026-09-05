@@ -193,11 +193,12 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if key, ok := node.Config["image_type_key"].(string); ok {
 			imgReq.ImageTypeKey = key
 		}
-		promptPayload, artifactID, err := incomingPromptDocument(applied, node.ID, sources)
+		promptPayload, effectiveSpec, artifactID, err := resolveImageDocument(applied, node.ID, sources)
 		if err != nil {
 			return err
 		}
 		imgReq.Prompt = promptPayload
+		imgReq.GenerationSpec = effectiveSpec
 		imgReq.PromptArtifactID = artifactID
 		imgReq.References = loadedRefs
 		imgReq.VisualSystem = mergeImageVisual(visual, visualOverlayFromConfig(node.Config))

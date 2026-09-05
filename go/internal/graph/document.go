@@ -147,7 +147,7 @@ func documentVisibleKeys(nodeType NodeType) []string {
 	}
 	var keys []string
 	for _, field := range fields {
-		if field.control == "hidden" {
+		if field.control == "hidden" || field.key == "text_settings" {
 			continue
 		}
 		keys = append(keys, field.key)
@@ -195,17 +195,17 @@ func contentFieldsEmpty(nodeType NodeType, config map[string]any) bool {
 }
 
 // looksLikeSourceNoteSeedBrief 识别创建页看图起草落成的 brief 种子：goal 等于 listing look rule，
-// design_goals 带 source-note 前缀，prohibitions 与 look 一致。改 look.md 会让旧种子被当成 authored。
+// key_messages 带 source-note 前缀，prohibitions 与 look 一致。改 look.md 会让旧种子被当成 authored。
 func looksLikeSourceNoteSeedBrief(config map[string]any) bool {
 	look := prompts.ListingLook()
 	goal, _ := config["goal"].(string)
 	if strings.TrimSpace(goal) != look.Rule {
 		return false
 	}
-	if !documentFieldEmpty(config["required_copy"]) {
+	if !documentFieldEmpty(config["required_elements"]) {
 		return false
 	}
-	goals := stringListValues(config["design_goals"])
+	goals := stringListValues(config["key_messages"])
 	if len(goals) != 1 || !strings.HasPrefix(goals[0], sourceNoteDesignGoalPrefix) {
 		return false
 	}
@@ -301,7 +301,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 		out = map[string]any{}
 	}
 	if action == DocumentActionRewrite || action == DocumentActionReplace || origin == OriginSeed {
-		for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
+		for _, key := range []string{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"} {
 			delete(out, key)
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
@@ -309,7 +309,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 		}
 		return out
 	}
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
+	for _, key := range []string{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"} {
 		if documentFieldEmpty(out[key]) {
 			if value, ok := generated[key]; ok {
 				out[key] = cloneValue(value)
@@ -319,7 +319,7 @@ func mergeGeneratedBrief(current, generated map[string]any, action, origin strin
 	return out
 }
 
-// mergeGeneratedOverlay 合并 visual_overlay 的 style/colors/prohibitions。rewrite/replace/seed 整份替换 overlay。
+// mergeGeneratedOverlay 合并 visual_overlay 的 style/colors。rewrite/replace/seed 整份替换 overlay。
 func mergeGeneratedOverlay(current map[string]any, generated map[string]any, action, origin string) map[string]any {
 	out := cloneMap(current)
 	if out == nil {
@@ -333,7 +333,7 @@ func mergeGeneratedOverlay(current map[string]any, generated map[string]any, act
 		out["visual_overlay"] = cloneMap(generated)
 		return out
 	}
-	for _, key := range []string{"style", "colors", "prohibitions"} {
+	for _, key := range []string{"style", "colors"} {
 		if documentFieldEmpty(overlay[key]) {
 			if value, ok := generated[key]; ok {
 				overlay[key] = cloneValue(value)
@@ -446,71 +446,6 @@ func collectGraphImageTypes(graph AppliedGraph) []map[string]any {
 		out = append(out, item)
 	}
 	return out
-}
-
-// listingTextPolicy 从图上第一个 infographic 生图节点读 text_policy。无信息图则 none。
-// spec 缺省或 none 时信息图仍返回 required + zh-CN，避免图上无字。
-func listingTextPolicy(graph AppliedGraph) (policy, language string) {
-	policy = "none"
-	for _, node := range graph.Nodes {
-		if node.NodeType != NodeImageGeneration {
-			continue
-		}
-		key, _ := node.Config["image_type_key"].(string)
-		if imageTypeFamily(strings.TrimSpace(key)) != "infographic" {
-			continue
-		}
-		spec, _ := node.Config["generation_spec"].(map[string]any)
-		if spec == nil {
-			return "required", "zh-CN"
-		}
-		raw, _ := spec["text_policy"].(string)
-		raw = strings.TrimSpace(raw)
-		if raw == "" || raw == "none" {
-			return "required", firstTextLanguage(spec, "zh-CN")
-		}
-		return raw, firstTextLanguage(spec, "zh-CN")
-	}
-	return policy, language
-}
-
-func firstTextLanguage(spec map[string]any, fallback string) string {
-	if lang, _ := spec["text_language"].(string); strings.TrimSpace(lang) != "" {
-		return strings.TrimSpace(lang)
-	}
-	return fallback
-}
-
-// downstreamTextPolicy 从该 prompt 连出的生图节点读 text_policy，供 AssemblePromptRequest。
-// 没有下游或全是 none 则 none。与 listingTextPolicy（全图第一个信息图）不是同一条规则。
-func downstreamTextPolicy(graph AppliedGraph, promptNodeID string) (policy, language string) {
-	policy = "none"
-	for _, edge := range graph.Edges {
-		if edge.SourceNodeID != promptNodeID || edge.Role != RolePrompt {
-			continue
-		}
-		target, err := graph.Node(edge.TargetNodeID)
-		if err != nil || target.NodeType != NodeImageGeneration {
-			continue
-		}
-		spec, _ := target.Config["generation_spec"].(map[string]any)
-		if spec == nil {
-			continue
-		}
-		raw, _ := spec["text_policy"].(string)
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
-		}
-		if raw != "none" {
-			policy = raw
-			if lang, _ := spec["text_language"].(string); strings.TrimSpace(lang) != "" {
-				language = strings.TrimSpace(lang)
-			}
-			return policy, language
-		}
-	}
-	return policy, language
 }
 
 func mergeImageVisual(system, local map[string]any) map[string]any {

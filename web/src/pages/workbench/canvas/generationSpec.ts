@@ -11,7 +11,6 @@ const RESOLUTION_TIERS = new Set<WorkflowGenerationSpec["resolution_tier"]>(["st
 const QUALITY_INTENTS = new Set<WorkflowGenerationSpec["quality_intent"]>(["draft", "standard", "high"]);
 const REFERENCE_FIDELITIES = new Set<WorkflowGenerationSpec["reference_fidelity"]>(["low", "medium", "high"]);
 const BACKGROUND_INTENTS = new Set<WorkflowGenerationSpec["background_intent"]>(["auto", "opaque", "transparent"]);
-const TEXT_POLICIES = new Set<WorkflowGenerationSpec["text_policy"]>(["none", "allow", "required"]);
 
 export function parseWorkflowGenerationSpec(value: unknown): WorkflowGenerationSpec | null {
   if (!isRecord(value)) return null;
@@ -20,8 +19,6 @@ export function parseWorkflowGenerationSpec(value: unknown): WorkflowGenerationS
   const qualityIntent = value.quality_intent;
   const referenceFidelity = value.reference_fidelity;
   const backgroundIntent = value.background_intent;
-  const textPolicy = value.text_policy;
-  const textLanguage = value.text_language;
   if (
     typeof aspectRatio !== "string"
     || !parseAspectRatio(aspectRatio)
@@ -33,11 +30,7 @@ export function parseWorkflowGenerationSpec(value: unknown): WorkflowGenerationS
     || !REFERENCE_FIDELITIES.has(referenceFidelity as WorkflowGenerationSpec["reference_fidelity"])
     || typeof backgroundIntent !== "string"
     || !BACKGROUND_INTENTS.has(backgroundIntent as WorkflowGenerationSpec["background_intent"])
-    || typeof textPolicy !== "string"
-    || !TEXT_POLICIES.has(textPolicy as WorkflowGenerationSpec["text_policy"])
-    || (textLanguage !== undefined && textLanguage !== null && (typeof textLanguage !== "string" || !textLanguage.trim() || textLanguage.trim().length > 80))
-    || (textPolicy === "required" && (typeof textLanguage !== "string" || !textLanguage.trim()))
-    || (textPolicy === "none" && textLanguage != null)
+    || "text_policy" in value || "text_language" in value
   ) {
     return null;
   }
@@ -47,8 +40,6 @@ export function parseWorkflowGenerationSpec(value: unknown): WorkflowGenerationS
     quality_intent: qualityIntent as WorkflowGenerationSpec["quality_intent"],
     reference_fidelity: referenceFidelity as WorkflowGenerationSpec["reference_fidelity"],
     background_intent: backgroundIntent as WorkflowGenerationSpec["background_intent"],
-    text_policy: textPolicy as WorkflowGenerationSpec["text_policy"],
-    text_language: typeof textLanguage === "string" ? textLanguage.trim() : null,
   };
 }
 

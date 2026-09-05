@@ -15,6 +15,22 @@ type batchSourceGuard struct {
 	factBatches   [][]string
 }
 
+func TestRuntimeFactsExcludePendingAndConflictedValues(t *testing.T) {
+	facts := []map[string]any{
+		{"key": "material", "value": "steel", "status": "confirmed"},
+		{"key": "color", "value": "red", "status": "user_declared"},
+		{"key": "size", "value": "large", "status": "observed"},
+		{"key": "capacity", "value": "500ml", "status": "conflicted"},
+		{"key": "weight", "value": "1kg", "status": "confirmed", "requires_confirmation": true},
+	}
+	if got := mergeRuntimeFacts(facts, nil); !reflect.DeepEqual(got, facts[:2]) {
+		t.Fatalf("pending facts reached runtime: %+v", got)
+	}
+	if len(facts) != 5 {
+		t.Fatal("runtime filtering mutated editable facts")
+	}
+}
+
 func (g *batchSourceGuard) Lock(context.Context, *gorm.DB, string) error                { return nil }
 func (g *batchSourceGuard) HasAssets(context.Context, *gorm.DB, string, []string) error { return nil }
 func (g *batchSourceGuard) LoadSource(_ context.Context, _ *gorm.DB, productID string) (*SourceProduct, error) {

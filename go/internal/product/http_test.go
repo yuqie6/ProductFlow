@@ -132,8 +132,9 @@ func TestBirthCommands(t *testing.T) {
 	}
 
 	v3Body, v3Type := multipartPNG(t, map[string]string{
-		"name":        "直接创建演示商品",
-		"image_types": `[{"key":"hero","quantity":1}]`,
+		"name":          "直接创建演示商品",
+		"image_types":   `[{"key":"hero","quantity":1}]`,
+		"text_settings": `{"policy":"required","language":"ja-JP"}`,
 	})
 	v3, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v3/products", v3Body)
 	v3.Header.Set("Content-Type", v3Type)
@@ -164,6 +165,20 @@ func TestBirthCommands(t *testing.T) {
 	}
 	if direct.Product.CoverImageAssetID == nil {
 		t.Fatal("v3 missing cover")
+	}
+	var plans int
+	for _, raw := range direct.Graph["nodes"].([]any) {
+		node := raw.(map[string]any)
+		if node["node_type"] == "image_prompt" {
+			plans++
+			settings := node["config"].(map[string]any)["text_settings"].(map[string]any)
+			if settings["policy"] != "required" || settings["language"] != "ja-JP" {
+				t.Fatalf("create text settings lost: %+v", settings)
+			}
+		}
+	}
+	if plans != 1 {
+		t.Fatalf("expected one plan, got %d", plans)
 	}
 
 	presetBody, presetType := multipartPNG(t, map[string]string{

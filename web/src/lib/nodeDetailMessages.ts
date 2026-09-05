@@ -1,0 +1,63 @@
+export const nodeDetailZh = {
+  "nodeDetail.colorAccent": "点缀", "nodeDetail.colorNote": "颜色说明",
+  "nodeDetail.objective": "画面目标", "nodeDetail.scene": "构图与场景",
+  "nodeDetail.content": "重点内容", "nodeDetail.text": "画面文字",
+  "nodeDetail.noText": "无文字", "nodeDetail.withText": "带文字", "nodeDetail.details": "细节设置",
+  "nodeDetail.inherited": "继承方案", "nodeDetail.local": "本图调整",
+  "nodeDetail.editLocal": "修改本图", "nodeDetail.restore": "恢复继承",
+  "nodeDetail.effective": "本次生成内容", "nodeDetail.savedInput": "已保存的执行输入",
+  "nodeDetail.onlyThis": "仅影响这张图", "nodeDetail.affected": "关联 {count} 张图",
+  "nodeDetail.palette": "系列配色", "nodeDetail.colorRole": "颜色用途",
+  "nodeDetail.add": "添加", "nodeDetail.remove": "移除", "nodeDetail.pending": "待确认信息",
+  "nodeDetail.constraints": "共享约束", "nodeDetail.fidelity": "商品保留要求",
+  "nodeDetail.styleOverride": "本图风格", "nodeDetail.confirmFact": "确认事实",
+  "nodeDetail.sourceEdit": "正在修改源商品：{name}",
+} as const;
+
+export const nodeDetailEn: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.colorAccent": "Accent", "nodeDetail.colorNote": "Color note",
+  "nodeDetail.objective": "Picture goal", "nodeDetail.scene": "Composition and scene",
+  "nodeDetail.content": "Key content", "nodeDetail.text": "Picture text",
+  "nodeDetail.noText": "No text", "nodeDetail.withText": "With text", "nodeDetail.details": "Details",
+  "nodeDetail.inherited": "From picture plan", "nodeDetail.local": "Picture adjustments",
+  "nodeDetail.editLocal": "Edit this picture", "nodeDetail.restore": "Restore inheritance",
+  "nodeDetail.effective": "Generation content", "nodeDetail.savedInput": "Saved execution input",
+  "nodeDetail.onlyThis": "Only this picture", "nodeDetail.affected": "{count} connected pictures",
+  "nodeDetail.palette": "Series palette", "nodeDetail.colorRole": "Color purpose",
+  "nodeDetail.add": "Add", "nodeDetail.remove": "Remove", "nodeDetail.pending": "Pending confirmation",
+  "nodeDetail.constraints": "Shared requirements", "nodeDetail.fidelity": "Product details to preserve",
+  "nodeDetail.styleOverride": "Picture style", "nodeDetail.confirmFact": "Confirm fact",
+  "nodeDetail.sourceEdit": "Editing source product: {name}",
+};
+
+export const nodeDetailJa: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.colorAccent": "アクセント", "nodeDetail.colorNote": "色の説明",
+  "nodeDetail.objective": "画像の目的", "nodeDetail.scene": "構図とシーン",
+  "nodeDetail.content": "重点内容", "nodeDetail.text": "画像内テキスト",
+  "nodeDetail.noText": "文字なし", "nodeDetail.withText": "文字あり", "nodeDetail.details": "詳細設定",
+  "nodeDetail.inherited": "画像プランを継承", "nodeDetail.local": "この画像の調整",
+  "nodeDetail.editLocal": "この画像を変更", "nodeDetail.restore": "継承に戻す",
+  "nodeDetail.effective": "生成内容", "nodeDetail.savedInput": "保存済みの実行入力",
+  "nodeDetail.onlyThis": "この画像のみ", "nodeDetail.affected": "関連画像 {count} 枚",
+  "nodeDetail.palette": "シリーズの配色", "nodeDetail.colorRole": "色の用途",
+  "nodeDetail.add": "追加", "nodeDetail.remove": "削除", "nodeDetail.pending": "確認待ち",
+  "nodeDetail.constraints": "共通要件", "nodeDetail.fidelity": "保持する商品特徴",
+  "nodeDetail.styleOverride": "この画像のスタイル", "nodeDetail.confirmFact": "事実を確認",
+  "nodeDetail.sourceEdit": "元の商品を編集中：{name}",
+};
+
+export const nodeDetailVi: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.colorAccent": "Điểm nhấn", "nodeDetail.colorNote": "Ghi chú màu",
+  "nodeDetail.objective": "Mục tiêu ảnh", "nodeDetail.scene": "Bố cục và bối cảnh",
+  "nodeDetail.content": "Nội dung chính", "nodeDetail.text": "Chữ trong ảnh",
+  "nodeDetail.noText": "Không chữ", "nodeDetail.withText": "Có chữ", "nodeDetail.details": "Chi tiết",
+  "nodeDetail.inherited": "Theo phương án ảnh", "nodeDetail.local": "Điều chỉnh ảnh này",
+  "nodeDetail.editLocal": "Sửa ảnh này", "nodeDetail.restore": "Khôi phục kế thừa",
+  "nodeDetail.effective": "Nội dung tạo ảnh", "nodeDetail.savedInput": "Đầu vào đã lưu",
+  "nodeDetail.onlyThis": "Chỉ ảnh này", "nodeDetail.affected": "{count} ảnh liên kết",
+  "nodeDetail.palette": "Bảng màu bộ ảnh", "nodeDetail.colorRole": "Mục đích màu",
+  "nodeDetail.add": "Thêm", "nodeDetail.remove": "Xóa", "nodeDetail.pending": "Chờ xác nhận",
+  "nodeDetail.constraints": "Yêu cầu chung", "nodeDetail.fidelity": "Đặc điểm cần giữ",
+  "nodeDetail.styleOverride": "Phong cách ảnh này", "nodeDetail.confirmFact": "Xác nhận thông tin",
+  "nodeDetail.sourceEdit": "Đang sửa sản phẩm nguồn: {name}",
+};

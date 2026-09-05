@@ -48,7 +48,7 @@ describe("DocumentCandidateReview", () => {
     }));
     expect(markup).toContain("设计目标");
     expect(markup).toContain("布局");
-    expect(markup).toContain("商品占比");
+    expect(markup).toContain("商品近似占比");
     expect(markup).toContain("文案区域");
     expect(markup).toContain("保留真实材质与产品结构");
     expect(markup).toContain("左侧主体，右侧留白");

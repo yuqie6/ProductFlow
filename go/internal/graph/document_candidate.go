@@ -63,8 +63,8 @@ func documentSections(nodeType NodeType) []DocumentSectionDefinition {
 	switch nodeType {
 	case NodeCreativeBrief:
 		return []DocumentSectionDefinition{
-			{Key: "objective", Fields: []string{"goal", "design_goals"}},
-			{Key: "copy", Fields: []string{"required_copy"}},
+			{Key: "objective", Fields: []string{"goal", "key_messages"}},
+			{Key: "requirements", Fields: []string{"required_elements"}},
 			{Key: "gaps", Fields: []string{"fact_gaps"}},
 			{Key: "guardrails", Fields: []string{"prohibitions"}},
 		}
@@ -72,7 +72,6 @@ func documentSections(nodeType NodeType) []DocumentSectionDefinition {
 		return []DocumentSectionDefinition{
 			{Key: "style", Fields: []string{"style"}},
 			{Key: "palette", Fields: []string{"colors"}},
-			{Key: "guardrails", Fields: []string{"prohibitions"}},
 		}
 	case NodeImagePrompt:
 		return []DocumentSectionDefinition{
@@ -118,10 +117,10 @@ func proposedDocumentConfig(node AppliedNode, payload map[string]any, action str
 func visibleDocument(nodeType NodeType, config map[string]any) map[string]any {
 	switch nodeType {
 	case NodeCreativeBrief:
-		return pickDocumentFields(config, []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"})
+		return pickDocumentFields(config, []string{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"})
 	case NodeVisualSystem:
 		overlay, _ := config["visual_overlay"].(map[string]any)
-		return pickDocumentFields(overlay, []string{"style", "colors", "prohibitions"})
+		return pickDocumentFields(overlay, []string{"style", "colors"})
 	case NodeImagePrompt:
 		prompt, _ := config["prompt"].(map[string]any)
 		return cloneMap(prompt)

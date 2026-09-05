@@ -38,6 +38,14 @@ interface GraphRunListPayload {
 }
 
 function findGraphWorkerPids(): number[] {
+  const isolatedPID = process.env.PRODUCTFLOW_GRAPH_WORKER_PID;
+  if (isolatedPID) {
+    const pid = Number(isolatedPID);
+    if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("invalid isolated worker PID");
+    const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    if (!cmd.includes("productflow-worker")) throw new Error("isolated PID is not a graph worker");
+    return [pid];
+  }
   const pids: number[] = [];
   for (const entry of readdirSync("/proc")) {
     if (!/^\d+$/.test(entry)) continue;
@@ -114,7 +122,7 @@ async function authorPrompt(page: Page, productID: string): Promise<GraphNodePay
   expect(prompt).toBeTruthy();
   await selectNode(page, prompt!.id);
   await page.getByLabel("设计目标").fill("人工目标-不要被构图应用改掉");
-  await page.getByLabel("商品占比（%）").fill("55");
+  await page.getByLabel("商品近似占比（%）").fill("55");
   await page.getByLabel("布局").fill("人工左侧留白");
   await expect.poll(async () => {
     const latest = await currentGraph(page, productID);
@@ -269,7 +277,7 @@ test.describe("canvas document mock provider", () => {
         await page.getByRole("button", { name: "详情" }).click();
         await expect(page.getByLabel("设计目标")).toBeVisible();
         await page.getByLabel("设计目标").fill(authoredGoal);
-        await page.getByLabel("商品占比（%）").fill("55");
+        await page.getByLabel("商品近似占比（%）").fill("55");
         await page.getByLabel("布局").fill("运行中左侧留白");
         await expect.poll(async () => {
           const latest = await currentGraph(page, productID);

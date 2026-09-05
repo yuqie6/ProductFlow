@@ -28,7 +28,7 @@ func TestEndpointStripsTrailingV1(t *testing.T) {
 }
 
 func TestPromptSuccessFailUnknown(t *testing.T) {
-	okPayload := `{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[]}`
+	okPayload := `{"goal":"展示商品","key_messages":["主体"],"required_elements":[],"prohibitions":[],"fact_gaps":[]}`
 	cases := []struct {
 		name   string
 		status int
@@ -1006,19 +1006,23 @@ func TestPromptSendsReferenceImageURL(t *testing.T) {
 		path = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&posted)
 		w.WriteHeader(200)
-		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[]}}`)
+		_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","key_messages":["主体"],"required_elements":["展示杯盖"],"prohibitions":["不得宣称医疗功效"],"fact_gaps":[]}}`)
 	}))
 	defer srv.Close()
 	p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
-	_, err = p.GenerateCreativeBrief(context.Background(), graph.PromptRequest{
-		NodeTitle: "brief",
-		Facts:     []map[string]any{{"key": "product_name", "value": "杯"}},
+	brief, err := p.GenerateCreativeBrief(context.Background(), graph.PromptRequest{
+		NodeTitle:  "brief",
+		TextPolicy: "none",
+		Facts:      []map[string]any{{"key": "product_name", "value": "杯"}},
 		References: []graph.ReferenceImage{{
 			AssetID: "a1", Bytes: png, MIME: "image/png", Label: "主体", Role: "product_identity",
 		}},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(fmt.Sprint(brief.Payload["required_elements"]), "展示杯盖") || !strings.Contains(fmt.Sprint(brief.Payload["prohibitions"]), "不得宣称医疗功效") {
+		t.Fatalf("no-text incorrectly removed brief requirements: %+v", brief.Payload)
 	}
 	if path != "/v1/responses" {
 		t.Fatalf("path %s", path)
@@ -1148,6 +1152,8 @@ func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
 		ImageTypeTitle:      "核心卖点图",
 		ImageTypeFamily:     "infographic",
 		ImageTypeJob:        "详情卖点图",
+		TextPolicy:          "required",
+		TextLanguage:        "ja-JP",
 		GenerateFromContext: true,
 		CurrentPrompt:       map[string]any{"design_goal": "卖点"},
 		DocumentAction:      graph.DocumentActionRewrite,
@@ -1172,6 +1178,8 @@ func TestPromptGenerationBodyHasListingLookAndSeed(t *testing.T) {
 		`"listing_look"`,
 		`"listing_look_rule"`,
 		`"current_prompt"`,
+		`"text_policy":"required"`,
+		`"text_language":"ja-JP"`,
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("missing %s in %s", needle, text)
@@ -1352,7 +1360,7 @@ func TestPromptRejectsExtraAndMissingKeys(t *testing.T) {
 	t.Run("brief-extra", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"],"required_copy":[],"prohibitions":[],"fact_gaps":[],"extra":"no"}}`)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","key_messages":["主体"],"required_elements":[],"prohibitions":[],"fact_gaps":[],"extra":"no"}}`)
 		}))
 		defer srv.Close()
 		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}
@@ -1363,7 +1371,7 @@ func TestPromptRejectsExtraAndMissingKeys(t *testing.T) {
 	t.Run("brief-missing", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
-			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","design_goals":["主体"]}}`)
+			_, _ = io.WriteString(w, `{"id":"r1","model":"m","output_parsed":{"goal":"展示商品","key_messages":["主体"]}}`)
 		}))
 		defer srv.Close()
 		p := OpenAIPrompt{APIKey: "sk", BaseURL: srv.URL, Model: "gpt"}

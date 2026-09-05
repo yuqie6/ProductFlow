@@ -193,6 +193,16 @@ func loadProductSourceSnapshots(ctx context.Context, tx *gorm.DB, graphProductID
 
 // mergeRuntimeFacts 用商品名称等身份字段补 facts 里没有的 key。已有同名 key（大小写不敏感）不覆盖。
 func mergeRuntimeFacts(facts []map[string]any, source *productSourceSnapshot) []map[string]any {
+	confirmed := make([]map[string]any, 0, len(facts))
+	for _, fact := range facts {
+		status, _ := fact["status"].(string)
+		pending, _ := fact["requires_confirmation"].(bool)
+		if pending || status == "observed" || status == "conflicted" {
+			continue
+		}
+		confirmed = append(confirmed, fact)
+	}
+	facts = confirmed
 	if source == nil || source.SourceProduct == nil {
 		return facts
 	}

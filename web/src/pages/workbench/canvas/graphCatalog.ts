@@ -25,6 +25,21 @@ export function graphNodeConfigFields(
   return graphCatalogNode(catalog, nodeType)?.config_fields ?? [];
 }
 
+export function graphConnectedImageCount(graph: GraphProjection, nodeId: string): number {
+  const targets = new Map<string, string[]>();
+  for (const edge of graph.edges) targets.set(edge.source_node_id, [...(targets.get(edge.source_node_id) ?? []), edge.target_node_id]);
+  const seen = new Set<string>([nodeId]);
+  const pending = [nodeId];
+  while (pending.length) {
+    for (const target of targets.get(pending.pop()!) ?? []) {
+      if (seen.has(target)) continue;
+      seen.add(target);
+      pending.push(target);
+    }
+  }
+  return graph.nodes.filter((node) => node.id !== nodeId && seen.has(node.id) && node.node_type === "image_generation").length;
+}
+
 export function graphCatalogNode(
   catalog: GraphNodeCatalog | null | undefined,
   nodeType: GraphNodeType,

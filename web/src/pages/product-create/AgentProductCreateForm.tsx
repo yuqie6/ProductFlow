@@ -126,7 +126,6 @@ const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon, LucideIcon, LucideIcon] 
 
 const TEXT_POLICY_LABELS = {
   required: "agentCreate.textPolicy.required",
-  allow: "agentCreate.textPolicy.allow",
   none: "agentCreate.textPolicy.none",
 } as const;
 
@@ -666,7 +665,7 @@ export function AgentProductCreateForm({
       {stageCard(5, t("agentCreate.outputHint"), outputReady, (
         <div className="space-y-4" data-create-output>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-            <div role="radiogroup" aria-label={t("agentCreate.textPolicy")} className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
+            <div role="radiogroup" aria-label={t("agentCreate.textPolicy")} className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
               {CREATE_TEXT_POLICIES.map((policy) => {
                 const selected = outputDraft.textPolicy === policy;
                 return (
@@ -687,7 +686,7 @@ export function AgentProductCreateForm({
                 );
               })}
             </div>
-            <label htmlFor="agent-create-text-language" className="block shrink-0 sm:w-40">
+            {outputDraft.textPolicy === "required" ? <label htmlFor="agent-create-text-language" className="block shrink-0 sm:w-40">
               <span className="sr-only">{t("agentCreate.textLanguage")}</span>
               <select
                 id="agent-create-text-language"
@@ -702,9 +701,8 @@ export function AgentProductCreateForm({
                   </option>
                 ))}
               </select>
-            </label>
+            </label> : null}
           </div>
-          <p className="text-xs leading-5 text-text-muted">{t("agentCreate.textPolicyHint")}</p>
           <div>
             <div id="agent-create-type-ratios" className="mb-1 text-xs font-medium text-text-secondary">
               {t("agentCreate.aspectRatio")}

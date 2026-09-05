@@ -36,7 +36,9 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	compile := prompts.CompileImageTemplates()
 	briefLines := []string{
 		compile.LeadFor(typeTitle),
-		"商品本体参考图中的商品是身份基准：准确保留商品外形、结构、材质、颜色和可见标识；围绕本图任务重新设计场景、机位与光线。",
+		compile.Identity,
+		compile.Recompose,
+		compile.Invent,
 	}
 	for index, ref := range req.References {
 		line := fmt.Sprintf("Reference image %d: role=%s", index+1, ref.Role)
@@ -60,6 +62,15 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	}
 	if designGoal := usablePromptText(payload["design_goal"]); designGoal != "" {
 		briefLines = append(briefLines, "图目标："+designGoal)
+	}
+	if rules := usablePromptTexts(payload["shared_rules"]); len(rules) > 0 {
+		briefLines = append(briefLines, "必须遵守："+strings.Join(rules, "；"))
+	}
+	if rules := usablePromptTexts(payload["creative_boundary"]); len(rules) > 0 {
+		briefLines = append(briefLines, "不得出现："+strings.Join(rules, "；"))
+	}
+	if rules := usablePromptTexts(asMapOrNil(payload["product_fidelity"])["requirements"]); len(rules) > 0 {
+		briefLines = append(briefLines, "商品保留要求："+strings.Join(rules, "；"))
 	}
 	for _, line := range overlayBriefLines(mergeImageVisual(req.VisualSystem, req.VisualOverlay)) {
 		briefLines = append(briefLines, line)

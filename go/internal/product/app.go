@@ -66,12 +66,13 @@ func (s Service) GetAsset(ctx context.Context, assetID string) (ImageAsset, erro
 
 // CreateInput 是商品出生时的名称、可选资料与参考图。Uploads 引用随后写成的 ProductImageAsset，不是存储路径。
 type CreateInput struct {
-	Name       string
-	Category   string   // 空表示未填
-	Price      string   // 空表示未填
-	SourceNote string   // 空表示未填；不是 CreativeBrief
-	Uploads    []Upload // 已校验参考图；至少一张、最多六张
-	SetCover   bool     // 出生入参位；当前封面由 createWithGraph 的 setCover 参数决定，本字段未被读取
+	TextSettings map[string]any
+	Name         string
+	Category     string   // 空表示未填
+	Price        string   // 空表示未填
+	SourceNote   string   // 空表示未填；不是 CreativeBrief
+	Uploads      []Upload // 已校验参考图；至少一张、最多六张
+	SetCover     bool     // 出生入参位；当前封面由 createWithGraph 的 setCover 参数决定，本字段未被读取
 }
 
 // CreateWithoutGraph 是 v2 无图出生：写商品与参考图，不创建 workflow_graphs。至少一张、最多六张参考图。
@@ -103,6 +104,7 @@ func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []
 			FactSetVersionID:  factID,
 			SourceNote:        creation.product.SourceNote,
 			GenerationSpec:    generationSpec,
+			TextSettings:      in.TextSettings,
 			DeliverySpec:      deliverySpec,
 		})
 		if err != nil {

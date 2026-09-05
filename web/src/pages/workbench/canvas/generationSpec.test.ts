@@ -8,8 +8,6 @@ const validSpec = {
   quality_intent: "high",
   reference_fidelity: "high",
   background_intent: "auto",
-  text_policy: "allow",
-  text_language: " zh-CN ",
 };
 
 describe("workflow generation spec", () => {
@@ -17,7 +15,6 @@ describe("workflow generation spec", () => {
     expect(parseWorkflowGenerationSpec({ ...validSpec, aspect_ratio: " 4:5 " })).toEqual({
       ...validSpec,
       aspect_ratio: "4:5",
-      text_language: "zh-CN",
     });
   });
 

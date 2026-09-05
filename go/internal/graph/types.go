@@ -349,5 +349,6 @@ type DirectCreateInput struct {
 	FactSetVersionID  *string
 	SourceNote        *string        // 商品说明，不是 CreativeBrief
 	GenerationSpec    map[string]any // 复制到 image_generation
+	TextSettings      map[string]any // 复制到 image_prompt；不属于模型生成参数
 	DeliverySpec      map[string]any // 复制到 image_generation；不进 image digest
 }

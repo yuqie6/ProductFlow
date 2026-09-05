@@ -76,7 +76,7 @@ func TestAssemblePromptRequestAuthoredDoesNotGenerateFromContext(t *testing.T) {
 	}
 }
 
-func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t *testing.T) {
+func TestAssemblePromptRequestOwnsTextPolicy(t *testing.T) {
 	prompt := AppliedNode{
 		ID:       "prompt-1",
 		NodeType: NodeImagePrompt,
@@ -84,6 +84,7 @@ func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t 
 		Config: map[string]any{
 			"image_type_key": "faq",
 			"prompt":         map[string]any{"design_goal": imageTypePromptGoal("faq")},
+			"text_settings":  map[string]any{"policy": "required", "language": "zh-CN"},
 		},
 	}
 	image := AppliedNode{
@@ -92,10 +93,7 @@ func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t 
 		Title:    "信息图",
 		Config: map[string]any{
 			"image_type_key": "faq",
-			"generation_spec": map[string]any{
-				"text_policy":   "required",
-				"text_language": "zh-CN",
-			},
+			"text_override":  map[string]any{"policy": "none", "language": nil},
 		},
 	}
 	g := AppliedGraph{
@@ -105,8 +103,8 @@ func TestAssemblePromptRequestIncludesBriefsImageTypesAndDownstreamTextPolicy(t 
 		},
 	}
 	briefs := []map[string]any{
-		{"goal": "卖点一", "design_goals": []any{"镜头 A"}},
-		{"goal": "卖点二", "required_copy": []any{"限时"}},
+		{"goal": "卖点一", "key_messages": []any{"镜头 A"}},
+		{"goal": "卖点二", "required_elements": []any{"限时"}},
 	}
 	req, err := AssemblePromptRequest(prompt, nil, briefs, nil, nil, "digest", g)
 	if err != nil {
@@ -145,13 +143,13 @@ func TestAssembleCreativeBriefCollectsGraphImageTypes(t *testing.T) {
 	}
 }
 
-func TestAssembleCreativeBriefLiftsInfographicTextPolicy(t *testing.T) {
+func TestAssembleCreativeBriefDoesNotReadUnconnectedImageTextPolicy(t *testing.T) {
 	brief := AppliedNode{ID: "brief", NodeType: NodeCreativeBrief, Title: "要求", Config: map[string]any{"goal": "卖"}}
 	image := AppliedNode{
 		ID: "image", NodeType: NodeImageGeneration, Title: "卖点",
 		Config: map[string]any{
 			"image_type_key": "selling_point",
-			"generation_spec": map[string]any{"text_policy": "required", "text_language": "zh-CN"},
+			"text_override":  map[string]any{"policy": "required", "language": "zh-CN"},
 		},
 	}
 	g := AppliedGraph{Nodes: []AppliedNode{brief, image}}
@@ -159,7 +157,7 @@ func TestAssembleCreativeBriefLiftsInfographicTextPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.TextPolicy != "required" || req.TextLanguage != "zh-CN" {
+	if req.TextPolicy != "none" || req.TextLanguage != "" {
 		t.Fatalf("brief policy %q %q", req.TextPolicy, req.TextLanguage)
 	}
 }

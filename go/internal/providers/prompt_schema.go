@@ -5,20 +5,20 @@ package providers
 var briefJSONSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []any{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"},
+	"required":             []any{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"},
 	"properties": map[string]any{
-		"goal":          nonEmptyTextSchema(),
-		"design_goals":  boundedTextArraySchema(1, 4, 320),
-		"required_copy": boundedTextArraySchema(0, 6, 120),
-		"prohibitions":  boundedStringArraySchema(0, 0),
-		"fact_gaps":     boundedTextArraySchema(0, 6, 160),
+		"goal":              nonEmptyTextSchema(),
+		"key_messages":      boundedTextArraySchema(1, 4, 320),
+		"required_elements": boundedTextArraySchema(0, 6, 120),
+		"prohibitions":      boundedTextArraySchema(0, 6, 240),
+		"fact_gaps":         boundedTextArraySchema(0, 6, 160),
 	},
 }
 
 var overlayJSONSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []any{"style", "colors", "prohibitions"},
+	"required":             []any{"style", "colors"},
 	"properties": map[string]any{
 		"style": boundedTextArraySchema(3, 5, 160),
 		"colors": map[string]any{
@@ -36,7 +36,6 @@ var overlayJSONSchema = map[string]any{
 				},
 			},
 		},
-		"prohibitions": boundedStringArraySchema(0, 0),
 	},
 }
 
@@ -52,7 +51,7 @@ var listingPromptJSONSchema = map[string]any{
 		"shared_rules":      boundedStringArraySchema(1, 1),
 		"design_goal":       nonEmptyTextSchema(),
 		"product_fidelity":  fidelitySchema,
-		"creative_boundary": boundedStringArraySchema(0, 1),
+		"creative_boundary": boundedTextArraySchema(0, 6, 240),
 		"composition":       compositionSchema,
 		"content":           contentSchema,
 		"text":              textSchema,

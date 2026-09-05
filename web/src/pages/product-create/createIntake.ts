@@ -1,4 +1,4 @@
-import type { AgentProductWorkspaceLimits, WorkflowGenerationSpec } from "../../lib/types";
+import type { AgentProductWorkspaceLimits, GraphTextSettings, WorkflowGenerationSpec } from "../../lib/types";
 import {
   validateAgentProductWorkspaceInput,
   type AgentImageTypeSelectionDraft,
@@ -9,7 +9,7 @@ export const CREATE_DEFAULT_TEXT_LANGUAGE = "zh-CN";
 export const CREATE_BRIEF_MAX_LENGTH = 4000;
 export const CREATE_SHARED_ASPECT_FALLBACK = "1:1";
 
-export const CREATE_TEXT_POLICIES = ["required", "allow", "none"] as const;
+export const CREATE_TEXT_POLICIES = ["required", "none"] as const;
 export const CREATE_TEXT_LANGUAGE_OPTIONS = [
   { value: "zh-CN", label: "简体中文" },
   { value: "en-US", label: "English" },
@@ -17,7 +17,7 @@ export const CREATE_TEXT_LANGUAGE_OPTIONS = [
   { value: "vi-VN", label: "Tiếng Việt" },
 ] as const;
 
-export type CreateTextPolicy = WorkflowGenerationSpec["text_policy"];
+export type CreateTextPolicy = GraphTextSettings["policy"];
 
 export interface CreateOutputDraft {
   textPolicy: CreateTextPolicy;
@@ -40,9 +40,11 @@ export function buildCreateGenerationSpec(draft: CreateOutputDraft): WorkflowGen
     quality_intent: "high",
     reference_fidelity: "high",
     background_intent: "auto",
-    text_policy: draft.textPolicy,
-    text_language: language || CREATE_DEFAULT_TEXT_LANGUAGE,
   };
+}
+
+export function buildCreateTextSettings(draft: CreateOutputDraft): GraphTextSettings {
+  return { policy: draft.textPolicy, language: draft.textPolicy === "none" ? null : draft.textLanguage.trim() };
 }
 
 export function createOutputSummary(draft: CreateOutputDraft): {
@@ -51,7 +53,7 @@ export function createOutputSummary(draft: CreateOutputDraft): {
 } {
   return {
     textPolicy: draft.textPolicy,
-    textLanguage: draft.textLanguage.trim() || CREATE_DEFAULT_TEXT_LANGUAGE,
+    textLanguage: draft.textPolicy === "none" ? null : draft.textLanguage.trim() || CREATE_DEFAULT_TEXT_LANGUAGE,
   };
 }
 

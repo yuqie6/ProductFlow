@@ -460,8 +460,11 @@ export interface WorkflowGenerationSpec {
   quality_intent: "draft" | "standard" | "high";
   reference_fidelity: "low" | "medium" | "high";
   background_intent: "auto" | "opaque" | "transparent";
-  text_policy: "none" | "allow" | "required";
-  text_language?: string | null;
+}
+
+export interface GraphTextSettings {
+  policy: "none" | "required";
+  language: string | null;
 }
 
 export interface WorkflowDeliverySpec {
@@ -1608,6 +1611,12 @@ export interface GraphNode {
   pending_candidate_artifact_id?: string | null;
   source_product?: GraphSourceProduct | null;
   product_fact_set?: GraphProductFactSet | null;
+  image_input?: {
+    prompt: Record<string, unknown>;
+    text_settings: GraphTextSettings;
+    inherited_prompt: Record<string, unknown>;
+    inherited_text_settings: GraphTextSettings;
+  };
   incoming: GraphEdgeSummary[];
   outgoing: GraphEdgeSummary[];
 }

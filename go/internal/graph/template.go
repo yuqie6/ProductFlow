@@ -114,10 +114,7 @@ func imageTypePromptGoal(key string) string {
 	if ok {
 		title = option.Title
 	}
-	job := imageTypeJob(key)
-	if job == "" && ok {
-		job = option.Description
-	}
+	job := option.Description
 	if job == "" {
 		return title
 	}
@@ -141,7 +138,7 @@ func creativeBriefConfigFromSourceNote(sourceNote *string) map[string]any {
 	look := prompts.ListingLook()
 	return map[string]any{
 		"goal":         look.Rule,
-		"design_goals": []string{sourceNoteDesignGoalPrefix + text},
+		"key_messages": []string{sourceNoteDesignGoalPrefix + text},
 		"prohibitions": append([]string{}, look.BriefProhibitions...),
 	}
 }
@@ -248,7 +245,7 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 		CreateNodeOp{
 			ClientRef: "visual-system",
 			NodeType:  NodeVisualSystem,
-			Title:     "视觉规范",
+			Title:     "系列风格",
 			PositionX: 80,
 			PositionY: 40,
 			Config:    map[string]any{},
@@ -315,15 +312,20 @@ func BuildDirectCreateTemplate(in DirectCreateInput) (ChangeSet, error) {
 		groupY := 40 + typeIndex*280
 		ops = append(ops, CreateGroupOp{ClientRef: groupRef, Title: typeTitle, MemberRefs: []string{}})
 		groupRefCopy := groupRef
+		textConfig := defaultTextSettings(imageType.Key)
+		if in.TextSettings != nil {
+			textConfig = cloneMap(in.TextSettings)
+		}
 		ops = append(ops, CreateNodeOp{
 			ClientRef: promptRef,
 			NodeType:  NodeImagePrompt,
-			Title:     typeTitle + "提示词",
+			Title:     typeTitle + "方案",
 			PositionX: 420,
 			PositionY: groupY,
 			GroupRef:  &groupRefCopy,
 			Config: map[string]any{
 				"image_type_key": imageType.Key,
+				"text_settings":  textConfig,
 				"prompt":         map[string]any{"design_goal": promptGoal},
 			},
 		})
@@ -524,31 +526,13 @@ func shotVariationInstruction(key string, imageIndex, quantity int) string {
 	return fmt.Sprintf("第 %d 张，共 %d 张。机位或用途与其他张不同。", n, quantity)
 }
 
-// generationSpecForShot 按图种填默认比例与信息图 text_policy。用户已带的 generation_spec 优先。非法枚举返回 Validation。
+// generationSpecForShot applies the image-type aspect ratio; text is owned by the plan.
 func generationSpecForShot(imageType DirectCreateImageType, generationSpec map[string]any) (map[string]any, error) {
 	overrides := cloneMap(generationSpec)
 	if imageType.AspectRatio != "" {
 		overrides["aspect_ratio"] = imageType.AspectRatio
 	} else if strings.TrimSpace(asString(overrides["aspect_ratio"])) == "" {
 		overrides["aspect_ratio"] = defaultAspectRatioForImageType(imageType.Key)
-	}
-	family := imageTypeFamily(imageType.Key)
-	language := strings.TrimSpace(asString(overrides["text_language"]))
-	if language == "" {
-		language = "zh-CN"
-	}
-	if family == "infographic" {
-		overrides["text_policy"] = "required"
-		overrides["text_language"] = language
-	} else {
-		policy := ""
-		if generationSpec != nil {
-			policy = asString(generationSpec["text_policy"])
-		}
-		if policy == "" || policy == "none" {
-			overrides["text_policy"] = "none"
-			overrides["text_language"] = nil
-		}
 	}
 	return resolveTemplateGenerationSpec(overrides)
 }

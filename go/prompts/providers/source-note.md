@@ -21,7 +21,7 @@ Write a shop-owner listing description. Buyers should learn what the product is 
 - Do not use phrases such as "suitable for emphasizing", "can highlight", "focus on showcasing", "ideal for display", 适合强调, 可重点强调, 适合用于陈列.
 - Do not invent suggested uses (perfume vs home decor, gift vs daily) or unverifiable claims (送礼首选, 大容量) unless printed on the pack.
 
-visible example: 厚壁玻璃密封瓶，球盖锁扣。瓶身通透能看见内容，厚壁更耐磕，锁扣开合看得见。
+visible example: 透明玻璃瓶，圆形瓶盖配金属锁扣。瓶身通透，内容物一目了然；瓶口与锁扣结构清楚，便于查看开合方式。
 Not dry: 厚壁玻璃密封瓶，球盖锁扣，瓶身透明。
 Not: 厚壁玻璃密封瓶，适合强调玻璃质感与装饰效果，可重点强调通透瓶身。
 

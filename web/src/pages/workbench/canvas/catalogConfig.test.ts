@@ -30,8 +30,8 @@ function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">)
 const briefFields: GraphCatalogConfigField[] = [
   { key: "title", value_kind: "string", required: false, control: "hidden" },
   { key: "goal", value_kind: "string", required: false, control: "textarea", label_key: "workflowConfirmation.designGoal" },
-  { key: "design_goals", value_kind: "string_list", required: false, control: "string_list", label_key: "graph.inspector.designGoals" },
-  { key: "required_copy", value_kind: "string_list", required: false, control: "string_list", label_key: "graph.inspector.requiredCopy" },
+  { key: "key_messages", value_kind: "string_list", required: false, control: "string_list", label_key: "graph.inspector.designGoals" },
+  { key: "required_elements", value_kind: "string_list", required: false, control: "string_list", label_key: "graph.inspector.requiredCopy" },
   { key: "prohibitions", value_kind: "string_list", required: false, control: "string_list" },
 ];
 
@@ -45,7 +45,6 @@ const visualFields: GraphCatalogConfigField[] = [
     fields: [
       { key: "style", value_kind: "string_list", required: false, control: "string_list" },
       { key: "colors", value_kind: "object_list", required: false, control: "visual_background" },
-      { key: "prohibitions", value_kind: "string_list", required: false, control: "string_list" },
     ],
   },
 ];
@@ -89,8 +88,6 @@ const imageFields: GraphCatalogConfigField[] = [
       quality_intent: "high",
       reference_fidelity: "high",
       background_intent: "auto",
-      text_policy: "none",
-      text_language: null,
     },
     fields: [
       { key: "aspect_ratio", value_kind: "string", required: false, control: "aspect_ratio", panel: "basic", default: "1:1" },
@@ -98,8 +95,6 @@ const imageFields: GraphCatalogConfigField[] = [
       { key: "quality_intent", value_kind: "string", required: false, control: "select", default: "high" },
       { key: "reference_fidelity", value_kind: "string", required: false, control: "select", default: "high" },
       { key: "background_intent", value_kind: "string", required: false, control: "select", default: "auto" },
-      { key: "text_policy", value_kind: "string", required: false, control: "select", default: "none" },
-      { key: "text_language", value_kind: "string_or_null", required: false, control: "text" },
     ],
   },
   {
@@ -118,18 +113,39 @@ const imageFields: GraphCatalogConfigField[] = [
 ];
 
 describe("catalog config drafts", () => {
+  it("blocks missing text language without discarding the draft", () => {
+    const draft = { title: "方案", config: { text_settings: { policy: "required", language: "" } } };
+    expect(validateCatalogDraft(draft, [], "invalid")).toBe("invalid");
+    expect(draft.config.text_settings.language).toBe("");
+    expect(validateCatalogDraft({ ...draft, config: { text_settings: { policy: "required", language: "ja-JP" } } }, [], "invalid")).toBeNull();
+    expect(validateCatalogDraft({ ...draft, config: { text_override: { policy: "none", language: "ja-JP" } } }, [], "invalid")).toBe("invalid");
+  });
+  it("preserves explicit empty override leaves without filling siblings", () => {
+    const fields: GraphCatalogConfigField[] = [{
+      key: "prompt_overrides", value_kind: "object_or_null", control: "group", required: false,
+      fields: [{ key: "content", value_kind: "object", control: "group", required: false, fields: [
+        { key: "background", value_kind: "string", control: "textarea", required: false },
+        { key: "focus", value_kind: "string_list", control: "string_list", required: false },
+        { key: "selling_points", value_kind: "string_list", control: "string_list", required: false },
+      ] }],
+    }];
+    const config = { prompt_overrides: { content: { background: "", focus: [] } } };
+    expect(catalogConfigForSave(fields, config)).toEqual(config);
+    const restored = patchCatalogValue(fields, config, ["prompt_overrides", "content", "background"], undefined);
+    expect(catalogConfigForSave(fields, restored)).toEqual({ prompt_overrides: { content: { focus: [] } } });
+  });
   it("drops unregistered keys and writes brief lists from catalog fields", () => {
     const source = node({
       id: "brief",
       node_type: "creative_brief",
       title: "创作要求",
-      config: { extra: "keep", design_goals: ["主图"], required_copy: ["标题"], prohibitions: ["变形"] },
+      config: { extra: "keep", key_messages: ["主图"], required_elements: ["标题"], prohibitions: ["变形"] },
     });
     const draft = catalogNodeDraft(source, briefFields);
     const saved = catalogConfigForSave(briefFields, { ...draft.config, goal: "主图优先" });
     expect(saved.extra).toBeUndefined();
     expect(saved.goal).toBe("主图优先");
-    expect(saved.design_goals).toEqual(["主图"]);
+    expect(saved.key_messages).toEqual(["主图"]);
   });
 
   it("only serializes fields declared by the catalog", () => {
@@ -143,15 +159,11 @@ describe("catalog config drafts", () => {
     expect(saved).toEqual({ goal: "手填目标" });
   });
 
-  it("fills image generation defaults from catalog instead of a private draft type", () => {
+  it("does not materialize defaults on opening a node", () => {
     const source = node({ id: "image", node_type: "image_generation", title: "主图 1" });
     const draft = catalogNodeDraft(source, imageFields);
     const saved = catalogConfigForSave(imageFields, draft.config);
-    expect(saved.generation_spec).toMatchObject({
-      aspect_ratio: "1:1",
-      resolution_tier: "high",
-      text_policy: "none",
-    });
+    expect(saved.generation_spec).toBeUndefined();
     expect(draft.config.delivery_spec).toBeUndefined();
     expect(saved.delivery_spec).toBeUndefined();
   });
@@ -329,12 +341,10 @@ describe("catalog config drafts", () => {
       ["visual_overlay", "colors"],
       [{ role: "background", value: "#FFFFFF", label: "背景" }],
     );
-    const withProhibitions = patchCatalogValue(visualFields, withBackground, ["visual_overlay", "prohibitions"], ["变形"]);
-    const saved = catalogConfigForSave(visualFields, withProhibitions);
-    expect(saved.visual_system_version_id).toBeNull();
+    const saved = catalogConfigForSave(visualFields, withBackground);
+    expect(saved.visual_system_version_id).toBeUndefined();
     expect(saved.visual_overlay).toEqual({
       style: ["干净白底"],
-      prohibitions: ["变形"],
       colors: [{ role: "background", value: "#FFFFFF", label: "背景" }],
     });
     expect(readVisualBackground((saved.visual_overlay as { colors: unknown }).colors)).toBe("#FFFFFF");

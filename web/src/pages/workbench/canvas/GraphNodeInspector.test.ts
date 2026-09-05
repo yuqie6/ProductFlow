@@ -62,7 +62,7 @@ const catalog: GraphNodeCatalog = {
     {
       node_type: "creative_brief", output_data_type: "creative_brief", kind: "document", accepts: [], config_fields: [
         field("goal", "textarea", { label_key: "workflowConfirmation.designGoal" }),
-        field("design_goals", "string_list", { label_key: "graph.inspector.designGoals" }),
+        field("key_messages", "string_list", { label_key: "graph.inspector.designGoals" }),
       ]
     },
     {
@@ -124,7 +124,7 @@ const graph: GraphProjection = {
       id: "brief",
       node_type: "creative_brief",
       title: "创作要求",
-      config: { goal: "突出瓶身", design_goals: ["主图清晰"] },
+      config: { goal: "突出瓶身", key_messages: ["主图清晰"] },
     }),
     node({
       id: "asset",
@@ -214,7 +214,7 @@ describe("GraphNodeInspector", () => {
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null);
     expect(markup).toContain("画面比例");
     expect(markup).toContain("4:5");
-    expect(markup).toContain("还缺提示词，先连上再运行");
+    expect(markup).toContain("还缺画面方案，先连上再运行");
     expect(markup).not.toContain("先连上参考图");
     expect(markup).not.toContain("generation_spec");
     expect(markup).toContain("运行该节点");
@@ -405,7 +405,7 @@ describe("GraphNodeInspector", () => {
     }));
     expect(markup).toContain("风格关键词");
     expect(markup).toContain("暖色");
-    expect(markup).toContain("背景色");
+    expect(markup).toContain("系列配色");
   });
 
   it("disables catalog controls while the graph is busy", () => {
@@ -444,7 +444,7 @@ describe("GraphNodeInspector", () => {
       title: "创作要求",
       config: { campaign_line: "主标题留下" },
     }), undefined, nextCatalog);
-    expect(markup).toContain("必要文案");
+    expect(markup).toContain("必须包含");
     expect(markup).toContain("主标题留下");
   });
 
@@ -521,7 +521,7 @@ describe("GraphNodeInspector", () => {
     }));
     expect(markup).toContain("风格关键词");
     expect(markup).toContain("干净白底");
-    expect(markup).toContain("背景色");
+    expect(markup).toContain("系列配色");
     expect(markup).not.toContain("visual_system_version_id");
   });
 
@@ -589,7 +589,7 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("deadbeef");
   });
 
-  it("shows the last generated prompt on a prompt node", () => {
+  it("does not present an old prompt artifact as the current document", () => {
     const markup = renderInspector(node({
       id: "prompt",
       node_type: "image_prompt",
@@ -600,9 +600,9 @@ describe("GraphNodeInspector", () => {
         content: { background: "干净背景" },
       },
     }));
-    expect(markup).toContain("上次写出");
-    expect(markup).toContain("为筋膜枪生成首屏海报");
-    expect(markup).toContain("干净背景");
+    expect(markup).not.toContain("上次写出");
+    expect(markup).not.toContain("为筋膜枪生成首屏海报");
+    expect(markup).not.toContain("干净背景");
   });
 
   it("shows the last failure on the open inspector", () => {

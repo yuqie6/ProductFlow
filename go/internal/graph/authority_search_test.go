@@ -139,8 +139,8 @@ func replayAuthorityTrace(t *testing.T, gs *graphServer, trace []authorityAction
 func authorityCountingPrompt() countingPrompt {
 	return countingPrompt{MockPromptProvider: graph.MockPromptProvider{
 		Brief: map[string]any{
-			"goal": mockAuthorityBriefGoal, "design_goals": []any{"mock"},
-			"required_copy": []any{}, "prohibitions": []any{}, "fact_gaps": []any{},
+			"goal": mockAuthorityBriefGoal, "key_messages": []any{"mock"},
+			"required_elements": []any{}, "prohibitions": []any{}, "fact_gaps": []any{},
 		},
 		Prompt: map[string]any{
 			"design_goal": "MOCK-AUTHORITY-PROMPT-GOAL",
@@ -453,7 +453,7 @@ func checkAuthorityAfterRun(before, after graph.Projection, run graph.GraphRunRe
 func checkObjectiveOnly(before, after graph.NodeView) []string {
 	switch before.NodeType {
 	case graph.NodeCreativeBrief:
-		if !jsonEqual(before.Config["required_copy"], after.Config["required_copy"]) {
+		if !jsonEqual(before.Config["required_elements"], after.Config["required_elements"]) {
 			return []string{"O6 brief copy changed on objective apply"}
 		}
 		if !jsonEqual(before.Config["prohibitions"], after.Config["prohibitions"]) {
@@ -495,11 +495,11 @@ func visibleDocumentConfig(node graph.NodeView) map[string]any {
 	switch node.NodeType {
 	case graph.NodeCreativeBrief:
 		return map[string]any{
-			"goal":          cfg["goal"],
-			"design_goals":  cfg["design_goals"],
-			"required_copy": cfg["required_copy"],
-			"prohibitions":  cfg["prohibitions"],
-			"fact_gaps":     cfg["fact_gaps"],
+			"goal":              cfg["goal"],
+			"key_messages":      cfg["key_messages"],
+			"required_elements": cfg["required_elements"],
+			"prohibitions":      cfg["prohibitions"],
+			"fact_gaps":         cfg["fact_gaps"],
 		}
 	case graph.NodeVisualSystem:
 		return map[string]any{

@@ -1,5 +1,5 @@
 /**
- * 按 Catalog 字段物化 inspector 草稿。
+ * 按 Catalog 字段读取 inspector 草稿，不在打开表单时补默认值。
  *
  * 未登记和已退休的 plan key（`prompt_plan_key` 等）会被去掉。
  * hidden 字段留在 config 里，但不能在 inspector 编辑。
@@ -29,68 +29,9 @@ export function visibleCatalogFields(fields: GraphCatalogConfigField[]): GraphCa
 export function catalogNodeDraft(node: GraphNode, fields: GraphCatalogConfigField[]): CatalogNodeDraft {
   return {
     title: node.title,
-    config: materializeCatalogConfig(fields, isRecord(node.config) ? node.config : {}),
+    config: cloneJson(Object.fromEntries(Object.entries(isRecord(node.config) ? node.config : {})
+      .filter(([key]) => fields.some((field) => field.key === key)))),
   };
-}
-
-export function materializeCatalogConfig(
-  fields: GraphCatalogConfigField[],
-  config: Record<string, unknown>,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...config };
-  for (const field of fields) {
-    const current = next[field.key];
-    const hasCurrent = Object.prototype.hasOwnProperty.call(next, field.key) && current !== undefined;
-    if (field.control === "optional_object") {
-      if (!hasCurrent) continue;
-      if (current == null) {
-        next[field.key] = null;
-        continue;
-      }
-      if (isRecord(current) && field.fields?.length) {
-        next[field.key] = materializeCatalogConfig(field.fields, current);
-      }
-      continue;
-    }
-    if (!hasCurrent) {
-      if (hasCatalogDefault(field)) {
-        const defaultValue = cloneJson(field.default);
-        next[field.key] = isRecord(defaultValue) && field.fields?.length
-          ? materializeCatalogConfig(field.fields, defaultValue)
-          : defaultValue;
-        continue;
-      }
-      if (field.control === "hidden") {
-        if (field.value_kind === "string_or_null") next[field.key] = null;
-        continue;
-      }
-      if (field.value_kind === "string_list") {
-        next[field.key] = [];
-        continue;
-      }
-      if (field.value_kind === "boolean") {
-        next[field.key] = Boolean(field.default);
-        continue;
-      }
-      if (field.value_kind === "string" || field.value_kind === "string_or_null") {
-        next[field.key] = field.value_kind === "string_or_null" ? null : "";
-      }
-      continue;
-    }
-    if (
-      (field.value_kind === "object" || field.value_kind === "object_or_null")
-      && isRecord(current)
-      && field.fields?.length
-      && hasCatalogDefault(field)
-    ) {
-      next[field.key] = materializeCatalogConfig(field.fields, current);
-    } else if (field.value_kind === "object_list" && Array.isArray(current) && field.fields?.length && hasCatalogDefault(field)) {
-      next[field.key] = current.map((item) => (
-        isRecord(item) ? materializeCatalogConfig(field.fields ?? [], item) : item
-      ));
-    }
-  }
-  return next;
 }
 
 export function catalogConfigForSave(
@@ -123,6 +64,12 @@ export function validateCatalogDraft(
   if (generation != null && !parseWorkflowGenerationSpec(generation)) return message;
   const delivery = draft.config.delivery_spec;
   if (delivery != null && !parseWorkflowDeliverySpec(delivery)) return message;
+  for (const settings of [draft.config.text_settings, draft.config.text_override]) {
+    if (settings == null) continue;
+    if (!isRecord(settings)) return message;
+    const language = typeof settings.language === "string" ? settings.language.trim() : "";
+    if (settings.policy === "required" ? !language : settings.policy !== "none" || Boolean(language)) return message;
+  }
   if (!validateFieldTree(fields, draft.config)) return message;
   return null;
 }
@@ -253,6 +200,7 @@ function normalizeFieldValue(field: GraphCatalogConfigField, value: unknown): un
     if (value == null) return null;
     if (!isRecord(value)) return value;
     const nested = field.fields?.length ? nestedCatalogObject(field.fields, value) : value;
+    if (field.key === "prompt_overrides" || field.key === "text_override") return nested;
     const compact = compactRecord(nested);
     return Object.keys(compact).length ? compact : null;
   }
@@ -456,10 +404,6 @@ function visibleWhenMatches(rule: GraphCatalogVisibleWhen | null | undefined, pa
   const actual = parent[rule.field];
   const candidate = actual == null ? "" : String(actual);
   return rule.values.includes(candidate);
-}
-
-function hasCatalogDefault(field: GraphCatalogConfigField): boolean {
-  return field.default !== undefined && field.default !== null;
 }
 
 function isPromptStrippedKey(key: string): boolean {

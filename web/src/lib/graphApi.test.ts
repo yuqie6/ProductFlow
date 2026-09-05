@@ -104,9 +104,8 @@ describe("v3 graph API helpers", () => {
         quality_intent: "high",
         reference_fidelity: "high",
         background_intent: "auto",
-        text_policy: "required",
-        text_language: "zh-CN",
       },
+      textSettings: { policy: "required", language: "zh-CN" },
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -121,9 +120,9 @@ describe("v3 graph API helpers", () => {
       { key: "hero", quantity: 1, aspect_ratio: "3:4" },
       { key: "detail", quantity: 1, aspect_ratio: "1:1" },
     ]);
-    expect(JSON.parse(String(formData.get("generation_spec")))).toMatchObject({
-      text_policy: "required",
-      text_language: "zh-CN",
+    expect(JSON.parse(String(formData.get("text_settings")))).toEqual({
+      policy: "required",
+      language: "zh-CN",
     });
     expect(formData.getAll("images")).toEqual([image]);
   });

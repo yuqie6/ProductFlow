@@ -19,7 +19,7 @@ func TestSelectRunNodeIDsNodeScopeRequiresTarget(t *testing.T) {
 func cookSelectGraph() AppliedGraph {
 	spec := map[string]any{
 		"aspect_ratio": "1:1", "resolution_tier": "high", "quality_intent": "high",
-		"reference_fidelity": "high", "background_intent": "auto", "text_policy": "none",
+		"reference_fidelity": "high", "background_intent": "auto",
 	}
 	return AppliedGraph{
 		Revision: 1,

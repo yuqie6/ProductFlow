@@ -119,7 +119,7 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(OverlayInstructions(), "same background color") {
 		t.Fatal("overlay instructions must not lock every shot to one background")
 	}
-	if !strings.Contains(PromptInstructions(), "empty for ordinary reference-backed product photography") || !strings.Contains(PromptInstructions(), "one strong visual concept") {
+	if !strings.Contains(PromptInstructions(), "Do not add generic rendering-defect lists") || !strings.Contains(PromptInstructions(), "one strong visual concept") {
 		t.Fatal("prompt instructions must prioritize art direction over guardrail lists")
 	}
 	if !strings.Contains(PromptInstructions(), "complete ecommerce conversion page") || !strings.Contains(PromptInstructions(), "compact trust strip") {
@@ -131,14 +131,14 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if strings.Contains(PromptInstructions(), "two-column") || strings.Contains(PromptInstructions(), "search-grid") {
 		t.Fatal("hero must not describe shopping-app layout as the image job")
 	}
-	if !strings.Contains(BriefInstructions(), "`prohibitions` must be empty") || !strings.Contains(OverlayInstructions(), "`prohibitions` must be empty") {
-		t.Fatal("brief and visual instructions must not generate negative prompt lists")
+	if !strings.Contains(BriefInstructions(), "Preserve explicit user prohibitions") || !strings.Contains(OverlayInstructions(), "Shared restrictions belong to the creative brief") {
+		t.Fatal("brief must own supplied restrictions without duplicating them in visual style")
 	}
 	if !strings.Contains(BriefInstructions(), "fact_gaps") {
 		t.Fatal("brief instructions must collect fact gaps")
 	}
 	required := compile.TextPolicyLine("required", "zh-CN", "photography")
-	if !strings.Contains(required, "zh-CN") || !strings.Contains(required, "封面") {
+	if !strings.Contains(required, "zh-CN") || !strings.Contains(required, "逐字") || !strings.Contains(required, "简短标题") {
 		t.Fatalf("photography text required %q", required)
 	}
 	infoRequired := compile.TextPolicyLine("required", "zh-CN", "infographic")

@@ -70,7 +70,7 @@ describe("shotChangeSet", () => {
     const imageOp = createOps.find((op) => op.op === "create_node" && op.node_type === "image_generation");
     expect(imageOp?.config).toMatchObject({
       image_type_key: "hero",
-      generation_spec: { aspect_ratio: "3:4", text_policy: "none" },
+      generation_spec: { aspect_ratio: "3:4" },
     });
   });
 
@@ -109,12 +109,9 @@ describe("shotChangeSet", () => {
   it("only sends shot-specific generation settings and leaves Catalog defaults to the backend", () => {
     expect(shotGenerationSpec("faq")).toEqual({
       aspect_ratio: "3:4",
-      text_policy: "required",
-      text_language: "zh-CN",
     });
     expect(shotGenerationSpec("hero")).toEqual({
       aspect_ratio: "3:4",
-      text_policy: "none",
     });
   });
 });

@@ -155,11 +155,11 @@ func (m MockPromptProvider) GenerateCreativeBrief(ctx context.Context, req Promp
 	payload := m.Brief
 	if payload == nil {
 		payload = map[string]any{
-			"goal":          "清晰展示商品",
-			"design_goals":  []any{"突出主体"},
-			"required_copy": []any{},
-			"prohibitions":  []any{},
-			"fact_gaps":     []any{},
+			"goal":              "清晰展示商品",
+			"key_messages":      []any{"突出主体"},
+			"required_elements": []any{},
+			"prohibitions":      []any{},
+			"fact_gaps":         []any{},
 		}
 	}
 	return PromptResult{Payload: payload, Model: "mock-brief"}, nil
@@ -180,7 +180,6 @@ func (m MockPromptProvider) GenerateVisualOverlay(ctx context.Context, req Promp
 				map[string]any{"role": "headline", "value": "#1C1917", "label": "标题色"},
 				map[string]any{"role": "accent", "value": "#6B7C6A", "label": "克制点缀"},
 			},
-			"prohibitions": []any{"不要改变商品结构、颜色或材质"},
 		}
 	}
 	return PromptResult{Payload: payload, Model: "mock-visual"}, nil

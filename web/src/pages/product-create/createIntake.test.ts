@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCreateGenerationSpec,
+  buildCreateTextSettings,
   createOutputSummary,
   defaultCreateOutputDraft,
   isCreateCanvasReady,
@@ -10,28 +11,28 @@ import {
 } from "./createIntake";
 
 describe("create intake generation spec", () => {
-  it("defaults photography to no copy and keeps language for infographic pages", () => {
+  it("keeps text settings outside generation settings", () => {
     const spec = buildCreateGenerationSpec(defaultCreateOutputDraft());
     expect(spec).toMatchObject({
-      text_policy: "none",
-      text_language: "zh-CN",
       resolution_tier: "high",
     });
+    expect(spec).not.toHaveProperty("text_policy");
+    expect(buildCreateTextSettings(defaultCreateOutputDraft())).toEqual({ policy: "none", language: null });
   });
 
-  it("keeps language when photography is text-free so infographic shots can use it", () => {
-    const spec = buildCreateGenerationSpec({
+  it("clears effective language when text is disabled", () => {
+    const spec = buildCreateTextSettings({
       textPolicy: "none",
       textLanguage: "zh-CN",
     });
     expect(spec).toMatchObject({
-      text_policy: "none",
-      text_language: "zh-CN",
+      policy: "none",
+      language: null,
     });
     expect(createOutputSummary({
       textPolicy: "none",
       textLanguage: "zh-CN",
-    }).textLanguage).toBe("zh-CN");
+    }).textLanguage).toBeNull();
   });
 
   it("rejects required copy without a language", () => {

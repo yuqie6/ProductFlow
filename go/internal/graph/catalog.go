@@ -29,8 +29,6 @@ var defaultGenerationSpec = map[string]any{
 	"quality_intent":     "high",
 	"reference_fidelity": "high",
 	"background_intent":  "auto",
-	"text_policy":        "none",
-	"text_language":      nil,
 }
 
 var defaultDeliverySpec = map[string]any{
@@ -67,9 +65,8 @@ var catalogAcceptanceOrder = [][2]string{
 }
 
 var visualOverlayKeys = map[string]struct{}{
-	"style":        {},
-	"colors":       {},
-	"prohibitions": {},
+	"style":  {},
+	"colors": {},
 }
 
 type inputContract struct {
@@ -231,7 +228,6 @@ func visualOverlayFields() []configField {
 			fld("value", "string", "", withMaxLen(7)),
 			fld("label", "string", "", withMaxLen(255)),
 		)),
-		fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 	}
 }
 
@@ -243,9 +239,9 @@ func promptFields() []configField {
 		fld("shared_rules", "string_list", "", withLabel("workflowConfirmation.sharedRules")),
 		fld("creative_boundary", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 		fld("product_fidelity", "object", "group", withLabel("workflowConfirmation.productFidelity"), withFields(
-			fld("complex_structure", "boolean", "", withLabel("agentWorkbench.nodeEditor.complexStructure")),
-			fld("product_present", "boolean", "", withLabel("agentWorkbench.nodeEditor.productPresent"), withDefault(true)),
-			fld("picture_in_picture", "string", "select", withLabel("agentWorkbench.nodeEditor.pictureInPicture"), withChoices("none", "allowed", "required"), withDefault("none")),
+			hid("complex_structure", "boolean"),
+			hid("product_present", "boolean", withDefault(true)),
+			hid("picture_in_picture", "string", withChoices("none", "allowed", "required"), withDefault("none")),
 			fld("requirements", "string_list", "", withLabel("agentWorkbench.nodeEditor.requirements")),
 		)),
 		fld("composition", "object", "group", withLabel("workflowConfirmation.composition"), withFields(
@@ -280,9 +276,44 @@ func generationSpecFields() []configField {
 		fld("quality_intent", "string", "select", withLabel("agentWorkbench.nodeEditor.quality"), withChoices("draft", "standard", "high"), withPanel("basic"), withDefault("high")),
 		fld("reference_fidelity", "string", "select", withLabel("agentWorkbench.nodeEditor.referenceFidelity"), withChoices("low", "medium", "high"), withPanel("advanced"), withDefault("high")),
 		fld("background_intent", "string", "select", withLabel("agentWorkbench.nodeEditor.backgroundIntent"), withChoices("auto", "opaque", "transparent"), withPanel("advanced"), withDefault("auto")),
-		fld("text_policy", "string", "select", withLabel("agentWorkbench.nodeEditor.textPolicy"), withChoices("none", "allow", "required"), withPanel("advanced"), withDefault("none")),
-		fld("text_language", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.textLanguage"), withMaxLen(80), withPanel("advanced"), withVisible("text_policy", "allow", "required")),
 	}
+}
+
+func textSettingsFields() []configField {
+	return []configField{
+		fld("policy", "string", "select", withChoices("none", "required"), withLabel("agentWorkbench.nodeEditor.textPolicy")),
+		fld("language", "string_or_null", "", withLabel("agentWorkbench.nodeEditor.textLanguage"), withMaxLen(80), withVisible("policy", "required")),
+	}
+}
+
+func imagePromptOverrideFields() []configField {
+	var fields []configField
+	for _, field := range promptFields() {
+		if field.key == "composition" || field.key == "content" || field.key == "atmosphere" {
+			if field.key == "composition" {
+				var children []configField
+				for _, child := range field.fields {
+					if child.key != "copy_regions" {
+						child.defaultValue = nil
+						children = append(children, child)
+					}
+				}
+				field.fields = children
+			}
+			fields = append(fields, field)
+		}
+	}
+	return fields
+}
+
+func imageTextOverrideFields() []configField {
+	fields := textSettingsFields()
+	for _, field := range promptFields() {
+		if field.key == "text" {
+			fields = append(fields, field.fields...)
+		}
+	}
+	return append(fields, fld("copy_regions", "string_list", "", withLabel("agentWorkbench.nodeEditor.copyRegions")))
 }
 
 func deliverySpecFields() []configField {
@@ -314,25 +345,28 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 		return []configField{
 			hid("title", "string"),
 			fld("goal", "string", "textarea", withLabel("workflowConfirmation.designGoal")),
-			fld("design_goals", "string_list", "", withLabel("graph.inspector.designGoals")),
-			fld("required_copy", "string_list", "", withLabel("graph.inspector.requiredCopy")),
+			fld("key_messages", "string_list", "", withLabel("graph.inspector.designGoals")),
+			fld("required_elements", "string_list", "", withLabel("graph.inspector.requiredCopy")),
 			fld("fact_gaps", "string_list", "", withLabel("graph.inspector.factGaps")),
 			fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
 		}, true
 	case NodeVisualSystem:
 		return []configField{
 			hid("visual_system_version_id", "string_or_null"),
-			fld("visual_overlay", "object_or_null", "group", withHint("graph.inspector.visualVersionHint"), withNoDigest(), withFields(visualOverlayFields()...)),
+			fld("visual_overlay", "object_or_null", "group", withNoDigest(), withFields(visualOverlayFields()...)),
 		}, true
 	case NodeImagePrompt:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
+			fld("text_settings", "object", "group", withLabel("workflowConfirmation.textContent"), withFields(textSettingsFields()...)),
 			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withNoDigest(), withFields(promptFields()...)),
 		}, true
 	case NodeImageGeneration:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
 			fld("variation_instruction", "string_or_null", "textarea", withLabel("workflowConfirmation.variation"), withMaxLen(4000)),
+			fld("prompt_overrides", "object_or_null", "group", withFields(imagePromptOverrideFields()...)),
+			fld("text_override", "object_or_null", "group", withFields(imageTextOverrideFields()...)),
 			fld("generation_spec", "object", "group", withLabel("agentWorkbench.nodeEditor.generationSettings"), withRequired(), withDefault(cloneMap(defaultGenerationSpec)), withFields(generationSpecFields()...)),
 			fld("delivery_spec", "object_or_null", "optional_object", withLabel("workflowConfirmation.deliverySpec"), withToggle("agentWorkbench.nodeEditor.deliveryEnabled"), withPanel("advanced"), withNoDigest(), withDefault(cloneMap(defaultDeliverySpec)), withFields(deliverySpecFields()...)),
 			fld("visual_overlay", "object_or_null", "group", withFields(visualOverlayFields()...)),
@@ -354,6 +388,11 @@ func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]
 	}
 	_, hadGenerationSpec := out["generation_spec"]
 	applyConfigDefaults(fields, out)
+	if nodeType == NodeImagePrompt {
+		if _, exists := out["text_settings"]; !exists {
+			out["text_settings"] = defaultTextSettings(asString(out["image_type_key"]))
+		}
+	}
 	if nodeType == NodeImageGeneration && !hadGenerationSpec {
 		applyImageTypeGenerationDefaults(out)
 	}
@@ -374,15 +413,6 @@ func applyImageTypeGenerationDefaults(config map[string]any) {
 	if aspect, _ := spec["aspect_ratio"].(string); aspect == "" || aspect == "1:1" {
 		if def := defaultAspectRatioForImageType(key); def != "1:1" {
 			spec["aspect_ratio"] = def
-		}
-	}
-	if imageTypeFamily(key) != "infographic" {
-		return
-	}
-	if policy, _ := spec["text_policy"].(string); policy == "" || policy == "none" {
-		spec["text_policy"] = "required"
-		if spec["text_language"] == nil || asString(spec["text_language"]) == "" {
-			spec["text_language"] = "zh-CN"
 		}
 	}
 }
@@ -575,6 +605,16 @@ func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]a
 	if err := validateConfigFields(fields, payload, ""); err != nil {
 		return nil, err
 	}
+	if nodeType == NodeImagePrompt {
+		if err := validateTextSettings(payload["text_settings"]); err != nil {
+			return nil, err
+		}
+	}
+	if nodeType == NodeImageGeneration {
+		if err := validateTextSettings(payload["text_override"]); err != nil {
+			return nil, err
+		}
+	}
 	if nodeType == NodeImageGeneration {
 		if raw, exists := payload["generation_spec"]; exists {
 			normalized, err := normalizeGenerationSpec(raw)
@@ -594,7 +634,7 @@ func NormalizeNodeConfig(nodeType NodeType, config map[string]any) (map[string]a
 	return payload, nil
 }
 
-// CatalogVisualOverlay 只保留 style / colors / prohibitions；空则 nil。
+// CatalogVisualOverlay 只保留 style / colors；空则 nil。
 func CatalogVisualOverlay(overlay map[string]any) map[string]any {
 	if len(overlay) == 0 {
 		return nil

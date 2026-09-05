@@ -16,7 +16,7 @@ ASSETS = DIST / "assets"
 BUDGETS = {
     "app entry": ("entry", 1_000_000, 300_000),
     "workbench loader": ("ProductWorkbenchPage-*.js", 100_000, 40_000),
-    "workbench shell": ("AgentWorkbenchShell-*.js", 550_000, 170_000),
+    "workbench shell": ("ProductWorkbenchSurface-*.js", 550_000, 170_000),
 }
 
 

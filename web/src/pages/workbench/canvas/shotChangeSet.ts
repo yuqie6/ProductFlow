@@ -18,11 +18,8 @@ export interface CreateShotInput {
 }
 
 export function shotGenerationSpec(imageTypeKey: AgentProductImageTypeKey): Record<string, unknown> {
-  const infographic = imageTypeFamily(imageTypeKey) === "infographic";
   return {
     aspect_ratio: defaultAspectRatioForType(imageTypeKey),
-    text_policy: infographic ? "required" : "none",
-    ...(infographic ? { text_language: "zh-CN" } : {}),
   };
 }
 
@@ -46,6 +43,7 @@ export function buildCreateShotOperations(input: CreateShotInput): GraphChangeSe
       group_ref: groupRef,
       config: {
         image_type_key: input.imageTypeKey,
+        text_settings: { policy: imageTypeFamily(input.imageTypeKey) === "infographic" ? "required" : "none", language: imageTypeFamily(input.imageTypeKey) === "infographic" ? "zh-CN" : null },
         prompt: { design_goal: input.title },
       },
     },

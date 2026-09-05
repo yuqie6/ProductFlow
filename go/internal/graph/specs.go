@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"strings"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 )
@@ -23,7 +22,6 @@ var defaultTemplateGenerationSpec = map[string]any{
 	"quality_intent":     "high",
 	"reference_fidelity": "high",
 	"background_intent":  "auto",
-	"text_policy":        "none",
 }
 
 func resolveTemplateGenerationSpec(overrides map[string]any) (map[string]any, error) {
@@ -38,7 +36,7 @@ func resolveTemplateGenerationSpec(overrides map[string]any) (map[string]any, er
 	return normalized, nil
 }
 
-// normalizeGenerationSpec 拒绝未知 key，并规范化闭集枚举。非法返回 Validation。text_language 仅 text_policy 需要时保留。
+// normalizeGenerationSpec owns model settings only; text belongs to the picture plan.
 func normalizeGenerationSpec(value any) (map[string]any, error) {
 	raw, ok := asMap(value)
 	if !ok {
@@ -46,7 +44,7 @@ func normalizeGenerationSpec(value any) (map[string]any, error) {
 	}
 	known := map[string]struct{}{
 		"aspect_ratio": {}, "resolution_tier": {}, "quality_intent": {},
-		"reference_fidelity": {}, "background_intent": {}, "text_policy": {}, "text_language": {},
+		"reference_fidelity": {}, "background_intent": {},
 	}
 	for key := range raw {
 		if _, ok := known[key]; !ok {
@@ -73,36 +71,12 @@ func normalizeGenerationSpec(value any) (map[string]any, error) {
 	if !oneOf(background, "auto", "opaque", "transparent") {
 		return nil, apperr.Validation("generation_spec 无效")
 	}
-	textPolicy := strOr(raw, "text_policy", "none")
-	if !oneOf(textPolicy, "none", "allow", "required") {
-		return nil, apperr.Validation("generation_spec 无效")
-	}
-	var textLanguage any
-	if rawLang, exists := raw["text_language"]; exists && rawLang != nil {
-		s, ok := rawLang.(string)
-		if !ok {
-			return nil, apperr.Validation("generation_spec 无效")
-		}
-		s = strings.TrimSpace(s)
-		if s == "" || len(s) > 80 {
-			return nil, apperr.Validation("generation_spec 无效")
-		}
-		textLanguage = s
-	}
-	if textPolicy == "required" && textLanguage == nil {
-		return nil, apperr.Validation("generation_spec 无效: 要求图片文字时必须指定 text_language")
-	}
-	if textPolicy == "none" && textLanguage != nil {
-		return nil, apperr.Validation("generation_spec 无效: 禁止图片文字时不能指定 text_language")
-	}
 	return map[string]any{
 		"aspect_ratio":       aspect,
 		"resolution_tier":    resolution,
 		"quality_intent":     quality,
 		"reference_fidelity": fidelity,
 		"background_intent":  background,
-		"text_policy":        textPolicy,
-		"text_language":      textLanguage,
 	}, nil
 }
 

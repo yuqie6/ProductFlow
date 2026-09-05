@@ -144,7 +144,7 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("商品说明");
     expect(markup).toContain("出图设定");
     expect(markup).toContain("要文案");
-    expect(markup).toContain("可有文案");
+    expect(markup).not.toContain("可有文案");
     expect(markup).toContain("不要文案");
     expect(markup).toContain("先选择图片类型");
     expect(markup.match(/data-image-type=/g)).toHaveLength(15);

@@ -32,10 +32,10 @@ describe("GraphAddNodePanel", () => {
       onCreate: () => undefined,
     }));
     expect(markup).toContain("商品资料");
-    expect(markup).toContain("图片素材");
+    expect(markup).toContain("参考图片");
     expect(markup).toContain("创作要求");
-    expect(markup).toContain("视觉规范");
-    expect(markup).toContain("提示词生成");
+    expect(markup).toContain("系列风格");
+    expect(markup).toContain("画面方案");
     expect(markup).toContain("图片生成");
     expect(markup).toContain("提供商品名称、类目和卖点");
     expect(markup).not.toContain("product_source");

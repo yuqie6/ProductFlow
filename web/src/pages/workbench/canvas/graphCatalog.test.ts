@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import {
+  graphConnectedImageCount,
   graphConnectionInvalidReason,
   graphDataTypeLabelKey,
   graphNodeHasInput,
@@ -148,6 +149,20 @@ const graph: GraphProjection = {
   edges: [],
   groups: [],
 };
+
+describe("graphConnectedImageCount", () => {
+  it("counts distinct downstream pictures, not unused nodes or duplicate paths", () => {
+    const connected: GraphProjection = { ...graph, edges: [
+      { id: "a", source_node_id: "source", target_node_id: "prompt", data_type: "product_facts", role: "facts", order: 0 },
+      { id: "b", source_node_id: "prompt", target_node_id: "image", data_type: "prompt", role: "prompt", order: 0 },
+      { id: "c", source_node_id: "source", target_node_id: "visual", data_type: "product_facts", role: "facts", order: 0 },
+      { id: "d", source_node_id: "visual", target_node_id: "image", data_type: "visual_system", role: "visual_guidance", order: 0 },
+    ] };
+    expect(graphConnectedImageCount(connected, "source")).toBe(1);
+    expect(graphConnectedImageCount(connected, "visual-2")).toBe(0);
+    expect(graphConnectedImageCount(connected, "image")).toBe(0);
+  });
+});
 
 describe("isGraphConnectionValid", () => {
   it("allows facts into prompt and prompt into image", () => {

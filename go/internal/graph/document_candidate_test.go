@@ -6,22 +6,22 @@ func TestApplyDocumentSectionsOnlyReplacesSelectedBusinessSection(t *testing.T) 
 	node := AppliedNode{
 		ID: "brief", NodeType: NodeCreativeBrief, DocumentOrigin: OriginAuthored,
 		Config: map[string]any{
-			"goal": "人工目标", "design_goals": []any{"保留目标"},
-			"required_copy": []any{"人工文案"}, "prohibitions": []any{"禁止虚构"},
+			"goal": "人工目标", "key_messages": []any{"保留目标"},
+			"required_elements": []any{"人工文案"}, "prohibitions": []any{"禁止虚构"},
 		},
 	}
 	proposed := proposedDocumentConfig(node, map[string]any{
-		"goal": "AI 目标", "design_goals": []any{"AI 目标 2"},
-		"required_copy": []any{"AI 文案"}, "prohibitions": []any{"AI 限制"},
+		"goal": "AI 目标", "key_messages": []any{"AI 目标 2"},
+		"required_elements": []any{"AI 文案"}, "prohibitions": []any{"AI 限制"},
 	}, DocumentActionRewrite)
-	applied, err := applyDocumentSections(node, proposed, []string{"copy"})
+	applied, err := applyDocumentSections(node, proposed, []string{"requirements"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied["goal"] != "人工目标" || !documentValueEqual(applied["design_goals"], []any{"保留目标"}) {
+	if applied["goal"] != "人工目标" || !documentValueEqual(applied["key_messages"], []any{"保留目标"}) {
 		t.Fatalf("unselected objective changed: %+v", applied)
 	}
-	if !documentValueEqual(applied["required_copy"], []any{"AI 文案"}) {
+	if !documentValueEqual(applied["required_elements"], []any{"AI 文案"}) {
 		t.Fatalf("selected copy not applied: %+v", applied)
 	}
 	if !documentValueEqual(applied["prohibitions"], []any{"禁止虚构"}) {
@@ -33,16 +33,16 @@ func TestApplyDocumentSectionsDeletesMissingSelectedBriefField(t *testing.T) {
 	node := AppliedNode{
 		ID: "brief", NodeType: NodeCreativeBrief, DocumentOrigin: OriginAuthored,
 		Config: map[string]any{
-			"goal": "人工目标", "required_copy": []any{"必须保留的旧文案"},
+			"goal": "人工目标", "required_elements": []any{"必须保留的旧文案"},
 		},
 	}
 	candidate := map[string]any{"goal": "AI 目标"}
 
-	applied, err := applyDocumentSections(node, candidate, []string{"copy"})
+	applied, err := applyDocumentSections(node, candidate, []string{"requirements"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := applied["required_copy"]; exists {
+	if _, exists := applied["required_elements"]; exists {
 		t.Fatalf("selected copy section retained a field removed by the candidate: %+v", applied)
 	}
 	if applied["goal"] != "人工目标" {
@@ -52,12 +52,12 @@ func TestApplyDocumentSectionsDeletesMissingSelectedBriefField(t *testing.T) {
 
 func TestMergeGeneratedBriefRewriteRemovesOmittedDocumentField(t *testing.T) {
 	current := map[string]any{
-		"goal": "人工目标", "required_copy": []any{"旧文案"}, "metadata": "保留",
+		"goal": "人工目标", "required_elements": []any{"旧文案"}, "metadata": "保留",
 	}
 	generated := map[string]any{"goal": "AI 目标"}
 
 	merged := mergeGeneratedBrief(current, generated, DocumentActionRewrite, OriginAuthored)
-	if _, exists := merged["required_copy"]; exists {
+	if _, exists := merged["required_elements"]; exists {
 		t.Fatalf("rewrite retained an omitted document field: %+v", merged)
 	}
 	if merged["goal"] != "AI 目标" || merged["metadata"] != "保留" {

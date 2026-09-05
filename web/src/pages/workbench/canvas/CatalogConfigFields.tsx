@@ -1,4 +1,6 @@
 import { useState, type ReactNode } from "react";
+import { Plus, Trash2 } from "lucide-react";
+import { IconButton } from "../../../components/ui/icon-button";
 
 import { ImageAspectRatioPicker } from "../../../components/ImageAspectRatioPicker";
 import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../../../components/ImageGenerationSettingsTabs";
@@ -14,13 +16,15 @@ import {
   patchCatalogValue,
   readStringListText,
   readText,
-  readVisualBackground,
   visibleCatalogFields,
   visualBackgroundValueMaxLength,
-  writeVisualBackground,
 } from "./catalogConfig";
 
 const SELECT_OPTION_LABEL_KEYS = {
+  product_identity: "graph.inspector.role.product_identity",
+  environment: "graph.inspector.role.environment",
+  style: "graph.inspector.role.style",
+  evidence: "graph.inspector.role.evidence",
   none: "agentWorkbench.nodeEditor.option.none",
   allowed: "agentWorkbench.nodeEditor.option.allowed",
   required: "agentWorkbench.nodeEditor.option.required",
@@ -115,7 +119,7 @@ export function CatalogConfigFields({
   );
 }
 
-function CatalogField({
+export function CatalogField({
   item,
   config,
   onPatch,
@@ -241,17 +245,41 @@ function CatalogField({
     );
   }
   if (item.field.control === "visual_background") {
+    const colors = Array.isArray(raw) ? raw.filter(isRecord) : [];
+    const colorRoles = [
+      { value: "background", label: t("agentWorkbench.nodeEditor.background") },
+      { value: "product", label: t("graph.inspector.role.product_identity") },
+      { value: "headline", label: t("agentWorkbench.nodeEditor.headline") },
+      { value: "accent", label: t("nodeDetail.colorAccent") },
+    ];
+    const updateColor = (index: number, key: string, next: string) => onPatch(item.path,
+      colors.map((color, position) => position === index ? { ...color, [key]: next } : color));
     return (
-      <Input
-        label={fieldLabel}
-        value={readVisualBackground(raw)}
-        maxLength={visualBackgroundValueMaxLength(item.field)}
-        onChange={(event) => onPatch(
-          item.path,
-          writeVisualBackground(event.target.value, raw, t("graph.inspector.visualBackground")),
-        )}
-        disabled={disabled}
-      />
+      <div className="min-w-0 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-text-secondary">{t("nodeDetail.palette")}</span>
+          <IconButton label={t("nodeDetail.add")} size="sm" disabled={disabled || colors.length >= (item.field.max_length ?? 32)}
+            onClick={() => onPatch(item.path, [...colors, { role: colors.length ? "accent" : "background", value: "#ffffff", label: "" }])}><Plus size={14} /></IconButton>
+        </div>
+        {colors.map((color, index) => <div key={index} className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-end gap-2">
+          <input type="color" aria-label={t("nodeDetail.palette")} value={readText(color.value)} disabled={disabled}
+            className="h-11 w-11 cursor-pointer rounded-control border border-border-l1 bg-transparent p-1"
+            onChange={(event) => updateColor(index, "value", event.target.value)} />
+          <Field label={t("nodeDetail.colorRole")}>
+            <Select value={readText(color.role)} disabled={disabled} size="sm" ariaLabel={t("nodeDetail.colorRole")}
+              options={colorRoles.some((role) => role.value === color.role) ? colorRoles : [...colorRoles, { value: readText(color.role), label: readText(color.label) || humanizeCatalogKey(readText(color.role)) }]}
+              onChange={(next) => updateColor(index, "role", next)} />
+          </Field>
+          <IconButton label={t("nodeDetail.remove")} disabled={disabled}
+            onClick={() => onPatch(item.path, colors.filter((_, position) => position !== index))}><Trash2 size={14} /></IconButton>
+          <div className="col-span-3 grid grid-cols-[minmax(0,1fr)_6.5rem] gap-2">
+            <Input label={t("nodeDetail.colorNote")} value={readText(color.label)} disabled={disabled} maxLength={255}
+              onChange={(event) => updateColor(index, "label", event.target.value)} />
+            <Input label="HEX" value={readText(color.value)} disabled={disabled}
+              maxLength={visualBackgroundValueMaxLength(item.field)} onChange={(event) => updateColor(index, "value", event.target.value)} />
+          </div>
+        </div>)}
+      </div>
     );
   }
   if (item.field.control === "textarea") {

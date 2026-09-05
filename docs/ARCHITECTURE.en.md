@@ -158,6 +158,8 @@ A product with no live graph can `POST /api/v3/products/{product_id}/workflows` 
 
 Graph rules live in `go/internal/graph`. The catalog also publishes the port contract and editable config fields; ChangeSet writes reject unregistered `config` keys. Structure writes use Graph Command; runs use the same package's runs / execute / durability. HTTP entry is that package's HTTP layer.
 
+`image_prompt.config.text_settings` owns text policy and language. `image_generation` stores sparse `prompt_overrides` and an optional whole `text_override`; `generation_spec` contains model settings only. `resolveImageDocument` resolves inherited fields, explicit local empty values, connected brief requirements and effective text for execution, input digests and inspector projections. The projection also exposes inherited values for restoring a local field. No-text rendering does not mutate authored copy. Candidate application preserves text settings and image-local changes. Pending or conflicting product observations remain editable but are excluded from runtime facts until confirmed.
+
 ## 7. Image Model
 
 `MediaObject` stores path, MIME type, byte size, dimensions, hash, and verification state. `ProductImageAsset` stores product-scoped display name, origin, folder, parent image, and image type.

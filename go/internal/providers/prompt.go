@@ -114,9 +114,6 @@ func (p OpenAIPrompt) GenerateCreativeBrief(ctx context.Context, req graph.Promp
 	if err != nil {
 		return graph.PromptResult{}, err
 	}
-	if req.TextPolicy == "none" {
-		payload["required_copy"] = []any{}
-	}
 	return graph.PromptResult{Payload: payload, Model: model, ResponseID: id}, nil
 }
 
@@ -225,10 +222,6 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 		if current == nil {
 			current = asPromptMap(req.Config["prompt"])
 		}
-		textLanguages := []any{}
-		if strings.TrimSpace(req.TextLanguage) != "" {
-			textLanguages = []any{req.TextLanguage}
-		}
 		context = map[string]any{
 			"task":                   "generate_ecommerce_image_prompt_artifact",
 			"document_action":        req.DocumentAction,
@@ -245,7 +238,7 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 			"current_prompt":         current,
 			"briefs":                 briefsOrEmpty(req.Briefs),
 			"text_policy":            textPolicyOrNone(req.TextPolicy),
-			"text_languages":         textLanguages,
+			"text_language":          nilIfEmpty(req.TextLanguage),
 			"reference_images":       refMeta,
 			"listing_look":           graph.ListingLookContext(),
 			"listing_look_rule":      graph.ListingLookRule(),
@@ -274,8 +267,6 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 			"confirmed_facts":   factsOrEmpty(req.Facts),
 			"current_brief":     req.Brief,
 			"current_overlay":   req.Visual,
-			"text_policy":       textPolicyOrNone(req.TextPolicy),
-			"text_language":     nilIfEmpty(req.TextLanguage),
 			"reference_images":  refMeta,
 			"image_types":       imageTypes,
 			"listing_look":      graph.ListingLookContext(),

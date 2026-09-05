@@ -97,7 +97,7 @@ func TestInvertReorderEdges(t *testing.T) {
 func TestFillDefaultNodeConfigAddsGenerationSpec(t *testing.T) {
 	got := FillDefaultNodeConfig(NodeImageGeneration, map[string]any{})
 	spec, _ := got["generation_spec"].(map[string]any)
-	if spec["text_language"] != nil || spec["text_policy"] != "none" {
+	if spec["aspect_ratio"] != "1:1" || spec["text_policy"] != nil {
 		t.Fatalf("spec %+v", spec)
 	}
 }

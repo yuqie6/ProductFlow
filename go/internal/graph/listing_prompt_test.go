@@ -50,6 +50,15 @@ func TestCompileImageModelPromptUnknownTypeKeepsKey(t *testing.T) {
 	}
 }
 
+func TestImageInstructionsSeparateReferenceRolesAndPreservePrintedLabels(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{ImageTypeKey: "hero", GenerationSpec: map[string]any{"text_policy": "none"}, Prompt: map[string]any{"design_goal": "展示商品"}})
+	for _, needle := range []string{"product_identity", "environment 只借鉴", "style 只借鉴", "保留商品本体原有", "以本图已确认内容为准"} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("missing role/text priority instruction %q in %s", needle, got)
+		}
+	}
+}
+
 func TestCompileImageModelPromptIncludesVisualDirectionAndVariation(t *testing.T) {
 	got := CompileImageModelPrompt(ImageRequest{
 		NodeTitle:            "核心卖点图",
@@ -74,27 +83,22 @@ func TestCompileImageModelPromptIncludesVisualDirectionAndVariation(t *testing.T
 	}
 }
 
-func TestCompileImageModelPromptKeepsCreativeDirectionAndDropsGuardrailLists(t *testing.T) {
+func TestCompileImageModelPromptPreservesExplicitConstraints(t *testing.T) {
 	got := CompileImageModelPrompt(ImageRequest{
 		ImageTypeKey:   "faq",
 		GenerationSpec: map[string]any{"text_policy": "required", "text_language": "zh-CN"},
 		Prompt: map[string]any{
 			"design_goal":       "问答",
 			"creative_boundary": []any{"不要变形"},
-			"shared_rules":      []any{"不要添加文字"},
+			"shared_rules":      []any{"保留杯盖形状"},
 			"content":           map[string]any{"decorations": []any{"弱投影"}},
 			"composition":       map[string]any{"copy_regions": []any{"顶栏"}},
 			"text":              map[string]any{"headline": "三问三答"},
 		},
 	})
-	for _, needle := range []string{"点缀：弱投影", "文案区域：顶栏", "图片内文字：三问三答"} {
+	for _, needle := range []string{"点缀：弱投影", "文案区域：顶栏", "图片内文字：三问三答", "不要变形", "保留杯盖形状"} {
 		if !strings.Contains(got, needle) {
 			t.Fatalf("missing %q in\n%s", needle, got)
-		}
-	}
-	for _, unwanted := range []string{"不要变形", "不要添加文字", "禁令：", "规则："} {
-		if strings.Contains(got, unwanted) {
-			t.Fatalf("guardrail list leaked into image prompt %q in\n%s", unwanted, got)
 		}
 	}
 }

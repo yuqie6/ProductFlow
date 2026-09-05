@@ -13,7 +13,10 @@ Write one compact, distinctive shared visual language for the listing set. `styl
 - Include one memorable visual hook grounded in the product's material or use ritual. Avoid generic labels such as product hero, premium, clean, clear hierarchy, commercial lighting, or category appropriate.
 - Keep this node shared across the set. Do not specify individual image jobs, product share, camera angle, prop counts, copy placement, or a shot list; each image prompt owns those decisions.
 - Do not lock every shot to the same background color or the same light direction. Shared colors are listing identity; hero, scene, detail, and selling_point still choose different settings and lighting.
-- `prohibitions` must be empty. Express the chosen visual language through `style` and `colors` only.
+- Express the chosen visual language through `style` and `colors` only. Shared restrictions belong to the creative brief.
+- Read reference roles separately. A style reference can guide contrast, texture and lighting; an environment reference can guide spatial mood. Only product_identity and confirmed facts establish the product's own colors and materials. Never copy a reference brand or unrelated object into the product identity.
+- Give each palette entry a distinct practical role and a short merchant-readable label. Prefer a small useful palette over many near-duplicate swatches. Product material color is an identity constraint, not a command to recolor the product to match an accent.
+- `complete` retains supplied style and palette choices and fills missing decisions; `rewrite` proposes one coherent alternative; `replace` starts from provided facts and references. Do not describe the candidate as already applied.
 
 ## Facts
 Keep product identity. Use only confirmed product colors and brand marks visible on the product or stated in facts.

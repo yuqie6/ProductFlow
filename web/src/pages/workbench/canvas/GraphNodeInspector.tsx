@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Check,
   Images,
   Link2,
   Loader2,
@@ -53,6 +54,7 @@ import { DownloadLink } from "../chrome/ImageDownloadComponents";
 import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { CatalogConfigFields } from "./CatalogConfigFields";
+import { NodeDetailFields } from "./NodeDetailFields";
 import { DocumentCandidateReview } from "./DocumentCandidateReview";
 import {
   catalogConfigForSave,
@@ -64,7 +66,7 @@ import {
 import { documentCandidateCatalogFields } from "./documentCandidateView";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { replaceDeliverySpec } from "./deliveryRenditions";
-import { graphCatalogNode, graphEdgeRoleLabelKey, graphNodeConfigFields, graphRunBlock, graphRunBlockMessage, missingRequiredRunRoles } from "./graphCatalog";
+import { graphCatalogNode, graphConnectedImageCount, graphEdgeRoleLabelKey, graphNodeConfigFields, graphRunBlock, graphRunBlockMessage, missingRequiredRunRoles } from "./graphCatalog";
 import { graphNodeHasPinnableOutput, graphNodeTitleKey } from "./graphLayout";
 import { graphArtifactTypeLabelKey, graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphOutputActionLabelKey, graphOutputQualityLabelKey, graphProgressPhaseLabelKey, graphRunInputTraceEntries, LIVE_RUN_STATUSES } from "./graphRunDisplay";
 import { submitAfterSuccessfulFlush, withGraphRunSubmit } from "./graphRunLock";
@@ -362,7 +364,7 @@ export function GraphNodeInspector({
 
   return (
     <InspectorFlushContext.Provider value={registerFlush}>
-      <div key={node.id} className="space-y-4 pb-4 motion-safe:animate-node-reveal" data-graph-node-inspector>
+      <div key={node.id} className="space-y-4 pb-4 motion-safe:animate-node-reveal" data-graph-node-inspector data-inspector-node-id={node.id}>
         <section className="border-b border-border-l1 pb-4">
           <div className="flex min-w-0 items-center gap-2">
             <Tooltip content={t(graphNodeTitleKey(node.node_type))}>
@@ -565,6 +567,16 @@ export function GraphNodeInspector({
           ) : null}
         </section>
 
+        <div className="flex min-w-0 items-center gap-2 text-[11px] text-text-muted" data-node-detail-scope>
+          <Link2 size={13} className="shrink-0" aria-hidden="true" />
+          {node.node_type === "image_generation" ? incoming.filter((item) => item.edge.role === "prompt").map((item) => (
+            <button key={item.edge.id} type="button" disabled={!item.related || !onJump}
+              onClick={() => item.related && onJump?.(item.related.id)} className="min-w-0 truncate text-left underline decoration-border-l1 underline-offset-4 focus-visible:outline-accent">
+              {item.related?.title ?? t("graph.runs.deletedNode")}
+            </button>
+          )) : <span>{t("nodeDetail.affected", { count: graphConnectedImageCount(graph, node.id) })}</span>}
+        </div>
+
         {saveState.error || mutationError ? (
           <div role="alert" className="rounded-panel border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
             <AlertCircle size={13} className="mr-1.5 inline" />
@@ -588,10 +600,6 @@ export function GraphNodeInspector({
             onDiscard={() => candidateMutation.mutate({ kind: "discard" })}
             onRetry={() => void candidateQuery.refetch()}
           />
-        ) : null}
-
-        {node.node_type === "image_prompt" ? (
-          <PromptResult payload={node.current_artifact_payload} />
         ) : null}
 
         {node.node_type === "product_source" ? (
@@ -709,25 +717,6 @@ export function GraphNodeInspector({
   );
 }
 
-function PromptResult({ payload }: { payload: Record<string, unknown> | null | undefined }) {
-  const { t } = useI18n();
-  const goal = typeof payload?.design_goal === "string" ? payload.design_goal.trim() : "";
-  if (!goal) return null;
-  const content = payload?.content && typeof payload.content === "object"
-    ? payload.content as Record<string, unknown>
-    : null;
-  const background = typeof content?.background === "string" ? content.background.trim() : "";
-  return (
-    <section className="border-b border-border-l1 pb-4">
-      <h4 className="text-xs font-semibold text-text-primary">{t("graph.inspector.lastPrompt")}</h4>
-      <p className="mt-2 text-xs leading-5 text-text-secondary">{goal}</p>
-      {background ? (
-        <p className="mt-1 text-[11px] leading-4 text-text-muted">{background}</p>
-      ) : null}
-    </section>
-  );
-}
-
 function CatalogLoadError({
   message,
   busy,
@@ -832,6 +821,10 @@ function GraphInspectorDashboard({
   );
 }
 
+function isPendingFact(fact: ProductFactRowDraft): boolean {
+  return Boolean(fact.original.requires_confirmation) || fact.original.status === "observed" || fact.original.status === "conflicted";
+}
+
 function ProductSourceEditor({
   node,
   graphProductId,
@@ -854,6 +847,7 @@ function ProductSourceEditor({
   const searchInputId = useId();
   const [search, setSearch] = useState("");
   const [factsForm, setFactsForm] = useState<ProductFactsDraft | null>(null);
+  const [factsBaseVersion, setFactsBaseVersion] = useState<number | null>(null);
   const [factsSaveState, setFactsSaveState] = useState<{ status: SaveStatus; error: string | null }>({
     status: "idle",
     error: null,
@@ -887,6 +881,7 @@ function ProductSourceEditor({
   useEffect(() => {
     setSearch("");
     setFactsForm(null);
+    setFactsBaseVersion(null);
     setFactsSaveState({ status: "idle", error: null });
   }, [sourceProductId]);
 
@@ -895,10 +890,12 @@ function ProductSourceEditor({
       setFactsForm(null);
       return;
     }
-    if (factsQuery.data) {
-      setFactsForm(productFactsDraft(factsQuery.data.product, factsQuery.data.fact_set));
+    if (factsQuery.data && !factsForm) {
+      const next = productFactsDraft(factsQuery.data.product, factsQuery.data.fact_set);
+      setFactsForm(next);
+      setFactsBaseVersion(factsQuery.data.fact_set?.version ?? null);
     }
-  }, [factsQuery.data, sourceProductId]);
+  }, [factsQuery.data, sourceProductId, factsForm]);
 
   const saveBinding = useCallback(async (nextProductId: string | null, productName?: string) => {
     const nextTitle = node.title === t("graph.node.productSource") && productName ? productName : node.title;
@@ -931,7 +928,7 @@ function ProductSourceEditor({
     setFactsSaveState({ status: "saving", error: null });
     try {
       const response = await api.updateProductFacts(sourceProductId, {
-        expected_fact_version: factsQuery.data?.fact_set?.version ?? node.product_fact_set?.version ?? null,
+        expected_fact_version: factsBaseVersion,
         name: normalized.name,
         category: normalized.category || null,
         price: normalized.price || null,
@@ -946,6 +943,7 @@ function ProductSourceEditor({
         queryClient.invalidateQueries({ queryKey: ["workflow-graph", graphProductId] }),
       ]);
       setFactsForm(productFactsDraft(response.product, response.fact_set));
+      setFactsBaseVersion(response.fact_set?.version ?? null);
       setFactsSaveState({ status: "saved", error: null });
     } catch (error) {
       setFactsSaveState({
@@ -973,14 +971,15 @@ function ProductSourceEditor({
         <SaveStatusBadge status={factsSaveState.status} />
       </div>
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ title })} />
-      <p className="text-[11px] leading-5 text-text-muted">{t("graph.inspector.productSourceHint")}</p>
+      {sourceProduct ? <p className="break-words text-[11px] leading-5 text-text-muted">{t("nodeDetail.sourceEdit", { name: sourceProduct.name })}</p> : null}
       {!sourceProductId ? (
         <div className="rounded-xl border border-state-warning/35 bg-state-warning-soft px-3 py-2.5 text-xs leading-5 text-state-warning">
           {t("graph.inspector.productSourceUnbound")}
         </div>
       ) : null}
 
-      <div className="space-y-2">
+      <details open={!sourceProductId} className="space-y-2 border-t border-border-l1 pt-3">
+        <summary className="cursor-pointer text-xs font-semibold text-text-secondary">{t("graph.inspector.productSourceSelected")}</summary>
         <Field label={t("graph.inspector.productSourceSearch")} htmlFor={searchInputId}>
           <span className="relative block">
             <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" aria-hidden="true" />
@@ -1024,7 +1023,7 @@ function ProductSourceEditor({
             {t("graph.inspector.productSourceClear")}
           </Button>
         ) : null}
-      </div>
+      </details>
 
       {factsQuery.error ? (
         <div role="alert" className="rounded-xl border border-state-error/30 bg-state-error-soft px-3 py-2.5 text-xs leading-5 text-state-error">
@@ -1064,12 +1063,14 @@ function ProductSourceEditor({
                 {t("graph.inspector.productFactAdd")}
               </Button>
             </div>
-            {factsForm.facts.map((fact, index) => (
+            {([false, true] as const).map((pending) => <div key={String(pending)} className="space-y-2">
+              {pending && factsForm.facts.some(isPendingFact) ? <SectionTitle title={t("nodeDetail.pending")} /> : null}
+              {factsForm.facts.filter((fact) => isPendingFact(fact) === pending).map((fact) => (
               <div key={fact.id} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_44px] gap-1.5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px]">
                 <Input
                   value={fact.key}
                   disabled={busy}
-                  aria-label={`${t("graph.inspector.productFactKey")} ${index + 1}`}
+                  aria-label={`${t("graph.inspector.productFactKey")} ${factsForm.facts.indexOf(fact) + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { key: event.target.value })}
                   placeholder={t("graph.inspector.productFactKey")}
                   className="min-w-0 px-2"
@@ -1077,7 +1078,7 @@ function ProductSourceEditor({
                 <Input
                   value={fact.value}
                   disabled={busy}
-                  aria-label={`${t("graph.inspector.productFactValue")} ${index + 1}`}
+                  aria-label={`${t("graph.inspector.productFactValue")} ${factsForm.facts.indexOf(fact) + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { value: event.target.value })}
                   placeholder={t("graph.inspector.productFactValue")}
                   className="min-w-0 px-2"
@@ -1092,8 +1093,15 @@ function ProductSourceEditor({
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </Button>
+                {pending ? <div className="col-span-3 flex justify-end">
+                  <IconButton label={t("nodeDetail.confirmFact")} disabled={busy} size="sm"
+                    onClick={() => setFactsForm({ ...factsForm, facts: factsForm.facts.map((item) => item.id === fact.id
+                      ? { ...item, original: { ...item.original, status: "confirmed", requires_confirmation: false, conflicts: [] } }
+                      : item) })}><Check size={14} /></IconButton>
+                </div> : null}
               </div>
-            ))}
+              ))}
+            </div>)}
           </div>
           {validateProductFactsDraft(factsForm) ? (
             <p role="alert" className="text-[11px] leading-5 text-state-error">{productFactsValidationMessage(validateProductFactsDraft(factsForm), t)}</p>
@@ -1257,7 +1265,8 @@ function CatalogNodeEditor({
     <AutosaveForm editor={editor} busy={busy}>
       {header}
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      <CatalogConfigFields
+      <NodeDetailFields
+        node={node}
         fields={fields}
         value={editor.draft.config}
         onChange={(config) => editor.update({ ...editor.draft, config })}
@@ -1674,12 +1683,12 @@ function NodeImagePreview({
   const { t } = useI18n();
   const parsed = parseAspectRatio(aspectRatio);
   return (
-    <div className="relative overflow-hidden rounded-xl border border-border-l1">
+    <div className="relative overflow-hidden rounded-lg border border-border-l1">
       <button
         type="button"
         onClick={() => onPreview(image)}
         className={`block w-full ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
-        style={parsed ? { aspectRatio: `${parsed.width} / ${parsed.height}` } : undefined}
+        style={{ aspectRatio: parsed ? `${parsed.width} / ${parsed.height}` : "4 / 3", maxHeight: 240 }}
         aria-label={t("detail.previewImage", { alt: image.alt })}
         data-preview-aspect={parsed ? `${parsed.width}:${parsed.height}` : undefined}
       >

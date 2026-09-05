@@ -42,7 +42,6 @@ func AssemblePromptRequest(
 	switch node.NodeType {
 	case NodeCreativeBrief:
 		req.Brief = filteredBriefConfig(node.Config)
-		req.TextPolicy, req.TextLanguage = listingTextPolicy(graph)
 	case NodeVisualSystem:
 		if overlay := CatalogVisualOverlay(asMapOrNil(node.Config["visual_overlay"])); overlay != nil {
 			req.Visual = overlay
@@ -60,7 +59,7 @@ func AssemblePromptRequest(
 		}
 		req.ImageTypeFamily = imageTypeFamily(key)
 		req.ImageTypeJob = imageTypeJob(key)
-		req.TextPolicy, req.TextLanguage = downstreamTextPolicy(graph, node.ID)
+		req.TextPolicy, req.TextLanguage = textSettings(node.Config)
 		promptConfig := asMapOrNil(node.Config["prompt"])
 		req.GenerateFromContext = DocumentOrigin(node) == OriginSeed
 		seed, err := seedPromptFromRuntime(node.Title, key, facts, briefs, promptConfig, req.GenerateFromContext, req.TextPolicy)
@@ -89,7 +88,7 @@ func AssemblePromptRequest(
 // filteredBriefConfig 只保留 brief 可见字段给 prompt 组装。全空返回 nil，不要写成 {}。
 func filteredBriefConfig(config map[string]any) map[string]any {
 	out := map[string]any{}
-	for _, key := range []string{"goal", "design_goals", "required_copy", "prohibitions", "fact_gaps"} {
+	for _, key := range []string{"goal", "key_messages", "required_elements", "prohibitions", "fact_gaps"} {
 		value, ok := config[key]
 		if !ok || value == nil || value == "" {
 			continue
@@ -134,7 +133,7 @@ func seedPromptFromRuntime(
 	textPolicy string,
 ) (map[string]any, error) {
 	stored = stripV3PromptPayload(stored)
-	briefGoal, briefCopy, _ := briefFields(briefs)
+	briefGoal, _, _ := briefFields(briefs)
 	productName := factValue(facts, "product_name")
 	designGoal := strings.TrimSpace(asString(stored["design_goal"]))
 	if designGoal == "" {
@@ -156,17 +155,6 @@ func seedPromptFromRuntime(
 	text := asMapOrNil(stored["text"])
 	if textPolicy == "none" && !promptConfigHasAuthoredText(stored) {
 		text = map[string]any{}
-	} else if len(briefCopy) > 0 && !anyTextField(text) {
-		body := strings.Join(briefCopy[1:], "\n")
-		var bodyVal any
-		if body != "" {
-			bodyVal = body
-		}
-		text = map[string]any{
-			"headline": briefCopy[0],
-			"subtitle": text["subtitle"],
-			"body":     bodyVal,
-		}
 	}
 	sharedRules := stringList(stored["shared_rules"])
 	if len(sharedRules) == 0 {
@@ -282,7 +270,7 @@ func isInlineVisualOverlay(visual map[string]any) bool {
 	}
 	for key := range visual {
 		switch key {
-		case "style", "colors", "prohibitions":
+		case "style", "colors":
 		default:
 			return false
 		}
@@ -328,9 +316,6 @@ func visualExceptionsFromOverlay(overlay map[string]any) ([]map[string]any, erro
 			overrides = append(overrides, map[string]any{"field": "colors", "value": coerced})
 		}
 	}
-	if prohibitions := stringList(overlay["prohibitions"]); len(prohibitions) > 0 {
-		overrides = append(overrides, map[string]any{"field": "prohibitions", "value": stringListToAny(prohibitions)})
-	}
 	if len(overrides) == 0 {
 		return nil, apperr.Validation("视觉覆盖输入无效")
 	}
@@ -367,20 +352,20 @@ func overlayColorRole(raw string, index int, used map[string]struct{}) string {
 	return candidate
 }
 
-// briefFields 从多份 brief 抽出 goal / design_goals / required_copy，供 seedPromptFromRuntime。
+// briefFields 从多份 brief 抽出 goal / key_messages / required_elements，供 seedPromptFromRuntime。
 func briefFields(briefs []map[string]any) (string, []string, []string) {
 	var goals, copyItems, prohibitions []string
 	for _, brief := range briefs {
 		if brief == nil {
 			continue
 		}
-		goals = append(goals, stringList(brief["design_goals"])...)
+		goals = append(goals, stringList(brief["key_messages"])...)
 		if goal := strings.TrimSpace(asString(brief["goal"])); goal != "" {
 			goals = append(goals, goal)
 		} else if title := strings.TrimSpace(asString(brief["title"])); title != "" {
 			goals = append(goals, title)
 		}
-		copyItems = append(copyItems, stringList(brief["required_copy"])...)
+		copyItems = append(copyItems, stringList(brief["required_elements"])...)
 		prohibitions = append(prohibitions, stringList(brief["prohibitions"])...)
 	}
 	goals = uniqueStrings(goals)

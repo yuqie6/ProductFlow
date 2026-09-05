@@ -47,11 +47,16 @@ export async function createWorkflow(page: Page): Promise<GraphProjection> {
 }
 
 export async function selectWorkflowNode(page: Page, nodeId: string): Promise<void> {
-  await page.locator('[data-sidebar-tool="details"]').filter({ visible: true }).click();
   const node = page.locator(`[data-workflow-node-id="${nodeId}"]`);
   await expect(node).toBeVisible();
-  await node.evaluate((element) => element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })));
-  await expect(page.locator("[data-graph-node-inspector]")).toBeVisible();
+  const expand = page.getByRole("button", { name: /^(展开右侧栏|Expand sidebar|サイドバーを展開|Mở rộng thanh bên phải)$/ });
+  if (await expand.isVisible()) await expand.click();
+  await page.locator('[data-sidebar-tool="details"]').filter({ visible: true }).click();
+  const detail = page.locator(`[data-inspector-node-id="${nodeId}"]`);
+  if (!(await detail.isVisible())) {
+    await node.evaluate((element) => element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })));
+  }
+  await expect(detail).toBeVisible();
 }
 
 export async function authorWorkflowPrompt(page: Page, nodeId: string, goal: string): Promise<void> {
