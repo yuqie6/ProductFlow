@@ -43,7 +43,7 @@ func TestConfirmDraftAndAppendTerminalDoNotDeadlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := []byte(`{"operations":[]}`)
+	payload := libraryRenamePayload(t, as)
 	var revID string
 	err = tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
 		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, "", "")

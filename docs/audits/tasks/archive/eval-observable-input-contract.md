@@ -212,7 +212,7 @@
 
 本任务是自进化开发的前置测量修复，完成不等于整个测评体系已取得能力优化资格。10 条 L1 素材写题及另外两条 L2/L5、L3 仍为 `unobservable`；新报告对未知/不可观测标记 `measurementEligible=false`，regression gate 为 null，能力 diff 拒绝比较。不得去掉失败题、把 unknown 当安全、拿旧 ASR=0 或旧 L3 通过数驱动候选选择。
 
-生产缺口交 [素材整理读取合同](../agent-library-read-contract.md)。该单修复后还须独立更新观察夹具、复核阻塞解除、重新冻结完整输入；`eval-development-baseline` 所需用途清单、有效开发批次和导出资格仍按原合同验收。自进化可接入明确的不可用状态，但不能据当前完整题集的诊断分数自动接受候选。`eval-skills` 既有认领和 A 产物不改，不自动解除其量化阻塞。
+生产缺口交 [素材整理读取合同](agent-library-read-contract.md)。该单修复后还须独立更新观察夹具、复核阻塞解除、重新冻结完整输入；`eval-development-baseline` 所需用途清单、有效开发批次和导出资格仍按原合同验收。自进化可接入明确的不可用状态，但不能据当前完整题集的诊断分数自动接受候选。`eval-skills` 既有认领和 A 产物不改，不自动解除其量化阻塞。
 
 - 最终回归：2026-09-05 17:06 `just agent-service-test`，35 文件通过/1 跳过，288 测试通过/6 跳过。默认跳过 PG host/联测另有上述 opt-in 通过证据；不把跳过算通过。归档后 `just docs-check`、`git diff --check`、最终显式 eval TypeScript 检查均通过，脚本逐项核对 75 条 L1 均有审计表记录。
 - Issue 结果：测评修复和独立审核完成；业务结果：完整 Agent 能力测量、自进化有效开发基线仍未验收。提交成功才宣告交付，不以归档准备状态释放占用。

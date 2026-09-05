@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [agent-library-read-contract.md](agent-library-read-contract.md) | 完成 | 素材真实 before/revision、目录分页、归档读取和工作流关联观察；六类确认及错误事实回归通过，评测冻结另单独立验收 |
 | [canvas-delivery-proof.md](canvas-delivery-proof.md) | 完成 | 浏览器原图/交付图下载与 ZIP 谱系/hash，失败反馈，2 passed；Go delivery 24 tests passed |
 | [eval-observable-input-contract.md](eval-observable-input-contract.md) | 完成 | 75 条 L1 逐题审核，成功/未知、真实状态、授权时序与攻击行为评分修复；素材读取缺口仍阻塞完整能力测量与自进化基线 |
 | [canvas-run-recovery-proof.md](canvas-run-recovery-proof.md) | 完成 | 隔离 mock 浏览器四条通过：场景选点、修复后重试、只重试失败、保存失败阻止运行 |

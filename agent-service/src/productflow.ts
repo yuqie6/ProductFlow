@@ -251,8 +251,11 @@ export class ProductFlowClient {
     });
   }
 
-  async listGlobalMediaAssets(conversationID: string, query: string, cursor: string, limit: number, signal?: AbortSignal): Promise<unknown> {
-    return this.json(this.conversationPath(conversationID) + "/media-library?" + new URLSearchParams({ query, cursor, limit: String(limit) }), { signal });
+  async listGlobalMediaAssets(conversationID: string, query: string, cursor: string, limit: number, signal?: AbortSignal,
+    options: { include_archived?: boolean; folder_query?: string; folders_after_id?: string; workflow_id?: string } = {}): Promise<unknown> {
+    const search = new URLSearchParams({ query, cursor, limit: String(limit) });
+    for (const [key, value] of Object.entries(options)) if (value !== undefined) search.set(key, String(value));
+    return this.json(this.conversationPath(conversationID) + "/media-library?" + search, { signal });
   }
 
   async inspectGlobalMediaAssets(conversationID: string, assetIDs: string[], signal?: AbortSignal): Promise<unknown> {

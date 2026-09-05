@@ -207,7 +207,7 @@ func TestConfirmOrganizationDraftCompletesGlobalTask(t *testing.T) {
 	var task TaskResponse
 	as.decode(t, created, &task)
 
-	payload := []byte(`{"operations":[]}`)
+	payload := libraryRenamePayload(t, as)
 	var revID string
 	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
 		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, "", "")

@@ -135,7 +135,7 @@ just agent-evals-mutate
 ## 阻塞与交接
 
 - 原因：首轮合同校正后，新 A 仍复现不可见目标值、非等价释义与桩读取事实缺口。当前批次只作诊断，不足以验收 B 的能力改善。
-- 解除条件：[eval-observable-input-contract](archive/eval-observable-input-contract.md) 独立交付测量修复；完整题集仍受 [生产素材读取缺口](agent-library-read-contract.md) 阻塞，须独立复核解除并重新冻结任务 / world / 桩合同。用同一可观测评测输入重新运行 A 与候选 B，不拿本轮 A 跨题集比较；既有认领与固定 A 产物保持。
+- 解除条件：[eval-observable-input-contract](archive/eval-observable-input-contract.md) 已独立交付测量修复，[生产素材读取合同](archive/agent-library-read-contract.md) 已补齐事实；完整题集仍等待 [独立观察刷新](eval-library-observation-refresh.md) 验收并重新冻结任务 / world / 桩合同。用同一可观测评测输入重新运行 A 与候选 B，不拿本轮 A 跨题集比较；既有认领与固定 A 产物保持。
 - 跟进者：评测组负责独立校正，Agent 能力组负责候选与后续复跑。
 - 未完成：候选两次 k=3、稳定性、系统性失败改善及 mutate kill_rate。regression 与 Self-Harness G1 / G2 均未通过，不把本候选提交写成任务完成。
 - 交接：A 进程已结束，独立 checkout 与产物保留；未改共享 DB / provider。候选实现已由原认领者自审并随本次候选提交保管，保持原 owner 以待新题合同交接，不占后续评测任务的文件或 live 资源。

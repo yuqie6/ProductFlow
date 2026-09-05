@@ -102,7 +102,7 @@ func TestRecoverExpiredDraftTurnDoesNotCreateSecondDraft(t *testing.T) {
 	as.decode(t, session, &sess)
 	convID := sess.Conversations[0].ConversationID
 	claimed := createClaimedTurnForConversation(t, as, convID, nil)
-	payload := []byte(`{"operations":[]}`)
+	payload := libraryRenamePayload(t, as)
 	var revID string
 	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
 		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, claimed.turn.ID, "draft-1")

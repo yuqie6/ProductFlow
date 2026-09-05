@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
@@ -397,11 +398,38 @@ type AssetMetadata struct {
 
 // AssetListResponse 给内部工具面的图片元数据分页，不含 bytes。
 //
-// NextCursor 为 nil 表示没有下一页；after/cursor 是 opaque 游标不是页码。商品图库与全局图库共用本壳，条目都是 AssetMetadata。
+// NextCursor 为 nil 表示没有下一页；after 是 opaque 游标不是页码。商品图库条目为 AssetMetadata；全局整理使用独立 LibraryAssetListResponse。
 // 不要把本列表整包塞进模型 Turn；inspect 才按明确 id 取。
 type AssetListResponse struct {
 	Items      []AssetMetadata `json:"items"`       // 本页元数据；不含 bytes
 	NextCursor *string         `json:"next_cursor"` // opaque 游标，不是页码；nil 表示没有下一页
+}
+
+// LibraryAssetMetadata exposes the facts required by library draft operations, without media URLs.
+type LibraryAssetMetadata struct {
+	ID                 string   `json:"id"`
+	DisplayName        string   `json:"display_name"`
+	OriginalFilename   string   `json:"original_filename"`
+	OriginType         string   `json:"origin_type"`
+	Revision           int      `json:"revision"`
+	FolderID           *string  `json:"folder_id"`
+	FolderName         *string  `json:"folder_name"`
+	TagNames           []string `json:"tag_names"`
+	IsArchived         bool     `json:"is_archived"`
+	MIMEType           string   `json:"mime_type"`
+	ByteSize           *int     `json:"byte_size"`
+	Width              *int     `json:"width"`
+	Height             *int     `json:"height"`
+	VerificationStatus string   `json:"verification_status"`
+	CreatedAt          string   `json:"created_at"`
+}
+
+type LibraryAssetListResponse struct {
+	Items              []LibraryAssetMetadata           `json:"items"`
+	NextCursor         *string                          `json:"next_cursor"`
+	Folders            []library.Folder                 `json:"folders"`
+	FoldersNextAfterID *string                          `json:"folders_next_after_id"`
+	Workflow           *library.WorkflowLinkObservation `json:"workflow,omitempty"`
 }
 
 // GlobalProductResponse 给全局 Agent 的商品短摘要，不是 product.Detail，也不是工作台 WorkbenchResponse。

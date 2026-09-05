@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import { ProductFlowError, type Scope } from "./contracts.js";
 import { ProductFlowClient } from "./productflow.js";
@@ -45,6 +47,44 @@ const baseScope: Scope = {
 };
 
 describe("ProductFlow Pi tools", () => {
+  it("forwards organization discovery options and exposes schema-valid draft facts", async () => {
+    const draftSchema = JSON.parse(readFileSync(new URL("../../go/internal/agent/global_draft_schema.json", import.meta.url), "utf8"));
+    const page = { items: [{ id: "asset-1", revision: 3, display_name: "Source", folder_id: null,
+      tag_names: ["summer"], is_archived: true }], next_cursor: null,
+      folders: [{ id: "folder-1", name: "Destination", count: 0 }], folders_next_after_id: "folder-1",
+      workflow: { workflow_id: "workflow-1", workflow_title: "Workflow", workflow_revision: 7, linked: { "asset-1": false } } };
+    let observed = new URLSearchParams();
+    const server = createServer((request, response) => {
+      observed = new URL(request.url!, "http://localhost").searchParams;
+      response.writeHead(200, { "Content-Type": "application/json" }); response.end(JSON.stringify(page));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("server not bound");
+    try {
+      const client = new ProductFlowClient(`http://127.0.0.1:${address.port}`, "tok", 1000);
+      const scope: Scope = { ...baseScope, scope_type: "global", product_id: null };
+      const tool = createProductFlowTools(runtime(scope, client)).find((tool) => tool.name === "list_global_media_library_assets_v1")!;
+      const result = await tool.execute("read-library", { limit: 10, include_archived: true, folder_query: "Destination",
+        folders_after_id: "folder-0", workflow_id: "workflow-1" }, undefined, undefined, {} as never);
+      expect(Object.fromEntries(observed)).toEqual({ query: "", cursor: "", limit: "10", include_archived: "true",
+        folder_query: "Destination", folders_after_id: "folder-0", workflow_id: "workflow-1" });
+      const text = result.content.find((part) => part.type === "text"); if (!text || text.type !== "text") throw new Error("missing facts");
+      const data = JSON.parse(text.text).data as typeof page;
+      expect(data).toEqual(page);
+      const { id, ...before } = data.items[0];
+      for (const [operation, target] of [
+        ["rename", { display_name: "New name" }], ["move", { folder_id: data.folders[0].id }],
+        ["set_tags", { tag_names: ["selected"] }], ["archive", { is_archived: true }], ["restore", { is_archived: false }],
+        ["link_workflow", { workflow_id: data.workflow.workflow_id, workflow_title: data.workflow.workflow_title,
+          expected_workflow_revision: data.workflow.workflow_revision, expected_linked: data.workflow.linked[id as "asset-1"] }],
+      ]) {
+        expect(Value.Check(draftSchema, { schema_version: 1, draft_kind: "library_organization", library_payload: {
+          schema_version: 1, confirmation_summary: "User request", operations: [{ operation, asset_id: id, expected_revision: before.revision, before, reason: "User request", target }],
+        } })).toBe(true);
+      }
+    } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())); }
+  });
+
   it("keeps product scope tools bounded and confirmation-oriented", () => {
     const names = createProductFlowTools(runtime(baseScope)).map((tool) => tool.name).sort();
     expect(names).toContain("load_productflow_skill");

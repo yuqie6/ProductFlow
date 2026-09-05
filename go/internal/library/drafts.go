@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 
@@ -236,6 +237,58 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 	if err := json.Unmarshal(payload, &body); err != nil {
 		return nil, apperr.Validation("素材整理 Draft payload 无效")
 	}
+	if len(body.Operations) == 0 || len(body.Operations) > 256 {
+		return nil, apperr.Validation("素材整理操作数量无效")
+	}
+	// Workflow synchronization locks the graph before assets; preserve that order for draft links.
+	workflowIDs := map[string]bool{}
+	folderIDs := map[string]bool{}
+	assetIDs := make([]string, 0, len(body.Operations))
+	for _, op := range body.Operations {
+		assetID, _ := op["asset_id"].(string)
+		assetIDs = append(assetIDs, assetID)
+		if op["operation"] == "move" {
+			target, _ := op["target"].(map[string]any)
+			if id, ok := target["folder_id"].(string); ok && id != "" {
+				folderIDs[id] = true
+			}
+		}
+		if op["operation"] == "link_workflow" {
+			target, _ := op["target"].(map[string]any)
+			id, _ := target["workflow_id"].(string)
+			workflowIDs[id] = true
+		}
+	}
+	ordered := make([]string, 0, len(workflowIDs))
+	for id := range workflowIDs {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	workflows := map[string]schema.WorkflowGraphs{}
+	for _, id := range ordered {
+		var graph schema.WorkflowGraphs
+		err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ? AND active = ?", id, true).Take(&graph).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperr.NotFound("工作流不存在")
+		}
+		if err != nil {
+			return nil, err
+		}
+		workflows[id] = graph
+	}
+	ordered = ordered[:0]
+	for id := range folderIDs {
+		ordered = append(ordered, id)
+	}
+	sort.Strings(ordered)
+	for _, id := range ordered {
+		if _, err := lockFolder(ctx, pgxTx, id); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := lockLibraryAssets(ctx, pgxTx, assetIDs); err != nil {
+		return nil, err
+	}
 	now := s.now()
 	applied := 0
 	for _, op := range body.Operations {
@@ -251,8 +304,15 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 		if err != nil {
 			return nil, err
 		}
-		if expected > 0 && rec.Revision != expected {
+		if expected < 1 || rec.Revision != expected {
 			return nil, apperr.Conflict("素材已被其他操作修改")
+		}
+		asset, err := s.loadAsset(ctx, pgxTx, assetID)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkDraftBefore(op["before"], asset); err != nil {
+			return nil, err
 		}
 		switch kind {
 		case "rename":
@@ -336,6 +396,15 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 			}
 		case "link_workflow":
 			workflowID, _ := target["workflow_id"].(string)
+			graph := workflows[workflowID]
+			var count int64
+			if err := pgxTx.WithContext(ctx).Model(&schema.WorkflowMediaLibraryAssets{}).Where("workflow_id = ? AND media_library_asset_id = ?", workflowID, assetID).Count(&count).Error; err != nil {
+				return nil, err
+			}
+			expectedLinked, ok := target["expected_linked"].(bool)
+			if !ok || graph.Title != target["workflow_title"] || graph.Revision != jsonInt(target["expected_workflow_revision"]) || expectedLinked != (count > 0) {
+				return nil, apperr.Conflict("工作流或素材关联状态已变化")
+			}
 			if err := pgxTx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&schema.WorkflowMediaLibraryAssets{
 				WorkflowID:          workflowID,
 				MediaLibraryAssetID: assetID,
@@ -349,6 +418,47 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 		applied++
 	}
 	return json.Marshal(map[string]any{"applied_operations": applied})
+}
+
+func checkDraftBefore(raw any, asset Asset) error {
+	before, ok := raw.(map[string]any)
+	if !ok {
+		return apperr.Validation("素材整理缺少 before")
+	}
+	names := make([]string, 0, len(asset.Tags))
+	for _, tag := range asset.Tags {
+		names = append(names, tag.Name)
+	}
+	sort.Strings(names)
+	actual := map[string]any{"revision": asset.Revision, "display_name": asset.DisplayName, "folder_id": asset.FolderID, "tag_names": names, "is_archived": asset.IsArchived}
+	wanted := make(map[string]any, len(before))
+	for key, value := range before {
+		wanted[key] = value
+	}
+	if rawNames, ok := before["tag_names"].([]any); ok {
+		tags := make([]string, 0, len(rawNames))
+		for _, value := range rawNames {
+			name, ok := value.(string)
+			if !ok {
+				return apperr.Validation("素材标签无效")
+			}
+			tags = append(tags, name)
+		}
+		sort.Strings(tags)
+		wanted["tag_names"] = tags
+	}
+	a, err := canonjson.SHA256Hex(actual)
+	if err != nil {
+		return err
+	}
+	b, err := canonjson.SHA256Hex(wanted)
+	if err != nil {
+		return apperr.Validation("素材 before 无效")
+	}
+	if a != b {
+		return apperr.Conflict("素材 before 与当前状态不一致")
+	}
+	return nil
 }
 
 func loadOrganizationDraft(ctx context.Context, q *gorm.DB, conversationID string) (OrganizationDraft, error) {

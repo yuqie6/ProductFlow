@@ -857,10 +857,22 @@ func (h HTTP) assetContent(c *gin.Context) {
 
 // listLibrary 处理 GET /api/internal/v1/agent-conversations/:conversation_id/media-library。
 //
-// 200 返回 AssetListResponse（全局图库元数据）。query query / cursor（opaque 不是页码）；limit 默认 50、上限 100。必须是 global conversation，否则 409。
+// 200 返回 LibraryAssetListResponse；素材 cursor 与目录 folders_after_id 独立分页，include_archived 可显式包含归档素材。
+// folder_query 查目标目录，workflow_id 返回该工作流对本页素材的关联事实。limit 默认 50、上限 100。非 global 返回 409。
 func (h HTTP) listLibrary(c *gin.Context) {
-	limit, _ := queryInt(c, "limit", assetListDefaultLimit, 1, assetListMaxLimit)
-	out, err := h.Service.ListLibraryAssets(c.Request.Context(), c.Param("conversation_id"), c.Query("query"), c.Query("cursor"), limit)
+	limit, err := queryInt(c, "limit", assetListDefaultLimit, 1, assetListMaxLimit)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	archived := c.Query("include_archived")
+	if archived != "" && archived != "true" && archived != "false" {
+		httpx.AbortErr(c, apperr.Validation("include_archived 必须为布尔值"))
+		return
+	}
+	out, err := h.Service.ListLibraryAssets(c.Request.Context(), c.Param("conversation_id"), c.Query("query"), c.Query("cursor"), limit, LibraryReadOptions{
+		IncludeArchived: archived == "true", FolderQuery: c.Query("folder_query"), FoldersAfterID: c.Query("folders_after_id"), WorkflowID: c.Query("workflow_id"),
+	})
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

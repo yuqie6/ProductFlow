@@ -2,7 +2,7 @@
 
 package agent
 
-const ToolManifestVersion = "ed0ece0cd54f0ed57da895949557823889c032e33303819def5f61e0e4883e01"
+const ToolManifestVersion = "1ea580c712abcedcbbe6ff6f8f3d2a03ee9585d4075f8e565d6d8c7670e1ee06"
 
 var toolRecoveryPolicies = map[string]string{
 	"load_productflow_skill": "none",

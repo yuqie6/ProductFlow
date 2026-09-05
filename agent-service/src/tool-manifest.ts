@@ -203,7 +203,13 @@ export const TOOL_PARAMETER_SCHEMAS = {
   inspect_products_v1: productInspectionInputSchema,
   inspect_global_workflow_context_v1: globalProductContextInputSchema,
   inspect_global_workflow_runs_v1: globalWorkflowInspectionInputSchema,
-  list_global_media_library_assets_v1: paginationInputSchema(100),
+  list_global_media_library_assets_v1: Type.Object({
+    ...paginationInputSchema(100).properties,
+    include_archived: Type.Optional(Type.Boolean()),
+    folder_query: Type.Optional(Type.String({ maxLength: 255 })),
+    folders_after_id: Type.Optional(idSchema),
+    workflow_id: Type.Optional(idSchema),
+  }, { additionalProperties: false }),
   inspect_global_media_library_assets_v1: imageInspectionInputSchema,
   create_product_workspace_v1: Type.Object(
     { name: Type.String({ minLength: 1, maxLength: 255 }) },
@@ -524,7 +530,7 @@ export const TOOL_MANIFEST = [
   {
     name: "list_global_media_library_assets_v1",
     version: 1,
-    description: "List one bounded page of canonical global media-library metadata. This never returns image bytes or URLs.",
+    description: "List one bounded page of global assets with revision, folder_id, tag_names and is_archived for draft before values. Use include_archived to find assets to restore. Folders are independently paged with folder_query and folders_after_id; follow folders_next_after_id. Supply workflow_id to observe its title, revision and exact link membership for returned assets. No image bytes or URLs.",
     scope: "global",
     effect: "read",
     ui_kind: "organize_assets",

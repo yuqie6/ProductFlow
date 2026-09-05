@@ -32,10 +32,15 @@ func galleryMeta(item product.GalleryAssetResponse) AssetMetadata {
 	}
 }
 
-func libraryMeta(item library.AssetResponse) AssetMetadata {
-	return AssetMetadata{
+func libraryMeta(item library.AssetResponse) LibraryAssetMetadata {
+	tags := make([]string, 0, len(item.Tags))
+	for _, tag := range item.Tags {
+		tags = append(tags, tag.Name)
+	}
+	return LibraryAssetMetadata{
 		ID: item.ID, DisplayName: item.DisplayName, OriginalFilename: item.OriginalFilename,
-		OriginType: item.SourceType, UserFolderID: item.FolderID, UserFolderName: item.FolderName,
+		OriginType: item.SourceType, FolderID: item.FolderID, FolderName: item.FolderName,
+		Revision: item.Revision, TagNames: tags, IsArchived: item.IsArchived,
 		MIMEType: item.MIMEType, ByteSize: item.ByteSize, Width: item.Width, Height: item.Height,
 		VerificationStatus: item.VerificationStatus, CreatedAt: item.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -127,34 +132,60 @@ func (s Service) ReadProductAssetContent(ctx context.Context, conversationID, as
 	return s.readAssetBytes(asset.StoragePath, asset.MIMEType, asset.DisplayName, asset.ByteSize, asset.Width, asset.Height)
 }
 
-// ListLibraryAssets 给全局 Agent 列有界图库元数据（无 bytes），对应内部 GET .../media-library。
-//
-// conversation 必须是 global，否则校验失败。cursor 是图库 opaque 游标不是页码。query 可选。归档素材不出现。
-// limit<1 回落到默认 50。只读，不写工具账本、lease、Goal。
-func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, cursor string, limit int) (AssetListResponse, error) {
+type LibraryReadOptions struct {
+	IncludeArchived bool
+	FolderQuery     string
+	FoldersAfterID  string
+	WorkflowID      string
+}
+
+// ListLibraryAssets 给全局 Agent 列有界图库元数据（无 bytes）。
+// conversation 必须是 global；cursor 是图库 opaque 游标。归档素材仅在 IncludeArchived 时出现。
+// limit<1 默认 50。目录独立分页，工作流关联仅检查本页素材。只读，不写工具账本、lease、Goal。
+func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, cursor string, limit int, options ...LibraryReadOptions) (LibraryAssetListResponse, error) {
+	var opt LibraryReadOptions
+	if len(options) > 0 {
+		opt = options[0]
+	}
 	conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
-		return AssetListResponse{}, err
+		return LibraryAssetListResponse{}, err
 	}
 	if err := requireGlobalScope(conv); err != nil {
-		return AssetListResponse{}, err
+		return LibraryAssetListResponse{}, err
 	}
 	if limit < 1 {
 		limit = assetListDefaultLimit
 	}
-	page, err := s.Library.List(ctx, library.ListFilter{Limit: limit, Cursor: cursor, Search: query})
+	page, err := s.Library.List(ctx, library.ListFilter{Limit: limit, Cursor: cursor, Search: query, IncludeArchived: opt.IncludeArchived})
 	if err != nil {
-		return AssetListResponse{}, err
+		return LibraryAssetListResponse{}, err
 	}
-	items := make([]AssetMetadata, 0, len(page.Items))
+	items := make([]LibraryAssetMetadata, 0, len(page.Items))
 	for _, item := range page.Items {
 		items = append(items, libraryMeta(item))
 	}
-	return AssetListResponse{Items: items, NextCursor: page.NextCursor}, nil
+	folders, err := s.Library.ListOrganizationFolders(ctx, opt.FolderQuery, opt.FoldersAfterID, limit)
+	if err != nil {
+		return LibraryAssetListResponse{}, err
+	}
+	out := LibraryAssetListResponse{Items: items, NextCursor: page.NextCursor, Folders: folders.Items, FoldersNextAfterID: folders.NextAfterID}
+	if opt.WorkflowID != "" {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.ID)
+		}
+		observed, err := s.Library.ObserveWorkflowLinks(ctx, opt.WorkflowID, ids)
+		if err != nil {
+			return LibraryAssetListResponse{}, err
+		}
+		out.Workflow = &observed
+	}
+	return out, nil
 }
 
 // InspectLibraryAssets 按明确 id 检查未归档全局素材元数据。asset id 非法或为空返回 Validation。素材不存在或已归档返回 NotFound；非全局 conversation 返回 Conflict。
-func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string, assetIDs []string) ([]AssetMetadata, error) {
+func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string, assetIDs []string) ([]LibraryAssetMetadata, error) {
 	ids, err := normalizeAssetIDs(assetIDs)
 	if err != nil {
 		return nil, err
@@ -169,7 +200,7 @@ func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string
 	if err := requireGlobalScope(conv); err != nil {
 		return nil, err
 	}
-	out := make([]AssetMetadata, 0, len(ids))
+	out := make([]LibraryAssetMetadata, 0, len(ids))
 	for _, id := range ids {
 		asset, err := s.Library.Get(ctx, id)
 		if err != nil {
@@ -179,6 +210,7 @@ func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string
 			return nil, apperr.NotFound("全局素材不存在或已归档")
 		}
 		out = append(out, libraryMeta(library.AssetResponse{
+			Revision: asset.Revision, Tags: asset.Tags, IsArchived: asset.IsArchived,
 			ID: asset.ID, DisplayName: asset.DisplayName, OriginalFilename: asset.OriginalFilename,
 			SourceType: asset.SourceType, FolderID: asset.FolderID, FolderName: asset.FolderName,
 			MIMEType: asset.MIMEType, ByteSize: asset.ByteSize, Width: asset.Width, Height: asset.Height,

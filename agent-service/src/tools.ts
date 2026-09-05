@@ -289,6 +289,8 @@ function createGlobalMediaListTool(runtime: ToolRuntime): ToolDefinition {
           params.cursor ?? "",
           params.limit,
           runtime.signal,
+          { include_archived: params.include_archived, folder_query: params.folder_query,
+            folders_after_id: params.folders_after_id, workflow_id: params.workflow_id },
         ),
       ),
   });
