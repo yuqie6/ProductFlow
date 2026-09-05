@@ -17,7 +17,7 @@ owns_tools:
   - inspect_product_image_assets_v1
   - finalize_product_intake_v1
 scope: any
-version: 3
+version: 4
 ---
 
 # 商品 Intake
@@ -40,6 +40,7 @@ version: 3
 
 0. 全局会话只处理商品查找或工作区创建。已有同名候选时先消歧，不重复创建；创建成功后让界面进入返回的商品工作区，本 Turn 不继续写 intake。
 1. 收集图片类型与 `reference_asset_ids`。
+   将用户的图种名称映射到当前上下文 `image_type_catalog`，`selection.image_types[].key` 使用目录项的原始 key，数量沿用用户已确认的选择。不要把中文名称自行翻译成新的枚举；目录无法支持的图种须说明并澄清。
 2. 用户没点名图种时，用 `ask_user` 提问。默认选项为推荐套图：封面主图 2、核心卖点图 4、规格参数图 1、SKU 1、场景 1、细节 1。不要在用户未确认时直接 finalize 这一套。
 3. 用户只点封面/主图和细节时，追问是否补上卖点图、规格图和选款图；选项为「补齐推荐套图」和「只要我说的这几种」。未确认前不要 finalize 纯摄影套图。
 4. 调用 `finalize_product_intake_v1`，再重读上下文。该工具写入 intake 并展开摄影/信息图模板（每种生成类型一组 + prompt + N 个 image 节点）。

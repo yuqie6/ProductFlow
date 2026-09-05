@@ -19,7 +19,8 @@
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
 | [eval-development-baseline.md](eval-development-baseline.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 开放 | — | — |
+| [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 阻塞 | 主代理-agent-0905-0458 | 2026-09-05T14:29:45+08:00 |
+| [eval-observable-input-contract.md](eval-observable-input-contract.md) | 评测 | 实现 | 开放 | — | — |
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
