@@ -18,7 +18,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [canvas-run-recovery-proof.md](canvas-run-recovery-proof.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [canvas-delivery-proof.md](canvas-delivery-proof.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [canvas-asset-recipe-proof.md](canvas-asset-recipe-proof.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |

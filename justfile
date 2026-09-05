@@ -204,6 +204,10 @@ web-e2e-live-agent-workflow:
 web-e2e-canvas-document:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_CANVAS_DOCUMENT=1 pnpm --dir web exec playwright test e2e/canvas-document-mock.spec.ts --config playwright.config.ts'
 
+# Chromium scene and retry contracts; requires a running mock stack, never changes provider bindings.
+web-e2e-canvas-run-recovery *args:
+    PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 pnpm --dir web exec playwright test e2e/canvas-run-recovery.spec.ts --config playwright.config.ts {{args}}
+
 # Chromium Agent SSE: duplicate seq1 then seq2 on one generation; connection stays open.
 web-e2e-agent-sse:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/agent-conversation-runtime.spec.ts e2e/agent-sse-reconnect.spec.ts --config playwright.config.ts'

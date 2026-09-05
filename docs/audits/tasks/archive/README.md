@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [canvas-run-recovery-proof.md](canvas-run-recovery-proof.md) | 完成 | 隔离 mock 浏览器四条通过：场景选点、修复后重试、只重试失败、保存失败阻止运行 |
 | [canvas-workflow-coverage.md](canvas-workflow-coverage.md) | 完成 | 完整操作链核查与 274 条前端回归通过；场景/重试、交付图、资产/配方浏览器证据另单补齐 |
 | [perf-imagesession-http-load.md](perf-imagesession-http-load.md) | 完成 | 隔离 25k 会话 / 10k 轮次 / 1k 任务，七条真实 HTTP 路径各 100 样本；详情 258KB、p95 16.33ms，生产并发仍未验 |
 | [agent-question-answer-identity.md](agent-question-answer-identity.md) | 完成 | Node/PG 按问题绑定答案、并发幂等与第二问 SIGKILL 恢复通过；固定 live 只问一问，缺上下文读取而 FAIL |

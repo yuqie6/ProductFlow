@@ -68,6 +68,11 @@ describe("failedNodesRunInput", () => {
       node_runs: [
         { status: "failed", node_id: "image-1" },
         { status: "succeeded", node_id: "image-2" },
+        { status: "unknown", node_id: "image-unknown" },
+        { status: "cancelled", node_id: "image-cancelled" },
+        { status: "skipped", node_id: "image-skipped" },
+        { status: "running", node_id: "image-running" },
+        { status: "queued", node_id: "image-queued" },
         { status: "failed", node_id: null },
       ],
     })).toEqual({ scope: "selection", node_ids: ["image-1"] });

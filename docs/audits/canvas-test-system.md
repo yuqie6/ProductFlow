@@ -124,8 +124,8 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 | 只建画布并上传参考 | 创建表单 → `POST /api/v3/products` → 商品、资产与 schema-v3 图事务创建 | `product/http_test.go`；`direct-create-full-graph.spec.ts` 浏览器创建、整图成功、图库图片和真实 bytes；本轮未重跑真实 provider | 完成（既有 C5） |
 | 添加、连线、复制、分组、撤销重做 | `GraphCanvasPanel` → Graph ChangeSet → 持久图与操作组 | `workbench-v3-actions.spec.ts` 检查添加六类节点、场景、删边、复制内部边、分组与 undo/redo 的持久结果；现有合同不重建 | 部分完成（待完整操作链复跑） |
 | 检查器保存与运行交错 | autosave → Inspector → Surface → `commitNode` → Graph Command | AR-01、C0-C4、C6 的已归档证据 | 完成 |
-| 运行此场景 | `GraphShotFilmstrip` / 画布分组 → `shotRunRequest` → 一次 `selection`，只含该组生图节点；保存 flush 后提交 | `shotChangeSet.test.ts` 验 node_ids；`select_test.go` 验 selection；Filmstrip 测试仅静态渲染，e2e 没有点击运行此场景后的业务断言 | 部分完成 |
-| 失败后修正并重试、仅重试失败节点 | Inspector / RunsPanel → `/runs/:id/retry` 或 `selection` → 按当前图重新提交；原 run 保留 | `runs.go:retryGraphRun` 复用原 scope/target/force/document action；`graphRunPreview.test.ts` 验失败目标集合；`workbench-v3-actions.spec.ts` 的 can retry 用例只验按钮可见，没有点击 | 部分完成 |
+| 运行此场景 | `GraphShotFilmstrip` / 画布分组 → `shotRunRequest` → 一次 `selection`，只含该组生图节点；保存 flush 后提交 | `canvas-run-recovery.spec.ts` 核一次 selection、两张 detail 成功、hero 未运行、全部 config 与 authored 不变；另验保存失败不提交 | 完成 |
+| 失败后修正并重试、仅重试失败节点 | Inspector / RunsPanel → `/runs/:id/retry` 或 `selection` → 按当前图重新提交；原 run 保留 | `canvas-run-recovery.spec.ts` 核真实选图修复、POST 原 run retry、新 run 成功、旧 run failed；混合结果只重试失败节点且保留成功兄弟资产；unknown/cancelled/live 排除有确定性回归 | 完成 |
 | 结果预览与原图下载 | GraphRunsPanel / ProductImageExplorer → 明确资产预览和 download URL | C5 已取真实生成 bytes；图库 HTTP 覆盖 ZIP 与归属；未找到浏览器点击下载并核文件的用例 | 部分完成 |
 | 交付规格、生成交付图和交付包 | `DeliveryRenditionPanel` → rendition job → 确定性渲染；Explorer → delivery export | `delivery/http_test.go` 验提交、幂等与结果 lineage；`export_archive_test.go` 验 manifest、SHA256 与完整/部分导出；Web 仅规格/选择/按钮测试，无该链浏览器用例 | 部分完成 |
 | 绑定、拖入参考与固定当前结果 | Explorer / Canvas → 明确 asset id 的 ChangeSet；固定结果创建独立 image_asset，不自动连边 | `graphAssetDrop.test.ts` 验操作计划；actions 浏览器验绑定但不连线显示 unused；固定结果、拖入端口后的持久身份未有完整浏览器证据 | 部分完成 |
@@ -135,7 +135,7 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 
 ### 后续交付次序
 
-1. [场景运行与失败恢复](tasks/canvas-run-recovery-proof.md)：真实点击、一次正确 scope/target、修正后成功、非目标与手填文稿不变。优先级 P1，覆盖用户继续生产的关键动作。
+1. [场景运行与失败恢复](tasks/archive/canvas-run-recovery-proof.md)：已完成，`just web-e2e-canvas-run-recovery` 隔离 mock 浏览器 4 passed（34.9s）。场景选点、修复参考后重试成功、只重试失败节点、保存失败不提交均核真实业务状态；原失败历史、成功兄弟结果和手填文稿保持。
 2. [结果交付](tasks/canvas-delivery-proof.md)：选规格、产物尺寸/格式/源图身份、下载文件、ZIP manifest 与资产 lineage。优先级 P1，验收商家能拿到可使用的文件。
 3. [资产复用与配方确认](tasks/canvas-asset-recipe-proof.md)：绑定、固定当前结果、片段确认合并及完整配方冲突；复跑既有图编辑动作。优先级 P2，不重复实现编辑器。
 
