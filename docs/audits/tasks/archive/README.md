@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-restart-batch-expectation.md](eval-restart-batch-expectation.md) | 完成 | ACK 丢失恢复测试固定上下文返回窗口并精确比较已提交批次；消除调度相关假失败，不改运行时 |
 | [eval-graph-clear-intent.md](eval-graph-clear-intent.md) | 完成 | 三种删节点问法明确保留分组；120 种删除排列及额外写入拒绝回归；新身份须完整重采开发基线 |
 | [canvas-local-edit-flow.md](canvas-local-edit-flow.md) | 完成 | mock 绑定下检查器局部编辑可提交、保留谱系、采用/撤销；失败不覆盖节点当前图；隔离 Chromium 2 passed |
 | [perf-imagesession-active-status.md](perf-imagesession-active-status.md) | 完成 | 活动 Status/SSE 保持全量 queued/running；省略 prompt 后 300 条固定夹具 584,030B / p95 18.16ms，查询次数恒为 8 |

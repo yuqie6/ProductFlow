@@ -161,7 +161,7 @@ describe("ProductFlow Pi Agent process recovery", () => {
   it("confirms a server-committed batch after SIGKILL before the local ACK", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "productflow-pi-process-restart-"));
     const provider = await createHangingProviderServer();
-    const productFlow = await createFakeProductFlowServer(provider.baseURL);
+    const productFlow = await createFakeProductFlowServer(provider.baseURL, true);
     let first: AgentProcess | undefined;
     let second: AgentProcess | undefined;
 
@@ -185,6 +185,11 @@ describe("ProductFlow Pi Agent process recovery", () => {
       expect(started.turn_id).toBe("process-restart-turn-id");
       await within(productFlow.firstBatchCommitted, 5_000, "first journal batch was not committed");
 
+      const committedBeforeACK = structuredClone(productFlow.events);
+      const committedSequences = committedBeforeACK.map((event) => event.sequence);
+      expect(committedBeforeACK[0]).toMatchObject({ sequence: 1, kind: "turn/start" });
+      expect(productFlow.batchRequests).toEqual([committedSequences]);
+
       first.child.kill("SIGKILL");
       await waitForExit(first.child);
       first = undefined;
@@ -205,9 +210,9 @@ describe("ProductFlow Pi Agent process recovery", () => {
       expect(productFlow.claimOwnerIDs.length).toBeGreaterThanOrEqual(2);
       expect(new Set(productFlow.claimOwnerIDs).size).toBe(1);
       expect(productFlow.batchRequests.filter((sequences) => sequences.includes(1))).toHaveLength(1);
-      expect(productFlow.confirmRequests).toEqual([[], [1]]);
-      expect(productFlow.events.map((event) => event.sequence)).toEqual([1]);
-      expect(productFlow.events.map((event) => event.kind)).toEqual(["turn/start"]);
+      expect(productFlow.confirmRequests).toEqual([[], committedSequences]);
+      expect(productFlow.batchRequests).toEqual([committedSequences]);
+      expect(productFlow.events).toEqual(committedBeforeACK);
     } finally {
       productFlow.releaseFirstBatchResponse();
       if (first) {
@@ -408,7 +413,7 @@ function writeProviderSSE(response: ServerResponse, event: Record<string, unknow
   response.write(`event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
-async function createFakeProductFlowServer(providerBaseURL: string): Promise<{
+async function createFakeProductFlowServer(providerBaseURL: string, holdRuntimeContextUntilACK = false): Promise<{
   baseURL: string;
   checkpoints: Array<{ kind: string; payload: Record<string, unknown> }>;
   events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }>;
@@ -432,7 +437,7 @@ async function createFakeProductFlowServer(providerBaseURL: string): Promise<{
   const firstBatchResponse = new Promise<void>((resolve) => {
     releaseFirstBatchResponse = resolve;
   });
-  const handoff = { firstBatchBlocked: false, resolveFirstBatchCommitted, firstBatchResponse };
+  const handoff = { firstBatchBlocked: false, resolveFirstBatchCommitted, firstBatchResponse, holdRuntimeContextUntilACK };
   const lease = {
     harnessTurnID: "",
     ownerID: "",
@@ -475,7 +480,7 @@ async function handleFakeProductFlowRequest(
   confirmRequests: number[][],
   claimOwnerIDs: string[],
   lease: { harnessTurnID: string; ownerID: string; leaseToken: string },
-  handoff: { firstBatchBlocked: boolean; resolveFirstBatchCommitted: () => void; firstBatchResponse: Promise<void> },
+  handoff: { firstBatchBlocked: boolean; resolveFirstBatchCommitted: () => void; firstBatchResponse: Promise<void>; holdRuntimeContextUntilACK: boolean },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const body = request.method === "POST" ? await readJSON(request) : {};
@@ -512,6 +517,11 @@ async function handleFakeProductFlowRequest(
     return;
   }
   if (url.pathname.endsWith("/runtime-context")) {
+    // Keep the ACK-loss scenario from racing with additional locally queued context events.
+    if (handoff.holdRuntimeContextUntilACK) {
+      await handoff.firstBatchResponse;
+      if (response.destroyed) return;
+    }
     sendJSON(response, 200, {
       schema_version: 1,
       session_id: "session-process-restart",
