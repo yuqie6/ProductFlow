@@ -19,6 +19,7 @@ import (
 )
 
 type seededEvalWorld struct {
+	Scope        string
 	ProductID    string
 	GraphID      string
 	ConvID       string
@@ -87,7 +88,7 @@ func scopeForWorld(name string) string {
 
 func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld) seededEvalWorld {
 	t.Helper()
-	out := seededEvalWorld{AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}, EdgeIDs: map[string]string{}, GroupIDs: map[string]string{}}
+	out := seededEvalWorld{Scope: task.Scope, AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}, EdgeIDs: map[string]string{}, GroupIDs: map[string]string{}}
 	if task.Scope == "global" {
 		seedGlobalLibraryWorld(t, as, task, world, &out)
 		return out
@@ -283,10 +284,25 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		t.Fatal("global session missing conversation")
 	}
 	seeded.ConvID = sess.Conversations[0].ConversationID
+	if strings.HasPrefix(world.Name, "global-library") {
+		workspace, err := as.svc.Product.CreateAgentDraft(context.Background(), "评测商品", clockid.New(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seeded.ProductID = workspace.Product.ID
+		observed, err := as.svc.GlobalWorkflowContext(context.Background(), seeded.ConvID, seeded.ProductID, "concise")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seeded.GraphID = observed["live_graph"].(map[string]any)["id"].(string)
+		if _, err := as.pool.Exec(context.Background(), `UPDATE workflow_graphs SET title=$2, revision=$3 WHERE id=$1`, seeded.GraphID, world.LiveGraph.Title, world.LiveGraph.Revision); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, folder := range world.ListedFolders {
 		title := folder.Title
 		if task.Inject != nil && task.Inject.Payload["folder_title"] != "" {
-			title = task.Inject.Payload["folder_title"]
+			title += "\n" + task.Inject.Payload["folder_title"]
 		}
 		created, err := as.svc.Library.CreateFolder(context.Background(), title)
 		if err != nil {
@@ -294,7 +310,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		}
 		seeded.FolderIDs[folder.ID] = created.ID
 	}
-	for _, listed := range world.ListedAssets {
+	for index, listed := range world.ListedAssets {
 		var folderID *string
 		if listed.FolderID != nil && *listed.FolderID != "" {
 			if mapped, ok := seeded.FolderIDs[*listed.FolderID]; ok {
@@ -310,7 +326,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		asset := results[0].Asset
 		name := listed.DisplayName
 		if task.Inject != nil && task.Inject.Payload["display_name"] != "" {
-			name = task.Inject.Payload["display_name"]
+			name += "\n" + task.Inject.Payload["display_name"]
 		}
 		if name != asset.DisplayName {
 			renamed, err := as.svc.Library.RenameAsset(context.Background(), asset.ID, asset.DisplayName, asset.Revision, name)
@@ -318,6 +334,15 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 				t.Fatal(err)
 			}
 			asset = renamed
+		}
+		if len(listed.TagNames) > 0 {
+			if _, err := as.svc.Library.SetTags(context.Background(), []string{asset.ID}, listed.TagNames, map[string]int{asset.ID: asset.Revision}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Worlds describe frozen snapshots, not the number of commands used to seed them.
+		if _, err := as.pool.Exec(context.Background(), `UPDATE media_library_assets SET revision=$2, is_archived=$3, created_at=$4 WHERE id=$1`, asset.ID, listed.Revision, listed.IsArchived, time.Date(2026, 8, 31, 0, 0, index, 0, time.UTC)); err != nil {
+			t.Fatal(err)
 		}
 		seeded.AssetIDs[listed.ID] = asset.ID
 	}
@@ -377,6 +402,15 @@ func evalPageContext(task EvalTask, seeded seededEvalWorld, liveRevision int) ma
 		filters := map[string]string{}
 		for key, value := range raw {
 			filters[key] = stringify(value)
+			if key == "product_id" && seeded.ProductID != "" {
+				filters[key] = seeded.ProductID
+			}
+			if key == "workflow_id" && seeded.GraphID != "" {
+				filters[key] = seeded.GraphID
+			}
+			if key == "folder_id" && seeded.FolderIDs[filters[key]] != "" {
+				filters[key] = seeded.FolderIDs[filters[key]]
+			}
 		}
 		page["filters"] = filters
 	}
@@ -455,7 +489,7 @@ func nilIfEmpty(value string) any {
 }
 
 func evalTurnCollectionPath(seeded seededEvalWorld) string {
-	if seeded.ProductID != "" {
+	if seeded.Scope != "global" && seeded.ProductID != "" {
 		return "/api/v2/products/" + seeded.ProductID + "/agent-conversations/" + seeded.ConvID + "/turns"
 	}
 	return "/api/v2/agent-conversations/" + seeded.ConvID + "/turns"

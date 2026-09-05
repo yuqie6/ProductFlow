@@ -6,7 +6,7 @@
 
 ## 组职责与交付序列
 
-- 当前主线为已交付的 [可见输入校正](tasks/archive/eval-observable-input-contract.md) 与 [素材整理读取合同](tasks/archive/agent-library-read-contract.md) → [独立观察刷新与冻结](tasks/eval-library-observation-refresh.md) → [Skill 候选复验](tasks/eval-skills.md)。生产读取已补齐，评测观察尚未独立刷新，完整题集仍不能用于能力比较；既有候选认领和固定 A 产物保持。协调者在本组内串行安排。
+- 当前主线的 [可见输入校正](tasks/archive/eval-observable-input-contract.md)、[素材整理读取合同](tasks/archive/agent-library-read-contract.md) 与 [独立观察刷新](tasks/archive/eval-library-observation-refresh.md) 已交付。12 条素材输入阻塞解除，固定可测输入可交 [开发基线](tasks/eval-development-baseline.md) 采证及 [Skill 候选复验](tasks/eval-skills.md) 重新安排同版本 A/B；既有候选认领和旧 A 产物保持，历史诊断成绩不补发资格。协调者串行安排各自冻结窗口。
 - 标签校准、L2 状态采证与生产回流按各自合法输入安排。缺人工标签或生产样本如实阻塞，只限制使用相应证据的结论，不阻止其它已具备条件的确定性工作。
 - 本组冻结题库、world、grader、模拟用户、集合用途和访问规则；使用者可自行运行固定版本并取得结果，不依赖本组逐轮人工操作。不得把新题集成绩与旧题集比较归因。
 - 普通行为修复的回归和正式复验由本组完成；评分文件与候选编辑面隔离。原 `eval-skills` 候选提交和 A 诊断证据留在任务，B 复跑与变异验收仍未完成，不能算自动进化。
@@ -47,7 +47,7 @@
 
 [可见输入校正](tasks/archive/eval-observable-input-contract.md) 审核全部 75 条 L1，修订释义、可达事实和行为评分；83 条总任务、24/24 工具、12/12 Graph op 仅证明静态登记覆盖。成功/失败/未知调用分开记录，L2 增加真实 PG 内容与额外副作用配对，L3 使用 Go 决策及最终状态观察，L5 改为实际暴露后的攻击目标行为。
 
-原生产全局素材读取缺少 revision、tag_names、is_archived、目标目录发现及已归档素材读取能力。[素材整理读取合同](tasks/archive/agent-library-read-contract.md) 已补齐这些事实与工作流关联观察，并在真实确认事务核验 before 和并发预期；六类操作与错误事实回归通过。生产修复保持评测及 Skill 冻结，10 条 L1 和另外 2 条 L2/L5、L3 任务仍保留 `observability_blocker`，runner 输出失败的 `unobservable`，不静默删题或计安全通过。报告含未知结果时 `measurementEligible=false`，能力 diff 拒绝执行。[独立观察刷新](tasks/eval-library-observation-refresh.md) 须核对生产响应、桩、夹具和 Go host 后重新冻结。完整新 A/B 尚不具备测量资格。
+原素材读取缺口由 [生产读取合同](tasks/archive/agent-library-read-contract.md) 修复。[独立观察刷新](tasks/archive/eval-library-observation-refresh.md) 用隔离 Go 数据库生成素材快照，补齐 world 标签/归档、目录和目标身份播种；12 条参考操作使用实际 before 确认并复读，错误事实与额外写入仍失败。另修复标签题“主推”被期望为“主图”、旧 before 名称及 L5 改名释义缺目标。83 题、75 条 L1、11 worlds 保持；12 条 observability_blocker 解除，未删题或放宽 grader/split。新输入全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`，独立审核一致。真实模型开发批次与 A/B 尚未重跑；后续遇 unknown/unobservable 仍按原报告合同禁止能力比较。
 
 历史 raw run 不改写。旧 L1 释义失真、L2 revision/pending 数量判断、L3 无真实决策及全局同意计数、L5 攻击原文子串检测均影响采信。上文和历史记录中的通过率、L3 2/5、L5 ASR=0 只保留为诊断，不证明完成目标或安全通过。本次仅交付确定性测量回归，未运行新真实模型批次，P1–P4 与 D-08 质量门不因修复测评而通过。
 
@@ -179,7 +179,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 |---|---|---|---|
 | L3-01 | `user-sim.ts` 用独立模型扮演具有隐藏目标、事实表和应答策略的用户；被测 Agent 仍走生产 manager/Go 路径 | `完成`（模型与 manager） | [eval-user-sim](tasks/archive/eval-user-sim.md)：每次话语独立 `complete()`，隐藏上下文不给 Agent，不回退脚本；15 项聚焦回归通过。固定 live `20260904T234034Z-93b42b6d` 实际完成 4 次用户请求，Agent 仍走生产 PiRuntimeManager。 |
 | L3-02 | `requires_input` 通过 manager 或 Go question-answer API 回答，同一问题/Turn 的恢复语义保持生产合同 | `完成`（恢复合同回归） | [agent-question-answer-identity](tasks/archive/agent-question-answer-identity.md) 修复第二问题身份冲突、PG 旧答案遗留和不同答案覆盖；生产 manager 两问及 Go HTTP + PG + Pi 第二问 SIGKILL 恢复回归通过。固定 live `20260905T001434Z-90c24d87` 只问一问并恢复，缺少上下文读取而 FAIL；未取得真实模型连续两问通过证据，不表示 L3 五流程或阶段通过。 |
-| L3-03 | graph proposal、global draft、workflow run request 通过生产 confirm/discard API 做用户决策 | `部分完成` | `go-world.ts` 调用隔离 Go 业务服务及确认路由并复读结果；历史 4 项 PG 决策回归通过。生产 Agent 读取及六类确认合同已修复，见 [素材读取交付](tasks/archive/agent-library-read-contract.md)；冻结的评测 host/素材断言尚待 [独立刷新](tasks/eval-library-observation-refresh.md)，历史合法输入测试不代表 Agent 可见输入链已验收；无新五流程 live。 |
+| L3-03 | graph proposal、global draft、workflow run request 通过生产 confirm/discard API 做用户决策 | `部分完成` | `go-world.ts` 调用隔离 Go 业务服务及确认路由并复读结果；[观察刷新](tasks/archive/eval-library-observation-refresh.md) 将素材草案改为实际读取所得 before/revision，错误 before 确认失败且资产不变；4 项 Go 决策回归通过。生产读取与确认见 [素材交付](tasks/archive/agent-library-read-contract.md)。没有新五流程真实模型 live，不能据确定性回归签收整层。 |
 | L3-04 | 首批 5 条流程覆盖 intake 两轮追问、提案拒绝后改口、run request 确认、全局草案确认和缺信息改名 | `完成` | 5 条 `layers` 含 `l3` 的任务已入集，L0 断言 ≥5。 |
 | L3-05 | grader 断言终态、轮数上限和“用户同意前没有 finalize/apply”；未确认写入单独计数并可阻断 pass | `部分完成` | `user-sim.ts` 按回答区间及目标匹配授权，撤回不延续授权，后续同意不追认历史；要求实际目标写入及最终业务观察。配对回归通过；历史 `93b42b6d` 2/5 仅诊断，尚无新 live。 |
 

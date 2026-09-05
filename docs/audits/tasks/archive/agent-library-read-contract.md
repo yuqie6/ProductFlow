@@ -74,4 +74,4 @@
 - `git diff --name-only -- agent-service/evals agent-service/.pi` 为空。原 12 条不可观测标记和旧 L3 缺 revision 断言仍冻结；本单未运行该旧 opt-in L3 素材断言，也不以它证明新合同通过。
 - 自审核对因果范围、字段所有读写者、真实结果与测试边界、无密钥、无 dev/provider 设置写入。Issue 完成只表示生产读取/确认合同修复；测评和自进化基线资格不自动通过。
 
-后续由 [观察刷新与冻结](../eval-library-observation-refresh.md) 独立核对生产读取与桩/host，更新旧缺字段断言并决定哪些 observability_blocker 可解除。随后才能按用途清单采有效开发批次。保留 eval-skills 原 owner 与固定 A，不重用旧诊断成绩。
+后续由 [观察刷新与冻结](eval-library-observation-refresh.md) 独立核对生产读取与桩/host，更新旧缺字段断言并决定哪些 observability_blocker 可解除。随后才能按用途清单采有效开发批次。保留 eval-skills 原 owner 与固定 A，不重用旧诊断成绩。

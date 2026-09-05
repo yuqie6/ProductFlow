@@ -97,7 +97,7 @@
                 "reason": "更清晰的商品名",
                 "before": {
                   "revision": 1,
-                  "display_name": "旧名",
+                  "display_name": "商品图",
                   "folder_id": null,
                   "tag_names": [],
                   "is_archived": false
@@ -111,6 +111,5 @@
         }
       }
     ]
-  },
-  "observability_blocker": "Go ListLibraryAssets/InspectLibraryAssets 的 AssetMetadata 缺少草案 JSON Schema 必填的 expected_revision/before 所需 revision、tag_names、is_archived；归档素材也不会由当前读取工具返回。生产工具与 Skill 合同待独立修复，不使用桩补造这些事实。"
+  }
 }

@@ -35,7 +35,7 @@ func TestEvalUserSimHost(t *testing.T) {
 	if task.ID == "" {
 		t.Fatal("unknown L3 task")
 	}
-	as := newAgentServer(t, mockGateway{}, "tok")
+	as := newEvalLibraryServer(t)
 	seeded := seedEvalWorld(t, as, task, worlds[task.World])
 	var mu sync.Mutex
 	closed := make(chan struct{})
@@ -85,7 +85,14 @@ func TestEvalUserSimHost(t *testing.T) {
 		case "observe":
 			out = map[string]any{"errors": gradeEvalFinalWrites(t, as, seeded, task.Expect.Writes, baseline)}
 		case "assets":
-			out, callErr = as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 100)
+			query, _ := p["query"].(string)
+			cursor, _ := p["cursor"].(string)
+			archived, _ := p["include_archived"].(bool)
+			folderQuery, _ := p["folder_query"].(string)
+			afterID, _ := p["folders_after_id"].(string)
+			workflowID, _ := p["workflow_id"].(string)
+			limit, _ := p["limit"].(float64)
+			out, callErr = as.svc.ListLibraryAssets(ctx, seeded.ConvID, query, cursor, int(limit), LibraryReadOptions{IncludeArchived: archived, FolderQuery: folderQuery, FoldersAfterID: afterID, WorkflowID: workflowID})
 		case "inspect_assets":
 			ids := []string{}
 			if values, ok := p["asset_ids"].([]any); ok {

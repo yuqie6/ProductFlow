@@ -153,6 +153,11 @@ type agentServer struct {
 func newAgentServer(t *testing.T, gw Gateway, internalToken string) *agentServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
+	return newAgentServerOnDB(t, gw, internalToken, pool, gdb)
+}
+
+func newAgentServerOnDB(t *testing.T, gw Gateway, internalToken string, pool *pgxpool.Pool, gdb *gorm.DB) *agentServer {
+	t.Helper()
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))

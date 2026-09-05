@@ -40,7 +40,8 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld) {
     }
   };
   Object.assign(stub.client, {
-    listGlobalMediaAssets: () => invoke("assets", {}, "list_global_media_library_assets_v1"),
+    listGlobalMediaAssets: (_c: string, query: string, cursor: string, limit: number, _signal?: AbortSignal,
+      options: Record<string, unknown> = {}) => invoke("assets", { query, cursor, limit, ...options }, "list_global_media_library_assets_v1"),
     inspectGlobalMediaAssets: (_c: string, asset_ids: string[]) => invoke("inspect_assets", { asset_ids }, "inspect_global_media_library_assets_v1"),
     productContext: () => invoke("context", {}, "get_product_workflow_context_v1"),
     getNodeDetail: (_c: string, node_id: string) => invoke("node", { node_id }, "get_node_detail_v1"),

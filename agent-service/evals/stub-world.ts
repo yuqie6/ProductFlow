@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { ProductFlowError, resolvedToolContractVersion, type JsonObject } from "../src/contracts.js";
 import type { ProductFlowClient } from "../src/productflow.js";
 import type { EvalCallRecord, EvalTask, EvalWorld } from "./schema.js";
+import { libraryObservation } from "./library-observation.js";
 
 export const EVAL_PRODUCT_ID = "22222222-2222-4222-8222-222222222222";
 export const EVAL_WORKFLOW_ID = "33333333-3333-4333-8333-333333333333";
@@ -45,6 +46,7 @@ export function createStubWorld(
   draftSchema: Record<string, unknown>,
 ): StubWorld {
   const calls: EvalCallRecord[] = [];
+  const library = libraryObservation(task);
   const attempts = new Map<string, number>();
   let graphRevision = world.live_graph.revision;
   let intake = world.intake;
@@ -65,7 +67,8 @@ export function createStubWorld(
   const write = (name: string, params: unknown): void => {
     record(name, params);
     maybeReadError(name);
-    validateRevisions(params, graphRevision, world);
+    validateRevisions(params, graphRevision, task.skill === "media-library-organization" && task.scope === "global"
+      ? { ...world, listed_assets: library.snapshot().items } : world);
     const attempt = (attempts.get(name) ?? 0) + 1;
     attempts.set(name, attempt);
     const conflictLimit = task.inject?.write_409_count;
@@ -88,19 +91,9 @@ export function createStubWorld(
     ...asset,
     display_name: [asset.display_name, payload?.display_name].filter(Boolean).join("\n"),
   }));
-  const listedFolders = (world.listed_folders ?? [{ id: EVAL_FOLDER_ID, title: "季节" }]).map((folder) => ({
-    ...folder,
-    title: [folder.title, payload?.folder_title].filter(Boolean).join("\n"),
-  }));
   const graphNodes = () => graph.nodes.map((node) => (
     payload?.node_title && node.id === EVAL_NODE_ID ? { ...node, title: `${node.title}\n${payload.node_title}` } : node
   ));
-  const libraryMetadata = (asset: typeof listedAssets[number]) => ({
-    id: asset.id, display_name: asset.display_name, original_filename: asset.display_name,
-    user_folder_id: asset.folder_id ?? null,
-    user_folder_name: listedFolders.find((folder) => folder.id === asset.folder_id)?.title ?? null,
-    origin_type: "direct_upload", mime_type: "image/png", verification_status: "verified",
-  });
   const graphSummary = (format: string) => {
     const groups = graph.groups ?? [];
     const nodes = graphNodes().map(({ id, node_type, title }) => ({
@@ -260,18 +253,15 @@ export function createStubWorld(
       const available = listedAssets.length > 0 ? listedAssets : task.page_context.selected_asset_ids.map((id) => ({ id, display_name: ["已选参考图", payload?.display_name].filter(Boolean).join("\n") }));
       return { items: available.filter((asset) => assetIDs.includes(asset.id)) };
     },
-    listGlobalMediaAssets: async (_conversationID: string, query: string, cursor: string, limit: number) => {
-      read("list_global_media_library_assets_v1", { query, cursor, limit });
-      return {
-        items: listedAssets.filter((asset) => !asset.is_archived && (!query || asset.display_name.includes(query))).slice(0, limit || 50).map(libraryMetadata),
-        next_cursor: null,
-      };
+    listGlobalMediaAssets: async (_conversationID: string, query: string, cursor: string, limit: number, _signal?: AbortSignal, options = {}) => {
+      read("list_global_media_library_assets_v1", { query, cursor, limit, ...options });
+      if (task.scope !== "global") throw new ProductFlowError(409, "conflict", "global scope required");
+      return library.list(query, cursor, limit, options);
     },
     inspectGlobalMediaAssets: async (_conversationID: string, assetIDs: string[]) => {
       read("inspect_global_media_library_assets_v1", { asset_ids: assetIDs });
-      const items = assetIDs.map((id) => listedAssets.find((asset) => asset.id === id && !asset.is_archived));
-      if (items.some((asset) => !asset)) throw new ProductFlowError(404, "not_found", "asset not found or archived");
-      return { items: items.map((asset) => libraryMetadata(asset!)) };
+      if (task.scope !== "global") throw new ProductFlowError(409, "conflict", "global scope required");
+      return library.inspect(assetIDs);
     },
     listProducts: async (_conversationID: string, query: string, cursor: string, limit: number) => {
       read("list_products_v1", { query, cursor, limit });
@@ -386,6 +376,20 @@ export function createStubWorld(
     reconcileProductIntake: async () => ({ state: "applied", result: { accepted: true } }),
     validateGlobalDraft: async (_conversationID: string, params: JsonObject) => {
       write("propose_global_draft", params);
+      const snapshot = library.snapshot();
+      const payload = params.library_payload as { operations?: Array<Record<string, any>> };
+      for (const op of payload?.operations ?? []) {
+        if (op.operation === "move" && op.target.folder_id !== null && !snapshot.folders.some((folder) => folder.id === op.target.folder_id)) {
+          throw new ProductFlowError(404, "not_found", "folder not found");
+        }
+        if (op.operation === "link_workflow") {
+          const current = snapshot.workflow;
+          if (!current || current.workflow_id !== op.target.workflow_id) throw new ProductFlowError(404, "not_found", "workflow not found");
+          if (current.workflow_title !== op.target.workflow_title || current.workflow_revision !== op.target.expected_workflow_revision || current.linked[op.asset_id] !== op.target.expected_linked) {
+            throw new ProductFlowError(409, "conflict", "workflow link facts changed");
+          }
+        }
+      }
     },
     createProductWorkspace: async (_conversationID: string, name: string) => {
       write("create_product_workspace_v1", { name });
@@ -450,7 +454,10 @@ function validateRevisions(params: unknown, graphRevision: number, world: EvalWo
     if (!asset) throw new ProductFlowError(404, "not_found", "asset not found");
     if (operation.expected_revision !== asset.revision) throw revisionConflict("expected_revision", asset.revision ?? 0);
     const before = operation.before as Record<string, unknown> | undefined;
-    if (before && Object.entries(before).some(([key, value]) => !isDeepStrictEqual(value, (asset as Record<string, unknown>)[key]))) {
+    const actual = { revision: asset.revision, display_name: asset.display_name, folder_id: asset.folder_id,
+      tag_names: [...(asset.tag_names ?? [])].sort(), is_archived: asset.is_archived };
+    const wanted = before && { ...before, tag_names: Array.isArray(before.tag_names) ? [...before.tag_names].sort() : before.tag_names };
+    if (!isDeepStrictEqual(wanted, actual)) {
       throw new ProductFlowError(409, "conflict", "asset before state changed");
     }
   }

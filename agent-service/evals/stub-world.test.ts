@@ -34,13 +34,15 @@ describe("L1 stub world", () => {
     else expect(after.live_graph.edges.some((edge) => edge.id === "edge-brief-prompt")).toBe(false);
   });
 
-  it("does not supply library revision or archived assets absent from the production tool contract", async () => {
+  it("requires explicit archived discovery and preserves Go before facts", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((task) => task.id === "media-library-organization-restore-asset")!;
     const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
     const listed = await stub.client.listGlobalMediaAssets("conv", "", "", 20) as { items: unknown[] };
     expect(listed.items).toEqual([]);
-    expect(task.observability_blocker).toContain("AssetMetadata");
+    const archived = await stub.client.listGlobalMediaAssets("conv", "", "", 20, undefined, { include_archived: true }) as { items: unknown[] };
+    expect(archived.items).toMatchObject([{ revision: 2, tag_names: ["归档"], is_archived: true }]);
+    await expect(stub.client.inspectGlobalMediaAssets("conv", task.page_context.selected_asset_ids)).rejects.toMatchObject({ status: 404 });
   });
   it("records calls and advances the graph revision after an injected conflict", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();

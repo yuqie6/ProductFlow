@@ -1,6 +1,6 @@
 # 任务：批准开发集合并采集可供 Miner 消费的冻结 L1 批次
 
-状态：阻塞
+状态：开放
 类型：证据
 认领者：—
 认领于：—
@@ -22,7 +22,7 @@
 
 ## 前置与并行
 
-- [eval-contract-alignment](archive/eval-contract-alignment.md) 已独立校正、审核并提交，逐题产品依据和新 task hash 齐全；生产 Skill/runtime/harness 不随校正改变。
+- [独立观察刷新](archive/eval-library-observation-refresh.md) 已独立审核并提交，沿用其最新 task/world/fixture 身份；早期 [eval-contract-alignment](archive/eval-contract-alignment.md) 仅作历史依据。生产 Skill/runtime/harness 不随本单采证改变。
 - 本组协调者审核清单：当前公开题与已读轨迹按 exposed development 处理，同源 scene/source/origin 不跨用途。隐藏与独立验收材料未就绪时记录空集与缺口，不另贴标签宣称独立。
 - 真实 provider 凭据可用；固定候选代码 checkout、任务/world、Skill、壳、provider/model、推理参数、并发/预算与完整 trial 分母。协议已声明 dirty 工作树不能承担同 commit 比较时，使用独立固定 checkout，协调认领留在共享工作树。
 - 运行使用独立 `STORAGE_ROOT`，不得修改共享 provider 设置、DB、worker 或图片池/浏览器资源。记录预期 task/trial 数后再开跑，不事后降分母。
@@ -43,8 +43,8 @@
 
 ## 阻塞与交接
 
-- 原因：首轮考题合同已冻结，但 `eval-skills` 的固定新批次发现仍有不可见目标值、非等价释义与必要读取事实缺口；尚无获批准的冻结开发清单与新批次。
-- 解除条件：[可见输入合同](archive/eval-observable-input-contract.md) 与 [生产素材读取合同](archive/agent-library-read-contract.md) 已交付；[独立观察刷新](eval-library-observation-refresh.md) 尚未验收，完整题集仍保留不可观测标记。须独立复核观察夹具并重新冻结可用输入后，自进化组确认版本、集合依据与自身固定执行窗口。`measurementEligible=false` 的诊断分数不得用于候选选择；`skill-ab-20260905` 的公开诊断批次不替代本单的有效开发包。
+- 输入阻塞已解除：[可见输入合同](archive/eval-observable-input-contract.md)、[生产素材读取合同](archive/agent-library-read-contract.md) 与 [独立观察刷新](archive/eval-library-observation-refresh.md) 已交付，12 条素材阻塞经独立审核移除。最新全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`；以观察归档的交付提交冻结执行代码，不使用旧合同 hash。
+- 本单开放待认领。获批准的开发用途清单、新 k=3 批次及有效导出仍未完成，由本单执行者按上述合同采证。`measurementEligible=false` 的诊断分数不得用于候选选择；`skill-ab-20260905` 的公开诊断批次不替代本单有效开发包。
 - 跟进者：自进化组协调者消费 Agent 质量组已交付的固定校正版本；输入就绪后本组自行采证。
 - 交接：无执行者、源码 diff 或运行资源占用；不预研 Miner、不重用旧转录伪造完成证据。eval-contract-alignment 已归档。
 

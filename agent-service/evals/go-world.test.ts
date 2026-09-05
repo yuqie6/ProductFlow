@@ -39,12 +39,21 @@ describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L3 Go dec
       if (kind === "library_draft") {
         const call = task.reference.scripted_calls.find((call) => call.name === "propose_global_draft")!;
         const params = structuredClone(call.params) as JsonObject;
-        // This exercises the decision transaction with an independently seeded valid packet.
-        // The Agent read contract cannot currently supply its required revision; live L3 is blocked.
+        const read = async () => await stub.client.listGlobalMediaAssets("conv", "商品图", "", 20) as { items: Array<Record<string, unknown>> };
+        const current = await read();
+        const { id: asset_id, revision, display_name, folder_id, tag_names, is_archived } = current.items[0];
+        const operation = (params.library_payload as { operations: Array<Record<string, unknown>> }).operations[0];
+        operation.asset_id = asset_id;
+        operation.expected_revision = revision;
+        operation.before = { revision, display_name, folder_id, tag_names, is_archived };
         expect(checkJSONSchema(loadGlobalDraftSchema(), params)).toBe(true);
-        const current = await stub.client.inspectGlobalMediaAssets("conv", ["11111111-1111-4111-8111-111111111111"]) as { items: Array<Record<string, unknown>> };
-        expect(current.items[0]).not.toHaveProperty("revision");
+        const wrong = structuredClone(params);
+        ((wrong.library_payload as { operations: Array<{ before: Record<string, unknown> }> }).operations[0].before).display_name = "wrong-before";
+        await stub.client.validateGlobalDraft("conv", wrong, undefined);
+        await expect(host.decide(kind, "confirm")).rejects.toThrow();
+        expect((await read()).items).toEqual(current.items);
         await stub.client.validateGlobalDraft("conv", params as JsonObject, undefined);
+        expect((await read()).items).toEqual(current.items);
       } else {
         const context = await stub.client.productContext("conv", undefined, "detailed") as { live_graph: { revision: number } };
         const prepared = await stub.client.prepareWorkflowRunRequest("conv", { expected_workflow_revision: context.live_graph.revision, task_id: null, source_run_id: null });
