@@ -6,12 +6,12 @@ Thank you for considering contributing code, documentation, or issue reports to 
 
 ## Before You Start
 
-1. Read `README.en.md` to understand the project positioning and local startup flow.
-2. Read `docs/README.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md` to understand documentation ownership and current feature boundaries.
-3. If you change the backend, read `go/AGENTS.md`. The retired FastAPI tree is on `retired/python`; do not merge it back.
-4. If you change the frontend, read `web/AGENTS.md`.
-5. For cross-layer or product-semantic changes, check `CONTEXT.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md`; unfinished directions belong in `docs/ROADMAP.en.md`. Do not treat `docs/adr/` as current design.
-6. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or local database dumps.
+For initial orientation or setup, consult `README.en.md`. For day-to-day changes, follow [AGENTS.md](AGENTS.md) and read material relevant to the task. Reuse context already read while its relevant inputs remain unchanged:
+
+- Backend changes use `go/AGENTS.md`; frontend changes use `web/AGENTS.md`, alongside the affected implementation and tests.
+- Domain or product-semantic changes use the relevant definitions in `CONTEXT.md` and `docs/PRD.en.md`; unclear code ownership calls for the relevant section of `docs/ARCHITECTURE.en.md`.
+- Documentation edits use the ownership map in `docs/README.md`; unfinished directions belong in `docs/ROADMAP.en.md`. Read `docs/adr/` only for historical questions.
+- The retired FastAPI tree is on `retired/python`; do not merge it back. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or local database dumps.
 
 ## Local Development
 
@@ -30,27 +30,20 @@ just agent-service-run
 just web-dev
 ```
 
-Or run `just dev` to start PostgreSQL, Redis, migrations, the API, worker, dispatcher, Pi Agent, and Web together. The default `mock` provider does not require a real API key.
+Or run `just dev` to start PostgreSQL, Redis, migrations, the API, worker, dispatcher, Pi Agent, and Web together. It stops existing development processes and applies migrations; check other tasks' resource use in a shared environment and reuse a suitable running stack when available. The default `mock` provider does not require a real API key.
 
 ## Common Checks
 
-For backend changes, run:
+Choose checks from the [root verification matrix](AGENTS.md#testing-guidelines). Local logic changes need a regression near the trigger; shared contracts, persistence and cross-module changes need affected reader and writer coverage. Record required checks separately from optional broader validation.
 
-```bash
-just go-test
-```
+| Scope | Verification entrypoint |
+|---|---|
+| Local Go fix / full backend gate | [go/AGENTS.md](go/AGENTS.md#tests); the full gate is `just go-test` |
+| Local Node.js/Pi fix / full service gate | Focused tests and contract checks in the root rules; the full gate is `just agent-service-test` |
+| Local frontend fix / full frontend gate | [web/AGENTS.md](web/AGENTS.md#verification); the full gate includes tests, lint and `just web-build` with bundle budgets |
+| Documentation and engineering instructions only | `just docs-check`, relevant references and diff; walk through positive and negative rule triggers, without business builds by default |
 
-For frontend changes, run:
-
-```bash
-just web-build
-```
-
-For documentation or open-source governance file changes, at least confirm that referenced commands, paths, and configuration files exist.
-
-```bash
-just docs-check
-```
+Real-provider, capacity and frozen model evaluations apply when required by the task contract or the claim being made, with the appropriate environment, authorization and resource isolation. Report actual commands, results and unverified items. Local checks do not establish a full release pass. Completion criteria are in [AGENTS.md](AGENTS.md#completion).
 
 ## Documentation Style
 
@@ -113,4 +106,4 @@ Boundaries:
 ## Engineering Knowledge
 
 `AGENTS.md` holds repository and layer-specific engineering constraints, `CONTEXT.md` records current domain boundaries.
-`docs/adr/` is a historical archive, not live design. GitHub Issues and the actual Git state carry task status.
+`docs/adr/` is a historical archive. Product requirements and PRDs use GitHub Issues; delegated execution contracts and status live in task files in the [local public task pool](docs/audits/tasks/README.md), with the board as a synchronized index. Direct fixes need no ticket. Git status establishes actual changes and commit ownership.

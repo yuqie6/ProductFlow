@@ -1,6 +1,6 @@
 # ProductFlow 文档
 
-一份事实一个家。代码、测试和真实运行是最终证据；文档与它们冲突时改文档。
+一份事实一个家。代码、测试和真实运行说明当前行为；与文档冲突时，核对预期合同并区分实现缺陷和文档过时。只读审查报告差异，已授权的修复更新受影响的实现或活文档。
 
 ## 当前产品
 
@@ -12,7 +12,7 @@
 | [`USER_GUIDE.md`](USER_GUIDE.md) | 页面怎么操作、故障怎么处理 | 内部事务、模型表 |
 | [`../AGENTS.md`](../AGENTS.md)、[`../go/AGENTS.md`](../go/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
 
-`web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影，同一提交更新。
+`web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影。两处共享的用户操作内容变化时，在同一交付中同步受影响部分；只改文档错字、链接或帮助页未展示的内容，不要求改动前端代码。
 
 英文 `PRD.en.md`、`ARCHITECTURE.en.md`、`USER_GUIDE.en.md`、`ROADMAP.en.md` 是翻译，不是第二份规范。
 
@@ -20,7 +20,7 @@
 
 [`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/README.md`](audits/README.md) 索引 Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性五组。**一组一份文档**，按完整交付结果组织组内串行任务，组外消费已可用的固定合同与产物；拆合时迁移有效内容与证据，不保留重复章程。历史证据收入现有 history 文档。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)：任务文件保存合同与状态，看板展示开放、认领和阻塞，关闭记录保留在 archive。独立任务无需归组或父章程；认领由主代理确认，组内交付经审核后同步唯一组文档。当前会话直接处理的小修无需建单。
+[`audits/README.md`](audits/README.md) 索引 Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性五组。**一组一份文档**；拆合时迁移有效内容与证据，不保留重复章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)，由该协议维护认领、提交和归档流程。当前会话直接处理的修复和只读调查无需建单。
 
 ## 历史叙事
 
@@ -28,7 +28,7 @@
 
 ## 历史决策档案
 
-[`adr/`](adr/) 不是当前设计。改代码、改合同、做新功能时不要读它，也不要新写 ADR。当前事实只维护 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。下表只索引已有文件名。
+[`adr/`](adr/) 保存历史决策，按历史追溯需要读取，不作为修改前置或当前设计依据，也不新增 ADR。当前事实维护在 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。下表只索引已有文件名。
 
 | 文档 |
 |---|
@@ -60,8 +60,9 @@
 1. 当前事实写在 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。未验证方向写在 ROADMAP，不把已接线能力再抄一遍。
 2. 规格不复述已交付合同。只写相对 PRD 多出来的能力、验收和不做。
 3. 不再新增 ADR。已有 `adr/` 当档案；当前设计只维护 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。
-4. 用户操作变化必须同时改 USER_GUIDE 和 HelpPage。
+4. 用户操作变化更新受影响的 USER_GUIDE 内容；与 HelpPage 共享的操作按上方投影规则同步。
 5. 实现敏感声明指向当前代码所有者或测试。
 6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`../CONTEXT.md`](../CONTEXT.md) Mainline Scope。
+7. 整理或归档更新活跃索引和链接，保留历史结论、原始 run_id、采证基线与证据归属。历史文件可修复失效链接，但不改写当时的判断。删除范围外或他人的材料仍需明确授权。
 
 `just docs-check` 校验索引、前端路由、code owner 路径、仓库内链接，以及内部 issue 元数据、看板同步和归档索引。规格目录若重新出现才检查状态标注。它不裁定验收证据是否充分，也不自动判断文件写入或运行资源冲突。

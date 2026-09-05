@@ -1,7 +1,6 @@
 ---
 name: frontend-app-ui
-description: Linear-style operational app UI. Calm surfaces, sparse utility copy, icon-led chrome, one accent, cards only when the card is the object. Use when building or restyling ProductFlow pages, workbench, inspector, dock, settings, or other product surfaces (not marketing landing pages).
-paths: web/src/**/*.tsx,web/src/**/*.css
+description: Compose or substantially restyle ProductFlow operational UI with existing surfaces, icon-led controls and object cards. Use for layout and information hierarchy work, not routine wiring or copy fixes.
 ---
 
 # Frontend App UI

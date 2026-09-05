@@ -15,12 +15,12 @@ ProductFlow overlay: user-visible copy still follows `.cursor/rules/ui-language.
 
 ## How It Works
 
-1. Read `command.md` in this directory (vendored snapshot).
-2. Read the specified files, or ask which files to review.
-3. Check against all rules in `command.md`.
-4. Output findings in the terse `file:line` format from that file.
+1. Establish the requested review scope from the files, diff or reported interaction. Ask only when the target cannot be reasonably inferred.
+2. Read the relevant sections of `command.md` in this directory (locally adapted snapshot); a comprehensive UI audit uses all applicable sections. Reuse unchanged guidance already loaded.
+3. Check observable behavior against project contracts. Native controls, existing state ownership and measured rendering costs determine which guidelines apply; do not add handlers, URL state or virtualization solely to satisfy a generic checklist.
+4. Report actionable findings with file locations, impact and a concrete correction. A review remains read-only unless fixes are authorized. State any browser or accessibility behavior that was not verified.
 
-If the user asks for the latest upstream rules, fetch and replace `command.md` from:
+If the user asks for the latest upstream rules, fetch them for comparison from the source below. Replace the local snapshot only when an update is authorized, preserving the ProductFlow adaptations and license:
 
 ```
 https://raw.githubusercontent.com/vercel-labs/web-interface-guidelines/main/command.md

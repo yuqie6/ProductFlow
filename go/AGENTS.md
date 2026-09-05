@@ -19,8 +19,14 @@ Terminal logs are readable lines (time, level, process, message, `key=value`). J
 
 ## Tests
 
+For a local change, run the affected package and the regression nearest the changed behavior, with dev environment variables loaded. For shared contracts, persistence or schema, include affected readers and writers; schema changes need a focused migrate regression. Use `just go-test` for changes across shared platform behavior or the full backend release gate. Documentation-only changes follow the root documentation checks.
+
+Full suite with an explicitly fresh run when required by the task or changed environment:
+
 ```bash
 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./... -count=1 -p 1'
 ```
 
 Packages that touch PostgreSQL skip without `DATABASE_URL`. `testdb.Pool` connects to `<dbname>_gotest_<package>` (created and migrated on first use), not the live just-dev database. `just go-test` still runs `go test -p 1` so packages do not race `CREATE DATABASE` / first migrate. Test harnesses that hit admin routes must set `AdminAccessRequired: true` and overlay `app_settings.admin_access_required=true`.
+
+A skipped database test is not persistence evidence. Reuse valid results when relevant code and environment are unchanged; opt-in capacity and real-provider gates apply when needed for the task's claim. Coordinate concurrent tests of the same package database.

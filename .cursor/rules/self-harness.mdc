@@ -6,11 +6,12 @@ alwaysApply: false
 
 # Agent 质量与自进化
 
-执行这些专项任务时，按 [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md) 申请认领，以对应任务限定范围，并读取适用仓库规则、当前实现与测试：
+按本次目标选择规则：
 
-- 普通 Skill 行为修复：Agent 质量组的 [`docs/audits/tasks/eval-skills.md`](docs/audits/tasks/eval-skills.md)。该单不能修改题目或 grader；测量缺陷走同组的独立先行任务。
-- 可哈希壳（P1）已交付，证据：[`docs/audits/tasks/archive/harness-artifact.md`](docs/audits/tasks/archive/harness-artifact.md)；后续阶段从任务板申请，不重开 P1。
+- 用户直接要求的普通 Skill 修复按根规则调查、验证和交付，不绑定某张长期评测单。编辑前尊重已认领路径和冻结输入；存在占用时交协调者处理，不绕过占用开工。技能编写和局部验证入口见 [`agent-service/.pi/skills/README.md`](../../agent-service/.pi/skills/README.md)。
+- 执行看板中的质量或自进化任务时，按 [`任务协议`](../../docs/audits/tasks/README.md) 确认所有权，执行该任务已冻结的验收合同。真实模型质量声明需要对应固定评测，不能用局部确定性检查代替；普通修复不自动继承其它任务的全部 live 门槛。
+- 修改被测行为时保持题目、world 与 grader 冻结；测量缺陷交独立评测任务修订，使用重新冻结的输入比较基线与候选。
 
-自进化合同在 [`docs/audits/agent-self-harness.md`](docs/audits/agent-self-harness.md)：自动发现、归因、修改、验证和有界迭代，最终一次用户审批。旧 P3–P7 和人工逐簇抽读不再是执行前置。跨层修改按根因批准，生产权限、正式评分和预算保持候选不可写。
+实现或验收自动进化机制时读取 [`自进化合同`](../../docs/audits/agent-self-harness.md) 的相关章节：自动发现、归因、修改、验证和有界迭代，最终一次用户审批。旧 P3–P7 和人工逐簇抽读不再是执行前置。跨层修改按根因确定，生产权限、正式评分和预算保持候选不可写。
 
 人工修复与自动候选分别归因。固定评测可以由交付组自动调用，不等其它组逐次操作。Pi 保持单一生产 loop，代码候选在隔离环境构建和验证，批准前不改生产。Steer、长期记忆、无人工发布和元进化不作为当前完成条件。

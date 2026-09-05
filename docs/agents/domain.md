@@ -14,22 +14,25 @@ Expected files, when they exist:
 - `docs/ROADMAP.md` for unfinished directions
 - package `AGENTS.md` files for executable implementation constraints
 
-`docs/adr/` may exist as a historical archive. Skills must not read it to learn current design, and must not create new ADRs.
+`docs/adr/` may exist as a historical archive. Read it only for historical questions; do not use it to establish current design or create new ADRs.
 
-These files do not need to exist before a skill can run. If they are absent, proceed silently. Producer skills such as `/grill-with-docs` update `CONTEXT.md` when a term is resolved; they do not add ADRs.
+These files do not need to exist before a skill can run. If a reference is absent, continue with available evidence and mention the gap only when it affects the result. Domain discussion, including `/grill-with-docs`, remains read-only unless recording is authorized. Resolving a term does not itself authorize updating `CONTEXT.md`.
 
-## Before exploring, read these
+## Read By Question
 
-- `CONTEXT.md` at the repo root, if it exists.
-- The relevant ownership section in `docs/ARCHITECTURE.md` and package `AGENTS.md` before proposing code changes.
-- Live code, tests, and the current diff. They win over any document.
+- For a domain term or invariant, read the relevant `CONTEXT.md` definition.
+- For ownership or runtime flow, read the affected section of `docs/ARCHITECTURE.md`.
+- For product behavior, read the affected PRD or user-guide section.
+- For implementation work, load applicable package rules and inspect the relevant live code, tests and diff. A local fix does not require reading all domain documents.
+
+Reuse context already read while its relevant inputs remain unchanged. Follow the board's ownership protocol before task-specific exploration when taking a board issue.
 
 ## Use the glossary's vocabulary
 
 When output names a domain concept in an issue title, refactor proposal, hypothesis, or test name, use the term as defined in `CONTEXT.md`.
 
-If the concept is missing from the glossary, either reconsider whether that term belongs in the project language, or update `CONTEXT.md` when the term is actually resolved.
+If a concept is missing, first determine whether an existing term fits. Report a proposed definition during discussion; update `CONTEXT.md` only when recording is requested or the authorized implementation requires updating that contract.
 
 ## Current design wins
 
-If a historical ADR, audit note, or old paragraph contradicts live code or `CONTEXT.md` / `ARCHITECTURE.md`, follow the live sources and update the living docs. Do not block a change because it disagrees with an ADR.
+Use live evidence to distinguish actual behavior, intended contract and historical statements. Report discrepancies during read-only work. During authorized fixes, correct the affected implementation or living document based on that distinction; do not turn an implementation defect into a new requirement. A historical ADR does not block an authorized current design change.

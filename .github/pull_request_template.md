@@ -8,9 +8,11 @@
 
 ## Verification
 
-- [ ] `just go-test`
-- [ ] `just web-build`
-- [ ] Documentation-only change; build/test not required
+Use the risk matrix in `AGENTS.md` and the affected package rules. Include the actual commands, results and relevant browser evidence. `just web-build` includes bundle budgets.
+
+- Required checks and results:
+- Unverified behavior, missing prerequisites and impact:
+- Optional broader checks omitted, when relevant to the claim:
 
 ## Config / migration notes
 

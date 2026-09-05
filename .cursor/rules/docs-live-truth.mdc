@@ -1,12 +1,11 @@
 ---
-description: 当前设计以代码和活文档为准；不把 ADR 当现状，也不为演进中的设计新开 ADR
-alwaysApply: true
+description: 查询产品或架构事实、修改活文档时加载；文档职责见 docs/README.md
+globs: CONTEXT.md,docs/**/*.md
+alwaysApply: false
 ---
 
-# 活设计，不读旧 ADR
+# 活文档
 
-当前事实只在：代码、测试、`CONTEXT.md`、`docs/PRD.md`、`docs/ARCHITECTURE.md`、`docs/USER_GUIDE.md`。未做的事只在 `docs/ROADMAP.md`。
+按问题读取相关章节，文档所有权和更新条件见 [`docs/README.md`](../../docs/README.md)。`docs/adr/` 只作历史追溯，不用来判定当前行为，也不新增 ADR。
 
-`docs/adr/` 是考古档案。改功能前不要去读它，也不要用旧 ADR 否决新设计。文档和代码冲突时改活文档。
-
-不要新写 ADR。设计变了就原地更新 CONTEXT / ARCHITECTURE / PRD / USER_GUIDE。不可逆的产品边界（例如主线不保兼容）写进 `CONTEXT.md`，不要再冻一份决策文。
+代码与文档冲突时核对当前行为和预期合同，区分实现缺陷与文档过时。只读任务报告差异；已授权的修复更新受影响的实现或活文档，不把缺陷直接改写成产品要求。

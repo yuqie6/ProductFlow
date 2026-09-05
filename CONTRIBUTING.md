@@ -6,12 +6,12 @@
 
 ## 开始前
 
-1. 阅读 `README.md`，确认项目定位和本地启动方式。
-2. 阅读 `docs/README.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解文档职责与当前功能边界。
-3. 如果要改后端，读取 `go/AGENTS.md`。退休的 FastAPI 树在 `retired/python`，不要合并回主线。
-4. 如果要改前端，读取 `web/AGENTS.md`。
-5. 跨层或产品语义变更先核对 `CONTEXT.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`；未完成方向写在 `docs/ROADMAP.md`。不要把 `docs/adr/` 当当前设计。
-6. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
+首次了解或配置项目时，参考 `README.md` 的定位和启动说明。日常修改遵循 [AGENTS.md](AGENTS.md)，按任务读取材料，已读且未变化的上下文可复用：
+
+- 后端修改读取 `go/AGENTS.md`；前端修改读取 `web/AGENTS.md`，并检查相关实现与测试。
+- 涉及领域或产品语义时查 `CONTEXT.md`、`docs/PRD.md` 的相关定义；不清楚代码归属时查 `docs/ARCHITECTURE.md` 对应章节。
+- 编辑文档时查 `docs/README.md` 的职责；未完成方向写在 `docs/ROADMAP.md`。`docs/adr/` 只用于历史追溯。
+- 退休的 FastAPI 树在 `retired/python`，不要合并回主线。不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
 
 ## 本地开发
 
@@ -30,27 +30,20 @@ just agent-service-run
 just web-dev
 ```
 
-或使用 `just dev` 一次启动 PostgreSQL、Redis、迁移、API、worker、dispatcher、Pi Agent 和 Web。默认 `mock` provider 不需要真实 API key。
+或使用 `just dev` 一次启动 PostgreSQL、Redis、迁移、API、worker、dispatcher、Pi Agent 和 Web。该命令会先停止已有开发进程并应用迁移；共享环境中先检查其它任务占用，已有可用服务可直接复用。默认 `mock` provider 不需要真实 API key。
 
 ## 常用检查
 
-后端变更建议运行：
+按 [根规则的验证矩阵](AGENTS.md#testing-guidelines) 选择检查。局部逻辑改动运行贴近触发点的回归；共享合同、持久化和跨模块改动扩大到相关读写方。必需验证与可选扩大检查分别记录。
 
-```bash
-just go-test
-```
+| 范围 | 验证入口 |
+|---|---|
+| Go 局部修复 / 完整后端门禁 | [go/AGENTS.md](go/AGENTS.md#tests)；完整门禁为 `just go-test` |
+| Node.js/Pi 局部修复 / 完整服务门禁 | 根规则中的定向测试与合同检查；完整门禁为 `just agent-service-test` |
+| 前端局部修复 / 完整前端门禁 | [web/AGENTS.md](web/AGENTS.md#verification)；完整门禁为 test、lint 和 `just web-build`（含包体预算） |
+| 纯文档和工程指令 | `just docs-check`、相关引用与 diff；规则变更检查正反触发场景，不默认运行业务构建 |
 
-前端变更建议运行：
-
-```bash
-just web-build
-```
-
-文档或开源治理文件变更至少应确认引用的命令、路径和配置文件存在。
-
-```bash
-just docs-check
-```
+真实 provider、容量和固定模型评测按任务合同或所作声明触发，需具备相应环境、授权和资源隔离。报告实际命令、结果及未验证项；通过局部检查不代表完整发布门禁通过。完成标准见 [AGENTS.md](AGENTS.md#completion)。
 
 ## 文档风格
 
@@ -112,4 +105,4 @@ Boundaries:
 
 ## 工程知识位置
 
-`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界。`docs/adr/` 是历史档案，不是当前设计。任务状态由 GitHub Issues 与实际 Git 状态承担。
+`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界。`docs/adr/` 是历史档案。产品需求与 PRD 使用 GitHub Issues；委派执行任务的合同和状态由 [本地公共任务池](docs/audits/tasks/README.md) 中的任务文件维护，看板是同步索引。直接修复不强制建单，Git 状态用于检查实际改动和提交归属。

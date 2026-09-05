@@ -5,3 +5,5 @@ Fetched: 2026-08-21
 License: MIT (LICENSE)
 
 `SKILL.md` was changed to prefer the local `command.md` snapshot and to record the ProductFlow copy/icon overlay. Upstream originally fetched the guidelines on every review.
+
+Local adaptations scope review sections to the task, preserve read-only authorization, and make keyboard handlers, virtualization, URL state and hydration checks conditional on the actual UI. `command.md` also follows ProductFlow localized copy conventions. The license is unchanged.

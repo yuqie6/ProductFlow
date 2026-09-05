@@ -7,7 +7,7 @@ argument-hint: <file-or-pattern>
 
 Review these files for compliance: $ARGUMENTS
 
-Read files, check against rules below. Output concise but comprehensive—sacrifice grammar for brevity. High signal-to-noise.
+Read the files in scope and apply relevant sections below. Report concrete impact and correction, using the project's existing behavior and components as context. This is a locally adapted reference, not a requirement to redesign every reviewed file.
 
 ## Rules
 
@@ -15,7 +15,7 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 
 - Icon-only buttons need `aria-label`
 - Form controls need `<label>` or `aria-label`
-- Interactive elements need keyboard handlers (`onKeyDown`/`onKeyUp`)
+- Interactive elements need keyboard access. Prefer native controls; add `onKeyDown`/`onKeyUp` only for custom interactions or behavior not provided by the native element.
 - `<button>` for actions, `<a>`/`<Link>` for navigation (not `<div onClick>`)
 - Images need `alt` (or `alt=""` if decorative)
 - Decorative icons need `aria-hidden="true"`
@@ -83,7 +83,7 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 
 ### Performance
 
-- Large lists (>50 items): virtualize (`virtua`, `content-visibility: auto`)
+- For lists with demonstrated rendering or interaction cost, use existing pagination or virtualization as appropriate. Item count alone does not require a new library or state layer.
 - No layout reads in render (`getBoundingClientRect`, `offsetHeight`, `offsetWidth`, `scrollTop`)
 - Batch DOM reads/writes; avoid interleaving
 - Prefer uncontrolled inputs; controlled inputs must be cheap per keystroke
@@ -94,9 +94,9 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 
 ### Navigation & State
 
-- URL reflects state—filters, tabs, pagination, expanded panels in query params
+- Put filters, tabs or pagination in the URL when the workflow needs sharing, reload persistence or browser navigation; follow the existing route contract.
 - Links use `<a>`/`<Link>` (Cmd/Ctrl+click, middle-click support)
-- Deep-link all stateful UI (if uses `useState`, consider URL sync via nuqs or similar)
+- Keep transient selections, panel state and edit drafts local unless the product workflow requires deep links. `useState` alone is not a reason to introduce URL synchronization.
 - Destructive actions need confirmation modal or undo window—never immediate
 
 ### Touch & Interaction
@@ -130,7 +130,7 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 ### Hydration Safety
 
 - Inputs with `value` need `onChange` (or use `defaultValue` for uncontrolled)
-- Date/time rendering: guard against hydration mismatch (server vs client)
+- When a page uses server rendering and hydration, check date/time mismatches; this does not apply to client-only Vite routes.
 - `suppressHydrationWarning` only where truly needed
 
 ### Hover & Interactive States
@@ -141,7 +141,7 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 ### Content & Copy
 
 - Active voice: "Install the CLI" not "The CLI will be installed"
-- Title Case for headings/buttons (Chicago style)
+- Follow the project's localized copy conventions; ProductFlow Chinese UI uses sentence-like phrasing and icon toolbars retain accessible names.
 - Numerals for counts: "8 deployments" not "eight"
 - Specific button labels: "Save API Key" not "Continue"
 - Error messages include fix/next step, not just problem
@@ -157,7 +157,7 @@ Read files, check against rules below. Output concise but comprehensive—sacrif
 - Inline `onClick` navigation without `<a>`
 - `<div>` or `<span>` with click handlers (should be `<button>`)
 - Images without dimensions
-- Large arrays `.map()` without virtualization
+- Unbounded list rendering with demonstrated interaction or memory cost
 - Form inputs without labels
 - Icon buttons without `aria-label`
 - Hardcoded date/number formats (use `Intl.*`)
@@ -187,4 +187,4 @@ src/Modal.tsx:34 - "..." → "…"
 ✓ pass
 ```
 
-State issue + location. Skip explanation unless fix non-obvious. No preamble.
+State issue, location, impact and correction concisely. Report unverified behavior separately; avoid findings based only on an inapplicable checklist item.

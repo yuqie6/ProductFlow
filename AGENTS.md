@@ -2,7 +2,9 @@
 
 ## Working Method
 
-Read the live implementation, call chain, tests, and current diff before deciding what is true. Use `CONTEXT.md` for domain vocabulary and stable invariants, `docs/PRD.md` / `docs/ARCHITECTURE.md` / `docs/USER_GUIDE.md` for current product and runtime shape, and `docs/ROADMAP.md` for unfinished directions. Do not treat `docs/adr/` as current design, and do not write new ADRs. When documentation conflicts with code or tests, verify the live behavior and correct the living documentation.
+Inspect the current diff and the implementation, callers and tests relevant to the task. Load applicable package rules when entering that package. Reuse documents and verification already read in the session while their relevant inputs remain unchanged; refresh when files, environment, ownership or context may have changed.
+
+Read documentation by question: `CONTEXT.md` for domain terms and invariants, `docs/ARCHITECTURE.md` for ownership and runtime flow, `docs/PRD.md` / `docs/USER_GUIDE.md` for affected product behavior, and `docs/ROADMAP.md` for unfinished directions. Read the relevant sections rather than treating this list as an opening checklist. `docs/adr/` is a historical archive, not current design; do not write new ADRs. When code and documentation disagree, determine whether the implementation or the document is wrong. Read-only reviews report the discrepancy; authorized fixes update the affected implementation or living documentation.
 
 Do not require a repository task, planning phase, session journal, or workflow ceremony for ordinary work. When the user asks to fix a problem directly, investigate and fix it in the current session without requiring a business group or issue. When asked to record a task for another agent, use the shared board at [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md): it accepts both business-group tasks and independent user requests. Independent tasks omit group/parent metadata and record the reported problem and expected outcome. For other broad changes, state the scope and validation plan in the conversation or issue. Persist only decisions that will remain useful after the change.
 
@@ -12,7 +14,7 @@ Before a cross-layer change, trace `input -> wire schema -> application use case
 
 Search for an existing implementation before adding a helper, API, state store, component, or constant. Extract an abstraction only when it removes repeated non-trivial logic or establishes one real owner. After deletion or a contract rename, scan code, tests, configuration, and docs for residue. Do not keep readers for retired shapes.
 
-Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`. For publishing, claiming, blocking, reviewing or closing an internal issue, follow [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md). The issue file owns its status; the board is a checked index. When taking a board task, acquire confirmed ownership before task-specific investigation or planning, including read-only code exploration. Before ownership, only select a candidate from its packet and check prerequisites and occupancy; promptly request its claim, then wait for confirmation. After ownership, inspect live code, tests and applicable repository rules before designing or editing. This ordering also applies when the primary agent executes a board task.
+When editing documentation, use the ownership map in [`docs/README.md`](docs/README.md). For publishing, claiming, blocking, reviewing or closing a board issue, load [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md); it owns the full coordination procedure. Board tasks require confirmed ownership before task-specific investigation or planning, including read-only exploration by the primary agent. Direct work must still respect existing file ownership and frozen runtime resources.
 
 ## Multi-Agent Delivery
 
@@ -25,34 +27,22 @@ The primary agent owns:
 - cross-slice integration, deletion of obsolete paths and final verification;
 - user-facing status, risk and completion claims.
 
-Implementation sub-agents receive one bounded causal slice at a time. For work on the audit task board, that slice is exactly one claimed file under `docs/audits/tasks/`. Each task packet must state:
+Implementation sub-agents receive one claimed board task at a time, with outcome, exclusive scope, invariants, dependencies and completion evidence specified by the [task template](docs/audits/tasks/_template.md). Keep one writer per file or tightly coupled module. Parallel slices must have non-conflicting write scopes, frozen inputs and runtime resources. Use at most three implementation agents alongside the primary agent when four slots are available. Worktree-local commits do not establish mutual exclusion.
 
-- the concrete outcome and user-visible behavior;
-- current implementation and contract anchors to inspect;
-- files or modules the agent owns and boundaries it must not edit;
-- required wire, persistence and runtime invariants;
-- focused tests and completion evidence;
-- prerequisites, frozen evaluation inputs and exclusive runtime resources where applicable;
-- claim fields (`状态` / `认领者` / `认领于`) so other agents can see occupancy.
-
-Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their write scopes, frozen inputs and runtime resources do not conflict and each slice is claimed on the board. With four total agent slots, use at most three implementation agents alongside the primary agent. The primary agent confirms claims in one coordinating workspace; local commits in separate worktrees do not provide mutual exclusion.
-
-The executor self-reviews its exclusive diff and reports evidence; the primary agent reviews every sub-agent delivery before acceptance. The coordinator serializes ownership registration in the shared working tree; confirmed registration grants ownership without a Git commit. One designated Git writer (the primary agent by default) commits each completed task's implementation, tests, evidence and archive together. Do not create separate claim, progress, release or routine archive commits. Closing a group issue updates its parent ledger's affected conclusions and evidence links; independent issues record the outcome in the issue without creating a ledger. Both follow the same review and archive rules. Only the primary agent publishes follow-up issues after checking prerequisites. The executor **stops for assignment**. Procedure: `docs/audits/tasks/README.md` and `.cursor/rules/module-review-commit.mdc`. Sub-agents must not push, reset, revert, or declare the overall program complete.
-
-The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is filed as a new `开放` board task, not started in the same turn. Ordinary small fixes and read-only investigations do not use the board unless the user asks to file a task.
+Each executor self-reviews its complete task diff and reports evidence; the primary agent reviews every sub-agent delivery and coordinates integration. Sub-agents stop for assignment after delivery and must not push, reset, revert, or declare the overall program complete. The primary agent continues necessary work within the user's authorized objective. When integration reveals a substantial new slice, adjust or publish its task and confirm ownership and dependencies before proceeding; this can happen in the same turn. New objectives or actions beyond existing authorization require user approval.
 
 ## Project Structure & Module Organization
-ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, asynq). Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `go/README.md` or `web/AGENTS.md` before editing that package. The retired FastAPI tree is on `retired/python`; do not merge it back.
+ProductFlow is a single-administrator, single-merchant workspace. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, asynq). Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Package rules live in `go/AGENTS.md` and `web/AGENTS.md`; consult `go/README.md` for Go setup or runtime questions. The retired FastAPI tree is on `retired/python`; do not merge it back.
 
 ## Build, Test, and Development Commands
 Use the root `justfile` whenever possible:
 
-- `docker compose up -d` — start local PostgreSQL and Redis.
+- `docker compose up -d productflow-postgres productflow-redis` — start local PostgreSQL and Redis.
 - `just go-migrate` — apply GORM `CreateTable`/`AddColumn` plus ExtraDDL with dev env vars. AutoMigrate is not used.
 - `just go-api` — run the Go business API (default local runtime).
 - `just go-worker` — run the Go asynq worker.
 - `just go-dispatcher` — run the Go async dispatcher.
-- `just go-test` — run Go tests (`go test -C go ./...`).
+- `just go-test` — run the full Go suite with dev env vars and serial package execution.
 - `just agent-service-install` — install the Node.js/Pi Agent dependencies from the lockfile.
 - `just agent-service-run` — run the Node.js/Pi workflow Agent service.
 - `just agent-service-test` — run Agent service tests.
@@ -61,17 +51,35 @@ Use the root `justfile` whenever possible:
 - `just docs-check` — verify documented routes, code-owner paths, local Markdown links, and internal issue/board consistency.
 - `just web-install` — install frontend dependencies with pnpm.
 - `just web-dev` — run Vite with the API proxy configured.
-- `just web-build` — type-check and build the frontend.
+- `just web-build` — type-check, build the frontend, and check bundle budgets.
 - `just web-e2e-live-graph` — opt-in browser gate: skip-Agent create, run the full graph, real prompt/image providers.
+
+Use an existing suitable dev stack when available. Before `just dev` / `just dev-stop`, check whether its processes or database are in use by another task. Real-provider runs require the task's credentials, budget authorization and resource isolation; an opt-in command does not grant them.
 
 ## Coding Style & Naming Conventions
 Go packages under `go/internal/` use the module layout in `go/AGENTS.md`. React components and pages use `PascalCase` filenames, such as `ProductListPage.tsx`; hooks, helpers, and API functions use `camelCase`. Keep provider-specific code behind infrastructure factories instead of leaking it into routes.
 
 ## Testing Guidelines
-Go tests live under `go/` and are the default backend gate: `just go-test` (needs `DATABASE_URL` for packages that use PostgreSQL). Run `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes go through GORM models plus constraint patches in `go/internal/platform/db/schema` and a focused migrate regression. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
+Choose verification from the changed behavior and its consumers. A fixed task or release contract may require more; retain that requirement unless its owner changes the contract before evaluation.
+
+| Change | Required evidence |
+|---|---|
+| Documentation or engineering instructions only | Relevant links, commands, diff and `just docs-check`; for rule changes, walk through positive and negative trigger cases. No business build or live run by default. |
+| Local logic or interaction | Focused regression at the causal boundary plus applicable package static checks. |
+| Shared wire types, state machines, persistence or schema | Tests for affected readers and writers and cross-module behavior; schema changes include a focused migrate regression. |
+| Layout, copy or theme | The affected UI and relevant viewport, locale, theme and input states, as scoped in `web/AGENTS.md`. |
+| Release, capacity or real-model quality claim | The corresponding full build, budget, browser or frozen live evaluation gate. A local pass does not establish the broader claim. |
+
+Go commands and PostgreSQL prerequisites are in `go/AGENTS.md`; `just go-test` is the full backend gate. For Node.js/Pi code changes, run focused tests and check affected generated contracts with `just agent-service-check-contracts`; use `just agent-service-test` for shared runtime changes or the full service gate. Product runtime prompts and Skills are behavior changes, not documentation-only edits. Skill changes follow `agent-service/.pi/skills/README.md`; real-model evals remain opt-in unless the task contract requires them. Frontend checks are defined in `web/AGENTS.md`. Reuse valid results when their code, dependencies, configuration and relevant environment are unchanged. Broaden or repeat checks for new evidence or changed inputs.
+
+## Completion
+
+A task is complete when its requested output is delivered, required behavior has proportionate evidence, the complete task diff and temporary artifacts or processes have been reviewed, and necessary documentation and authorized delivery commits are finished. State unverified items and their impact. Read-only reviews and discussions finish with findings or decisions and do not authorize file changes.
+
+Continue authorized work through implementation, verification and integration without repeated permission requests. If a required check is blocked, report the missing input or environment and do not claim completion; optional broader checks do not block a verified local result. Finish other independent work within the objective where possible. Do not expand into unrelated fixes merely to make a full suite green. Stop at a genuine authorization, dependency or resource boundary rather than a turn boundary.
 
 ## Commit & Pull Request Guidelines
-Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one delivery commit per completed task by default, including its final records and archive; ordinary direct fixes use one focused commit per topic. Claiming or updating task status is not a deliverable and must not trigger a commit. Before any commit, reread the live `.cursor/rules/module-review-commit.mdc` and, for board work, `docs/audits/tasks/README.md`; do not rely on a session's earlier copy. A reviewed exclusive delivery is committed in the same turn; that is standing authorization for this repo. Do not wait for a separate commit request, and do not commit unresolved work, secrets, or files outside the task. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.
+Load [the commit procedure](.cursor/rules/module-review-commit.mdc) when preparing this task's first commit; reuse it until it changes or context is missing. Board delivery and archive mechanics belong to the task protocol. A reviewed exclusive delivery is committed in the same turn; that is standing authorization for this repo, subject to the user's current instructions. Do not wait for a separate commit request. Pull requests describe the user-visible change, report actual verification and gaps, call out migrations/config changes, and include relevant UI screenshots.
 
 ## Documentation Style
 Official docs, release notes, PR descriptions, and contribution guidance must stay concrete and verifiable. Avoid templated delivery copy and empty contrast/progress scaffolding:

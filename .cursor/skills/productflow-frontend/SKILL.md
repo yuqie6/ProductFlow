@@ -1,38 +1,36 @@
 ---
 name: productflow-frontend
-description: ProductFlow 工作台 UI 的项目前端技能入口。画面先于文字、图标替代正文、后端词转译成用户结果语言；并在现有 token 内做克制的运营界面。Use when changing web UI, workbench, inspector, i18n copy, empty/error states, buttons, or visual design.
-paths: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css
+description: Design new or substantially restyled ProductFlow UI using existing tokens, workbench controls and user-facing language. Routine copy corrections, event wiring and nonvisual fixes use the relevant project rules without a design workflow.
 ---
 
 # ProductFlow Frontend
 
-改用户能看见的界面时先读本技能，再读专项技能。权威顺序：
+用于新增界面或实质调整布局、层级和观感。现有工程与文案约定分别由 `web/AGENTS.md`、`.cursor/rules/ui-language.mdc` 维护；token 以 `web/src/index.css` 的相关定义为准。
 
-1. `.cursor/rules/ui-language.mdc` — 文案、图标、转译（项目法）
-2. `web/src/index.css` `@theme` — 已有 token 与工作台结构
-3. `web/AGENTS.md` — 工程合同（无障碍、状态、复用 chrome）
-4. [frontend-app-ui](../frontend-app-ui/SKILL.md) — 运营工作台构图
-5. [frontend-design](../frontend-design/SKILL.md) — 反模板审美，但必须先读 [PRODUCTFLOW.md](../frontend-design/PRODUCTFLOW.md)
-6. [web-design-guidelines](../web-design-guidelines/SKILL.md) — 无障碍 / 焦点 / 触控审计
+按需要选择专项资料，不串读整个技能集：
 
-画布、检查器、配方、侧栏还要跟 `.cursor/rules/workbench.mdc`。操作说明以 `docs/USER_GUIDE.md` 为准。
+| 当前工作 | 读取材料 |
+|---|---|
+| 运营工作台的布局或层级设计 | [frontend-app-ui](../frontend-app-ui/SKILL.md) |
+| 用户明确要求新的视觉方向 | [PRODUCTFLOW.md](../frontend-design/PRODUCTFLOW.md)，再按该覆盖层使用 [frontend-design](../frontend-design/SKILL.md) |
+| 用户要求 UI / 无障碍审查，或需解决具体可用性问题 | [web-design-guidelines](../web-design-guidelines/SKILL.md) 的相关检查项 |
+| 画布、检查器、配方或侧栏的行为变化 | `.cursor/rules/workbench.mdc`，以及 `docs/USER_GUIDE.md` 中受影响的操作 |
+
+已加载且未变化的资料可复用。仅修改文案时使用文案规则和相关 i18n 键；仅修接线时读取组件、调用链和测试。
 
 ## 这是什么产品
 
 单商家商品视觉工作台。主生产面是画布，不是落地页。用户要扫节点、连边、跑图、选素材。Agent 是旁边的协作者。
 
-## 开工前
+## 设计边界
 
-用一句话写下：这一面的唯一工作是什么。然后删掉不服务这句话的字、卡、色、动效。
+围绕用户在当前界面完成的任务安排信息和操作。只调整本次范围内影响该任务的内容，不为完成设计练习扩大清理范围。
 
 不要新开色板、字体、布局壳、节点卡皮肤。accent 只有一套（亮 indigo / 暗 violet）。字体是 Inter + 中文回退。
 
 ## 文案
 
-- 先问：删掉这句，画面还能否被扫懂？能就删。
-- 工具条、节点类型、状态：图标 / 色 / 预览；字进 `aria-label`。
-- 空态、确认、失败：一句结果 + 下一步。不解释架构。
-- 禁止把 schema、revision、asset id、digest、payload 校验值画在常规 chrome 上。调试信息进开发者工具或明确的「技术详情」折叠。
+遵循 `.cursor/rules/ui-language.mdc`，复用已有术语和四语键。图标控件仍需可达名称，陌生图标需提示；必要标签和状态不能只靠颜色表达。
 
 ## 画面
 
@@ -40,3 +38,7 @@ paths: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css
 - 边：默认低噪声；关系文字只在 hover / 选中 / 详情。
 - 卡片只在「卡片本身就是对象」（节点、素材、一次运行）时使用。面板用 layout，不要套一层卡。
 - 动效只用于状态切换、抽屉、选中；尊重 `prefers-reduced-motion`。不要为工作台做 hero 入场。
+
+## 完成
+
+受影响的用户流程可用，界面复用当前视觉体系，并完成 `web/AGENTS.md` 中与改动风险相称的检查。报告可观察结果和未验证项；普通局部改动不要求独特性评审、额外设计稿或全站重设计。

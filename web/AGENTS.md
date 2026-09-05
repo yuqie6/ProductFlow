@@ -1,8 +1,10 @@
 # Frontend Engineering Guidelines
 
-## Read First
+## Task Context
 
-Use `docs/ARCHITECTURE.md` for the current code map and inspect the route, API method, shared DTO, feature owner, and closest tests before editing. Backend and current browser behavior define the wire contract; old screenshots and retired pages do not.
+Inspect the changed component or helper, its relevant callers, tests and diff. For navigation changes, trace the route; for API changes, inspect the API method, shared DTO and backend contract. Consult the relevant section of `docs/ARCHITECTURE.md` when ownership is unclear. A copy or layout fix does not require tracing unrelated API and persistence paths. Current code and browser evidence establish actual behavior; compare them with the intended contract before deciding what to fix.
+
+For visible copy and controls, load `.cursor/rules/ui-language.mdc`. New or substantially restyled surfaces use `.cursor/skills/productflow-frontend/SKILL.md`, which routes to the relevant design guidance. Ordinary event wiring, query fixes and copy corrections do not require a design plan or a full UI audit. Workbench behavior uses `.cursor/rules/workbench.mdc`; read affected `docs/USER_GUIDE.md` sections when the user workflow changes. Reuse unchanged rules already loaded in this session.
 
 ## Ownership
 
@@ -64,26 +66,34 @@ Current feature owners:
 
 ## Verification
 
-Run focused tests while editing, then:
+Select checks using the root `AGENTS.md` risk matrix:
+
+- Local logic or interaction: run the affected Vitest tests and lint the changed TS/TSX files; verify the actual interaction in a browser when the defect depends on DOM events or rendering.
+- Copy or styling: check changed translations and affected rendering; choose the locales, themes and viewport boundaries that can expose the change. A prose-only edit to these instructions needs documentation checks, not a frontend build.
+- Shared API/types, query ownership, routing, shared controls, global styling, dependencies or build configuration: run the full frontend gate below and relevant consumer tests. Use the same full gate for a frontend release.
+
+Full frontend gate:
 
 ```bash
 pnpm --dir web test:run
 pnpm --dir web lint
-pnpm --dir web build
+just web-build
 ```
 
-Skip-Agent, real-provider full-graph browser coverage is opt-in and is not part of the commands above. It needs a running `just dev` stack and real prompt/image bindings:
+`just web-build` includes type-checking, the production build and bundle budgets. Direct `pnpm --dir web build` omits the budget check; do not report it as the same gate. For local TS/TSX changes where a targeted test does not establish type correctness, run the relevant TypeScript project check or `just web-build`.
+
+Skip-Agent, real-provider full-graph browser coverage is opt-in unless required by the task's acceptance contract. It needs a suitable running dev stack, real prompt/image bindings and authorized provider usage:
 
 ```bash
 just web-e2e-live-graph
 ```
 
-Inspector rewrite / candidate apply against mock prompt/image providers is a separate opt-in gate:
+Inspector rewrite / candidate apply against mock prompt/image providers is a separate opt-in gate. It temporarily changes provider bindings; use an isolated stack or coordinate exclusive use and restoration:
 
 ```bash
 just web-e2e-canvas-document
 ```
 
-For visible workflow changes, also verify desktop, narrow desktop, and mobile in a real browser, including light/dark mode, supported locales, console/network errors, overlap, clipping, and reduced motion.
+For layout and canvas changes, verify the affected flow at desktop, narrow desktop and mobile boundaries, checking overlap, clipping and console/network errors. Theme changes need light/dark checks; translated or resized text needs relevant locales and long content; changed animation needs reduced motion; changed controls need relevant keyboard and touch behavior. Combine the full matrix for a shared shell redesign or release, rather than repeating every dimension for each local change.
 
-Match tests to the changed owner: API encoding/body, parser/reducer, hook/query invalidation, component interaction, canvas adapters, inspector autosave, image selection, or route transition. For canvas and layout changes, verify actual `innerWidth`, `clientWidth`, element bounds, and nonblank canvas pixels.
+Match tests to the changed owner: API encoding/body, parser/reducer, hook/query invalidation, component interaction, canvas adapters, inspector autosave, image selection, or route transition. For canvas and layout evidence, verify actual `innerWidth`, `clientWidth` and element bounds; check nonblank pixels for affected raster or 3D canvases. Report required checks that could not run and optional checks outside the local claim. Reuse results while their relevant inputs remain unchanged.
