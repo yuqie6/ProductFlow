@@ -26,7 +26,7 @@
 
 ### Agent 耐久
 
-lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/performance-governance.md#production-gates`](audits/performance-governance.md#production-gates)。S1–S6 与 G-01–G-05、G-07 已关闭。运行时所有权 S0–S6 已关闭，证据在 [`history/agent-runtime-timeline.md#runtime-ownership-evidence`](history/agent-runtime-timeline.md#runtime-ownership-evidence)。
+下一候选仍需 G-06 的可采信真实业务证据与 G-07 的干净固定 checkout 全量验证，口径见 [平台可靠性发布合同](audits/performance-governance.md#production-gates)。历史 S1–S6 实现切片已交付，旧 G-07 PASS 仅对 `fb658633` 有效，不代表后续候选通过；[原生产计划](history/agent-runtime-timeline.md#platform-production-gate-history)与[运行时所有权记录](history/agent-runtime-timeline.md#runtime-ownership-evidence)保留历史证据，不重新开工。
 
 剩余：G-06 的行为门槛由 [评测组章程](audits/agent-eval-system.md) 根据已审核的 `run_id` 裁定，执行进度见 [Issue 看板](audits/tasks/README.md)。采证 issue 关闭不等于门槛通过。未过门前不扩大默认能力，也不把 Pi session 文件当作 durable 证明。background 模型调用仍按生产账本 D-03 不接。旧 Go Agent 留在 `exp`。Session、Task、WorkflowRun 不得合并，见 `CONTEXT.md`。
 
@@ -40,7 +40,7 @@ Agent 质量组在组内串行完成考题校正与 [普通 Skill 修复复验](
 
 ### 运行时性能治理
 
-[生图 admission 指标](audits/tasks/archive/perf-capacity-metrics.md)已交付。[连续生图详情有界读取](audits/tasks/archive/perf-imagesession-detail.md)已交付。[dispatcher 积压续投](audits/tasks/archive/perf-dispatcher-backlog.md)已交付，本地 500 条突发单副本 PENDING→SENT p95 0.438s。基线与锁序在 [`audits/performance-governance.md`](audits/performance-governance.md)。SaaS tenant admission 仍是新基线。
+待验证方向：故障到用户可见收敛的时间预算、连续生图活动任务增长时的 Status/SSE 成本、恢复积压与正常投递共存的尾延迟，以及实际部署中的连接与锁等待。按 [平台可靠性章程](audits/performance-governance.md#下一步如何选择) 的风险与发布条件选题；先前详情、投递和容量局部门不覆盖这些负载。候选尚未固定时不反复跑全量门；SaaS tenant admission 另属新产品基线。
 
 ### 画布文稿权威测试
 

@@ -26,7 +26,7 @@ Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe lib
 
 ### Agent durability
 
-Lease, journal, effect reconciliation, SSE gap repair, and capacity-gate evidence live in [`audits/performance-governance.md#production-gates`](audits/performance-governance.md#production-gates). S1–S6 and G-01–G-05, G-07 are closed. Runtime-ownership S0–S6 is closed; evidence is in [`history/agent-runtime-timeline.md#runtime-ownership-evidence`](history/agent-runtime-timeline.md#runtime-ownership-evidence).
+The next candidate still needs admissible G-06 live business evidence and G-07 full verification on a clean, fixed checkout, under the [Platform Reliability release contract](audits/performance-governance.md#production-gates). Historical S1-S6 implementation slices are delivered. The old G-07 PASS applies only to `fb658633`, not later candidates. The [original production plan](history/agent-runtime-timeline.md#platform-production-gate-history) and [runtime-ownership record](history/agent-runtime-timeline.md#runtime-ownership-evidence) preserve historical evidence without reopening implementation.
 
 Remaining: the [evaluation charter](audits/agent-eval-system.md) decides G-06 behavior gates from reviewed `run_id` evidence; execution progress lives on the [issue board](audits/tasks/README.md). Closing an evidence issue does not pass the gate. Until the gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
 
@@ -44,7 +44,7 @@ C0–C6 are landed. C4 idle rewrite/candidate, mid-run inspector typing, undo du
 
 ### Runtime performance governance
 
-[Generation admission metrics](audits/tasks/archive/perf-capacity-metrics.md) are delivered. [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. [Dispatcher backlog continuation](audits/tasks/archive/perf-dispatcher-backlog.md) is delivered; a local 500-item burst now has single-replica PENDING→SENT p95 0.438s. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
+Unverified directions: time from a fault to user-visible recovery, ImageSession Status/SSE cost as active tasks grow, dispatch tail latency alongside recovery backlog, and deployed connection/lock-wait behavior. Select work using the risks and publication conditions in the [Platform Reliability charter](audits/performance-governance.md#下一步如何选择). Previous detail, dispatch, and capacity gates do not cover these workloads. Do not repeatedly run full release gates before freezing the candidate. SaaS tenant admission belongs to a separate product baseline.
 
 ### Responsibility consolidation
 
