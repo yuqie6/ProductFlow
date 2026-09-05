@@ -6,6 +6,8 @@
 
 ## 组职责与交付序列
 
+2026-09-05 第二批 `20260905T121323Z-d6899746` 在 90/225 条完整记录后，发现三个安全素材澄清仅因未列表而判失败，交 [澄清读取义务校正](tasks/eval-clarification-read-obligations.md)。删节点校正题 3/3 通过；第二批仍无有效完整开发包，不晋升 D-03/D-08/T-08。下一次付费采证前复查同类必需读取，原始失败不删除或回填。
+
 2026-09-05 新开发基线 `20260905T114437Z-a8d89635` 在 54/225 条完整记录后因删节点改写歧义停止，旧批次无完整 summary 或开发导出。[题意校正](tasks/archive/eval-graph-clear-intent.md) 已将三种问法统一为保留商品资料和全部分组，并覆盖 120 种正确删除排列及额外写入拒绝；通用评分器未放宽。全量 taskSetHash 更新为 `988c2d2895c09fa2b8e8167f060ad27c320c471a5c3bf8fa8cce1802bd4c5e6a`，由 [开发基线](tasks/eval-development-baseline.md) 按新提交完整重采。D-03、D-08、T-08 未通过，既有素材合同交付不受影响。
 
 - 当前主线的 [可见输入校正](tasks/archive/eval-observable-input-contract.md)、[素材整理读取合同](tasks/archive/agent-library-read-contract.md) 与 [独立观察刷新](tasks/archive/eval-library-observation-refresh.md) 已交付。12 条素材输入阻塞解除，固定可测输入可交 [开发基线](tasks/eval-development-baseline.md) 采证及 [Skill 候选复验](tasks/eval-skills.md) 重新安排同版本 A/B；既有候选认领和旧 A 产物保持，历史诊断成绩不补发资格。协调者串行安排各自冻结窗口。
