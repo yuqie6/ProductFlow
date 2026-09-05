@@ -12,7 +12,7 @@
   "utterances": [
     "这次 provider_error 具体发生在哪里",
     "读取指定 run 解释供应商错误",
-    "查看 run 4444 的节点失败详情"
+    "查看 run 44444444-4444-4444-8444-444444444444 的节点失败详情"
   ],
   "world": "expanded-failed-run",
   "page_context": {
@@ -38,7 +38,15 @@
         "load_productflow_skill",
         "get_workflow_run_detail_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      ]
     },
     "ops": {
       "required": [],

@@ -56,7 +56,8 @@
         "tool": "propose_global_draft",
         "match": {
           "library_payload.operations[0].operation": "archive",
-          "library_payload.operations[0].target.is_archived": true
+          "library_payload.operations[0].target.is_archived": true,
+          "library_payload.operations[0].asset_id": "11111111-1111-4111-8111-111111111111"
         }
       }
     ],
@@ -109,5 +110,6 @@
         }
       }
     ]
-  }
+  },
+  "observability_blocker": "Go ListLibraryAssets/InspectLibraryAssets 的 AssetMetadata 缺少草案 JSON Schema 必填的 expected_revision/before 所需 revision、tag_names、is_archived；归档素材也不会由当前读取工具返回。生产工具与 Skill 合同待独立修复，不使用桩补造这些事实。"
 }

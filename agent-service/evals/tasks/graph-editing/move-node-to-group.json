@@ -39,7 +39,13 @@
         "get_product_workflow_context_v1",
         "apply_graph_change_set_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [
@@ -52,7 +58,10 @@
         "tool": "apply_graph_change_set_v1",
         "match": {
           "operations[0].op": "move_nodes_to_group",
-          "operations[0].group_ref": "group-main"
+          "operations[0].group_ref": "group-main",
+          "operations[0].node_refs": [
+            "node-prompt-2"
+          ]
         }
       }
     ]

@@ -35,6 +35,8 @@ export const EvalCallRecordSchema = Type.Object(
     name: nonEmptyStringSchema,
     params: jsonValueSchema,
     ts: nonEmptyStringSchema,
+    outcome: Type.Union([Type.Literal("succeeded"), Type.Literal("failed"), Type.Literal("unknown")]),
+    observed_injections: Type.Optional(Type.Array(nonEmptyStringSchema)),
   },
   { additionalProperties: false },
 );
@@ -129,6 +131,7 @@ export const EvalUserSimSchema = Type.Object(
           ]),
           text: Type.Optional(Type.String()),
           answer: Type.Optional(jsonValueSchema),
+          authorize_writes: Type.Optional(Type.Boolean()),
         },
         { additionalProperties: false },
       ),
@@ -144,6 +147,7 @@ export const EvalExpectSchema = Type.Object(
       {
         required: Type.Array(nonEmptyStringSchema, { uniqueItems: true }),
         forbidden: Type.Array(nonEmptyStringSchema, { uniqueItems: true }),
+        reads: Type.Optional(Type.Array(writeExpectationSchema)),
       },
       { additionalProperties: false },
     ),
@@ -198,6 +202,7 @@ export const EvalTaskSchema = Type.Object(
     page_context: pageContextSchema,
     expect: EvalExpectSchema,
     origin: nonEmptyStringSchema,
+    observability_blocker: Type.Optional(nonEmptyStringSchema),
     reference: Type.Object(
       {
         scripted_calls: Type.Array(EvalReferenceCallSchema, { minItems: 1 }),
@@ -245,6 +250,7 @@ const graphNodeSchema = Type.Object(
     id: nonEmptyStringSchema,
     node_type: nonEmptyStringSchema,
     title: Type.String(),
+    config: Type.Optional(Type.Record(Type.String(), jsonValueSchema)),
   },
   { additionalProperties: false },
 );
@@ -255,6 +261,13 @@ export const EvalWorldSchema = Type.Object(
     name: Type.String({ minLength: 1, maxLength: 120, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$" }),
     intake: Type.Union([Type.Record(Type.String(), jsonValueSchema), Type.Null()]),
     birth_expandable: Type.Boolean(),
+    pending_proposal_id: Type.Optional(nonEmptyStringSchema),
+    listed_workflow_runs: Type.Optional(Type.Array(Type.Object({
+      workflow_id: nonEmptyStringSchema,
+      workflow_title: nonEmptyStringSchema,
+      workflow_revision: Type.Integer({ minimum: 0 }),
+      items: Type.Array(Type.Object({ id: nonEmptyStringSchema, status: nonEmptyStringSchema }, { additionalProperties: false })),
+    }, { additionalProperties: false }))),
     live_graph: Type.Object(
       {
         id: nonEmptyStringSchema,

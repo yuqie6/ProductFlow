@@ -55,22 +55,23 @@ var (
 
 // EvalTask is the language-neutral Agent eval task JSON used by Go L2/L6.
 type EvalTask struct {
-	SchemaVersion int            `json:"schema_version"`
-	ID            string         `json:"id"`
-	Skill         string         `json:"skill"`
-	Scope         string         `json:"scope"`
-	Suite         string         `json:"suite"`
-	CaseType      string         `json:"case_type"`
-	Layers        []string       `json:"layers"`
-	Split         string         `json:"split"`
-	Utterances    []string       `json:"utterances"`
-	World         string         `json:"world"`
-	PageContext   map[string]any `json:"page_context"`
-	Expect        EvalExpect     `json:"expect"`
-	Origin        string         `json:"origin"`
-	Reference     EvalReference  `json:"reference"`
-	Inject        *EvalInject    `json:"inject"`
-	UserSim       *EvalUserSim   `json:"user_sim"`
+	ObservabilityBlocker string         `json:"observability_blocker,omitempty"`
+	SchemaVersion        int            `json:"schema_version"`
+	ID                   string         `json:"id"`
+	Skill                string         `json:"skill"`
+	Scope                string         `json:"scope"`
+	Suite                string         `json:"suite"`
+	CaseType             string         `json:"case_type"`
+	Layers               []string       `json:"layers"`
+	Split                string         `json:"split"`
+	Utterances           []string       `json:"utterances"`
+	World                string         `json:"world"`
+	PageContext          map[string]any `json:"page_context"`
+	Expect               EvalExpect     `json:"expect"`
+	Origin               string         `json:"origin"`
+	Reference            EvalReference  `json:"reference"`
+	Inject               *EvalInject    `json:"inject"`
+	UserSim              *EvalUserSim   `json:"user_sim"`
 }
 
 // EvalExpect is the per-layer expectation block.
@@ -100,8 +101,9 @@ type EvalBudgetExpect struct {
 
 // EvalNameSet is required/forbidden tool or op names.
 type EvalNameSet struct {
-	Required  []string `json:"required"`
-	Forbidden []string `json:"forbidden"`
+	Required  []string          `json:"required"`
+	Forbidden []string          `json:"forbidden"`
+	Reads     []EvalWriteExpect `json:"reads,omitempty"`
 }
 
 // EvalStateExpect is the PostgreSQL-facing L2 grader contract.
@@ -149,10 +151,11 @@ type EvalUserSim struct {
 
 // EvalUserSimAnswer is one scripted or live simulated-user turn.
 type EvalUserSimAnswer struct {
-	When   string          `json:"when"`
-	Action string          `json:"action"`
-	Text   string          `json:"text"`
-	Answer json.RawMessage `json:"answer"`
+	When            string          `json:"when"`
+	Action          string          `json:"action"`
+	Text            string          `json:"text"`
+	Answer          json.RawMessage `json:"answer"`
+	AuthorizeWrites bool            `json:"authorize_writes,omitempty"`
 }
 
 // EvalInject overlays adversarial or fault payloads onto a seeded world.
@@ -194,15 +197,17 @@ type evalInjectPayloadJSON struct {
 
 // EvalWorld is a named ProductFlow world used to seed PostgreSQL or the TS stub.
 type EvalWorld struct {
-	SchemaVersion   int                `json:"schema_version"`
-	Name            string             `json:"name"`
-	Intake          json.RawMessage    `json:"intake"`
-	BirthExpandable bool               `json:"birth_expandable"`
-	LiveGraph       EvalWorldGraph     `json:"live_graph"`
-	FailedRun       *EvalFailedRun     `json:"failed_run"`
-	RecentRun       *EvalRecentRun     `json:"recent_run"`
-	ListedAssets    []EvalListedAsset  `json:"listed_assets"`
-	ListedFolders   []EvalListedFolder `json:"listed_folders"`
+	PendingProposalID  string             `json:"pending_proposal_id,omitempty"`
+	ListedWorkflowRuns []map[string]any   `json:"listed_workflow_runs,omitempty"`
+	SchemaVersion      int                `json:"schema_version"`
+	Name               string             `json:"name"`
+	Intake             json.RawMessage    `json:"intake"`
+	BirthExpandable    bool               `json:"birth_expandable"`
+	LiveGraph          EvalWorldGraph     `json:"live_graph"`
+	FailedRun          *EvalFailedRun     `json:"failed_run"`
+	RecentRun          *EvalRecentRun     `json:"recent_run"`
+	ListedAssets       []EvalListedAsset  `json:"listed_assets"`
+	ListedFolders      []EvalListedFolder `json:"listed_folders"`
 }
 
 // EvalWorldGraph is the graph shape described by a world JSON file.
@@ -220,9 +225,10 @@ type EvalWorldGraph struct {
 
 // EvalWorldNode is a world node identified by a stable eval id, not a PG UUID.
 type EvalWorldNode struct {
-	ID       string `json:"id"`
-	NodeType string `json:"node_type"`
-	Title    string `json:"title"`
+	ID       string         `json:"id"`
+	NodeType string         `json:"node_type"`
+	Title    string         `json:"title"`
+	Config   map[string]any `json:"config,omitempty"`
 }
 
 // EvalWorldEdge is a world edge using world node ids.

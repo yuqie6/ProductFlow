@@ -41,6 +41,14 @@
       ],
       "forbidden": [
         "request_workflow_run_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
       ]
     },
     "ops": {

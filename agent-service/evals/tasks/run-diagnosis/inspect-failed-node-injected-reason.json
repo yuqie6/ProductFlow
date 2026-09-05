@@ -43,6 +43,20 @@
         "request_workflow_run_v1",
         "apply_graph_change_set_v1",
         "propose_global_draft"
+      ],
+      "reads": [
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        },
+        {
+          "tool": "get_node_detail_v1",
+          "match": {
+            "node_id": "node-prompt-1"
+          }
+        }
       ]
     },
     "ops": {

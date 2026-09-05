@@ -10,11 +10,11 @@
     "l1"
   ],
   "utterances": [
-    "比较两个指定工作流的最近运行并查看失败项",
-    "全局检查给定 workflow IDs 的运行摘要",
-    "从多个工作流里找出失败记录并读取详情"
+    "比较两个指定工作流的最近运行并查看失败项；比较的工作流是33333333-3333-4333-8333-333333333333和77777777-7777-4777-8777-777777777777",
+    "全局检查给定 workflow IDs 的运行摘要；比较的工作流是33333333-3333-4333-8333-333333333333和77777777-7777-4777-8777-777777777777",
+    "从多个工作流里找出失败记录并读取详情；比较的工作流是33333333-3333-4333-8333-333333333333和77777777-7777-4777-8777-777777777777"
   ],
-  "world": "expanded-failed-run",
+  "world": "global-two-workflow-runs",
   "page_context": {
     "snapshot_id": "eval-global_agent",
     "route": "/media-library",
@@ -42,7 +42,24 @@
         "inspect_global_workflow_runs_v1",
         "get_workflow_run_detail_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "inspect_global_workflow_runs_v1",
+          "match": {
+            "workflow_ids": [
+              "33333333-3333-4333-8333-333333333333",
+              "77777777-7777-4777-8777-777777777777"
+            ]
+          }
+        },
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      ]
     },
     "ops": {
       "required": [],

@@ -19,9 +19,10 @@ export function gradeOperations(
 ): GradeResult {
   if (!expectation) return result([]);
   const names = new Set(operationNames(calls));
+  const completed = new Set(operationNames(calls.filter((call) => call.outcome === "succeeded")));
   const errors: string[] = [];
   for (const required of expectation.required ?? []) {
-    if (!names.has(required)) errors.push(`required Graph operation was not used: ${required}`);
+    if (!completed.has(required)) errors.push(`required Graph operation was not used: ${required}`);
   }
   for (const forbidden of expectation.forbidden ?? []) {
     if (names.has(forbidden)) errors.push(`forbidden Graph operation was used: ${forbidden}`);

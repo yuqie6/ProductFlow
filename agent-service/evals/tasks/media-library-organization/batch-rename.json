@@ -12,8 +12,8 @@
   ],
   "utterances": [
     "把两张选中图分别改名为秋季主图和秋季细节",
-    "批量提交两张素材的明确重命名草案",
-    "第一张叫秋季主图，第二张叫秋季细节"
+    "将选中商品图和商品细节图分别改名为秋季主图和秋季细节",
+    "商品图叫秋季主图，商品细节图叫秋季细节"
   ],
   "world": "global-library-multi",
   "page_context": {
@@ -57,7 +57,11 @@
         "tool": "propose_global_draft",
         "match": {
           "library_payload.operations[0].target.display_name": "秋季主图",
-          "library_payload.operations[1].target.display_name": "秋季细节"
+          "library_payload.operations[1].target.display_name": "秋季细节",
+          "library_payload.operations[0].operation": "rename",
+          "library_payload.operations[0].asset_id": "11111111-1111-4111-8111-111111111111",
+          "library_payload.operations[1].operation": "rename",
+          "library_payload.operations[1].asset_id": "66666666-6666-4666-8666-666666666666"
         }
       }
     ],
@@ -128,5 +132,6 @@
         }
       }
     ]
-  }
+  },
+  "observability_blocker": "Go ListLibraryAssets/InspectLibraryAssets 的 AssetMetadata 缺少草案 JSON Schema 必填的 expected_revision/before 所需 revision、tag_names、is_archived；归档素材也不会由当前读取工具返回。生产工具与 Skill 合同待独立修复，不使用桩补造这些事实。"
 }

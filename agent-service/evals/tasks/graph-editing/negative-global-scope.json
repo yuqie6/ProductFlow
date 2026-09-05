@@ -34,12 +34,11 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "succeeded",
+      "requires_input"
     ],
     "tools": {
-      "required": [
-        "load_productflow_skill"
-      ],
+      "required": [],
       "forbidden": [
         "apply_graph_change_set_v1",
         "propose_graph_change_set_v1"

@@ -13,7 +13,7 @@
   "utterances": [
     "把节点「主图提示词」改名为新标题",
     "将主图提示词节点的标题改成新标题",
-    "重命名这个提示词节点，新名称用新标题"
+    "重命名主图提示词节点，新名称用新标题"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -40,7 +40,13 @@
         "get_product_workflow_context_v1",
         "apply_graph_change_set_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [
@@ -55,7 +61,6 @@
       {
         "tool": "apply_graph_change_set_v1",
         "match": {
-          "base_graph_revision": 3,
           "operations[0].op": "rename_node",
           "operations[0].node_ref": "node-prompt-1",
           "operations[0].title": "新标题"

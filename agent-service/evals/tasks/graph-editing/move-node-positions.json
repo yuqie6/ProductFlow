@@ -10,9 +10,9 @@
     "l1"
   ],
   "utterances": [
-    "把主图提示词和生成节点移动到新位置",
-    "调整两个主图节点的画布坐标",
-    "将 node-prompt-1 与 node-image-1 排到右侧"
+    "把主图提示词移到(640,240)，主图生成节点移到(920,240)，完成后聚焦这两个节点",
+    "调整坐标：node-prompt-1为(640,240)，node-image-1为(920,240)，完成后聚焦这两个节点",
+    "将主图提示词和主图生成节点分别排到(640,240)与(920,240)，完成后聚焦这两个节点"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -40,7 +40,13 @@
         "apply_graph_change_set_v1",
         "focus_canvas_items_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [
@@ -53,10 +59,17 @@
         "tool": "apply_graph_change_set_v1",
         "match": {
           "operations[0].op": "move_nodes",
-          "operations[0].nodes[1]": [
-            "node-image-1",
-            920,
-            240
+          "operations[0].nodes": [
+            [
+              "node-prompt-1",
+              640,
+              240
+            ],
+            [
+              "node-image-1",
+              920,
+              240
+            ]
           ]
         }
       }
@@ -104,7 +117,10 @@
       {
         "name": "focus_canvas_items_v1",
         "params": {
-          "node_ids": ["node-prompt-1", "node-image-1"]
+          "node_ids": [
+            "node-prompt-1",
+            "node-image-1"
+          ]
         }
       }
     ]

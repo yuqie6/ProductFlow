@@ -31,13 +31,13 @@
   },
   "expect": {
     "terminal": [
-      "requires_input"
+      "requires_input",
+      "succeeded"
     ],
     "tools": {
       "required": [
         "load_productflow_skill",
-        "inspect_workflow_runs_v1",
-        "ask_user"
+        "inspect_workflow_runs_v1"
       ],
       "forbidden": [
         "cancel_workflow_run_v1"

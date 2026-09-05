@@ -11,8 +11,8 @@
     "l2"
   ],
   "utterances": [
-    "运行我选的主图和细节图节点",
-    "为两个选中生成节点发起运行",
+    "运行主图和细节图两个生成节点",
+    "为主图生成和细节图生成这两个节点发起选择运行",
     "提交 node-image-1 与 node-image-2 的选择运行"
   ],
   "world": "expanded-rev3",
@@ -40,7 +40,13 @@
         "get_product_workflow_context_v1",
         "request_workflow_run_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -54,7 +60,10 @@
           "node_ids": [
             "node-image-1",
             "node-image-2"
-          ]
+          ],
+          "force": false,
+          "document_action": "",
+          "source_run_id": null
         }
       }
     ],

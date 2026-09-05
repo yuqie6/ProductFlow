@@ -10,11 +10,11 @@
     "l1"
   ],
   "utterances": [
-    "解散主图组并调整主图提示词的输入顺序",
-    "提交一个取消分组并重排输入边的提案",
-    "移除 group-main，同时让商品资料输入排在简报之前"
+    "解散主图组，把主图提示词的商品资料输入按补充商品资料、商品资料的顺序排列",
+    "提交解散 group-main 的提案，node-prompt-1 的 facts 输入先 source-2 后 source-1",
+    "移除主图组分组，主图提示词的商品资料输入先补充商品资料，再商品资料"
   ],
-  "world": "expanded-rev3",
+  "world": "expanded-reorder",
   "page_context": {
     "snapshot_id": "eval-product_workbench",
     "route": "/products/22222222-2222-4222-8222-222222222222",
@@ -39,7 +39,13 @@
         "get_product_workflow_context_v1",
         "propose_graph_change_set_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [
@@ -53,7 +59,14 @@
         "tool": "propose_graph_change_set_v1",
         "match": {
           "operations[0].op": "dissolve_group",
-          "operations[1].op": "reorder_edges"
+          "operations[1].op": "reorder_edges",
+          "operations[0].group_ref": "group-main",
+          "operations[1].node_ref": "node-prompt-1",
+          "operations[1].role": "facts",
+          "operations[1].edge_refs": [
+            "edge-second-source-prompt",
+            "edge-source-prompt"
+          ]
         }
       }
     ]
@@ -70,7 +83,7 @@
       {
         "name": "get_product_workflow_context_v1",
         "params": {
-          "response_format": "concise"
+          "response_format": "detailed"
         }
       },
       {
@@ -86,10 +99,10 @@
             {
               "op": "reorder_edges",
               "node_ref": "node-prompt-1",
-              "role": "context",
+              "role": "facts",
               "edge_refs": [
-                "edge-source-prompt",
-                "edge-brief-prompt"
+                "edge-second-source-prompt",
+                "edge-source-prompt"
               ]
             }
           ]

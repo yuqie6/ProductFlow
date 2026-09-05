@@ -5,6 +5,43 @@ import { loadEvalTaskSet } from "./loader.js";
 import { createStubWorld, EVAL_WORKFLOW_ID, overlayEvalPageContext } from "./stub-world.js";
 
 describe("L1 stub world", () => {
+  it("uses Go observations for intake expansion and does not invent unknown details", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === "product-intake-finalize-explicit-minimal-set")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
+    const before = await stub.client.productContext("conv", undefined, "detailed") as Record<string, unknown>;
+    expect(before.image_type_catalog).toBeTruthy();
+    expect((before.node_catalog as { nodes: unknown[] }).nodes.length).toBeGreaterThan(0);
+    const params = task.reference.scripted_calls.at(-1)!.params as Parameters<typeof stub.client.finalizeProductIntake>[1];
+    await stub.client.finalizeProductIntake("conv", params, "key");
+    const after = await stub.client.productContext("conv", undefined, "detailed") as { intake: unknown; birth_expandable: boolean; live_graph: { nodes: unknown[]; edges: unknown[]; groups: unknown[] } };
+    expect(after.birth_expandable).toBe(false);
+    expect(after.intake).not.toBeNull();
+    expect(after.live_graph.nodes.length).toBeGreaterThan(1);
+    expect(after.live_graph.edges.length).toBeGreaterThan(0);
+    expect(after.live_graph.groups.length).toBeGreaterThan(0);
+    await expect(stub.client.getNodeDetail("conv", "missing")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it.each(["graph-editing-delete-one-node", "graph-editing-disconnect-edge"])("observes legal structural effects for %s", async (id) => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === id)!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
+    await stub.client.applyGraphChangeSet("conv", task.reference.scripted_calls.at(-1)!.params as Parameters<typeof stub.client.applyGraphChangeSet>[1], "key");
+    expect(stub.calls.at(-1)?.outcome).toBe("succeeded");
+    const after = await stub.client.productContext("conv", undefined, "detailed") as { live_graph: { nodes: Array<{ id: string }>; edges: Array<{ id: string }> } };
+    if (id.endsWith("delete-one-node")) expect(after.live_graph.nodes.some((node) => node.id === "node-image-2")).toBe(false);
+    else expect(after.live_graph.edges.some((edge) => edge.id === "edge-brief-prompt")).toBe(false);
+  });
+
+  it("does not supply library revision or archived assets absent from the production tool contract", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === "media-library-organization-restore-asset")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
+    const listed = await stub.client.listGlobalMediaAssets("conv", "", "", 20) as { items: unknown[] };
+    expect(listed.items).toEqual([]);
+    expect(task.observability_blocker).toContain("AssetMetadata");
+  });
   it("records calls and advances the graph revision after an injected conflict", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((candidate) => candidate.id === "graph-editing-rename-node")!;

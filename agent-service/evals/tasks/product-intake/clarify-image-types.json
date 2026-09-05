@@ -5,7 +5,10 @@
   "scope": "product_workflow",
   "suite": "regression",
   "case_type": "positive",
-  "layers": ["l0", "l1"],
+  "layers": [
+    "l0",
+    "l1"
+  ],
   "utterances": [
     "为新商品补充图片类型和参考图要求",
     "帮我把这个新商品需要的图片种类和参考图信息补全",
@@ -27,28 +30,65 @@
     "captured_at": "2026-08-31T00:00:00.000Z"
   },
   "expect": {
-    "terminal": ["requires_input"],
+    "terminal": [
+      "requires_input"
+    ],
     "tools": {
-      "required": ["load_productflow_skill", "get_product_workflow_context_v1", "ask_user"],
-      "forbidden": ["propose_graph_change_set_v1", "finalize_product_intake_v1"]
+      "required": [
+        "load_productflow_skill",
+        "get_product_workflow_context_v1",
+        "ask_user"
+      ],
+      "forbidden": [
+        "propose_graph_change_set_v1",
+        "finalize_product_intake_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
-    "ops": { "required": [], "forbidden": ["add_node", "connect"] },
+    "ops": {
+      "required": [],
+      "forbidden": [
+        "add_node",
+        "connect"
+      ]
+    },
     "writes": [],
-    "question": { "required": true }
+    "question": {
+      "required": true
+    }
   },
   "origin": "legacy:fixtures.ts",
   "reference": {
     "scripted_calls": [
-      { "name": "load_productflow_skill", "params": { "skill_name": "product-intake" } },
-      { "name": "get_product_workflow_context_v1", "params": { "response_format": "concise" } },
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "product-intake"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
+        }
+      },
       {
         "name": "ask_user",
         "params": {
           "header": "图片类型",
           "question": "需要哪些图片类型、各几张？参考图是否已经上传？",
           "options": [
-            { "label": "推荐套图：封面2、卖点4、规格1、选款1、场景1、细节1" },
-            { "label": "只要封面和细节" }
+            {
+              "label": "推荐套图：封面2、卖点4、规格1、选款1、场景1、细节1"
+            },
+            {
+              "label": "只要封面和细节"
+            }
           ]
         }
       }

@@ -26,6 +26,15 @@ afterEach(async () => {
 });
 
 describe("agent eval report", () => {
+  it("keeps unobservable trials visible and refuses capability comparison", () => {
+    const record = { ...trial("run-a", "l1", "blocked", "media-library-organization", "regression", 1, false), status: "unobservable", errors: ["missing production revision"] };
+    const report = buildRunReport("run-a", [record], 1);
+    expect(report).toMatchObject({ measurementEligible: false, unobservableTrials: 1 });
+    expect(report.overall.trialCount).toBe(1);
+    expect(report.regressionGate.passed).toBeNull();
+    expect(formatRunReport(report)).toContain("diagnostic, not capability scores");
+    expect(() => diffReports(report, report)).toThrow("cannot compare unobservable");
+  });
   it("computes task-mean pass^1, unbiased pass^k, groups, and a trial Wilson interval", () => {
     const records = [
       trial("run-a", "l1", "task-a", "product-intake", "regression", 1, true),
@@ -175,10 +184,10 @@ describe("agent eval report", () => {
 
 function trial(
   runId: string,
-  layer: string,
+  layer: TrialRecord["layer"],
   taskId: string,
   skill: string,
-  suite: string,
+  suite: TrialRecord["suite"],
   trialNumber: number,
   passed: boolean,
   tokenCount: number | null = 10,

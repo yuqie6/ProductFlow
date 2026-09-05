@@ -10,9 +10,9 @@
     "l1"
   ],
   "utterances": [
-    "强制重写当前工作流产物",
-    "发起整图 rewrite 运行并覆盖已有结果",
-    "提交一次强制重新生成的全图请求"
+    "强制重写主图提示词节点 node-prompt-1 的文稿",
+    "提交一次主图提示词单节点的强制 rewrite 请求",
+    "重新生成 node-prompt-1 的文稿，使用强制重写模式"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -39,7 +39,13 @@
         "get_product_workflow_context_v1",
         "request_workflow_run_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -50,7 +56,10 @@
         "tool": "request_workflow_run_v1",
         "match": {
           "force": true,
-          "document_action": "rewrite"
+          "document_action": "rewrite",
+          "scope": "node",
+          "node_id": "node-prompt-1",
+          "source_run_id": null
         }
       }
     ]
@@ -74,9 +83,10 @@
         "name": "request_workflow_run_v1",
         "params": {
           "expected_workflow_revision": 3,
-          "scope": "graph",
+          "scope": "node",
           "force": true,
-          "document_action": "rewrite"
+          "document_action": "rewrite",
+          "node_id": "node-prompt-1"
         }
       }
     ]

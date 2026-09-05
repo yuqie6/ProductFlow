@@ -117,6 +117,10 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 		seeded = seedEvalWorld(t, as, task, world)
 	}()
 	status := "failed"
+	if task.ObservabilityBlocker != "" {
+		status = "unobservable"
+		errors = append(errors, "unobservable eval input: "+task.ObservabilityBlocker)
+	}
 	var toolNames []string
 	toolCalls := []map[string]any{}
 	var terminal any
@@ -179,6 +183,7 @@ func runL2Trial(t *testing.T, as *agentServer, pi piAgentProc, task EvalTask, wo
 	if len(errors) == 0 {
 		errors = append(errors, gradeEvalTools(toolNames, task.Expect.Tools)...)
 		errors = append(errors, gradeEvalState(t, as, seeded, task.Expect.State)...)
+		errors = append(errors, gradeEvalPersistedWrites(t, as, seeded, task.Expect.Writes)...)
 		if !containsString(task.Expect.Terminal, status) {
 			errors = append(errors, fmt.Sprintf("terminal %s not in %v", status, task.Expect.Terminal))
 		}
@@ -311,8 +316,15 @@ func toolCallsFromSteps(steps []map[string]any) ([]string, []map[string]any) {
 		if name == "" || name == "productflow_context_injection" {
 			continue
 		}
-		names = append(names, name)
-		calls = append(calls, map[string]any{"name": name, "params": map[string]any{}, "ts": now})
+		outcome := "unknown"
+		if step["status"] == "succeeded" {
+			outcome = "succeeded"
+			names = append(names, name)
+		}
+		if step["status"] == "failed" {
+			outcome = "failed"
+		}
+		calls = append(calls, map[string]any{"name": name, "params": map[string]any{}, "ts": now, "outcome": outcome})
 	}
 	return names, calls
 }

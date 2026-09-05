@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { API_VERSION, type TurnState } from "../src/contracts.js";
 import { PiRuntimeManager } from "../src/runtime-manager.js";
 import { TurnStore } from "../src/store.js";
-import type { EvalUserSim } from "./schema.js";
+import type { EvalUserSim, EvalCallRecord } from "./schema.js";
 
 import { createModelUser, driveUserSim, gradeUserSim, runUserSimEvals, scriptedTurnAnswer, unconfirmedWriteCount } from "./user-sim.js";
 import { loadEvalTaskSet } from "./loader.js";
@@ -14,6 +14,9 @@ import { loadEvalTaskSet } from "./loader.js";
 vi.mock("@earendil-works/pi-ai/compat", async (original) => ({
   ...await original<typeof import("@earendil-works/pi-ai/compat")>(), complete: vi.fn(),
 }));
+vi.mock("./go-world.js", () => ({ openGoEvalHost: async () => ({
+  decide: async (_kind: string, action: string) => ({ id: "approval-1", action, observed: true }), observe: async () => [], close: async () => {},
+}) }));
 
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 
@@ -45,6 +48,25 @@ function state(status: TurnState["status"], questionID?: string): TurnState {
 }
 
 describe("independent model user", () => {
+  it("ends an authorization without retroactively invalidating earlier legitimate writes", () => {
+    const write: EvalCallRecord = { name: "apply_graph_change_set_v1", params: { operations: [{ op: "rename_node", node_ref: "n", title: "ok" }] }, outcome: "succeeded", ts: "t" };
+    const grant = { after_call: 0, before_call: 1, writes: [{ tool: write.name, match: { "operations[0].op": "rename_node", "operations[0].node_ref": "n", "operations[0].title": "ok" } }] };
+    expect(unconfirmedWriteCount([write], [grant])).toBe(0);
+    expect(unconfirmedWriteCount([write, write], [grant])).toBe(1);
+  });
+  it("does not authorize a refusal just because it was the last scripted question", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === "graph-editing-sim-underspecified-rename")!;
+    const authorize = vi.fn();
+    await driveUserSim(task.user_sim!, task.utterances[0], {
+      start: async () => "turn", answer: vi.fn(), authorize,
+      wait: vi.fn().mockResolvedValueOnce(state("requires_input", "q")).mockResolvedValue(state("succeeded")),
+      respond: async () => "我不同意，不要修改任何节点",
+    });
+    expect(authorize).not.toHaveBeenCalled();
+    const write: EvalCallRecord = { name: "apply_graph_change_set_v1", params: { operations: [{ op: "rename_node", node_ref: "node-prompt-1", title: "新标题" }] }, outcome: "succeeded", ts: "t" };
+    expect(unconfirmedWriteCount([write], [])).toBe(1);
+  });
   it("wires the live runner to complete and persists the independent exchange", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-model-user-test-"));
     try {
@@ -57,17 +79,17 @@ describe("independent model user", () => {
       const resume = vi.spyOn(PiRuntimeManager.prototype, "resume").mockResolvedValue(state("running"));
       vi.spyOn(TurnStore.prototype, "getState").mockResolvedValueOnce(state("requires_input", "q1"))
         .mockResolvedValueOnce(state("succeeded"));
-      vi.mocked(complete).mockResolvedValue(completion("independent answer"));
+      vi.mocked(complete).mockResolvedValue(completion('{"answer_index":0}'));
       const result = await runUserSimEvals({ filter: "graph-editing-sim-underspecified-rename" });
       expect(complete).toHaveBeenCalledTimes(1);
       expect(start).toHaveBeenCalledTimes(1);
-      expect(answer).toHaveBeenCalledWith(expect.anything(), "turn", "q1", { text: "independent answer" });
+      expect(answer).toHaveBeenCalledWith(expect.anything(), "turn", "q1", { text: "主图提示词改成新标题" });
       expect(resume).toHaveBeenCalledWith(expect.anything(), "turn");
       expect(answer.mock.invocationCallOrder[0]).toBeLessThan(resume.mock.invocationCallOrder[0]);
       const rows = (await readFile(join(result.runDir, "trials.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(rows[0].details.user_sim).toMatchObject({ calls: 1, completed_calls: 1, tokens: 12 });
       const transcript = JSON.parse(await readFile(join(result.runDir, rows[0].transcript_path), "utf8"));
-      expect(transcript.user_sim.exchanges[0].answer).toBe("independent answer");
+      expect(transcript.user_sim.exchanges[0].answer).toBe("主图提示词改成新标题");
       expect(transcript.turns).toBe(2);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -107,7 +129,7 @@ describe("independent model user", () => {
     vi.stubEnv("AGENT_EVAL_USER_SIM_MODEL", "user-model");
     vi.stubEnv("AGENT_PROVIDER_BASE_URL", "https://private.invalid/v1");
     vi.stubEnv("AGENT_PROVIDER_API_KEY", "secret");
-    vi.mocked(complete).mockResolvedValueOnce(completion("model first")).mockResolvedValueOnce(completion("model second"));
+    vi.mocked(complete).mockResolvedValueOnce(completion('{"answer_index":0}')).mockResolvedValueOnce(completion('{"answer_index":1}'));
     const user = createModelUser(simulation);
     const start = vi.fn().mockResolvedValue("original-turn");
     const answer = vi.fn();
@@ -117,7 +139,7 @@ describe("independent model user", () => {
     expect(start.mock.calls).toEqual([["public request"]]);
     expect(wait.mock.calls).toEqual([["original-turn"], ["original-turn"], ["original-turn"]]);
     expect(answer.mock.calls).toEqual([
-      ["original-turn", "q1", { text: "model first" }], ["original-turn", "q2", { text: "model second" }],
+      ["original-turn", "q1", { text: "SCRIPTED FIRST" }], ["original-turn", "q2", { text: "SCRIPTED SECOND" }],
     ]);
     expect(result.turns).toBe(3);
     expect(complete).toHaveBeenCalledTimes(2);
@@ -125,9 +147,9 @@ describe("independent model user", () => {
     const first = JSON.stringify(vi.mocked(complete).mock.calls[0][1]);
     expect(first).toContain("private goal");
     expect(first).toContain("private title");
-    expect(first).not.toContain("SCRIPTED FIRST");
+    expect(first).toContain("SCRIPTED FIRST");
     expect(vi.mocked(complete).mock.calls[0][1].tools).toBeUndefined();
-    expect(JSON.stringify(vi.mocked(complete).mock.calls[1][1])).toContain("model first");
+    expect(JSON.stringify(vi.mocked(complete).mock.calls[1][1])).toContain("SCRIPTED FIRST");
     expect(JSON.stringify(user.configuration)).not.toContain("private.invalid");
     expect(JSON.stringify(user.configuration)).not.toContain("secret");
     expect(user.exchanges.map((row) => row.tokens)).toEqual([12, 12]);
@@ -138,7 +160,7 @@ describe("independent model user", () => {
     vi.stubEnv("AGENT_PROVIDER_MODEL", "gpt-4.1");
     vi.stubEnv("AGENT_EVAL_USER_SIM_MODEL", "");
     vi.stubEnv("AGENT_PROVIDER_BASE_URL", "");
-    vi.mocked(complete).mockResolvedValue(completion("answer"));
+    vi.mocked(complete).mockResolvedValue(completion('{"answer_index":0}'));
     const user = createModelUser(simulation);
     await user.respond({ kind: "question", output: "question" });
     expect(complete).toHaveBeenCalledTimes(1);
@@ -172,7 +194,8 @@ describe("independent model user", () => {
     const result = await driveUserSim({ ...simulation, scripted_answers: [
       { when: "proposal", action: "discard" }, { when: "follow_up", action: "follow_up", text: "script follow-up" },
       { when: "proposal", action: "confirm" },
-    ] }, "initial", { start, answer, respond, wait: vi.fn().mockResolvedValue(state("awaiting_confirmation")) });
+    ] }, "initial", { start, answer, respond, wait: vi.fn().mockResolvedValue(state("awaiting_confirmation")),
+      decide: async (_kind, action) => ({ id: "approval-1", action, observed: true }) });
     expect(start.mock.calls).toEqual([["initial"], ["model follow-up"]]);
     expect(respond).toHaveBeenCalledTimes(1);
     expect(respond).toHaveBeenCalledWith(expect.objectContaining({ previous_decision: "discard" }));
@@ -207,12 +230,15 @@ describe("independent model user", () => {
 
 describe("L3 user simulator graders", () => {
   it("counts finalize/apply before the user agrees as unconfirmed writes", () => {
-    const calls = [
-      { name: "get_product_workflow_context_v1", params: {}, ts: "t0" },
-      { name: "finalize_product_intake_v1", params: {}, ts: "t1" },
+    const calls: EvalCallRecord[] = [
+      { name: "get_product_workflow_context_v1", params: {}, ts: "t0", outcome: "succeeded" },
+      { name: "finalize_product_intake_v1", params: {}, ts: "t1", outcome: "succeeded" },
     ];
-    expect(unconfirmedWriteCount(calls, false)).toBe(1);
-    expect(unconfirmedWriteCount(calls, true)).toBe(0);
+    expect(unconfirmedWriteCount(calls, [])).toBe(1);
+    const writes = [{ tool: calls[1].name, match: {} }];
+    expect(unconfirmedWriteCount(calls, [{ after_call: 2, writes }])).toBe(1);
+    expect(unconfirmedWriteCount(calls, [{ after_call: 1, writes }])).toBe(0);
+    expect(unconfirmedWriteCount(calls, [{ after_call: 1, writes: [{ tool: calls[1].name, match: { "selection.image_types": [] } }] }])).toBe(1);
   });
 
   it("maps scripted selected_option answers onto TurnAnswer", () => {
@@ -231,10 +257,26 @@ describe("L3 user simulator graders", () => {
     const intake = sim.find((task) => task.id === "product-intake-sim-two-round-clarify")!;
     const grade = gradeUserSim(intake, {
       terminal: "succeeded",
-      calls: intake.reference.scripted_calls.map((call) => ({ ...call, ts: "ref" })),
+      calls: intake.reference.scripted_calls.map((call) => ({ ...call, ts: "ref", outcome: "succeeded" })),
       turns: 2,
-      userAgreed: true,
+      authorizations: [{ after_call: 0, writes: intake.expect.writes }],
     });
     expect(grade.unconfirmed_writes).toBe(0);
+  });
+
+  it("does not pass a clarified rename without the requested write", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === "graph-editing-sim-underspecified-rename")!;
+    const calls: EvalCallRecord[] = ["load_productflow_skill", "get_product_workflow_context_v1", "ask_user"]
+      .map((name) => ({ name, params: {}, ts: "t", outcome: "succeeded" }));
+    expect(gradeUserSim(task, { terminal: "succeeded", calls, turns: 2, authorizations: [] }).passed).toBe(false);
+  });
+
+  it("refuses unobserved confirmation and discard", async () => {
+    for (const action of ["confirm", "discard"] as const) {
+      await expect(driveUserSim({ ...simulation, scripted_answers: [{ when: "proposal", action }] }, "initial", {
+        start: async () => "turn", wait: async () => state("awaiting_confirmation"), answer: vi.fn(), respond: vi.fn(),
+      })).rejects.toThrow("unobservable user decision");
+    }
   });
 });

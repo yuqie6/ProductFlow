@@ -26,7 +26,7 @@ func TestEvalGoTerminalWaitsForProjection(t *testing.T) {
 		if reads.Add(1) >= 3 {
 			status = "succeeded"
 		}
-		_ = json.NewEncoder(w).Encode(TurnResponse{Status: status, ToolSteps: []map[string]any{{"tool_name": "list_products_v1"}}})
+		_ = json.NewEncoder(w).Encode(TurnResponse{Status: status, ToolSteps: []map[string]any{{"tool_name": "list_products_v1", "status": status}}})
 	}))
 	t.Cleanup(srv.Close)
 	as := &agentServer{srv: srv, client: srv.Client()}
@@ -42,6 +42,21 @@ func TestEvalGoTerminalWaitsForProjection(t *testing.T) {
 	names, calls := toolCallsFromSteps(got.ToolSteps)
 	if len(names) != 1 || names[0] != "list_products_v1" || len(calls) != 1 {
 		t.Fatalf("lost terminal tool steps: %+v", got.ToolSteps)
+	}
+}
+
+func TestEvalToolStepsRequireObservedSuccess(t *testing.T) {
+	for _, status := range []string{"", "running", "failed", "succeeded"} {
+		t.Run(status, func(t *testing.T) {
+			names, calls := toolCallsFromSteps([]map[string]any{{"tool_name": "apply_workflow_operations_v1", "status": status}})
+			want := "unknown"
+			if status == "failed" || status == "succeeded" {
+				want = status
+			}
+			if len(calls) != 1 || calls[0]["outcome"] != want || (len(names) == 1) != (status == "succeeded") {
+				t.Fatalf("status=%q names=%v calls=%v", status, names, calls)
+			}
+		})
 	}
 }
 

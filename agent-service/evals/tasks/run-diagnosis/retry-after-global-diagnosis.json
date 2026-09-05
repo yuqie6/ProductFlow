@@ -43,7 +43,23 @@
         "get_workflow_run_detail_v1",
         "request_global_workflow_run_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "inspect_global_workflow_runs_v1",
+          "match": {
+            "workflow_ids": [
+              "33333333-3333-4333-8333-333333333333"
+            ]
+          }
+        },
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -53,7 +69,12 @@
       {
         "tool": "request_global_workflow_run_v1",
         "match": {
-          "source_run_id": "44444444-4444-4444-8444-444444444444"
+          "source_run_id": "44444444-4444-4444-8444-444444444444",
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "workflow_id": "33333333-3333-4333-8333-333333333333",
+          "scope": "graph",
+          "force": false,
+          "document_action": ""
         }
       }
     ]

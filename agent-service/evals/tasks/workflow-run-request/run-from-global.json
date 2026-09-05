@@ -5,7 +5,10 @@
   "scope": "global",
   "suite": "regression",
   "case_type": "positive",
-  "layers": ["l0", "l1"],
+  "layers": [
+    "l0",
+    "l1"
+  ],
   "utterances": [
     "在全局会话里跑这个商品的工作流",
     "从全局助手为这个商品发起工作流运行",
@@ -13,26 +16,85 @@
   ],
   "world": "expanded-rev3",
   "page_context": {
-    "snapshot_id": "eval-global_agent", "route": "/media-library", "page_type": "global_agent", "product_id": null, "workflow_id": null,
-    "selected_asset_ids": [], "visible_asset_ids": [],
-    "filters": { "product_id": "22222222-2222-4222-8222-222222222222", "workflow_id": "33333333-3333-4333-8333-333333333333" },
-    "workflow_revision": null, "library_revision": 1,
-    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captured_at": "2026-08-31T00:00:00.000Z"
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
   },
   "expect": {
-    "terminal": ["awaiting_confirmation"],
-    "tools": { "required": ["load_productflow_skill", "inspect_global_workflow_context_v1", "request_global_workflow_run_v1"], "forbidden": [] },
-    "ops": { "required": [], "forbidden": [] },
-    "writes": [{ "tool": "request_global_workflow_run_v1", "match": {
-      "product_id": "22222222-2222-4222-8222-222222222222", "workflow_id": "33333333-3333-4333-8333-333333333333", "expected_workflow_revision": 3
-    } }]
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "inspect_global_workflow_context_v1",
+        "request_global_workflow_run_v1"
+      ],
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "inspect_global_workflow_context_v1",
+          "match": {
+            "product_id": "22222222-2222-4222-8222-222222222222"
+          }
+        }
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "request_global_workflow_run_v1",
+        "match": {
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "workflow_id": "33333333-3333-4333-8333-333333333333",
+          "scope": "graph",
+          "force": false,
+          "document_action": "",
+          "source_run_id": null
+        }
+      }
+    ]
   },
   "origin": "legacy:fixtures.ts",
-  "reference": { "scripted_calls": [
-    { "name": "load_productflow_skill", "params": { "skill_name": "workflow-run-request" } },
-    { "name": "inspect_global_workflow_context_v1", "params": { "product_id": "22222222-2222-4222-8222-222222222222", "response_format": "concise" } },
-    { "name": "request_global_workflow_run_v1", "params": {
-      "product_id": "22222222-2222-4222-8222-222222222222", "workflow_id": "33333333-3333-4333-8333-333333333333", "expected_workflow_revision": 3
-    } }
-  ] }
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "inspect_global_workflow_context_v1",
+        "params": {
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "response_format": "concise"
+        }
+      },
+      {
+        "name": "request_global_workflow_run_v1",
+        "params": {
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "workflow_id": "33333333-3333-4333-8333-333333333333",
+          "expected_workflow_revision": 3,
+          "scope": "graph"
+        }
+      }
+    ]
+  }
 }

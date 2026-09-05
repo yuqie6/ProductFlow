@@ -30,7 +30,6 @@
   },
   "expect": {
     "terminal": [
-      "requires_input",
       "succeeded"
     ],
     "tools": {
@@ -39,15 +38,32 @@
         "get_product_workflow_context_v1",
         "ask_user"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
-      "required": [],
+      "required": [
+        "rename_node"
+      ],
       "forbidden": [
         "add_node"
       ]
     },
-    "writes": [],
+    "writes": [
+      {
+        "tool": "apply_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "rename_node",
+          "operations[0].node_ref": "node-prompt-1",
+          "operations[0].title": "新标题"
+        }
+      }
+    ],
     "question": {
       "required": true
     }
@@ -85,7 +101,8 @@
         "text": "主图提示词改成新标题",
         "answer": {
           "selected_option": 0
-        }
+        },
+        "authorize_writes": true
       }
     ]
   }

@@ -10,9 +10,9 @@
     "l1"
   ],
   "utterances": [
-    "把所有商品的工作流都跑一遍",
-    "全局批量启动每个商品",
-    "无需选择，运行库里全部工作流"
+    "我想批量运行所有商品，但现在先不要提交运行请求，问我确认范围。",
+    "准备全局批量启动每个商品；本轮只向我确认范围，不提交任何运行请求。",
+    "我想运行库里全部工作流，请先问我确认范围；我回复前不要提交请求。"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -23,10 +23,7 @@
     "workflow_id": null,
     "selected_asset_ids": [],
     "visible_asset_ids": [],
-    "filters": {
-      "product_id": "22222222-2222-4222-8222-222222222222",
-      "workflow_id": "33333333-3333-4333-8333-333333333333"
-    },
+    "filters": {},
     "workflow_revision": null,
     "library_revision": 1,
     "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

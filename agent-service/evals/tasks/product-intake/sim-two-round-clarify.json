@@ -20,7 +20,9 @@
     "page_type": "product_workbench",
     "product_id": "22222222-2222-4222-8222-222222222222",
     "workflow_id": "33333333-3333-4333-8333-333333333333",
-    "selected_asset_ids": [],
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
     "visible_asset_ids": [],
     "filters": {},
     "workflow_revision": 1,
@@ -36,10 +38,17 @@
       "required": [
         "load_productflow_skill",
         "get_product_workflow_context_v1",
-        "ask_user"
+        "ask_user",
+        "finalize_product_intake_v1"
       ],
       "forbidden": [
         "propose_graph_change_set_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
       ]
     },
     "ops": {
@@ -49,7 +58,48 @@
         "connect"
       ]
     },
-    "writes": [],
+    "writes": [
+      {
+        "tool": "finalize_product_intake_v1",
+        "match": {
+          "selection.image_types": [
+            {
+              "key": "hero",
+              "quantity": 2,
+              "order": 0
+            },
+            {
+              "key": "selling_point",
+              "quantity": 4,
+              "order": 1
+            },
+            {
+              "key": "specifications",
+              "quantity": 1,
+              "order": 2
+            },
+            {
+              "key": "sku",
+              "quantity": 1,
+              "order": 3
+            },
+            {
+              "key": "scene",
+              "quantity": 1,
+              "order": 4
+            },
+            {
+              "key": "detail",
+              "quantity": 1,
+              "order": 5
+            }
+          ],
+          "reference_asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
+        }
+      }
+    ],
     "question": {
       "required": true
     }
@@ -107,15 +157,11 @@
       {
         "when": "question",
         "action": "answer",
-        "text": "还是用推荐套图吧",
+        "text": "确认采用推荐套图：封面2、卖点4、规格1、选款1、场景1、细节1，使用已选参考图保存并展开",
         "answer": {
           "selected_option": 0
-        }
-      },
-      {
-        "when": "follow_up",
-        "action": "follow_up",
-        "text": "按推荐套图保存"
+        },
+        "authorize_writes": true
       }
     ]
   }

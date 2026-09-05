@@ -43,7 +43,21 @@
         "inspect_product_image_assets_v1",
         "finalize_product_intake_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        },
+        {
+          "tool": "inspect_product_image_assets_v1",
+          "match": {
+            "asset_ids": [
+              "11111111-1111-4111-8111-111111111111"
+            ]
+          }
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -53,9 +67,41 @@
       {
         "tool": "finalize_product_intake_v1",
         "match": {
-          "selection.image_types[1].key": "selling_point",
-          "selection.image_types[1].quantity": 4,
-          "reference_asset_ids[0]": "11111111-1111-4111-8111-111111111111"
+          "selection.image_types": [
+            {
+              "key": "hero",
+              "quantity": 2,
+              "order": 0
+            },
+            {
+              "key": "selling_point",
+              "quantity": 4,
+              "order": 1
+            },
+            {
+              "key": "specifications",
+              "quantity": 1,
+              "order": 2
+            },
+            {
+              "key": "sku",
+              "quantity": 1,
+              "order": 3
+            },
+            {
+              "key": "scene",
+              "quantity": 1,
+              "order": 4
+            },
+            {
+              "key": "detail",
+              "quantity": 1,
+              "order": 5
+            }
+          ],
+          "reference_asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
         }
       }
     ],
@@ -64,7 +110,7 @@
       "intake_image_type_keys": [
         "hero",
         "selling_point",
-        "spec",
+        "specifications",
         "sku",
         "scene",
         "detail"
@@ -111,7 +157,7 @@
                 "order": 1
               },
               {
-                "key": "spec",
+                "key": "specifications",
                 "quantity": 1,
                 "order": 2
               },

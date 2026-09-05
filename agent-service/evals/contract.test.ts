@@ -314,7 +314,7 @@ function gradeLive(
   calls: ReadonlyArray<{ name: string; params: unknown }>,
   options: { question?: boolean } = {},
 ): string[] {
-  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "pair" }));
+  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "pair", outcome: "succeeded" }));
   const errors = [
     ...gradeTerminal(task.expect.terminal, terminal).errors,
     ...gradeTools(task.expect.tools, recorded).errors.map((error) => `expect.tools: ${error}`),

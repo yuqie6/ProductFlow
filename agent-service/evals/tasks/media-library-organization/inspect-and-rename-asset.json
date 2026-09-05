@@ -5,7 +5,10 @@
   "scope": "global",
   "suite": "regression",
   "case_type": "positive",
-  "layers": ["l0", "l1"],
+  "layers": [
+    "l0",
+    "l1"
+  ],
   "utterances": [
     "先看看这几张选中的图，再把商品图改名为新名",
     "检查选中素材的画面后，将商品图名称改成新名",
@@ -13,36 +16,115 @@
   ],
   "world": "global-library",
   "page_context": {
-    "snapshot_id": "eval-global_agent", "route": "/media-library", "page_type": "global_agent", "product_id": null, "workflow_id": null,
-    "selected_asset_ids": ["11111111-1111-4111-8111-111111111111"], "visible_asset_ids": [],
-    "filters": { "product_id": "22222222-2222-4222-8222-222222222222", "workflow_id": "33333333-3333-4333-8333-333333333333" },
-    "workflow_revision": null, "library_revision": 1,
-    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captured_at": "2026-08-31T00:00:00.000Z"
+    "snapshot_id": "eval-global_agent",
+    "route": "/media-library",
+    "page_type": "global_agent",
+    "product_id": null,
+    "workflow_id": null,
+    "selected_asset_ids": [
+      "11111111-1111-4111-8111-111111111111"
+    ],
+    "visible_asset_ids": [],
+    "filters": {
+      "product_id": "22222222-2222-4222-8222-222222222222",
+      "workflow_id": "33333333-3333-4333-8333-333333333333"
+    },
+    "workflow_revision": null,
+    "library_revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
   },
   "expect": {
-    "terminal": ["awaiting_confirmation"],
-    "tools": { "required": ["load_productflow_skill", "list_global_media_library_assets_v1", "inspect_global_media_library_assets_v1", "propose_global_draft"], "forbidden": [] },
-    "ops": { "required": [], "forbidden": [] },
-    "writes": [{ "tool": "propose_global_draft", "match": {
-      "library_payload.operations[0].operation": "rename", "library_payload.operations[0].target.display_name": "新名"
-    } }]
+    "terminal": [
+      "awaiting_confirmation"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "list_global_media_library_assets_v1",
+        "inspect_global_media_library_assets_v1",
+        "propose_global_draft"
+      ],
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "inspect_global_media_library_assets_v1",
+          "match": {
+            "asset_ids": [
+              "11111111-1111-4111-8111-111111111111"
+            ]
+          }
+        }
+      ]
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "propose_global_draft",
+        "match": {
+          "library_payload.operations[0].operation": "rename",
+          "library_payload.operations[0].target.display_name": "新名",
+          "library_payload.operations[0].asset_id": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    ]
   },
   "origin": "legacy:fixtures.ts",
-  "reference": { "scripted_calls": [
-    { "name": "load_productflow_skill", "params": { "skill_name": "media-library-organization" } },
-    { "name": "list_global_media_library_assets_v1", "params": { "limit": 20 } },
-    { "name": "inspect_global_media_library_assets_v1", "params": { "asset_ids": ["11111111-1111-4111-8111-111111111111"] } },
-    { "name": "propose_global_draft", "params": {
-      "schema_version": 1, "draft_kind": "library_organization",
-      "library_payload": {
-        "schema_version": 1, "confirmation_summary": "把这张图改名",
-        "operations": [{
-          "operation": "rename", "asset_id": "11111111-1111-4111-8111-111111111111", "expected_revision": 1,
-          "reason": "更清晰的商品名",
-          "before": { "revision": 1, "display_name": "旧名", "folder_id": null, "tag_names": [], "is_archived": false },
-          "target": { "display_name": "新名" }
-        }]
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "media-library-organization"
+        }
+      },
+      {
+        "name": "list_global_media_library_assets_v1",
+        "params": {
+          "limit": 20
+        }
+      },
+      {
+        "name": "inspect_global_media_library_assets_v1",
+        "params": {
+          "asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
+        }
+      },
+      {
+        "name": "propose_global_draft",
+        "params": {
+          "schema_version": 1,
+          "draft_kind": "library_organization",
+          "library_payload": {
+            "schema_version": 1,
+            "confirmation_summary": "把这张图改名",
+            "operations": [
+              {
+                "operation": "rename",
+                "asset_id": "11111111-1111-4111-8111-111111111111",
+                "expected_revision": 1,
+                "reason": "更清晰的商品名",
+                "before": {
+                  "revision": 1,
+                  "display_name": "旧名",
+                  "folder_id": null,
+                  "tag_names": [],
+                  "is_archived": false
+                },
+                "target": {
+                  "display_name": "新名"
+                }
+              }
+            ]
+          }
+        }
       }
-    } }
-  ] }
+    ]
+  },
+  "observability_blocker": "Go ListLibraryAssets/InspectLibraryAssets 的 AssetMetadata 缺少草案 JSON Schema 必填的 expected_revision/before 所需 revision、tag_names、is_archived；归档素材也不会由当前读取工具返回。生产工具与 Skill 合同待独立修复，不使用桩补造这些事实。"
 }

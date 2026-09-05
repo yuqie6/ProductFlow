@@ -19,13 +19,16 @@ import (
 )
 
 type seededEvalWorld struct {
-	ProductID   string
-	GraphID     string
-	ConvID      string
-	AssetIDs    map[string]string
-	FolderIDs   map[string]string
-	NodeIDs     map[string]string
-	FailedRunID string
+	ProductID    string
+	GraphID      string
+	ConvID       string
+	AssetIDs     map[string]string
+	FolderIDs    map[string]string
+	NodeIDs      map[string]string
+	EdgeIDs      map[string]string
+	GroupIDs     map[string]string
+	FailedRunID  string
+	InitialGraph graph.Projection
 }
 
 func TestEvalWorldsSeedFourKinds(t *testing.T) {
@@ -84,7 +87,7 @@ func scopeForWorld(name string) string {
 
 func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld) seededEvalWorld {
 	t.Helper()
-	out := seededEvalWorld{AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}}
+	out := seededEvalWorld{AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}, EdgeIDs: map[string]string{}, GroupIDs: map[string]string{}}
 	if task.Scope == "global" {
 		seedGlobalLibraryWorld(t, as, task, world, &out)
 		return out
@@ -138,6 +141,13 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 		out.FailedRunID = insertEvalFailedRun(t, as, out, world, task)
 	}
 	applyEvalInject(t, as, task, world, &out)
+	if out.GraphID != "" {
+		live, err := as.svc.Graph.Get(context.Background(), out.ProductID, out.GraphID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.InitialGraph = live
+	}
 	return out
 }
 
@@ -160,6 +170,9 @@ func expandEvalGraph(t *testing.T, as *agentServer, world EvalWorld, seeded *see
 			continue
 		}
 		cfg := map[string]any{}
+		for key, value := range node.Config {
+			cfg[key] = value
+		}
 		if node.NodeType == "product_source" {
 			cfg["source_product_id"] = seeded.ProductID
 		}
@@ -207,6 +220,23 @@ func expandEvalGraph(t *testing.T, as *agentServer, world EvalWorld, seeded *see
 		for _, worldNode := range world.LiveGraph.Nodes {
 			if node.Title == worldNode.Title {
 				seeded.NodeIDs[worldNode.ID] = node.ID
+			}
+		}
+	}
+	for _, edge := range applied.Edges {
+		for _, want := range world.LiveGraph.Edges {
+			if edge.SourceNodeID == seeded.NodeIDs[want.SourceID] && edge.TargetNodeID == seeded.NodeIDs[want.TargetID] {
+				seeded.EdgeIDs[want.ID] = edge.ID
+				if string(edge.Role) != want.Role {
+					t.Fatalf("world %s edge %s role %s != production %s", world.Name, want.ID, want.Role, edge.Role)
+				}
+			}
+		}
+	}
+	for _, group := range applied.Groups {
+		for _, want := range world.LiveGraph.Groups {
+			if group.Title == want.Title {
+				seeded.GroupIDs[want.ID] = group.ID
 			}
 		}
 	}
@@ -272,7 +302,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 			}
 		}
 		results, err := as.svc.Library.Upload(context.Background(), []library.UploadItem{{
-			Content: evalPNG(t), Filename: listed.DisplayName + ".png", MIMEType: "image/png",
+			Content: evalPNG(t), Filename: listed.DisplayName, MIMEType: "image/png",
 		}}, folderID, clockid.New())
 		if err != nil || len(results) == 0 {
 			t.Fatalf("upload %s: %v", listed.DisplayName, err)

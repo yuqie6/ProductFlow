@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveLiveEvalConcurrency } from "./live-concurrency.js";
+import { mergeToolCalls } from "./live-runner.js";
+import type { EvalCallRecord } from "./schema.js";
+import { toolKind } from "../src/tool-manifest.js";
 
 const live = process.env.PRODUCTFLOW_RUN_AGENT_EVALS === "1";
 
 describe("live eval concurrency", () => {
+  it("does not duplicate a successful write after a local validation failure", () => {
+    const write: EvalCallRecord = { name: "apply_graph_change_set_v1", params: { operations: [{ op: "rename_node", node_ref: "n", title: "ok" }] }, ts: "t", outcome: "succeeded" };
+    const merged = mergeToolCalls({ updated_at: "t", tool_steps: [
+      { step_id: "bad", kind: toolKind(write.name), tool_name: write.name, status: "failed", summary: "invalid schema" },
+      { step_id: "good", kind: toolKind(write.name), tool_name: write.name, status: "succeeded", summary: "applied" },
+    ] }, [write]);
+    expect(merged.filter((call) => call.outcome === "succeeded")).toEqual([write]);
+    expect(merged.filter((call) => call.outcome === "failed")).toHaveLength(1);
+  });
   it("caps requested concurrency at production maxConcurrentTurns", () => {
     expect(resolveLiveEvalConcurrency(99, {})).toEqual({
       concurrency: 3,

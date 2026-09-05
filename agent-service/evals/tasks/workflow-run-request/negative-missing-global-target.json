@@ -23,10 +23,7 @@
     "workflow_id": null,
     "selected_asset_ids": [],
     "visible_asset_ids": [],
-    "filters": {
-      "product_id": "22222222-2222-4222-8222-222222222222",
-      "workflow_id": "33333333-3333-4333-8333-333333333333"
-    },
+    "filters": {},
     "workflow_revision": null,
     "library_revision": 1,
     "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -49,7 +46,10 @@
       "required": [],
       "forbidden": []
     },
-    "writes": []
+    "writes": [],
+    "question": {
+      "required": true
+    }
   },
   "origin": "planned:p1-task-expansion",
   "reference": {

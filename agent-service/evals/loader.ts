@@ -114,7 +114,12 @@ export function validateEvalTask(task: EvalTask, world: EvalWorld, catalog: Skil
 function assertSkillOwnsReferenceTools(task: EvalTask, catalog: SkillCatalog): void {
   const owned = new Set(ownedToolsFromCatalogPrompt(catalog.prompt, task.skill));
   for (const call of task.reference.scripted_calls) {
-    if (call.name === PRODUCTFLOW_SKILL_TOOL_NAME) continue;
+    if (call.name === PRODUCTFLOW_SKILL_TOOL_NAME) {
+      const name = (call.params as { skill_name?: unknown })?.skill_name;
+      if (typeof name !== "string" || !catalog.names.includes(name)) throw new Error(`Unknown reference skill: ${String(name)}`);
+      for (const tool of ownedToolsFromCatalogPrompt(catalog.prompt, name)) owned.add(tool);
+      continue;
+    }
     if (!owned.has(call.name)) {
       throw new Error(`Agent eval ${task.skill} expected tool ${call.name} is not in that skill's owns_tools`);
     }

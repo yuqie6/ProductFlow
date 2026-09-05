@@ -9,9 +9,9 @@
     "l3"
   ],
   "utterances": [
-    "把商品图改名为新名，我确认这份草案",
-    "提交重命名草案并确认",
-    "拟改名草案后同意生效"
+    "把已选商品图改名为新名，我确认这份草案",
+    "提交已选商品图改名为新名的草案并确认",
+    "把选中的商品图拟改名为新名，草案出来后我同意生效"
   ],
   "world": "global-library",
   "page_context": {
@@ -121,5 +121,6 @@
         "action": "confirm"
       }
     ]
-  }
+  },
+  "observability_blocker": "Go ListLibraryAssets/InspectLibraryAssets 的 AssetMetadata 缺少草案 JSON Schema 必填的 expected_revision/before 所需 revision、tag_names、is_archived；归档素材也不会由当前读取工具返回。生产工具与 Skill 合同待独立修复，不使用桩补造这些事实。"
 }

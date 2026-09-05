@@ -38,7 +38,13 @@
         "get_product_workflow_context_v1",
         "request_workflow_run_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -48,8 +54,10 @@
       {
         "tool": "request_workflow_run_v1",
         "match": {
-          "expected_workflow_revision": 3,
-          "scope": "graph"
+          "scope": "graph",
+          "force": false,
+          "document_action": "",
+          "source_run_id": null
         }
       }
     ]

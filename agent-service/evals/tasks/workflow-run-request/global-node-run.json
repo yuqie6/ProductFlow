@@ -10,8 +10,8 @@
     "l1"
   ],
   "utterances": [
-    "在全局只运行这个商品的主图节点",
-    "从全局助手提交指定商品的单节点运行",
+    "在全局只运行这个商品的主图提示词节点",
+    "从全局助手提交该商品主图提示词节点的单节点运行",
     "为该商品 node-prompt-1 创建运行请求"
   ],
   "world": "expanded-rev3",
@@ -42,7 +42,15 @@
         "inspect_global_workflow_context_v1",
         "request_global_workflow_run_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "inspect_global_workflow_context_v1",
+          "match": {
+            "product_id": "22222222-2222-4222-8222-222222222222"
+          }
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -53,7 +61,12 @@
         "tool": "request_global_workflow_run_v1",
         "match": {
           "scope": "node",
-          "node_id": "node-prompt-1"
+          "node_id": "node-prompt-1",
+          "product_id": "22222222-2222-4222-8222-222222222222",
+          "workflow_id": "33333333-3333-4333-8333-333333333333",
+          "force": false,
+          "document_action": "",
+          "source_run_id": null
         }
       }
     ]

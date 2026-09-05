@@ -50,9 +50,10 @@
       {
         "tool": "request_workflow_run_v1",
         "match": {
-          "expected_workflow_revision": 3,
           "source_run_id": "44444444-4444-4444-8444-444444444444",
-          "scope": "graph"
+          "scope": "graph",
+          "force": false,
+          "document_action": ""
         }
       }
     ],

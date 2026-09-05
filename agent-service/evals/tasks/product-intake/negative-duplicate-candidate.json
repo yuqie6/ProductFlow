@@ -45,6 +45,16 @@
       ],
       "forbidden": [
         "create_product_workspace_v1"
+      ],
+      "reads": [
+        {
+          "tool": "inspect_products_v1",
+          "match": {
+            "product_ids": [
+              "22222222-2222-4222-8222-222222222222"
+            ]
+          }
+        }
       ]
     },
     "ops": {

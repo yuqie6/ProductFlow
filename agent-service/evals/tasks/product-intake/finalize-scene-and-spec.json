@@ -41,7 +41,13 @@
         "get_product_workflow_context_v1",
         "finalize_product_intake_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [],
@@ -51,9 +57,21 @@
       {
         "tool": "finalize_product_intake_v1",
         "match": {
-          "selection.image_types[0].key": "scene",
-          "selection.image_types[0].quantity": 3,
-          "selection.image_types[1].key": "spec"
+          "selection.image_types": [
+            {
+              "key": "scene",
+              "quantity": 3,
+              "order": 0
+            },
+            {
+              "key": "specifications",
+              "quantity": 1,
+              "order": 1
+            }
+          ],
+          "reference_asset_ids": [
+            "11111111-1111-4111-8111-111111111111"
+          ]
         }
       }
     ]
@@ -85,7 +103,7 @@
                 "order": 0
               },
               {
-                "key": "spec",
+                "key": "specifications",
                 "quantity": 1,
                 "order": 1
               }

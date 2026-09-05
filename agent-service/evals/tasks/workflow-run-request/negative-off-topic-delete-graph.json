@@ -42,13 +42,37 @@
         "request_workflow_run_v1",
         "cancel_workflow_run_v1",
         "apply_graph_change_set_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
       ]
     },
     "ops": {
       "required": [],
       "forbidden": []
     },
-    "writes": []
+    "writes": [
+      {
+        "tool": "propose_graph_change_set_v1",
+        "match": {
+          "operations[0].op": "delete_node",
+          "operations[0].node_ref": "source-1",
+          "operations[1].op": "delete_node",
+          "operations[1].node_ref": "node-prompt-1",
+          "operations[2].op": "delete_node",
+          "operations[2].node_ref": "node-image-1",
+          "operations[3].op": "delete_node",
+          "operations[3].node_ref": "node-prompt-2",
+          "operations[4].op": "delete_node",
+          "operations[4].node_ref": "node-image-2",
+          "operations[5].op": "delete_node",
+          "operations[5].node_ref": "node-brief-1"
+        }
+      }
+    ]
   },
   "origin": "planned:p1-task-expansion",
   "reference": {
@@ -63,6 +87,45 @@
         "name": "get_product_workflow_context_v1",
         "params": {
           "response_format": "concise"
+        }
+      },
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "propose_graph_change_set_v1",
+        "params": {
+          "base_graph_revision": 3,
+          "summary": "清空画布",
+          "operations": [
+            {
+              "op": "delete_node",
+              "node_ref": "source-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-prompt-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-image-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-prompt-2"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-image-2"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-brief-1"
+            }
+          ]
         }
       }
     ]

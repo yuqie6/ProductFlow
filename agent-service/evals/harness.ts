@@ -84,7 +84,7 @@ export function paramsMatchSchema(name: string, params: unknown): boolean {
 }
 
 export function assertTaskExpectations(task: EvalTask, calls: EvalReferenceCall[]): void {
-  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "reference" }));
+  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "reference", outcome: "succeeded" }));
   const checks = [
     ["expect.tools", gradeTools(task.expect.tools, recorded)],
     ["expect.ops", gradeOperations(task.expect.ops, recorded)],

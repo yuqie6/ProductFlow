@@ -3,15 +3,12 @@ export interface GradeResult {
   errors: string[];
 }
 
-export interface EvalCallRecord {
-  name: string;
-  params: unknown;
-  ts: string;
-}
+export type { EvalCallRecord } from "../schema.js";
 
 export interface ToolExpectation {
   required?: readonly string[];
   forbidden?: readonly string[];
+  reads?: readonly WriteExpectation[];
 }
 
 export interface OperationExpectation {

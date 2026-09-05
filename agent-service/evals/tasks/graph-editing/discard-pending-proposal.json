@@ -5,28 +5,65 @@
   "scope": "product_workflow",
   "suite": "regression",
   "case_type": "positive",
-  "layers": ["l0", "l1"],
+  "layers": [
+    "l0",
+    "l1"
+  ],
   "utterances": [
     "放弃刚才那份还没确认的图改动",
     "撤掉当前待确认的画布提案",
     "不要应用那份图修改方案，把它丢弃"
   ],
-  "world": "expanded-rev3",
+  "world": "expanded-pending-proposal",
   "page_context": {
-    "snapshot_id": "eval-product_workbench", "route": "/products/22222222-2222-4222-8222-222222222222", "page_type": "product_workbench",
-    "product_id": "22222222-2222-4222-8222-222222222222", "workflow_id": "33333333-3333-4333-8333-333333333333",
-    "selected_asset_ids": [], "visible_asset_ids": [], "filters": {}, "workflow_revision": 1, "library_revision": null,
-    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captured_at": "2026-08-31T00:00:00.000Z"
+    "snapshot_id": "eval-product_workbench",
+    "route": "/products/22222222-2222-4222-8222-222222222222",
+    "page_type": "product_workbench",
+    "product_id": "22222222-2222-4222-8222-222222222222",
+    "workflow_id": "33333333-3333-4333-8333-333333333333",
+    "selected_asset_ids": [],
+    "visible_asset_ids": [],
+    "filters": {},
+    "workflow_revision": 1,
+    "library_revision": null,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "captured_at": "2026-08-31T00:00:00.000Z"
   },
   "expect": {
-    "terminal": ["succeeded"],
-    "tools": { "required": ["load_productflow_skill", "discard_workflow_proposal_v1"], "forbidden": [] },
-    "ops": { "required": [], "forbidden": [] },
-    "writes": [{ "tool": "discard_workflow_proposal_v1", "match": {} }]
+    "terminal": [
+      "succeeded"
+    ],
+    "tools": {
+      "required": [
+        "load_productflow_skill",
+        "discard_workflow_proposal_v1"
+      ],
+      "forbidden": []
+    },
+    "ops": {
+      "required": [],
+      "forbidden": []
+    },
+    "writes": [
+      {
+        "tool": "discard_workflow_proposal_v1",
+        "match": {}
+      }
+    ]
   },
   "origin": "legacy:fixtures.ts",
-  "reference": { "scripted_calls": [
-    { "name": "load_productflow_skill", "params": { "skill_name": "graph-editing" } },
-    { "name": "discard_workflow_proposal_v1", "params": {} }
-  ] }
+  "reference": {
+    "scripted_calls": [
+      {
+        "name": "load_productflow_skill",
+        "params": {
+          "skill_name": "graph-editing"
+        }
+      },
+      {
+        "name": "discard_workflow_proposal_v1",
+        "params": {}
+      }
+    ]
+  }
 }

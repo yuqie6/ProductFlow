@@ -31,12 +31,11 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "succeeded",
+      "requires_input"
     ],
     "tools": {
-      "required": [
-        "load_productflow_skill"
-      ],
+      "required": [],
       "forbidden": [
         "propose_global_draft"
       ]

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "name": "expanded-pending-proposal",
+  "intake": {
+    "schema_version": 1,
+    "image_types": [
+      {
+        "key": "hero",
+        "quantity": 2,
+        "order": 0
+      },
+      {
+        "key": "detail",
+        "quantity": 2,
+        "order": 1
+      }
+    ]
+  },
+  "birth_expandable": false,
+  "live_graph": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "title": "评测图",
+    "revision": 3,
+    "node_count": 6,
+    "edge_count": 5,
+    "group_count": 1,
+    "nodes": [
+      {
+        "id": "source-1",
+        "node_type": "product_source",
+        "title": "商品资料"
+      },
+      {
+        "id": "node-prompt-1",
+        "node_type": "image_prompt",
+        "title": "主图提示词",
+        "config": {
+          "image_type_key": "hero"
+        }
+      },
+      {
+        "id": "node-image-1",
+        "node_type": "image_generation",
+        "title": "主图 1",
+        "config": {
+          "image_type_key": "hero"
+        }
+      },
+      {
+        "id": "node-prompt-2",
+        "node_type": "image_prompt",
+        "title": "细节提示词",
+        "config": {
+          "image_type_key": "detail"
+        }
+      },
+      {
+        "id": "node-image-2",
+        "node_type": "image_generation",
+        "title": "细节图 1",
+        "config": {
+          "image_type_key": "detail"
+        }
+      },
+      {
+        "id": "node-brief-1",
+        "node_type": "creative_brief",
+        "title": "创意简报"
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-source-prompt",
+        "source_id": "source-1",
+        "target_id": "node-prompt-1",
+        "role": "facts",
+        "order": 0
+      },
+      {
+        "id": "edge-prompt-image",
+        "source_id": "node-prompt-1",
+        "target_id": "node-image-1",
+        "role": "prompt",
+        "order": 0
+      },
+      {
+        "id": "edge-source-prompt-2",
+        "source_id": "source-1",
+        "target_id": "node-prompt-2",
+        "role": "facts",
+        "order": 0
+      },
+      {
+        "id": "edge-prompt-image-2",
+        "source_id": "node-prompt-2",
+        "target_id": "node-image-2",
+        "role": "prompt",
+        "order": 0
+      },
+      {
+        "id": "edge-brief-prompt",
+        "source_id": "node-brief-1",
+        "target_id": "node-prompt-1",
+        "role": "brief",
+        "order": 0
+      }
+    ],
+    "groups": [
+      {
+        "id": "group-main",
+        "title": "主图组",
+        "member_ids": [
+          "node-prompt-1",
+          "node-image-1"
+        ]
+      }
+    ]
+  },
+  "pending_proposal_id": "proposal-pending-1"
+}

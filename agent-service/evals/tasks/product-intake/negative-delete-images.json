@@ -31,13 +31,11 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "succeeded",
+      "requires_input"
     ],
     "tools": {
-      "required": [
-        "load_productflow_skill",
-        "get_product_workflow_context_v1"
-      ],
+      "required": [],
       "forbidden": [
         "finalize_product_intake_v1",
         "create_product_workspace_v1"

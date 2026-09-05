@@ -1,0 +1,32 @@
+[
+  {
+    "operations": [
+      {
+        "node_ref": "node-image-2",
+        "op": "delete_node"
+      }
+    ],
+    "removed_edge_ids": [
+      "edge-prompt-image-2"
+    ],
+    "removed_group_ids": [],
+    "removed_node_ids": [
+      "node-image-2"
+    ],
+    "world": "expanded-rev3"
+  },
+  {
+    "operations": [
+      {
+        "edge_ref": "edge-brief-prompt",
+        "op": "disconnect_edge"
+      }
+    ],
+    "removed_edge_ids": [
+      "edge-brief-prompt"
+    ],
+    "removed_group_ids": [],
+    "removed_node_ids": [],
+    "world": "expanded-rev3"
+  }
+]

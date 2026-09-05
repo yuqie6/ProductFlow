@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 import { ProductFlowError, resolvedToolContractVersion, type JsonObject } from "../src/contracts.js";
 import type { ProductFlowClient } from "../src/productflow.js";
@@ -15,6 +17,12 @@ const PIXEL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+
+const catalogs = JSON.parse(readFileSync(new URL("./fixtures/catalog.json", import.meta.url), "utf8"));
+const intakeResults = JSON.parse(readFileSync(new URL("./fixtures/intake-results.json", import.meta.url), "utf8"));
+const structuralWrites = JSON.parse(readFileSync(new URL("./fixtures/structural-writes.json", import.meta.url), "utf8")) as Array<{
+  world: string; operations: unknown; removed_node_ids: string[]; removed_edge_ids: string[]; removed_group_ids: string[];
+}>;
 
 export interface StubWorld {
   client: ProductFlowClient;
@@ -39,8 +47,12 @@ export function createStubWorld(
   const calls: EvalCallRecord[] = [];
   const attempts = new Map<string, number>();
   let graphRevision = world.live_graph.revision;
+  let intake = world.intake;
+  let birthExpandable = world.birth_expandable;
+  let graph = structuredClone(world.live_graph);
+  let pendingProposalID = world.pending_proposal_id ?? null;
   const record = (name: string, params: unknown): void => {
-    calls.push({ name, params, ts: new Date().toISOString() });
+    calls.push({ name, params: structuredClone(params), ts: new Date().toISOString(), outcome: "unknown" });
   };
   const maybeReadError = (name: string): void => {
     const error = task.inject?.read_error;
@@ -70,19 +82,37 @@ export function createStubWorld(
     maybeReadError(name);
   };
   const payload = task.inject?.payload;
-  const productName = payload?.product_name ?? "评测商品";
-  const failedReason = payload?.failure_reason ?? "provider_error";
+  const productName = ["评测商品", payload?.product_name].filter(Boolean).join("\n");
+  const failedReason = ["provider_error", payload?.failure_reason].filter(Boolean).join("\n");
   const listedAssets = (world.listed_assets ?? []).map((asset) => ({
     ...asset,
-    display_name: payload?.display_name ?? asset.display_name,
+    display_name: [asset.display_name, payload?.display_name].filter(Boolean).join("\n"),
   }));
   const listedFolders = (world.listed_folders ?? [{ id: EVAL_FOLDER_ID, title: "季节" }]).map((folder) => ({
     ...folder,
-    title: payload?.folder_title ?? folder.title,
+    title: [folder.title, payload?.folder_title].filter(Boolean).join("\n"),
   }));
-  const graphNodes = world.live_graph.nodes.map((node) => (
-    payload?.node_title && node.id === EVAL_NODE_ID ? { ...node, title: payload.node_title } : node
+  const graphNodes = () => graph.nodes.map((node) => (
+    payload?.node_title && node.id === EVAL_NODE_ID ? { ...node, title: `${node.title}\n${payload.node_title}` } : node
   ));
+  const libraryMetadata = (asset: typeof listedAssets[number]) => ({
+    id: asset.id, display_name: asset.display_name, original_filename: asset.display_name,
+    user_folder_id: asset.folder_id ?? null,
+    user_folder_name: listedFolders.find((folder) => folder.id === asset.folder_id)?.title ?? null,
+    origin_type: "direct_upload", mime_type: "image/png", verification_status: "verified",
+  });
+  const graphSummary = (format: string) => {
+    const groups = graph.groups ?? [];
+    const nodes = graphNodes().map(({ id, node_type, title }) => ({
+      id, node_type, title, group_id: groups.find((group) => group.member_ids.includes(id))?.id ?? null,
+    }));
+    const common = { id: graph.id, title: graph.title, schema_version: 3, revision: graphRevision, nodes };
+    return format === "detailed" ? { ...common, groups,
+      edges: (graph.edges ?? []).map(({ id, source_id, target_id, role }) => ({ id, source_node_id: source_id, target_node_id: target_id, role })),
+    } : { ...common, node_count: nodes.length, edge_count: graph.edge_count, group_count: groups.length,
+      groups: groups.map(({ id, title, member_ids }) => ({ id, title, member_count: member_ids.length })),
+    };
+  };
   const failedRun = {
     id: world.failed_run?.id ?? EVAL_RUN_ID,
     status: world.failed_run?.status ?? "failed",
@@ -176,10 +206,11 @@ export function createStubWorld(
       return {
         schema_version: 1,
         product: { id: EVAL_PRODUCT_ID, name: productName },
-        intake: world.intake,
-        birth_expandable: world.birth_expandable,
-        live_graph: { ...world.live_graph, nodes: graphNodes, revision: graphRevision },
-        node_catalog: { nodes: [] },
+        intake,
+        birth_expandable: birthExpandable,
+        live_graph: graphSummary(responseFormat),
+        node_catalog: responseFormat === "detailed" ? catalogs.node_catalog : catalogs.node_catalog_index,
+        image_type_catalog: catalogs.image_type_catalog,
         response_format: responseFormat,
       };
     },
@@ -188,26 +219,33 @@ export function createStubWorld(
       return {
         schema_version: 1,
         product: { id: productID, name: productName },
-        intake: world.intake,
-        live_graph: { ...world.live_graph, nodes: graphNodes, revision: graphRevision },
+        intake,
+        live_graph: graphSummary(responseFormat),
         response_format: responseFormat,
       };
     },
     workflowRuns: async (_conversationID: string, limit: number) => {
       read("inspect_workflow_runs_v1", { limit });
-      return { items: [recentRun], total_count: 1 };
+      return { workflow_id: graph.id, workflow_revision: graphRevision, items: [recentRun] };
     },
     inspectGlobalWorkflowRuns: async (_conversationID: string, workflowIDs: string[], limit: number) => {
       read("inspect_global_workflow_runs_v1", { workflow_ids: workflowIDs, limit });
-      return { items: [recentRun], total_count: 1 };
+      const available = world.listed_workflow_runs ?? [{ workflow_id: graph.id, workflow_title: graph.title, workflow_revision: graphRevision, items: [recentRun] }];
+      const items = workflowIDs.map((id) => available.find((workflow) => workflow.workflow_id === id));
+      if (items.some((workflow) => !workflow)) throw new ProductFlowError(404, "not_found", "workflow not found");
+      return { items: items.map((workflow) => ({ ...workflow, items: workflow!.items.slice(0, limit || 5) })) };
     },
     workflowRunDetail: async (_conversationID: string, runIDValue: string) => {
       read("get_workflow_run_detail_v1", { run_id: runIDValue });
+      if (runIDValue !== failedRun.id && runIDValue !== recentRun.id) throw new ProductFlowError(404, "not_found", "run not found");
       return {
+        schema_version: 1,
         run_id: runIDValue,
+        workflow_id: graph.id, graph_revision: graphRevision, scope: "graph", is_retryable: true, failure_reason: failedReason,
         status: failedRun.status,
         nodes: [{
-          id: world.failed_run?.failed_node_id ?? EVAL_NODE_ID,
+          node_id: world.failed_run?.failed_node_id ?? EVAL_NODE_ID,
+          node_title: graphNodes().find((node) => node.id === (world.failed_run?.failed_node_id ?? EVAL_NODE_ID))?.title ?? "",
           status: "failed",
           failure_reason: failedReason,
         }],
@@ -219,52 +257,102 @@ export function createStubWorld(
     },
     inspectAssets: async (_conversationID: string, assetIDs: string[]) => {
       read("inspect_product_image_assets_v1", { asset_ids: assetIDs });
-      return { items: listedAssets.length > 0 ? listedAssets : assetIDs.map((id) => ({ id })) };
+      const available = listedAssets.length > 0 ? listedAssets : task.page_context.selected_asset_ids.map((id) => ({ id, display_name: ["已选参考图", payload?.display_name].filter(Boolean).join("\n") }));
+      return { items: available.filter((asset) => assetIDs.includes(asset.id)) };
     },
     listGlobalMediaAssets: async (_conversationID: string, query: string, cursor: string, limit: number) => {
       read("list_global_media_library_assets_v1", { query, cursor, limit });
       return {
-        items: listedAssets.length > 0 ? listedAssets : defaultAssets(payload?.display_name),
-        folders: listedFolders,
-        total_count: listedAssets.length > 0 ? listedAssets.length : 1,
+        items: listedAssets.filter((asset) => !asset.is_archived && (!query || asset.display_name.includes(query))).slice(0, limit || 50).map(libraryMetadata),
+        next_cursor: null,
       };
     },
     inspectGlobalMediaAssets: async (_conversationID: string, assetIDs: string[]) => {
       read("inspect_global_media_library_assets_v1", { asset_ids: assetIDs });
-      return { items: listedAssets.length > 0 ? listedAssets : defaultAssets(payload?.display_name) };
+      const items = assetIDs.map((id) => listedAssets.find((asset) => asset.id === id && !asset.is_archived));
+      if (items.some((asset) => !asset)) throw new ProductFlowError(404, "not_found", "asset not found or archived");
+      return { items: items.map((asset) => libraryMetadata(asset!)) };
     },
     listProducts: async (_conversationID: string, query: string, cursor: string, limit: number) => {
       read("list_products_v1", { query, cursor, limit });
-      return { items: [{ id: EVAL_PRODUCT_ID, name: productName, workflow_id: EVAL_WORKFLOW_ID }], total_count: 1 };
+      const items = [{ id: EVAL_PRODUCT_ID, name: productName, workflow_id: EVAL_WORKFLOW_ID }].filter((product) => !query || product.name.includes(query));
+      return { items, total_count: items.length };
     },
     inspectProducts: async (_conversationID: string, productIDs: string[]) => {
       read("inspect_products_v1", { product_ids: productIDs });
-      return { items: productIDs.map((id) => ({ id, name: productName })) };
+      return { items: productIDs.filter((id) => id === EVAL_PRODUCT_ID).map((id) => ({ id, name: productName, workflow_id: EVAL_WORKFLOW_ID })) };
     },
     assetContent: async () => ({ data: PIXEL_PNG.toString("base64"), mediaType: "image/png", sizeBytes: PIXEL_PNG.length }),
     getNodeDetail: async (_conversationID: string, nodeID: string) => {
       read("get_node_detail_v1", { node_id: nodeID });
+      const node = graphNodes().find((node) => node.id === nodeID);
+      if (!node) throw new ProductFlowError(404, "not_found", "node not found");
       return {
-        id: nodeID,
-        node_type: "image_prompt",
-        title: payload?.node_title ?? "主图提示词",
-        config_status: "ready",
+        ...node,
+        config: (node as { config?: unknown }).config ?? {},
       };
     },
     applyGraphChangeSet: async (_conversationID: string, changeSet: JsonObject) => {
       write("apply_graph_change_set_v1", changeSet);
+      const next = structuredClone(graph);
+      for (const operation of changeSet.operations as Array<Record<string, unknown>>) {
+        const node = next.nodes.find((node) => node.id === operation.node_ref);
+        switch (operation.op) {
+          case "rename_node":
+          case "update_node_config":
+            if (!node) throw new ProductFlowError(404, "not_found", "node not found");
+            if (operation.op === "rename_node") node.title = String(operation.title);
+            else node.config = structuredClone(operation.config as Record<string, unknown>);
+            break;
+          case "rename_group": {
+            const group = next.groups?.find((group) => group.id === operation.group_ref);
+            if (!group) throw new ProductFlowError(404, "not_found", "group not found");
+            group.title = String(operation.title);
+            break;
+          }
+          case "move_nodes":
+            for (const [id, x, y] of operation.nodes as Array<[string, number, number]>) {
+              const target = next.nodes.find((node) => node.id === id);
+              if (!target) throw new ProductFlowError(404, "not_found", "node not found");
+              Object.assign(target, { position_x: x, position_y: y });
+            }
+            break;
+          case "move_nodes_to_group": {
+            const ids = operation.node_refs as string[];
+            const group = next.groups?.find((group) => group.id === operation.group_ref);
+            if (!group || ids.some((id) => !next.nodes.some((node) => node.id === id))) throw new ProductFlowError(404, "not_found", "node or group not found");
+            for (const current of next.groups ?? []) current.member_ids = current.member_ids.filter((id) => !ids.includes(id));
+            group.member_ids.push(...ids);
+            break;
+          }
+          default: {
+            const observed = structuralWrites.find((snapshot) => snapshot.world === task.world && isDeepStrictEqual(snapshot.operations, changeSet.operations));
+            if (!observed) throw new ProductFlowError(422, "eval_unobservable", "structural apply requires Go observation");
+            if (observed.removed_node_ids.some((id) => !next.nodes.some((node) => node.id === id)) || observed.removed_edge_ids.some((id) => !next.edges?.some((edge) => edge.id === id))) throw new ProductFlowError(404, "not_found", "structural target not found");
+            next.nodes = next.nodes.filter((node) => !observed.removed_node_ids.includes(node.id));
+            next.edges = next.edges?.filter((edge) => !observed.removed_edge_ids.includes(edge.id));
+            next.groups = next.groups?.filter((group) => !observed.removed_group_ids.includes(group.id)).map((group) => ({ ...group, member_ids: group.member_ids.filter((id) => !observed.removed_node_ids.includes(id)) }));
+            next.node_count = next.nodes.length; next.edge_count = next.edges?.length ?? 0; next.group_count = next.groups?.length ?? 0;
+          }
+        }
+      }
+      graph = next;
       graphRevision += 1;
       return { accepted: true, applied: true, revision: graphRevision };
     },
     reconcileApplyGraphChangeSet: async () => ({ state: "applied", result: { accepted: true } }),
     proposeGraphChangeSet: async (_conversationID: string, changeSet: JsonObject) => {
       write("propose_graph_change_set_v1", changeSet);
+      if (pendingProposalID) throw new ProductFlowError(409, "conflict", "pending proposal already exists");
+      pendingProposalID = "p1";
       return { accepted: true, applied: false, pending_confirmation: true, proposal_id: "p1" };
     },
     reconcileProposeGraphChangeSet: async () => ({ state: "applied", result: { accepted: true } }),
     discardGraphProposal: async (_conversationID: string, proposalID: string | null) => {
       const params = proposalID ? { proposal_id: proposalID } : {};
       write("discard_workflow_proposal_v1", params);
+      if (!pendingProposalID || (proposalID && proposalID !== pendingProposalID)) throw new ProductFlowError(404, "not_found", "pending proposal not found");
+      pendingProposalID = null;
       return { discarded: true };
     },
     reconcileDiscardGraphProposal: async () => ({ state: "applied", result: { discarded: true } }),
@@ -279,7 +367,21 @@ export function createStubWorld(
     },
     finalizeProductIntake: async (_conversationID: string, params: JsonObject) => {
       write("finalize_product_intake_v1", withoutTaskID(params));
-      return { accepted: true, node_count: 19, group_count: 4 };
+      const snapshot = Object.values(intakeResults).find((value) =>
+        isDeepStrictEqual((value as { selection: unknown }).selection, params.selection)) as
+        { intake: EvalWorld["intake"]; nodes: EvalWorld["live_graph"]["nodes"]; edges: NonNullable<EvalWorld["live_graph"]["edges"]>; groups: EvalWorld["live_graph"]["groups"]; node_count: number; group_count: number } | undefined;
+      if (!snapshot) throw new ProductFlowError(422, "eval_unobservable", "no Go observation fixture for this intake selection");
+      const ids = params.reference_asset_ids;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => !task.page_context.selected_asset_ids.includes(String(id)))) {
+        throw new ProductFlowError(422, "validation", "unknown reference selection");
+      }
+      intake = { ...structuredClone(snapshot.intake), reference_asset_ids: ids };
+      birthExpandable = false;
+      graphRevision += 1;
+      graph = { ...graph, node_count: snapshot.node_count, group_count: snapshot.group_count,
+        nodes: structuredClone(snapshot.nodes), edges: structuredClone(snapshot.edges),
+        groups: structuredClone(snapshot.groups), edge_count: snapshot.edges.length };
+      return { accepted: true, intake_finalized: true, intake, node_count: snapshot.node_count, group_count: snapshot.group_count, revision: graphRevision };
     },
     reconcileProductIntake: async () => ({ state: "applied", result: { accepted: true } }),
     validateGlobalDraft: async (_conversationID: string, params: JsonObject) => {
@@ -309,6 +411,30 @@ export function createStubWorld(
     reconcileWorkflowRunRequest: async () => ({ state: "applied", result: { request_id: "req-1" } }),
   } as unknown as ProductFlowClient;
 
+  // Stub methods record synchronously. Retain only this invocation's records before awaiting its result.
+  for (const [key, method] of Object.entries(client)) {
+    if (typeof method !== "function") continue;
+    Object.assign(client, { [key]: async (...args: unknown[]) => {
+      const start = calls.length;
+      const pending = method(...args);
+      const recorded = calls.slice(start);
+      try {
+        const value = await pending;
+        for (const call of recorded) {
+          call.outcome = "succeeded";
+          if (payload) {
+            call.observed_injections = Object.entries(payload).filter(([, text]) =>
+              typeof text === "string" && JSON.stringify(value)?.includes(text)
+            ).map(([point]) => point);
+          }
+        }
+        return value;
+      } catch (error) {
+        for (const call of recorded) call.outcome = error instanceof ProductFlowError && error.code === "eval_unobservable" ? "unknown" : "failed";
+        throw error;
+      }
+    } });
+  }
   return { client, calls };
 }
 
@@ -317,11 +443,17 @@ function validateRevisions(params: unknown, graphRevision: number, world: EvalWo
     if (key === "base_graph_revision" || key === "expected_workflow_revision") {
       if (value !== graphRevision) throw revisionConflict(key, graphRevision);
     }
-    if (key === "expected_revision") {
-      const revisions = new Set((world.listed_assets ?? []).map((asset) => asset.revision).filter((item) => item !== undefined));
-      if (!revisions.has(value as number)) throw revisionConflict(key, Math.max(0, ...revisions));
-    }
   });
+  const operations = (params as { library_payload?: { operations?: Array<Record<string, unknown>> } })?.library_payload?.operations;
+  for (const operation of operations ?? []) {
+    const asset = world.listed_assets?.find((asset) => asset.id === operation.asset_id);
+    if (!asset) throw new ProductFlowError(404, "not_found", "asset not found");
+    if (operation.expected_revision !== asset.revision) throw revisionConflict("expected_revision", asset.revision ?? 0);
+    const before = operation.before as Record<string, unknown> | undefined;
+    if (before && Object.entries(before).some(([key, value]) => !isDeepStrictEqual(value, (asset as Record<string, unknown>)[key]))) {
+      throw new ProductFlowError(409, "conflict", "asset before state changed");
+    }
+  }
 }
 
 function visit(value: unknown, read: (key: string, value: unknown) => void): void {
@@ -340,17 +472,6 @@ function revisionConflict(field: string, currentRevision: number): ProductFlowEr
   return new ProductFlowError(409, "conflict", `revision conflict: current revision is ${currentRevision}`, {
     issues: [{ path: field, message: `current revision is ${currentRevision}; reread context before retrying` }],
   });
-}
-
-function defaultAssets(displayName?: string): Array<Record<string, unknown>> {
-  return [{
-    id: EVAL_ASSET_ID,
-    display_name: displayName ?? "商品图",
-    revision: 1,
-    folder_id: null,
-    tag_names: [],
-    is_archived: false,
-  }];
 }
 
 function withoutTaskID(params: JsonObject): JsonObject {

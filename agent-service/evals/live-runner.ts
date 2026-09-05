@@ -147,6 +147,7 @@ async function runTrial(
   let errors: string[] = [];
   let events: Awaited<ReturnType<TurnStore["events"]>> = [];
   try {
+    if (task.observability_blocker) throw new Error(`unobservable eval input: ${task.observability_blocker}`);
     const started = await manager.start({
       lookup: { conversationID },
       input: {
@@ -195,7 +196,7 @@ async function runTrial(
     utterance,
     started_at: startedAt.toISOString(),
     duration_ms: durationMS,
-    status: terminal?.status ?? "failed",
+    status: task.observability_blocker ? "unobservable" : terminal?.status ?? "failed",
     passed: errors.length === 0,
     errors,
     terminal: terminal?.status ?? null,
@@ -255,18 +256,25 @@ function gradeTrial(
   return grades.flatMap((grade) => grade.errors);
 }
 
-export function mergeToolCalls(terminal: TurnState | null, recorded: readonly EvalCallRecord[]): EvalCallRecord[] {
+export function mergeToolCalls(terminal: Pick<TurnState, "updated_at" | "tool_steps" | "question"> | null, recorded: readonly EvalCallRecord[]): EvalCallRecord[] {
   const calls = [...recorded];
   const recordedCounts = new Map<string, number>();
-  for (const call of recorded) recordedCounts.set(call.name, (recordedCounts.get(call.name) ?? 0) + 1);
+  for (const call of recorded) {
+    const key = `${call.name}:${call.outcome}`;
+    recordedCounts.set(key, (recordedCounts.get(key) ?? 0) + 1);
+  }
   const seenCounts = new Map<string, number>();
   for (const step of terminal?.tool_steps ?? []) {
     const name = step.tool_name;
     if (!name || name === "productflow_context_injection") continue;
-    const seen = (seenCounts.get(name) ?? 0) + 1;
-    seenCounts.set(name, seen);
-    if (seen <= (recordedCounts.get(name) ?? 0)) continue;
-    calls.push({ name, params: {}, ts: terminal?.updated_at ?? new Date().toISOString() });
+    const outcome = step.status === "succeeded" || (name === "ask_user" && terminal?.question)
+      ? "succeeded" : step.status === "failed" ? "failed" : "unknown";
+    const key = `${name}:${outcome}`;
+    const seen = (seenCounts.get(key) ?? 0) + 1;
+    seenCounts.set(key, seen);
+    if (seen <= (recordedCounts.get(key) ?? 0)) continue;
+    calls.push({ name, params: {}, ts: terminal?.updated_at ?? new Date().toISOString(),
+      outcome });
   }
   return calls;
 }

@@ -53,6 +53,8 @@ export interface GroupMetric extends MetricSummary {
 }
 
 export interface RunReport {
+  measurementEligible: boolean;
+  unobservableTrials: number;
   runId: string;
   passK: number;
   tasks: TaskMetric[];
@@ -200,14 +202,18 @@ export function buildRunReport(runId: string, records: readonly TrialRecord[], p
     .map(([key, rows]) => taskMetric(key, rows, passK))
     .sort(compareTasks);
   const bySuite = groupMetrics(tasks, (task) => task.suite);
+  const unobservableTrials = records.filter((record) => record.status === "unobservable" || record.tool_calls.some((call) => call.outcome === "unknown")).length;
+  const gate = regressionGate(bySuite, passK);
   return {
+    measurementEligible: unobservableTrials === 0,
+    unobservableTrials,
     runId,
     passK,
     tasks,
     overall: summarize(tasks),
     bySkill: groupMetrics(tasks, (task) => task.skill),
     bySuite,
-    regressionGate: regressionGate(bySuite, passK),
+    regressionGate: unobservableTrials ? { ...gate, passed: null, reason: `${unobservableTrials} unobservable trial(s); raw counts are diagnostic only` } : gate,
   };
 }
 
@@ -240,6 +246,7 @@ export function wilson95(successes: number, trials: number): WilsonInterval {
 }
 
 export function diffReports(baseline: RunReport, candidate: RunReport): ReportDiff {
+  if (!baseline.measurementEligible || !candidate.measurementEligible) throw new Error("cannot compare unobservable eval runs as capability measurements");
   if (baseline.passK !== candidate.passK) {
     throw new Error(`cannot diff pass^${baseline.passK} against pass^${candidate.passK}`);
   }
@@ -326,6 +333,7 @@ export function formatRunReport(report: RunReport): string {
   const overall = report.overall;
   const lines = [
     `# Agent Eval Report: ${report.runId}`,
+    `measurement_eligible=${report.measurementEligible} unobservable_trials=${report.unobservableTrials}${report.measurementEligible ? "" : "; all counts below are diagnostic, not capability scores"}`,
     "",
     `run_id=${report.runId} tasks=${overall.taskCount} trials=${overall.trialCount} pass^1=${formatRatio(overall.passAt1)} pass^${report.passK}=${formatNullableRatio(overall.passAtK)} trial_success=${formatRatio(overall.trialSuccessProportion)} wilson95_trial_success=[${formatRatio(overall.trialSuccessWilson95.low)},${formatRatio(overall.trialSuccessWilson95.high)}] tokens=${overall.tokenCount} token_usage_unavailable=${overall.tokenCountUnavailable} duration_ms=${overall.durationMs}`,
     `regression_gate=${report.regressionGate.passed === null ? "unavailable" : report.regressionGate.passed ? "pass" : "fail"} pass^1_threshold=0.9500 pass^3_threshold=0.9000 reason=${report.regressionGate.reason}`,

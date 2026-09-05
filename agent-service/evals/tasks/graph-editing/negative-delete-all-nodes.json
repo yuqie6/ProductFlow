@@ -41,6 +41,12 @@
       ],
       "forbidden": [
         "apply_graph_change_set_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
       ]
     },
     "ops": {

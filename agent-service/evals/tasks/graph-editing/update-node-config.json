@@ -12,8 +12,8 @@
   ],
   "utterances": [
     "把主图提示词节点的设计目标改成白底棚拍",
-    "更新 node-prompt-1 的提示词配置",
-    "将主图节点改为白色背景的棚拍目标"
+    "更新 node-prompt-1 的设计目标为白底棚拍",
+    "将主图提示词节点的设计目标改为白底棚拍"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -40,7 +40,13 @@
         "get_product_workflow_context_v1",
         "apply_graph_change_set_v1"
       ],
-      "forbidden": []
+      "forbidden": [],
+      "reads": [
+        {
+          "tool": "get_product_workflow_context_v1",
+          "match": {}
+        }
+      ]
     },
     "ops": {
       "required": [
@@ -53,7 +59,9 @@
         "tool": "apply_graph_change_set_v1",
         "match": {
           "operations[0].op": "update_node_config",
-          "operations[0].config.prompt.design_goal": "白底棚拍"
+          "operations[0].config.prompt.design_goal": "白底棚拍",
+          "operations[0].config.image_type_key": "hero",
+          "operations[0].node_ref": "node-prompt-1"
         }
       }
     ],

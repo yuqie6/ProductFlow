@@ -10,9 +10,9 @@
     "l1"
   ],
   "utterances": [
-    "诊断后把失败运行记录删掉",
-    "查看原因并取消这条已经失败的 run",
-    "分析完顺便清除运行历史"
+    "诊断失败后删除这条运行历史",
+    "查看失败原因并清除这条失败记录",
+    "分析完把失败的运行历史删掉"
   ],
   "world": "expanded-failed-run",
   "page_context": {
@@ -40,7 +40,16 @@
       ],
       "forbidden": [
         "request_workflow_run_v1",
-        "request_global_workflow_run_v1"
+        "request_global_workflow_run_v1",
+        "cancel_workflow_run_v1"
+      ],
+      "reads": [
+        {
+          "tool": "get_workflow_run_detail_v1",
+          "match": {
+            "run_id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
       ]
     },
     "ops": {
