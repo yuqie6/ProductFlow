@@ -51,6 +51,62 @@ async function flushAsyncWork(): Promise<void> {
 
 describe("ConversationRuntime", () => {
 
+  it.each(["resolve", "reject"] as const)("repairs after reconnect while an obsolete request will %s late", async (outcome) => {
+    vi.useFakeTimers();
+    const sources: FakeEventSource[] = [];
+    const requests: Array<{
+      signal?: AbortSignal;
+      resolve: (page: ConversationEventPage) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const received: number[] = [];
+    const protocolErrors = vi.fn();
+    const close = subscribeToConversationEvents({
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => {
+        const source = new FakeEventSource();
+        sources.push(source);
+        return source;
+      },
+      fetchEventPage: (_url, signal) => new Promise((resolve, reject) => {
+        requests.push({ signal, resolve, reject });
+      }),
+      onEvent: (value) => received.push(value.sequence),
+      onProtocolError: protocolErrors,
+    });
+    const page: ConversationEventPage = {
+      items: [JSON.parse(event(1)) as AgentTurnEvent],
+      next_after: 1,
+      has_more: false,
+      stream_state: "live",
+    };
+    try {
+      sources[0].emit("turn.started", event(2));
+      sources[0].emit("error");
+      await vi.advanceTimersByTimeAsync(250);
+      sources[1].emit("turn.started", event(3));
+      expect(requests).toHaveLength(2);
+      expect(requests[0].signal?.aborted).toBe(true);
+      expect(requests[1].signal?.aborted).toBe(false);
+      if (outcome === "resolve") requests[0].resolve(page);
+      else requests[0].reject(new Error("obsolete request failed"));
+      await flushAsyncWork();
+      expect(received).toEqual([]);
+      sources[1].emit("turn.started", event(4));
+      expect(requests).toHaveLength(2);
+      requests[1].resolve(page);
+      await flushAsyncWork();
+      expect(received).toEqual([1, 2, 3, 4]);
+      expect(protocolErrors).not.toHaveBeenCalled();
+      expect(sources[1].closed).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      close();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps shared repair alive until the last consumer releases it", () => {
     const sources: FakeEventSource[] = [];
     const signals: AbortSignal[] = [];

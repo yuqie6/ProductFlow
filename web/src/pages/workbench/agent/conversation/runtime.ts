@@ -164,7 +164,7 @@ interface ConversationEventSubscriptionInput {
 export function subscribeToConversationEvents(input: ConversationEventSubscriptionInput): () => void {
   const createEventSource = input.createEventSource ?? createBrowserEventSource;
   const fetchEventPage = input.fetchEventPage ?? fetchBrowserEventPage;
-  const repairController = new AbortController();
+  let activeRepair: AbortController | null = null;
   let closed = false;
   let source: ConversationEventSourceLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -174,7 +174,6 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
   let seenTerminal = false;
   let streamComplete = false;
   let generation = 0;
-  let repairing = false;
   let repairFailures = 0;
   let finiteReconciliationRequested = false;
   const buffered = new Map<number, AgentTurnEvent>();
@@ -204,8 +203,9 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
   };
 
   const repairGap = async (repairGeneration: number) => {
-    if (closed || repairing) return;
-    repairing = true;
+    if (closed || activeRepair) return;
+    const repairController = new AbortController();
+    activeRepair = repairController;
     try {
       let hasMore = true;
       let progressed = false;
@@ -214,7 +214,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       while (!closed && repairGeneration === generation && hasMore) {
         const previousCursor = cursor;
         const page = await fetchEventPage(withEventPageCursor(input.url, cursor), repairController.signal);
-        if (closed || repairGeneration !== generation) return;
+        if (closed || repairController.signal.aborted || repairGeneration !== generation) return;
         hasMore = page.has_more;
         tailStreamState = page.stream_state;
         for (const candidate of page.items) {
@@ -244,7 +244,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       repairFailures = 0;
       if (finiteReconciliationRequested || seenTerminal || streamComplete) close();
     } catch (error) {
-      if (closed || repairGeneration !== generation) return;
+      if (closed || repairController.signal.aborted || repairGeneration !== generation) return;
       if (finiteReconciliationRequested || streamComplete) {
         protocolFailure(error instanceof Error ? error : new AgentEventProtocolError("Agent 历史事件补齐失败"));
         return;
@@ -256,14 +256,15 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
         scheduleReconnect();
       }
     } finally {
-      repairing = false;
+      if (activeRepair === repairController) activeRepair = null;
     }
   };
 
   const close = () => {
     if (closed) return;
     closed = true;
-    repairController.abort();
+    activeRepair?.abort();
+    activeRepair = null;
     if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
     source?.close();
@@ -278,6 +279,8 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       return;
     }
     reconnectScheduled = true;
+    activeRepair?.abort();
+    activeRepair = null;
     source?.close();
     source = null;
     input.onConnectionState?.("reconnecting");

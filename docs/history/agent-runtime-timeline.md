@@ -1328,3 +1328,13 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 最终 `pnpm --dir web test:run` PASS，92 个文件、658 项（3.89s）；定向 lint、应用 TypeScript 检查和 `just web-build` PASS。构建包含 app/node/e2e 类型检查和 bundle gate，Vite 的 >500kB 提示仍存在，仓库固定预算通过；这些结果来自含其他任务改动的工作树，不签收干净候选 G-07。本轮没有运行真实浏览器、API、PG 或 provider，现有 durable gap 浏览器门还含真实创建 Turn 和条件认领路径，不能无资源隔离直接借用共享栈采证。
 
 运行时与测试 Git blob 分别为 `f3c6adc2c35fa46877d0194096df5d166c44ce42`、`6e03ee333057af64101785b0068f69176b1693f7`。全量 `pnpm --dir web lint`、`just docs-check` 和 diff check 也通过。主代理自审 fetcher 所有调用点、取消与 catch 顺序、共享引用生命周期和完整 diff；交付只包含本轮 runtime、测试及证据文档，G-05 的 5s 浏览器补洞验收仍待独立复验。
+
+## 2026-09-06 Agent 重连补洞请求隔离
+
+接续 `74d8a42c` 检查断线交错：旧连接收到 sequence=2，发起缺失 sequence=1 的分页请求；请求尚未结束时 SSE 断线，新连接收到 sequence=3。原 `repairing` 是跨连接布尔值，新缺口被直接跳过。旧请求若永不返回，新连接的分页补洞持续受阻；即便旧请求稍后结束，也没有自动重启这次被跳过的补洞。此判断不意味着每次真实重连都会卡住，完整连续重放可能自行补齐缺口。
+
+新增迟到成功/失败两条受控回归，fetcher 故意忽略取消以验证旧结果隔离。基线两条均 FAIL（Vitest 0.283s）：重连后总请求数为 1，预期 2。运行时将布尔占用与订阅级 controller 合并为当前补洞请求的 controller；scheduleReconnect 立即 abort 并释放旧占用，新补洞拥有新 controller。返回或失败时检查取消状态，finally 只释放自己仍持有的占用，防止旧请求结束清掉新请求。close 保留取消当前请求，未新增重试次数或修改退避预算。
+
+修复后两条均通过：新连接发起第二次请求，旧 signal 已取消、新 signal 未取消；旧请求迟到成功/失败均不投递事件。新请求仍在等待时再收到 sequence=4，总请求数保持 2，不出现第三次重叠补洞。随后第二次请求返回 sequence=1，按序投递 [1,2,3,4] 各一次，无协议错误、无多余重连 timer，当前流保持打开。测试使用 fake timer 推进原有 250ms 首次退避，该值不是实测恢复延迟，不计算 p95 或签收 5s 容量门。
+
+最终前端全量 `pnpm --dir web test:run` PASS，92 个文件、660 项（3.55s）；`pnpm --dir web lint`、`just web-build` PASS，包含 app/node/e2e 类型检查和 bundle 预算，Vite >500kB 提示保留。运行时 Git blob=`833bcd847c14e39056eaaa54b9b38b47ba5b8da5`，测试=`b829840c8470e85ca4b7eb57e38cb016da8a6b58`。主代理自审新旧 controller 身份、abort 后 catch/finally、失败计数及原共享订阅回归；没有运行浏览器、API 或真实 provider，不将当前含他人改动的工作树构建视为 G-07 固定候选验收。持续活跃且网络不返回的请求 deadline、浏览器 5s 补洞和多副本容量仍未由本轮证明。
