@@ -386,6 +386,11 @@ func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID str
 		if result.RowsAffected != 1 {
 			return errStale
 		}
+		// The attempt-fenced checkpoint and its next envelope must commit together.
+		availableAt := time.Now().UTC().Add(time.Duration(queue.DefaultLaterRetrySeconds) * time.Second)
+		if _, err := queue.Requeue(ctx, gdb, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, &availableAt, true); err != nil {
+			return err
+		}
 		return notifyTaskSession(ctx, gdb, taskID)
 	})
 }

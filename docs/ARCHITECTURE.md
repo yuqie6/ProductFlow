@@ -211,7 +211,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 
 ## 9. 异步与恢复
 
-连续生图每次消费最多发起一次 provider 调用。确认批次后仍有候选时，任务在 `candidate_saved` 检查点回 queued、释放 attempt 围栏并返回 `queue.ErrLater`；consumer 将信封释放回 PENDING。下次 claim 创建新围栏，保留完成数、结果组、业务尝试次数和原 started_at；失败重试清空 started_at，仍受原尝试次数上限约束。30 分钟 handler deadline 限制每次消费，不再累计顺序批次。每次消费重新读取输入媒体，批次之间可能等待投递和容量 admission。回归：`go/internal/imagesession/batch_yield_test.go`。
+连续生图每次消费最多发起一次 provider 调用。确认批次后仍有候选时，任务在 `candidate_saved` 检查点回 queued、释放 attempt 围栏，并在同一事务通过 Requeue 释放信封 lease、置 PENDING、设置原有 1s 续投延迟；然后返回 `queue.ErrLater`。旧 consumer 的 token CAS 不能修改新一轮 lease。检查点后进程退出不再等待旧 35 分钟消费 lease，信封写入失败则整个检查点事务回滚。下次 claim 创建新围栏，保留完成数、结果组、业务尝试次数和原 started_at；失败重试清空 started_at，仍受原尝试次数上限约束。30 分钟 handler deadline 限制每次消费，不再累计顺序批次。每次消费重新读取输入媒体，批次之间可能等待投递和容量 admission。回归：`go/internal/imagesession/batch_yield_test.go`、`checkpoint_exit_test.go`、`checkpoint_transaction_test.go`。
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
 - Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。claim 满 `limit` 时 dispatch 立即续跑，空闲才等 interval 或 NOTIFY；同一轮已 claim 行有界并发 SENT+enqueue，每条仍先 SENT 再 enqueue。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`、recovery duration 和错误；配置 metrics token 后，API `/metrics` 提供 queued/stale-running backlog 与当前 PostgreSQL 锁等待，dispatcher `/metrics` 另提供各域 recovery duration histogram 和候选锁查询耗时。

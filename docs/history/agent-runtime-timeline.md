@@ -1419,3 +1419,23 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 加强有效 lease 反例后的中间版本 `-race -count=3` PASS（23.373s）；最终增加下载字节断言后，dev env wrapper 下 `go test -C go ./internal/imagesession -run "^TestImageCheckpointExitRecovery$" -race -count=2 -v -timeout 2m` PASS（16.026s），两场景各两次。运行时没有改变，不报告时延优化。测试 Git blob=`4daaac619d4bc0202607335644cfde4e3270a00e`；被测执行器=`83b2a07a7903c5e99547b79b362797fca9cdf422`，dispatcher=`6689457df88da4575f23612f29fe595ce0a460ae`。
 
 这一窗口的信封恢复资格需要同时满足 lease 失效和 sent_at 达到 5 分钟对账阈值；默认消费 lease 为 claim 后 35 分钟，还需等待 dispatcher 调度和批次额度。任务已 queued，不使用 ImageSession running 的 90 分钟闲置恢复。安全性已有直接证据，恢复等待仍可能较长，不能把测试中的时间推进写成即时恢复能力。主代理自审子进程边界、身份隔离、有效 lease 反例、用户取消、下载字节和全部 diff；未启动共享服务或真实 provider，未重跑全 Go 或整树发布门。
+
+## 2026-09-06 连续生图检查点原子续投
+
+基线 `914490b0` 中，任务检查点和 consumer 释放信封是两个事务；进程在中间退出会留下 queued 任务与有效 SENT lease。本轮将跨进程测试改为要求退出后立即读到 PENDING、lease 为空，且不修改数据库时间戳即可在 3s 内再次投递。旧实现两场景均 FAIL（3.499s），实际仍为 SENT，lease 到期时间为 claim 后 35 分钟。
+
+运行时只在 `yieldCompletedBatch` 的既有 attempt/status/candidate_saved/无活动候选条件更新成功后，同事务调用 `queue.Requeue(..., allowActiveLease=true)`。当前任务围栏拥有已确认的批次检查点，允许释放对应信封的活动 lease；保留原有 DefaultLaterRetrySeconds=1，返回 ErrLater。任务回 queued 与信封 PENDING 同时提交或回滚。复用 Requeue 现行语义重置该信封的投递 attempts，已确认的新批次开始新的投递周期；业务 attempts 仍由执行器独立计数。未修改 queue 实现、全局 lease、超时、状态或 schema。
+
+新增独立 PG 事务回归：在 async_dispatches 更新处注入错误，直接运行 generation，要求已单独提交的第一素材/完成数保留，而 checkpoint 的 task queued 更新回滚到 running、原 attempt 保留，信封仍为原 SENT/lease。另一场景先提交 checkpoint 并投递、获取新消费 token，再用旧 token 调用 ReleaseForRetry 和 MarkConsumed，两个 CAS 均返回未更新，新 SENT/token 不变。这证明原 consumer 返回后不能覆盖已经开始的新投递。
+
+最终完整 ImageSession 包 `go test -C go ./internal/imagesession -count=1 -race -timeout 3m` PASS（56.051s）。两个重点测试 `-run "TestImageCheckpointExitRecovery|TestImageCheckpointTransactionBoundaries" -race -count=3 -v -timeout 2m` 经 dev env wrapper 执行，PASS（47.428s），每轮含正常恢复、用户取消、事务回滚、旧 token 隔离四种场景。
+
+| 轮次 | 正常路径重新投递 | 已取消路径重新投递 |
+| --- | --- | --- |
+| 1 | 993.358ms | 968.692ms |
+| 2 | 993.783ms | 968.390ms |
+| 3 | 991.387ms | 997.797ms |
+
+起点为父进程已确认退出、读取任务/图片并完成可选取消之后，终点为 dispatcher callback 再次接收同一信封。按 20ms 间隔执行真实 dispatcher，等待真实 available_at，无时间戳改写；不是 worker 启动或第二张出图时延，也不包含真实 Redis/broker。两路径初始加恢复投递各为 2；正常恢复只调用一次 provider，完成两张；取消调用零次，保留一张。业务 attempts=1，首张实际下载 SHA-256 保持。该窗口不再受旧 35 分钟 lease 阻挡，不能把未实等的旧等待换算成性能百分比或生产 p95。
+
+最终 Git blob：执行器=`375616475a33a4047b22108c83f45141f2c94407`、跨进程测试=`d41aadf08ccb4c33f28af513cf9c386a749ec41b`、事务测试=`7153228566b74353524554064496e3fe328b7f02`。中英文架构与组内当前状态同步。主代理自审 task→envelope 锁序、事务所有权、allowActiveLease 的受围栏调用点、旧 token CAS、投递与业务 attempts 区分及完整 diff；未运行真实 provider 或整树发布门。检查点前进程退出、单次 provider 卡住及真实 broker 多副本容量仍需分别验证。

@@ -113,34 +113,27 @@ func TestImageCheckpointExitRecovery(t *testing.T) {
 			if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
 				t.Fatal(err)
 			}
-			if envelope.Status != queue.StatusSent || envelope.LeaseToken == nil {
+			if envelope.Status != queue.StatusPending || envelope.LeaseToken != nil {
 				t.Fatalf("checkpoint envelope=%+v", envelope)
-			}
-			if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", dispatch.ID).
-				Update("sent_at", time.Now().Add(-10*time.Minute)).Error; err != nil {
-				t.Fatal(err)
-			}
-			if _, err := queue.RunDispatcherOnce(ctx, pool, deliver, 10); err != nil {
-				t.Fatal(err)
-			}
-			if enqueued != 1 {
-				t.Fatalf("live lease redelivered: %d", enqueued)
 			}
 			if cancelTask {
 				response := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generation-tasks/"+taskID+"/cancel", map[string]any{})
 				ss.mustStatus(t, response, http.StatusOK)
 				response.Body.Close()
 			}
-			if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", dispatch.ID).
-				Update("lease_expires_at", time.Now().Add(-time.Second)).Error; err != nil {
-				t.Fatal(err)
-			}
-			if _, err := queue.RunDispatcherOnce(ctx, pool, deliver, 10); err != nil {
-				t.Fatal(err)
+			recoveryStarted := time.Now()
+			for enqueued == 1 && time.Since(recoveryStarted) < 3*time.Second {
+				if _, err := queue.RunDispatcherOnce(ctx, pool, deliver, 10); err != nil {
+					t.Fatal(err)
+				}
+				if enqueued == 1 {
+					time.Sleep(20 * time.Millisecond)
+				}
 			}
 			if enqueued != 2 {
-				t.Fatalf("expired checkpoint deliveries=%d", enqueued)
+				t.Fatalf("checkpoint deliveries=%d within 3s", enqueued)
 			}
+			t.Logf("checkpoint ready-to-redelivery=%s without timestamp edits", time.Since(recoveryStarted))
 			provider := &countingProvider{}
 			executor := Executor{DB: db, Media: ss.media, Provider: provider}
 			if err := queue.Consume(ctx, pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute}); err != nil {
