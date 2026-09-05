@@ -1217,3 +1217,17 @@ Turn 页查询减少 90.74%，本轮对照 p95 减少 68.89%，正文未缩减�
 验证命令：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run "TestExpiredRecoveryAdvancesPastLockedProjectionPrefix|TestRecoverExpiredExecutionsRejectsStaleFencingWriter|TestAppendEventsAndExpiredRecoveryDoNotDeadlock" -race -count=10 -timeout 2m'` PASS（115.894s）。30 次顶层测试含 10 组锁定前缀，合计 260 条 fixture execution 经验证终态唯一。总测试时间包含 HTTP 建立、历史测试库恢复清理及其他两个回归，不作为吞吐或 p95。
 
 结论只覆盖过期 execution 的 projection 锁定前缀；queued Task 补首轮、pending Turn 补投递、execution 单独持锁、持续错误候选和资源饱和仍需各自采证。本轮无生产代码或合同改变，未重跑完整 Agent 包；上一节评测 catalog 漂移导致的整包失败仍保留。主代理自审候选排序、独立锁事务、状态/owner/终态/序列断言与全部 diff，未触碰其他组文件或运行资源。
+
+## 2026-09-05 Agent queued Task 恢复跳过 conversation 锁
+
+queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recovery.go` blob `9c5c046bad0b76baee7a4d323d004080f9ec115e` 在无锁发现前 25 条后逐条调用 `reserveTurn`，第一条 `lockConversation` 会等待；注释中长 conversation 锁不拖住其他 Task 的说法缺少实现支撑。真实 PG 反例创建 26 个 queued Task，前 25 个共用一个 conversation，第 26 个属于另一个，按 created_at 排定顺序。独立事务锁住前缀 conversation，恢复 context 为 1s：原实现第一轮 recovered=0、err=nil，FAIL（2.301s）。取消在单条错误分支被吞，第 26 条根本未进入候选处理。
+
+修复只在发现时 `FOR UPDATE OF agent_conversations SKIP LOCKED`，逐条处理事务再次尝试跳锁，成功持锁后调用原 `reserveTurn`。发现事务不锁 Task，锁立即释放；不在发现批次中执行 reserve。第二次取锁覆盖发现后竞争窗口，并保留原 conversation→后续业务锁顺序、initial 幂等键、作用域、Task 状态与会话容量校验。每条处理新增一次短查询，未增加缓存、超时配置或重试状态。取消在循环及单条错误分支返回 context 错误，其他单条 reserve 失败仍按原策略跳过。
+
+新增回归分两种锁定时机：发现前持锁，三轮 recovered=1/0/0；发现后在第一条处理前通过 Query callback 取得真实独立事务锁，三轮为 0/1/0，首批候选额度仍为 25。两者持锁前缀均无新 projection，解锁后下一轮 recovered=25，重入为 0；逐 Task 检查总 projection 恰好 1 且 current_turn_id 指向它。取消回归在发现后取消，要求返回 `context.Canceled`。`HasMore` 取跳锁后候选 limit+1，因此锁定任务存在时可为 false，不代表全库无待恢复项。
+
+三个顶层回归（两种锁竞争、取消、原 queued HasMore）`-race -count=10 -timeout 2m` PASS（33.911s）；两种前缀共 20 组、520 个 Task。测试总耗时包含 HTTP fixture 与清理，不报告为恢复吞吐或 p95。完整 Agent 包 `-race -count=1 -timeout 4m` FAIL（94.366s），唯一报告失败为已有 `TestEvalObservationFixtures` catalog 漂移；该次整包含两种锁竞争，后补取消断言由上述重复验证覆盖，未更改其他组评测输入。
+
+运行时 `recovery.go` SHA-256 为 `5d3f21443b86e365a11a0f03dee32132aa53ebc730e8479e1c7258075d83d534`。Task 行锁、autoNameSession 更新锁、持续错误前缀与 pending Turn restage 未由此修复；不宣称 queued 恢复已具备全部公平性或发布门通过。主代理自审锁作用域、事务释放与重查窗口、取消返回和幂等断言；没有修改共享服务、schema 或 provider 配置。
+
+最终自审把唯一性断言从 current_turn_id 关联计数加强为每个 Task 的总 projection 数与 current 关联数均为 1。加强后的两种锁竞争及取消回归 `-race -count=3` PASS（9.077s）。`just docs-check`、diff check PASS；中英文架构仅纳入本轮恢复说明。

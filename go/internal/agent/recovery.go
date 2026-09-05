@@ -90,7 +90,8 @@ func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (Recovery
 
 // recoverQueuedTaskTurns 给 status=queued 且 current_turn_id 为空的 Task 补首轮 Turn。
 //
-// 先用短读事务取得候选 Task，再为每个 Task 单独提交 reserveTurn。这样一只坏 Task 或一个长 conversation 锁不会拖住其它 Task 的恢复。
+// 发现候选和逐条处理时跳过锁定 conversation；成功持锁后调用原 reserveTurn。
+// 发现事务立即释放锁，处理事务重新取锁，避免在发现后的竞争窗口等待 conversation。
 // 幂等键固定为 initial:{conversationID}:{taskID}，崩溃重入走 reserveTurn 回放，不会重复造 projection。reserve 失败的单条跳过，不让一只坏 Task 卡死整批恢复。
 //
 // 写 agent_turn_projections（经 reserveTurn）。不改已处于 goal_loop / 用户终态的 Task。
@@ -108,6 +109,7 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, boo
 	var tasks []item
 	if err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		return pgxTx.WithContext(ctx).Model(&schema.AgentTasks{}).
+			Clauses(pfdb.ForUpdateOfSkipLocked("agent_conversations")).
 			Select("agent_tasks.id, agent_tasks.goal, agent_tasks.conversation_id, agent_conversations.scope_type, agent_conversations.product_id").
 			Joins("JOIN agent_conversations ON agent_conversations.id = agent_tasks.conversation_id").
 			Where("agent_tasks.status = ? AND agent_tasks.current_turn_id IS NULL AND agent_tasks.conversation_id IS NOT NULL", "queued").
@@ -123,6 +125,9 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, boo
 	}
 	created := 0
 	for _, task := range tasks {
+		if err := ctx.Err(); err != nil {
+			return created, hasMore, err
+		}
 		var productID *string
 		if task.Scope == "product_workflow" {
 			productID = task.ProductID
@@ -130,11 +135,23 @@ func recoverQueuedTaskTurns(ctx context.Context, s Service, limit int) (int, boo
 		key := "initial:" + task.ConvID + ":" + task.ID
 		var wasCreated bool
 		err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+			var conversation schema.AgentConversations
+			err := pgxTx.WithContext(ctx).Select("id").Clauses(pfdb.SkipLocked()).
+				Where("id = ?", task.ConvID).Take(&conversation).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
 			_, made, err := reserveTurn(ctx, pgxTx, productID, task.ConvID, task.Goal, nil, key, &task.ID, "", nil)
 			wasCreated = made
 			return err
 		})
 		if err != nil {
+			if ctx.Err() != nil {
+				return created, hasMore, ctx.Err()
+			}
 			continue
 		}
 		if wasCreated {
