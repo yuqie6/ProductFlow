@@ -51,7 +51,7 @@ export function rememberAgentWorkbenchQueryData(
   setQueryData(
     agentWorkbenchQueryKey(
       bootstrap.product.id,
-      agentSessionId ?? bootstrap.conversation.session_id,
+      agentSessionId === undefined ? bootstrap.conversation.session_id : agentSessionId,
       agentTaskId,
     ),
     bootstrap,

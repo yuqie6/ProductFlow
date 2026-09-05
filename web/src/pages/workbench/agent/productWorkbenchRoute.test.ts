@@ -172,7 +172,11 @@ describe("resolveProductWorkbenchSurface", () => {
 });
 
 describe("rememberAgentWorkbenchQueryData", () => {
-  it("writes the session-scoped workbench query and the live graph", () => {
+  it.each([
+    { sessionId: "session-2", expectedSessionId: "session-2" },
+    { sessionId: undefined, expectedSessionId: "session-2" },
+    { sessionId: null, expectedSessionId: null },
+  ])("preserves query identity for session=$sessionId and writes the live graph", ({ sessionId, expectedSessionId }) => {
     const writes: Array<{ key: readonly unknown[]; data: unknown }> = [];
     const graph = { id: "graph-1" } as GraphProjection;
     const bootstrap = {
@@ -185,10 +189,10 @@ describe("rememberAgentWorkbenchQueryData", () => {
         writes.push({ key: queryKey, data });
       },
       bootstrap,
-      "session-2",
+      sessionId,
     );
     expect(writes).toEqual([
-      { key: ["agent-workbench", "product-1", "session-2", null], data: bootstrap },
+      { key: ["agent-workbench", "product-1", expectedSessionId, null], data: bootstrap },
       { key: ["workflow-graph", "product-1"], data: graph },
     ]);
   });
