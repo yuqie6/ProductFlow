@@ -1205,3 +1205,15 @@ Turn 页查询减少 90.74%，本轮对照 p95 减少 68.89%，正文未缩减�
 运行时 `serialize.go` / `turns.go` SHA-256 为 `510668b106cdfb5b629596abee4ac8318c4a848720c91d0c876ff7485894b5b0` / `6a340d5a434c64f2d099dd641a9a92775d132ad0bcf32fdf1557a789c2a5eeff`。HTTP 门 `read_load_test.go` SHA-256 为 `438c7af6946579d22ac7b48895aa5ff6551ffebcf14258a63c398378f400ff0a`。Session 全局读取的补建检查、更长正文、多客户端、journal/SSE、浏览器分布及整组发布门仍未关闭。本轮未改 Agent service、schema 或 provider 合同。
 
 修正夹具后完整 Agent 包 `-race -count=1 -timeout 4m` 执行完毕，FAIL（86.129s），唯一报告失败为 `TestEvalObservationFixtures` 的 `agent-service/evals/fixtures/catalog.json` 漂移；其余默认启用测试未报告失败，不含 opt-in 门。未自动重生成其他组的评测夹具，也不宣称整包或固定候选通过。`just docs-check`、diff check PASS；主代理自审批量查询、作用域、顺序、响应字段和全部测试断言，中英文架构仅交付本轮段落。
+
+## 2026-09-05 Agent 过期 execution 锁定前缀
+
+核查 `recoverNextExpiredExecution`：候选关联查询已使用 `FOR UPDATE OF agent_turn_projections SKIP LOCKED`，每次取 1 条，在同一事务中按 projection→execution 顺序复核和收敛。该路径没有 ImageSession/Delivery/LocalEdit 原来固定无锁前缀的问题，本轮不修改运行时。被测 `recovery.go` Git blob 为 `9c5c046bad0b76baee7a4d323d004080f9ec115e`。
+
+新增 `TestExpiredRecoveryAdvancesPastLockedProjectionPrefix`，复用真实 HTTP 创建、claim 和过期 lease 夹具，无真实 provider。在测试 PG 中创建 26 条 execution，按扫描器的 execution ID 排序，独立事务锁住前 25 条 projection。连续三轮恢复（limit=25）分别收敛 1/0/0 条，持锁前缀的 25 个 owner 均未清除；解锁后下一轮收敛 25 条。全部 26 条 projection 为 unknown，各恰好一个 turn/end，journal count=max(sequence)，无序列缺口。每轮持锁恢复使用 3s context 作为挂起失败边界，不把它当生产时延预算。
+
+`HasMore` 由独立无锁查询探测全部过期 owner，因此持锁前缀存在时三轮均为 true，解锁且恢复完毕后为 false；这与其他域按跳锁后 limit+1 判读不同。测试初版错误假定创建顺序等于 execution ID 顺序，夹具预检失败，尚未执行持锁恢复；已改为按实际 ID 排序，不能把这次夹具失败记作运行时缺陷。
+
+验证命令：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run "TestExpiredRecoveryAdvancesPastLockedProjectionPrefix|TestRecoverExpiredExecutionsRejectsStaleFencingWriter|TestAppendEventsAndExpiredRecoveryDoNotDeadlock" -race -count=10 -timeout 2m'` PASS（115.894s）。30 次顶层测试含 10 组锁定前缀，合计 260 条 fixture execution 经验证终态唯一。总测试时间包含 HTTP 建立、历史测试库恢复清理及其他两个回归，不作为吞吐或 p95。
+
+结论只覆盖过期 execution 的 projection 锁定前缀；queued Task 补首轮、pending Turn 补投递、execution 单独持锁、持续错误候选和资源饱和仍需各自采证。本轮无生产代码或合同改变，未重跑完整 Agent 包；上一节评测 catalog 漂移导致的整包失败仍保留。主代理自审候选排序、独立锁事务、状态/owner/终态/序列断言与全部 diff，未触碰其他组文件或运行资源。

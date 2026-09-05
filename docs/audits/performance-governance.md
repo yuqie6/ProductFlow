@@ -118,6 +118,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 ## 下一步如何选择
 
+2026-09-05 Agent 过期 execution 的锁定前缀已有直接回归，见 [扫描证据](../history/agent-runtime-timeline.md#2026-09-05-agent-过期-execution-锁定前缀)：25 条 projection 持锁时，第 26 条仍在第一轮收敛；此路径已在候选查询跳锁，无需套用其他域的修复。`HasMore` 仍探测全部过期 owner，持锁前缀存在时为 true。queued Task 补首轮、pending Turn 补投递、execution 单独持锁与持续错误候选未由此关闭。
+
 2026-09-05 [交付与局部编辑恢复锁定前缀](../history/agent-runtime-timeline.md#2026-09-05-交付与局部编辑恢复跳过锁定前缀)：两个域分别复现 25 条持锁候选使第 26 条连续 3 轮无法恢复。各自候选发现前移跳锁后，后续任务第一轮恢复且不重复，解锁后前缀正常补回。保留 Delivery 可重排队和 LocalEdit 已过 provider 边界为 unknown 的差异。此项不覆盖 Graph/Agent 的不同候选结构，也未解决持续错误前缀。
 
 2026-09-05 [连续生图恢复锁定前缀](../history/agent-runtime-timeline.md#2026-09-05-连续生图恢复跳过锁定前缀)：最早 25 个候选持锁时，原实现连续 3 轮均未恢复第 26 条正常任务。候选发现阶段前移 `SKIP LOCKED` 后，第一轮即为后续任务补回唯一 outbox；持锁任务不变，解锁后全部恢复。发现查询默认返回至多 26 个候选 ID 并短暂锁行，事务结束即释放；状态迁移仍逐条重新锁行和复核。此结论只覆盖 ImageSession 行锁前缀，持续错误条目和其他域候选公平性未据此关闭。
