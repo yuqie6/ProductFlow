@@ -14,6 +14,11 @@ const DEFAULT_PASS_K = 3;
 
 export type TrialRecord = EvalTrialRecord;
 
+export function isUnobservableTrial(record: Pick<TrialRecord, "status" | "terminal" | "tool_calls">): boolean {
+  return record.status === "unobservable" || record.status === "unknown" || record.terminal === "unknown"
+    || record.tool_calls.some((call) => call.outcome === "unknown");
+}
+
 export interface WilsonInterval {
   low: number;
   high: number;
@@ -202,7 +207,7 @@ export function buildRunReport(runId: string, records: readonly TrialRecord[], p
     .map(([key, rows]) => taskMetric(key, rows, passK))
     .sort(compareTasks);
   const bySuite = groupMetrics(tasks, (task) => task.suite);
-  const unobservableTrials = records.filter((record) => record.status === "unobservable" || record.tool_calls.some((call) => call.outcome === "unknown")).length;
+  const unobservableTrials = records.filter(isUnobservableTrial).length;
   const gate = regressionGate(bySuite, passK);
   return {
     measurementEligible: unobservableTrials === 0,

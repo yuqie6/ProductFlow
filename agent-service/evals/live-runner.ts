@@ -17,7 +17,7 @@ import { formatEvalReport, type EvalReport, type EvalReportRow } from "./harness
 import { loadGlobalDraftSchema } from "./json-schema.js";
 import { loadEvalTaskSet } from "./loader.js";
 import { currentGitProvenance, hashCanonicalJSON } from "./provenance.js";
-import { buildRunReport, formatRunReport, type RunReport } from "./report.js";
+import { buildRunReport, formatRunReport, isUnobservableTrial, type RunReport } from "./report.js";
 import { EvalRunStorage, newEvalRunID, type EvalRunMetadata } from "./run-storage.js";
 import type { EvalCallRecord, EvalTask, EvalTrialRecord, EvalWorld } from "./schema.js";
 import { createStubWorld, overlayEvalPageContext } from "./stub-world.js";
@@ -170,7 +170,13 @@ async function runTrial(
 
   const calls = mergeToolCalls(terminal, stub.calls);
   const unobservedTools = calls.filter((call) => call.outcome === "unknown").map((call) => call.name);
-  const unobservable = Boolean(task.observability_blocker) || unobservedTools.length > 0;
+  const unobservable = isUnobservableTrial({
+    status: task.observability_blocker ? "unobservable" : terminal?.status ?? "failed",
+    terminal: terminal?.status ?? null, tool_calls: calls,
+  });
+  if (terminal?.status === "unknown") {
+    errors.unshift("unobservable terminal outcome: unknown; raw trial is diagnostic only");
+  }
   if (unobservedTools.length > 0) {
     errors.unshift(`unobservable tool outcome: ${[...new Set(unobservedTools)].join(", ")}; raw trial is diagnostic only`);
   }

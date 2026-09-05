@@ -16,7 +16,9 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-it.each([false, true])("persists actual stub observability independently of the model terminal (missing=%s)", async (missing) => {
+it.each(["observed", "missing", "unknown_terminal"])("persists actual observability independently of the model terminal (%s)", async (mode) => {
+  const missing = mode === "missing";
+  const unobservable = mode !== "observed";
   const root = await mkdtemp(join(tmpdir(), "productflow-live-observability-"));
   roots.push(root);
   vi.stubEnv("STORAGE_ROOT", root);
@@ -28,7 +30,7 @@ it.each([false, true])("persists actual stub observability independently of the 
   const task = tasks.find((task) => task.id === (missing
     ? "graph-editing-dissolve-and-reorder" : "graph-editing-delete-one-node"))!;
   const terminal: TurnState = {
-    api_version: API_VERSION, run_id: "fixture", turn_id: "fixture", status: "succeeded",
+    api_version: API_VERSION, run_id: "fixture", turn_id: "fixture", status: mode === "unknown_terminal" ? "unknown" : "succeeded",
     input: { input_text: task.utterances[0], asset_ids: [], idempotency_key: "fixture", page_context: task.page_context },
     output: "diagnostic output", error: "", tool_steps: [], created_at: "2026-09-05T00:00:00Z",
     updated_at: "2026-09-05T00:00:00Z", started_at: null, finished_at: null,
@@ -49,10 +51,14 @@ it.each([false, true])("persists actual stub observability independently of the 
   vi.spyOn(TurnStore.prototype, "events").mockResolvedValue([]);
   const result = await runLiveEvals({ tasks: [task], trials: 1, concurrency: 1 });
   const record = JSON.parse((await readFile(join(result.runDir, "trials.jsonl"), "utf8")).trim());
-  expect(record.status).toBe(missing ? "unobservable" : "succeeded");
-  expect(record.terminal).toBe("succeeded");
+  expect(record.status).toBe(unobservable ? "unobservable" : "succeeded");
+  expect(record.terminal).toBe(terminal.status);
   expect(record.tool_calls[0].outcome).toBe(missing ? "unknown" : "succeeded");
-  expect(result.metrics.measurementEligible).toBe(!missing);
+  expect(result.metrics.measurementEligible).toBe(!unobservable);
+  if (mode === "unknown_terminal") {
+    expect(record.passed).toBe(false);
+    expect(record.errors).toContain("unobservable terminal outcome: unknown; raw trial is diagnostic only");
+  }
   if (missing) {
     expect(record.passed).toBe(false);
     expect(record.errors).toContain("unobservable tool outcome: apply_graph_change_set_v1; raw trial is diagnostic only");

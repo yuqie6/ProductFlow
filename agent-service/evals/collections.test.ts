@@ -162,10 +162,12 @@ describe("frozen evaluation collections", () => {
     expect(reads.mock.calls.some(([path]) => String(path).includes("/transcripts/"))).toBe(false);
   });
 
-  it.each(["unobservable_status", "unknown_write", "unknown_read"])("rejects %s before opening transcripts or exporting a packet", async (mode) => {
+  it.each(["unobservable_status", "unknown_status", "unknown_terminal", "unknown_write", "unknown_read"])("rejects %s before opening transcripts or exporting a packet", async (mode) => {
     const f = await fixture();
     const record = { ...f.record, passed: true, errors: [] };
     if (mode === "unobservable_status") record.status = "unobservable";
+    else if (mode === "unknown_status") record.status = "unknown";
+    else if (mode === "unknown_terminal") record.terminal = "unknown";
     else record.tool_calls = [{
       name: mode === "unknown_write" ? "apply_graph_change_set_v1" : "get_node_detail_v1",
       params: {}, ts: record.started_at, outcome: "unknown",

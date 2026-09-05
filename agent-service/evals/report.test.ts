@@ -26,6 +26,14 @@ afterEach(async () => {
 });
 
 describe("agent eval report", () => {
+  it.each(["status", "terminal"] as const)("rejects unknown %s even without an unknown tool outcome", (field) => {
+    const record = { ...trial("run-a", "l1", "unresolved", "graph-editing", "regression", 1, true), [field]: "unknown" };
+    const report = buildRunReport("run-a", [record], 1);
+    expect(report).toMatchObject({ measurementEligible: false, unobservableTrials: 1 });
+    expect(report.overall.trialCount).toBe(1);
+    expect(report.regressionGate.passed).toBeNull();
+    expect(() => diffReports(report, report)).toThrow("cannot compare unobservable");
+  });
   it("keeps unobservable trials visible and refuses capability comparison", () => {
     const record = { ...trial("run-a", "l1", "blocked", "media-library-organization", "regression", 1, false), status: "unobservable", errors: ["missing production revision"] };
     const report = buildRunReport("run-a", [record], 1);

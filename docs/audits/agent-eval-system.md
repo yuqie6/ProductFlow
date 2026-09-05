@@ -6,6 +6,10 @@
 
 ## 组职责与交付序列
 
+2026-09-05 自动测评消费边界复查：`3e5b3972` 已拒绝不可测 trial 的整批开发导出。继续审查发现运行时 `unknown` 终态在无未知工具记录时仍可进入能力比较，现由 `report.ts:isUnobservableTrial` 统一阻断，L1 保留原始 terminal 并记录不可测身份。`pnpm exec vitest run evals` 120 passed / 5 skipped，TypeScript、生成合同检查通过；未修改题库、阈值或生产运行时，未启动新的付费批次。
+
+当前开发基线第三批 `20260905T131829Z-35b08c45` 因结构 Go 观察缺口在 59/225 条后停止，无完整 summary 或导出；[开发基线任务](tasks/eval-development-baseline.md) 保留原始身份与用量缺口。结构观察须等待现有节点合同重构稳定后独立采集，D-03/D-08/T-08 与自动化测评就绪结论仍未通过。
+
 2026-09-05 [澄清读取义务校正](tasks/archive/eval-clarification-read-obligations.md) 完成：五题取消无用强制读取，20 道澄清题按所需事实复查；保留写入安全与必要观察。全量 taskSetHash `acb773ce1b47457cb94d11544cddddb886dfcee8bb7febdb7267c64ab6c719f2`，完整 Node 297 passed / 6 skipped。开发基线可按新提交重新冻结采证，旧两批不拼接、不回填；D-03/D-08/T-08 不因离线修复通过。
 
 2026-09-05 [恢复测试时序校正](tasks/archive/eval-restart-batch-expectation.md)：ACK 前崩溃测试不再把并发生成上下文事件当作恢复错误；仅调整测试替身的崩溃窗口及快照断言，运行时不变。完整 Node 测试 297 passed / 6 skipped；不替代真实模型 D-08 证据。
