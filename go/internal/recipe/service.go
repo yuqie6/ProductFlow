@@ -9,6 +9,7 @@ package recipe
 
 import (
 	"context"
+	"log"
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -85,7 +86,9 @@ func (s Service) List(ctx context.Context, includeArchived bool) ([]RecipeView, 
 		for _, rec := range rows {
 			view, err := serializeSummary(rec)
 			if err != nil {
-				return err
+				// The picker exposes only usable versions; retain invalid records for diagnosis.
+				log.Printf("recipe list excluded invalid current version recipe_id=%s error=%q", rec.ID, err.Error())
+				continue
 			}
 			out = append(out, view)
 		}

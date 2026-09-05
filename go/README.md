@@ -21,3 +21,7 @@ JSON 日志写滚动文件，终端默认是可读行。默认目录是 `STORAGE
 HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。dispatcher 先标 SENT 再 asynq 投递；worker `MaxRetry=0`。无法证明的供应商结果标 `unknown`，不自动当失败重试。
 
 Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。Go dispatcher 是唯一 durable scanner。
+
+## 配方列表排障
+
+`GET /api/v3/workflow-recipes` 只返回当前版本通过内容、节点合同及 hash 校验的配方；失效项不阻断其他配方，全部失效时返回 `[]`。`include_archived=true` 仍执行上述校验。过滤不删除、归档或改写数据库记录；API 终端日志中的 `recipe list excluded invalid current version` 包含配方 ID 和错误。失效配方的详情、预览与应用仍严格拒绝，不支持旧配置自动升级。

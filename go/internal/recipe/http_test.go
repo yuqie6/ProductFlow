@@ -39,6 +39,11 @@ type recipeServer struct {
 func newRecipeServer(t *testing.T) *recipeServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
+	return newRecipeServerWithDB(t, pool, gdb)
+}
+
+func newRecipeServerWithDB(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *recipeServer {
+	t.Helper()
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
