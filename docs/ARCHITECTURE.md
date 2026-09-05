@@ -195,6 +195,8 @@ GenerationSpec 保存模型生成意图；provider effective values 和解码后
 
 商品图库批量下载通过 `POST /api/v2/products/:product_id/image-assets/download-archive`，最多 100 张且总元数据字节不超过 512MiB。事务只冻结条目身份，事务外逐文件 `ReadVerified` 核验、写入临时 ZIP；完成 ZIP 后 HTTP 才发送附件，返回或传输中断后删除临时文件。内存不持整包，但首响应要等待打包完成，并需要整包临时存储。`just go-test-zip-http-rss` 覆盖鉴权、10/100 张有效 PNG、条目哈希、传输中断清理与数量/总字节拒绝；该单客户端下载门不代表并发磁盘或内存容量。
 
+商品图库打包的取消点由请求 context 和 `Writer.Add` 入口检查连接：临时 ZIP 已创建、首个媒体元数据读取后取消时，当前文件核验可以完成，但不会继续读取后续文件，失败路径删除临时包。HTTP 内存门用真实请求取消与 handler 退出屏障验证该边界；不在文件核验或压缩内部新增取消线程。`ReadVerified` 核对大小、SHA 和图片配置，不执行完整像素解码。
+
 ## 8. Provider 架构
 
 `ProviderProfile` 保存 endpoint、secret、能力、默认模型和 provider 级配置。`ProviderBinding` 把一个 profile 绑定到用途：

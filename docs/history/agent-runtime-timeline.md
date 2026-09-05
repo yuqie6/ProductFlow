@@ -1282,3 +1282,15 @@ queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recover
 `mediaarchive` 默认全包 `-race -count=1` PASS（1.052s），不启用 opt-in 内存测试；内存门使用普通构建，避免把 race 开销当生产内存。被测 Git blob：`product/gallery_archive.go`=`5eecc5d51600fa74b73a40379ed16e6dfc13f175`，`product/http.go`=`ad887f546e7461cec623f1e78341ca19050352eb`，`media/read.go`=`96a2a1075b2176415dd21edecafa3c38e1b68ed9`，`mediaarchive/archive.go`=`c637471132f8b9e4618bddf0b5a831e480adaaa5`；新增 HTTP 测试 SHA-256=`c28ac0c7e8889bc4a4a643dab64910b3d1414924d05d2ded87a3dc5f73d5aea2`。
 
 结论：商品图库在该固定 PNG 单客户端场景无需新增内存缓存或打包重构。并发导出、临时存储饱和、JPEG/WebP 解码、打包中取消以及 Delivery 导出 HTTP 仍分别保留。主代理自审测量起止、RSS 口径、文件/连接 cleanup、来源身份及全部 diff；不将此局部门当成整树发布通过。
+
+## 2026-09-05 商品图库打包期间 HTTP 取消
+
+在 `d564d0d1` 的独立 HTTP 门上新增 `packing_cancel_cleanup`，不修改运行时。测试以 100 张、每张 4,919,853B 的原夹具请求批量下载；Query callback 只在临时 gallery ZIP 已存在且首个 media_objects 读取完成时建立屏障，然后等待真实请求 context 取消。主测试收到屏障后取消 HTTP 请求，要求客户端返回 context.Canceled，并等待测试 middleware 报告整个 handler 退出，而非只观察客户端断线。
+
+现有实现通过：临时包创建后只进入 1 次媒体读取，后续 99 个文件不继续读取，临时 ZIP 无残留。这里不包含事务内已经完成的 100 个元数据冻结读取，不能把该计数称为整个请求只有 1 条 SQL。当前文件的 ReadVerified 仍可完成字节读取、SHA 和图片配置检查；它使用 DecodeConfig，不执行完整像素解码。随后 Writer.Add 在入口发现取消并 Abort，调用方 defer 也保留失败清理。不声称可在单文件压缩或磁盘写入的任意位置立即中断。
+
+`PRODUCTFLOW_RUN_ZIP_HTTP_RSS=1` 下仅选择 `TestGalleryArchiveHTTPMemory/packing_cancel_cleanup`，`-race -count=5 -v -timeout 2m` PASS（22.532s）。5 次取消到 handler 完成及无临时包的观测值为 50.849/79.496/52.030/59.336/69.777ms，均未超过事先固定的 2s 失败边界；不报告 p95，不把 race 延迟当生产 SLO。每次都请求 100 张并只进入首个打包期媒体读取。该定向命令仍构建有效 PNG、独立数据库和鉴权，但不运行 10/100 张完整响应的 RSS 场景。
+
+自审补充：测试退出时取消请求并等待 handler 后再移除 Query callback，避免失败清理与仍在运行的 handler 竞争。最终完整 `just go-test-zip-http-rss` PASS（13.496s）：10/100 张完整下载、传输中断、打包期取消、鉴权及数量/总字节拒绝全部通过。普通构建的取消到 handler 完成与清理为 4.074ms；100 张响应仍为 492,146,522B，额外 RSS 上界 40,955,904B（约 39.06MiB），响应头等待 7.252s、全文读取 8.945s。与前次运行的波动不作为优化收益，运行时代码没有变化。
+
+最终 HTTP 测试 SHA-256 为 `a28885ab3a3191b679fd990f4f26a6563d257dcef486a49eff24879be452b4b7`。主代理自审同步屏障、成功读取计数、客户端取消错误、handler 生命周期及临时文件清理；`just docs-check`、diff check PASS。未启动共享服务、使用真实 provider 或重跑整树发布门；并发导出和临时存储容量仍未由该单请求取消测试证明。

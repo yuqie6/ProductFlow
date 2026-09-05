@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/png"
@@ -19,10 +20,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -31,6 +34,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/settings"
+	"gorm.io/gorm"
 )
 
 func TestGalleryArchiveHTTPMemory(t *testing.T) {
@@ -88,6 +92,13 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 	encoded = bytes.Buffer{}
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "zip-http-test"})))
+	packingRequestDone := make(chan struct{})
+	engine.Use(func(c *gin.Context) {
+		if c.GetHeader("X-Archive-Cancel-Probe") == "1" {
+			defer close(packingRequestDone)
+		}
+		c.Next()
+	})
 	store := settings.NewStore(pool, config.Config{AdminAccessRequired: true})
 	auth.HTTP{AdminAccessKey: "zip-key", Store: store}.Register(engine)
 	product.HTTP{Service: product.Service{DB: db, Media: media.Store{Files: storage.Local{Root: root}}}, Settings: store}.Register(engine)
@@ -218,6 +229,89 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+	})
+	t.Run("packing_cancel_cleanup", func(t *testing.T) {
+		entered := make(chan struct{})
+		var reads atomic.Int64
+		var probeFailed atomic.Bool
+		const callback = "test:archive_packing_cancel"
+		if err := db.Callback().Query().After("gorm:query").Register(callback, func(q *gorm.DB) {
+			if q.Statement.Table != "media_objects" || q.Error != nil {
+				return
+			}
+			if reads.Load() == 0 {
+				files, err := filepath.Glob(filepath.Join(archiveDir, "gallery-archive-*.zip"))
+				if err != nil {
+					probeFailed.Store(true)
+					return
+				}
+				if len(files) == 0 {
+					return
+				}
+			}
+			if reads.Add(1) == 1 {
+				close(entered)
+				select {
+				case <-q.Statement.Context.Done():
+				case <-time.After(5 * time.Second):
+					probeFailed.Store(true)
+				}
+			}
+		}); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			select {
+			case <-packingRequestDone:
+			case <-time.After(6 * time.Second):
+				t.Error("packing handler still active during probe cleanup")
+			}
+			db.Callback().Query().Remove(callback)
+		}()
+		payload, err := json.Marshal(map[string]any{"asset_ids": ids})
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, srv.URL+path, bytes.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Archive-Cancel-Probe", "1")
+		for _, cookie := range login.Cookies() {
+			req.AddCookie(cookie)
+		}
+		result := make(chan error, 1)
+		go func() {
+			resp, err := client.Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			result <- err
+		}()
+		select {
+		case <-entered:
+		case <-requestCtx.Done():
+			<-result
+			t.Fatal("request did not reach file verification with a temporary ZIP")
+		}
+		started := time.Now()
+		cancel()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("client cancellation=%v", err)
+		}
+		select {
+		case <-packingRequestDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("canceled packing handler did not finish within 2s")
+		}
+		files, err := filepath.Glob(filepath.Join(archiveDir, "gallery-archive-*.zip"))
+		if err != nil || len(files) != 0 || reads.Load() != 1 || probeFailed.Load() {
+			t.Fatalf("files=%v reads_after_begin=%d probe_failed=%v err=%v", files, reads.Load(), probeFailed.Load(), err)
+		}
+		t.Logf("ZIP_CANCEL selected=100 media_reads_after_begin=%d handler_and_cleanup_after=%s", reads.Load(), time.Since(started))
 	})
 	t.Run("limits", func(t *testing.T) {
 		payload, err := json.Marshal(map[string]any{"asset_ids": append(append([]string{}, ids...), "extra")})

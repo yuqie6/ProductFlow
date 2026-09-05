@@ -187,6 +187,8 @@ Global media-library reads, folder/tag/archive organization, source saves, and w
 
 Product gallery batch download uses `POST /api/v2/products/:product_id/image-assets/download-archive`, limited to 100 assets and 512MiB of declared media bytes. The transaction freezes entry identities; outside it, `ReadVerified` validates one file at a time while writing a temporary ZIP. HTTP sends the attachment only after the archive is complete and removes it after transfer or disconnection. Memory does not retain the whole archive, but response headers wait for packing and temporary storage must hold the archive. `just go-test-zip-http-rss` covers authentication, 10/100 valid PNGs, entry hashes, interrupted-transfer cleanup and count/byte-limit rejection. This single-client gate does not establish concurrent disk or memory capacity.
 
+Gallery packing observes request cancellation at `Writer.Add` entry. When canceled after temporary ZIP creation and the first media metadata read, verification of the current file may finish, but subsequent files are not read and failure cleanup removes the temporary archive. The HTTP gate verifies this boundary using real request cancellation and a handler-completion barrier; no cancellation thread is added inside verification or compression. `ReadVerified` checks size, SHA and image configuration without decoding the full pixel buffer.
+
 ## 8. Provider Architecture
 
 `ProviderProfile` stores endpoint, secret, capabilities, default models, and provider configuration. `ProviderBinding` maps one profile to a purpose:
