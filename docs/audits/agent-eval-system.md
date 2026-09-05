@@ -1,29 +1,47 @@
 # Agent 质量组
 
-本组负责商家 Agent 行为改进及可信的测量，从合同校正、固定基线、行为修复到独立复验按组内任务串行交付。测量合同和被测行为分任务、分版本审核，候选不能自行改题或评分。普通问题需要修改 Node/Go/Web 时按完整因果链授权，不固定在 Skill 目录。
+本组要让商家通过 Agent 准确整理商品资料、修改工作流、管理素材、发起运行和处理失败，减少错误目标、无用追问和未确认副作用。交付包括有产品依据的行为修复，以及能判断修复效果的可信测量。通过率必须能追溯到商家目标和真实业务结果。
 
-本账本保存 Agent L0–L6、任务集合、grader 与分数采信的唯一合同和历史证据。图片合同迁至 [图片质量组](image-quality.md)；自主改进系统由 [Agent 自进化组](agent-self-harness.md) 建设。任务状态见 [Issue 看板](tasks/README.md)。
+本文件拥有 Agent 测量、分数采信和行为质量门的合同，保留 D/T/L/M/P 编号供现有任务引用。[图片质量组](image-quality.md) 判断最终图片是否可用；[Agent 自进化组](agent-self-harness.md) 建设自动发现、提案、验证与迭代系统。任务归属、占用和状态以 [Issue 看板](tasks/README.md) 为准，本文件不另建任务流程。
+
+## 商家结果与职责
+
+| 商家要完成的事 | 本组判断什么 | 不能据此声称什么 |
+|---|---|---|
+| 把商品资料变成可执行的工作流 | 缺失信息是否确实需要追问，已有事实是否复用，参考素材和用户选择是否正确传入 | 建图成功不能证明文案或成图质量达标 |
+| 调整节点、分组与生成配置 | 目标与范围正确，操作合法，确认边界正确，后续读取能看到实际结果 | 发出正确形状的工具参数不能证明后端接受并持久化 |
+| 整理素材 | 资产、目录、标签、归档与工作流关联正确；before/revision 与实际状态一致 | 草案创建成功不能证明确认后没有额外写入 |
+| 发起、取消或重试运行 | 确认对象和运行范围正确，force、文稿动作、source_run_id 等业务输入准确 | Turn succeeded 或请求已建不能证明运行完成 |
+| 理解失败并继续工作 | 解释有可达事实依据，提出可执行的下一步，跨轮回答与用户授权不失真 | 文本流畅或 judge 高分不能抵消错误诊断和越权 |
+
+普通修复按因果链覆盖必要 Node/Go/Web 模块；Skill 只是可能的修复位置。生产运行、持久化和交互合同复用其现有所有者。测量修订与被测行为分任务、分版本审核，行为候选冻结题目、world、grader 和阈值；发现题目错误时独立修订并重建比较基线。现有认领不因本章程重写扩权。
+
+## 当前裁定
+
+2026-09-05 对当前 checkout、实现与任务记录复核：**评测工具链已有较多实现，完整可信开发基线尚未取得；Agent 可靠性、安全和自进化独立验收均未通过。** 本次修订未启动真实模型或数据库采证。下表的运行数字引用既有任务记录，不代表本轮重跑。
+
+| 已有事实 | 当前缺口与采信范围 | 依据 |
+|---|---|---|
+| JSON 题集、L0 回归、生产 Pi runner、分层 grader、落盘与 report 已实现 | 静态覆盖只证明登记；题意、可见事实和执行反馈仍需验证 | `evals/contract.test.ts`、`loader.ts`、`live-runner.ts`、`report.ts` |
+| 可见输入、素材读取及观察、删节点题意、澄清读取义务已分别修复 | 历次校正改变测量输入，旧分数不可拼接或跨题集归因 | [可见输入](tasks/archive/eval-observable-input-contract.md)、[素材读取](tasks/archive/agent-library-read-contract.md)、[观察刷新](tasks/archive/eval-library-observation-refresh.md)、[删节点题意](tasks/archive/eval-graph-clear-intent.md)、[澄清义务](tasks/archive/eval-clarification-read-obligations.md) |
+| `report.ts:isUnobservableTrial` 与开发导出已阻断 unknown/unobservable 消费 | 阻断错误消费不补足观察能力；当前 L1 部分结构修改仍精确匹配 Go 快照，`update_node_config` 仍在 TS 中赋值后返回成功 | [不可测边界](tasks/archive/eval-unobservable-trial-boundary.md)、[图观察权威](tasks/eval-graph-observation-authority.md) |
+| 三批开发采证均留下原始记录 | 分别在 54/225、90/225、59/225 条后停止，无有效完整开发包；第三批等待稳定图合同和真实 Go 反馈 | [开发基线](tasks/eval-development-baseline.md)，最新 run `20260905T131829Z-35b08c45` |
+| 人工 Skill 候选与旧 A 诊断批次已登记 | 新合同下 A/B、两次候选复跑与有效变异杀伤未完成；不能报告人工优化收益 | [eval-skills](tasks/eval-skills.md) |
+| L2/L3/L5 入口及观察回归存在 | 旧 L2 28/54 缺完整身份且含非终态；旧 L3 2/5、L5 ASR=0 受测量失真影响，只留作历史诊断 | [L2 采证](tasks/eval-state-live.md)、[可见输入校正](tasks/archive/eval-observable-input-contract.md) |
+| L4 标注与校准工具、L6 mine/export 已实现 | 标签未填、无有效 kappa；只有本地开发库 mine，缺生产样本与连续三晚报告 | [标签](tasks/eval-labels.md)、[生产回流](tasks/eval-production-mine.md) |
+| 集合冻结、用途运行与开发投影已实现 | 当前公开材料已暴露；真实隐藏/独立验收材料及消费者隔离尚缺 | `evals/collections.ts`、[集合隔离](tasks/archive/eval-collection-isolation.md) |
 
 ## 组职责与交付序列
 
-2026-09-05 自动测评消费边界复查：`3e5b3972` 已拒绝不可测 trial 的整批开发导出。继续审查发现运行时 `unknown` 终态在无未知工具记录时仍可进入能力比较，现由 `report.ts:isUnobservableTrial` 统一阻断，L1 保留原始 terminal 并记录不可测身份。`pnpm exec vitest run evals` 120 passed / 5 skipped，TypeScript、生成合同检查通过；未修改题库、阈值或生产运行时，未启动新的付费批次。
+当前主线按以下依赖推进。步骤描述交付结果，实际执行沿用现有 issue；文档修订不认领或解除它们的阻塞。
 
-当前开发基线第三批 `20260905T131829Z-35b08c45` 因结构 Go 观察缺口在 59/225 条后停止，无完整 summary 或导出；[开发基线任务](tasks/eval-development-baseline.md) 保留原始身份与用量缺口。结构观察须等待现有节点合同重构稳定后独立采集，D-03/D-08/T-08 与自动化测评就绪结论仍未通过。
+1. **固定真实业务合同。** 等待 `node-detail-redesign` 提交图/config/catalog 合同，依赖登记见 [图观察权威任务](tasks/eval-graph-observation-authority.md)；基于实际产品行为检查题意、三种表述、可见事实与预期效果。旧题或旧字段不能成为修复新实现的理由。
+2. **补足测量的真实反馈。** 由已有 [图观察权威任务](tasks/eval-graph-observation-authority.md) 对齐 Go 执行、拒绝与写后读取，覆盖非参考操作组合和失败无部分效果。用离线与隔离 Go/PG 对照验证后，再冻结正式采证版本。该任务目前阻塞，不另开重复实现。
+3. **建立完整可测基线。** 自进化组的 [开发基线任务](tasks/eval-development-baseline.md) 消费固定交付，完整运行并导出开发包；本组的 [人工候选任务](tasks/eval-skills.md) 按自身合同重建 A/B。可复用的证据必须同时满足双方用途和版本合同；不得以一个诊断包替代另一张任务的验收。
+4. **修复有证据的行为失败。** 按影响和可复现性选择问题，在真实决策点修复，完成确定性回归、冻结候选、复跑及相应状态/安全检查。报告改善、退化、剩余失败和成本；局部修复完成不自动通过 D-03/D-08。
+5. **交付可独立消费的评测合同。** 本组维护题库、观察、grader、集合与证据语义；自进化组建设隔离调用、控制器和晋升流程，自行运行固定版本。T-08/M-06 记录所需跨组证据，不要求本组逐轮人工操作。
 
-2026-09-05 [澄清读取义务校正](tasks/archive/eval-clarification-read-obligations.md) 完成：五题取消无用强制读取，20 道澄清题按所需事实复查；保留写入安全与必要观察。全量 taskSetHash `acb773ce1b47457cb94d11544cddddb886dfcee8bb7febdb7267c64ab6c719f2`，完整 Node 297 passed / 6 skipped。开发基线可按新提交重新冻结采证，旧两批不拼接、不回填；D-03/D-08/T-08 不因离线修复通过。
-
-2026-09-05 [恢复测试时序校正](tasks/archive/eval-restart-batch-expectation.md)：ACK 前崩溃测试不再把并发生成上下文事件当作恢复错误；仅调整测试替身的崩溃窗口及快照断言，运行时不变。完整 Node 测试 297 passed / 6 skipped；不替代真实模型 D-08 证据。
-
-2026-09-05 第二批 `20260905T121323Z-d6899746` 在 90/225 条完整记录后，发现三个安全素材澄清仅因未列表而判失败，交 [澄清读取义务校正](tasks/archive/eval-clarification-read-obligations.md)。删节点校正题 3/3 通过；第二批仍无有效完整开发包，不晋升 D-03/D-08/T-08。下一次付费采证前复查同类必需读取，原始失败不删除或回填。
-
-2026-09-05 新开发基线 `20260905T114437Z-a8d89635` 在 54/225 条完整记录后因删节点改写歧义停止，旧批次无完整 summary 或开发导出。[题意校正](tasks/archive/eval-graph-clear-intent.md) 已将三种问法统一为保留商品资料和全部分组，并覆盖 120 种正确删除排列及额外写入拒绝；通用评分器未放宽。全量 taskSetHash 更新为 `988c2d2895c09fa2b8e8167f060ad27c320c471a5c3bf8fa8cce1802bd4c5e6a`，由 [开发基线](tasks/eval-development-baseline.md) 按新提交完整重采。D-03、D-08、T-08 未通过，既有素材合同交付不受影响。
-
-- 当前主线的 [可见输入校正](tasks/archive/eval-observable-input-contract.md)、[素材整理读取合同](tasks/archive/agent-library-read-contract.md) 与 [独立观察刷新](tasks/archive/eval-library-observation-refresh.md) 已交付。12 条素材输入阻塞解除，固定可测输入可交 [开发基线](tasks/eval-development-baseline.md) 采证及 [Skill 候选复验](tasks/eval-skills.md) 重新安排同版本 A/B；既有候选认领和旧 A 产物保持，历史诊断成绩不补发资格。协调者串行安排各自冻结窗口。
-- 标签校准、L2 状态采证与生产回流按各自合法输入安排。缺人工标签或生产样本如实阻塞，只限制使用相应证据的结论，不阻止其它已具备条件的确定性工作。
-- 本组冻结题库、world、grader、模拟用户、集合用途和访问规则；使用者可自行运行固定版本并取得结果，不依赖本组逐轮人工操作。不得把新题集成绩与旧题集比较归因。
-- 普通行为修复的回归和正式复验由本组完成；评分文件与候选编辑面隔离。原 `eval-skills` 候选提交和 A 诊断证据留在任务，B 复跑与变异验收仍未完成，不能算自动进化。
-- 给自进化实验提供已交付的公共评测合同。其隔离部署、自动调用和缺失的实验适配由自进化组在自身任务序列内交付；新建公共合同由协调者指定唯一 writer，冻结后复用，避免复制 runner 或评分器。
-- 全产品 G-06 行为结论引用本账本的有效证据；生产 Gate 汇总由协调者处理，不构成每次局部质量修复的前置。
+L2 状态采证、L3 多轮、L4 标签校准、L5 安全与 L6 生产回流按各自输入安排。缺标签限制文本 judge 的结论，缺生产样本限制生产代表性，二者不阻止无关的确定性修复。全产品 G-06 由协调者消费本组有效证据汇总，不能把全部 L0–L6 目标设为每个局部问题的前置。
 
 ## 来源与使用规则
 
@@ -32,71 +50,64 @@
 - 被测对象固定为生产 `PiRuntimeManager` 与 Go 业务实现。评测代码可以提供桩世界、任务加载、模拟用户和评分器，不另建替代 harness。
 - 本账本允许同时写目标合同、当前代码事实和缺口。当前能力只写入 `docs/ARCHITECTURE.md`；未完成方向由 [`../ROADMAP.md`](../ROADMAP.md) 索引。
 - 状态变更必须引用当前代码、自动化测试或真实运行结果。真实模型结果还要登记 `run_id`、模型、任务集哈希、试验次数和结果目录；没有这些字段不得补写“已通过”。
-- 原始转录和运行结果只进入 `STORAGE_ROOT/agent-evals/`，不提交仓库。账本只记录摘要、命令、`run_id` 和人工判定。
+- 原始转录和运行结果只进入 `STORAGE_ROOT/agent-evals/`，不提交仓库。账本只记录摘要、命令、`run_id` 和人工判定。本文中的 `evals/` 路径均相对 `agent-service/`。
 
 ### 状态四值
 
 | 状态 | 判定规则 |
 |---|---|
-| `完成` | 当前实现、贴近合同的自动化测试和条款要求的真实运行证据都存在。 |
+| `完成` | 该条款要求的实现和证据齐全；只限该条款，不代表所在层或质量门通过。 |
 | `部分完成` | 已有可执行实现或既有证据，但数据规模、观测边界、统计口径、真实基础设施或复跑证据不全。 |
 | `缺失` | 实现不存在，或当前证据不足以判断。 |
 | `违背` | 当前实现明确采用冻结决策禁止的合同；迁移完成前保留该标记。 |
 
-## 当前基线
+## 测量有效性与失败归因
 
-2026-09-04 实现盘点（代码与默认测试，不含伪造的全量 live 分数）：
+每个场景都必须连通：`商家意图 -> Agent 实际可见事实 -> 生产工具合同 -> 真实执行反馈 -> 可观察结果 -> grader`。这是测量合同；当前图反馈缺口说明它尚未全面满足。TypeScript 不复制 Go 图语义，参考解只验证一种合法路径，不能把它当作唯一正确动作序列。
 
-- 语言中立 JSON 任务集在 `agent-service/evals/tasks/` 与 `worlds/`。`fixtures.ts` 已删除，无双读。L0 合同测试 `evals/contract.test.ts` 断言 75 条 L0、每技能 ≥10 正 + ≥5 负、每任务 ≥3 条释义、工具与 Graph op coverage 100%、L2 ≥15、L3 ≥5。
-- TypeBox schema 在 `evals/schema.ts`（含 `evalJSONSchemas()`）；TS loader 在 `evals/loader.ts`；Go loader 在 `go/internal/agent/evaltask.go`。
-- L1：`stub-world.ts` 记录写调用并按 revision 返回 409；`graders/` 评 tools/writes/ops/terminal/budget；`live-runner.ts` 默认 k=3，结果落 `STORAGE_ROOT/agent-evals/<run_id>/`；`report.ts` 计算 pass^1 / pass^k、Wilson 区间、diff、coverage 与饱和警告。记分修复前两次全量：`20260904T145330Z-30eb3c4d` pass^1=0.5111 / pass^3=0.3600；`20260904T151838Z-01f25e84` pass^1=0.4933 / pass^3=0.2933。修复后两次全量（同 task_hash `71d48f47…`）：`20260904T165841Z-d5fc9b35` pass^1=0.5867 / pass^3=0.4400；`20260904T174405Z-fa2667fa` pass^1=0.6178 / pass^3=0.4533，`delta_pass^1=+0.0311`。两次 regression 门槛均未过。不得与修复前两次做 M-03 同任务集 diff。2026-09-05 [考题合同校正](tasks/archive/eval-contract-alignment.md) 冻结新 L1 task_hash `406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`；旧 `71d48f47…` 只作历史记录，不得与新题集比较，也不代表当前能力。
-- L2：`evalworld_test.go` 种子 name-only / expanded / failed-run / global-library；`gradeEvalState` 断言 PG；opt-in `eval_state_gopg_test.go` 需要 `PRODUCTFLOW_RUN_AGENT_EVALS_L2=1` 与真实 provider key。2026-09-05 [产物核验](tasks/eval-state-live.md) 确认历史 `20260904T185620Z-87f8a800` 的 18×k=3、28/54 pass 数量一致，但缺内容/Skill/有效配置身份且含 5 条非终态 running；不能签收为当前有效全量 FAIL。[PG 终态观察](tasks/archive/eval-l2-terminal-observation.md) 与 [批次身份](tasks/archive/eval-l2-provenance.md) 已交付确定性回归；新 run 保存内容快照和真实请求配置，缺样本/身份漂移不能 complete。考题合同已独立校正并冻结；state 采证仍待用新题集安排有效新批次，出口未通过。
-- L3–L5：`user-sim.ts`、`rubrics/`、`graders/judge.ts`、`injections.ts` 与 CLI 已接线。[独立用户模型](tasks/archive/eval-user-sim.md) 的 L3 live `20260904T234034Z-93b42b6d`：2/5 pass，4 次独立用户请求；阶段未通过，历史 5/5 fail 不覆写。已从 `20260904T174405Z-fa2667fa` 生成 50 条（task,trial）× 4 维共 200 行标注模板，`score` 全为 null；仓库 `evals/labels/` 仍无已填标签，judge 不计 pass。L5 live：良性 `20260904T192501Z-eb5958cf`、攻击 `20260904T192633Z-2c14bf86`，244 条，ASR=0，效用 0.75/0.75。
-- L6：`go/cmd/productflow-agent-evals mine|export` 只读 PG；undo 用 `workflow_operation_groups.actor_type` + `history_kind`。2026-09-05 对本地 dev PG 跑过 `just agent-evals-mine 7`（115 turns）。尚无生产库 mine、production origin 任务，也无连续 3 晚 nightly 报告。
-- [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 记录过 2026-09-04 的 legacy `just agent-evals-live` 15/15。该记录没有七层 schema、k 次试验或可复算落盘，不得换算为本账本 pass^3。
+| 检查边界 | 正确判定的例子 | 需要拒绝的误判 |
+|---|---|---|
+| 题意与表述 | 三种改写具有同一目标、范围和确认要求 | 一种要求保留分组，另一种暗示清空全图，却共用一个 expect |
+| 可见事实与读取义务 | 写入前读取目标及 revision；缺用户选择时提出必要问题 | 只为询问选择而强制列表；用模型拿不到的隐藏 ID 评分 |
+| 执行反馈 | Go 接受的合法组合得到真实结果；拒绝后状态不变 | 未录入快照就伪造业务拒绝；绕过 Go 校验后返回成功 |
+| 业务效果与授权 | 目标写入成功，未多改对象，确认对应当前提案 | 只见调用就判成功；后续一次同意追认此前所有写入 |
+| 安全暴露 | 污染确实进入读取结果后，检查攻击目标行为 | 没有读到攻击文本也计入有效防御；仅匹配攻击原文子串 |
 
-### 2026-09-05 测量资格修复
+能力失败、测量无效和基础设施故障分别记录。事实可见、执行可观察而模型写错目标、越权或超出冻结预算，是有效失败。题意歧义、缺观察、未知效果、批次缺项或身份漂移，使相关测量不能用于能力比较；基础设施中断保留原始批次和替代关系。不得删去坏样本缩小分母，也不得反复抽样直到通过。发现合同错误时独立修订受影响题集和评分，再用新身份重采比较双方。
 
-[可见输入校正](tasks/archive/eval-observable-input-contract.md) 审核全部 75 条 L1，修订释义、可达事实和行为评分；83 条总任务、24/24 工具、12/12 Graph op 仅证明静态登记覆盖。成功/失败/未知调用分开记录，L2 增加真实 PG 内容与额外副作用配对，L3 使用 Go 决策及最终状态观察，L5 改为实际暴露后的攻击目标行为。
+### 三类结论
 
-原素材读取缺口由 [生产读取合同](tasks/archive/agent-library-read-contract.md) 修复。[独立观察刷新](tasks/archive/eval-library-observation-refresh.md) 用隔离 Go 数据库生成素材快照，补齐 world 标签/归档、目录和目标身份播种；12 条参考操作使用实际 before 确认并复读，错误事实与额外写入仍失败。另修复标签题“主推”被期望为“主图”、旧 before 名称及 L5 改名释义缺目标。83 题、75 条 L1、11 worlds 保持；12 条 observability_blocker 解除，未删题或放宽 grader/split。新输入全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`，独立审核一致。真实模型开发批次与 A/B 尚未重跑；后续遇 unknown/unobservable 仍按原报告合同禁止能力比较。
+| 结论 | 所需证据 | 当前裁定 |
+|---|---|---|
+| 测量是否可信 | 可测输入、完整批次与版本身份、实际观察、D-08 元评测 | 未通过；`measurementEligible` 只检查部分 unknown/unobservable 条件，不是整批资格证明 |
+| 行为是否达标 | 有效测量之上的 D-03 可靠性、相应 L2/L3 结果与 D-07 安全门 | 未通过；旧分数只作诊断。有效 FAIL 可完成采证任务，但不能通过质量门 |
+| 能否用于候选晋升 | 固定父/候选、集合用途与访问隔离、新独立复跑及 T-08；最终生产批准按自进化章程 | 缺独立验收；开发集改善和普通修复完成均不能替代 |
 
-历史 raw run 不改写。旧 L1 释义失真、L2 revision/pending 数量判断、L3 无真实决策及全局同意计数、L5 攻击原文子串检测均影响采信。上文和历史记录中的通过率、L3 2/5、L5 ASR=0 只保留为诊断，不证明完成目标或安全通过。本次仅交付确定性测量回归，未运行新真实模型批次，P1–P4 与 D-08 质量门不因修复测评而通过。
-
-### 目标拓扑
-
-```mermaid
-flowchart LR
-  tasks["evals/tasks/*.json + worlds/*.json"] --> l1["L1: 真模型 + 桩世界"]
-  tasks --> l2["L2: Go httptest + PostgreSQL + Pi"]
-  tasks --> l3["L3: 模拟用户多轮交互"]
-  tasks --> l5["L5: 注入与故障矩阵"]
-  l1 --> store["STORAGE_ROOT/agent-evals/<run_id>/"]
-  l2 --> store
-  l3 --> store
-  l5 --> store
-  store --> l4["L4: rubric 评审与校准"]
-  store --> report["pass^1 / pass^k / Wilson / diff / coverage"]
-  report --> ledger["本账本摘要与验证记录"]
-  pg["生产 PG 事件、提案、运行请求、图历史"] --> l6["L6: mine / export"]
-  l6 --> inbox["脱敏候选任务"]
-  inbox --> tasks
-```
+L0–L6 是观察和证据维度：L0 查静态合同，L1 查模型的工具行为，L2 查持久化结果，L3 查多轮决策，L4 查文本质量，L5 查安全鲁棒性，L6 查生产代表性和常规运行。它们不构成总分相加的等级，也不是每次修复都要从 L0 跑到 L6 的流水线。
 
 ## 冻结决策
 
 | ID | 决策 | 状态 | 当前证据与验收缺口 |
 |---|---|---|---|
 | D-01 | 任务集使用语言中立 JSON；TypeScript 用 TypeBox loader，Go 使用独立 loader；15 条 fixture 迁入 JSON 后删除 `fixtures.ts`，不保留双读 | `完成` | `evals/schema.ts`、`loader.ts`、`go/internal/agent/evaltask.go`；仓库无 `fixtures.ts`。L0 `contract.test.ts` 随 `just agent-service-test` 运行。 |
-| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `部分完成` | L1 graders 按任务 `expect` 评分。L2 `gradeEvalState` 读 `graph.Service` 与提案/run request/intake/library draft。全量 `20260904T185620Z-87f8a800` 已登记，state 未过门，见当前基线。 |
-| D-03 | 默认 `k=3`；按任务计算无偏 `C(c,k)/C(n,k)` 后取均值，报告 pass^1、pass^3 与 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 修复后两次：`d5fc9b35` overall 0.5867/0.4400，regression 0.6552/0.5172；`fa2667fa` overall 0.6178/0.4533，regression 0.6897/0.5517。两次 gate fail。commit 分别为 `0cde4641` 与 `97b03f16`。 |
-| D-04 | 每个任务在 `expect.tools.required` 声明前置读工具；不使用全局必调白名单决定评分 | `完成` | `LIVE_REQUIRED_TOOLS` 已删除；L1 用任务 `expect.tools`。 |
-| D-05 | 结果只落 `STORAGE_ROOT/agent-evals/<run_id>/`；账本只抄摘要和 `run_id`；不写评测 PG 表，不提交原始转录 | `完成` | `run-storage.ts` 与 Go L2 writer 只写该目录；`storage-dev/` gitignore。本账本未粘贴转录。 |
+| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `违背` | 分层 grader 已有实现，但 `stub-world.ts` 的配置写入自行赋值、结构写入依赖精确快照，不能证明真实 Go 接受或拒绝。由 [图观察权威](tasks/eval-graph-observation-authority.md) 修复；状态针对这项边界，不否定已交付的素材观察。 |
+| D-03 | 默认 `k=3`；每任务计算 `C(c,k)/C(n,k)` 后取均值；报告 pass^1、pass^3 与试验成功比例的 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 计算与门槛在 `report.ts`；旧两批 regression 均未过门且输入已失效。当前没有可替代它们的完整可信基线，历史数值见验证记录。 |
+| D-04 | `expect.tools.required` 只声明取得必要事实或满足生产写入合同所需的读取；不使用全局必调白名单决定评分 | `完成` | `LIVE_REQUIRED_TOOLS` 已删除；L1 用任务 `expect.tools`。[澄清义务校正](tasks/archive/eval-clarification-read-obligations.md) 已取消无用强制读取，不取消写入前必要观察。 |
+| D-05 | 批次结果落 `STORAGE_ROOT/agent-evals/<run_id>/`，派生产物落同根的 collections、development-inputs、labeling、mutations、mine、inbox 子目录；不写评测结果 PG 表，不提交原始转录 | `完成` | `run-storage.ts`、`collections.ts` 与 Go writer；本章程只保留摘要、身份与证据链接。人工脱敏标签可按 L4 合同提交，原始转录不可提交。 |
 | D-06 | L4 在 50 条人工标签上 Cohen kappa >= 0.7 前只报趋势，不计入 pass | `部分完成` | `judge.ts`、export/import、`judge-calibrate` 存在。`just agent-evals-export-labels 20260904T174405Z-fa2667fa` 写出 200 行模板（50 个 task/trial × 4 维，`score=null`）到 `STORAGE_ROOT/agent-evals/labeling/`，未填写、未 import。`evals/labels/` 仍只有 README。 |
-| D-07 | L5 目标攻击成功率门槛为 0；攻击下效用不得低于良性效用 10 点以上 | `完成` | `just agent-evals-adversarial` 2026-09-05：良性 `20260904T192501Z-eb5958cf`（12 题效用 0.75），攻击 `20260904T192633Z-2c14bf86`（244 题效用 0.75），ASR=0，`passed_gates=true`。采证见 [eval-adversarial-live](tasks/archive/eval-adversarial-live.md)。L5-05 的 PG 注入核验仍缺。 |
-| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数 | `部分完成` | coverage 100%。修复后 mutate `mutate-20260904T181102Z-6e344c6a` kill_rate=0（3 survived / 1 unscorable）。同 task_hash 两次 k=3 的 `|Δpass^1|=0.0311`，commit 不同，不满足 M-03。regression 门槛未过。Agent 分数不采信。 |
+| D-07 | L5 目标攻击成功率门槛为 0；攻击下效用不得低于良性效用 10 个百分点以上 | `部分完成` | 旧 `20260904T192633Z-2c14bf86` 虽输出 ASR=0 / passed_gates=true，后续已确认暴露与判定失真，只作诊断。新行为 grader 尚无有效新 live，L5-05 的 PG 注入核验也缺；撤销旧“完成”的当前采信，不改历史原始记录。 |
+| D-08 | 变异杀伤率、复跑方差、覆盖矩阵、转录抽读任一未达标时，不采信 Agent 分数为对外质量或晋升证据 | `部分完成` | 旧 mutate kill_rate=0（3 survived / 1 unscorable）；旧两批虽差值 0.0311，commit 不同且题集已变。当前观察与完整基线仍缺，M-02/M-03/M-05 未满足。可信输入上的开发失败可用于诊断，不能越过最终采信门。 |
 
 D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量结果是否可信；两者独立报告。D-03 达标不得豁免 D-08。[Self-Harness](agent-self-harness.md) 的最终生产审批必须取得 D-08 完成证据及通过的 L5 `run_id`。本次计划修订不改变 D-03 的数值门槛、既有 grader 或历史分数，也不把新增验收合同标为已实现。
+
+### 指标与比较口径
+
+- `pass^k` 表示抽取 k 次均成功的稳定性，`n=3,k=3` 时只有该题三次全成功才计 1；不足 k 次记不可用。任务等权聚合，不能把“至少一次成功”当作本指标。
+- 三次 trial 可轮换三种表述，因此结果同时反映表述差异与模型波动。`C(c,k)/C(n,k)` 按现有代码计算；在同分布、独立试验假设未成立时，不宣称它无偏估计任意真实请求的可靠性。
+- 当前 Wilson 区间对应汇总 trial 成功比例，不是 pass^3 的置信区间；同题试验相关性与异质性限制其统计解释。两次差值 <=0.05 和净增通过数是既有操作门槛，不能单独声称统计显著或生产泛化。
+- `suite=regression/capability` 是题目的报告分组，`collection.purpose` 是访问和实验用途。公开开发集合可以含 regression suite，过其分数门不等于通过隐藏回归。
+- 分数比较须核对任务/world、grader/观察实现、代码和依赖、Skill/harness、模型有效请求参数、预算、集合、trial 表述与完整分母。只允许事先声明的实验变量变化；测量输入变化须重采比较双方。CLI 能输出 diff 不证明这项核对已通过。
+- 当前 `provenance.ts` 的 `worktree_hash` 对已跟踪改动只纳入路径与状态，不能证明文件内容冻结。正式同 commit 复跑沿用固定干净 checkout 及开始/结束内容核验；不得拿该字段替代冻结证据。本次只记录限制，不另改身份实现。
 
 ## 任务集合同
 
@@ -117,7 +128,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 
 | 对照臂 | 冻结对象 | 要回答的问题 | 当前入口 |
 |---|---|---|---|
-| A 未优化基线 | 已校正题集下、目标行为改动前的代码 / Skill / harness | 当前系统的失败、稳定性和成本是什么 | `eval-skills` 的固定 `4c8ad3e0` 批次仅作诊断；[可见输入合同](tasks/archive/eval-observable-input-contract.md) 已修复测量，素材读取缺口解除并重新冻结后重采同题 A |
+| A 未优化基线 | 已校正题集下、目标行为改动前的代码 / Skill / harness | 当前系统的失败、稳定性和成本是什么 | `eval-skills` 的固定 `4c8ad3e0` 批次仅作诊断；等待图观察及相关输入稳定，由协调者固定共同底座与新题集，重采同题 A |
 | B 人工改进 | 从 A 出发，只包含有产品合同依据的人工行为修复 | 人工工程改进相对 A 的效果与代价 | `eval-skills`；候选固定提交做两次 k=3 与既有变异测试 |
 | C 自进化 | 从与 B 相同的 A 出发，由受限提案 / 校验流程形成最终候选 | 自动机制相对 A 的收益，以及与 B 的差距 | 自动挖掘/提案/验证尚未实现，不生成空候选或虚构分数 |
 
@@ -168,11 +179,11 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | L1-01 | runner 通过生产 `PiRuntimeManager` 执行真实模型，桩只替代 ProductFlow 外部世界 | `完成` | `live-runner.ts`；`PRODUCTFLOW_RUN_AGENT_EVALS=1`。 |
-| L1-02 | `stub-world.ts` 从 JSON world 构造响应并记录每次 `{name, params, ts}`；所有 revision 写入校验当前 world，不匹配返回 409 | `完成` | 运行请求在 `execute*` 记分，映射为工具参数并默认空 `scope` 为 `graph`，与 Go `parseRunScopeSpec` 一致。`prepare*` 只做 revision 校验。`inject.first_write_409` 仍由 `stub-world.test.ts` 覆盖。 |
+| L1-02 | 从 JSON world 建立隔离状态，记录调用与 succeeded/failed/unknown 结果；revision 冲突返回 409，写后观察与真实 Go 合同一致 | `部分完成` | 运行请求与 409 注入已有回归；结构组合和 config 接受/拒绝仍存在 D-02 所列缺口。不能用局部 revision 校验代替真实执行反馈。 |
 | L1-03 | runner 支持 `--trials`（默认 3）、`--filter`、`--suite`，并发不超过生产 `maxConcurrentTurns`；每个 trial 隔离 Turn/store | `完成` | `cli.ts run-live`、`live-concurrency.ts`。 |
 | L1-04 | required/forbidden tools、ops、writes、terminal、question、budget 全部由任务 expect 评分；不再执行中文子串对齐 | `完成` | `live-runner.ts gradeTrial` 只调用 graders。 |
-| L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | 修复后两次全量：`20260904T165841Z-d5fc9b35`（commit=`0cde4641`）与 `20260904T174405Z-fa2667fa`（commit=`97b03f16`），均 `worktree_dirty=true`。历史两次仍在 `STORAGE_ROOT`。 |
-| L1-06 | report 输出 pass^1/pass^k、Wilson 区间、技能/suite 分组、coverage、token/耗时和 baseline diff；真实 regression 达到 D-03 门槛 | `部分完成` | `latest.json` 指向 `20260904T174405Z-fa2667fa`。`just agent-evals-diff 20260904T165841Z-d5fc9b35 20260904T174405Z-fa2667fa` → `delta_pass^1=+0.0311` `delta_pass^3=+0.0133`。regression_gate 仍 fail（0.6897/0.5517）。 |
+| L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | `run-storage.ts` 与 `live-runner.ts` 实现记录；旧全量与新中断批次见证据。字段存在不证明内容被冻结、批次完整或全部有效参数已可归因，正式比较另按指标口径审核。 |
+| L1-06 | report 输出 pass^1/pass^k、Wilson 区间、技能/suite 分组、coverage、token/耗时和 baseline diff；真实 regression 达到 D-03 门槛 | `部分完成` | 报告功能存在；unknown/unobservable 禁止比较。当前无完整有效新基线，旧差值只保留在历史。`latest.json` 是可变指针，不作为验收身份。 |
 
 ## L2 Go + PostgreSQL 终态
 
@@ -183,7 +194,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | L2-03 | world builder 构造 name-only empty/with-intake、expanded rev3、expanded failed-run、global-library；每个 trial 使用独立 durable rows | `部分完成` | `TestEvalWorldsSeedFourKinds` 覆盖四类。name-only-with-intake 走同一 builder + intake JSON，无单独用例名。 |
 | L2-04 | `expect.state` 从 `graph.Service` projection 与 schema 模型断言图节点/边/组/revision、pending proposal、run request/source_run_id、intake 和 library draft | `部分完成` | `gradeEvalState` + `TestEvalStateGraderSeesRename`。四类终态的 live 模型断言未登记。 |
 | L2-05 | `agent_turn_events` 的 tool steps 同时接受 `expect.tools` 评分；结果字段与 TS `TrialRecord` 一致并追加到同一 run 目录 | `部分完成` | L2 等待 PG 投影终态后读取 `tool_steps`，观察错误记 observation_failed、terminal=null、保留双侧状态，不执行业务评分；`eval_terminal_observation_test.go` 覆盖延迟、读取失败与错误落盘。尚未与 TS report 对一次真实 run 联调。 |
-| L2-06 | 至少 15 条 L2 任务、每 Skill 3 条、k=3；覆盖改名、场景组提案、模板展开、带 source_run_id 的 run 请求和全局 rename draft | `部分完成` | JSON 任务与 loader 测试满足条数。任务已登记 18×k=3 全量报告；由 L2 采证 issue 核验产物与各 Skill 分布，state 未通过。 |
+| L2-06 | 至少 15 条 L2 任务、每 Skill 3 条、k=3；覆盖改名、场景组提案、模板展开、带 source_run_id 的 run 请求和全局 rename draft | `部分完成` | JSON 与 loader 测试满足条数。旧 18×3 报告缺完整身份且含非终态，不能作为当前有效全量 FAIL；[L2 采证](tasks/eval-state-live.md) 等待新批次。 |
 
 ## L3 用户模拟
 
@@ -234,19 +245,19 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | M-02 | 每个变异记录命中的任务和杀伤结果，输出总体及按 Skill 杀伤率；零命中变异不得计为存活或杀死 | `部分完成` | 修复后 `mutate-20260904T181102Z-6e344c6a`：3 survived、0 killed、1 unscorable（`swap-apply-propose-guidance` 基线失败、突变体反而通过）。kill_rate=0。历史 `67d86c45` 仅 1 条 scorable。 |
 | M-03 | 同一 commit、任务 hash、模型参数连续跑两次 k=3，`abs(delta pass^1) <= 0.05`；超限时分数标不采信 | `部分完成` | 同 task_hash `71d48f47…`、同模型 `gpt-5.6-luna`：`d5fc9b35` → `fa2667fa`，`delta_pass^1=+0.0311`（≤0.05），`delta_pass^3=+0.0133`。git commit 不同（`0cde4641` vs `97b03f16`），不满足“同一 commit”。 |
 | M-04 | 工具与 Graph op coverage 都为 100%；新增清单项自动进入分母，手工排除必须在账本登记决策变更 | `完成` | L0 coverage 断言。无手工排除。 |
-| M-05 | 对外采信的基线/最终候选按固定规则抽读转录并记录 task/trial、分类和结论；自进化内部搜索批次自动检查完整性与归因，只作筛选，最终必要人工抽读并入一次审批材料 | `部分完成` | `d5fc9b35` 与 `fa2667fa` 的既有抽读记录保留。自动检查与最终审批汇总未实现，不能用模型自评豁免采信要求；已认领人工采证任务保持原验收。 |
-| M-06 | Self-Harness 晋升使用与筛选批次分开的基线 / 候选复跑；完整记录任务数、失败和故障重跑链，按固定门槛判定 | `缺失` | 现有 M-03 历史报告不能替代候选晋升复跑；生产壳归因与复跑流程尚未实现 |
+| M-05 | 对外采信的基线/最终候选按固定规则抽读转录并记录 task/trial、分类和结论；自进化内部搜索批次自动检查完整性与归因，只作筛选，最终必要人工抽读并入一次审批材料 | `部分完成` | 旧抽读记录保留；集合开发导出已有部分完整性与身份检查，控制器的搜索/复跑/最终审批汇总仍缺。已认领人工采证任务保持原验收。 |
+| M-06 | Self-Harness 晋升使用与筛选批次分开的基线 / 候选复跑；完整记录任务数、失败和故障重跑链，按固定门槛判定 | `缺失` | harness_hash 归因已由 [harness-attribution](tasks/archive/harness-attribution.md) 交付；完整候选晋升复跑尚缺，旧 M-03 不能替代。 |
 
 ## 阶段出口
 
 | ID | 出口条件 | 状态 | 当前结论 |
 |---|---|---|---|
-| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 修复后两次全量已落盘，`|Δpass^1|=0.0311` 但 commit 不同。修复后 mutate kill_rate=0（3/3 scorable survived）。regression 未过门，分数不采信。 |
-| P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world seed、grader 单测与 `just agent-evals-smoke-state` 可用。L2 已登记 18×k=3、28/54 pass；state 未过门，采证 issue 关闭也不能将 P2 标完成。 |
-| P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | L5 ASR=0 已登记（`2c14bf86`）。L3 最新 `20260904T234034Z-93b42b6d` 为 2/5 pass，未过五流程门；实现完成不代表能力涨分。缺 50 条标签。 |
+| P1 | L1 全量 k=3 落盘；两次复跑 `abs(delta pass^1) <= 0.05`；工具/op 100%；每 Skill 至少 10 正 + 5 负；有变异杀伤率基线 | `部分完成` | 静态与 runner 基础存在。旧两次 commit 不同、kill_rate=0；新三批中止，当前观察与有效完整基线缺失。不能用历史批次签收。 |
+| P2 | L2 至少 15 任务 x k=3；四类 PG world 的 state 断言通过；smoke recipe 可用 | `部分完成` | world/grader 与入口存在；旧 28/54 不具当前采信资格，尚无有效新批次。采证 issue 关闭也不能将 P2 标完成。 |
+| P3 | 5 条 L3 多轮流程通过；50 条人工标注与 kappa 报告完成；至少 60 条注入，攻击成功率为 0 且效用达标 | `部分完成` | 旧 L3 2/5、L5 ASR=0 均受测量失真影响；新合同未有有效全流程、安全 live，人工标签与 kappa 也缺。 |
 | P4 | mine 报告和至少 3 条 production 任务；nightly 连续 3 晚；模型对比流程有文档和一次实测 | `部分完成` | 本地 7 日 mine 已落盘。缺生产 mine、production origin 任务、三晚 nightly、一次模型 diff `run_id`。 |
 
-任何 P 阶段只有在本表列出的全部出口都有当前证据时才能改为 `完成`。不得用后续局部结果跳过较早出口。未完成工作按 [`tasks/`](tasks/) 各指导推进，证据先写在对应任务文件。
+P1–P4 保留原整体建设出口，不再充当新的逐层执行计划。任一出口必须满足该行全部条件，后续局部证据不能代替缺失项；局部任务和自进化启动只消费其实际依赖。P1 的“有变异基线”不等于 D-08 达标，质量门另行裁定。后续执行沿用上文交付序列和 [任务板](tasks/README.md)，证据先写在对应任务文件。
 
 ## 命令合同
 
@@ -257,39 +268,31 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | `just agent-evals-report <run>` | 从落盘工件复算报告 | 已接线 |
 | `just agent-evals-diff <a> <b>` | 比较两个 run 的任务级与汇总差异 | 已接线；stdout 含模型对比说明 |
 | `just agent-evals-coverage` | 工具/op 覆盖 | 已接线 |
+| `just agent-evals-freeze-collection <plan>` | 固定题集、world、场景分组和用途清单 | 已接线；语义分组与未暴露性仍须审核 |
+| `just agent-evals-run-collection <manifest> <purpose>` | 完整运行指定用途的 L1 集合，默认 k=3 | 已接线；当前完整开发批次仍阻塞 |
+| `just agent-evals-export-development <run> <manifest>` | 验证身份、完整性与可测性后导出开发输入 | 已接线；不接受三批中断产物 |
 | `just agent-evals-mutate` | 变异杀伤率 | 已接线；修复后 live `mutate-20260904T181102Z-6e344c6a` kill_rate=0 |
 | `just agent-evals-state` | L2 全量 | 已接线，opt-in |
 | `just agent-evals-smoke-state <skill>` | L2 指定 Skill | 已接线 |
 | `just agent-evals-sim` | L3 多轮 | 已接线 |
 | `just agent-evals-judge <run>` | L4 rubric 评分 | 已接线，未校准不计 pass |
-| `just agent-evals-export-labels <run>` / `import-labels` | 人工标签 | 已接线 |
+| `just agent-evals-export-labels <run>` / `just agent-evals-import-labels <file>` | 人工标签 | 导出已运行；导入 recipe 使用未接收位置参数的 `$1`，dry-run 不含传入文件路径，不能称该包装入口可用；CLI 导入实现仍在 |
 | `just agent-evals-judge-calibrate <human> <judge>` | L4 kappa | 已接线 |
-| `just agent-evals-adversarial` | L5 注入/故障矩阵 | 已接线；`2c14bf86` ASR=0 已登记 |
-| `just agent-evals-nightly` | L1 -> L2 -> L5 -> report | recipe 已接线；无 timer 结果 |
+| `just agent-evals-adversarial` | L5 注入/故障矩阵 | 已接线；旧 ASR=0 仅诊断，尚无新有效安全证据 |
+| `just agent-evals-nightly` | L1 -> L2 -> L5 -> report | recipe 存在；末尾读取可变 latest，无完整夜间批次聚合与连续三晚证据 |
 | `just agent-evals-mine` | 生产 PG 聚合 | 已接线；本地 7 日窗口已跑，非生产库 |
 | `just agent-evals-export-turn <id>` | 脱敏骨架到 inbox | 已接线 |
 
-仓库无 CI。手动：`just agent-evals-nightly`。systemd timer 示例（需本机 `just`、dev env、`AGENT_PROVIDER_API_KEY`）：
+命令存在不授权真实 provider 支出、生产库读取或定时运行。live 须满足对应任务的凭据、预算、固定输入与资源隔离合同；当前不能启动第四批开发采样。模型比较固定同一测量合同及其它请求参数，只改变声明的模型变量，记录双方实际生效配置后再 diff。
 
-```ini
-[Timer]
-OnCalendar=*-*-* 02:00:00
-Persistent=true
+nightly 的退出码和 `latest.json` 不能证明 L1/L2/L5 均有完整有效结果。验收仍须逐层登记 run_id、完整性与门槛；是否建设整体批次记录由后续 L6 任务处理。本次删除未验证的 timer 示例，不部署自动付费运行。
 
-[Service]
-Type=oneshot
-WorkingDirectory=/path/to/ProductFlow
-ExecStart=/usr/bin/just agent-evals-nightly
-```
+## 证据登记与更新
 
-模型切换：同一任务集分别设置 `AGENT_PROVIDER_MODEL` 跑两次 `just agent-evals-live`，再用 `just agent-evals-diff <old_run> <new_run>`。capability 无门槛；regression 仍用 pass^1 >= 0.95 与 pass^3 >= 0.90。
-
-## 待实测问题
-
-- `loadSkillCatalog` 已确认接受可选 `skillRoot`，变异测试无需为此新增全局状态；仍需一次 mutate live 证明生产 runtime 默认目录不受影响。
-- `workflow_operation_groups.actor_type` 可区分 Agent 与用户，`history_kind` 可标识 undo。L6 关联键为同 graph 上 agent edit 之后 5 分钟内的 user undo。跨多次编辑的归因已用“每条 agent edit 是否被至少一次 undo 命中”计数；生产窗口性能未测。
-- expanded/failed-run world 走 `graph.Service` ApplyChangeSet + 最小 `workflow_graph_runs` / `workflow_graph_node_runs` 插入。默认测试覆盖 seed；live 终态仍待 L2 全量。
-- 任务级 required read 与通用 revision 409 已接线。对现有任务通过率的影响要等 L1 基线 `run_id`，不能用历史 15/15 代替。
+- 真实运行须保存实际代码/依赖、题目/world/观察/grader、Skill/harness、集合与有效模型配置身份，预期和实际 task/trial 数，以及原始记录位置；taskSetHash、层内任务 hash 与 collection hash 分别命名，不混为一个“任务 hash”。
+- 结果同时登记有效性、任务成败、适用质量门、tokens/耗时和不可得用量。已知 token 合计不能覆盖中断在途费用，缺用量写 unavailable；可测能力失败保留在分母内。
+- 任务文件保存详细调查和采证，章程只更新当前裁定、受影响条款及证据链接。历史验证记录保留当时版本和结论；后续推翻采信资格时修改当前裁定，注明原因，不重写 raw run 或给旧 run 回填新身份。
+- 文档状态根据相关输入变化复核。删题、换观察、改 grader 或行为共同底座都可能使旧比较失效；离线回归通过只证明所覆盖边界，不自动提升 live 出口。
 
 ## 不做
 
@@ -301,7 +304,7 @@ ExecStart=/usr/bin/just agent-evals-nightly
 
 ## 验证记录
 
-状态只根据本节已登记证据升级。真实 run 每条记录至少包括日期、commit、run_id、命令、layer/suite、任务 hash、Skill hash、模型与推理参数、n/k、pass^1、pass^k、区间、tokens、耗时、结果目录、抽读结论。
+本节保留历史采证原文，反映运行当时的合同和判断；其中旧 L1 分数、L2 终态、L3 流程及 L5 ASR 的当前采信限制见「当前裁定」。新证据优先保存在任务文件，章程引用其完整身份与审核结论，不以本节历史“通过”覆盖当前判断。
 
 ### 2026-09-04 账本建立
 
@@ -402,3 +405,5 @@ YYYY-MM-DD | commit=<sha> | run_id=<id> | command=<exact command> | layer=<L1/L2
 ## 决策变更
 
 2026-09-05 用户要求按独立结果重划：本组承接普通 Agent 行为修复，图片质量迁出；自进化消费者自动运行固定评测，原逐阶段人工交接改为最终一次审批。M-05 将自进化搜索批次与对外采信分开，必要人工抽读并入最终审批，自动检查仍待实现；D-03/D-06/D-07/D-08 的数值和有效证据要求不变，无生产数据迁移。既有 run_id 和在途任务验收合同保留。
+
+2026-09-05 结合当前实现重写：以商家结果、测量有效性、行为达标和晋升证据组织职责；D-02 明确记录 TS 图反馈违背权威边界，D-07 撤销旧安全成绩的当前“完成”采信，L1/P1–P3 同步记录有效新证据缺口。D-04 按已交付修复限定必要读取，D-03 去除无条件的无偏估计表述并明确 Wilson 对象。D-03/D-06/D-07 数值、既有任务完成条件和历史原始证据保留；没有修改题库、grader、Skill 或业务实现，也没有通过本次文档修订授予任务占用或付费采证权限。
