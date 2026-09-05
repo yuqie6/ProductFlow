@@ -46,6 +46,11 @@ type sessionServer struct {
 func newSessionServer(t *testing.T) *sessionServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
+	return newSessionServerWithDatabase(t, pool, gdb)
+}
+
+func newSessionServerWithDatabase(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *sessionServer {
+	t.Helper()
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))

@@ -135,6 +135,10 @@ go-test-agent-query-plan:
 go-test-imagesession-query-plan:
     PRODUCTFLOW_RUN_IMAGE_SESSION_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/imagesession -run TestImageSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
 
+# Opt-in authenticated ImageSession HTTP payload/latency gate in a disposable migrated database.
+go-test-imagesession-http-load:
+    PRODUCTFLOW_RUN_IMAGE_SESSION_HTTP_LOAD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/imagesession -run TestImageSessionHTTPTargetScale -count=1 -p 1 -v -timeout 6m'
+
 # Opt-in 100 near-limit image ZIP extra MaxRSS/heap gate (mediaarchive streaming writer).
 go-test-zip-rss:
     PRODUCTFLOW_RUN_ZIP_RSS=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/mediaarchive -run TestStreamingZipNearLimitImagesKeepsExtraRSSUnderBudget -count=1 -p 1 -v -timeout 4m'
