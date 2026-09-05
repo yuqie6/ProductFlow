@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [canvas-workflow-coverage.md](canvas-workflow-coverage.md) | 完成 | 完整操作链核查与 274 条前端回归通过；场景/重试、交付图、资产/配方浏览器证据另单补齐 |
 | [agent-question-answer-identity.md](agent-question-answer-identity.md) | 完成 | Node/PG 按问题绑定答案、并发幂等与第二问 SIGKILL 恢复通过；固定 live 只问一问，缺上下文读取而 FAIL |
 | [eval-contract-alignment.md](eval-contract-alignment.md) | 完成 | 按生产意图路由校正 8 道失真题并冻结 L1 hash `406dc178…`；旧 `71d48f47…` 不可跨题集比较 |
 | [eval-user-sim.md](eval-user-sim.md) | 完成 | 独立用户模型、answer/resume 接线与跨 turn 观测；真实五条 2/5 pass，第二问题答案冲突交独立生产修复单 |

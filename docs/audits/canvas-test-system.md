@@ -113,6 +113,34 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 
 当前实现事实：`ProductWorkbenchSurface` 传给检查器的 `busy` 是结构保存，不是 GraphRun，运行中输入框与撤销按钮按理可操作。检查器草稿基线沿 autosave → Inspector → Surface → `commitNode` 传递；兄弟节点配置变更不再把未改节点的脏草稿标冲突。文稿 `commitNode` 遇 409 提示 `graph.canvas.revisionConflict` 且不重放；`executeApply` 仅纯 `move_nodes` 自动重放。Mock 瞬时返回，自动保存 debounce 700ms。
 
+## 完整操作链验收
+
+2026-09-05 用户授权本组负责完整落地。以下核查基线为 `1dccfb59a09802eab194ee0d568079c9c4c8b8e5`，目标 Web/Graph/Delivery/Product/Recipe 文件无在途 diff；Agent、图片池和 imagesession 的其它会话改动不纳入本组。核查记录见 [canvas-workflow-coverage](tasks/archive/canvas-workflow-coverage.md)。
+
+文稿权威 C0-C6 保持已交付结论。下表的「部分完成」表示已有实现或分层测试，尚未收齐该完整操作链的浏览器与业务状态证据，不直接判定产品有 bug。既有浏览器文件本轮只核对代码，未重跑。
+
+| 用户操作 | 当前入口与业务效果 | 当前证据及边界 | 状态 |
+|---|---|---|---|
+| 只建画布并上传参考 | 创建表单 → `POST /api/v3/products` → 商品、资产与 schema-v3 图事务创建 | `product/http_test.go`；`direct-create-full-graph.spec.ts` 浏览器创建、整图成功、图库图片和真实 bytes；本轮未重跑真实 provider | 完成（既有 C5） |
+| 添加、连线、复制、分组、撤销重做 | `GraphCanvasPanel` → Graph ChangeSet → 持久图与操作组 | `workbench-v3-actions.spec.ts` 检查添加六类节点、场景、删边、复制内部边、分组与 undo/redo 的持久结果；现有合同不重建 | 部分完成（待完整操作链复跑） |
+| 检查器保存与运行交错 | autosave → Inspector → Surface → `commitNode` → Graph Command | AR-01、C0-C4、C6 的已归档证据 | 完成 |
+| 运行此场景 | `GraphShotFilmstrip` / 画布分组 → `shotRunRequest` → 一次 `selection`，只含该组生图节点；保存 flush 后提交 | `shotChangeSet.test.ts` 验 node_ids；`select_test.go` 验 selection；Filmstrip 测试仅静态渲染，e2e 没有点击运行此场景后的业务断言 | 部分完成 |
+| 失败后修正并重试、仅重试失败节点 | Inspector / RunsPanel → `/runs/:id/retry` 或 `selection` → 按当前图重新提交；原 run 保留 | `runs.go:retryGraphRun` 复用原 scope/target/force/document action；`graphRunPreview.test.ts` 验失败目标集合；`workbench-v3-actions.spec.ts` 的 can retry 用例只验按钮可见，没有点击 | 部分完成 |
+| 结果预览与原图下载 | GraphRunsPanel / ProductImageExplorer → 明确资产预览和 download URL | C5 已取真实生成 bytes；图库 HTTP 覆盖 ZIP 与归属；未找到浏览器点击下载并核文件的用例 | 部分完成 |
+| 交付规格、生成交付图和交付包 | `DeliveryRenditionPanel` → rendition job → 确定性渲染；Explorer → delivery export | `delivery/http_test.go` 验提交、幂等与结果 lineage；`export_archive_test.go` 验 manifest、SHA256 与完整/部分导出；Web 仅规格/选择/按钮测试，无该链浏览器用例 | 部分完成 |
+| 绑定、拖入参考与固定当前结果 | Explorer / Canvas → 明确 asset id 的 ChangeSet；固定结果创建独立 image_asset，不自动连边 | `graphAssetDrop.test.ts` 验操作计划；actions 浏览器验绑定但不连线显示 unused；固定结果、拖入端口后的持久身份未有完整浏览器证据 | 部分完成 |
+| 保存配方、预览并确认应用 | `recipeSave` / `RecipeLibraryPanel` → `/recipes` → Graph Command | `recipe/http_test.go` 验 fragment 保存/预览/应用及 full 冲突；现有 proof/actions 浏览器到确认预览或取消为止，未确认后核新图/合并图 | 部分完成 |
+
+本轮确定性回归：`pnpm --dir web test:run src/pages/product-create src/pages/workbench/canvas src/pages/workbench/chrome/image-explorer`，39 files / 274 tests passed（2026-09-05 16:48:49，1.36s）。本轮未执行 Go PG 回归、浏览器或真实 provider；不以单元测试通过替代这些门槛。
+
+### 后续交付次序
+
+1. [场景运行与失败恢复](tasks/canvas-run-recovery-proof.md)：真实点击、一次正确 scope/target、修正后成功、非目标与手填文稿不变。优先级 P1，覆盖用户继续生产的关键动作。
+2. [结果交付](tasks/canvas-delivery-proof.md)：选规格、产物尺寸/格式/源图身份、下载文件、ZIP manifest 与资产 lineage。优先级 P1，验收商家能拿到可使用的文件。
+3. [资产复用与配方确认](tasks/canvas-asset-recipe-proof.md)：绑定、固定当前结果、片段确认合并及完整配方冲突；复跑既有图编辑动作。优先级 P2，不重复实现编辑器。
+
+以上为测量与交付缺口，根因未证实前不预设需要改生产代码。mock/live 必须使用隔离环境或已确认的共享 provider/worker 窗口；不能覆盖图片组资源。路线图中的新交互设计不自动成为本批次实现要求。
+
 ## 明确不做
 
 - 无界 12-op DFS
