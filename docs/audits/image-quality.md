@@ -74,6 +74,15 @@ just image-evals-report <run_id>
 
 评委默认使用当前 prompt 绑定，优先 `/v1/responses`。若需要覆盖，设置 `IMAGE_EVAL_JUDGE_BASE_URL`、`IMAGE_EVAL_JUDGE_API_KEY`、`IMAGE_EVAL_JUDGE_MODEL`。
 
+完整商品输入对照支持先调用现有商品 AI 表单接口，再固定结果供多个候选复用。准备命令每个抽样商品调用一次，只上传身份参考；未知规格不进入 source_note。输入文件记录商品身份、参考字节摘要、AI 原始表单和最终 source_note；最终文本可在冻结前审核编辑。代码不能证明 AI 提取内容正确，人工复核仍需记录在对应实测合同中。
+
+```bash
+PRODUCTFLOW_RUN_IMAGE_EVALS=1 just image-evals-prepare-inputs /absolute/path/product-inputs.json 2 1
+PRODUCTFLOW_RUN_IMAGE_EVALS=1 just image-evals-run 2 1 /absolute/path/product-inputs.json
+```
+
+准备命令拒绝覆盖已有文件；调用失败保留部分结果并停止，不自动重试。运行前验证整个抽样集的输入与实际参考字节，输入缺失或身份变化时不创建商品。报告在生图前写入输入，并记录 `input_mode`、最终文本和冻结文件 SHA-256；省略输入文件则明确记作 `title_props` 基线。A/B 必须复用同一冻结文件，不能每轮重新生成商品说明。命令需要隔离的 API/worker、现有模型绑定及该批费用授权；新增入口本身不授予费用权限。实现与确定性证据见 [商品输入冻结](tasks/archive/image-eval-product-input.md)，尚未运行新的真实模型批次，不构成质量改善结论。
+
 ### Live 记录
 
 | 日期 | run_id | 种子 | n | 采集类目 | 均分/闸门 | 判定 |

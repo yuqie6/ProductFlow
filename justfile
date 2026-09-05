@@ -76,15 +76,18 @@ agent-evals-nightly:
     bash scripts/with_dev_env.sh bash -lc 'status=0; pnpm --dir agent-service exec tsx evals/cli.ts run-live --trials 3 || status=1; PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 go test -C go ./internal/agent -run "^TestAgentEvalStateL2Live$" -count=1 -timeout 4h -v || status=1; pnpm --dir agent-service exec tsx evals/cli.ts run-adversarial --trials 1 || status=1; root="${STORAGE_ROOT:-storage-dev}"; if [ -f "$root/agent-evals/latest.json" ]; then run_id=$(python3 -c "import json,os; print(json.load(open(os.path.join(os.environ.get(\"STORAGE_ROOT\",\"storage-dev\"), \"agent-evals\", \"latest.json\")))[\"run_id\"])"); pnpm --dir agent-service exec tsx evals/cli.ts report "$run_id" || status=1; fi; exit $status'
 
 # Opt-in listing-quality eval. Needs PRODUCTFLOW_RUN_IMAGE_EVALS=1, live API/worker, real prompt/image bindings.
-# Bytes stay under STORAGE_ROOT/image-evals/. Gate: docs/audits/agent-eval-system.md#image-quality
+# Bytes stay under STORAGE_ROOT/image-evals/. Gate: docs/audits/image-quality.md#image-quality
 image-evals-ingest json:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals ingest --json "$1"' -- '{{json}}'
 
 image-evals-sample n="20" seed="1":
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals sample --n "$1" --seed "$2"' -- '{{n}}' '{{seed}}'
 
-image-evals-run n="8" seed="1":
-    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_IMAGE_EVALS=1 go run -C go ./cmd/productflow-image-evals run --n "$1" --seed "$2"' -- '{{n}}' '{{seed}}'
+image-evals-prepare-inputs out n="8" seed="1":
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals prepare-inputs --out "$1" --n "$2" --seed "$3"' -- '{{out}}' '{{n}}' '{{seed}}'
+
+image-evals-run n="8" seed="1" inputs="":
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_IMAGE_EVALS=1 go run -C go ./cmd/productflow-image-evals run --n "$1" --seed "$2" --product-inputs "$3"' -- '{{n}}' '{{seed}}' '{{inputs}}'
 
 image-evals-report run:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals report "$1"' -- '{{run}}'

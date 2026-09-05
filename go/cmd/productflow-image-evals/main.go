@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,6 +34,8 @@ func main() {
 		os.Exit(runSample(os.Args[2:]))
 	case "run":
 		os.Exit(runLive(os.Args[2:]))
+	case "prepare-inputs":
+		os.Exit(runPrepareInputs(os.Args[2:]))
 	case "report":
 		os.Exit(runReport(os.Args[2:]))
 	case "-h", "--help", "help":
@@ -48,7 +51,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
   productflow-image-evals ingest --json <file-or-dir>
   productflow-image-evals sample [--n 20] [--seed 1]
-  productflow-image-evals run [--n 8] [--seed 1]
+  productflow-image-evals prepare-inputs --out <new-json-file> [--n 8] [--seed 1]
+  productflow-image-evals run [--n 8] [--seed 1] [--product-inputs <json-file>]
   productflow-image-evals report <run_id>`)
 }
 
@@ -129,8 +133,13 @@ func runSample(args []string) int {
 }
 
 func runLive(args []string) int {
-	n := flagInt(args, "--n", 8)
-	seed := int64(flagInt(args, "--seed", 1))
+	flags := flag.NewFlagSet("run", flag.ContinueOnError)
+	n := flags.Int("n", 8, "sample count")
+	seed := flags.Int64("seed", 1, "sample seed")
+	inputs := flags.String("product-inputs", "", "frozen product input file")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return 2
+	}
 	root, err := storageRoot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -174,27 +183,20 @@ func runLive(args []string) int {
 	if envBase := strings.TrimSpace(os.Getenv("IMAGE_EVAL_JUDGE_BASE_URL")); envBase != "" {
 		judge.BaseURL = envBase
 	}
-	apiBase := strings.TrimSpace(os.Getenv("IMAGE_EVAL_API_BASE"))
-	if apiBase == "" {
-		port := strings.TrimSpace(os.Getenv("APP_PORT"))
-		if port == "" {
-			port = "29282"
-		}
-		apiBase = "http://127.0.0.1:" + port
-	}
 	ctx, stop := context.WithTimeout(context.Background(), 6*time.Hour)
 	defer stop()
 	report, err := imageeval.RunSampled(ctx, imageeval.RunConfig{
-		StorageRoot: root,
-		APIBase:     apiBase,
-		AdminKey:    cfg.AdminAccessKey,
-		Seed:        seed,
-		N:           n,
-		Commit:      gitHead(),
-		Command:     "just image-evals-run",
-		Image:       image,
-		Judge:       judge,
-		JudgeModel:  judge.Model,
+		StorageRoot:       root,
+		APIBase:           imageEvalAPIBase(),
+		AdminKey:          cfg.AdminAccessKey,
+		Seed:              *seed,
+		N:                 *n,
+		ProductInputsPath: *inputs,
+		Commit:            gitHead(),
+		Command:           "just image-evals-run",
+		Image:             image,
+		Judge:             judge,
+		JudgeModel:        judge.Model,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -207,6 +209,50 @@ func runLive(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func runPrepareInputs(args []string) int {
+	flags := flag.NewFlagSet("prepare-inputs", flag.ContinueOnError)
+	n := flags.Int("n", 8, "sample count")
+	seed := flags.Int64("seed", 1, "sample seed")
+	out := flags.String("out", "", "new output file; never overwrite an existing snapshot")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*out) == "" {
+		fmt.Fprintln(os.Stderr, "prepare-inputs requires --out <new-json-file>")
+		return 2
+	}
+	root, err := storageRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	snapshot, err := imageeval.PrepareProductInputs(ctx, imageeval.RunConfig{
+		StorageRoot: root, APIBase: imageEvalAPIBase(), AdminKey: cfg.AdminAccessKey,
+		N: *n, Seed: *seed, Commit: gitHead(),
+	}, *out)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("prepared=%d output=%s\n", len(snapshot.Inputs), *out)
+	return 0
+}
+
+func imageEvalAPIBase() string {
+	if base := strings.TrimSpace(os.Getenv("IMAGE_EVAL_API_BASE")); base != "" {
+		return base
+	}
+	port := strings.TrimSpace(os.Getenv("APP_PORT"))
+	if port == "" {
+		port = "29282"
+	}
+	return "http://127.0.0.1:" + port
 }
 
 func runReport(args []string) int {

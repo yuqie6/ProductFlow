@@ -142,19 +142,22 @@ type CaseReport struct {
 
 // RunReport 是一次抽样测评。
 type RunReport struct {
-	RunID      string       `json:"run_id"`
-	Commit     string       `json:"commit"`
-	Seed       int64        `json:"seed"`
-	N          int          `json:"n"`
-	ModelImage string       `json:"image_model"`
-	ModelJudge string       `json:"judge_model"`
-	StartedAt  time.Time    `json:"started_at"`
-	FinishedAt time.Time    `json:"finished_at"`
-	Passed     bool         `json:"passed"`
-	PassCount  int          `json:"pass_count"`
-	FailCount  int          `json:"fail_count"`
-	Cases      []CaseReport `json:"cases"`
-	Command    string       `json:"command"`
+	InputMode        string         `json:"input_mode"`
+	ProductInputsSHA string         `json:"product_inputs_sha256,omitempty"`
+	ProductInputs    []ProductInput `json:"product_inputs"`
+	RunID            string         `json:"run_id"`
+	Commit           string         `json:"commit"`
+	Seed             int64          `json:"seed"`
+	N                int            `json:"n"`
+	ModelImage       string         `json:"image_model"`
+	ModelJudge       string         `json:"judge_model"`
+	StartedAt        time.Time      `json:"started_at"`
+	FinishedAt       time.Time      `json:"finished_at"`
+	Passed           bool           `json:"passed"`
+	PassCount        int            `json:"pass_count"`
+	FailCount        int            `json:"fail_count"`
+	Cases            []CaseReport   `json:"cases"`
+	Command          string         `json:"command"`
 }
 
 // CategorySeeds 是淘宝检索分层，不用猜你喜欢。

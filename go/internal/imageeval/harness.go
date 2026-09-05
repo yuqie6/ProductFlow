@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,19 +20,20 @@ import (
 
 // RunConfig 是一次 opt-in 测评。PRODUCTFLOW_RUN_IMAGE_EVALS=1 才应调用 Live。
 type RunConfig struct {
-	StorageRoot string
-	APIBase     string
-	AdminKey    string
-	Seed        int64
-	N           int
-	Commit      string
-	Command     string
-	Image       providers.ImageClient
-	Judge       JudgeClient
-	JudgeModel  string
-	HTTPClient  *http.Client
-	PollEvery   time.Duration
-	PollFor     time.Duration
+	StorageRoot       string
+	APIBase           string
+	AdminKey          string
+	Seed              int64
+	N                 int
+	Commit            string
+	Command           string
+	Image             providers.ImageClient
+	Judge             JudgeClient
+	JudgeModel        string
+	HTTPClient        *http.Client
+	PollEvery         time.Duration
+	PollFor           time.Duration
+	ProductInputsPath string
 }
 
 // RunSampled 从过线池分层抽样，跑工作台臂、直调臂和评委闸门。
@@ -50,6 +52,10 @@ func RunSampled(ctx context.Context, cfg RunConfig) (RunReport, error) {
 	if err != nil {
 		return RunReport{}, err
 	}
+	inputs, inputSHA, err := resolveProductInputs(cfg.StorageRoot, sample, cfg.ProductInputsPath)
+	if err != nil {
+		return RunReport{}, err
+	}
 	client, err := cfg.http()
 	if err != nil {
 		return RunReport{}, err
@@ -59,17 +65,26 @@ func RunSampled(ctx context.Context, cfg RunConfig) (RunReport, error) {
 	}
 	runID := time.Now().UTC().Format("20060102T150405Z") + "-" + CaseIDFromURL(fmt.Sprintf("%d:%d", cfg.Seed, len(sample)))[:8]
 	report := RunReport{
-		RunID:      runID,
-		Commit:     cfg.Commit,
-		Seed:       cfg.Seed,
-		N:          len(sample),
-		Command:    cfg.Command,
-		StartedAt:  time.Now().UTC(),
-		ModelImage: cfg.Image.Name(),
-		ModelJudge: cfg.JudgeModel,
+		RunID:            runID,
+		Commit:           cfg.Commit,
+		Seed:             cfg.Seed,
+		N:                len(sample),
+		Command:          cfg.Command,
+		StartedAt:        time.Now().UTC(),
+		ModelImage:       cfg.Image.Name(),
+		ModelJudge:       cfg.JudgeModel,
+		ProductInputs:    inputs,
+		ProductInputsSHA: inputSHA,
+		InputMode:        "title_props",
 	}
-	for _, item := range sample {
-		caseReport := evaluateCase(ctx, cfg, client, item)
+	if cfg.ProductInputsPath != "" {
+		report.InputMode = "frozen_source_note"
+	}
+	if err := writeRun(cfg.StorageRoot, report); err != nil {
+		return report, err
+	}
+	for i, item := range sample {
+		caseReport := evaluateCase(ctx, cfg, client, item, inputs[i].SourceNote)
 		report.Cases = append(report.Cases, caseReport)
 		if caseReport.Passed {
 			report.PassCount++
@@ -96,9 +111,9 @@ func (cfg RunConfig) http() (*http.Client, error) {
 	return &http.Client{Jar: jar, Timeout: 2 * time.Minute}, nil
 }
 
-func evaluateCase(ctx context.Context, cfg RunConfig, client *http.Client, m Manifest) CaseReport {
+func evaluateCase(ctx context.Context, cfg RunConfig, client *http.Client, m Manifest, sourceNote string) CaseReport {
 	out := CaseReport{CaseID: m.ID}
-	productID, graphID, err := createDirect(ctx, client, cfg, m)
+	productID, graphID, err := createDirect(ctx, client, cfg, m, sourceNote)
 	if err != nil {
 		out.Error = err.Error()
 		return out
@@ -252,12 +267,12 @@ func evalTypeCounts(m Manifest) []TypeCount {
 	return out
 }
 
-func createDirect(ctx context.Context, client *http.Client, cfg RunConfig, m Manifest) (string, string, error) {
+func createDirect(ctx context.Context, client *http.Client, cfg RunConfig, m Manifest, sourceNote string) (string, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	_ = w.WriteField("name", truncateRunes(m.Title, 80))
 	_ = w.WriteField("category", m.Category)
-	_ = w.WriteField("source_note", factsNote(m))
+	_ = w.WriteField("source_note", sourceNote)
 	typesJSON, _ := json.Marshal(evalTypeCounts(m))
 	_ = w.WriteField("image_types", string(typesJSON))
 	for i, ref := range m.References {
@@ -490,8 +505,13 @@ func listGenerated(ctx context.Context, client *http.Client, apiBase, productID,
 
 func factsNote(m Manifest) string {
 	parts := []string{m.Title}
-	for k, v := range m.Props {
-		parts = append(parts, k+"："+v)
+	keys := make([]string, 0, len(m.Props))
+	for k := range m.Props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		parts = append(parts, k+"："+m.Props[k])
 	}
 	return strings.Join(parts, "。")
 }
