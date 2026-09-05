@@ -54,6 +54,63 @@ const config = {
 };
 
 describe("Pi runtime fake provider E2E", () => {
+  it("answers two questions in one Pi turn without mixing identities or duplicating results", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-two-questions-"));
+    const provider = await createFakeResponsesServer("two_questions");
+    const events: Array<{ kind: string; sequence: number; payload: Record<string, unknown> }> = [];
+    let manager: PiRuntimeManager | undefined;
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const skills = { root: "/tmp/fake-productflow-skills", hash: "fake-skill-catalog", names: [],
+        prompt: "", promptForScope: () => "", load: async () => "" } satisfies SkillCatalog;
+      manager = new PiRuntimeManager({ ...config, dataRoot: root }, store,
+        createFakeProductFlow(provider.baseURL, [], events, [], () => 1), skills);
+      const lookup = { conversationID: scope.conversation_id };
+      const started = await manager.start({ lookup, input: {
+        input_text: "Answer two questions", asset_ids: [], idempotency_key: "two-questions", page_context: null,
+      } });
+      const question = async (previous?: string) => {
+        await expect.poll(async () => {
+          const state = await store.getState(scope.run_id, started.turn_id);
+          return state.status === "requires_input" && state.question?.id !== previous;
+        }).toBe(true);
+        return (await store.getState(scope.run_id, started.turn_id)).question!;
+      };
+      const first = await question();
+      await Promise.all([
+        manager.answerQuestion(lookup, started.turn_id, first.id, { text: "first answer" }),
+        manager.answerQuestion(lookup, started.turn_id, first.id, { text: "first answer" }),
+      ]);
+      await expect(manager.answerQuestion(lookup, started.turn_id, first.id, { text: "conflict" }))
+        .rejects.toMatchObject({ code: "question_already_answered" });
+      await manager.resume(lookup, started.turn_id);
+      const second = await question(first.id);
+      await manager.answerQuestion(lookup, started.turn_id, first.id, { text: "first answer" });
+      expect((await store.getState(scope.run_id, started.turn_id)).question?.id).toBe(second.id);
+      await expect(manager.answerQuestion(lookup, started.turn_id, "expired-question", { text: "late" }))
+        .rejects.toMatchObject({ code: "question_expired" });
+      await manager.answerQuestion(lookup, started.turn_id, second.id, { text: "second answer" });
+      await manager.answerQuestion(lookup, started.turn_id, second.id, { text: "second answer" });
+      await manager.resume(lookup, started.turn_id);
+      expect((await waitForTerminal(store, scope.run_id, started.turn_id)).status).toBe("succeeded");
+      expect(provider.requestCount).toBe(3);
+      expect(events.filter((event) => event.kind === "question/answered").map((event) => event.payload)).toEqual([
+        { question_id: first.id, answer: { text: "first answer" } },
+        { question_id: second.id, answer: { text: "second answer" } },
+      ]);
+      const input = provider.requestBodies[2].input as Array<{ type: string; output?: string }>;
+      const results = input.filter((item) => item.type === "function_call_output");
+      expect(results).toHaveLength(2);
+      expect(results.map((item) => JSON.parse(item.output!).data.answer.text)).toEqual(["first answer", "second answer"]);
+      expect(events.map((event) => event.sequence)).toEqual(events.map((_, index) => index + 1));
+    } finally {
+      await manager?.close();
+      await provider.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("runs a Pi session through the durable lease, event, and checkpoint boundaries", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-e2e-"));
     const provider = await createFakeResponsesServer();
@@ -689,7 +746,7 @@ function createFakeProductFlow(
     appendTurnEvents: async (
       _conversationID: string,
       _executionID: string,
-      args: { events: Array<{ sequence: number; kind: string; payload: Record<string, unknown> }> },
+      args: { events: Array<{ sequence: number; kind: string; ignorable?: boolean; payload: Record<string, unknown> }> },
     ) => {
       events.push(...args.events);
       return args.events.map((event) => ({
@@ -699,6 +756,7 @@ function createFakeProductFlow(
         sequence: event.sequence,
         schema_version: 1 as const,
         kind: event.kind,
+        ignorable: event.ignorable,
         created_at: "2026-08-20T00:00:00.000Z",
       }));
     },
@@ -788,7 +846,7 @@ async function waitForTerminal(store: TurnStore, runID: string, turnID: string):
   throw new Error("fake provider E2E Turn did not reach a terminal state");
 }
 
-type FakeProviderMode = "text" | "reasoning" | "workspace" | "graph_proposal" | "disconnect" | "reset" | "timeout";
+type FakeProviderMode = "text" | "reasoning" | "workspace" | "graph_proposal" | "disconnect" | "reset" | "timeout" | "two_questions";
 
 async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promise<{
   baseURL: string;
@@ -819,6 +877,7 @@ async function createFakeResponsesServer(mode: FakeProviderMode = "text"): Promi
         });
       }
       if (mode === "workspace" && requestCount === 1) writeWorkspaceToolResponse(response);
+      else if (mode === "two_questions" && requestCount <= 2) writeQuestionToolResponse(response, requestCount);
       else if (mode === "graph_proposal" && requestCount === 1) writeGraphProposalToolResponse(response);
       else if (mode === "reasoning") writeReasoningTextResponse(response, requestCount);
       else if (mode === "disconnect") writeTruncatedTextResponse(response, requestCount);
@@ -1019,6 +1078,21 @@ function writeWorkspaceToolResponse(response: import("node:http").ServerResponse
   });
   writeSSE(response, { type: "response.output_item.done", output_index: 0, item: toolCall });
   writeSSE(response, { type: "response.completed", response: responseBody });
+}
+
+function writeQuestionToolResponse(response: import("node:http").ServerResponse, number: number): void {
+  const toolCall = {
+    type: "function_call", id: `fc-question-${number}`, call_id: `call-question-${number}`, name: "ask_user", status: "completed",
+    arguments: JSON.stringify({ header: `Question ${number}`, question: `Answer ${number}?`, options: [{ label: "A" }, { label: "B" }] }),
+  };
+  const body = { id: `resp-question-${number}`, object: "response", status: "completed", output: [toolCall],
+    usage: { input_tokens: 1, output_tokens: 3, total_tokens: 4 } };
+  writeSSE(response, { type: "response.created", response: { ...body, status: "in_progress", output: [] } });
+  writeSSE(response, { type: "response.output_item.added", output_index: 0, item: { ...toolCall, arguments: "" } });
+  writeSSE(response, { type: "response.function_call_arguments.delta", output_index: 0, delta: toolCall.arguments });
+  writeSSE(response, { type: "response.function_call_arguments.done", output_index: 0, arguments: toolCall.arguments });
+  writeSSE(response, { type: "response.output_item.done", output_index: 0, item: toolCall });
+  writeSSE(response, { type: "response.completed", response: body });
 }
 
 function writeGraphProposalToolResponse(response: import("node:http").ServerResponse): void {

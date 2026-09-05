@@ -39,7 +39,7 @@ import {
   continueAgentSession,
   injectAskUserToolResult,
   storedAnswerFromEvents,
-  QUESTION_WAIT_EXPIRED_MESSAGE,
+  type StoredQuestionAnswer,
 } from "./question-resume.js";
 import {
   boundedUsage,
@@ -87,6 +87,7 @@ export class TurnRuntime implements ToolRuntime {
     timeout?: ReturnType<typeof setTimeout>;
   };
   private pendingQuestionAnswer?: TurnAnswer;
+  private questionWriteChain: Promise<unknown> = Promise.resolve();
   private artifact?: TurnArtifact;
   private workflowRunRequested = false;
   private workflowApproval?: JsonObject;
@@ -951,7 +952,7 @@ export class TurnRuntime implements ToolRuntime {
       throw new RuntimeError(409, "not_resumable", "the answered question is no longer attached to a live Pi turn");
     }
     const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
-    const answeredSequence = [...events].reverse().find((event) => event.kind === "question/answered")?.sequence ?? 0;
+    const answeredSequence = [...events].reverse().find((event) => event.kind === "question/answered" && event.payload.question_id === waiter.questionID)?.sequence ?? 0;
     const existingResume = events.some((event) => event.kind === "turn/resume_requested" && event.sequence > answeredSequence);
     if (!existingResume) {
       await this.appendJournalEvent(turnID, "turn/resume_requested", { status: "running" }, true);
@@ -996,7 +997,11 @@ export class TurnRuntime implements ToolRuntime {
     return answerPromise;
   }
 
-  async answerQuestion(turnID: string, questionID: string, answer: TurnAnswer): Promise<TurnState> {
+  answerQuestion(turnID: string, questionID: string, answer: TurnAnswer): Promise<TurnState> {
+    return this.serializeQuestionWrite(() => this.persistQuestionAnswer(turnID, questionID, answer));
+  }
+
+  private async persistQuestionAnswer(turnID: string, questionID: string, answer: TurnAnswer): Promise<TurnState> {
     const state = await this.manager.store.getState(this.scope.run_id, turnID);
     const waiter = this.questionWaiter;
     if (this.pendingQuestionAnswer && waiter?.turnID === turnID && waiter.questionID === questionID) {
@@ -1005,9 +1010,9 @@ export class TurnRuntime implements ToolRuntime {
       }
       return state;
     }
-    const stored = await this.storedQuestionAnswer(turnID);
+    const stored = await this.storedQuestionAnswer(turnID, questionID);
     if (stored) {
-      if (JSON.stringify(stored) !== JSON.stringify(answer)) {
+      if (JSON.stringify(stored.answer) !== JSON.stringify(answer)) {
         throw new RuntimeError(409, "question_already_answered", "the question already has a different answer");
       }
       if (state.status === "requires_input" && state.question?.id === questionID) {
@@ -1363,11 +1368,21 @@ export class TurnRuntime implements ToolRuntime {
     if (this.questionWaiter) this.questionWaiter.timeout = undefined;
   }
 
-  private async expireQuestionWaiter(turnID: string, questionID: string): Promise<void> {
+  private serializeQuestionWrite<T>(write: () => Promise<T>): Promise<T> {
+    const result = this.questionWriteChain.then(write);
+    this.questionWriteChain = result.catch(() => undefined);
+    return result;
+  }
+
+  private expireQuestionWaiter(turnID: string, questionID: string): Promise<void> {
+    return this.serializeQuestionWrite(() => this.expirePendingQuestion(turnID, questionID));
+  }
+
+  private async expirePendingQuestion(turnID: string, questionID: string): Promise<void> {
     const waiter = this.questionWaiter;
     if (!waiter || waiter.turnID !== turnID || waiter.questionID !== questionID) return;
     if (this.pendingQuestionAnswer) return;
-    const stored = await this.storedQuestionAnswer(turnID);
+    const stored = await this.storedQuestionAnswer(turnID, questionID);
     if (stored || this.pendingQuestionAnswer) return;
     if (this.questionWaiter !== waiter) return;
     const state = await this.manager.store.getState(this.scope.run_id, turnID);
@@ -1385,9 +1400,9 @@ export class TurnRuntime implements ToolRuntime {
     waiter.resolve({ skip: true });
   }
 
-  private async storedQuestionAnswer(turnID: string): Promise<TurnAnswer | null> {
+  private async storedQuestionAnswer(turnID: string, questionID?: string): Promise<StoredQuestionAnswer | null> {
     const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
-    return storedAnswerFromEvents(events);
+    return storedAnswerFromEvents(events, questionID);
   }
 
   async hasStoredQuestionAnswer(turnID: string): Promise<boolean> {
@@ -1397,16 +1412,9 @@ export class TurnRuntime implements ToolRuntime {
   private async continueWithStoredQuestionAnswer(
     session: AgentSession,
     turnID: string,
-    answer: TurnAnswer,
+    stored: StoredQuestionAnswer,
   ): Promise<void> {
-    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
-    const answered = [...events].reverse().find((event) => event.kind === "question/answered");
-    const questionID = typeof answered?.payload.question_id === "string"
-      ? answered.payload.question_id
-      : "";
-    if (!questionID) {
-      throw new RuntimeError(409, "question_wait_expired", QUESTION_WAIT_EXPIRED_MESSAGE);
-    }
+    const { questionID, answer } = stored;
     const toolCallId = await injectAskUserToolResult(session, questionID, answer);
     if (toolCallId) {
       await this.setJournalToolStep(turnID, {

@@ -70,9 +70,10 @@ func (g *liveGateway) AnswerQuestion(conversationID, turnID, questionID string, 
 }
 
 type askUserProvider struct {
-	mu     sync.Mutex
-	count  int
-	bodies []string
+	mu        sync.Mutex
+	count     int
+	bodies    []string
+	questions int
 }
 
 func (p *askUserProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +82,6 @@ func (p *askUserProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.count++
 	n := p.count
 	p.bodies = append(p.bodies, string(body))
-	raw := string(body)
 	p.mu.Unlock()
 
 	if !strings.Contains(r.URL.Path, "responses") {
@@ -92,10 +92,24 @@ func (p *askUserProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	if strings.Contains(raw, "function_call_output") || strings.Contains(raw, `"type":"function_call_output"`) {
+	var request struct {
+		Input []struct {
+			Type string `json:"type"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
+		panic(err)
+	}
+	answered := 0
+	for _, item := range request.Input {
+		if item.Type == "function_call_output" {
+			answered++
+		}
+	}
+	if answered >= p.questions {
 		writeProviderTextSSE(w, n)
 	} else {
-		writeProviderAskUserSSE(w)
+		writeProviderAskUserSSE(w, answered+1)
 	}
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
@@ -114,24 +128,25 @@ func writeSSE(w http.ResponseWriter, eventType string, payload any) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, raw)
 }
 
-func writeProviderAskUserSSE(w http.ResponseWriter) {
+func writeProviderAskUserSSE(w http.ResponseWriter, number int) {
+	itemID, callID, responseID := fmt.Sprintf("fc-question-%d", number), fmt.Sprintf("call-question-%d", number), fmt.Sprintf("resp-question-%d", number)
 	toolCall := map[string]any{
-		"type": "function_call", "id": "fc-question", "call_id": "call-question",
+		"type": "function_call", "id": itemID, "call_id": callID,
 		"name": "ask_user", "arguments": `{"header":"确认","question":"是否继续？","options":[{"label":"继续"},{"label":"停止"}]}`,
 		"status": "completed",
 	}
 	responseBody := map[string]any{
-		"id": "resp-question", "object": "response", "status": "completed",
+		"id": responseID, "object": "response", "status": "completed",
 		"output": []any{toolCall},
 		"usage":  map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
 	}
 	writeSSE(w, "response.created", map[string]any{
 		"type":     "response.created",
-		"response": map[string]any{"id": "resp-question", "object": "response", "status": "in_progress", "output": []any{}},
+		"response": map[string]any{"id": responseID, "object": "response", "status": "in_progress", "output": []any{}},
 	})
 	writeSSE(w, "response.output_item.added", map[string]any{
 		"type": "response.output_item.added", "output_index": 0,
-		"item": map[string]any{"type": "function_call", "id": "fc-question", "call_id": "call-question", "name": "ask_user", "arguments": "", "status": "in_progress"},
+		"item": map[string]any{"type": "function_call", "id": itemID, "call_id": callID, "name": "ask_user", "arguments": "", "status": "in_progress"},
 	})
 	writeSSE(w, "response.function_call_arguments.delta", map[string]any{
 		"type": "response.function_call_arguments.delta", "output_index": 0, "delta": toolCall["arguments"],
@@ -178,6 +193,12 @@ func writeProviderTextSSE(w http.ResponseWriter, n int) {
 }
 
 func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
+	for _, questions := range []int{1, 2} {
+		t.Run(fmt.Sprintf("question-%d", questions), func(t *testing.T) { testDurableQuestionAnswer(t, questions) })
+	}
+}
+
+func testDurableQuestionAnswer(t *testing.T, questions int) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required to spawn the Pi Agent")
 	}
@@ -189,7 +210,7 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 	gw := &liveGateway{}
 	as := newAgentServer(t, gw, gopgPiInternalToken)
 	seedFakeAgentProvider(t, as)
-	provider := &askUserProvider{}
+	provider := &askUserProvider{questions: questions}
 	llm := httptest.NewServer(provider)
 	t.Cleanup(llm.Close)
 
@@ -223,6 +244,34 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 	}
 	if err := json.Unmarshal(parked.Question, &question); err != nil || question.ID == "" {
 		t.Fatalf("question %+v err=%v", parked.Question, err)
+	}
+	if questions == 2 {
+		firstID := question.ID
+		answer := as.doJSON(t, http.MethodPost, "/api/v2/agent-conversations/"+convID+"/turns/"+submitted.Turn.ID+"/questions/"+firstID+"/answer", map[string]any{"option": 1})
+		as.mustStatus(t, answer, http.StatusOK)
+		answer.Body.Close()
+		waitAgentTurnStatus(t, first.baseURL, convID, *submitted.Turn.HarnessTurnID, "requires_input", 45*time.Second, first)
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			parked = waitGoTurnStatus(t, as, convID, submitted.Turn.ID, "requires_input", 10*time.Second)
+			if err := json.Unmarshal(parked.Question, &question); err != nil {
+				t.Fatal(err)
+			}
+			if question.ID != "" && question.ID != firstID {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("second question was not projected")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		var answerMissing bool
+		if err := as.pool.QueryRow(context.Background(), `SELECT question_answer_json IS NULL FROM agent_turn_projections WHERE id = $1`, submitted.Turn.ID).Scan(&answerMissing); err != nil {
+			t.Fatal(err)
+		}
+		if !answerMissing {
+			t.Fatal("second question inherited the first answer")
+		}
 	}
 
 	killPiAgent(t, first.cmd)
@@ -298,8 +347,17 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 			answered++
 		}
 	}
-	if answered != 1 {
+	if answered != questions {
 		t.Fatalf("question/answered count %d kinds=%v", answered, kinds)
+	}
+	var journal []schema.AgentTurnEvents
+	if err := as.db.Where("turn_projection_id = ?", submitted.Turn.ID).Order("sequence").Find(&journal).Error; err != nil {
+		t.Fatal(err)
+	}
+	for i, event := range journal {
+		if event.Sequence != i+1 {
+			t.Fatalf("journal sequence gap at %d: %d", i, event.Sequence)
+		}
 	}
 	count, bodies := provider.snapshot()
 	if count < 2 {
@@ -314,6 +372,36 @@ func TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult(t *testing.T) {
 	}
 	if !injected {
 		t.Fatalf("Pi continue request did not include injected ask_user tool result; bodies=%v logs=%s", bodies, second.logs())
+	}
+	var finalRequest struct {
+		Input []struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Output string `json:"output"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(bodies[len(bodies)-1]), &finalRequest); err != nil {
+		t.Fatal(err)
+	}
+	results := 0
+	for _, item := range finalRequest.Input {
+		if item.Type != "function_call_output" {
+			continue
+		}
+		results++
+		if item.CallID != fmt.Sprintf("call-question-%d", results) {
+			t.Fatalf("wrong resumed tool identity: %s", item.CallID)
+		}
+		expected := `{"accepted":true,"answer":{"option":0}}`
+		if results < questions {
+			expected = `{"schema_version":1,"data":{"accepted":true,"answer":{"option":1}}}`
+		}
+		if !sameJSON(item.Output, json.RawMessage(expected)) {
+			t.Fatalf("wrong question result %d: %s", results, item.Output)
+		}
+	}
+	if results != questions {
+		t.Fatalf("model received %d question results, want %d", results, questions)
 	}
 }
 

@@ -522,6 +522,7 @@ func foldJournalProjection(gdb *gorm.DB, projectionID, kind string, payload json
 	case "question/requested":
 		updates["status"] = "requires_input"
 		updates["question_json"] = string(payload)
+		updates["question_answer_json"] = gorm.Expr("NULL")
 	case "text.chunk":
 		if delta, _ := doc["delta"].(string); delta != "" {
 			updates["output_text"] = gorm.Expr("COALESCE(output_text, '') || ?", delta)

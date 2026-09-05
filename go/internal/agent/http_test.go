@@ -21,6 +21,7 @@ import (
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -792,6 +793,59 @@ func TestAnswerQuestionUnavailableDoesNotCreateSecondTurn(t *testing.T) {
 	}
 	if !strings.Contains(answerJSON, "筋膜枪") {
 		t.Fatalf("durable answer missing: %s", answerJSON)
+	}
+}
+
+func TestAnswerQuestionUnavailableDoesNotOverwriteCommittedAnswer(t *testing.T) {
+	gw := &questionGateway{answerErr: GatewayError{Status: 503, Code: "unavailable", Detail: "Agent 服务暂时不可用"}}
+	as := newAgentServer(t, gw, "")
+	convID, turnID, _ := as.submitAndParkQuestion(t, "question-idempotent")
+	path := "/api/v2/agent-conversations/" + convID + "/turns/" + turnID + "/questions/question-idempotent/answer"
+	for i := 0; i < 2; i++ {
+		resp := as.doJSON(t, http.MethodPost, path, map[string]any{"text": "first answer"})
+		as.mustStatus(t, resp, http.StatusServiceUnavailable)
+		resp.Body.Close()
+	}
+	resp := as.doJSON(t, http.MethodPost, path, map[string]any{"text": "different answer"})
+	as.mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	var answerJSON string
+	if err := as.pool.QueryRow(context.Background(), `SELECT question_answer_json::text FROM agent_turn_projections WHERE id = $1`, turnID).Scan(&answerJSON); err != nil {
+		t.Fatal(err)
+	}
+	if answerJSON != `{"text":"first answer"}` {
+		t.Fatalf("committed answer changed: %s", answerJSON)
+	}
+}
+
+func TestConcurrentDifferentQuestionAnswersCommitOnlyOne(t *testing.T) {
+	as := newAgentServer(t, &questionGateway{}, "")
+	convID, turnID, _ := as.submitAndParkQuestion(t, "question-concurrent")
+	start := make(chan struct{})
+	errorsOut := make(chan error, 2)
+	for _, answer := range []string{"first", "second"} {
+		go func(answer string) {
+			<-start
+			_, err := as.svc.persistQuestionAnswer(context.Background(), nil, convID, turnID, "question-concurrent", map[string]any{"text": answer})
+			errorsOut <- err
+		}(answer)
+	}
+	close(start)
+	succeeded, conflicts := 0, 0
+	for i := 0; i < 2; i++ {
+		err := <-errorsOut
+		if err == nil {
+			succeeded++
+			continue
+		}
+		var appErr apperr.Error
+		if !errors.As(err, &appErr) || appErr.Code != apperr.CodeNotPending {
+			t.Fatalf("unexpected answer error: %v", err)
+		}
+		conflicts++
+	}
+	if succeeded != 1 || conflicts != 1 {
+		t.Fatalf("succeeded=%d conflicts=%d", succeeded, conflicts)
 	}
 }
 

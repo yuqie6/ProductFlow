@@ -22,11 +22,20 @@ interface SessionMessage {
   toolName?: string;
 }
 
-export function storedAnswerFromEvents(events: readonly TurnEvent[]): TurnAnswer | null {
+export interface StoredQuestionAnswer {
+  questionID: string;
+  answer: TurnAnswer;
+}
+
+export function storedAnswerFromEvents(events: readonly TurnEvent[], questionID?: string): StoredQuestionAnswer | null {
+  const requested = [...events].reverse().find((event) => event.kind === "question/requested");
+  const target = questionID ?? requested?.payload.id;
+  if (typeof target !== "string" || !target) return null;
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
-    if (event.kind !== "question/answered") continue;
-    return parseStoredAnswer(event.payload.answer);
+    if (event.kind !== "question/answered" || event.payload.question_id !== target) continue;
+    const answer = parseStoredAnswer(event.payload.answer);
+    return answer ? { questionID: target, answer } : null;
   }
   return null;
 }

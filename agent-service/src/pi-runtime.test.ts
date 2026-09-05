@@ -797,7 +797,7 @@ describe("PiRuntimeManager turn state", () => {
     },
   );
 
-  it("queues a durably answered question after restart instead of marking it unknown", async () => {
+  it.each([false, true])("restores only the current question answer after restart (new unanswered question=%s)", async (hasNextQuestion) => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-answered-handoff-"));
     let manager: PiRuntimeManager | undefined;
     try {
@@ -831,6 +831,11 @@ describe("PiRuntimeManager turn state", () => {
       await store.appendLocalEvent(scope.run_id, created.state.turn_id, "question/answered", {
         question_id: "q-answered", answer: { option: 0 },
       });
+      if (hasNextQuestion) {
+        const nextQuestion = { id: "q-next", header: "继续", question: "第二次选择？", options: [{ label: "继续" }, { label: "停止" }] };
+        await store.appendLocalEvent(scope.run_id, created.state.turn_id, "question/requested", nextQuestion);
+        await store.updateState(scope.run_id, created.state.turn_id, { status: "requires_input", question: nextQuestion });
+      }
       await store.saveDurableHandoff(scope.run_id, created.state.turn_id, lease);
       const productFlow = {
         confirmTurnEvents: async (_conversationID: string, _executionID: string, args: { events: Array<{ sequence: number }> }) => ({
@@ -846,16 +851,19 @@ describe("PiRuntimeManager turn state", () => {
         })),
         releaseTurnExecution: async () => ({ released: true }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+      const restartedStore = new TurnStore(root);
+      await restartedStore.init();
       manager = new PiRuntimeManager(
-        { ...config, dataRoot: root, maxConcurrentTurns: 0 }, store, productFlow,
+        { ...config, dataRoot: root, maxConcurrentTurns: 0 }, restartedStore, productFlow,
         {} as ConstructorParameters<typeof PiRuntimeManager>[3], "stable-owner",
       );
 
       const summary = await manager.recoverAfterRestart();
-      expect(summary).toMatchObject({ replayed_handoffs: 1, queued_turns: 1 });
-      expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: "queued" });
+      expect(summary).toMatchObject({ replayed_handoffs: 1, queued_turns: hasNextQuestion ? 0 : 1 });
+      expect(await store.getState(scope.run_id, created.state.turn_id)).toMatchObject({ status: hasNextQuestion ? "requires_input" : "queued" });
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toEqual([
         "question/requested", "question/answered",
+        ...(hasNextQuestion ? ["question/requested"] : []),
       ]);
     } finally {
       await manager?.close();
@@ -1822,6 +1830,18 @@ describe("PiRuntimeManager turn state", () => {
       expect((await store.events(scope.run_id, created.state.turn_id, 0)).map((event) => event.kind)).toContain(
         "question/answered",
       );
+      const second = { ...question, id: "question-reference", question: "参考图是哪张？" };
+      await store.updateState(scope.run_id, created.state.turn_id, { status: "requires_input", question: second });
+      await store.appendEvent(scope.run_id, created.state.turn_id, "question/requested", second);
+      const nextAnswer = await manager.answerQuestion(
+        { conversationID: scope.conversation_id }, created.state.turn_id, second.id, { text: "第二张图" },
+      );
+      expect(nextAnswer.status).toBe("queued");
+      expect((await store.events(scope.run_id, created.state.turn_id, 0))
+        .filter((event) => event.kind === "question/answered").map((event) => event.payload)).toEqual([
+          { question_id: question.id, answer: { text: "筋膜枪" } },
+          { question_id: second.id, answer: { text: "第二张图" } },
+        ]);
     } finally {
       await managerHolder.manager?.close();
       await rm(root, { recursive: true, force: true });
@@ -1907,6 +1927,13 @@ describe("PiRuntimeManager turn state", () => {
         owner_id: "owner-timeout",
         lease_token: "lease-timeout",
       };
+
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "question/requested", {
+        id: "earlier-question", header: "前一问", question: "已回答？", options: [{ label: "继续" }, { label: "停止" }],
+      });
+      await store.appendLocalEvent(scope.run_id, created.state.turn_id, "question/answered", {
+        question_id: "earlier-question", answer: { text: "already answered" },
+      });
 
       const answer = await internal.askUser({
         id: "question-timeout",

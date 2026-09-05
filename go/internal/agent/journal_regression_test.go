@@ -62,6 +62,49 @@ func TestInitialExecutionClaimRecordsHeartbeatAtClaimTime(t *testing.T) {
 	}
 }
 
+func TestNewQuestionJournalClearsPreviousAnswerAndReplayKeepsCurrentAnswer(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	question := func(sequence int, id string) EventAppendInput {
+		return EventAppendInput{Sequence: sequence, SchemaVersion: 1, RunID: claimed.turn.HarnessRunID,
+			TurnID: *claimed.turn.HarnessTurnID, Kind: "question/requested",
+			Payload: json.RawMessage(`{"id":"` + id + `","header":"名称","question":"名称？","options":[{"label":"填写"}]}`)}
+	}
+	first := question(1, "first-question")
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{first}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "first answer"}); err != nil {
+		t.Fatal(err)
+	}
+	second := question(2, "second-question")
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{second}); err != nil {
+		t.Fatal(err)
+	}
+	var row schema.AgentTurnProjections
+	if err := as.db.Take(&row, "id = ?", claimed.turn.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.QuestionAnswerJSON != nil {
+		t.Fatalf("second question inherited previous answer: %s", *row.QuestionAnswerJSON)
+	}
+	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "late answer"}); err == nil {
+		t.Fatal("accepted an answer for the expired first question")
+	}
+	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "second-question", map[string]any{"text": "second answer"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{second}); err != nil {
+		t.Fatal(err)
+	}
+	if err := as.db.Take(&row, "id = ?", claimed.turn.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.QuestionAnswerJSON == nil || *row.QuestionAnswerJSON != `{"text":"second answer"}` {
+		t.Fatalf("replay changed current answer: %+v", row.QuestionAnswerJSON)
+	}
+}
+
 func TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	claimed := createClaimedJournalTurn(t, as)

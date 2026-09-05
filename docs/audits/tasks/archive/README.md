@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [agent-question-answer-identity.md](agent-question-answer-identity.md) | 完成 | Node/PG 按问题绑定答案、并发幂等与第二问 SIGKILL 恢复通过；固定 live 只问一问，缺上下文读取而 FAIL |
 | [eval-user-sim.md](eval-user-sim.md) | 完成 | 独立用户模型、answer/resume 接线与跨 turn 观测；真实五条 2/5 pass，第二问题答案冲突交独立生产修复单 |
 | [eval-l2-provenance.md](eval-l2-provenance.md) | 完成 | L2 内容快照、工作树与实际 SDK 请求身份归因；缺样本/漂移不可 complete，未补写历史或重跑真实批次 |
 | [eval-l2-terminal-observation.md](eval-l2-terminal-observation.md) | 完成 | L2 等待 PG 终态后评分；观察失败单列并保留双侧状态，重复/race 回归通过，未重跑旧批次 |

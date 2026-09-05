@@ -153,7 +153,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | L3-01 | `user-sim.ts` 用独立模型扮演具有隐藏目标、事实表和应答策略的用户；被测 Agent 仍走生产 manager/Go 路径 | `完成`（模型与 manager） | [eval-user-sim](tasks/archive/eval-user-sim.md)：每次话语独立 `complete()`，隐藏上下文不给 Agent，不回退脚本；15 项聚焦回归通过。固定 live `20260904T234034Z-93b42b6d` 实际完成 4 次用户请求，Agent 仍走生产 PiRuntimeManager。 |
-| L3-02 | `requires_input` 通过 manager 或 Go question-answer API 回答，同一问题/Turn 的恢复语义保持生产合同 | `部分完成` | 模拟器补齐 `answerQuestion -> resume`；live 重命名在同一 turn 恢复执行。intake 第二个不同 question ID 的回答被生产运行时误报已有不同答案，交 [agent-question-answer-identity](tasks/agent-question-answer-identity.md)。Go HTTP 变体未验收。 |
+| L3-02 | `requires_input` 通过 manager 或 Go question-answer API 回答，同一问题/Turn 的恢复语义保持生产合同 | `完成`（恢复合同回归） | [agent-question-answer-identity](tasks/archive/agent-question-answer-identity.md) 修复第二问题身份冲突、PG 旧答案遗留和不同答案覆盖；生产 manager 两问及 Go HTTP + PG + Pi 第二问 SIGKILL 恢复回归通过。固定 live `20260905T001434Z-90c24d87` 只问一问并恢复，缺少上下文读取而 FAIL；未取得真实模型连续两问通过证据，不表示 L3 五流程或阶段通过。 |
 | L3-03 | graph proposal、global draft、workflow run request 通过生产 confirm/discard API 做用户决策 | `部分完成` | 脚本策略含 confirm/discard；L1 桩世界没有 Go HTTP 确认面，L2 变体未跑。 |
 | L3-04 | 首批 5 条流程覆盖 intake 两轮追问、提案拒绝后改口、run request 确认、全局草案确认和缺信息改名 | `完成` | 5 条 `layers` 含 `l3` 的任务已入集，L0 断言 ≥5。 |
 | L3-05 | grader 断言终态、轮数上限和“用户同意前没有 finalize/apply”；未确认写入单独计数并可阻断 pass | `部分完成` | 最新固定 live `20260904T234034Z-93b42b6d` k=1：2/5 pass；跨 turn 本地 Skill 现已计入。其余失败为提案终态、既有全局同意计数与第二问题答案冲突。未更改 grader；不能把显式重命名答案后的 `unconfirmed writes: 1` 直接认定为生产越权，也不能据此放宽规则。 |

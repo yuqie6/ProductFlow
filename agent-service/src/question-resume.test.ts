@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { TurnAnswer } from "./contracts.js";
+import type { TurnAnswer, TurnEvent } from "./contracts.js";
 import {
   buildAskUserToolResultMessage,
   compactAskUserSummary,
@@ -20,18 +20,35 @@ describe("question-resume helpers", () => {
   it("reads the latest stored question answer from events", () => {
     expect(
       storedAnswerFromEvents([
-        { sequence: 1, kind: "question/requested", payload: {}, created_at: "", run_id: "", turn_id: "", schema_version: 1 },
+        { sequence: 1, kind: "question/requested", payload: { id: "question-1" }, created_at: "", run_id: "", turn_id: "", schema_version: 1 },
         {
           sequence: 2,
           kind: "question/answered",
-          payload: { answer: { text: "筋膜枪" } },
+          payload: { question_id: "question-1", answer: { text: "筋膜枪" } },
           created_at: "",
           run_id: "",
           turn_id: "",
           schema_version: 1,
         },
       ]),
-    ).toEqual({ text: "筋膜枪" });
+    ).toEqual({ questionID: "question-1", answer: { text: "筋膜枪" } });
+  });
+
+  it("looks up the current question by default and never resumes it with an older answer", () => {
+    const event = (kind: string, payload: TurnEvent["payload"]): TurnEvent => ({
+      schema_version: 1, run_id: "run", turn_id: "turn", sequence: 1, created_at: "", kind, payload,
+    });
+    const events = [
+      event("question/requested", { id: "q1" }),
+      event("question/answered", { question_id: "q1", answer: { text: "first" } }),
+      event("question/requested", { id: "q2" }),
+    ];
+    expect(storedAnswerFromEvents(events)).toBeNull();
+    expect(storedAnswerFromEvents(events, "missing")).toBeNull();
+    expect(storedAnswerFromEvents(events, "q1")).toEqual({ questionID: "q1", answer: { text: "first" } });
+    events.push(event("question/answered", { question_id: "q2", answer: { option: 1 } }));
+    events.push(event("question/answered", { question_id: "q1", answer: { text: "first" } }));
+    expect(storedAnswerFromEvents(events)).toEqual({ questionID: "q2", answer: { option: 1 } });
   });
 
   it("finds an unanswered ask_user tool call and ignores completed ones", () => {

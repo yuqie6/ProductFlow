@@ -292,13 +292,20 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 		if err != nil {
 			return err
 		}
-		if err := pgxTx.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(map[string]any{
-			"question_answer_json": string(answerJSON),
-			"resume_required":      false,
-			"sync_error":           gorm.Expr("NULL"),
-			"updated_at":           time.Now().UTC(),
-		}).Error; err != nil {
-			return err
+		result := pgxTx.Model(&schema.AgentTurnProjections{}).
+			Where("id = ? AND status = 'requires_input' AND question_json->>'id' = ?", projectionID, questionID).
+			Where("question_answer_json IS NULL OR question_answer_json::jsonb = ?::jsonb", string(answerJSON)).
+			Updates(map[string]any{
+				"question_answer_json": string(answerJSON),
+				"resume_required":      false,
+				"sync_error":           gorm.Expr("NULL"),
+				"updated_at":           time.Now().UTC(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return apperr.NotPending("当前 Agent 问题已过期或已保存不同答案")
 		}
 		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
 			return err
