@@ -74,28 +74,25 @@ func CountAdmissionRunning(ctx context.Context, db *gorm.DB) (int, error) {
 }
 
 func countOverview(ctx context.Context, db *gorm.DB) (int, int, error) {
-	var sessionRunning, sessionQueued int64
-	if err := db.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
-		Where("status = ?", "running").Count(&sessionRunning).Error; err != nil {
+	sessionCounts := db.Model(&schema.ImageSessionGenerationTasks{}).
+		Select("COUNT(*) FILTER (WHERE status = ?) AS running, COUNT(*) FILTER (WHERE status = ?) AS queued", "running", "queued").
+		Where("status IN ?", []string{"running", "queued"})
+	graphActivity := db.Model(&schema.WorkflowGraphRuns{}).
+		Select(`EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?) AS has_running,
+			EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?) AS has_queued`, "running", "queued").
+		Where("status = ?", "running")
+	graphCounts := db.Table("(?) AS active_runs", graphActivity).
+		Select("COUNT(*) FILTER (WHERE has_running) AS running, COUNT(*) FILTER (WHERE NOT has_running AND has_queued) AS queued")
+	var counts struct {
+		Running int64
+		Queued  int64
+	}
+	// One statement keeps running/queued totals on one PG snapshot during state transitions.
+	err := db.WithContext(ctx).Table("(?) AS session_counts CROSS JOIN (?) AS graph_counts", sessionCounts, graphCounts).
+		Select("session_counts.running + graph_counts.running AS running, session_counts.queued + graph_counts.queued AS queued").
+		Find(&counts).Error
+	if err != nil {
 		return 0, 0, err
 	}
-	if err := db.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
-		Where("status = ?", "queued").Count(&sessionQueued).Error; err != nil {
-		return 0, 0, err
-	}
-	var graphRunning, graphQueued int64
-	if err := db.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
-		Where("status = ?", "running").
-		Where("EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?)", "running").
-		Count(&graphRunning).Error; err != nil {
-		return 0, 0, err
-	}
-	if err := db.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
-		Where("status = ?", "running").
-		Where("NOT EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?)", "running").
-		Where("EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?)", "queued").
-		Count(&graphQueued).Error; err != nil {
-		return 0, 0, err
-	}
-	return int(sessionRunning) + int(graphRunning), int(sessionQueued) + int(graphQueued), nil
+	return int(counts.Running), int(counts.Queued), nil
 }

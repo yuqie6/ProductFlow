@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,80 @@ func TestLoadSnapshotEmptyDefaults(t *testing.T) {
 	}
 	if snap.Max != DefaultMaxConcurrent || snap.AdmissionRunning != 0 || snap.OverviewRunning != 0 || snap.OverviewQueued != 0 || snap.OverviewActive() != 0 {
 		t.Fatalf("empty snapshot: %+v", snap)
+	}
+}
+
+func TestQueueOverviewUsesOneStatementSnapshot(t *testing.T) {
+	for _, domain := range []string{"session", "graph"} {
+		for _, initial := range []string{"running", "queued"} {
+			t.Run(domain+"_from_"+initial, func(t *testing.T) {
+				_, gdb := testdb.Open(t)
+				resetGenerationRows(t, gdb)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				now := time.Now().UTC()
+				if domain == "session" {
+					id := insertImageSession(t, gdb, now)
+					insertSessionTask(t, gdb, id, initial, now)
+				} else {
+					insertGraphRun(t, gdb, now, []string{initial})
+				}
+				reads, changed := 0, false
+				callback := "test:queue_snapshot_transition"
+				if err := gdb.Callback().Query().After("gorm:query").Register(callback, func(db *gorm.DB) {
+					if db.DryRun || db.Statement.Table == "app_settings" {
+						return
+					}
+					reads++
+					trigger := strings.Contains(db.Statement.SQL.String(), "AS session_counts")
+					if domain == "session" && db.Statement.Table == "image_session_generation_tasks" {
+						trigger = true
+					}
+					if domain == "graph" && db.Statement.Table == "workflow_graph_runs" {
+						trigger = true
+					}
+					if !trigger || changed {
+						return
+					}
+					changed = true
+					next := "running"
+					if initial == "running" {
+						next = "queued"
+					}
+					// A separate connection commits after the first domain count (old) or combined read (new).
+					var err error
+					if domain == "session" {
+						updates := map[string]any{"status": next, "active_attempt_id": nil}
+						if next == "running" {
+							updates["active_attempt_id"], updates["started_at"] = clockid.New(), now
+						}
+						err = gdb.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
+							Where("status = ?", initial).Updates(updates).Error
+					} else {
+						err = gdb.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
+							Where("status = ?", initial).Update("status", next).Error
+					}
+					if err != nil {
+						db.AddError(err)
+					}
+				}); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = gdb.Callback().Query().Remove(callback) })
+				snap, err := LoadQueueOverview(ctx, gdb)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("QUEUE_SNAPSHOT domain=%s initial=%s statements=%d running=%d queued=%d", domain, initial, reads, snap.OverviewRunning, snap.OverviewQueued)
+				wantRunning, wantQueued := 0, 1
+				if initial == "running" {
+					wantRunning, wantQueued = 1, 0
+				}
+				if !changed || reads != 1 || snap.OverviewRunning != wantRunning || snap.OverviewQueued != wantQueued {
+					t.Fatal("overview did not preserve a single pre-transition statement snapshot")
+				}
+			})
+		}
 	}
 }
 
@@ -77,6 +152,45 @@ func TestLoadSnapshotAdmissionRunningDiffersFromOverviewRunning(t *testing.T) {
 	}
 	if overview.Max != snap.Max || overview.OverviewRunning != snap.OverviewRunning || overview.OverviewQueued != snap.OverviewQueued {
 		t.Fatalf("queue overview=%+v snapshot=%+v", overview, snap)
+	}
+}
+
+func TestQueueOverviewGraphClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		nodes    []string
+		terminal bool
+		running  int
+		queued   int
+	}{
+		{"running_precedes_queued", []string{"running", "queued", "running"}, false, 1, 0},
+		{"queued_once_per_run", []string{"queued", "queued"}, false, 0, 1},
+		{"terminal_nodes", []string{"succeeded", "failed"}, false, 0, 0},
+		{"no_nodes", nil, false, 0, 0},
+		{"terminal_run", []string{"running", "queued"}, true, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, gdb := testdb.Open(t)
+			resetGenerationRows(t, gdb)
+			now := time.Now().UTC()
+			insertGraphRun(t, gdb, now, tc.nodes)
+			if tc.terminal {
+				if err := gdb.Model(&schema.WorkflowGraphRuns{}).Where("status = ?", "running").
+					Updates(map[string]any{"status": "succeeded", "finished_at": now}).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			id := insertImageSession(t, gdb, now)
+			insertSessionTask(t, gdb, id, "cancelled", now)
+			insertSessionTask(t, gdb, id, "failed", now)
+			snap, err := LoadQueueOverview(context.Background(), gdb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap.OverviewRunning != tc.running || snap.OverviewQueued != tc.queued {
+				t.Fatalf("classification=%+v want running=%d queued=%d", snap, tc.running, tc.queued)
+			}
+		})
 	}
 }
 

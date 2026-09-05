@@ -192,7 +192,7 @@ func TestImageSessionQueueOverviewOnlyForReturnedTasks(t *testing.T) {
 			if tc.want == 0 && queueReads != 0 {
 				t.Error("empty task projection read an unused global queue overview")
 			}
-			if tc.want > 0 && (queueReads != 5 || tasks[0].QueueMaxConcurrentTasks != 20) {
+			if tc.want > 0 && (queueReads != 2 || tasks[0].QueueMaxConcurrentTasks != 20) {
 				t.Error("returned task lost its queue overview")
 			}
 		})
@@ -200,6 +200,12 @@ func TestImageSessionQueueOverviewOnlyForReturnedTasks(t *testing.T) {
 }
 
 func isImageSessionQueueOverviewQuery(db *gorm.DB) bool {
+	if db.DryRun {
+		return false
+	}
+	if strings.Contains(db.Statement.SQL.String(), "AS session_counts") {
+		return true
+	}
 	switch db.Statement.Dest.(type) {
 	case *schema.AppSettings:
 		return db.Statement.Table == "app_settings"

@@ -1049,3 +1049,36 @@ SSE 量化复用上一记录的隔离 PG / loopback HTTP / cookie / 4 订阅 / 2
 `TestImageSessionQueueOverviewOnlyForReturnedTasks` 在原实现的 empty_status / empty_detail / terminal_status 三个分支各捕获 5 条无用查询并 FAIL；修改后均为 0，terminal_detail / active_status 仍为 5，所有分支保留非 null 任务数组及必要队列字段，PASS（0.775s）。`just go-test-imagesession-http-load` 前后都通过原有七路径合同及新增测量阶段（16.085s / 14.550s）。量化计数由真实 GORM Query callback 采集；延迟数值来自非 race 运行。
 
 扩展回归通过 dev env wrapper 同时设置 `PRODUCTFLOW_RUN_IMAGE_SESSION_HTTP_LOAD=1` 和 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1`，运行 ImageSession 全包 `-race -count=1 -v -timeout 3m`，PASS（67.240s）。HTTP 空任务阶段队列查询仍为 0；SSE 活动窗口仍为 4 帧 / 359,468B / 32 次 Status 回读，64 条任务表 COUNT，进度/终态/重连通过。query-plan opt-in 本轮未开启。`just docs-check` 与 diff check PASS，主代理自审，无 schema/provider/共享服务配置修改。
+
+## 2026-09-05 展示队列单语句快照与查询对照
+
+`platform/generation.countOverview` 原实现依次读取 session running、session queued、graph running、graph queued；同一任务或图节点在读取期间切换状态时会双计或漏计。源码基线为 `0626ef24` 的 `snapshot.go`，截至本轮仍是同一实现；修改后随本记录提交。展示消费方为 ImageSession，`LoadSnapshot` 另供既有测试；worker 和 metrics 使用的 `CountAdmissionRunning` 未改。
+
+新查询使用 GORM 组合两个聚合子查询，在单条 PostgreSQL 语句中读取 session 与 graph running/queued 总数。Graph 保持每个 run 至多计一次，有 running 节点优先归 running；只有 queued 节点且无 running 才归 queued，终态 run 或没有活动节点不计。容量配置仍单独读取；不把此保证推广为配置、admission 或整个 ImageSession Status 的同一快照。
+
+| 强制交错，初始只有一个工作项 | 原实现 | 新实现 |
+|---|---|---|
+| Session running→queued | running=1 / queued=1，双计 | running=1 / queued=0 |
+| Session queued→running | running=0 / queued=0，漏计 | running=0 / queued=1 |
+| Graph 节点 running→queued | running=1 / queued=1，双计 | running=1 / queued=0 |
+| Graph 节点 queued→running | running=0 / queued=0，漏计 | running=0 / queued=1 |
+| 展示总数实际 SQL 语句数 | 4 | 1 |
+
+测试在第一次对应域 COUNT 返回后通过另一连接提交状态切换；新实现则在完整聚合返回后提交。因此期望新结果保持该单语句读取时的状态，下一次读取才反映新状态。回调忽略 GORM 构建子查询的 DryRun，构建过程不计作数据库语句或交错点。原实现四个分支 FAIL，新实现通过。另有五个分类回归：running/queued 混合、多 queued 节点、全部终态节点、无节点、终态 run；终态 session tasks 不混入队列。`TestQueueOverview* -race -count=20` PASS（9.150s），共 80 次交错和 100 次分类检查；既有 admission 按节点而总览按 run 的差异测试保留。
+
+SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / note 512B、隔离 PG / loopback HTTP / cookie 的固定输入，无 Graph run。`sse_load_test.go` SHA-256 为 `5232cef49635b34da440650a3599a7ce27fa5f79abe8e57d0cae4e8d67a89578`。本轮指标明确计“总览 SQL 及配置读取”，不再沿用旧的单表 COUNT 指标；GORM DryRun 不计入实际查询。
+
+| 实测项 | 修改前 | 修改后 |
+|---|---:|---:|
+| Status 回读次数 | 32 | 32 |
+| 总览查询，含配置 | 160 | 64 |
+| 状态帧 / SSE 正文字节 | 4 / 359,468 | 4 / 359,468 |
+| 心跳 / 重连首份终态 | 4 / 1 | 4 / 1 |
+| 4 订阅中进度变化最长送达 | 754.41ms | 754.05ms |
+| 4 订阅中终态最长送达 | 1,996.84ms | 1,997.75ms |
+
+每次总览从 5 条 SQL（配置 + 4 个独立 COUNT）减至 2 条（配置 + 单语句聚合），本窗口实测减少 96 次数据库查询，降幅 60%。这不等于扫描行数、CPU 或延迟减少 60%；新 SQL 内仍有聚合与 Graph EXISTS 探测。没有新增锁、缓存或持久状态。静默窗口不测大规模活跃 Graph 计划、慢客户端或真实网络；各送达延迟只有 4 个样本，不报告 p95 或延迟收益。
+
+`just go-test-imagesession-sse-load` 前后 PASS（19.955s / 19.863s）；generation / imagesession 普通包测 PASS（1.502s / 7.454s）。共享工作树有其他模块并发修改，本记录不构成固定候选发布验收。当前 HTTP、空任务回归的查询计数器已识别组合 SQL，空投影仍为 0，返回任务时的队列查询期望由 5 调整为 2；响应字段合同不变。
+
+扩展验证通过 dev env wrapper 显式开启 `PRODUCTFLOW_RUN_IMAGE_SESSION_HTTP_LOAD=1` 与 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1`，串行运行 `go test -C go ./internal/platform/generation ./internal/imagesession ./internal/graph -race -count=1 -p 1 -timeout 5m`：三个包 PASS（2.959s / 73.104s / 85.343s）。query-plan opt-in 本轮未开启。`just docs-check` 和 diff check PASS，主代理自审，仅提交共享总览、相关测试与文档，未纳入其他会话 schema/配方/评测改动。
