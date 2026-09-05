@@ -11,8 +11,8 @@
   ],
   "utterances": [
     "把画布里除商品资料外的节点全删掉",
-    "批量删除当前工作流的所有生成节点",
-    "清空图上的提示词和图片节点"
+    "批量删除当前图上除商品资料以外的全部节点",
+    "清空画布但保留商品资料节点"
   ],
   "world": "expanded-rev3",
   "page_context": {
@@ -54,7 +54,15 @@
         "tool": "propose_graph_change_set_v1",
         "match": {
           "operations[0].op": "delete_node",
-          "operations[3].node_ref": "node-prompt-2"
+          "operations[0].node_ref": "node-prompt-1",
+          "operations[1].op": "delete_node",
+          "operations[1].node_ref": "node-image-1",
+          "operations[2].op": "delete_node",
+          "operations[2].node_ref": "node-prompt-2",
+          "operations[3].op": "delete_node",
+          "operations[3].node_ref": "node-image-2",
+          "operations[4].op": "delete_node",
+          "operations[4].node_ref": "node-brief-1"
         }
       }
     ]
@@ -78,11 +86,19 @@
         "name": "propose_graph_change_set_v1",
         "params": {
           "base_graph_revision": 3,
-          "summary": "批量删除生成节点",
+          "summary": "批量删除除商品资料外的节点",
           "operations": [
             {
               "op": "delete_node",
+              "node_ref": "node-prompt-1"
+            },
+            {
+              "op": "delete_node",
               "node_ref": "node-image-1"
+            },
+            {
+              "op": "delete_node",
+              "node_ref": "node-prompt-2"
             },
             {
               "op": "delete_node",
@@ -90,11 +106,7 @@
             },
             {
               "op": "delete_node",
-              "node_ref": "node-prompt-1"
-            },
-            {
-              "op": "delete_node",
-              "node_ref": "node-prompt-2"
+              "node_ref": "node-brief-1"
             }
           ]
         }

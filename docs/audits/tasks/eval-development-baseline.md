@@ -12,7 +12,7 @@
 
 ## 问题来源
 
-[集合隔离机制](archive/eval-collection-isolation.md) 已在 `2ab85674` 交付，旧 run 没有其冻结身份，不能回填后冒充隔离采证。当前 [eval-contract-alignment](eval-contract-alignment.md) 尚未校正已发现的考题/生产合同冲突。Agent P3 需要有明确来源、身份与完整性的新开发输入，不能将误判直接归因为行为机制。
+[集合隔离机制](archive/eval-collection-isolation.md) 已在 `2ab85674` 交付，旧 run 没有其冻结身份，不能回填后冒充隔离采证。[eval-contract-alignment](archive/eval-contract-alignment.md) 已独立校正并冻结 L1 `task_hash=406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`。Agent P3 仍需评测维护者批准场景分组并采集带身份的新开发批次，不能将旧题集误判直接归因为行为机制。
 
 ## 做成什么样
 
@@ -20,7 +20,7 @@
 
 ## 前置与并行
 
-- [eval-contract-alignment](eval-contract-alignment.md) 已独立校正、审核并提交，逐题产品依据和新 task hash 齐全；生产 Skill/runtime/harness 不随校正改变。
+- [eval-contract-alignment](archive/eval-contract-alignment.md) 已独立校正、审核并提交，逐题产品依据和新 task hash 齐全；生产 Skill/runtime/harness 不随校正改变。
 - 评测维护者审核清单：当前公开题与已读轨迹按 exposed development 处理，同源 scene/source/origin 不跨用途。隐藏与独立验收材料未就绪时记录空集与缺口，不另贴标签宣称独立。
 - 真实 provider 凭据可用；固定候选代码 checkout、任务/world、Skill、壳、provider/model、推理参数、并发/预算与完整 trial 分母。协议已声明 dirty 工作树不能承担同 commit 比较时，使用独立固定 checkout，协调认领留在共享工作树。
 - 运行使用独立 `STORAGE_ROOT`，不得修改共享 provider 设置、DB、worker 或图片池/浏览器资源。记录预期 task/trial 数后再开跑，不事后降分母。
@@ -41,10 +41,10 @@
 
 ## 阻塞与交接
 
-- 原因：考题合同独立校正未完成，尚无获批准的冻结开发清单与新批次。
-- 解除条件：eval-contract-alignment 完成归档，评测维护者接手分组审核并确认固定执行窗口。
+- 原因：考题合同已冻结，尚无获批准的冻结开发清单与新批次。
+- 解除条件：评测维护者接手分组审核并确认固定执行窗口。
 - 跟进者：Agent 能力组主代理协调评测维护者。
-- 交接：无执行者、源码 diff 或运行资源占用；不预研 Miner、不重用旧转录伪造完成证据。
+- 交接：无执行者、源码 diff 或运行资源占用；不预研 Miner、不重用旧转录伪造完成证据。eval-contract-alignment 已归档。
 
 ## 发布依据
 

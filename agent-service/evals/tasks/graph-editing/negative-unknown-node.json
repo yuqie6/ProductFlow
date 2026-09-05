@@ -31,7 +31,7 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "requires_input"
     ],
     "tools": {
       "required": [
@@ -47,7 +47,10 @@
       "required": [],
       "forbidden": []
     },
-    "writes": []
+    "writes": [],
+    "question": {
+      "required": true
+    }
   },
   "origin": "planned:p1-task-expansion",
   "reference": {

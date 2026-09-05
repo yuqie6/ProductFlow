@@ -37,8 +37,7 @@
     "tools": {
       "required": [
         "load_productflow_skill",
-        "get_workflow_run_detail_v1",
-        "get_node_detail_v1"
+        "get_workflow_run_detail_v1"
       ],
       "forbidden": [
         "request_workflow_run_v1"
@@ -66,12 +65,6 @@
         "name": "get_workflow_run_detail_v1",
         "params": {
           "run_id": "44444444-4444-4444-8444-444444444444"
-        }
-      },
-      {
-        "name": "get_node_detail_v1",
-        "params": {
-          "node_id": "node-prompt-1"
         }
       }
     ]

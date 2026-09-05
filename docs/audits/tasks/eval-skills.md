@@ -1,6 +1,6 @@
 # 任务：修复 Skill 系统性失败并用冻结评测复验
 
-状态：阻塞
+状态：开放
 类型：实现
 认领者：—
 认领于：—
@@ -21,7 +21,7 @@
 
 既有 L1 任务在真模型下能复现地提高 pass，并且四条 Skill 变异至少能杀死一部分。提交说明写「产品合同 / Skill 缺陷」；Self-Harness 进化与 overlay lineage 不在本任务范围。2026-09-05 归属转入 Agent 能力，ID 保留；评测组负责题库与结果复核，不在本任务中同时修改被测行为和考题。
 
-当前可复算基线（同 task_hash `71d48f47…`，模型 `gpt-5.6-luna`）：
+当前可复算基线（旧题集 `71d48f47…`，模型 `gpt-5.6-luna`，不可与新题集比较）：
 
 - `20260904T174405Z-fa2667fa`：pass^1=0.6178，pass^3=0.4533，regression 0.6897/0.5517，门槛未过
 - mutate `mutate-20260904T181102Z-6e344c6a`：kill_rate=0（3 survived / 1 unscorable）
@@ -59,7 +59,7 @@
 - `scope=node` 却打错 `node_id`
 - 变异 `swap-apply-propose-guidance` 基线任务本身失败，突变体反而过
 
-读取失败任务的 `expect`、对应 `SKILL.md` 与产品合同，修有依据的指导缺陷。不要为了过题改 expect、放宽 grader 或只加会过的新题。题目失真影响验收时暂停本次比较并记录阻塞；评测修订题目后须用新 task_hash 重跑未修补基线与候选，历史分数不作跨题集改善证据。
+读取失败任务的 `expect`、对应 `SKILL.md` 与产品合同，修有依据的指导缺陷。不要为了过题改 expect、放宽 grader 或只加会过的新题。题目失真影响验收时暂停本次比较并记录阻塞；评测已在 [eval-contract-alignment](archive/eval-contract-alignment.md) 冻结新题集，须用新 L1 `task_hash` `406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb` 重跑未修补基线与候选，历史分数不作跨题集改善证据。
 
 ## 合同
 
@@ -96,10 +96,10 @@ just agent-evals-mutate
 
 ## 阻塞与交接
 
-- 原因：现有冻结 expect 与生产按意图路由、结构化提问、按需加载 Skill 的合同冲突。
-- 解除条件：[eval-contract-alignment.md](eval-contract-alignment.md) 独立审核并冻结修订题集；以新 task_hash 重跑未修补基线和候选，不能跨题集比较历史分数。P1 若已交付，基线与候选须使用同一 P1 runtime/policy。
-- 跟进者：Agent 能力组主代理协调评测组；题目/评分归评测组，不在本任务修改。
-- 交接：主代理-agent-0905-0458 于 2026-09-05T04:57:57+08:00 认领，05:00 完成有界复核后确认无源码 diff、无运行进程、无冻结资源，清空认领者并释放占用。当前只有本任务协调记录，未形成 Skill 候选提交。
+- 原因：无。
+- 解除条件：无。
+- 跟进者：Agent 能力组。
+- 交接：[eval-contract-alignment](archive/eval-contract-alignment.md) 已独立审核归档。冻结 L1 `task_hash=406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`。旧 `71d48f47…` 不可比较。无 Skill diff、无 live 占用。可认领后只修生产 Skill，并用新题集重跑基线与候选。
 
 把 run 记在这里，不要改总账本。维护者验收时同步 Agent 能力章程的修复结论与评测章程的分数/门槛；本任务完成不改变 Self-Harness 阶段状态。
 

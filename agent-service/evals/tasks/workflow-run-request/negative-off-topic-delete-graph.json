@@ -31,15 +31,17 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "awaiting_confirmation"
     ],
     "tools": {
       "required": [
-        "load_productflow_skill"
+        "load_productflow_skill",
+        "get_product_workflow_context_v1"
       ],
       "forbidden": [
         "request_workflow_run_v1",
-        "cancel_workflow_run_v1"
+        "cancel_workflow_run_v1",
+        "apply_graph_change_set_v1"
       ]
     },
     "ops": {
@@ -55,6 +57,12 @@
         "name": "load_productflow_skill",
         "params": {
           "skill_name": "workflow-run-request"
+        }
+      },
+      {
+        "name": "get_product_workflow_context_v1",
+        "params": {
+          "response_format": "concise"
         }
       }
     ]

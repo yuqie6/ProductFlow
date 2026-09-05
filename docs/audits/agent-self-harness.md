@@ -7,7 +7,7 @@
 ## 组职责与交接
 
 - 对 Agent 能否遵守商品事实、用户意图、确认权限并正确使用既有工具负责。普通 Skill 修复与 Self-Harness 进化分别验收；修好产品缺陷不等于 P1–P7 或 G1/G2 完成。
-- [eval-skills](tasks/eval-skills.md) 从评测组转入，尚未交付。2026-09-05 复核发现 expect 与生产路由/提问合同冲突，暂停比较，交 [eval-contract-alignment](tasks/eval-contract-alignment.md) 独立校正并冻结新题集。只修生产 Skill，不改题目、world 或 grader；能力改善由评测组按冻结输入复核。普通修复无需等待 P1；当前无 Skill diff 或 live 占用，P1 可按自身合同推进。
+- [eval-skills](tasks/eval-skills.md) 从评测组转入，尚未交付。2026-09-05 复核发现 expect 与生产路由/提问合同冲突后，[eval-contract-alignment](tasks/archive/eval-contract-alignment.md) 已独立校正并冻结 L1 `task_hash=406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`；旧 `71d48f47…` 不可比较。eval-skills 已恢复开放，只修生产 Skill，不改题目、world 或 grader；能力改善由评测组按冻结输入复核。普通修复无需等待 P1；当前无 Skill diff 或 live 占用，P1 可按自身合同推进。
 - 本组拥有壳版本与候选行为，不拥有评分规则。题目过时交评测组独立处理；共享 runtime 或 policy 的 live 输入按看板冻结，不能边修改边采信旧结果。
 - lease、journal、恢复与 SSE 基础交平台可靠性；Graph Command 与人工编辑合同交工作流体验。工具使用错误由本组修，工具业务实现错误按根因移交，不用 Skill 绕开。
 - Skill 修复交付后，本组记录修复结果，评测账本记录分数与门槛；同一 run_id 通过链接复用，不复制第二套评分结论。Self-Harness 后续门槛保持下文合同。

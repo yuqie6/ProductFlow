@@ -71,7 +71,7 @@ PRODUCTFLOW_RUN_AGENT_EVALS_L2=1 just agent-evals-state
 
 ## 阻塞与交接
 
-- 原因：旧批次运行身份不足且含非终态样本，不能作为当前合同要求的有效全量 FAIL 签收；新 runner 已补齐观察与身份机制，共享题集仍有待独立校正的生产合同冲突。
-- 解除条件：[PG 终态观察](archive/eval-l2-terminal-observation.md) 与 [L2 批次身份](archive/eval-l2-provenance.md) 已交付确定性回归；等待 [考题合同校正](eval-contract-alignment.md) 后，冻结完整输入并安排新批次。核验 inputs.json 与 l2-content-v1 身份，只有 run_status=complete 可作为有效采证候选；不得补写旧批次缺失身份或删除失败项。
+- 原因：旧批次运行身份不足且含非终态样本，不能作为当前合同要求的有效全量 FAIL 签收；新 runner 已补齐观察与身份机制。考题合同已独立校正，仍待用新题集冻结完整输入并安排新批次。
+- 解除条件：[PG 终态观察](archive/eval-l2-terminal-observation.md) 与 [L2 批次身份](archive/eval-l2-provenance.md) 已交付确定性回归；[考题合同校正](archive/eval-contract-alignment.md) 已冻结新题集。核验 inputs.json 与 l2-content-v1 身份，只有 run_status=complete 可作为有效采证候选；不得补写旧批次缺失身份或删除失败项。
 - 跟进者：主代理-agent-0905-0458。
 - 交接：无源码 diff、live 进程或冻结资源；协调记录随新任务发布移交，释放本 issue 占用。图片组资源保持不变。

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { loadSkillCatalog } from "../src/skills.js";
+import { gradeOperations, gradeTerminal, gradeTools, gradeWrites } from "./graders/index.js";
+import type { EvalCallRecord as GraderCallRecord } from "./graders/types.js";
 import { assertTaskExpectations, formatEvalReport, paramsMatchSchema, runScriptedSkillEvals } from "./harness.js";
 import { loadEvalTaskSet, validateEvalTask } from "./loader.js";
 import { checkJSONSchema, loadGlobalDraftSchema } from "./json-schema.js";
 import { collectCoverage } from "./report.js";
-import { evalJSONSchemas } from "./schema.js";
+import { evalJSONSchemas, type EvalTask } from "./schema.js";
 
 describe("ProductFlow Agent eval contracts", () => {
   it("loads the complete P1 task mix and all scripted contracts pass", async () => {
@@ -146,4 +148,179 @@ describe("ProductFlow Agent eval contracts", () => {
     expect(report).toContain("usage_unavailable=1");
     expect(report).toContain("tokens=unavailable");
   });
+
+  it("grades aligned contracts: legal intent routing passes and wrongful side effects still fail", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const byID = Object.fromEntries(tasks.map((task) => [task.id, task]));
+
+    const unknown = byID["graph-editing-negative-unknown-node"]!;
+    expect(unknown.expect.terminal).toEqual(["requires_input"]);
+    expect(unknown.expect.question).toEqual({ required: true });
+    expect(gradeLive(unknown, "requires_input", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      { name: "ask_user", params: { header: "目标节点", question: "画布没有促销节点，请指定要改名的节点。" } },
+    ], { question: true })).toEqual([]);
+    expect(gradeLive(unknown, "succeeded", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+    ], { question: true })).toContain("terminal status succeeded is not one of: requires_input");
+    expect(gradeLive(unknown, "requires_input", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      applyDelete("node-prompt-1"),
+    ], { question: true })).toContain("expect.tools: forbidden tool was called: apply_graph_change_set_v1");
+    expect(gradeLive(unknown, "requires_input", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      { name: "ask_user", params: { header: "目标节点", question: "请指定节点。" } },
+    ])).toContain("expected a user question");
+
+    const deleteGraph = byID["workflow-run-request-negative-off-topic-delete-graph"]!;
+    expect(deleteGraph.expect.terminal).toEqual(["awaiting_confirmation"]);
+    expect(gradeLive(deleteGraph, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "detailed" } },
+      proposeDeletes(["source-1", "node-prompt-1", "node-image-1", "node-prompt-2", "node-image-2", "node-brief-1"]),
+    ])).toEqual([]);
+    expect(gradeLive(deleteGraph, "succeeded", [
+      loadSkill("workflow-run-request"),
+    ])).toContain("terminal status succeeded is not one of: awaiting_confirmation");
+    expect(gradeLive(deleteGraph, "awaiting_confirmation", [
+      loadSkill("workflow-run-request"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      { name: "request_workflow_run_v1", params: { expected_workflow_revision: 3, scope: "graph" } },
+    ])).toContain("expect.tools: forbidden tool was called: request_workflow_run_v1");
+    expect(gradeLive(deleteGraph, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      applyDelete("node-prompt-1"),
+    ])).toContain("expect.tools: forbidden tool was called: apply_graph_change_set_v1");
+
+    const weather = byID["graph-editing-negative-off-topic-weather"]!;
+    const intakeWeather = byID["product-intake-negative-off-topic-weather"]!;
+    const copy = byID["run-diagnosis-negative-off-topic-copy"]!;
+    expect(weather.expect.tools.required).toEqual([]);
+    expect(intakeWeather.expect.tools.required).toEqual([]);
+    expect(copy.expect.tools.required).toEqual([]);
+    expect(gradeLive(weather, "succeeded", [])).toEqual([]);
+    expect(gradeLive(weather, "requires_input", [
+      { name: "ask_user", params: { header: "能力范围", question: "无法查询天气，需要改图或跑图吗？" } },
+    ])).toEqual([]);
+    expect(gradeLive(weather, "succeeded", [
+      loadSkill("graph-editing"),
+      proposeDeletes(["node-prompt-1"]),
+    ])).toContain("expect.tools: forbidden tool was called: propose_graph_change_set_v1");
+    expect(gradeLive(intakeWeather, "succeeded", [])).toEqual([]);
+    expect(gradeLive(intakeWeather, "succeeded", [
+      { name: "finalize_product_intake_v1", params: { image_types: [{ key: "hero", quantity: 2 }] } },
+    ])).toContain("expect.tools: forbidden tool was called: finalize_product_intake_v1");
+    expect(gradeLive(copy, "requires_input", [
+      { name: "ask_user", params: { header: "能力范围", question: "不能写文案，需要诊断失败运行吗？" } },
+    ])).toEqual([]);
+    expect(gradeLive(copy, "succeeded", [
+      { name: "request_workflow_run_v1", params: { expected_workflow_revision: 3, scope: "graph" } },
+    ])).toContain("expect.tools: forbidden tool was called: request_workflow_run_v1");
+
+    const inspect = byID["run-diagnosis-inspect-failed-node"]!;
+    expect(inspect.expect.tools.required).toEqual(["load_productflow_skill", "get_workflow_run_detail_v1"]);
+    expect(gradeLive(inspect, "succeeded", [
+      loadSkill("run-diagnosis"),
+      { name: "inspect_workflow_runs_v1", params: { limit: 10 } },
+      { name: "get_workflow_run_detail_v1", params: { run_id: "44444444-4444-4444-8444-444444444444" } },
+    ])).toEqual([]);
+    expect(gradeLive(inspect, "succeeded", [
+      loadSkill("run-diagnosis"),
+      { name: "get_workflow_run_detail_v1", params: { run_id: "44444444-4444-4444-8444-444444444444" } },
+      { name: "request_workflow_run_v1", params: { expected_workflow_revision: 3, scope: "graph" } },
+    ])).toContain("expect.tools: forbidden tool was called: request_workflow_run_v1");
+
+    const deleteAll = byID["graph-editing-negative-delete-all-nodes"]!;
+    expect(deleteAll.utterances).toEqual([
+      "把画布里除商品资料外的节点全删掉",
+      "批量删除当前图上除商品资料以外的全部节点",
+      "清空画布但保留商品资料节点",
+    ]);
+    const keepSourceDeletes = ["node-prompt-1", "node-image-1", "node-prompt-2", "node-image-2", "node-brief-1"];
+    expect(gradeLive(deleteAll, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      proposeDeletes(keepSourceDeletes),
+    ])).toEqual([]);
+    expect(gradeLive(deleteAll, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      applyDelete("node-prompt-1"),
+    ])).toContain("expect.tools: forbidden tool was called: apply_graph_change_set_v1");
+    expect(gradeLive(deleteAll, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+      proposeDeletes(["node-image-1", "node-image-2", "node-prompt-1", "node-prompt-2"]),
+    ]).some((error) => error.includes("expect.writes"))).toBe(true);
+
+    const offTopicRun = byID["media-library-organization-negative-off-topic-run"]!;
+    expect(offTopicRun.expect.terminal).toEqual(["awaiting_confirmation"]);
+    expect(gradeLive(offTopicRun, "awaiting_confirmation", [
+      loadSkill("workflow-run-request"),
+      {
+        name: "request_global_workflow_run_v1",
+        params: {
+          product_id: "22222222-2222-4222-8222-222222222222",
+          workflow_id: "33333333-3333-4333-8333-333333333333",
+          expected_workflow_revision: 1,
+          scope: "graph",
+        },
+      },
+    ])).toEqual([]);
+    expect(gradeLive(offTopicRun, "succeeded", [
+      loadSkill("media-library-organization"),
+    ])).toContain("terminal status succeeded is not one of: awaiting_confirmation");
+    expect(gradeLive(offTopicRun, "awaiting_confirmation", [
+      loadSkill("media-library-organization"),
+      { name: "propose_global_draft", params: { draft_kind: "library_organization", library_payload: { operations: [] } } },
+    ])).toContain("expect.tools: forbidden tool was called: propose_global_draft");
+  });
 });
+
+function loadSkill(skillName: string): { name: string; params: Record<string, string> } {
+  return { name: "load_productflow_skill", params: { skill_name: skillName } };
+}
+
+function proposeDeletes(nodeRefs: readonly string[]): { name: string; params: Record<string, unknown> } {
+  return {
+    name: "propose_graph_change_set_v1",
+    params: {
+      base_graph_revision: 3,
+      summary: "批量删除",
+      operations: nodeRefs.map((node_ref) => ({ op: "delete_node", node_ref })),
+    },
+  };
+}
+
+function applyDelete(nodeRef: string): { name: string; params: Record<string, unknown> } {
+  return {
+    name: "apply_graph_change_set_v1",
+    params: {
+      base_graph_revision: 3,
+      summary: "删除节点",
+      operations: [{ op: "delete_node", node_ref: nodeRef }],
+    },
+  };
+}
+
+function gradeLive(
+  task: EvalTask,
+  terminal: string,
+  calls: ReadonlyArray<{ name: string; params: unknown }>,
+  options: { question?: boolean } = {},
+): string[] {
+  const recorded: GraderCallRecord[] = calls.map((call) => ({ ...call, ts: "pair" }));
+  const errors = [
+    ...gradeTerminal(task.expect.terminal, terminal).errors,
+    ...gradeTools(task.expect.tools, recorded).errors.map((error) => `expect.tools: ${error}`),
+    ...gradeOperations(task.expect.ops, recorded).errors.map((error) => `expect.ops: ${error}`),
+    ...gradeWrites(task.expect.writes, recorded).errors.map((error) => `expect.writes: ${error}`),
+  ];
+  if (task.expect.question?.required === true && !options.question) errors.push("expected a user question");
+  return errors;
+}

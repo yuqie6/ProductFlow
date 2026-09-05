@@ -11,8 +11,8 @@
   ],
   "utterances": [
     "运行这个商品的生成工作流",
-    "马上开始生成主图",
-    "替我重跑失败的图任务"
+    "为筛选中的这个商品提交整图运行请求",
+    "在全局会话请求运行当前商品工作流"
   ],
   "world": "global-library",
   "page_context": {
@@ -34,7 +34,7 @@
   },
   "expect": {
     "terminal": [
-      "succeeded"
+      "awaiting_confirmation"
     ],
     "tools": {
       "required": [
