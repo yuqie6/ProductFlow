@@ -99,6 +99,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
 
+2026-09-05 连续生图状态读取窄修：`serialize.go:loadStatus` 的最新轮次查询仅取 `id/generation_group_id`，状态与详情共用的 effect 摘要查询不再加载 `request_json/result_json`。`status_projection_test.go` 在真实 PG 查询结果上检查字段未加载，并验证 26 个 queued/running 任务不截断、effect 响应字段不变；fixture 中排除的原始 JSON 共 3,539,646 字节。原始数据仍存于 PG，执行/对账读取未改。ImageSession 包测、race 与原目标规模 HTTP gate 通过；该 gate 的历史页面形状不构成活动 SSE 负载验收，也不据此前后两次跑分宣称延迟收益。活动集数量、必要响应字节、轮次计数和每订阅回读仍需独立评估。
+
 ## 下一步如何选择
 
 后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件，尚未发布或认领实施 issue。

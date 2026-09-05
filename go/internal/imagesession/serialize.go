@@ -142,7 +142,8 @@ func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) 
 		return StatusResponse{}, err
 	}
 	var latest schema.ImageSessionRounds
-	err = tx.WithContext(ctx).Where("session_id = ?", sessionID).Order("created_at DESC, id DESC").Take(&latest).Error
+	err = tx.WithContext(ctx).Select("id", "generation_group_id").
+		Where("session_id = ?", sessionID).Order("created_at DESC, id DESC").Take(&latest).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return StatusResponse{}, err
 	}
@@ -434,7 +435,8 @@ func listEffectsByTaskIDs(ctx context.Context, tx *gorm.DB, taskIDs []string) (m
 		return out, nil
 	}
 	var rows []schema.ImageSessionProviderEffects
-	if err := tx.WithContext(ctx).Where("generation_task_id IN ?", taskIDs).
+	// These raw payloads belong to execution/reconciliation, not the task response.
+	if err := tx.WithContext(ctx).Omit("request_json", "result_json").Where("generation_task_id IN ?", taskIDs).
 		Order("generation_task_id ASC, candidate_start_index ASC, id ASC").Find(&rows).Error; err != nil {
 		return nil, err
 	}
