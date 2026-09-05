@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,6 +39,9 @@ var sealedDocsOnly = map[string]bool{
 }
 
 var goOpsExtras = map[string]bool{
+	"GET /api/v3/image-generation-options":                                              true,
+	"POST /api/v3/products/from-recipe":                                                 true,
+	"POST /api/v3/workflow-recipes/{}/creation-preview":                                 true,
 	"GET /healthz/ready":                                                                true,
 	"GET /api/v2/agent-control/events":                                                  true,
 	"GET /api/v2/agent-conversations/{}/turns/{}/events/page":                           true,
@@ -56,8 +60,10 @@ var goOpsExtras = map[string]bool{
 	"POST /api/v2/product-source-notes/generate":                                        true,
 }
 
-// Historical snapshot still lists retired Agent library-effect and single-event routes.
+// Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.
 var sealedRetired = map[string]bool{
+	"GET /api/v3/products/{}/image-assets/{}/fidelity-checks":                          true,
+	"POST /api/v3/products/{}/image-assets/{}/fidelity-checks":                         true,
 	"POST /api/internal/v1/agent-conversations/{}/asset-moves":                         true,
 	"POST /api/internal/v1/agent-conversations/{}/asset-moves/prepare":                 true,
 	"POST /api/internal/v1/agent-conversations/{}/asset-moves/reconcile":               true,
@@ -124,7 +130,15 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 		sealedKeys[key] = true
 	}
 
-	var missing []string
+	missing, extra := routeContractDrift(goKeys, sealedKeys)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("HTTP route contract drift\nmissing in Go (%d):\n  %s\nextra in Go (%d):\n  %s",
+			len(missing), strings.Join(missing, "\n  "),
+			len(extra), strings.Join(extra, "\n  "))
+	}
+}
+
+func routeContractDrift(goKeys, sealedKeys map[string]bool) (missing, extra []string) {
 	for key := range sealedKeys {
 		if sealedDocsOnly[key] || sealedRetired[key] {
 			continue
@@ -133,8 +147,16 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 			missing = append(missing, key)
 		}
 	}
-	var extra []string
+	for key := range goOpsExtras {
+		if !goKeys[key] && !sealedKeys[key] {
+			missing = append(missing, key)
+		}
+	}
 	for key := range goKeys {
+		if sealedRetired[key] {
+			extra = append(extra, key+" (retired)")
+			continue
+		}
 		if goOpsExtras[key] {
 			continue
 		}
@@ -144,10 +166,29 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 	}
 	sort.Strings(missing)
 	sort.Strings(extra)
-	if len(missing) > 0 || len(extra) > 0 {
-		t.Fatalf("HTTP route contract drift\nmissing in Go (%d):\n  %s\nextra in Go (%d):\n  %s",
-			len(missing), strings.Join(missing, "\n  "),
-			len(extra), strings.Join(extra, "\n  "))
+	return missing, extra
+}
+
+func TestRouteContractDriftRejectsMissingAddedAndRevivedRetiredRoutes(t *testing.T) {
+	const added = "GET /api/v3/image-generation-options"
+	const retired = "GET /api/v3/products/{}/image-assets/{}/fidelity-checks"
+	for _, tc := range []struct{ name, remove, add, missing, extra string }{
+		{name: "current"},
+		{name: "added route removed", remove: added, missing: added},
+		{name: "retired route revived", add: retired, extra: retired + " (retired)"},
+		{name: "unregistered addition", add: "GET /unexpected", extra: "GET /unexpected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := maps.Clone(goOpsExtras)
+			delete(current, tc.remove)
+			if tc.add != "" {
+				current[tc.add] = true
+			}
+			missing, extra := routeContractDrift(current, map[string]bool{retired: true})
+			if strings.Join(missing, ",") != tc.missing || strings.Join(extra, ",") != tc.extra {
+				t.Fatalf("missing=%v extra=%v", missing, extra)
+			}
+		})
 	}
 }
 

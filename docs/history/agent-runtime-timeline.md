@@ -1439,3 +1439,13 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 起点为父进程已确认退出、读取任务/图片并完成可选取消之后，终点为 dispatcher callback 再次接收同一信封。按 20ms 间隔执行真实 dispatcher，等待真实 available_at，无时间戳改写；不是 worker 启动或第二张出图时延，也不包含真实 Redis/broker。两路径初始加恢复投递各为 2；正常恢复只调用一次 provider，完成两张；取消调用零次，保留一张。业务 attempts=1，首张实际下载 SHA-256 保持。该窗口不再受旧 35 分钟 lease 阻挡，不能把未实等的旧等待换算成性能百分比或生产 p95。
 
 最终 Git blob：执行器=`375616475a33a4047b22108c83f45141f2c94407`、跨进程测试=`d41aadf08ccb4c33f28af513cf9c386a749ec41b`、事务测试=`7153228566b74353524554064496e3fe328b7f02`。中英文架构与组内当前状态同步。主代理自审 task→envelope 锁序、事务所有权、allowActiveLease 的受围栏调用点、旧 token CAS、投递与业务 attempts 区分及完整 diff；未运行真实 provider 或整树发布门。检查点前进程退出、单次 provider 卡住及真实 broker 多副本容量仍需分别验证。
+
+## 2026-09-06 后端集成复验与现行路由合同
+
+启动时 HEAD=`b82cfae5975ba66b8ca901d01ee6777ae1f8a9c4`，Go/Agent/Web 代码无本地差异，工作树有其他组文档改动，未发现并行 Go 测试。运行 `GOFLAGS=-count=1 just go-test`，使用 dev env 和串行包执行，最终退出 1：26 个包通过、3 个包失败、9 个包无测试。Graph 179.633s、ImageSession 26.826s、queue 10.445s、schema 11.619s 均通过；时长为包运行时间，不是业务延迟。
+
+失败分别为：API 封存路由检查报告缺少 2 条人工保真路由、额外 3 条已交付路由；Agent 的 TestEvalObservationFixtures 报 catalog.json 漂移（包 91.600s）；imageeval 编译阶段报告 ProductInput / resolveProductInputs 未定义。运行期间其他组修改了 imageeval types/harness 并新增 product_input 文件，结束时相应工作树仍有变更；编译失败记录只代表当时读取状态，不据此判定最终代码缺陷。该轮代码输入未冻结，不能把整份结果归为 b82cfae5 固定候选证据。recipe 与 prompts 本轮通过，不沿用旧失败结论。
+
+路由差异核对现行权威：图片质量 IMG-D-08 明确退役人工保真 HTTP；架构与配方创建交付记录拥有 creation-preview、products/from-recipe；node-detail-contract-completion 交付 image-generation-options。仅修改 API 路由合同测试中的历史差异清单，未恢复退役 API、改注册代码或重生成历史 contracts/http-routes.json。检查器同时要求登记的新路由存在，并拒绝退役路由复活，避免新增清单退化为忽略名单。
+
+修复后经 dev env wrapper 独立运行 `go test -C go ./cmd/productflow-api -race -count=1 -v -timeout 1m`，完整包 PASS（1.072s）：实际注册、未授权响应和新增检查器回归均通过。检查器四场景为现行集合接受、已登记新增路由缺失拒绝、退役路由复活拒绝、未登记新增路由拒绝。测试 Git blob=`4fabf72745174138e54f5ae7091f1c4b49dbafd1`。完整 Go 的 API 失败来自修复前版本；本次未在移动工作树上再次重跑整套测试。主代理自审差异清单依据、正反例、排序和完整任务 diff；未修改 Agent 评测夹具或图片质量组在途代码，未调用真实 provider。G-07 仍须冻结候选后执行完整规定门。

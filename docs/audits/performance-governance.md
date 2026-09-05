@@ -70,6 +70,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 ## 如何判读证据
 
+2026-09-06 [后端集成复验与现行路由合同](../history/agent-runtime-timeline.md#2026-09-06-后端集成复验与现行路由合同)：无缓存全 Go 26 包通过、3 包失败、9 包无测试；运行期间其他组代码变化，不作为固定候选全量证据。已修复历史路由差异检查并通过完整 API 包 race 回归；Agent 夹具漂移和图片评测在途编译结果保留原始边界。
+
 | 证据层次 | 能支持什么 | 不能支持什么 |
 |---|---|---|
 | 当前源码与合同测试 | owner、字段、锁顺序、状态迁移和具体反例 | 实际负载延迟、部署可用性 |
@@ -176,7 +178,7 @@ Go 包测需要 PG 时通过 `bash scripts/with_dev_env.sh bash -lc 'go test -C 
 
 <a id="production-gates"></a>
 
-G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-S6 实现切片已交付并收入 [原生产计划及历史验收](../history/agent-runtime-timeline.md#platform-production-gate-history)，不重新开工。历史 PASS 保留；本次只改文档，未产生新候选的全量 PASS。
+G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-S6 实现切片已交付并收入 [原生产计划及历史验收](../history/agent-runtime-timeline.md#platform-production-gate-history)，不重新开工。历史 PASS 保留；后续局部实现与验证见本页证据，不自动构成新候选全量 PASS。
 
 | Gate | 必须证明 | 现有证据资格 |
 |---|---|---|
@@ -186,7 +188,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | G-04 浏览器恢复 | 普通断线、gap、重复、旧 generation、overflow、terminal gap、approval 刷新；无错误断线提示 | 2026-09-05 `ebc7630d` 工作树 `web-e2e-agent-sse` 5 passed；[2026-09-06 原生 EventSource 截断恢复](../history/agent-runtime-timeline.md#2026-09-06-agent-原生-sse-连接截断恢复) 三轮 cursor 0→1、序号各一次、无运行时错误，261.7–262.8ms。单次有限重放，不替代其余矩阵或完整 UI 复验 |
 | G-05 标准容量 | 25 并发 Turn、100 SSE、单 Turn 10k 事件、单会话 1000 Turn，及上表时延与正确性断言 | [2026-09-06 分场景复验](../history/agent-runtime-timeline.md#2026-09-06-agent-容量分场景与实时-sse)：1×10k 深度 / 25×128 并发写 p95 68.57/203.30ms；100 SSE 同一新事件 p95 37.52ms。[浏览器补洞](../history/agent-runtime-timeline.md#2026-09-06-agent-隔离浏览器补洞容量) 10k 事件三轮 595.0/587.3/664.3ms，满足 5s。各维度独立、固定小正文，未测同时满载或持续推送；当前移动工作树不签固定候选全量通过 |
 | G-06 真实业务 | 冻结真实模型/配置的完整 Skill 评测、审批到单一 WorkflowRun、真实图运行、Chromium；确认有效 background 能力为 false | 真实审批/出图已有历史 PASS，行为门仍由 [Agent 质量组](agent-eval-system.md) 的固定 `run_id` 裁定；旧 `gpt-5.6-luna` 15/15 冒烟不满足 L1-L6 出口 |
-| G-07 候选全量 | 干净固定 checkout，无缓存 Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、diff check | `fb658633` 于 2026-09-04 通过；证据只属于该基线，当前候选未在本轮重跑 |
+| G-07 候选全量 | 干净固定 checkout，无缓存 Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、diff check | `fb658633` 于 2026-09-04 通过；2026-09-06 全 Go 集成复验失败且运行期间代码变化，不能签收固定候选；详见[集成复验证据](../history/agent-runtime-timeline.md#2026-09-06-后端集成复验与现行路由合同) |
 
 当前有效能力保持 D-03：provider profile 与 adapter 能力取交集，Pi adapter 的 `background_resumable` 为 false；不新增绕过 Pi 的模型执行器。字段存在不表示可以后台续跑。PG 权威、7 天 chunk 压缩、不可恢复模型中断与 effect 对账的 D/C 合同在历史来源和现行代码中保留，不因文档重排放宽。
 
