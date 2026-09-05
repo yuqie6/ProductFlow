@@ -1402,3 +1402,20 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 最初 race 夹具在 2s 窗口内还执行 mock 的 PNG 编码，出现 context deadline exceeded；普通构建同测试 PASS（4.038s），单独初始化队列连接后 race 仍失败。将固定 PNG 编码移到计时外后完整 ImageSession 包 `go test -C go ./internal/imagesession -count=1 -race -timeout 3m` PASS（39.866s）。未放宽生产时限或测试 2s 窗口。随后三个新增/更新测试 `-count=3 -race -v -timeout 2m` PASS（40.410s）：三轮分段累计 5.823477/5.859620/5.866596s，每轮均 3 个窗口、3 次 provider、1 次业务尝试；限流上限与真实 deadline 边界各三次通过。
 
 最终 Git blob：执行器=`83b2a07a7903c5e99547b79b362797fca9cdf422`，分段测试=`94d984460cbe212b5d19c0c9057c143866b4e0d6`，部分完成 deadline 测试=`b99e04692553ab50e091cc3af65900542d1eff8c`。中英文架构同步批次续投和 attempts 语义。主代理自审 consumer ErrLater 路径、checkpoint 围栏、失败计数、固定输入及完整 diff；未改 queue/Graph lease 或重跑整树发布门。单次 provider 本身超时仍应 unknown；checkpoint 已提交但信封释放失败的恢复、真实 broker 长时间运行及跨批次用户取消仍需进一步故障验证。
+
+## 2026-09-06 连续生图检查点退出与取消恢复
+
+新增 `TestImageCheckpointExitRecovery`，使用独立迁移 PG、父进程真实鉴权 HTTP 和共享的本次临时媒体目录。真实 dispatcher 先将一条信封标 SENT，再由同一测试二进制的子进程执行 queue.Consume；actor 保存第一候选、确认 applied、提交 queued 检查点并返回 ErrLater 后，子进程直接 os.Exit(23)，不执行 consumer 的 ReleaseForRetry 或任何 defer。父进程必须观察到实际退出码 23；该注入属于进程突然退出，不称为 SIGKILL 或真实 broker 崩溃。
+
+退出后，PG 中任务 queued、completed=1、首个 effect applied，信封仍 SENT 且持有消费 lease。测试将 sent_at 推到 10 分钟前，但保持 lease 有效，真实 RunDispatcherOnce 不增加投递；只在随后把 lease_expires_at 推到过去时才对账并重新投递同一信封。初始及恢复两次 dispatcher 只用本地 enqueue callback 记录身份，不启动 Redis。独立库内时间推进用于验证判定条件，不是实等默认 35 分钟。
+
+| 场景 | 恢复后的 provider 调用 | 最终完成数 / 状态 | 信封与素材 |
+| --- | --- | --- | --- |
+| 未取消 | 1 次，仅第二候选 | 2 / succeeded | CONSUMED、无 lease、两个 effect applied |
+| 检查点后经真实 HTTP 取消 | 0 次 | 1 / cancelled | CONSUMED、无 lease、首个 effect applied |
+
+两场景业务 attempts 均为 1，初始和恢复投递合计各 2 次，首张资产 ID 保留。最终加强为子进程退出后、恢复/取消处理后各走一次真实下载接口，要求响应 200、非空图片字节及 SHA-256 相等；不只检查 DB 投影身份。
+
+加强有效 lease 反例后的中间版本 `-race -count=3` PASS（23.373s）；最终增加下载字节断言后，dev env wrapper 下 `go test -C go ./internal/imagesession -run "^TestImageCheckpointExitRecovery$" -race -count=2 -v -timeout 2m` PASS（16.026s），两场景各两次。运行时没有改变，不报告时延优化。测试 Git blob=`4daaac619d4bc0202607335644cfde4e3270a00e`；被测执行器=`83b2a07a7903c5e99547b79b362797fca9cdf422`，dispatcher=`6689457df88da4575f23612f29fe595ce0a460ae`。
+
+这一窗口的信封恢复资格需要同时满足 lease 失效和 sent_at 达到 5 分钟对账阈值；默认消费 lease 为 claim 后 35 分钟，还需等待 dispatcher 调度和批次额度。任务已 queued，不使用 ImageSession running 的 90 分钟闲置恢复。安全性已有直接证据，恢复等待仍可能较长，不能把测试中的时间推进写成即时恢复能力。主代理自审子进程边界、身份隔离、有效 lease 反例、用户取消、下载字节和全部 diff；未启动共享服务或真实 provider，未重跑全 Go 或整树发布门。
