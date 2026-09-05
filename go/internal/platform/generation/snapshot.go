@@ -77,12 +77,13 @@ func countOverview(ctx context.Context, db *gorm.DB) (int, int, error) {
 	sessionCounts := db.Model(&schema.ImageSessionGenerationTasks{}).
 		Select("COUNT(*) FILTER (WHERE status = ?) AS running, COUNT(*) FILTER (WHERE status = ?) AS queued", "running", "queued").
 		Where("status IN ?", []string{"running", "queued"})
-	graphActivity := db.Model(&schema.WorkflowGraphRuns{}).
-		Select(`EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?) AS has_running,
-			EXISTS (SELECT 1 FROM workflow_graph_node_runs n WHERE n.graph_run_id = workflow_graph_runs.id AND n.status = ?) AS has_queued`, "running", "queued").
-		Where("status = ?", "running")
+	graphActivity := db.Model(&schema.WorkflowGraphNodeRuns{}).
+		Select("BOOL_OR(workflow_graph_node_runs.status = ?) AS has_running", "running").
+		Joins("JOIN workflow_graph_runs r ON r.id = workflow_graph_node_runs.graph_run_id").
+		Where("r.status = ? AND workflow_graph_node_runs.status IN ?", "running", []string{"running", "queued"}).
+		Group("workflow_graph_node_runs.graph_run_id")
 	graphCounts := db.Table("(?) AS active_runs", graphActivity).
-		Select("COUNT(*) FILTER (WHERE has_running) AS running, COUNT(*) FILTER (WHERE NOT has_running AND has_queued) AS queued")
+		Select("COUNT(*) FILTER (WHERE has_running) AS running, COUNT(*) FILTER (WHERE NOT has_running) AS queued")
 	var counts struct {
 		Running int64
 		Queued  int64

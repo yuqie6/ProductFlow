@@ -110,7 +110,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 空任务投影不再读取无用的队列概览。其他会话有 25,010 个 queued 任务时，空详情/Status 各 100 次请求的队列查询均从 500→0，p95 分别从 10.63→6.29ms、9.47→4.54ms；返回终态任务的详情仍保留队列字段。输入、字节和取样口径见 [空任务读取对照](../history/agent-runtime-timeline.md#2026-09-05-连续生图空任务读取与全局积压隔离)。该结果不覆盖仍需返回任务的活动会话成本。
 
-展示用队列总览的 4 条独立 COUNT 已合为单条聚合 SQL，修复任务/图节点 running↔queued 切换时的双计与漏计。4 个交错及 5 个分类场景各重复 20 次 race 通过；同活动 SSE fixture 的总览查询（含配置）160→64，每次回读 5→2。该口径不同于前述“任务表 COUNT”；容量配置与 admission 仍独立。详见 [队列快照对照](../history/agent-runtime-timeline.md#2026-09-05-展示队列单语句快照与查询对照)，大规模活跃 Graph 的执行计划和延迟仍未签收。
+展示用队列总览的 4 条独立 COUNT 已合为单条聚合 SQL，修复任务/图节点 running↔queued 切换时的双计与漏计。4 个交错及 5 个分类场景各重复 20 次 race 通过；同活动 SSE fixture 的总览查询（含配置）160→64，每次回读 5→2。该口径不同于前述“任务表 COUNT”；容量配置与 admission 仍独立。详见 [队列快照对照](../history/agent-runtime-timeline.md#2026-09-05-展示队列单语句快照与查询对照)。后续活跃 Graph 测量发现关联 EXISTS 重复探测；按 run 聚合活动节点后，25k 活动 runs / 100k nodes 的总览 p95 从 474.15→40.23ms，单语句快照与 running 优先语义保留。[活跃规模记录](../history/agent-runtime-timeline.md#2026-09-05-队列总览活跃-graph-聚合) 另覆盖 100/0 活动 run；此为隔离 PG 本地读取证据，未覆盖多订阅 HTTP/SSE 容量。
 
 2026-09-05 连续生图故障可见状态：[perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 钉死四类结果。未过 provider 边界则重排队；已 applied 不重放；不可证明结果为 `unknown` 且不可自动重试；无 parked question。asynq 取消 handler ctx 后 worker 仍写 `unknown`。心跳未过期不恢复；晚到 `finishSucceeded` 不能覆盖 `unknown`。进程崩溃后 running 上限为最后一次 heartbeat + 默认 90 分钟 + recovery 10s / 25 条批次。asynq 30 分钟墙钟仍可能打断顺序多候选任务。未改全局 `TaskTimeout`。
 
@@ -136,6 +136,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | Graph 锁、lease、取消与自动采用 | `go test -C go ./internal/graph`；锁序和 lease 测试按场景重复/race | 无死锁、迟到 writer 拒绝、用户文稿与产物状态一致 |
 | 投递、恢复、admission | queue/dispatcher/受影响领域包；已有 `dispatch_latency_test.go`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；进程测试不替代容器拓扑 |
 | Graph 读取 | `just go-test-graph-query-plan`、`just http-ab-gates`、`just web-e2e-workbench-performance`、`just web-build` | 实际 SQL、响应字段/字节、TTI、按需请求、active-run fixture |
+| 共享展示队列总览 | `just go-test-queue-overview-load`、generation 快照交错回归 | 25k runs / 100k nodes，活动 run 为 25k/100/0；running 优先、终态父 run 排除、实际 SQL 计划与总览读取 p95 <300ms。本地回归预算不构成 HTTP 或生产 SLO |
 | ImageSession 读取 | `just go-test-imagesession-query-plan`、`just go-test-imagesession-http-load`、包内 HTTP/SSE 回归 | 详情、历史、Status 各自的数据形状；静态页面 gate 不覆盖活动 SSE 成本 |
 | ImageSession 活动 Status | `just go-test-imagesession-active-status`；包内 `TestImageSessionStatusActiveSetHTTP` | 26/100/300 活动任务不截断、`has_active` 与列表一致、无原始 JSON、固定夹具 `<1MiB`；查询次数不随活动集线性增加 |
 | ImageSession SSE 重复快照 | `just go-test-imagesession-sse-load` | 固定订阅/字段宽度下的帧数、正文、PG 回读、心跳、无通知变化、终态及重连；不等同完整容量门 |

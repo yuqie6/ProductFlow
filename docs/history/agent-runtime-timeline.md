@@ -1083,3 +1083,33 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 `just go-test-imagesession-sse-load` 前后 PASS（19.955s / 19.863s）；generation / imagesession 普通包测 PASS（1.502s / 7.454s）。共享工作树有其他模块并发修改，本记录不构成固定候选发布验收。当前 HTTP、空任务回归的查询计数器已识别组合 SQL，空投影仍为 0，返回任务时的队列查询期望由 5 调整为 2；响应字段合同不变。
 
 扩展验证通过 dev env wrapper 显式开启 `PRODUCTFLOW_RUN_IMAGE_SESSION_HTTP_LOAD=1` 与 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1`，串行运行 `go test -C go ./internal/platform/generation ./internal/imagesession ./internal/graph -race -count=1 -p 1 -timeout 5m`：三个包 PASS（2.959s / 73.104s / 85.343s）。query-plan opt-in 本轮未开启。`just docs-check` 和 diff check PASS，主代理自审，仅提交共享总览、相关测试与文档，未纳入其他会话 schema/配方/评测改动。
+
+## 2026-09-05 队列总览活跃 Graph 聚合
+
+`df5b20fc` 的单语句总览保留了相关 EXISTS。25,000 个 running Graph run、每 run 4 个节点时，执行计划把 running EXISTS 用于两项 FILTER，形成 25,000 + 25,000 + 12,500 次节点探测，JIT 花费 110.899ms。修复仅修改 `platform/generation.countOverview`：JOIN running 父 run，筛选 queued/running 节点，按 graph_run_id 聚合 BOOL_OR，再分类计数。无活动节点与终态 run 不计；混合 run 只计 running。ImageSession 聚合、单语句快照、配置独立读取、admission 与锁合同均不变；未增加索引、缓存、持久状态或修改 JIT 配置。
+
+同输入前后对照：隔离迁移 PG 库，25k products、25k graphs、25k running runs、100k nodes；四类 run 各 6250，分别全部终态节点、全部 queued、全部 running、1 running + 3 queued。每次断言 running=12500、queued=6250、active=18750、AdmissionRunning=0。无 ImageSession 任务。snapshot_json 为 `{}`，其他字段使用 schema 默认值；本测试不读取业务正文，不能用于 payload 或内存结论。单客户端串行，预热 10 次、计时 100 次；计时覆盖 LoadQueueOverview 的配置读取和聚合，排序第 50/95 个样本；EXPLAIN 为另一次真实聚合 SQL。
+
+| 指标 | 修改前 | 修改后首轮 |
+|---|---:|---:|
+| 总览 p50 | 427.25ms | 38.12ms |
+| 总览 p95 | 474.15ms | 40.23ms |
+| 聚合 EXPLAIN execution | 421.812ms | 41.405ms |
+| 聚合 shared hit blocks | 344,088 | 1,670 |
+| 聚合 shared read blocks | 0 | 0 |
+
+本地 p95 下降约 91.52%。缓存页命中计数下降约 99.51%，不能解释为实际磁盘 IO、CPU 或 RSS 同比例下降。新计划采用集合 join/aggregate；全活动输入的顺序扫描合理，不设置一律禁止 Seq Scan 的断言。
+
+最终可重复入口 `just go-test-queue-overview-load` 使用 `overview_load_test.go`（SHA-256 `45452f1e04c750662f54d832d9254fd1c8ed3f9c24dc2b93f97f3a3abda1f054`）。运行时修改后 `snapshot.go` SHA-256 `236548ce906dfc9cb054666373f5e7b6411207e9f5d68e8ade74f527861bb03c`。追加两阶段只改变父 run 状态并 ANALYZE：保留前 100 个 running，随后全部终态；历史节点状态故意保留，以验证父状态过滤。各阶段独立预热 10 / 测量 100，实际结果如下。此复跑与全量 Go 测试同时进行，不替换首轮同输入对照。
+
+| 活动 run / 总 run | running / queued | 总览 p50 / p95 | 聚合 EXPLAIN execution |
+|---|---|---|---:|
+| 25,000 / 25,000 | 12,500 / 6,250 | 40.98 / 47.10ms | 40.893ms |
+| 100 / 25,000 | 50 / 25 | 18.35 / 19.88ms | 2.423ms |
+| 0 / 25,000 | 0 / 0 | 1.16 / 1.51ms | 0.093ms |
+
+三个阶段 PASS（总 13.533s），逐次结果断言通过。新增 p95 <300ms 是本地 SQL 读取回归预算，在首次稀疏测量前设定；旧稠密输入 p95 不满足该预算。该预算不继承为 ImageSession HTTP 或生产 SLO。无稀疏场景的旧实现对照，不宣称该场景性能提升。EXPLAIN 单次耗时不等于整次读取 p95；连接、配置读取与规划均会影响两者差异。
+
+验证：dev env 下 `TestQueueOverview|TestLoadSnapshot -race -count=20` PASS（11.623s）；`just go-test-imagesession-sse-load` PASS（20.158s），4 订阅 / 26 活动任务，32 次 Status 回读、64 条总览查询（含配置），进度、终态、心跳和重连断言通过。本轮 SSE 正文 133,580B，因另项已提交的 Status prompt 省略而不同于历史 359,468B，不归因为本次 SQL 优化。
+
+`just go-test` 已完整执行：generation / ImageSession / Graph PASS（1.148s / 8.316s / 71.840s），整树 FAIL。失败为 API `TestSealedHTTPRoutesAreRegistered`（fidelity-checks 缺失、配方创建额外路由）、Agent `TestEvalObservationFixtures`（catalog fixture 漂移）、recipe 两项 HTTP 测试（409 而非 200）、prompts `TestCatalogHasRequiredImageTypesAndNeedles`。这些断言不涉及本次 generation 查询，所在合同正有其他任务并发修改；未覆盖或重写其文件。本记录不构成 G-07 固定候选 PASS。`just docs-check`、diff check PASS；主代理自审查询语义、读写消费者和完整独占 diff，仅提交本切片。

@@ -131,6 +131,10 @@ go-test-graph-query-plan:
 go-test-agent-query-plan:
     PRODUCTFLOW_RUN_AGENT_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run TestAgentSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
 
+# Opt-in queue overview dense/sparse active Graph latency and EXPLAIN gate.
+go-test-queue-overview-load:
+    PRODUCTFLOW_RUN_QUEUE_OVERVIEW_LOAD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/generation -run TestQueueOverviewActiveGraphScale -count=1 -p 1 -v -timeout 4m'
+
 # Opt-in target-scale ImageSession list/history EXPLAIN gate in a disposable migrated database.
 go-test-imagesession-query-plan:
     PRODUCTFLOW_RUN_IMAGE_SESSION_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/imagesession -run TestImageSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
