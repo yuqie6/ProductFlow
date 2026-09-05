@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/graph"
@@ -156,6 +157,54 @@ func TestAdoptSkipsOverwriteWhenUndoDuringBriefCook(t *testing.T) {
 	}
 	if got.PendingCandidateArtifactID == nil {
 		t.Fatal("undo during rewrite must leave generated brief as a candidate")
+	}
+}
+
+func TestAdoptSkipsOverwriteWhenUndoDuringGraphRun(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	view := loadProjection(t, gs, productID, graphID)
+	brief := nodeOfType(t, view, graph.NodeCreativeBrief)
+	seedGoal := brief.Config["goal"]
+	cfg := cloneConfig(t, brief.Config)
+	delete(cfg, "document_origin")
+	cfg["goal"] = "整图跑前手填-将被撤销"
+	patchNodeConfig(t, gs, productID, graphID, brief.ID, "先手填", view.Revision, cfg)
+	prompt := &midRunGraphUndoEditor{
+		countingPrompt: authorityCountingPrompt(),
+		gs:             gs, productID: productID, graphID: graphID,
+	}
+	images := &midRunGraphUndoImage{editor: prompt}
+	resp := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
+		"scope": "graph",
+	})
+	gs.mustStatus(t, resp, 201)
+	var run graph.GraphRunResponse
+	gs.decode(t, resp, &run)
+	gs.executeLocallyWithTimeout(t, run.ID, graph.Executor{
+		DB: gs.db,
+		Deps: graph.Dependencies{
+			Prompt: prompt,
+			Image:  images,
+			Assets: product.Service{DB: gs.db, Media: gs.media},
+		},
+	}, canvasInjectExecuteTimeout)
+	if prompt.err != nil {
+		t.Fatal(prompt.err)
+	}
+	if !prompt.undone {
+		t.Fatal("expected mid-run undo during graph run")
+	}
+	after := loadProjection(t, gs, productID, graphID)
+	got := nodeOfType(t, after, graph.NodeCreativeBrief)
+	if jsonEqual(got.Config["goal"], "整图跑前手填-将被撤销") {
+		t.Fatal("undo during graph run must revert the authored brief")
+	}
+	if jsonEqual(got.Config["goal"], mockAuthorityBriefGoal) {
+		t.Fatal("undo during graph run must not let mock brief overwrite live goal")
+	}
+	if !jsonEqual(got.Config["goal"], seedGoal) {
+		t.Fatalf("undone brief goal %+v vs seed %+v", got.Config["goal"], seedGoal)
 	}
 }
 
@@ -382,6 +431,56 @@ func (p *midRunUndoEditor) GenerateCreativeBrief(ctx context.Context, req graph.
 	}
 	p.undone = true
 	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+}
+
+type midRunGraphUndoEditor struct {
+	countingPrompt
+	gs                 *graphServer
+	productID, graphID string
+	once               sync.Once
+	undone             bool
+	err                error
+}
+
+func (p *midRunGraphUndoEditor) undoOnce(ctx context.Context) {
+	p.once.Do(func() {
+		resp, err := p.gs.doContext(ctx, "POST", "/api/v3/products/"+p.productID+"/workflows/"+p.graphID+"/undo", nil, "")
+		if err != nil {
+			p.err = err
+			return
+		}
+		status := p.gs.readStatus(resp)
+		if status != http.StatusOK {
+			p.err = fmt.Errorf("undo status %d", status)
+			return
+		}
+		p.undone = true
+	})
+}
+
+func (p *midRunGraphUndoEditor) GenerateCreativeBrief(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p.undoOnce(ctx)
+	return p.countingPrompt.GenerateCreativeBrief(ctx, req)
+}
+
+func (p *midRunGraphUndoEditor) GenerateVisualOverlay(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p.undoOnce(ctx)
+	return p.countingPrompt.GenerateVisualOverlay(ctx, req)
+}
+
+func (p *midRunGraphUndoEditor) GeneratePrompt(ctx context.Context, req graph.PromptRequest) (graph.PromptResult, error) {
+	p.undoOnce(ctx)
+	return p.countingPrompt.GeneratePrompt(ctx, req)
+}
+
+type midRunGraphUndoImage struct {
+	countingImage
+	editor *midRunGraphUndoEditor
+}
+
+func (p *midRunGraphUndoImage) GenerateImage(ctx context.Context, req graph.ImageRequest) (graph.ImageResult, error) {
+	p.editor.undoOnce(ctx)
+	return p.countingImage.GenerateImage(ctx, req)
 }
 
 type midRunBriefCancelEditor struct {

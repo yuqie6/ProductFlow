@@ -2,7 +2,7 @@
 
 本账本管理 schema-v3 画布在 cook、Inspector 保存、候选审阅、undo 与 Agent 写入交错时的文稿权威合同。它衡量「AI 生成会不会盖掉用户已发布文稿」，不替代 [`agent-eval-system.md`](agent-eval-system.md) 的模型行为评测，也不替代 [`performance-governance.md#production-gates`](performance-governance.md#production-gates) 的 Agent 生产 Gate。
 
-**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C6 已完成。当前任务与认领见 [Issue 看板](tasks/README.md)；维护者核对整图跑中途撤销与浏览器 409 剩余缺口后再决定是否发单，不重复派版本语义修复。
+**工作流体验组章程。执行以已发布 issue 为界。** 接收原画布职责与架构 AR-01，当前交付聚焦编辑保存链；产品创建、图操作、生成结果与资产使用问题按实际合同发布，不因改组自动扩大实现范围。C0–C6 已完成。当前任务与认领见 [Issue 看板](tasks/README.md)。C3 整图跑中途撤销具名钉死已归档为 [canvas-graph-run-undo](tasks/archive/canvas-graph-run-undo.md)；剩余浏览器撤销与文稿 409 停止见 [canvas-c4-remainder](tasks/canvas-c4-remainder.md)，不重复派版本语义修复。
 
 ## 组职责与交接
 
@@ -60,7 +60,7 @@
 | C-00 | C0 单步合同 | origin、merge、section apply、何时 cook | `完成` | `document_test.go`、`document_candidate_test.go`、`select_test.go`、`ops_parse_test.go` |
 | C-01 | C1 mock HTTP cook | `graphServer` + `Executor`；O4 在 apply 前 live 不变；O2 mid-run 不覆盖 | `完成` | `cook_contract_test.go`；`TestForceRewritePromptDoesNotChangeLiveUntilApply` |
 | C-02 | C2 有界搜索 | 默认 8 条随机 walk（深度 ≤ 3）+ 6 类动作深度 2 穷举；失败 shrink；缺节点动作跳过 | `完成` | `authority_search_test.go`；`just go-test`；加深 `just go-test-canvas-search` |
-| C-03 | C3 回调插入写 | Mock provider 回调里发一次 HTTP ChangeSet（开跑时的 `base_graph_revision`，不重试 409）。整图跑中途改本节点 / 兄弟文稿 / 视觉 overlay / undo / 保存后取消。整图跑期间点改写必须排队且不得盖 live。同节点已采用后一次过期保存 409。`to_node` 与 `selection` 在手填提示词后不得盖 live。cook 协程不得 `t.Fatal` | `完成` | `authority_inject_test.go`；`TestAdoptSkipsOverwriteWhenUserEditsDuringRun`；`TestAdoptSkipsOverwriteWhenVisualEditedDuringGraphRun`；`TestCancelGraphRunKeepsMidRunInspectorSave`；`TestRewriteQueuedDuringGraphRunKeepsAuthoredLive`；`TestInspectorSaveAfterSameNodeAdoptConflicts`；`TestToNodeAndSelectionAfterAuthoredPromptKeepLive` |
+| C-03 | C3 回调插入写 | Mock provider 回调里发一次 HTTP ChangeSet（开跑时的 `base_graph_revision`，不重试 409）。整图跑中途改本节点 / 兄弟文稿 / 视觉 overlay / undo / 保存后取消。整图跑期间点改写必须排队且不得盖 live。同节点已采用后一次过期保存 409。`to_node` 与 `selection` 在手填提示词后不得盖 live。cook 协程不得 `t.Fatal` | `完成` | `authority_inject_test.go`；`TestAdoptSkipsOverwriteWhenUserEditsDuringRun`；`TestAdoptSkipsOverwriteWhenVisualEditedDuringGraphRun`；`TestAdoptSkipsOverwriteWhenUndoDuringBriefCook`；`TestAdoptSkipsOverwriteWhenUndoDuringGraphRun`；`TestCancelGraphRunKeepsMidRunInspectorSave`；`TestRewriteQueuedDuringGraphRunKeepsAuthoredLive`；`TestInspectorSaveAfterSameNodeAdoptConflicts`；`TestToNodeAndSelectionAfterAuthoredPromptKeepLive` |
 | C-04 | C4 浏览器 + mock 供应商 | 空闲时在检查器手填提示词，再点改写/补全/替换与按 section 应用。整图或节点 cook **正在跑**时检查器打字保存，adopt 不得盖 live（O2） | `完成` | `web/e2e/canvas-document-mock.spec.ts`、`just web-e2e-canvas-document`；2026-09-05 Chromium 3 passed（门禁临时切 mock 后恢复）。运行中打字：`mid-run inspector typing keeps live authored copy after graph adopt`。AR-01 基线/409/串行/失败阻止运行见 `useNodeDraftAutosave.test.ts` 等。指导 [canvas-inspector-midrun](tasks/archive/canvas-inspector-midrun.md) |
 | C-05 | C5 真 provider 整图 | skip-Agent 出一张真图；不覆盖 rewrite/候选 | `完成` | `just web-e2e-live-graph` → `direct-create-full-graph.spec.ts` |
 | C-06 | C6 Agent × 画布 | `ApplyAgentChangeSet` / `apply_graph_change_set_v1` 与整图 GraphRun 交错仍守 O2/O3 | `完成` | `authority_agent_interleave_test.go`；`go/internal/agent/canvas_authority_interleave_test.go` |
@@ -103,11 +103,11 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 | 保存后取消整图跑 | C3 | 完成 |
 | Agent 整图跑中途写入 | C6 | 完成 |
 | 节点 rewrite 中途 undo | C3 | 完成 |
-| 整图或节点 cook 进行中，检查器打字保存 | C4 | 缺失 |
-| 整图跑中途撤销 | — | 未单独覆盖（现有 undo 在节点 rewrite） |
-| 浏览器看到文稿 409 后停止 | C3 有 409 断言；C4 无 | 部分 |
+| 整图或节点 cook 进行中，检查器打字保存 | C4 | 完成（`mid-run inspector typing keeps live authored copy after graph adopt`） |
+| 整图跑中途撤销 | C3 HTTP 完成（`TestAdoptSkipsOverwriteWhenUndoDuringGraphRun`）；C4 浏览器见 [canvas-c4-remainder](tasks/canvas-c4-remainder.md) | 部分 |
+| 浏览器看到文稿 409 后停止 | C3 有 409 断言；C4 Playwright 见 [canvas-c4-remainder](tasks/canvas-c4-remainder.md) | 部分 |
 
-当前实现事实（C4 可能踩到）：`ProductWorkbenchSurface` 传给检查器的 `busy` 是结构保存，不是 GraphRun，运行中输入框按理可编辑。`useNodeDraftAutosave` 的 `serverEditVersion` 是整图 `revision`；兄弟采用导致 refetch 时，当前节点 config 没变也可能挡住保存。Mock 瞬时返回，自动保存 debounce 700ms。
+当前实现事实：`ProductWorkbenchSurface` 传给检查器的 `busy` 是结构保存，不是 GraphRun，运行中输入框与撤销按钮按理可操作。检查器草稿基线沿 autosave → Inspector → Surface → `commitNode` 传递；兄弟节点配置变更不再把未改节点的脏草稿标冲突。文稿 `commitNode` 遇 409 不重放；`executeApply` 仅纯 `move_nodes` 自动重放。Mock 瞬时返回，自动保存 debounce 700ms。
 
 ## 明确不做
 

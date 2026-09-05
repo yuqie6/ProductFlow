@@ -18,6 +18,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [canvas-c4-remainder.md](canvas-c4-remainder.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | 评测 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 开放 | — | — |
 | [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
