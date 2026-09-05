@@ -126,8 +126,8 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 | 检查器保存与运行交错 | autosave → Inspector → Surface → `commitNode` → Graph Command | AR-01、C0-C4、C6 的已归档证据 | 完成 |
 | 运行此场景 | `GraphShotFilmstrip` / 画布分组 → `shotRunRequest` → 一次 `selection`，只含该组生图节点；保存 flush 后提交 | `canvas-run-recovery.spec.ts` 核一次 selection、两张 detail 成功、hero 未运行、全部 config 与 authored 不变；另验保存失败不提交 | 完成 |
 | 失败后修正并重试、仅重试失败节点 | Inspector / RunsPanel → `/runs/:id/retry` 或 `selection` → 按当前图重新提交；原 run 保留 | `canvas-run-recovery.spec.ts` 核真实选图修复、POST 原 run retry、新 run 成功、旧 run failed；混合结果只重试失败节点且保留成功兄弟资产；unknown/cancelled/live 排除有确定性回归 | 完成 |
-| 结果预览与原图下载 | GraphRunsPanel / ProductImageExplorer → 明确资产预览和 download URL | C5 已取真实生成 bytes；图库 HTTP 覆盖 ZIP 与归属；未找到浏览器点击下载并核文件的用例 | 部分完成 |
-| 交付规格、生成交付图和交付包 | `DeliveryRenditionPanel` → rendition job → 确定性渲染；Explorer → delivery export | `delivery/http_test.go` 验提交、幂等与结果 lineage；`export_archive_test.go` 验 manifest、SHA256 与完整/部分导出；Web 仅规格/选择/按钮测试，无该链浏览器用例 | 部分完成 |
+| 结果预览与原图下载 | GraphRunsPanel / ProductImageExplorer → 明确资产预览和 download URL | `canvas-delivery.spec.ts` 实际预览图片非空，浏览器下载原图并核 SHA256；C5 保留真实 provider bytes 证据 | 完成 |
+| 交付规格、生成交付图和交付包 | `DeliveryRenditionPanel` → rendition job → 确定性渲染；Explorer → delivery export | `canvas-delivery.spec.ts` 两规格保存/渲染、原图不变、下载 PNG 尺寸与 ZIP 文件/manifest lineage/hash；混选原图拒绝和 503 可见反馈；Go delivery 24 tests passed | 完成 |
 | 绑定、拖入参考与固定当前结果 | Explorer / Canvas → 明确 asset id 的 ChangeSet；固定结果创建独立 image_asset，不自动连边 | `graphAssetDrop.test.ts` 验操作计划；actions 浏览器验绑定但不连线显示 unused；固定结果、拖入端口后的持久身份未有完整浏览器证据 | 部分完成 |
 | 保存配方、预览并确认应用 | `recipeSave` / `RecipeLibraryPanel` → `/recipes` → Graph Command | `recipe/http_test.go` 验 fragment 保存/预览/应用及 full 冲突；现有 proof/actions 浏览器到确认预览或取消为止，未确认后核新图/合并图 | 部分完成 |
 
@@ -136,7 +136,7 @@ C2 加深：`PRODUCTFLOW_CANVAS_SEARCH_WALKS` 默认 8；`just go-test-canvas-se
 ### 后续交付次序
 
 1. [场景运行与失败恢复](tasks/archive/canvas-run-recovery-proof.md)：已完成，`just web-e2e-canvas-run-recovery` 隔离 mock 浏览器 4 passed（34.9s）。场景选点、修复参考后重试成功、只重试失败节点、保存失败不提交均核真实业务状态；原失败历史、成功兄弟结果和手填文稿保持。
-2. [结果交付](tasks/canvas-delivery-proof.md)：选规格、产物尺寸/格式/源图身份、下载文件、ZIP manifest 与资产 lineage。优先级 P1，验收商家能拿到可使用的文件。
+2. [结果交付](tasks/archive/canvas-delivery-proof.md)：已完成，`just web-e2e-canvas-delivery` 隔离 mock 浏览器 2 passed（16.8s）；原图/交付图下载、规格、ZIP manifest/lineage/hash 与失败反馈通过。图片视觉质量仍由图片质量组验收。
 3. [资产复用与配方确认](tasks/canvas-asset-recipe-proof.md)：绑定、固定当前结果、片段确认合并及完整配方冲突；复跑既有图编辑动作。优先级 P2，不重复实现编辑器。
 
 以上为测量与交付缺口，根因未证实前不预设需要改生产代码。mock/live 必须使用隔离环境或已确认的共享 provider/worker 窗口；不能覆盖图片组资源。路线图中的新交互设计不自动成为本批次实现要求。

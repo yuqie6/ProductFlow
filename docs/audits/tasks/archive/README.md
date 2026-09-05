@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [canvas-delivery-proof.md](canvas-delivery-proof.md) | 完成 | 浏览器原图/交付图下载与 ZIP 谱系/hash，失败反馈，2 passed；Go delivery 24 tests passed |
 | [eval-observable-input-contract.md](eval-observable-input-contract.md) | 完成 | 75 条 L1 逐题审核，成功/未知、真实状态、授权时序与攻击行为评分修复；素材读取缺口仍阻塞完整能力测量与自进化基线 |
 | [canvas-run-recovery-proof.md](canvas-run-recovery-proof.md) | 完成 | 隔离 mock 浏览器四条通过：场景选点、修复后重试、只重试失败、保存失败阻止运行 |
 | [canvas-workflow-coverage.md](canvas-workflow-coverage.md) | 完成 | 完整操作链核查与 274 条前端回归通过；场景/重试、交付图、资产/配方浏览器证据另单补齐 |
