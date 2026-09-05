@@ -163,7 +163,7 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 - `image_session_attach`
 - `local_edit`
 
-商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。图片会话列表按 `updated_at DESC, id DESC` 使用版本化游标分页，默认 20 条、最多 100 条；列表只返回最新资产和轮次摘要，详情再读取任务与轮次明细。
+商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。图片会话列表按 `updated_at DESC, id DESC` 使用版本化游标分页，默认 20 条、最多 100 条；列表只返回最新资产和轮次摘要，详情再读取任务与轮次明细。连续生图 worker claim 与 Graph 共用全库 `generation_max_concurrent_tasks` advisory，顺序为 capacity → task；HTTP `Generate` 只写 queued 与 PENDING，不持该锁、不增加 denied。
 
 DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩放和格式规范异步生成交付文件。交付文件不替换源图。内置 DeliverySpec 模板由 `go/internal/delivery` 提供，只读 API 顺序为淘宝/天猫首屏 3:4、京东主图 1:1、Amazon 主图 1:1、详情竖图 3:4、场景横图 4:3。模板是便捷默认值，不构成平台审核或合规保证；用户可以覆盖宽高、格式和体积。来源标记为 `docs/ARCHITECTURE.md §7`。
 

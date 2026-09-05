@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -334,6 +333,7 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 }
 
 // Generate 创建 queued 生成任务并写入 PENDING dispatch；HTTP 不直接入队 broker。
+// 容量 admission 在 worker claim，入队不持 generation advisory、不增加 denied。
 // 提示词空/超长、尺寸或 tool 非法返回 Validation；会话或图片不存在返回 NotFound。
 func (s Service) Generate(ctx context.Context, sessionID string, req GenerateRequest) (DetailResponse, error) {
 	prompt := strings.TrimSpace(req.Prompt)
@@ -361,9 +361,6 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	toolOpts := filterToolOptions(req.ToolOptions, s.allowedToolFields(ctx))
 	var taskID string
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := graph.GenerationCapacityAvailable(ctx, pgxTx); err != nil {
-			return fmt.Errorf("generation capacity: %w", err)
-		}
 		sessAssets, err := listAssets(ctx, pgxTx, sessionID)
 		if err != nil {
 			return fmt.Errorf("list assets: %w", err)

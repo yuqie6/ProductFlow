@@ -161,7 +161,7 @@ Current origins:
 - `image_session_attach`
 - `local_edit`
 
-The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset. Image-session lists use a versioned keyset cursor ordered by `updated_at DESC, id DESC`, default to 20 items, and cap pages at 100; the list returns latest-asset and round summaries while detail reads rounds and tasks.
+The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset. Image-session lists use a versioned keyset cursor ordered by `updated_at DESC, id DESC`, default to 20 items, and cap pages at 100; the list returns latest-asset and round summaries while detail reads rounds and tasks. Image-session worker claims share the process-wide `generation_max_concurrent_tasks` advisory with Graph, in `capacity -> task` order; HTTP `Generate` only writes queued plus PENDING and does not take that lock or increment denied.
 
 DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, resize, and format-specific delivery file. It does not replace the source image. Built-in DeliverySpec templates live in `go/internal/delivery`. The read-only API order is Taobao/Tmall hero 3:4, JD hero 1:1, Amazon hero 1:1, detail portrait 3:4, and scene landscape 4:3. Templates are convenience defaults, not platform-compliance guarantees; users can override size, format, and byte limits. Source label: `docs/ARCHITECTURE.md §7`.
 
