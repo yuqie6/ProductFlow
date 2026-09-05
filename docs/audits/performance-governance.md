@@ -91,7 +91,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 |---|---|---|---|
 | Graph/Agent 锁序，PERF-01、PERF-02、PERF-03 | 显式持 run 锁追加事件；自动采用先 run 后 graph；Agent 先 projection 后 execution/Task | [Graph 并发任务](tasks/archive/perf-graph-adopt-concurrent.md)；Agent `recovery_fencing_scanner_test.go`、`draft_confirm_lock_order_test.go` 有回归 | 实际积压与并发下的等待、饥饿和取消响应；已通过的窄测试不重复开修复单 |
 | 执行权与恢复，PERF-05、PERF-11 | Graph 行 lease、迟到结果围栏；各域恢复拆成有界发现与单聚合事务。连续生图：未过 provider 边界则重排队；已打 provider 或 covering effect 则 `unknown` 且不可自动重试；无 parked question。asynq 取消 handler ctx 后仍落 unknown。心跳未过期不恢复；晚到 `finishSucceeded` 不能覆盖 unknown。 | [连续生图故障可见状态](tasks/archive/perf-imagesession-recovery-visible.md)；`graph/execute_test.go`、各域 `recovery_test.go`；[历史进程故障证据](../history/agent-runtime-timeline.md#platform-reliability-evidence) | 进程崩溃后页面保持 running 的上限为最后一次 heartbeat + `image_session_stale_running_after_minutes`（默认 90）+ recovery 10s 扫描与 25 条批次。asynq 30 分钟墙钟仍可能打断顺序多候选（非 `openai-images` 批量）的合法心跳任务并写成 unknown。长积压和坏条目是否拖慢其他域仍待测。 |
-| 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT p95 0.438/0.279s；25 条延期未认领 | 重 recovery 与正常投递共存时的尾延迟；全库槽是现行单商家设计，不能用加 worker 代替容量推导 |
+| 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT 历史 p95 0.438/0.279s；[慢恢复共存](../history/agent-runtime-timeline.md#2026-09-05-慢恢复与正常投递共存)：1000 条过期连续生图任务、恢复写入人为延迟 100ms，最终投递 p95 0.442/0.265s，25 条延期未认领；采证起点曾出现一次未复现的时间矛盾，已保留失败并加强提交证据屏障 | 该固定场景支持保留双循环；数据库连接/IO 饱和、不同域长积压及坏条目对后续恢复域的影响仍待测。全库槽是现行单商家设计，不能用加 worker 代替容量推导 |
 | 实时通道，PERF-07 | 共享 LISTEN、退订释放、通知丢失回 PG、Agent gap repair | `platform/notify/replica_field_test.go`；历史 `web-e2e-agent-sse` 5 passed | 多副本订阅回读、fallback、连接池和慢客户端总成本；LISTEN 数与浏览器 SSE 数分别计量 |
 | Graph 工作台读取，PERF-09 | 摘要/详情、批量投影、轻量 status read 与 bundle gate | [Graph 专项原始记录](../history/agent-runtime-timeline.md#platform-graph-read-history)：25k runs/100k node-runs；HTTP、TTI、按需详情各有证据 | 历史浏览器 fixture 无 active run，Graph SSE=0；活跃执行与真实详情打开分布不能借用该结果 |
 | 连续生图读取，PERF-08 | 详情任务三组各最多 20、去重最多 60；history keyset；[目标规模 HTTP gate](tasks/archive/perf-imagesession-http-load.md) 已交付。Status/SSE 返回该会话全部 queued/running，省略 `prompt`，固定宽度 300 条活动任务仍 `<1MiB`。 | 25k 会话 HTTP：详情 258,037B、p95 16.33ms。活动集：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 26/100/300 条 queued+running+effect，查询次数恒为 8；修改前 300 条 Status ≥1MiB，省略 prompt 后包内 HTTP 与隔离规模门通过 | COUNT/关联扫描、真实 prompt 宽度超过夹具、多订阅并发和生产分布仍待评估 |
@@ -121,7 +121,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件；具体认领只维护在看板。
 
 1. **明确故障后的用户可见结果。** 连续生图执行链已由 [perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 交付。另选 Graph 或 Agent 链时仍定义故障点、等待上限和四种边界；与工作流体验组运行/重试入口重叠时先交接。
-2. **验证活动负载，不只验证历史页面。** 连续生图活动 Status/SSE 已由 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 交付：固定宽度下保持全量活动任务，省略 prompt 使 300 条仍低于 `<1MiB`。dispatch 优先调查恢复积压和正常提交共存时的投递尾延迟。不预设分页或缓存方案。
+2. **验证活动负载，不只验证历史页面。** 连续生图活动 Status/SSE 已由 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 交付：固定宽度下保持全量活动任务，省略 prompt 使 300 条仍低于 `<1MiB`。dispatch 已有慢连续生图恢复与正常投递的共存证据；后续恢复调查关注域间顺序、坏条目和资源饱和，不能把双循环并行推广为所有域互不阻塞。不预设分页或缓存方案。
 3. **补足可解释的测量。** 确定慢在锁等待、查询、JSON、队列还是 provider；只有现有指标无法回答已选问题时才补 histogram/trace。`last_ms`、瞬时 waiter 数和局部 query duration 不能互相替代。
 4. **准备候选发布证据。** 候选 checkout、测试输入与运行资源固定后执行受影响门和全量门；Agent 行为消费质量组可采信版本。没有冻结候选时不反复跑 G-07 追逐移动的 HEAD。
 
@@ -134,7 +134,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 改动或问题 | 必要验证入口 | 判定重点 |
 |---|---|---|
 | Graph 锁、lease、取消与自动采用 | `go test -C go ./internal/graph`；锁序和 lease 测试按场景重复/race | 无死锁、迟到 writer 拒绝、用户文稿与产物状态一致 |
-| 投递、恢复、admission | queue/dispatcher/受影响领域包；已有 `dispatch_latency_test.go`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；进程测试不替代容器拓扑 |
+| 投递、恢复、admission | queue/dispatcher/受影响领域包；`just go-test-dispatch-latency`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；投递门含单/双副本、空/慢恢复四场景，PENDING→SENT p95 <1s；进程测试不替代容器拓扑 |
 | Graph 读取 | `just go-test-graph-query-plan`、`just http-ab-gates`、`just web-e2e-workbench-performance`、`just web-build` | 实际 SQL、响应字段/字节、TTI、按需请求、active-run fixture |
 | 共享展示队列总览 | `just go-test-queue-overview-load`、generation 快照交错回归 | 25k runs / 100k nodes，活动 run 为 25k/100/0；running 优先、终态父 run 排除、实际 SQL 计划与总览读取 p95 <300ms。本地回归预算不构成 HTTP 或生产 SLO |
 | ImageSession 读取 | `just go-test-imagesession-query-plan`、`just go-test-imagesession-http-load`、包内 HTTP/SSE 回归 | 详情、历史、Status 各自的数据形状；静态页面 gate 不覆盖活动 SSE 成本 |

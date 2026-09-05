@@ -194,12 +194,19 @@ func TestDispatcherPendingSentLatency(t *testing.T) {
 		t.Setenv("SESSION_SECRET", "dispatch-latency-test-only")
 	}
 	bin := buildDispatcher(t)
-	for _, replicas := range []int{1, 2} {
-		t.Run(fmt.Sprintf("replicas_%d", replicas), func(t *testing.T) {
+	for _, scenario := range []struct {
+		replicas int
+		recovery bool
+	}{{1, false}, {2, false}, {1, true}, {2, true}} {
+		replicas := scenario.replicas
+		t.Run(fmt.Sprintf("replicas_%d_recovery_%t", replicas, scenario.recovery), func(t *testing.T) {
 			const ready, deferred = 500, 25
 			name := fmt.Sprintf("pf_dlat_%d", time.Now().UnixNano())
 			pool, gdb := testdb.IsolatedMigrated(t, name)
 			installDispatchLatencyProbe(t, pool)
+			if scenario.recovery {
+				stageSlowRecoveryLoad(t, pool)
+			}
 			redisURL := startDispatchLatencyRedis(t)
 			opt, err := queue.ParseRedis(redisURL)
 			if err != nil {
@@ -231,6 +238,9 @@ func TestDispatcherPendingSentLatency(t *testing.T) {
 					}
 				})
 				waitDispatchLatencyListener(t, ctx, pool, appName)
+				if scenario.recovery {
+					waitSlowRecoveryStarted(t, ctx, pool, appName)
+				}
 			}
 			ids, releaseAt := stageDispatchLatencyLoad(t, ctx, gdb, ready, deferred)
 			var samples []dispatchLatencySample
@@ -290,8 +300,14 @@ func TestDispatcherPendingSentLatency(t *testing.T) {
 			if len(claimsByReplica) != replicas {
 				t.Fatalf("expected all %d dispatchers to participate: %v", replicas, claimsByReplica)
 			}
-			t.Logf("DISPATCH_LATENCY_SUMMARY replicas=%d ready=%d deferred_unclaimed=%d interval=1s recovery=10s limit=100 pending_sent_p50=%s pending_sent_p95=%s claim_sent_p50=%s claim_sent_p95=%s target_p95_lt_1s=%t claims_by_replica=%v",
-				replicas, ready, deferred, dispatchLatencyQuantile(pendingToSent, .5), dispatchLatencyQuantile(pendingToSent, .95),
+			if scenario.recovery {
+				assertRecoveryOverlapsDispatch(t, ctx, pool, releaseAt, samples)
+			}
+			if p95 := dispatchLatencyQuantile(pendingToSent, .95); p95 >= time.Second {
+				t.Errorf("PENDING-to-SENT p95 %s exceeds 1s local budget", p95)
+			}
+			t.Logf("DISPATCH_LATENCY_SUMMARY replicas=%d slow_recovery=%t ready=%d deferred_unclaimed=%d interval=1s recovery=10s limit=100 pending_sent_p50=%s pending_sent_p95=%s claim_sent_p50=%s claim_sent_p95=%s target_p95_lt_1s=%t claims_by_replica=%v",
+				replicas, scenario.recovery, ready, deferred, dispatchLatencyQuantile(pendingToSent, .5), dispatchLatencyQuantile(pendingToSent, .95),
 				dispatchLatencyQuantile(claimToSent, .5), dispatchLatencyQuantile(claimToSent, .95), dispatchLatencyQuantile(pendingToSent, .95) < time.Second, claimsByReplica)
 			raw, err := json.Marshal(struct {
 				Replicas int                     `json:"replicas"`

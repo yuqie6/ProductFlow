@@ -131,6 +131,10 @@ go-test-graph-query-plan:
 go-test-agent-query-plan:
     PRODUCTFLOW_RUN_AGENT_QUERY_PLAN=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run TestAgentSessionQueryPlanTargetScale -count=1 -p 1 -v -timeout 6m'
 
+# Opt-in real dispatcher/Redis latency with and without a slow recovery backlog.
+go-test-dispatch-latency:
+    PRODUCTFLOW_RUN_DISPATCH_LATENCY=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/queue -run TestDispatcherPendingSentLatency -count=1 -p 1 -v -timeout 4m'
+
 # Opt-in queue overview dense/sparse active Graph latency and EXPLAIN gate.
 go-test-queue-overview-load:
     PRODUCTFLOW_RUN_QUEUE_OVERVIEW_LOAD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/generation -run TestQueueOverviewActiveGraphScale -count=1 -p 1 -v -timeout 4m'

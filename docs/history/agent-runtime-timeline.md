@@ -1113,3 +1113,30 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 验证：dev env 下 `TestQueueOverview|TestLoadSnapshot -race -count=20` PASS（11.623s）；`just go-test-imagesession-sse-load` PASS（20.158s），4 订阅 / 26 活动任务，32 次 Status 回读、64 条总览查询（含配置），进度、终态、心跳和重连断言通过。本轮 SSE 正文 133,580B，因另项已提交的 Status prompt 省略而不同于历史 359,468B，不归因为本次 SQL 优化。
 
 `just go-test` 已完整执行：generation / ImageSession / Graph PASS（1.148s / 8.316s / 71.840s），整树 FAIL。失败为 API `TestSealedHTTPRoutesAreRegistered`（fidelity-checks 缺失、配方创建额外路由）、Agent `TestEvalObservationFixtures`（catalog fixture 漂移）、recipe 两项 HTTP 测试（409 而非 200）、prompts `TestCatalogHasRequiredImageTypesAndNeedles`。这些断言不涉及本次 generation 查询，所在合同正有其他任务并发修改；未覆盖或重写其文件。本记录不构成 G-07 固定候选 PASS。`just docs-check`、diff check PASS；主代理自审查询语义、读写消费者和完整独占 diff，仅提交本切片。
+
+## 2026-09-05 慢恢复与正常投递共存
+
+现有 coordinator 已将 watch 的 dispatch 与 recovery 分成独立串行循环；旧测试验证 callback 并行，旧进程测量仅覆盖空恢复库。本轮沿用 `dispatch_latency_test.go` 的真实 dispatcher 子进程、隔离迁移 PG、Unix socket Redis 与 PG 时间探针，增加真实 ImageSession 恢复写入，不修改运行时代码。
+
+固定四场景：单/双副本 × 空/慢恢复。每场景新建数据库与 Redis，默认 dispatch 1s、recovery 10s、claim 100。正常负载为同事务提交 500 条立即可投递 Graph actor outbox + 25 条延后一小时的 outbox；无 worker、无真实 provider。500 条构成一个突发批次，无预热；p50/p95 为该批次 500 个逐条观测的第 250/475 个排序值，不代表 500 次独立突发试验。计时从 PG `clock_timestamp()` 提交前采样至真实 SENT 更新触发器，含提交尾部；不用 cycle-start `sent_at` 冒充转移时间。SENT 之后另外等待并核对 Redis 信封。
+
+慢恢复输入：1 个 ImageSession、1000 个 running task，prompt=`fixture`、size=`1024x1024`、generation_count=1、completed=0、active attempt/index=1，progress phase=`provider_running`，心跳与 started_at 均两小时前，无 effect 行。实际恢复用默认 90 分钟阈值，应写 `unknown`、清 active attempt/index、is_retryable=false，不得重新入队。隔离库 BEFORE UPDATE 触发器仅对 running→unknown 注入 `pg_sleep(0.1)` 并记录起止；不模拟资源饱和，不修改服务超时。每个 dispatcher 需在 `pg_stat_activity` 被观测为该表更新中的 `PgSleep` 才释放正常负载。
+
+| 副本 | 恢复场景 | PENDING→SENT p50 / p95 | claim→SENT p50 / p95 |
+|---|---|---|---|
+| 1 | 空 | 260.901 / 414.230ms | 37.318 / 74.297ms |
+| 2 | 空 | 158.855 / 246.503ms | 42.971 / 61.029ms |
+| 1 | 1000 条积压、每次恢复写入延迟 100ms | 228.359 / 383.671ms | 36.690 / 54.678ms |
+| 2 | 同上 | 176.685 / 261.728ms | 44.598 / 71.252ms |
+
+两组慢恢复均已提交 25 个 unknown，仍有 975 个 running；从首次延迟写入开始至第 25 个已提交观察点的写入结束，跨度分别为 2.647180s / 1.402294s。测试逐条确认所有正常 SENT 时间均落在该恢复跨度内，且首次恢复早于正常负载释放。该跨度不是完整 recovery cycle 时长或全积压恢复时间。四场景各 500 个唯一 Redis 信封，MaxRetry=0；每条正常 outbox attempts=1、last_error=NULL；25 条延期均 pending、未 claim、无信封；unknown 未创建 ImageSession outbox。双副本各参与 200/300 条 claim。
+
+判定：该固定场景支持保留现有双循环，不需要修改运行时。空/慢恢复单副本 p95 差 -30.559ms、双副本差 +15.225ms，不能把一次批次差异解释为性能提升或稳定开销。新入口 `just go-test-dispatch-latency` 把原有 `<1s` 本地目标升级为明确断言；四场景 PASS（15.907s）。不覆盖池耗尽、CPU/IO 饱和、Graph/Agent 长恢复、域间顺序等待、坏条目或容器故障，不能据此宣告本组容量全面合格。
+
+采证基线 HEAD=`511a597a`，工作树有其他组并发修改，不是固定干净候选。被测 coordinator/main SHA-256 分别为 `c46dea619cd79c288112348be5caa4694351b8be6321353d88b42c601e75ca4e` / `70d28699fdf8c640d07af771018f72643b28c6225b531ed9824ef5c1ba9c250b`；测试 `dispatch_latency_test.go` / `recovery_latency_test.go` SHA-256 分别为 `4bf48cd28ada94e4abf50fde2f7c9fe47f6f17bc2db527913e83bbb7291dd797` / `e19f6786b93d9ce92d04b8f33cdf3b3231a698f9343d113a0aba91ecc3ea12c6`。进程、临时 Redis 与测试库由 cleanup 回收，不触碰共享 dev 服务或配置。
+
+采证复跑曾有 1 次双副本 FAIL：观测到 PgSleep 后释放正常负载，但事后恢复探针最早时间晚于释放时间。随后定向重复 5 次、完整四场景重复 3 次均未重现，根因未确定，不能删掉失败或解释为已证明的生产故障。最终释放条件加上“至少一条恢复探针已经提交”，仍需每个副本实际处于慢恢复；时间先后与全部正常 SENT 落在恢复跨度内的断言不放宽。最终 helper SHA-256 为 `c876e45e99ffebab74690ec6aeab9517850a986c8cabdabd86ebb0c1f8440af4`。
+
+最终 `just go-test-dispatch-latency` 四场景 PASS（15.226s）：空恢复单/双副本 p95 398.733/289.080ms，慢恢复单/双副本 p95 442.338/264.662ms；对应恢复跨度 2.665111/1.435673s。仍为每场景 500 个正常唯一信封、25 个延期未 claim，慢恢复各 25 unknown、975 running，状态与时间断言全部通过。包级 `queue` / `cmd/productflow-dispatcher -race -count=1 -p 1` PASS（6.229s / 1.951s），该命令不启用进程级 opt-in。本轮无生产代码修改，不重跑整树发布门；上一切片的整树失败没有因此消失。
+
+最终提交屏障下双副本慢恢复定向 `-count=3` PASS（16.291s）。`just docs-check`、diff check PASS；主代理自审实际恢复调用链、探针计时边界、唯一信封和未知状态断言，以及本切片全部 diff。交付仅含测试、just 入口和组内证据，不纳入其他组并发改动。
