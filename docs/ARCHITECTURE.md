@@ -193,6 +193,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
 - Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。claim 满 `limit` 时 dispatch 立即续跑，空闲才等 interval 或 NOTIFY；同一轮已 claim 行有界并发 SENT+enqueue，每条仍先 SENT 再 enqueue。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`、recovery duration 和错误；配置 metrics token 后，API `/metrics` 提供 queued/stale-running backlog 与当前 PostgreSQL 锁等待，dispatcher `/metrics` 另提供各域 recovery duration histogram 和候选锁查询耗时。
+- 连续生图 running 是否闲置看最后一次 progress heartbeat（没有则 started_at）。默认 90 分钟后 dispatcher 重排队或标 `unknown`；心跳未过期不恢复。asynq `TaskTimeout` 30 分钟取消 handler context 时，worker 仍把不可证明的结果写成 `unknown`，不等待闲置阈值。已 `applied` 的 candidate 不因恢复再写副作用；晚到 attempt 不能覆盖 `unknown`。本链没有 parked question/approval。实现：`go/internal/imagesession/recovery.go`、`execute.go`；回归：`recovery_test.go`、`TestExecuteCanceledContextMarksUnknown`。
 - Redis 只承担 asynq broker 和投递唤醒；业务状态和生成容量 admission 由 PostgreSQL 负责。asynq worker 默认并发为 4，业务失败不依赖 broker retry。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - 连续生图状态的 `has_active_generation_task` 由同次返回的完整活动任务列表推导，不做独立 COUNT，避免查询间入队/完成导致活动标志与列表矛盾。此保证仅覆盖活动标志与任务列表，不表示轮次、effects 和队列统计共用一个全局快照。实现：`go/internal/imagesession/serialize.go`；回归：`status_projection_test.go`。

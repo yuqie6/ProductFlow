@@ -455,6 +455,46 @@ func TestExecuteTimeoutIsUnknown(t *testing.T) {
 	}
 }
 
+type contextCancelProvider struct {
+	cancel context.CancelFunc
+}
+
+func (p contextCancelProvider) Name() string { return "mock" }
+
+func (p contextCancelProvider) Generate(ctx context.Context, req ChatRequest) (ChatResult, error) {
+	p.cancel()
+	<-ctx.Done()
+	return ChatResult{}, ctx.Err()
+}
+
+func TestExecuteCanceledContextMarksUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "asynq 取消", "size": "1024x1024", "generation_count": 1,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	exec := Executor{DB: ss.db, Media: ss.media, Provider: contextCancelProvider{cancel: cancel}}
+	if err := exec.Execute(ctx, taskID); err != nil {
+		t.Fatal(err)
+	}
+	got := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+	if got.Status != "unknown" || got.IsRetryable {
+		t.Fatalf("canceled execute %+v", got)
+	}
+	if len(got.ProviderEffects) == 0 || got.ProviderEffects[0].EffectResult != "unknown" {
+		t.Fatalf("effects %+v", got.ProviderEffects)
+	}
+}
+
+func TestIsUncertainProviderFailureIncludesCanceledContext(t *testing.T) {
+	if !IsUncertainProviderFailure(context.Canceled) || !IsUncertainProviderFailure(context.DeadlineExceeded) {
+		t.Fatal("canceled/deadline must be unknown")
+	}
+	if IsRetryableProviderFailure(context.Canceled) {
+		t.Fatal("canceled context must not auto-retry as failed")
+	}
+}
+
 func TestExecutePersistsImagesBatchCandidateCount(t *testing.T) {
 	ss := newSessionServer(t)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{

@@ -60,6 +60,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | Agent 执行与投影 | `projection -> execution -> task`；Draft 确认先持关联 projection，再写 Task | `agent/execution.go`、`agent/draft_confirm_lock_order_test.go` |
 | worker / Graph lease | task timeout 30 分钟，consumer lease 为其加 5 分钟；Graph lease 复用该时长，每 5 分钟续租 | `platform/queue/asynq.go`、`actors.go`、`graph/lease.go` |
 | dispatcher | dispatch 空闲间隔 1s，recovery 间隔 10s；默认 claim 100，满批立即再查 | `go/cmd/productflow-dispatcher/main.go`、`coordinator.go` |
+| 连续生图闲置恢复 | 默认 90 分钟无 progress heartbeat 后重排队或 `unknown`；asynq `TaskTimeout` 30 分钟取消时 worker 直接写 `unknown` | `imagesession/recovery.go`、`execute.go`；`recovery_test.go`、`execute_test.go` |
 | 并发 | asynq worker 4；Node Turn 默认 3/进程；全库生图槽默认 3，可设 1-20 | worker `main.go`、Node `config.ts`、`platform/generation` |
 | journal batch | 20ms / 64 events / 768KiB 三个批次上限；结构事件有 flush barrier | `agent-service/src/journal-publisher.ts` |
 
@@ -89,7 +90,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 范围 / 旧编号 | 已实现或已交付 | 有效证据与边界 | 当前待回答的问题 |
 |---|---|---|---|
 | Graph/Agent 锁序，PERF-01、PERF-02、PERF-03 | 显式持 run 锁追加事件；自动采用先 run 后 graph；Agent 先 projection 后 execution/Task | [Graph 并发任务](tasks/archive/perf-graph-adopt-concurrent.md)；Agent `recovery_fencing_scanner_test.go`、`draft_confirm_lock_order_test.go` 有回归 | 实际积压与并发下的等待、饥饿和取消响应；已通过的窄测试不重复开修复单 |
-| 执行权与恢复，PERF-05、PERF-11 | Graph 行 lease、迟到结果围栏；各域恢复拆成有界发现与单聚合事务 | `graph/execute_test.go`、各域 `recovery_test.go`；[历史进程故障证据](../history/agent-runtime-timeline.md#platform-reliability-evidence) | 超时/lease/恢复周期共同决定的用户可见恢复时间；长积压和坏条目是否影响其他任务 |
+| 执行权与恢复，PERF-05、PERF-11 | Graph 行 lease、迟到结果围栏；各域恢复拆成有界发现与单聚合事务。连续生图：未过 provider 边界则重排队；已打 provider 或 covering effect 则 `unknown` 且不可自动重试；无 parked question。asynq 取消 handler ctx 后仍落 unknown。心跳未过期不恢复；晚到 `finishSucceeded` 不能覆盖 unknown。 | [连续生图故障可见状态](tasks/archive/perf-imagesession-recovery-visible.md)；`graph/execute_test.go`、各域 `recovery_test.go`；[历史进程故障证据](../history/agent-runtime-timeline.md#platform-reliability-evidence) | 进程崩溃后页面保持 running 的上限为最后一次 heartbeat + `image_session_stale_running_after_minutes`（默认 90）+ recovery 10s 扫描与 25 条批次。asynq 30 分钟墙钟仍可能打断顺序多候选（非 `openai-images` 批量）的合法心跳任务并写成 unknown。长积压和坏条目是否拖慢其他域仍待测。 |
 | 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT p95 0.438/0.279s；25 条延期未认领 | 重 recovery 与正常投递共存时的尾延迟；全库槽是现行单商家设计，不能用加 worker 代替容量推导 |
 | 实时通道，PERF-07 | 共享 LISTEN、退订释放、通知丢失回 PG、Agent gap repair | `platform/notify/replica_field_test.go`；历史 `web-e2e-agent-sse` 5 passed | 多副本订阅回读、fallback、连接池和慢客户端总成本；LISTEN 数与浏览器 SSE 数分别计量 |
 | Graph 工作台读取，PERF-09 | 摘要/详情、批量投影、轻量 status read 与 bundle gate | [Graph 专项原始记录](../history/agent-runtime-timeline.md#platform-graph-read-history)：25k runs/100k node-runs；HTTP、TTI、按需详情各有证据 | 历史浏览器 fixture 无 active run，Graph SSE=0；活跃执行与真实详情打开分布不能借用该结果 |
@@ -111,11 +112,13 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 展示用队列总览的 4 条独立 COUNT 已合为单条聚合 SQL，修复任务/图节点 running↔queued 切换时的双计与漏计。4 个交错及 5 个分类场景各重复 20 次 race 通过；同活动 SSE fixture 的总览查询（含配置）160→64，每次回读 5→2。该口径不同于前述“任务表 COUNT”；容量配置与 admission 仍独立。详见 [队列快照对照](../history/agent-runtime-timeline.md#2026-09-05-展示队列单语句快照与查询对照)，大规模活跃 Graph 的执行计划和延迟仍未签收。
 
+2026-09-05 连续生图故障可见状态：[perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 钉死四类结果。未过 provider 边界则重排队；已 applied 不重放；不可证明结果为 `unknown` 且不可自动重试；无 parked question。asynq 取消 handler ctx 后 worker 仍写 `unknown`。心跳未过期不恢复；晚到 `finishSucceeded` 不能覆盖 `unknown`。进程崩溃后 running 上限为最后一次 heartbeat + 默认 90 分钟 + recovery 10s / 25 条批次。asynq 30 分钟墙钟仍可能打断顺序多候选任务。未改全局 `TaskTimeout`。
+
 ## 下一步如何选择
 
-后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件，尚未发布或认领实施 issue。
+后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件；具体认领只维护在看板。
 
-1. **明确故障后的用户可见结果。** 选择一条真实执行链，定义故障点、等待上限依据和预期状态；复用既有 lease/kill/recovery 测试，核对未提交、已提交未回执、provider 结果未知和等待用户四种边界。与工作流体验组已有运行/重试/恢复任务重叠时先交接，不重复立项。
+1. **明确故障后的用户可见结果。** 连续生图执行链已由 [perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 交付。另选 Graph 或 Agent 链时仍定义故障点、等待上限和四种边界；与工作流体验组运行/重试入口重叠时先交接。
 2. **验证活动负载，不只验证历史页面。** 连续生图优先调查 queued/running 增长时 Status/SSE 的任务、effects、字节与回读次数；dispatch 优先调查恢复积压和正常提交共存时的投递尾延迟。当前只确认了潜在放大路径，未确认生产故障，不预设分页或缓存方案。
 3. **补足可解释的测量。** 确定慢在锁等待、查询、JSON、队列还是 provider；只有现有指标无法回答已选问题时才补 histogram/trace。`last_ms`、瞬时 waiter 数和局部 query duration 不能互相替代。
 4. **准备候选发布证据。** 候选 checkout、测试输入与运行资源固定后执行受影响门和全量门；Agent 行为消费质量组可采信版本。没有冻结候选时不反复跑 G-07 追逐移动的 HEAD。

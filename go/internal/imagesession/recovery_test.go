@@ -229,6 +229,106 @@ func TestRecoverUnfinishedContinuesAfterOneRestageFailure(t *testing.T) {
 	}
 }
 
+func TestRecoverUnfinishedLeavesRecentHeartbeatRunning(t *testing.T) {
+	ss := newSessionServer(t)
+	drainImageRecovery(t, ss)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "fresh heartbeat", "size": "1024x1024", "generation_count": 1,
+	})
+	markStaleRunning(t, ss, taskID, "running", 0, nil)
+	stampHeartbeat(t, ss, taskID, 0)
+
+	summary, err := RecoverUnfinished(context.Background(), ss.pool, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.StaleRunningTasks != 0 || summary.UnknownTasks != 0 || summary.EnqueuedTasks != 0 {
+		t.Fatalf("fresh heartbeat must not recover, summary %+v", summary)
+	}
+	got := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+	if got.Status != "running" {
+		t.Fatalf("status %s", got.Status)
+	}
+}
+
+func TestRecoverUnfinishedDefaultStaleUsesNinetyMinutes(t *testing.T) {
+	ss := newSessionServer(t)
+	drainImageRecovery(t, ss)
+	if DefaultStaleRunningAfter != 90*time.Minute {
+		t.Fatalf("default stale %s", DefaultStaleRunningAfter)
+	}
+
+	_, freshID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "under default stale", "size": "1024x1024", "generation_count": 1,
+	})
+	markStaleRunning(t, ss, freshID, "running", 0, nil)
+	stampHeartbeat(t, ss, freshID, DefaultStaleRunningAfter-time.Minute)
+
+	_, staleID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "past default stale", "size": "1024x1024", "generation_count": 1,
+	})
+	markStaleRunning(t, ss, staleID, "running", 0, nil)
+	stampHeartbeat(t, ss, staleID, DefaultStaleRunningAfter+time.Minute)
+
+	summary, err := RecoverUnfinished(context.Background(), ss.pool, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.StaleRunningTasks < 1 {
+		t.Fatalf("expired heartbeat must requeue, summary %+v", summary)
+	}
+	var freshStatus, staleStatus, stalePhase string
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT status FROM image_session_generation_tasks WHERE id = $1
+	`, freshID).Scan(&freshStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := ss.pool.QueryRow(context.Background(), `
+		SELECT status, progress_phase FROM image_session_generation_tasks WHERE id = $1
+	`, staleID).Scan(&staleStatus, &stalePhase); err != nil {
+		t.Fatal(err)
+	}
+	if freshStatus != "running" {
+		t.Fatalf("heartbeat inside default stale recovered early: %s", freshStatus)
+	}
+	if staleStatus != "queued" || stalePhase != "requeued_after_idle" {
+		t.Fatalf("heartbeat past default stale status=%s phase=%s", staleStatus, stalePhase)
+	}
+}
+
+func TestRecoverUnfinishedLateWriterDoesNotSucceedAfterUnknown(t *testing.T) {
+	ss := newSessionServer(t)
+	drainImageRecovery(t, ss)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{
+		"prompt": "late writer", "size": "1024x1024", "generation_count": 1,
+	})
+	idx := 1
+	attempt := markStaleRunning(t, ss, taskID, "running", 0, &idx)
+
+	summary, err := RecoverUnfinished(context.Background(), ss.pool, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.UnknownTasks < 1 {
+		t.Fatalf("summary %+v", summary)
+	}
+	if err := (Executor{DB: ss.db, Media: ss.media}).finishSucceeded(context.Background(), taskID, attempt, clockid.New()); err != nil {
+		t.Fatal(err)
+	}
+	got := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+	if got.Status != "unknown" || got.IsRetryable {
+		t.Fatalf("late writer mutated unknown: %+v", got)
+	}
+
+	if err := (Executor{DB: ss.db, Media: ss.media}).Execute(context.Background(), taskID); err != nil {
+		t.Fatal(err)
+	}
+	got = generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+	if got.Status != "unknown" {
+		t.Fatalf("execute revived %s", got.Status)
+	}
+}
+
 func drainImageRecovery(t *testing.T, ss *sessionServer) {
 	t.Helper()
 	if _, err := ss.pool.Exec(context.Background(), `
@@ -261,6 +361,29 @@ func stampCreatedAt(t *testing.T, ss *sessionServer, taskID string, createdAt ti
 	`, taskID, createdAt); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func stampHeartbeat(t *testing.T, ss *sessionServer, taskID string, age time.Duration) {
+	t.Helper()
+	at := time.Now().UTC().Add(-age)
+	if _, err := ss.pool.Exec(context.Background(), `
+		UPDATE image_session_generation_tasks
+		SET progress_updated_at = $2, started_at = $2
+		WHERE id = $1
+	`, taskID, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func generationTaskByID(t *testing.T, session DetailResponse, taskID string) TaskResponse {
+	t.Helper()
+	for _, task := range session.GenerationTasks {
+		if task.ID == taskID {
+			return task
+		}
+	}
+	t.Fatalf("missing task %s", taskID)
+	return TaskResponse{}
 }
 
 func pendingDispatchCount(t *testing.T, ss *sessionServer, aggregateID string) int {

@@ -71,7 +71,7 @@ func configDefinitions() []configDefinition {
 		{Key: "upload_max_pixels", Label: "最大像素数", Category: "图片与上传", InputType: "number", Minimum: intPtr(1)},
 		{Key: "upload_allowed_image_mime_types", Label: "允许图片 MIME", Category: "图片与上传", InputType: "textarea", Description: "逗号分隔，例如 image/png,image/jpeg,image/webp。"},
 		{Key: "generation_max_concurrent_tasks", Label: "全局生成并发上限", Category: "生成队列", InputType: "number", Description: "全局资源保护阈值；工作流和文/图生图达到上限时会提示稍后重试。", Minimum: intPtr(1), Maximum: intPtr(20)},
-		{Key: "image_session_stale_running_after_minutes", Label: "文/图生图进度闲置恢复阈值（分钟）", Category: "生成队列", InputType: "number", Description: "worker 启动恢复时，running 文/图生图任务会按最近 progress heartbeat 判断是否闲置；旧任务没有 progress 时回退到 started_at。", Minimum: intPtr(1), Maximum: intPtr(24 * 60)},
+		{Key: "image_session_stale_running_after_minutes", Label: "文/图生图进度闲置恢复阈值（分钟）", Category: "生成队列", InputType: "number", Description: "dispatcher 按最近 progress heartbeat（没有则 started_at）判断 running 是否闲置；默认 90 分钟后重排队或标 unknown。asynq 任务墙钟到期时 worker 会直接写 unknown，不等待该阈值。进程崩溃无法写库时，页面保持 running 的上限约为本值加恢复扫描间隔。", Minimum: intPtr(1), Maximum: intPtr(24 * 60)},
 		{Key: "workflow_image_generation_provider_timeout_seconds", Label: "工作流生图 Provider 超时（秒）", Category: "生成队列", InputType: "number", Description: "工作流 AI 生图节点单次 provider 调用的项目级超时上界；超时后会安全失败并释放生成队列容量。", Minimum: intPtr(1), Maximum: intPtr(24 * 60 * 60)},
 		{Key: "admin_access_required", Label: "要求登录访问密钥", Category: "安全与运维", InputType: "boolean", Description: "默认开启，普通工作台和私有 API 需要 ADMIN_ACCESS_KEY 登录；关闭后仍需 SETTINGS_ACCESS_TOKEN 才能查看和修改系统配置。"},
 		{Key: "deletion_enabled", Label: "启用业务删除", Category: "安全与运维", InputType: "boolean", Description: "默认关闭，用于体验站禁止整条商品和文/图生图会话被删除，保留溯源证据。"},

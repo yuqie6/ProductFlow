@@ -32,7 +32,8 @@ func IsConfirmedProviderFailure(err error) bool {
 
 // IsUncertainProviderFailure 判断错误是否不可证明，应标 unknown。
 func IsUncertainProviderFailure(err error) bool {
-	return errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx)
+	return errors.Is(err, ErrTimeout) || errors.Is(err, ErrConnection) || errors.Is(err, ErrProvider5xx) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // IsRetryableProviderFailure 判断错误是否允许用户稍后重试。

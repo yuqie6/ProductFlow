@@ -17,6 +17,11 @@ import (
 
 const recoveryBatchLimit = 25
 
+// DefaultStaleRunningAfter 是 dispatcher 未传入正数阈值时，按最后一次 progress heartbeat
+// （没有则 started_at）判断 running 闲置的默认等待。进程崩溃后商家仍看到 running 的上限
+// 约为该值加上 recovery 扫描间隔；asynq 墙钟到期走 worker 落 unknown，不等待本阈值。
+const DefaultStaleRunningAfter = 90 * time.Minute
+
 // RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的连续生图任务。
 type RecoverySummary struct {
 	QueuedTasks       int  `json:"queued_tasks"`        // 本轮看到的 queued 任务数
@@ -40,7 +45,7 @@ func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.
 
 func recoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, limit int) (RecoverySummary, error) {
 	if staleAfter <= 0 {
-		staleAfter = 90 * time.Minute
+		staleAfter = DefaultStaleRunningAfter
 	}
 	if limit <= 0 {
 		limit = recoveryBatchLimit

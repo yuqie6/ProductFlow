@@ -105,7 +105,7 @@ func main() {
 		var rendition delivery.RecoverySummary
 		var localImageEdit localedit.RecoverySummary
 		var agentTurns agent.RecoverySummary
-		imageStale := time.Duration(settingsStore.IntSetting(ctx, "image_session_stale_running_after_minutes", 90)) * time.Minute
+		imageStale := time.Duration(settingsStore.IntSetting(ctx, "image_session_stale_running_after_minutes", int(imagesession.DefaultStaleRunningAfter/time.Minute))) * time.Minute
 		recoveryErr := runRecoverySteps(ctx, []recoveryStep{
 			{
 				domain: "graph", errorContext: "workflow recovery",

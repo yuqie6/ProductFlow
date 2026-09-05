@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [perf-imagesession-recovery-visible.md](perf-imagesession-recovery-visible.md) | 完成 | 连续生图故障可见状态：取消 ctx 仍落 unknown，心跳未过期不恢复，晚到 writer 拒绝；崩溃等待默认 90 分钟 |
 | [canvas-full-recipe-entry.md](canvas-full-recipe-entry.md) | 完成 | 创建页完整配方预览/取消/事务确认与丢响应重试；PG 59、Web 650、浏览器 7 passed，24 组语言主题布局 |
 | [eval-library-observation-refresh.md](eval-library-observation-refresh.md) | 完成 | Go 素材快照与 L1/L3 观察对齐，修正标签错题，12 条输入阻塞解除；独立审核与哈希一致，开发基线开放待采证 |
 | [canvas-asset-recipe-proof.md](canvas-asset-recipe-proof.md) | 完成 | 固定资产、拖入参考、片段确认及完整配方拒绝覆盖通过；actions 78 passed；无图商品入口有效 FAIL 交 canvas-full-recipe-entry |

@@ -61,13 +61,15 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
 			return nil
 		}
+		persistCtx, cancelPersist := persistContext(ctx)
+		defer cancelPersist()
 		if isUnknown(err) {
-			if markErr := e.finishUnknown(ctx, taskID, attemptID); markErr != nil {
+			if markErr := e.finishUnknown(persistCtx, taskID, attemptID); markErr != nil {
 				return markErr
 			}
 			return nil
 		}
-		e.finishFailed(ctx, taskID, attemptID, err)
+		e.finishFailed(persistCtx, taskID, attemptID, err)
 		return nil
 	}
 	return nil
@@ -78,6 +80,13 @@ var (
 	errCancelled       = errors.New("cancelled")
 	errStale           = errors.New("stale_attempt")
 )
+
+const persistTimeout = 5 * time.Second
+
+// persistContext 在 asynq 取消 handler ctx 后仍允许把业务终态写入 PostgreSQL。
+func persistContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), persistTimeout)
+}
 
 // unknownErr 表示无法证明的供应商结果；Execute 标 unknown 且不自动当失败重试。
 type unknownErr struct{}
@@ -312,21 +321,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			BaseBytes: chatCtx.BaseBytes, ReferenceBytes: chatCtx.ReferenceBytes,
 		})
 		if genErr != nil {
-			var ae apperr.Error
-			if errors.As(genErr, &ae) && ae.Status == 400 {
-				_ = e.markEffect(ctx, taskID, candidate, "failed", ae.Detail)
-				return genErr
-			}
-			if IsUncertainProviderFailure(genErr) {
-				_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)
-				return unknownErr{}
-			}
-			if IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr) {
-				_ = e.markEffect(ctx, taskID, candidate, "failed", genErr.Error())
-				return genErr
-			}
-			_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)
-			return unknownErr{}
+			return e.recordGenerateFailure(ctx, taskID, candidate, genErr)
 		}
 		images := result.Images
 		if len(images) == 0 && len(result.Bytes) > 0 {
@@ -363,6 +358,26 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 		candidate += batch
 	}
 	return e.finishSucceeded(ctx, taskID, attemptID, groupID)
+}
+
+func (e Executor) recordGenerateFailure(ctx context.Context, taskID string, candidate int, genErr error) error {
+	persistCtx, cancelPersist := persistContext(ctx)
+	defer cancelPersist()
+	var ae apperr.Error
+	if errors.As(genErr, &ae) && ae.Status == 400 {
+		_ = e.markEffect(persistCtx, taskID, candidate, "failed", ae.Detail)
+		return genErr
+	}
+	if IsUncertainProviderFailure(genErr) {
+		_ = e.markEffect(persistCtx, taskID, candidate, "unknown", unknownDetail)
+		return unknownErr{}
+	}
+	if IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr) {
+		_ = e.markEffect(persistCtx, taskID, candidate, "failed", genErr.Error())
+		return genErr
+	}
+	_ = e.markEffect(persistCtx, taskID, candidate, "unknown", unknownDetail)
+	return unknownErr{}
 }
 
 func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string) error {
