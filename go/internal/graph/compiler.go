@@ -177,17 +177,13 @@ func compilePromptRuntime(graph AppliedGraph, nodeID string, sources map[string]
 	for _, edge := range edges {
 		incomingIDs = append(incomingIDs, edge.ID)
 	}
-	refIDs := make([]string, 0, len(references))
-	for _, ref := range references {
-		refIDs = append(refIDs, ref.AssetID)
-	}
 	return inputDigest(map[string]any{
 		"node_id":                  nodeID,
 		"config":                   requestConfigForDigest(node.NodeType, node.Config),
 		"facts":                    factsOrEmpty(facts),
 		"fact_set_versions":        incomingFactSetVersions(graph, nodeID, sources),
 		"briefs":                   briefsOrEmpty(briefs),
-		"references":               refIDs,
+		"references":               referenceDigestInputs(references),
 		"visual_system":            visualPayload,
 		"visual_system_version_id": visualVersionID,
 		"visual_overlay":           visualOverlay,
@@ -228,17 +224,13 @@ func compileContextRuntime(graph AppliedGraph, nodeID string, sources map[string
 	for _, edge := range edges {
 		incomingIDs = append(incomingIDs, edge.ID)
 	}
-	refIDs := make([]string, 0, len(references))
-	for _, ref := range references {
-		refIDs = append(refIDs, ref.AssetID)
-	}
 	return inputDigest(map[string]any{
 		"node_id":           nodeID,
 		"node_type":         node.NodeType,
 		"config":            requestConfigForDigest(node.NodeType, node.Config),
 		"facts":             factsOrEmpty(facts),
 		"fact_set_versions": incomingFactSetVersions(graph, nodeID, sources),
-		"references":        refIDs,
+		"references":        referenceDigestInputs(references),
 		"incoming_edge_ids": incomingIDs,
 	}), nil
 }
@@ -309,15 +301,11 @@ func compileImageRuntime(graph AppliedGraph, nodeID string, sources map[string]S
 	for _, edge := range edges {
 		incomingIDs = append(incomingIDs, edge.ID)
 	}
-	refIDs := make([]string, 0, len(references))
-	for _, ref := range references {
-		refIDs = append(refIDs, ref.AssetID)
-	}
 	return inputDigest(map[string]any{
 		"node_id":                  nodeID,
 		"config":                   requestConfigForDigest(node.NodeType, normalized),
 		"prompt_document":          stripV3Prompt(promptPayload),
-		"references":               refIDs,
+		"references":               referenceDigestInputs(references),
 		"visual_system_version_id": visualVersionID,
 		"visual_overlay":           visualOverlay,
 		"incoming_edge_ids":        incomingIDs,
@@ -376,10 +364,22 @@ func compileReference(graph AppliedGraph, edge AppliedEdge, sources map[string]S
 	if raw, ok := source.Config["role"].(string); ok && strings.TrimSpace(raw) != "" {
 		role = strings.TrimSpace(raw)
 	}
+	if note := strings.TrimSpace(asString(source.Config["label"])); note != "" {
+		label = note
+	}
 	return compiledReference{
 		EdgeID: edge.ID, SourceNodeID: source.ID, AssetID: *assetID,
 		Label: label, MIMEType: mimeType, Order: edge.Order, Role: role,
 	}, nil
+}
+
+// Reference metadata changes provider meaning even when the media bytes stay the same.
+func referenceDigestInputs(references []compiledReference) []map[string]any {
+	inputs := make([]map[string]any, 0, len(references))
+	for _, ref := range references {
+		inputs = append(inputs, map[string]any{"asset_id": ref.AssetID, "role": ref.Role, "label": ref.Label})
+	}
+	return inputs
 }
 
 // compileVisual 合并 visual_system 的 version payload 与节点 visual_overlay。

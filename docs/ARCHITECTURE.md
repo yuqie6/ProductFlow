@@ -156,6 +156,8 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 
 图规则由 `go/internal/graph` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构写入走 Graph Command；运行走同一包的 runs / execute / durability。HTTP 入口是该包的 HTTP 层。
 
+参考输入按入边顺序携带资产 ID、用途 `role` 与说明 `label`；节点 `config.label` 非空时优先于绑定资产名称。三项共同进入消费节点的输入摘要，用途或说明改变会使相关结果需要更新，断开参考边后不再影响该目标。生图 adapter 发出的参考像素顺序与最终提示词中的编号一致。此摘要算法变更可能使带参考图的既有结果显示过期，不删除历史结果，也不自动提交运行。实现与回归：`go/internal/graph/compiler.go`、`go/internal/graph/reference_contract_test.go`、`go/internal/providers/adapt/adapt_test.go`。
+
 ## 7. 图片模型
 
 `MediaObject` 保存 storage 路径、MIME、字节数、尺寸、哈希和核验状态。`ProductImageAsset` 保存商品作用域内的显示名、来源、文件夹、父图和图片类型。

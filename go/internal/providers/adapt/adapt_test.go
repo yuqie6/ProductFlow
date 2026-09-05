@@ -61,6 +61,27 @@ func TestGraphImageCompilesPromptAndMapsUnknown(t *testing.T) {
 	}
 }
 
+func TestGraphReferenceMeaningMatchesProviderImageOrder(t *testing.T) {
+	stub := &stubClient{}
+	_, err := GraphImage(stub).GenerateImage(context.Background(), graph.ImageRequest{
+		References: []graph.ReferenceImage{
+			{Role: "product_identity", Label: "商品本体", MIME: "image/png", Bytes: []byte("identity")},
+			{Role: "style", Label: "仅参考光线", MIME: "image/jpeg", Bytes: []byte("style")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.last.Refs) != 2 || string(stub.last.Refs[0].Bytes) != "identity" || string(stub.last.Refs[1].Bytes) != "style" {
+		t.Fatalf("reference bytes changed order: %+v", stub.last.Refs)
+	}
+	for _, want := range []string{"Reference image 1: role=product_identity; label=商品本体", "Reference image 2: role=style; label=仅参考光线"} {
+		if !strings.Contains(stub.last.Prompt, want) {
+			t.Fatalf("missing %q in %s", want, stub.last.Prompt)
+		}
+	}
+}
+
 func TestChatMapsModeAndErrors(t *testing.T) {
 	stub := &stubClient{out: providers.GenerateResult{Bytes: []byte("png"), Images: [][]byte{[]byte("png")}, MIME: "image/png"}}
 	got, err := Chat(stub, nil).Generate(context.Background(), imagesession.ChatRequest{

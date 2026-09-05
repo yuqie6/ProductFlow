@@ -36,7 +36,14 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	compile := prompts.CompileImageTemplates()
 	briefLines := []string{
 		compile.LeadFor(typeTitle),
-		"参考图中的商品是身份基准：准确保留商品外形、结构、材质、颜色和可见标识；围绕本图任务重新设计场景、机位与光线。",
+		"商品本体参考图中的商品是身份基准：准确保留商品外形、结构、材质、颜色和可见标识；围绕本图任务重新设计场景、机位与光线。",
+	}
+	for index, ref := range req.References {
+		line := fmt.Sprintf("Reference image %d: role=%s", index+1, ref.Role)
+		if note := strings.TrimSpace(ref.Label); note != "" {
+			line += "; label=" + note
+		}
+		briefLines = append(briefLines, line)
 	}
 	if typeLine := compile.TypeLine(imageTypeKey); typeLine != "" {
 		briefLines = append(briefLines, typeLine)
