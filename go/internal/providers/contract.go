@@ -139,7 +139,7 @@ type ImageClient interface {
 	ReconcileResponse(ctx context.Context, responseID string) (string, error)
 }
 
-// MockImage 不打网。ModeChat 出灰色 PNG；其它模式出 1×1 PNG。
+// MockImage 不打网。ModeChat 出灰色 PNG；工作流 mock 在未指定 Size 时出 64×64 灰图，保证局部编辑选区能同时有编辑区和保护区。
 type MockImage struct {
 	ProviderName string
 	PNG          []byte
@@ -170,13 +170,13 @@ func (m MockImage) Generate(_ context.Context, req GenerateRequest) (GenerateRes
 		return GenerateResult{}, m.Err
 	}
 	pngBytes := m.PNG
+	width, height := 0, 0
 	if len(pngBytes) == 0 {
-		if req.chat() {
-			w, h := parsePixelSize(req.Size)
-			pngBytes = grayPNG(w, h)
-		} else {
-			pngBytes = smallestPNG()
+		width, height = parsePixelSize(req.Size)
+		if !req.chat() && strings.TrimSpace(req.Size) == "" {
+			width, height = 64, 64
 		}
+		pngBytes = grayPNG(width, height)
 	}
 	n := req.Count
 	if n < 1 {
@@ -189,6 +189,7 @@ func (m MockImage) Generate(_ context.Context, req GenerateRequest) (GenerateRes
 	return GenerateResult{
 		Bytes: pngBytes, Images: images, MIME: "image/png", Model: "mock-image",
 		ProviderStatus: "completed", PromptVersion: "mock-image-v1",
+		Width: width, Height: height,
 	}, nil
 }
 
@@ -201,16 +202,6 @@ func (m MockImage) Edit(_ context.Context, req EditRequest) (EditResult, error) 
 		png = req.SourceBytes
 	}
 	return EditResult{Bytes: png, MIME: "image/png", Model: "mock-local-edit", ProviderStatus: "completed"}, nil
-}
-
-func smallestPNG() []byte {
-	return []byte{
-		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-		0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
-		0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
-		0x42, 0x60, 0x82,
-	}
 }
 
 func parsePixelSize(size string) (int, int) {

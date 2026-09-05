@@ -320,6 +320,21 @@ const HELP_DOCS = {
             },
           ],
         },
+        {
+          id: "local-edit",
+          title: "局部编辑",
+          blocks: [
+            {
+              type: "list",
+              items: [
+                "生图节点有当前出图时，检查器可打开局部编辑：标记区域后选择消除、换字或局部重绘。",
+                "新图进入图库并保留来源；失败不替换节点当前结果。",
+                "可把结果采用为该节点当前图，或只留在图库；图库菜单打开时默认只留在图库。",
+                "当前图片供应商未支持时，入口会说明原因。",
+              ],
+            },
+          ],
+        },
       ],
     },
     {
@@ -492,6 +507,7 @@ const HELP_DOCS = {
       sections: [
         { id: "directories", title: "Directories and classification", blocks: [{ type: "list", items: ["Browse all images, recent generations, uploads, generated results, image types, and origins.", "Create, rename, and remove user folders, and move currently loaded images in batches.", "Use grid or list view, sort by name or time, and download one image or a ZIP of selected images.", "The Agent can inspect names and directories, organize the library, and open only the images needed as references."] }] },
         { id: "cover-and-reference", title: "Cover and reference binding", blocks: [{ type: "paragraph", text: "The product cover is selected automatically and has no workflow semantics. A workflow reference always binds a concrete library asset to its own reference image node." }] },
+        { id: "local-edit", title: "Local edit", blocks: [{ type: "list", items: ["When an image node has a current result, the inspector can open local edit: mark a region, then remove, replace text, or inpaint.", "The new image enters the library and keeps lineage; failure does not replace the node's current result.", "Adopt the result as the node's current image, or keep it in the library only. Opening from the library menu keeps it in the library.", "If the current image provider does not support local edit, the entry explains why."] }] },
       ],
     },
     {
@@ -595,6 +611,7 @@ const HELP_DOCS = {
       sections: [
         { id: "directories", title: "ディレクトリと分類", blocks: [{ type: "list", items: ["全画像、最近の生成、アップロード、生成結果、画像タイプ、出所で閲覧できます。", "ユーザーフォルダを作成、名前変更、削除し、読み込み済み画像を一括移動できます。", "グリッドまたは一覧表示、名前と時間による並べ替え、単体または ZIP ダウンロードに対応します。", "Agent はファイル名とディレクトリを確認して整理し、必要な画像だけを参考として開けます。"] }] },
         { id: "cover-and-reference", title: "カバーと参考画像", blocks: [{ type: "paragraph", text: "商品カバーは自動選択され、ワークフロー上の意味を持ちません。ワークフローでは具体的なライブラリ画像を専用の参考画像ノードへ紐付けます。" }] },
+        { id: "local-edit", title: "部分編集", blocks: [{ type: "list", items: ["画像ノードに現在の結果があるとき、検査器から部分編集を開けます。範囲を指定し、削除、文字置換、部分再描画を選びます。", "新しい画像はライブラリに入り出所を残します。失敗してもノードの現在結果は置き換わりません。", "結果をノードの現在画像として採用するか、ライブラリにだけ残します。ライブラリメニューから開いた場合はライブラリに残します。", "現在の画像プロバイダが部分編集に未対応のときは、入口がその理由を示します。"] }] },
       ],
     },
     {
@@ -698,6 +715,7 @@ const HELP_DOCS = {
       sections: [
         { id: "directories", title: "Thư mục và phân loại", blocks: [{ type: "list", items: ["Duyệt tất cả ảnh, ảnh mới tạo, ảnh tải lên, kết quả tạo, loại ảnh và nguồn.", "Tạo, đổi tên, xóa thư mục người dùng và di chuyển hàng loạt ảnh đã tải.", "Dùng chế độ lưới hoặc danh sách, sắp xếp theo tên hay thời gian, tải một ảnh hoặc tệp ZIP ảnh đã chọn.", "Agent có thể đọc tên và thư mục để sắp xếp, rồi chỉ mở ảnh cần dùng làm tham chiếu."] }] },
         { id: "cover-and-reference", title: "Ảnh bìa và liên kết tham chiếu", blocks: [{ type: "paragraph", text: "Ảnh bìa sản phẩm được chọn tự động và không mang ngữ nghĩa quy trình. Một tham chiếu quy trình luôn liên kết tài sản cụ thể trong thư viện vào node ảnh tham chiếu riêng." }] },
+        { id: "local-edit", title: "Chỉnh sửa cục bộ", blocks: [{ type: "list", items: ["Khi node ảnh có kết quả hiện tại, inspector có thể mở chỉnh sửa cục bộ: đánh dấu vùng rồi xóa, thay chữ hoặc vẽ lại cục bộ.", "Ảnh mới vào thư viện và giữ nguồn; thất bại không thay kết quả hiện tại của node.", "Có thể dùng kết quả làm ảnh hiện tại của node, hoặc chỉ giữ trong thư viện. Mở từ menu thư viện thì mặc định chỉ giữ trong thư viện.", "Nếu nhà cung cấp ảnh hiện tại không hỗ trợ, lối vào sẽ giải thích lý do."] }] },
       ],
     },
     {

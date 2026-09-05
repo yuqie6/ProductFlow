@@ -220,6 +220,10 @@ web-e2e-canvas-delivery *args:
 web-e2e-canvas-asset-recipe *args:
     PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 pnpm --dir web exec playwright test e2e/canvas-asset-recipe.spec.ts --config playwright.config.ts {{args}}
 
+# Chromium local edit adopt/lineage; requires isolated mock image bindings.
+web-e2e-canvas-local-edit *args:
+    PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 pnpm --dir web exec playwright test e2e/canvas-local-edit.spec.ts --config playwright.config.ts {{args}}
+
 # Chromium Agent SSE: duplicate seq1 then seq2 on one generation; connection stays open.
 web-e2e-agent-sse:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/agent-conversation-runtime.spec.ts e2e/agent-sse-reconnect.spec.ts --config playwright.config.ts'

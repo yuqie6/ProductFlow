@@ -139,6 +139,7 @@ Image nodes:
 - A reference edge is optional. Text-only generation is allowed; an unbound reference edge fails and points at that asset node. Direct create wires uploads to visual, brief, prompt, and image nodes.
 - Running this node only renders an image from the live prompt document. A prompt artifact is not required. A seed prompt with only the template design goal can still render; the inspector warns that you may want to generate or fill composition first.
 - Inspect output both on the node and in the library.
+- When the node has a current image, the inspector can open local edit: mark a region and choose remove, replace text, or inpaint. The new image enters the library and keeps lineage; failure does not replace the node's current result. Adopt it as the node's current image, or keep it in the library only. The library menu can also open local edit; those results stay in the library unless opened from the inspector. If the current image provider does not support local edit, the entry explains why.
 
 ### 3.4 Runs
 
@@ -182,6 +183,7 @@ Switch between grid and list, sort by name or time, search the current scope, an
 - Multi-select loaded images to move or download a ZIP.
 - Create a delivery rendition from an image.
 - Bind an explicit asset to a reference node.
+- Locally edit a readable image; opening from the inspector can adopt the result as the current generation node.
 
 Every generation remains in the library. The system has no rejected-draft state and does not automatically delete unselected candidates.
 
@@ -287,6 +289,10 @@ Check whether the Turn requires input. Answer in the composer; the original turn
 ### A Reference Node Is Empty
 
 Open the product library, confirm the target image exists, and bind the explicit asset from the inspector. The product cover is not automatically used by every reference node.
+
+### Local edit is unavailable
+
+The inspector or library entry explains whether the current image provider supports remove, replace-text, and inpaint. The node's current image is not replaced when it is unsupported. Mock bindings can complete these operations; OpenAI requires the masked local-edit capability on the profile; Gemini currently does not support it.
 
 ### Image Generation Failed
 

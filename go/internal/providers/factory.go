@@ -71,10 +71,10 @@ func (l LiveImage) ReconcileResponse(ctx context.Context, responseID string) (st
 	return p.ReconcileResponse(ctx, responseID)
 }
 
-// Image 按当前 image 绑定构造生图/编辑客户端。store 为 nil 或绑定是 mock 时返回不打网的 MockImage。
+// Image 按当前 image 绑定构造生图/编辑客户端。store 为 nil 或绑定是 mock 时返回不打网的 MockImage，并声明 masked local edit。
 func Image(ctx context.Context, store *settings.Store) (ImageClient, error) {
 	if store == nil {
-		return MockImage{}, nil
+		return MockImage{Cap: SupportedEditCapability("mock")}, nil
 	}
 	binding, err := store.ResolveImage(ctx)
 	if err != nil {
@@ -82,7 +82,7 @@ func Image(ctx context.Context, store *settings.Store) (ImageClient, error) {
 	}
 	switch binding.Kind {
 	case "", "mock":
-		return MockImage{}, nil
+		return MockImage{Cap: SupportedEditCapability("mock")}, nil
 	case "openai_images":
 		return OpenAIImages{
 			Kind: "openai_images", APIKey: binding.APIKey, BaseURL: binding.BaseURL,

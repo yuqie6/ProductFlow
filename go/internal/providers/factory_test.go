@@ -1,7 +1,9 @@
 package providers
 
 import (
+	"bytes"
 	"context"
+	"image/png"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -44,6 +46,13 @@ func TestMockImageGenerateAndEdit(t *testing.T) {
 	if len(workflow.Bytes) == 0 || workflow.MIME != "image/png" {
 		t.Fatalf("workflow mock %+v", workflow)
 	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(workflow.Bytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Width < 2 || cfg.Height < 2 {
+		t.Fatalf("workflow mock must be paintable, got %dx%d", cfg.Width, cfg.Height)
+	}
 	chat, err := mock.Generate(ctx, GenerateRequest{Prompt: "x", Size: "64x64", Count: 2, Mode: ModeChat})
 	if err != nil {
 		t.Fatal(err)
@@ -71,5 +80,16 @@ func TestImageFactoryMockWhenStoreNil(t *testing.T) {
 	}
 	if got.Name() != "mock" {
 		t.Fatalf("name %s", got.Name())
+	}
+	cap := got.Capability()
+	if !cap.Supported || cap.Mode != editModeMasked {
+		t.Fatalf("factory mock must declare masked local edit: %+v", cap)
+	}
+	edited, err := got.Edit(context.Background(), EditRequest{SourceBytes: []byte("src"), Instruction: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(edited.Bytes) != "src" {
+		t.Fatalf("edit %+v", edited)
 	}
 }

@@ -40,9 +40,10 @@ The current release serves a personal project and live demo. The main repository
 
 ### 3.3 Manage Images
 
-- The product library stores uploads, workflow generations, and image-session attachments.
+- The product library stores uploads, workflow generations, image-session attachments, and local-edit results.
 - Its directory tree exposes system groups, image types, origins, and user folders.
 - Users search, sort, preview, rename, move, multi-select, download, and create delivery renditions.
+- Users can remove, replace text, or inpaint an existing product image. The new asset keeps lineage; failure does not replace the node's current result. Opening from the inspector can adopt the result as that generation node's current image, or keep it in the library only.
 - User folders are one level deep. Deleting a folder removes organization only and does not delete images or break node, cover, or lineage references.
 - Node bindings and library entries share the same ProductImageAsset identity.
 - Product cover selection is automatic and serves list presentation.
