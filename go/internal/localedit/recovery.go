@@ -23,7 +23,7 @@ type RecoverySummary struct {
 	StaleRunningTasks int  `json:"stale_running_tasks"` // 过期 claimed 被重排队
 	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
 	UnknownTasks      int  `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown
-	HasMore           bool `json:"has_more"`            // unlocked snapshot 仍有未处理候选
+	HasMore           bool `json:"has_more"`            // 跳过锁定行后仍有超过本批额度的候选
 }
 
 // RecoverUnfinished 把 queued 任务补回 PENDING；过期且已打 provider 的 running 标 unknown。
@@ -88,6 +88,7 @@ func discoverLocalEditCandidates(ctx context.Context, gdb *gorm.DB, cutoff time.
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		candidateScanStarted := time.Now()
 		scanErr := localEditRecoveryScope(pgxTx.WithContext(ctx), cutoff).
+			Clauses(pfdb.SkipLocked()).
 			Order("updated_at ASC, id ASC").
 			Limit(limit+1).
 			Pluck("id", &ids).Error

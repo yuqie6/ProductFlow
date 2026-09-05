@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -123,4 +124,52 @@ func pendingDispatchCount(t *testing.T, pool *pgxpool.Pool, aggregateID string) 
 		t.Fatal(err)
 	}
 	return n
+}
+
+func TestRecoverUnfinishedSkipsLockedCandidatePrefix(t *testing.T) {
+	ds := newDeliveryServer(t)
+	drainDeliveryRecovery(t, ds)
+	created := ds.createProduct(t)
+	var ids []string
+	for i := 0; i <= recoveryBatchLimit; i++ {
+		ids = append(ids, insertQueuedDeliveryJob(t, ds, created.Product.ID, created.CreatedAssets[0].ID,
+			fmt.Sprintf("%064x", i), time.Unix(int64(i+1), 0).UTC()))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lock, err := ds.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback(context.Background())
+	if _, err := lock.Exec(ctx, `SELECT id FROM delivery_rendition_jobs WHERE id=ANY($1) FOR UPDATE`, ids[:recoveryBatchLimit]); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		summary, err := RecoverUnfinished(ctx, ds.pool, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if i == 0 {
+			want = 1
+		}
+		if summary.EnqueuedJobs != want {
+			t.Fatalf("cycle %d enqueued %d jobs, want %d", i, summary.EnqueuedJobs, want)
+		}
+	}
+	if got := pendingDispatchCount(t, ds.pool, ids[recoveryBatchLimit]); got != 1 {
+		t.Fatalf("unlocked job after %d locked candidates has %d dispatches after 3 cycles, want 1", recoveryBatchLimit, got)
+	}
+	for _, id := range ids[:recoveryBatchLimit] {
+		if pendingDispatchCount(t, ds.pool, id) != 0 {
+			t.Fatal("locked job was restaged")
+		}
+	}
+	if err := lock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := RecoverUnfinished(ctx, ds.pool, time.Minute); err != nil || summary.EnqueuedJobs != recoveryBatchLimit {
+		t.Fatalf("released jobs not recovered: %+v err=%v", summary, err)
+	}
 }

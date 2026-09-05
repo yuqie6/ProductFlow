@@ -22,7 +22,7 @@ type RecoverySummary struct {
 	QueuedJobs       int  `json:"queued_jobs"`        // 本轮看到的 queued 任务数
 	StaleRunningJobs int  `json:"stale_running_jobs"` // 过期 running 被重置为 queued 的数量
 	EnqueuedJobs     int  `json:"enqueued_jobs"`      // 成功补回 PENDING dispatch 的数量
-	HasMore          bool `json:"has_more"`           // unlocked snapshot 仍有未处理候选
+	HasMore          bool `json:"has_more"`           // 跳过锁定行后仍有超过本批额度的候选
 }
 
 // RecoverUnfinished 把 queued / 过期 running 的交付任务补回 PENDING dispatch。交付没有 unknown。
@@ -81,6 +81,7 @@ func discoverDeliveryCandidates(ctx context.Context, gdb *gorm.DB, cutoff time.T
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		candidateScanStarted := time.Now()
 		scanErr := deliveryRecoveryScope(pgxTx.WithContext(ctx), cutoff).
+			Clauses(pfdb.SkipLocked()).
 			Order("updated_at ASC, id ASC").
 			Limit(limit+1).
 			Pluck("id", &ids).Error

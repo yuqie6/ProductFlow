@@ -1170,3 +1170,15 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 运行时/测试 SHA-256：`recovery.go`=`c61bd9af76cc54d79452ba811d54d39d962733648d08f9fde842589b92c75c91`，`recovery_test.go`=`a68bf3c034d47e982311d43d0b4f464d55d45363143b96f5c8a1d07a6e0ed9da`。只改本域发现查询与相关文档，不改 schema、provider、共享配置或运行服务；共享工作树不是固定候选，本轮不声称 G-07 通过。
 
 锁定前缀回归 `-race -count=10` PASS（11.265s）。`just docs-check`、diff check PASS；主代理自审查询锁作用域、limit+1 语义、逐条复核与所有新增断言。中英文架构仅暂存 ImageSession 恢复段落，其他组未提交文稿不纳入交付。
+
+## 2026-09-05 交付与局部编辑恢复跳过锁定前缀
+
+`3fc016ad` 后核查 Delivery/LocalEdit：两域同样先无锁按 updated_at/id 取固定前缀，再逐条跳锁。分别新增真实 PG 回归，26 个 queued 任务按时间排序，独立事务持前 25 条行锁。Delivery 用现有商品/资产与 rendition job 夹具（26 个不同 spec hash），LocalEdit 用现有 HTTP 创建/submit 流程和 mock capability，移除初始 outbox；均无真实 provider。原实现连续 3 轮后第 26 条 outbox=0，分别 FAIL（0.840s / 1.337s）。
+
+两域仅在候选发现查询使用已有 `pfdb.SkipLocked()`；发现事务结束释放锁，逐条状态复核与 restage 不变。修改后每域第一轮 enqueue=1、后两轮=0，第 26 条唯一 outbox 存在；前缀持锁期间无 outbox，解锁后下一轮 enqueue=25。HasMore 只计跳锁后的可选候选，返回上限与内部扫描成本不能混用。Delivery 过期任务仍可重排队，LocalEdit provider_call 后仍为不可重试 unknown；没有引入共享恢复状态机、schema 或重试兜底。
+
+验证：Delivery / LocalEdit 全包 `-race -count=1 -p 1` PASS（3.882s / 4.397s），含原有 limit/HasMore、过期任务和 unknown 回归。新增锁定前缀各 `-race -count=10` PASS（4.830s / 13.352s）。这是候选前进与唯一 outbox 证据，不是恢复时延 p95 或容量上限。
+
+扩大验证 `just go-test-dispatch-latency` 全套 FAIL（14.193s）：前三场景通过，双副本慢恢复报 invalid sample，claim 时间 `2026-09-05T22:05:44.142255+08:00`、SENT 时间 `22:05:44.158497+08:00`；旧错误日志未打印 release 与 envelope_seen，无法据此确定具体失败分支。保留全部原断言，仅扩充错误诊断为 release、envelope_seen、claim-minus-release、sent-minus-claim。随后双副本慢恢复定向 `-count=5` PASS（26.411s），异常未重现，原因未确定。这不构成全套门通过；本次局部修复的必要包级与触发点证据通过，扩大进程门缺口继续保留。
+
+被测 Delivery/LocalEdit `recovery.go` SHA-256 分别为 `a33243144f891611907a399e8db8a1d931a3a9cd54d302ed50d5075ba8ad7f53` / `7c91fefe1a607951562dbe0dd62e5b2f324a97121e7ecc00c257d745f4c1960a`。Graph/Agent 查询未改，持续错误候选问题未关闭；未动共享 dev DB、provider 或服务。主代理自审两域查询边界、状态差异、测试全部断言和诊断文案，架构共享文件只提交本次段落。

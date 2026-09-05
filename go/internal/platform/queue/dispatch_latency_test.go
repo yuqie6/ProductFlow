@@ -291,7 +291,7 @@ func TestDispatcherPendingSentLatency(t *testing.T) {
 			claimsByReplica := map[string]int{}
 			for _, sample := range samples {
 				if !seen[sample.ID] || sample.ClaimedAt.Before(releaseAt) || sample.SentAt.Before(sample.ClaimedAt) {
-					t.Fatalf("invalid sample: %+v", sample)
+					t.Fatalf("invalid sample: %+v release=%s envelope_seen=%t claim_minus_release=%s sent_minus_claim=%s", sample, releaseAt.Format(time.RFC3339Nano), seen[sample.ID], sample.ClaimedAt.Sub(releaseAt), sample.SentAt.Sub(sample.ClaimedAt))
 				}
 				pendingToSent = append(pendingToSent, sample.SentAt.Sub(releaseAt))
 				claimToSent = append(claimToSent, sample.SentAt.Sub(sample.ClaimedAt))
