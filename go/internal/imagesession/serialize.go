@@ -177,7 +177,10 @@ func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) 
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	overview := s.queueOverview(ctx, tx)
+	var overview queueOverview
+	if len(scannedTasks) > 0 {
+		overview = s.queueOverview(ctx, tx)
+	}
 	positions := queuedPositions(ctx, tx, taskIDs)
 	tasks := make([]TaskResponse, 0, len(scannedTasks))
 	for _, row := range scannedTasks {
@@ -335,7 +338,10 @@ func (s Service) serializeDetailTasks(ctx context.Context, tx *gorm.DB, sessionI
 	if err != nil {
 		return nil, err
 	}
-	overview := s.queueOverview(ctx, tx)
+	var overview queueOverview
+	if len(scannedTasks) > 0 {
+		overview = s.queueOverview(ctx, tx)
+	}
 	positions := queuedPositions(ctx, tx, taskIDs)
 	tasks := make([]TaskResponse, 0, len(scannedTasks))
 	for _, row := range scannedTasks {

@@ -1027,3 +1027,25 @@ SSE 量化复用上一记录的隔离 PG / loopback HTTP / cookie / 4 订阅 / 2
 实测减少 32 条 COUNT，即每次 Status 少 1 条；这个 COUNT 子集下降 33.33%，不能写成全部 SQL、CPU 或时延下降 33.33%。原有传输优化保持，无新缓存或保留内存；未增加锁。延迟样本各 4 个，不报告 p95 或毫秒级改进。
 
 验证：`TestImageSessionStatusActiveFlagMatchesTaskSnapshot` 修改前双向 FAIL、修改后 PASS（0.768s）；同回归 `-race -count=20` PASS（4.357s，共 40 次交错）；ImageSession 全包 `-race -count=1` PASS（24.916s，默认跳过 opt-in）；`just go-test-imagesession-sse-load` 修改前 PASS（20.026s）、修改后 PASS（20.085s）。常规 SSE gate 仅检查帧/回读/送达，不能代替新增交错回归。命令均通过 `scripts/with_dev_env.sh` 提供 dev 环境变量，测试不改共享 dev 库或运行服务。
+
+## 2026-09-05 连续生图空任务读取与全局积压隔离
+
+`80f272f8` 后的 Status/详情仍会在任务列表为空时调用 `queueOverview`，读取容量配置及全局 ImageSession/Graph queued/running 数量；这些结果只嵌在 TaskResponse，空列表没有消费者。本轮在两个 serializer 调用点按返回任务数跳过该读取，不修改共享 generation 统计函数或返回字段。详情包含终态任务时仍读取并返回队列信息。
+
+修改前后使用同一 `http_load_test.go`，SHA-256 为 `49425c664808c4e4db89a10da2de44f39b6ecdaf4b3aa8784941f9bb1cd3a923`；运行时代码基线为 `80f272f8` 的 serializer，修改后随本记录提交。共享工作树其他模块存在并发修改，不作为干净候选发布验收。
+
+新增对照阶段位于原七条 HTTP 路径测量之后：在另一会话插入 25,000 个 queued 任务并 ANALYZE，不改变原 gate 的前置 fixture。此时隔离 PG 库共 25,000 会话、26,000 任务（25,010 queued）、10,000 轮次；目标会话 `plan-img-00001` 无任务/轮次。Graph 无运行记录。使用真实 cookie 鉴权和 loopback HTTP，单客户端，每路径预热 10 次、测量 100 次；计时从发送请求到完整读取正文，p50/p95 用排序第 50/95 个样本。查询计数仅覆盖本域调用的 1 条容量配置读取与 4 条队列 COUNT，不包含其他 SELECT 或事务控制。
+
+| 实测项 | 修改前 | 修改后 |
+|---|---:|---:|
+| 空详情 p50 / p95 | 9.77 / 10.63ms | 5.60 / 6.29ms |
+| 空 Status p50 / p95 | 8.23 / 9.47ms | 3.79 / 4.54ms |
+| 空详情队列查询，100 次测量 | 500 | 0 |
+| 空 Status 队列查询，100 次测量 | 500 | 0 |
+| 空详情 / Status 最大正文字节 | 229 / 271 | 229 / 271 |
+
+每个空任务响应实测少 5 条查询；该本地对照的详情/Status p95 分别下降约 40.77% / 52.12%，不代表生产 SLO、全部页面或 CPU 降幅。没有新增缓存、锁或保留内存。目标响应依旧需要读取本会话，不宣称零查询；带任务响应仍需队列概览。
+
+`TestImageSessionQueueOverviewOnlyForReturnedTasks` 在原实现的 empty_status / empty_detail / terminal_status 三个分支各捕获 5 条无用查询并 FAIL；修改后均为 0，terminal_detail / active_status 仍为 5，所有分支保留非 null 任务数组及必要队列字段，PASS（0.775s）。`just go-test-imagesession-http-load` 前后都通过原有七路径合同及新增测量阶段（16.085s / 14.550s）。量化计数由真实 GORM Query callback 采集；延迟数值来自非 race 运行。
+
+扩展回归通过 dev env wrapper 同时设置 `PRODUCTFLOW_RUN_IMAGE_SESSION_HTTP_LOAD=1` 和 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1`，运行 ImageSession 全包 `-race -count=1 -v -timeout 3m`，PASS（67.240s）。HTTP 空任务阶段队列查询仍为 0；SSE 活动窗口仍为 4 帧 / 359,468B / 32 次 Status 回读，64 条任务表 COUNT，进度/终态/重连通过。query-plan opt-in 本轮未开启。`just docs-check` 与 diff check PASS，主代理自审，无 schema/provider/共享服务配置修改。

@@ -11,10 +11,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/testdb"
+	"gorm.io/gorm"
 )
 
 const httpLoadPrompt = "Preserve product identity, shape, material and label. "
@@ -193,6 +195,57 @@ func TestImageSessionHTTPTargetScale(t *testing.T) {
 		if tc.listPage && durations[94] >= 300*time.Millisecond {
 			t.Errorf("%s p95=%s exceeds initial local budget <300ms", tc.name, durations[94])
 		}
+	}
+
+	// Keep the original seven-route fixture unchanged; measure unrelated backlog separately.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_session_generation_tasks
+		(id, session_id, status, prompt, size, generation_count, created_at, attempts, is_retryable, completed_candidates)
+		SELECT 'http-backlog-' || lpad(g::text, 5, '0'), 'plan-img-24999', 'queued'::jobstatus,
+		'p', '1024x1024', 1, '2026-09-05T00:00:00Z'::timestamptz, 0, TRUE, 0
+		FROM generate_series(1, 25000) AS g`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `ANALYZE image_session_generation_tasks`); err != nil {
+		t.Fatal(err)
+	}
+	var queueReads atomic.Int64
+	callback := "test:http_empty_queue_reads"
+	if err := gdb.Callback().Query().After("gorm:query").Register(callback, func(db *gorm.DB) {
+		if isImageSessionQueueOverviewQuery(db) {
+			queueReads.Add(1)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gdb.Callback().Query().Remove(callback) })
+	t.Log("HTTP_EMPTY_FIXTURE sessions=25000 tasks=26000 queued=25010 rounds=10000 target_tasks=0 target_rounds=0 concurrency=1")
+	for _, suffix := range []string{"", "/status"} {
+		durations := make([]time.Duration, 0, 100)
+		maxBytes := 0
+		var before int64
+		for i := 0; i < 110; i++ {
+			if i == 10 {
+				before = queueReads.Load()
+			}
+			raw, elapsed := read("/api/image-sessions/plan-img-00001" + suffix)
+			var projection struct {
+				ID              string         `json:"id"`
+				GenerationTasks []TaskResponse `json:"generation_tasks"`
+				RoundsCount     int            `json:"rounds_count"`
+			}
+			decode(raw, &projection)
+			if projection.ID != "plan-img-00001" || projection.GenerationTasks == nil || len(projection.GenerationTasks) != 0 || projection.RoundsCount != 0 {
+				t.Fatal("empty projection leaked other-session data or returned null tasks")
+			}
+			if i >= 10 {
+				durations = append(durations, elapsed)
+				maxBytes = max(maxBytes, len(raw))
+			}
+		}
+		slices.Sort(durations)
+		t.Logf("HTTP_EMPTY route=detail%s warmup=10 samples=100 p50=%s p95=%s max_payload_bytes=%d queue_queries=%d",
+			suffix, durations[49], durations[94], maxBytes, queueReads.Load()-before)
 	}
 }
 

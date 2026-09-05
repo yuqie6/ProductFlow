@@ -127,6 +127,89 @@ func TestImageSessionStatusSkipsRawProviderPayloads(t *testing.T) {
 	}
 }
 
+func TestImageSessionQueueOverviewOnlyForReturnedTasks(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		detail bool
+		status string
+		want   int
+	}{
+		{"empty_status", false, "", 0},
+		{"empty_detail", true, "", 0},
+		{"terminal_status", false, "cancelled", 0},
+		{"terminal_detail", true, "cancelled", 1},
+		{"active_status", false, "queued", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ss := newSessionServer(t)
+			now := time.Now().UTC()
+			session := schema.ImageSessions{ID: clockid.New(), Title: tc.name, CreatedAt: now, UpdatedAt: now}
+			if err := ss.db.Create(&session).Error; err != nil {
+				t.Fatal(err)
+			}
+			if tc.status != "" {
+				task := schema.ImageSessionGenerationTasks{
+					ID: clockid.New(), SessionID: session.ID, Status: tc.status,
+					Prompt: "queue projection", Size: "1024x1024", GenerationCount: 1, CreatedAt: now,
+				}
+				t.Cleanup(func() {
+					if err := ss.db.Where("id = ?", task.ID).Delete(&schema.ImageSessionGenerationTasks{}).Error; err != nil {
+						t.Error(err)
+					}
+				})
+				if err := ss.db.Create(&task).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			queueReads := 0
+			callback := "test:empty_task_queue_reads"
+			if err := ss.db.Callback().Query().After("gorm:query").Register(callback, func(db *gorm.DB) {
+				if isImageSessionQueueOverviewQuery(db) {
+					queueReads++
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ss.db.Callback().Query().Remove(callback) })
+			var tasks []TaskResponse
+			if tc.detail {
+				detail, err := ss.svc.Get(context.Background(), session.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tasks = detail.GenerationTasks
+			} else {
+				status, err := ss.svc.Status(context.Background(), session.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tasks = status.GenerationTasks
+			}
+			t.Logf("QUEUE_PROJECTION route=%s tasks=%d queue_queries=%d", tc.name, len(tasks), queueReads)
+			if tasks == nil || len(tasks) != tc.want {
+				t.Fatalf("tasks=%v want count=%d and non-null array", tasks, tc.want)
+			}
+			if tc.want == 0 && queueReads != 0 {
+				t.Error("empty task projection read an unused global queue overview")
+			}
+			if tc.want > 0 && (queueReads != 5 || tasks[0].QueueMaxConcurrentTasks != 20) {
+				t.Error("returned task lost its queue overview")
+			}
+		})
+	}
+}
+
+func isImageSessionQueueOverviewQuery(db *gorm.DB) bool {
+	switch db.Statement.Dest.(type) {
+	case *schema.AppSettings:
+		return db.Statement.Table == "app_settings"
+	case *int64:
+		return db.Statement.Table == "image_session_generation_tasks" || db.Statement.Table == "workflow_graph_runs"
+	default:
+		return false
+	}
+}
+
 func TestImageSessionStatusActiveFlagMatchesTaskSnapshot(t *testing.T) {
 	for _, enqueue := range []bool{true, false} {
 		name := "complete_before_task_read"
