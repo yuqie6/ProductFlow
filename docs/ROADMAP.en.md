@@ -35,7 +35,9 @@ Active execution issues and blockers live on the [issue board](audits/tasks/READ
 
 ### Agent self-evolution
 
-Agent Quality sequences evaluation-contract correction and [ordinary Skill verification](audits/tasks/eval-skills.md) within one group. Agent Self-Evolution owns automatic discovery, diagnosis, instruction/code proposals, validation, and bounded iteration, with one final user approval. The controller is missing. Existing P1/P2/P2b evidence remains; the [current charter](audits/agent-self-harness.md) replaces the old P3-P7 and S0-S6 plans. Development inputs have a one-time startup blocker. Once fixed evaluation inputs are available, the group runs them autonomously. Steer, long-term memory, and approval-free deployment are outside the required delivery.
+Agent Self-Evolution targets merchant tasks with explicit business postconditions on a fixed production model configuration and business version. It owns automatic discovery, testing causal hypotheses, instruction/code proposals, and bounded iteration, with one final user approval. The controller is unimplemented. It reuses Pi, domain tools, and the shared evaluation system; the [current charter](audits/agent-self-harness.md) owns components, evidence, and delivery order. Existing P1/P2/P2b evidence remains; the old P3-P7 and S0-S6 plans have been replaced.
+
+Development inputs still have a one-time startup blocker; see the [development baseline](audits/tasks/eval-development-baseline.md). After valid fixed inputs are delivered, the group runs autonomously without waiting for [manual Skill improvements](audits/tasks/eval-skills.md). Merchant dissatisfaction alone does not establish an Agent defect. Initial problem selection uses measurable development evidence and does not require an online feedback system. Model transfer, subjective feedback attribution, lasting preferences, and general harness replacement remain [future questions](audits/agent-self-harness.md#未来问题), without adding current gates. Steer, long-term memory, and deployment without approval remain outside the prerequisites.
 
 ### Canvas document-authority tests
 
