@@ -22,6 +22,7 @@
 | [eval-go-loader.md](eval-go-loader.md) | 完成 | Go loader extra=forbid；共享非法 fixture 覆盖多余字段、未知 enum、重复 id、缺失 world、L2 层级不匹配 |
 | [perf-capacity-metrics.md](perf-capacity-metrics.md) | 完成 | `/metrics` 增加 admission running 与 denied；容量满路径按 graph/imagesession 计数 |
 | [perf-dispatcher-backlog.md](perf-dispatcher-backlog.md) | 完成 | watch 满批后续投；单副本 500 条 PENDING→SENT p95 0.438s |
+| [perf-graph-adopt-concurrent.md](perf-graph-adopt-concurrent.md) | 完成 | 自动采用与 cancel/recovery/mutate 并发 `-count=20` 无死锁；succeeded 则三文稿 generated+ready |
 | [canvas-inspector-midrun.md](canvas-inspector-midrun.md) | 完成 | 运行中检查器保存与 AR-01 基线贯通；mock 浏览器门 3 passed |
 | [canvas-graph-run-undo.md](canvas-graph-run-undo.md) | 完成 | 整图跑中途 HTTP undo 具名钉死；live 回到撤销后文稿 |
 | [canvas-c4-remainder.md](canvas-c4-remainder.md) | 完成 | 浏览器整图跑中途撤销与文稿 409 停止；mock 门 5 passed |

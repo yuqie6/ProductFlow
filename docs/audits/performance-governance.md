@@ -4,7 +4,7 @@
 
 生产 Gate 的详细合同保存在本文 [生产 Gate](#production-gates) 节；[历史时间线](../history/agent-runtime-timeline.md#runtime-ownership-evidence) 保留已关闭所有权重构的证据。当前代码、测试和真实运行仍是最终证据；账本中的目标、预算和未验证项必须标明状态。
 
-**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情、时延、容量指标与 dispatcher 积压续投已归档。[perf-dispatcher-backlog](tasks/archive/perf-dispatcher-backlog.md) 后本地 500 条突发单副本 PENDING→SENT p95 为 0.438s。PERF-12 仍缺目标规模 payload，本轮不发该后续单。本地 p95 不表示生产 SLO。
+**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情、时延、容量指标、dispatcher 积压续投与 Graph 自动采用并发已经归档。[perf-dispatcher-backlog](tasks/archive/perf-dispatcher-backlog.md) 后本地 500 条突发单副本 PENDING→SENT p95 为 0.438s。[perf-graph-adopt-concurrent](tasks/archive/perf-graph-adopt-concurrent.md) 补齐自动采用与 mutate 并发 Gate。PERF-12 仍缺目标规模 payload，本轮不发该后续单。本地 p95 不表示生产 SLO。本组当前无未关闭 issue。
 
 ## 组职责与交接
 
@@ -71,7 +71,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 
 | ID | 项目 | 状态 | 当前措施与证据 | 剩余缺口 |
 |---|---|---|---|---|
-| PERF-01 | Graph 行锁反向边 | 部分完成 | Graph 事件追加收口为 `appendGraphRunEventLocked`；run mutation 使用 `run -> graph -> node` 或 `run -> node -> effect`；文稿自动采用改为先锁 run 再锁 live graph；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` `-count=20` 通过 | 未单独断言自动采用结果；目标规模锁等待仍缺 |
+| PERF-01 | Graph 行锁反向边 | 部分完成 | Graph 事件追加收口为 `appendGraphRunEventLocked`；run mutation 使用 `run -> graph -> node` 或 `run -> node -> effect`；文稿自动采用改为先锁 run 再锁 live graph；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` 与 `TestConcurrentAdoptCancelMutateDoesNotDeadlock` `-count=20` 通过。[perf-graph-adopt-concurrent](tasks/archive/perf-graph-adopt-concurrent.md)：无 `40P01`；`generated` 文稿保持 ready；succeeded 则三文稿均为 generated | 目标规模锁等待仍缺 |
 | PERF-02 | Agent Task 与 Turn projection 反向边 | 部分完成 | 全局 Draft 确认先锁关联 projection，再写 conversation / Task；`TestConfirmDraftAndAppendTerminalDoNotDeadlock` 与既有 append/claim 锁序测试 `-count=20` 通过 | 继续核对稳定架构文档的 owner 表 |
 | PERF-03 | node/run 隐式反向边 | 部分完成 | `failBlockedQueuedNodes` 先锁 run，再改 node 并追加事件；事件 helper 不再隐藏获取 run 锁；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` 覆盖 cancel、ExecuteRun、recovery，`-count=20` 通过 | 目标规模锁等待仍缺 |
 | PERF-04 | 生图容量锁顺序 | 部分完成 | Graph 为 `capacity advisory -> run -> node`；ImageSession claim 改为 `capacity advisory -> task`，取得 task 锁后重新核对状态。`just go-test-staging-field` 中 `TestReplicaFieldTwoWorkersRespectGenerationCapacity`：上限 1 时两 worker 同时 claim，1 running / 1 waiting_for_capacity | 全库单钥匙和 noisy neighbor 仍存在；SaaS 前需按 workspace/tenant 重构 |
@@ -303,7 +303,7 @@ Recovery 的默认边界：
 
 ### P0：先修正确性和锁序
 
-状态：当前工作树已落地，相关包和全量 Go gate 已通过；专门并发 Gate 仍未补齐。
+状态：当前工作树已落地，相关包和全量 Go gate 已通过。Graph cancel/recovery/ExecuteRun/automatic adoption 与 live mutate 的包内并发 Gate 已补齐；目标规模锁等待仍缺。Agent AppendEvents/Draft confirm 与 ImageSession 双 claim 专项并发仍按原验收重点观察。
 
 - Graph 事件写入使用显式 `appendGraphRunEventLocked`；所有会追加事件的 run mutation 先拿 run 锁。
 - 文稿自动采用路径使用 `run -> graph -> node`；普通节点状态路径使用 `run -> node -> effect`。
@@ -564,6 +564,7 @@ PRODUCTFLOW_PERF_PRODUCT_ID=<product-id> WEB_BASE_URL=http://127.0.0.1:<web-port
 | 2026-09-05 | dispatcher 积压满批续投，交付见 [归档任务](tasks/archive/perf-dispatcher-backlog.md) | queue 4.724s、dispatcher 0.764s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 8.715s，每场 500 个有效样本、25 个延期跳过；单副本 p95 437.666ms，双副本 278.819ms。满批后续投与 SENT+enqueue 有界并发 race 子集通过 | 有效本地回归完成；无生产 SLO；未跑重 recovery 负载；`just staging-up` 杀容器未跑 |
 | 2026-09-05 | AR-02 journal 职责调查，认领 `324894a6` | 指定 Node 测试 61 passed / 1 skipped（10k WAL `runIf`）；`just docs-check` 通过。结论保留现状，见[归档任务](tasks/archive/arch-journal-assessment.md) | 本轮未跑 Go ConfirmEvents / fencing；Node recover claim 409 缺测；不发实现单 |
 | 2026-09-05 | 生图 admission running/denied 指标 | `generationCapacityAvailable` 容量满打点；`/metrics` 输出 `productflow_generation_admission_running` 与带 `graph`/`imagesession` domain 的 `productflow_generation_admission_denied_total`。metrics 0.856s、graph 78.394s 通过，见[归档任务](tasks/archive/perf-capacity-metrics.md) | 未跑 imagesession replica field；入队路径满容量也会增加 denied；denied 非跨副本合计 |
+| 2026-09-05 | Graph 自动采用并发 Gate，见[归档任务](tasks/archive/perf-graph-adopt-concurrent.md) | `TestConcurrentAdoptCancelMutateDoesNotDeadlock` 与既有 cancel/recovery 测试 `-count=20` 58.757s 通过；`go test -C go ./internal/graph -count=1 -p 1` 85.024s 通过。未改 cook/adopt 生产路径 | 目标规模锁等待仍缺；未把 P0 整项标完成 |
 
 验证记录不能把一次局部测试写成全量完成。工作树有其它未提交改动时，报告必须列出本次实际触碰的文件和测试范围，不得使用 clean checkout 作为默认假设。
 
