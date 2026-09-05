@@ -89,6 +89,8 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 
 ## 4. Agent 创建链路
 
+配方创建由 `pages/product-create/RecipeProductCreateForm.tsx` → `POST /api/v3/workflow-recipes/{recipe_id}/creation-preview` → `POST /api/v3/products/from-recipe` 承担。预览只计算无目标身份的配方结构与 digest；确认提交名称、参考图、说明、版本、digest 和 `Idempotency-Key`。`product.CreateFromRecipe` 在现有商品创建事务中复核预览，并用同一事务的 `recipe.Preview` / `Apply` 绑定新商品及 facts、写首张图与应用记录。完整配方仍拒绝覆盖已有图。商品的 `creation_idempotency_key` / `creation_request_hash` 成对且 key 唯一；同请求回放当前商品/图，不同请求冲突。媒体补偿在事务提交成功后释放，提交失败清理新文件。部署须运行 `just go-migrate` 补列及约束。测试：`go/internal/product/recipe_create_test.go`、`go/internal/recipe/http_test.go`、`go/internal/platform/db/schema/migrate_test.go`。
+
 ```text
 product name (+ optional types and 1..6 uploads)
   -> Product + live schema-v3 graph + product-owned AgentSession + AgentConversation

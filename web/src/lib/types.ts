@@ -1695,6 +1695,12 @@ export interface DirectCreateProductResponse {
   graph: GraphProjection;
 }
 
+export interface RecipeCreateProductResponse {
+  created: boolean;
+  product: CanonicalProductDetail;
+  graph: GraphProjection;
+}
+
 export interface GraphChangeSet {
   base_graph_revision: number;
   summary: string;

@@ -1,6 +1,6 @@
-// Package product 实现商品四条出生命令、facts、封面与商品图库。
+// Package product 实现商品出生命令、facts、封面与商品图库。
 //
-// 职责：无图创建、直连创建、Agent 名称-only、Agent 表单工作区。商品图、封面、图库、节点绑定
+// 职责：无图创建、直连创建、配方创建、Agent 名称-only、Agent 表单工作区。商品图、封面、图库、节点绑定
 // 一律引用 ProductImageAsset id，合同与 intake 不得出现存储路径。
 //
 // 调用时机：HTTP 出生/facts/图库走 [Service]；graph 编译与跑图通过 [GraphGuard] 读商品与 fact，
@@ -266,13 +266,13 @@ func (s Service) createWithGraph(ctx context.Context, in CreateInput, setCover, 
 				return err
 			}
 		}
-		compensation.Release()
 		return nil
 	})
 	if err != nil {
 		compensation.Rollback()
 		return err
 	}
+	compensation.Release()
 	return nil
 }
 

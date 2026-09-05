@@ -290,6 +290,25 @@ func (s Service) Preview(ctx context.Context, productID, recipeID string, expect
 	return out, err
 }
 
+// PreviewCreation validates a complete recipe before a product exists. It writes nothing.
+// The digest binds the recipe structure; confirmation resolves the new product identity separately.
+func (s Service) PreviewCreation(ctx context.Context, recipeID string, expectedVersion int) (Preview, error) {
+	var out Preview
+	err := tx.WithGorm(ctx, s.DB, func(db *gorm.DB) error {
+		rec, err := loadRecipe(ctx, db, recipeID, false)
+		if err != nil {
+			return err
+		}
+		plan, err := s.planFromRecipe(productTarget{}, rec, expectedVersion, nil, nil)
+		if err != nil {
+			return err
+		}
+		out = plan.preview()
+		return nil
+	})
+	return out, err
+}
+
 // Apply 按预览 digest 确认写入目标 live 图。完整配方在已有 live 图上返回冲突；fragment 可 merge 或返回显式冲突。相同幂等键回放。
 func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, error) {
 	ctx = graph.WithProductGuard(ctx, s.Products)

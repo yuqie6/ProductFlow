@@ -89,6 +89,8 @@ Current frontend ownership:
 
 ## 4. Agent Creation Flow
 
+Recipe creation is owned by `pages/product-create/RecipeProductCreateForm.tsx`, `POST /api/v3/workflow-recipes/{recipe_id}/creation-preview`, and `POST /api/v3/products/from-recipe`. The read-only preview binds recipe structure before a target exists. Confirmation sends product name, uploads, notes, recipe version/digest, and `Idempotency-Key`. `product.CreateFromRecipe` verifies the preview inside its existing creation transaction, then calls `recipe.Preview` and `Apply` on that same transaction to bind target product/facts and write the first graph plus application record. Full recipes still reject existing graphs. Product `creation_idempotency_key` and `creation_request_hash` are paired, with a unique key: identical requests replay the current product/graph; different requests conflict. Media compensation is released after commit and removes new files on commit failure. Run `just go-migrate` to add the columns and constraints. Tests: `go/internal/product/recipe_create_test.go`, `go/internal/recipe/http_test.go`, `go/internal/platform/db/schema/migrate_test.go`.
+
 ```text
 product name (+ optional types and 1..6 uploads)
   -> Product + live schema-v3 graph + product-owned AgentSession + AgentConversation

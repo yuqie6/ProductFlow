@@ -721,6 +721,8 @@ func (ProductImageAssets) TableName() string { return "product_image_assets" }
 // Products 对应表 products。
 // 商品主档：名称、intake、封面与当前 facts 版本。
 type Products struct {
+	CreationIdempotencyKey  *string   `gorm:"column:creation_idempotency_key;type:varchar(120)"`
+	CreationRequestHash     *string   `gorm:"column:creation_request_hash;type:varchar(64)"`
 	ID                      string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name                    string    `gorm:"column:name;type:varchar(255);not null"`
 	Category                *string   `gorm:"column:category;type:varchar(120)"`

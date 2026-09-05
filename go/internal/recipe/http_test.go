@@ -231,6 +231,63 @@ func TestRecipeListRequiresLogin(t *testing.T) {
 	}
 }
 
+func TestRecipeCreationPreviewHTTP(t *testing.T) {
+	rs := newRecipeServer(t)
+	productID, g := rs.createDirectGraph(t, "creation preview")
+	for _, source := range []string{"workflow", "selection"} {
+		body := map[string]any{"source_type": source, "expected_graph_revision": g.Revision, "title": "creation preview"}
+		if source == "selection" {
+			body["node_ids"] = []string{g.Nodes[0].ID}
+		}
+		saved := rs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+g.ID+"/recipes", body)
+		rs.mustStatus(t, saved, http.StatusCreated)
+		var rec recipe.RecipeView
+		rs.decode(t, saved, &rec)
+		path := "/api/v3/workflow-recipes/" + rec.ID + "/creation-preview"
+		for _, trial := range []struct {
+			body   map[string]any
+			status int
+		}{
+			{map[string]any{}, 400}, {map[string]any{"expected_recipe_version": 0}, 400},
+			{map[string]any{"expected_recipe_version": 1, "product_id": productID}, 400},
+			{map[string]any{"expected_recipe_version": 2}, 409},
+		} {
+			resp := rs.doJSON(t, http.MethodPost, path, trial.body)
+			rs.mustStatus(t, resp, trial.status)
+			rs.decode(t, resp, nil)
+		}
+		resp := rs.doJSON(t, http.MethodPost, path, map[string]any{"expected_recipe_version": 1})
+		if source == "selection" {
+			rs.mustStatus(t, resp, 409)
+			rs.decode(t, resp, nil)
+			continue
+		}
+		rs.mustStatus(t, resp, 200)
+		var preview recipe.PreviewView
+		rs.decode(t, resp, &preview)
+		if preview.Mode != "create" || preview.BaseGraphRevision != 0 || len(preview.Nodes) != len(g.Nodes) {
+			t.Fatalf("unexpected preview %+v", preview)
+		}
+		archived := rs.do(t, http.MethodDelete, "/api/v3/workflow-recipes/"+rec.ID+"?expected_recipe_version=1", nil, "")
+		rs.mustStatus(t, archived, 200)
+		rs.decode(t, archived, nil)
+		resp = rs.doJSON(t, http.MethodPost, path, map[string]any{"expected_recipe_version": 1})
+		rs.mustStatus(t, resp, 409)
+		rs.decode(t, resp, nil)
+	}
+	noAuth, err := http.NewRequest(http.MethodPost, rs.srv.URL+"/api/v3/workflow-recipes/"+clockid.New()+"/creation-preview", strings.NewReader(`{"expected_recipe_version":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	noAuth.Header.Set("Content-Type", "application/json")
+	resp, err := rs.client.Do(noAuth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs.mustStatus(t, resp, 401)
+	rs.decode(t, resp, nil)
+}
+
 func TestRecipeAPISavesFragmentPreviewAndApply(t *testing.T) {
 	rs := newRecipeServer(t)
 	listed := rs.do(t, http.MethodGet, "/api/v3/workflow-recipes", nil, "")

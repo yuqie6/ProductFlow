@@ -12,6 +12,7 @@ import type {
 } from "../lib/types";
 import { agentProductWorkbenchPath, agentWorkbenchQueryKey } from "./workbench/agent/productWorkbenchRoute";
 import { AgentProductCreateForm } from "./product-create/AgentProductCreateForm";
+import { RecipeProductCreateForm } from "./product-create/RecipeProductCreateForm";
 import {
   isAmbiguousFinalizeError,
   parsePendingDraft,
@@ -162,6 +163,7 @@ export function AgentProductCreatePage() {
     pendingDraft?.deliveryPresetKey ?? null,
   );
   const [error, setError] = useState("");
+  const [creationMode, setCreationMode] = useState<"form" | "recipe">("form");
   const [reconciliationRequired, setReconciliationRequired] = useState(false);
   const draftIdempotencyKeyRef = useRef(pendingDraft?.idempotencyKey ?? createIdempotencyKey());
   const intakeIdempotencyRef = useRef<IntakeIdempotencyState | null>(null);
@@ -774,7 +776,7 @@ export function AgentProductCreatePage() {
                 <h1 className="text-xl font-semibold leading-7 tracking-tight text-text-primary sm:text-[26px] sm:leading-8">
                   {t("agentCreate.title")}
                 </h1>
-                <p className="mt-1 text-sm leading-6 text-text-secondary">
+                <p hidden={creationMode === "recipe"} className="mt-1 text-sm leading-6 text-text-secondary">
                   {t("agentCreate.description")}
                 </p>
               </div>
@@ -789,7 +791,16 @@ export function AgentProductCreatePage() {
                 <span>{t("agentCreate.recoveryNotice")}</span>
               </div>
             ) : null}
-            <AgentProductCreateForm
+            {!workspaceId && !workspace ? (
+              <div role="group" aria-label={t("agentCreate.recipe.modeLabel")} className="mb-6 flex flex-wrap gap-1 border-b border-border-l1">
+                {(["form", "recipe"] as const).map((mode) => (
+                  <button type="button" key={mode} disabled={isSubmitting} aria-pressed={creationMode === mode} data-create-mode={mode}
+                    className={`min-h-10 border-b-2 px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent ${creationMode === mode ? "border-accent text-accent" : "border-transparent text-text-secondary"}`}
+                    onClick={() => setCreationMode(mode)}>{t(mode === "form" ? "agentCreate.recipe.formMode" : "agentCreate.recipe.mode")}</button>
+                ))}
+              </div>
+            ) : null}
+            {creationMode === "recipe" && !workspaceId && !workspace ? <RecipeProductCreateForm /> : <AgentProductCreateForm
               productName={workspace?.product.name ?? name}
               isProductNameReadOnly={Boolean(workspace)}
               options={options}
@@ -837,7 +848,7 @@ export function AgentProductCreatePage() {
               onSubmit={handleSubmit}
               onDirectCreate={workspace ? undefined : handleDirectCreate}
               isDirectCreating={directCreateMutation.isPending}
-            />
+            />}
           </div>
         ) : null}
       </main>

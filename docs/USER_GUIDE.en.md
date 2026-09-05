@@ -191,13 +191,15 @@ The Agent can read bounded names, directories, and metadata; create or rename fo
 
 ## 6. Save Workflow Recipes
 
+To reuse a complete recipe, open New Product and select "From a recipe". Enter the new product name, choose a complete recipe, upload 1 to 6 product references, and optionally add product details. "Preview recipe" shows its structure; cancelling creates neither a product nor a graph. "Confirm and create product" opens the new canvas without an Agent. After a network error, retrying the same confirmation does not create another product. Asset placeholders do not carry source product images: select replacements from the new product's library and review reusable documents for suitability.
+
 The workbench can save:
 
 - A complete workflow preset.
 - The local flow of the current group.
 - A fragment from the current node selection.
 
-A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user. Apply preview names create vs merge and lists the nodes and edges that will appear; a failed preview cannot be confirmed. Confirm writes the target product's live graph once. A full preset only writes when the product has no workflow yet; an existing workflow is an explicit conflict. Fragment recipes merge into an existing workflow or return a conflict. A workbench with no graph can still preview and apply a recipe.
+A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user. Apply preview names create vs merge and lists the nodes and edges that will appear; a failed preview cannot be confirmed. Confirm writes the target product's live graph once. Full presets are used for new products from the creation page; an existing workflow is an explicit conflict. Fragment recipes merge into an existing workflow from the workbench or return a conflict.
 
 ## 7. Iterative Image Generation
 

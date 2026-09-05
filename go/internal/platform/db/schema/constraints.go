@@ -144,6 +144,16 @@ END $enum$;`,
 // ExtraDDL 补上 CreateTable/AddColumn 不管的 CHECK/UNIQUE/FK 与索引。改约束只改这里，不要在模型 tag 里再写一份。
 var ExtraDDL = []string{
 	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT uq_products_creation_idempotency_key UNIQUE (creation_idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT ck_products_creation_idempotency_pair CHECK ((creation_idempotency_key IS NULL AND creation_request_hash IS NULL) OR (creation_idempotency_key IS NOT NULL AND length(creation_idempotency_key) > 0 AND creation_request_hash IS NOT NULL AND length(creation_request_hash) = 64));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
 ALTER TYPE agentcheckpointkind ADD VALUE IF NOT EXISTS 'model_response_bound';
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN undefined_object THEN NULL;

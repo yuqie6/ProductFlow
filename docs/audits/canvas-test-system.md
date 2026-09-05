@@ -88,7 +88,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 场景运行与失败修复 | [canvas-run-recovery-proof](tasks/archive/canvas-run-recovery-proof.md)：隔离 mock Chromium 4 passed，34.9s | 核 selection、保存失败不提交、选图修复后新 run 成功、只重试失败节点；保存 409 为浏览器注入，状态排除另有单元回归 |
 | 预览、下载和交付包 | [canvas-delivery-proof](tasks/archive/canvas-delivery-proof.md)：隔离 mock Chromium 2 passed，16.8s；Go delivery 24 tests passed | 核两种 PNG 规格、原图不变、实际文件及 ZIP 谱系/hash；503 为浏览器注入，未覆盖所有格式和真实存储故障 |
 | 资产与片段配方复用 | [canvas-asset-recipe-proof](tasks/archive/canvas-asset-recipe-proof.md)：固定结果后再生成不换绑定，图库拖到 reference 端口，片段保存/取消/确认及目标配置保留；Recipe PG 12 passed | 专属浏览器门 3 passed / 1 skipped；跳过项是单独启用的未解决入口诊断，不计通过。未覆盖全部拖放组合或商家效率 |
-| 完整配方创建入口 | 后端 create 回归通过；已有图的完整配方冲突浏览器通过；无图商品入口诊断 1 failed | 当前创建流程都会建图，无图 API 商品又被缺 Agent 工作区挡住；商家套用完整配方链未通过，交 [canvas-full-recipe-entry](tasks/canvas-full-recipe-entry.md) |
+| 完整配方创建入口 | [canvas-full-recipe-entry](tasks/archive/canvas-full-recipe-entry.md)：创建页只读预览、取消无写入、同事务创建首图、丢响应重试不重复；PG 59、Web 650、浏览器 7 passed | 1440/1024/390 业务操作，24 组语言/主题布局；来源身份、资产与结果不继承。素材占位需重新选图，文稿须按新商品审阅；未代替商家效率或真实 provider 验收 |
 | 局部编辑与日常操作效率 | 局部编辑已接线，现有 shot filmstrip 可选场景 | 未进行本组完整局部编辑验收或商家任务观察；现有 filmstrip 不等于路线图中的镜头列表主界面已经交付 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
@@ -144,6 +144,6 @@ just docs-check
 
 优先处理已复现的丢稿、错误运行目标、错误资产身份、结果无法取用与无法恢复等业务故障；其次处理有操作证据的重复劳动与理解成本。证据补强必须说明它阻碍哪项业务判断，不按测试空白数量排优先级。
 
-[资产复用与片段确认](tasks/archive/canvas-asset-recipe-proof.md) 已按现场边界交付，完整配方入口拆分为 [canvas-full-recipe-entry](tasks/canvas-full-recipe-entry.md)，状态见任务看板。下一项优先恢复商家从当前创建界面预览、确认完整配方的路径；保持已有图不可覆盖、取消不写图及目标身份正确。该缺口有真实失败证据，不继续用增加测试数代替修复。设置 `PRODUCTFLOW_PROBE_FULL_RECIPE_ENTRY=1` 并运行专属门的 `--grep @known-gap` 可单独复现当前 FAIL。
+[完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。本组当前没有已发布的后续实现单，局部编辑完整操作和商家任务成本仍为明确未知。
 
 其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

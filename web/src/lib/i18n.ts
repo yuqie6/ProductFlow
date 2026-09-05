@@ -7,6 +7,16 @@ export const DEFAULT_LOCALE: Locale = "zh-CN";
 export const LOCALE_STORAGE_KEY = "productflow.locale";
 
 export const zhCN = {
+  "agentCreate.recipe.modeLabel": "创建方式",
+  "agentCreate.recipe.formMode": "新建工作流",
+  "agentCreate.recipe.mode": "从配方创建",
+  "agentCreate.recipe.productName": "商品名称",
+  "agentCreate.recipe.choose": "选择完整配方",
+  "agentCreate.recipe.empty": "暂无已保存的完整配方",
+  "agentCreate.recipe.upload": "商品参考图（1 至 6 张）",
+  "agentCreate.recipe.sourceNote": "商品说明（可选）",
+  "agentCreate.recipe.preview": "预览配方",
+  "agentCreate.recipe.confirm": "确认并创建商品",
   "nav.home": "首页",
   "app.loading": "加载中",
   "nav.products": "商品/工作台",
@@ -2111,6 +2121,16 @@ export const zhCN = {
 } as const;
 
 export const enUS: Record<keyof typeof zhCN, string> = {
+  "agentCreate.recipe.modeLabel": "Creation method",
+  "agentCreate.recipe.formMode": "New workflow",
+  "agentCreate.recipe.mode": "From a recipe",
+  "agentCreate.recipe.productName": "Product name",
+  "agentCreate.recipe.choose": "Choose a complete recipe",
+  "agentCreate.recipe.empty": "No saved complete recipes",
+  "agentCreate.recipe.upload": "Product references (1 to 6 images)",
+  "agentCreate.recipe.sourceNote": "Product details (optional)",
+  "agentCreate.recipe.preview": "Preview recipe",
+  "agentCreate.recipe.confirm": "Confirm and create product",
   "nav.home": "Home",
   "app.loading": "Loading",
   "nav.products": "Products",
@@ -4215,6 +4235,16 @@ export const enUS: Record<keyof typeof zhCN, string> = {
 };
 
 export const jaJP: Record<keyof typeof zhCN, string> = {
+  "agentCreate.recipe.modeLabel": "作成方法",
+  "agentCreate.recipe.formMode": "新規ワークフロー",
+  "agentCreate.recipe.mode": "レシピから作成",
+  "agentCreate.recipe.productName": "商品名",
+  "agentCreate.recipe.choose": "完全なレシピを選択",
+  "agentCreate.recipe.empty": "保存済みの完全なレシピはありません",
+  "agentCreate.recipe.upload": "商品参考画像（1〜6枚）",
+  "agentCreate.recipe.sourceNote": "商品説明（任意）",
+  "agentCreate.recipe.preview": "レシピをプレビュー",
+  "agentCreate.recipe.confirm": "確認して商品を作成",
   "nav.home": "ホーム",
   "app.loading": "読み込み中",
   "nav.products": "商品/ワークベンチ",
@@ -6319,6 +6349,16 @@ export const jaJP: Record<keyof typeof zhCN, string> = {
 };
 
 export const viVN: Record<keyof typeof zhCN, string> = {
+  "agentCreate.recipe.modeLabel": "Cách tạo",
+  "agentCreate.recipe.formMode": "Quy trình mới",
+  "agentCreate.recipe.mode": "Tạo từ công thức",
+  "agentCreate.recipe.productName": "Tên sản phẩm",
+  "agentCreate.recipe.choose": "Chọn công thức đầy đủ",
+  "agentCreate.recipe.empty": "Chưa có công thức đầy đủ đã lưu",
+  "agentCreate.recipe.upload": "Ảnh tham chiếu sản phẩm (1 đến 6 ảnh)",
+  "agentCreate.recipe.sourceNote": "Chi tiết sản phẩm (không bắt buộc)",
+  "agentCreate.recipe.preview": "Xem trước công thức",
+  "agentCreate.recipe.confirm": "Xác nhận và tạo sản phẩm",
   "nav.home": "Trang chủ",
   "app.loading": "Đang tải",
   "nav.products": "Sản phẩm",

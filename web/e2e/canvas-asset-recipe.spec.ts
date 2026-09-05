@@ -1,5 +1,4 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFile } from "node:fs/promises";
 
 import type { GraphProjection, GraphRun, WorkflowRecipePreview, WorkflowRecipeSummary } from "../src/lib/types";
 import { assertMockImageProviders, lockLocale, loginAsAdmin, REFERENCE_PRODUCT_IMAGE, requiredEnv } from "./liveGraph";
@@ -140,18 +139,141 @@ test.describe("canvas asset and recipe identity", () => {
 
   });
 
-  test("graphless product can reach the recipe library @known-gap", async ({ page }) => {
-    test.skip(process.env.PRODUCTFLOW_PROBE_FULL_RECIPE_ENTRY !== "1", "canvas-full-recipe-entry: opt-in reproduction of the unresolved entry gap");
-    const created = await page.request.post("/api/v2/products", { multipart: {
-      name: `recipe graphless ${Date.now()}`,
-      images: { name: "reference.png", mimeType: "image/png", buffer: await readFile(REFERENCE_PRODUCT_IMAGE) },
-    } });
-    expect(created.ok(), await created.text()).toBeTruthy();
-    const { product } = await created.json();
-    await page.goto(`/products/${product.id}`);
-    await expect(page.getByRole("alert")).toHaveText("商品还没有 Agent 工作区");
-    expect((await page.request.get(`/api/v3/products/${product.id}/workflows/current`)).status()).toBe(404);
-    await expect(page.locator('[data-sidebar-tool="recipes"]').filter({ visible: true })).toHaveCount(1, { timeout: 1000 });
+  for (const width of [1440, 1024, 390]) {
+    test(`full recipe creation cancels without writes and confirms once at ${width}px`, async ({ page }) => {
+      const source = await createWorkflow(page);
+      const sourceProductId = workflowProductId(page);
+      const sourceAssetId = await runImage(page, source, source.nodes.find((node) => node.node_type === "image_generation")!.id);
+      const recipe = await saveRecipe(page, "保存完整工作流预设");
+      const recipeNodes = recipe.current_version.payload.nodes;
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/products/new");
+      await page.locator('[data-create-mode="recipe"]').click();
+      const name = `recipe target ${width} ${Date.now()}`;
+      await page.locator("#recipe-product-name").fill(name);
+      await page.locator("#create-recipe").selectOption(recipe.id);
+      await page.locator('[data-create-recipe-form] input[type="file"]').setInputFiles(REFERENCE_PRODUCT_IMAGE);
+      await page.locator("#recipe-source-note").fill("这是新商品的资料，不复用原商品身份");
+      const writes: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v3/products/from-recipe") writes.push(request.url());
+      });
+      await page.getByRole("button", { name: "预览配方", exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.locator("[data-recipe-preview]")).toHaveAttribute("data-recipe-preview-mode", "create");
+      await expect(dialog.locator("[data-recipe-preview-nodes] li")).toHaveCount(recipeNodes.length);
+      await dialog.getByRole("button", { name: "取消", exact: true }).click();
+      expect(writes).toHaveLength(0);
+      const products = await page.request.get(`/api/v2/products?q=${encodeURIComponent(name)}`);
+      expect((await products.json()).total).toBe(0);
+      await page.getByRole("button", { name: "预览配方", exact: true }).click();
+      await expect(dialog.getByRole("button", { name: "确认并创建商品", exact: true })).toBeEnabled();
+      let firstProductId: string | undefined;
+      if (width === 1440) {
+        // Drop the response at fetch's application boundary; CDP interception omits upload bytes.
+        await page.evaluate(() => {
+          const fetch = window.fetch.bind(window);
+          let dropped = false;
+          window.fetch = async (input, init) => {
+            const response = await fetch(input, init);
+            if (!dropped && typeof input === "string" && input.endsWith("/api/v3/products/from-recipe") && response.ok) {
+              dropped = true;
+              throw new TypeError("Injected response loss after commit");
+            }
+            return response;
+          };
+        });
+        const firstConfirmation = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v3/products/from-recipe");
+        await dialog.getByRole("button", { name: "确认并创建商品", exact: true }).click();
+        const applied = await firstConfirmation;
+        expect(applied.status(), await applied.text()).toBe(201);
+        firstProductId = (await applied.json()).product.id;
+        await expect(dialog.getByRole("alert")).toBeVisible();
+      }
+      const confirmed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v3/products/from-recipe");
+      await dialog.getByRole("button", { name: "确认并创建商品", exact: true }).click();
+      const response = await confirmed;
+      expect(response.status(), await response.text()).toBe(width === 1440 ? 200 : 201);
+      const result = await response.json();
+      if (width === 1440) expect(result.product.id).toBe(firstProductId);
+      await page.waitForURL(`**/products/${result.product.id}`);
+      await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+      expect(writes).toHaveLength(width === 1440 ? 2 : 1);
+      const graph = await workflowGraph(page);
+      expect(graph.product_id).toBe(result.product.id);
+      expect(graph.id).not.toBe(source.id);
+      expect(graph.nodes).toHaveLength(recipeNodes.length);
+      expect(graph.edges).toHaveLength(source.edges.length);
+      expect(graph.groups).toHaveLength(source.groups.length);
+      for (const node of graph.nodes) {
+        expect(source.nodes.some((old) => old.id === node.id)).toBe(false);
+        expect(node.bound_asset_id).toBeNull();
+        expect(node.current_artifact_id).toBeNull();
+        expect(node.preview_asset_id).toBeNull();
+        if (node.node_type === "product_source") {
+          expect(node.config.source_product_id).toBe(result.product.id);
+          expect(node.source_product?.name).toBe(name);
+        }
+      }
+      for (const edge of graph.edges) expect(source.edges.some((old) => old.id === edge.id)).toBe(false);
+      expect(JSON.stringify(graph)).not.toContain(sourceProductId);
+      expect(JSON.stringify(graph)).not.toContain(sourceAssetId);
+      await page.reload();
+      await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+      expect((await workflowGraph(page)).nodes).toEqual(graph.nodes);
+      const after = await page.request.get(`/api/v2/products?q=${encodeURIComponent(name)}`);
+      expect((await after.json()).total).toBe(1);
+    });
+  }
+
+  test("recipe creation layout supports all locales and themes", async ({ page, browser }, testInfo) => {
+    const source = await createWorkflow(page);
+    const recipe = await saveRecipe(page, "保存完整工作流预设", `完整配方-${"workflow".repeat(30)}`);
+    const storageState = await page.context().storageState();
+    for (const width of [1440, 1024, 390]) {
+      for (const theme of ["light", "dark"] as const) {
+        for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"]) {
+          const context = await browser.newContext({ storageState, viewport: { width, height: 900 }, reducedMotion: "reduce", colorScheme: theme });
+          try {
+            const p = await context.newPage();
+            const errors: string[] = [];
+            p.on("pageerror", (error) => errors.push(error.message));
+            p.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+            p.on("response", (response) => { if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`); });
+            await p.addInitScript(({ locale, theme }) => { localStorage.setItem("productflow.locale", locale); localStorage.setItem("productflow.theme", theme); }, { locale, theme });
+            await p.goto(`${new URL(page.url()).origin}/products/new`);
+            await p.locator('[data-create-mode="recipe"]').click();
+            await p.locator("#recipe-product-name").fill("商品 Product サンプル Sản phẩm");
+            await p.locator("#create-recipe").selectOption(recipe.id);
+            await p.locator('[data-create-recipe-form] input[type="file"]').setInputFiles(REFERENCE_PRODUCT_IMAGE);
+            await expect(p.locator('[data-create-recipe-form] img')).toBeVisible();
+            expect(await p.locator('[data-create-recipe-form] img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+            const dimensions = await p.evaluate(() => ({ viewport: innerWidth, client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
+            expect(dimensions.viewport).toBe(width);
+            expect(dimensions.client).toBe(width);
+            expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.client);
+            const submit = p.locator('[data-create-recipe-form] button[type="submit"]');
+            await submit.scrollIntoViewIfNeeded();
+            await p.screenshot({ path: testInfo.outputPath(`form-${width}-${theme}-${locale}.png`) });
+            await submit.click();
+            const dialog = p.getByRole("dialog");
+            await expect(dialog.locator("[data-recipe-preview]")).toBeVisible();
+            for (const button of await dialog.getByRole("button").all()) {
+              const bounds = await button.boundingBox();
+              expect(bounds).not.toBeNull();
+              expect(bounds!.x).toBeGreaterThanOrEqual(0);
+              expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+              expect(bounds!.y).toBeGreaterThanOrEqual(0);
+              expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(900);
+              expect(await button.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+            }
+            await p.screenshot({ path: testInfo.outputPath(`preview-${width}-${theme}-${locale}.png`) });
+            expect(errors).toEqual([]);
+          } finally { await context.close(); }
+        }
+      }
+    }
+    expect((await workflowGraph(page)).id).toBe(source.id);
   });
 });
 
@@ -168,11 +290,11 @@ async function runImage(page: Page, graph: GraphProjection, nodeId: string): Pro
   return assetId!;
 }
 
-async function saveRecipe(page: Page, label: string): Promise<WorkflowRecipeSummary> {
+async function saveRecipe(page: Page, label: string, title = `asset-recipe ${Date.now()}`): Promise<WorkflowRecipeSummary> {
   await page.locator('[data-sidebar-tool="add"]').filter({ visible: true }).click();
   await page.getByRole("button", { name: new RegExp(label) }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("预设名称").fill(`asset-recipe ${Date.now()}`);
+  await dialog.getByLabel("预设名称").fill(title);
   const responsePromise = page.waitForResponse((response) => response.request().method() === "POST" && /\/workflows\/[^/]+\/recipes$/.test(new URL(response.url()).pathname));
   await dialog.getByRole("button", { name: "保存预设", exact: true }).click();
   const response = await responsePromise;

@@ -42,6 +42,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3 := engine.Group("/api/v3", admin)
 	v3.GET("/workflow-recipes", h.list)
 	v3.GET("/workflow-recipes/:recipe_id", h.get)
+	v3.POST("/workflow-recipes/:recipe_id/creation-preview", h.previewCreation)
 	v3.DELETE("/workflow-recipes/:recipe_id", h.archive)
 	v3.POST("/products/:product_id/workflows/:workflow_id/recipes", h.create)
 	v3.POST("/products/:product_id/workflows/:workflow_id/recipes/:recipe_id/versions", h.append)
@@ -126,6 +127,26 @@ func (h HTTP) preview(c *gin.Context) {
 		return
 	}
 	out, err := h.Service.Preview(c.Request.Context(), c.Param("product_id"), c.Param("recipe_id"), *body.ExpectedRecipeVersion)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, serializePreview(out))
+}
+
+func (h HTTP) previewCreation(c *gin.Context) {
+	var body struct {
+		ExpectedRecipeVersion *int `json:"expected_recipe_version"`
+	}
+	if err := bindJSON(c, &body); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	if body.ExpectedRecipeVersion == nil || *body.ExpectedRecipeVersion < 1 {
+		httpx.AbortErr(c, apperr.Validation("请求体无效"))
+		return
+	}
+	out, err := h.Service.PreviewCreation(c.Request.Context(), c.Param("recipe_id"), *body.ExpectedRecipeVersion)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

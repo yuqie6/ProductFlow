@@ -62,6 +62,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.GET("/v2/product-image-assets/:asset_id/download", h.download)
 	api.DELETE("/v2/product-image-assets/:asset_id", h.requireDeletion, h.deleteAsset)
 	api.POST("/v3/products", h.createV3)
+	api.POST("/v3/products/from-recipe", h.createFromRecipe)
 	api.GET("/v2/agent-product-workspaces/options", h.workspaceOptions)
 	api.POST("/v2/agent-product-workspaces/drafts", h.createDraftWorkspace)
 	api.POST("/v2/agent-product-workspaces", h.createWorkspace)

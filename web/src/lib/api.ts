@@ -54,6 +54,7 @@ import type {
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
   DirectCreateProductResponse,
+  RecipeCreateProductResponse,
   GeneratedSourceNote,
   GraphChangeSet,
   GraphDocumentCandidate,
@@ -1077,6 +1078,31 @@ export const api = {
       body.append("images", image);
     }
     return request("/api/v3/products", { method: "POST", body });
+  },
+  previewRecipeCreation(recipeId: string, expectedRecipeVersion: number): Promise<WorkflowRecipePreview> {
+    return request(`/api/v3/workflow-recipes/${encodeURIComponent(recipeId)}/creation-preview`, {
+      method: "POST", body: JSON.stringify({ expected_recipe_version: expectedRecipeVersion }),
+    });
+  },
+  createProductFromRecipe(input: {
+    name: string;
+    images: File[];
+    sourceNote: string;
+    recipeId: string;
+    expectedRecipeVersion: number;
+    previewDigest: string;
+    idempotencyKey: string;
+  }): Promise<RecipeCreateProductResponse> {
+    const body = new FormData();
+    body.append("name", input.name);
+    body.append("source_note", input.sourceNote);
+    body.append("recipe_id", input.recipeId);
+    body.append("expected_recipe_version", String(input.expectedRecipeVersion));
+    body.append("preview_digest", input.previewDigest);
+    for (const file of input.images) body.append("images", file);
+    return request("/api/v3/products/from-recipe", {
+      method: "POST", body, headers: { "Idempotency-Key": input.idempotencyKey },
+    });
   },
   generateProductSourceNote(input: {
     images: File[];
