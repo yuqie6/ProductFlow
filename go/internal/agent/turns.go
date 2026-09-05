@@ -650,7 +650,7 @@ func (s Service) bindGatewayTurn(ctx context.Context, productID *string, convers
 	if err != nil {
 		return TurnResponse{}, err
 	}
-	if row.HarnessTurnID != nil {
+	if row.HarnessTurnID != nil || !turnNeedsSync(row) {
 		return serializeTurn(row, nil), nil
 	}
 	if s.Gateway == nil {

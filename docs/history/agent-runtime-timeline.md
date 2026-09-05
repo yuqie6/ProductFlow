@@ -1247,3 +1247,17 @@ queued Task 补首轮与过期 execution 使用不同扫描器。基线 `recover
 后续整包再次出现过期批次第二轮 unknown=0/want=1（95.938s）。增加扫描前候选诊断后第三次整包复现（91.934s）：预期 execution 为 `b534df08-20c3-4435-b406-a1312d822be0` / `0eca0e53-e589-4a0e-b647-8f8ba417f1d1`，候选中另有其他夹具留下的 `7026bb6d-836a-448e-97c4-c3f4f31abd3f`（queued/claimed）及 `e0e8b4b4-95b6-4e5e-b000-aff98036c842`（unknown/claimed）。按 ID 排序，第二轮先回收前者 lease，按合同不新增 unknown，因此计数为 0。Agent lease 默认 60s，包级共享测试库中的其他 lease 可以在 drain 之后到期；预先清理无法固定两条候选。该测试改用现有 `testdb.IsolatedMigrated` 独立迁移库，原两轮 1/1 与 HasMore true/false 断言不变，删除临时候选日志，不改运行时为测试排除真实候选。
 
 独立库修正后的最终完整 Agent 包 `-race -count=1 -timeout 4m` FAIL（90.036s），唯一报告失败为已有 `TestEvalObservationFixtures` 的 catalog 漂移；其他默认启用测试未报告失败。没有重生成评测夹具，未执行真实 provider 或整树发布门。`just docs-check`、diff check PASS；主代理自审 SQL/worker 资格一致性、发现后复核、旧夹具修正与独立库 cleanup，交付不包含其他任务改动。
+
+## 2026-09-05 Agent 迟到 sync 信封启动检查
+
+`46e77533` 已收紧恢复候选，但已经入队的信封仍可迟到。源码中 `SyncTurn` 只提前跳过 resume_required，`bindGatewayTurn` 只跳过已绑定 harness；未绑定的终态或无答案停等 Turn 仍会调用 Gateway.StartTurn。PG `ClaimExecution` 已在 projection 锁下拒绝终态，不能把多余的 Gateway 请求直接解释为真实模型执行或重复副作用。
+
+真实 HTTP 创建临时启动失败的 Turn，确认 harness 尚未绑定，再在 PG 夹具中设置目标状态。覆盖 succeeded/failed/canceled/unknown/awaiting_confirmation/无答案 requires_input，以及 running+resume_required，分别走 worker 和直接绑定入口，共 14 个组合。基线 worker 的 6 个非 resume_required 组合及直接绑定的 7 个组合，各错误调用 StartTurn 一次；worker resume_required 原来就正确跳过。另一个交错在 worker 首次读取后提交 canceled，绑定重读仍调用 StartTurn 一次。基线两项回归 FAIL（1.771s），合计 14 次不必要 mock 启动调用。
+
+运行时仅修改两处判断，复用现有 `turnNeedsSync`：worker 在任何 Gateway 操作前判断；绑定入口重读后判断，同时保留已有 harness 非空直接返回。这两处分别覆盖消费入口、读取间状态改变和 SubmitTurn 直接绑定，不新增锁、状态、重试或 provider 路径。末次读取与远端请求之间仍可能交错，PG claim 继续拥有执行权裁定；不在事务中等待远端。
+
+修改后 14 个组合及首次读取后取消场景均为 0 次额外 StartTurn，状态和未绑定身份保持。正向回归确认 queued/running/cancel_requested 未绑定 Turn 仍各发起 1 次启动。另经真实 PG `queue.Consume` 消费已标 SENT 的迟到取消信封，要求状态转为 CONSUMED 且 StartTurn=0；未启动 Redis 或真实 Agent service，不将此称为完整 broker/Node 故障门。
+
+上述四个顶层测试 `-race -count=10 -timeout 1m` PASS（15.737s）：140 个状态/入口组合、10 次读取交错、30 个正常启动场景、10 次 PG 消费。量化的是调用次数和状态正确性，不是 HTTP p95 或费用。`sync.go` / `turns.go` SHA-256 为 `a9d0ce236e5d57a0d6cc76213255f332de4b86c6d9d2fb3b8c5123602b5336b9` / `dfd4485038392c9a1cb2b5cc50115b53910c2685205f2913960c0a269312d311`；新增测试为 `3170684daede98d34815764d2a2332d084a6822f7580c43661e8ec2492592ab0`。
+
+最终完整 Agent 包 `-race -count=1 -timeout 4m` FAIL（104.352s），唯一报告失败为已有 `TestEvalObservationFixtures` catalog 漂移；本轮及其他默认启用测试未报告失败。未修改评测夹具或调用真实 provider。`just docs-check`、diff check PASS；主代理自审 worker/SubmitTurn 两个调用入口、重读窗口、正常启动与 PG 消费断言，提交仅包含本轮改动。

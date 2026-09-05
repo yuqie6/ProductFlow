@@ -48,7 +48,7 @@ func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	if err != nil || row.ID == "" {
 		return err
 	}
-	if row.ResumeRequired {
+	if !turnNeedsSync(row) {
 		return nil
 	}
 	productID := row.ConversationProductID

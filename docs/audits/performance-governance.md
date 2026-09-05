@@ -118,6 +118,8 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 ## 下一步如何选择
 
+2026-09-05 Agent 迟到 sync 信封启动检查，见 [执行边界回归](../history/agent-runtime-timeline.md#2026-09-05-agent-迟到-sync-信封启动检查)：仅补投递筛选无法处理已经入队的信封。原 worker/直接绑定对已终态或停等的未绑定 Turn 仍调用 StartTurn；两处复用 `turnNeedsSync` 后，14 个状态/入口组合及首次读取后取消场景均不发启动请求，迟到取消信封正常 CONSUMED。末次读取到远端请求仍非原子，PG claim 的终态拒绝保留；mock 调用减少不能折算为真实模型费用或副作用。
+
 2026-09-05 Agent pending Turn 补投递与 worker 同步条件对齐，见 [资格矩阵](../history/agent-runtime-timeline.md#2026-09-05-agent-补投递与-worker-同步资格对齐)：72 种状态组合原来补 14 个信封，实际仅 8 个需要 worker 同步；SQL 发现排除已绑定活动 Turn，逐条复核复用 `turnNeedsSync`，消除该夹具的 6 个无效信封。已回答问题、未绑定启动、resume_required 和终态边界保留。绑定后复核已覆盖，读取后到 outbox 写入的竞态与 outbox 行锁仍不由本轮保证。
 
 2026-09-05 Agent queued Task 补首轮：[conversation 锁跳过](../history/agent-runtime-timeline.md#2026-09-05-agent-queued-task-恢复跳过-conversation-锁)。原实现前 25 条共用被锁 conversation 时，首轮在等待中取消，第 26 条未恢复且错误被吞；发现和逐条处理均跳锁后，发现前持锁时第 26 条首轮恢复，发现后持锁时第二轮恢复。解锁后前缀各补唯一首轮，取消返回 context 错误。Task/Session 行锁、持续错误前缀与 pending Turn 补投递仍待验证。

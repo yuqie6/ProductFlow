@@ -125,6 +125,8 @@ Queued Agent Task recovery skips locked conversations during candidate discovery
 
 Pending Agent Turn restaging follows the worker's `turnNeedsSync`: unbound queued/running/cancel_requested Turns or answered requires_input Turns need synchronization when resume_required is false. Bound active Turns advance through the PG journal without recurring no-op envelopes. SQL discovery and per-item revalidation both check binding state; revalidation is not an atomic snapshot spanning the read and outbox write. Implementation and regression: `go/internal/agent/recovery.go`, `helpers.go`, `recovery_sync_eligibility_test.go`.
 
+Late Agent sync envelopes use the same `turnNeedsSync` check at worker entry: settled, parked or resume_required unbound Turns do not call StartTurn. `bindGatewayTurn` also revalidates after rereading, covering state changes after the initial worker read and direct binding from submission. Envelopes that no longer need synchronization are consumed without ErrLater. No database lock spans the final read and remote request; `ClaimExecution` still enforces terminal-state rejection under the projection lock. Regression: `go/internal/agent/sync_start_guard_test.go`.
+
 ## 5. Product intake and retired WorkflowDraft topology
 
 Image types, quantities, and reference asset ids live on Product intake. Create does not insert `WorkflowDraft`. A product Conversation only requires `product_id`. Product-path `propose_workflow_draft` / confirm / persist do not exist; those URLs return 404. The `workflow_drafts` table is dropped. Agent intake persist expands a birth graph from the template; an already expanded graph is edited only through Graph Command, not a second complete DAG.

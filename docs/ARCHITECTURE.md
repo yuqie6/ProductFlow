@@ -131,6 +131,8 @@ Agent queued Task 补首轮恢复在候选发现及逐条处理时跳过锁定 c
 
 Agent pending Turn 补投递与 worker 的 `turnNeedsSync` 对齐：仅未绑定 harness 的 queued/running/cancel_requested，或已有答案的 requires_input，且 resume_required=false，才需要同步。已绑定的活动 Turn 由 PG journal 推进，不周期性补无效信封；SQL 发现与逐条读取后复核均检查绑定状态。该复核不是跨读取与 outbox 写入的原子快照。实现与回归：`go/internal/agent/recovery.go`、`helpers.go`、`recovery_sync_eligibility_test.go`。
 
+迟到的 Agent sync 信封在 worker 入口按同一 `turnNeedsSync` 判断，已终态、停等或 resume_required 的未绑定 Turn 不调用 StartTurn；`bindGatewayTurn` 重读后也复核资格，覆盖首次 worker 读取后状态改变及提交路径的直接绑定。已可证明无需同步的信封正常消费，不通过 ErrLater 重排队。最后一次读取与远端请求之间不持数据库锁，终态执行权仍由 `ClaimExecution` 的 projection 锁和状态校验约束。回归：`go/internal/agent/sync_start_guard_test.go`。
+
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
 商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 不存在；对应 HTTP 返回 404。`workflow_drafts` 表已删除。Agent intake 落库会按模板展开 birth 图；已经展开的图改拓扑只走 Graph Command，不再交第二套完整 DAG。
