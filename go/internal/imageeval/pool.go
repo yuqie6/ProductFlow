@@ -114,6 +114,15 @@ func LoadManifest(storageRoot, caseID string) (Manifest, error) {
 	if m.ID == "" || m.URL == "" || len(m.References) == 0 || len(m.Gold) == 0 || len(m.ImageTypes) == 0 {
 		return Manifest{}, fmt.Errorf("invalid manifest %s", caseID)
 	}
+	refHashes := make(map[string]struct{}, len(m.References))
+	for _, ref := range m.References {
+		refHashes[ref.SHA256] = struct{}{}
+	}
+	for _, gold := range m.Gold {
+		if _, overlap := refHashes[gold.SHA256]; overlap {
+			return Manifest{}, fmt.Errorf("invalid manifest %s: reference/gold content overlap", caseID)
+		}
+	}
 	return m, nil
 }
 

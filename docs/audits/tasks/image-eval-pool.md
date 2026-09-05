@@ -1,6 +1,6 @@
 # 任务：淘宝过线池与生图闸门 live
 
-状态：开放
+状态：阻塞
 类型：证据
 认领者：—
 认领于：—
@@ -62,9 +62,17 @@ just image-evals-report <run_id>
 
 本轮开始前由维护者与执行者在本 issue 写定采集批次（类目与目标增量）和 live 抽样 n，不能事后降低目标凑完成。本轮约定增量与有效 live 报告齐全即可关闭采证 issue；总池规模或质量门未达标分别留在父章程。缺登录、风控中止或未完成约定采证时转阻塞。若修抽取脚本，必须补充对应提取样本验证证据。
 
+## 阻塞与交接
+
+- 当前阻塞：接管后逐文件复核发现 5 个 SKU 的参考与金标 SHA-256 重叠；先行修复见 [image-pool-disjoint](archive/image-pool-disjoint.md)。读取端排除后可用 195 SKU，3c 与 womenswear 各 19，未达到合计 200、每类 20 的池目标。采集增量和未提交文档由本组协调者保管；正式 live 仍需节点合同任务交付后的固定版本及独立资源窗口，不拿变化中的生成链作对照。
+
+- 用户已确认原会话停止并将组内开发交给主代理-image-quality-0905-2245；原采集清单与历史窗口增量由本组协调者保管，保留在工作树待采证任务交付。
+
 ## 证据
 
-池：类目计数、合计 SKU、日期。
+2026-09-05 接管复核：200 个 manifest 与索引一致，6346 个文件共 939954504 bytes，大小与 SHA-256 全部吻合。但 5 个 SKU 存在参考/金标内容重叠，修复后读取端只接受 195 个：3c 19、appliance 28、baby 20、beauty 20、food 21、home 23、menswear 20、sports 25、womenswear 19。原像素和 manifest 保留供追溯，不通过回填旧 manifest 修复证据。
+
+`just image-evals-sample 8 1` 在排除污染后的集合选择：3c `61ddf8407f8e62c2`、appliance `d229379fd27005e5`、baby `442ea5992cba1b90`、beauty `fcdcc8b241d7a254`、food `76a1fb56d0ff2e1a`、home `6d69aa54c5a7794d`、menswear `4431e47cc4eb8b16`、sports `86af53be9a77da71`。集合变化导致原冻结抽样不再适用于新池；这是本次确定性复核输出，正式 live 前重新冻结，不改 n=8、seed=1 合同。
 
 ```text
 YYYY-MM-DD | run_id= | 种子= | n= | 类目= | 工作台/金标/直调 | 闸门=过|未过

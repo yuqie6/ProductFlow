@@ -45,6 +45,7 @@ func Admit(listing ExtractListing, images []PoolImage) (Manifest, error) {
 
 	var refs []PoolImage
 	usedRefURL := map[string]struct{}{}
+	usedRefHash := map[string]struct{}{}
 	takeRef := func(img PoolImage) {
 		if len(refs) >= MaxRefImages {
 			return
@@ -52,8 +53,12 @@ func Admit(listing ExtractListing, images []PoolImage) (Manifest, error) {
 		if _, used := usedRefURL[img.SourceURL]; used {
 			return
 		}
+		if _, used := usedRefHash[img.SHA256]; used {
+			return
+		}
 		refs = append(refs, img)
 		usedRefURL[img.SourceURL] = struct{}{}
+		usedRefHash[img.SHA256] = struct{}{}
 	}
 	for _, img := range usable {
 		if img.Role == "sku" || img.TypeKey == "sku" {
@@ -74,6 +79,9 @@ func Admit(listing ExtractListing, images []PoolImage) (Manifest, error) {
 	var gold []PoolImage
 	for _, img := range usable {
 		if _, used := usedRefURL[img.SourceURL]; used {
+			continue
+		}
+		if _, used := usedRefHash[img.SHA256]; used {
 			continue
 		}
 		gold = append(gold, img)

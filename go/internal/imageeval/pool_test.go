@@ -3,6 +3,7 @@ package imageeval
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +48,38 @@ func TestPoolRoundTrip(t *testing.T) {
 	}
 	if len(loaded) != 1 || loaded[0].ID != m.ID {
 		t.Fatalf("%+v", loaded)
+	}
+}
+
+func TestLoadAdmittedExcludesReferenceGoldContentOverlap(t *testing.T) {
+	root := t.TempDir()
+	listing := ExtractListing{Source: "taobao", URL: "https://item.taobao.com/item.htm?id=clean", Title: "陶瓷马克杯"}
+	clean, err := Admit(listing, completeImages())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAdmittedCase(root, clean); err != nil {
+		t.Fatal(err)
+	}
+	listing.URL = "https://item.taobao.com/item.htm?id=contaminated"
+	contaminated, err := Admit(listing, completeImages())
+	if err != nil {
+		t.Fatal(err)
+	}
+	contaminated.Gold[0].SHA256 = contaminated.References[0].SHA256
+	// Reproduce a manifest persisted before content-based admission.
+	if err := WriteAdmittedCase(root, contaminated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(root, contaminated.ID); err == nil || !strings.Contains(err.Error(), "reference/gold content overlap") {
+		t.Fatalf("expected contaminated manifest rejection, got %v", err)
+	}
+	loaded, err := LoadAdmitted(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].ID != clean.ID {
+		t.Fatalf("expected only clean case, got %+v", loaded)
 	}
 }
 

@@ -114,6 +114,38 @@ func TestAdmitCompleteListing(t *testing.T) {
 	}
 }
 
+func TestAdmitSplitsReferenceContentAcrossURLs(t *testing.T) {
+	listing := ExtractListing{Source: "taobao", URL: "https://item.taobao.com/item.htm?id=split", Title: "陶瓷马克杯"}
+	images := completeImages()
+	images[2].SHA256 = images[5].SHA256
+	duplicateRef := images[5]
+	duplicateRef.SourceURL += "-alias"
+	images = append(images, duplicateRef)
+	m, err := Admit(listing, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.References) != 1 || len(m.Gold) != 12 {
+		t.Fatalf("references=%d gold=%d", len(m.References), len(m.Gold))
+	}
+	for _, gold := range m.Gold {
+		if gold.SHA256 == m.References[0].SHA256 {
+			t.Fatal("same content admitted as both reference and gold")
+		}
+	}
+}
+
+func TestAdmitRejectsWhenReferenceSplitRemovesRequiredGold(t *testing.T) {
+	listing := ExtractListing{Source: "taobao", URL: "https://item.taobao.com/item.htm?id=split-hero", Title: "陶瓷马克杯"}
+	images := completeImages()
+	images[0].SHA256 = images[5].SHA256
+	images[6].TypeKey = "packaging"
+	_, err := Admit(listing, images)
+	if err == nil || !strings.Contains(err.Error(), "missing gold type hero") {
+		t.Fatalf("expected missing hero after content split, got %v", err)
+	}
+}
+
 func TestSampleStratifiedReproducible(t *testing.T) {
 	pool := []Manifest{
 		{ID: "a", Category: "home"},

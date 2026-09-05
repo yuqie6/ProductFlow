@@ -4,13 +4,19 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestIngestListingAdmitsCompleteFixture(t *testing.T) {
 	png := solidPNG(t, 800, 800)
+	referencePNG := solidPNG(t, 801, 800)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
+		if strings.HasPrefix(r.URL.Path, "/sku/") {
+			_, _ = w.Write(referencePNG)
+			return
+		}
 		_, _ = w.Write(png)
 	}))
 	t.Cleanup(srv.Close)
