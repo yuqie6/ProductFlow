@@ -99,7 +99,7 @@ type TaskResponse struct {
 	ToolOptions               map[string]any   `json:"tool_options"`     // 过滤后的 image tool 字段
 	ProviderNotes             []string         `json:"provider_notes"`   // 空是 []
 	ProviderEffects           []EffectResponse `json:"provider_effects"` // 副作用账本；unknown 不自动重试
-	Attempts                  int              `json:"attempts"`         // 已占用的执行次数
+	Attempts                  int              `json:"attempts"`         // 业务尝试次数，正常批次续跑不增加
 	IsRetryable               bool             `json:"is_retryable"`     // unknown 时为 false，不能走 Retry
 	IsCancelable              bool             `json:"is_cancelable"`    // queued 或 running 才为 true
 	CreatedAt                 time.Time        `json:"created_at"`

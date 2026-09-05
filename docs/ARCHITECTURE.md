@@ -211,6 +211,8 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 
 ## 9. 异步与恢复
 
+连续生图每次消费最多发起一次 provider 调用。确认批次后仍有候选时，任务在 `candidate_saved` 检查点回 queued、释放 attempt 围栏并返回 `queue.ErrLater`；consumer 将信封释放回 PENDING。下次 claim 创建新围栏，保留完成数、结果组、业务尝试次数和原 started_at；失败重试清空 started_at，仍受原尝试次数上限约束。30 分钟 handler deadline 限制每次消费，不再累计顺序批次。每次消费重新读取输入媒体，批次之间可能等待投递和容量 admission。回归：`go/internal/imagesession/batch_yield_test.go`。
+
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
 - Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。claim 满 `limit` 时 dispatch 立即续跑，空闲才等 interval 或 NOTIFY；同一轮已 claim 行有界并发 SENT+enqueue，每条仍先 SENT 再 enqueue。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`、recovery duration 和错误；配置 metrics token 后，API `/metrics` 提供 queued/stale-running backlog 与当前 PostgreSQL 锁等待，dispatcher `/metrics` 另提供各域 recovery duration histogram 和候选锁查询耗时。
 - 连续生图 running 是否闲置看最后一次 progress heartbeat（没有则 started_at）。默认 90 分钟后 dispatcher 重排队或标 `unknown`；心跳未过期不恢复。asynq `TaskTimeout` 30 分钟取消 handler context 时，worker 仍把不可证明的结果写成 `unknown`，不等待闲置阈值。已 `applied` 的 candidate 不因恢复再写副作用；晚到 attempt 不能覆盖 `unknown`。本链没有 parked question/approval。实现：`go/internal/imagesession/recovery.go`、`execute.go`；回归：`recovery_test.go`、`TestExecuteCanceledContextMarksUnknown`。

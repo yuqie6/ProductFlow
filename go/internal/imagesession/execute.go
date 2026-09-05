@@ -39,7 +39,7 @@ func (e Executor) provider() ChatProvider {
 	return MockChatProvider{}
 }
 
-// Execute 是 worker 入口：queued -> running -> succeeded/failed/unknown。无法证明的 provider 结果标 unknown。
+// Execute 每次执行一个 provider 批次；未完成任务回 queued 并返回 ErrLater，终态返回 nil。
 func (e Executor) Execute(ctx context.Context, taskID string) error {
 	unlock, ok := tryLock(taskID)
 	if !ok {
@@ -58,6 +58,9 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		return e.releaseIdle(ctx, taskID)
 	}
 	if err := e.runGeneration(ctx, taskID, attemptID, sessionID); err != nil {
+		if errors.Is(err, queue.ErrLater) {
+			return err
+		}
 		if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
 			return nil
 		}
@@ -161,12 +164,18 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 			return nil
 		}
 		attemptID = clockid.New()
+		attempts := row.Attempts + 1
+		startedAt := now
+		if row.CompletedCandidates > 0 && row.StartedAt != nil && row.FailureReason == nil {
+			attempts = max(row.Attempts, 1)
+			startedAt = *row.StartedAt
+		}
 		res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
 			Where("id = ? AND status = ? AND active_attempt_id IS NULL", taskID, "queued").
 			Updates(map[string]any{
 				"status":                   "running",
 				"active_attempt_id":        attemptID,
-				"started_at":               now,
+				"started_at":               startedAt,
 				"finished_at":              nil,
 				"failure_reason":           nil,
 				"progress_phase":           "running",
@@ -175,7 +184,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 				"provider_response_id":     nil,
 				"provider_response_status": nil,
 				"progress_metadata":        nil,
-				"attempts":                 gorm.Expr("attempts + 1"),
+				"attempts":                 attempts,
 			})
 		if res.Error != nil {
 			return res.Error
@@ -208,7 +217,7 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// runGeneration 按 count 调 ChatProvider 并逐张 saveCandidate。attempt 已失效返回 errStale，调用方停手。
+// runGeneration 跳过已 applied 的区间，最多调用一次 ChatProvider 并逐张 saveCandidate。
 // 输入合计超 50MiB 不打网；输出整批先过 10/50MiB 与 MIME 闸门再 saveCandidate，避免部分写入。
 // 无法证明的供应商错误走 finishFailed 标 unknown，不要自动当 failed 重试。
 func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionID string) error {
@@ -356,8 +365,29 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 		}
 		completed = candidate + batch - 1
 		candidate += batch
+		if candidate <= count {
+			if err := e.yieldCompletedBatch(ctx, taskID, attemptID); err != nil {
+				return err
+			}
+			return queue.ErrLater
+		}
 	}
 	return e.finishSucceeded(ctx, taskID, attemptID, groupID)
+}
+
+func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID string) error {
+	return tx.WithGorm(ctx, e.DB, func(gdb *gorm.DB) error {
+		result := gdb.Model(&schema.ImageSessionGenerationTasks{}).
+			Where("id = ? AND active_attempt_id = ? AND status = ? AND progress_phase = ? AND active_candidate_index IS NULL", taskID, attemptID, "running", "candidate_saved").
+			Updates(map[string]any{"status": "queued", "active_attempt_id": nil, "progress_updated_at": time.Now().UTC()})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errStale
+		}
+		return notifyTaskSession(ctx, gdb, taskID)
+	})
 }
 
 func (e Executor) recordGenerateFailure(ctx context.Context, taskID string, candidate int, genErr error) error {

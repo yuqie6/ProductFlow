@@ -1388,3 +1388,17 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 最终经 dev env wrapper 运行 `go test -C go ./internal/imagesession -run "TestExecuteDeadlinePreservesCompletedCandidate|TestExecuteCanceledContextMarksUnknown|TestExecuteTimeoutIsUnknown|TestRecoverUnfinishedLeavesRecentHeartbeatRunning" -race -count=2 -v -timeout 1m` PASS（12.830s），四类场景各两次。新测试两次均为 1/2 已保存、2 个 effect、2 次 provider 调用且重入无增加；不报告性能 p95。测试 Git blob=`cf08ddaa413120c6f459b1b5f31f00b95fde07fa`，执行器=`897544eea9a8787d0ebaa227d2e14c0a5eaec58f`，asynq 配置=`11e1b51a8fbb1853c17437af6cdf1134737cfc17`。
 
 后续待实现方向是在已确认的候选/批次边界交还执行权，避免多个合法 provider 调用累积占满单个信封时限。必须一起核对 completed/group/effect 的持久化、任务 queued/running 投影、attempt 计数、ErrLater 重投与消费 lease；不得重放未知 effect 或把排队切片伪装成用户失败重试。本轮未改这些共享行为，也未提高超时、自动重试或替换未知状态。主代理自审现有状态断言、素材身份保留及测试超时清理；量化证据不作为长任务风险关闭依据。
+
+## 2026-09-06 连续生图按已确认批次续投
+
+执行器现在每次消费最多调用一次 provider。非批量 provider 一张即一批，openai-images 仍沿用原 n≤10 批量。保存整个批次并将 effect 标 applied 后，如尚有候选，用 task/attempt/status/candidate_saved/无活动候选的条件更新把任务回 queued、释放 active_attempt_id，再返回已有 queue.ErrLater；真实 consumer 将同一信封回 PENDING 并释放消费 lease。最后一批直接 succeeded/CONSUMED。不新增状态、信封格式、表字段、provider 接口或超时常量。
+
+每次 claim 都换 fencing attempt id。已有完成候选且 started_at 非空、无 failure_reason 的正常续跑保留业务 attempts 和最初 started_at；现有失败/手动重试清空 started_at，所以下次继续增加 attempts。capacity 等待覆盖 progress_phase 不会丢失该判断依据。序列化 attempts 字段形状不变，注释改为业务尝试次数。每批重新读取原任务指定的输入媒体；不会隐式把上批产物当新 base。代价是新增每批投递、容量竞争和输入读取，未宣称总完成时间变短。
+
+真实 PG/HTTP/queue.Consume 回归生成三张图，每次 provider 等待 1 秒，每次 consumer context 上限 2 秒。测试在计时前生成固定有效 PNG 并初始化队列 DB 访问，逐次模拟 dispatcher 把本条信封标 SENT，不启动 Redis 或扫描他人信封。中间两次断言任务 queued、信封 PENDING、lease 为空；末次 succeeded/CONSUMED。每步 completed/rounds/provider calls 各增加 1，业务 attempts 恒 1，started_at 不变，所有 effect applied。累计执行时间必须超过单次 2s 窗口，证明正常续投得到独立执行窗口；不是生产吞吐或 30 分钟真实队列现场测量。
+
+另补部分完成后的限流测试：正常首批不消耗重试次数，第二候选连续限流仍按 attempts=1/2/3 到达 failed。前一轮 deadline 回归改为先执行首批并断言 ErrLater，再继续第二批到真实 5s deadline，仍要求首张身份保留、applied/unknown、禁止重放。原一次性调用两候选的测试首次全包因此 FAIL，已按新消费合同调整，未改 unknown 断言。
+
+最初 race 夹具在 2s 窗口内还执行 mock 的 PNG 编码，出现 context deadline exceeded；普通构建同测试 PASS（4.038s），单独初始化队列连接后 race 仍失败。将固定 PNG 编码移到计时外后完整 ImageSession 包 `go test -C go ./internal/imagesession -count=1 -race -timeout 3m` PASS（39.866s）。未放宽生产时限或测试 2s 窗口。随后三个新增/更新测试 `-count=3 -race -v -timeout 2m` PASS（40.410s）：三轮分段累计 5.823477/5.859620/5.866596s，每轮均 3 个窗口、3 次 provider、1 次业务尝试；限流上限与真实 deadline 边界各三次通过。
+
+最终 Git blob：执行器=`83b2a07a7903c5e99547b79b362797fca9cdf422`，分段测试=`94d984460cbe212b5d19c0c9057c143866b4e0d6`，部分完成 deadline 测试=`b99e04692553ab50e091cc3af65900542d1eff8c`。中英文架构同步批次续投和 attempts 语义。主代理自审 consumer ErrLater 路径、checkpoint 围栏、失败计数、固定输入及完整 diff；未改 queue/Graph lease 或重跑整树发布门。单次 provider 本身超时仍应 unknown；checkpoint 已提交但信封释放失败的恢复、真实 broker 长时间运行及跨批次用户取消仍需进一步故障验证。

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/yuqie6/productflow/internal/platform/queue"
 )
 
 type partialDeadlineProvider struct {
@@ -50,6 +52,9 @@ func TestExecuteDeadlinePreservesCompletedCandidate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	executor := Executor{DB: ss.db, Media: ss.media, Provider: provider}
+	if err := executor.Execute(ctx, taskID); !errors.Is(err, queue.ErrLater) {
+		t.Fatalf("first batch should yield: %v", err)
+	}
 	if err := executor.Execute(ctx, taskID); err != nil {
 		t.Fatal(err)
 	}
