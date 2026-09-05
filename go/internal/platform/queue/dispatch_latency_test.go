@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,6 +142,7 @@ func TestDispatchLatencyProbeTracksClaimSentAndDeferred(t *testing.T) {
 	installDispatchLatencyProbe(t, pool)
 	ctx := context.Background()
 	ids, releaseAt := stageDispatchLatencyLoad(t, ctx, gdb, 2, 1)
+	var mu sync.Mutex
 	enqueued := map[string]int{}
 	summary, err := queue.RunDispatcherOnce(ctx, pool, func(id, aggregateID string) error {
 		var status string
@@ -150,7 +152,9 @@ func TestDispatchLatencyProbeTracksClaimSentAndDeferred(t *testing.T) {
 		if status != queue.StatusSent {
 			return fmt.Errorf("enqueue before SENT: %s", status)
 		}
+		mu.Lock()
 		enqueued[id]++
+		mu.Unlock()
 		return nil
 	}, queue.DefaultClaimLimit)
 	if err != nil || summary.Pending != 2 || summary.Sent != 2 {

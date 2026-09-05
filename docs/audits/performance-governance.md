@@ -4,7 +4,7 @@
 
 生产 Gate 的详细合同保存在本文 [生产 Gate](#production-gates) 节；[历史时间线](../history/agent-runtime-timeline.md#runtime-ownership-evidence) 保留已关闭所有权重构的证据。当前代码、测试和真实运行仍是最终证据；账本中的目标、预算和未验证项必须标明状态。
 
-**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情、时延与容量指标已归档；PERF-12 仍缺目标规模 payload，本轮不发后续单。时延采证完成不表示单副本 p95 达标。
+**平台可靠性组章程。执行以已发布 issue 为界。** 合并原性能与生产可靠性职责，接收 journal 职责调查。当前任务、认领和阻塞见 [Issue 看板](tasks/README.md)。GraphRun 摘要/详情、SSE fanout、recovery 有界批次已经接线。详情、时延、容量指标与 dispatcher 积压续投已归档。[perf-dispatcher-backlog](tasks/archive/perf-dispatcher-backlog.md) 后本地 500 条突发单副本 PENDING→SENT p95 为 0.438s。PERF-12 仍缺目标规模 payload，本轮不发该后续单。本地 p95 不表示生产 SLO。
 
 ## 组职责与交接
 
@@ -76,7 +76,7 @@ ProductFlow 当前是单管理员、单商家工作区，运行单元包括 Reac
 | PERF-03 | node/run 隐式反向边 | 部分完成 | `failBlockedQueuedNodes` 先锁 run，再改 node 并追加事件；事件 helper 不再隐藏获取 run 锁；`TestConcurrentCancelExecuteRecoveryDoesNotDeadlock` 覆盖 cancel、ExecuteRun、recovery，`-count=20` 通过 | 目标规模锁等待仍缺 |
 | PERF-04 | 生图容量锁顺序 | 部分完成 | Graph 为 `capacity advisory -> run -> node`；ImageSession claim 改为 `capacity advisory -> task`，取得 task 锁后重新核对状态。`just go-test-staging-field` 中 `TestReplicaFieldTwoWorkersRespectGenerationCapacity`：上限 1 时两 worker 同时 claim，1 running / 1 waiting_for_capacity | 全库单钥匙和 noisy neighbor 仍存在；SaaS 前需按 workspace/tenant 重构 |
 | PERF-05 | Agent 与业务 recovery 长事务 | 部分完成 | Agent 过期 execution / queued Task / pending restage 已分阶段且每聚合一事务；`HasMore` 为各阶段 OR。Graph/ImageSession/Delivery/LocalEdit 为发现快照 → 单聚合状态 → 单聚合 outbox；每轮最多 25 条，`SKIP LOCKED`，单条失败不回滚整批。Graph 取消/执行/recovery 锁序 `-count=20` 已跑 | 仍需目标规模锁等待分布 |
-| PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch/recovery cadence 解耦，默认 1s/10s；PENDING 写入同事务 NOTIFY，陈旧 SENT 对账最多 100 条；双副本 SKIP LOCKED 与 SIGKILL 幸存已验。`a0d1ba4f` 新增[真实投递时延采证](tasks/archive/perf-dispatcher-latency.md)：独立 PG 库/Redis，500 条突发 + 25 条延期，三轮单副本 PENDING→SENT p95 2.540–2.594s，双副本 0.772–0.784s；500/500 信封各一次，延期均未认领 | 单副本仍未达建议 p95 < 1s；后两批 claim 间隔约 1s，需调查 backlog 下通知合并/ticker 的批间等待；未到期唤醒仍跳过；无生产 SLO 或重 recovery 负载结论，`just staging-up` 杀容器未跑 |
+| PERF-06 | dispatcher recovery 拖慢投递 | 部分完成 | dispatch/recovery cadence 解耦，默认 1s/10s；PENDING 写入同事务 NOTIFY，陈旧 SENT 对账最多 100 条；双副本 SKIP LOCKED 与 SIGKILL 幸存已验。watch 在 claim 满 `limit` 时立即续跑，同一轮已 claim 行有界并发 SENT+enqueue。[perf-dispatcher-backlog](tasks/archive/perf-dispatcher-backlog.md)：隔离 PG/Redis，500 条突发 + 25 条延期，单副本 PENDING→SENT p95 437.666ms，双副本 278.819ms；500/500 信封各一次，延期均未认领。先前采证 `a0d1ba4f` 单副本 p95 2.540–2.594s 保留为修复前基线 | 无生产 SLO 或重 recovery 负载结论；未到期唤醒仍跳过；`just staging-up` 杀容器未跑 |
 | PERF-07 | SSE 连接占用 | 完成 | `platform/notify.Subscribe` 按 pool 在进程内共享一条 LISTEN，Agent/Graph/ImageSession 共用 fanout；`ListenerConnections`、`GraphSSEConnections`、Agent SSE gauge 已接入 API metrics；缓冲满时丢通知并依赖 PG 回读；notify/metrics/Agent shared-listener tests 通过。`TestReplicaFieldTwoAPIPoolsKeepIndependentLISTEN`：两个 pool 两条 LISTEN，停 A 后 B 仍收到 Run 通知；`TestReplicaFieldTwoListenersSurviveNotifyLoss`：dispatcher LISTEN 副本 A 取消后 B 仍被唤醒 | 指标是单进程 gauge；部署仍需按副本抓取并用 `replicas * (listener + SSE) + pool` 做容量告警；docker 杀 API 副本未跑 |
 | PERF-08 | ImageSession 列表 N+1 | 部分完成 | 列表批量摘要、首屏 history 与 `GET /history` keyset 保留。详情活动/近期终态/首屏轮次任务各 LIMIT 20，去重最多 60；队列位置由 PG 排名后只返回所需 ID。`232e51f7` 包内回归与 query-plan 通过；25k 会话 / 10k 轮次 / 1k 任务下，三组任务返回 10/20/20 条，execution 0.037/0.059/0.133ms。[任务证据](tasks/archive/perf-imagesession-detail.md) | COUNT 仍 Seq Scan（1.552ms），首屏关联任务查询仍 Seq Scan；真实负载端到端 payload/延迟待观察，不把返回有界等同于扫描成本有界 |
 | PERF-09 | GraphRun 列表 N+1 与排序 | 完成 | run/node 摘要批量读取；`(graph_id, started_at DESC, id DESC)` 索引已写入并完成本地 schema migration；列表 DTO 排除 snapshot、compiled context、input trace、output，单 run 详情按需读取；Graph projection 的 artifact、商品资料/fact、绑定资产和视觉版本改为批量投影；执行 loop 复用事务内完整 run；Graph SSE 建连/fallback 只读 status；HTTP 100 样本、目标规模 EXPLAIN、Playwright TTI/重复读取/详情打开和 Web bundle budget 均通过 | 生产详情打开率和跨副本连接预算需要部署后按 metrics/trace 观察；摘要仍按最近 20 条返回，`progress_metadata` 仍是列表所需的 JSON 读取 |
@@ -315,11 +315,11 @@ Recovery 的默认边界：
 
 ### P1：解耦 dispatch、recovery 和容量 admission
 
-状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次、dispatcher `has_more`/duration/error 日志、dispatcher 各域 recovery histogram、候选锁查询耗时、API 当前 PostgreSQL 锁等待和 queued/stale-running backlog 指标已落地；capacity wait/running/denied 指标已落地；批次内事务拆分和负载验证仍待实施。
+状态：dispatch/recovery cadence、Agent recovery 事务、全部 recovery owner 的有界候选批次、dispatcher `has_more`/duration/error 日志、dispatcher 各域 recovery histogram、候选锁查询耗时、API 当前 PostgreSQL 锁等待和 queued/stale-running backlog 指标已落地；capacity wait/running/denied 指标已落地；业务域 recovery 已按单聚合状态迁移与 restage 拆事务；watch dispatch 在 claim 满批时立即续跑，同一轮 SENT+enqueue 有界并发。本地 500 条突发 PENDING→SENT p95 已低于 1s。生产 SLO、重 recovery 负载和 `just staging-up` 杀容器仍观察。
 
-1. dispatcher watch 模式持续以 dispatch interval 处理 outbox；recovery 使用独立 cadence。首轮 recovery 立即运行，失败不推进成功时间戳。
-2. Agent、Graph、ImageSession、Delivery、LocalEdit 已使用默认 25 条上限；业务域使用 `status + stale predicate + SKIP LOCKED` 和稳定时间/id 排序，dispatcher 日志记录每个 owner 的 `has_more`、recovery duration 与错误，dispatcher `/metrics` 提供各域 recovery histogram/候选锁查询耗时，API `/metrics` 提供当前 PostgreSQL 锁等待和 queued/stale-running backlog。下一步是拆分批次内状态迁移与 restage，并用目标规模验证没有隐性饥饿。
-3. 把当前每批事务继续拆成候选 claim、单聚合状态迁移、restage 的短事务；不要让批次大小随业务行数增长。
+1. dispatcher watch 模式持续处理到期 outbox；claim 满 `limit` 时立即续跑，空闲才等 interval 或 NOTIFY。recovery 使用独立 cadence 与独立 goroutine。首轮 recovery 立即运行，失败不推进成功时间戳。
+2. Agent、Graph、ImageSession、Delivery、LocalEdit 已使用默认 25 条上限；业务域使用 `status + stale predicate + SKIP LOCKED` 和稳定时间/id 排序，dispatcher 日志记录每个 owner 的 `has_more`、recovery duration 与错误，dispatcher `/metrics` 提供各域 recovery histogram/候选锁查询耗时，API `/metrics` 提供当前 PostgreSQL 锁等待和 queued/stale-running backlog。目标规模下有无隐性饥饿仍观察。
+3. 业务域 recovery 已拆成候选发现、单聚合状态迁移、restage 的短事务；不要让批次大小随业务行数增长。
 4. 单商家阶段继续用 PostgreSQL capacity advisory 保证准确 admission；capacity wait 用 `productflow_advisory_lock_wait_seconds`，running/denied 用 `productflow_generation_admission_*`。SaaS 前替换为按 workspace/tenant 的 admission token；PostgreSQL 只做对账。
 5. GraphRun 行 lease 已替代执行 loop 的长 advisory：token/expiry CAS、5 分钟续租、过期接管、迟到 provider 结果 fencing 和 recovery 的 lease 过期条件已落地。继续观察续租失败、接管和 worker consumer lease 的时间预算。
 
@@ -351,12 +351,12 @@ Recovery 的默认边界：
 
 ```text
 watch loop
-  -> dispatch due: reconcile outbox leases, claim PENDING, mark SENT, enqueue
-  -> recovery due: run each domain's bounded recovery stages
-  -> sleep until dispatch interval
+  -> dispatch due: while claim fills limit: reconcile, claim PENDING, mark SENT, enqueue
+  -> recovery due: run each domain's bounded recovery stages (independent goroutine)
+  -> idle dispatch waits for interval or NOTIFY
 ```
 
-当前实现保留顺序执行各 domain recovery，但 recovery 不再每一秒运行。后续可把 recovery 拆为独立 goroutine 或独立进程，前提是：
+dispatch 与 recovery 已是独立 goroutine。各 domain recovery 仍顺序执行。后续若把 recovery 拆为独立进程，前提是：
 
 - 每个 owner 的候选状态有 PostgreSQL 条件和 `SKIP LOCKED`/CAS 围栏。
 - recovery 与 live worker 之间的锁序保持一致。
@@ -560,7 +560,8 @@ PRODUCTFLOW_PERF_PRODUCT_ID=<product-id> WEB_BASE_URL=http://127.0.0.1:<web-port
 | 2026-09-05 | ImageSession 10k 轮次 / 1k 任务 history 索引与 query plan | ExtraDDL `ix_image_session_rounds_session_created`、`ix_image_session_generation_tasks_session_created`；`just go-test-imagesession-query-plan`：列表 0.019ms，history 首页/keyset 0.084ms/0.022ms，任务 LIMIT 21 为 0.025ms | 热会话独占整表时 COUNT/详情无 LIMIT 仍 Seq Scan；GET 详情仍装入全部匹配任务 |
 | 2026-09-05 | 本地双副本进程级现场闸门 | `just go-test-staging-field`：通知丢失后另一 LISTEN 仍唤醒；两 API pool 独立 LISTEN；两 dispatcher SKIP LOCKED 各入队一次；两真实 dispatcher `--watch` 进程 SIGKILL 其一后另一副本仍 SENT（`TestReplicaFieldDispatcherSIGKILLSurvivor` 9.39s）；生图上限 1 时两 worker 1 running / 1 waiting；Graph 过期 lease 接管与迟到结果围栏测试纳入同一命令 | `just staging-up` 杀容器未跑；SSE 首帧 p95 未测；本账本不可归档 |
 | 2026-09-05 | 连续生图详情任务读取有界，交付 `232e51f7` | 三组实际生产任务 SQL 各 LIMIT 20，去重最多 60；队列排名只返回所需 ID。包内测试 6.694s、目标规模 query-plan 3.141s、新增 HTTP/排名回归 race 三次 2.941s，均通过；详见[归档任务](tasks/archive/perf-imagesession-detail.md) | 首屏关联任务和 rounds COUNT 仍 Seq Scan；未验收生产 payload/延迟，PERF-08 保留部分完成 |
-| 2026-09-05 | dispatcher 负载时延，测试交付 `a0d1ba4f` | queue 包回归 5.098s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 连续三轮 31.652s，每场 500 个有效样本、25 个延期跳过；单副本 p95 2539.869/2567.677/2593.774ms，双副本 775.003/772.495/783.593ms。DB 时钟探针与 Redis 信封核对见[归档任务](tasks/archive/perf-dispatcher-latency.md) | 有效采证完成，单副本建议目标 FAIL；仅本地带探针突发负载，不作为生产 SLO；保留批间等待缺口 |
+| 2026-09-05 | dispatcher 负载时延，测试交付 `a0d1ba4f` | queue 包回归 5.098s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 连续三轮 31.652s，每场 500 个有效样本、25 个延期跳过；单副本 p95 2539.869/2567.677/2593.774ms，双副本 775.003/772.495/783.593ms。DB 时钟探针与 Redis 信封核对见[归档任务](tasks/archive/perf-dispatcher-latency.md) | 当时采证完成，单副本建议目标 FAIL；仅本地带探针突发负载，不作为生产 SLO；批间等待由后续 [perf-dispatcher-backlog](tasks/archive/perf-dispatcher-backlog.md) 修复 |
+| 2026-09-05 | dispatcher 积压满批续投，交付见 [归档任务](tasks/archive/perf-dispatcher-backlog.md) | queue 4.724s、dispatcher 0.764s；`PRODUCTFLOW_RUN_DISPATCH_LATENCY=1` 单/双真实 dispatcher 8.715s，每场 500 个有效样本、25 个延期跳过；单副本 p95 437.666ms，双副本 278.819ms。满批后续投与 SENT+enqueue 有界并发 race 子集通过 | 有效本地回归完成；无生产 SLO；未跑重 recovery 负载；`just staging-up` 杀容器未跑 |
 | 2026-09-05 | AR-02 journal 职责调查，认领 `324894a6` | 指定 Node 测试 61 passed / 1 skipped（10k WAL `runIf`）；`just docs-check` 通过。结论保留现状，见[归档任务](tasks/archive/arch-journal-assessment.md) | 本轮未跑 Go ConfirmEvents / fencing；Node recover claim 409 缺测；不发实现单 |
 | 2026-09-05 | 生图 admission running/denied 指标 | `generationCapacityAvailable` 容量满打点；`/metrics` 输出 `productflow_generation_admission_running` 与带 `graph`/`imagesession` domain 的 `productflow_generation_admission_denied_total`。metrics 0.856s、graph 78.394s 通过，见[归档任务](tasks/archive/perf-capacity-metrics.md) | 未跑 imagesession replica field；入队路径满容量也会增加 denied；denied 非跨副本合计 |
 

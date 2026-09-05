@@ -44,7 +44,7 @@ C0–C6 are landed. C4 idle rewrite/candidate and mid-run inspector typing are i
 
 ### Runtime performance governance
 
-[Generation admission metrics](audits/tasks/archive/perf-capacity-metrics.md) are delivered. [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. [Dispatcher load-latency evidence](audits/tasks/archive/perf-dispatcher-latency.md) is complete; a single dispatcher handling a 500-item burst still misses the suggested 1s p95 target. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
+[Generation admission metrics](audits/tasks/archive/perf-capacity-metrics.md) are delivered. [Bounded image-session detail reads](audits/tasks/archive/perf-imagesession-detail.md) are delivered. [Dispatcher backlog continuation](audits/tasks/archive/perf-dispatcher-backlog.md) is delivered; a local 500-item burst now has single-replica PENDING→SENT p95 0.438s. Baseline and lock order: [`audits/performance-governance.md`](audits/performance-governance.md). SaaS tenant admission is a new baseline.
 
 ### Responsibility consolidation
 

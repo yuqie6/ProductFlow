@@ -114,6 +114,20 @@ func forwardWake[T any](in <-chan T, wake chan<- struct{}) {
 	}
 }
 
+// dispatchWhileHasMore keeps claiming due PENDING after a full batch instead of
+// waiting for the next ticker or NOTIFY. Recovery must not use this helper.
+func dispatchWhileHasMore(ctx context.Context, run func(context.Context) (bool, error)) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		hasMore, err := run(ctx)
+		if err != nil || !hasMore {
+			return err
+		}
+	}
+}
+
 func drainWake(wake <-chan struct{}) {
 	for {
 		select {

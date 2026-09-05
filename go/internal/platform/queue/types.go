@@ -39,10 +39,11 @@ type Dispatch struct {
 
 // Summary 是 dispatcher 一轮的计数。Pending 是本轮 claim 数，Sent 是成功标 SENT 并入队的条数。
 type Summary struct {
-	Pending    int `json:"pending"`    // 本轮 claim 数
-	Sent       int `json:"sent"`       // 成功标 SENT 并入队
-	Reconciled int `json:"reconciled"` // 本轮回收过期/陈旧 SENT
-	Dead       int `json:"dead"`       // 库中 dead 行数，不是本轮新增
+	Pending    int  `json:"pending"`    // 本轮 claim 数
+	Sent       int  `json:"sent"`       // 成功标 SENT 并入队
+	Reconciled int  `json:"reconciled"` // 本轮回收过期/陈旧 SENT
+	Dead       int  `json:"dead"`       // 库中 dead 行数，不是本轮新增
+	HasMore    bool `json:"has_more"`   // 本轮 claim 已满 limit，下一轮继续探测到期 PENDING
 }
 
 // EnqueueFunc 把已 SENT 的信封交给 broker。失败不得在本函数里改 PostgreSQL 行。

@@ -2,6 +2,8 @@ package queue
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,6 +13,10 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
+
+// sendClaimedConcurrency 限制同一轮已 claim 行上 SENT+enqueue 的并发。
+// 每条仍先 SENT 再 enqueue；不提高 DefaultClaimLimit。
+const sendClaimedConcurrency = 16
 
 // RunDispatcherOnce 对账过期 lease 与陈旧 SENT，再 SKIP LOCKED claim PENDING、标 SENT 并 enqueue。
 // HTTP 不得调用本函数入队。
@@ -46,11 +52,8 @@ func RunDispatcherOnce(ctx context.Context, pool *pgxpool.Pool, enqueue EnqueueF
 		return Summary{}, err
 	}
 	summary.Pending = len(claimed)
-	for _, dispatch := range claimed {
-		if sendClaimed(ctx, gdb, dispatch, enqueue, now) {
-			summary.Sent++
-		}
-	}
+	summary.HasMore = len(claimed) == limit
+	summary.Sent = sendAllClaimed(ctx, gdb, claimed, enqueue, now)
 	var dead int64
 	if err := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("status = ?", StatusDead).Count(&dead).Error; err != nil {
 		return Summary{}, err
@@ -149,6 +152,33 @@ func claimPending(ctx context.Context, gdb *gorm.DB, now time.Time, limit, lease
 		return nil, err
 	}
 	return claimed, nil
+}
+
+func sendAllClaimed(ctx context.Context, gdb *gorm.DB, claimed []Dispatch, enqueue EnqueueFunc, now time.Time) int {
+	if len(claimed) == 0 {
+		return 0
+	}
+	n := sendClaimedConcurrency
+	if n > len(claimed) {
+		n = len(claimed)
+	}
+	var sent atomic.Int64
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, n)
+	for _, dispatch := range claimed {
+		dispatch := dispatch
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if sendClaimed(ctx, gdb, dispatch, enqueue, now) {
+				sent.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	return int(sent.Load())
 }
 
 // sendClaimed 先把行标 SENT 再 enqueue。broker 失败只写 last_error，行保持 SENT 等对账，不回滚成 PENDING。

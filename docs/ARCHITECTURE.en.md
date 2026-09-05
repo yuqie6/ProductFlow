@@ -184,7 +184,7 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 ## 9. Asynchronous Work and Recovery
 
 - The Go worker executes workflow nodes, image-session candidates, delivery renditions, and local edits.
-- The async dispatcher scans durable dispatch/recovery rows in PostgreSQL and delivers them to Redis. `just dev` and Compose both start this process.
+- The async dispatcher scans durable dispatch/recovery rows in PostgreSQL and delivers them to Redis. `just dev` and Compose both start this process. Watch mode continues immediately when a claim batch fills `limit`, and waits for the interval or NOTIFY only when idle; already-claimed rows are SENT+enqueued with bounded concurrency, still SENT before enqueue.
 - Redis provides the broker. PostgreSQL remains authoritative for generation-capacity admission and queued/running/terminal state.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors. Recovery candidates are bounded to 25 per domain and use stable ordering and `SKIP LOCKED`. When metrics are enabled, the API exposes queued/stale-running backlog and current PostgreSQL lock waiters; the dispatcher exposes per-domain recovery duration and candidate-lock query histograms.
 - Worker startup recovers unfinished jobs that can be safely redelivered.

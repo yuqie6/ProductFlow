@@ -195,6 +195,92 @@ func TestDrainWakeEmptiesPendingSignals(t *testing.T) {
 	drainWake(nil)
 }
 
+func TestDispatchWhileHasMoreContinuesUntilCaughtUp(t *testing.T) {
+	var calls int
+	err := dispatchWhileHasMore(context.Background(), func(context.Context) (bool, error) {
+		calls++
+		return calls < 3, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3", calls)
+	}
+}
+
+func TestDispatchWhileHasMoreStopsOnError(t *testing.T) {
+	wantErr := errors.New("claim failed")
+	var calls int
+	err := dispatchWhileHasMore(context.Background(), func(context.Context) (bool, error) {
+		calls++
+		return true, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want claim failure", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestDispatchWhileHasMoreStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var calls int
+	err := dispatchWhileHasMore(ctx, func(context.Context) (bool, error) {
+		calls++
+		return true, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want canceled", err)
+	}
+	if calls != 0 {
+		t.Fatalf("calls = %d, want 0", calls)
+	}
+}
+
+func TestRunWatchLoopsDispatchDrainsBacklogBeforeTicker(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	batches := make(chan int, 8)
+	remaining := 3
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		runWatchLoops(
+			ctx,
+			time.Hour,
+			time.Hour,
+			nil,
+			func(ctx context.Context) error {
+				return dispatchWhileHasMore(ctx, func(context.Context) (bool, error) {
+					batches <- remaining
+					remaining--
+					return remaining > 0, nil
+				})
+			},
+			func(context.Context) error { return nil },
+			nil,
+			nil,
+		)
+	}()
+
+	for want := 3; want >= 1; want-- {
+		select {
+		case got := <-batches:
+			if got != want {
+				t.Fatalf("batch remaining = %d, want %d", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for backlog batch %d", want)
+		}
+	}
+
+	cancel()
+	waitForSignal(t, done, "watch loops to stop")
+}
+
 func TestStartDispatchWakeExitsOnCancel(t *testing.T) {
 	pool, _ := testdb.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())

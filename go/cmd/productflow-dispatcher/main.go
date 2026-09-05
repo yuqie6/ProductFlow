@@ -190,23 +190,28 @@ func main() {
 		}
 		return recoveryErr
 	}
-	runDispatchCycle := func(ctx context.Context) error {
+	runDispatchBatch := func(ctx context.Context) (bool, error) {
 		summary, err := queue.RunDispatcherOnce(ctx, pool, enqueue, *limit)
 		if err != nil {
-			return fmt.Errorf("dispatch: %w", err)
+			return false, fmt.Errorf("dispatch: %w", err)
 		}
 		fields := []zap.Field{
 			zap.Int("pending", summary.Pending),
 			zap.Int("sent", summary.Sent),
 			zap.Int("reconciled", summary.Reconciled),
 			zap.Int("dead", summary.Dead),
+			zap.Bool("has_more", summary.HasMore),
 		}
 		if dispatcherCycleIdle(summary) {
 			logger.Debug("dispatcher dispatch cycle", fields...)
 		} else {
 			logger.Info("dispatcher dispatch cycle", fields...)
 		}
-		return nil
+		return summary.HasMore, nil
+	}
+	runDispatchCycle := func(ctx context.Context) error {
+		_, err := runDispatchBatch(ctx)
+		return err
 	}
 
 	if !*watch {
@@ -224,7 +229,9 @@ func main() {
 		time.Duration(*interval*float64(time.Second)),
 		time.Duration(*recoveryInterval*float64(time.Second)),
 		dispatchWake,
-		runDispatchCycle,
+		func(ctx context.Context) error {
+			return dispatchWhileHasMore(ctx, runDispatchBatch)
+		},
 		runRecoveryCycle,
 		func(err error) {
 			if err != nil && !errors.Is(err, context.Canceled) {
