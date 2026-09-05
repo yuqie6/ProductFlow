@@ -37,7 +37,6 @@
       "required": [
         "load_productflow_skill",
         "get_product_workflow_context_v1",
-        "list_product_image_assets_v2",
         "ask_user"
       ],
       "forbidden": [
@@ -72,20 +71,13 @@
         }
       },
       {
-        "name": "list_product_image_assets_v2",
-        "params": {
-          "directory_kind": "uploads",
-          "limit": 20
-        }
-      },
-      {
         "name": "ask_user",
         "params": {
           "header": "选择参考图",
           "question": "请选择要用于生成的已上传参考图。",
           "options": [
             {
-              "label": "使用当前上传素材"
+              "label": "选择参考素材"
             },
             {
               "label": "稍后再选"

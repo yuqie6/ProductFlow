@@ -6,9 +6,11 @@
 
 ## 组职责与交付序列
 
+2026-09-05 [澄清读取义务校正](tasks/archive/eval-clarification-read-obligations.md) 完成：五题取消无用强制读取，20 道澄清题按所需事实复查；保留写入安全与必要观察。全量 taskSetHash `acb773ce1b47457cb94d11544cddddb886dfcee8bb7febdb7267c64ab6c719f2`，完整 Node 297 passed / 6 skipped。开发基线可按新提交重新冻结采证，旧两批不拼接、不回填；D-03/D-08/T-08 不因离线修复通过。
+
 2026-09-05 [恢复测试时序校正](tasks/archive/eval-restart-batch-expectation.md)：ACK 前崩溃测试不再把并发生成上下文事件当作恢复错误；仅调整测试替身的崩溃窗口及快照断言，运行时不变。完整 Node 测试 297 passed / 6 skipped；不替代真实模型 D-08 证据。
 
-2026-09-05 第二批 `20260905T121323Z-d6899746` 在 90/225 条完整记录后，发现三个安全素材澄清仅因未列表而判失败，交 [澄清读取义务校正](tasks/eval-clarification-read-obligations.md)。删节点校正题 3/3 通过；第二批仍无有效完整开发包，不晋升 D-03/D-08/T-08。下一次付费采证前复查同类必需读取，原始失败不删除或回填。
+2026-09-05 第二批 `20260905T121323Z-d6899746` 在 90/225 条完整记录后，发现三个安全素材澄清仅因未列表而判失败，交 [澄清读取义务校正](tasks/archive/eval-clarification-read-obligations.md)。删节点校正题 3/3 通过；第二批仍无有效完整开发包，不晋升 D-03/D-08/T-08。下一次付费采证前复查同类必需读取，原始失败不删除或回填。
 
 2026-09-05 新开发基线 `20260905T114437Z-a8d89635` 在 54/225 条完整记录后因删节点改写歧义停止，旧批次无完整 summary 或开发导出。[题意校正](tasks/archive/eval-graph-clear-intent.md) 已将三种问法统一为保留商品资料和全部分组，并覆盖 120 种正确删除排列及额外写入拒绝；通用评分器未放宽。全量 taskSetHash 更新为 `988c2d2895c09fa2b8e8167f060ad27c320c471a5c3bf8fa8cce1802bd4c5e6a`，由 [开发基线](tasks/eval-development-baseline.md) 按新提交完整重采。D-03、D-08、T-08 未通过，既有素材合同交付不受影响。
 

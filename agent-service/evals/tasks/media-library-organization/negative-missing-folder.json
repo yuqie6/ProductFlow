@@ -41,7 +41,6 @@
     "tools": {
       "required": [
         "load_productflow_skill",
-        "list_global_media_library_assets_v1",
         "ask_user"
       ],
       "forbidden": [
@@ -64,19 +63,13 @@
         }
       },
       {
-        "name": "list_global_media_library_assets_v1",
-        "params": {
-          "limit": 20
-        }
-      },
-      {
         "name": "ask_user",
         "params": {
           "header": "选择文件夹",
           "question": "请选择要移动到的目标文件夹。",
           "options": [
             {
-              "label": "季节"
+              "label": "提供目标目录名称或 ID"
             },
             {
               "label": "暂不移动"

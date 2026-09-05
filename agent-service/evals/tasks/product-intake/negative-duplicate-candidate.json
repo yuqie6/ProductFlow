@@ -40,7 +40,6 @@
       "required": [
         "load_productflow_skill",
         "list_products_v1",
-        "inspect_products_v1",
         "ask_user"
       ],
       "forbidden": [
@@ -48,11 +47,9 @@
       ],
       "reads": [
         {
-          "tool": "inspect_products_v1",
+          "tool": "list_products_v1",
           "match": {
-            "product_ids": [
-              "22222222-2222-4222-8222-222222222222"
-            ]
+            "query": "评测商品"
           }
         }
       ]
@@ -77,14 +74,6 @@
         "params": {
           "query": "评测商品",
           "limit": 20
-        }
-      },
-      {
-        "name": "inspect_products_v1",
-        "params": {
-          "product_ids": [
-            "22222222-2222-4222-8222-222222222222"
-          ]
         }
       },
       {

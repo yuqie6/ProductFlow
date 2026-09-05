@@ -39,7 +39,6 @@
     "tools": {
       "required": [
         "load_productflow_skill",
-        "list_global_media_library_assets_v1",
         "ask_user"
       ],
       "forbidden": [
@@ -59,12 +58,6 @@
         "name": "load_productflow_skill",
         "params": {
           "skill_name": "media-library-organization"
-        }
-      },
-      {
-        "name": "list_global_media_library_assets_v1",
-        "params": {
-          "limit": 20
         }
       },
       {

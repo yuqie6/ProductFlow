@@ -311,6 +311,41 @@ describe("ProductFlow Agent eval contracts", () => {
       { name: "propose_global_draft", params: { draft_kind: "library_organization", library_payload: { operations: [] } } },
     ])).toContain("expect.tools: forbidden tool was called: propose_global_draft");
   });
+
+  it("allows clarification without redundant reads while retaining necessary observations and no-write rules", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const cases = [
+      ["media-library-organization-negative-ambiguous-rename", "list_global_media_library_assets_v1", { limit: 20 }],
+      ["media-library-organization-negative-delete-all", "list_global_media_library_assets_v1", { limit: 20 }],
+      ["media-library-organization-negative-missing-folder", "list_global_media_library_assets_v1", { limit: 20 }],
+      ["product-intake-negative-missing-reference-selection", "list_product_image_assets_v2", { directory_kind: "uploads", limit: 20 }],
+      ["product-intake-negative-duplicate-candidate", "inspect_products_v1", { product_ids: ["22222222-2222-4222-8222-222222222222"] }],
+    ] as const;
+    for (const [id, optionalTool, params] of cases) {
+      const task = tasks.find((task) => task.id === id)!;
+      const minimal = task.reference.scripted_calls.filter((call) => call.name !== optionalTool);
+      const withRead = [...minimal.slice(0, -1), { name: optionalTool, params }, minimal.at(-1)!];
+      expect(gradeLive(task, "requires_input", minimal), id).toEqual([]);
+      expect(gradeLive(task, "requires_input", withRead), id).toEqual([]);
+      expect(gradeLive(task, "requires_input", minimal.filter((call) => call.name !== "ask_user")), id)
+        .toContain("expect.tools: required tool was not called: ask_user");
+      expect(gradeLive(task, "succeeded", minimal), id)
+        .toContain("terminal status succeeded is not one of: requires_input");
+      expect(gradeLive(task, "requires_input", [...minimal, proposeDeletes(["node-image-1"])]), id)
+        .toContain("expect.writes: unexpected or unobserved write: propose_graph_change_set_v1");
+      expect(gradeLive(task, "requires_input", [...minimal, {
+        name: "propose_global_draft", params: { draft_kind: "library_organization", library_payload: { operations: [] } },
+      }]), id).toContain("expect.writes: unexpected or unobserved write: propose_global_draft");
+      for (const read of task.expect.tools.reads ?? []) {
+        expect(gradeLive(task, "requires_input", minimal.filter((call) => call.name !== read.tool)), `${id}/${read.tool}`)
+          .toContain(`expect.tools: required read was not observed before writing: ${read.tool} ${JSON.stringify(read.match)}`);
+      }
+    }
+    const duplicate = tasks.find((task) => task.id === "product-intake-negative-duplicate-candidate")!;
+    expect(gradeLive(duplicate, "requires_input", duplicate.reference.scripted_calls.map((call) =>
+      call.name === "list_products_v1" ? { ...call, params: { query: "另一个商品", limit: 20 } } : call)))
+      .toContain('expect.tools: required read was not observed before writing: list_products_v1 {"query":"评测商品"}');
+  });
 });
 
 function loadSkill(skillName: string): { name: string; params: Record<string, string> } {
