@@ -1,14 +1,14 @@
 # 任务：消除批量删节点题的清空画布歧义
 
-状态：开放
+状态：完成
 类型：实现
-认领者：—
-认领于：—
+认领者：主代理-eval-quality-0905-2005
+认领于：2026-09-05T20:05:00+08:00
 业务组：Agent 质量
 父账本：agent-eval-system.md
 完成后可拆：解除开发基线的输入阻塞，由协调者重新冻结后采证
 
-认领、审核和交付遵循 [Issue 协议](README.md)。取得确认所有权后再展开实现；不修改正在冻结运行的题集。
+认领、审核和交付遵循 [Issue 协议](../README.md)。取得确认所有权后再展开实现；不修改正在冻结运行的题集。
 
 ## 问题来源与证据
 
@@ -38,6 +38,14 @@
 
 ## 阻塞与交接
 
-- 当前无实现阻塞；等待认领。开发基线因本问题阻塞。
+- 本单实现及验证完成；开发基线须用本单提交重新冻结后完整采证，旧批次不恢复或重评分。
 - 发布者：主代理-eval-quality-0905-1934；发布依据为实际 trial 参数与现行匹配逻辑。已核对看板，无同根因开放任务；素材观察刷新仅修素材输入，不覆盖该题。
-- 题意存在歧义的判断为协调者自审，不宣称独立审核；本任务尚未实现或验收。
+- 审核者：主代理-eval-quality-0905-2005，自审。三种问法均保留商品资料和全部分组，只改任务 JSON 与现有合同测试；未修改 grader、Skill、world、阈值或用途。L5 生成器未选该题，同源扫描无待改注入版本。
+
+## 完成证据
+
+- 2026-09-05：`pnpm --dir agent-service exec vitest run evals/contract.test.ts` 9 passed，包含全部 120 种正确删除排列，以及额外解散分组、误删商品资料、漏删和直接 apply 的拒绝断言。原始 trial 3 经当前 `gradeWrites` 离线重放拒绝额外解散；只移除额外解散的对照通过，原始文件未改写。
+- `pnpm --dir agent-service exec tsc --noEmit` 通过。`pnpm --dir agent-service test` 首次 295 passed / 1 failed / 6 skipped，未改动的 `process-restart.e2e.test.ts:208` 收到 `[[], [1, 2]]` 而非 `[[], [1]]`；单独复查同样失败。第二次完整执行 296 passed / 6 skipped；旧固定 checkout 的重启专项 4 passed。记录间歇性测试风险，未在本单修改恢复逻辑，未声称该风险已修复。
+- 全量 83 题、L1 75 题、107 个 task/world/fixture JSON。全量 taskSetHash `988c2d2895c09fa2b8e8167f060ad27c320c471a5c3bf8fa8cce1802bd4c5e6a`；L1 task hash `bd5c944fcd5c643e21c7fdb251ddced0c86bb14140b947076a06f98d186a1750`；原始文件 hash `23f5957781c655c2ed1b147f79c4b0c56e1396f7d35d0709f682d01d1c1d102f`，算法沿用观察刷新：evals 相对路径默认排序，每项 path + NUL + bytes + NUL 后 SHA-256。
+- `just docs-check`、`git diff --check` 通过。交付定位：随本任务提交，通过本归档 Git 历史查询。
+- Issue 结果：题意校正完成，开发输入阻塞可解除。业务门槛：未重跑真实模型，D-03/D-08/T-08 与自进化 G1 均不因本单通过；完整开发批次仍未交付。

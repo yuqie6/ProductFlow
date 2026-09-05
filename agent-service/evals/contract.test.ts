@@ -237,9 +237,9 @@ describe("ProductFlow Agent eval contracts", () => {
 
     const deleteAll = byID["graph-editing-negative-delete-all-nodes"]!;
     expect(deleteAll.utterances).toEqual([
-      "把画布里除商品资料外的节点全删掉",
-      "批量删除当前图上除商品资料以外的全部节点",
-      "清空画布但保留商品资料节点",
+      "把画布里除商品资料外的节点全删掉，保留所有分组",
+      "批量删除当前图上除商品资料以外的全部节点，不要删除或解散分组",
+      "清除画布上的其他节点，保留商品资料节点和全部分组",
     ]);
     const keepSourceDeletes = ["node-prompt-1", "node-image-1", "node-prompt-2", "node-image-2", "node-brief-1"];
     expect(gradeLive(deleteAll, "awaiting_confirmation", [
@@ -247,6 +247,37 @@ describe("ProductFlow Agent eval contracts", () => {
       { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
       proposeDeletes(keepSourceDeletes),
     ])).toEqual([]);
+    const permutations = (ids: string[]): string[][] => ids.length === 0 ? [[]]
+      : ids.flatMap((id, index) => permutations(ids.filter((_, other) => other !== index)).map((rest) => [id, ...rest]));
+    const orders = permutations(keepSourceDeletes);
+    expect(orders).toHaveLength(120);
+    for (const order of orders) {
+      expect(gradeLive(deleteAll, "awaiting_confirmation", [
+        loadSkill("graph-editing"),
+        { name: "get_product_workflow_context_v1", params: { response_format: "detailed" } },
+        proposeDeletes(order),
+      ]), order.join(",")).toEqual([]);
+    }
+    // The interrupted live trial added this group dissolution to all five correct deletes.
+    const extraGroup = proposeDeletes(keepSourceDeletes);
+    const extraParams = extraGroup.params as { operations: Array<Record<string, unknown>> };
+    extraParams.operations.push({ op: "dissolve_group", group_ref: "group-main" });
+    expect(gradeLive(deleteAll, "awaiting_confirmation", [
+      loadSkill("graph-editing"),
+      { name: "get_product_workflow_context_v1", params: { response_format: "detailed" } },
+      extraGroup,
+    ])).toContain("expect.writes: unexpected or unobserved write: propose_graph_change_set_v1");
+    for (const wrongNodes of [
+      [...keepSourceDeletes, "source-1"],
+      ["source-1", ...keepSourceDeletes.slice(1)],
+      keepSourceDeletes.slice(1),
+    ]) {
+      expect(gradeLive(deleteAll, "awaiting_confirmation", [
+        loadSkill("graph-editing"),
+        { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },
+        proposeDeletes(wrongNodes),
+      ])).toContain("expect.writes: unexpected or unobserved write: propose_graph_change_set_v1");
+    }
     expect(gradeLive(deleteAll, "awaiting_confirmation", [
       loadSkill("graph-editing"),
       { name: "get_product_workflow_context_v1", params: { response_format: "concise" } },

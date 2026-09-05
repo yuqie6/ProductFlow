@@ -10,7 +10,7 @@
 - 普通人工工程修复由 [Agent 质量组](agent-eval-system.md) 承接。[eval-skills](tasks/eval-skills.md) 的人工候选与结果不算本系统的自动收益。
 - 每轮使用已发布的固定评测与业务合同。评测器在候选之外运行，候选不能修改其规则、隐藏材料或成绩；独立验证不要求另一个工作组人工运行。
 - 已知普通生产故障继续正常修复，不为保存实验基线留在线上；自动进化在固定隔离版本中进行。共享代码变更仍由协调者预约排他范围，组不永久占有模块。
-- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务。[观察刷新](tasks/archive/eval-library-observation-refresh.md) 已解除素材输入阻塞；新批次发现 [删节点改写歧义](tasks/eval-graph-clear-intent.md) 后暂停，尚无有效完整开发包。它不定义未来每轮的人工流程。
+- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务。[观察刷新](tasks/archive/eval-library-observation-refresh.md) 与 [删节点题意校正](tasks/archive/eval-graph-clear-intent.md) 已解除已知输入阻塞；旧中断批次保留，须按最新固定提交完整重采，尚无有效完整开发包。它不定义未来每轮的人工流程。
 
 ## 当前基础与缺口
 
