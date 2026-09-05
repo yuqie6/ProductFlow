@@ -997,3 +997,33 @@ Web route split 和预算也已通过：bundle entry 为 928.6KB raw/253.2KiB gz
 复跑入口：`just go-test-imagesession-sse-load`。修改前测试走完完整场景后因 32 个重复快照而 FAIL；修改后 PASS（20.084s）。`go test -C go ./internal/imagesession -count=1` PASS（7.152s）；通过 dev env wrapper 设置 `PRODUCTFLOW_RUN_IMAGE_SESSION_SSE_LOAD=1` 后执行同包 `-race -count=1 -v -timeout 2m` PASS（43.493s），专项静默窗口仍为 4 帧 / 359,468B / 32 次回读。默认测试跳过专项；race 本轮显式开启。单元回归 `TestWriteSessionStatusOnlySuppressesIdenticalSnapshots` 覆盖 map 顺序不变、进度变化、仅队列变化、编码失败不写半帧、终态和新连接首帧。
 
 文档校验：共享工作树 `docs-check` 当时因并发登记的 `eval-library-observation-refresh.md` 看板/文件状态不一致失败，未改动该任务。用 `git checkout-index` 导出本次暂存快照后，独立目录 `just docs-check` PASS；本任务 diff check PASS。主代理自审，仅提交本次 SSE、测试、命令与文档变更。
+
+## 2026-09-05 连续生图活动标志一致性与查询对照
+
+基线：`dbbc8479`，`serialize.go` 最近修改为 `d542e60a`；本轮只改活动标志推导及删除独立 COUNT，未改隔离级别、锁、队列概览或 SSE 回读周期。前后 SSE 采样使用同一新增计数器的 `sse_load_test.go`，SHA-256 为 `ea8f835d106844ed02ce4d67463edea1d0779f3eeabdf96bbcd8d0a8120594d9`。修改后版本随本记录提交；共享工作树存在其他模块并发改动，未作候选发布验收。
+
+真实 PG 回归在任务列表 SELECT 前，经另一连接提交入队或取消最后一个任务，确定性形成旧 COUNT 与任务列表之间的提交窗口：
+
+| 交错 | 修改前 | 修改后 |
+|---|---|---|
+| 入队发生在任务列表读取前 | `has_active=false`，列表 1 条 | `has_active=true`，列表 1 条 |
+| 最后一个任务取消发生在列表读取前 | `has_active=true`，列表 0 条 | `has_active=false`，列表 0 条 |
+| 列表之前的独立活动 COUNT / 每次 Status | 1 | 0 |
+| 生图任务表全部 COUNT / 每次 Status | 3 | 2 |
+
+服务端 `sse.go` 与前端 `sessionEvents.ts` 都使用活动标志决定关流；因此第一种矛盾会导致带活动任务的快照被当作终态。这是强制交错的代码/真实 PG 复现，不是生产发生率统计。现在标志由同次完整活动列表推导；任务在列表读取后发生的新变化仍需后续读取发现，不宣称整个 Status 共用全局快照。
+
+SSE 量化复用上一记录的隔离 PG / loopback HTTP / cookie / 4 订阅 / 26 queued / 15.25s 静默窗口，任务宽度和传输统计范围相同；仅新增 Query callback 计数生图任务表 COUNT。该计数包含全局 queued/running 概览的两条查询，不包含轮次、Graph、settings、effects 等其他查询。
+
+| 实测项 | 修改前 | 修改后 |
+|---|---:|---:|
+| Status 回读次数 | 32 | 32 |
+| 生图任务表 COUNT 总次数 | 96 | 64 |
+| 状态帧 / SSE 正文字节 | 4 / 359,468 | 4 / 359,468 |
+| 心跳 / 重连首份终态 | 4 / 1 | 4 / 1 |
+| 4 订阅中进度变化最长送达 | 756.70ms | 754.15ms |
+| 4 订阅中终态最长送达 | 1,997.12ms | 1,996.00ms |
+
+实测减少 32 条 COUNT，即每次 Status 少 1 条；这个 COUNT 子集下降 33.33%，不能写成全部 SQL、CPU 或时延下降 33.33%。原有传输优化保持，无新缓存或保留内存；未增加锁。延迟样本各 4 个，不报告 p95 或毫秒级改进。
+
+验证：`TestImageSessionStatusActiveFlagMatchesTaskSnapshot` 修改前双向 FAIL、修改后 PASS（0.768s）；同回归 `-race -count=20` PASS（4.357s，共 40 次交错）；ImageSession 全包 `-race -count=1` PASS（24.916s，默认跳过 opt-in）；`just go-test-imagesession-sse-load` 修改前 PASS（20.026s）、修改后 PASS（20.085s）。常规 SSE gate 仅检查帧/回读/送达，不能代替新增交错回归。命令均通过 `scripts/with_dev_env.sh` 提供 dev 环境变量，测试不改共享 dev 库或运行服务。

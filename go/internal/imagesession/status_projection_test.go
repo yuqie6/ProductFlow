@@ -126,3 +126,85 @@ func TestImageSessionStatusSkipsRawProviderPayloads(t *testing.T) {
 		t.Fatalf("detail did not exercise shared effect projection: reads=%d", effectReads)
 	}
 }
+
+func TestImageSessionStatusActiveFlagMatchesTaskSnapshot(t *testing.T) {
+	for _, enqueue := range []bool{true, false} {
+		name := "complete_before_task_read"
+		if enqueue {
+			name = "enqueue_before_task_read"
+		}
+		t.Run(name, func(t *testing.T) {
+			ss := newSessionServer(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			now := time.Now().UTC()
+			session := schema.ImageSessions{ID: clockid.New(), Title: name, CreatedAt: now, UpdatedAt: now}
+			if err := ss.db.WithContext(ctx).Create(&session).Error; err != nil {
+				t.Fatal(err)
+			}
+			task := schema.ImageSessionGenerationTasks{
+				ID: clockid.New(), SessionID: session.ID, Status: "queued", Prompt: "snapshot",
+				Size: "1024x1024", GenerationCount: 1, CreatedAt: now,
+			}
+			t.Cleanup(func() {
+				if err := ss.db.Where("id = ?", task.ID).Delete(&schema.ImageSessionGenerationTasks{}).Error; err != nil {
+					t.Error(err)
+				}
+			})
+			if !enqueue {
+				if err := ss.db.WithContext(ctx).Create(&task).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			countReads, taskReads, countsBeforeList := 0, 0, 0
+			callback := "test:active_task_snapshot"
+			// Commit from another DB connection between the old COUNT and the task SELECT.
+			if err := ss.db.Callback().Query().Before("gorm:query").Register(callback, func(db *gorm.DB) {
+				if db.Statement.Table != "image_session_generation_tasks" {
+					return
+				}
+				switch db.Statement.Dest.(type) {
+				case *int64:
+					countReads++
+					if taskReads == 0 {
+						countsBeforeList++
+					}
+				case *[]schema.ImageSessionGenerationTasks:
+					taskReads++
+					if taskReads != 1 {
+						return
+					}
+					var err error
+					if enqueue {
+						err = ss.db.WithContext(ctx).Create(&task).Error
+					} else {
+						err = ss.db.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
+							Where("id = ?", task.ID).Update("status", "cancelled").Error
+					}
+					if err != nil {
+						db.AddError(err)
+					}
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ss.db.Callback().Query().Remove(callback) })
+			status, err := ss.svc.Status(ctx, session.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("ACTIVE_SNAPSHOT enqueue=%t task_count_queries=%d counts_before_list=%d task_list_queries=%d has_active=%t tasks=%d",
+				enqueue, countReads, countsBeforeList, taskReads, status.HasActiveGenerationTask, len(status.GenerationTasks))
+			wantTasks := 0
+			if enqueue {
+				wantTasks = 1
+			}
+			if taskReads != 1 || len(status.GenerationTasks) != wantTasks || status.HasActiveGenerationTask != enqueue {
+				t.Error("activity flag and task list must describe the same task read")
+			}
+			if countsBeforeList != 0 {
+				t.Error("status made a redundant, independently visible active-task COUNT")
+			}
+		})
+	}
+}

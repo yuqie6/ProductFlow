@@ -46,10 +46,14 @@ func TestImageSessionSSESnapshotLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 	var reads atomic.Int64
+	var taskCountReads atomic.Int64
 	callback := "test:sse_snapshot_reads"
 	if err := gdb.Callback().Query().After("gorm:query").Register(callback, func(db *gorm.DB) {
 		if _, ok := db.Statement.Dest.(*schema.ImageSessionRounds); ok {
 			reads.Add(1)
+		}
+		if _, ok := db.Statement.Dest.(*int64); ok && db.Statement.Table == "image_session_generation_tasks" {
+			taskCountReads.Add(1)
 		}
 	}); err != nil {
 		t.Fatal(err)
@@ -158,6 +162,7 @@ func TestImageSessionSSESnapshotLoad(t *testing.T) {
 	}
 	t.Logf("SSE_IDLE clients=4 active_tasks=26 effects=0 prompt_bytes=%d note_bytes=512 window=%s frames_including_initial=%d wire_body_bytes=%d heartbeats=%d status_reads=%d",
 		len(tasks[0].Prompt), time.Since(idleStart), idleFrames, idleBytes, beats, reads.Load())
+	t.Logf("SSE_IDLE_QUERY image_session_task_count_queries=%d", taskCountReads.Load())
 	if reads.Load() < 32 || beats < 4 {
 		t.Fatal("fixture did not exercise periodic PG recovery reads and heartbeats")
 	}

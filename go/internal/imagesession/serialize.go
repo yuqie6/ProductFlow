@@ -153,12 +153,6 @@ func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) 
 		latestGroup = latest.GenerationGroupID
 	}
 
-	var activeCount int64
-	if err := tx.WithContext(ctx).Model(&schema.ImageSessionGenerationTasks{}).
-		Where("session_id = ? AND status IN ?", sessionID, imageSessionActiveTaskStatuses).
-		Count(&activeCount).Error; err != nil {
-		return StatusResponse{}, err
-	}
 	var scannedTaskModels []schema.ImageSessionGenerationTasks
 	if err := tx.WithContext(ctx).Where("session_id = ? AND status IN ?", sessionID, imageSessionActiveTaskStatuses).
 		Order("created_at DESC, id DESC").Find(&scannedTaskModels).Error; err != nil {
@@ -199,7 +193,7 @@ func (s Service) loadStatus(ctx context.Context, tx *gorm.DB, sessionID string) 
 	return StatusResponse{
 		ID: sess.ID, Title: sess.Title, RoundsCount: int(roundsCount),
 		LatestRoundID: latestRoundID, LatestGenerationGroupID: latestGroup,
-		HasActiveGenerationTask: activeCount > 0, GenerationTasks: tasks,
+		HasActiveGenerationTask: len(tasks) > 0, GenerationTasks: tasks,
 		CreatedAt: sess.CreatedAt, UpdatedAt: sess.UpdatedAt,
 	}, nil
 }

@@ -153,7 +153,7 @@ type HistoryResponse struct {
 }
 
 // StatusResponse 是会话轻量状态的 HTTP 投影，供轮询和 SSE，不带全量轮次/素材。
-// HasActiveGenerationTask 在任一任务 queued 或 running 时为 true。
+// HasActiveGenerationTask 来自本次 GenerationTasks 读取，任一任务 queued 或 running 时为 true。
 type StatusResponse struct {
 	ID                      string         `json:"id"`
 	Title                   string         `json:"title"`
