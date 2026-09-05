@@ -168,6 +168,12 @@ async function runTrial(
     await manager.close().catch(() => undefined);
   }
 
+  const calls = mergeToolCalls(terminal, stub.calls);
+  const unobservedTools = calls.filter((call) => call.outcome === "unknown").map((call) => call.name);
+  const unobservable = Boolean(task.observability_blocker) || unobservedTools.length > 0;
+  if (unobservedTools.length > 0) {
+    errors.unshift(`unobservable tool outcome: ${[...new Set(unobservedTools)].join(", ")}; raw trial is diagnostic only`);
+  }
   const durationMS = Date.now() - startedAt.getTime();
   const transcriptPath = await storage.writeTranscript(task.id, trial, {
     schema_version: 1,
@@ -183,7 +189,6 @@ async function runTrial(
     events: events.map((event) => ({ sequence: event.sequence, kind: event.kind, created_at: event.created_at })),
     stub_calls: stub.calls,
   });
-  const calls = mergeToolCalls(terminal, stub.calls);
   const record: EvalTrialRecord = {
     schema_version: 1,
     run_id: runID,
@@ -196,7 +201,7 @@ async function runTrial(
     utterance,
     started_at: startedAt.toISOString(),
     duration_ms: durationMS,
-    status: task.observability_blocker ? "unobservable" : terminal?.status ?? "failed",
+    status: unobservable ? "unobservable" : terminal?.status ?? "failed",
     passed: errors.length === 0,
     errors,
     terminal: terminal?.status ?? null,

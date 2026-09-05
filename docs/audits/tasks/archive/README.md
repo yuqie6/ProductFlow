@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-unobservable-trial-boundary.md](eval-unobservable-trial-boundary.md) | 完成 | 未知工具结果显式不可测，按原始 trial 拒绝整批开发导出；115 passed / 5 skipped，结构观察与有效基线仍待补齐 |
 | [eval-clarification-read-obligations.md](eval-clarification-read-obligations.md) | 完成 | 五题去除无用必需读取，复查 20 道澄清题；安全提问与写入前置事实回归，297 passed / 6 skipped |
 | [eval-restart-batch-expectation.md](eval-restart-batch-expectation.md) | 完成 | ACK 丢失恢复测试固定上下文返回窗口并精确比较已提交批次；消除调度相关假失败，不改运行时 |
 | [eval-graph-clear-intent.md](eval-graph-clear-intent.md) | 完成 | 三种删节点问法明确保留分组；120 种删除排列及额外写入拒绝回归；新身份须完整重采开发基线 |

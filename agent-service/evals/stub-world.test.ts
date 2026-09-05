@@ -34,6 +34,21 @@ describe("L1 stub world", () => {
     else expect(after.live_graph.edges.some((edge) => edge.id === "edge-brief-prompt")).toBe(false);
   });
 
+  it("keeps missing structural observations unknown without inventing a graph effect", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((task) => task.id === "graph-editing-dissolve-and-reorder")!;
+    const world = worlds.get(task.world)!;
+    const stub = createStubWorld(task, world, "conv", "run", {});
+    const before = await stub.client.productContext("conv", undefined, "detailed");
+    await expect(stub.client.applyGraphChangeSet("conv", {
+      base_graph_revision: world.live_graph.revision,
+      summary: "dissolve only",
+      operations: [{ op: "dissolve_group", group_ref: "group-main" }],
+    }, "key")).rejects.toMatchObject({ code: "eval_unobservable" });
+    expect(stub.calls.at(-1)).toMatchObject({ name: "apply_graph_change_set_v1", outcome: "unknown" });
+    expect(await stub.client.productContext("conv", undefined, "detailed")).toEqual(before);
+  });
+
   it("requires explicit archived discovery and preserves Go before facts", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((task) => task.id === "media-library-organization-restore-asset")!;

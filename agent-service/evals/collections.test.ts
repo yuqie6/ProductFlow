@@ -162,6 +162,31 @@ describe("frozen evaluation collections", () => {
     expect(reads.mock.calls.some(([path]) => String(path).includes("/transcripts/"))).toBe(false);
   });
 
+  it.each(["unobservable_status", "unknown_write", "unknown_read"])("rejects %s before opening transcripts or exporting a packet", async (mode) => {
+    const f = await fixture();
+    const record = { ...f.record, passed: true, errors: [] };
+    if (mode === "unobservable_status") record.status = "unobservable";
+    else record.tool_calls = [{
+      name: mode === "unknown_write" ? "apply_graph_change_set_v1" : "get_node_detail_v1",
+      params: {}, ts: record.started_at, outcome: "unknown",
+    }];
+    await fs.writeFile(join(f.runRoot, "trials.jsonl"), JSON.stringify(record) + "\n");
+    // A stale summary cannot overrule the raw observation evidence.
+    await fs.writeFile(join(f.runRoot, "summary.json"), JSON.stringify({ metrics: { measurementEligible: true } }));
+    const reads = vi.spyOn(fs, "readFile");
+    await expect(exportDevelopment(runID, f.path, taskSet, f.root)).rejects.toThrow(/Unobservable development batch/);
+    expect(reads.mock.calls.some(([path]) => String(path).includes("/transcripts/"))).toBe(false);
+    await expect(fs.stat(join(f.root, "agent-evals", "development-inputs"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["succeeded", "failed"] as const)("exports observed %s tool results even when the capability trial fails", async (outcome) => {
+    const f = await fixture();
+    f.record.tool_calls = [{ name: "apply_graph_change_set_v1", params: {}, ts: f.record.started_at, outcome }];
+    await fs.writeFile(join(f.runRoot, "trials.jsonl"), JSON.stringify(f.record) + "\n");
+    const packet = JSON.parse(await fs.readFile(await exportDevelopment(runID, f.path, taskSet, f.root), "utf8"));
+    expect(packet.trials[0].record).toMatchObject({ passed: false, tool_calls: [{ outcome }] });
+  });
+
   it.each(["unknown", "duplicate", "missing", "wrong_run", "traversal"])("rejects %s trials before opening any transcript", async (mode) => {
     const f = await fixture();
     const record = { ...f.record };

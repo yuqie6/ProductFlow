@@ -4,6 +4,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import type { EvalTaskSet } from "./loader.js";
 import { hashCanonicalJSON } from "./provenance.js";
+import { buildRunReport } from "./report.js";
 import { evalStorageRoot } from "./run-storage.js";
 import { EvalTrialRecordSchema, type EvalTrialRecord } from "./schema.js";
 
@@ -143,6 +144,9 @@ export async function exportDevelopment(runID: string, manifestPath: string, tas
     paths.push(await containedPath(runRoot, record.transcript_path));
   }
   if (records.length !== selected.tasks.length * raw.trials) throw new Error("Incomplete development batch");
+  if (!buildRunReport(runID, records, raw.trials).measurementEligible) {
+    throw new Error("Unobservable development batch; raw trials are diagnostic only");
+  }
   const trials = [];
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index];

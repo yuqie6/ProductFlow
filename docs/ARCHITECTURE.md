@@ -244,7 +244,7 @@ L3 的 `evals/user-sim.ts` 使用独立 Pi SDK `complete()` 选择规范事实�
 
 `just agent-evals-run-collection <绝对 manifest 路径> <用途>` 沿现有 L1 runner 执行该用途的完整 L1 任务，默认 k=3；禁止叠加 filter、suite、替换 tasks 或其它 layer。`run.json.collection` 记录实际 manifest hash、用途及任务 ID；普通 run 不补造此身份。需要与现有 live 相同的真实模型凭据，命令本身不证明一次运行已完成。
 
-`just agent-evals-export-development <run_id> <绝对 manifest 路径>` 只接收已结束且身份完整匹配的开发批次。验证集合与 run 后才读 trial，所有 trial 的数量、身份、表述和路径均通过后才读转录；混合用途、旧 run、缺失/重复试验和符号链接被拒绝。输出 `agent-evals/development-inputs/` 的 0600 文件，包含开发 task/world、成功与失败 trial、转录的回答/工具/错误字段及版本身份，不含转录顶层 thinking 字段；不读取全局 history 或 summary 正文，不能从这些入口把隐藏摘要带入提案。该输出仍是敏感开发材料，不是匿名化产物。
+`just agent-evals-export-development <run_id> <绝对 manifest 路径>` 只接收已结束且身份完整匹配的开发批次。验证集合与 run 后才读 trial，所有 trial 的数量、身份、表述和路径均通过后才读转录；混合用途、旧 run、缺失/重复试验和符号链接被拒绝。导出按原始 trial 重算 `measurementEligible`，含 `unobservable` 状态或 `unknown` 工具结果时整批拒绝，不删除坏样本后缩小分母。L1 将未知工具结果显式记录为不可测 trial，保留原始终态及诊断轨迹；真实已观察的能力失败仍可导出。输出 `agent-evals/development-inputs/` 的 0600 文件，包含开发 task/world、成功与失败 trial、转录的回答/工具/错误字段及版本身份，不含转录顶层 thinking 字段；不读取全局 history 或 summary 正文，不能从这些入口把隐藏摘要带入提案。该输出仍是敏感开发材料，不是匿名化产物。
 
 这是可信评测进程中的应用边界，不隔离同一 OS 用户；维护者须固定输入和已结束 run，避免并发篡改。未来提案器只能接导出的开发包，不得获得评测文件系统或命令工具。P3/P4、隐藏集采证、独立验收和候选比较尚未实现。测试见 `evals/collections.test.ts`、`evals/cli.test.ts`。
 
