@@ -115,10 +115,6 @@ function readOrCreateIntakeIdempotencyKey(conversationId: string): string {
   return created;
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
 function validationMessage(t: TranslateFunction, issue: AgentProductCreateValidationIssue): string {
   switch (issue.code) {
     case "options_unavailable":
@@ -167,12 +163,10 @@ export function AgentProductCreatePage() {
   );
   const [error, setError] = useState("");
   const [reconciliationRequired, setReconciliationRequired] = useState(false);
-  const [leaving, setLeaving] = useState(false);
   const draftIdempotencyKeyRef = useRef(pendingDraft?.idempotencyKey ?? createIdempotencyKey());
   const intakeIdempotencyRef = useRef<IntakeIdempotencyState | null>(null);
   const submissionWorkspaceRef = useRef<AgentProductWorkspaceSnapshot | null>(null);
   const navigationScheduledRef = useRef(false);
-  const navigationTimerRef = useRef<number | null>(null);
 
   const workspaceId = resolveWorkspaceRestorationId(searchParams.get("workspace"), pendingDraft);
   const agentSessionId = searchParams.get("agent_session_id")?.trim() || pendingDraft?.agentSessionId || null;
@@ -223,29 +217,34 @@ export function AgentProductCreatePage() {
     };
   }, [conversationId, workspace]);
 
-  useEffect(() => {
-    if (!workspace?.intake_finalized || navigationScheduledRef.current) return;
-    navigationScheduledRef.current = true;
-    setLeaving(true);
-    const delay = prefersReducedMotion() ? 0 : 180;
-    navigationTimerRef.current = window.setTimeout(() => {
-      navigate(
-        agentProductWorkbenchPath(
-          workspace.product.id,
-          workspace.conversation.session_id,
-          workspace.task_id || agentTaskId,
-        ),
-        { replace: true },
-      );
-    }, delay);
-  }, [agentTaskId, navigate, workspace]);
-
-  useEffect(
-    () => () => {
-      if (navigationTimerRef.current !== null) window.clearTimeout(navigationTimerRef.current);
+  const openWorkbenchMutation = useMutation({
+    mutationFn: async (target: AgentProductWorkspaceSnapshot) => {
+      const productId = target.product.id;
+      const sessionId = target.conversation.session_id;
+      const taskId = target.task_id || agentTaskId;
+      const [bootstrap] = await Promise.all([
+        queryClient.fetchQuery({
+          queryKey: agentWorkbenchQueryKey(productId, sessionId, taskId),
+          queryFn: () => api.getAgentWorkbench(productId, sessionId, taskId),
+        }),
+        import("./workbench/agent/ProductWorkbenchSurface"),
+      ]);
+      // Prime both graph states before mounting the destination route.
+      if (!bootstrap.graph) {
+        queryClient.setQueryDefaults(["workflow-graph", productId], { staleTime: Infinity });
+      }
+      queryClient.setQueryData(["workflow-graph", productId], bootstrap.graph);
+      return agentProductWorkbenchPath(productId, sessionId, taskId);
     },
-    [],
-  );
+    onMutate: () => setError(""),
+    onSuccess: (path) => {
+      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
+      startTransition(() => navigate(path, { replace: true }));
+    },
+    onError: (mutationError) => {
+      setError(errorDetail(mutationError, t("agentCreate.error.failed")));
+    },
+  });
 
   const retainWorkspace = (nextWorkspace: AgentProductWorkspaceSnapshot) => {
     submissionWorkspaceRef.current = nextWorkspace;
@@ -396,27 +395,9 @@ export function AgentProductCreatePage() {
     onSuccess: async (createdWorkspace) => {
       setError("");
       submissionWorkspaceRef.current = createdWorkspace;
-      const productId = createdWorkspace.product.id;
-      const sessionId = createdWorkspace.conversation.session_id;
-      const taskId = createdWorkspace.task_id || agentTaskId;
-      const [bootstrap] = await Promise.all([
-        queryClient.fetchQuery({
-          queryKey: agentWorkbenchQueryKey(productId, sessionId, taskId),
-          queryFn: () => api.getAgentWorkbench(productId, sessionId, taskId),
-        }),
-        import("./workbench/agent/ProductWorkbenchSurface"),
-      ]);
-      // The destination must not enter its missing-graph loading state on handoff.
-      if (!bootstrap.graph) {
-        queryClient.setQueryDefaults(["workflow-graph", productId], { staleTime: Infinity });
-      }
-      queryClient.setQueryData(["workflow-graph", productId], bootstrap.graph);
-      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
       void queryClient.invalidateQueries({ queryKey: ["products"] });
       navigationScheduledRef.current = true;
-      startTransition(() => {
-        navigate(agentProductWorkbenchPath(productId, sessionId, taskId), { replace: true });
-      });
+      await openWorkbenchMutation.mutateAsync(createdWorkspace);
     },
     onError: (mutationError) => {
       setError(errorDetail(mutationError, t("agentCreate.error.failed")));
@@ -439,7 +420,7 @@ export function AgentProductCreatePage() {
   });
 
   useEffect(() => {
-    if (!workspace || workspace.intake_finalized || navigationScheduledRef.current) {
+    if (!workspace || navigationScheduledRef.current) {
       return;
     }
     if (
@@ -450,17 +431,9 @@ export function AgentProductCreatePage() {
       return;
     }
     navigationScheduledRef.current = true;
-    navigate(
-      agentProductWorkbenchPath(
-        workspace.product.id,
-        workspace.conversation.session_id,
-        workspace.task_id || agentTaskId,
-      ),
-      { replace: true },
-    );
+    openWorkbenchMutation.mutate(workspace);
   }, [
-    agentTaskId,
-    navigate,
+    openWorkbenchMutation,
     reconciliationMutation.isPending,
     startAgentMutation.isPending,
     submitMutation.isPending,
@@ -558,11 +531,16 @@ export function AgentProductCreatePage() {
   };
 
   const handleSubmit = () => {
+    if (openWorkbenchMutation.isPending) return;
+    if (workspace?.intake_finalized) {
+      openWorkbenchMutation.mutate(workspace);
+      return;
+    }
     if (reconciliationRequired) {
       if (!reconciliationMutation.isPending) reconciliationMutation.mutate();
       return;
     }
-    if (submitMutation.isPending || startAgentMutation.isPending || workspace?.intake_finalized) return;
+    if (submitMutation.isPending || startAgentMutation.isPending) return;
     const trimmedName = (workspace?.product.name ?? name).trim();
     if (!trimmedName) {
       setError(t("agentCreate.error.nameRequired"));
@@ -709,6 +687,7 @@ export function AgentProductCreatePage() {
   const restoring = Boolean(workspaceId && !workspace && workspaceQuery.isLoading);
   const restoreError = workspaceId && !workspace ? workspaceQuery.error : null;
   const isSubmitting =
+    openWorkbenchMutation.isPending ||
     submitMutation.isPending ||
     startAgentMutation.isPending ||
     reconciliationMutation.isPending ||
@@ -719,8 +698,7 @@ export function AgentProductCreatePage() {
 
   return (
     <div
-      className={`relative flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${leaving ? "opacity-0" : "opacity-100"
-        }`}
+      className="relative flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary"
     >
       <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-border-l1 bg-surface-raised/85 px-4 backdrop-blur-md sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -786,7 +764,7 @@ export function AgentProductCreatePage() {
           </div>
         ) : null}
 
-        {!restoring && !restoreError && !workspace?.intake_finalized ? (
+        {!restoring && !restoreError ? (
           <div className="mx-auto w-full max-w-[920px] px-4 py-7 sm:px-6 sm:py-10">
             <div className="mb-6 flex items-start gap-3.5 sm:mb-8 sm:items-center">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent text-surface-raised shadow-sm">

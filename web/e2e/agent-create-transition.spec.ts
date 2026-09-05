@@ -1,4 +1,68 @@
 import { expect, test } from "@playwright/test";
+import { REFERENCE_PRODUCT_IMAGE } from "./liveGraph";
+
+for (const { completeIntake, retry } of [
+  { completeIntake: false, retry: false },
+  { completeIntake: true, retry: false },
+  { completeIntake: true, retry: true },
+]) {
+  test(`real Agent workbench preserves content throughout creation (complete=${completeIntake}, retry=${retry})`, async ({ page }) => {
+    test.skip(process.env.PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH !== "1", "Requires the local live stack");
+    if (retry) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    }
+    let drafts = 0;
+    let intakes = 0;
+    page.on("request", (request) => {
+      if (request.method() !== "POST") return;
+      if (request.url().endsWith("/drafts")) drafts += 1;
+      if (request.url().endsWith("/intake")) intakes += 1;
+    });
+    if (retry) {
+      await page.route("**/agent-workbench?*", async (route) => {
+        await route.fulfill({ status: 503, json: { detail: "Transition bootstrap failed" } });
+      }, { times: 1 });
+    }
+    await page.addInitScript(() => localStorage.setItem("productflow.locale", "zh-CN"));
+    const login = await page.request.post("/api/auth/session", {
+      data: { admin_key: process.env.ADMIN_ACCESS_KEY },
+    });
+    expect(login.ok()).toBe(true);
+    await page.goto("/products/new");
+    await page.locator("#agent-product-name").fill(`transition-${completeIntake}-${Date.now()}`);
+    if (completeIntake) {
+      await page.locator("#agent-product-brief").fill("White ceramic cup with a curved handle.");
+      await page.locator('[data-image-type="detail"]').click();
+      await page.locator('[data-agent-product-intake-form] input[type="file"]').setInputFiles(REFERENCE_PRODUCT_IMAGE);
+    }
+    await page.evaluate(() => {
+      const deadline = performance.now() + 15_000;
+      const sample = () => {
+        const form = document.querySelector("[data-agent-product-intake-form]");
+        const root = form?.closest(".h-dvh");
+        if ((!form && !document.querySelector("[data-agent-workbench-shell]"))
+          || (root && Number(getComputedStyle(root).opacity) < 1)) {
+          document.documentElement.dataset.transitionContentGap = "true";
+        }
+        if (performance.now() < deadline) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+    await page.getByRole("button", { name: "开始对话" }).click();
+    if (retry) {
+      await expect(page.getByText("Transition bootstrap failed", { exact: true })).toBeVisible();
+      await expect(page.locator("#agent-product-name")).toBeVisible();
+      await page.getByRole("button", { name: "开始对话" }).click();
+    }
+    await expect(page.locator("[data-agent-workbench-shell]")).toBeVisible();
+    await expect(page.locator("[data-agent-composer] textarea")).toBeVisible();
+    await page.screenshot({ path: `/tmp/productflow-transition-${completeIntake}-${retry}.png` });
+    expect(await page.locator("html").getAttribute("data-transition-content-gap")).toBeNull();
+    expect(drafts).toBe(1);
+    expect(intakes).toBe(completeIntake ? 1 : 0);
+  });
+}
 
 // Isolate the route handoff from providers and the canvas; no server writes.
 for (const failFirst of [false, true]) {
