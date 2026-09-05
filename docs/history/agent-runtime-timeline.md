@@ -1182,3 +1182,26 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 扩大验证 `just go-test-dispatch-latency` 全套 FAIL（14.193s）：前三场景通过，双副本慢恢复报 invalid sample，claim 时间 `2026-09-05T22:05:44.142255+08:00`、SENT 时间 `22:05:44.158497+08:00`；旧错误日志未打印 release 与 envelope_seen，无法据此确定具体失败分支。保留全部原断言，仅扩充错误诊断为 release、envelope_seen、claim-minus-release、sent-minus-claim。随后双副本慢恢复定向 `-count=5` PASS（26.411s），异常未重现，原因未确定。这不构成全套门通过；本次局部修复的必要包级与触发点证据通过，扩大进程门缺口继续保留。
 
 被测 Delivery/LocalEdit `recovery.go` SHA-256 分别为 `a33243144f891611907a399e8db8a1d931a3a9cd54d302ed50d5075ba8ad7f53` / `7c91fefe1a607951562dbe0dd62e5b2f324a97121e7ecc00c257d745f4c1960a`。Graph/Agent 查询未改，持续错误候选问题未关闭；未动共享 dev DB、provider 或服务。主代理自审两域查询边界、状态差异、测试全部断言和诊断文案，架构共享文件只提交本次段落。
+
+## 2026-09-05 Agent 读取容量与 Turn 批量投影
+
+实际路由没有独立 Session GET 详情；本轮覆盖全局 Session 列表、商品 Session 列表、Turn 列表与单条 Turn GET。`just go-test-agent-read-load` 使用独立迁移 PG 数据库、真实 HTTP 与 cookie 认证、mock gateway，不调用真实 provider，不修改共享 dev 服务。夹具为 25,000 sessions、27,000 conversations、单对话 1,000 条已成功 Turn。热门 20 个 Session 各有 101 个 conversations，响应各返回 20 条摘要并保留真实 count。标题 128B、summary 1024B、商品名 192B；Turn input/output/thinking 分别 512/8192/2048B，assets/tool_steps 为空。该深度属于 Turn 投影，不是 journal 事件深度。
+
+每路径单客户端串行 10 次预热、100 次采样，计时从发请求到完整读取正文，JSON 校验不计入；排序后第 50/95 个样本为 p50/p95。运行前固定本地预算：Session p95 <300ms、Turn 页/详情 <500ms、各正文 <1MiB。Query/Row 回调计数不包含事务控制语句，不能等同数据库全部活动。另通过真实 HTTP 翻完 1,000 条 Turn，检查不重复、不遗漏。
+
+基线 Turn 列表先选择 50 个 ID，再逐条关联 conversation/task：每请求 54 个 Query/Row 回调，100 请求累计 5,400。修改仅将这些投影合并为一个关联查询，按原 ID 顺序恢复结果；单条/批量复用作用域校验及投影字段，cursor、focus、完整正文与 harness 优先级不变。基线 `serialize.go` / `turns.go` Git blob 为 `46f459ef8237d0dc81719784147a738acfc3eb1b` / `c098bd05f890b514c209310a7652ac2d1f6be4f1`。
+
+| 路径 | 基线 p50/p95 ms | 首轮修改后 p50/p95 ms | 基线/修改后最大正文 B | 每请求回调，前→后 |
+| --- | --- | --- | --- | --- |
+| 全局 Session 20 条 | 74.36 / 75.78 | 81.25 / 98.98 | 185002 / 184600 | 6→6 |
+| 商品 Session 20 条 | 3.48 / 4.14 | 3.66 / 4.26 | 36123 / 36123 | 5→5 |
+| Turn 50 条 | 27.03 / 28.70 | 6.15 / 8.93 | 572313 / 572313 | 54→5 |
+| 单条 Turn | 2.27 / 2.77 | 2.25 / 2.75 | 11441 / 11441 | 3→3 |
+
+Turn 页查询减少 90.74%，本轮对照 p95 减少 68.89%，正文未缩减。全局 Session 正文字节差来自独立夹具的时间戳序列化宽度，读取实现未改，不计为收益；延迟也未改善。独立数据库运行仍共享宿主机资源，这些数值不代表生产 SLO 或并发容量。
+
+最终入口 `just go-test-agent-read-load` PASS（14.167s）：四路径 p95 为 77.79/4.11/6.62/2.53ms，最大正文 185002/36123/572313/11441B；回调为 6/5/5/3 次每请求。新增门强制 Turn 页 100 请求恰好 500 个回调。`TestTurnBatchPreservesScopeOrderAndHarness -race -count=10` PASS（2.470s）：批量与单条序列化一致、自定义顺序、Task 优先于 Conversation harness、跨商品/跨 conversation 拒绝、缺失行报错、空批次非 nil，以及真实 ListTurns 仅一次投影查询。首轮整包运行发现新增夹具固定 harness ID 重跑冲突，已改成每次唯一值，以上十次回归使用修正后夹具。
+
+运行时 `serialize.go` / `turns.go` SHA-256 为 `510668b106cdfb5b629596abee4ac8318c4a848720c91d0c876ff7485894b5b0` / `6a340d5a434c64f2d099dd641a9a92775d132ad0bcf32fdf1557a789c2a5eeff`。HTTP 门 `read_load_test.go` SHA-256 为 `438c7af6946579d22ac7b48895aa5ff6551ffebcf14258a63c398378f400ff0a`。Session 全局读取的补建检查、更长正文、多客户端、journal/SSE、浏览器分布及整组发布门仍未关闭。本轮未改 Agent service、schema 或 provider 合同。
+
+修正夹具后完整 Agent 包 `-race -count=1 -timeout 4m` 执行完毕，FAIL（86.129s），唯一报告失败为 `TestEvalObservationFixtures` 的 `agent-service/evals/fixtures/catalog.json` 漂移；其余默认启用测试未报告失败，不含 opt-in 门。未自动重生成其他组的评测夹具，也不宣称整包或固定候选通过。`just docs-check`、diff check PASS；主代理自审批量查询、作用域、顺序、响应字段和全部测试断言，中英文架构仅交付本轮段落。

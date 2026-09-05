@@ -85,13 +85,9 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 		for i, j := 0, len(ids)-1; i < j; i, j = i+1, j-1 {
 			ids[i], ids[j] = ids[j], ids[i]
 		}
-		turns := make([]turnRow, 0, len(ids))
-		for _, id := range ids {
-			row, err := loadTurn(ctx, pgxTx, productID, conversationID, id)
-			if err != nil {
-				return err
-			}
-			turns = append(turns, row)
+		turns, err := loadTurns(ctx, pgxTx, productID, conversationID, ids)
+		if err != nil {
+			return err
 		}
 		focus, err := canvasFocusForTurns(ctx, pgxTx, turns)
 		if err != nil {

@@ -97,6 +97,10 @@ func loadTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversati
 		}
 		return turnRow{}, err
 	}
+	return scopedTurn(ctx, pgxTx, productID, conversationID, row)
+}
+
+func scopedTurn(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID string, row turnRow) (turnRow, error) {
 	if productID == nil && row.ConversationScope != "global" {
 		return turnRow{}, apperr.NotFound("Agent turn 不存在")
 	}
@@ -122,15 +126,7 @@ func loadTurnByID(ctx context.Context, pgxTx *gorm.DB, projectionID string) (tur
 
 func scanTurn(ctx context.Context, pgxTx *gorm.DB, projectionID string, conversationID *string) (turnRow, error) {
 	var dest turnJoinDest
-	q := pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
-		Select(`agent_turn_projections.*,
-			agent_conversations.harness_run_id AS conversation_harness_run_id,
-			agent_tasks.harness_run_id AS task_harness_run_id,
-			agent_conversations.scope_type AS conversation_scope,
-			agent_conversations.product_id AS conversation_product_id`).
-		Joins("JOIN agent_conversations ON agent_conversations.id = agent_turn_projections.conversation_id").
-		Joins("LEFT JOIN agent_tasks ON agent_tasks.id = agent_turn_projections.task_id").
-		Where("agent_turn_projections.id = ?", projectionID)
+	q := turnJoinQuery(ctx, pgxTx).Where("agent_turn_projections.id = ?", projectionID)
 	if conversationID != nil {
 		q = q.Where("agent_turn_projections.conversation_id = ?", *conversationID)
 	}
@@ -138,6 +134,50 @@ func scanTurn(ctx context.Context, pgxTx *gorm.DB, projectionID string, conversa
 		return turnRow{}, err
 	}
 	return turnFromModels(dest.AgentTurnProjections, dest.ConversationHarnessRunID, dest.TaskHarnessRunID, dest.ConversationScope, dest.ConversationProductID), nil
+}
+
+func turnJoinQuery(ctx context.Context, pgxTx *gorm.DB) *gorm.DB {
+	return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
+		Select(`agent_turn_projections.*,
+			agent_conversations.harness_run_id AS conversation_harness_run_id,
+			agent_tasks.harness_run_id AS task_harness_run_id,
+			agent_conversations.scope_type AS conversation_scope,
+			agent_conversations.product_id AS conversation_product_id`).
+		Joins("JOIN agent_conversations ON agent_conversations.id = agent_turn_projections.conversation_id").
+		Joins("LEFT JOIN agent_tasks ON agent_tasks.id = agent_turn_projections.task_id")
+}
+
+func loadTurns(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID string, ids []string) ([]turnRow, error) {
+	turns := make([]turnRow, 0, len(ids))
+	if len(ids) == 0 {
+		return turns, nil
+	}
+	var rows []turnJoinDest
+	if err := turnJoinQuery(ctx, pgxTx).
+		Where("agent_turn_projections.conversation_id = ? AND agent_turn_projections.id IN ?", conversationID, ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	byID := make(map[string]turnRow, len(rows))
+	for _, row := range rows {
+		turn := turnFromModels(row.AgentTurnProjections, row.ConversationHarnessRunID, row.TaskHarnessRunID, row.ConversationScope, row.ConversationProductID)
+		byID[turn.ID] = turn
+	}
+	for _, id := range ids {
+		row, ok := byID[id]
+		if !ok {
+			if _, err := loadConversation(ctx, pgxTx, productID, conversationID); err != nil {
+				return nil, err
+			}
+			return nil, apperr.NotFound("Agent turn 不存在")
+		}
+		row, err := scopedTurn(ctx, pgxTx, productID, conversationID, row)
+		if err != nil {
+			return nil, err
+		}
+		turns = append(turns, row)
+	}
+	return turns, nil
 }
 
 // canvasFocusForTurns 从已 applied 的 focus_canvas_items_v1 账本给列表中的 Turn 配焦点。只读 agent_tool_mutations，不读 Pi，不改图。

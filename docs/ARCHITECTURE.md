@@ -125,6 +125,8 @@ ProductFlow 拥有商品、图提案确认、WorkflowGraphRun 和 Web projection
 
 `before_model_request` 还记录已加载 `skill_catalog_hash` 与 `model_configuration`：后者由 `PiSessionAdapter.requestConfiguration` 从已解析的 SDK model、thinking level 和会话请求选项读取，endpoint 仅存 hash，不含 API key。这是请求前 SDK 配置身份，不代表上游供应商返回了相同的最终执行参数。Go L2 的 `eval_provenance_test.go` 保存选中任务及其 world 的 canonical 内容快照、代码/工作树内容身份，并从真实 checkpoint 与 invocation 关联读取逐次请求配置。新 `run.json` 使用 `provenance_version=l2-content-v1`，启动为 incomplete、模型为 unobserved；完整 trial 身份、终态、输入快照、运行配置和 checkout 收尾校验后才为 complete，否则为 invalid。complete 允许业务 FAIL，不表示能力过门。历史批次不回填；校验不能替代运行全程的独立固定 checkout。回归见 `eval_provenance_regression_test.go`、`harness_attribution_test.go` 与 Pi harness/E2E 测试。
 
+Agent Turn 列表先按游标选择本页 ID，再用单条关联查询批量读取投影、conversation 作用域及 Task/Conversation harness 身份，按所选 ID 顺序组装响应；不逐条回读 Turn。单条与批量读取共用关联字段和作用域校验，canvas focus 保持原批量投影。Session 列表最多返回每会话 20 条 conversation 摘要，同时返回完整 conversation_count；没有独立的 Session GET 详情路由。实现与回归：`go/internal/agent/turns.go`、`serialize.go`、`turn_batch_test.go`、`read_load_test.go`。
+
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 
 商品图种、数量和参考图 ID 存在 Product 的 intake 上。创建路径不插入 `WorkflowDraft`。商品 Conversation 只要求 `product_id`。产品路径上的 `propose_workflow_draft` / 确认 / persist 不存在；对应 HTTP 返回 404。`workflow_drafts` 表已删除。Agent intake 落库会按模板展开 birth 图；已经展开的图改拓扑只走 Graph Command，不再交第二套完整 DAG。
