@@ -4,7 +4,7 @@
 类型：证据
 认领者：—
 认领于：—
-业务组：评测
+业务组：Agent 质量
 父账本：agent-eval-system.md
 完成后可拆：无（kappa 达标后由评测组章程发「judge 计入 pass」刀）
 

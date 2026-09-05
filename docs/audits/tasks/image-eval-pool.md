@@ -4,13 +4,15 @@
 类型：证据
 认领者：—
 认领于：—
-业务组：评测
-父账本：agent-eval-system.md
+业务组：图片质量
+父账本：image-quality.md
 完成后可拆：合计仍 <200 或每类目不足则发 image-eval-pool-grow.md（合同同本任务）。闸门未过不另发刷分任务
 
 本文件限定交付范围；认领、阻塞、审核与关闭见 [Issue 协议](README.md)。执行前读取适用仓库规则、当前实现、测试和 diff。ingest/admit/harness 不在本次修改范围。
 
-图片门槛与验收结论在父章程的 [图片质量验收](../agent-eval-system.md#image-quality) 节，维护者关闭时更新 IMG-D-01/IMG-D-10/IMG-C-03 和 live 记录；不把 Agent pass^k 套用于图片闸门。
+图片门槛与验收结论在父章程的 [图片质量验收](../image-quality.md#image-quality) 节，维护者关闭时更新 IMG-D-01/IMG-D-10/IMG-C-03 和 live 记录；不把 Agent pass^k 套用于图片闸门。
+
+2026-09-05 组织协调：改归图片质量组，原认领者、任务 ID、采集/验收合同及资源占用不变。原图片账本的未提交增量迁至 `../image-quality.md`，后续只更新该父账本；本次组织提交不代为验收采集结果。
 
 ## 前置与并行
 
@@ -35,7 +37,7 @@
 
 - `go/internal/imageeval` 的准入阈值、闸门公式、naive 提示词（已有测试钉死）
 - 工作台检查器、已删除的人工保真表单
-- Agent 行为评测代码、题库与标签（同组的其它任务仍各自独占）
+- Agent 行为评测代码、题库与标签（Agent 质量组的任务仍各自独占）
 
 ## 合同（抄齐）
 

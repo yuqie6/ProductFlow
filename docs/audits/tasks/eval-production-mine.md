@@ -4,7 +4,7 @@
 类型：证据
 认领者：—
 认领于：—
-业务组：评测
+业务组：Agent 质量
 父账本：agent-eval-system.md
 完成后可拆：生产 mine 已有 Turn 时，由维护者发布 eval-production-tasks（只新增 production origin 任务）
 

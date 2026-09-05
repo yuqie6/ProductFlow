@@ -18,13 +18,13 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [eval-development-baseline.md](eval-development-baseline.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-skills.md](eval-skills.md) | Agent 能力 | 实现 | 阻塞 | 主代理-agent-0905-0458 | 2026-09-05T14:29:45+08:00 |
-| [eval-observable-input-contract.md](eval-observable-input-contract.md) | 评测 | 实现 | 开放 | — | — |
-| [eval-labels.md](eval-labels.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-state-live.md](eval-state-live.md) | 评测 | 证据 | 阻塞 | — | — |
-| [eval-production-mine.md](eval-production-mine.md) | 评测 | 证据 | 阻塞 | — | — |
-| [image-eval-pool.md](image-eval-pool.md) | 评测 | 证据 | 开放 | — | — |
+| [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
+| [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | 主代理-agent-0905-0458 | 2026-09-05T14:29:45+08:00 |
+| [eval-observable-input-contract.md](eval-observable-input-contract.md) | Agent 质量 | 实现 | 开放 | — | — |
+| [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |
+| [eval-state-live.md](eval-state-live.md) | Agent 质量 | 证据 | 阻塞 | — | — |
+| [eval-production-mine.md](eval-production-mine.md) | Agent 质量 | 证据 | 阻塞 | — | — |
+| [image-eval-pool.md](image-eval-pool.md) | 图片质量 | 证据 | 开放 | — | — |
 
 ## 职责与适用范围
 
@@ -54,7 +54,8 @@
 2. 写齐结果、修改范围、当前代码锚点、不变量、前置条件、并行限制、验证和完成条件。使用现有类型 `实现` 或 `证据`。多个结果如果依赖不同凭据、可分别验收，就拆开。
 3. 任务包自足指无需从长章程推导本次任务。执行者仍须读取适用 AGENTS、当前实现、调用链、测试和 diff；合同冲突交给维护者裁定。
 4. 发布前查所有组和独立任务是否已有重复或重叠工作；优先补充已有任务、关联依赖或安排等待，不重复开工。根因未知时记录真实现象和预期，授权有界调查；不得猜测根因或硬指定修复文件，调查后由维护者确认实际修改范围。
-5. 写入同一看板并提交。依赖引用具体 issue 或章程条款及所需结果；仅有文件不重叠不能证明可并行。GitHub 产品 issue 若有关联，记链接即可，不复制其状态机，也不为本地独立任务强制创建 GitHub issue。
+5. 发布前检查本组任务序列和组外输入：前置必须已交付且有固定版本；未交付的必要工作纳入本组先行任务，或标明一次性启动阻塞。不得把持续等待其它组执行作为正常流程，也不得复制公共实现掩盖依赖。仅有文件不重叠不能证明可并行。
+6. 写入同一看板并提交。依赖引用具体 issue 或章程条款及所需结果；GitHub 产品 issue 若有关联，记链接即可，不复制其状态机，也不为本地独立任务强制创建 GitHub issue。维护者的认领、排期和审核由协调会话执行，不等于要求用户在每个开发步骤审批；未来进化系统的最终用户批准见自进化章程。
 
 ## 认领与并行
 

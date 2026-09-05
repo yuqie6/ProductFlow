@@ -9,11 +9,11 @@
 ## 组职责与交接
 
 - 负责 lease、journal、ACK、恢复、队列、锁序、容量、查询成本和实时通道基础；同一执行链的正确性与性能由本组统一权衡，不拆成两组分别验收后互相覆盖。
-- 生产就绪 S1–S6 和已通过 Gate 保留历史基线，不重新开工。G-06 行为部分引用评测组可采信 run_id；G-07 必须绑定候选 checkout，全量门不能借用旧 HEAD 的结果。主代理汇总全部相关结果作发布裁定。
+- 生产就绪 S1–S6 和已通过 Gate 保留历史基线，不重新开工。G-06 行为部分引用 Agent 质量组可采信的固定 run_id；G-07 必须绑定候选 checkout，全量门不能借用旧 HEAD 的结果。协调者汇总全产品发布条件，本组局部修复按受影响合同验收，不以其它组全部目标完成为前置。
 - AR-02 由 [arch-journal-assessment](tasks/archive/arch-journal-assessment.md) 于 2026-09-05 完成调查。结论：保留现状，不发布 journal 实现 issue。在线路径已拆出 batcher / 回执等式 / ACK 文件；重启前缀确认与 claim、phase、abandon 同属 `recoverDurableHandoff`，单独吸收 confirm 循环不会删掉 TurnRuntime 必知分支。指定 Node 测试 61 通过 / 1 跳过（10k WAL `runIf`）；未证明数据丢失。Go ConfirmEvents / fencing 与 Node recover claim 409 仍是改协议时才补的缺口，不构成开工许可。
 - journal 合同保持 PG 权威、在线 append 的 lease 检查、confirmation 不 claim/续租、不重放丢失模型执行。权限与失败矩阵见归档 issue；不重启历史运行时所有权计划。
 - 2026-09-05 [agent-question-answer-identity](tasks/archive/agent-question-answer-identity.md) 修复同一 Turn 后续问题答案身份：Node 按 question ID 读取并串行写回答/超时；Go 新问题清旧答案，原子拒绝过期问题和不同答案覆盖。真实 Pi + fake provider、Go HTTP + PG + Pi 的两问及第二问等待期间 SIGKILL 恢复通过；整个 Go Agent 包 race 89.361s，Node 269 passed / 2 skipped。固定 live `20260905T001434Z-90c24d87` 只触发一问并恢复，因缺少上下文读取而 FAIL；不作为真实两问通过证据，不改变历史 Gate 基线或组内整体就绪结论。
-- 画布草稿基线、文稿采用规则与结果使用行为交工作流体验；Skill 行为交 Agent 能力；题库、grader、图片闸门交评测。跨层修复由维护者指定一张主 issue 的完整因果范围，不按目录拆断事务或权限合同。
+- 组内按“故障/负载复现 → 必要执行链修复 → 故障与容量验证”串行交付。普通 Agent 行为归 Agent 质量，图片对照归图片质量，画布操作归工作流体验；本组消费固定业务合同，不等其它组日常工作。跨层修复由协调者指定一张主 issue 的完整因果范围，不按目录拆断事务或权限合同。
 
 ## 使用规则
 

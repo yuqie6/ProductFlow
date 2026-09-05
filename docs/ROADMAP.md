@@ -2,7 +2,7 @@
 
 尚未成为产品事实、或尚未被真实验证的方向。当前能力见 [`PRD.md`](PRD.md)，结构见 [`ARCHITECTURE.md`](ARCHITECTURE.md)，操作见 [`USER_GUIDE.md`](USER_GUIDE.md)。
 
-跨层验收由工作流体验、Agent 能力、评测、平台可靠性四组承接：一组一份文档，职责与投入顺序在 [`audits/README.md`](audits/README.md)，issue 看板在 [`audits/tasks/README.md`](audits/tasks/README.md)。先认领再开工，一人一份。组文档保存合同和证据；用户独立交办任务也可进入同一看板，无需建组。
+跨层交付由 Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性五组承接。组内任务按结果串行，组外消费已可用的固定输入，职责与次序在 [`audits/README.md`](audits/README.md)，issue 看板在 [`audits/tasks/README.md`](audits/tasks/README.md)。先认领再开工，一人一份。组文档保存合同和证据；用户独立交办任务也可进入同一看板，无需建组。
 
 ## 近期
 
@@ -34,9 +34,9 @@ lease、journal、effect 对账、SSE gap 与容量门的证据在 [`audits/perf
 
 未完成执行任务与阻塞统一见 [Issue 看板](audits/tasks/README.md)，业务组后续发布条件见 [业务组索引](audits/README.md)。任务文件限定本次交付，仍需读取现场代码与测试。冻结决策与历史 `run_id` 在 [`audits/agent-eval-system.md`](audits/agent-eval-system.md)。未登记 `run_id` 前不把 pass^k 写成产品事实。
 
-### Agent Self-Harness
+### Agent 自进化
 
-Agent 能力组的 [普通 Skill 修复](audits/tasks/eval-skills.md) 等待评测题与生产合同独立校正后复验。壳工件 P1、归因 P2 与有界结构轨迹 P2b 的当前实现见 ARCHITECTURE；P3–P7 仍按阶段门发布，尚无自动进化或生产热切。全程合同在 [`audits/agent-self-harness.md`](audits/agent-self-harness.md)。题库与 grader 由评测组独立维护。
+Agent 质量组在组内串行完成考题校正与 [普通 Skill 修复复验](audits/tasks/eval-skills.md)。自进化组交付自动发现、归因、指令/代码候选、验证和多轮迭代，最终一次用户审批；当前仍缺控制器。已有 P1/P2/P2b 保留，旧 P3–P7 与 S0–S6 路线由 [当前自进化章程](audits/agent-self-harness.md) 替代。开发输入有一次性启动阻塞；固定评测就绪后本组自行调用，Steer、长期记忆和无人工发布不构成本期前置。
 
 ### 运行时性能治理
 
@@ -53,7 +53,7 @@ C0–C6 已落地。C4 空闲改写/候选、运行中检查器打字、整图�
 ### 图片生产质量
 
 - provider 真实尺寸、格式和高级字段的合同测试。
-- 内部淘宝套图对照由评测组承接：[`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md)，图片闸门与 Agent 分数分别验收。
+- 内部淘宝套图对照与质量改进由 [图片质量组](audits/image-quality.md) 承接；当前任务 [`image-eval-pool`](audits/tasks/image-eval-pool.md) 保持原认领与合同，图片闸门与 Agent 分数分别验收。
 - 交付图规格、裁切预览和批量下载。
 - 生成失败、取消、重试和 provider note 的用户反馈。
 

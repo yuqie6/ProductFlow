@@ -101,3 +101,5 @@ Domain documentation uses a single-context layout: root `CONTEXT.md`. `docs/adr/
 ### Audit task board
 
 Each business group has exactly one document containing its responsibilities, contracts, gates and evidence. [`docs/audits/README.md`](docs/audits/README.md) indexes those documents. When merging groups, consolidate active content and delete the old group files; move historical evidence into existing history docs. Group tasks and independent user requests share [`docs/audits/tasks/README.md`](docs/audits/tasks/README.md); claiming and conflict checks apply to both.
+
+Group boundaries follow independently verifiable outcomes. Sequence each group's necessary implementation and verification tasks internally; consume already delivered, fixed contracts from other groups. Record genuine startup blockers instead of assuming future interfaces exist. Independent evaluation means frozen scoring and protected evidence, not a required human handoff on every run. Runtime self-evolution has one final user approval; development-task coordination and review remain governed by the shared board.

@@ -4,7 +4,7 @@
 类型：证据
 认领者：—
 认领于：—
-业务组：评测
+业务组：Agent 质量
 父账本：agent-eval-system.md
 完成后可拆：与 eval-adversarial-live 都有有效 run_id 后，由维护者核对是否可发布 eval-nightly；失败修复按根因另行发单
 

@@ -4,7 +4,7 @@
 类型：实现
 认领者：—
 认领于：—
-业务组：评测
+业务组：Agent 质量
 父账本：agent-eval-system.md
 完成后可拆：维护者核对 eval-skills 与冻结开发基线的解除条件
 

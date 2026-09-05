@@ -2,7 +2,7 @@
 
 Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
 
-Four groups own cross-layer audits: Workflow Experience, Agent Capability, Evaluation, and Platform Reliability. Each group has one document. Responsibilities and priorities live in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Group documents keep contracts and evidence; independent user requests may use the same board without a group.
+Five groups own complete cross-layer outcomes: Agent Quality, Agent Self-Evolution, Image Quality, Workflow Experience, and Platform Reliability. Each group sequences its own tasks and consumes already available, fixed inputs from outside the group. Responsibilities and priorities live in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Each group keeps one contract and evidence document; independent requests may use the same board without a group.
 
 ## Near term
 
@@ -34,9 +34,9 @@ Remaining: the [evaluation charter](audits/agent-eval-system.md) decides G-06 be
 
 Active execution issues and blockers live on the [issue board](audits/tasks/README.md); follow-up publication conditions live in the [business-group index](audits/README.md). The assigned issue bounds the delivery; live code and tests must still be read. Frozen decisions and historical `run_id`: [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Do not record pass^k as product fact without a ledger `run_id`.
 
-### Agent Self-Harness
+### Agent self-evolution
 
-Agent Capability's [ordinary Skill fixes](audits/tasks/eval-skills.md) await independent alignment of evaluation tasks with production contracts. ARCHITECTURE describes the implemented P1 harness artifact and P2 attribution. P2b-P7 retain their publication gates; automatic evolution and production hot promotion are not implemented. Full contract: [`audits/agent-self-harness.md`](audits/agent-self-harness.md). Evaluation independently owns tasks and graders.
+Agent Quality sequences evaluation-contract correction and [ordinary Skill verification](audits/tasks/eval-skills.md) within one group. Agent Self-Evolution owns automatic discovery, diagnosis, instruction/code proposals, validation, and bounded iteration, with one final user approval. The controller is missing. Existing P1/P2/P2b evidence remains; the [current charter](audits/agent-self-harness.md) replaces the old P3-P7 and S0-S6 plans. Development inputs have a one-time startup blocker. Once fixed evaluation inputs are available, the group runs them autonomously. Steer, long-term memory, and approval-free deployment are outside the required delivery.
 
 ### Canvas document-authority tests
 
@@ -53,7 +53,7 @@ Workflow Experience owns inspector draft version semantics. The mid-run inspecto
 ### Image production quality
 
 - Real-provider contracts for size, format, and advanced fields.
-- Evaluation owns the internal Taobao listing eval: [`audits/tasks/image-eval-pool.md`](audits/tasks/image-eval-pool.md). Image gates and Agent scores remain separate.
+- [Image Quality](audits/image-quality.md) owns the Taobao listing comparison and resulting quality improvements. The current [image-eval-pool](audits/tasks/image-eval-pool.md) keeps its claim and contract. Image gates and Agent scores remain separate.
 - Delivery specs, crop preview, and batch download.
 - Failure, cancel, retry, and provider-note feedback.
 
