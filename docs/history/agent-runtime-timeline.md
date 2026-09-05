@@ -1140,3 +1140,19 @@ SSE 前后沿用 4 订阅、26 queued、15.25s 静默窗口、prompt 2,160B / no
 最终 `just go-test-dispatch-latency` 四场景 PASS（15.226s）：空恢复单/双副本 p95 398.733/289.080ms，慢恢复单/双副本 p95 442.338/264.662ms；对应恢复跨度 2.665111/1.435673s。仍为每场景 500 个正常唯一信封、25 个延期未 claim，慢恢复各 25 unknown、975 running，状态与时间断言全部通过。包级 `queue` / `cmd/productflow-dispatcher -race -count=1 -p 1` PASS（6.229s / 1.951s），该命令不启用进程级 opt-in。本轮无生产代码修改，不重跑整树发布门；上一切片的整树失败没有因此消失。
 
 最终提交屏障下双副本慢恢复定向 `-count=3` PASS（16.291s）。`just docs-check`、diff check PASS；主代理自审实际恢复调用链、探针计时边界、唯一信封和未知状态断言，以及本切片全部 diff。交付仅含测试、just 入口和组内证据，不纳入其他组并发改动。
+
+## 2026-09-05 watch 恢复域独立调度
+
+`26c9ea21` 后的 coordinator 将 dispatch 与 recovery 分开，但每轮 recovery 仍按 Graph→ImageSession→Delivery→LocalEdit→Agent 顺序执行。首域等待时其他域无机会启动；仅在一轮内部并行仍会让下一轮等待最慢域。本次把 watch 的五域各自置于 `runScheduledLoop`，复用默认 10s cadence，域内批次串行、满批不立即续扫。单次 CLI 仍按原序恢复再投递，单域错误不会跳过其他域。父 context 取消后等待所有循环返回；没有放弃后台 goroutine 或持久化新状态。
+
+已核对各域恢复使用各自业务行/事务，outbox 按 actor 和 aggregate 身份隔离；Graph/Agent 的锁序、未知结果与 fencing 不变。`metrics.ObserveRecovery` 使用初始化后的固定域 map 与 atomic histogram/counter，允许域间同时报告；每个域的 summary 改为回调局部变量，避免共享聚合日志产生数据竞争。watch 不再输出整轮 `recovery_duration_ms`；逐域日志 `dispatcher recovery batch` 使用 `domain/enqueued/unknown/has_more`，空批次 Debug、工作/积压 Info。域耗时和错误沿用 recovery 指标，未新增 histogram。
+
+回归 `TestRecoveryDomainTicksWhileAnotherDomainIsBlocked`：阻塞首域直到取消；健康域每 10ms 运行；失败域返回错误并继续按自己的 cadence 重试。原实现 1s 等待超时 FAIL（后续域 0 次运行），修改后要求健康域至少 3 次、失败域至少 3 次报告，慢域进入次数仍为 1。该调度回归无 provider、无 PG 等待，不将 10ms 测试 cadence 当成生产默认，也不按 3 个样本报告 p95。取消 cleanup 等待全部循环退出。与原 one-shot、错误汇总、正常投递独立测试一起 `-race -count=20` PASS（1.723s）；最终 dispatcher 包 race PASS（2.014s），含日志级别和域字段回归。
+
+`just go-test-dispatch-latency` 使用上一节未改的 500 正常 + 25 延期、空/1000 过期任务、100ms 注入写入延迟、独立 PG/Redis 与实际子进程夹具，四场景 PASS（14.445s）。空恢复单/双副本投递 p95 379.901/258.770ms，慢恢复 385.253/244.671ms；对应已观测恢复跨度 2.647272/1.436276s。每场景 500 个唯一信封，延期不提前；慢恢复各 25 unknown、975 running，无未知任务重新入队。该门证明新调度接入后正常投递与该真实恢复链仍共存，不证明所有域满负载或进程故障已覆盖。
+
+资源代价：每进程最多同时运行的恢复批次由 1 变为 5，另有投递与 LISTEN，PG pool MaxConns 仍为 16。此为调度上限和配置事实，未测峰值连接占用或 CPU/IO；池饱和、域内坏条目占满候选窗口，以及连续生图 30 分钟墙钟问题仍保留。未改共享 provider、dev 服务或其他组运行资源。
+
+自审补充：取消检查移入每次批次启动前，避免 ticker/wake 与取消同时就绪时再次调用；新增取消回归，最终 dispatcher 全包 `-race -count=20` PASS（2.809s）。最终进程四场景再跑 PASS（14.445s）：空恢复单/双副本 p95 376.735/238.319ms，慢恢复 363.348/237.403ms；状态、延期、唯一信封和恢复跨度断言全部保留。最终 main/coordinator SHA-256 为 `5b65868deabb786c3fcb16667941570a0fbe4483e4c2acf6172786d875c00f55` / `8a0fb38594dc3a70f0f0144c2e26ab2794d220b6c0ed1ead440b391a2c8ecd0b`。
+
+`just go-test` 完整执行但整树 FAIL：路由合同漂移、Agent eval catalog fixture、两项配方 409/200 和 prompt art-direction 断言。dispatcher、Graph（68.110s）、ImageSession（7.844s）、Delivery（1.431s）、LocalEdit（1.286s）、queue（4.322s）通过。全量运行后只补上述取消边界与测试，已由最终包级 race 和进程门覆盖；未借此宣称完整候选 PASS。`just docs-check` 与 diff check PASS。中英文架构仅暂存独立调度段落，其他任务的 Graph 文稿改动不纳入本交付。

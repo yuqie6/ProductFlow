@@ -46,6 +46,8 @@ Current code ownership:
 | Image quality eval | `go/internal/imageeval`, `go/cmd/productflow-image-evals` | read-only CLI; opt-in live | `go/internal/imageeval` |
 | Errors and logging | `go/internal/platform/apperr`, `httpx`, `log` | middleware and workers | platform and package HTTP tests |
 
+In watch mode the dispatcher runs one dispatch loop and five independent recovery loops (Graph, ImageSession, Delivery, LocalEdit, Agent). Each domain has a default 10s cadence with serial batches; it does not wait for other domains, and a full recovery batch does not trigger immediate draining. Cancellation joins every loop. One-shot mode retains ordered domain recovery followed by dispatch. Domain batch logs carry `domain/enqueued/unknown/has_more`; idle batches stay at Debug. Per-domain recovery metrics record duration and errors. The shared PG pool remains at 16 connections; independent scheduling does not guarantee isolation under connection or IO saturation. Implementation and regression: `go/cmd/productflow-dispatcher/main.go`, `coordinator.go`, `coordinator_test.go`.
+
 ## 3. Frontend Structure
 
 `web/src/App.tsx` registers the current pages:

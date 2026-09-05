@@ -46,6 +46,8 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 生图质量测评 | `go/internal/imageeval`、`go/cmd/productflow-image-evals` | 只读 CLI；opt-in live | `go/internal/imageeval` |
 | 错误与日志 | `go/internal/platform/apperr`、`httpx`、`log` | 中间件与 worker | platform 与各包 HTTP 测试 |
 
+dispatcher watch 模式有一个投递循环和五个独立恢复循环（Graph、ImageSession、Delivery、LocalEdit、Agent）。每域默认 10s cadence、域内批次串行，不等待其他域完成；满批恢复不立即续扫。取消时等待全部循环退出。one-shot 保留固定域顺序恢复后投递的合同。逐域批次日志携带 `domain/enqueued/unknown/has_more`，空批次为 Debug；耗时与错误由按域 recovery 指标记录。共享 PG 池仍为 16，独立调度不保证连接或 IO 饱和下的隔离。实现与回归：`go/cmd/productflow-dispatcher/main.go`、`coordinator.go`、`coordinator_test.go`。
+
 ## 3. 前端结构
 
 `web/src/App.tsx` 注册当前页面：

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,11 +102,11 @@ func TestRunWatchLoopsDispatchWakeIsNotBlockedByRecovery(t *testing.T) {
 				dispatched <- struct{}{}
 				return nil
 			},
-			func(ctx context.Context) error {
+			[]recoveryStep{{run: func(ctx context.Context) error {
 				startOnce.Do(func() { close(recoveryStarted) })
 				<-ctx.Done()
 				return ctx.Err()
-			},
+			}}},
 			nil,
 			nil,
 		)
@@ -138,11 +139,11 @@ func TestRunWatchLoopsDispatchTickerIsNotBlockedByRecovery(t *testing.T) {
 				dispatched <- struct{}{}
 				return nil
 			},
-			func(ctx context.Context) error {
+			[]recoveryStep{{run: func(ctx context.Context) error {
 				startOnce.Do(func() { close(recoveryStarted) })
 				<-ctx.Done()
 				return ctx.Err()
-			},
+			}}},
 			nil,
 			nil,
 		)
@@ -260,7 +261,7 @@ func TestRunWatchLoopsDispatchDrainsBacklogBeforeTicker(t *testing.T) {
 					return remaining > 0, nil
 				})
 			},
-			func(context.Context) error { return nil },
+			[]recoveryStep{{run: func(context.Context) error { return nil }}},
 			nil,
 			nil,
 		)
@@ -307,5 +308,70 @@ func waitForSignal(t *testing.T, ch <-chan struct{}, description string) {
 	case <-ch:
 	case <-time.After(time.Second):
 		t.Fatalf("timed out waiting for %s", description)
+	}
+}
+
+func TestRecoveryDomainTicksWhileAnotherDomainIsBlocked(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	ticks := make(chan struct{}, 16)
+	failures := make(chan struct{}, 16)
+	var slowCalls atomic.Int32
+	done := make(chan struct{})
+	steps := []recoveryStep{
+		{domain: "slow", run: func(ctx context.Context) error {
+			if slowCalls.Add(1) == 1 {
+				close(started)
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}},
+		{domain: "healthy", run: func(context.Context) error {
+			select {
+			case ticks <- struct{}{}:
+			default:
+			}
+			return nil
+		}},
+		{domain: "failing", run: func(context.Context) error { return errors.New("domain failure") }},
+	}
+	go func() {
+		defer close(done)
+		runWatchLoops(ctx, time.Hour, 10*time.Millisecond, nil,
+			func(context.Context) error { return nil },
+			steps, nil, func(result recoveryStepResult) {
+				if result.domain == "failing" && result.err != nil {
+					select {
+					case failures <- struct{}{}:
+					default:
+					}
+				}
+			})
+	}()
+	t.Cleanup(func() { cancel(); waitForSignal(t, done, "all domain loops to stop") })
+	waitForSignal(t, started, "slow recovery to start")
+	for i := 0; i < 3; i++ {
+		waitForSignal(t, ticks, "healthy recovery to keep ticking")
+		waitForSignal(t, failures, "failed recovery to report and retry on its own schedule")
+	}
+	if calls := slowCalls.Load(); calls != 1 {
+		t.Fatalf("blocked domain entered %d times, want 1", calls)
+	}
+}
+
+func TestScheduledLoopDoesNotStartAnotherBatchAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wake := make(chan struct{}, 1)
+	wake <- struct{}{}
+	calls := 0
+	runScheduledLoop(ctx, time.Nanosecond, wake, func(context.Context) error {
+		calls++
+		cancel()
+		return nil
+	}, nil)
+	if calls != 1 {
+		t.Fatalf("started %d batches despite cancellation", calls)
 	}
 }

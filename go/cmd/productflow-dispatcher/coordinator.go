@@ -23,28 +23,32 @@ func runOneShot(ctx context.Context, recoverCycle, dispatchCycle cycleFunc) erro
 	return errors.Join(recoveryErr, dispatchErr)
 }
 
-// runWatchLoops keeps recovery work off the dispatch loop. Each loop is
-// internally serial, while dispatch ticks or wake-ups can run during recovery.
+// Each recovery domain has its own serial schedule; neither dispatch nor a
+// healthy domain waits for another domain's current batch or next tick.
 func runWatchLoops(
 	ctx context.Context,
 	dispatchInterval time.Duration,
 	recoveryInterval time.Duration,
 	dispatchWake <-chan struct{},
 	dispatchCycle cycleFunc,
-	recoverCycle cycleFunc,
+	recoverySteps []recoveryStep,
 	reportDispatch cycleReporter,
-	reportRecovery cycleReporter,
+	reportRecovery func(recoveryStepResult),
 ) {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1 + len(recoverySteps))
 	go func() {
 		defer wg.Done()
 		runScheduledLoop(ctx, dispatchInterval, dispatchWake, dispatchCycle, reportDispatch)
 	}()
-	go func() {
-		defer wg.Done()
-		runScheduledLoop(ctx, recoveryInterval, nil, recoverCycle, reportRecovery)
-	}()
+	for _, step := range recoverySteps {
+		go func() {
+			defer wg.Done()
+			runScheduledLoop(ctx, recoveryInterval, nil, func(ctx context.Context) error {
+				return runRecoveryStep(ctx, step, reportRecovery)
+			}, nil)
+		}()
+	}
 	wg.Wait()
 }
 
@@ -56,13 +60,13 @@ func runScheduledLoop(
 	report cycleReporter,
 ) {
 	runAndReport := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		err := run(ctx)
 		if report != nil {
 			report(err)
 		}
-	}
-	if ctx.Err() != nil {
-		return
 	}
 	runAndReport()
 
@@ -163,18 +167,22 @@ func runRecoverySteps(
 		if err := ctx.Err(); err != nil {
 			return errors.Join(result, err)
 		}
-		started := time.Now()
-		err := step.run(ctx)
-		if report != nil {
-			report(recoveryStepResult{
-				domain:   step.domain,
-				duration: time.Since(started),
-				err:      err,
-			})
-		}
+		err := runRecoveryStep(ctx, step, report)
 		if err != nil {
-			result = errors.Join(result, fmt.Errorf("%s: %w", step.errorContext, err))
+			result = errors.Join(result, err)
 		}
 	}
 	return result
+}
+
+func runRecoveryStep(ctx context.Context, step recoveryStep, report func(recoveryStepResult)) error {
+	started := time.Now()
+	err := step.run(ctx)
+	if report != nil {
+		report(recoveryStepResult{domain: step.domain, duration: time.Since(started), err: err})
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", step.errorContext, err)
+	}
+	return nil
 }

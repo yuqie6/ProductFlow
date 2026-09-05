@@ -1,7 +1,7 @@
-// Command productflow-dispatcher 把 PENDING 的 async_dispatches 标 SENT 并入 asynq，再跑各域未完成作业恢复。
+// Command productflow-dispatcher 投递 PENDING outbox，并恢复各域未完成作业。
 //
 // HTTP/API 禁止直接 enqueue。本进程是唯一把 PENDING→SENT 的地方。空闲轮询是 Debug 日志，不要改成 Info 刷屏。
-// 恢复会调 graph/agent/imagesession/localedit/delivery 的 RecoverUnfinished；改恢复顺序要先想清楚锁与幂等键。
+// watch 模式按域独立定时，域内串行；one-shot 按固定域顺序恢复后投递。
 package main
 
 import (
@@ -98,97 +98,58 @@ func main() {
 	enqueue := queue.EnqueueWith(client)
 	settingsStore := settings.NewStore(pool, cfg)
 
-	runRecoveryCycle := func(ctx context.Context) error {
-		recoveryStarted := time.Now()
-		var workflow graph.RecoverySummary
-		var imageSession imagesession.RecoverySummary
-		var rendition delivery.RecoverySummary
-		var localImageEdit localedit.RecoverySummary
-		var agentTurns agent.RecoverySummary
-		imageStale := time.Duration(settingsStore.IntSetting(ctx, "image_session_stale_running_after_minutes", int(imagesession.DefaultStaleRunningAfter/time.Minute))) * time.Minute
-		recoveryErr := runRecoverySteps(ctx, []recoveryStep{
-			{
-				domain: "graph", errorContext: "workflow recovery",
-				run: func(ctx context.Context) (err error) {
-					workflow, err = graph.RecoverUnfinishedGraphRuns(ctx, pool, 0, product.GraphGuard{})
-					return err
-				},
+	recoverySteps := []recoveryStep{
+		{
+			domain: "graph", errorContext: "workflow recovery",
+			run: func(ctx context.Context) (err error) {
+				workflow, err := graph.RecoverUnfinishedGraphRuns(ctx, pool, 0, product.GraphGuard{})
+				logRecoveryWork(logger, "graph", workflow.EnqueuedRuns, workflow.UnknownRuns, workflow.HasMore)
+				return err
 			},
-			{
-				domain: "image_session", errorContext: "image session recovery",
-				run: func(ctx context.Context) (err error) {
-					imageSession, err = imagesession.RecoverUnfinished(ctx, pool, imageStale)
-					return err
-				},
+		},
+		{
+			domain: "image_session", errorContext: "image session recovery",
+			run: func(ctx context.Context) (err error) {
+				imageStale := time.Duration(settingsStore.IntSetting(ctx, "image_session_stale_running_after_minutes", int(imagesession.DefaultStaleRunningAfter/time.Minute))) * time.Minute
+				imageSession, err := imagesession.RecoverUnfinished(ctx, pool, imageStale)
+				logRecoveryWork(logger, "image_session", imageSession.EnqueuedTasks, imageSession.UnknownTasks, imageSession.HasMore)
+				return err
 			},
-			{
-				domain: "delivery", errorContext: "delivery recovery",
-				run: func(ctx context.Context) (err error) {
-					rendition, err = delivery.RecoverUnfinished(ctx, pool, 0)
-					return err
-				},
+		},
+		{
+			domain: "delivery", errorContext: "delivery recovery",
+			run: func(ctx context.Context) (err error) {
+				rendition, err := delivery.RecoverUnfinished(ctx, pool, 0)
+				logRecoveryWork(logger, "delivery", rendition.EnqueuedJobs, 0, rendition.HasMore)
+				return err
 			},
-			{
-				domain: "local_image_edit", errorContext: "local image edit recovery",
-				run: func(ctx context.Context) (err error) {
-					localImageEdit, err = localedit.RecoverUnfinished(ctx, pool, 0)
-					return err
-				},
+		},
+		{
+			domain: "local_image_edit", errorContext: "local image edit recovery",
+			run: func(ctx context.Context) (err error) {
+				localImageEdit, err := localedit.RecoverUnfinished(ctx, pool, 0)
+				logRecoveryWork(logger, "local_image_edit", localImageEdit.EnqueuedTasks, localImageEdit.UnknownTasks, localImageEdit.HasMore)
+				return err
 			},
-			{
-				domain: "agent", errorContext: "agent recovery",
-				run: func(ctx context.Context) (err error) {
-					agentTurns, err = agent.RecoverUnfinished(ctx, pool, 0)
-					return err
-				},
+		},
+		{
+			domain: "agent", errorContext: "agent recovery",
+			run: func(ctx context.Context) (err error) {
+				agentTurns, err := agent.RecoverUnfinished(ctx, pool, 0)
+				logRecoveryWork(logger, "agent", agentTurns.EnqueuedTurns, 0, agentTurns.HasMore)
+				return err
 			},
-		}, func(result recoveryStepResult) {
-			pfmetrics.ObserveRecovery(result.domain, result.duration, result.err != nil)
-			if result.err != nil {
-				logger.Error("dispatcher recovery domain",
-					zap.String("domain", result.domain),
-					zap.Int64("duration_ms", result.duration.Milliseconds()),
-					zap.Error(result.err),
-				)
-			}
-		})
-		recoveryDuration := time.Since(recoveryStarted)
-		fields := []zap.Field{
-			zap.Int64("recovery_duration_ms", recoveryDuration.Milliseconds()),
-			zap.Int("workflow", workflow.EnqueuedRuns),
-			zap.Int("workflow_unknown", workflow.UnknownRuns),
-			zap.Int("image_session", imageSession.EnqueuedTasks),
-			zap.Int("image_session_unknown", imageSession.UnknownTasks),
-			zap.Int("agent", agentTurns.EnqueuedTurns),
-			zap.Int("rendition", rendition.EnqueuedJobs),
-			zap.Int("local_image_edit", localImageEdit.EnqueuedTasks),
-			zap.Int("local_image_edit_unknown", localImageEdit.UnknownTasks),
-			zap.Bool("workflow_more", workflow.HasMore),
-			zap.Bool("image_session_more", imageSession.HasMore),
-			zap.Bool("rendition_more", rendition.HasMore),
-			zap.Bool("local_image_edit_more", localImageEdit.HasMore),
-			zap.Bool("agent_more", agentTurns.HasMore),
+		},
+	}
+	reportRecovery := func(result recoveryStepResult) {
+		pfmetrics.ObserveRecovery(result.domain, result.duration, result.err != nil)
+		if result.err != nil {
+			logger.Error("dispatcher recovery domain",
+				zap.String("domain", result.domain),
+				zap.Int64("duration_ms", result.duration.Milliseconds()),
+				zap.Error(result.err),
+			)
 		}
-		recoveryWork := []int{
-			workflow.EnqueuedRuns, workflow.UnknownRuns,
-			imageSession.EnqueuedTasks, imageSession.UnknownTasks,
-			agentTurns.EnqueuedTurns, rendition.EnqueuedJobs,
-			localImageEdit.EnqueuedTasks, localImageEdit.UnknownTasks,
-		}
-		for _, hasMore := range []bool{
-			workflow.HasMore, imageSession.HasMore, rendition.HasMore,
-			localImageEdit.HasMore, agentTurns.HasMore,
-		} {
-			if hasMore {
-				recoveryWork = append(recoveryWork, 1)
-			}
-		}
-		if dispatcherCycleIdle(queue.Summary{}, recoveryWork...) {
-			logger.Debug("dispatcher recovery cycle", fields...)
-		} else {
-			logger.Info("dispatcher recovery cycle", fields...)
-		}
-		return recoveryErr
 	}
 	runDispatchBatch := func(ctx context.Context) (bool, error) {
 		summary, err := queue.RunDispatcherOnce(ctx, pool, enqueue, *limit)
@@ -215,7 +176,9 @@ func main() {
 	}
 
 	if !*watch {
-		if err := runOneShot(context.Background(), runRecoveryCycle, runDispatchCycle); err != nil {
+		if err := runOneShot(context.Background(), func(ctx context.Context) error {
+			return runRecoverySteps(ctx, recoverySteps, reportRecovery)
+		}, runDispatchCycle); err != nil {
 			logger.Fatal("dispatcher", zap.Error(err))
 		}
 		return
@@ -232,19 +195,24 @@ func main() {
 		func(ctx context.Context) error {
 			return dispatchWhileHasMore(ctx, runDispatchBatch)
 		},
-		runRecoveryCycle,
+		recoverySteps,
 		func(err error) {
 			if err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("dispatcher dispatch loop", zap.Error(err))
 			}
 		},
-		func(err error) {
-			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.Error("dispatcher recovery loop", zap.Error(err))
-			}
-		},
+		reportRecovery,
 	)
 	waitListen()
+}
+
+func logRecoveryWork(logger *zap.Logger, domain string, enqueued, unknown int, hasMore bool) {
+	fields := []zap.Field{zap.String("domain", domain), zap.Int("enqueued", enqueued), zap.Int("unknown", unknown), zap.Bool("has_more", hasMore)}
+	if enqueued == 0 && unknown == 0 && !hasMore {
+		logger.Debug("dispatcher recovery batch", fields...)
+	} else {
+		logger.Info("dispatcher recovery batch", fields...)
+	}
 }
 
 func dispatcherCycleIdle(summary queue.Summary, recovery ...int) bool {

@@ -35,7 +35,7 @@
 | Graph 执行 | `graph/lease.go` 用 token/expiry CAS、续租和写入检查约束 worker；`graph/durability.go` 负责节点生图 admission | 进程 mutex 只处理本进程重复入口；生图容量锁与执行 lease 是不同职责 |
 | Agent 在线写入 | `agent/execution.go` 校验 lease、批量写 PG journal、fold 投影；Node `journal-publisher.ts` 合帧并等待结构屏障 | WAL、Pi session 和浏览器内存都不能替代 PG 业务权威 |
 | Agent 重启 | `turn-runtime.ts:recoverDurableHandoff` 先确认 PG 前缀，再按条件 claim、提交可证明的未发布事件；Go `agent/recovery.go` 收敛丢失执行 | confirm 接口本身不 claim/续租；整个 handoff 流程可以 claim，不能概括为“Node 重启只读” |
-| 后台恢复 | dispatcher 的 dispatch/recovery 独立循环；域内候选发现与单聚合状态迁移分开，恢复各域仍顺序调用 | 有界候选不等于所有内部查询常数成本；Graph 发现阶段无锁，单聚合变更再复核并锁行 |
+| 后台恢复 | watch 中投递及五个恢复域分别定时，域内串行且有界；one-shot 仍按固定域顺序恢复后投递 | 域间不再等待其他域批次完成，但仍共享 PG 连接与 IO；有界候选不等于所有内部查询常数成本，Graph 单聚合变更仍复核并锁行 |
 | 实时通道 | `platform/notify/fanout.go` 按进程内 pool 共享 LISTEN；Agent/Graph 回读事件或状态，ImageSession SSE 调 `Service.Status` 发状态快照 | 共享 LISTEN 不消除每个订阅的回读成本；ImageSession 状态快照不使用 Agent 的逐事件补洞协议 |
 
 Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispatcher/`，Node 路径相对 `agent-service/src/`。
@@ -118,10 +118,12 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 
 ## 下一步如何选择
 
+2026-09-05 [恢复域独立调度](../history/agent-runtime-timeline.md#2026-09-05-watch-恢复域独立调度)：原实现首域阻塞时，后续域无法启动或按 cadence 再次运行。watch 改为五个独立串行恢复循环，域内不重入、取消等待全部退出；one-shot 顺序与既有锁/状态合同保留。20 次 race 重复验证慢域、健康域和失败域并存。真实四场景投递门通过，慢恢复单/双副本 p95 385.253/244.671ms。最多并发恢复批次由 1 增至 5；未新增连接池、缓存或超时，资源饱和与域内坏条目仍待验证。
+
 后续方向按业务风险安排，不按表格里哪个空格最容易补齐来选任务。以下是调查顺序和发布条件；具体认领只维护在看板。
 
 1. **明确故障后的用户可见结果。** 连续生图执行链已由 [perf-imagesession-recovery-visible](tasks/archive/perf-imagesession-recovery-visible.md) 交付。另选 Graph 或 Agent 链时仍定义故障点、等待上限和四种边界；与工作流体验组运行/重试入口重叠时先交接。
-2. **验证活动负载，不只验证历史页面。** 连续生图活动 Status/SSE 已由 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 交付：固定宽度下保持全量活动任务，省略 prompt 使 300 条仍低于 `<1MiB`。dispatch 已有慢连续生图恢复与正常投递的共存证据；后续恢复调查关注域间顺序、坏条目和资源饱和，不能把双循环并行推广为所有域互不阻塞。不预设分页或缓存方案。
+2. **验证活动负载，不只验证历史页面。** 连续生图活动 Status/SSE 已由 [perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 交付：固定宽度下保持全量活动任务，省略 prompt 使 300 条仍低于 `<1MiB`。dispatch 已有慢连续生图恢复与正常投递的共存证据；watch 恢复域已独立调度，后续调查域内坏条目饥饿和共享资源饱和，不能把调度独立推广为数据库资源隔离。不预设分页或缓存方案。
 3. **补足可解释的测量。** 确定慢在锁等待、查询、JSON、队列还是 provider；只有现有指标无法回答已选问题时才补 histogram/trace。`last_ms`、瞬时 waiter 数和局部 query duration 不能互相替代。
 4. **准备候选发布证据。** 候选 checkout、测试输入与运行资源固定后执行受影响门和全量门；Agent 行为消费质量组可采信版本。没有冻结候选时不反复跑 G-07 追逐移动的 HEAD。
 
