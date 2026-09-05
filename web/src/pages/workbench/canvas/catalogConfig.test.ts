@@ -113,6 +113,12 @@ const imageFields: GraphCatalogConfigField[] = [
 ];
 
 describe("catalog config drafts", () => {
+  it("preserves explicit empty style overrides and removes restored keys", () => {
+    const config = { visual_overlay: { style: [], colors: [] } };
+    expect(catalogConfigForSave(visualFields, config)).toEqual(config);
+    const restored = patchCatalogValue(visualFields, config, ["visual_overlay", "style"], undefined);
+    expect(catalogConfigForSave(visualFields, restored)).toEqual({ visual_overlay: { colors: [] } });
+  });
   it("blocks missing text language without discarding the draft", () => {
     const draft = { title: "方案", config: { text_settings: { policy: "required", language: "" } } };
     expect(validateCatalogDraft(draft, [], "invalid")).toBe("invalid");

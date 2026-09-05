@@ -226,6 +226,7 @@ func (s Service) GalleryBootstrap(ctx context.Context, productID string) (Galler
 
 // GalleryListInput 是图库分页查询。After 必须与当前 directory/q/sort 绑定。
 type GalleryListInput struct {
+	NodeID        string // Restrict to original generation results from this node.
 	DirectoryKind string // all|recent_generated|uploads|generated|unorganized|image_type|source|user_folder
 	DirectoryKey  string // 与 DirectoryKind 绑定；换条件必须重拉
 	Query         string
@@ -264,7 +265,7 @@ func (s Service) ListGalleryAssets(ctx context.Context, productID string, in Gal
 		if !validGallerySort(sort) {
 			return apperr.Validation("图库排序无效")
 		}
-		filterHash, err := galleryFilterHash(productID, kind, key, query, sort)
+		filterHash, err := galleryFilterHash(productID, kind, key, query, sort, in.NodeID)
 		if err != nil {
 			return err
 		}
@@ -299,6 +300,9 @@ func (s Service) ListGalleryAssets(ctx context.Context, productID string, in Gal
 			}
 		}
 		q := applyGalleryListFilters(galleryQuery(pgxTx.WithContext(ctx)), productID, kind, key, query, sort, cursor, asOf, limit+1)
+		if in.NodeID != "" {
+			q = q.Where("direct_gen.node_id = ?", in.NodeID)
+		}
 		var scanned []galleryScanRow
 		if err := q.Scan(&scanned).Error; err != nil {
 			return err
@@ -602,13 +606,14 @@ func projectGalleryAsset(row galleryRow) GalleryAssetResponse {
 	return item
 }
 
-func galleryFilterHash(productID, kind string, key *string, query, sort string) (string, error) {
+func galleryFilterHash(productID, kind string, key *string, query, sort, nodeID string) (string, error) {
 	var directoryKey any
 	if key != nil {
 		directoryKey = *key
 	}
 	raw, err := canonicalJSON(map[string]any{
 		"product_id":     productID,
+		"node_id":        nodeID,
 		"directory_kind": kind,
 		"directory_key":  directoryKey,
 		"query":          query,

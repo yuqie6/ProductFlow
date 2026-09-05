@@ -14,7 +14,8 @@ type GraphRunRequest struct {
 	// Force 仅对 node|to_node|selection 的显式目标生效；全图携带 force 为 Validation。
 	Force bool `json:"force"`
 	// DocumentAction 是 complete|rewrite|replace；只允许配合 force 跑单个文稿节点。
-	DocumentAction string `json:"document_action"`
+	DocumentAction  string `json:"document_action"`
+	DocumentSection string `json:"document_section"`
 }
 
 // GraphRunInputTraceEntry 记录编译时实际用到的一条入边，不是整图扫描结果。
@@ -104,8 +105,9 @@ type GraphRunPreviewResponse struct {
 	// Force 仅预览显式目标；全图请求里必须为 false。
 	Force bool `json:"force"`
 	// DocumentAction 是 complete|rewrite|replace；空视为 complete。
-	DocumentAction string           `json:"document_action"`
-	Nodes          []RunPreviewNode `json:"nodes"` // 空列表是 [] 不是 nil
+	DocumentAction  string           `json:"document_action"`
+	DocumentSection string           `json:"document_section"`
+	Nodes           []RunPreviewNode `json:"nodes"` // 空列表是 [] 不是 nil
 }
 
 // GraphRunListResponse 包装最近的 GraphRun 摘要列表。
@@ -130,6 +132,7 @@ type graphRunRow struct {
 	FinishedAt              *time.Time
 	Force                   bool
 	DocumentAction          string
+	DocumentSection         string
 	NodeRuns                []graphNodeRunRow
 }
 

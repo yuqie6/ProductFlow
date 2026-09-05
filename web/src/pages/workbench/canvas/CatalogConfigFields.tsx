@@ -83,7 +83,7 @@ export function CatalogConfigFields({
       ))}
       {basic.length || advanced.length ? (
         <FieldGroup title={tabsTitleKey ? t(tabsTitleKey) : t("agentWorkbench.nodeEditor.generationSettings")}>
-          <ImageGenerationSettingsTabs
+          {advanced.length ? <ImageGenerationSettingsTabs
             value={settingsTab}
             onChange={setSettingsTab}
             basic={(
@@ -112,7 +112,7 @@ export function CatalogConfigFields({
                 ))}
               </div>
             )}
-          />
+          /> : <div className="space-y-4">{basic.map((item) => <CatalogField key={item.path.join(".")} item={item} config={value} onPatch={setPath} disabled={disabled} />)}</div>}
         </FieldGroup>
       ) : null}
     </>
@@ -188,6 +188,8 @@ export function CatalogField({
         {label ? <div className="mb-2 text-[11px] font-semibold text-text-secondary">{t(label)}</div> : null}
         <ImageAspectRatioPicker
           value={readText(raw) || "1:1"}
+          presets={item.field.choices?.length ? item.field.choices : undefined}
+          allowCustom={!item.field.choices?.length}
           onChange={(aspectRatio) => onPatch(item.path, aspectRatio)}
           disabled={disabled}
         />
@@ -261,21 +263,21 @@ export function CatalogField({
           <IconButton label={t("nodeDetail.add")} size="sm" disabled={disabled || colors.length >= (item.field.max_length ?? 32)}
             onClick={() => onPatch(item.path, [...colors, { role: colors.length ? "accent" : "background", value: "#ffffff", label: "" }])}><Plus size={14} /></IconButton>
         </div>
-        {colors.map((color, index) => <div key={index} className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-end gap-2">
+        {colors.map((color, index) => <div key={index} data-palette-row className="grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)_2.75rem] items-center gap-2 lg:grid-cols-[2rem_minmax(0,1fr)_2rem]">
           <input type="color" aria-label={t("nodeDetail.palette")} value={readText(color.value)} disabled={disabled}
-            className="h-11 w-11 cursor-pointer rounded-control border border-border-l1 bg-transparent p-1"
+            className="h-11 w-11 cursor-pointer rounded-control border border-border-l1 bg-transparent p-1 lg:h-8 lg:w-8"
             onChange={(event) => updateColor(index, "value", event.target.value)} />
-          <Field label={t("nodeDetail.colorRole")}>
+          <Field>
             <Select value={readText(color.role)} disabled={disabled} size="sm" ariaLabel={t("nodeDetail.colorRole")}
               options={colorRoles.some((role) => role.value === color.role) ? colorRoles : [...colorRoles, { value: readText(color.role), label: readText(color.label) || humanizeCatalogKey(readText(color.role)) }]}
               onChange={(next) => updateColor(index, "role", next)} />
           </Field>
-          <IconButton label={t("nodeDetail.remove")} disabled={disabled}
+          <IconButton label={t("nodeDetail.remove")} size="sm" disabled={disabled}
             onClick={() => onPatch(item.path, colors.filter((_, position) => position !== index))}><Trash2 size={14} /></IconButton>
           <div className="col-span-3 grid grid-cols-[minmax(0,1fr)_6.5rem] gap-2">
-            <Input label={t("nodeDetail.colorNote")} value={readText(color.label)} disabled={disabled} maxLength={255}
+            <Input aria-label={t("nodeDetail.colorNote")} placeholder={t("nodeDetail.colorNote")} value={readText(color.label)} disabled={disabled} maxLength={255}
               onChange={(event) => updateColor(index, "label", event.target.value)} />
-            <Input label="HEX" value={readText(color.value)} disabled={disabled}
+            <Input aria-label="HEX" value={readText(color.value)} disabled={disabled} className="font-mono"
               maxLength={visualBackgroundValueMaxLength(item.field)} onChange={(event) => updateColor(index, "value", event.target.value)} />
           </div>
         </div>)}
@@ -288,7 +290,7 @@ export function CatalogField({
         label={fieldLabel}
         value={readText(raw)}
         onChange={(next) => onPatch(item.path, next)}
-        minRows={3}
+        minRows={2}
         maxRows={12}
         maxLength={item.field.max_length ?? undefined}
         disabled={disabled}
@@ -343,7 +345,7 @@ function cloneDefault(field: GraphCatalogConfigField): unknown {
   return {};
 }
 
-function FieldGroup({ title, children }: { title: string; children: ReactNode }) {
+export function FieldGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <fieldset className="space-y-3 border-t border-border-l1 pt-4">
       {title ? <legend className="mb-1 text-xs font-semibold text-text-primary">{title}</legend> : null}

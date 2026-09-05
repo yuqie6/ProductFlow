@@ -1,4 +1,8 @@
 export const nodeDetailZh = {
+  "nodeDetail.supplement": "补充要求",
+  "nodeDetail.section": "生成章节", "nodeDetail.history": "历史版本", "nodeDetail.moreHistory": "更多版本", "nodeDetail.noResult": "待生成", "nodeDetail.optionsUnavailable": "生成设置暂时无法加载。",
+  "nodeDetail.replacesSeries": "替代以下系列设置", "nodeDetail.fromSeries": "继承系列设置", "nodeDetail.unspecified": "未指定",
+  "nodeDetail.briefGoal": "传播目标", "nodeDetail.prohibitions": "不得出现",
   "nodeDetail.colorAccent": "点缀", "nodeDetail.colorNote": "颜色说明",
   "nodeDetail.objective": "画面目标", "nodeDetail.scene": "构图与场景",
   "nodeDetail.content": "重点内容", "nodeDetail.text": "画面文字",
@@ -15,6 +19,10 @@ export const nodeDetailZh = {
 } as const;
 
 export const nodeDetailEn: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.supplement": "Additional requirements",
+  "nodeDetail.section": "Generate section", "nodeDetail.history": "Image history", "nodeDetail.moreHistory": "More versions", "nodeDetail.noResult": "Not generated yet", "nodeDetail.optionsUnavailable": "Generation settings are unavailable.",
+  "nodeDetail.replacesSeries": "Replaces these series settings", "nodeDetail.fromSeries": "Inherited series settings", "nodeDetail.unspecified": "Not specified",
+  "nodeDetail.briefGoal": "Communication goal", "nodeDetail.prohibitions": "Must not appear",
   "nodeDetail.colorAccent": "Accent", "nodeDetail.colorNote": "Color note",
   "nodeDetail.objective": "Picture goal", "nodeDetail.scene": "Composition and scene",
   "nodeDetail.content": "Key content", "nodeDetail.text": "Picture text",
@@ -31,6 +39,10 @@ export const nodeDetailEn: Record<keyof typeof nodeDetailZh, string> = {
 };
 
 export const nodeDetailJa: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.supplement": "追加要件",
+  "nodeDetail.section": "生成する章", "nodeDetail.history": "画像履歴", "nodeDetail.moreHistory": "他のバージョン", "nodeDetail.noResult": "未生成", "nodeDetail.optionsUnavailable": "生成設定を読み込めません。",
+  "nodeDetail.replacesSeries": "以下の共通設定を置き換え", "nodeDetail.fromSeries": "共通設定を継承", "nodeDetail.unspecified": "未指定",
+  "nodeDetail.briefGoal": "伝えたい目的", "nodeDetail.prohibitions": "表示禁止",
   "nodeDetail.colorAccent": "アクセント", "nodeDetail.colorNote": "色の説明",
   "nodeDetail.objective": "画像の目的", "nodeDetail.scene": "構図とシーン",
   "nodeDetail.content": "重点内容", "nodeDetail.text": "画像内テキスト",
@@ -47,6 +59,10 @@ export const nodeDetailJa: Record<keyof typeof nodeDetailZh, string> = {
 };
 
 export const nodeDetailVi: Record<keyof typeof nodeDetailZh, string> = {
+  "nodeDetail.supplement": "Yêu cầu bổ sung",
+  "nodeDetail.section": "Tạo mục", "nodeDetail.history": "Lịch sử ảnh", "nodeDetail.moreHistory": "Thêm phiên bản", "nodeDetail.noResult": "Chưa tạo ảnh", "nodeDetail.optionsUnavailable": "Không thể tải thiết lập tạo ảnh.",
+  "nodeDetail.replacesSeries": "Thay thế thiết lập chung bên dưới", "nodeDetail.fromSeries": "Kế thừa thiết lập chung", "nodeDetail.unspecified": "Chưa chỉ định",
+  "nodeDetail.briefGoal": "Mục tiêu truyền đạt", "nodeDetail.prohibitions": "Không được xuất hiện",
   "nodeDetail.colorAccent": "Điểm nhấn", "nodeDetail.colorNote": "Ghi chú màu",
   "nodeDetail.objective": "Mục tiêu ảnh", "nodeDetail.scene": "Bố cục và bối cảnh",
   "nodeDetail.content": "Nội dung chính", "nodeDetail.text": "Chữ trong ảnh",

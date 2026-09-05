@@ -2,6 +2,46 @@ package graph
 
 import "testing"
 
+func TestImageStyleOverridesReplaceOnlyPresentFields(t *testing.T) {
+	series := map[string]any{"style": []any{"冷色摄影"}, "colors": []any{map[string]any{"role": "background", "value": "#eeeeee"}}}
+	local := map[string]any{"style": []any{}}
+	got := mergeImageVisual(series, local)
+	if !documentValueEqual(got["style"], []any{}) || !documentValueEqual(got["colors"], series["colors"]) {
+		t.Fatalf("explicit clear must preserve unrelated series settings: %+v", got)
+	}
+	delete(local, "style")
+	if !documentValueEqual(mergeImageVisual(series, local), series) {
+		t.Fatal("restoring inheritance must recover series values")
+	}
+	if !documentValueEqual(series["style"], []any{"冷色摄影"}) {
+		t.Fatal("local edit mutated the shared series")
+	}
+}
+
+func TestImageProjectionShowsInheritedStyleWithoutLocalReplacement(t *testing.T) {
+	g := imageDocumentGraph()
+	g.Nodes = append(g.Nodes, AppliedNode{ID: "style", NodeType: NodeVisualSystem, Config: map[string]any{
+		"visual_overlay": map[string]any{"style": []any{"系列冷色"}},
+	}})
+	g.Edges = append(g.Edges, AppliedEdge{ID: "style-one", SourceNodeID: "style", TargetNodeID: "one", Role: RoleVisualGuidance, DataType: DataVisualSystem})
+	g.Nodes[1].Config["visual_overlay"] = map[string]any{"style": []any{"本图暖色"}}
+	sources := map[string]SourceRecord{"style": {VisualPayload: map[string]any{"style": []any{"旧风格"}, "colors": []any{map[string]any{"role": "background", "value": "#eeeeee"}}}}}
+	view := buildProjection(graphRow{}, g, nil, false, false, nil, nil, nil, sources, nil)
+	for _, node := range view.Nodes {
+		if node.ID != "one" {
+			continue
+		}
+		if node.ImageInput == nil || !documentValueEqual(node.ImageInput.InheritedVisual["style"], []any{"系列冷色"}) {
+			t.Fatalf("projection must show the series value being replaced: %+v", node.ImageInput)
+		}
+		if !documentValueEqual(node.ImageInput.InheritedVisual["colors"], sources["style"].VisualPayload["colors"]) {
+			t.Fatal("inherited colors from published style missing")
+		}
+		return
+	}
+	t.Fatal("image projection missing")
+}
+
 func imageDocumentGraph() AppliedGraph {
 	return AppliedGraph{Nodes: []AppliedNode{
 		{ID: "plan", NodeType: NodeImagePrompt, Config: map[string]any{

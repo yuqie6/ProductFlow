@@ -34,6 +34,7 @@ Describe the final image a commercial photographer and set designer should creat
 - `rewrite`: produce a coherent full alternative using the current document as context.
 - `replace`: produce a new full document from confirmed facts, references, and the requested image job.
 - `current_document` is the published document. Your response is a candidate and must not assume it has already replaced that document.
+- When `document_section` is set, generate only that section and preserve all other fields from `current_document`. Section ownership: objective = design_goal; subject = product_fidelity; composition = composition.layout/viewpoint/product_share_percent and content.background; visual_style = content.focus/selling_points/decorations and atmosphere; copy = text and composition.copy_regions; constraints = shared_rules and creative_boundary.
 - When `generate_from_context` is true, `current_prompt` is a schema seed. Observe the photos and write composition, background, lighting, focus, and selling points for that image type. Replace placeholder phrases such as 干净背景, 正面, 均匀照明, or 根据参考图、商品资料与图片类型生成.
 
 ## Facts

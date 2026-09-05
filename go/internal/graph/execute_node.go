@@ -126,6 +126,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		return err
 	}
 	req.DocumentAction = mode
+	req.DocumentSection = run.DocumentSection
 	if req.DocumentAction == "" {
 		req.DocumentAction = DocumentActionComplete
 	}
@@ -517,6 +518,14 @@ func (e Executor) persistContentArtifact(
 	}
 	baseDocumentHash := documentBaseHash(snapshotNode)
 	autoPublish := run.DocumentAction == "" && DocumentOrigin(snapshotNode) == OriginSeed
+	if run.DocumentSection != "" {
+		proposed := proposedDocumentConfig(snapshotNode, result.Payload, action)
+		limited, err := applyDocumentSections(snapshotNode, proposed, []string{run.DocumentSection})
+		if err != nil {
+			return err
+		}
+		result.Payload = visibleDocument(snapshotNode.NodeType, limited)
+	}
 	payload, err := json.Marshal(result.Payload)
 	if err != nil {
 		return err

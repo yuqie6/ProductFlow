@@ -200,7 +200,7 @@ function normalizeFieldValue(field: GraphCatalogConfigField, value: unknown): un
     if (value == null) return null;
     if (!isRecord(value)) return value;
     const nested = field.fields?.length ? nestedCatalogObject(field.fields, value) : value;
-    if (field.key === "prompt_overrides" || field.key === "text_override") return nested;
+    if (["prompt_overrides", "text_override", "visual_overlay"].includes(field.key)) return nested;
     const compact = compactRecord(nested);
     return Object.keys(compact).length ? compact : null;
   }

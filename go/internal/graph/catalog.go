@@ -339,16 +339,16 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	case NodeImageAsset:
 		return []configField{
 			fld("role", "string_or_null", "select", withLabel("graph.inspector.assetRole"), withChoices(imageAssetRoleOrder...), withMaxLen(120)),
-			fld("label", "string_or_null", "", withLabel("graph.inspector.assetLabel"), withMaxLen(255)),
+			fld("label", "string_or_null", "textarea", withLabel("graph.inspector.assetLabel"), withMaxLen(255)),
 		}, true
 	case NodeCreativeBrief:
 		return []configField{
 			hid("title", "string"),
-			fld("goal", "string", "textarea", withLabel("workflowConfirmation.designGoal")),
+			fld("goal", "string", "textarea", withLabel("nodeDetail.briefGoal")),
 			fld("key_messages", "string_list", "", withLabel("graph.inspector.designGoals")),
 			fld("required_elements", "string_list", "", withLabel("graph.inspector.requiredCopy")),
-			fld("fact_gaps", "string_list", "", withLabel("graph.inspector.factGaps")),
-			fld("prohibitions", "string_list", "", withLabel("workflowConfirmation.creativeBoundary")),
+			hid("fact_gaps", "string_list", withDigest()),
+			fld("prohibitions", "string_list", "", withLabel("nodeDetail.prohibitions")),
 		}, true
 	case NodeVisualSystem:
 		return []configField{
@@ -364,7 +364,7 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	case NodeImageGeneration:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
-			fld("variation_instruction", "string_or_null", "textarea", withLabel("workflowConfirmation.variation"), withMaxLen(4000)),
+			fld("variation_instruction", "string_or_null", "textarea", withLabel("nodeDetail.supplement"), withMaxLen(4000)),
 			fld("prompt_overrides", "object_or_null", "group", withFields(imagePromptOverrideFields()...)),
 			fld("text_override", "object_or_null", "group", withFields(imageTextOverrideFields()...)),
 			fld("generation_spec", "object", "group", withLabel("agentWorkbench.nodeEditor.generationSettings"), withRequired(), withDefault(cloneMap(defaultGenerationSpec)), withFields(generationSpecFields()...)),

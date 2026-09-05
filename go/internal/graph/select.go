@@ -73,9 +73,26 @@ func SelectRunNodeIDs(graph AppliedGraph, scope, targetNodeID string, sources ma
 // 缺目标、非处理节点、缺必连边或无可运行节点返回 Validation。
 func SelectRunNodeIDsWithMode(graph AppliedGraph, scope, targetNodeID string, nodeIDs []string, sources map[string]SourceRecord, force bool, mode string) ([]string, error) {
 	mode = validDocumentAction(mode)
+	inScope, err := previewScopeSet(graph, scope, targetNodeID, nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	if scope == RunScopeNode || scope == RunScopeSelection {
+		for nodeID := range inScope {
+			for _, ancestorID := range processingAncestors(graph, nodeID) {
+				inScope[ancestorID] = struct{}{}
+			}
+		}
+	}
 	var processingIDs []string
 	for _, node := range graph.Nodes {
 		if IsProcessingNode(node.NodeType) {
+			// Frozen ancestors still supply inputs, so validate them without enqueueing them.
+			if _, selected := inScope[node.ID]; selected {
+				if msg := nodeConfigError(RuleNode{node.ID, node.NodeType, node.Config, node.BoundAssetID}); msg != "" {
+					return nil, apperr.Validation("节点「" + node.Title + "」配置无效: " + msg)
+				}
+			}
 			processingIDs = append(processingIDs, node.ID)
 		}
 	}
@@ -275,8 +292,17 @@ func previewScopeSet(graph AppliedGraph, scope, targetNodeID string, nodeIDs []s
 // plannedActionFor 给 PreviewRun 算 generate/reuse/frozen/blocked，不写库。
 // 内容节点非 force 且非 seed 为 frozen；图片看 digest。缺必连边为 blocked。force 只对显式目标为 true。
 func plannedActionFor(graph AppliedGraph, node AppliedNode, sources map[string]SourceRecord, forceTarget bool, mode string) (string, string) {
-	if !hasRequiredEdges(graph, node.ID) {
-		return PlannedBlocked, "缺少必连输入"
+	if err := rejectIncompleteRequiredEdges(graph, node); err != nil {
+		return PlannedBlocked, err.Error()
+	}
+	for _, ancestorID := range processingAncestors(graph, node.ID) {
+		ancestor, err := graph.Node(ancestorID)
+		if err != nil {
+			return PlannedBlocked, err.Error()
+		}
+		if msg := nodeConfigError(RuleNode{ancestor.ID, ancestor.NodeType, ancestor.Config, ancestor.BoundAssetID}); msg != "" {
+			return PlannedBlocked, "节点「" + ancestor.Title + "」配置无效: " + msg
+		}
 	}
 	if isContentNodeType(node.NodeType) {
 		if contentNodeShouldGenerate(node, forceTarget, mode) {

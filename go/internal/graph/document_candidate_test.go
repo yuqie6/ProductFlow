@@ -100,7 +100,8 @@ func TestDocumentSectionsCoverLivePromptFields(t *testing.T) {
 	}
 	for _, field := range []string{
 		"design_goal", "shared_rules", "creative_boundary", "product_fidelity",
-		"composition", "content", "text", "atmosphere",
+		"composition.layout", "composition.viewpoint", "composition.product_share_percent", "composition.copy_regions",
+		"content.background", "content.focus", "content.selling_points", "content.decorations", "text", "atmosphere",
 	} {
 		if _, ok := covered[field]; !ok {
 			t.Fatalf("prompt field %s is not in any document section", field)
@@ -113,21 +114,21 @@ func TestDocumentSectionsCoverLivePromptFields(t *testing.T) {
 	}
 }
 
-func TestApplyDocumentSectionsPromptCompositionKeepsContent(t *testing.T) {
+func TestApplyDocumentSectionsPromptScenePreservesCopyAndFocus(t *testing.T) {
 	node := AppliedNode{
 		ID: "prompt", NodeType: NodeImagePrompt, DocumentOrigin: OriginAuthored,
 		Config: map[string]any{
 			"prompt": map[string]any{
 				"design_goal": "人工目标",
-				"composition": map[string]any{"layout": "居中", "product_share_percent": 70.0},
-				"content":     map[string]any{"background": "白底"},
+				"composition": map[string]any{"layout": "居中", "product_share_percent": 70.0, "copy_regions": []string{"顶部"}},
+				"content":     map[string]any{"background": "白底", "focus": []string{"杯柄"}},
 			},
 		},
 	}
 	proposed := proposedDocumentConfig(node, map[string]any{
 		"design_goal": "AI 目标",
 		"composition": map[string]any{"layout": "左侧主体", "product_share_percent": 58.0, "viewpoint": "平视"},
-		"content":     map[string]any{"background": "木桌"},
+		"content":     map[string]any{"background": "木桌", "focus": []string{"杯口"}},
 	}, DocumentActionRewrite)
 	applied, err := applyDocumentSections(node, proposed, []string{"composition"})
 	if err != nil {
@@ -138,11 +139,14 @@ func TestApplyDocumentSectionsPromptCompositionKeepsContent(t *testing.T) {
 		t.Fatalf("unselected objective changed: %+v", prompt)
 	}
 	content, _ := prompt["content"].(map[string]any)
-	if content["background"] != "白底" {
-		t.Fatalf("unselected content changed: %+v", prompt)
+	if content["background"] != "木桌" || !documentValueEqual(content["focus"], []string{"杯柄"}) {
+		t.Fatalf("scene must update background and preserve focus: %+v", prompt)
 	}
 	composition, _ := prompt["composition"].(map[string]any)
 	if composition["layout"] != "左侧主体" {
 		t.Fatalf("selected composition not applied: %+v", prompt)
+	}
+	if !documentValueEqual(composition["copy_regions"], []string{"顶部"}) {
+		t.Fatalf("scene changed copy position: %+v", composition)
 	}
 }

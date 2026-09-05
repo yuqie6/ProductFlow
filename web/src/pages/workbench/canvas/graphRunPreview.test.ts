@@ -16,6 +16,7 @@ describe("plannedActionsFromPreview", () => {
       requested_node_ids: [],
       force: false,
       document_action: "complete",
+      document_section: "",
       nodes: [
         { node_id: "prompt", title: "提示词", planned_action: "frozen", reason: "已手写" },
         { node_id: "image", title: "主图", planned_action: "generate", reason: "将生成" },

@@ -578,6 +578,73 @@ func TestForceRewritePromptDoesNotChangeLiveUntilApply(t *testing.T) {
 	}
 }
 
+func TestSectionCandidateReachesProviderAndApplyAllPreservesOtherSections(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	prompts := &countingPrompt{varyPrompt: true}
+	images := &countingImage{}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
+	view := loadProjection(t, gs, productID, graphID)
+	node := nodeOfType(t, view, graph.NodeImagePrompt)
+	before := cloneConfig(t, node.Config)
+	executeGraphRun(t, gs, productID, graphID, map[string]any{
+		"scope": "node", "node_id": node.ID, "force": true, "document_action": "rewrite", "document_section": "objective",
+	}, prompts, images)
+	if prompts.last.DocumentSection != "objective" {
+		t.Fatalf("provider section %q", prompts.last.DocumentSection)
+	}
+	after := loadProjection(t, gs, productID, graphID)
+	pending := nodeOfType(t, after, graph.NodeImagePrompt)
+	if pythonish(pending.Config) != pythonish(before) {
+		t.Fatal("candidate changed published document")
+	}
+	response := gs.doJSON(t, "POST", "/api/v3/products/"+productID+"/workflows/"+graphID+"/nodes/"+node.ID+"/candidate/apply", map[string]any{
+		"artifact_id": *pending.PendingCandidateArtifactID, "base_graph_revision": after.Revision,
+	})
+	gs.mustStatus(t, response, 200)
+	var applied graph.Projection
+	gs.decode(t, response, &applied)
+	got := nodeOfType(t, applied, graph.NodeImagePrompt).Config["prompt"].(map[string]any)
+	want := before["prompt"].(map[string]any)
+	if got["design_goal"] == want["design_goal"] {
+		t.Fatal("selected goal was not adopted")
+	}
+	delete(got, "design_goal")
+	delete(want, "design_goal")
+	if pythonish(got) != pythonish(want) {
+		t.Fatalf("apply all changed unselected fields: %s != %s", pythonish(got), pythonish(want))
+	}
+}
+
+func TestNodeImageHistoryFiltersAndPaginatesPersistedResults(t *testing.T) {
+	gs := newIsolatedGraphServer(t)
+	productID, graphID := gs.createDirectGraph(t)
+	prompts := &countingPrompt{}
+	images := &countingImage{}
+	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "graph"}, prompts, images)
+	view := loadProjection(t, gs, productID, graphID)
+	node := nodeOfType(t, view, graph.NodeImageGeneration)
+	executeGraphRun(t, gs, productID, graphID, map[string]any{"scope": "node", "node_id": node.ID, "force": true}, prompts, images)
+	svc := product.Service{DB: gs.db, Media: gs.media}
+	first, err := svc.ListGalleryAssets(context.Background(), productID, product.GalleryListInput{DirectoryKind: "generated", NodeID: node.ID, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 || first.NextCursor == nil || first.Items[0].Generation.NodeID != node.ID {
+		t.Fatalf("first history page %+v", first)
+	}
+	second, err := svc.ListGalleryAssets(context.Background(), productID, product.GalleryListInput{DirectoryKind: "generated", NodeID: node.ID, Limit: 1, After: *first.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.NextCursor != nil || second.Items[0].ID == first.Items[0].ID || second.Items[0].Generation.NodeID != node.ID {
+		t.Fatalf("second history page %+v", second)
+	}
+	if _, err := svc.ListGalleryAssets(context.Background(), productID, product.GalleryListInput{DirectoryKind: "generated", Limit: 1, After: *first.NextCursor}); err == nil {
+		t.Fatal("node cursor accepted without node filter")
+	}
+}
+
 func TestAdoptSkipsOverwriteWhenUserEditsDuringRun(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	productID, graphID := gs.createDirectGraph(t)

@@ -413,6 +413,15 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 		if err != nil {
 			return err
 		}
+		if req.DocumentSection != "" {
+			target, err := applied.Node(ptrStr(req.NodeID))
+			if err != nil {
+				return err
+			}
+			if err := validateDocumentSection(target.NodeType, req.DocumentSection); err != nil {
+				return err
+			}
+		}
 		nodes, err := PlanRun(applied, req.Scope, ptrStr(req.NodeID), req.NodeIDs, sources, req.Force, validDocumentAction(req.DocumentAction))
 		if err != nil {
 			return err
@@ -423,6 +432,7 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 			RequestedNodeIDs: requestedNodeIDsOrEmpty(req.NodeIDs),
 			Force:            req.Force,
 			DocumentAction:   validDocumentAction(req.DocumentAction),
+			DocumentSection:  req.DocumentSection,
 			Nodes:            nodes,
 		}
 		return nil

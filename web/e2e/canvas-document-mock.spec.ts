@@ -122,6 +122,7 @@ async function authorPrompt(page: Page, productID: string): Promise<GraphNodePay
   expect(prompt).toBeTruthy();
   await selectNode(page, prompt!.id);
   await page.getByLabel("设计目标").fill("人工目标-不要被构图应用改掉");
+  await page.locator("[data-plan-composition-details] > summary").click();
   await page.getByLabel("商品近似占比（%）").fill("55");
   await page.getByLabel("布局").fill("人工左侧留白");
   await expect.poll(async () => {
@@ -277,6 +278,7 @@ test.describe("canvas document mock provider", () => {
         await page.getByRole("button", { name: "详情" }).click();
         await expect(page.getByLabel("设计目标")).toBeVisible();
         await page.getByLabel("设计目标").fill(authoredGoal);
+        await page.locator("[data-plan-composition-details] > summary").click();
         await page.getByLabel("商品近似占比（%）").fill("55");
         await page.getByLabel("布局").fill("运行中左侧留白");
         await expect.poll(async () => {

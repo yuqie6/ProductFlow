@@ -35,6 +35,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 	nodeIDs := normalizeRunNodeIDs(req.NodeIDs)
 	force := req.Force
 	mode := validDocumentAction(req.DocumentAction)
+	section := req.DocumentSection
 	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
 	if err != nil {
 		return graphRunSubmission{}, err
@@ -51,13 +52,16 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 		if err != nil || !isContentNodeType(target.NodeType) {
 			return graphRunSubmission{}, apperr.Validation("document_action 只支持文稿节点")
 		}
+		if err := validateDocumentSection(target.NodeType, section); err != nil {
+			return graphRunSubmission{}, err
+		}
 	}
 	active, err := loadActiveRun(ctx, tx, row.ID)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
 	if active != nil {
-		if sameInFlightRun(*active, scope, targetNodeID, nodeIDs, force, mode, row.Revision) {
+		if sameInFlightRun(*active, scope, targetNodeID, nodeIDs, force, mode, section, row.Revision) {
 			if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, active.ID, 0); err != nil {
 				return graphRunSubmission{}, err
 			}
@@ -67,7 +71,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 			}
 			return graphRunSubmission{Run: full, Created: false}, nil
 		}
-		queued, err := findDuplicateQueuedRun(ctx, tx, row.ID, scope, targetNodeID, nodeIDs, force, mode)
+		queued, err := findDuplicateQueuedRun(ctx, tx, row.ID, scope, targetNodeID, nodeIDs, force, mode, section)
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
@@ -78,7 +82,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 			}
 			return graphRunSubmission{Run: full, Created: false}, nil
 		}
-		queuedRun, err := insertQueuedGraphRun(ctx, tx, row, scope, targetNodeID, nodeIDs, force, mode)
+		queuedRun, err := insertQueuedGraphRun(ctx, tx, row, scope, targetNodeID, nodeIDs, force, mode, section)
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
@@ -90,7 +94,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 	}
 	// 崩溃或人工 recovery 后，queued 行可能比 running 行活得更久。
 	// 必须保持 FIFO：只要还有残留 queued，就不能抢先启动更新的请求。
-	queued, err := findDuplicateQueuedRun(ctx, tx, row.ID, scope, targetNodeID, nodeIDs, force, mode)
+	queued, err := findDuplicateQueuedRun(ctx, tx, row.ID, scope, targetNodeID, nodeIDs, force, mode, section)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -108,7 +112,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 			}
 			return graphRunSubmission{Run: full, Created: false}, nil
 		}
-		queuedRun, err := insertQueuedGraphRun(ctx, tx, row, scope, targetNodeID, nodeIDs, force, mode)
+		queuedRun, err := insertQueuedGraphRun(ctx, tx, row, scope, targetNodeID, nodeIDs, force, mode, section)
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
@@ -156,7 +160,7 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 		return graphRunSubmission{}, err
 	}
 	now := time.Now().UTC()
-	meta, _ := json.Marshal(runProgressMeta(scope, targetNodeID, nodeIDs, force, mode))
+	meta, _ := json.Marshal(runProgressMeta(scope, targetNodeID, nodeIDs, force, mode, req.DocumentSection))
 	runID := clockid.New()
 	metaStr := string(meta)
 	err = tx.WithContext(ctx).Create(&schema.WorkflowGraphRuns{
@@ -197,9 +201,9 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 
 // insertQueuedGraphRun 写入 FIFO queued 行。snapshot 只放 schema_version 占位；真正快照在 activate 时按当时 live 图重做。
 // 不 Stage asynq、不插 node_runs。写 run.queued 事件。改占位 JSON 时须保持 activateQueuedRun 能覆盖它。
-func insertQueuedGraphRun(ctx context.Context, tx *gorm.DB, row graphRow, scope string, targetNodeID *string, nodeIDs []string, force bool, mode string) (schema.WorkflowGraphRuns, error) {
+func insertQueuedGraphRun(ctx context.Context, tx *gorm.DB, row graphRow, scope string, targetNodeID *string, nodeIDs []string, force bool, mode, section string) (schema.WorkflowGraphRuns, error) {
 	now := time.Now().UTC()
-	meta, _ := json.Marshal(runProgressMeta(scope, targetNodeID, nodeIDs, force, mode))
+	meta, _ := json.Marshal(runProgressMeta(scope, targetNodeID, nodeIDs, force, mode, section))
 	metaStr := string(meta)
 	placeholder, _ := json.Marshal(map[string]any{"schema_version": GraphSnapshotSchemaVersion})
 	rec := schema.WorkflowGraphRuns{
@@ -260,13 +264,14 @@ func insertNodeRunsForSelection(ctx context.Context, tx *gorm.DB, runID string, 
 	return nil
 }
 
-func runProgressMeta(scope string, targetNodeID *string, nodeIDs []string, force bool, mode string) map[string]any {
+func runProgressMeta(scope string, targetNodeID *string, nodeIDs []string, force bool, mode, section string) map[string]any {
 	return map[string]any{
 		"run_scope":          scope,
 		"requested_node_id":  targetNodeID,
 		"requested_node_ids": nodeIDs,
 		"force":              force,
 		"document_action":    mode,
+		"document_section":   section,
 	}
 }
 
@@ -293,12 +298,13 @@ func normalizeRunNodeIDs(ids []string) []string {
 	return out
 }
 
-func sameInFlightRun(active graphRunRow, scope string, targetNodeID *string, nodeIDs []string, force bool, mode string, revision int) bool {
+func sameInFlightRun(active graphRunRow, scope string, targetNodeID *string, nodeIDs []string, force bool, mode, section string, revision int) bool {
 	return active.RunScope == scope &&
 		ptrEqual(active.RequestedNodeID, targetNodeID) &&
 		sameStringSlice(active.RequestedNodeIDs, nodeIDs) &&
 		active.Force == force &&
 		validDocumentAction(active.DocumentAction) == mode &&
+		active.DocumentSection == section &&
 		active.GraphRevision == revision
 }
 
@@ -314,14 +320,14 @@ func sameStringSlice(a, b []string) bool {
 	return true
 }
 
-func findDuplicateQueuedRun(ctx context.Context, tx *gorm.DB, graphID, scope string, targetNodeID *string, nodeIDs []string, force bool, mode string) (*graphRunRow, error) {
+func findDuplicateQueuedRun(ctx context.Context, tx *gorm.DB, graphID, scope string, targetNodeID *string, nodeIDs []string, force bool, mode, section string) (*graphRunRow, error) {
 	var recs []schema.WorkflowGraphRuns
 	if err := tx.WithContext(ctx).Where("graph_id = ? AND status = ?", graphID, RunStatusQueued).Order("started_at, id").Find(&recs).Error; err != nil {
 		return nil, err
 	}
 	for _, rec := range recs {
 		run := graphRunFromSchema(rec)
-		if sameInFlightRun(run, scope, targetNodeID, nodeIDs, force, mode, run.GraphRevision) {
+		if sameInFlightRun(run, scope, targetNodeID, nodeIDs, force, mode, section, run.GraphRevision) {
 			return &run, nil
 		}
 	}
@@ -330,6 +336,9 @@ func findDuplicateQueuedRun(ctx context.Context, tx *gorm.DB, graphID, scope str
 
 // validateGraphRunRequest 拒绝 graph+force，以及没有显式目标的 force / document_action。
 func validateGraphRunRequest(req GraphRunRequest) error {
+	if req.DocumentSection != "" && req.DocumentAction == "" {
+		return apperr.Validation("document_section 必须指定 document_action")
+	}
 	scope := req.Scope
 	if scope == "" {
 		scope = RunScopeGraph
@@ -375,11 +384,12 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 	}
 	run := graphRunFromSchema(rec)
 	req := GraphRunRequest{
-		Scope:          run.RunScope,
-		NodeID:         run.RequestedNodeID,
-		NodeIDs:        run.RequestedNodeIDs,
-		Force:          run.Force,
-		DocumentAction: run.DocumentAction,
+		Scope:           run.RunScope,
+		NodeID:          run.RequestedNodeID,
+		NodeIDs:         run.RequestedNodeIDs,
+		Force:           run.Force,
+		DocumentAction:  run.DocumentAction,
+		DocumentSection: run.DocumentSection,
 	}
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
@@ -673,6 +683,7 @@ func graphRunFromSchema(rec schema.WorkflowGraphRuns) graphRunRow {
 				run.Force = force
 			}
 			run.DocumentAction = validDocumentAction(asString(meta["document_action"]))
+			run.DocumentSection = asString(meta["document_section"])
 			run.RequestedNodeIDs = stringSliceField(meta["requested_node_ids"])
 		}
 	}
@@ -811,11 +822,12 @@ func retryGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID s
 		return graphRunSubmission{}, apperr.Validation("该工作流运行不可重试")
 	}
 	return submitGraphRun(ctx, tx, productID, graphID, GraphRunRequest{
-		Scope:          source.RunScope,
-		NodeID:         source.RequestedNodeID,
-		NodeIDs:        source.RequestedNodeIDs,
-		Force:          source.Force,
-		DocumentAction: source.DocumentAction,
+		Scope:           source.RunScope,
+		NodeID:          source.RequestedNodeID,
+		NodeIDs:         source.RequestedNodeIDs,
+		Force:           source.Force,
+		DocumentAction:  source.DocumentAction,
+		DocumentSection: source.DocumentSection,
 	})
 }
 

@@ -62,6 +62,7 @@ type ImageInputView struct {
 	TextSettings          map[string]any `json:"text_settings"`
 	InheritedPrompt       map[string]any `json:"inherited_prompt"`
 	InheritedTextSettings map[string]any `json:"inherited_text_settings"`
+	InheritedVisual       map[string]any `json:"inherited_visual"`
 }
 
 // EdgeSummary 是 NodeView.incoming / outgoing 里的短边，给检查器画端口用，不是整图边列表。
@@ -241,6 +242,9 @@ func buildProjection(
 				base, baseSpec, _, _ := resolveImageDocument(inherited, node.ID, sources)
 				imageInput.InheritedPrompt = base
 				imageInput.InheritedTextSettings = map[string]any{"policy": baseSpec["text_policy"], "language": baseSpec["text_language"]}
+				if _, _, visual, _, err := collectPromptInputs(applied, node.ID, sources); err == nil {
+					imageInput.InheritedVisual = visual
+				}
 			}
 		}
 		if node.NodeType == NodeImageAsset {

@@ -129,6 +129,7 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		}
 	}
 	if strings.TrimSpace(req.VariationInstruction) != "" {
+		briefLines = append(briefLines, "以下本图补充要求仅在不违反商品事实、必须遵守、不得出现和商品保留要求时生效。")
 		briefLines = append(briefLines, "变化："+strings.TrimSpace(req.VariationInstruction))
 	}
 	return strings.Join(uniquePromptLines(briefLines), "\n")

@@ -77,9 +77,9 @@ func documentSections(nodeType NodeType) []DocumentSectionDefinition {
 		return []DocumentSectionDefinition{
 			{Key: "objective", Fields: []string{"design_goal"}},
 			{Key: "subject", Fields: []string{"product_fidelity"}},
-			{Key: "composition", Fields: []string{"composition"}},
-			{Key: "visual_style", Fields: []string{"content", "atmosphere"}},
-			{Key: "copy", Fields: []string{"text"}},
+			{Key: "composition", Fields: []string{"composition.layout", "composition.viewpoint", "composition.product_share_percent", "content.background"}},
+			{Key: "visual_style", Fields: []string{"content.focus", "content.selling_points", "content.decorations", "atmosphere"}},
+			{Key: "copy", Fields: []string{"text", "composition.copy_regions"}},
 			{Key: "constraints", Fields: []string{"shared_rules", "creative_boundary"}},
 		}
 	default:
@@ -95,6 +95,20 @@ func documentBaseHash(node AppliedNode) string {
 	})
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
+}
+
+func validateDocumentSection(nodeType NodeType, section string) error {
+	if section == "" {
+		return nil
+	}
+	if nodeType == NodeImagePrompt {
+		for _, definition := range documentSections(nodeType) {
+			if definition.Key == section {
+				return nil
+			}
+		}
+	}
+	return apperr.Validation("document_section 只支持画面方案的有效章节")
 }
 
 func proposedDocumentConfig(node AppliedNode, payload map[string]any, action string) map[string]any {
@@ -132,11 +146,32 @@ func visibleDocument(nodeType NodeType, config map[string]any) map[string]any {
 func pickDocumentFields(source map[string]any, fields []string) map[string]any {
 	out := map[string]any{}
 	for _, field := range fields {
-		if value, ok := source[field]; ok {
-			out[field] = cloneValue(value)
-		}
+		copyDocumentField(out, source, strings.Split(field, "."))
 	}
 	return out
+}
+
+func copyDocumentField(target, source map[string]any, path []string) {
+	key := path[0]
+	if len(path) == 1 {
+		if value, ok := source[key]; ok {
+			target[key] = cloneValue(value)
+		} else {
+			delete(target, key)
+		}
+		return
+	}
+	sourceChild, _ := source[key].(map[string]any)
+	targetChild, _ := target[key].(map[string]any)
+	if targetChild == nil {
+		targetChild = map[string]any{}
+	}
+	copyDocumentField(targetChild, sourceChild, path[1:])
+	if len(targetChild) > 0 {
+		target[key] = targetChild
+	} else {
+		delete(target, key)
+	}
 }
 
 func candidateSections(nodeType NodeType, current, candidate map[string]any) []DocumentCandidateSection {
@@ -176,11 +211,7 @@ func applyDocumentSections(node AppliedNode, candidateConfig map[string]any, req
 	candidateVisible := visibleDocument(node.NodeType, candidateConfig)
 	for key := range selected {
 		for _, field := range allowed[key].Fields {
-			if value, ok := candidateVisible[field]; ok {
-				currentVisible[field] = cloneValue(value)
-			} else {
-				delete(currentVisible, field)
-			}
+			copyDocumentField(currentVisible, candidateVisible, strings.Split(field, "."))
 		}
 	}
 	switch node.NodeType {

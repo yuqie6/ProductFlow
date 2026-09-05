@@ -56,6 +56,7 @@ type PromptRequest struct {
 	CurrentPrompt       map[string]any // seed 或当前 prompt 文档
 	// DocumentAction 是 complete|rewrite|replace；空视为 complete。
 	DocumentAction   string
+	DocumentSection  string
 	CurrentDocument  map[string]any   // complete/rewrite 时的当前文稿；seed 起草可空
 	VisualExceptions []map[string]any // 内联 overlay 拆出的例外；完整 visual 时为 nil
 	TextPolicy       string           // none|required 等，来自下游或 listing

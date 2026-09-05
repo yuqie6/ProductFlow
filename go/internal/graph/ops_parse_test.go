@@ -204,3 +204,27 @@ func TestCatalogJSONStableNodeOrderAndLabels(t *testing.T) {
 		t.Fatalf("accepts %+v", accepts)
 	}
 }
+
+func TestNodeDetailReadOnlyQuestionsAndReferenceNote(t *testing.T) {
+	brief, _ := nodeConfigFields(NodeCreativeBrief)
+	for _, field := range brief {
+		if field.key == "fact_gaps" && field.control != "hidden" {
+			t.Fatal("pending facts must not be editable as creative requirements")
+		}
+	}
+	asset, _ := nodeConfigFields(NodeImageAsset)
+	for _, field := range asset {
+		if field.key == "label" && field.control != "textarea" {
+			t.Fatal("reference notes need a multiline control")
+		}
+	}
+	config := map[string]any{"goal": "展示杯身", "fact_gaps": []any{"容量待确认"}}
+	normalized, err := NormalizeNodeConfig(NodeCreativeBrief, config)
+	if err != nil || !documentValueEqual(normalized["fact_gaps"], config["fact_gaps"]) {
+		t.Fatalf("read-only questions must survive normalization: %+v, %v", normalized, err)
+	}
+	merged := mergeGeneratedBrief(config, map[string]any{"goal": "展示杯柄", "fact_gaps": []any{"材质待确认"}}, "rewrite", OriginAuthored)
+	if !documentValueEqual(merged["fact_gaps"], []any{"材质待确认"}) {
+		t.Fatalf("provider still owns pending questions: %+v", merged)
+	}
+}

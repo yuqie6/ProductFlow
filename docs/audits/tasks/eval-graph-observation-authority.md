@@ -22,7 +22,7 @@ L1 图工具执行、拒绝及后续读取由同一真实 Go 合同决定。合�
 
 ## 前置与并行
 
-- 前置：`node-detail-redesign.md` 完成并提交稳定节点/config/catalog/wire 合同；该任务仍独占 `go/internal/graph/` 与必要 Agent wire 适配。不得在其未提交改动上生成正式观察证据。
+- 前置：[节点重构](archive/node-detail-redesign.md) 已在 `44078831` 提交；后续 [节点合同补齐](archive/node-detail-contract-completion.md) 已完成实现与验收，固定版本通过该归档的 Git 历史定位；执行本任务前仍需确认提交成功、当前占用和隔离资源。字段变更与跨消费者回归见该归档「固定合同交接」，不得在未提交改动上生成正式观察证据。
 - 已交付：读取义务修复 `8cf6e08a`，不可测导出 `3e5b3972`，未知终态边界 `e48ab7fd`。
 - 采集使用独立固定 checkout、隔离测试 PostgreSQL 与独立 STORAGE_ROOT。先核实测试宿主的数据库命名、清理和并发，不能只凭独立进程宣称隔离；不修改共享 provider、DB 或 worker。
 - 本任务不需要真实模型请求；有效离线/Go 反馈对齐完成后再由开发基线任务付费采证。

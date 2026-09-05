@@ -225,6 +225,7 @@ func promptRequestContent(req graph.PromptRequest, kind string) ([]map[string]an
 		context = map[string]any{
 			"task":                   "generate_ecommerce_image_prompt_artifact",
 			"document_action":        req.DocumentAction,
+			"document_section":       req.DocumentSection,
 			"current_document":       req.CurrentDocument,
 			"generate_from_context":  req.GenerateFromContext,
 			"image_type_key":         emptyToUnspecified(req.ImageTypeKey),

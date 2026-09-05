@@ -1504,6 +1504,7 @@ export interface GraphRunSubmitInput {
   node_ids?: string[] | null;
   force?: boolean;
   document_action?: GraphDocumentAction;
+  document_section?: string;
 }
 
 export type GraphNodeKind = "source" | "document" | "effect";
@@ -1616,6 +1617,7 @@ export interface GraphNode {
     text_settings: GraphTextSettings;
     inherited_prompt: Record<string, unknown>;
     inherited_text_settings: GraphTextSettings;
+    inherited_visual: Record<string, unknown> | null;
   };
   incoming: GraphEdgeSummary[];
   outgoing: GraphEdgeSummary[];
@@ -1804,6 +1806,7 @@ export interface GraphRunPreviewResponse {
   requested_node_ids: string[];
   force: boolean;
   document_action: GraphDocumentAction;
+  document_section: string;
   nodes: GraphRunPreviewNode[];
 }
 

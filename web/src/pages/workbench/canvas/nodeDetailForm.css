@@ -1,0 +1,63 @@
+.node-detail-form {
+  min-width: 0;
+}
+
+.node-detail-form fieldset {
+  min-width: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.node-detail-form > fieldset + fieldset {
+  margin-top: 24px;
+}
+
+.node-detail-form legend {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.node-detail-form fieldset fieldset legend {
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.node-detail-form details {
+  min-width: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.node-detail-form summary {
+  min-height: 36px;
+  padding: 8px 0;
+  font-size: 11px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.node-detail-form summary + div {
+  padding-top: 4px;
+}
+
+.node-detail-form textarea[readonly] {
+  border-color: transparent;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.node-detail-form [data-palette-row] + [data-palette-row] {
+  margin-top: 16px;
+}
+
+@media (max-width: 1023px) {
+  .node-detail-form summary {
+    min-height: 44px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+}

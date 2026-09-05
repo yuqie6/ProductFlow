@@ -55,6 +55,9 @@ import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { CatalogConfigFields } from "./CatalogConfigFields";
 import { NodeDetailFields } from "./NodeDetailFields";
+import { NodeImageHistory } from "./NodeImageHistory";
+import { generationOptionFields } from "./generationOptions";
+import "./nodeDetailForm.css";
 import { DocumentCandidateReview } from "./DocumentCandidateReview";
 import {
   catalogConfigForSave,
@@ -645,7 +648,10 @@ export function GraphNodeInspector({
           <CatalogNodeEditor
             key={node.id}
             node={node}
+            graph={graph}
+            onJump={onJump}
             catalog={catalog}
+            onGenerateSection={(section, action) => submitInspectorRun({ scope: "node", node_id: node.id, force: true, document_action: action, document_section: section })}
             busy={busy}
             graphRevision={graph.revision}
             productId={graph.product_id}
@@ -1039,8 +1045,10 @@ function ProductSourceEditor({
             {factSet ? <span className="text-[10px] text-text-muted">{t("graph.inspector.productFactsVersion", { version: factSet.version })}</span> : null}
           </div>
           <TextInput label={t("detail.inspector.productName")} value={factsForm.name} maxLength={255} disabled={busy} onChange={(name) => setFactsForm({ ...factsForm, name })} />
-          <TextInput label={t("detail.inspector.category")} value={factsForm.category} maxLength={255} disabled={busy} onChange={(category) => setFactsForm({ ...factsForm, category })} />
-          <TextInput label={t("detail.inspector.price")} value={factsForm.price} maxLength={120} disabled={busy} onChange={(price) => setFactsForm({ ...factsForm, price })} />
+          <div className="grid min-w-0 grid-cols-2 gap-3">
+            <TextInput label={t("detail.inspector.category")} value={factsForm.category} maxLength={255} disabled={busy} onChange={(category) => setFactsForm({ ...factsForm, category })} />
+            <TextInput label={t("detail.inspector.price")} value={factsForm.price} maxLength={120} disabled={busy} onChange={(price) => setFactsForm({ ...factsForm, price })} />
+          </div>
           <TextArea label={t("detail.inspector.productDescription")} value={factsForm.source_note} onChange={(source_note) => setFactsForm({ ...factsForm, source_note })} minRows={2} maxRows={8} disabled={busy} />
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -1190,10 +1198,11 @@ function ImageAssetEditor({
         onChange={(config) => editor.update({ ...editor.draft, config })}
         disabled={busy}
       />
+      <div className="grid grid-cols-2 gap-2">
       {onBind ? (
         <Button
           variant="secondary"
-          size="lg"
+          size="sm"
           className="w-full"
           onClick={() => void onBind()}
           disabled={busy}
@@ -1205,20 +1214,25 @@ function ImageAssetEditor({
       {node.bound_asset_id ? (
         <Button
           variant="secondary"
-          size="lg"
+          size="sm"
           className="w-full"
           disabled={busy}
           onClick={() => void unbind()}
         >
+          <XCircle size={14} aria-hidden="true" />
           {t("graph.inspector.unbind")}
         </Button>
       ) : null}
+      </div>
     </AutosaveForm>
   );
 }
 
 function CatalogNodeEditor({
   node,
+  graph,
+  onJump,
+  onGenerateSection,
   catalog,
   busy,
   graphRevision,
@@ -1231,6 +1245,9 @@ function CatalogNodeEditor({
 }: {
   node: GraphNode;
   catalog: GraphNodeCatalog;
+  graph: GraphProjection;
+  onJump?: (nodeId: string) => void;
+  onGenerateSection: (section: string, action: "complete" | "rewrite") => void;
   busy: boolean;
   graphRevision: number;
   productId: string;
@@ -1242,6 +1259,12 @@ function CatalogNodeEditor({
 }) {
   const { t } = useI18n();
   const fields = graphNodeConfigFields(catalog, node.node_type);
+  const optionsQuery = useQuery({
+    queryKey: ["image-generation-options"], queryFn: api.getImageGenerationOptions,
+    enabled: node.node_type === "image_generation",
+  });
+  const hasReferences = node.incoming.some((edge) => edge.role === "reference" && graph.nodes.some((source) => source.id === edge.node_id && (source.bound_asset_id || source.preview_asset_id)));
+  const visibleFields = node.node_type === "image_generation" ? generationOptionFields(fields, optionsQuery.data ?? {}, hasReferences, node.config.image_type_key) : fields;
   const editor = useNodeDraftAutosave<CatalogNodeDraft>({
     serverValue: catalogNodeDraft(node, fields),
     serverEditVersion: graphRevision,
@@ -1264,15 +1287,29 @@ function CatalogNodeEditor({
   return (
     <AutosaveForm editor={editor} busy={busy}>
       {header}
+      {node.node_type === "image_generation" && !sourceAssetId ? <p className="text-xs text-text-muted">{t("nodeDetail.noResult")}</p> : null}
+      {node.node_type === "image_generation" && onPreviewImage ? <NodeImageHistory key={node.id} productId={productId} nodeId={node.id} currentAssetId={sourceAssetId} onPreview={onPreviewImage} /> : null}
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
       <NodeDetailFields
         node={node}
-        fields={fields}
+        graph={graph}
+        onJump={onJump}
+        onGenerateSection={onGenerateSection}
+        fields={visibleFields}
         value={editor.draft.config}
         onChange={(config) => editor.update({ ...editor.draft, config })}
         disabled={busy}
       />
+      {node.node_type === "image_generation" && optionsQuery.isError ? <div role="alert" className="text-xs text-state-error">
+        {t("nodeDetail.optionsUnavailable")}
+        <IconButton label={t("workbench.retry")} onClick={() => void optionsQuery.refetch()}><RotateCcw size={14} /></IconButton>
+      </div> : null}
       {node.node_type === "image_generation" && onPreviewImage ? (
+        <details data-export-settings className="border-t border-border-l1 pt-3">
+          <summary className="cursor-pointer text-xs font-semibold">{t("workflowConfirmation.deliverySpec")}</summary>
+          <div className="space-y-3 pt-3">
+            <CatalogConfigFields fields={fields.filter((field) => field.key === "delivery_spec").map((field) => ({ ...field, panel: null }))}
+              value={editor.draft.config} onChange={(config) => editor.update({ ...editor.draft, config })} disabled={busy} />
         <DeliveryRenditionPanel
           productId={productId}
           sourceAssetId={sourceAssetId}
@@ -1281,6 +1318,8 @@ function CatalogNodeEditor({
           onApplyDeliverySpec={applyDeliverySpec}
           applyDisabled={busy}
         />
+          </div>
+        </details>
       ) : null}
     </AutosaveForm>
   );
@@ -1311,7 +1350,7 @@ function AutosaveForm<T>({
   useEffect(() => registerFlush(flushId, () => editor.flush(true)), [editor.flush, flushId, registerFlush]);
   return (
     <form
-      className="space-y-4 border-b border-border-l1 pb-4"
+      className="node-detail-form space-y-4 border-b border-border-l1 pb-4"
       onSubmit={(event) => {
         event.preventDefault();
         void editor.flush(true).catch(() => undefined);
@@ -1812,7 +1851,7 @@ function nodePreview(node: GraphNode): DownloadableImage | null {
   const assetId = node.preview_asset_id ?? node.bound_asset_id;
   if (!assetId) return null;
   return {
-    previewUrl: api.getProductImageAssetMediaUrl(assetId, "thumbnail"),
+    previewUrl: api.getProductImageAssetMediaUrl(assetId, "preview"),
     downloadUrl: api.getProductImageAssetMediaUrl(assetId),
     filename: `${sanitizeFilenamePart(node.title, "workflow-image")}.png`,
     alt: node.title,

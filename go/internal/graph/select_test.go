@@ -1,6 +1,54 @@
 package graph
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestRunScopesRejectInvalidConfigAndPreviewNamesCause(t *testing.T) {
+	for _, scope := range []string{RunScopeGraph, RunScopeNode, RunScopeToNode, RunScopeSelection} {
+		t.Run(scope, func(t *testing.T) {
+			g := cookSelectGraph()
+			g.Nodes[2].Config["generation_spec"].(map[string]any)["text_policy"] = "none"
+			if _, err := SelectRunNodeIDsWithMode(g, scope, "image", []string{"image"}, nil, false, DocumentActionComplete); err == nil || !strings.Contains(err.Error(), "text_policy") {
+				t.Fatalf("invalid image must reject entire request: %v", err)
+			}
+			preview, err := PlanRun(g, scope, "image", []string{"image"}, nil, false, DocumentActionComplete)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, node := range preview {
+				if node.NodeID == "image" && (node.Action != PlannedBlocked || !strings.Contains(node.Reason, "text_policy")) {
+					t.Fatalf("preview must expose config error: %+v", node)
+				}
+			}
+		})
+	}
+}
+
+func TestRunValidatesFrozenAncestorsOnlyWithinRequestedScope(t *testing.T) {
+	g := cookSelectGraph()
+	g.Nodes[0].DocumentOrigin = OriginAuthored
+	g.Nodes[0].Config["design_goals"] = []any{"retired field"}
+	for _, scope := range []string{RunScopeGraph, RunScopeToNode, RunScopeNode, RunScopeSelection} {
+		if _, err := SelectRunNodeIDsWithMode(g, scope, "image", []string{"image"}, nil, false, DocumentActionComplete); err == nil || !strings.Contains(err.Error(), "design_goals") {
+			t.Fatalf("%s must reject invalid frozen ancestor: %v", scope, err)
+		}
+		preview, err := PlanRun(g, scope, "image", []string{"image"}, nil, false, DocumentActionComplete)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range preview {
+			if node.NodeID == "image" && (node.Action != PlannedBlocked || !strings.Contains(node.Reason, "design_goals")) {
+				t.Fatalf("%s must show invalid ancestor: %+v", scope, node)
+			}
+		}
+	}
+	g.Edges = g.Edges[1:]
+	if _, err := SelectRunNodeIDs(g, RunScopeNode, "image", nil); err != nil {
+		t.Fatalf("unconnected invalid nodes must not block explicit target: %v", err)
+	}
+}
 
 func TestSelectRunNodeIDsEmptyGraph(t *testing.T) {
 	_, err := SelectRunNodeIDs(EmptyGraph, RunScopeGraph, "", nil)

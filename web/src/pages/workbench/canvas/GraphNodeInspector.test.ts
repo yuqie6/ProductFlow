@@ -86,7 +86,7 @@ const catalog: GraphNodeCatalog = {
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
       ], config_fields: [
         field("variation_instruction", "textarea", {
-          label_key: "workflowConfirmation.variation",
+          label_key: "nodeDetail.supplement",
           value_kind: "string_or_null",
           max_length: 4000,
         }),
@@ -211,7 +211,9 @@ describe("GraphNodeInspector", () => {
   });
 
   it("renders generation settings from catalog fields instead of a raw config textarea", () => {
-    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null);
+    const client = new QueryClient();
+    client.setQueryData(["image-generation-options"], { aspect_ratio: ["1:1", "2:3", "3:2"], quality_intent: ["draft", "standard", "high"] });
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
     expect(markup).toContain("画面比例");
     expect(markup).toContain("4:5");
     expect(markup).toContain("还缺画面方案，先连上再运行");
@@ -220,6 +222,12 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("运行该节点");
     expect(markup).toContain("运行到这里");
     expect(markup).not.toContain('data-image-fidelity-panel="true"');
+    expect(markup).not.toContain("imageAspect.width");
+  });
+
+  it("does not expose static generation controls before capabilities are available", () => {
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null);
+    expect(markup).not.toContain("data-image-aspect-ratio-picker");
   });
 
   it("lets an image node run without a reference edge", () => {
@@ -410,7 +418,7 @@ describe("GraphNodeInspector", () => {
 
   it("disables catalog controls while the graph is busy", () => {
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, undefined, catalog, { busy: true });
-    expect(markup).toContain("差异指令");
+    expect(markup).toContain("补充要求");
     expect(markup).toContain('disabled=""');
     expect(markup).toContain('maxLength="4000"');
   });

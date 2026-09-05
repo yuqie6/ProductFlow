@@ -2,6 +2,7 @@ package graph
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -17,7 +18,8 @@ import (
 // Service 必须注入；Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。
 // 提交运行只写 PENDING dispatch，禁止在 handler 里打 broker。不要把本类型当成 graph.Service。
 type HTTP struct {
-	Service Service // 必须注入；改图与跑图都经此入口
+	Service           Service // 必须注入；改图与跑图都经此入口
+	GenerationOptions func(context.Context) (map[string][]string, error)
 	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌；Runtime 失败则拒绝该请求。
 	Settings interface {
 		settings.RuntimeReader
@@ -39,6 +41,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	})
 	v3 := engine.Group("/api/v3", admin)
 	v3.GET("/node-catalog", h.catalog)
+	v3.GET("/image-generation-options", h.generationOptions)
 	v3.POST("/products/:product_id/workflows", h.createEmpty)
 	v3.GET("/products/:product_id/workflows/current", h.current)
 	v3.GET("/products/:product_id/workflows/:workflow_id", h.get)
@@ -62,6 +65,19 @@ func (h HTTP) Register(engine *gin.Engine) {
 // catalog 是 GET /api/v3/node-catalog：200 返回 CatalogJSON。
 func (h HTTP) catalog(c *gin.Context) {
 	c.JSON(http.StatusOK, CatalogJSON())
+}
+
+func (h HTTP) generationOptions(c *gin.Context) {
+	if h.GenerationOptions == nil {
+		c.JSON(http.StatusOK, map[string][]string{})
+		return
+	}
+	out, err := h.GenerationOptions(c.Request.Context())
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // createEmpty 是 POST /api/v3/products/:product_id/workflows：201 空画布；已有 active 图 409。

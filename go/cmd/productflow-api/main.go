@@ -100,8 +100,9 @@ func main() {
 			Settings: settingsStore,
 		},
 		Graph: graph.HTTP{
-			Service:  graphService,
-			Settings: settingsStore,
+			Service:           graphService,
+			GenerationOptions: liveImage.GenerationOptions,
+			Settings:          settingsStore,
 		},
 		Recipe: recipe.HTTP{
 			Service:  recipe.Service{DB: gdb, Products: product.GraphGuard{}},

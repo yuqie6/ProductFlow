@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [node-detail-contract-completion.md](node-detail-contract-completion.md) | 完成 | 六类详情合同、章节候选、能力选项、图片历史与独立导出；非法配置拒绝运行；Go/PG、Web 663、隔离浏览器 14 passed，评测快照另单刷新 |
 | [image-pool-disjoint.md](image-pool-disjoint.md) | 完成 | 参考/金标按下载内容隔离，排除 5 个旧污染 SKU；有效池 195，局部回归通过，正式 live 未完成 |
 | [node-detail-redesign.md](node-detail-redesign.md) | 完成 | 六类侧栏、方案文字与单图继承合同；角色化 prompt；PG、Web 655、隔离浏览器 19 passed，实图质量未评测 |
 | [eval-unobservable-trial-boundary.md](eval-unobservable-trial-boundary.md) | 完成 | 未知工具结果显式不可测，按原始 trial 拒绝整批开发导出；115 passed / 5 skipped，结构观察与有效基线仍待补齐 |

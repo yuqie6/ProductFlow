@@ -20,6 +20,7 @@ interface ImageAspectRatioPickerProps {
   onChange: (value: string) => void;
   presets?: readonly string[];
   disabled?: boolean;
+  allowCustom?: boolean;
 }
 
 function customDraft(value: string): { width: string; height: string } {
@@ -34,6 +35,7 @@ export function ImageAspectRatioPicker({
   onChange,
   presets = DEFAULT_IMAGE_ASPECT_RATIOS,
   disabled = false,
+  allowCustom = true,
 }: ImageAspectRatioPickerProps) {
   const { t } = useI18n();
   const presetValues = useMemo(() => new Set(presets), [presets]);
@@ -77,7 +79,8 @@ export function ImageAspectRatioPicker({
         })}
       </div>
 
-      <div className={`rounded-xl border p-3 ${
+      {!allowCustom && !presetValues.has(value) ? <p className="text-xs text-state-warning">{t("imageAspect.current", { ratio: value })}</p> : null}
+      {allowCustom ? <div className={`rounded-xl border p-3 ${
         !presetValues.has(value) && parseAspectRatio(value)
           ? "border-indigo-200 bg-indigo-50/60 dark:border-violet-400/40 dark:bg-violet-500/10"
           : "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950/50"
@@ -124,7 +127,7 @@ export function ImageAspectRatioPicker({
         <div className={`mt-2 text-[11px] leading-5 ${normalized ? "text-slate-500 dark:text-slate-400" : "text-red-600 dark:text-red-300"}`}>
           {normalized ? t("imageAspect.valid", { ratio: normalized }) : t("imageAspect.invalid")}
         </div>
-      </div>
+      </div> : null}
     </div>
   );
 }

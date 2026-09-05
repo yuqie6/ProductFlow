@@ -482,6 +482,7 @@ func (h HTTP) downloadArchive(c *gin.Context) {
 func (h HTTP) listGalleryAssets(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	out, err := h.Service.ListGalleryAssets(c.Request.Context(), c.Param("product_id"), GalleryListInput{
+		NodeID:        c.Query("node_id"),
 		DirectoryKind: c.DefaultQuery("directory_kind", "all"),
 		DirectoryKey:  c.Query("directory_key"),
 		Query:         c.Query("q"),

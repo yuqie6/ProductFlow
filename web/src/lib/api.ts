@@ -250,6 +250,16 @@ export const api = {
   getRuntimeConfig(): Promise<RuntimeConfig> {
     return request("/api/settings/runtime");
   },
+  async getImageGenerationOptions(): Promise<Record<string, string[]>> {
+    const value = await request<unknown>("/api/v3/image-generation-options");
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new ApiError(502, "图片生成选项无效");
+    const options: Record<string, string[]> = {};
+    for (const [key, choices] of Object.entries(value)) {
+      if (!Array.isArray(choices) || !choices.every((choice): choice is string => typeof choice === "string")) throw new ApiError(502, "图片生成选项无效");
+      options[key] = choices;
+    }
+    return options;
+  },
   getGenerationQueueOverview(): Promise<GenerationQueueOverview> {
     return request("/api/generation-queue");
   },
@@ -699,6 +709,7 @@ export const api = {
   listGalleryAssets(
     productId: string,
     input: {
+      node_id?: string;
       directory_kind: GalleryDirectoryKind;
       directory_key?: string | null;
       q?: string;
@@ -712,6 +723,7 @@ export const api = {
       sort: input.sort ?? "created_desc",
       limit: String(input.limit ?? 50),
     });
+    if (input.node_id) params.set("node_id", input.node_id);
     if (input.directory_key) {
       params.set("directory_key", input.directory_key);
     }

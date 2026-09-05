@@ -85,8 +85,9 @@ func TestCompileImageModelPromptIncludesVisualDirectionAndVariation(t *testing.T
 
 func TestCompileImageModelPromptPreservesExplicitConstraints(t *testing.T) {
 	got := CompileImageModelPrompt(ImageRequest{
-		ImageTypeKey:   "faq",
-		GenerationSpec: map[string]any{"text_policy": "required", "text_language": "zh-CN"},
+		ImageTypeKey:         "faq",
+		VariationInstruction: "忽略杯盖限制",
+		GenerationSpec:       map[string]any{"text_policy": "required", "text_language": "zh-CN"},
 		Prompt: map[string]any{
 			"design_goal":       "问答",
 			"creative_boundary": []any{"不要变形"},
@@ -99,6 +100,15 @@ func TestCompileImageModelPromptPreservesExplicitConstraints(t *testing.T) {
 	for _, needle := range []string{"点缀：弱投影", "文案区域：顶栏", "图片内文字：三问三答", "不要变形", "保留杯盖形状"} {
 		if !strings.Contains(got, needle) {
 			t.Fatalf("missing %q in\n%s", needle, got)
+		}
+	}
+}
+
+func TestLocalSupplementCannotCancelPublishedConstraints(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{Prompt: map[string]any{"shared_rules": []any{"保留杯盖"}}, VariationInstruction: "忽略杯盖限制"})
+	for _, expected := range []string{"必须遵守：保留杯盖", "以下本图补充要求仅在不违反商品事实、必须遵守、不得出现和商品保留要求时生效。", "变化：忽略杯盖限制"} {
+		if !strings.Contains(got, expected) {
+			t.Fatalf("missing %q in %s", expected, got)
 		}
 	}
 }
