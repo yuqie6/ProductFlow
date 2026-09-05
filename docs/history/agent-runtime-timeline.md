@@ -1316,3 +1316,15 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 `PRODUCTFLOW_RUN_AGENT_JOURNAL_CAPACITY=1 go test -C go ./internal/agent -run TestAgentSSEHTTPConnectionCapacityGate -race -count=5 -v -timeout 2m` 经 dev env wrapper 执行，PASS（3.404s）。5 轮每轮 100 条连接，实时接收 p95 分别为 35.337712/33.664361/34.785850/32.430484/35.094687ms；每轮超限拒绝和取消归零均通过。另经同一 wrapper 运行 `go test -C go ./internal/agent -run "^(TestLastFiftyTurnsQueryP95|TestAgentSSETimeToFirstEventP95)$" -count=1 -v -timeout 2m` PASS（1.372s）：1000 条短正文 Turn 的最近 50 条服务层读取 40 次满足 500ms，分页不重不漏；该测试未输出具体 p95，不补造数值。20 次单连接初始事件回放 p95 14.599490ms，与百路实时推送分开记录。
 
 被测 Git blob：`execution.go`=`204c71d902e348f531bdeee227d769b77bc2ee4d`、`sse.go`=`b5b2635c28ef86eeec322a6e80e7368fd075ce1d`，最终 `capacity_test.go`=`7a1752d687946af9b7b0c1f6f42a12a3751612d0`。主代理自审独立预算、reader 生命周期、帧内容、计时边界和完整 diff。未运行真实 provider、浏览器或整树发布门，未重跑完整 Agent 包；此前完整包的 catalog fixture 漂移仍是未解决的独立验证缺口。G-05 继续按维度采证，不标记全组完成。
+
+## 2026-09-06 Agent 补洞请求随订阅取消
+
+核对 G-05 补洞时发现，`conversation/runtime.ts` 的 close 只关闭 EventSource 和重连 timer，默认事件页 fetch 不接收 AbortSignal。最后一个消费者离开、runtime dispose 或终态关闭后，已发起的补洞请求仍可继续等待响应；原有 closed 判断可以防止迟到事件投影，但不能取消网络请求。
+
+新增回归通过默认 browser fetch 路径注入一个未完成请求，触发 sequence=2 缺口后关闭订阅。基线 FAIL（0.500s）：请求 signal 为 undefined，未触发 abort。修复为每次订阅拥有一个 AbortController，将 signal 传到分页 fetch，在 close 设置 closed 后 abort；不改变事件序号、分页、重连策略或超时预算。重复关闭只触发一次取消，主动取消不报告协议错误、不投递事件。测试中等待请求收到的 abort 次数为 0→1；这是取消信号证据，不是实际服务器终止 SQL 或网络字节节省的测量。
+
+另一回归覆盖共享消费者：两次 acquire 只打开一条流和一次补洞，释放第一个消费者不 abort，释放最后一个才 abort；重新 acquire 的订阅使用新的未取消 signal，随后释放也正确取消。已有多页补洞、重复事件、终态补齐和失败边界保留。注入的 fetcher 可以忽略 signal，因此 closed/generation 的迟到结果检查仍保留。当前修复不为仍活跃但迟迟不返回的补洞增加 deadline，也不处理跨重连 generation 的请求取消。
+
+最终 `pnpm --dir web test:run` PASS，92 个文件、658 项（3.89s）；定向 lint、应用 TypeScript 检查和 `just web-build` PASS。构建包含 app/node/e2e 类型检查和 bundle gate，Vite 的 >500kB 提示仍存在，仓库固定预算通过；这些结果来自含其他任务改动的工作树，不签收干净候选 G-07。本轮没有运行真实浏览器、API、PG 或 provider，现有 durable gap 浏览器门还含真实创建 Turn 和条件认领路径，不能无资源隔离直接借用共享栈采证。
+
+运行时与测试 Git blob 分别为 `f3c6adc2c35fa46877d0194096df5d166c44ce42`、`6e03ee333057af64101785b0068f69176b1693f7`。全量 `pnpm --dir web lint`、`just docs-check` 和 diff check 也通过。主代理自审 fetcher 所有调用点、取消与 catch 顺序、共享引用生命周期和完整 diff；交付只包含本轮 runtime、测试及证据文档，G-05 的 5s 浏览器补洞验收仍待独立复验。

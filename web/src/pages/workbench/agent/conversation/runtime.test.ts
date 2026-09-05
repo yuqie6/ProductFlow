@@ -51,6 +51,84 @@ async function flushAsyncWork(): Promise<void> {
 
 describe("ConversationRuntime", () => {
 
+  it("keeps shared repair alive until the last consumer releases it", () => {
+    const sources: FakeEventSource[] = [];
+    const signals: AbortSignal[] = [];
+    const runtime = new ConversationRuntime({
+      key: "shared-repair",
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => {
+        const source = new FakeEventSource();
+        sources.push(source);
+        return source;
+      },
+      fetchEventPage: (_url, signal) => {
+        if (signal) signals.push(signal);
+        return new Promise(() => undefined);
+      },
+    });
+    try {
+      const releaseFirst = runtime.acquire({});
+      const releaseSecond = runtime.acquire({});
+      sources[0]?.emit("turn.started", event(2));
+      expect(signals).toHaveLength(1);
+      releaseFirst();
+      expect(signals[0]?.aborted).toBe(false);
+      expect(sources[0]?.closed).toBe(false);
+      releaseSecond();
+      expect(signals[0]?.aborted).toBe(true);
+      const releaseNext = runtime.acquire({});
+      sources[1]?.emit("turn.started", event(2));
+      expect(signals).toHaveLength(2);
+      expect(signals[1]?.aborted).toBe(false);
+      releaseNext();
+      expect(signals[1]?.aborted).toBe(true);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("aborts an in-flight browser repair when its subscription closes", async () => {
+    const source = new FakeEventSource();
+    let requestSignal: AbortSignal | undefined;
+    let aborts = 0;
+    const protocolErrors = vi.fn();
+    const received = vi.fn();
+    const fetchMock = vi.fn((_url: unknown, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal?.addEventListener("abort", () => {
+          aborts += 1;
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const close = subscribeToConversationEvents({
+      url: "/events",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => source,
+      onEvent: received,
+      onProtocolError: protocolErrors,
+    });
+    try {
+      source.emit("turn.started", event(2));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      close();
+      close();
+      await flushAsyncWork();
+      expect(requestSignal?.aborted).toBe(true);
+      expect(aborts).toBe(1);
+      expect(source.closed).toBe(true);
+      expect(received).not.toHaveBeenCalled();
+      expect(protocolErrors).not.toHaveBeenCalled();
+    } finally {
+      close();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("repairs a sequence gap from the durable event page before delivering buffered events", async () => {
     const source = new FakeEventSource();
     const received: number[] = [];
@@ -74,6 +152,7 @@ describe("ConversationRuntime", () => {
 
     expect(fetchEventPage).toHaveBeenCalledWith(
       "/api/v2/agent-conversations/c/turns/t/events/page?after=1&limit=250",
+      expect.any(AbortSignal),
     );
     expect(received).toEqual([1, 2, 3]);
     expect(source.closed).toBe(false);
@@ -149,8 +228,8 @@ describe("ConversationRuntime", () => {
     source.emit("turn.started", event(252));
     await flushAsyncWork();
 
-    expect(fetchEventPage).toHaveBeenNthCalledWith(1, "/events/page?after=0&limit=250");
-    expect(fetchEventPage).toHaveBeenNthCalledWith(2, "/events/page?after=250&limit=250");
+    expect(fetchEventPage).toHaveBeenNthCalledWith(1, "/events/page?after=0&limit=250", expect.any(AbortSignal));
+    expect(fetchEventPage).toHaveBeenNthCalledWith(2, "/events/page?after=250&limit=250", expect.any(AbortSignal));
     expect(received).toEqual(Array.from({ length: 252 }, (_, index) => index + 1));
     expect(source.closed).toBe(false);
     close();
@@ -346,7 +425,7 @@ describe("ConversationRuntime", () => {
     sources[0].emit("turn.started", event(1));
     sources[0].emit("error");
 
-    expect(fetchEventPage).toHaveBeenCalledWith("/events-finite/page?after=1&limit=250");
+    expect(fetchEventPage).toHaveBeenCalledWith("/events-finite/page?after=1&limit=250", expect.any(AbortSignal));
     expect(sources).toHaveLength(1);
     expect(sources[0].closed).toBe(true);
     expect(states).toEqual(["connecting", "reconnecting"]);

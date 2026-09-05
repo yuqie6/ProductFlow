@@ -17,7 +17,7 @@ export interface ConversationEventSourceLike {
 }
 
 export type ConversationEventSourceFactory = (url: string) => ConversationEventSourceLike;
-export type ConversationEventPageFetcher = (url: string) => Promise<ConversationEventPage>;
+export type ConversationEventPageFetcher = (url: string, signal?: AbortSignal) => Promise<ConversationEventPage>;
 
 export interface ConversationEventPage {
   items: AgentTurnEvent[];
@@ -164,6 +164,7 @@ interface ConversationEventSubscriptionInput {
 export function subscribeToConversationEvents(input: ConversationEventSubscriptionInput): () => void {
   const createEventSource = input.createEventSource ?? createBrowserEventSource;
   const fetchEventPage = input.fetchEventPage ?? fetchBrowserEventPage;
+  const repairController = new AbortController();
   let closed = false;
   let source: ConversationEventSourceLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -212,7 +213,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
       let tailStreamState: ConversationEventPage["stream_state"] | null = null;
       while (!closed && repairGeneration === generation && hasMore) {
         const previousCursor = cursor;
-        const page = await fetchEventPage(withEventPageCursor(input.url, cursor));
+        const page = await fetchEventPage(withEventPageCursor(input.url, cursor), repairController.signal);
         if (closed || repairGeneration !== generation) return;
         hasMore = page.has_more;
         tailStreamState = page.stream_state;
@@ -262,6 +263,7 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
   const close = () => {
     if (closed) return;
     closed = true;
+    repairController.abort();
     if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
     reconnectTimer = undefined;
     source?.close();
@@ -366,8 +368,8 @@ export function subscribeToConversationEvents(input: ConversationEventSubscripti
   return close;
 }
 
-async function fetchBrowserEventPage(url: string): Promise<ConversationEventPage> {
-  const response = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+async function fetchBrowserEventPage(url: string, signal?: AbortSignal): Promise<ConversationEventPage> {
+  const response = await fetch(url, { credentials: "include", headers: { Accept: "application/json" }, signal });
   if (!response.ok) throw new Error(`Agent 事件补洞请求失败 (${response.status})`);
   return await response.json() as ConversationEventPage;
 }
