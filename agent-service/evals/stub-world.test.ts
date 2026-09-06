@@ -5,6 +5,40 @@ import { loadEvalTaskSet } from "./loader.js";
 import { createStubWorld, EVAL_WORKFLOW_ID, overlayEvalPageContext } from "./stub-world.js";
 
 describe("L1 stub world", () => {
+  it("reads current node and text contracts after every observed intake", async () => {
+    const infographic = new Set(["selling_point", "dimensions", "specifications", "after_sales", "precautions", "faq", "shipping", "brand_story"]);
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const policies = new Set<string>();
+    let checked = 0;
+    for (const task of tasks) {
+      const call = task.reference.scripted_calls.find((call) => call.name === "finalize_product_intake_v1");
+      if (!call) continue;
+      const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
+      await stub.client.finalizeProductIntake("conv", call.params as Parameters<typeof stub.client.finalizeProductIntake>[1], "key");
+      const context = await stub.client.productContext("conv", undefined, "detailed") as { live_graph: { nodes: Array<{ id: string; node_type: string }> } };
+      for (const node of context.live_graph.nodes) {
+        const detail = await stub.client.getNodeDetail("conv", node.id) as { config: Record<string, unknown> };
+        expect(detail.config).not.toHaveProperty("design_goals");
+        if (node.node_type === "image_generation") {
+          expect(detail.config.generation_spec).not.toHaveProperty("text_policy");
+          expect(detail.config.generation_spec).not.toHaveProperty("text_language");
+        }
+        if (node.node_type === "image_prompt") {
+          const imageType = String(detail.config.image_type_key ?? "");
+          const settings = detail.config.text_settings as { policy: string; language: string | null };
+          const want = infographic.has(imageType)
+            ? { policy: "required", language: "zh-CN" }
+            : { policy: "none", language: null };
+          expect(settings).toEqual(want);
+          policies.add(settings.policy);
+        }
+      }
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(policies).toEqual(new Set(["none", "required"]));
+  });
+
   it("uses Go observations for intake expansion and does not invent unknown details", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((task) => task.id === "product-intake-finalize-explicit-minimal-set")!;

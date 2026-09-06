@@ -55,6 +55,20 @@ func TestEvalObservationFixtures(t *testing.T) {
 			identities := map[string]string{}
 			nodes := make([]map[string]any, 0, len(live.Nodes))
 			for i, node := range live.Nodes {
+				if _, err := graph.NormalizeNodeConfig(node.NodeType, node.Config); err != nil {
+					t.Fatalf("%s: generated %s config violates current catalog: %v", task.ID, node.NodeType, err)
+				}
+				if node.NodeType == graph.NodeImagePrompt {
+					settings, ok := node.Config["text_settings"].(map[string]any)
+					imageType, _ := node.Config["image_type_key"].(string)
+					want := map[string]any{"policy": "none", "language": nil}
+					if graph.ImageTypeFamily(imageType) == "infographic" {
+						want = map[string]any{"policy": "required", "language": "zh-CN"}
+					}
+					if !ok || !reflect.DeepEqual(settings, want) {
+						t.Fatalf("%s: %s prompt text defaults = %#v, want %#v", task.ID, imageType, settings, want)
+					}
+				}
 				id := fmt.Sprintf("expanded-%d", i)
 				if node.NodeType == "product_source" {
 					id = "source-1"

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-node-snapshot-sync.md](eval-node-snapshot-sync.md) | 完成 | 按已提交节点合同刷新 Catalog/intake 观察；无 update 模式 Go/PG 一致性与 Node 消费回归通过。图操作真实语义仍由原任务处理 |
 | [image-eval-product-input.md](image-eval-product-input.md) | 完成 | 复用商品 AI 表单、冻结 source_note 与参考身份；整批预检、请求/报告链路及失败不重试回归通过，未新增真实质量分数 |
 | [node-detail-contract-completion.md](node-detail-contract-completion.md) | 完成 | 六类详情合同、章节候选、能力选项、图片历史与独立导出；非法配置拒绝运行；Go/PG、Web 663、隔离浏览器 14 passed，评测快照另单刷新 |
 | [image-pool-disjoint.md](image-pool-disjoint.md) | 完成 | 参考/金标按下载内容隔离，排除 5 个旧污染 SKU；有效池 195，局部回归通过，正式 live 未完成 |

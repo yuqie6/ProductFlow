@@ -168,7 +168,7 @@
           {
             "affects_digest": true,
             "choices": [],
-            "control": "text",
+            "control": "textarea",
             "default": null,
             "fields": [],
             "hint_key": null,
@@ -232,7 +232,7 @@
             "fields": [],
             "hint_key": null,
             "key": "goal",
-            "label_key": "workflowConfirmation.designGoal",
+            "label_key": "nodeDetail.briefGoal",
             "max_length": null,
             "max_value": null,
             "min_value": null,
@@ -249,7 +249,7 @@
             "default": null,
             "fields": [],
             "hint_key": null,
-            "key": "design_goals",
+            "key": "key_messages",
             "label_key": "graph.inspector.designGoals",
             "max_length": null,
             "max_value": null,
@@ -267,7 +267,7 @@
             "default": null,
             "fields": [],
             "hint_key": null,
-            "key": "required_copy",
+            "key": "required_elements",
             "label_key": "graph.inspector.requiredCopy",
             "max_length": null,
             "max_value": null,
@@ -281,12 +281,12 @@
           {
             "affects_digest": true,
             "choices": [],
-            "control": "string_list",
+            "control": "hidden",
             "default": null,
             "fields": [],
             "hint_key": null,
             "key": "fact_gaps",
-            "label_key": "graph.inspector.factGaps",
+            "label_key": null,
             "max_length": null,
             "max_value": null,
             "min_value": null,
@@ -304,7 +304,7 @@
             "fields": [],
             "hint_key": null,
             "key": "prohibitions",
-            "label_key": "workflowConfirmation.creativeBoundary",
+            "label_key": "nodeDetail.prohibitions",
             "max_length": null,
             "max_value": null,
             "min_value": null,
@@ -325,13 +325,13 @@
             "key": "objective",
             "fields": [
               "goal",
-              "design_goals"
+              "key_messages"
             ]
           },
           {
-            "key": "copy",
+            "key": "requirements",
             "fields": [
-              "required_copy"
+              "required_elements"
             ]
           },
           {
@@ -481,27 +481,9 @@
                 "toggle_label_key": null,
                 "value_kind": "object_list",
                 "visible_when": null
-              },
-              {
-                "affects_digest": true,
-                "choices": [],
-                "control": "string_list",
-                "default": null,
-                "fields": [],
-                "hint_key": null,
-                "key": "prohibitions",
-                "label_key": "workflowConfirmation.creativeBoundary",
-                "max_length": null,
-                "max_value": null,
-                "min_value": null,
-                "panel": null,
-                "required": false,
-                "toggle_label_key": null,
-                "value_kind": "string_list",
-                "visible_when": null
               }
             ],
-            "hint_key": "graph.inspector.visualVersionHint",
+            "hint_key": null,
             "key": "visual_overlay",
             "label_key": null,
             "max_length": null,
@@ -530,12 +512,6 @@
             "key": "palette",
             "fields": [
               "colors"
-            ]
-          },
-          {
-            "key": "guardrails",
-            "fields": [
-              "prohibitions"
             ]
           }
         ],
@@ -587,6 +563,70 @@
             "required": false,
             "toggle_label_key": null,
             "value_kind": "string",
+            "visible_when": null
+          },
+          {
+            "affects_digest": true,
+            "choices": [],
+            "control": "group",
+            "default": null,
+            "fields": [
+              {
+                "affects_digest": true,
+                "choices": [
+                  "none",
+                  "required"
+                ],
+                "control": "select",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "policy",
+                "label_key": "agentWorkbench.nodeEditor.textPolicy",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "text",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "language",
+                "label_key": "agentWorkbench.nodeEditor.textLanguage",
+                "max_length": 80,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_or_null",
+                "visible_when": {
+                  "field": "policy",
+                  "op": "in",
+                  "values": [
+                    "required"
+                  ]
+                }
+              }
+            ],
+            "hint_key": null,
+            "key": "text_settings",
+            "label_key": "workflowConfirmation.textContent",
+            "max_length": null,
+            "max_value": null,
+            "min_value": null,
+            "panel": null,
+            "required": false,
+            "toggle_label_key": null,
+            "value_kind": "object",
             "visible_when": null
           },
           {
@@ -674,14 +714,14 @@
                 "default": null,
                 "fields": [
                   {
-                    "affects_digest": true,
+                    "affects_digest": false,
                     "choices": [],
-                    "control": "checkbox",
+                    "control": "hidden",
                     "default": null,
                     "fields": [],
                     "hint_key": null,
                     "key": "complex_structure",
-                    "label_key": "agentWorkbench.nodeEditor.complexStructure",
+                    "label_key": null,
                     "max_length": null,
                     "max_value": null,
                     "min_value": null,
@@ -692,14 +732,14 @@
                     "visible_when": null
                   },
                   {
-                    "affects_digest": true,
+                    "affects_digest": false,
                     "choices": [],
-                    "control": "checkbox",
+                    "control": "hidden",
                     "default": true,
                     "fields": [],
                     "hint_key": null,
                     "key": "product_present",
-                    "label_key": "agentWorkbench.nodeEditor.productPresent",
+                    "label_key": null,
                     "max_length": null,
                     "max_value": null,
                     "min_value": null,
@@ -710,18 +750,18 @@
                     "visible_when": null
                   },
                   {
-                    "affects_digest": true,
+                    "affects_digest": false,
                     "choices": [
                       "none",
                       "allowed",
                       "required"
                     ],
-                    "control": "select",
+                    "control": "hidden",
                     "default": "none",
                     "fields": [],
                     "hint_key": null,
                     "key": "picture_in_picture",
-                    "label_key": "agentWorkbench.nodeEditor.pictureInPicture",
+                    "label_key": null,
                     "max_length": null,
                     "max_value": null,
                     "min_value": null,
@@ -1125,20 +1165,26 @@
           {
             "key": "composition",
             "fields": [
-              "composition"
+              "composition.layout",
+              "composition.viewpoint",
+              "composition.product_share_percent",
+              "content.background"
             ]
           },
           {
             "key": "visual_style",
             "fields": [
-              "content",
+              "content.focus",
+              "content.selling_points",
+              "content.decorations",
               "atmosphere"
             ]
           },
           {
             "key": "copy",
             "fields": [
-              "text"
+              "text",
+              "composition.copy_regions"
             ]
           },
           {
@@ -1201,7 +1247,7 @@
             "fields": [],
             "hint_key": null,
             "key": "variation_instruction",
-            "label_key": "workflowConfirmation.variation",
+            "label_key": "nodeDetail.supplement",
             "max_length": 4000,
             "max_value": null,
             "min_value": null,
@@ -1215,14 +1261,386 @@
             "affects_digest": true,
             "choices": [],
             "control": "group",
+            "default": null,
+            "fields": [
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "group",
+                "default": null,
+                "fields": [
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "text",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "viewpoint",
+                    "label_key": "agentWorkbench.nodeEditor.viewpoint",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "number",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "product_share_percent",
+                    "label_key": "agentWorkbench.nodeEditor.productShare",
+                    "max_length": null,
+                    "max_value": 100,
+                    "min_value": 1,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "number",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "textarea",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "layout",
+                    "label_key": "agentWorkbench.nodeEditor.layout",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string",
+                    "visible_when": null
+                  }
+                ],
+                "hint_key": null,
+                "key": "composition",
+                "label_key": "workflowConfirmation.composition",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "object",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "group",
+                "default": null,
+                "fields": [
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "string_list",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "focus",
+                    "label_key": "agentWorkbench.nodeEditor.focus",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string_list",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "string_list",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "selling_points",
+                    "label_key": "agentWorkbench.nodeEditor.sellingPoints",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string_list",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "textarea",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "background",
+                    "label_key": "agentWorkbench.nodeEditor.background",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "string_list",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "decorations",
+                    "label_key": "agentWorkbench.nodeEditor.decorations",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string_list",
+                    "visible_when": null
+                  }
+                ],
+                "hint_key": null,
+                "key": "content",
+                "label_key": "workflowConfirmation.content",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "object",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "group",
+                "default": null,
+                "fields": [
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "string_list",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "keywords",
+                    "label_key": "agentWorkbench.nodeEditor.keywords",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string_list",
+                    "visible_when": null
+                  },
+                  {
+                    "affects_digest": true,
+                    "choices": [],
+                    "control": "textarea",
+                    "default": null,
+                    "fields": [],
+                    "hint_key": null,
+                    "key": "lighting",
+                    "label_key": "agentWorkbench.nodeEditor.lighting",
+                    "max_length": null,
+                    "max_value": null,
+                    "min_value": null,
+                    "panel": null,
+                    "required": false,
+                    "toggle_label_key": null,
+                    "value_kind": "string",
+                    "visible_when": null
+                  }
+                ],
+                "hint_key": null,
+                "key": "atmosphere",
+                "label_key": "workflowConfirmation.atmosphere",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "object",
+                "visible_when": null
+              }
+            ],
+            "hint_key": null,
+            "key": "prompt_overrides",
+            "label_key": null,
+            "max_length": null,
+            "max_value": null,
+            "min_value": null,
+            "panel": null,
+            "required": false,
+            "toggle_label_key": null,
+            "value_kind": "object_or_null",
+            "visible_when": null
+          },
+          {
+            "affects_digest": true,
+            "choices": [],
+            "control": "group",
+            "default": null,
+            "fields": [
+              {
+                "affects_digest": true,
+                "choices": [
+                  "none",
+                  "required"
+                ],
+                "control": "select",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "policy",
+                "label_key": "agentWorkbench.nodeEditor.textPolicy",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "text",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "language",
+                "label_key": "agentWorkbench.nodeEditor.textLanguage",
+                "max_length": 80,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_or_null",
+                "visible_when": {
+                  "field": "policy",
+                  "op": "in",
+                  "values": [
+                    "required"
+                  ]
+                }
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "text",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "headline",
+                "label_key": "agentWorkbench.nodeEditor.headline",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_or_null",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "text",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "subtitle",
+                "label_key": "agentWorkbench.nodeEditor.subtitle",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_or_null",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "textarea",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "body",
+                "label_key": "agentWorkbench.nodeEditor.body",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_or_null",
+                "visible_when": null
+              },
+              {
+                "affects_digest": true,
+                "choices": [],
+                "control": "string_list",
+                "default": null,
+                "fields": [],
+                "hint_key": null,
+                "key": "copy_regions",
+                "label_key": "agentWorkbench.nodeEditor.copyRegions",
+                "max_length": null,
+                "max_value": null,
+                "min_value": null,
+                "panel": null,
+                "required": false,
+                "toggle_label_key": null,
+                "value_kind": "string_list",
+                "visible_when": null
+              }
+            ],
+            "hint_key": null,
+            "key": "text_override",
+            "label_key": null,
+            "max_length": null,
+            "max_value": null,
+            "min_value": null,
+            "panel": null,
+            "required": false,
+            "toggle_label_key": null,
+            "value_kind": "object_or_null",
+            "visible_when": null
+          },
+          {
+            "affects_digest": true,
+            "choices": [],
+            "control": "group",
             "default": {
               "aspect_ratio": "1:1",
               "background_intent": "auto",
               "quality_intent": "high",
               "reference_fidelity": "high",
-              "resolution_tier": "high",
-              "text_language": null,
-              "text_policy": "none"
+              "resolution_tier": "high"
             },
             "fields": [
               {
@@ -1330,53 +1748,6 @@
                 "toggle_label_key": null,
                 "value_kind": "string",
                 "visible_when": null
-              },
-              {
-                "affects_digest": true,
-                "choices": [
-                  "none",
-                  "allow",
-                  "required"
-                ],
-                "control": "select",
-                "default": "none",
-                "fields": [],
-                "hint_key": null,
-                "key": "text_policy",
-                "label_key": "agentWorkbench.nodeEditor.textPolicy",
-                "max_length": null,
-                "max_value": null,
-                "min_value": null,
-                "panel": "advanced",
-                "required": false,
-                "toggle_label_key": null,
-                "value_kind": "string",
-                "visible_when": null
-              },
-              {
-                "affects_digest": true,
-                "choices": [],
-                "control": "text",
-                "default": null,
-                "fields": [],
-                "hint_key": null,
-                "key": "text_language",
-                "label_key": "agentWorkbench.nodeEditor.textLanguage",
-                "max_length": 80,
-                "max_value": null,
-                "min_value": null,
-                "panel": "advanced",
-                "required": false,
-                "toggle_label_key": null,
-                "value_kind": "string_or_null",
-                "visible_when": {
-                  "field": "text_policy",
-                  "op": "in",
-                  "values": [
-                    "allow",
-                    "required"
-                  ]
-                }
               }
             ],
             "hint_key": null,
@@ -1665,24 +2036,6 @@
                 "toggle_label_key": null,
                 "value_kind": "object_list",
                 "visible_when": null
-              },
-              {
-                "affects_digest": true,
-                "choices": [],
-                "control": "string_list",
-                "default": null,
-                "fields": [],
-                "hint_key": null,
-                "key": "prohibitions",
-                "label_key": "workflowConfirmation.creativeBoundary",
-                "max_length": null,
-                "max_value": null,
-                "min_value": null,
-                "panel": null,
-                "required": false,
-                "toggle_label_key": null,
-                "value_kind": "string_list",
-                "visible_when": null
               }
             ],
             "hint_key": null,
@@ -1751,8 +2104,8 @@
         "config_field_keys": [
           "title",
           "goal",
-          "design_goals",
-          "required_copy",
+          "key_messages",
+          "required_elements",
           "fact_gaps",
           "prohibitions"
         ],
@@ -1766,13 +2119,13 @@
             "key": "objective",
             "fields": [
               "goal",
-              "design_goals"
+              "key_messages"
             ]
           },
           {
-            "key": "copy",
+            "key": "requirements",
             "fields": [
-              "required_copy"
+              "required_elements"
             ]
           },
           {
@@ -1828,12 +2181,6 @@
             "fields": [
               "colors"
             ]
-          },
-          {
-            "key": "guardrails",
-            "fields": [
-              "prohibitions"
-            ]
           }
         ],
         "kind": "document",
@@ -1869,6 +2216,7 @@
         ],
         "config_field_keys": [
           "image_type_key",
+          "text_settings",
           "prompt"
         ],
         "document_actions": [
@@ -1892,20 +2240,26 @@
           {
             "key": "composition",
             "fields": [
-              "composition"
+              "composition.layout",
+              "composition.viewpoint",
+              "composition.product_share_percent",
+              "content.background"
             ]
           },
           {
             "key": "visual_style",
             "fields": [
-              "content",
+              "content.focus",
+              "content.selling_points",
+              "content.decorations",
               "atmosphere"
             ]
           },
           {
             "key": "copy",
             "fields": [
-              "text"
+              "text",
+              "composition.copy_regions"
             ]
           },
           {
@@ -1944,6 +2298,8 @@
         "config_field_keys": [
           "image_type_key",
           "variation_instruction",
+          "prompt_overrides",
+          "text_override",
           "generation_spec",
           "delivery_spec",
           "visual_overlay"

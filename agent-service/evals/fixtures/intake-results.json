@@ -14,7 +14,7 @@
         "order": 1,
         "role": "brief",
         "source_id": "expanded-0",
-        "target_id": "expanded-7"
+        "target_id": "expanded-8"
       },
       {
         "id": "expanded-edge-2",
@@ -88,57 +88,57 @@
       },
       {
         "id": "expanded-edge-12",
-        "order": 0,
-        "role": "prompt",
-        "source_id": "expanded-7",
-        "target_id": "expanded-5"
-      },
-      {
-        "id": "expanded-edge-13",
-        "order": 1,
-        "role": "prompt",
-        "source_id": "expanded-7",
-        "target_id": "expanded-6"
-      },
-      {
-        "id": "expanded-edge-14",
         "order": 1,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-5",
         "target_id": "expanded-2"
       },
       {
-        "id": "expanded-edge-15",
+        "id": "expanded-edge-13",
         "order": 2,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-5",
         "target_id": "expanded-3"
       },
       {
-        "id": "expanded-edge-16",
+        "id": "expanded-edge-14",
         "order": 0,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-5",
         "target_id": "expanded-4"
       },
       {
-        "id": "expanded-edge-17",
+        "id": "expanded-edge-15",
         "order": 4,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
-        "target_id": "expanded-5"
+        "source_id": "expanded-5",
+        "target_id": "expanded-6"
+      },
+      {
+        "id": "expanded-edge-16",
+        "order": 5,
+        "role": "visual_guidance",
+        "source_id": "expanded-5",
+        "target_id": "expanded-7"
+      },
+      {
+        "id": "expanded-edge-17",
+        "order": 3,
+        "role": "visual_guidance",
+        "source_id": "expanded-5",
+        "target_id": "expanded-8"
       },
       {
         "id": "expanded-edge-18",
-        "order": 5,
-        "role": "visual_guidance",
+        "order": 0,
+        "role": "prompt",
         "source_id": "expanded-8",
         "target_id": "expanded-6"
       },
       {
         "id": "expanded-edge-19",
-        "order": 3,
-        "role": "visual_guidance",
+        "order": 1,
+        "role": "prompt",
         "source_id": "expanded-8",
         "target_id": "expanded-7"
       },
@@ -158,14 +158,14 @@
       },
       {
         "id": "expanded-edge-22",
-        "order": 1,
+        "order": 0,
         "role": "facts",
         "source_id": "source-1",
-        "target_id": "expanded-7"
+        "target_id": "expanded-5"
       },
       {
         "id": "expanded-edge-23",
-        "order": 0,
+        "order": 1,
         "role": "facts",
         "source_id": "source-1",
         "target_id": "expanded-8"
@@ -185,9 +185,9 @@
       {
         "id": "expanded-group-1",
         "member_ids": [
-          "expanded-5",
           "expanded-6",
-          "expanded-7"
+          "expanded-7",
+          "expanded-8"
         ],
         "title": "细节展示图"
       }
@@ -242,9 +242,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "hero",
           "variation_instruction": "第 1 张，共 2 张。另一张封面：棚拍、包装或使用瞬间择一，与其他封面不同，不要画购物 App 货架。"
@@ -269,9 +267,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "hero",
           "variation_instruction": "第 2 张，共 2 张。另一张封面：棚拍、包装或使用瞬间择一，与其他封面不同，不要画购物 App 货架。"
@@ -284,12 +280,22 @@
         "config": {
           "image_type_key": "hero",
           "prompt": {
-            "design_goal": "封面主图：买家问题：这是什么商品？成色和轮廓过不过关？\n好图：电商商品封面。商品占画面约 70%，棚灯均匀或品类光线清楚，缩小后轮廓仍可认。可以是干净棚拍、包装展示、使用瞬间，或品类海报（一句利益叠在商品上）。若画面有字，只留一句高对比利益点，例如数量、加厚、效果。\n失败：缩略图里认不出商品；和详情卖点图一样布满引导线；价签、倒计时、满屏爆炸贴；把购物 App 的搜索栏、双列货架、底栏或卡片边框画进画面。\n工艺：中长焦减少透视变形；轮廓光或侧光画出体积；背景为识别服务不是故事。服装看版型或成套轮廓；玻璃看边缘高光。利益点文字若出现，放边角或底部一条，不要挡住商品身份。"
+            "design_goal": "封面主图：商品封面，棚拍或使用瞬间，缩略图能认"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-4",
         "node_type": "image_prompt",
-        "title": "封面主图提示词"
+        "title": "封面主图方案"
+      },
+      {
+        "config": {},
+        "id": "expanded-5",
+        "node_type": "visual_system",
+        "title": "系列风格"
       },
       {
         "config": {
@@ -307,14 +313,12 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "detail",
           "variation_instruction": "第 1 张，共 2 张。机位或用途与其他张不同。"
         },
-        "id": "expanded-5",
+        "id": "expanded-6",
         "node_type": "image_generation",
         "title": "细节展示图 1"
       },
@@ -334,14 +338,12 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "detail",
           "variation_instruction": "第 2 张，共 2 张。机位或用途与其他张不同。"
         },
-        "id": "expanded-6",
+        "id": "expanded-7",
         "node_type": "image_generation",
         "title": "细节展示图 2"
       },
@@ -349,18 +351,16 @@
         "config": {
           "image_type_key": "detail",
           "prompt": {
-            "design_goal": "细节展示图：买家问题：摸上去、做工、关键结构经不经看？\n好图：只拍一处，例如接缝、织纹、玻璃厚度、瓶口密封、五金或内里。该处占满画面；侧光扫过表面，高光和阴影让材质可读。能当品质证据，不能当首图的中心裁切。\n失败：首图或场景图裁一刀；距离不够仍是整件商品加同一背景；正面平光把纹理抹平；同时讲三个工艺点。\n工艺：微距或近摄；侧光或掠射光；焦点在被证明的那一处。玻璃看口沿、厚底、密封；服装看线迹、面料组织、扣眼。默认无字。"
+            "design_goal": "细节展示图：材质和工艺特写"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
-        "id": "expanded-7",
-        "node_type": "image_prompt",
-        "title": "细节展示图提示词"
-      },
-      {
-        "config": {},
         "id": "expanded-8",
-        "node_type": "visual_system",
-        "title": "视觉规范"
+        "node_type": "image_prompt",
+        "title": "细节展示图方案"
       },
       {
         "config": {
@@ -403,7 +403,7 @@
         "order": 1,
         "role": "brief",
         "source_id": "expanded-0",
-        "target_id": "expanded-5"
+        "target_id": "expanded-6"
       },
       {
         "id": "expanded-edge-2",
@@ -456,36 +456,36 @@
       },
       {
         "id": "expanded-edge-9",
-        "order": 0,
-        "role": "prompt",
-        "source_id": "expanded-5",
-        "target_id": "expanded-4"
-      },
-      {
-        "id": "expanded-edge-10",
         "order": 1,
         "role": "visual_guidance",
-        "source_id": "expanded-6",
+        "source_id": "expanded-4",
         "target_id": "expanded-2"
       },
       {
-        "id": "expanded-edge-11",
+        "id": "expanded-edge-10",
         "order": 0,
         "role": "visual_guidance",
-        "source_id": "expanded-6",
+        "source_id": "expanded-4",
         "target_id": "expanded-3"
       },
       {
-        "id": "expanded-edge-12",
+        "id": "expanded-edge-11",
         "order": 3,
         "role": "visual_guidance",
-        "source_id": "expanded-6",
-        "target_id": "expanded-4"
+        "source_id": "expanded-4",
+        "target_id": "expanded-5"
+      },
+      {
+        "id": "expanded-edge-12",
+        "order": 2,
+        "role": "visual_guidance",
+        "source_id": "expanded-4",
+        "target_id": "expanded-6"
       },
       {
         "id": "expanded-edge-13",
-        "order": 2,
-        "role": "visual_guidance",
+        "order": 0,
+        "role": "prompt",
         "source_id": "expanded-6",
         "target_id": "expanded-5"
       },
@@ -505,14 +505,14 @@
       },
       {
         "id": "expanded-edge-16",
-        "order": 1,
+        "order": 0,
         "role": "facts",
         "source_id": "source-1",
-        "target_id": "expanded-5"
+        "target_id": "expanded-4"
       },
       {
         "id": "expanded-edge-17",
-        "order": 0,
+        "order": 1,
         "role": "facts",
         "source_id": "source-1",
         "target_id": "expanded-6"
@@ -531,8 +531,8 @@
       {
         "id": "expanded-group-1",
         "member_ids": [
-          "expanded-4",
-          "expanded-5"
+          "expanded-5",
+          "expanded-6"
         ],
         "title": "细节展示图"
       }
@@ -587,9 +587,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "hero"
         },
@@ -601,12 +599,22 @@
         "config": {
           "image_type_key": "hero",
           "prompt": {
-            "design_goal": "封面主图：买家问题：这是什么商品？成色和轮廓过不过关？\n好图：电商商品封面。商品占画面约 70%，棚灯均匀或品类光线清楚，缩小后轮廓仍可认。可以是干净棚拍、包装展示、使用瞬间，或品类海报（一句利益叠在商品上）。若画面有字，只留一句高对比利益点，例如数量、加厚、效果。\n失败：缩略图里认不出商品；和详情卖点图一样布满引导线；价签、倒计时、满屏爆炸贴；把购物 App 的搜索栏、双列货架、底栏或卡片边框画进画面。\n工艺：中长焦减少透视变形；轮廓光或侧光画出体积；背景为识别服务不是故事。服装看版型或成套轮廓；玻璃看边缘高光。利益点文字若出现，放边角或底部一条，不要挡住商品身份。"
+            "design_goal": "封面主图：商品封面，棚拍或使用瞬间，缩略图能认"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-3",
         "node_type": "image_prompt",
-        "title": "封面主图提示词"
+        "title": "封面主图方案"
+      },
+      {
+        "config": {},
+        "id": "expanded-4",
+        "node_type": "visual_system",
+        "title": "系列风格"
       },
       {
         "config": {
@@ -624,13 +632,11 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "detail"
         },
-        "id": "expanded-4",
+        "id": "expanded-5",
         "node_type": "image_generation",
         "title": "细节展示图 1"
       },
@@ -638,18 +644,16 @@
         "config": {
           "image_type_key": "detail",
           "prompt": {
-            "design_goal": "细节展示图：买家问题：摸上去、做工、关键结构经不经看？\n好图：只拍一处，例如接缝、织纹、玻璃厚度、瓶口密封、五金或内里。该处占满画面；侧光扫过表面，高光和阴影让材质可读。能当品质证据，不能当首图的中心裁切。\n失败：首图或场景图裁一刀；距离不够仍是整件商品加同一背景；正面平光把纹理抹平；同时讲三个工艺点。\n工艺：微距或近摄；侧光或掠射光；焦点在被证明的那一处。玻璃看口沿、厚底、密封；服装看线迹、面料组织、扣眼。默认无字。"
+            "design_goal": "细节展示图：材质和工艺特写"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
-        "id": "expanded-5",
-        "node_type": "image_prompt",
-        "title": "细节展示图提示词"
-      },
-      {
-        "config": {},
         "id": "expanded-6",
-        "node_type": "visual_system",
-        "title": "视觉规范"
+        "node_type": "image_prompt",
+        "title": "细节展示图方案"
       },
       {
         "config": {
@@ -710,129 +714,129 @@
       },
       {
         "id": "expanded-edge-4",
-        "order": 0,
-        "role": "prompt",
-        "source_id": "expanded-15",
-        "target_id": "expanded-14"
-      },
-      {
-        "id": "expanded-edge-5",
-        "order": 0,
-        "role": "prompt",
-        "source_id": "expanded-17",
-        "target_id": "expanded-16"
-      },
-      {
-        "id": "expanded-edge-6",
         "order": 11,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-0"
       },
       {
-        "id": "expanded-edge-7",
+        "id": "expanded-edge-5",
         "order": 5,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-10"
       },
       {
-        "id": "expanded-edge-8",
+        "id": "expanded-edge-6",
         "order": 6,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-11"
       },
       {
-        "id": "expanded-edge-9",
+        "id": "expanded-edge-7",
         "order": 7,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-12"
       },
       {
-        "id": "expanded-edge-10",
+        "id": "expanded-edge-8",
         "order": 3,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-13"
       },
       {
-        "id": "expanded-edge-11",
+        "id": "expanded-edge-9",
         "order": 15,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
-        "target_id": "expanded-14"
-      },
-      {
-        "id": "expanded-edge-12",
-        "order": 14,
-        "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-15"
       },
       {
-        "id": "expanded-edge-13",
-        "order": 9,
+        "id": "expanded-edge-10",
+        "order": 14,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-16"
       },
       {
-        "id": "expanded-edge-14",
-        "order": 8,
+        "id": "expanded-edge-11",
+        "order": 9,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-17"
       },
       {
-        "id": "expanded-edge-15",
+        "id": "expanded-edge-12",
+        "order": 8,
+        "role": "visual_guidance",
+        "source_id": "expanded-14",
+        "target_id": "expanded-18"
+      },
+      {
+        "id": "expanded-edge-13",
         "order": 10,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-1"
       },
       {
-        "id": "expanded-edge-16",
+        "id": "expanded-edge-14",
         "order": 13,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-4"
       },
       {
-        "id": "expanded-edge-17",
+        "id": "expanded-edge-15",
         "order": 12,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-5"
       },
       {
-        "id": "expanded-edge-18",
+        "id": "expanded-edge-16",
         "order": 1,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-6"
       },
       {
-        "id": "expanded-edge-19",
+        "id": "expanded-edge-17",
         "order": 2,
         "role": "visual_guidance",
-        "source_id": "expanded-18",
+        "source_id": "expanded-14",
         "target_id": "expanded-7"
+      },
+      {
+        "id": "expanded-edge-18",
+        "order": 0,
+        "role": "visual_guidance",
+        "source_id": "expanded-14",
+        "target_id": "expanded-8"
+      },
+      {
+        "id": "expanded-edge-19",
+        "order": 4,
+        "role": "visual_guidance",
+        "source_id": "expanded-14",
+        "target_id": "expanded-9"
       },
       {
         "id": "expanded-edge-20",
         "order": 0,
-        "role": "visual_guidance",
-        "source_id": "expanded-18",
-        "target_id": "expanded-8"
+        "role": "prompt",
+        "source_id": "expanded-16",
+        "target_id": "expanded-15"
       },
       {
         "id": "expanded-edge-21",
-        "order": 4,
-        "role": "visual_guidance",
+        "order": 0,
+        "role": "prompt",
         "source_id": "expanded-18",
-        "target_id": "expanded-9"
+        "target_id": "expanded-17"
       },
       {
         "id": "expanded-edge-22",
@@ -853,14 +857,14 @@
         "order": 5,
         "role": "brief",
         "source_id": "expanded-2",
-        "target_id": "expanded-15"
+        "target_id": "expanded-16"
       },
       {
         "id": "expanded-edge-25",
         "order": 2,
         "role": "brief",
         "source_id": "expanded-2",
-        "target_id": "expanded-17"
+        "target_id": "expanded-18"
       },
       {
         "id": "expanded-edge-26",
@@ -1039,21 +1043,21 @@
       },
       {
         "id": "expanded-edge-51",
-        "order": 5,
+        "order": 0,
         "role": "facts",
         "source_id": "source-1",
-        "target_id": "expanded-15"
+        "target_id": "expanded-14"
       },
       {
         "id": "expanded-edge-52",
-        "order": 2,
+        "order": 5,
         "role": "facts",
         "source_id": "source-1",
-        "target_id": "expanded-17"
+        "target_id": "expanded-16"
       },
       {
         "id": "expanded-edge-53",
-        "order": 0,
+        "order": 2,
         "role": "facts",
         "source_id": "source-1",
         "target_id": "expanded-18"
@@ -1128,16 +1132,16 @@
       {
         "id": "expanded-group-4",
         "member_ids": [
-          "expanded-14",
-          "expanded-15"
+          "expanded-15",
+          "expanded-16"
         ],
         "title": "细节展示图"
       },
       {
         "id": "expanded-group-5",
         "member_ids": [
-          "expanded-16",
-          "expanded-17"
+          "expanded-17",
+          "expanded-18"
         ],
         "title": "规格参数图"
       }
@@ -1198,9 +1202,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "sku"
         },
@@ -1212,12 +1214,16 @@
         "config": {
           "image_type_key": "sku",
           "prompt": {
-            "design_goal": "SKU 展示图：买家问题：有哪些颜色、规格或款式，怎么选？\n好图：纯色或白底，均匀棚灯，同一机位高度，商品摆正、边缘干净，同屏可比较。可加短标签区分颜色、尺码或筒高。\n失败：情景棚拍、生活场景或每款不同机位；做成卖点引导线页。\n工艺：均匀棚灯，无投影抢戏，边缘干净。默认无字或仅短标签。"
+            "design_goal": "SKU 展示图：白底规格对照，方便选款"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-1",
         "node_type": "image_prompt",
-        "title": "SKU 展示图提示词"
+        "title": "SKU 展示图方案"
       },
       {
         "config": {},
@@ -1249,9 +1255,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "scene"
         },
@@ -1263,12 +1267,16 @@
         "config": {
           "image_type_key": "scene",
           "prompt": {
-            "design_goal": "场景展示图：买家问题：这是谁的、在哪用、用起来是什么感觉？\n好图：商品在被使用或会被使用的真实环境里，不是放在漂亮静物台上。一到两件说明用途的道具；手、衣架、桌面仪式、窗台都可以，但要回答给谁用。商品对焦清楚，环境可认但后景虚；缩略图里仍能找到商品。光线是环境光或窗光，与首图棚灯、细节侧光不是同一套。\n失败：和首图同一暖白台面只加了一片叶子；氛围大片里找不到商品；道具比商品抢；靠文案解释场景。\n工艺：稍远机位看到环境和比例；景深把空间推后。服装看穿搭场合；香氛或玻璃看陈列位置，例如梳妆台或浴室层架，不是另一张瓶身棚拍。默认无字，故事用画面讲。"
+            "design_goal": "场景展示图：使用场景里拍，商品是主角"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-5",
         "node_type": "image_prompt",
-        "title": "场景展示图提示词"
+        "title": "场景展示图方案"
       },
       {
         "config": {
@@ -1286,9 +1294,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "hero",
           "variation_instruction": "第 1 张，共 2 张。另一张封面：棚拍、包装或使用瞬间择一，与其他封面不同，不要画购物 App 货架。"
@@ -1313,9 +1319,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "hero",
           "variation_instruction": "第 2 张，共 2 张。另一张封面：棚拍、包装或使用瞬间择一，与其他封面不同，不要画购物 App 货架。"
@@ -1328,12 +1332,16 @@
         "config": {
           "image_type_key": "hero",
           "prompt": {
-            "design_goal": "封面主图：买家问题：这是什么商品？成色和轮廓过不过关？\n好图：电商商品封面。商品占画面约 70%，棚灯均匀或品类光线清楚，缩小后轮廓仍可认。可以是干净棚拍、包装展示、使用瞬间，或品类海报（一句利益叠在商品上）。若画面有字，只留一句高对比利益点，例如数量、加厚、效果。\n失败：缩略图里认不出商品；和详情卖点图一样布满引导线；价签、倒计时、满屏爆炸贴；把购物 App 的搜索栏、双列货架、底栏或卡片边框画进画面。\n工艺：中长焦减少透视变形；轮廓光或侧光画出体积；背景为识别服务不是故事。服装看版型或成套轮廓；玻璃看边缘高光。利益点文字若出现，放边角或底部一条，不要挡住商品身份。"
+            "design_goal": "封面主图：商品封面，棚拍或使用瞬间，缩略图能认"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-8",
         "node_type": "image_prompt",
-        "title": "封面主图提示词"
+        "title": "封面主图方案"
       },
       {
         "config": {
@@ -1351,9 +1359,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "selling_point",
           "variation_instruction": "第 1 张，共 4 张。本页只讲一个与其他张不同的钩子；共享店招和版式，不要把全部卖点画进这一页。"
@@ -1378,9 +1384,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "selling_point",
           "variation_instruction": "第 2 张，共 4 张。本页只讲一个与其他张不同的钩子；共享店招和版式，不要把全部卖点画进这一页。"
@@ -1405,9 +1409,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "selling_point",
           "variation_instruction": "第 3 张，共 4 张。本页只讲一个与其他张不同的钩子；共享店招和版式，不要把全部卖点画进这一页。"
@@ -1432,9 +1434,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "selling_point",
           "variation_instruction": "第 4 张，共 4 张。本页只讲一个与其他张不同的钩子；共享店招和版式，不要把全部卖点画进这一页。"
@@ -1447,12 +1447,22 @@
         "config": {
           "image_type_key": "selling_point",
           "prompt": {
-            "design_goal": "核心卖点图：买家问题：为什么买？这一页证明哪一个理由？\n好图：详情转化图。一张一个钩子：大标题加可选副标题，商品在中部，最多两条有事实依据的短利益，带小图标和指到部件的引导线，底部信任条与全套共用店招。多张卖点图共享字体、底栏和强调色，钩子互不重复。只选一张时，才把 3 到 5 条利益收进同一页。商品占比约 40% 到 55%。整张图是完整设计的电商页面。\n失败：纯摄影无字；米白抠图两侧贴字，没有主题、图标体系和底栏；把整套钩子都画进每一张；超过 5 条或墙式说明书；把购物 App 货架画进画面。\n工艺：信息设计优先于棚拍。引导线、小图标、底栏写进文案区域和点缀。中文必须可读、与事实一致。"
+            "design_goal": "核心卖点图：详情转化图，一页一个钩子，标题和店招完整"
+          },
+          "text_settings": {
+            "language": "zh-CN",
+            "policy": "required"
           }
         },
         "id": "expanded-13",
         "node_type": "image_prompt",
-        "title": "核心卖点图提示词"
+        "title": "核心卖点图方案"
+      },
+      {
+        "config": {},
+        "id": "expanded-14",
+        "node_type": "visual_system",
+        "title": "系列风格"
       },
       {
         "config": {
@@ -1470,13 +1480,11 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "detail"
         },
-        "id": "expanded-14",
+        "id": "expanded-15",
         "node_type": "image_generation",
         "title": "细节展示图 1"
       },
@@ -1484,12 +1492,16 @@
         "config": {
           "image_type_key": "detail",
           "prompt": {
-            "design_goal": "细节展示图：买家问题：摸上去、做工、关键结构经不经看？\n好图：只拍一处，例如接缝、织纹、玻璃厚度、瓶口密封、五金或内里。该处占满画面；侧光扫过表面，高光和阴影让材质可读。能当品质证据，不能当首图的中心裁切。\n失败：首图或场景图裁一刀；距离不够仍是整件商品加同一背景；正面平光把纹理抹平；同时讲三个工艺点。\n工艺：微距或近摄；侧光或掠射光；焦点在被证明的那一处。玻璃看口沿、厚底、密封；服装看线迹、面料组织、扣眼。默认无字。"
+            "design_goal": "细节展示图：材质和工艺特写"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
-        "id": "expanded-15",
+        "id": "expanded-16",
         "node_type": "image_prompt",
-        "title": "细节展示图提示词"
+        "title": "细节展示图方案"
       },
       {
         "config": {
@@ -1507,13 +1519,11 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "specifications"
         },
-        "id": "expanded-16",
+        "id": "expanded-17",
         "node_type": "image_generation",
         "title": "规格参数图 1"
       },
@@ -1521,18 +1531,16 @@
         "config": {
           "image_type_key": "specifications",
           "prompt": {
-            "design_goal": "规格参数图：买家问题：关键参数是什么？\n好图：键值对照或指数条，只呈现资料里已有的参数。可以整页表格，不必再放一张商品棚拍。\n失败：虚构参数；做成卖点转化页或墙式说明书。\n工艺：对齐模块、短标签、留白清楚。"
+            "design_goal": "规格参数图：参数对照信息图"
+          },
+          "text_settings": {
+            "language": "zh-CN",
+            "policy": "required"
           }
         },
-        "id": "expanded-17",
-        "node_type": "image_prompt",
-        "title": "规格参数图提示词"
-      },
-      {
-        "config": {},
         "id": "expanded-18",
-        "node_type": "visual_system",
-        "title": "视觉规范"
+        "node_type": "image_prompt",
+        "title": "规格参数图方案"
       },
       {
         "config": {
@@ -1595,7 +1603,7 @@
         "order": 1,
         "role": "brief",
         "source_id": "expanded-0",
-        "target_id": "expanded-7"
+        "target_id": "expanded-8"
       },
       {
         "id": "expanded-edge-2",
@@ -1676,50 +1684,50 @@
       },
       {
         "id": "expanded-edge-13",
-        "order": 0,
-        "role": "prompt",
-        "source_id": "expanded-7",
-        "target_id": "expanded-6"
-      },
-      {
-        "id": "expanded-edge-14",
         "order": 1,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-6",
         "target_id": "expanded-2"
       },
       {
-        "id": "expanded-edge-15",
+        "id": "expanded-edge-14",
         "order": 2,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-6",
         "target_id": "expanded-3"
       },
       {
-        "id": "expanded-edge-16",
+        "id": "expanded-edge-15",
         "order": 3,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-6",
         "target_id": "expanded-4"
       },
       {
-        "id": "expanded-edge-17",
+        "id": "expanded-edge-16",
         "order": 0,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
+        "source_id": "expanded-6",
         "target_id": "expanded-5"
       },
       {
-        "id": "expanded-edge-18",
+        "id": "expanded-edge-17",
         "order": 5,
         "role": "visual_guidance",
-        "source_id": "expanded-8",
-        "target_id": "expanded-6"
+        "source_id": "expanded-6",
+        "target_id": "expanded-7"
+      },
+      {
+        "id": "expanded-edge-18",
+        "order": 4,
+        "role": "visual_guidance",
+        "source_id": "expanded-6",
+        "target_id": "expanded-8"
       },
       {
         "id": "expanded-edge-19",
-        "order": 4,
-        "role": "visual_guidance",
+        "order": 0,
+        "role": "prompt",
         "source_id": "expanded-8",
         "target_id": "expanded-7"
       },
@@ -1739,14 +1747,14 @@
       },
       {
         "id": "expanded-edge-22",
-        "order": 1,
+        "order": 0,
         "role": "facts",
         "source_id": "source-1",
-        "target_id": "expanded-7"
+        "target_id": "expanded-6"
       },
       {
         "id": "expanded-edge-23",
-        "order": 0,
+        "order": 1,
         "role": "facts",
         "source_id": "source-1",
         "target_id": "expanded-8"
@@ -1767,8 +1775,8 @@
       {
         "id": "expanded-group-1",
         "member_ids": [
-          "expanded-6",
-          "expanded-7"
+          "expanded-7",
+          "expanded-8"
         ],
         "title": "规格参数图"
       }
@@ -1823,9 +1831,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "scene",
           "variation_instruction": "第 1 张，共 3 张。机位或用途与其他张不同。"
@@ -1850,9 +1856,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "scene",
           "variation_instruction": "第 2 张，共 3 张。机位或用途与其他张不同。"
@@ -1877,9 +1881,7 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": null,
-            "text_policy": "none"
+            "resolution_tier": "high"
           },
           "image_type_key": "scene",
           "variation_instruction": "第 3 张，共 3 张。机位或用途与其他张不同。"
@@ -1892,12 +1894,22 @@
         "config": {
           "image_type_key": "scene",
           "prompt": {
-            "design_goal": "场景展示图：买家问题：这是谁的、在哪用、用起来是什么感觉？\n好图：商品在被使用或会被使用的真实环境里，不是放在漂亮静物台上。一到两件说明用途的道具；手、衣架、桌面仪式、窗台都可以，但要回答给谁用。商品对焦清楚，环境可认但后景虚；缩略图里仍能找到商品。光线是环境光或窗光，与首图棚灯、细节侧光不是同一套。\n失败：和首图同一暖白台面只加了一片叶子；氛围大片里找不到商品；道具比商品抢；靠文案解释场景。\n工艺：稍远机位看到环境和比例；景深把空间推后。服装看穿搭场合；香氛或玻璃看陈列位置，例如梳妆台或浴室层架，不是另一张瓶身棚拍。默认无字，故事用画面讲。"
+            "design_goal": "场景展示图：使用场景里拍，商品是主角"
+          },
+          "text_settings": {
+            "language": null,
+            "policy": "none"
           }
         },
         "id": "expanded-5",
         "node_type": "image_prompt",
-        "title": "场景展示图提示词"
+        "title": "场景展示图方案"
+      },
+      {
+        "config": {},
+        "id": "expanded-6",
+        "node_type": "visual_system",
+        "title": "系列风格"
       },
       {
         "config": {
@@ -1915,13 +1927,11 @@
             "background_intent": "auto",
             "quality_intent": "high",
             "reference_fidelity": "high",
-            "resolution_tier": "high",
-            "text_language": "zh-CN",
-            "text_policy": "required"
+            "resolution_tier": "high"
           },
           "image_type_key": "specifications"
         },
-        "id": "expanded-6",
+        "id": "expanded-7",
         "node_type": "image_generation",
         "title": "规格参数图 1"
       },
@@ -1929,18 +1939,16 @@
         "config": {
           "image_type_key": "specifications",
           "prompt": {
-            "design_goal": "规格参数图：买家问题：关键参数是什么？\n好图：键值对照或指数条，只呈现资料里已有的参数。可以整页表格，不必再放一张商品棚拍。\n失败：虚构参数；做成卖点转化页或墙式说明书。\n工艺：对齐模块、短标签、留白清楚。"
+            "design_goal": "规格参数图：参数对照信息图"
+          },
+          "text_settings": {
+            "language": "zh-CN",
+            "policy": "required"
           }
         },
-        "id": "expanded-7",
-        "node_type": "image_prompt",
-        "title": "规格参数图提示词"
-      },
-      {
-        "config": {},
         "id": "expanded-8",
-        "node_type": "visual_system",
-        "title": "视觉规范"
+        "node_type": "image_prompt",
+        "title": "规格参数图方案"
       },
       {
         "config": {
