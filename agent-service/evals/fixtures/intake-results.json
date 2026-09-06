@@ -1447,7 +1447,7 @@
         "config": {
           "image_type_key": "selling_point",
           "prompt": {
-            "design_goal": "核心卖点图：详情转化图，一页一个钩子，标题和店招完整"
+            "design_goal": "核心卖点图：详情转化图，一个购买理由配清晰的商品证据"
           },
           "text_settings": {
             "language": "zh-CN",

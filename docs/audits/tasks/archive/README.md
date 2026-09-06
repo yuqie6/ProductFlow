@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-graph-observation-authority.md](eval-graph-observation-authority.md) | 完成 | L1 graph-editing 写入走隔离 testdb Go 宿主；非法配置与多步 apply 由生产合同拒绝。catalog/intake 仍为 fixtures，未跑付费 L1 |
 | [eval-node-snapshot-sync.md](eval-node-snapshot-sync.md) | 完成 | 按已提交节点合同刷新 Catalog/intake 观察；无 update 模式 Go/PG 一致性与 Node 消费回归通过。图操作真实语义仍由原任务处理 |
 | [image-quality-content-candidate.md](image-quality-content-candidate.md) | 完成 | 单张卖点聚焦、图种内容分工、策划标签与成稿分离；生成策略候选通过相关回归，实图改善待固定新批次 |
 | [image-eval-product-input.md](image-eval-product-input.md) | 完成 | 复用商品 AI 表单、冻结 source_note 与参考身份；整批预检、请求/报告链路及失败不重试回归通过，未新增真实质量分数 |

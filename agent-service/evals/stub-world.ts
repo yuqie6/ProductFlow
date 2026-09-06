@@ -21,13 +21,20 @@ const PIXEL_PNG = Buffer.from(
 
 const catalogs = JSON.parse(readFileSync(new URL("./fixtures/catalog.json", import.meta.url), "utf8"));
 const intakeResults = JSON.parse(readFileSync(new URL("./fixtures/intake-results.json", import.meta.url), "utf8"));
-const structuralWrites = JSON.parse(readFileSync(new URL("./fixtures/structural-writes.json", import.meta.url), "utf8")) as Array<{
-  world: string; operations: unknown; removed_node_ids: string[]; removed_edge_ids: string[]; removed_group_ids: string[];
-}>;
+
+export interface GraphAuthority {
+  apply(changeSet: JsonObject, key: string): Promise<JsonObject>;
+  propose(changeSet: JsonObject, key: string): Promise<JsonObject>;
+  discard(proposalID: string | null, key: string): Promise<JsonObject>;
+  productContext(format: string): Promise<JsonObject>;
+  getNodeDetail(nodeID: string): Promise<JsonObject>;
+}
 
 export interface StubWorld {
   client: ProductFlowClient;
   calls: EvalCallRecord[];
+  bindGraphAuthority(authority: GraphAuthority): void;
+  syncGraphRevision(revision: number): void;
 }
 
 export function overlayEvalPageContext(task: EvalTask, world: EvalWorld): EvalTask["page_context"] {
@@ -48,11 +55,11 @@ export function createStubWorld(
   const calls: EvalCallRecord[] = [];
   const library = libraryObservation(task);
   const attempts = new Map<string, number>();
+  let authority: GraphAuthority | null = null;
   let graphRevision = world.live_graph.revision;
   let intake = world.intake;
   let birthExpandable = world.birth_expandable;
   let graph = structuredClone(world.live_graph);
-  let pendingProposalID = world.pending_proposal_id ?? null;
   const record = (name: string, params: unknown): void => {
     calls.push({ name, params: structuredClone(params), ts: new Date().toISOString(), outcome: "unknown" });
   };
@@ -67,8 +74,11 @@ export function createStubWorld(
   const write = (name: string, params: unknown): void => {
     record(name, params);
     maybeReadError(name);
-    validateRevisions(params, graphRevision, task.skill === "media-library-organization" && task.scope === "global"
-      ? { ...world, listed_assets: library.snapshot().items } : world);
+    const graphWrite = name === "apply_graph_change_set_v1" || name === "propose_graph_change_set_v1" || name === "discard_workflow_proposal_v1";
+    if (!authority || !graphWrite) {
+      validateRevisions(params, graphRevision, task.skill === "media-library-organization" && task.scope === "global"
+        ? { ...world, listed_assets: library.snapshot().items } : world);
+    }
     const attempt = (attempts.get(name) ?? 0) + 1;
     attempts.set(name, attempt);
     const conflictLimit = task.inject?.write_409_count;
@@ -76,7 +86,6 @@ export function createStubWorld(
       throw revisionConflict(name, graphRevision);
     }
     if (task.inject?.first_write_409 === name && attempt === 1) {
-      graphRevision += 1;
       throw revisionConflict(name, graphRevision);
     }
   };
@@ -100,11 +109,30 @@ export function createStubWorld(
       id, node_type, title, group_id: groups.find((group) => group.member_ids.includes(id))?.id ?? null,
     }));
     const common = { id: graph.id, title: graph.title, schema_version: 3, revision: graphRevision, nodes };
-    return format === "detailed" ? { ...common, groups,
+    return format === "detailed" ? {
+      ...common, groups,
       edges: (graph.edges ?? []).map(({ id, source_id, target_id, role }) => ({ id, source_node_id: source_id, target_node_id: target_id, role })),
-    } : { ...common, node_count: nodes.length, edge_count: graph.edge_count, group_count: groups.length,
+    } : {
+      ...common, node_count: nodes.length, edge_count: graph.edge_count, group_count: groups.length,
       groups: groups.map(({ id, title, member_ids }) => ({ id, title, member_count: member_ids.length })),
     };
+  };
+  const overlayGoContext = (ctx: Record<string, unknown>, responseFormat: string) => {
+    const product = ctx.product && typeof ctx.product === "object" ? { ...(ctx.product as Record<string, unknown>) } : {};
+    if (payload?.product_name) product.name = productName;
+    const live = ctx.live_graph && typeof ctx.live_graph === "object"
+      ? { ...(ctx.live_graph as Record<string, unknown>) } : {};
+    if (typeof live.revision === "number") graphRevision = live.revision;
+    if (payload?.node_title && Array.isArray(live.nodes)) {
+      live.nodes = (live.nodes as Array<{ id: string; title: string }>).map((node) => (
+        node.id === EVAL_NODE_ID ? { ...node, title: `${node.title}\n${payload.node_title}` } : node
+      ));
+    }
+    return { ...ctx, product, live_graph: Object.keys(live).length > 0 ? live : ctx.live_graph, response_format: responseFormat };
+  };
+  const requireGraphAuthority = (): GraphAuthority => {
+    if (!authority) throw new ProductFlowError(500, "eval_host", "graph write requires Go observation");
+    return authority;
   };
   const failedRun = {
     id: world.failed_run?.id ?? EVAL_RUN_ID,
@@ -196,6 +224,10 @@ export function createStubWorld(
       })),
     productContext: async (_conversationID: string, _signal: AbortSignal | undefined, responseFormat: string) => {
       read("get_product_workflow_context_v1", { response_format: responseFormat });
+      if (authority) {
+        const ctx = await authority.productContext(responseFormat) as Record<string, unknown>;
+        return overlayGoContext(ctx, responseFormat);
+      }
       return {
         schema_version: 1,
         product: { id: EVAL_PRODUCT_ID, name: productName },
@@ -275,6 +307,13 @@ export function createStubWorld(
     assetContent: async () => ({ data: PIXEL_PNG.toString("base64"), mediaType: "image/png", sizeBytes: PIXEL_PNG.length }),
     getNodeDetail: async (_conversationID: string, nodeID: string) => {
       read("get_node_detail_v1", { node_id: nodeID });
+      if (authority) {
+        const detail = await authority.getNodeDetail(nodeID) as Record<string, unknown>;
+        if (payload?.node_title && detail.id === EVAL_NODE_ID && typeof detail.title === "string") {
+          return { ...detail, title: `${detail.title}\n${payload.node_title}` };
+        }
+        return detail;
+      }
       const node = graphNodes().find((node) => node.id === nodeID);
       if (!node) throw new ProductFlowError(404, "not_found", "node not found");
       return {
@@ -282,68 +321,22 @@ export function createStubWorld(
         config: (node as { config?: unknown }).config ?? {},
       };
     },
-    applyGraphChangeSet: async (_conversationID: string, changeSet: JsonObject) => {
+    applyGraphChangeSet: async (_conversationID: string, changeSet: JsonObject, key = "") => {
       write("apply_graph_change_set_v1", changeSet);
-      const next = structuredClone(graph);
-      for (const operation of changeSet.operations as Array<Record<string, unknown>>) {
-        const node = next.nodes.find((node) => node.id === operation.node_ref);
-        switch (operation.op) {
-          case "rename_node":
-          case "update_node_config":
-            if (!node) throw new ProductFlowError(404, "not_found", "node not found");
-            if (operation.op === "rename_node") node.title = String(operation.title);
-            else node.config = structuredClone(operation.config as Record<string, unknown>);
-            break;
-          case "rename_group": {
-            const group = next.groups?.find((group) => group.id === operation.group_ref);
-            if (!group) throw new ProductFlowError(404, "not_found", "group not found");
-            group.title = String(operation.title);
-            break;
-          }
-          case "move_nodes":
-            for (const [id, x, y] of operation.nodes as Array<[string, number, number]>) {
-              const target = next.nodes.find((node) => node.id === id);
-              if (!target) throw new ProductFlowError(404, "not_found", "node not found");
-              Object.assign(target, { position_x: x, position_y: y });
-            }
-            break;
-          case "move_nodes_to_group": {
-            const ids = operation.node_refs as string[];
-            const group = next.groups?.find((group) => group.id === operation.group_ref);
-            if (!group || ids.some((id) => !next.nodes.some((node) => node.id === id))) throw new ProductFlowError(404, "not_found", "node or group not found");
-            for (const current of next.groups ?? []) current.member_ids = current.member_ids.filter((id) => !ids.includes(id));
-            group.member_ids.push(...ids);
-            break;
-          }
-          default: {
-            const observed = structuralWrites.find((snapshot) => snapshot.world === task.world && isDeepStrictEqual(snapshot.operations, changeSet.operations));
-            if (!observed) throw new ProductFlowError(422, "eval_unobservable", "structural apply requires Go observation");
-            if (observed.removed_node_ids.some((id) => !next.nodes.some((node) => node.id === id)) || observed.removed_edge_ids.some((id) => !next.edges?.some((edge) => edge.id === id))) throw new ProductFlowError(404, "not_found", "structural target not found");
-            next.nodes = next.nodes.filter((node) => !observed.removed_node_ids.includes(node.id));
-            next.edges = next.edges?.filter((edge) => !observed.removed_edge_ids.includes(edge.id));
-            next.groups = next.groups?.filter((group) => !observed.removed_group_ids.includes(group.id)).map((group) => ({ ...group, member_ids: group.member_ids.filter((id) => !observed.removed_node_ids.includes(id)) }));
-            next.node_count = next.nodes.length; next.edge_count = next.edges?.length ?? 0; next.group_count = next.groups?.length ?? 0;
-          }
-        }
-      }
-      graph = next;
-      graphRevision += 1;
-      return { accepted: true, applied: true, revision: graphRevision };
+      const result = await requireGraphAuthority().apply(changeSet, key);
+      if (typeof result.revision === "number") graphRevision = result.revision;
+      return result;
     },
     reconcileApplyGraphChangeSet: async () => ({ state: "applied", result: { accepted: true } }),
-    proposeGraphChangeSet: async (_conversationID: string, changeSet: JsonObject) => {
+    proposeGraphChangeSet: async (_conversationID: string, changeSet: JsonObject, key = "") => {
       write("propose_graph_change_set_v1", changeSet);
-      if (pendingProposalID) throw new ProductFlowError(409, "conflict", "pending proposal already exists");
-      pendingProposalID = "p1";
-      return { accepted: true, applied: false, pending_confirmation: true, proposal_id: "p1" };
+      return requireGraphAuthority().propose(changeSet, key);
     },
     reconcileProposeGraphChangeSet: async () => ({ state: "applied", result: { accepted: true } }),
-    discardGraphProposal: async (_conversationID: string, proposalID: string | null) => {
+    discardGraphProposal: async (_conversationID: string, proposalID: string | null, key = "") => {
       const params = proposalID ? { proposal_id: proposalID } : {};
       write("discard_workflow_proposal_v1", params);
-      if (!pendingProposalID || (proposalID && proposalID !== pendingProposalID)) throw new ProductFlowError(404, "not_found", "pending proposal not found");
-      pendingProposalID = null;
-      return { discarded: true };
+      return requireGraphAuthority().discard(proposalID, key);
     },
     reconcileDiscardGraphProposal: async () => ({ state: "applied", result: { discarded: true } }),
     cancelWorkflowRun: async (_conversationID: string, runIDValue: string) => {
@@ -368,9 +361,11 @@ export function createStubWorld(
       intake = { ...structuredClone(snapshot.intake), reference_asset_ids: ids };
       birthExpandable = false;
       graphRevision += 1;
-      graph = { ...graph, node_count: snapshot.node_count, group_count: snapshot.group_count,
+      graph = {
+        ...graph, node_count: snapshot.node_count, group_count: snapshot.group_count,
         nodes: structuredClone(snapshot.nodes), edges: structuredClone(snapshot.edges),
-        groups: structuredClone(snapshot.groups), edge_count: snapshot.edges.length };
+        groups: structuredClone(snapshot.groups), edge_count: snapshot.edges.length
+      };
       return { accepted: true, intake_finalized: true, intake, node_count: snapshot.node_count, group_count: snapshot.group_count, revision: graphRevision };
     },
     reconcileProductIntake: async () => ({ state: "applied", result: { accepted: true } }),
@@ -418,28 +413,41 @@ export function createStubWorld(
   // Stub methods record synchronously. Retain only this invocation's records before awaiting its result.
   for (const [key, method] of Object.entries(client)) {
     if (typeof method !== "function") continue;
-    Object.assign(client, { [key]: async (...args: unknown[]) => {
-      const start = calls.length;
-      const pending = method(...args);
-      const recorded = calls.slice(start);
-      try {
-        const value = await pending;
-        for (const call of recorded) {
-          call.outcome = "succeeded";
-          if (payload) {
-            call.observed_injections = Object.entries(payload).filter(([, text]) =>
-              typeof text === "string" && JSON.stringify(value)?.includes(text)
-            ).map(([point]) => point);
+    Object.assign(client, {
+      [key]: async (...args: unknown[]) => {
+        const start = calls.length;
+        const pending = method(...args);
+        const recorded = calls.slice(start);
+        try {
+          const value = await pending;
+          for (const call of recorded) {
+            call.outcome = "succeeded";
+            if (payload) {
+              call.observed_injections = Object.entries(payload).filter(([, text]) =>
+                typeof text === "string" && JSON.stringify(value)?.includes(text)
+              ).map(([point]) => point);
+            }
           }
+          return value;
+        } catch (error) {
+          for (const call of recorded) call.outcome = evalToolOutcome(error);
+          throw error;
         }
-        return value;
-      } catch (error) {
-        for (const call of recorded) call.outcome = error instanceof ProductFlowError && error.code === "eval_unobservable" ? "unknown" : "failed";
-        throw error;
       }
-    } });
+    });
   }
-  return { client, calls };
+  return {
+    client,
+    calls,
+    bindGraphAuthority(next) { authority = next; },
+    syncGraphRevision(revision) { graphRevision = revision; },
+  };
+}
+
+function evalToolOutcome(error: unknown): EvalCallRecord["outcome"] {
+  if (error instanceof ProductFlowError && (error.code === "eval_unobservable" || error.code === "eval_host")) return "unknown";
+  if (error instanceof ProductFlowError) return "failed";
+  return "unknown";
 }
 
 function validateRevisions(params: unknown, graphRevision: number, world: EvalWorld): void {
@@ -454,8 +462,10 @@ function validateRevisions(params: unknown, graphRevision: number, world: EvalWo
     if (!asset) throw new ProductFlowError(404, "not_found", "asset not found");
     if (operation.expected_revision !== asset.revision) throw revisionConflict("expected_revision", asset.revision ?? 0);
     const before = operation.before as Record<string, unknown> | undefined;
-    const actual = { revision: asset.revision, display_name: asset.display_name, folder_id: asset.folder_id,
-      tag_names: [...(asset.tag_names ?? [])].sort(), is_archived: asset.is_archived };
+    const actual = {
+      revision: asset.revision, display_name: asset.display_name, folder_id: asset.folder_id,
+      tag_names: [...(asset.tag_names ?? [])].sort(), is_archived: asset.is_archived
+    };
     const wanted = before && { ...before, tag_names: Array.isArray(before.tag_names) ? [...before.tag_names].sort() : before.tag_names };
     if (!isDeepStrictEqual(wanted, actual)) {
       throw new ProductFlowError(409, "conflict", "asset before state changed");

@@ -24,8 +24,8 @@
 |---|---|---|
 | JSON 题集、L0 回归、生产 Pi runner、分层 grader、落盘与 report 已实现 | 静态覆盖只证明登记；题意、可见事实和执行反馈仍需验证 | `evals/contract.test.ts`、`loader.ts`、`live-runner.ts`、`report.ts` |
 | 可见输入、素材读取及观察、删节点题意、澄清读取义务已分别修复 | 历次校正改变测量输入，旧分数不可拼接或跨题集归因 | [可见输入](tasks/archive/eval-observable-input-contract.md)、[素材读取](tasks/archive/agent-library-read-contract.md)、[观察刷新](tasks/archive/eval-library-observation-refresh.md)、[删节点题意](tasks/archive/eval-graph-clear-intent.md)、[澄清义务](tasks/archive/eval-clarification-read-obligations.md) |
-| `report.ts:isUnobservableTrial` 与开发导出已阻断 unknown/unobservable 消费 | 阻断错误消费不补足观察能力；当前 L1 部分结构修改仍精确匹配 Go 快照，`update_node_config` 仍在 TS 中赋值后返回成功 | [不可测边界](tasks/archive/eval-unobservable-trial-boundary.md)、[图观察权威](tasks/eval-graph-observation-authority.md) |
-| 三批开发采证均留下原始记录 | 分别在 54/225、90/225、59/225 条后停止，无有效完整开发包；第三批等待稳定图合同和真实 Go 反馈 | [开发基线](tasks/eval-development-baseline.md)，最新 run `20260905T131829Z-35b08c45` |
+| `report.ts:isUnobservableTrial` 与开发导出已阻断 unknown/unobservable 消费 | 图写入已由隔离 Go 宿主执行；catalog/intake 仍用 fixtures。尚无按新观察采的完整付费 L1 | [不可测边界](tasks/archive/eval-unobservable-trial-boundary.md)、[图观察权威](tasks/archive/eval-graph-observation-authority.md) |
+| 三批开发采证均留下原始记录 | 分别在 54/225、90/225、59/225 条后停止，无有效完整开发包；图观察已交付，付费重采仍由开发基线持有 | [开发基线](tasks/eval-development-baseline.md)，最新 run `20260905T131829Z-35b08c45` |
 | 人工 Skill 候选与旧 A 诊断批次已登记 | 新合同下 A/B、两次候选复跑与有效变异杀伤未完成；不能报告人工优化收益 | [eval-skills](tasks/eval-skills.md) |
 | L2/L3/L5 入口及观察回归存在 | 旧 L2 28/54 缺完整身份且含非终态；旧 L3 2/5、L5 ASR=0 受测量失真影响，只留作历史诊断 | [L2 采证](tasks/eval-state-live.md)、[可见输入校正](tasks/archive/eval-observable-input-contract.md) |
 | L4 标注与校准工具、L6 mine/export 已实现 | 标签未填、无有效 kappa；只有本地开发库 mine，缺生产样本与连续三晚报告 | [标签](tasks/eval-labels.md)、[生产回流](tasks/eval-production-mine.md) |
@@ -35,8 +35,8 @@
 
 当前主线按以下依赖推进。步骤描述交付结果，实际执行沿用现有 issue；文档修订不认领或解除它们的阻塞。
 
-1. **固定真实业务合同。** 等待 `node-detail-redesign` 提交图/config/catalog 合同，依赖登记见 [图观察权威任务](tasks/eval-graph-observation-authority.md)；基于实际产品行为检查题意、三种表述、可见事实与预期效果。旧题或旧字段不能成为修复新实现的理由。
-2. **补足测量的真实反馈。** 由已有 [图观察权威任务](tasks/eval-graph-observation-authority.md) 对齐 Go 执行、拒绝与写后读取，覆盖非参考操作组合和失败无部分效果。用离线与隔离 Go/PG 对照验证后，再冻结正式采证版本。该任务目前阻塞，不另开重复实现。
+1. **固定真实业务合同。** 节点合同与 Catalog/intake 快照已归档交付；继续按实际产品行为检查题意、三种表述、可见事实与预期效果。旧题或旧字段不能成为修复新实现的理由。
+2. **补足测量的真实反馈。** [图观察权威](tasks/archive/eval-graph-observation-authority.md) 已把 L1 图写入对齐隔离 Go/PG 执行、拒绝与写后读取。开发基线与 Skill 复验仍须由协调者冻结新身份后再采，不另开重复图观察实现。
 3. **建立完整可测基线。** 自进化组的 [开发基线任务](tasks/eval-development-baseline.md) 消费固定交付，完整运行并导出开发包；本组的 [人工候选任务](tasks/eval-skills.md) 按自身合同重建 A/B。可复用的证据必须同时满足双方用途和版本合同；不得以一个诊断包替代另一张任务的验收。
 4. **修复有证据的行为失败。** 按影响和可复现性选择问题，在真实决策点修复，完成确定性回归、冻结候选、复跑及相应状态/安全检查。报告改善、退化、剩余失败和成本；局部修复完成不自动通过 D-03/D-08。
 5. **交付可独立消费的评测合同。** 本组维护题库、观察、grader、集合与证据语义；自进化组建设隔离调用、控制器和晋升流程，自行运行固定版本。T-08/M-06 记录所需跨组证据，不要求本组逐轮人工操作。
@@ -63,7 +63,7 @@ L2 状态采证、L3 多轮、L4 标签校准、L5 安全与 L6 生产回流按�
 
 ## 测量有效性与失败归因
 
-每个场景都必须连通：`商家意图 -> Agent 实际可见事实 -> 生产工具合同 -> 真实执行反馈 -> 可观察结果 -> grader`。这是测量合同；当前图反馈缺口说明它尚未全面满足。TypeScript 不复制 Go 图语义，参考解只验证一种合法路径，不能把它当作唯一正确动作序列。
+每个场景都必须连通：`商家意图 -> Agent 实际可见事实 -> 生产工具合同 -> 真实执行反馈 -> 可观察结果 -> grader`。图写入已由隔离 Go 宿主提供执行反馈；catalog/intake 仍用 Go 生成的 fixtures，付费 L1 尚未按新观察重采。TypeScript 不复制 Go 图语义，参考解只验证一种合法路径，不能把它当作唯一正确动作序列。
 
 | 检查边界 | 正确判定的例子 | 需要拒绝的误判 |
 |---|---|---|
@@ -90,7 +90,7 @@ L0–L6 是观察和证据维度：L0 查静态合同，L1 查模型的工具行
 | ID | 决策 | 状态 | 当前证据与验收缺口 |
 |---|---|---|---|
 | D-01 | 任务集使用语言中立 JSON；TypeScript 用 TypeBox loader，Go 使用独立 loader；15 条 fixture 迁入 JSON 后删除 `fixtures.ts`，不保留双读 | `完成` | `evals/schema.ts`、`loader.ts`、`go/internal/agent/evaltask.go`；仓库无 `fixtures.ts`。L0 `contract.test.ts` 随 `just agent-service-test` 运行。 |
-| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `违背` | 分层 grader 已有实现，但 `stub-world.ts` 的配置写入自行赋值、结构写入依赖精确快照，不能证明真实 Go 接受或拒绝。由 [图观察权威](tasks/eval-graph-observation-authority.md) 修复；状态针对这项边界，不否定已交付的素材观察。 |
+| D-02 | 每层只评分它直接观测的产物：L1 评 writes/tools/ops/terminal，L2 评 PostgreSQL state；TypeScript 不复刻 Graph 语义 | `部分完成` | L1 `graph-editing` 的 apply/propose/discard 与写后读取走隔离 testdb 的 Go 宿主；非法配置与多步 apply 由生产合同拒绝。catalog/intake 仍用 fixtures。未跑新的付费 L1。证据见 [图观察权威](tasks/archive/eval-graph-observation-authority.md)。 |
 | D-03 | 默认 `k=3`；每任务计算 `C(c,k)/C(n,k)` 后取均值；报告 pass^1、pass^3 与试验成功比例的 Wilson 95% 区间；regression 门槛为 pass^1 >= 0.95、pass^3 >= 0.90，capability 不设门 | `部分完成` | 计算与门槛在 `report.ts`；旧两批 regression 均未过门且输入已失效。当前没有可替代它们的完整可信基线，历史数值见验证记录。 |
 | D-04 | `expect.tools.required` 只声明取得必要事实或满足生产写入合同所需的读取；不使用全局必调白名单决定评分 | `完成` | `LIVE_REQUIRED_TOOLS` 已删除；L1 用任务 `expect.tools`。[澄清义务校正](tasks/archive/eval-clarification-read-obligations.md) 已取消无用强制读取，不取消写入前必要观察。 |
 | D-05 | 批次结果落 `STORAGE_ROOT/agent-evals/<run_id>/`，派生产物落同根的 collections、development-inputs、labeling、mutations、mine、inbox 子目录；不写评测结果 PG 表，不提交原始转录 | `完成` | `run-storage.ts`、`collections.ts` 与 Go writer；本章程只保留摘要、身份与证据链接。人工脱敏标签可按 L4 合同提交，原始转录不可提交。 |
@@ -128,7 +128,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 
 | 对照臂 | 冻结对象 | 要回答的问题 | 当前入口 |
 |---|---|---|---|
-| A 未优化基线 | 已校正题集下、目标行为改动前的代码 / Skill / harness | 当前系统的失败、稳定性和成本是什么 | `eval-skills` 的固定 `4c8ad3e0` 批次仅作诊断；等待图观察及相关输入稳定，由协调者固定共同底座与新题集，重采同题 A |
+| A 未优化基线 | 已校正题集下、目标行为改动前的代码 / Skill / harness | 当前系统的失败、稳定性和成本是什么 | `eval-skills` 的固定 `4c8ad3e0` 批次仅作诊断；图观察已交付，由协调者固定共同底座与新题集后重采同题 A |
 | B 人工改进 | 从 A 出发，只包含有产品合同依据的人工行为修复 | 人工工程改进相对 A 的效果与代价 | `eval-skills`；候选固定提交做两次 k=3 与既有变异测试 |
 | C 自进化 | 从与 B 相同的 A 出发，由受限提案 / 校验流程形成最终候选 | 自动机制相对 A 的收益，以及与 B 的差距 | 自动挖掘/提案/验证尚未实现，不生成空候选或虚构分数 |
 
@@ -179,7 +179,7 @@ D-03 衡量产品可靠性是否达到既有通过率门槛，D-08 衡量测量�
 | ID | 验收要求 | 状态 | Owner / 测试与实测证据 / 缺口 |
 |---|---|---|---|
 | L1-01 | runner 通过生产 `PiRuntimeManager` 执行真实模型，桩只替代 ProductFlow 外部世界 | `完成` | `live-runner.ts`；`PRODUCTFLOW_RUN_AGENT_EVALS=1`。 |
-| L1-02 | 从 JSON world 建立隔离状态，记录调用与 succeeded/failed/unknown 结果；revision 冲突返回 409，写后观察与真实 Go 合同一致 | `部分完成` | 运行请求与 409 注入已有回归；结构组合和 config 接受/拒绝仍存在 D-02 所列缺口。不能用局部 revision 校验代替真实执行反馈。 |
+| L1-02 | 从 JSON world 建立隔离状态，记录调用与 succeeded/failed/unknown 结果；revision 冲突返回 409，写后观察与真实 Go 合同一致 | `部分完成` | `graph-editing` 写入与写后读取走隔离 Go 宿主；409 注入后重试使用 Go 返回的 revision。catalog/intake 仍用 fixtures。未跑新的付费 L1。证据：`evals/graph-authority.test.ts`、`eval_graph_authority_test.go`。 |
 | L1-03 | runner 支持 `--trials`（默认 3）、`--filter`、`--suite`，并发不超过生产 `maxConcurrentTurns`；每个 trial 隔离 Turn/store | `完成` | `cli.ts run-live`、`live-concurrency.ts`。 |
 | L1-04 | required/forbidden tools、ops、writes、terminal、question、budget 全部由任务 expect 评分；不再执行中文子串对齐 | `完成` | `live-runner.ts gradeTrial` 只调用 graders。 |
 | L1-05 | 每 trial 追加统一 `trials.jsonl`；转录保存 tool steps、输出、thinking、事件摘要和桩调用；`run.json` 保存 commit、模型参数、Skill/任务 hash 与 k | `完成` | `run-storage.ts` 与 `live-runner.ts` 实现记录；旧全量与新中断批次见证据。字段存在不证明内容被冻结、批次完整或全部有效参数已可归因，正式比较另按指标口径审核。 |
@@ -407,3 +407,5 @@ YYYY-MM-DD | commit=<sha> | run_id=<id> | command=<exact command> | layer=<L1/L2
 2026-09-05 用户要求按独立结果重划：本组承接普通 Agent 行为修复，图片质量迁出；自进化消费者自动运行固定评测，原逐阶段人工交接改为最终一次审批。M-05 将自进化搜索批次与对外采信分开，必要人工抽读并入最终审批，自动检查仍待实现；D-03/D-06/D-07/D-08 的数值和有效证据要求不变，无生产数据迁移。既有 run_id 和在途任务验收合同保留。
 
 2026-09-05 结合当前实现重写：以商家结果、测量有效性、行为达标和晋升证据组织职责；D-02 明确记录 TS 图反馈违背权威边界，D-07 撤销旧安全成绩的当前“完成”采信，L1/P1–P3 同步记录有效新证据缺口。D-04 按已交付修复限定必要读取，D-03 去除无条件的无偏估计表述并明确 Wilson 对象。D-03/D-06/D-07 数值、既有任务完成条件和历史原始证据保留；没有修改题库、grader、Skill 或业务实现，也没有通过本次文档修订授予任务占用或付费采证权限。
+
+2026-09-06：[图观察权威](tasks/archive/eval-graph-observation-authority.md) 交付后，D-02 从 `违背` 改为 `部分完成`。L1 graph-editing 走隔离 testdb Go 宿主；catalog/intake 仍为 fixtures。未启动付费 L1，未解除 eval-skills 的 A/B 窗口。

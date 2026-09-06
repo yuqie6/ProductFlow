@@ -25,7 +25,7 @@
 - 普通人工工程修复由 [Agent 质量组](agent-eval-system.md) 承接。[eval-skills](tasks/eval-skills.md) 的人工候选与结果不算本系统的自动收益。
 - 每轮使用已发布的固定评测与业务合同。评测器在候选之外运行，候选不能修改其规则、隐藏材料或成绩；独立验证不要求另一个工作组人工运行。
 - 已知普通生产故障继续正常修复，不为保存实验基线留在线上；自动进化在固定隔离版本中进行。共享代码变更仍由协调者预约排他范围，组不永久占有模块。
-- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务，三批采证均未形成有效完整开发包。[不可测消费边界](tasks/archive/eval-unobservable-trial-boundary.md) 已交付，[图观察权威](tasks/eval-graph-observation-authority.md) 及新冻结批次仍待交付；前置与占用以对应任务为准。它不定义未来每轮的人工流程。
+- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务，三批采证均未形成有效完整开发包。[不可测消费边界](tasks/archive/eval-unobservable-trial-boundary.md) 与 [图观察权威](tasks/archive/eval-graph-observation-authority.md) 已交付；新冻结批次仍待开发基线采证。前置与占用以对应任务为准。它不定义未来每轮的人工流程。
 
 ## 当前基础与缺口
 
@@ -84,7 +84,7 @@
 | 自动发现到改进 | 从获准执行记录自动选题、诊断、产生修改并完成候选验证；包含一条真实代码级问题，不能全部只改 Prompt | 记录中无人挑题、手写诊断或补丁；自动候选修复父版本失败，相关合同与安全回归通过；明确一次案例不能证明普遍收益 |
 | 多轮与最终审批 | 有界多轮运行，失败不丢弃，正常路径只在最终版本审批一次；批准、拒绝、取消、无改善、超预算和版本漂移均可验收 | 多个问题上的成本与效果、独立验收、完整谱系、一次批准应用精确版本及恢复演练 |
 
-初始开发输入须消费 [图观察权威](tasks/eval-graph-observation-authority.md) 等所需测量修复的固定交付，再由 [开发基线](tasks/eval-development-baseline.md) 冻结用途清单、完整采证并导出。取得开发包后本组自行编排，不等待 Agent 质量组全部 L0–L6、nightly 或日常候选完成。真实隐藏材料缺失时可以验证已有开发范围，不能跳过最终独立验收；需要语义裁判的实验仍须满足其校准合同。
+初始开发输入须消费已交付的 [图观察权威](tasks/archive/eval-graph-observation-authority.md) 等测量修复，再由 [开发基线](tasks/eval-development-baseline.md) 冻结用途清单、完整采证并导出。取得开发包后本组自行编排，不等待 Agent 质量组全部 L0–L6、nightly 或日常候选完成。真实隐藏材料缺失时可以验证已有开发范围，不能跳过最终独立验收；需要语义裁判的实验仍须满足其校准合同。
 
 组内后续可建设当前缺失的验证入口与受限部署，调用已有公共评测实现。涉及被测行为与评测合同的工作分成先后任务，分别审核并冻结；修改候选时正式评分不变。
 

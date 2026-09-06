@@ -21,6 +21,7 @@ import { buildRunReport, formatRunReport, isUnobservableTrial, type RunReport } 
 import { EvalRunStorage, newEvalRunID, type EvalRunMetadata } from "./run-storage.js";
 import type { EvalCallRecord, EvalTask, EvalTrialRecord, EvalWorld } from "./schema.js";
 import { createStubWorld, overlayEvalPageContext } from "./stub-world.js";
+import { openGoEvalHost } from "./go-world.js";
 import { taskSplit } from "./split.js";
 import { PRODUCTION_MAX_CONCURRENT_TURNS_DEFAULT, resolveLiveEvalConcurrency } from "./live-concurrency.js";
 import { loadCollection, selectCollection } from "./collections.js";
@@ -146,8 +147,12 @@ async function runTrial(
   let tokenCount: number | null = null;
   let errors: string[] = [];
   let events: Awaited<ReturnType<TurnStore["events"]>> = [];
+  let graphHost: Awaited<ReturnType<typeof openGoEvalHost>> | undefined;
   try {
     if (task.observability_blocker) throw new Error(`unobservable eval input: ${task.observability_blocker}`);
+    if (layer === "l1" && task.skill === "graph-editing" && !process.env.VITEST) {
+      graphHost = await openGoEvalHost(task, stub, { layer: "l1", overlay: "graph" });
+    }
     const started = await manager.start({
       lookup: { conversationID },
       input: {
@@ -165,6 +170,7 @@ async function runTrial(
   } catch (error) {
     errors = [errorMessage(error)];
   } finally {
+    await graphHost?.close().catch(() => undefined);
     await manager.close().catch(() => undefined);
   }
 
@@ -232,7 +238,7 @@ async function runTrial(
 
 function gradeTrial(
   task: EvalTask,
-  world: EvalWorld,
+  _world: EvalWorld,
   terminal: TurnState,
   calls: readonly EvalCallRecord[],
   tokenCount: number | null,
@@ -259,8 +265,8 @@ function gradeTrial(
       grades.push({ passed: false, errors: [`${task.inject.first_write_409} used ${attempts.length} attempts after injected 409; expected 2`] });
     } else {
       const lastRevision = valueAtPath(attempts[1].params, "base_graph_revision");
-      if (lastRevision !== undefined && lastRevision !== world.live_graph.revision + 1) {
-        grades.push({ passed: false, errors: [`retry used base_graph_revision=${String(lastRevision)}; expected ${world.live_graph.revision + 1}`] });
+      if (typeof lastRevision !== "number") {
+        grades.push({ passed: false, errors: [`retry omitted base_graph_revision after injected 409`] });
       }
     }
   }
@@ -284,8 +290,10 @@ export function mergeToolCalls(terminal: Pick<TurnState, "updated_at" | "tool_st
     const seen = (seenCounts.get(key) ?? 0) + 1;
     seenCounts.set(key, seen);
     if (seen <= (recordedCounts.get(key) ?? 0)) continue;
-    calls.push({ name, params: {}, ts: terminal?.updated_at ?? new Date().toISOString(),
-      outcome });
+    calls.push({
+      name, params: {}, ts: terminal?.updated_at ?? new Date().toISOString(),
+      outcome
+    });
   }
   return calls;
 }

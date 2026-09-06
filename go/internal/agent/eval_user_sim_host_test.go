@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,17 +13,23 @@ import (
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
 // Node's L3 driver uses this opt-in, isolated PG host for business effects and user decisions.
+// L1 graph observation reuses the same host with PRODUCTFLOW_EVAL_HOST_LAYER=l1.
 // Pi execution leases remain local to the Node test harness; graph/library transactions are production code.
 func TestEvalUserSimHost(t *testing.T) {
 	id := os.Getenv("PRODUCTFLOW_EVAL_HOST_TASK")
 	if id == "" {
 		t.Skip("L3 subprocess host")
 	}
-	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), "l3")
+	layer := strings.TrimSpace(os.Getenv("PRODUCTFLOW_EVAL_HOST_LAYER"))
+	if layer == "" {
+		layer = "l3"
+	}
+	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), layer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +40,7 @@ func TestEvalUserSimHost(t *testing.T) {
 		}
 	}
 	if task.ID == "" {
-		t.Fatal("unknown L3 task")
+		t.Fatal("unknown eval host task")
 	}
 	as := newEvalLibraryServer(t)
 	seeded := seedEvalWorld(t, as, task, worlds[task.World])
@@ -56,8 +63,9 @@ func TestEvalUserSimHost(t *testing.T) {
 			return
 		}
 		var request struct {
-			Method string         `json:"method"`
-			Params map[string]any `json:"params"`
+			Method         string         `json:"method"`
+			Params         map[string]any `json:"params"`
+			IdempotencyKey string         `json:"idempotency_key"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -79,6 +87,10 @@ func TestEvalUserSimHost(t *testing.T) {
 		raw = []byte(text)
 		var p map[string]any
 		_ = json.Unmarshal(raw, &p)
+		key := strings.TrimSpace(request.IdempotencyKey)
+		if key == "" {
+			key = clockid.New()
+		}
 		var out any
 		var callErr error
 		switch request.Method {
@@ -104,11 +116,15 @@ func TestEvalUserSimHost(t *testing.T) {
 			callErr = err
 			out = map[string]any{"items": items}
 		case "context":
-			out, callErr = as.svc.ProductContext(ctx, seeded.ConvID, "detailed")
+			format, _ := p["response_format"].(string)
+			out, callErr = as.svc.ProductContext(ctx, seeded.ConvID, format)
 		case "apply":
-			out, callErr = as.svc.ApplyGraphTool(ctx, seeded.ConvID, raw, clockid.New())
+			out, callErr = as.svc.ApplyGraphTool(ctx, seeded.ConvID, raw, key)
 		case "propose":
-			out, callErr = as.svc.ProposeGraphTool(ctx, seeded.ConvID, raw, clockid.New())
+			out, callErr = as.svc.ProposeGraphTool(ctx, seeded.ConvID, raw, key)
+		case "discard":
+			id, _ := p["proposal_id"].(string)
+			out, callErr = as.svc.DiscardProposalTool(ctx, seeded.ConvID, id, key)
 		case "node":
 			out, callErr = as.svc.GetNodeDetail(ctx, seeded.ConvID, fmt.Sprint(p["node_id"]))
 		case "intake":
@@ -212,8 +228,7 @@ func TestEvalUserSimHost(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if callErr != nil {
-			w.WriteHeader(422)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": callErr.Error()})
+			writeEvalHostError(w, callErr)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(normalizeEvalIdentity(t, out, seeded))
@@ -221,4 +236,52 @@ func TestEvalUserSimHost(t *testing.T) {
 	defer server.Close()
 	fmt.Printf("EVAL_HOST_READY=%s\n", server.URL)
 	<-closed
+}
+
+func writeEvalHostError(w http.ResponseWriter, err error) {
+	var e apperr.Error
+	if errors.As(err, &e) {
+		body := map[string]any{"detail": e.Detail}
+		if e.Code != "" {
+			body["code"] = e.Code
+		}
+		w.WriteHeader(e.Status)
+		_ = json.NewEncoder(w).Encode(body)
+		return
+	}
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(map[string]any{"detail": err.Error(), "code": "eval_host"})
+}
+
+func TestEvalHostErrorStatus(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeEvalHostError(rec, apperr.Validation("节点配置包含未登记字段: design_goal"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["detail"] != "节点配置包含未登记字段: design_goal" || body["code"] != nil {
+		t.Fatalf("%#v", body)
+	}
+
+	rec = httptest.NewRecorder()
+	writeEvalHostError(rec, apperr.NotFound("节点不存在"))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	writeEvalHostError(rec, fmt.Errorf("no pending proposal"))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["code"] != "eval_host" || body["detail"] != "no pending proposal" {
+		t.Fatalf("%#v", body)
+	}
 }

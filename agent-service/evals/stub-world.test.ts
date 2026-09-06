@@ -57,18 +57,17 @@ describe("L1 stub world", () => {
     await expect(stub.client.getNodeDetail("conv", "missing")).rejects.toMatchObject({ status: 404 });
   });
 
-  it.each(["graph-editing-delete-one-node", "graph-editing-disconnect-edge"])("observes legal structural effects for %s", async (id) => {
+  it.each(["graph-editing-delete-one-node", "graph-editing-disconnect-edge"])("does not invent structural success without Go for %s", async (id) => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((task) => task.id === id)!;
     const stub = createStubWorld(task, worlds.get(task.world)!, "conv", "run", {});
-    await stub.client.applyGraphChangeSet("conv", task.reference.scripted_calls.at(-1)!.params as Parameters<typeof stub.client.applyGraphChangeSet>[1], "key");
-    expect(stub.calls.at(-1)?.outcome).toBe("succeeded");
-    const after = await stub.client.productContext("conv", undefined, "detailed") as { live_graph: { nodes: Array<{ id: string }>; edges: Array<{ id: string }> } };
-    if (id.endsWith("delete-one-node")) expect(after.live_graph.nodes.some((node) => node.id === "node-image-2")).toBe(false);
-    else expect(after.live_graph.edges.some((edge) => edge.id === "edge-brief-prompt")).toBe(false);
+    const before = await stub.client.productContext("conv", undefined, "detailed");
+    await expect(stub.client.applyGraphChangeSet("conv", task.reference.scripted_calls.at(-1)!.params as Parameters<typeof stub.client.applyGraphChangeSet>[1], "key")).rejects.toMatchObject({ code: "eval_host", status: 500 });
+    expect(stub.calls.at(-1)?.outcome).toBe("unknown");
+    expect(await stub.client.productContext("conv", undefined, "detailed")).toEqual(before);
   });
 
-  it("keeps missing structural observations unknown without inventing a graph effect", async () => {
+  it("keeps missing graph host observations unknown without inventing a graph effect", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((task) => task.id === "graph-editing-dissolve-and-reorder")!;
     const world = worlds.get(task.world)!;
@@ -78,7 +77,7 @@ describe("L1 stub world", () => {
       base_graph_revision: world.live_graph.revision,
       summary: "dissolve only",
       operations: [{ op: "dissolve_group", group_ref: "group-main" }],
-    }, "key")).rejects.toMatchObject({ code: "eval_unobservable" });
+    }, "key")).rejects.toMatchObject({ code: "eval_host" });
     expect(stub.calls.at(-1)).toMatchObject({ name: "apply_graph_change_set_v1", outcome: "unknown" });
     expect(await stub.client.productContext("conv", undefined, "detailed")).toEqual(before);
   });
@@ -93,7 +92,7 @@ describe("L1 stub world", () => {
     expect(archived.items).toMatchObject([{ revision: 2, tag_names: ["归档"], is_archived: true }]);
     await expect(stub.client.inspectGlobalMediaAssets("conv", task.page_context.selected_asset_ids)).rejects.toMatchObject({ status: 404 });
   });
-  it("records calls and advances the graph revision after an injected conflict", async () => {
+  it("records calls and reports the current revision after an injected conflict", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((candidate) => candidate.id === "graph-editing-rename-node")!;
     const world = worlds.get(task.world)!;
@@ -106,12 +105,11 @@ describe("L1 stub world", () => {
     };
     await expect(stub.client.applyGraphChangeSet("conversation", first, "key-1")).rejects.toMatchObject({ status: 409 });
     const context = await stub.client.productContext("conversation", undefined, "concise") as { live_graph: { revision: number } };
-    expect(context.live_graph.revision).toBe(4);
-    await expect(stub.client.applyGraphChangeSet("conversation", { ...first, base_graph_revision: 4 }, "key-2"))
-      .resolves.toMatchObject({ applied: true, revision: 5 });
+    expect(context.live_graph.revision).toBe(3);
+    await expect(stub.client.applyGraphChangeSet("conversation", first, "key-2")).rejects.toMatchObject({ code: "eval_host" });
 
     expect(stub.calls.filter((call) => call.name === "apply_graph_change_set_v1").map((call) => call.params))
-      .toEqual([first, { ...first, base_graph_revision: 4 }]);
+      .toEqual([first, first]);
     expect(stub.calls.find((call) => call.name === "get_product_workflow_context_v1")?.params)
       .toEqual({ response_format: "concise" });
   });

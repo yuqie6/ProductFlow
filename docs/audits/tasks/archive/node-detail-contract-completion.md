@@ -51,7 +51,7 @@
 - 工作流 `d623dc70-1f87-4ade-ab8a-2fbb0bb9f8bc`（商品 `6adf2ccc-b4c8-43fc-865e-0af1ddd7d94a`）真实浏览器点击「运行此场景」，请求 `scope=selection`，图片节点为 `de49bb89-29d3-4ba2-bee6-d9c8ffe84f9c`、`a910c82e-d698-4c79-9330-7655d60d0356`，返回 400：`目标节点不可运行: generation_spec包含未登记字段: text_language, text_policy`。创作要求还存有旧 `design_goals`；旧数据来源尚未追溯，不据此断言当前创建入口仍写旧格式。
 - 同图「运行整张图」返回 201，运行 `ef7be868-d205-402b-af3e-f82d2f975b06` 最终 succeeded，但仅有两个 frozen 文稿节点且均 skipped，没有图片生成。`select.go` 全图选点过滤配置无效节点；preview 将配置无效也标成「缺少必连输入」。需明确部分节点不可运行时的提交/反馈合同，覆盖 graph、selection、node、to_node 及 Agent 运行消费者，不能用空出图的成功掩盖配置错误。
 - 交付前验证所有当前写入入口使用新合同：直接创建、Agent intake、Graph Command、画布添加场景及配方；验证文字设置继承/覆盖、provider 输入、digest 与响应投影。按仓库规则不增加旧数据兼容读取或迁移命令，不擅自清空用户数据库。
-- 固定合同提交后交接 [图观察权威任务](../eval-graph-observation-authority.md)，通过本归档的 Git 历史定位交付版本，并提供下方变更字段和回归结果，由该任务刷新当前评测观察并验证拒绝语义；不在本任务改冻结题库、grader 或 Skill。`agent-service-check-contracts` 通过不证明 Catalog/intake 评测快照同步。
+- 固定合同提交后交接 [图观察权威任务](eval-graph-observation-authority.md)，通过本归档的 Git 历史定位交付版本，并提供下方变更字段和回归结果，由该任务刷新当前评测观察并验证拒绝语义；不在本任务改冻结题库、grader 或 Skill。`agent-service-check-contracts` 通过不证明 Catalog/intake 评测快照同步。
 - 已有本次诊断证据：`TestEvalObservationFixtures` 在 Catalog 比较阶段失败；文字默认值、旧文字字段拒绝、文字设置 digest、有效覆盖 digest 四个无数据库 Go 回归通过。浏览器截图 `/tmp/productflow-run-scene-400.png` 为本机临时证据；未执行收费模型评测。上述结果不替代本任务最终固定合同的验收。
 
 ## 接手前证据

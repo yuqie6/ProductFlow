@@ -43,7 +43,7 @@
 
 ## 阻塞与交接
 
-- 当前实现依赖：[图观察权威](eval-graph-observation-authority.md)。不可测消费边界已交付；图操作及配置反馈需在节点合同稳定后由真实 Go 路径验证。[节点合同补齐](archive/node-detail-contract-completion.md) 已完成实现与验收，固定交付通过该归档的 Git 历史定位。图观察实现与快照更新尚未交付，不据节点归档解除此前置，不启动第四次付费全量采样。
+- 当前实现依赖：[图观察权威](archive/eval-graph-observation-authority.md) 已交付。L1 graph-editing 的 apply/propose/discard 与写后读取走隔离 testdb 的 Go 宿主；catalog/intake 仍用 fixtures。付费 L1 需独立 `DATABASE_URL`（testdb 包建隔离库）与 `STORAGE_ROOT`，启动前通过 `TestEvalObservationFixtures`。协调者确认资源窗口并重新冻结集合前，不启动第四次付费全量采样。
 
 - 输入阻塞已解除：[可见输入合同](archive/eval-observable-input-contract.md)、[生产素材读取合同](archive/agent-library-read-contract.md) 与 [独立观察刷新](archive/eval-library-observation-refresh.md) 已交付，12 条素材阻塞经独立审核移除。最新全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`；以观察归档的交付提交冻结执行代码，不使用旧合同 hash。
 - 本单开放待认领。获批准的开发用途清单、新 k=3 批次及有效导出仍未完成，由本单执行者按上述合同采证。`measurementEligible=false` 的诊断分数不得用于候选选择；`skill-ab-20260905` 的公开诊断批次不替代本单有效开发包。

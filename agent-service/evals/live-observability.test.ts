@@ -28,7 +28,7 @@ it.each(["observed", "missing", "unknown_terminal"])("persists actual observabil
   vi.stubEnv("PRODUCTFLOW_AGENT_EVAL_SUITE", "");
   const { tasks } = await loadEvalTaskSet();
   const task = tasks.find((task) => task.id === (missing
-    ? "graph-editing-dissolve-and-reorder" : "graph-editing-delete-one-node"))!;
+    ? "graph-editing-dissolve-and-reorder" : "workflow-run-request-cancel-running-run"))!;
   const terminal: TurnState = {
     api_version: API_VERSION, run_id: "fixture", turn_id: "fixture", status: mode === "unknown_terminal" ? "unknown" : "succeeded",
     input: { input_text: task.utterances[0], asset_ids: [], idempotency_key: "fixture", page_context: task.page_context },
@@ -39,11 +39,14 @@ it.each(["observed", "missing", "unknown_terminal"])("persists actual observabil
   let stub: stubWorld.StubWorld;
   vi.spyOn(stubWorld, "createStubWorld").mockImplementation((...args) => (stub = create(...args)));
   vi.spyOn(PiRuntimeManager.prototype, "start").mockImplementation(async () => {
-    const params = missing ? {
-      base_graph_revision: 3, summary: "dissolve only", operations: [{ op: "dissolve_group", group_ref: "group-main" }],
-    } : task.reference.scripted_calls.at(-1)!.params as Parameters<typeof stub.client.applyGraphChangeSet>[1];
-    if (missing) await expect(stub.client.applyGraphChangeSet("conv", params, "key")).rejects.toMatchObject({ code: "eval_unobservable" });
-    else await stub.client.applyGraphChangeSet("conv", params, "key");
+    if (missing) {
+      const params = {
+        base_graph_revision: 3, summary: "dissolve only", operations: [{ op: "dissolve_group", group_ref: "group-main" }],
+      };
+      await expect(stub.client.applyGraphChangeSet("conv", params, "key")).rejects.toMatchObject({ code: "eval_host" });
+    } else {
+      await stub.client.cancelWorkflowRun("conv", "44444444-4444-4444-8444-444444444444", "key");
+    }
     return terminal;
   });
   vi.spyOn(PiRuntimeManager.prototype, "close").mockResolvedValue();
