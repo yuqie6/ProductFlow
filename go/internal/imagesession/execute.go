@@ -72,8 +72,7 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 			}
 			return nil
 		}
-		e.finishFailed(persistCtx, taskID, attemptID, err)
-		return nil
+		return e.finishFailed(persistCtx, taskID, attemptID, err)
 	}
 	return nil
 }
@@ -219,7 +218,7 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 
 // runGeneration 跳过已 applied 的区间，最多调用一次 ChatProvider 并逐张 saveCandidate。
 // 输入合计超 50MiB 不打网；输出整批先过 10/50MiB 与 MIME 闸门再 saveCandidate，避免部分写入。
-// 无法证明的供应商错误走 finishFailed 标 unknown，不要自动当 failed 重试。
+// 无法证明的供应商错误由 Execute 调 finishUnknown，不自动当 failed 重试。
 func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionID string) error {
 	var prompt, size string
 	var baseID *string
@@ -634,8 +633,9 @@ func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID string) e
 	})
 }
 
-// finishFailed 按错误类型标 failed 或 unknown。可重试且 attempts 未满则拉回 queued 并补 PENDING；unknown 不自动重试。
-func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, cause error) {
+// finishFailed 处理已证明失败；可重试且 attempts 未满则回 queued，否则写 failed。
+// 持久化错误必须返回 consumer，不能将未提交的处理结果确认为已消费。
+func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, cause error) error {
 	reason := genericFailure
 	if cause != nil && cause.Error() != "" {
 		reason = cause.Error()
@@ -644,9 +644,11 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, ca
 		}
 	}
 	noRetry := isNonRetryableGenerationError(cause)
-	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var task schema.ImageSessionGenerationTasks
-		_ = pgxTx.Where("id = ?", taskID).Take(&task).Error
+		if err := pgxTx.Where("id = ?", taskID).Take(&task).Error; err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		if !noRetry && task.Attempts < maxAttempts {
 			if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).

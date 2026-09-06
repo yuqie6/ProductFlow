@@ -1449,3 +1449,13 @@ SSE 保留 100 个真实鉴权 HTTP 连接、初始 id=1 回放、第 101 个连
 路由差异核对现行权威：图片质量 IMG-D-08 明确退役人工保真 HTTP；架构与配方创建交付记录拥有 creation-preview、products/from-recipe；node-detail-contract-completion 交付 image-generation-options。仅修改 API 路由合同测试中的历史差异清单，未恢复退役 API、改注册代码或重生成历史 contracts/http-routes.json。检查器同时要求登记的新路由存在，并拒绝退役路由复活，避免新增清单退化为忽略名单。
 
 修复后经 dev env wrapper 独立运行 `go test -C go ./cmd/productflow-api -race -count=1 -v -timeout 1m`，完整包 PASS（1.072s）：实际注册、未授权响应和新增检查器回归均通过。检查器四场景为现行集合接受、已登记新增路由缺失拒绝、退役路由复活拒绝、未登记新增路由拒绝。测试 Git blob=`4fabf72745174138e54f5ae7091f1c4b49dbafd1`。完整 Go 的 API 失败来自修复前版本；本次未在移动工作树上再次重跑整套测试。主代理自审差异清单依据、正反例、排序和完整任务 diff；未修改 Agent 评测夹具或图片质量组在途代码，未调用真实 provider。G-07 仍须冻结候选后执行完整规定门。
+
+## 2026-09-06 连续生图失败落库不得确认消费
+
+从检查点事务失败向外追到 Execute，发现 finishFailed 丢弃事务返回值，Execute 随后返回 nil。自动重试 queued 或最终 failed 未能提交时，consumer 仍进入 MarkConsumed。该缺陷与 provider 内容质量无关，发生在执行结果持久化到队列确认的边界。
+
+新增独立迁移 PG 测试 TestConsumeDoesNotAcknowledgeFailedTaskPersistence：真实 Stage/dispatcher/Consume，mock provider 返回已证明的限流失败；分别在 auto_retry_queued 和 failed 状态更新处注入数据库写错误。后者将已有 attempts 设为 maxAttempts-1，使此次 claim 达到重试上限。基线两场景各命中一次注入，却都收到 consume error=nil，测试 FAIL（3.563s）。未模拟网络断库、commit 回执丢失或 Redis 故障。
+
+finishFailed 现在返回事务错误，读取任务失败也直接返回，Execute 将错误交给 consumer；复用现有 MarkFailed 分支，不修改队列重试、lease、schema 或恢复阈值。最终重点测试经 dev env wrapper 运行 `go test -C go ./internal/imagesession -run TestConsumeDoesNotAcknowledgeFailedTaskPersistence -race -count=3 -v -timeout 1m` PASS（13.390s）。两个场景各三次，均要求原错误可由 errors.Is 识别、恰好一次注入、任务仍 running、信封 PENDING/lease 空/consumed_at 空，以及唯一 effect 仍为已确认 failed。这里量化的是六次故障断言，不是生产故障率或延迟收益。
+
+任务落库失败后仍需要现行闲置恢复收敛；本轮只消除错误的成功确认，没有证明即时恢复、持续数据库故障下的最终完成或检查点提交前崩溃的全部情况。执行器 Git blob=`28c45110813d53f84fba95e97909224ec851641a`，新测试=`12db6156644051ad7aac6f508d4a4dec2a389403`。主代理自审唯一调用方、错误路径、事务回滚、隔离库与完整 diff；未调用真实 provider。
