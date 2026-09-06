@@ -27,6 +27,8 @@
 | [eval-state-live.md](eval-state-live.md) | Agent 质量 | 证据 | 阻塞 | — | — |
 | [eval-production-mine.md](eval-production-mine.md) | Agent 质量 | 证据 | 阻塞 | — | — |
 | [image-eval-pool.md](image-eval-pool.md) | 图片质量 | 证据 | 阻塞 | — | — |
+| [image-quality-comparison.md](image-quality-comparison.md) | 图片质量 | 证据 | 阻塞 | — | — |
+| [image-quality-content-pilot.md](image-quality-content-pilot.md) | 图片质量 | 证据 | 阻塞 | — | — |
 
 ## 职责与适用范围
 

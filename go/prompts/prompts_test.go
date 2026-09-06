@@ -99,7 +99,7 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(compile.FamilyLine("infographic"), "资料模块") {
 		t.Fatalf("infographic family fallback %q", compile.Infographic)
 	}
-	for _, needle := range []string{"3 到 5 条", "小图标"} {
+	for _, needle := range []string{"即使只选一张", "一个有依据的购买理由", "最多两条", "小图标"} {
 		if !strings.Contains(selling.Job, needle) {
 			t.Fatalf("selling point job missing %q: %q", needle, selling.Job)
 		}
