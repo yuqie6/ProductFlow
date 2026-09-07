@@ -225,3 +225,38 @@ func TestCompactExpiredTurnJournalsAdvancesPastEachBatch(t *testing.T) {
 		t.Fatalf("compacted batches %d then %d", first, second)
 	}
 }
+
+// A long stream without a matching canonical attempt must not cause one full
+// journal lookup per chunk, or starve the recovery loop that calls compaction.
+func TestCompactExpiredTurnJournalsBoundsUnmatchedStream(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	claimed := createClaimedJournalTurn(t, as)
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-8 * 24 * time.Hour)
+	if _, err := as.pool.Exec(ctx, `UPDATE agent_turn_projections SET status='succeeded',finished_at=$2 WHERE id=$1`, claimed.turn.ID, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(ctx, `
+ INSERT INTO agent_turn_events (id,turn_projection_id,run_id,turn_id,schema_version,sequence,kind,ignorable,payload_json,created_at)
+ SELECT md5($1||'-chunk-'||i),$1,'compact-bound-run',$2,1,i,'text.chunk',false,'{"attempt_id":"orphan","delta":"keep"}'::json,$3
+ FROM generate_series(1,5000) i`, claimed.turn.ID, *claimed.turn.HarnessTurnID, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := as.pool.Exec(ctx, `
+ INSERT INTO agent_turn_events (id,turn_projection_id,run_id,turn_id,schema_version,sequence,kind,ignorable,payload_json,created_at)
+ VALUES ($1,$2,'compact-bound-run',$3,1,5001,'assistant/message',false,'{"attempt_id":"different","text":"other attempt"}'::json,$4)`, clockid.New(), claimed.turn.ID, *claimed.turn.HarnessTurnID, old); err != nil {
+		t.Fatal(err)
+	}
+	bounded, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if _, err := CompactExpiredTurnJournals(bounded, as.svc, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	var preserved int
+	if err := as.pool.QueryRow(ctx, `SELECT count(*) FROM agent_turn_events WHERE turn_projection_id=$1 AND kind='text.chunk' AND payload_json::jsonb->>'delta'='keep'`, claimed.turn.ID).Scan(&preserved); err != nil {
+		t.Fatal(err)
+	}
+	if preserved != 5000 {
+		t.Fatalf("unmatched chunks preserved=%d", preserved)
+	}
+}

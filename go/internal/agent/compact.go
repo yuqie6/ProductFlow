@@ -25,6 +25,8 @@ func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (
 	cutoff := now.Add(-streamCompactAfter)
 	var ids []string
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		// Correlate the canonical message with the event, so PostgreSQL can join
+		// the two event sets instead of rescanning a Turn journal for each chunk.
 		uncompactedChunks := gdb.Table("agent_turn_events AS event").
 			Select("1").
 			Where("event.turn_projection_id = agent_turn_projections.id").
@@ -32,7 +34,7 @@ func CompactExpiredTurnJournals(ctx context.Context, s Service, now time.Time) (
 			Where("event.payload_json::jsonb <> ?::jsonb", `{"compacted":true}`).
 			Where(`EXISTS (
 				SELECT 1 FROM agent_turn_events AS message
-				WHERE message.turn_projection_id = agent_turn_projections.id
+				WHERE message.turn_projection_id = event.turn_projection_id
 				  AND message.kind = 'assistant/message'
 				  AND COALESCE(event.payload_json::jsonb->>'attempt_id', '') = COALESCE(message.payload_json::jsonb->>'attempt_id', '')
 				  AND (
