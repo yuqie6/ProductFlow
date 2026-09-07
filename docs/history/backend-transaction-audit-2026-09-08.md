@@ -42,7 +42,7 @@
 | Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | `2610f2b0` |
 | 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
 | 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | `a32f72bc` |
-| Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 随本次提交 |
+| Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 2b4355ec |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -56,7 +56,7 @@
 | 连续生图 | `Execute → runGeneration → ensureEffect → Generate → saveCandidate → markEffect → finish*`；每次信封处理一个批次，已有 applied 批次跳过 Provider。 | billing sequence 绑定、部分候选已保存后的失败、effect 写失败及额度最终收口需继续审计；不能直接套用 node/attempt 的额度键规则。 |
 | 局部编辑 | 本轮覆盖 HTTP 创建/提交夹具、worker、task/attempt/asset/hold/账户、恢复与 queue.Consume。 | 未进行 SIGKILL 或真实 Provider 调用；进程崩溃按可持久化边界和实际恢复函数注入验证。 |
 | 交付 | 已有本地 Render、资产派生、attempt 条件写入和恢复；此次收口 worker 失败终态错误传播。 | 原图/媒体存储的各类真实 IO 故障、交付性能和全部采用流程未作本轮专项验收。 |
-| Agent 控制 | Node manager 持进程内调度，TurnRuntime 持 lease/checkpoint，工具经 Go effect reconciliation；checkpoint 写失败会中止执行。保留该分工。 | Go/Node lease、journal、工具业务提交之间完整 crash 矩阵及 opt-in 重启门尚未跑完；Node 本地测试不替代 PG 持久化证据。 |
+| Agent 控制 | Node manager 持进程内调度，TurnRuntime 持 lease/checkpoint，工具经 Go effect reconciliation；checkpoint 写失败会中止执行。保留该分工。 | 已分别运行 Go 辅助进程 + PostgreSQL 的 SIGKILL 和 Node 实进程 + 本地服务替身的重启测试；Node → Go → PostgreSQL 联动 crash 矩阵仍未验收，替身不替代持久化证据。 |
 
 ## 后续优先级
 
@@ -194,7 +194,7 @@ Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未
 
 对应真实 PostgreSQL 边界组合实际执行并通过（5.125 秒）：`TestClaimNewAttemptResetsCheckpointSequence`、`TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows`、`TestRejectedTurnEndCannotSplitJournalAndProjection`、`TestRecoverExpiredExecutionsRejectsStaleFencingWriter`、`TestAppendEventsAndCheckpointDoNotDeadlock`。分别核对新尝试序号、重复事件原 receipt/零重复行、非法终态不改投影、过期恢复后旧 lease 写入被拒绝，以及可控交错下的 checkpoint/journal 锁序。这不等同全部 Node/Go 进程 SIGKILL 矩阵或真实模型质量验收。
 
-本轮未运行付费模型、opt-in 重启与规模门，未改动冻结评价资源。Node 与 Go Agent 路径无新增 diff，正常 build 输出未提交。该复核补充当前证据并保留有价值的现有边界，不将测试全绿作为整体控制链路完成声明。
+该轮未运行付费模型或规模门，未改动冻结评价资源。后续核实 process-restart.e2e.test.ts 属于默认 Vitest include，并非 opt-in；其独立执行结果及证据边界见下文。Node 与 Go Agent 路径无新增 diff，正常 build 输出未提交。该复核补充当前证据并保留有价值的现有边界，不将测试全绿作为整体控制链路完成声明。
 
 
 Node checkpoint 顺序切片由本任务主代理负责，范围为 `agent-service/src/turn-runtime.ts`、既有 runtime 回归及 [Go 序号数据库合同](../../go/internal/agent/checkpoint_sequence_test.go)。已安装 pi-agent-core 0.83.0 的 agent.js 默认 toolExecution 为 parallel，agent-loop.js 在没有 sequential 工具时通过 Promise.all 执行工具；ProductFlow 工具及 session 未配置 sequential。多个工具经 withEffect 进入同一 checkpoint，旧代码在 await 追加后才推进序号；实测两个请求均发 sequence=1，原成功/失败两种用例都失败。
@@ -202,3 +202,21 @@ Node checkpoint 顺序切片由本任务主代理负责，范围为 `agent-servi
 修复在 TurnRuntime 内用 Promise 链串行分配序号和追加确认。单项错误仍返回原调用者并设置既有 executionLeaseError；链尾仅承接排队，后续项读取该错误后拒绝，不再次发送。cleanup 等待链完成，再释放 lease、清理 session；新 Turn 重置链和序号。两个新增 Node 回归包含延迟首条、成功/失败分支和清理等待，不为此改变 Pi 工具业务并行策略。
 
 最终 Node 整包 37 文件通过、2 文件跳过，315 测试通过、9 跳过（10.36 秒）；build 和生成合同检查通过。真实 PostgreSQL 序号冲突、尝试重置及 journal/checkpoint 锁序组合通过（2.735 秒）：同序号不同内容 Conflict，后续连续序号实际留下两行，last_checkpoint_sequence=2。本证据分别验证 Node 发送顺序与 Go 持久化合同，不声称已运行真实模型并行工具或完整跨进程 SIGKILL。主代理完整 diff 自审、docs-check 通过；未修改评价任务独占的 evals 或 eval_* 文件。
+
+
+## Agent 进程终止与恢复证据
+
+本切片由同一主代理负责，仅补充既有崩溃测试的实际验收记录，不修改运行时或评价资源。Go [SIGKILL 测试](../../go/internal/agent/sigkill_gopg_test.go) 启动当前测试二进制的独立 lease writer，经测试 HTTP 服务写入真实 PostgreSQL，在明确就绪点仅终止该子进程；父进程显式使租约过期并调用恢复函数。四个子例实际通过（2.309 秒）：
+
+- model_start：模型开始 checkpoint 后终止，projection 为 unknown/execution_interrupted，invocation 为 interrupted，journal 连续。
+- mutation：商品创建提交后终止，仅有一个对应商品，projection 为 unknown，终态事件唯一且 journal 连续。
+- approval：审批请求提交后终止，测试显式设置 awaiting_confirmation；恢复保留等待状态、一个审批请求、零 graph run、零 turn/end。本例不证明 Node 自动完成审批状态投影。
+- turn_end：成功终态提交后终止，恢复保留 succeeded、唯一 turn/end 和连续 journal，旧 lease 的追加请求被拒绝。
+
+可复跑命令：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run "^TestSIGKILLLeaseHolderAgainstGoPG$" -count=1 -timeout 90s -v'`。helper 自身的环境条件用于子进程分流，不是父测试跳过或真实模型授权。
+
+Node [进程重启测试](../../agent-service/src/process-restart.e2e.test.ts) 使用真正的 Node 服务子进程、独立临时 data root 和本地假 Provider/ProductFlow HTTP 服务。四例独立执行通过（7.62 秒）：SIGTERM 保留问题等待 requires_input；活动 Turn 优雅退出投影为 unknown；Provider 请求开始后 SIGKILL 并重启，模型请求累计仍为一次；服务端提交 journal 但本地未收到 ACK 时 SIGKILL，重启经确认恢复且不重发该批次。测试在 finally 中终止自身子进程、关闭本地服务器并删除自身临时目录。
+
+可复跑命令：`pnpm --dir agent-service exec vitest run src/process-restart.e2e.test.ts --reporter=verbose`。当前 Vitest 默认 include 已包含此文件，本次独立 verbose 运行明确确认四例均非 skipped。Node 用例证明本地重启与 HTTP 确认策略，Go 用例证明真实数据库恢复规则；没有把二者拼接为未经运行的端到端证据。仍未运行真实 Node 与 Go/PostgreSQL 联动的完整故障时点矩阵、真实 Provider 结果未知后的对账或生产故障演练。
+
+主代理自审本切片完整文档 diff，核对测试断言与上述描述，docs-check 通过；既有开发服务未重启，没有真实模型调用或新增费用。本轮未发现需要改动业务代码的新缺陷。
