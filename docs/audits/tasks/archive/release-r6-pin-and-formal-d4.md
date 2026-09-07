@@ -63,7 +63,7 @@
 - 原因：无
 - 解除条件：无
 - 跟进者：无
-- 交接：已归档；交付随本任务提交。跟进见 [release-r6-resource-budget](../release-r6-resource-budget.md)。
+- 交接：已归档；交付随本任务提交。跟进见 [release-r6-resource-budget](release-r6-resource-budget.md) → [release-r6-close-ruling](release-r6-close-ruling.md)。
 
 ## 证据
 

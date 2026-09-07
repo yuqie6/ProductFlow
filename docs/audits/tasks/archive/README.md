@@ -4,6 +4,8 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-r6-close-ruling.md](release-r6-close-ruling.md) | 完成 | 总纲 R6 通过；残余非宣称已列；≠R1–R5/SLA |
+| [release-r6-resource-budget.md](release-r6-resource-budget.md) | 完成 | 空闲/轻负载足迹+对应表；非 SLA；本门≠自动关 R6 |
 | [release-r6-pin-and-formal-d4.md](release-r6-pin-and-formal-d4.md) | 完成 | pin `0.0.0-67b0f3092158`+正式 D4 PASS；资源预算未测；R6 未通过 |
 | [release-r6-clean-candidate-gate.md](release-r6-clean-candidate-gate.md) | 完成 | G-07 干净候选 PASS；正式 D4/pin 仍缺；R6 未通过 |
 | [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 完成 | B6 汇总；R6 未通过（G-07 FAIL）；诚实 FAIL |

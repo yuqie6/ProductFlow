@@ -2,7 +2,7 @@
 
 自营与自托管使用**同一套**发行物：版本化镜像 tag、锁定 Compose、`.env` 样例与 `VERSION` / `images.env`。本目录是源码树内的安装包模板；发布者用 `scripts/release-pack.sh` 打出 `dist/release/productflow-<tag>/`（及 `.tar.gz`）交给空主机。
 
-本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），**B3** 备份/恢复与一致点 runbook（对齐 **D2**），**B4** 恢复演练备注，以及 **B5 / D4** 稳定版起 **N→N+1** 升级合同与最小步骤。**B6**（2026-09-07）已在隔离资源汇总 D1/D3/N→N+1/G-07：**R6 未通过**。同日干净候选 G-07 PASS 后，pin `0.0.0-67b0f3092158`（≡`67b0f309`）与正式 D4（`0.0.0-5ed2b916b569`→该 pin，非等价 retag）已采证，惟资源预算等仍缺 → **R6 仍未通过**。证据见 [`release-r6-pin-and-formal-d4`](../docs/audits/tasks/archive/release-r6-pin-and-formal-d4.md)、[`release-r6-clean-candidate-gate`](../docs/audits/tasks/archive/release-r6-clean-candidate-gate.md)、[`release-r6-readiness-gate`](../docs/audits/tasks/archive/release-r6-readiness-gate.md)。跟进 [`release-r6-resource-budget`](../docs/audits/tasks/release-r6-resource-budget.md)。**不**宣称 **R6** 已通过；不杜撰 RPO/RTO/SLA。
+本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），**B3** 备份/恢复与一致点 runbook（对齐 **D2**），**B4** 恢复演练备注，以及 **B5 / D4** 稳定版起 **N→N+1** 升级合同与最小步骤。维护者裁定（2026-09-07）：**总纲 R6 通过**（pin `0.0.0-67b0f3092158`；见 [`release-r6-close-ruling`](../docs/audits/tasks/archive/release-r6-close-ruling.md)）。证据链：G-07 [`clean-candidate`](../docs/audits/tasks/archive/release-r6-clean-candidate-gate.md)、正式 D4 [`pin-and-formal-d4`](../docs/audits/tasks/archive/release-r6-pin-and-formal-d4.md)、资源足迹 [`resource-budget`](../docs/audits/tasks/archive/release-r6-resource-budget.md)（**非 SLA**）、B6 汇总 [`readiness-gate`](../docs/audits/tasks/archive/release-r6-readiness-gate.md)。残余非宣称（满载/多商/registry push 等）见 close-ruling；**≠R1–R5**；不杜撰 RPO/RTO/SLA。
 
 ## 镜像 tag 约定
 

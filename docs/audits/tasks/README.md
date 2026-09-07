@@ -20,7 +20,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [release-r6-resource-budget.md](release-r6-resource-budget.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [image-quality-content-pilot.md](image-quality-content-pilot.md) | 图片质量 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
