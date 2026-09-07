@@ -3,6 +3,7 @@ package adapt
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -100,5 +101,17 @@ func TestChatMapsModeAndErrors(t *testing.T) {
 	_, err = Chat(stub, nil).Generate(context.Background(), imagesession.ChatRequest{Prompt: "x"})
 	if !errors.Is(err, imagesession.ErrRateLimit) {
 		t.Fatalf("want rate limit, got %v", err)
+	}
+}
+
+func TestGraphImageUnknownPreservesProviderCause(t *testing.T) {
+	for _, cause := range []error{providers.ErrUnknown, providers.ErrTimeout, providers.ErrConnection, providers.ErrProvider5xx} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			original := fmt.Errorf("request trace-123: %w", cause)
+			_, err := GraphImage(&stubClient{err: original}).GenerateImage(context.Background(), graph.ImageRequest{})
+			if !errors.Is(err, graph.ErrProviderUnknown()) || !errors.Is(err, original) || !strings.Contains(err.Error(), "trace-123") {
+				t.Fatalf("lost classification or cause: %v", err)
+			}
+		})
 	}
 }

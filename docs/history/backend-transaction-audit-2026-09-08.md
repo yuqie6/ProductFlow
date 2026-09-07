@@ -37,7 +37,8 @@
 | 连续生图接管 pending/忽略 unknown，重试 failed 时未重置结果与 Provider/hash | `ensureEffect` 只允许确认失败重新准备；未决 intent 保留原身份转 unknown，applied 复用 | 原实现三种缺陷复现；新调用 pending 元数据与请求一致，未决返回 unknown 且保留原 request/attempt，applied 批次数不变 | `4e17ba26` |
 | 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | `58791772` |
 | Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | `d27b6a66` |
-| Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | 随本次提交 |
+| Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | `4216e3b0` |
+| 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -149,3 +150,10 @@ Graph 提案依赖切片由本任务主代理负责，范围为 `graph/service.g
 Graph Provider 原因切片由本任务主代理负责，范围为 `graph/execute_node.go`、[Provider 失败原因回归](../../go/internal/graph/provider_failure_detail_test.go) 和原未知额度回归调用签名。复用原节点失败的 apperr.Detail 提取规则，两类 Provider 错误都保留未知提示与具体原因，经既有 markNodeUnknown 写入节点、effect 和事件；不改变重试分类、额度合同或持久化结构。真实 PostgreSQL 两条调用原代码均复现原因丢失，修复后与三条未知额度事务入口的针对性组合通过（1.079 秒）。
 
 Provider 原因切片当前工作区 Graph 整包通过（87.623 秒），新增数据库原因断言实际执行；未运行 opt-in 规模或真实模型门。复用已确认的标准 vet 版本声明缺口，`go vet -stdversion=false ./internal/graph` 通过，不将其称为标准 vet 全绿。主代理完整 diff 自审、markUnknownCommitted 全调用者扫描、`just docs-check` 和空白检查通过；未改变其他任务资源。
+
+
+Provider 错误适配切片由本任务主代理负责，范围为 `providers/adapt/adapt.go`、`providers/prompt.go`、Graph 未知提示去重及对应测试。继续追踪真实适配器发现上个切片只证明 Graph 收到原因后能保存，不能证明适配前原因未被删除；本切片用原生多错误包装保留 Graph unknown 和底层 error，不新增错误类型。四类图片失败可 errors.Is 原错误，文稿解码失败可 errors.As json.SyntaxError；未把原响应正文写入错误。真实数据库 [适配器集成回归](../../go/internal/graph/provider_adapter_cause_test.go) 经过商品创建、图执行、正式 GraphImage 适配器、终态写入与再次投递，节点和 effect 保存 trace，未知提示只出现一次，客户端仅调用一次。
+
+请求追踪审计的新证据：`callProvider/callImageProvider` 的 request_json 仅含 node_id、node_type、input_digest、attempt_id；实际 PromptRequest 的文稿动作/内容和 ImageRequest 的生成参数/变体/参考图没有直接记录。该 hash 当前是执行身份摘要，不能作为实际 Provider 请求证明。下层 `providers/adapt.graphImage.GenerateImage` 还执行 CompileImageModelPrompt 并转为 GenerateRequest；因此 Graph 边界证据也不等同 HTTP 出站正文。未发现这些缺字段导致实际 Provider 输入错误的复现，当前归为追踪缺口。后续实现须绑定记录与调用的同一 typed request，参考图只记录身份和实际字节摘要，避免 base64 进入具有 64 KiB 限制的 effect JSON；需真实数据库比对实际捕获请求、参考图摘要及超限时 Provider 零调用。该请求记录改造尚未实施。
+
+错误适配切片验证：providers 整包通过（0.109 秒），providers/adapt 整包通过（0.012 秒）；最终 Graph 实际适配器持久化、双入口原因和未知额度回滚组合通过（2.564 秒）。`go vet -stdversion=false` 的 providers/adapt/graph 检查通过；标准 vet 的既有版本声明缺口未改变。主代理完整 diff 自审、相关返回路径扫描、`just docs-check` 与空白检查通过；没有真实模型费用，没有触碰账户/schema 或共享进程。本次没有重跑 Graph 整包，前一切片整包证据不当作本次整包结果。

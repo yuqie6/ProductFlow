@@ -311,7 +311,7 @@ func parseResponsesStructured(raw []byte, fallbackModel string, schema map[strin
 		} `json:"output"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, "", "", graph.ErrProviderUnknown()
+		return nil, "", "", fmt.Errorf("%w: decode response: %w", graph.ErrProviderUnknown(), err)
 	}
 	candidates := [][]byte{envelope.OutputParsed}
 	for _, item := range envelope.Output {

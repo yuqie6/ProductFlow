@@ -50,7 +50,7 @@ func mapGraphErr(err error) error {
 		errors.Is(err, providers.ErrTimeout) ||
 		errors.Is(err, providers.ErrConnection) ||
 		errors.Is(err, providers.ErrProvider5xx) {
-		return graph.ErrProviderUnknown()
+		return fmt.Errorf("%w: %w", graph.ErrProviderUnknown(), err)
 	}
 	return err
 }

@@ -571,7 +571,9 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 
 func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string, cause string) error {
 	detail := ProviderUnknownDetail
-	if cause = strings.TrimSpace(cause); cause != "" && cause != detail {
+	if cause = strings.TrimSpace(cause); strings.HasPrefix(cause, detail) {
+		detail = cause
+	} else if cause != "" {
 		detail += ": " + cause
 	}
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
