@@ -77,6 +77,7 @@ type ImageRequest struct {
 	// InputDigest 是本次生图对应的编译 digest，写入产物后用于 skip/stale。
 	InputDigest          string
 	ImageTypeKey         string         // 图种闭集 key，写入生成图身份
+	ProduceRoute         string         // subject_preserve|generative；空则按图种默认
 	GenerationSpec       map[string]any // 节点 generation_spec；不进 image digest 的交付项不在这里
 	Prompt               map[string]any // 来自入边 live prompt 文档，不是节点 config dump
 	References           []ReferenceImage

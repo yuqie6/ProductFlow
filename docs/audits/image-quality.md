@@ -12,7 +12,7 @@
 
 ## 组内交付
 
-1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。[事实分层闸 CF-B0](tasks/archive/compete-facts-layer-gate.md)、[CF-B1 图位文字追溯](tasks/archive/compete-facts-text-trace.md) 与 [CF-B2 变更影响预览](tasks/archive/compete-facts-impact-preview.md) 已交付；下一项 [CF-B3 双路线](tasks/compete-facts-produce-route.md)。
+1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。[事实分层闸 CF-B0](tasks/archive/compete-facts-layer-gate.md)、[CF-B1 图位文字追溯](tasks/archive/compete-facts-text-trace.md)、[CF-B2 变更影响预览](tasks/archive/compete-facts-impact-preview.md) 与 [CF-B3 双路线](tasks/archive/compete-facts-produce-route.md) 已交付；下一项 [CF-B4 受控排版](tasks/compete-facts-controlled-layout.md)。
 2. [image-quality-content-pilot](tasks/image-quality-content-pilot.md)：固定两商品内容策略候选真实对照（费用上限内已授权）。
 3. 有真实差距后按合同发布生成链/排版实现切片；不与旧 42/32 图位完成条件混写。
 4. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
@@ -35,8 +35,8 @@
 | 编译入边与 digest | `graph/compiler.go`：`incomingSorted` 只扫入边；`incomingFactSetVersions` 写入 digest；`execute_node.go` `skipUnchanged` 同 digest 跳过；CF-B2 预览只经 RoleFacts，未选中已完成节点可重盖 digest 保 artifact | — |
 | 图位文字 | `image_prompt`/`image` 产物可挂 `text_trace`（`fact_keys` 或 `user_image_override`）；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required`；卖点一图一理由检查器 `CheckSellingPointOneReason` | OCR 成片对照闸未建；交付采用侧尚未强制消费 `text_qualified` |
 | 配方清身份 | `recipe/payload.go` 剥 `source_product_id` / `fact_set_version_id` / `visual_system_version_id` / `visual_overrides` / `fact_keys` 等 | 结构复用已有；品牌/视觉方案版本继承与「第二商品不带旧身份」缺产品级继承链 |
-| 主体/局部 | `localedit`：供应商 `masked_edit`（`remove\|replace_text\|inpaint`），非确定性抠图保真链 | **无**主体提取+背景/阴影+比例的保留主体产图路线；不能把 localedit 标成像素保真 |
-| 生成式摄影 | `image_generation` + providers；提示词可含「保持一致」类文案 | 无路线标签区分「保留主体 vs 生成式」；无禁止用提示词宣称像素保真的合同闸 |
+| 主体/局部 | `localedit`：供应商 `masked_edit`；图位可声明 `produce_route=subject_preserve` | **无**主体提取+背景/阴影+比例实现链；不能把 localedit 标成像素保真 |
+| 生成式摄影 | `image_generation` + providers；图位/产物 `produce_route`；生成式禁像素保真文案审计 | 主体提取链未建；采用侧尚未强制消费 `route_qualified` |
 | 交付规格 | `delivery/spec.go` + `renderer.go`：确定性缩放/裁切/编码（png/jpeg/webp），`Render` 不调模型 | **不是**图内二维排版；无层/字体/安全区组合器 |
 | 视觉方案 | 表 `visual_systems` / `visual_system_versions`；节点 `visual_overlay`；`mergeImageVisual` 本地 overlay 盖系统；配方 `preferred_visual_system_version_id` | **无** Brand 实体与品牌版本；总纲四级继承未落地；品牌更新静默改在做任务的防护未建 |
 | 采用快照 | 体验组 [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)（已交付） | 本组定义身份/文字**合格判据**；采用/导出 UX 与快照持久化归体验组 |
@@ -48,11 +48,11 @@
 | IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `完成`（`layer` 闭集 + 确认门/营销闸；资料面板分栏；`TestFactLayerGate*`） |
 | IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1：元数据+卖点检查器；OCR 与采用硬闸另发） |
 | IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `完成`（CF-B2：impact-preview + `update_node_ids` 采用；未选中保 artifact；证据见 [compete-facts-impact-preview](tasks/archive/compete-facts-impact-preview.md)） |
-| IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `缺失` |
-| IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `缺失`（生成链已有，路线合同与禁令未钉） |
-| IQ-CF-06 | **受控二维排版边界**：营销字、规格、Logo 使用图内组合：图片层、文字层、必要形状、字体、字号、颜色、对齐、安全区。归属图片产出与 media lineage；**不**承担 DAG 调度，**不**第二工作流编辑器。只编辑本系统持有的结构；任意图片分层后置。浏览器预览与服务端导出同输入一致性（中文换行、缺字、长标题、像素尺寸）可测。技术选型在实现任务中按下方比较维度验证后选定，**本文件不指定 SDK**。 | 结构 schema + 预览/导出一致性测试；选型备忘只记比较结果 | `缺失`（DeliverySpec≠排版） |
+| IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `部分完成`（CF-B3：`produce_route=subject_preserve` + 失败→未解决/`route_qualified=false`；主体提取链未建） |
+| IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `部分完成`（CF-B3：`produce_route=generative` + 禁令审计 + UI「可能改变外观」；真实对照另发） |
+| IQ-CF-06 | **受控二维排版边界**：营销字、规格、Logo 使用图内组合：图片层、文字层、必要形状、字体、字号、颜色、对齐、安全区。归属图片产出与 media lineage；**不**承担 DAG 调度，**不**第二工作流编辑器。只编辑本系统持有的结构；任意图片分层后置。浏览器预览与服务端导出同输入一致性（中文换行、缺字、长标题、像素尺寸）可测。技术选型在实现任务中按下方比较维度验证后选定，**本文件不指定 SDK**。 | 结构 schema + 预览/导出一致性测试；选型备忘只记比较结果 | `缺失`（DeliverySpec≠排版；实现见 [compete-facts-controlled-layout](tasks/compete-facts-controlled-layout.md)） |
 | IQ-CF-07 | **品牌/视觉继承优先级**：本商品显式覆盖 > 选定视觉方案版本 > 品牌版本 > 产品默认。事实与身份参考来自目标商品，**不参与**风格继承链。实例保存所选版本 id；品牌/方案更新先列受影响商品，须显式采用新版本，不得静默改在做任务与旧交付。配方继续清除来源商品身份与 fact/visual 版本绑定。 | 继承解析单测 + 配方 extract/apply 回归 + 第二商品无旧身份样例 | `缺失`（visual_system / overlay 局部存在；Brand 与四级链未建） |
-| IQ-CF-08 | **与采用快照交接**：本组判定「身份合格 / 文字合格 / 路线声明正确」；体验组 [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md) 负责采用动作、快照持久化、导出 UX。不合格图可生成但**不得**进入「已采用交付」合格集（由体验组消费本判据）。O1–O7 文稿采用 ≠ 交付采用。 | 跨组合同引用；本组提供判据表，不写采用表模型 | `部分完成`（体验组快照已交付；本组判据闸仍待 CF 批次） |
+| IQ-CF-08 | **与采用快照交接**：本组判定「身份合格 / 文字合格 / 路线声明正确」；体验组 [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md) 负责采用动作、快照持久化、导出 UX。不合格图可生成但**不得**进入「已采用交付」合格集（由体验组消费本判据）。O1–O7 文稿采用 ≠ 交付采用。 | 跨组合同引用；本组提供判据表，不写采用表模型 | `部分完成`（体验组快照已交付；`text_qualified`/`route_qualified` 判据侧就绪，采用硬闸未接） |
 
 #### IQ-CF-06 技术选型比较维度（不选定实现）
 
@@ -85,8 +85,8 @@
 | **CF-B0** | 事实来源分层闸 | 扩展/收紧 facts 写入与展示：确认门、冲突可见、营销文案与性能事实分栏；不新建事实仓库 | 用户确认容量 `600ml`→`confirmed`+`user`；图观材质→`image_observation` 待确认 | `agent_inference`「保温 24h」未确认即当 `confirmed` 性能；口吻「明星同款」写入规格事实 | `完成`（`product/facts*` + 资料面板分栏；证据见 [compete-facts-layer-gate](tasks/archive/compete-facts-layer-gate.md)） |
 | **CF-B1** | 图位文字追溯 | prompt/generation 产物记录文字所用 `fact_keys` 或本图覆盖；卖点一图一理由检查器（可先非 live） | 规格图「600ml」← fact `capacity`；保温杯卖点只强调「轻量杯身」且有依据 | 成片「24h 保温」无 fact；卖点同时堆三句无关口号且无 key | `完成`（`graph/text_trace*` + prompt/image 产物挂载；证据见 [compete-facts-text-trace](tasks/archive/compete-facts-text-trace.md)；OCR/采用硬闸非本批） |
 | **CF-B2** | 变更影响预览 | 事实保存前预览依赖图位；用户多选更新；未选中已完成节点保持 artifact；解释旧 `fact_set_version_id` | 改 500→600ml：列出规格/卖点图；场景图无容量字则默认不入更新集且不重跑 | 改容量后全图自动重跑；预览注入未连边节点资料 | `完成`（预览 API + UI 多选；`skipUnchanged`/`incomingFactSetVersions` 回归；证据见 [compete-facts-impact-preview](tasks/archive/compete-facts-impact-preview.md)） |
-| **CF-B3** | 双路线声明 | 图位/运行记录 `produce_route=subject_preserve\|generative`；生成式禁像素保真文案；保留主体路线失败→未解决项 | 主图 `subject_preserve`；场景 `generative` 且 UI 显示「可能改变外观」 | 生成式路线提示词含「像素级一致」；保留主体失败仍标已交付合格 | 枚举/文案审计测试；路线字段持久化 |
-| **CF-B4** | 受控二维排版 | 先完成选型比较备忘（上表维度），再最小结构：层、字体、安全区、预览/导出一致性；接现有资产 lineage | 规格字排版改字号不重生成杯身；预览与导出同夹具一致 | 排版服务调度 Graph 节点；未经验证 SDK 直接进主依赖；缺字静默空白当合格 | 选型备忘审阅 + 一致性夹具；**本证据任务只冻结维度，不选型** |
+| **CF-B3** | 双路线声明 | 图位/运行记录 `produce_route=subject_preserve\|generative`；生成式禁像素保真文案；保留主体路线失败→未解决项 | 主图 `subject_preserve`；场景 `generative` 且 UI 显示「可能改变外观」 | 生成式路线提示词含「像素级一致」；保留主体失败仍标已交付合格 | `完成`（枚举/文案审计测试；路线字段持久化；证据见 [compete-facts-produce-route](tasks/archive/compete-facts-produce-route.md)；主体提取与采用硬闸非本批） |
+| **CF-B4** | 受控二维排版 | 先完成选型比较备忘（上表维度），再最小结构：层、字体、安全区、预览/导出一致性；接现有资产 lineage | 规格字排版改字号不重生成杯身；预览与导出同夹具一致 | 排版服务调度 Graph 节点；未经验证 SDK 直接进主依赖；缺字静默空白当合格 | `缺失`（实现见 [compete-facts-controlled-layout](tasks/compete-facts-controlled-layout.md)；合同维度已冻结，本批选型+最小结构） |
 | **CF-B5** | 品牌/视觉继承 | 四级优先级解析；实例存版本 id；更新需显式采用；配方清身份保持；第二商品样例 | 商品 overlay 色盖方案色盖品牌色盖默认；新杯复用方案但容量为新 fact | 事实/参考进入风格链；品牌更新静默改旧交付；配方带回 `source_product_id` | 解析单测 + recipe payload 回归 + 手工第二商品清单 |
 
 #### 保温杯贯通流程 → 批次（可自动化部分）

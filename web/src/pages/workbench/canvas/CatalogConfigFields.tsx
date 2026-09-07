@@ -45,6 +45,8 @@ const SELECT_OPTION_LABEL_KEYS = {
   bottom: "agentWorkbench.nodeEditor.option.bottom",
   left: "agentWorkbench.nodeEditor.option.left",
   right: "agentWorkbench.nodeEditor.option.right",
+  subject_preserve: "agentWorkbench.nodeEditor.option.subject_preserve",
+  generative: "agentWorkbench.nodeEditor.option.generative",
 } as const;
 
 interface CatalogRenderItem {

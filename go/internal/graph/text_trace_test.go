@@ -153,12 +153,16 @@ func TestTextTraceAsMapRoundTripKeys(t *testing.T) {
 
 func TestStripV3PromptPayloadDropsTextTrace(t *testing.T) {
 	got := stripV3PromptPayload(map[string]any{
-		"design_goal": "目标",
-		"text_trace":  map[string]any{"fact_keys": []any{"capacity"}},
-		"fact_keys":   []any{"legacy"},
+		"design_goal":   "目标",
+		"text_trace":    map[string]any{"fact_keys": []any{"capacity"}},
+		"produce_route": map[string]any{"route": "generative"},
+		"fact_keys":     []any{"legacy"},
 	})
 	if _, ok := got["text_trace"]; ok {
 		t.Fatal("text_trace must be stripped from live prompt document")
+	}
+	if _, ok := got["produce_route"]; ok {
+		t.Fatal("produce_route must be stripped from live prompt document")
 	}
 	if _, ok := got["fact_keys"]; ok {
 		t.Fatal("fact_keys must stay stripped")

@@ -358,12 +358,14 @@ func nodeConfigFields(nodeType NodeType) ([]configField, bool) {
 	case NodeImagePrompt:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
+			fld("produce_route", "string", "select", withLabel("agentWorkbench.nodeEditor.produceRoute"), withChoices(ProduceRouteSubjectPreserve, ProduceRouteGenerative), withDigest()),
 			fld("text_settings", "object", "group", withLabel("workflowConfirmation.textContent"), withFields(textSettingsFields()...)),
 			fld("prompt", "object", "group", withLabel("graph.inspector.promptSection"), withNoDigest(), withFields(promptFields()...)),
 		}, true
 	case NodeImageGeneration:
 		return []configField{
 			hid("image_type_key", "string", withDigest()),
+			fld("produce_route", "string", "select", withLabel("agentWorkbench.nodeEditor.produceRoute"), withChoices(ProduceRouteSubjectPreserve, ProduceRouteGenerative), withDigest()),
 			fld("variation_instruction", "string_or_null", "textarea", withLabel("nodeDetail.supplement"), withMaxLen(4000)),
 			fld("prompt_overrides", "object_or_null", "group", withFields(imagePromptOverrideFields()...)),
 			fld("text_override", "object_or_null", "group", withFields(imageTextOverrideFields()...)),
@@ -391,6 +393,11 @@ func FillDefaultNodeConfig(nodeType NodeType, config map[string]any) map[string]
 	if nodeType == NodeImagePrompt {
 		if _, exists := out["text_settings"]; !exists {
 			out["text_settings"] = defaultTextSettings(asString(out["image_type_key"]))
+		}
+	}
+	if nodeType == NodeImagePrompt || nodeType == NodeImageGeneration {
+		if _, exists := out["produce_route"]; !exists {
+			out["produce_route"] = DefaultProduceRoute(asString(out["image_type_key"]))
 		}
 	}
 	if nodeType == NodeImageGeneration && !hadGenerationSpec {

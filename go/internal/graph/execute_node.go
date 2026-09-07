@@ -188,8 +188,16 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			Facts:        facts,
 			ImageTypeKey: req.ImageTypeKey,
 		}))
+		route := ResolveProduceRoute(node.Config, req.ImageTypeKey)
+		routeRec := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+			Route:             route,
+			ImageTypeKey:      req.ImageTypeKey,
+			SkipIdentityCheck: true,
+			PromptTexts:       collectPromptAuditTexts(result.Payload, ""),
+		}))
 		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, prompt.Name(), map[string]any{
-			"text_trace": textTrace,
+			"text_trace":    textTrace,
+			"produce_route": routeRec,
 		}, func(config map[string]any) map[string]any {
 			return mergeGeneratedPrompt(config, result.Payload, mode, DocumentOrigin(node))
 		})
@@ -201,6 +209,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if key, ok := node.Config["image_type_key"].(string); ok {
 			imgReq.ImageTypeKey = key
 		}
+		imgReq.ProduceRoute = ResolveProduceRoute(node.Config, imgReq.ImageTypeKey)
 		promptPayload, effectiveSpec, artifactID, err := resolveImageDocument(applied, node.ID, sources)
 		if err != nil {
 			return err
@@ -242,7 +251,13 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			ImageTypeKey:      imgReq.ImageTypeKey,
 			UserImageOverride: nodeHasTextOverride(node.Config),
 		}))
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID, imageTrace)
+		routeRec := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+			Route:                imgReq.ProduceRoute,
+			ImageTypeKey:         imgReq.ImageTypeKey,
+			HasIdentityReference: hasProductIdentityReference(imgReq.References),
+			PromptTexts:          collectPromptAuditTexts(promptPayload, imgReq.VariationInstruction),
+		}))
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID, imageTrace, routeRec)
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -651,6 +666,7 @@ func (e Executor) persistImageArtifact(
 	promote bool,
 	providerName, promptArtifactID string,
 	textTrace map[string]any,
+	produceRoute map[string]any,
 ) error {
 	if e.Deps.Assets == nil {
 		return apperr.Validation("节点运行失败")
@@ -723,6 +739,9 @@ func (e Executor) persistImageArtifact(
 		}
 		if len(textTrace) > 0 {
 			payloadMap["text_trace"] = textTrace
+		}
+		if len(produceRoute) > 0 {
+			payloadMap["produce_route"] = produceRoute
 		}
 		payload, err := json.Marshal(payloadMap)
 		if err != nil {
@@ -973,7 +992,7 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 				source.VisualPayload = cloneMap(payloadMap)
 			}
 		case "prompt":
-			// text_trace / fact_keys 只挂在产物元数据，不进下游 listing prompt。
+			// text_trace / produce_route / fact_keys 只挂在产物元数据，不进下游 listing prompt。
 			source.PromptDocument = stripV3PromptPayload(payloadMap)
 		}
 		byNodeRun[*rec.NodeRunID] = source

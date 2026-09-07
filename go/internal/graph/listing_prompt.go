@@ -31,6 +31,10 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		text = map[string]any{}
 	}
 	imageTypeKey := strings.TrimSpace(req.ImageTypeKey)
+	route := NormalizeProduceRoute(req.ProduceRoute)
+	if route == "" {
+		route = DefaultProduceRoute(imageTypeKey)
+	}
 	family := imageTypeFamily(imageTypeKey)
 	typeTitle := imageTypeTitle(imageTypeKey)
 	compile := prompts.CompileImageTemplates()
@@ -39,6 +43,11 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		compile.Identity,
 		compile.Recompose,
 		compile.Invent,
+	}
+	if route == ProduceRouteGenerative {
+		briefLines = append(briefLines, "本路线为生成式摄影，可能改变外观；不要要求像素级一致或像素级还原。")
+	} else {
+		briefLines = append(briefLines, "本路线为保留主体：优先保持商品外形与结构，但不得宣称绝对像素保真。")
 	}
 	for index, ref := range req.References {
 		line := fmt.Sprintf("Reference image %d: role=%s", index+1, ref.Role)
@@ -61,16 +70,16 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		briefLines = append(briefLines, line)
 	}
 	if designGoal := usablePromptText(payload["design_goal"]); designGoal != "" {
-		briefLines = append(briefLines, "图目标："+designGoal)
+		briefLines = append(briefLines, "图目标："+scrubRoutePromptText(route, designGoal))
 	}
 	if rules := usablePromptTexts(payload["shared_rules"]); len(rules) > 0 {
-		briefLines = append(briefLines, "必须遵守："+strings.Join(rules, "；"))
+		briefLines = append(briefLines, "必须遵守："+strings.Join(scrubRoutePromptTexts(route, rules), "；"))
 	}
 	if rules := usablePromptTexts(payload["creative_boundary"]); len(rules) > 0 {
-		briefLines = append(briefLines, "不得出现："+strings.Join(rules, "；"))
+		briefLines = append(briefLines, "不得出现："+strings.Join(scrubRoutePromptTexts(route, rules), "；"))
 	}
 	if rules := usablePromptTexts(asMapOrNil(payload["product_fidelity"])["requirements"]); len(rules) > 0 {
-		briefLines = append(briefLines, "商品保留要求："+strings.Join(rules, "；"))
+		briefLines = append(briefLines, "商品保留要求："+strings.Join(scrubRoutePromptTexts(route, rules), "；"))
 	}
 	for _, line := range overlayBriefLines(mergeImageVisual(req.VisualSystem, req.VisualOverlay)) {
 		briefLines = append(briefLines, line)
@@ -97,7 +106,7 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		briefLines = append(briefLines, "卖点："+strings.Join(selling, "、"))
 	}
 	if background := usablePromptText(content["background"]); background != "" {
-		briefLines = append(briefLines, "背景："+background)
+		briefLines = append(briefLines, "背景："+scrubRoutePromptText(route, background))
 	}
 	if decorations := usablePromptTexts(content["decorations"]); len(decorations) > 0 {
 		briefLines = append(briefLines, "点缀："+strings.Join(decorations, "、"))
@@ -130,9 +139,28 @@ func CompileImageModelPrompt(req ImageRequest) string {
 	}
 	if strings.TrimSpace(req.VariationInstruction) != "" {
 		briefLines = append(briefLines, "以下本图补充要求仅在不违反商品事实、必须遵守、不得出现和商品保留要求时生效。")
-		briefLines = append(briefLines, "变化："+strings.TrimSpace(req.VariationInstruction))
+		briefLines = append(briefLines, "变化："+scrubRoutePromptText(route, strings.TrimSpace(req.VariationInstruction)))
 	}
 	return strings.Join(uniquePromptLines(briefLines), "\n")
+}
+
+func scrubRoutePromptText(route, text string) string {
+	if len(FindForbiddenPixelFidelityPhrases(text)) == 0 {
+		return text
+	}
+	// 生成式与保留主体都不得把绝对像素保真宣称发给模型。
+	_ = route
+	return ScrubForbiddenPixelFidelityPhrases(text)
+}
+
+func scrubRoutePromptTexts(route string, texts []string) []string {
+	out := make([]string, 0, len(texts))
+	for _, text := range texts {
+		if next := scrubRoutePromptText(route, text); next != "" {
+			out = append(out, next)
+		}
+	}
+	return out
 }
 
 func overlayBriefLines(overlay map[string]any) []string {

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [compete-facts-produce-route.md](compete-facts-produce-route.md) | 完成 | CF-B3 produce_route+禁令审计；≠主体提取/采用硬闸/R3 |
 | [merchant-delivery-localedit.md](merchant-delivery-localedit.md) | 完成 | B6 交付/局部编辑跨商404；≠MP-B |
 | [workbench-conditional-results-default.md](workbench-conditional-results-default.md) | 完成 | 有产出默认results否则flow；≠全局默认/记忆 |
 | [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 完成 | CF-B2 impact-preview+多选采用；≠OCR/自动跑图/R3 |
