@@ -15,7 +15,7 @@ func TestNormalizeFactPayloadAndDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["key"] != "material" || got["source_type"] != "user" || got["status"] != "confirmed" {
+	if got["key"] != "material" || got["source_type"] != "user" || got["status"] != "confirmed" || got["layer"] != "performance" {
 		t.Fatalf("%+v", got)
 	}
 	if _, err := normalizeFactPayload(map[string]any{"key": ""}); err == nil {
@@ -27,11 +27,17 @@ func TestNormalizeFactPayloadAndDuplicates(t *testing.T) {
 	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "status": "maybe"}); err == nil {
 		t.Fatal("invalid status")
 	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "layer": "brand"}); err == nil {
+		t.Fatal("invalid layer")
+	}
 	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "source_type": nil}); err == nil {
 		t.Fatal("explicit null source_type")
 	}
 	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "status": nil}); err == nil {
 		t.Fatal("explicit null status")
+	}
+	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "layer": nil}); err == nil {
+		t.Fatal("explicit null layer")
 	}
 	if _, err := normalizeFactPayload(map[string]any{"key": "material", "value": "钢", "requires_confirmation": nil}); err == nil {
 		t.Fatal("explicit null requires_confirmation")
@@ -161,6 +167,7 @@ func TestFactsHTTPRejectsExplicitNullOnNonNullableFields(t *testing.T) {
 	for _, fact := range []map[string]any{
 		{"key": "material", "value": "钢", "source_type": nil},
 		{"key": "material", "value": "钢", "status": nil},
+		{"key": "material", "value": "钢", "layer": nil},
 		{"key": "material", "value": "钢", "requires_confirmation": nil},
 		{"key": "material", "value": "钢", "evidence_asset_ids": nil},
 		{"key": "material", "value": "钢", "conflicts": nil},
@@ -246,4 +253,153 @@ func TestProductListRejectsInvalidQuery(t *testing.T) {
 		t.Fatalf("valid list %d %s", ok.StatusCode, raw)
 	}
 	ok.Body.Close()
+}
+
+
+func TestFactLayerGatePositiveAndNegativeFixtures(t *testing.T) {
+	t.Parallel()
+
+	confirmedCapacity, err := normalizeFactPayload(map[string]any{
+		"key": "capacity", "value": "600ml", "source_type": "user", "status": "confirmed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirmedCapacity["source_type"] != "user" || confirmedCapacity["status"] != "confirmed" || confirmedCapacity["layer"] != "performance" {
+		t.Fatalf("user capacity: %+v", confirmedCapacity)
+	}
+	if boolOr(confirmedCapacity["requires_confirmation"]) {
+		t.Fatal("user confirmed capacity should not require confirmation")
+	}
+
+	imageMaterial, err := normalizeFactPayload(map[string]any{
+		"key": "material", "value": "不锈钢", "source_type": "image_observation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageMaterial["source_type"] != "image_observation" || imageMaterial["status"] != "observed" {
+		t.Fatalf("image material defaults: %+v", imageMaterial)
+	}
+	if !boolOr(imageMaterial["requires_confirmation"]) {
+		t.Fatal("image observation must stay pending")
+	}
+
+	if _, err := normalizeFactPayload(map[string]any{
+		"key": "insulation", "value": "保温 24h", "source_type": "agent_inference", "status": "confirmed",
+	}); err == nil {
+		t.Fatal("agent inference confirmed performance must reject")
+	} else {
+		var e apperr.Error
+		if !errorAs(err, &e) || e.Detail != "未确认的推断或图观事实不能升为已确认性能事实" {
+			t.Fatalf("%v", err)
+		}
+	}
+
+	if _, err := normalizeFactPayload(map[string]any{
+		"key": "material", "value": "明星同款", "source_type": "user", "status": "confirmed",
+	}); err == nil {
+		t.Fatal("marketing tone in performance must reject")
+	} else {
+		var e apperr.Error
+		if !errorAs(err, &e) || e.Detail != "营销口吻不能写入性能事实" {
+			t.Fatalf("%v", err)
+		}
+	}
+
+	marketing, err := normalizeFactPayload(map[string]any{
+		"key": "selling_point", "value": "明星同款", "source_type": "user", "status": "user_declared",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marketing["layer"] != "marketing" {
+		t.Fatalf("selling_point layer: %+v", marketing)
+	}
+
+	pendingInference, err := normalizeFactPayload(map[string]any{
+		"key": "insulation", "value": "保温 24h", "source_type": "agent_inference", "status": "observed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !boolOr(pendingInference["requires_confirmation"]) || pendingInference["status"] != "observed" {
+		t.Fatalf("pending inference: %+v", pendingInference)
+	}
+
+	conflicted, err := normalizeFactPayload(map[string]any{
+		"key": "capacity", "value": "500ml", "status": "conflicted",
+		"conflicts": []any{map[string]any{"value": "600ml", "source_type": "user"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !boolOr(conflicted["requires_confirmation"]) {
+		t.Fatal("conflicted must require confirmation")
+	}
+	if _, err := normalizeFactPayload(map[string]any{
+		"key": "capacity", "value": "500ml", "status": "conflicted",
+	}); err == nil {
+		t.Fatal("conflicted without conflicts must reject")
+	}
+}
+
+func TestFactsHTTPLayerGateFixtures(t *testing.T) {
+	ps := newProductServer(t)
+	created := ps.createV2(t, "分层闸", map[string]string{"category": "杯壶", "price": "39.00"}, 1)
+	path := "/api/v3/products/" + created.Product.ID + "/facts"
+
+	ok := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"facts": []map[string]any{
+			{"key": "capacity", "value": "600ml", "source_type": "user", "status": "confirmed"},
+			{"key": "material", "value": "不锈钢", "source_type": "image_observation"},
+			{"key": "selling_point", "value": "轻量杯身", "layer": "marketing", "source_type": "user", "status": "user_declared"},
+		},
+	})
+	if ok.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(ok.Body)
+		ok.Body.Close()
+		t.Fatalf("positive put %d %s", ok.StatusCode, raw)
+	}
+	var payload FactsResponse
+	ps.decode(t, ok, &payload)
+	byKey := map[string]Fact{}
+	for _, fact := range payload.Facts {
+		byKey[fact.Key] = fact
+	}
+	if byKey["capacity"].Status != "confirmed" || byKey["capacity"].SourceType != "user" || byKey["capacity"].Layer != "performance" {
+		t.Fatalf("capacity %+v", byKey["capacity"])
+	}
+	if byKey["material"].SourceType != "image_observation" || byKey["material"].Status != "observed" || !byKey["material"].RequiresConfirmation {
+		t.Fatalf("material %+v", byKey["material"])
+	}
+	if byKey["selling_point"].Layer != "marketing" {
+		t.Fatalf("selling_point %+v", byKey["selling_point"])
+	}
+
+	rejectInference := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"expected_fact_set_version_id": payload.CurrentFactSetVersionID,
+		"facts": []map[string]any{
+			{"key": "insulation", "value": "保温 24h", "source_type": "agent_inference", "status": "confirmed"},
+		},
+	})
+	if rejectInference.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(rejectInference.Body)
+		rejectInference.Body.Close()
+		t.Fatalf("inference confirmed %d %s", rejectInference.StatusCode, raw)
+	}
+	rejectInference.Body.Close()
+
+	rejectMarketing := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"expected_fact_set_version_id": payload.CurrentFactSetVersionID,
+		"facts": []map[string]any{
+			{"key": "material", "value": "明星同款", "source_type": "user", "status": "confirmed"},
+		},
+	})
+	if rejectMarketing.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(rejectMarketing.Body)
+		rejectMarketing.Body.Close()
+		t.Fatalf("marketing performance %d %s", rejectMarketing.StatusCode, raw)
+	}
+	rejectMarketing.Body.Close()
 }

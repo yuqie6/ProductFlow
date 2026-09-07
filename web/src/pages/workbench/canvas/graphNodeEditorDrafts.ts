@@ -4,6 +4,7 @@ import type {
   GraphProductFactSet,
   GraphNode,
   JsonValue,
+  ProductFactLayer,
 } from "../../../lib/types";
 
 export interface GraphTitleDraft {
@@ -32,6 +33,16 @@ export interface ProductFactsDraft {
 }
 
 export type ProductFactsDraftError = "empty_key" | "empty_value" | "duplicate_key";
+
+const MARKETING_FACT_KEYS = new Set([
+  "selling_point",
+  "slogan",
+  "tagline",
+  "marketing_copy",
+  "卖点",
+  "口号",
+  "营销文案",
+]);
 
 /** 已退休的 V1 plan key 和编译器拥有的输入，不能经 inspector 回写。 */
 export const GRAPH_PROMPT_STRIPPED_KEYS = [
@@ -81,7 +92,10 @@ export function productFactsDraft(
       id: `fact-${index}`,
       key: fact.key,
       value: factValueText(fact.value),
-      original: fact,
+      original: {
+        ...fact,
+        layer: factLayer(fact),
+      },
     })),
   };
 }
@@ -105,6 +119,7 @@ export function productFactsPayload(draft: ProductFactsDraft): GraphProductFact[
     ...original,
     key,
     value: value === factValueText(original.value) ? original.value : value,
+    layer: original.layer ?? defaultFactLayer(key),
   }));
 }
 
@@ -120,6 +135,56 @@ export function validateProductFactsDraft(draft: ProductFactsDraft): ProductFact
     keys.add(key);
   }
   return null;
+}
+
+export function confirmProductFactRow(fact: ProductFactRowDraft): ProductFactRowDraft {
+  return {
+    ...fact,
+    original: {
+      ...fact.original,
+      source_type: "user",
+      status: "confirmed",
+      requires_confirmation: false,
+      conflicts: [],
+      layer: fact.original.layer ?? defaultFactLayer(fact.key),
+    },
+  };
+}
+
+export function isPendingProductFact(fact: ProductFactRowDraft): boolean {
+  return Boolean(fact.original.requires_confirmation)
+    || fact.original.status === "observed"
+    || fact.original.status === "conflicted";
+}
+
+export function isConflictedProductFact(fact: ProductFactRowDraft): boolean {
+  return fact.original.status === "conflicted";
+}
+
+export function factLayer(fact: Pick<GraphProductFact, "key" | "layer">): ProductFactLayer {
+  return fact.layer ?? defaultFactLayer(fact.key);
+}
+
+export function defaultFactLayer(key: string): ProductFactLayer {
+  return MARKETING_FACT_KEYS.has(key.trim().toLocaleLowerCase()) ? "marketing" : "performance";
+}
+
+export function emptyFactRow(id: string, layer: ProductFactLayer): ProductFactRowDraft {
+  return {
+    id,
+    key: "",
+    value: "",
+    original: {
+      key: "",
+      value: "",
+      layer,
+      source_type: "user",
+      status: "confirmed",
+      requires_confirmation: false,
+      evidence_asset_ids: [],
+      conflicts: [],
+    },
+  };
 }
 
 export function validateGraphTitle(title: string, message: string): string | null {

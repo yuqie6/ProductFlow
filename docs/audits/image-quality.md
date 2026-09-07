@@ -12,7 +12,7 @@
 
 ## 组内交付
 
-1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。下一项 [事实分层闸 CF-B0](tasks/compete-facts-layer-gate.md)。
+1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。[事实分层闸 CF-B0](tasks/archive/compete-facts-layer-gate.md) 已交付；下一项 [CF-B1 图位文字追溯](tasks/compete-facts-text-trace.md)。
 2. [image-quality-content-pilot](tasks/image-quality-content-pilot.md)：固定两商品内容策略候选真实对照（费用上限内已授权）。
 3. 有真实差距后按合同发布生成链/排版实现切片；不与旧 42/32 图位完成条件混写。
 4. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
@@ -31,7 +31,7 @@
 
 | 区域 | 已有 | 缺口（相对 §6.1–§6.3） |
 |---|---|---|
-| 商品事实 | `product/facts.go`：不可变 `product_fact_set_versions`；`source_type` 闭集 `user\|image_observation\|agent_inference`；`status` 闭集 `observed\|user_declared\|confirmed\|conflicted`；`requires_confirmation` / `evidence_asset_ids` / `conflicts` | 无「营销口吻不得升级为性能证据」的写入闸；无事实变更→依赖图位的影响预览 API/UI；争议展示未成产品合同 |
+| 商品事实 | `product/facts.go`：不可变 `product_fact_set_versions`；`source_type` 闭集 `user\|image_observation\|agent_inference`；`status` 闭集 `observed\|user_declared\|confirmed\|conflicted`；`layer` 闭集 `performance\|marketing`；`requires_confirmation` / `evidence_asset_ids` / `conflicts`；写入闸拒绝未确认推断升 `confirmed`、拒绝营销口吻入性能层 | 无事实变更→依赖图位的影响预览 API/UI（CF-B2） |
 | 编译入边与 digest | `graph/compiler.go`：`incomingSorted` 只扫入边；`incomingFactSetVersions` 写入 digest；`execute_node.go` `skipUnchanged` 同 digest 跳过 | 变更后自动跳过≠用户可见的影响预览与「选择更新范围」；未连边资料不进运行输入（已正确，须保持） |
 | 图位文字 | `image_prompt` Catalog 有 `fact_keys`；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required` | 无持久化「成片文字 → fact key」追溯；卖点「单图一购买理由」仍靠内容策略候选，非法证据未硬闸 |
 | 配方清身份 | `recipe/payload.go` 剥 `source_product_id` / `fact_set_version_id` / `visual_system_version_id` / `visual_overrides` / `fact_keys` 等 | 结构复用已有；品牌/视觉方案版本继承与「第二商品不带旧身份」缺产品级继承链 |
@@ -45,7 +45,7 @@
 
 | ID | 合同 | 验证层 | 状态 |
 |---|---|---|---|
-| IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `缺失`（字段已有，分层业务闸未齐） |
+| IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `完成`（`layer` 闭集 + 确认门/营销闸；资料面板分栏；`TestFactLayerGate*`） |
 | IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `缺失` |
 | IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `缺失`（digest/skip 已有，预览与范围选择无） |
 | IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `缺失` |
@@ -82,7 +82,7 @@
 
 | 批次 | 名称 | 精确范围 | 正测样例 | 反测样例 | 验证层 |
 |---|---|---|---|---|---|
-| **CF-B0** | 事实来源分层闸 | 扩展/收紧 facts 写入与展示：确认门、冲突可见、营销文案与性能事实分栏；不新建事实仓库 | 用户确认容量 `600ml`→`confirmed`+`user`；图观材质→`image_observation` 待确认 | `agent_inference`「保温 24h」未确认即当 `confirmed` 性能；口吻「明星同款」写入规格事实 | `product/facts*` 夹具 + 工作台资料面板 |
+| **CF-B0** | 事实来源分层闸 | 扩展/收紧 facts 写入与展示：确认门、冲突可见、营销文案与性能事实分栏；不新建事实仓库 | 用户确认容量 `600ml`→`confirmed`+`user`；图观材质→`image_observation` 待确认 | `agent_inference`「保温 24h」未确认即当 `confirmed` 性能；口吻「明星同款」写入规格事实 | `完成`（`product/facts*` + 资料面板分栏；证据见 [compete-facts-layer-gate](tasks/archive/compete-facts-layer-gate.md)） |
 | **CF-B1** | 图位文字追溯 | prompt/generation 产物记录文字所用 `fact_keys` 或本图覆盖；卖点一图一理由检查器（可先非 live） | 规格图「600ml」← fact `capacity`；保温杯卖点只强调「轻量杯身」且有依据 | 成片「24h 保温」无 fact；卖点同时堆三句无关口号且无 key | 产物元数据单测；抽检清单；内容试点可对照但非本批完成条件 |
 | **CF-B2** | 变更影响预览 | 事实保存前预览依赖图位；用户多选更新；未选中已完成节点保持 artifact；解释旧 `fact_set_version_id` | 改 500→600ml：列出规格/卖点图；场景图无容量字则默认不入更新集且不重跑 | 改容量后全图自动重跑；预览注入未连边节点资料 | 预览 API + `skipUnchanged`/`incomingFactSetVersions` 回归 |
 | **CF-B3** | 双路线声明 | 图位/运行记录 `produce_route=subject_preserve\|generative`；生成式禁像素保真文案；保留主体路线失败→未解决项 | 主图 `subject_preserve`；场景 `generative` 且 UI 显示「可能改变外观」 | 生成式路线提示词含「像素级一致」；保留主体失败仍标已交付合格 | 枚举/文案审计测试；路线字段持久化 |

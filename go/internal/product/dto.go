@@ -159,12 +159,14 @@ type Upload struct {
 
 // Fact 是 GET/PUT /api/v3/products/:id/facts 里一条不可变事实，存在 product_fact_set_versions.payload_json。
 // SourceType 闭集 user|image_observation|agent_inference；Status 闭集 observed|user_declared|confirmed|conflicted。
+// Layer 闭集 performance|marketing：营销口吻不得写入 performance 层；不另建事实仓库。
 // 改 key 集合必须同步 normalizeFactPayload。不要和 graph.FactSet（编译器 []map）搞混。
 type Fact struct {
 	Key                  string `json:"key"`
 	Value                any    `json:"value"`       // 标量或短文本，形状由 key 约定
 	SourceType           string `json:"source_type"` // user|image_observation|agent_inference
 	Status               string `json:"status"`
+	Layer                string `json:"layer"`                  // performance|marketing
 	RequiresConfirmation bool   `json:"requires_confirmation"` // true 时需用户确认才算正式事实
 	EvidenceAssetIDs     []any  `json:"evidence_asset_ids"`    // ProductImageAsset id；空列表是 [] 不是 nil
 	Conflicts            []any  `json:"conflicts"`             // 冲突事实摘要；空列表是 [] 不是 nil

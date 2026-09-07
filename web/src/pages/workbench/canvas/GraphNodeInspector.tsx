@@ -76,8 +76,13 @@ import { submitAfterSuccessfulFlush, withGraphRunSubmit } from "./graphRunLock";
 import { runPreviewPointerHandlers } from "./graphRunPreview";
 import { displayNodeState } from "./graphOperationalState";
 import {
+  confirmProductFactRow,
+  emptyFactRow,
+  factLayer,
   graphProductSourceConfig,
   graphProductSourceDraft,
+  isConflictedProductFact,
+  isPendingProductFact,
   normalizeProductFactsDraft,
   productFactsDraft,
   productFactsPayload,
@@ -89,6 +94,7 @@ import {
   type ProductFactRowDraft,
   type GraphTitleDraft,
 } from "./graphNodeEditorDrafts";
+import type { ProductFactLayer } from "../../../lib/types";
 import { nodeDraftSaveError, useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 type InspectorFlush = () => Promise<unknown>;
@@ -827,10 +833,6 @@ function GraphInspectorDashboard({
   );
 }
 
-function isPendingFact(fact: ProductFactRowDraft): boolean {
-  return Boolean(fact.original.requires_confirmation) || fact.original.status === "observed" || fact.original.status === "conflicted";
-}
-
 function ProductSourceEditor({
   node,
   graphProductId,
@@ -1050,66 +1052,113 @@ function ProductSourceEditor({
             <TextInput label={t("detail.inspector.price")} value={factsForm.price} maxLength={120} disabled={busy} onChange={(price) => setFactsForm({ ...factsForm, price })} />
           </div>
           <TextArea label={t("detail.inspector.productDescription")} value={factsForm.source_note} onChange={(source_note) => setFactsForm({ ...factsForm, source_note })} minRows={2} maxRows={8} disabled={busy} />
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold text-text-muted">{t("graph.inspector.productFacts")}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={busy}
-                onClick={() => setFactsForm({
-                  ...factsForm,
-                  facts: [...factsForm.facts, {
-                    id: nextFactRowId(factsForm.facts),
-                    key: "",
-                    value: "",
-                    original: { key: "", value: "" },
-                  }],
-                })}
-              >
-                <Plus size={13} aria-hidden="true" />
-                {t("graph.inspector.productFactAdd")}
-              </Button>
-            </div>
-            {([false, true] as const).map((pending) => <div key={String(pending)} className="space-y-2">
-              {pending && factsForm.facts.some(isPendingFact) ? <SectionTitle title={t("nodeDetail.pending")} /> : null}
-              {factsForm.facts.filter((fact) => isPendingFact(fact) === pending).map((fact) => (
-              <div key={fact.id} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_44px] gap-1.5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px]">
-                <Input
-                  value={fact.key}
-                  disabled={busy}
-                  aria-label={`${t("graph.inspector.productFactKey")} ${factsForm.facts.indexOf(fact) + 1}`}
-                  onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { key: event.target.value })}
-                  placeholder={t("graph.inspector.productFactKey")}
-                  className="min-w-0 px-2"
-                />
-                <Input
-                  value={fact.value}
-                  disabled={busy}
-                  aria-label={`${t("graph.inspector.productFactValue")} ${factsForm.facts.indexOf(fact) + 1}`}
-                  onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { value: event.target.value })}
-                  placeholder={t("graph.inspector.productFactValue")}
-                  className="min-w-0 px-2"
-                />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-11 w-11 px-0 text-text-muted hover:text-state-error lg:h-9 lg:w-8"
-                  disabled={busy}
-                  aria-label={t("graph.inspector.productFactRemove")}
-                  onClick={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
-                >
-                  <Trash2 size={14} aria-hidden="true" />
-                </Button>
-                {pending ? <div className="col-span-3 flex justify-end">
-                  <IconButton label={t("nodeDetail.confirmFact")} disabled={busy} size="sm"
-                    onClick={() => setFactsForm({ ...factsForm, facts: factsForm.facts.map((item) => item.id === fact.id
-                      ? { ...item, original: { ...item.original, status: "confirmed", requires_confirmation: false, conflicts: [] } }
-                      : item) })}><Check size={14} /></IconButton>
-                </div> : null}
+          <div className="space-y-3">
+            {([
+              { layer: "performance" as const, title: t("nodeDetail.performanceFacts") },
+              { layer: "marketing" as const, title: t("nodeDetail.marketingFacts") },
+            ]).map((section) => {
+              const settled = factsForm.facts.filter((fact) => !isPendingProductFact(fact) && factLayer(fact.original) === section.layer);
+              return (
+                <div key={section.layer} className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <SectionTitle title={section.title} />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => setFactsForm({
+                        ...factsForm,
+                        facts: [...factsForm.facts, emptyFactRow(nextFactRowId(factsForm.facts), section.layer)],
+                      })}
+                    >
+                      <Plus size={13} aria-hidden="true" />
+                      {t("graph.inspector.productFactAdd")}
+                    </Button>
+                  </div>
+                  {settled.map((fact) => (
+                    <FactEditorRow
+                      key={fact.id}
+                      fact={fact}
+                      index={factsForm.facts.indexOf(fact)}
+                      busy={busy}
+                      layer={section.layer}
+                      onChange={(patch) => updateFactRow(setFactsForm, factsForm, fact.id, patch)}
+                      onRemove={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
+                      t={t}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+            {factsForm.facts.some(isConflictedProductFact) ? (
+              <div className="space-y-2">
+                <SectionTitle title={t("nodeDetail.conflictedFacts")} />
+                {factsForm.facts.filter(isConflictedProductFact).map((fact) => (
+                  <div key={fact.id} className="space-y-1.5 rounded-xl border border-state-warning/35 bg-state-warning-soft/40 p-2">
+                    <FactEditorRow
+                      fact={fact}
+                      index={factsForm.facts.indexOf(fact)}
+                      busy={busy}
+                      layer={factLayer(fact.original)}
+                      onChange={(patch) => updateFactRow(setFactsForm, factsForm, fact.id, patch)}
+                      onRemove={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
+                      t={t}
+                    />
+                    {(fact.original.conflicts ?? []).length > 0 ? (
+                      <p className="px-1 text-[10px] leading-4 text-state-warning">
+                        {t("nodeDetail.factConflictDetail")}
+                        {": "}
+                        {(fact.original.conflicts ?? []).map((item) => JSON.stringify(item)).join(" · ")}
+                      </p>
+                    ) : null}
+                    <div className="flex justify-end">
+                      <IconButton
+                        label={t("nodeDetail.confirmFact")}
+                        disabled={busy}
+                        size="sm"
+                        onClick={() => setFactsForm({
+                          ...factsForm,
+                          facts: factsForm.facts.map((item) => item.id === fact.id ? confirmProductFactRow(item) : item),
+                        })}
+                      >
+                        <Check size={14} />
+                      </IconButton>
+                    </div>
+                  </div>
+                ))}
               </div>
-              ))}
-            </div>)}
+            ) : null}
+            {factsForm.facts.some((fact) => isPendingProductFact(fact) && !isConflictedProductFact(fact)) ? (
+              <div className="space-y-2">
+                <SectionTitle title={t("nodeDetail.pending")} />
+                {factsForm.facts.filter((fact) => isPendingProductFact(fact) && !isConflictedProductFact(fact)).map((fact) => (
+                  <div key={fact.id} className="space-y-1.5">
+                    <FactEditorRow
+                      fact={fact}
+                      index={factsForm.facts.indexOf(fact)}
+                      busy={busy}
+                      layer={factLayer(fact.original)}
+                      onChange={(patch) => updateFactRow(setFactsForm, factsForm, fact.id, patch)}
+                      onRemove={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
+                      t={t}
+                    />
+                    <div className="flex justify-end">
+                      <IconButton
+                        label={t("nodeDetail.confirmFact")}
+                        disabled={busy}
+                        size="sm"
+                        onClick={() => setFactsForm({
+                          ...factsForm,
+                          facts: factsForm.facts.map((item) => item.id === fact.id ? confirmProductFactRow(item) : item),
+                        })}
+                      >
+                        <Check size={14} />
+                      </IconButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
           {validateProductFactsDraft(factsForm) ? (
             <p role="alert" className="text-[11px] leading-5 text-state-error">{productFactsValidationMessage(validateProductFactsDraft(factsForm), t)}</p>
@@ -1763,6 +1812,58 @@ function TextInput({
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
     />
+  );
+}
+
+function FactEditorRow({
+  fact,
+  index,
+  busy,
+  layer,
+  onChange,
+  onRemove,
+  t,
+}: {
+  fact: ProductFactRowDraft;
+  index: number;
+  busy: boolean;
+  layer: ProductFactLayer;
+  onChange: (patch: Partial<ProductFactRowDraft>) => void;
+  onRemove: () => void;
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_44px] gap-1.5 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px]">
+      <Input
+        value={fact.key}
+        disabled={busy}
+        aria-label={`${t("graph.inspector.productFactKey")} ${index + 1}`}
+        onChange={(event) => onChange({
+          key: event.target.value,
+          original: { ...fact.original, layer },
+        })}
+        placeholder={t("graph.inspector.productFactKey")}
+        className="min-w-0 px-2"
+      />
+      <Input
+        value={fact.value}
+        disabled={busy}
+        aria-label={`${t("graph.inspector.productFactValue")} ${index + 1}`}
+        onChange={(event) => onChange({ value: event.target.value })}
+        placeholder={t("graph.inspector.productFactValue")}
+        className="min-w-0 px-2"
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-11 w-11 px-0 text-text-muted hover:text-state-error lg:h-9 lg:w-8"
+        disabled={busy}
+        aria-label={t("graph.inspector.productFactRemove")}
+        onClick={onRemove}
+      >
+        <Trash2 size={14} aria-hidden="true" />
+      </Button>
+    </div>
   );
 }
 

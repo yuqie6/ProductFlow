@@ -16,6 +16,10 @@ export const nodeDetailZh = {
   "nodeDetail.constraints": "共享约束", "nodeDetail.fidelity": "商品保留要求",
   "nodeDetail.styleOverride": "本图风格", "nodeDetail.confirmFact": "确认事实",
   "nodeDetail.sourceEdit": "正在修改源商品：{name}",
+  "nodeDetail.performanceFacts": "性能事实",
+  "nodeDetail.marketingFacts": "营销文案",
+  "nodeDetail.conflictedFacts": "冲突待裁定",
+  "nodeDetail.factConflictDetail": "冲突说明",
 } as const;
 
 export const nodeDetailEn: Record<keyof typeof nodeDetailZh, string> = {
@@ -36,6 +40,10 @@ export const nodeDetailEn: Record<keyof typeof nodeDetailZh, string> = {
   "nodeDetail.constraints": "Shared requirements", "nodeDetail.fidelity": "Product details to preserve",
   "nodeDetail.styleOverride": "Picture style", "nodeDetail.confirmFact": "Confirm fact",
   "nodeDetail.sourceEdit": "Editing source product: {name}",
+  "nodeDetail.performanceFacts": "Performance facts",
+  "nodeDetail.marketingFacts": "Marketing copy",
+  "nodeDetail.conflictedFacts": "Conflicts to resolve",
+  "nodeDetail.factConflictDetail": "Conflict detail",
 };
 
 export const nodeDetailJa: Record<keyof typeof nodeDetailZh, string> = {
@@ -56,6 +64,10 @@ export const nodeDetailJa: Record<keyof typeof nodeDetailZh, string> = {
   "nodeDetail.constraints": "共通要件", "nodeDetail.fidelity": "保持する商品特徴",
   "nodeDetail.styleOverride": "この画像のスタイル", "nodeDetail.confirmFact": "事実を確認",
   "nodeDetail.sourceEdit": "元の商品を編集中：{name}",
+  "nodeDetail.performanceFacts": "性能ファクト",
+  "nodeDetail.marketingFacts": "マーケ文案",
+  "nodeDetail.conflictedFacts": "衝突の裁定待ち",
+  "nodeDetail.factConflictDetail": "衝突の説明",
 };
 
 export const nodeDetailVi: Record<keyof typeof nodeDetailZh, string> = {
@@ -76,4 +88,8 @@ export const nodeDetailVi: Record<keyof typeof nodeDetailZh, string> = {
   "nodeDetail.constraints": "Yêu cầu chung", "nodeDetail.fidelity": "Đặc điểm cần giữ",
   "nodeDetail.styleOverride": "Phong cách ảnh này", "nodeDetail.confirmFact": "Xác nhận thông tin",
   "nodeDetail.sourceEdit": "Đang sửa sản phẩm nguồn: {name}",
+  "nodeDetail.performanceFacts": "Thông số hiệu năng",
+  "nodeDetail.marketingFacts": "Nội dung marketing",
+  "nodeDetail.conflictedFacts": "Xung đột cần xử lý",
+  "nodeDetail.factConflictDetail": "Chi tiết xung đột",
 };

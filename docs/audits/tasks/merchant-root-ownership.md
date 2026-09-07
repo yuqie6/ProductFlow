@@ -1,9 +1,9 @@
 # 任务：业务根对象写入 merchant_id 并强制查询归属
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-merchant/merchant-root-ownership
+认领于：2026-09-07T12:31:30+08:00
 业务组：商家平台
 父账本：merchant-platform.md
 完成后可拆：B2 商品链隔离或按矩阵并行无写集冲突的切片；完整隔离门未过不开放第二商家
@@ -45,8 +45,8 @@ B2+ 全链路下载/SSE、开放第二商、Skill/grader。
 
 - 原因：无（执行前仍核并行写集）。
 - 解除条件：无。
-- 跟进者：待认领。
-- 交接：仅发布。
+- 跟进者：sub-merchant/merchant-root-ownership。
+- 交接：已认领；CF-B0 已归档，product 写集可启。未改代码。
 
 ## 证据
 

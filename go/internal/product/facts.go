@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -200,6 +201,7 @@ func factsFromMaps(items []map[string]any) []Fact {
 				Value:            item["value"],
 				SourceType:       stringOr(item["source_type"], "user"),
 				Status:           stringOr(item["status"], "confirmed"),
+				Layer:            stringOr(item["layer"], "performance"),
 				EvidenceAssetIDs: anyList(item["evidence_asset_ids"]),
 				Conflicts:        anyList(item["conflicts"]),
 			})
@@ -216,6 +218,7 @@ func factFromMap(item map[string]any) Fact {
 		Value:                item["value"],
 		SourceType:           stringOr(item["source_type"], "user"),
 		Status:               stringOr(item["status"], "confirmed"),
+		Layer:                stringOr(item["layer"], "performance"),
 		RequiresConfirmation: boolOr(item["requires_confirmation"]),
 		EvidenceAssetIDs:     anyList(item["evidence_asset_ids"]),
 		Conflicts:            anyList(item["conflicts"]),
@@ -233,6 +236,7 @@ func currentFactMaps(current *FactSet) []map[string]any {
 			"value":                 fact.Value,
 			"source_type":           fact.SourceType,
 			"status":                fact.Status,
+			"layer":                 fact.Layer,
 			"requires_confirmation": fact.RequiresConfirmation,
 			"evidence_asset_ids":    fact.EvidenceAssetIDs,
 			"conflicts":             fact.Conflicts,
@@ -259,9 +263,10 @@ func normalizeFactMaps(items []map[string]any) ([]map[string]any, error) {
 	return out, nil
 }
 
-// normalizeFactPayload 拒绝可选字段显式 null；source_type/status 必须是闭集枚举。
+// normalizeFactPayload 拒绝可选字段显式 null；source_type/status/layer 必须是闭集枚举。
+// 分层闸：未确认推断不得升为 confirmed；营销口吻不得写入 performance 层。
 func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
-	for _, key := range []string{"source_type", "status", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
+	for _, key := range []string{"source_type", "status", "layer", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
 		if v, ok := payload[key]; ok && v == nil {
 			return nil, apperr.Validation("请求体无效")
 		}
@@ -282,7 +287,7 @@ func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
 		}
 		sourceType = s
 	}
-	status := "confirmed"
+	status := defaultFactStatus(sourceType)
 	if v, ok := payload["status"]; ok && v != nil {
 		s, ok := v.(string)
 		if !ok {
@@ -294,6 +299,19 @@ func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
 		}
 		status = s
 	}
+	layer := defaultFactLayer(key)
+	if v, ok := payload["layer"]; ok && v != nil {
+		s, ok := v.(string)
+		if !ok {
+			return nil, apperr.Validation("请求体无效")
+		}
+		s = strings.TrimSpace(s)
+		if _, allowed := factLayers[s]; !allowed {
+			return nil, apperr.Validation("请求体无效")
+		}
+		layer = s
+	}
+	requiresConfirmation := boolOr(payload["requires_confirmation"])
 	if v, ok := payload["requires_confirmation"]; ok && v != nil {
 		if _, ok := v.(bool); !ok {
 			return nil, apperr.Validation("请求体无效")
@@ -311,15 +329,93 @@ func normalizeFactPayload(payload map[string]any) (map[string]any, error) {
 			return nil, apperr.Validation("请求体无效")
 		}
 	}
+	requiresConfirmation, err := applyFactLayerGate(sourceType, status, layer, requiresConfirmation, conflicts, payload["value"])
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"key":                   key,
 		"value":                 payload["value"],
 		"source_type":           sourceType,
 		"status":                status,
-		"requires_confirmation": boolOr(payload["requires_confirmation"]),
+		"layer":                 layer,
+		"requires_confirmation": requiresConfirmation,
 		"evidence_asset_ids":    evidence,
 		"conflicts":             conflicts,
 	}, nil
+}
+
+// applyFactLayerGate 落实 IQ-CF-01 / CF-B0：确认门、冲突可见、营销与性能分栏。
+func applyFactLayerGate(
+	sourceType, status, layer string,
+	requiresConfirmation bool,
+	conflicts []any,
+	value any,
+) (bool, error) {
+	if sourceType == "agent_inference" || sourceType == "image_observation" {
+		if status == "confirmed" {
+			return false, apperr.Validation("未确认的推断或图观事实不能升为已确认性能事实")
+		}
+		requiresConfirmation = true
+	}
+	if status == "confirmed" && requiresConfirmation {
+		return false, apperr.Validation("已确认事实不能同时要求确认")
+	}
+	if status == "conflicted" {
+		requiresConfirmation = true
+		if len(conflicts) == 0 {
+			return false, apperr.Validation("冲突事实必须附带可裁定的冲突说明")
+		}
+	}
+	if layer == "performance" && looksLikeMarketingCopy(value) {
+		return false, apperr.Validation("营销口吻不能写入性能事实")
+	}
+	return requiresConfirmation, nil
+}
+
+func defaultFactStatus(sourceType string) string {
+	if sourceType == "agent_inference" || sourceType == "image_observation" {
+		return "observed"
+	}
+	return "confirmed"
+}
+
+func defaultFactLayer(key string) string {
+	folded := strings.ToLower(strings.TrimSpace(key))
+	if _, ok := marketingFactKeys[folded]; ok {
+		return "marketing"
+	}
+	return "performance"
+}
+
+func looksLikeMarketingCopy(value any) bool {
+	text := strings.ToLower(strings.TrimSpace(factValueText(value)))
+	if text == "" {
+		return false
+	}
+	for _, marker := range marketingToneMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func factValueText(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case float64, float32, int, int64, int32, bool:
+		return fmt.Sprint(typed)
+	default:
+		raw, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
 }
 
 var factSourceTypes = map[string]struct{}{
@@ -328,6 +424,20 @@ var factSourceTypes = map[string]struct{}{
 
 var factStatuses = map[string]struct{}{
 	"observed": {}, "user_declared": {}, "confirmed": {}, "conflicted": {},
+}
+
+var factLayers = map[string]struct{}{
+	"performance": {}, "marketing": {},
+}
+
+var marketingFactKeys = map[string]struct{}{
+	"selling_point": {}, "slogan": {}, "tagline": {}, "marketing_copy": {},
+	"卖点": {}, "口号": {}, "营销文案": {},
+}
+
+var marketingToneMarkers = []string{
+	"明星同款", "网红同款", "网红推荐", "爆款必入", "必入爆款", "种草神器",
+	"celebrity same", "influencer pick", "viral must-have",
 }
 
 func deref(v *string) string {

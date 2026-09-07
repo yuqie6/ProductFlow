@@ -729,7 +729,7 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 		return nil, apperr.Validation("请求体无效")
 	}
 	allowed := map[string]struct{}{
-		"key": {}, "value": {}, "source_type": {}, "status": {},
+		"key": {}, "value": {}, "source_type": {}, "status": {}, "layer": {},
 		"requires_confirmation": {}, "evidence_asset_ids": {}, "conflicts": {},
 	}
 	out := make([]map[string]any, 0, len(items))
@@ -741,6 +741,7 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 			Value                json.RawMessage  `json:"value"`
 			SourceType           *string          `json:"source_type"`
 			Status               *string          `json:"status"`
+			Layer                *string          `json:"layer"`
 			RequiresConfirmation *bool            `json:"requires_confirmation"`
 			EvidenceAssetIDs     []string         `json:"evidence_asset_ids"`
 			Conflicts            []map[string]any `json:"conflicts"`
@@ -766,7 +767,7 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 		if _, ok := presence["value"]; !ok {
 			return nil, apperr.Validation("请求体无效")
 		}
-		for _, key := range []string{"source_type", "status", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
+		for _, key := range []string{"source_type", "status", "layer", "requires_confirmation", "evidence_asset_ids", "conflicts"} {
 			if raw, ok := presence[key]; ok && string(raw) == "null" {
 				return nil, apperr.Validation("请求体无效")
 			}
@@ -792,6 +793,12 @@ func parseFactItems(raw json.RawMessage) (*[]map[string]any, error) {
 				return nil, apperr.Validation("请求体无效")
 			}
 			row["status"] = *wire.Status
+		}
+		if wire.Layer != nil {
+			if _, ok := factLayers[*wire.Layer]; !ok {
+				return nil, apperr.Validation("请求体无效")
+			}
+			row["layer"] = *wire.Layer
 		}
 		if wire.RequiresConfirmation != nil {
 			row["requires_confirmation"] = *wire.RequiresConfirmation

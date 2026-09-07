@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNode } from "../../../lib/types";
 import {
+  confirmProductFactRow,
   graphProductSourceConfig,
   graphProductSourceDraft,
   productFactsDraft,
@@ -98,7 +99,8 @@ describe("graph node inspector drafts", () => {
         key: "dimensions",
         value: [10, 20],
         source_type: "image_observation",
-        status: "confirmed",
+        status: "observed",
+        requires_confirmation: true,
         evidence_asset_ids: ["asset-1"],
       }],
     });
@@ -106,8 +108,33 @@ describe("graph node inspector drafts", () => {
       key: "dimensions",
       value: [10, 20],
       source_type: "image_observation",
-      status: "confirmed",
+      status: "observed",
+      requires_confirmation: true,
       evidence_asset_ids: ["asset-1"],
+      layer: "performance",
     }]);
+  });
+
+  it("confirms pending facts as user-owned performance rows", () => {
+    const confirmed = confirmProductFactRow({
+      id: "a",
+      key: "material",
+      value: "不锈钢",
+      original: {
+        key: "material",
+        value: "不锈钢",
+        source_type: "image_observation",
+        status: "observed",
+        requires_confirmation: true,
+        layer: "performance",
+      },
+    });
+    expect(confirmed.original).toMatchObject({
+      source_type: "user",
+      status: "confirmed",
+      requires_confirmation: false,
+      layer: "performance",
+      conflicts: [],
+    });
   });
 });

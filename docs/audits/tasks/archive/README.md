@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [compete-facts-layer-gate.md](compete-facts-layer-gate.md) | 完成 | layer/确认门/营销闸 + 资料分栏；IQ-CF-01/CF-B0；≠R3 |
 | [merchant-identity-skeleton.md](merchant-identity-skeleton.md) | 完成 | User/Merchant/Membership/邀请/可撤销会话；bootstrap；MP-A；≠业务表隔离 |
 | [delivery-workbench-projection.md](delivery-workbench-projection.md) | 完成 | 成果/流程切换；全量生图投影；默认仍流程；Vitest 16；≠采用快照 |
 | [compete-facts-layout-contract.md](compete-facts-layout-contract.md) | 完成 | IQ-CF-01…08、CF-B0…B5；与采用快照 IQ-CF-08 交接；≠R3 |

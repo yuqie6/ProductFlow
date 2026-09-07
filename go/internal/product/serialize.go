@@ -94,6 +94,7 @@ func metadataFacts(p Product) []map[string]any {
 			"value":                 *item.val,
 			"source_type":           "user",
 			"status":                "confirmed",
+			"layer":                 "performance",
 			"requires_confirmation": false,
 			"evidence_asset_ids":    []any{},
 			"conflicts":             []any{},
