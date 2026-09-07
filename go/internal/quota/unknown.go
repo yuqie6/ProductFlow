@@ -13,11 +13,11 @@ import (
 )
 
 // DefaultUnknownHoldTTL 是 pending_reconciliation 在无 Op 裁定前的最长停留时长。
-// 到期后按预留全额 Settle（保守计费），禁止自动 Release 当零消费。
+// 到期后释放用户预留；供应商调用事实仍由各自的 unknown 账本保留。
 const DefaultUnknownHoldTTL = 72 * time.Hour
 
-// UnknownExpiryReason 是到期自动结算事件的固定原因。
-const UnknownExpiryReason = "unknown hold TTL expiry; charged reserved amount"
+// UnknownExpiryReason 是到期自动释放事件的固定原因。
+const UnknownExpiryReason = "unknown hold TTL expiry; released user reservation; provider result remains unknown"
 
 // DefaultExpireUnknownBatch 是单轮到期扫描默认批大小。
 const DefaultExpireUnknownBatch = 100
@@ -47,8 +47,8 @@ func (s *Service) unknownHoldTTL() time.Duration {
 }
 
 // ResolveUnknown 是 Operator 对 pending_reconciliation hold 的明示裁定。
-// 复用 Settle：actualUnits ∈ [0, reserved]；0 表示核查后确认零消费（≠自动超时 Release）。
-// 非 pending 拒绝；Release 对 unknown 仍禁止。
+// 复用 Settle：actualUnits ∈ [0, reserved]；0 表示核查后确认零消费（≠自动到期释放）。
+// 非 pending 拒绝；普通 Release 对 unknown 仍禁止。
 func (s *Service) ResolveUnknown(ctx context.Context, merchantID, idempotencyKey string, actualUnits int64, reason, actorUserID string) (Hold, Account, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -74,8 +74,8 @@ func (s *Service) ResolveUnknown(ctx context.Context, merchantID, idempotencyKey
 	})
 }
 
-// ExpireUnknownHolds 扫描已超过 TTL 的 pending_reconciliation，按预留全额 Settle。
-// 不 Release；已终态（含 Op 抢先裁定）跳过。limit<=0 用 DefaultExpireUnknownBatch。
+// ExpireUnknownHolds 扫描已超过 TTL 的 pending_reconciliation，释放用户预留。
+// 复用 Release 的账本更新；已终态（含 Op/迟到结果抢先收口）跳过。limit<=0 用 DefaultExpireUnknownBatch。
 func (s *Service) ExpireUnknownHolds(ctx context.Context, now time.Time, limit int) (expired int, hasMore bool, err error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -91,7 +91,7 @@ func (s *Service) ExpireUnknownHolds(ctx context.Context, now time.Time, limit i
 	var rows []schema.MerchantQuotaHolds
 	if err := s.DB.WithContext(ctx).
 		Where("status = ? AND updated_at <= ?", StatusPendingReconciliation, cutoff).
-		Order("updated_at ASC").
+		Order("updated_at ASC, id ASC").
 		Limit(limit + 1).
 		Find(&rows).Error; err != nil {
 		return 0, false, apperr.Internal("扫描待核对预留失败")
@@ -102,16 +102,18 @@ func (s *Service) ExpireUnknownHolds(ctx context.Context, now time.Time, limit i
 	}
 
 	for _, row := range rows {
-		_, _, settleErr := s.settle(ctx, row.MerchantID, row.IdempotencyKey, row.AmountUnits, settleOptions{
+		_, _, changed, releaseErr := s.release(ctx, row.MerchantID, row.IdempotencyKey, releaseOptions{
 			RequirePending: true,
 			Reason:         UnknownExpiryReason,
 		})
-		if settleErr == nil {
-			expired++
+		if releaseErr == nil {
+			if changed {
+				expired++
+			}
 			continue
 		}
 		// Op 或并发已收口：跳过；其它错误中止本轮。
-		if isConflict(settleErr) {
+		if isConflict(releaseErr) {
 			terminal, termErr := s.holdIsTerminal(ctx, row.MerchantID, row.IdempotencyKey)
 			if termErr != nil {
 				return expired, hasMore, termErr
@@ -120,7 +122,7 @@ func (s *Service) ExpireUnknownHolds(ctx context.Context, now time.Time, limit i
 				continue
 			}
 		}
-		return expired, hasMore, settleErr
+		return expired, hasMore, releaseErr
 	}
 	return expired, hasMore, nil
 }

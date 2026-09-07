@@ -102,6 +102,7 @@ func TestMerchantDeliveryIsolation(t *testing.T) {
 	}))
 	assertCross404("foreign adoption list", ds.do(t, http.MethodGet, "/api/v3/products/"+foreign.productID+"/delivery-adoptions", nil, ""))
 	assertCross404("foreign adoption create", ds.doJSON(t, http.MethodPost, "/api/v3/products/"+foreign.productID+"/delivery-adoptions", map[string]any{
+		"acknowledge_quality_warnings": true,
 		"slots": []map[string]any{{
 			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": foreign.assetID,
 			"delivery_spec":  map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"},

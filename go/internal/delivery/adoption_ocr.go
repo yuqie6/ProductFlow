@@ -8,11 +8,8 @@ import (
 	"strings"
 
 	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/ocr"
-	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
-	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
 
@@ -138,50 +135,28 @@ func factRefsFromMaps(facts []map[string]any) []ocr.FactRef {
 	return out
 }
 
-// applyAdoptionOCRGate 对要求文字的 text_trace 读成片并对照；失败拒绝采用。
-// 选型：无成片字节 / 无可对照期望 → Validation 拒绝（不得静默当 pass）；无文字期望则跳过 OCR。
-func (s Service) applyAdoptionOCRGate(
-	ctx context.Context,
-	tx *gorm.DB,
-	productID string,
-	slot preparedSlot,
-	payload map[string]any,
-	facts []map[string]any,
-) error {
+// checkAdoptionOCR 只返回检查结论。图片字节由采用入口完成归属与完整性校验。
+func checkAdoptionOCR(ctx context.Context, imageBytes []byte, payload map[string]any, facts []map[string]any) (string, string, error) {
 	rawTrace, _ := payload["text_trace"].(map[string]any)
 	if !adoptionTextTraceNeedsOCR(rawTrace) {
-		return nil
+		return "pass", "", nil
 	}
-	refs := factRefsFromMaps(facts)
-	expected := ocr.ExpectedFromTextTrace(rawTrace, refs)
+	expected := ocr.ExpectedFromTextTrace(rawTrace, factRefsFromMaps(facts))
 	if len(expected) == 0 {
-		return apperr.Validationf("图位 %s 无可对照的文字期望，不能采用为交付", slot.slotKey)
+		return "unchecked", "无可对照的文字期望", nil
 	}
-
-	asset, err := product.LoadAssetRow(ctx, tx, slot.sourceAssetID)
-	if err != nil || asset.ProductID != productID {
-		return apperr.Validationf("图位 %s 成片不可读，文字 OCR 无法核对", slot.slotKey)
-	}
-	content, err := s.Media.ReadVerified(ctx, tx, asset.MediaObjectID)
+	gated, result, err := graph.ApplyImageOCRTraceForAdoption(ctx, imageBytes, rawTrace, facts)
 	if err != nil {
-		if re, ok := media.AsReadError(err); ok {
-			return apperr.Validationf("图位 %s 成片字节缺失或未核验，文字 OCR 无法核对（%s）", slot.slotKey, re.Detail)
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
 		}
-		return err
-	}
-	if len(content.Bytes) == 0 {
-		return apperr.Validationf("图位 %s 成片字节为空，文字 OCR 无法核对", slot.slotKey)
-	}
-
-	gated, result, err := graph.ApplyImageOCRTraceForAdoption(ctx, content.Bytes, rawTrace, facts)
-	if err != nil {
-		return apperr.Validationf("图位 %s 文字 OCR 对照失败：%s", slot.slotKey, err.Error())
+		return "unchecked", "文字检查无法完成，请人工核对", nil
 	}
 	if !result.Pass || !ocr.TextQualifiedAfterOCR(true, result) {
-		return apperr.Validationf("图位 %s 文字 OCR 对照不合格，不能采用为交付", slot.slotKey)
+		return "fail", "文字检查未识别到预期内容，请人工核对", nil
 	}
 	if q, ok := gated["text_qualified"].(bool); ok && !q {
-		return apperr.Validationf("图位 %s 文字 OCR 对照不合格，不能采用为交付", slot.slotKey)
+		return "fail", "文字追溯检查未通过", nil
 	}
-	return nil
+	return "pass", "", nil
 }

@@ -101,7 +101,7 @@ func TestReserveSettleReleaseUnknown(t *testing.T) {
 	if acct7.AvailableUnits != 55 || acct7.ReservedUnits != 20 {
 		t.Fatalf("unknown must keep reserved liability: %+v", acct7)
 	}
-	// Must not auto-release as zero cost
+	// Before TTL expiry, ordinary Release cannot close an unknown hold.
 	if _, _, err := svc.Release(ctx, merchantID, "op-unknown-1"); err == nil {
 		t.Fatal("expected release of unknown to fail")
 	} else {

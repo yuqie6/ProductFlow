@@ -21,9 +21,19 @@ import { Tooltip } from "../../../components/ui/tooltip";
 import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { TranslationKey } from "../../../lib/i18n";
-import type { GraphPlannedAction, GraphRunSubmitInput, WorkflowNodeDisplayStatus } from "../../../lib/types";
+import type {
+  DeliveryAdoptionSlot,
+  GraphPlannedAction,
+  GraphRunSubmitInput,
+  WorkflowNodeDisplayStatus,
+} from "../../../lib/types";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import type { AgentProductImageTypeKey } from "../../../lib/types";
+import {
+  adoptionQualityIssueMessageKey,
+  adoptionQualityStatusMessageKey,
+  type AdoptionQualityAssessment,
+} from "./deliveryAdoption";
 import { dominantPlannedAction, plannedActionClassName, runPreviewPointerHandlers } from "./graphRunPreview";
 import type { GraphResultItem, GraphResultSection } from "./resultProjection";
 
@@ -48,9 +58,9 @@ export interface GraphResultsViewProps {
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
-  /** slot_key（通常为 nodeId）→ 已采用资产 id；当前产物不等于交付采用。 */
-  adoptedAssetBySlot?: ReadonlyMap<string, string>;
-  adoptionBlockByNodeId?: ReadonlyMap<string, string>;
+  /** 当前产物的有限质量检查；服务端返回的采用槽位质量优先。 */
+  adoptionQualityByNodeId?: ReadonlyMap<string, AdoptionQualityAssessment>;
+  adoptedSlotBySlot?: ReadonlyMap<string, DeliveryAdoptionSlot>;
   adoptingNodeId?: string | null;
   exportingAdoption?: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
@@ -80,8 +90,8 @@ export function GraphResultsView({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
-  adoptedAssetBySlot,
-  adoptionBlockByNodeId,
+  adoptionQualityByNodeId,
+  adoptedSlotBySlot,
   adoptingNodeId = null,
   exportingAdoption = false,
   onAdoptItem,
@@ -188,8 +198,8 @@ export function GraphResultsView({
               onOpenLocalEdit={onOpenLocalEdit}
               onPreviewImage={onPreviewImage}
               onBindEvidence={onBindEvidence}
-              adoptedAssetBySlot={adoptedAssetBySlot}
-              adoptionBlockByNodeId={adoptionBlockByNodeId}
+              adoptionQualityByNodeId={adoptionQualityByNodeId}
+              adoptedSlotBySlot={adoptedSlotBySlot}
               adoptingNodeId={adoptingNodeId}
               onAdoptItem={onAdoptItem}
             />
@@ -217,8 +227,8 @@ function ResultSection({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
-  adoptedAssetBySlot,
-  adoptionBlockByNodeId,
+  adoptionQualityByNodeId,
+  adoptedSlotBySlot,
   adoptingNodeId,
   onAdoptItem,
 }: {
@@ -238,8 +248,8 @@ function ResultSection({
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
-  adoptedAssetBySlot?: ReadonlyMap<string, string>;
-  adoptionBlockByNodeId?: ReadonlyMap<string, string>;
+  adoptionQualityByNodeId?: ReadonlyMap<string, AdoptionQualityAssessment>;
+  adoptedSlotBySlot?: ReadonlyMap<string, DeliveryAdoptionSlot>;
   adoptingNodeId: string | null;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -283,8 +293,8 @@ function ResultSection({
             onOpenLocalEdit={onOpenLocalEdit}
             onPreviewImage={onPreviewImage}
             onBindEvidence={onBindEvidence}
-            adoptedAssetId={adoptedAssetBySlot?.get(item.nodeId) ?? null}
-            adoptionBlockReason={adoptionBlockByNodeId?.get(item.nodeId) ?? null}
+            adoptionQuality={adoptionQualityByNodeId?.get(item.nodeId) ?? null}
+            adoptedSlot={adoptedSlotBySlot?.get(item.nodeId) ?? null}
             adopting={adoptingNodeId === item.nodeId}
             onAdoptItem={onAdoptItem}
           />
@@ -311,8 +321,8 @@ function ResultCard({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
-  adoptedAssetId,
-  adoptionBlockReason,
+  adoptionQuality,
+  adoptedSlot,
   adopting,
   onAdoptItem,
 }: {
@@ -332,8 +342,8 @@ function ResultCard({
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
-  adoptedAssetId: string | null;
-  adoptionBlockReason: string | null;
+  adoptionQuality: AdoptionQualityAssessment | null;
+  adoptedSlot: DeliveryAdoptionSlot | null;
   adopting: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -347,14 +357,22 @@ function ResultCard({
   const canEdit = Boolean(item.currentAssetId && item.kind === "generation" && onOpenLocalEdit);
   const canPreview = Boolean(item.currentAssetId && onPreviewImage);
   const canBind = item.kind === "evidence" && Boolean(onBindEvidence);
-  const isAdopted = Boolean(adoptedAssetId && item.currentAssetId && adoptedAssetId === item.currentAssetId);
+  const isAdopted = Boolean(
+    adoptedSlot?.source_asset_id
+    && item.currentAssetId
+    && adoptedSlot.source_asset_id === item.currentAssetId,
+  );
   const canAdopt = Boolean(
     item.kind === "generation"
     && item.currentAssetId
     && onAdoptItem
     && !isAdopted,
   );
-  const adoptBlocked = Boolean(canAdopt && adoptionBlockReason);
+  const adoptedQuality = isAdopted ? adoptedSlot : null;
+  const qualityStatus = adoptedQuality?.quality_status ?? adoptionQuality?.status ?? null;
+  const qualityDetail = adoptedQuality?.quality_detail
+    ?? adoptionQuality?.issueCodes.map((code) => t(adoptionQualityIssueMessageKey(code))).join(" · ")
+    ?? null;
 
   return (
     <article
@@ -446,13 +464,12 @@ function ResultCard({
             </IconButton>
             {canAdopt ? (
               <IconButton
-                label={adoptionBlockReason ?? t("graph.results.adopt")}
+                label={t("graph.results.adopt")}
                 size="sm"
                 data-graph-result-adopt
-                data-graph-result-adopt-blocked={adoptBlocked ? "true" : undefined}
                 className="!h-7 !w-7"
                 busy={adopting}
-                disabled={busy || adopting || adoptBlocked}
+                disabled={busy || adopting}
                 onClick={() => onAdoptItem?.(item)}
               >
                 <Check size={12} aria-hidden="true" />
@@ -505,15 +522,19 @@ function ResultCard({
             ) : null}
           </div>
         </div>
-        {adoptBlocked && adoptionBlockReason ? (
-          <p
-            role="status"
-            data-graph-result-adopt-reason
-            className="text-[10px] leading-4 text-state-error"
-            title={adoptionBlockReason}
+        {qualityStatus ? (
+          <div
+            data-graph-result-quality
+            data-graph-result-quality-status={qualityStatus}
+            className={`flex min-w-0 flex-col gap-0.5 text-[10px] leading-4 ${
+              qualityStatus === "fail" ? "text-state-error" : qualityStatus === "unchecked" ? "text-state-warning" : "text-state-success"
+            }`}
           >
-            {adoptionBlockReason}
-          </p>
+            <span className="font-semibold">{t(adoptionQualityStatusMessageKey(qualityStatus))}</span>
+            {qualityDetail ? (
+              <span title={qualityDetail} className="break-words">{qualityDetail}</span>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </article>

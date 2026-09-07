@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-policy-alignment.md](saas-policy-alignment.md) | 完成 | 未知调用到期释放用户额度；有限质量检查允许确认采用，保留实际状态并下载 |
 | [saas-design-alignment.md](saas-design-alignment.md) | 完成 | 纠正账号与管理员范围、六组现行合同，删除支持占位；收费/采用政策待独立裁定 |
 | [saas-workspace-context.md](saas-workspace-context.md) | 取消 | 用户明确普通账号自有一个商家，撤销多组织切换；本轮未提交增量已清除 |
 | [smtp-public-registration.md](smtp-public-registration.md) | 完成 | SMTP 环境默认与公开验证码注册；退役邀请和设置二次解锁；整仓 Go 保留已复现的基线失败 |

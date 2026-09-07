@@ -36,6 +36,7 @@ import type {
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
   DeliveryAdoptionListResponse,
+  DeliveryAdoptionCreateInput,
   DeliveryAdoptionVersion,
   DeliveryAdoptionPreview,
   ProductVisualSelection,
@@ -110,12 +111,19 @@ export class ApiError extends Error {
   status: number;
   detail: string;
   retryAfterSeconds: number | null;
+  code: string | null;
 
-  constructor(status: number, detail: string, retryAfterSeconds: number | null = null) {
+  constructor(
+    status: number,
+    detail: string,
+    retryAfterSeconds: number | null = null,
+    code: string | null = null,
+  ) {
     super(detail);
     this.status = status;
     this.detail = detail;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.code = code;
   }
 }
 
@@ -172,9 +180,11 @@ async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
 
 async function responseApiError(response: Response): Promise<ApiError> {
   let detail = "请求失败";
+  let code: string | null = null;
   try {
-    const payload = (await response.json()) as { detail?: string };
-    detail = payload.detail ?? detail;
+    const payload = (await response.json()) as { detail?: unknown; code?: unknown };
+    if (typeof payload.detail === "string") detail = payload.detail;
+    if (typeof payload.code === "string" && payload.code.trim()) code = payload.code;
   } catch {
     detail = response.statusText || detail;
   }
@@ -184,6 +194,7 @@ async function responseApiError(response: Response): Promise<ApiError> {
     response.status,
     detail,
     Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null,
+    code,
   );
 }
 
@@ -1406,24 +1417,7 @@ export const api = {
   },
   createDeliveryAdoption(
     productId: string,
-    body: {
-      slots: Array<{
-        slot_key: string;
-        sort_order: number;
-        image_type_key?: string | null;
-        source_asset_id: string;
-        source_node_id?: string | null;
-        delivery_spec: WorkflowDeliverySpec;
-        quality_status?: "pass" | "fail" | "unchecked";
-        quality_detail?: string | null;
-        text_overflow?: boolean;
-      }>;
-      graph_id?: string | null;
-      graph_revision?: number | null;
-      fact_set_version_id?: string | null;
-      visual_system_version_id?: string | null;
-      notes?: string | null;
-    },
+    body: DeliveryAdoptionCreateInput,
   ): Promise<DeliveryAdoptionVersion> {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions`, {
       method: "POST",

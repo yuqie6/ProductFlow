@@ -120,7 +120,7 @@ The public registration page and its SMTP settings projection are part of the cu
 - Every reference node binds one explicit ProductImageAsset.
 - The visual system is a workflow-level shared constraint. Per-image prompts may record explicit exceptions.
 - GenerationSpec, provider-effective parameters, and measured output remain separate. DeliverySpec creates deterministic renditions without regenerating or replacing the source image.
-- Every generated result enters the product library. Explicit delivery adoption snapshots persist selected assets; reruns do not change historical selections or automatically delete other results.
+- Every generated result enters the product library. Explicit delivery adoption snapshots persist selected assets; reruns do not change historical selections or automatically delete other results. Limited image checks that fail or cannot judge require explicit user confirmation before adoption. Confirmed images remain downloadable with their actual quality findings; confirmation does not mark them qualified. Invalid specifications and missing, corrupt or unauthorized assets remain blocked.
 - The Agent conversation can be closed at any time. With it closed or never opened, canvas add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn must not lock the canvas.
 - Workflow reuse comes only from user-saved recipes.
 - Provider purposes are `prompt`, `agent`, and `image`.

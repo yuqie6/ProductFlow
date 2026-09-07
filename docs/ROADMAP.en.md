@@ -48,4 +48,4 @@ Self-evolution retains automatic discovery, causal validation, instruction/code 
 
 Existing evaluation IDs, frozen thresholds, candidates and evidence are preserved. Production mining is scheduled after an actual authorized commercial environment exists. New paid experiments still require their own applicable authorization.
 
-Product policies require explicit user decisions. Unknown provider cost does not determine customer charges, and limited image checks cannot silently become universal adoption restrictions. Historical evaluation scores remain tied to their original scope. Account and operations work no longer depends on team management, workspace selection or an unspecified reauthentication mechanism.
+On 2026-09-08 the user approved releasing unresolved holds at expiry while retaining unknown provider-cost facts, and allowing explicit adoption and download after a failed or incomplete image check without changing its quality status. Historical evaluation scores remain tied to their original scope. Account and operations work no longer depends on team management, workspace selection or an unspecified reauthentication mechanism.

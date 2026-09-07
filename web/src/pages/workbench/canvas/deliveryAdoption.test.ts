@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { DeliveryAdoptionVersion, GraphProjection } from "../../../lib/types";
 import {
-  adoptedAssetBySlot,
-  adoptionGateMessageKey,
+  adoptedSlotBySlot,
+  adoptionQualityIssueMessageKey,
   buildAdoptionSlotsReplacingNode,
-  evaluateAdoptionGate,
+  assessAdoptionQuality,
 } from "./deliveryAdoption";
 
 const graph = {
@@ -78,7 +78,7 @@ const current: DeliveryAdoptionVersion = {
 
 describe("deliveryAdoption", () => {
   it("maps adopted assets by slot key", () => {
-    expect(adoptedAssetBySlot(current).get("node-hero")).toBe("old-asset");
+    expect(adoptedSlotBySlot(current).get("node-hero")).toEqual(current.slots[0]);
   });
 
   it("replaces one node slot and renumbers sort order without dropping siblings", () => {
@@ -108,33 +108,23 @@ describe("deliveryAdoption", () => {
     })).toEqual({ error: "missing_delivery_spec" });
   });
 
-  it("blocks adopt when text_qualified is false even if client wants pass", () => {
-    expect(evaluateAdoptionGate({
+  it("reports a failed text check while keeping adoption available", () => {
+    expect(assessAdoptionQuality({
       text_trace: { text_qualified: false },
       produce_route: { route_qualified: true },
-    })).toEqual({ ok: false, code: "text_unqualified" });
-    expect(buildAdoptionSlotsReplacingNode({
-      graph,
-      current: null,
-      nodeId: "node-hero",
-      sourceAssetId: "asset-1",
-      qualityStatus: "pass",
-      artifactPayload: {
-        text_trace: { text_qualified: false },
-        produce_route: { route_qualified: true },
-      },
-    })).toEqual({ error: "text_unqualified" });
-    expect(adoptionGateMessageKey("text_unqualified")).toBe("graph.results.adoptTextUnqualified");
+    })).toEqual({ status: "fail", issueCodes: ["text_unqualified"] });
+    expect(adoptionQualityIssueMessageKey("text_unqualified")).toBe("graph.results.qualityTextFailed");
   });
 
-  it("blocks adopt when route_qualified is false", () => {
-    expect(evaluateAdoptionGate({
+  it("reports a failed route check while keeping adoption available", () => {
+    expect(assessAdoptionQuality({
       text_trace: { text_qualified: true },
       produce_route: { route_qualified: false },
-    })).toEqual({ ok: false, code: "route_unqualified" });
+    })).toEqual({ status: "fail", issueCodes: ["route_unqualified"] });
   });
 
-  it("downgrades pass to unchecked when qualification metadata is missing", () => {
+  it("reports missing qualification metadata as unchecked and does not claim pass", () => {
+    expect(assessAdoptionQuality({})).toEqual({ status: "unchecked", issueCodes: ["quality_unchecked"] });
     const built = buildAdoptionSlotsReplacingNode({
       graph,
       current: null,
@@ -149,5 +139,49 @@ describe("deliveryAdoption", () => {
         source_asset_id: "asset-1",
       }),
     ]);
+  });
+
+  it("uses pass only when both finite checks are explicitly true", () => {
+    const built = buildAdoptionSlotsReplacingNode({
+      graph,
+      current: null,
+      nodeId: "node-hero",
+      sourceAssetId: "asset-1",
+    });
+    expect(built).toEqual([
+      expect.objectContaining({ quality_status: "pass" }),
+    ]);
+  });
+
+  it("retains a sibling fail, detail, and overflow flag when replacing another slot", () => {
+    const retained = {
+      ...current,
+      slots: [
+        ...current.slots,
+        {
+          ...current.slots[0],
+          id: "s2",
+          slot_key: "node-other",
+          sort_order: 1,
+          quality_status: "fail" as const,
+          quality_detail: "图位文字溢出",
+          text_overflow: true,
+        },
+      ],
+    };
+    const built = buildAdoptionSlotsReplacingNode({
+      graph,
+      current: retained,
+      nodeId: "node-hero",
+      sourceAssetId: "asset-new",
+    });
+    expect(built).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        slot_key: "node-other",
+        quality_status: "fail",
+        quality_detail: "图位文字溢出",
+        text_overflow: true,
+      }),
+    ]));
   });
 });

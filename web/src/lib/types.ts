@@ -698,6 +698,28 @@ export interface DeliveryRenditionJobListResponse {
 
 export type DeliveryAdoptionQualityStatus = "pass" | "fail" | "unchecked";
 
+export interface DeliveryAdoptionSlotInput {
+  slot_key: string;
+  sort_order: number;
+  image_type_key?: string | null;
+  source_asset_id: string;
+  source_node_id?: string | null;
+  delivery_spec: WorkflowDeliverySpec;
+  quality_status?: DeliveryAdoptionQualityStatus;
+  quality_detail?: string | null;
+  text_overflow?: boolean;
+}
+
+export interface DeliveryAdoptionCreateInput {
+  acknowledge_quality_warnings: boolean;
+  slots: DeliveryAdoptionSlotInput[];
+  graph_id?: string | null;
+  graph_revision?: number | null;
+  fact_set_version_id?: string | null;
+  visual_system_version_id?: string | null;
+  notes?: string | null;
+}
+
 export interface DeliveryAdoptionSlot {
   id: string;
   slot_key: string;

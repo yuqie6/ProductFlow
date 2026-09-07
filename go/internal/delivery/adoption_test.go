@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -48,7 +49,7 @@ func TestDeliveryAdoptionCreatesImmutableVersionsAndExportMatchesPreview(t *test
 			"delivery_spec": spec, "quality_status": "fail",
 		}},
 	})
-	ds.mustStatus(t, rejected, http.StatusBadRequest)
+	ds.mustStatus(t, rejected, http.StatusConflict)
 	rejected.Body.Close()
 
 	overflow := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
@@ -57,7 +58,7 @@ func TestDeliveryAdoptionCreatesImmutableVersionsAndExportMatchesPreview(t *test
 			"delivery_spec": spec, "quality_status": "pass", "text_overflow": true,
 		}},
 	})
-	ds.mustStatus(t, overflow, http.StatusBadRequest)
+	ds.mustStatus(t, overflow, http.StatusConflict)
 	overflow.Body.Close()
 
 	extra := ds.uploadExtraAsset(t, productID)
@@ -169,6 +170,7 @@ func TestDeliveryAdoptionConcurrentCreatesBumpVersions(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+				"acknowledge_quality_warnings": true,
 				"slots": []map[string]any{{
 					"slot_key": fmt.Sprintf("slot-%d", i), "sort_order": 0,
 					"source_asset_id": assetID, "delivery_spec": spec, "quality_status": "unchecked",
@@ -295,7 +297,7 @@ func (ds *deliveryServer) attachArtifactOnGraphWithPayload(
 	_ = productID
 }
 
-func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
+func TestDeliveryAdoptionRequiresConfirmationForUnqualifiedGraphArtifacts(t *testing.T) {
 	ds := newDeliveryServer(t)
 	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
 
@@ -312,9 +314,9 @@ func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
 			}},
 		})
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
+		if resp.StatusCode != http.StatusConflict {
 			raw, _ := io.ReadAll(resp.Body)
-			t.Fatalf("%s want 400 got %d %s", name, resp.StatusCode, raw)
+			t.Fatalf("%s want 409 got %d %s", name, resp.StatusCode, raw)
 		}
 		raw, _ := io.ReadAll(resp.Body)
 		if !strings.Contains(string(raw), wantSubstr) {
@@ -324,17 +326,17 @@ func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
 
 	textFail := qualifiedAdoptionArtifactPayload()
 	textFail["text_trace"] = map[string]any{"text_qualified": false}
-	mustReject("fake pass + text_qualified=false", textFail, "pass", "文字追溯不合格")
+	mustReject("fake pass + text_qualified=false", textFail, "pass", "文字追溯检查未通过")
 
 	routeFail := qualifiedAdoptionArtifactPayload()
 	routeFail["produce_route"] = map[string]any{
 		"route": "subject_preserve", "route_qualified": false,
 		"unresolved_items": []any{"保留主体路线质检失败"},
 	}
-	mustReject("fake pass + route_qualified=false", routeFail, "pass", "产图路线不合格")
-	mustReject("unchecked + route_qualified=false", routeFail, "unchecked", "产图路线不合格")
+	mustReject("fake pass + route_qualified=false", routeFail, "pass", "产图路线检查未通过")
+	mustReject("unchecked + route_qualified=false", routeFail, "unchecked", "产图路线检查未通过")
 
-	mustReject("pass without metadata", map[string]any{}, "pass", "缺少合格追溯元数据")
+	mustReject("pass without metadata", map[string]any{}, "pass", "缺少完整质量检查记录")
 
 	created := ds.createProduct(t)
 	productID := created.Product.ID
@@ -353,6 +355,7 @@ func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
 	uncheckedAsset := uncheckedMissing.CreatedAssets[0].ID
 	ds.attachArtifactLineageWithPayload(t, uncheckedMissing.Product.ID, uncheckedAsset, map[string]any{})
 	uncheckedOK := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+uncheckedMissing.Product.ID+"/delivery-adoptions", map[string]any{
+		"acknowledge_quality_warnings": true,
 		"slots": []map[string]any{{
 			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": uncheckedAsset,
 			"delivery_spec": spec, "quality_status": "unchecked",
@@ -374,7 +377,7 @@ func textTraceCapacityPayload() map[string]any {
 	return p
 }
 
-func TestDeliveryAdoptionOCRMissingRejectsDeclaredPass(t *testing.T) {
+func TestDeliveryAdoptionOCRMissingRequiresConfirmation(t *testing.T) {
 	ds := newDeliveryServer(t)
 	created := ds.createProduct(t)
 	productID := created.Product.ID
@@ -393,13 +396,24 @@ func TestDeliveryAdoptionOCRMissingRejectsDeclaredPass(t *testing.T) {
 		}},
 	})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
+	if resp.StatusCode != http.StatusConflict {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("want 400 got %d %s", resp.StatusCode, raw)
+		t.Fatalf("want 409 got %d %s", resp.StatusCode, raw)
 	}
 	raw, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(raw), "文字 OCR 对照不合格") {
+	if !strings.Contains(string(raw), "文字检查未识别到预期内容") {
 		t.Fatalf("body %s", raw)
+	}
+
+	confirmed := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"acknowledge_quality_warnings": true,
+		"slots":                        []map[string]any{{"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID, "delivery_spec": spec, "quality_status": "pass"}},
+	})
+	ds.mustStatus(t, confirmed, http.StatusCreated)
+	var result AdoptionVersionResponse
+	ds.decode(t, confirmed, &result)
+	if result.Slots[0].Qualified || result.Slots[0].QualityStatus != "fail" {
+		t.Fatalf("OCR failure became pass: %+v", result)
 	}
 }
 
@@ -446,8 +460,7 @@ func TestDeliveryAdoptionOCRProductBodyInkAllowsPass(t *testing.T) {
 	resp.Body.Close()
 }
 
-
-func TestDeliveryAdoptionOCRRejectsEmptyExpectations(t *testing.T) {
+func TestDeliveryAdoptionOCRUncheckableRequiresConfirmation(t *testing.T) {
 	ds := newDeliveryServer(t)
 	created := ds.createProduct(t)
 	productID := created.Product.ID
@@ -466,9 +479,9 @@ func TestDeliveryAdoptionOCRRejectsEmptyExpectations(t *testing.T) {
 		}},
 	})
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest {
+	if resp.StatusCode != http.StatusConflict {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("want 400 got %d %s", resp.StatusCode, raw)
+		t.Fatalf("want 409 got %d %s", resp.StatusCode, raw)
 	}
 	raw, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(raw), "无可对照的文字期望") {
@@ -490,5 +503,139 @@ func TestAdoptionTextTraceNeedsOCR(t *testing.T) {
 		"entries": []any{map[string]any{"text": "600ml"}},
 	}) {
 		t.Fatal("entry text require OCR")
+	}
+}
+
+func TestConfirmedQualityWarningsRemainVisibleAndExportable(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload map[string]any
+		status  string
+	}{
+		{"failed", map[string]any{"text_trace": map[string]any{"text_qualified": false}}, "fail"},
+		{"unchecked", map[string]any{}, "unchecked"},
+		{"uncheckable_text", map[string]any{"text_trace": map[string]any{"text_qualified": true, "fact_keys": []any{"unknown_fact"}}, "produce_route": qualifiedAdoptionArtifactPayload()["produce_route"]}, "unchecked"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ds := newDeliveryServer(t)
+			created := ds.createProduct(t)
+			pid := created.Product.ID
+			aid := created.CreatedAssets[0].ID
+			ds.attachArtifactLineageWithPayload(t, pid, aid, tc.payload)
+			path := "/api/v3/products/" + pid + "/delivery-adoptions"
+			body := map[string]any{"slots": []map[string]any{{"slot_key": "hero", "sort_order": 0, "source_asset_id": aid, "quality_status": "pass", "delivery_spec": map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}}}}
+			warning := ds.doJSON(t, http.MethodPost, path, body)
+			ds.mustStatus(t, warning, http.StatusConflict)
+			var problem struct {
+				Code   string `json:"code"`
+				Detail string `json:"detail"`
+			}
+			ds.decode(t, warning, &problem)
+			if problem.Code != AdoptionQualityConfirmationRequired || problem.Detail == "" {
+				t.Fatalf("%+v", problem)
+			}
+			listResp := ds.do(t, http.MethodGet, path, nil, "")
+			var list AdoptionListResponse
+			ds.decode(t, listResp, &list)
+			if len(list.Items) != 0 || list.CurrentVersionID != nil {
+				t.Fatal("unconfirmed request wrote adoption")
+			}
+			body["acknowledge_quality_warnings"] = true
+			accepted := ds.doJSON(t, http.MethodPost, path, body)
+			ds.mustStatus(t, accepted, http.StatusCreated)
+			var version AdoptionVersionResponse
+			ds.decode(t, accepted, &version)
+			slot := version.Slots[0]
+			if slot.QualityStatus != tc.status || slot.Qualified || slot.QualityDetail == nil {
+				t.Fatalf("confirmation changed quality: %+v", slot)
+			}
+			read := ds.do(t, http.MethodGet, path+"/"+version.ID, nil, "")
+			var stored AdoptionVersionResponse
+			ds.decode(t, read, &stored)
+			if stored.Slots[0].QualityStatus != tc.status || *stored.Slots[0].QualityDetail != *slot.QualityDetail {
+				t.Fatal("quality snapshot not persisted")
+			}
+			filtered := ds.doJSON(t, http.MethodPost, path+"/"+version.ID+"/preview", map[string]any{"qualified_only": true})
+			var filteredBody AdoptionPreviewResponse
+			ds.decode(t, filtered, &filteredBody)
+			if len(filteredBody.Items) != 0 {
+				t.Fatal("nonqualified image counted as qualified")
+			}
+			ensure := ds.doJSON(t, http.MethodPost, path+"/"+version.ID+"/renditions", map[string]any{})
+			ds.mustStatus(t, ensure, http.StatusAccepted)
+			var jobs AdoptionRenditionsResponse
+			ds.decode(t, ensure, &jobs)
+			if len(jobs.Preview.Items) != 1 || jobs.Preview.Items[0].RenditionJobID == nil {
+				t.Fatalf("no rendition %+v", jobs)
+			}
+			if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), *jobs.Preview.Items[0].RenditionJobID); err != nil {
+				t.Fatal(err)
+			}
+			preview := ds.doJSON(t, http.MethodPost, path+"/"+version.ID+"/preview", map[string]any{})
+			var ready AdoptionPreviewResponse
+			ds.decode(t, preview, &ready)
+			if !ready.ExportReady || !ready.Complete || ready.Items[0].Qualified {
+				t.Fatalf("%+v", ready)
+			}
+			exported := ds.doJSON(t, http.MethodPost, path+"/"+version.ID+"/export", map[string]any{})
+			ds.mustStatus(t, exported, http.StatusOK)
+			raw, _ := io.ReadAll(exported.Body)
+			exported.Body.Close()
+			zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := zr.Open("manifest.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manifest.Close()
+			var m struct {
+				Items []struct {
+					Adoption struct {
+						Qualified bool `json:"qualified"`
+					} `json:"adoption"`
+				} `json:"items"`
+			}
+			if err := json.NewDecoder(manifest).Decode(&m); err != nil {
+				t.Fatal(err)
+			}
+			if len(m.Items) != 1 || m.Items[0].Adoption.Qualified {
+				t.Fatalf("export misreported quality: %+v", m)
+			}
+		})
+	}
+}
+
+func TestQualityConfirmationCannotBypassInvalidAssetsOrSpec(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	pid := created.Product.ID
+	aid := created.CreatedAssets[0].ID
+	foreign := ds.createProduct(t)
+	slot := map[string]any{"slot_key": "hero", "sort_order": 0, "source_asset_id": foreign.CreatedAssets[0].ID, "quality_status": "fail", "delivery_spec": map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}}
+	body := map[string]any{"acknowledge_quality_warnings": true, "slots": []map[string]any{slot}}
+	path := "/api/v3/products/" + pid + "/delivery-adoptions"
+	resp := ds.doJSON(t, http.MethodPost, path, body)
+	ds.mustStatus(t, resp, http.StatusBadRequest)
+	resp.Body.Close()
+	slot["source_asset_id"] = aid
+	slot["delivery_spec"] = map[string]any{"width": 64, "height": 64, "format": "invalid"}
+	resp = ds.doJSON(t, http.MethodPost, path, body)
+	ds.mustStatus(t, resp, http.StatusBadRequest)
+	resp.Body.Close()
+	slot["delivery_spec"] = map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	abs := resolveDeliveryMedia(t, ds, created.CreatedAssets[0].MediaObjectID)
+	if err := os.WriteFile(abs, []byte("corrupt image"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resp = ds.doJSON(t, http.MethodPost, path, body)
+	ds.mustStatus(t, resp, http.StatusConflict)
+	resp.Body.Close()
+	resp = ds.do(t, http.MethodGet, path, nil, "")
+	var list AdoptionListResponse
+	ds.decode(t, resp, &list)
+	if len(list.Items) != 0 {
+		t.Fatal("invalid requests wrote adoption")
 	}
 }

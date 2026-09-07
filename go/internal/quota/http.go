@@ -164,7 +164,7 @@ func (h HTTP) adjust(c *gin.Context) {
 }
 
 // resolveUnknown 是 POST /api/ops/merchants/:merchant_id/quota/holds/resolve：
-// 对 pending_reconciliation 明示 Settle；禁止当零消费 Release。
+// 对 pending_reconciliation 明示 Settle；actual_units=0 只表示人工核查结论，不等同 TTL 到期自动释放。
 func (h HTTP) resolveUnknown(c *gin.Context) {
 	principal := auth.PrincipalFrom(c)
 	if principal == nil {

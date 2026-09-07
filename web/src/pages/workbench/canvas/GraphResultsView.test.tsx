@@ -149,9 +149,22 @@ describe("GraphResultsView", () => {
     expect(markup).not.toContain("data-graph-results-export-adoption");
   });
 
-  it("shows delivery adoption controls when handlers and adopted map are provided", () => {
+  it("shows delivery adoption controls when handlers and an adopted slot are provided", () => {
     const markup = renderResults({
-      adoptedAssetBySlot: new Map([["node-ok", "asset-1"]]),
+      adoptedSlotBySlot: new Map([["node-ok", {
+        id: "slot-1",
+        slot_key: "node-ok",
+        sort_order: 0,
+        image_type_key: "hero",
+        source_asset_id: "asset-1",
+        source_node_id: "node-ok",
+        delivery_spec: { width: 800, height: 800, format: "png", fit: "contain" },
+        delivery_spec_hash: "hash",
+        quality_status: "pass",
+        quality_detail: null,
+        text_overflow: false,
+        qualified: true,
+      }]]),
       onAdoptItem: vi.fn(),
       onExportAdoption: vi.fn(),
       headerActions: createElement("div", { "data-graph-results-header-actions": true }, "switcher"),
@@ -169,14 +182,23 @@ describe("GraphResultsView", () => {
     );
   });
 
-  it("shows adoption rejection reason and disables adopt when blocked", () => {
+  it("shows a quality warning without disabling adoption", () => {
     const markup = renderResults({
-      adoptionBlockByNodeId: new Map([["node-ok", "文字追溯不合格，不能采用为交付"]]),
+      adoptionQualityByNodeId: new Map([[
+        "node-ok",
+        { status: "fail", issueCodes: ["text_unqualified"] },
+      ]]),
       onAdoptItem: vi.fn(),
     });
-    expect(markup).toContain('data-graph-result-adopt-blocked="true"');
-    expect(markup).toContain("data-graph-result-adopt-reason");
-    expect(markup).toContain("文字追溯不合格，不能采用为交付");
+    const cardStart = markup.indexOf('data-graph-result-item="node-ok"');
+    const cardSlice = markup.slice(cardStart, markup.indexOf("</article>", cardStart));
+    const adoptStart = cardSlice.indexOf("data-graph-result-adopt");
+    const adoptButton = cardSlice.slice(adoptStart, cardSlice.indexOf("</button>", adoptStart));
+    expect(adoptButton).toContain('data-graph-result-adopt="true"');
+    expect(adoptButton).not.toContain("disabled=");
+    expect(markup).toContain('data-graph-result-quality-status="fail"');
+    expect(markup).toContain("有限检查未通过");
+    expect(markup).toContain("文字追溯检查未通过");
   });
 
   it("keeps evidence bind entry and omits run for evidence items", () => {

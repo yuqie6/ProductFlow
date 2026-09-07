@@ -4,15 +4,15 @@
 // 操作事实；本包只管商家被收取的服务额度（available/reserved/事件），不另造平台成本账。
 //
 // B0 账本已交付；B1–B3 已接图会话 / Graph / Agent 主入口。
-// B4 余额 HTTP：商家只读本商 + Op 只读/调账（见 http.go）。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
+// B4 余额 HTTP：商家只读本商 + Op 只读/调账（见 http.go）。未知结果必须走 MarkUnknown；到期释放预留不代表供应商成功或零成本。
 // 价格目录 B0：quota_price_versions / entries 为单价真相；DefaultPriceVersionID 仅命名默认种子行；Reserve 校验版本。
 // 新商家首次建账按 QUOTA_TRIAL_UNITS（默认 DefaultTrialUnits）种子可用额度；≠真实支付。
 //
 // unknown / pending_reconciliation 运营合同（B0）：
-//   - MarkUnknown 后保留 reserved 负债；Release 一律拒绝。
+//   - MarkUnknown 后保留 reserved 负债；普通 Release 一律拒绝。
 //   - Op 明示裁定：ResolveUnknown → Settle(actual∈[0,reserved])，须写 reason；0 仅表示核查后确认零消费。
-//   - 到期：停留超过 QUOTA_UNKNOWN_HOLD_TTL（默认 72h）后 ExpireUnknownHolds 按预留全额 Settle，永不自动 Release。
-//   - Settle 幂等键与 hold 相同，重复裁定/到期不双结。
+//   - 到期：停留超过 QUOTA_UNKNOWN_HOLD_TTL（默认 72h）后 ExpireUnknownHolds 释放用户预留；原始 unknown 事件仍保留。
+//   - Settle/Release 幂等键与 hold 相同，重复裁定/到期不双结或双释。
 package quota
 
 import (
@@ -382,7 +382,7 @@ func (s *Service) settle(ctx context.Context, merchantID, idempotencyKey string,
 	return hold, acctOut, err
 }
 
-// Release 取消已明确未发出的调用：把预留退回 available。unknown 不得走此路径。
+// Release 取消已明确未发出的调用：把预留退回 available。unknown 只由 TTL 到期内部路径释放。
 func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string) (Hold, Account, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -392,10 +392,20 @@ func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string
 	if idempotencyKey == "" {
 		return Hold{}, Account{}, apperr.Validation("缺少幂等键")
 	}
+	hold, acct, _, err := s.release(ctx, merchantID, idempotencyKey, releaseOptions{})
+	return hold, acct, err
+}
 
-	var hold Hold
-	var acctOut Account
-	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+type releaseOptions struct {
+	RequirePending bool
+	Reason         string
+}
+
+// release performs the account and hold transition under one account-first transaction.
+// changed is false for an idempotent replay, which lets scanners report one effective release
+// when two workers selected the same stale row before either one committed.
+func (s *Service) release(ctx context.Context, merchantID, idempotencyKey string, opts releaseOptions) (hold Hold, acctOut Account, changed bool, err error) {
+	err = tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
 		acct, err := lockAccount(gdb, merchantID)
 		if err != nil {
 			return err
@@ -412,7 +422,11 @@ func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string
 			acctOut = accountFromRow(acct)
 			return nil
 		}
-		if row.Status != StatusReserved {
+		if opts.RequirePending {
+			if row.Status != StatusPendingReconciliation {
+				return apperr.Conflict("预留状态不允许到期释放")
+			}
+		} else if row.Status != StatusReserved {
 			return apperr.Conflict("预留状态不允许释放")
 		}
 		if acct.ReservedUnits < row.AmountUnits {
@@ -444,6 +458,7 @@ func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string
 		}
 		row.Status = StatusReleased
 		row.UpdatedAt = now
+		changed = true
 
 		holdID := row.ID
 		if err := appendEvent(gdb, schema.MerchantQuotaEvents{
@@ -456,6 +471,7 @@ func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string
 			AvailableAfter: acct.AvailableUnits,
 			ReservedAfter:  acct.ReservedUnits,
 			PriceVersionID: row.PriceVersionID,
+			Reason:         optionalString(opts.Reason),
 			CreatedAt:      now,
 		}); err != nil {
 			return err
@@ -464,7 +480,7 @@ func (s *Service) Release(ctx context.Context, merchantID, idempotencyKey string
 		acctOut = accountFromRow(acct)
 		return nil
 	})
-	return hold, acctOut, err
+	return hold, acctOut, changed, err
 }
 
 // MarkUnknown 将已发出但结果不明的预留标为待核对；保留 reserved 负债，不自动按零消费释放。

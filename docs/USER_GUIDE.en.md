@@ -331,3 +331,5 @@ Confirm that the current session belongs to a signed-in Operator, then inspect p
 Application logs must not contain API keys, session tokens, complete upload bytes, or data URLs. Treat any such log as a security issue.
 
 For self-hosted troubleshooting, read `storage-dev/logs/` (Compose: `logs/` under the mounted storage volume): `productflow-api.log`, `productflow-worker.log`, `productflow-dispatcher.log`. Each line is JSON with `ts`, `level`, `msg`, and `process`. API access lines include `request_id`. The terminal shows the same events as readable lines, not JSON.
+
+When adopting a delivery image, failed or inconclusive checks show their findings. Cancel to revise, or explicitly confirm adoption and download; confirmation does not change the check into a pass. Missing, corrupt or unauthorized images remain blocked. Unresolved generation holds are returned at expiry (72 hours by default); the platform retains the unknown provider-cost record and bears unverifiable costs.

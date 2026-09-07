@@ -18,12 +18,13 @@ type AdoptionSlotInput struct {
 
 // CreateAdoptionRequest 显式创建新的不可变交付采用版本；不修改历史版本行。
 type CreateAdoptionRequest struct {
-	Slots                 []AdoptionSlotInput `json:"slots"`
-	GraphID               *string             `json:"graph_id"`
-	GraphRevision         *int                `json:"graph_revision"`
-	FactSetVersionID      *string             `json:"fact_set_version_id"`
-	VisualSystemVersionID *string             `json:"visual_system_version_id"`
-	Notes                 *string             `json:"notes"`
+	AcknowledgeQualityWarnings bool                `json:"acknowledge_quality_warnings"`
+	Slots                      []AdoptionSlotInput `json:"slots"`
+	GraphID                    *string             `json:"graph_id"`
+	GraphRevision              *int                `json:"graph_revision"`
+	FactSetVersionID           *string             `json:"fact_set_version_id"`
+	VisualSystemVersionID      *string             `json:"visual_system_version_id"`
+	Notes                      *string             `json:"notes"`
 }
 
 // AdoptionSlotResponse 是已持久化图位投影。
@@ -75,7 +76,7 @@ type AdoptionListResponse struct {
 
 // AdoptionIssue 是导出/预览前可定位的问题。
 type AdoptionIssue struct {
-	Code    string  `json:"code"` // missing_asset|duplicate_slot|unsupported_format|invalid_crop|text_overflow|quality_failed|rendition_pending|rendition_failed
+	Code    string  `json:"code"` // missing_asset|duplicate_slot|unsupported_format|invalid_crop|rendition_pending|rendition_failed
 	SlotKey string  `json:"slot_key"`
 	Message string  `json:"message"`
 	JobID   *string `json:"job_id,omitempty"`

@@ -2,13 +2,15 @@
  * 懒加载成果集成：切换器与成果层同块，主壳只保留 flow 默认与选择同步入口。
  */
 
-import { Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 
+import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type {
+  DeliveryAdoptionCreateInput,
   GraphNodeCatalog,
   GraphPlannedAction,
   GraphProjection,
@@ -18,10 +20,9 @@ import type {
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { graphEdgeRoleLabelKey, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
-  adoptedAssetBySlot,
-  adoptionGateMessageKey,
+  adoptedSlotBySlot,
+  assessAdoptionQuality,
   buildAdoptionSlotsReplacingNode,
-  evaluateAdoptionGate,
 } from "./deliveryAdoption";
 import { projectGraphResults, type GraphResultItem } from "./resultProjection";
 import { GraphResultsView } from "./GraphResultsView";
@@ -127,6 +128,16 @@ export function WorkbenchResultsLayer({
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [operationError, setOperationError] = useState<unknown>(null);
+  const [qualityConfirmation, setQualityConfirmation] = useState<{
+    productId: string;
+    item: GraphResultItem;
+    body: DeliveryAdoptionCreateInput;
+    detail: string;
+  } | null>(null);
+  useEffect(() => {
+    setQualityConfirmation(null);
+    setOperationError(null);
+  }, [productId]);
   const sections = useMemo(() => projectGraphResults(graph, runs ?? EMPTY_RUNS), [graph, runs]);
   const adoptionQuery = useQuery({
     queryKey: ["delivery-adoption-current", productId],
@@ -139,23 +150,20 @@ export function WorkbenchResultsLayer({
       }
     },
   });
-  const adoptedMap = useMemo(
-    () => adoptedAssetBySlot(adoptionQuery.data ?? null),
+  const adoptedSlotMap = useMemo(
+    () => adoptedSlotBySlot(adoptionQuery.data ?? null),
     [adoptionQuery.data],
   );
-  const adoptionBlockByNodeId = useMemo(() => {
-    const map = new Map<string, string>();
+  const adoptionQualityByNodeId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof assessAdoptionQuality>>();
     for (const node of graph.nodes) {
       if (node.node_type !== "image_generation") continue;
-      const gate = evaluateAdoptionGate(
+      map.set(node.id, assessAdoptionQuality(
         node.current_artifact_payload as Record<string, unknown> | null | undefined,
-      );
-      if (!gate.ok) {
-        map.set(node.id, t(adoptionGateMessageKey(gate.code)));
-      }
+      ));
     }
     return map;
-  }, [graph.nodes, t]);
+  }, [graph.nodes]);
   const blockedReasons = useMemo(() => {
     const reasons: Record<string, string> = {};
     for (const node of graph.nodes) {
@@ -200,36 +208,87 @@ export function WorkbenchResultsLayer({
   }, [onBindNode]);
 
   const adoptMutation = useMutation({
-    mutationFn: async (item: GraphResultItem) => {
-      if (!item.currentAssetId) throw new ApiError(400, t("graph.results.adoptNeedImage"));
-      const slots = buildAdoptionSlotsReplacingNode({
-        graph,
-        current: adoptionQuery.data ?? null,
-        nodeId: item.nodeId,
-        sourceAssetId: item.currentAssetId,
-        qualityStatus: "unchecked",
-      });
-      if ("error" in slots) {
-        if (slots.error === "missing_delivery_spec") {
-          throw new ApiError(400, t("graph.results.adoptNeedSpec"));
-        }
-        if (slots.error === "text_unqualified" || slots.error === "route_unqualified") {
-          throw new ApiError(400, t(adoptionGateMessageKey(slots.error)));
-        }
-        throw new ApiError(400, t("graph.results.adoptNeedImage"));
+    mutationFn: async ({ productId: requestProductId, body }: {
+      productId: string;
+      item: GraphResultItem;
+      body: DeliveryAdoptionCreateInput;
+    }) => (
+      api.createDeliveryAdoption(requestProductId, body)
+    ),
+    onSuccess: async (_data, variables) => {
+      if (variables.productId !== productId) return;
+      setOperationError(null);
+      setQualityConfirmation(null);
+      await queryClient.invalidateQueries({ queryKey: ["delivery-adoption-current", productId] });
+    },
+    onError: (error, variables) => {
+      if (variables.productId !== productId) return;
+      if (
+        error instanceof ApiError
+        && error.status === 409
+        && error.code === "adoption_quality_confirmation_required"
+      ) {
+        setOperationError(null);
+        setQualityConfirmation({
+          productId: variables.productId,
+          item: variables.item,
+          body: variables.body,
+          detail: error.detail,
+        });
+        return;
       }
-      return api.createDeliveryAdoption(productId, {
+      setQualityConfirmation(null);
+      setOperationError(error);
+    },
+  });
+
+  const adoptItem = useCallback((item: GraphResultItem) => {
+    if (!item.currentAssetId) {
+      setOperationError(new ApiError(400, t("graph.results.adoptNeedImage")));
+      return;
+    }
+    const slots = buildAdoptionSlotsReplacingNode({
+      graph,
+      current: adoptionQuery.data ?? null,
+      nodeId: item.nodeId,
+      sourceAssetId: item.currentAssetId,
+    });
+    if ("error" in slots) {
+      setOperationError(new ApiError(
+        400,
+        slots.error === "missing_delivery_spec"
+          ? t("graph.results.adoptNeedSpec")
+          : t("graph.results.adoptNeedImage"),
+      ));
+      return;
+    }
+    setOperationError(null);
+    adoptMutation.mutate({
+      productId,
+      item,
+      body: {
+        acknowledge_quality_warnings: false,
         slots,
         graph_id: graph.id,
         graph_revision: graph.revision,
-      });
-    },
-    onSuccess: async () => {
-      setOperationError(null);
-      await queryClient.invalidateQueries({ queryKey: ["delivery-adoption-current", productId] });
-    },
-    onError: (error) => setOperationError(error),
-  });
+      },
+    });
+  }, [adoptMutation, adoptionQuery.data, graph, productId, t]);
+
+  const confirmQualityWarning = useCallback(() => {
+    if (!qualityConfirmation || qualityConfirmation.productId !== productId) {
+      setQualityConfirmation(null);
+      return;
+    }
+    adoptMutation.mutate({
+      productId: qualityConfirmation.productId,
+      item: qualityConfirmation.item,
+      body: {
+        ...qualityConfirmation.body,
+        acknowledge_quality_warnings: true,
+      },
+    });
+  }, [adoptMutation, productId, qualityConfirmation]);
 
   const exportMutation = useMutation({
     mutationFn: async () => {
@@ -257,7 +316,8 @@ export function WorkbenchResultsLayer({
   });
 
   return (
-    <Suspense
+    <>
+      <Suspense
       fallback={(
         <div className="flex h-full items-center justify-center text-text-muted" aria-label={t("app.loading")}>
           <ListChecks size={18} className="animate-pulse motion-reduce:animate-none" aria-hidden="true" />
@@ -271,7 +331,7 @@ export function WorkbenchResultsLayer({
         runsError={runsError}
         operationError={operationError ?? adoptionQuery.error}
         onRetryRuns={onRetryRuns}
-        busy={busy || adoptMutation.isPending || exportMutation.isPending}
+        busy={busy || adoptMutation.isPending || exportMutation.isPending || Boolean(qualityConfirmation)}
         runningNodeId={runningNodeId}
         selectedNodeIds={selectedNodeIds}
         plannedActions={plannedActions}
@@ -285,14 +345,50 @@ export function WorkbenchResultsLayer({
         onOpenLocalEdit={onOpenLocalEdit ? openLocalEdit : undefined}
         onPreviewImage={onPreviewImage ? previewImage : undefined}
         onBindEvidence={onBindNode ? bindEvidence : undefined}
-        adoptedAssetBySlot={adoptedMap}
-        adoptionBlockByNodeId={adoptionBlockByNodeId}
-        adoptingNodeId={adoptMutation.isPending ? adoptMutation.variables?.nodeId ?? null : null}
+        adoptedSlotBySlot={adoptedSlotMap}
+        adoptionQualityByNodeId={adoptionQualityByNodeId}
+        adoptingNodeId={adoptMutation.isPending && adoptMutation.variables?.productId === productId
+          ? adoptMutation.variables.item.nodeId
+          : null}
         exportingAdoption={exportMutation.isPending}
-        onAdoptItem={(item) => adoptMutation.mutate(item)}
+        onAdoptItem={adoptItem}
         onExportAdoption={adoptionQuery.data ? () => exportMutation.mutate() : undefined}
         headerActions={headerActions}
       />
-    </Suspense>
+      </Suspense>
+      <ConfirmDialog
+      open={qualityConfirmation?.productId === productId}
+      title={t("graph.results.qualityConfirmationTitle")}
+      description={t("graph.results.qualityConfirmationDescription")}
+      body={qualityConfirmation ? (
+        <QualityConfirmationBody detail={qualityConfirmation.detail} />
+      ) : null}
+      confirmLabel={t("graph.results.qualityConfirmationConfirm")}
+      cancelLabel={t("common.cancel")}
+      busy={adoptMutation.isPending}
+      destructive={false}
+      onConfirm={confirmQualityWarning}
+      onClose={() => {
+        if (!adoptMutation.isPending) setQualityConfirmation(null);
+      }}
+      />
+    </>
+  );
+}
+
+function QualityConfirmationBody({ detail }: { detail: string }) {
+  const { t } = useI18n();
+  const lines = detail.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return (
+    <div data-delivery-adoption-quality-confirmation className="space-y-3">
+      <p className="text-xs leading-5 text-text-secondary">
+        {t("graph.results.qualityConfirmationDetails")}
+      </p>
+      {lines.length ? (
+        <ul className="list-disc space-y-1 pl-5 text-xs leading-5 text-state-warning">
+          {lines.map((line, index) => <li key={`${line}-${index}`}>{line}</li>)}
+        </ul>
+      ) : null}
+    </div>
   );
 }

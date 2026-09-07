@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,10 +21,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// CreateAdoption 持久化新的不可变交付采用版本，并把商品当前指针切到该版本。
-// 文稿 O1–O7 候选采用不走此路径。quality_status=fail、文字溢出、或 graph 产物
-// text_qualified/route_qualified 为假时整次创建拒绝；客户端 quality_status 不能绕过。
-// 有 text_trace 且要求文字时，对成片默认跑 OCR 对照；失败不得合格采用（IQ-CF-02/08）。
+// CreateAdoption 保存用户选择与独立的质量结论。检查失败或未完成时须明确确认；
+// 确认不改变质量状态，也不绕过归属、交付规格和成片完整性校验。
+const AdoptionQualityConfirmationRequired = "adoption_quality_confirmation_required"
+
 func (s Service) CreateAdoption(ctx context.Context, productID string, req CreateAdoptionRequest) (AdoptionVersionResponse, error) {
 	if len(req.Slots) < 1 {
 		return AdoptionVersionResponse{}, apperr.Validation("交付采用至少需要一个图位")
@@ -53,7 +54,7 @@ func (s Service) CreateAdoption(ctx context.Context, productID string, req Creat
 		if err := validateOptionalSourceVersions(ctx, pgxTx, productID, req); err != nil {
 			return err
 		}
-		if err := s.validateAdoptionGraphQualification(ctx, pgxTx, productID, prepared, req.FactSetVersionID); err != nil {
+		if err := s.validateAdoptionGraphQualification(ctx, pgxTx, productID, prepared, req.FactSetVersionID, req.AcknowledgeQualityWarnings); err != nil {
 			return err
 		}
 
@@ -436,12 +437,6 @@ func prepareAdoptionSlots(inputs []AdoptionSlotInput) ([]preparedSlot, error) {
 		if quality != "pass" && quality != "fail" && quality != "unchecked" {
 			return nil, apperr.Validation("图位质量状态无效")
 		}
-		if quality == "fail" {
-			return nil, apperr.Validation("不合格图不得进入已采用交付合格集")
-		}
-		if in.TextOverflow {
-			return nil, apperr.Validationf("图位 %s 文字溢出，不能采用为交付", key)
-		}
 		normalized, err := NormalizeSpec(in.DeliverySpec)
 		if err != nil {
 			return nil, mapAdoptionSpecError(key, err)
@@ -472,22 +467,29 @@ func mapAdoptionSpecError(slotKey string, err error) error {
 	return apperr.Validationf("图位 %s 交付规格无效", slotKey)
 }
 
-// validateAdoptionGraphQualification 强制消费产物 text_qualified / route_qualified，
-// 并在 text_trace 要求文字时对成片跑 OCR（ApplyImageOCRTrace）。
-// 策略：显式 false → 整次拒绝（含客户端谎报 pass）；无追溯元数据 → 不得 quality_status=pass，
-// 仅允许 unchecked（不进合格导出集）；OCR missing/失败 → 拒绝；无字节/无可对照期望 → 拒绝合格，不得静默 pass。
+// validateAdoptionGraphQualification 保存实际检查结论；确认仅允许采用，不将其升级为合格。
 func (s Service) validateAdoptionGraphQualification(
-	ctx context.Context,
-	tx *gorm.DB,
-	productID string,
-	slots []preparedSlot,
-	factSetVersionID *string,
+	ctx context.Context, tx *gorm.DB, productID string, slots []preparedSlot,
+	factSetVersionID *string, acknowledged bool,
 ) error {
 	facts, err := loadAdoptionFactMaps(ctx, tx, productID, factSetVersionID)
 	if err != nil {
 		return err
 	}
-	for _, slot := range slots {
+	warnings := make([]string, 0)
+	for i := range slots {
+		slot := &slots[i]
+		asset, err := product.LoadAssetRow(ctx, tx, slot.sourceAssetID)
+		if err != nil {
+			return err
+		}
+		if asset.ProductID != productID {
+			return apperr.NotFound("源图不存在")
+		}
+		content, err := s.Media.ReadVerified(ctx, tx, asset.MediaObjectID)
+		if err != nil {
+			return mapExportRead(err)
+		}
 		payload, found, err := graph.LoadImageArtifactPayloadForAdoption(ctx, tx, productID, slot.sourceAssetID, slot.sourceNodeID)
 		if err != nil {
 			return err
@@ -496,20 +498,60 @@ func (s Service) validateAdoptionGraphQualification(
 		if found {
 			q = graph.ParseArtifactDeliveryQualification(payload)
 		}
+		details := make([]string, 0)
+		if slot.qualityDetail != nil {
+			details = append(details, strings.Split(*slot.qualityDetail, "；")...)
+		}
 		if q.HasTextTrace && !q.TextQualified {
-			return apperr.Validationf("图位 %s 文字追溯不合格，不能采用为交付", slot.slotKey)
+			slot.qualityStatus = "fail"
+			details = append(details, "文字追溯检查未通过")
 		}
 		if q.HasProduceRoute && !graph.RouteAllowsDeliveryPass(q.Route) {
-			return apperr.Validationf("图位 %s 产图路线不合格，不能采用为交付", slot.slotKey)
+			slot.qualityStatus = "fail"
+			details = append(details, "产图路线检查未通过")
+			details = append(details, q.Route.UnresolvedItems...)
+		}
+		if slot.textOverflow {
+			slot.qualityStatus = "fail"
+			details = append(details, "图位文字溢出")
+		}
+		if !graph.ArtifactAllowsQualifiedAdoption(q) && slot.qualityStatus != "fail" {
+			slot.qualityStatus = "unchecked"
+			details = append(details, "缺少完整质量检查记录")
 		}
 		if found && q.HasTextTrace {
-			if err := s.applyAdoptionOCRGate(ctx, tx, productID, slot, payload, facts); err != nil {
+			status, detail, err := checkAdoptionOCR(ctx, content.Bytes, payload, facts)
+			if err != nil {
 				return err
 			}
+			if status != "pass" {
+				if slot.qualityStatus != "fail" {
+					slot.qualityStatus = status
+				}
+				details = append(details, detail)
+			}
 		}
-		if slot.qualityStatus == "pass" && !graph.ArtifactAllowsQualifiedAdoption(q) {
-			return apperr.Validationf("图位 %s 缺少合格追溯元数据，不能标为合格采用", slot.slotKey)
+		if slot.qualityStatus != "pass" {
+			if len(details) == 0 {
+				if slot.qualityStatus == "fail" {
+					details = append(details, "图片质量检查未通过")
+				} else {
+					details = append(details, "图片质量尚未确认")
+				}
+			}
+			unique := make([]string, 0, len(details))
+			for _, detail := range details {
+				if !slices.Contains(unique, detail) {
+					unique = append(unique, detail)
+				}
+			}
+			detail := strings.Join(unique, "；")
+			slot.qualityDetail = &detail
+			warnings = append(warnings, fmt.Sprintf("第 %d 张图：%s", i+1, detail))
 		}
+	}
+	if len(warnings) > 0 && !acknowledged {
+		return apperr.ConflictCode(AdoptionQualityConfirmationRequired, strings.Join(warnings, "\n"))
 	}
 	return nil
 }
@@ -639,19 +681,6 @@ func buildAdoptionPreview(
 		}
 		seenKeys[slot.SlotKey] = struct{}{}
 
-		if slot.QualityStatus == "fail" {
-			issues = append(issues, AdoptionIssue{
-				Code: "quality_failed", SlotKey: slot.SlotKey, Message: "不合格图不得进入已采用交付合格集",
-			})
-			continue
-		}
-		if slot.TextOverflow {
-			issues = append(issues, AdoptionIssue{
-				Code: "text_overflow", SlotKey: slot.SlotKey, Message: "图位文字溢出",
-			})
-			continue
-		}
-
 		asset, err := product.LoadAssetRow(ctx, pgxTx, slot.SourceAssetID)
 		if err != nil || asset.ProductID != productID {
 			issues = append(issues, AdoptionIssue{
@@ -732,7 +761,7 @@ func buildAdoptionPreview(
 		}
 		if issue.Code == "rendition_failed" || issue.Code == "missing_asset" ||
 			issue.Code == "duplicate_slot" || issue.Code == "unsupported_format" ||
-			issue.Code == "invalid_crop" || issue.Code == "text_overflow" || issue.Code == "quality_failed" {
+			issue.Code == "invalid_crop" {
 			exportReady = false
 		}
 	}
