@@ -103,6 +103,7 @@ ProductFlow/
     public/
   docs/
   scripts/
+  release/
   CONTEXT.md
   docker-compose.yml
   justfile
@@ -110,7 +111,14 @@ ProductFlow/
 
 ## Docker Compose 运行
 
-### 1. 准备配置
+有两种入口：
+
+1. **源码工作树**（开发或本机 `docker compose up --build`）：见下方「源码 Compose」。
+2. **版本化发行物**（空主机、无 git）：见 [release/README.md](release/README.md)。固定镜像 tag、锁定 compose、`.env` 样例与 `VERSION`/`images.env` 由 `scripts/release-pack.sh` 打出；自营与自托管同一包。
+
+### 源码 Compose
+
+#### 1. 准备配置
 
 ```bash
 cp .env.example .env
@@ -124,7 +132,7 @@ cp .env.example .env
 - `POSTGRES_PASSWORD`
 - `AGENT_SERVICE_INTERNAL_TOKEN`
 
-### 2. 启动完整栈
+#### 2. 启动完整栈
 
 开发或本机调试（默认会把 PostgreSQL、Redis、dispatcher/worker metrics 映射到宿主端口，便于本机工具接入）：
 
@@ -148,7 +156,7 @@ Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service
 
 启动后使用 `ADMIN_ACCESS_KEY` 登录，再用 `SETTINGS_ACCESS_TOKEN` 解锁设置页并配置 `prompt`、`agent`、`image` 用途。
 
-### 3. 数据与日志
+#### 3. 数据与日志
 
 ```bash
 docker compose logs -f productflow-go-api productflow-go-worker productflow-agent-service productflow-web
@@ -162,6 +170,26 @@ docker compose down -v
 ```
 
 设置 `STORAGE_HOST_PATH=/absolute/host/path` 可使用宿主机目录；未设置时使用 `productflow-storage` named volume。
+
+### 版本化发行物（空主机）
+
+构建机（有源码）：
+
+```bash
+just release-build-images
+just release-pack
+# 可选推送：PRODUCTFLOW_REGISTRY=localhost:5000/ just release-push-images
+# 可选离线镜像：RELEASE_PACK_SAVE_IMAGES=1 just release-pack
+```
+
+空主机解包 `dist/release/productflow-<IMAGE_TAG>.tar.gz` 后，按 [release/README.md](release/README.md) 填写 `.env`、加载或拉取镜像，再：
+
+```bash
+docker compose --env-file images.env --env-file .env \
+  -f docker-compose.yml -f docker-compose.prod-ports.yml up -d
+```
+
+发行物路径不依赖作者本地 `storage` 或隐藏配置。备份/恢复与 R6 全项仍见平台可靠性章程；本 README 不宣称它们已通过。
 
 ## 本地开发
 
@@ -253,9 +281,13 @@ Pi 的真实 provider/依赖验收需要显式配置真实 ProductFlow、provide
 ```bash
 just release-dry-run
 just release
+just release-build-images
+just release-pack
 ```
 
-`release-dry-run` 校验 Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。生产式端口请在 Compose 命令中叠用 `docker-compose.prod-ports.yml`（见上文），再按同样四项探活验收；`just release` 默认仍使用开发 Compose 端口映射。
+`release-dry-run` 校验**源码树** Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。生产式端口请在 Compose 命令中叠用 `docker-compose.prod-ports.yml`（见上文），再按同样四项探活验收；`just release` 默认仍使用开发 Compose 端口映射。
+
+`release-build-images` / `release-pack`（及可选 `PRODUCTFLOW_REGISTRY=… just release-push-images`）产出不可变镜像 tag 与锁定安装包，供无 git 空主机安装；步骤与限制见 [release/README.md](release/README.md)。
 
 ## 主要 API 资源
 

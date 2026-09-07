@@ -45,7 +45,8 @@
 | merchant-root-ownership | 商家平台 B1；根表 merchant_id | 开放；与 CF-B0/采用写集串行 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
-| release-versioned-artifact | 发行 B2 | CTO 认领 `sub-release/…`，执行中 |
+| release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
+| release-backup-restore | 发行 B3；备份恢复 | CTO 认领 `sub-release/…`，执行中 |
 | delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
 | delivery-adoption-snapshot | 采用快照 | CTO 认领 `sub-delivery/…`，执行中 |
 | compete-facts-layout-contract | 事实/排版合同 | 完成归档 |

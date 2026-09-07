@@ -268,3 +268,15 @@ release:
 
 release-dry-run:
     DRY_RUN=1 bash scripts/release.sh
+
+# Build/tag immutable productflow-go / productflow-agent / productflow-web images.
+release-build-images:
+    bash scripts/release-build-images.sh
+
+# Push tagged release images; requires PRODUCTFLOW_REGISTRY or REGISTRY (trailing / optional).
+release-push-images:
+    bash scripts/release-push-images.sh
+
+# Assemble dist/release/productflow-<tag>/ and .tar.gz (compose + env sample + VERSION).
+release-pack:
+    bash scripts/release-pack.sh

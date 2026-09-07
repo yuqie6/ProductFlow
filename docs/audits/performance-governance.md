@@ -217,7 +217,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | `productflow-agent-service` | `agent-service/Dockerfile` | `node dist/main.js` | Pi 适配器；`AGENT_DATA_ROOT=/data` |
 | `productflow-web` | `web/Dockerfile`，构建参数 `VITE_API_BASE_URL=""` | nginx | 静态前端；`/api/` 反代 |
 
-`docker-compose.staging.yml` 仅叠加第二组 API/worker/dispatcher（默认宿主端口 29290/29296/29295），共享同一 PG/Redis/storage；不能据此宣称多主机或共享媒体一致性已验收。版本/镜像：当前仅本地 `docker compose build`，无固定发行 tag、无独立发行物目录、无版本化 compose 锁定；`just release` = `up -d --build` + 四项健康检查，且不删 volumes。
+`docker-compose.staging.yml` 仅叠加第二组 API/worker/dispatcher（默认宿主端口 29290/29296/29295），共享同一 PG/Redis/storage；不能据此宣称多主机或共享媒体一致性已验收。版本/镜像：**B2** 提供不可变 tag 与 `release/` 安装包（`scripts/release-build-images.sh` / `release-pack.sh`）；开发路径仍可用本地 `docker compose build`。`just release` = 源码树 `up -d --build` + 四项健康检查，且不删 volumes；空主机应使用发行物而非该脚本。
 
 ### 必要配置与密钥来源
 
@@ -291,7 +291,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 **缺实现**
 
 1. **Web 反代上游名**：**已由 B1 修正**——`web/nginx.conf` 现指向 Compose 服务名 `productflow-go-api:29280`（见 [release-compose-proxy-overlay](tasks/archive/release-compose-proxy-overlay.md)）。
-2. **无版本化发行物**：无不可变镜像 tag、无锁定 compose/env 契约包、无「空主机只拿发行物安装」路径（现依赖 git checkout + build）。
+2. **无版本化发行物**：**B2 已交付安装包路径**——不可变镜像 tag、`release/` 锁定 compose/env/`VERSION`、`scripts/release-{build,push,pack}*`；空主机按 [release/README.md](../../release/README.md) 安装。仍缺：正式 registry 上的稳定版冻结、完整 D1 隔离实跑证据（见任务）、R6。
 3. **无备份/恢复工具与一致点自动化**：无官方 dump/卷打包、校验清单、恢复 runbook 脚本。
 4. **无稳定版 N→N+1 升级包**：无受支持版本对、预检/失败停止/回滚说明、旧版数据夹具。
 5. **开发端口默认可达 PG/Redis/metrics**：开发 `docker-compose.yml` 仍映射本机调试端口；**生产式叠用** `docker-compose.prod-ports.yml` 已提供（B1），不把 PG/Redis/metrics 发布到宿主。
@@ -300,7 +300,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 **缺验证（机制或文档有，无隔离证据）**
 
-- 空主机干净安装；缺凭据/缺 provider 仍可管理；DB+媒体+Pi+`.env` 一致备份与异卷恢复；恢复后权限/资产/任务；迁移失败停机与回退；重启后 unknown 作业；staging 双副本共享卷一致性；当前 HEAD 的 G-07；R6 全项。
+- 空主机干净安装的**完整** D1 业务断言（本任务已做发行物四项 health + tarball config；登录/缺 provider UI 未单独采证）；缺凭据/缺 provider 仍可管理；DB+媒体+Pi+`.env` 一致备份与异卷恢复；恢复后权限/资产/任务；迁移失败停机与回退；重启后 unknown 作业；staging 双副本共享卷一致性；当前 HEAD 的 G-07；R6 全项；HEAD 全量 `release-build-images` / registry push。
 
 **需 Operator 决策**
 
@@ -315,7 +315,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 | 场景 | 预期可观察结果 | 归属 |
 |---|---|---|
-| 空主机 | 仅有 Docker/发行物/填写后的 env 样例应能 build、migrate、起栈、管理员登录；现缺发行物且 web `/api` 上游错误会阻断「经 Web 的 API」 | 缺实现 1–2 + 缺验证 |
+| 空主机 | 仅有 Docker/发行物/填写后的 env 样例应能拉取或 load 镜像、migrate、起栈、管理员登录；**B1/B2** 已提供上游修正与发行物路径。仍缺：正式 registry 上的 HEAD 全量 build/push 证据、登录/缺 provider 的完整 D1 业务断言、R6 | 缺验证（机制已有） |
 | 缺凭据 | 缺强制 env → Compose 拒启；缺 provider → 登录成功但生成/Agent Unavailable | 部分机制有，缺验证 |
 | 恢复缺媒体 | DB 有 `storage_path`，读文件 → missing；标记 `verification_status=missing` | 机制有，缺恢复演练 |
 | 恢复缺密钥 | 缺 `.env` 无法启动或会话/Agent 令牌失败；缺 PG 密钥列则 provider Unavailable | 同上 |
@@ -328,7 +328,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 **D1 隔离干净安装**
 
-1. 空目录放入发行物（待 B2）与从 `.env.example` 生成的密钥。
+1. 空目录放入发行物（**B2**：`release-pack` 产出的 `productflow-<tag>/` 或 `.tar.gz`）与从 `.env.example` 生成的密钥；用 `images.env` pin 镜像，不依赖 git checkout。
 2. `docker compose config`；up；migrate completed；四项 health（修上游后）。
 3. 断言：管理员登录；设置页可开；未配 provider 时生成入口明确不可用；PG/Redis/metrics **未**对非信任网暴露（按 Operator 生产 overlay）。
 
@@ -356,7 +356,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | 批次 | 结果 | 环境 | 验收 |
 |---|---|---|---|
 | B1 | 修正 web→API 上游（或 compose alias）；生产端口 overlay（PG/Redis/metrics 默认不公网） | 隔离 compose | **已交付**（2026-09-07）：`web/nginx.conf` 上游改为 `productflow-go-api:29280`；新增 `docker-compose.prod-ports.yml`（`ports: !override []` 去掉 PG/Redis/dispatcher·worker metrics 宿主映射）；README 写明叠用。隔离项目 `pf-b1-proxy-20260907` 四项探活通过（含经 web 的 `/api/healthz`）。证据见 [release-compose-proxy-overlay](tasks/archive/release-compose-proxy-overlay.md)。≠ R6；≠ B2 发行物；验证未用当前 HEAD 全量 `docker compose build`（见任务证据）。 |
-| B2 | 版本化镜像 tag + 锁定安装包（compose、env 样例、版本文件） | 镜像仓库或本地 registry | 无 git 工作树的空主机 D1 |
+| B2 | 版本化镜像 tag + 锁定安装包（compose、env 样例、版本文件） | 镜像仓库或本地 registry | **已交付路径（2026-09-07）**：不可变 tag `<VERSION>-<sha12>`；`scripts/release-build-images.sh` / `release-push-images.sh` / `release-pack.sh`；`release/` 锁定 compose + prod-ports + `.env.example` + 空主机 [release/README.md](../../release/README.md)。包输出 `dist/release/productflow-<tag>/`。自营与自托管同一发行物。≠ R6；≠ B3 备份。构建环境若 registry TLS 失败须如实记录，不得伪装 HEAD 全量 build。D1 隔离实跑可另证据或同窗口；合同与缺口见 [release-versioned-artifact](tasks/archive/release-versioned-artifact.md)。 |
 | B3 | 备份/恢复脚本与一致点 runbook（含 Pi 与 `.env`） | 隔离卷 | D2 清单完备 |
 | B4 | 执行 D3 恢复演练并留证据 | 新目录/实例 | 权限/资产/任务断言 |
 | B5 | 首个稳定版起 N→N+1 合同、夹具与文档歧义收窄任务 | 双版本夹具 | D4 |
@@ -372,3 +372,4 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 - 2026-09-05 重写依据：当前 queue/dispatcher、Graph lease/recovery、Agent execution/turn-runtime/batch、ImageSession serializer/SSE、metrics 和容量测试。修正了统一 `has_more`、详情与状态成本混用、capacity 维度相乘和 G-07 永久完成等误读；这是源码与证据整理，未改运行时，未做新一轮生产验收。
 - 2026-09-07 发行基线：只读 Compose/存储/迁移/Agent 持久面，写入本节差距与演练合同；未改运行时，未跑安装/恢复，R6 仍未通过。
 - 2026-09-07 B1：nginx 上游改为 `productflow-go-api`；增加 `docker-compose.prod-ports.yml`；隔离项目四项 health 通过。详见任务证据。
+- 2026-09-07 B2：版本化镜像 tag 约定与 build/push/pack 脚本；`release/` 锁定安装包与无 git 空主机 D1 方向文档。详见 [release-versioned-artifact](tasks/archive/release-versioned-artifact.md)。未宣称 R6 / B3。

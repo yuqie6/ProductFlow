@@ -1,0 +1,19 @@
+# Optional production port overlay for the release install package.
+# Same contract as the repository-root docker-compose.prod-ports.yml:
+# do not publish PostgreSQL, Redis, or dispatcher/worker metrics on the host.
+#
+#   docker compose --env-file images.env --env-file .env \
+#     -f docker-compose.yml -f docker-compose.prod-ports.yml up -d
+
+services:
+  productflow-postgres:
+    ports: !override []
+
+  productflow-redis:
+    ports: !override []
+
+  productflow-go-worker:
+    ports: !override []
+
+  productflow-go-dispatcher:
+    ports: !override []

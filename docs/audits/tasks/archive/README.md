@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-versioned-artifact.md](release-versioned-artifact.md) | 完成 | 不可变 tag + release/ 包 + pack 脚本；隔离探活；≠全量 build/R6 |
 | [compete-facts-layer-gate.md](compete-facts-layer-gate.md) | 完成 | layer/确认门/营销闸 + 资料分栏；IQ-CF-01/CF-B0；≠R3 |
 | [merchant-identity-skeleton.md](merchant-identity-skeleton.md) | 完成 | User/Merchant/Membership/邀请/可撤销会话；bootstrap；MP-A；≠业务表隔离 |
 | [delivery-workbench-projection.md](delivery-workbench-projection.md) | 完成 | 成果/流程切换；全量生图投影；默认仍流程；Vitest 16；≠采用快照 |

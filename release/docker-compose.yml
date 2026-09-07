@@ -1,0 +1,188 @@
+# Locked install compose: pin PRODUCTFLOW_*_IMAGE via images.env (written by
+# scripts/release-pack.sh) or an equivalent VERSION/images.env from the package.
+# Self-hosted and first-party sites use the same artifact.
+#
+# Empty-host example (after filling .env from .env.example):
+#   docker compose --env-file images.env --env-file .env \
+#     -f docker-compose.yml -f docker-compose.prod-ports.yml up -d
+#
+# Prefer image pulls / docker load over building from a git worktree.
+
+services:
+  productflow-postgres:
+    image: ${PRODUCTFLOW_POSTGRES_IMAGE:-postgres:16}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: productflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: productflow
+    ports:
+      - "${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      - productflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U productflow -d productflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  productflow-redis:
+    image: ${PRODUCTFLOW_REDIS_IMAGE:-redis:7}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_HOST_PORT:-16379}:6379"
+    volumes:
+      - productflow-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # schema 权威是 productflow-migrate：GORM CreateTable/AddColumn + ExtraDDL。不使用 AutoMigrate。
+  productflow-migrate:
+    image: ${PRODUCTFLOW_GO_IMAGE:?set PRODUCTFLOW_GO_IMAGE in images.env}
+    environment:
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+    command: ["productflow-migrate"]
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  productflow-go-api:
+    image: ${PRODUCTFLOW_GO_IMAGE:?set PRODUCTFLOW_GO_IMAGE in images.env}
+    restart: unless-stopped
+    environment: &productflow-go-env
+      APP_HOST: 0.0.0.0
+      APP_PORT: 29280
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+      REDIS_URL: redis://productflow-redis:6379/0
+      STORAGE_ROOT: /app/storage
+      LOG_DIR: /app/storage/logs
+      AGENT_SERVICE_BASE_URL: http://productflow-agent-service:29284
+      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
+      AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS: ${AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS:-5}
+      AGENT_SERVICE_READ_TIMEOUT_SECONDS: ${AGENT_SERVICE_READ_TIMEOUT_SECONDS:-90}
+      AGENT_TURN_SYNC_POLL_SECONDS: ${AGENT_TURN_SYNC_POLL_SECONDS:-1}
+      METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-console}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
+      UPLOAD_MAX_BATCH_BYTES: ${UPLOAD_MAX_BATCH_BYTES:-52428800}
+      UPLOAD_MAX_BATCH_FILES: ${UPLOAD_MAX_BATCH_FILES:-20}
+      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
+      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
+    command: ["productflow-api"]
+    ports:
+      - "${APP_HOST_PORT:-29280}:29280"
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:29280/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  productflow-go-worker:
+    image: ${PRODUCTFLOW_GO_IMAGE:?set PRODUCTFLOW_GO_IMAGE in images.env}
+    restart: unless-stopped
+    environment:
+      <<: *productflow-go-env
+      WORKER_METRICS_ADDR: ${WORKER_METRICS_ADDR:-0.0.0.0:29286}
+    ports:
+      - "${WORKER_METRICS_HOST_PORT:-29286}:29286"
+    command: ["productflow-worker"]
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
+      productflow-go-api:
+        condition: service_healthy
+      productflow-agent-service:
+        condition: service_healthy
+
+  productflow-go-dispatcher:
+    image: ${PRODUCTFLOW_GO_IMAGE:?set PRODUCTFLOW_GO_IMAGE in images.env}
+    restart: unless-stopped
+    environment:
+      <<: *productflow-go-env
+      DISPATCHER_METRICS_ADDR: ${DISPATCHER_METRICS_ADDR:-0.0.0.0:29285}
+    ports:
+      - "${DISPATCHER_METRICS_HOST_PORT:-29285}:29285"
+    command: ["productflow-dispatcher", "--watch"]
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+      productflow-migrate:
+        condition: service_completed_successfully
+
+  productflow-agent-service:
+    image: ${PRODUCTFLOW_AGENT_IMAGE:?set PRODUCTFLOW_AGENT_IMAGE in images.env}
+    restart: unless-stopped
+    environment:
+      AGENT_LISTEN_ADDRESS: 0.0.0.0:29284
+      AGENT_DATA_ROOT: /data
+      PRODUCTFLOW_INTERNAL_BASE_URL: http://productflow-go-api:29280
+      PRODUCTFLOW_REQUEST_TIMEOUT: ${PRODUCTFLOW_REQUEST_TIMEOUT:-30s}
+      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
+      AGENT_MAX_ITERATIONS: ${AGENT_MAX_ITERATIONS:-40}
+      AGENT_MODEL_CONTEXT_WINDOW: ${AGENT_MODEL_CONTEXT_WINDOW:-128000}
+      AGENT_AUTO_COMPACT_TOKEN_LIMIT: ${AGENT_AUTO_COMPACT_TOKEN_LIMIT:-96000}
+      AGENT_MAX_CONCURRENT_TURNS: ${AGENT_MAX_CONCURRENT_TURNS:-3}
+      AGENT_EVOLUTION_TRACES: ${AGENT_EVOLUTION_TRACES:-0}
+      STORAGE_ROOT: /app/storage
+    volumes:
+      - productflow-agent-data:/data
+      - productflow-agent-traces:/app/storage/agent-evolution-traces
+    depends_on:
+      productflow-go-api:
+        condition: service_healthy
+
+  productflow-web:
+    image: ${PRODUCTFLOW_WEB_IMAGE:?set PRODUCTFLOW_WEB_IMAGE in images.env}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-29281}:80"
+    depends_on:
+      productflow-go-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  productflow-postgres-data:
+  productflow-redis-data:
+  productflow-storage:
+  productflow-agent-data:
+  productflow-agent-traces:
