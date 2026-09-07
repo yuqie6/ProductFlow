@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -292,6 +293,82 @@ func TestCancelQuotaFailureRollsBackTaskAndAttempt(t *testing.T) {
 			}
 			if hold.Status != want {
 				t.Fatalf("retry cancellation hold=%s want=%s", hold.Status, want)
+			}
+		})
+	}
+}
+
+func TestTerminalQuotaFailureRemainsRecoverable(t *testing.T) {
+	for _, outcome := range []string{"success", "unknown"} {
+		t.Run(outcome, func(t *testing.T) {
+			ctx := context.Background()
+			provider := &capturingEditProvider{MockProvider: MockProvider{Cap: SupportedCapability("mock-local")}}
+			if outcome == "unknown" {
+				provider.Err = errors.New("provider timeout")
+			}
+			es := newEditServer(t, provider)
+			created := es.createProduct(t)
+			taskID := createQueuedLocalEdit(t, es, created, "terminal-quota-failure")
+			const constraint = "test_terminal_quota_failure"
+			if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds ADD CONSTRAINT "+constraint+" CHECK (idempotency_key NOT LIKE 'local-edit:"+taskID+":%' OR status = 'reserved')"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := es.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
+					t.Error(err)
+				}
+			})
+			executor := Executor{DB: es.db, Media: es.media, Provider: provider}
+			if err := executor.Execute(ctx, taskID); err == nil {
+				t.Fatal("terminal quota persistence failure must propagate")
+			}
+			if provider.lastSize == "" {
+				t.Fatal("provider was not called")
+			}
+			var status, phase, holdStatus string
+			var resultID *string
+			if err := es.pool.QueryRow(ctx, "SELECT t.status,t.result_asset_id,a.phase,h.status FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id JOIN merchant_quota_holds h ON h.idempotency_key='local-edit:'||t.id||':'||a.attempt_id WHERE t.id=$1", taskID).Scan(&status, &resultID, &phase, &holdStatus); err != nil {
+				t.Fatal(err)
+			}
+			if status != "running" || resultID != nil || phase != "provider_call" || holdStatus != quota.StatusReserved {
+				t.Fatalf("partial terminal: status=%s result=%v phase=%s hold=%s", status, resultID, phase, holdStatus)
+			}
+			var assets int
+			if err := es.pool.QueryRow(ctx, "SELECT count(*) FROM product_image_assets WHERE product_id=$1 AND id<>$2", created.Product.ID, created.CreatedAssets[0].ID).Scan(&assets); err != nil {
+				t.Fatal(err)
+			}
+			if assets != 0 {
+				t.Fatalf("rolled back success leaked %d assets", assets)
+			}
+			// Recovery must also remain atomic while the same quota failure persists.
+			future := time.Now().UTC().Add(2 * time.Hour)
+			if _, err := recoverLocalEditState(ctx, es.db, taskID, time.Minute, future); err == nil {
+				t.Fatal("recovery must report quota write failure")
+			}
+			if err := es.pool.QueryRow(ctx, "SELECT status FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			if status != "running" {
+				t.Fatalf("failed recovery committed %s", status)
+			}
+			if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+				t.Fatal(err)
+			}
+			if recovered, err := recoverLocalEditState(ctx, es.db, taskID, time.Minute, future); err != nil || recovered != "unknown" {
+				t.Fatalf("recovery=%s err=%v", recovered, err)
+			}
+			provider.lastSize = ""
+			if err := executor.Execute(ctx, taskID); err != nil {
+				t.Fatal(err)
+			}
+			if provider.lastSize != "" {
+				t.Fatal("recovered provider effect was repeated")
+			}
+			if err := es.pool.QueryRow(ctx, "SELECT t.status,h.status FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id JOIN merchant_quota_holds h ON h.idempotency_key='local-edit:'||t.id||':'||a.attempt_id WHERE t.id=$1", taskID).Scan(&status, &holdStatus); err != nil {
+				t.Fatal(err)
+			}
+			if status != "unknown" || holdStatus != quota.StatusPendingReconciliation {
+				t.Fatalf("status=%s hold=%s", status, holdStatus)
 			}
 		})
 	}

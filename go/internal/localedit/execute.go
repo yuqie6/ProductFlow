@@ -93,7 +93,6 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 	}
 	editSize, err := sourceEditSize(snap.SourceBytes, snap.SourceMIME)
 	if err != nil {
-		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
 		detail := "局部编辑源图未通过媒体核验"
 		var ae apperr.Error
 		if errors.As(err, &ae) && ae.Status == 400 && ae.Detail != "" {
@@ -112,18 +111,14 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		Size:      editSize,
 	})
 	if err != nil {
-		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		return e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", unknownDetail, false, truncStatus(fmt.Sprintf("%T", err)), "")
 	}
 	if len(result.Bytes) == 0 {
-		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		return e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "图片 provider 返回的局部编辑结果数量无法确认", false, result.ProviderStatus, result.ResponseID)
 	}
 	if err := e.persistResult(ctx, snap, attemptID, result); err != nil {
-		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		return e.finish(ctx, taskID, attemptID, "unknown", "unknown_provider_effect", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
 	}
-	_ = e.settleEditQuota(ctx, merchantID, taskID, attemptID)
 	return nil
 }
 
@@ -167,11 +162,6 @@ func (s snapshot) auditJSON() map[string]any {
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error) {
 	var claimed bool
 	var attemptID string
-	var unknownQuota struct {
-		productID string
-		attemptID string
-		mark      bool
-	}
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
@@ -201,11 +191,6 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 				task.Status = "queued"
 				task.ActiveAttemptID = nil
 			case "provider_pending", "provider_call", "provider_result_received":
-				if task.ActiveAttemptID != nil {
-					unknownQuota.productID = task.ProductID
-					unknownQuota.attemptID = *task.ActiveAttemptID
-					unknownQuota.mark = true
-				}
 				if err := markUnknownLocked(ctx, pgxTx, task, "provider boundary 已开始，滞留运行不能自动重投"); err != nil {
 					return err
 				}
@@ -250,9 +235,6 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		claimed = true
 		return nil
 	})
-	if err == nil && unknownQuota.mark {
-		err = finalizeRecoveredUnknownQuota(ctx, e.DB, unknownQuota.productID, taskID, unknownQuota.attemptID)
-	}
 	return claimed, attemptID, err
 }
 
@@ -421,7 +403,7 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 			}).Error; err != nil {
 			return err
 		}
-		return pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
+		if err := pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
 			Where("task_id = ? AND attempt_id = ?", snap.ID, attemptID).
 			Updates(map[string]any{
 				"phase":                "succeeded",
@@ -430,7 +412,14 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 				"provider_response_id": respID,
 				"provider_status":      statusPtr,
 				"updated_at":           now,
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		merchantID, err := merchantIDForProduct(ctx, pgxTx, snap.ProductID)
+		if err != nil {
+			return err
+		}
+		return (Executor{DB: pgxTx}).settleEditQuota(ctx, merchantID, snap.ID, attemptID)
 	})
 	if err != nil {
 		compensation.Rollback()
@@ -444,12 +433,25 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 // fence 失效为空操作：业务行以库里为准，不覆盖新 attempt 或取消状态。
 func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, effect, detail string, retryable bool, providerStatus, responseID string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		_, ok, err := lockFenced(ctx, pgxTx, taskID, attemptID)
+		task, ok, err := lockFenced(ctx, pgxTx, taskID, attemptID)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return nil
+		}
+		merchantID, err := merchantIDForProduct(ctx, pgxTx, task.ProductID)
+		if err != nil {
+			return err
+		}
+		command := Executor{DB: pgxTx}
+		if status == "unknown" {
+			err = command.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
+		} else {
+			err = command.releaseEditQuota(ctx, merchantID, taskID, attemptID)
+		}
+		if err != nil {
+			return err
 		}
 		now := time.Now().UTC()
 		var statusPtr, respPtr *string
@@ -540,6 +542,9 @@ func markStaleClaimed(ctx context.Context, tx *gorm.DB, task taskRow) error {
 func markUnknownLocked(ctx context.Context, tx *gorm.DB, task taskRow, detail string) error {
 	now := time.Now().UTC()
 	if task.ActiveAttemptID != nil {
+		if err := finalizeRecoveredUnknownQuota(ctx, tx, task.ProductID, task.ID, *task.ActiveAttemptID); err != nil {
+			return err
+		}
 		if err := tx.WithContext(ctx).Model(&schema.LocalImageEditProviderAttempts{}).
 			Where("task_id = ? AND attempt_id = ?", task.ID, *task.ActiveAttemptID).
 			Updates(map[string]any{
