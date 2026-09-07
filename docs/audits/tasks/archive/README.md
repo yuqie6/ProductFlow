@@ -4,6 +4,9 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-compose-proxy-overlay.md](release-compose-proxy-overlay.md) | 完成 | nginx→go-api；prod-ports overlay；隔离四项探活通过；≠R6/全量 build |
+| [merchant-isolation-contract.md](merchant-isolation-contract.md) | 完成 | 归并 69 / 展开 214 路由等；B0–B10；无未裁定边界；隔离未实现 |
+| [release-readiness-baseline.md](release-readiness-baseline.md) | 完成 | 只读冻结 Compose 发行/恢复差距、D1–D4 演练与 B1–B6；nginx 上游名错误已核实；R6 未通过 |
 | [eval-graph-observation-authority.md](eval-graph-observation-authority.md) | 完成 | L1 graph-editing 写入走隔离 testdb Go 宿主；非法配置与多步 apply 由生产合同拒绝。catalog/intake 仍为 fixtures，未跑付费 L1 |
 | [eval-node-snapshot-sync.md](eval-node-snapshot-sync.md) | 完成 | 按已提交节点合同刷新 Catalog/intake 观察；无 update 模式 Go/PG 一致性与 Node 消费回归通过。图操作真实语义仍由原任务处理 |
 | [image-quality-content-candidate.md](image-quality-content-candidate.md) | 完成 | 单张卖点聚焦、图种内容分工、策划标签与成稿分离；生成策略候选通过相关回归，实图改善待固定新批次 |

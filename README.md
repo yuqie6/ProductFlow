@@ -126,11 +126,19 @@ cp .env.example .env
 
 ### 2. 启动完整栈
 
+开发或本机调试（默认会把 PostgreSQL、Redis、dispatcher/worker metrics 映射到宿主端口，便于本机工具接入）：
+
 ```bash
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM `CreateTable`/`AddColumn` 与 ExtraDDL（CHECK / enum / 部分唯一索引 / FK），不使用 AutoMigrate。
+自托管 / 生产式端口（不把 PostgreSQL、Redis、metrics 发布到宿主；仅保留 Web 与 API 的宿主端口供反向代理）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build
+```
+
+Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service 和 Web。独立 `productflow-migrate` 容器在 Go API 之前执行 GORM `CreateTable`/`AddColumn` 与 ExtraDDL（CHECK / enum / 部分唯一索引 / FK），不使用 AutoMigrate。Web 容器内 nginx 将 `/api/` 反代到 Compose 服务名 `productflow-go-api:29280`。
 
 默认地址：
 
@@ -247,7 +255,7 @@ just release-dry-run
 just release
 ```
 
-`release-dry-run` 校验 Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。
+`release-dry-run` 校验 Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。生产式端口请在 Compose 命令中叠用 `docker-compose.prod-ports.yml`（见上文），再按同样四项探活验收；`just release` 默认仍使用开发 Compose 端口映射。
 
 ## 主要 API 资源
 

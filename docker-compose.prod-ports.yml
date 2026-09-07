@@ -1,0 +1,23 @@
+# Optional production port overlay: do not publish PostgreSQL, Redis, or
+# dispatcher/worker metrics on host interfaces. Web and API host ports from
+# docker-compose.yml remain available for reverse-proxy frontends.
+#
+# Usage (self-host / production-style):
+#   docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml up -d --build
+#
+# Local debugging may keep the base docker-compose.yml alone (PG/Redis/metrics
+# published on POSTGRES_HOST_PORT / REDIS_HOST_PORT / metrics host ports).
+# Do not use this overlay when you need those host ports for tooling.
+
+services:
+  productflow-postgres:
+    ports: !override []
+
+  productflow-redis:
+    ports: !override []
+
+  productflow-go-worker:
+    ports: !override []
+
+  productflow-go-dispatcher:
+    ports: !override []

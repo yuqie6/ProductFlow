@@ -16,7 +16,7 @@
 
 当前实现是单管理员、单商家工作区；2026-09-07 用户明确最终目标为可自托管多商家 SaaS。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
 
-组内先发布 [发行基线调查](tasks/release-readiness-baseline.md)，据当前 Compose、迁移、存储和持久状态形成可执行修复及演练合同。备份包含数据库、媒体、必要 Pi 数据及密钥配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
+组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级与 R6 仍未通过。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
 
 | 交付问题 | 本组负责 | 交接边界 |
 |---|---|---|
@@ -198,9 +198,177 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 组内局部交付无需等待其他组所有目标完成；宣告产品可发布时，协调者必须消费同一候选及可采信固定输入的完整证据。模型能力未过、未执行、无效运行和可复现的 FAIL 分别记录，不能通过关闭采证 issue 改写结论。
 
+## 自托管发行与恢复基线
+
+<a id="self-host-release-baseline"></a>
+
+调查任务：[release-readiness-baseline](tasks/archive/release-readiness-baseline.md)。源码基线：认领时 HEAD `d6709c4aacb2e26bb30ab70a99d08b1dca05f487`（短 `d6709c4a`）。方法：只读 `docker-compose.yml`、`docker-compose.staging.yml`、`scripts/release.sh`、各 Dockerfile、`.env.example`、`go/cmd/productflow-migrate`、`go/internal/platform/db/schema`、`go/internal/platform/storage`、`go/internal/media`、`go/internal/settings`、`agent-service` 持久路径与配置加载器；未启动/停止 Docker、worker、DB，未读 `.env` 秘密或真实 storage，未跑 `just dev` / `just release`。本节约束 [总纲 §9/§10](../ROADMAP.md#9-自托管与自营站点交付) 与 R6：开发 Compose/`release.sh` 健康检查 ≠ 商用可交付。
+
+### 运行单元与构建
+
+| 单元 | 镜像/构建 | 进程命令 | 角色 |
+|---|---|---|---|
+| `productflow-postgres` | 上游 `postgres:16` | 官方入口 | 业务权威库 |
+| `productflow-redis` | 上游 `redis:7`，`appendonly yes` | `redis-server` | asynq broker；非业务权威 |
+| `productflow-migrate` | `go/Dockerfile` 多二进制之一 | `productflow-migrate` | 启动前 schema：`CreateTable`/`AddColumn` + ExtraDDL；`restart: "no"` |
+| `productflow-go-api` | 同上 | `productflow-api` | HTTP、媒体读写、设置、internal Agent API |
+| `productflow-go-worker` | 同上 | `productflow-worker` | asynq 消费；metrics 可选 |
+| `productflow-go-dispatcher` | 同上 | `productflow-dispatcher --watch` | PENDING→SENT→enqueue；域恢复 |
+| `productflow-agent-service` | `agent-service/Dockerfile` | `node dist/main.js` | Pi 适配器；`AGENT_DATA_ROOT=/data` |
+| `productflow-web` | `web/Dockerfile`，构建参数 `VITE_API_BASE_URL=""` | nginx | 静态前端；`/api/` 反代 |
+
+`docker-compose.staging.yml` 仅叠加第二组 API/worker/dispatcher（默认宿主端口 29290/29296/29295），共享同一 PG/Redis/storage；不能据此宣称多主机或共享媒体一致性已验收。版本/镜像：当前仅本地 `docker compose build`，无固定发行 tag、无独立发行物目录、无版本化 compose 锁定；`just release` = `up -d --build` + 四项健康检查，且不删 volumes。
+
+### 必要配置与密钥来源
+
+| 输入 | 来源 | 用途 | 备注 |
+|---|---|---|---|
+| `POSTGRES_PASSWORD` | `.env`（env-only） | PG 与 `DATABASE_URL` | Compose 强制；样例见 `.env.example` |
+| `DATABASE_URL` / `REDIS_URL` | env | 库与 broker | Go 启动后不从库改写这两项 |
+| `ADMIN_ACCESS_KEY` | env-only | 管理员登录 | 当前无 User/Membership |
+| `SETTINGS_ACCESS_TOKEN` | env-only | 解锁设置页 | |
+| `SESSION_SECRET` | env-only | 会话 cookie | 更换会使既有会话失效 |
+| `AGENT_SERVICE_INTERNAL_TOKEN` | env-only，≥32 字符 | API↔Agent | Agent `config.ts` 硬校验长度 |
+| `METRICS_BEARER_TOKEN` 等 | env，可空 | `/metrics` | 空则不注册或不开 metrics 服 |
+| `SESSION_COOKIE_SECURE`、`BACKEND_CORS_ORIGINS`、上传上限 | env / 可被 `app_settings` 覆盖部分 | 公网与上传 | 生产公网地址未在 Compose 固化 |
+| `STORAGE_HOST_PATH` | 可选宿主绝对路径 | 绑定 `/app/storage` | 未设则用 named volume `productflow-storage` |
+| `provider_profiles.api_key` | PostgreSQL **明文** | prompt/image/agent 调用 | HTTP 不回明文；**无独立密文层**。「解密配置」在现行实现 = 可启动的 `.env` + 完整 PG（含密钥列） |
+| `AGENT_PROVIDER_*` | 可选 env | 覆盖 Agent 供应商 | 默认空，走设置页绑定 |
+
+缺凭据：无完整 `.env` 时 Compose 因 `${…:?}` 拒启；无 provider 密钥时仍应能用 `ADMIN_ACCESS_KEY` 登录并看到生成不可用（总纲「可配置」；**缺隔离演练证据**）。
+
+### 外露端口（开发 Compose 默认）
+
+| 宿主端口（默认） | 容器 | 总纲期望 |
+|---|---|---|
+| `WEB_PORT` 29281 | web:80 | 可对公网（经反向代理） |
+| `APP_HOST_PORT` 29280 | api:29280 | 可经代理；开发栈直接映射 |
+| `POSTGRES_HOST_PORT` 15432 | 5432 | **不应**按开发设置暴露公网 |
+| `REDIS_HOST_PORT` 16379 | 6379 | 同上 |
+| dispatcher/worker metrics 29285/29286 | 同端口 | 同上 |
+| Agent 29284 | **未** publish 到宿主 | 正确默认；`release.sh` 用 `docker compose exec` 探活 |
+
+生产式叠用：`docker compose -f docker-compose.yml -f docker-compose.prod-ports.yml …` 去掉 PG/Redis/metrics 的宿主 `ports`（策略为**不发布**，非仅绑 127.0.0.1）；Web/API 宿主端口仍保留。开发本机调试可继续只用 `docker-compose.yml`。
+
+### 持久数据与备份对象
+
+| 持久面 | 路径/卷 | 权威性 | 备份 |
+|---|---|---|---|
+| PostgreSQL | `productflow-postgres-data` → `/var/lib/postgresql/data` | 业务、journal、outbox、`provider_profiles`、`app_settings` | **必备**；一致点以逻辑 dump 或停写后文件系统快照为准 |
+| 媒体与日志 | `productflow-storage` 或 `STORAGE_HOST_PATH` → `/app/storage`：`media/{uuid前2位}/{uuid}{ext}`、同目录 `.variants/`、`logs/` | 字节权威在磁盘；DB `media_objects.storage_path` 引用 | **必备**原图；变体可重建但恢复后缺原图会 `missing_file`/`verification_status=missing` |
+| Pi / Agent 本地 | `productflow-agent-data` → `/data`：`publisher.json`、`agent-service.lock`、`runs/`、`sessions/`、`workspaces/` | **非**业务权威；模型 loop / handoff 材料 | **必备**（总纲与任务合同）；缺则重启后 lease owner / 会话续跑材料受损，PG journal 仍在 |
+| 演化轨迹 | `productflow-agent-traces`；默认 `AGENT_EVOLUTION_TRACES=0` | 诊断，非业务 | 可选；开启则纳入备份清单 |
+| Redis AOF | `productflow-redis-data` | 可丢 broker | 建议纳入一致点以免残留信封；**恢复后以 PG `async_dispatches` 再投递为准**，不把 Redis 当业务真相 |
+| 启动密钥文件 | 部署者持有的 `.env`（勿入库） | 启动与会话 | **必备**；与 PG 同代 |
+
+一致备份点（合同，**未实现自动化**）：（1）停止或排空 worker/dispatcher/Agent 接受新作业，或接受崩溃一致并记录在途 risk；（2）同窗口备份 PG + storage + agent-data + `.env`；（3）可选 Redis；（4）记录镜像 digest/源码 commit、迁移命令身份、备份起止时间。运行中作业：持有 lease 的 Graph/ImageSession/Agent/Delivery/LocalEdit 在恢复后按既有 recovery 合同收敛；不可证明供应商结果保持 `unknown`，不自动当失败重放。
+
+### 迁移流程（现行机制）
+
+1. Compose：`productflow-migrate` 在 postgres healthy 后跑一次；API/worker/dispatcher `depends_on: service_completed_successfully`。
+2. 命令：`schema.Apply`（EnumDDL → CreateTable/AddColumn → ExtraDDL）再 `graph.BackfillDocumentOrigin`；**不**删退役表/列；**不用** AutoMigrate。
+3. 包测：`go/internal/platform/db/schema/migrate_test.go`（空库 Apply、二次 Apply 保行、补列探针）——**开发库测**，不是发行 N→N+1 夹具。
+4. 升级起点：首个**稳定发行版**之后；retired V1/v2 / 实验库仍不支持。实现升级合同时须同步收窄 [CONTEXT Mainline Scope](../../CONTEXT.md)、[`docs/README.md`](../README.md) 中「主仓库不新增…旧数据迁移」等对**经营数据 N→N+1** 的歧义表述（本证据任务不改这些工程制度正文）。
+
+### 逐单元：配置 → 持久 → 备份 → 恢复 → 业务断言
+
+| 单元 | 配置输入 | 持久 | 备份项 | 恢复动作 | 业务断言（演练时） |
+|---|---|---|---|---|---|
+| postgres | `POSTGRES_*` / `DATABASE_URL` | PG 数据目录 | `pg_dump` 或停写快照 | 新卷 restore → migrate 幂等成功 | 商品/资产行、设置、`async_dispatches`、Agent journal 可读 |
+| redis | `REDIS_URL` | AOF | 可选同代 | 空 Redis 亦可 | dispatcher 能把 PENDING/需重投条目送回队列 |
+| migrate | `DATABASE_URL` | 无自有卷 | — | 失败则依赖服务不启动 | exit 0；指纹稳定（现有 head 测） |
+| go-api | 全套 go-env + `STORAGE_ROOT` | storage 卷 | 与媒体同备 | 挂同代 storage + `.env` | `/healthz`；登录；媒体下载非 missing |
+| go-worker / dispatcher | 同 api + metrics | 共享 storage | 同左 | 同左 | 无永久活动态；unknown 保留；不重复 applied 副作用 |
+| agent-service | token、`AGENT_DATA_ROOT`、`PRODUCTFLOW_INTERNAL_BASE_URL` | agent-data（+traces） | `/data` 树 | 恢复 publisher/runs/sessions | `/healthz` `runtime=productflow-pi`；parked 不因重启误失败 |
+| web | 构建期 API base 空 | 无业务持久 | 镜像即可 | 重建镜像 | `/healthz`；**`/api/healthz` 经 nginx 到 `productflow-go-api`（B1 已修）** |
+
+### 差距分类
+
+**已可用机制（源码/Compose 存在，≠ R6 通过）**
+
+- 单主机 Compose 全栈、migrate 前置、local storage、Agent `/data` 卷、`.env.example`、`release.sh` 四项探活、`migrate_test` 空库/幂等、README 安装步骤。
+
+**缺实现**
+
+1. **Web 反代上游名**：**已由 B1 修正**——`web/nginx.conf` 现指向 Compose 服务名 `productflow-go-api:29280`（见 [release-compose-proxy-overlay](tasks/archive/release-compose-proxy-overlay.md)）。
+2. **无版本化发行物**：无不可变镜像 tag、无锁定 compose/env 契约包、无「空主机只拿发行物安装」路径（现依赖 git checkout + build）。
+3. **无备份/恢复工具与一致点自动化**：无官方 dump/卷打包、校验清单、恢复 runbook 脚本。
+4. **无稳定版 N→N+1 升级包**：无受支持版本对、预检/失败停止/回滚说明、旧版数据夹具。
+5. **开发端口默认可达 PG/Redis/metrics**：开发 `docker-compose.yml` 仍映射本机调试端口；**生产式叠用** `docker-compose.prod-ports.yml` 已提供（B1），不把 PG/Redis/metrics 发布到宿主。
+6. **正式 Operator/商家初始化**：仍为单 `ADMIN_ACCESS_KEY`；多商家引导属商家平台，发行侧缺对接点说明。
+7. **诊断包**：无脱敏一键诊断交付物。
+
+**缺验证（机制或文档有，无隔离证据）**
+
+- 空主机干净安装；缺凭据/缺 provider 仍可管理；DB+媒体+Pi+`.env` 一致备份与异卷恢复；恢复后权限/资产/任务；迁移失败停机与回退；重启后 unknown 作业；staging 双副本共享卷一致性；当前 HEAD 的 G-07；R6 全项。
+
+**需 Operator 决策**
+
+- 公网入口与 TLS、`SESSION_COOKIE_SECURE`、CORS、哪些端口绑定 localhost。
+- `STORAGE_HOST_PATH` vs named volume；备份落盘位置与保留代际（**不杜撰 RPO/RTO**）。
+- 备份窗口：排空作业 vs 接受崩溃一致。
+- 首个稳定版标签何时冻结；自营与对外自托管是否同一 tag。
+- 主机规格与并发上限（**容量数字未测，禁止写入 SLA**）。
+- provider 密钥是否接受 PG 明文存储或要求后续加密（现状明文）。
+
+### 场景推演（合同级，未实跑）
+
+| 场景 | 预期可观察结果 | 归属 |
+|---|---|---|
+| 空主机 | 仅有 Docker/发行物/填写后的 env 样例应能 build、migrate、起栈、管理员登录；现缺发行物且 web `/api` 上游错误会阻断「经 Web 的 API」 | 缺实现 1–2 + 缺验证 |
+| 缺凭据 | 缺强制 env → Compose 拒启；缺 provider → 登录成功但生成/Agent Unavailable | 部分机制有，缺验证 |
+| 恢复缺媒体 | DB 有 `storage_path`，读文件 → missing；标记 `verification_status=missing` | 机制有，缺恢复演练 |
+| 恢复缺密钥 | 缺 `.env` 无法启动或会话/Agent 令牌失败；缺 PG 密钥列则 provider Unavailable | 同上 |
+| 迁移失败 | migrate 非 0 → API/worker/dispatcher 不达 healthy | Compose 依赖有，缺故意失败夹具 |
+| 重启有 unknown | 不可证明结果保持 unknown，不自动当失败重试；lease 过期后 recovery 收敛 | 域内测试有，缺发行拓扑实跑 |
+
+### 可执行演练合同（后续隔离任务）
+
+共同冻结：候选 commit、镜像 digest、env 样例哈希（无秘密）、空项目名、禁用共享 dev 卷。禁止在开发站跑 `scripts/release.sh` 当作 R6。
+
+**D1 隔离干净安装**
+
+1. 空目录放入发行物（待 B2）与从 `.env.example` 生成的密钥。
+2. `docker compose config`；up；migrate completed；四项 health（修上游后）。
+3. 断言：管理员登录；设置页可开；未配 provider 时生成入口明确不可用；PG/Redis/metrics **未**对非信任网暴露（按 Operator 生产 overlay）。
+
+**D2 一致备份**
+
+1. 写入探针：一商品、一媒体原图、一设置/provider 行（或 mock）、一可识别 Agent/Pi 文件或 Turn 投影。
+2. 按一致点备份 PG + `/app/storage` + `/data` + `.env`。
+3. 断言：清单含四类对象与 commit/digest；记录是否排空在途作业。
+
+**D3 恢复后权限/资产/任务**
+
+1. 新项目/新卷 restore 四类对象；migrate 幂等；起栈。
+2. 断言：同一 `ADMIN_ACCESS_KEY` 可登录；探针媒体可下载且非 missing；provider `has_api_key` 真且（若曾配置）可解析；PG 中任务/outbox 与恢复策略一致；Agent `/healthz` 与 publisher 身份可解释。
+
+**D4 稳定 N→N+1**（首个稳定版标签之后）
+
+1. 夹具：N 版数据 + 媒体 + agent-data。
+2. 预检 → 备份 → 换 N+1 镜像 → migrate → 冒烟。
+3. 失败则停止并文档化回退到备份；禁止引入 V1/v2 路径。
+
+验收命令方向（实跑任务填写具体隔离项目名）：`docker compose config`；healthz 四处；针对性 `pg_restore`/`psql` 探针查询；媒体 HTTP；`go test` migrate 包（不替代 D4）；候选全量仍走 G-07。本调查仅跑 `just docs-check` 与 `git diff --check`。
+
+### 后续修复批次（建议顺序）
+
+| 批次 | 结果 | 环境 | 验收 |
+|---|---|---|---|
+| B1 | 修正 web→API 上游（或 compose alias）；生产端口 overlay（PG/Redis/metrics 默认不公网） | 隔离 compose | **已交付**（2026-09-07）：`web/nginx.conf` 上游改为 `productflow-go-api:29280`；新增 `docker-compose.prod-ports.yml`（`ports: !override []` 去掉 PG/Redis/dispatcher·worker metrics 宿主映射）；README 写明叠用。隔离项目 `pf-b1-proxy-20260907` 四项探活通过（含经 web 的 `/api/healthz`）。证据见 [release-compose-proxy-overlay](tasks/archive/release-compose-proxy-overlay.md)。≠ R6；≠ B2 发行物；验证未用当前 HEAD 全量 `docker compose build`（见任务证据）。 |
+| B2 | 版本化镜像 tag + 锁定安装包（compose、env 样例、版本文件） | 镜像仓库或本地 registry | 无 git 工作树的空主机 D1 |
+| B3 | 备份/恢复脚本与一致点 runbook（含 Pi 与 `.env`） | 隔离卷 | D2 清单完备 |
+| B4 | 执行 D3 恢复演练并留证据 | 新目录/实例 | 权限/资产/任务断言 |
+| B5 | 首个稳定版起 N→N+1 合同、夹具与文档歧义收窄任务 | 双版本夹具 | D4 |
+| B6 | 冻结候选上 R6 + 所需 G-07 | 隔离资源 | 总纲 R6；**不得**回写为已通过直至证据齐 |
+
+未知输入（保持开放）：生产主机 OS/磁盘、备份介质、公网 DNS/TLS、真实商用数据规模、可接受停机策略、首个稳定版日期、是否要求 provider 密钥加密、多商家就绪时间线。不在此填写容量、RPO/RTO 或 SLA 数字。
+
 ## 维护约定
 
 - 新事实回写其唯一 owner：稳定行为写 ARCHITECTURE/PRD/USER_GUIDE，未来方向写 ROADMAP，本页写风险与验收判断，详细复现和采证留 issue。
 - 本页不重复维护开放任务数量或认领状态；任务关闭时只更新受影响结论与证据链接。无开放 issue 不代表无风险，有观测缺口也不自动产生实现单。
 - 旧设计允许纠正。记录当前因果依据、替代判断与未验证项；不把历史方案、评测阈值或架构拆分天然视为正确，也不通过改写目标掩盖失败。
 - 2026-09-05 重写依据：当前 queue/dispatcher、Graph lease/recovery、Agent execution/turn-runtime/batch、ImageSession serializer/SSE、metrics 和容量测试。修正了统一 `has_more`、详情与状态成本混用、capacity 维度相乘和 G-07 永久完成等误读；这是源码与证据整理，未改运行时，未做新一轮生产验收。
+- 2026-09-07 发行基线：只读 Compose/存储/迁移/Agent 持久面，写入本节差距与演练合同；未改运行时，未跑安装/恢复，R6 仍未通过。
+- 2026-09-07 B1：nginx 上游改为 `productflow-go-api`；增加 `docker-compose.prod-ports.yml`；隔离项目四项 health 通过。详见任务证据。
