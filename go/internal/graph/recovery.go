@@ -307,7 +307,7 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 	}
 	svc := &quota.Service{DB: gdb}
 	for _, action := range actions {
-		key := mustActiveImageQuotaKey(ctx, gdb, merchantID, action.nodeRunID, action.attemptID)
+		key := imageNodeQuotaKey(action.nodeRunID, action.attemptID)
 		if action.unknown {
 			_ = finalizeQuotaIgnoreMissing(svc.MarkUnknown(ctx, merchantID, key))
 			continue

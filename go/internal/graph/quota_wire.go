@@ -14,6 +14,7 @@ import (
 
 // B2：Graph image_generation 在 provider 出图前 Reserve；成功 Settle、未发出 Release、已发出不明 MarkUnknown。
 // 单价占位 1 内部单位；幂等键绑定 node_run + attempt（重试另开 attempt）。
+// 迟到 worker 只能收口原 attempt 的预留，禁止查询最新活跃预留替代。
 
 const graphImageQuotaUnits int64 = 1
 
@@ -41,17 +42,17 @@ func (e Executor) reserveImageQuota(ctx context.Context, merchantID, nodeRunID, 
 }
 
 func (e Executor) settleImageQuota(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
-	key := mustActiveImageQuotaKey(ctx, e.DB, merchantID, nodeRunID, attemptID)
+	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, graphImageQuotaUnits))
 }
 
 func (e Executor) markImageQuotaUnknown(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
-	key := mustActiveImageQuotaKey(ctx, e.DB, merchantID, nodeRunID, attemptID)
+	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
 }
 
 func (e Executor) releaseImageQuota(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
-	key := mustActiveImageQuotaKey(ctx, e.DB, merchantID, nodeRunID, attemptID)
+	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
 }
 
@@ -64,53 +65,6 @@ func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) 
 		return nil
 	}
 	return err
-}
-
-func mustActiveImageQuotaKey(ctx context.Context, db *gorm.DB, merchantID, nodeRunID, attemptID string) string {
-	key, err := activeImageQuotaKey(ctx, db, merchantID, nodeRunID, attemptID)
-	if err != nil || key == "" {
-		return imageNodeQuotaKey(nodeRunID, attemptID)
-	}
-	return key
-}
-
-func activeImageQuotaKey(ctx context.Context, db *gorm.DB, merchantID, nodeRunID, attemptID string) (string, error) {
-	merchantID = strings.TrimSpace(merchantID)
-	nodeRunID = strings.TrimSpace(nodeRunID)
-	attemptID = strings.TrimSpace(attemptID)
-	if merchantID == "" || nodeRunID == "" {
-		return imageNodeQuotaKey(nodeRunID, attemptID), nil
-	}
-	if attemptID != "" {
-		exact := imageNodeQuotaKey(nodeRunID, attemptID)
-		var row schema.MerchantQuotaHolds
-		err := db.WithContext(ctx).
-			Where("merchant_id = ? AND idempotency_key = ? AND status IN ?", merchantID, exact, []string{
-				quota.StatusReserved, quota.StatusPendingReconciliation,
-			}).
-			Take(&row).Error
-		if err == nil {
-			return row.IdempotencyKey, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", apperr.Internal("读取额度预留失败")
-		}
-	}
-	prefix := "graph-image-node:" + nodeRunID + ":"
-	var row schema.MerchantQuotaHolds
-	err := db.WithContext(ctx).
-		Where("merchant_id = ? AND idempotency_key LIKE ? AND status IN ?", merchantID, prefix+"%", []string{
-			quota.StatusReserved, quota.StatusPendingReconciliation,
-		}).
-		Order("created_at DESC").
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return imageNodeQuotaKey(nodeRunID, attemptID), nil
-	}
-	if err != nil {
-		return "", apperr.Internal("读取额度预留失败")
-	}
-	return row.IdempotencyKey, nil
 }
 
 func merchantIDForGraphRun(ctx context.Context, db *gorm.DB, runID string) (string, error) {
@@ -158,7 +112,7 @@ func (s Service) finalizeImageQuotaOnCancel(ctx context.Context, merchantID, nod
 	if err != nil {
 		return err
 	}
-	key := mustActiveImageQuotaKey(ctx, s.DB, merchantID, nodeRunID, attemptID)
+	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	if started {
 		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
 	}
@@ -170,7 +124,7 @@ func (e Executor) finalizeImageQuotaAfterClaimedFailure(ctx context.Context, run
 	if err != nil {
 		return err
 	}
-	key := mustActiveImageQuotaKey(ctx, e.DB, merchantID, nodeRunID, attemptID)
+	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	var hold schema.MerchantQuotaHolds
 	err = e.DB.WithContext(ctx).
 		Where("merchant_id = ? AND idempotency_key = ? AND status = ?", merchantID, key, quota.StatusReserved).
