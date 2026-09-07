@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-image-session.md](merchant-image-session.md) | 完成 | B5 会话生图跨商404；≠MP-B |
 | [workbench-default-entry-walkthrough.md](workbench-default-entry-walkthrough.md) | 完成 | 建议暂不全局默认成果；采用/视觉共享API缺口已记 |
 | [merchant-graph-recipe.md](merchant-graph-recipe.md) | 完成 | B3 Graph/SSE/recipe 跨商404；≠MP-B |
 | [release-d3-restore-drill.md](release-d3-restore-drill.md) | 完成 | B4 隔离全栈 D3；登录/媒体/Agent/CHECKSUMS；在途 UNKNOWN；≠R6 |

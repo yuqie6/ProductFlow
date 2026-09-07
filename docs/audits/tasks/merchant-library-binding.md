@@ -1,14 +1,14 @@
 # 任务：图库绑定商家隔离（B4）
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-merchant/merchant-library-binding
+认领于：2026-09-07T13:50:00+08:00
 业务组：商家平台
 父账本：merchant-platform.md
 完成后可拆：B6 或与 B5 并行（写集不冲突时）；完整隔离门未过不开放第二商家
 
-按 [Issue 协议](README.md) 认领。承接 [Graph/配方 B3](archive/merchant-graph-recipe.md) 与覆盖矩阵 **B4**（批次表；依赖 B1+B2+B5 时以父章程为准——若 B5 未交付则先做不依赖会话生图的绑定路径或等协调者裁定）。
+按 [Issue 协议](README.md) 认领。承接 [Graph/配方 B3](archive/merchant-graph-recipe.md) 与 [会话生图 B5](archive/merchant-image-session.md) 与覆盖矩阵 **B4**。
 
 ## 问题来源
 

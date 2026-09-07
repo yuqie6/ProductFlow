@@ -507,7 +507,7 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 }
 
 // Attach 把生成结果作为商品图片身份写入商品图库，复用同一 MediaObject，不复制 bytes。
-// 非生成结果或文件缺失返回 Validation；会话/商品/图片不存在返回 NotFound；媒体行缺失返回 Conflict。
+// 非生成结果或文件缺失返回 Validation；会话/商品跨商或不存在统一 NotFoundCrossMerchant；媒体行缺失返回 Conflict。
 func (s Service) Attach(ctx context.Context, sessionID, assetID, productID string) (product.AssetResponse, error) {
 	var out product.AssetResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -522,9 +522,9 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 			return apperr.Validation("只有生成结果可以附加到商品")
 		}
 		var productRow schema.Products
-		err = pgxTx.Where("id = ?", productID).Take(&productRow).Error
+		err = auth.ScopeMerchant(ctx, pgxTx.Where("id = ?", productID), "merchant_id").Take(&productRow).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.NotFound("商品不存在")
+			return auth.NotFoundCrossMerchant()
 		}
 		if err != nil {
 			return err
@@ -569,12 +569,17 @@ func (s Service) Attach(ctx context.Context, sessionID, assetID, productID strin
 	return out, err
 }
 
-// AssetDownload 读取会话素材行供下载；不存在时返回 NotFound。
+// AssetDownload 读取会话素材行供下载；缺失与跨商统一 NotFoundCrossMerchant（F4 / B1）。
 func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, error) {
 	var asset schema.ImageSessionAssets
-	err := s.DB.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error
+	q := s.DB.WithContext(ctx).
+		Table("image_session_assets AS a").
+		Select("a.*").
+		Joins("JOIN image_sessions AS s ON s.id = a.session_id").
+		Where("a.id = ?", assetID)
+	err := auth.ScopeMerchant(ctx, q, "s.merchant_id").Take(&asset).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return assetRow{}, apperr.NotFound("会话图片不存在")
+		return assetRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return assetRow{}, err
@@ -583,10 +588,13 @@ func (s Service) AssetDownload(ctx context.Context, assetID string) (assetRow, e
 }
 
 // Reconcile 对 unknown 生成任务查询供应商原请求；不可证明时保持 unknown。
-// 任务不存在或 effect 找不到返回 Conflict；非 unknown 状态也 Conflict。无法证明时保持 unknown，不得当失败自动重试。
+// 会话跨商/缺失统一 NotFoundCrossMerchant；任务不存在或 effect 找不到返回 Conflict；非 unknown 状态也 Conflict。
 func (s Service) Reconcile(ctx context.Context, sessionID, taskID string, candidateStart int) (EffectResponse, error) {
 	var out EffectResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
+			return err
+		}
 		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
 		if err != nil {
 			if apperr.IsNotFound(err) {
