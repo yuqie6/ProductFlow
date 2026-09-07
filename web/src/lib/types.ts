@@ -73,6 +73,29 @@ export interface AuthenticatedSessionState {
 
 export type SessionState = AnonymousSessionState | AuthenticatedSessionState;
 
+export interface AccountProfile {
+  user: SessionUser;
+  merchant: SessionMerchant | null;
+}
+
+export interface AccountSession {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export interface AccountSessionPage {
+  items: AccountSession[];
+  next_cursor: string | null;
+}
+
+export interface PasswordRecoveryChallenge {
+  challenge_id: string;
+  expires_in_seconds: number;
+  resend_after_seconds: number;
+}
+
 export interface ProductSummary {
   id: string;
   name: string;

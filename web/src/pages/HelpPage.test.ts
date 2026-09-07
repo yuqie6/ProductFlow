@@ -32,7 +32,7 @@ describe("HelpPage locale documents", () => {
   });
 
   it("covers current product surfaces in every locale", () => {
-    const requiredSlugs = ["media-library", "global-agent"];
+    const requiredSlugs = ["media-library", "global-agent", "account"];
     for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"] as const) {
       const slugs = getHelpDocsForLocale(locale).map((page) => page.slug);
       expect(slugs).toEqual(expect.arrayContaining(requiredSlugs));

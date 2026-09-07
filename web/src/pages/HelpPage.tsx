@@ -20,7 +20,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { Select as SelectField } from "../components/ui/select";
 import { TopNav } from "../components/TopNav";
-import type { Locale } from "../lib/i18n";
+import { translate, type Locale } from "../lib/i18n";
 import { useI18n } from "../lib/preferences";
 
 type SectionBlock =
@@ -756,12 +756,23 @@ const HELP_DOCS = {
 } satisfies Record<Locale, DocPage[]>;
 
 export function getHelpDocsForLocale(locale: Locale): DocPage[] {
-  return HELP_DOCS[locale];
+  return [...HELP_DOCS[locale], {
+    slug: "account",
+    title: translate(locale, "account.title"),
+    description: translate(locale, "account.subtitle"),
+    category: translate(locale, "account.title"),
+    icon: Settings,
+    sections: [
+      { id: "profile", title: translate(locale, "account.profile"), blocks: [{ type: "list", items: [translate(locale, "account.displayName"), translate(locale, "login.email"), translate(locale, "account.merchant")] }] },
+      { id: "security", title: translate(locale, "account.security"), blocks: [{ type: "paragraph", text: translate(locale, "account.passwordNote") }, { type: "paragraph", text: translate(locale, "account.sessionsNote") }] },
+      { id: "recovery", title: translate(locale, "recovery.title"), blocks: [{ type: "paragraph", text: translate(locale, "recovery.subtitle") }, { type: "paragraph", text: translate(locale, "recovery.accepted") }] },
+    ],
+  }];
 }
 
 export function getHelpNavGroupsForLocale(locale: Locale): HelpNavGroup[] {
   const groups = new Map<string, string[]>();
-  for (const page of HELP_DOCS[locale]) {
+  for (const page of getHelpDocsForLocale(locale)) {
     const pages = groups.get(page.category) ?? [];
     pages.push(page.slug);
     groups.set(page.category, pages);
@@ -770,8 +781,8 @@ export function getHelpNavGroupsForLocale(locale: Locale): HelpNavGroup[] {
 }
 
 export function getMissingHelpDocTranslations(locale: Locale = "ja-JP"): string[] {
-  const baseline = HELP_DOCS["zh-CN"];
-  const localized = new Map(HELP_DOCS[locale].map((page) => [page.slug, page]));
+  const baseline = getHelpDocsForLocale("zh-CN");
+  const localized = new Map(getHelpDocsForLocale(locale).map((page) => [page.slug, page]));
   const missing: string[] = [];
   for (const page of baseline) {
     const candidate = localized.get(page.slug);

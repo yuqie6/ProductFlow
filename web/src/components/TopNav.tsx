@@ -14,6 +14,7 @@ import {
   Settings,
   Sun,
   Wand2,
+  UserRound,
 } from "lucide-react";
 import type { FocusEvent, MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -60,6 +61,12 @@ const navItems = [
     to: "/help",
     icon: BookOpen,
     match: (pathname: string) => pathname.startsWith("/help"),
+  },
+  {
+    labelKey: "account.title",
+    to: "/account",
+    icon: UserRound,
+    match: (pathname: string) => pathname === "/account",
   },
   {
     labelKey: "nav.settings",

@@ -4,9 +4,11 @@
 
 ProductFlow currently implements a product-visual production workspace plus User/Merchant identity and merchant ownership foundations. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. The current development bootstrap still creates the only development merchant; public registration is implemented and has passed real-browser and real SMTP/IMAP mail-receipt verification. Account management, administrator product management and real payments remain incomplete; quota and stable-release recovery/upgrade mechanisms have scoped evidence.
+The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. The current development bootstrap still creates the only development merchant; public registration is implemented and has passed real-browser and real SMTP/IMAP mail-receipt verification. Personal profile, password recovery and session management are implemented; account preferences, complete administrator product management and real payments remain pending; quota and stable-release recovery/upgrade mechanisms have scoped evidence.
 
 The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. Each ordinary account owns one merchant. Workspace switching and team UX are excluded; administrators have explicit merchant-targeted product read, facts-edit and delete APIs, while complete administration pages and operation auditing remain planned; the [release roadmap](ROADMAP.en.md) owns the planned isolation, experience, competitive and deployment requirements. This PRD describes connected capabilities only.
+
+Account holders can edit their display name, change their password and manage active sessions at `/account`. The login page links to SMTP email-code recovery at `/password-recovery`. Successful password changes or recovery invalidate old passwords, sessions and outstanding recovery codes. Accepted responses do not directly identify whether an email is registered; invalid, expired or consumed recovery credentials receive one consistent error. Real SMTP receipt, recovery replay rejection and isolated browser operations have been verified.
 
 ### 1.1 Account entry
 
@@ -101,6 +103,8 @@ The code is a random six-digit value valid for 10 minutes, with a 60-second rese
 ## 5. Current Pages
 
 - `/home`: authenticated feature navigation and real product showcase.
+- `/account`: personal profile, password and session management.
+- `/password-recovery`: public email-code recovery.
 - `/products`: product list and automatic covers.
 - `/products/new`: full-screen Agent creation flow.
 - `/products/:productId`: Agent, workflow canvas, inspector, runs, recipes, and image library.

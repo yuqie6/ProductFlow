@@ -30,6 +30,41 @@
     "name": "register_account"
   },
   {
+    "method": "POST",
+    "path": "/api/auth/password-recovery/request",
+    "name": "request_password_recovery"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/password-recovery/confirm",
+    "name": "confirm_password_recovery"
+  },
+  {
+    "method": "GET",
+    "path": "/api/account",
+    "name": "get_account"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/account",
+    "name": "update_account"
+  },
+  {
+    "method": "POST",
+    "path": "/api/account/password",
+    "name": "change_account_password"
+  },
+  {
+    "method": "GET",
+    "path": "/api/account/sessions",
+    "name": "list_account_sessions"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/account/sessions/{id}",
+    "name": "revoke_account_session"
+  },
+  {
     "method": "GET",
     "path": "/api/ops/merchants",
     "name": "list_operator_merchants"

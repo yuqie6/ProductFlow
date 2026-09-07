@@ -45,11 +45,12 @@ func (h *HTTP) svc() Service {
 	return svc
 }
 
-// Mailer is the narrow settings boundary required by public registration.
-// It deliberately keeps SMTP configuration and transport out of auth.
+// Mailer is the narrow settings boundary required by public registration and
+// password recovery. It deliberately keeps SMTP configuration and transport out of auth.
 type Mailer interface {
 	RegistrationAvailable(context.Context) (bool, error)
 	SendVerificationCode(context.Context, string, string) error
+	SendPasswordResetCode(context.Context, string, string) error
 }
 
 // Register 挂上会话、引导、公开注册与 Operator 商家路由。
@@ -63,6 +64,15 @@ func (h HTTP) Register(engine *gin.Engine) {
 	group.POST("/bootstrap", h.bootstrap)
 	group.POST("/registration-code", h.registrationCode)
 	group.POST("/register", h.register)
+	group.POST("/password-recovery/request", h.passwordRecoveryRequest)
+	group.POST("/password-recovery/confirm", h.passwordRecoveryConfirm)
+
+	account := engine.Group("/api/account")
+	account.GET("", h.account)
+	account.PATCH("", h.updateAccount)
+	account.POST("/password", h.changePassword)
+	account.GET("/sessions", h.listAccountSessions)
+	account.DELETE("/sessions/:id", h.revokeAccountSession)
 
 	ops := engine.Group("/api/ops")
 	ops.Use(RequireOperator())
@@ -364,7 +374,10 @@ func writeRegistrationRetry(c *gin.Context, after time.Duration) {
 
 func (h HTTP) destroy(c *gin.Context) {
 	sessionID := httpx.SessionString(c, sessionCookieSessionKey)
-	_ = h.svc().RevokeSession(c.Request.Context(), sessionID)
+	if err := h.svc().RevokeSession(c.Request.Context(), sessionID); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
 	_ = httpx.ClearSession(c)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

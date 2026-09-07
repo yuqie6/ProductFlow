@@ -19,13 +19,23 @@ Login and setup show a countdown when attempts are rate limited. Submission beco
 3. Enter the six-digit code, set a password of at least eight characters, and provide a merchant name before submitting.
 4. After verification, the system creates an ordinary account, that account's own merchant, and trial quota, then signs in through the existing session. Email/password login remains available.
 
-A code is valid for 10 minutes, resends are limited to one per 60 seconds, and each challenge permits at most five failed attempts; resending invalidates the previous challenge. Existing membership management remains; direct association of additional existing users is deferred to a separate design.
+A code is valid for 10 minutes, resends are limited to one per 60 seconds, and each challenge permits at most five failed attempts; resending invalidates the previous challenge. Each ordinary account owns one merchant; membership management and merchant switching are not provided.
 
 All three purposes are required by the core flow:
 
 - Prompt: visual system, creative brief, prompt-generation nodes, and create-page source-note drafting from photos.
 - Agent: requirement clarification, library organization, and workflow creation.
 - Image: workflow and iterative image generation.
+
+### 1.2 Personal account and password recovery
+
+Open `/account` from the navigation to update your display name. Email is read-only. Ordinary accounts show their own merchant; an independent Operator can have no merchant. Active sessions are paginated by sign-in time and can be revoked individually. Revoking the current session signs you out. Failed revocation or logout remains visible and retryable.
+
+Changing a password requires the current password. The new password needs at least eight characters and at most 72 bytes. Success invalidates all existing sessions and outstanding recovery codes, requiring a new sign-in.
+
+Choose Reset password on the login page to open `/password-recovery`. Request a six-digit code through the account email, then enter it with a new password. An accepted request does not disclose account existence or promise mail delivery; check the inbox and spam folder and use the resend countdown. Recovery uses the existing SMTP configuration, a ten-minute validity window, a 60-second send interval and at most five failed attempts. Success consumes the code and revokes every existing session. A new send replaces the old code; a request during the send interval retains the code and refreshes its validity window. Unconfigured email service is reported as unavailable. No additional administrator unlock is required.
+
+Account-persisted language/theme preferences, merchant renaming and complete operations pages remain under development.
 
 ## 2. Create a Product
 

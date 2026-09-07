@@ -59,6 +59,12 @@ func TestApplyRetiresInviteTableAndCreatesRegistrationChallenges(t *testing.T) {
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'password_recovery_challenges'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("password_recovery_challenges missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
 		WHERE table_schema = 'public' AND table_name = 'merchant_invites'
 	`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("merchant_invites still present: n=%d err=%v", n, err)
@@ -68,6 +74,12 @@ func TestApplyRetiresInviteTableAndCreatesRegistrationChallenges(t *testing.T) {
 		WHERE schemaname = 'public' AND indexname = 'uq_registration_challenges_active_email'
 	`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("active email unique index missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_indexes
+		WHERE schemaname = 'public' AND indexname = 'uq_password_recovery_challenges_active_user'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("active user recovery unique index missing: n=%d err=%v", n, err)
 	}
 }
 

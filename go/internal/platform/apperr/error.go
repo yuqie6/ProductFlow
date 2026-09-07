@@ -13,6 +13,10 @@ const CodeNotPending = "not_pending"
 // CodeEventSequenceConflict 是 Turn 事件序号竞争的稳定机器码，随 409 写入 {"code"}。
 const CodeEventSequenceConflict = "event_sequence_conflict"
 
+// CodeInvalidRecoveryCode hides whether a password recovery challenge exists,
+// is owned by the supplied email, or has already become unusable.
+const CodeInvalidRecoveryCode = "invalid_recovery_code"
+
 // Error 是面向用户的失败，HTTP 状态码固定，文案进 {"detail": "..."}。
 // Code 非空时同时写入 {"code": "..."}，给协议竞争使用稳定机器码。
 type Error struct {

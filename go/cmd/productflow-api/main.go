@@ -104,7 +104,7 @@ func main() {
 		Store:             settingsStore,
 		Mailer:            settingsStore,
 		DB:                gdb,
-		Service:           auth.Service{DB: gdb},
+		Service:           auth.Service{DB: gdb, RecoveryChallengeIDSecret: cfg.SessionSecret},
 		AttemptLimiter:    attemptLimiter,
 		TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
 	}

@@ -20,7 +20,7 @@
 
 ## 前置与并行
 
-[设计校准](archive/saas-design-alignment.md) 已完成；[账户任务](saas-account-team.md) 提供本人页面时复用，若一起交付则由同一主代理整合，不以团队能力为前置。隔离 PG/browser，无需真实 provider。
+[设计校准](archive/saas-design-alignment.md) 已完成；[账户任务](archive/saas-account-team.md) 提供本人页面时复用，若一起交付则由同一主代理整合，不以团队能力为前置。隔离 PG/browser，无需真实 provider。
 
 ## 修改范围与所有权
 

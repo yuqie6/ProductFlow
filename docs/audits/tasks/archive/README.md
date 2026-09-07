@@ -4,6 +4,8 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-account-team.md](saas-account-team.md) | 完成 | 本人资料、密码/会话、SMTP恢复与防重放；真实隔离PG/API及邮件验证 |
+| [saas-account-interface.md](saas-account-interface.md) | 完成 | 四语账户与恢复页面；35项浏览器mock及真实Go接线验证 |
 | [category-annotation-rubric.md](category-annotation-rubric.md) | 完成 | 评委适用性与量表修正；47/48有效、比较一致6/8、错商品负控3/3，保留剩余误判 |
 | [category-annotation-repeatability.md](category-annotation-repeatability.md) | 完成 | 48项重复标注，候选胜负仅2/8一致；定位评委适用性和身份判读问题 |
 | [category-image-annotation.md](category-image-annotation.md) | 完成 | 分类多模态标注与显式候选对照；16/16 有效真实标注，非生成质量达标门 |

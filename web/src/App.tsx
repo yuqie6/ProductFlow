@@ -20,6 +20,8 @@ const HomePage = lazy(() =>
 const HelpPage = lazy(() =>
   import("./pages/HelpPage").then((module) => ({ default: module.HelpPage })),
 );
+const AccountPage = lazy(() => import("./pages/AccountPage").then((module) => ({ default: module.AccountPage })));
+const PasswordRecoveryPage = lazy(() => import("./pages/PasswordRecoveryPage").then((module) => ({ default: module.PasswordRecoveryPage })));
 const LoginPage = lazy(() =>
   import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })),
 );
@@ -93,6 +95,8 @@ function AppRoutes() {
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
+          <Route path="/password-recovery" element={<PasswordRecoveryPage />} />
+          <Route path="/account" element={authenticated ? <AccountPage /> : <Navigate to="/login" replace />} />
           <Route
             path="/home"
             element={authenticated ? <HomePage /> : <Navigate to="/login" replace />}

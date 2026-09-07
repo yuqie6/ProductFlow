@@ -202,6 +202,29 @@ func (s *Store) SendVerificationCode(ctx context.Context, email, code string) er
 	return sendSMTPVerificationCode(ctx, cfg, email, code, nil)
 }
 
+// SendPasswordResetCode sends a password recovery code over the same
+// TLS-protected SMTP transport as registration, with an independent message
+// purpose and body.
+func (s *Store) SendPasswordResetCode(ctx context.Context, email, code string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, err := s.smtpConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if !cfg.ready() {
+		return apperr.Unavailable("邮件服务尚未配置")
+	}
+	if _, err := parseSMTPMailbox(email); err != nil {
+		return err
+	}
+	if code == "" || hasSMTPControl(code) {
+		return apperr.Validation("验证码格式无效")
+	}
+	return sendSMTPPasswordResetCode(ctx, cfg, email, code, nil)
+}
+
 // sendSMTPVerificationCode is kept as a narrow sender helper so package tests
 // can supply a test CA pool. Production callers pass nil and use system roots.
 func sendSMTPVerificationCode(ctx context.Context, cfg smtpConfig, email, code string, roots *x509.CertPool) error {
@@ -209,6 +232,18 @@ func sendSMTPVerificationCode(ctx context.Context, cfg smtpConfig, email, code s
 	if err != nil {
 		return err
 	}
+	return sendSMTPMessage(ctx, cfg, email, message, roots)
+}
+
+func sendSMTPPasswordResetCode(ctx context.Context, cfg smtpConfig, email, code string, roots *x509.CertPool) error {
+	message, err := passwordResetMessage(cfg, email, code)
+	if err != nil {
+		return err
+	}
+	return sendSMTPMessage(ctx, cfg, email, message, roots)
+}
+
+func sendSMTPMessage(ctx context.Context, cfg smtpConfig, email string, message []byte, roots *x509.CertPool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -334,6 +369,30 @@ func verificationMessage(cfg smtpConfig, email, code string) ([]byte, error) {
 	}
 	subject := mime.QEncoding.Encode("UTF-8", "ProductFlow 邮箱验证码")
 	body := "您好，您的 ProductFlow 注册验证码是 " + code + "。\r\n验证码 10 分钟内有效，请勿将验证码告知他人。\r\n"
+	message := "From: " + from + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n" +
+		"Content-Transfer-Encoding: 8bit\r\n" +
+		"\r\n" + body
+	return []byte(message), nil
+}
+
+func passwordResetMessage(cfg smtpConfig, email, code string) ([]byte, error) {
+	from, err := formatSMTPHeaderAddress(cfg.fromAddress, cfg.fromName)
+	if err != nil {
+		return nil, err
+	}
+	to, err := formatSMTPHeaderAddress(email, "")
+	if err != nil {
+		return nil, err
+	}
+	if code == "" || hasSMTPControl(code) {
+		return nil, apperr.Validation("验证码格式无效")
+	}
+	subject := mime.QEncoding.Encode("UTF-8", "ProductFlow 密码恢复验证码")
+	body := "您好，您的 ProductFlow 密码恢复验证码是 " + code + "。\r\n验证码 10 分钟内有效且只能使用一次，请勿将验证码告知他人。\r\n"
 	message := "From: " + from + "\r\n" +
 		"To: " + to + "\r\n" +
 		"Subject: " + subject + "\r\n" +

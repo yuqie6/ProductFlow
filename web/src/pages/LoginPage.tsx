@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, LayoutGrid, Mail } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
 import { useI18n } from "../lib/preferences";
@@ -272,6 +272,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
             {needsBootstrap ? t("login.bootstrapSubmit") : registering ? t("login.registerSubmit") : t("login.submit")}{" "}
             <ArrowRight size={14} className="ml-2 opacity-70" />
           </button>
+          {!needsBootstrap && !registering ? <Link to="/password-recovery" className="flex min-h-11 items-center justify-center rounded-md text-sm text-text-secondary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-focus-ring">{t("recovery.title")}</Link> : null}
         </form>
       </div>
     </div>

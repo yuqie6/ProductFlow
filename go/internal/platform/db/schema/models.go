@@ -1149,6 +1149,7 @@ func AllModels() []any {
 		&Users{},
 		&Merchants{},
 		&RegistrationChallenges{},
+		&PasswordRecoveryChallenges{},
 		&AuthSessions{},
 		&QuotaPriceVersions{},
 		&QuotaPriceEntries{},

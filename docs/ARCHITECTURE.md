@@ -2,7 +2,7 @@
 
 ## 1. 系统边界
 
-ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家开始，公开注册可创建普通 User 及其自有 Merchant；普通账号直接使用自有商家，管理员使用显式目标商家授权；完整账户与运营页面尚未实现。系统由七个运行单元组成：
+ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家开始，公开注册可创建普通 User 及其自有 Merchant；普通账号直接使用自有商家，管理员使用显式目标商家授权；本人资料、密码恢复和会话管理已实现，个人偏好持久化与完整运营页面仍待交付。系统由七个运行单元组成：
 
 1. React/Vite Web。
 2. Go 业务 API。
@@ -21,6 +21,8 @@ ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家
 账号身份由 PostgreSQL User/AuthSession 与现有 `session` cookie 证明。登录和初始化使用 `go/internal/auth` 的 Redis 原子固定窗口限流，默认每 IP 15 分钟 100 次、每 IP 与账号 10 次。Redis 不可用时凭据交换返回 503，已登录读取继续使用 PostgreSQL 会话；预算与命名空间仅由环境变量配置。
 
 公开邮箱注册已实现：部署者完成 bootstrap 后，Operator 在现有 `/settings` 配置 `smtp_host`、`smtp_port`、`smtp_security`（`starttls`/`tls`）、`smtp_username`、`smtp_password`（secret）、`smtp_from_address` 和 `smtp_from_name`。开发栈从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；对应 `app_settings` 行覆盖环境默认，恢复默认删除数据库覆盖并回到当前环境默认。`POST /api/auth/registration-code` 发送六位验证码，challenge 有效 10 分钟、重发间隔 60 秒且最多 5 次错误验证；`POST /api/auth/register` 验证后创建普通 User、该用户自己的 Merchant 和试用额度，并沿现有 cookie 登录。初始化完成前关闭注册，邮箱密码登录保留。真实浏览器已验证 SMTP 发信、IMAP 收取、注册进入 `/products`、普通 User 自有 Merchant session、旧验证码重放返回 410 和密码登录成功。该证据只覆盖注册切片，不宣称整站发布或密码恢复；邀请接口、token、schema 和 reader/writer 退役，不保留兼容入口。
+
+本人账户与恢复由 `go/internal/auth` 统一处理：GET `/api/account` 返回本人资料和自有商家，PATCH只更新显示名；`/api/account/sessions` 有界游标分页并按归属撤销。登录、改密和恢复统一先锁User；改密/恢复在同事务消费旧恢复码并撤销全部会话。独立 `password_recovery_challenges` 存储验证码hash、失败次数、有效期和消费状态；错误尝试提交计数。恢复request统一202，重复请求ID行为保持一致，ID由SESSION_SECRET派生且无固定密钥回退；confirm的无效凭据统一400 `invalid_recovery_code`。发送失败使用有界独立上下文按本次code_hash失效，不误伤后来重发的码。退出仅在会话撤销成功后清cookie；失败可重试。新表随 `productflow-migrate` 创建。真实SMTP/IMAP和隔离API/浏览器验收见 [账户交付](audits/tasks/archive/saas-account-team.md)。
 
 账号的直接归属保存在 `users.merchant_id`；普通账号必须有值，普通账号之间唯一。Operator 是独立权限，商家归属可以为空；其开发商家不授予跨商操作权。会话返回 `merchant:{id,name,status}|null`，不再返回成员数组。浏览器请求不读取商家切换头；交互式商品入口必须有已认证账号及自有商家。管理员商品管理接口显式加载路径目标商家并复用既有商品用例，不挂载生成接口。后台任务继续从持久化对象固定商家。迁移在单个事务中预检旧归属，歧义时失败；删除旧成员表和默认首商家填充触发器，无归属业务数据不得自动猜测。
 
@@ -64,6 +66,8 @@ ImageSession、Delivery、LocalEdit 恢复在发现候选时用 `FOR UPDATE SKIP
 
 `web/src/App.tsx` 注册当前页面：
 
+- `/account` — 本人账户
+- `/password-recovery` — 公开邮箱恢复
 - `/login`
 - `/home`
 - `/products`

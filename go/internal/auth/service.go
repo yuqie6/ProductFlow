@@ -17,9 +17,14 @@ import (
 
 // Service 拥有身份写入与会话校验；HTTP 只做绑定与投影。
 type Service struct {
-	DB                      *gorm.DB
-	Now                     func() time.Time
-	EnsureRegistrationQuota func(ctx context.Context, db *gorm.DB, merchantID string) error
+	DB  *gorm.DB
+	Now func() time.Time
+	// RecoveryChallengeIDSecret is an env-only secret used to make recovery
+	// response IDs stable across non-delivery responses without exposing email
+	// addresses. Production supplies SESSION_SECRET; an omitted secret makes
+	// password recovery unavailable.
+	RecoveryChallengeIDSecret string
+	EnsureRegistrationQuota   func(ctx context.Context, db *gorm.DB, merchantID string) error
 }
 
 func (s Service) now() time.Time {
@@ -245,30 +250,41 @@ func (s Service) Login(ctx context.Context, email, password string) (*Principal,
 	if err != nil {
 		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
 	}
+	now := s.now()
 	var user userRow
-	err = s.DB.WithContext(ctx).Table("users").Where("email = ?", emailNorm).Take(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
-	}
+	var sessionID string
+	var principal *Principal
+	err = tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		// Login and password changes acquire the User row before touching sessions.
+		// This prevents an old-password login from surviving a committed password change.
+		err := gdb.Clauses(pfdb.ForUpdate()).Table("users").Where("email = ?", emailNorm).Take(&user).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
+		}
+		if err != nil {
+			return err
+		}
+		if user.Status != UserStatusActive || !checkPassword(user.PasswordHash, password) {
+			return apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
+		}
+		sessionID = clockid.New()
+		session := schema.AuthSessions{
+			ID: sessionID, UserID: user.ID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now,
+		}
+		if err := gdb.Create(&session).Error; err != nil {
+			return err
+		}
+		principal = &Principal{
+			UserID: user.ID, SessionID: sessionID, Email: user.Email,
+			DisplayName: user.DisplayName, IsOperator: user.IsOperator,
+			MerchantID: nullableID(user.MerchantID),
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, "", err
 	}
-	if user.Status != UserStatusActive || !checkPassword(user.PasswordHash, password) {
-		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
-	}
-	now := s.now()
-	sessionID := clockid.New()
-	session := schema.AuthSessions{
-		ID: sessionID, UserID: user.ID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now,
-	}
-	if err := s.DB.WithContext(ctx).Create(&session).Error; err != nil {
-		return nil, "", err
-	}
-	return &Principal{
-		UserID: user.ID, SessionID: sessionID, Email: user.Email,
-		DisplayName: user.DisplayName, IsOperator: user.IsOperator,
-		MerchantID: nullableID(user.MerchantID),
-	}, sessionID, nil
+	return principal, sessionID, nil
 }
 
 func (s Service) RevokeSession(ctx context.Context, sessionID string) error {

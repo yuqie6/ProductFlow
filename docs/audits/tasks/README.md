@@ -27,7 +27,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [saas-account-team.md](saas-account-team.md) | 商家平台 | 实现 | 开放 | — | — |
 | [saas-preferences-settings.md](saas-preferences-settings.md) | 商家平台 | 实现 | 阻塞 | — | — |
 | [saas-ops-console.md](saas-ops-console.md) | 商家平台 | 实现 | 开放 | — | — |
 | [saas-multimerchant-capacity-baseline.md](saas-multimerchant-capacity-baseline.md) | 平台可靠性 | 证据 | 开放 | — | — |

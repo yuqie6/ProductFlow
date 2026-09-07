@@ -42,6 +42,21 @@ type RegistrationChallenges struct {
 
 func (RegistrationChallenges) TableName() string { return "registration_challenges" }
 
+// PasswordRecoveryChallenges 对应表 password_recovery_challenges；密码恢复验证码只存 bcrypt 哈希。
+// 该表与注册 challenge 分开，避免两个用途共享消费与重放语义。
+type PasswordRecoveryChallenges struct {
+	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	UserID            string     `gorm:"column:user_id;type:varchar(36);not null"`
+	CodeHash          string     `gorm:"column:code_hash;type:varchar(255);not null"`
+	FailedAttempts    int        `gorm:"column:failed_attempts;type:integer;not null;default:0"`
+	ResendAvailableAt time.Time  `gorm:"column:resend_available_at;type:timestamptz;not null"`
+	ExpiresAt         time.Time  `gorm:"column:expires_at;type:timestamptz;not null"`
+	ConsumedAt        *time.Time `gorm:"column:consumed_at;type:timestamptz"`
+	CreatedAt         time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (PasswordRecoveryChallenges) TableName() string { return "password_recovery_challenges" }
+
 // AuthSessions 对应表 auth_sessions。可撤销密码会话；cookie 只存 session id。
 type AuthSessions struct {
 	ID        string     `gorm:"column:id;type:varchar(36);primaryKey"`

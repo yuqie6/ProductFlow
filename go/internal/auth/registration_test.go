@@ -35,6 +35,7 @@ type fakeRegistrationMailer struct {
 	available       bool
 	availabilityErr error
 	sendErr         error
+	resetSend       func(context.Context, string, string) error
 	sent            []registrationMail
 }
 
@@ -49,6 +50,18 @@ func (m *fakeRegistrationMailer) SendVerificationCode(_ context.Context, email, 
 	defer m.mu.Unlock()
 	m.sent = append(m.sent, registrationMail{Email: email, Code: code})
 	return m.sendErr
+}
+
+func (m *fakeRegistrationMailer) SendPasswordResetCode(ctx context.Context, email, code string) error {
+	m.mu.Lock()
+	m.sent = append(m.sent, registrationMail{Email: email, Code: code})
+	sendErr := m.sendErr
+	send := m.resetSend
+	m.mu.Unlock()
+	if send != nil {
+		return send(ctx, email, code)
+	}
+	return sendErr
 }
 
 func (m *fakeRegistrationMailer) last() registrationMail {

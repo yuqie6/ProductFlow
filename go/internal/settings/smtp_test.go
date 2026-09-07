@@ -92,6 +92,39 @@ func TestSendSMTPVerificationCodeKeepsAcceptedDATAOnQUITFailure(t *testing.T) {
 	}
 }
 
+func TestSendSMTPPasswordResetCodeUsesRecoveryMessage(t *testing.T) {
+	for _, security := range []string{"tls", "starttls"} {
+		t.Run(security, func(t *testing.T) {
+			port, roots, captureCh := startSMTPTestServer(t, security, "user", "secret", false)
+			cfg := smtpConfig{
+				host: "localhost", port: port, security: security,
+				username: "user", password: "secret",
+				fromAddress: "noreply@example.com", fromName: "商品工作台",
+			}
+			if err := sendSMTPPasswordResetCode(context.Background(), cfg, "buyer@example.com", "654321", roots); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case capture := <-captureCh:
+				if capture.err != nil {
+					t.Fatal(capture.err)
+				}
+				if !capture.tlsEstablished || !capture.authenticated {
+					t.Fatalf("reset mail transport was not protected/authenticated: %#v", capture)
+				}
+				if !strings.Contains(capture.message, "密码恢复验证码是 654321") || !strings.Contains(capture.message, "只能使用一次") {
+					t.Fatalf("recovery message missing purpose/code: %q", capture.message)
+				}
+				if strings.Contains(capture.message, "注册验证码") {
+					t.Fatalf("recovery message used registration purpose: %q", capture.message)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("SMTP test server did not finish")
+			}
+		})
+	}
+}
+
 func TestSMTPRejectsUntrustedCertificateAndMissingSTARTTLS(t *testing.T) {
 	for _, mode := range []string{"tls", "plain"} {
 		t.Run(mode, func(t *testing.T) {
@@ -118,6 +151,27 @@ func TestVerificationMessageRejectsHeaderInjection(t *testing.T) {
 		t.Fatal("expected header injection rejection")
 	}
 	if _, err := verificationMessage(smtpConfig{fromAddress: "sender@example.com"}, "buyer@example.com\nBcc: attacker@example.com", "123456"); err == nil {
+		t.Fatal("expected recipient header injection rejection")
+	}
+}
+
+func TestPasswordResetMessageUsesRecoveryPurposeAndOneTimeCode(t *testing.T) {
+	cfg := smtpConfig{fromAddress: "sender@example.com", fromName: "商品工作台"}
+	message, err := passwordResetMessage(cfg, "buyer@example.com", "654321")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := string(message)
+	if !strings.Contains(raw, "654321") {
+		t.Fatalf("reset message does not contain code: %q", raw)
+	}
+	if !strings.Contains(raw, "密码恢复") || !strings.Contains(raw, "只能使用一次") {
+		t.Fatalf("reset message purpose or one-time wording missing: %q", raw)
+	}
+	if strings.Contains(raw, "注册验证码") {
+		t.Fatalf("reset message uses registration purpose: %q", raw)
+	}
+	if _, err := passwordResetMessage(cfg, "buyer@example.com\nBcc: attacker@example.com", "654321"); err == nil {
 		t.Fatal("expected recipient header injection rejection")
 	}
 }

@@ -1,4 +1,7 @@
 import type {
+  AccountProfile,
+  AccountSessionPage,
+  PasswordRecoveryChallenge,
   GraphTextSettings,
   AgentProductWorkspaceCreateResponse,
   AgentProductWorkspaceOptions,
@@ -223,6 +226,30 @@ export const api = {
   },
   destroySession(): Promise<{ ok: boolean }> {
     return request("/api/auth/session", { method: "DELETE" });
+  },
+  getAccount(): Promise<AccountProfile> {
+    return request("/api/account");
+  },
+  updateAccount(input: { display_name: string }): Promise<AccountProfile> {
+    return request("/api/account", { method: "PATCH", body: JSON.stringify(input) });
+  },
+  changePassword(input: { current_password: string; new_password: string }): Promise<{ ok: boolean }> {
+    return request("/api/account/password", { method: "POST", body: JSON.stringify(input) });
+  },
+  getAccountSessions(input: { after?: string; limit?: number } = {}): Promise<AccountSessionPage> {
+    const params = new URLSearchParams();
+    if (input.after) params.set("after", input.after);
+    if (input.limit !== undefined) params.set("limit", String(input.limit));
+    return request(`/api/account/sessions${params.size ? `?${params}` : ""}`);
+  },
+  revokeAccountSession(id: string): Promise<{ ok: boolean }> {
+    return request(`/api/account/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  requestPasswordRecovery(email: string): Promise<PasswordRecoveryChallenge> {
+    return request("/api/auth/password-recovery/request", { method: "POST", body: JSON.stringify({ email }) });
+  },
+  confirmPasswordRecovery(input: { email: string; challenge_id: string; code: string; new_password: string }): Promise<{ ok: boolean }> {
+    return request("/api/auth/password-recovery/confirm", { method: "POST", body: JSON.stringify(input) });
   },
   requestRegistrationCode(email: string): Promise<{ challenge_id: string; retry_after_seconds: number }> {
     return request("/api/auth/registration-code", {

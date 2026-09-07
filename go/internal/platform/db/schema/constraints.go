@@ -1881,7 +1881,7 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_run_events_run_sequence ON public.workflow_graph_run_events USING btree (graph_run_id, sequence);`,
 
-	// Identity: direct user ownership / merchants / registration challenges / auth_sessions
+	// Identity: direct user ownership / merchants / registration challenges / password recovery / auth_sessions
 	`DROP TABLE IF EXISTS public.merchant_invites;`,
 	`DO $c$ BEGIN
 ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);
@@ -2077,6 +2077,23 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_registration_challenges_email_created ON public.registration_challenges USING btree (email, created_at DESC);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_challenges_active_email ON public.registration_challenges (email) WHERE consumed_at IS NULL;`,
+	`DO $c$ BEGIN
+ALTER TABLE password_recovery_challenges ADD CONSTRAINT fk_password_recovery_challenges_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE password_recovery_challenges ADD CONSTRAINT ck_password_recovery_challenges_failed_attempts CHECK (failed_attempts >= 0 AND failed_attempts <= 5);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE password_recovery_challenges ADD CONSTRAINT ck_password_recovery_challenges_code_hash_nonempty CHECK (length(btrim(code_hash)) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_password_recovery_challenges_user_created ON public.password_recovery_challenges USING btree (user_id, created_at DESC);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_password_recovery_challenges_active_user ON public.password_recovery_challenges (user_id) WHERE consumed_at IS NULL;`,
 	`CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_id ON public.auth_sessions USING btree (user_id);`,
 
 	// B1 root ownership: existing NULL merchant IDs fail explicitly; inserts must provide their merchant.

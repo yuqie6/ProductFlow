@@ -2,7 +2,7 @@
 
 ## 1. System Boundary
 
-The current ProductFlow development baseline starts with one administrator and one bootstrap development merchant; public registration can create an ordinary User and that user's own Merchant. Ordinary accounts use their own merchant directly; administrators use explicit merchant-targeted authorization. Complete account and operations pages remain unimplemented. The system has seven runtime units:
+The current ProductFlow development baseline starts with one administrator and one bootstrap development merchant; public registration can create an ordinary User and that user's own Merchant. Ordinary accounts use their own merchant directly; administrators use explicit merchant-targeted authorization. Personal profile, password recovery and session management are implemented; account-persisted preferences and complete operations pages remain pending. The system has seven runtime units:
 
 1. React/Vite Web.
 2. Go business API.
@@ -21,6 +21,8 @@ This document describes the current implementation only. Module ownership comes 
 PostgreSQL User/AuthSession records and the existing `session` cookie establish account identity. Login and bootstrap use the atomic Redis fixed-window limiter in `go/internal/auth`: by default 100 attempts per IP and 10 per IP/account in 15 minutes. Credential exchanges return 503 when Redis is unavailable; authenticated reads continue to use PostgreSQL sessions. Limits and namespaces are configured only through environment variables.
 
 Public email registration is implemented. After deployer bootstrap, the Operator configures `smtp_host`, `smtp_port`, `smtp_security` (`starttls`/`tls`), `smtp_username`, `smtp_password` (secret), `smtp_from_address`, and `smtp_from_name` in the existing `/settings`. The development stack reads startup defaults from `.env.dev` as `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, and `SMTP_FROM_NAME`; corresponding `app_settings` rows override those defaults, and restoring a default deletes the database override and returns to the current environment value. `POST /api/auth/registration-code` sends a six-digit code; a challenge is valid for 10 minutes, allows one resend every 60 seconds, and permits at most five failed attempts. `POST /api/auth/register` verifies the challenge, creates an ordinary User, that user's own Merchant, and trial quota, then signs in through the existing cookie. Registration is closed before initialization, and email/password login remains. A real-browser flow verified SMTP sending, IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant, a 410 response for replaying the old code, and successful password login. This evidence covers the registration slice and does not establish whole-site publication or password recovery. Invitation endpoints, tokens, schema, and readers/writers are retired without compatibility routes.
+
+Personal account and recovery behavior belongs to `go/internal/auth`: GET/PATCH `/api/account` exposes the current user's profile and only updates the display name; `/api/account/sessions` provides bounded cursor pagination and owner-scoped revocation. Login, password changes and recovery lock User first. Password changes and recovery consume outstanding recovery codes and revoke all sessions in one transaction. The independent `password_recovery_challenges` table stores code hashes, failed attempts, expiry and consumption. Failed attempts commit their counter. Recovery requests return 202 with consistent repeated-ID behavior; IDs derive from SESSION_SECRET without a hardcoded fallback. Invalid confirmation credentials return 400 `invalid_recovery_code`. Failed delivery cleanup uses a bounded independent context and the issued code hash so a later resend survives stale cleanup. Logout clears the cookie after successful revocation and remains retryable on failure. `productflow-migrate` creates the new table. Real SMTP/IMAP and isolated API/browser evidence is recorded in the [account delivery](audits/tasks/archive/saas-account-team.md).
 
 Account ownership is stored in `users.merchant_id`, required and unique among ordinary accounts. Operator permission is independent and permits a null home merchant. Sessions return `merchant:{id,name,status}|null`; browser merchant selection headers and team membership readers are removed. Ordinary product routes require the authenticated account’s own merchant. Administrator product read/edit/delete routes use an explicit merchant target and do not expose generation. Background jobs retain persisted ownership. Migration checks historical ownership within one transaction, fails on ambiguity, and removes the old member table and first-merchant fill triggers. Unowned business data is never assigned by guessing.
 
@@ -63,6 +65,8 @@ ImageSession, Delivery and LocalEdit recovery use `FOR UPDATE SKIP LOCKED` durin
 
 `web/src/App.tsx` registers the current pages:
 
+- `/account` — personal account
+- `/password-recovery` — public email recovery
 - `/login`
 - `/home`
 - `/products`
