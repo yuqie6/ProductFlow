@@ -601,11 +601,10 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 }
 
 func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, sessionID, groupID string) error {
-	var ok bool
-	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		now := time.Now().UTC()
 		res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
-			Where("id = ? AND active_attempt_id = ? AND status = ?", taskID, attemptID, "running").
+			Where("id = ? AND session_id = ? AND active_attempt_id = ? AND status = ?", taskID, sessionID, attemptID, "running").
 			Updates(map[string]any{
 				"status":                     "succeeded",
 				"active_attempt_id":          nil,
@@ -621,25 +620,22 @@ func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, sessio
 		if res.RowsAffected != 1 {
 			return nil
 		}
-		ok = true
+		merchantID, err := sessionMerchantID(ctx, pgxTx, sessionID)
+		if err != nil {
+			return err
+		}
+		if err := (Executor{DB: pgxTx}).settleGenerationQuota(ctx, merchantID, taskID); err != nil {
+			return err
+		}
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
-	if err != nil || !ok {
-		return err
-	}
-	merchantID, err := sessionMerchantID(ctx, e.DB, sessionID)
-	if err != nil {
-		return err
-	}
-	return e.settleGenerationQuota(ctx, merchantID, taskID)
 }
 
 func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID, sessionID string) error {
-	var ok bool
-	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		now := time.Now().UTC()
 		res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
-			Where("id = ? AND active_attempt_id = ? AND status = ?", taskID, attemptID, "running").
+			Where("id = ? AND session_id = ? AND active_attempt_id = ? AND status = ?", taskID, sessionID, attemptID, "running").
 			Updates(map[string]any{
 				"status":              "unknown",
 				"active_attempt_id":   nil,
@@ -655,17 +651,15 @@ func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID, sessionI
 		if res.RowsAffected != 1 {
 			return nil
 		}
-		ok = true
+		merchantID, err := sessionMerchantID(ctx, pgxTx, sessionID)
+		if err != nil {
+			return err
+		}
+		if err := (Executor{DB: pgxTx}).markGenerationQuotaUnknown(ctx, merchantID, taskID); err != nil {
+			return err
+		}
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
-	if err != nil || !ok {
-		return err
-	}
-	merchantID, err := sessionMerchantID(ctx, e.DB, sessionID)
-	if err != nil {
-		return err
-	}
-	return e.markGenerationQuotaUnknown(ctx, merchantID, taskID)
 }
 
 // finishFailed 处理已证明失败；可重试且 attempts 未满则回 queued，否则写 failed。

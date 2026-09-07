@@ -195,14 +195,23 @@ func recoverImageTaskState(ctx context.Context, gdb *gorm.DB, taskID string, cut
 				}).Error; err != nil {
 				return err
 			}
-			_ = pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+			if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
 				Where("generation_task_id = ? AND attempt_id = ? AND effect_result = ?", task.ID, *task.ActiveAttemptID, "pending").
 				Updates(map[string]any{
 					"effect_result":        "unknown",
 					"reconciliation_state": "unknown",
 					"detail":               unknownDetail,
 					"updated_at":           now,
-				}).Error
+				}).Error; err != nil {
+				return err
+			}
+			merchantID, err := sessionMerchantID(ctx, pgxTx, task.SessionID)
+			if err != nil {
+				return err
+			}
+			if err := (Executor{DB: pgxTx}).markGenerationQuotaUnknown(ctx, merchantID, taskID); err != nil {
+				return err
+			}
 			result.outcome = "unknown"
 			return nil
 		}

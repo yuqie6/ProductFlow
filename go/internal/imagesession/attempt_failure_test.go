@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -103,5 +104,77 @@ func TestTerminalFailureQuotaWriteRollsBackTask(t *testing.T) {
 	}
 	if n := countQuotaEvents(t, ss.db, merchantID, quota.EventRelease, key); n != 1 {
 		t.Fatalf("release events=%d", n)
+	}
+}
+
+func TestTerminalQuotaTransitionsAreAtomic(t *testing.T) {
+	for _, mode := range []string{"success", "unknown", "recovery"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			ss := newSessionServer(t)
+			session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "terminal consistency", "size": "1024x1024"})
+			attemptID := markStaleRunning(t, ss, taskID, "provider_call", 0, nil)
+			merchantID := auth.MustDevMerchantID(t, ss.db)
+			key := generationQuotaKey(taskID, 0)
+			const constraint = "test_imagesession_terminal_transition"
+			if _, err := ss.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds ADD CONSTRAINT "+constraint+" CHECK (idempotency_key <> '"+key+"' OR status = 'reserved')"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := ss.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
+					t.Error(err)
+				}
+			})
+			e := Executor{DB: ss.db}
+			groupID := clockid.New()
+			finish := func() error {
+				switch mode {
+				case "success":
+					return e.finishSucceeded(ctx, taskID, attemptID, session.ID, groupID)
+				case "unknown":
+					return e.finishUnknown(ctx, taskID, attemptID, session.ID)
+				default:
+					_, err := recoverImageTaskState(ctx, ss.db, taskID, time.Now().UTC().Add(-time.Minute))
+					return err
+				}
+			}
+			if err := finish(); err == nil {
+				t.Fatal("quota write error must propagate")
+			}
+			var status, active string
+			if err := ss.pool.QueryRow(ctx, "SELECT status,active_attempt_id FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&status, &active); err != nil {
+				t.Fatal(err)
+			}
+			if status != "running" || active != attemptID {
+				t.Fatalf("partial task state=%s active=%s", status, active)
+			}
+			if hold := loadQuotaHold(t, ss.db, merchantID, key); hold.Status != quota.StatusReserved {
+				t.Fatalf("partial hold=%s", hold.Status)
+			}
+			if _, err := ss.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if err := finish(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := ss.pool.QueryRow(ctx, "SELECT status FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&status); err != nil {
+				t.Fatal(err)
+			}
+			wantStatus, wantHold, event := "unknown", quota.StatusPendingReconciliation, quota.EventMarkUnknown
+			if mode == "success" {
+				wantStatus, wantHold, event = "succeeded", quota.StatusSettled, quota.EventSettle
+			}
+			if status != wantStatus {
+				t.Fatalf("task=%s want=%s", status, wantStatus)
+			}
+			if hold := loadQuotaHold(t, ss.db, merchantID, key); hold.Status != wantHold {
+				t.Fatalf("hold=%s want=%s", hold.Status, wantHold)
+			}
+			if n := countQuotaEvents(t, ss.db, merchantID, event, key); n != 1 {
+				t.Fatalf("terminal events=%d", n)
+			}
+		})
 	}
 }
