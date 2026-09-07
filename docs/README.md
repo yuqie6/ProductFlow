@@ -18,9 +18,9 @@
 
 ## 还没做成
 
-[`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
+[`ROADMAP.md`](ROADMAP.md) 是可自托管多商家 SaaS 的产品方向与正式版总纲，拥有竞品吸收、未来体验、隔离与经营要求、阶段出口和未决问题。其中现场实现只用于说明决策依据，不替代当前能力文档。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE。仓库不再维护独立的 `specs/` 树。
 
-[`audits/README.md`](audits/README.md) 索引 Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性五组。**一组一份文档**；拆合时迁移有效内容与证据，不保留重复章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)，由该协议维护认领、提交和归档流程。当前会话直接处理的修复和只读调查无需建单。
+[`audits/README.md`](audits/README.md) 索引商家平台、Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性六组。**一组一份文档**；拆合时迁移有效内容与证据，不保留重复章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)，由该协议维护认领、提交和归档流程。当前会话直接处理的修复和只读调查无需建单。
 
 ## 历史叙事
 

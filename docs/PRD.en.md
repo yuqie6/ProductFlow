@@ -2,9 +2,11 @@
 
 ## 1. Product Position
 
-ProductFlow is a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
+ProductFlow currently implements a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The current release serves a personal project and live demo. The main repository is in rapid development and accepts breaking changes. Deployments that need a stable snapshot should fork. Following this repository may require recreating the database and storage. The online release maintains one schema-v3 graph, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
+The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. Tenancy, billing and supported long-term upgrades are not implemented capabilities.
+
+The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. The [release roadmap](ROADMAP.en.md) owns planned isolation, experience, competitive and deployment requirements. The current single-merchant boundary is not the final product scope; this PRD describes connected capabilities only.
 
 ## 2. Target Users
 

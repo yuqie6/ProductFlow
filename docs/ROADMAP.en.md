@@ -1,71 +1,47 @@
 # ProductFlow Roadmap
 
-Directions that are not yet product fact, or that still lack real validation. Current capabilities live in [`PRD.en.md`](PRD.en.md), structure in [`ARCHITECTURE.en.md`](ARCHITECTURE.en.md), operations in [`USER_GUIDE.en.md`](USER_GUIDE.en.md).
+Updated 2026-09-07. This is an English summary of the [authoritative product direction and release design](ROADMAP.md), which contains the detailed competitor sources, acceptance contracts and decisions. Current capabilities remain in [PRD](PRD.en.md) and [Architecture](ARCHITECTURE.en.md). The requirements below are planned, not delivered features.
 
-Five groups own complete cross-layer outcomes: Agent Quality, Agent Self-Evolution, Image Quality, Workflow Experience, and Platform Reliability. Each group sequences its own tasks and consumes already available, fixed inputs from outside the group. Responsibilities and priorities live in [`audits/README.md`](audits/README.md), issues on [`audits/tasks/README.md`](audits/tasks/README.md). Claim one open task before coding. Each group keeps one contract and evidence document; independent requests may use the same board without a group.
+## Product and Stage
 
-## Near term
+The intended product is a self-hostable, multi-merchant SaaS. The project owner will also operate an instance of the same product. Self-hosting describes deployment control; multiple merchants describe application isolation. The current single-administrator, single-merchant implementation is an unreleased development baseline with no commercial merchant users.
 
-### Studio increments
+The primary job is a complete usable product-image delivery: organize supported facts, plan a set, generate, revise, select, export and reuse approved work for the next product. Agent, Graph, providers and self-evolution support this outcome.
 
-Do not write these into CONTEXT / PRD / ARCHITECTURE until they land.
+## Competitive Direction
 
-| Item | User-visible | Out of scope |
-|---|---|---|
-| Shot list as default surface | Workbench opens on shot rows (type, count, status, thumbnail, run this shot); same schema-v3 canvas remains available | A Shot table or a second executor |
-| Generate-set copy | One merchant action runs the existing DAG (content nodes first, then each shot); progress projected per shot | A second run model |
+The Chinese roadmap records dated official sources for Designkit, 51aic, Gaoding, Lovart, Photoroom, PicCopilot, Huiwa, Canva and ComfyUI. The investigation covers public interfaces, help/API documentation and public technical material. Paid same-task generation comparisons were not performed, and private competitor implementation details are unknown.
 
-Built-in DeliverySpec templates already live in ARCHITECTURE §7. The recipe library lists only recipes the user saved from a live graph.
+Sets, Agent assistance, local editing and workflow reuse already appear across competitors. ProductFlow must provide straightforward creation, result inspection, editing, comparison, selection, export and reuse. Potential differentiation is the combined effect of source-backed product facts, controlled revisions, deterministic text/layout where precision matters, and reusable approved visual decisions. These remain hypotheses until complete-task comparisons show less rework and better usable output.
 
-### Agent conversation chrome and conversation path
+Existing recipe preview, atomic creation, idempotency, source-identity stripping, local edits and ZIP delivery should be reused. An outcome view is a projection of the same Graph; it must cover ungrouped image nodes and multiple outputs per group. The existing canvas remains the default until task observations justify a change.
 
-- Collapsed sidebar, mobile conversation sheet, clipped suggestion chips. Decision boundary: [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md).
-- Question-count and visual-quality samples for conversation create.
-- A separate browser regression for the conversation path. `just web-e2e-live-graph` covers skip-Agent direct create and workbench continuous actions.
+## Multi-Merchant and Commercial Requirements
 
-### Agent durability
+Merchant is the tenant. Users access merchants through memberships; brands, products and delivery channels belong within that boundary. Planned roles are merchant Owner, Editor and Viewer, plus a separate site Operator. One user can belong to multiple merchants.
 
-The next candidate still needs admissible G-06 live business evidence and G-07 full verification on a clean, fixed checkout, under the [Platform Reliability release contract](audits/performance-governance.md#production-gates). Historical S1-S6 implementation slices are delivered. The old G-07 PASS applies only to `fb658633`, not later candidates. The [original production plan](history/agent-runtime-timeline.md#platform-production-gate-history) and [runtime-ownership record](history/agent-runtime-timeline.md#runtime-ownership-evidence) preserve historical evidence without reopening implementation.
+Isolation must cover HTTP/use cases, resource references, media variants, exports, queues, retries, SSE, browser caches, Agent contracts and internal callbacks. A payload merchant ID or internal bearer token cannot grant access. Switching merchants does not reassign existing tasks. Partial implementation must not expose a second mutually untrusted merchant.
 
-Remaining: the [evaluation charter](audits/agent-eval-system.md) decides G-06 behavior gates from reviewed `run_id` evidence; execution progress lives on the [issue board](audits/tasks/README.md). Closing an evidence issue does not pass the gate. Until the gates pass, do not expand default capability, and do not treat Pi session files as durable proof. Background model calls stay unsupported per production D-03. The old Go Agent stays on `exp`. Session, Task, and WorkflowRun stay separate (`CONTEXT.md`).
+The first supported topology is a single-host Compose deployment with PostgreSQL, Redis, local media and the current Go/Node/Web services. Providers are configured by the site Operator; deployment-level BYOK is supported by this design, while merchant-specific keys are a later extension.
 
-### Agent evaluation system
+Usage facts, estimated provider cost and commercial credits/payments are separate records. Every billable entry needs merchant attribution, idempotent reservation and settlement, and explicit handling of unknown outcomes. Invite trials can use operator-assigned credits. Public paid operation additionally requires payments, refunds, reconciliation and actual operating decisions.
 
-Active execution issues and blockers live on the [issue board](audits/tasks/README.md); follow-up publication conditions live in the [business-group index](audits/README.md). The assigned issue bounds the delivery; live code and tests must still be read. Frozen decisions and historical `run_id`: [`audits/agent-eval-system.md`](audits/agent-eval-system.md). Do not record pass^k as product fact without a ledger `run_id`.
+From the first stable release, installation, consistent backups, restoration and supported upgrades become product responsibilities. This does not introduce migration support for retired V1/v2 or historical experimental data. Self-hosted deployments do not send business telemetry to the project operator by default; external model calls still have explicit data destinations.
 
-### Agent self-evolution
+## Release Sequence
 
-Agent Self-Evolution targets merchant tasks with explicit business postconditions on a fixed production model configuration and business version. It owns automatic discovery, testing causal hypotheses, instruction/code proposals, and bounded iteration, with one final user approval. The controller is unimplemented. It reuses Pi, domain tools, and the shared evaluation system; the [current charter](audits/agent-self-harness.md) owns components, evidence, and delivery order. Existing P1/P2/P2b evidence remains; the old P3-P7 and S0-S6 plans have been replaced.
+1. Freeze complete tenant coverage and implementation slices; deliver the outcome-view increment and an evidence-based installation/restoration gap inventory.
+2. Deliver an internal two-merchant build with complete identity, resource, media, event, asynchronous and Agent isolation, plus accountable usage and resource limits.
+3. Deliver invite-ready product workflows: complete image sets, controlled edits, selected delivery snapshots, basic precise text/layout and merchant-scoped visual reuse, with applicable quality and recovery evidence.
+4. Ship a stable self-hosted release with fixed artifacts, supported configuration and installation/restoration/upgrade evidence. The operated site uses the same artifacts.
+5. Add public paid operation based on actual trial feedback, pricing and payment decisions. Expand batch production, channels and specialist features only with supporting demand, quality and cost evidence.
 
-Development inputs still have a one-time startup blocker; see the [development baseline](audits/tasks/eval-development-baseline.md). After valid fixed inputs are delivered, the group runs autonomously without waiting for [manual Skill improvements](audits/tasks/eval-skills.md). Merchant dissatisfaction alone does not establish an Agent defect. Initial problem selection uses measurable development evidence and does not require an online feedback system. Model transfer, subjective feedback attribution, lasting preferences, and general harness replacement remain [future questions](audits/agent-self-harness.md#未来问题), without adding current gates. Steer, long-term memory, and deployment without approval remain outside the prerequisites.
+Release gates cover isolation, common operations, image quality, Agent behavior, credits/execution and installation/recovery. Existing IMG and G-06/G-07 contracts stay in force. Historical runs do not pass a new candidate; development fixtures do not represent customers or revenue.
 
-### Canvas document-authority tests
+## Organization and Existing Work
 
-C0–C6 are landed. C4 idle rewrite/candidate, mid-run inspector typing, undo during a full-graph run, document-save 409 stop, inspector run-this-node, run-to-here, and in-flight cancel are in `just web-e2e-canvas-document`. The named C3 pin for undo during a full-graph run is [canvas-graph-run-undo](audits/tasks/archive/canvas-graph-run-undo.md). Browser undo and 409 evidence is [canvas-c4-remainder](audits/tasks/archive/canvas-c4-remainder.md). Inspector run-control evidence is [canvas-c4-run-controls](audits/tasks/archive/canvas-c4-run-controls.md); do not republish version-semantics work.
+Six groups own independently verifiable outcomes: Merchant Platform, Workflow Experience, Image Quality, Platform Reliability, Agent Quality and Agent Self-Evolution. The [group index](audits/README.md) owns responsibilities and capacity; the [shared board](audits/tasks/README.md) owns claims and exact task state. Roles without an actual assignee remain unfilled. No growth group is created for nonexistent merchant operations.
 
-### Runtime performance governance
+Self-evolution retains automatic discovery, causal validation, instruction/code candidates, bounded iterations and one final user approval. It starts from a valid frozen development package without waiting for production feedback or every evaluation layer. Hidden evaluation material, authorization and spending boundaries remain outside candidate modification.
 
-Unverified directions: time from a Graph/Agent fault to user-visible recovery, dispatch tail latency alongside recovery backlog, and deployed connection/lock-wait behavior. ImageSession Status/SSE cost at the fixed active-set fixture is delivered by [perf-imagesession-active-status](audits/tasks/archive/perf-imagesession-active-status.md). Select work using the risks and publication conditions in the [Platform Reliability charter](audits/performance-governance.md#下一步如何选择). Do not repeatedly run full release gates before freezing the candidate. SaaS tenant admission belongs to a separate product baseline.
-
-### Responsibility consolidation
-
-Workflow Experience owns inspector draft version semantics. The mid-run inspector save and AR-01 baseline contract are delivered in [canvas-inspector-midrun](audits/tasks/archive/canvas-inspector-midrun.md). The [journal assessment](audits/tasks/archive/arch-journal-assessment.md) is complete: keep the current structure; implementation is not authorized. The [original architecture record](history/agent-runtime-timeline.md#architecture-assessment-history) preserves sources and historical evidence without a separate group or task queue.
-
-### Image production quality
-
-- Real-provider contracts for size, format, and advanced fields.
-- [Image Quality](audits/image-quality.md) owns the Taobao listing comparison and resulting quality improvements. The current [image-eval-pool](audits/tasks/image-eval-pool.md) keeps its claim and contract. Image gates and Agent scores remain separate.
-- Delivery specs, crop preview, and batch download.
-- Failure, cancel, retry, and provider-note feedback.
-
-## Medium term
-
-- Richer fact conflict resolution and structured spec entry.
-- User-level visual-system save, compare, and reuse across products.
-- Image quality scores, similar-candidate clustering, and selection help.
-- More image provider adapters and observability.
-- Workflow run cost, latency, and failure-rate stats.
-
-## SaaS
-
-SaaS needs its own design for tenants, quotas and billing, object storage and retention, compatibility windows, audit, and SLOs. Those contracts start at the SaaS baseline and do not constrain the current live demo.
+Existing evaluation IDs, frozen thresholds, candidates and evidence are preserved. Production mining is scheduled after an actual authorized commercial environment exists. New paid experiments still require their own applicable authorization.

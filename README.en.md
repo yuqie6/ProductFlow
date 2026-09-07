@@ -12,7 +12,9 @@
 
 ProductFlow is an open-source product-visual workspace for a single merchant. A user uploads real product references, chooses the required image types and quantities, and works with a workflow Agent to clarify price, style, text language, copy requirements, and other missing information. The confirmed result becomes an editable, executable image-production workflow.
 
-The public instance is a personal live demo with one administrator and one merchant. The main repository is in rapid development and accepts breaking changes. Deployments that need a stable snapshot should fork. Following this repository may require recreating the database and storage. Multi-tenancy, billing, team permissions, and formal SaaS compatibility policies belong to a later stage.
+The public instance is a personal live demo. There is no formal commercial release or commercial merchant user base yet. The current implementation has one administrator and one merchant; the development mainline may still require recreating the database and storage.
+
+The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner using the same product. Merchant isolation, credits, delivery workflows and stable installation/restoration/upgrades are part of the [release roadmap](docs/ROADMAP.en.md). These planned requirements are not current capabilities.
 
 ## Current Capabilities
 

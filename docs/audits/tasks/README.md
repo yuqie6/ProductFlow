@@ -20,6 +20,9 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [merchant-isolation-contract.md](merchant-isolation-contract.md) | 商家平台 | 证据 | 开放 | — | — |
+| [delivery-workbench-projection.md](delivery-workbench-projection.md) | 工作流体验 | 实现 | 开放 | — | — |
+| [release-readiness-baseline.md](release-readiness-baseline.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 开放 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

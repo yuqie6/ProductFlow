@@ -4,7 +4,9 @@
 
 ProductFlow is a single-administrator, single-merchant visual production workspace. A user uploads real product references, selects intended image types and quantities, and works on a live schema-v3 graph. Agent-first create writes that graph immediately; the Agent applies or proposes ChangeSets instead of submitting a WorkflowDraft.
 
-The current repository is a personal live demo and a rapid-development mainline. Breaking changes are expected. There is no compatibility window, dual runtime, or old-data migration contract. Deployments that need a stable snapshot should fork; following this repository may require recreating the database and storage. Multi-tenancy, billing, team roles, publication integrations, and long-term SaaS compatibility are outside the current contract.
+The current implementation is an unreleased, rapid-development baseline with no commercial merchant users. Breaking changes are expected. There is no current compatibility window, dual runtime, or old-data migration contract; following this baseline may require recreating the database and storage. Multi-tenancy, billing and team roles are not implemented capabilities.
+
+The intended product is a self-hostable, multi-merchant SaaS, also deployed by the project owner as an operated service. The current single-merchant boundary does not define the final product scope. The [release roadmap](docs/ROADMAP.md) owns the unimplemented identity, isolation, commercial, experience and stable-release requirements. Supported upgrades will begin with the first stable release; retired V1/v2 and experimental data remain outside that future contract.
 
 ## Online Flow
 

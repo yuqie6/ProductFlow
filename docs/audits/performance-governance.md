@@ -14,7 +14,9 @@
 4. 正常交互与后台恢复可以共存；锁、连接、扫描、响应体和媒体内存的成本与实际工作量相称。
 5. 发布判断绑定代码版本、配置、数据形状和有效证据；能说明哪些已验证，哪些仍不确定。
 
-当前产品是单管理员、单商家工作区。tenant、真实用户身份、计费、公平配额和对象归档属于 [SaaS 新基线](../ROADMAP.md#saas)，不记作当前可靠性缺陷，也不通过零散补 tenant 字段开工。
+当前实现是单管理员、单商家工作区；2026-09-07 用户明确最终目标为可自托管多商家 SaaS。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
+
+组内先发布 [发行基线调查](tasks/release-readiness-baseline.md)，据当前 Compose、迁移、存储和持久状态形成可执行修复及演练合同。备份包含数据库、媒体、必要 Pi 数据及密钥配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
 
 | 交付问题 | 本组负责 | 交接边界 |
 |---|---|---|
@@ -100,7 +102,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | Agent Session 读取，PERF-12 | cursor page、批量会话摘要/count、`activity_at` 排序；每会话最多返回 20 conversation 摘要。Turn 列表改为批量关联读取 | [目标规模 HTTP](../history/agent-runtime-timeline.md#2026-09-05-agent-读取容量与-turn-批量投影)：25k sessions、27k conversations、单对话 1000 Turns，四条真实读取路径通过固定宽度门；50 条 Turn 页查询 54→5，p95 28.70→8.93ms，正文不变 | 无独立 Session GET 详情接口，详情成本按实际 Turn GET 测量。并发、更长正文、journal/SSE 与真实访问分布不由该单客户端门推定 |
 | journal/ACK 与可观测性，PERF-13 | 批量 PG append、WAL/ACK、恢复前缀确认；[journal 调查](tasks/archive/arch-journal-assessment.md)结论为保留现状 | 标准容量历史 PG batch p95 232.8ms，本地 WAL p95 0.81ms；[问题答案身份修复](tasks/archive/agent-question-answer-identity.md)含第二问 SIGKILL | 当前 batch 指标是 count 和 `last_ms` gauge，不能计算持续 p95；histogram、锁等待和告警是否需要补，跟随具体诊断/部署需求 |
 | 媒体内存 | 共享 ZIP writer 逐文件写临时包，事务只冻结条目身份；商品图库 HTTP 在打包完成后发送文件并清理 | writer 历史门保留；[真实 HTTP 门](../history/agent-runtime-timeline.md#2026-09-05-商品图库-zip-http-内存与传输)：100 张有效 PNG 共 469.19MiB，ZIP 469.35MiB，额外进程 RSS 上界 37.37MiB；鉴权、哈希、传输中断清理与限制拒绝通过；[首文件核验点取消](../history/agent-runtime-timeline.md#2026-09-05-商品图库打包期间-http-取消)已测 | 单客户端、同内容硬链接、暖文件缓存；不覆盖并发导出、临时存储饱和、压缩/磁盘写入中断、完整像素解码、JPEG/WebP 或交付导出 HTTP |
-| SaaS，PERF-10 | 现行合同明确为单商家 | [ROADMAP](../ROADMAP.md#saas) | 产品基线扩展时统一设计身份、范围、配额、存储与审计；当前不发布局部补丁 |
+| SaaS，PERF-10 | 当前实现单商家，正式版目标已确定多商家 | [ROADMAP](../ROADMAP.md)、[商家平台](merchant-platform.md) | 已进入正式版主线；本组负责调用事实、容量与发行恢复，按完整隔离合同协作 |
 
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
 
