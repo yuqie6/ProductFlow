@@ -14,6 +14,7 @@ import (
 
 // MP-C：localedit 在 provider Edit 前 Reserve；成功 Settle、未发出 Release、已发出不明 MarkUnknown。
 // 单价占位 1 内部单位；幂等键绑定 task + attempt（重试另开 attempt）。
+// 迟到 worker 只能收口自己的预留，不能回退到任务下其它 attempt 的活跃预留。
 
 const localEditQuotaUnits int64 = 1
 
@@ -57,17 +58,17 @@ func (e Executor) reserveEditQuota(ctx context.Context, merchantID, taskID, atte
 }
 
 func (e Executor) settleEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
-	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	key := editQuotaKey(taskID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, localEditQuotaUnits))
 }
 
 func (e Executor) markEditQuotaUnknown(ctx context.Context, merchantID, taskID, attemptID string) error {
-	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	key := editQuotaKey(taskID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
 }
 
 func (e Executor) releaseEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
-	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	key := editQuotaKey(taskID, attemptID)
 	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
 }
 
@@ -80,53 +81,6 @@ func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) 
 		return nil
 	}
 	return err
-}
-
-func mustActiveEditQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID, attemptID string) string {
-	key, err := activeEditQuotaKey(ctx, db, merchantID, taskID, attemptID)
-	if err != nil || key == "" {
-		return editQuotaKey(taskID, attemptID)
-	}
-	return key
-}
-
-func activeEditQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID, attemptID string) (string, error) {
-	merchantID = strings.TrimSpace(merchantID)
-	taskID = strings.TrimSpace(taskID)
-	attemptID = strings.TrimSpace(attemptID)
-	if merchantID == "" || taskID == "" {
-		return editQuotaKey(taskID, attemptID), nil
-	}
-	if attemptID != "" {
-		exact := editQuotaKey(taskID, attemptID)
-		var row schema.MerchantQuotaHolds
-		err := db.WithContext(ctx).
-			Where("merchant_id = ? AND idempotency_key = ? AND status IN ?", merchantID, exact, []string{
-				quota.StatusReserved, quota.StatusPendingReconciliation,
-			}).
-			Take(&row).Error
-		if err == nil {
-			return row.IdempotencyKey, nil
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", apperr.Internal("读取额度预留失败")
-		}
-	}
-	prefix := "local-edit:" + taskID + ":"
-	var row schema.MerchantQuotaHolds
-	err := db.WithContext(ctx).
-		Where("merchant_id = ? AND idempotency_key LIKE ? AND status IN ?", merchantID, prefix+"%", []string{
-			quota.StatusReserved, quota.StatusPendingReconciliation,
-		}).
-		Order("created_at DESC").
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return editQuotaKey(taskID, attemptID), nil
-	}
-	if err != nil {
-		return "", apperr.Internal("读取额度预留失败")
-	}
-	return row.IdempotencyKey, nil
 }
 
 func providerPhaseStarted(phase string) bool {
@@ -144,7 +98,7 @@ func (s Service) finalizeEditQuotaOnCancel(ctx context.Context, merchantID, task
 	if merchantID == "" {
 		return nil
 	}
-	key := mustActiveEditQuotaKey(ctx, s.DB, merchantID, taskID, attemptID)
+	key := editQuotaKey(taskID, attemptID)
 	if providerPhaseStarted(progressPhase) {
 		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
 	}
@@ -156,7 +110,7 @@ func finalizeRecoveredUnknownQuota(ctx context.Context, db *gorm.DB, productID, 
 	if err != nil {
 		return err
 	}
-	key := mustActiveEditQuotaKey(ctx, db, merchantID, taskID, attemptID)
+	key := editQuotaKey(taskID, attemptID)
 	return finalizeQuotaIgnoreMissing((&quota.Service{DB: db}).MarkUnknown(ctx, merchantID, key))
 }
 

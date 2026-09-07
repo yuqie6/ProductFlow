@@ -179,3 +179,58 @@ func TestLocalEditCancelReleasesQuotaBeforeProvider(t *testing.T) {
 		t.Fatalf("cancel must restore balance before=%+v after=%+v", before, after)
 	}
 }
+
+func TestLateAttemptCannotFinalizeNewAttemptQuota(t *testing.T) {
+	for _, action := range []string{"release", "settle", "unknown"} {
+		t.Run(action, func(t *testing.T) {
+			es := newEditServer(t, MockProvider{Cap: SupportedCapability("mock-local")})
+			ctx := context.Background()
+			merchantID := auth.MustDevMerchantID(t, es.db)
+			taskID, oldAttempt, newAttempt := clockid.New(), clockid.New(), clockid.New()
+			oldKey, newKey := editQuotaKey(taskID, oldAttempt), editQuotaKey(taskID, newAttempt)
+			q := &quota.Service{DB: es.db}
+			if _, _, err := q.Reserve(ctx, merchantID, oldKey, localEditQuotaUnits, quota.DefaultPriceVersionID); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := q.Release(ctx, merchantID, oldKey); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := q.Reserve(ctx, merchantID, newKey, localEditQuotaUnits, quota.DefaultPriceVersionID); err != nil {
+				t.Fatal(err)
+			}
+			before := loadQuotaAccount(t, es.db, merchantID)
+			e := Executor{DB: es.db}
+			var actionErr error
+			switch action {
+			case "release":
+				actionErr = e.releaseEditQuota(ctx, merchantID, taskID, oldAttempt)
+			case "settle":
+				actionErr = e.settleEditQuota(ctx, merchantID, taskID, oldAttempt)
+			case "unknown":
+				actionErr = e.markEditQuotaUnknown(ctx, merchantID, taskID, oldAttempt)
+			}
+			if action == "release" && actionErr != nil {
+				t.Fatal(actionErr)
+			}
+			if action != "release" {
+				var ae apperr.Error
+				if !errors.As(actionErr, &ae) || ae.Status != http.StatusConflict {
+					t.Fatalf("expected old released hold conflict, got %v", actionErr)
+				}
+			}
+			hold := loadQuotaHold(t, es.db, merchantID, newKey)
+			if hold.Status != quota.StatusReserved {
+				t.Fatalf("late %s changed new attempt hold: %+v", action, hold)
+			}
+			after := loadQuotaAccount(t, es.db, merchantID)
+			if after.AvailableUnits != before.AvailableUnits || after.ReservedUnits != before.ReservedUnits {
+				t.Fatalf("late %s changed account: before=%+v after=%+v", action, before, after)
+			}
+			for _, event := range []string{quota.EventRelease, quota.EventSettle, quota.EventMarkUnknown} {
+				if countQuotaEvents(t, es.db, merchantID, event, newKey) != 0 {
+					t.Fatalf("late %s wrote new attempt event %s", action, event)
+				}
+			}
+		})
+	}
+}
