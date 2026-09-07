@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-library-binding.md](merchant-library-binding.md) | 完成 | B4 图库绑定跨商404零写入；≠MP-B |
 | [merchant-image-session.md](merchant-image-session.md) | 完成 | B5 会话生图跨商404；≠MP-B |
 | [workbench-default-entry-walkthrough.md](workbench-default-entry-walkthrough.md) | 完成 | 建议暂不全局默认成果；采用/视觉共享API缺口已记 |
 | [merchant-graph-recipe.md](merchant-graph-recipe.md) | 完成 | B3 Graph/SSE/recipe 跨商404；≠MP-B |

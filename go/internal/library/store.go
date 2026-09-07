@@ -19,6 +19,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
 )
 
@@ -299,12 +300,12 @@ func lockLibraryAssets(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset,
 	return loadAssets(ctx, tx, auth.ScopeMerchant(ctx, libraryAssetQuery(tx).Where("a.id IN ?", ids), "a.merchant_id"))
 }
 
-// reloadInOrder 按传入 ids 顺序重载。任一 id 不在结果集返回 404。
+// reloadInOrder 按传入 ids 顺序重载。任一 id 缺失或跨商统一 NotFoundCrossMerchant。
 func reloadInOrder(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset, error) {
 	if len(ids) == 0 {
 		return []Asset{}, nil
 	}
-	items, err := loadAssets(ctx, tx, libraryAssetQuery(tx).Where("a.id IN ?", ids))
+	items, err := loadAssets(ctx, tx, auth.ScopeMerchant(ctx, libraryAssetQuery(tx).Where("a.id IN ?", ids), "a.merchant_id"))
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +317,7 @@ func reloadInOrder(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset, err
 	for _, id := range ids {
 		asset, ok := byID[id]
 		if !ok {
-			return nil, apperr.NotFound("素材库资产不存在")
+			return nil, auth.NotFoundCrossMerchant()
 		}
 		out = append(out, asset)
 	}
@@ -340,19 +341,22 @@ type sessionAssetScan struct {
 	VerifiedAt         *time.Time `gorm:"column:verified_at"`
 }
 
-// loadSessionAsset FOR UPDATE 锁会话图行并带上 MediaObject。不存在返回 404。
+// loadSessionAsset FOR UPDATE 锁会话图行并带上 MediaObject。
+// 缺失与跨商统一 NotFoundCrossMerchant（E3 / B1）。
 func loadSessionAsset(ctx context.Context, tx *gorm.DB, id string) (sessionRow, error) {
 	var row sessionAssetScan
-	err := tx.WithContext(ctx).Table("image_session_assets AS a").
+	q := tx.WithContext(ctx).Table("image_session_assets AS a").
 		Select(`a.id, a.kind::text AS kind, a.original_filename, a.created_at,
 		       m.id AS media_id, m.storage_path, m.mime_type, m.byte_size, m.width, m.height, m.sha256,
 		       m.verification_status, m.created_at AS media_created_at, m.verified_at`).
 		Joins("JOIN media_objects m ON m.id = a.media_object_id").
+		Joins("JOIN image_sessions s ON s.id = a.session_id").
 		Clauses(pfdb.ForUpdateOf("a")).
-		Where("a.id = ?", id).
-		Take(&row).Error
+		Where("a.id = ?", id)
+	q = auth.ScopeMerchant(ctx, q, "s.merchant_id")
+	err := q.Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return sessionRow{}, apperr.NotFound("会话图片不存在")
+		return sessionRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return sessionRow{}, err
@@ -388,7 +392,16 @@ func loadSessionAsset(ctx context.Context, tx *gorm.DB, id string) (sessionRow, 
 	}, nil
 }
 
+// requireWorkflow 先校验商品属本商，再确认 workflow∈product。
+// 跨商/缺失商品 → NotFoundCrossMerchant；本商但无该工作流 →「工作流不存在」。
 func requireWorkflow(ctx context.Context, tx *gorm.DB, productID, workflowID string, forUpdate bool) error {
+	if forUpdate {
+		if _, err := product.Lock(ctx, tx, productID); err != nil {
+			return err
+		}
+	} else if err := (product.GraphGuard{}).Require(ctx, tx, productID); err != nil {
+		return err
+	}
 	q := tx.WithContext(ctx).Select("id").Where("id = ? AND product_id = ?", workflowID, productID)
 	if forUpdate {
 		q = q.Clauses(pfdb.ForUpdate())

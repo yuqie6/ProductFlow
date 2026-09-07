@@ -5,6 +5,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -42,15 +43,16 @@ type workflowLinkScan struct {
 // listWorkflowTx 列出工作流子图库关联。ProductImageAssetID 优先用本商品收藏行，否则回落到源商品图。
 func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, workflowID string, limit int) (WorkflowList, error) {
 	var rows []workflowLinkScan
-	err := pgxTx.WithContext(ctx).Table("workflow_media_library_assets AS w").
+	q := pgxTx.WithContext(ctx).Table("workflow_media_library_assets AS w").
 		Select("w.media_library_asset_id, w.created_at, lib.id AS collect_id, src.id AS source_id").
 		Joins("JOIN media_library_assets a ON a.id = w.media_library_asset_id").
 		Joins("LEFT JOIN product_image_assets lib ON lib.source_library_asset_id = a.id AND lib.product_id = ?", productID).
 		Joins("LEFT JOIN product_image_assets src ON src.id = a.source_product_asset_id AND src.product_id = ?", productID).
 		Where("w.workflow_id = ?", workflowID).
 		Order("w.created_at DESC, w.media_library_asset_id DESC").
-		Limit(limit).
-		Scan(&rows).Error
+		Limit(limit)
+	q = auth.ScopeMerchant(ctx, q, "a.merchant_id")
+	err := q.Scan(&rows).Error
 	if err != nil {
 		return WorkflowList{}, err
 	}
@@ -86,7 +88,7 @@ func (s Service) listWorkflowTx(ctx context.Context, pgxTx *gorm.DB, productID, 
 }
 
 // SyncWorkflow 重写工作流子图库关联集合，不复制媒体 bytes。
-// 未选素材、ID 无效或重复返回 Validation；工作流或素材不存在返回 NotFound。
+// 未选素材、ID 无效或重复返回 Validation；跨商 product/素材或缺失统一 NotFoundCrossMerchant。
 func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string, libraryIDs []string) (WorkflowList, error) {
 	if len(libraryIDs) == 0 {
 		return WorkflowList{}, apperr.Validation("至少选择一个素材")
@@ -111,12 +113,12 @@ func (s Service) SyncWorkflow(ctx context.Context, productID, workflowID string,
 		if err := requireWorkflow(ctx, pgxTx, productID, workflowID, false); err != nil {
 			return err
 		}
-		assets, err := loadAssets(ctx, pgxTx, libraryAssetQuery(pgxTx).Where("a.id IN ?", uniqueIDs))
+		assets, err := loadAssets(ctx, pgxTx, auth.ScopeMerchant(ctx, libraryAssetQuery(pgxTx).Where("a.id IN ?", uniqueIDs), "a.merchant_id"))
 		if err != nil {
 			return err
 		}
 		if len(assets) != len(uniqueIDs) {
-			return apperr.NotFound("素材库资产不存在")
+			return auth.NotFoundCrossMerchant()
 		}
 		for _, asset := range assets {
 			if _, err := validateForUse(asset); err != nil {

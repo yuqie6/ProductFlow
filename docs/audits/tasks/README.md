@@ -20,7 +20,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-library-binding.md](merchant-library-binding.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-library-binding | 2026-09-07T13:50:00+08:00 |
+| [merchant-delivery-localedit.md](merchant-delivery-localedit.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-delivery-localedit | 2026-09-07T13:56:00+08:00 |
 | [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-impact-preview | 2026-09-07T13:45:00+08:00 |
 | [workbench-conditional-results-default.md](workbench-conditional-results-default.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [release-n-to-n1-upgrade.md](release-n-to-n1-upgrade.md) | 平台可靠性 | 实现 | 认领 | sub-release/release-n-to-n1-upgrade | 2026-09-07T13:48:00+08:00 |

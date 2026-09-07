@@ -136,7 +136,7 @@ func originForLibrary(asset Asset) string {
 }
 
 // SaveFromSession 把连续生图结果写入全局素材身份，复用 MediaObject。
-// 非生成结果或媒体未核验返回 Validation；会话图片不存在返回 NotFound；媒体元数据不全返回 Conflict。
+// 非生成结果或媒体未核验返回 Validation；会话图缺失/跨商统一 NotFoundCrossMerchant；媒体元数据不全返回 Conflict。
 func (s Service) SaveFromSession(ctx context.Context, imageSessionAssetID string) (SaveResult, error) {
 	var result SaveResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
