@@ -4,7 +4,8 @@
 // 操作事实；本包只管商家被收取的服务额度（available/reserved/事件），不另造平台成本账。
 //
 // B0 账本已交付；B1 将图会话 Generate 入队点接到 Reserve/Settle/Release/MarkUnknown。
-// Agent 入口与余额 HTTP 仍未接线。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
+// B2 将 Graph image_generation 出图前接到同一账本。Agent 入口与余额 HTTP 仍未接线。
+// 未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
 package quota
 
 import (

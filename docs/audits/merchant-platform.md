@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0+B1 已交付**（账本 + 图会话 Generate）。**B2 进行中**：[merchant-mp-c-wire-b2-graph](tasks/merchant-mp-c-wire-b2-graph.md) Graph 图节点接线。**仍开放**：Agent、HTTP 余额、全入口；≠ R5 ≠ 真实支付 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0+B1+B2 已交付**（[B2](tasks/archive/merchant-mp-c-wire-b2-graph.md)）。**B3 进行中**：[merchant-mp-c-wire-b3-agent](tasks/merchant-mp-c-wire-b3-agent.md) Agent 入口。**仍开放**：HTTP 余额、全入口；≠ R5 ≠ 真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
@@ -321,8 +321,8 @@
 
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
-- MP-C **B0 骨架已交付**；**B1 已接图会话 Generate**（Reserve→Settle/Release/MarkUnknown）。**未接**：Graph 图节点执行、Agent 入口、Op/商家余额 HTTP、其它收费入口与 R5。MP-D 仅 A8 合同草案（≠完整运营产品化）。
+- MP-C **B0 骨架已交付**；**B1 已接图会话 Generate**；**B2 已接 Graph image_generation**（Reserve→Settle/Release/MarkUnknown）。**未接**：Agent 入口、Op/商家余额 HTTP、其它收费入口与 R5。MP-D 仅 A8 合同草案（≠完整运营产品化）。
 - **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
 - 额度公平调度、混合负载经营验收仍属后续（≠本 R1 条文）。
 
-本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；MP-C B0+B1（仅图会话 Generate）已交付；≠ 第二外部商产品上线；≠ MP-C 全入口/R5；≠ MP-D。**
+本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；MP-C B0+B1+B2（图会话 Generate + Graph 图节点）已交付；≠ 第二外部商产品上线；≠ MP-C 全入口/R5；≠ MP-D。**

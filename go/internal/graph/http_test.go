@@ -80,6 +80,7 @@ func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServ
 	t.Cleanup(srv.Close)
 	gs := &graphServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
 	gs.cookies = auth.MustAuthenticate(t, gs.client, srv.URL)
+	mustSeedMerchantQuota(t, gdb, auth.MustDevMerchantID(t, gdb), 10_000)
 	var previousCapacity *string
 	_ = gs.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = gs.pool.Exec(context.Background(), `

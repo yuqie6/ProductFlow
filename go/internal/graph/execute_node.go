@@ -37,6 +37,9 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
 		return failErr
 	}
+	if qErr := e.finalizeImageQuotaAfterClaimedFailure(ctx, runID, nodeRunID, attemptID); qErr != nil {
+		return qErr
+	}
 	return nil
 }
 
@@ -385,8 +388,9 @@ func (e Executor) callProvider(
 	return result, promote, err
 }
 
-// callImageProvider 与 callProvider 同一围栏：prepare → invoke → finish。
-// invoke 出错标 unknown，不把空 Bytes 当失败——空结果由 runClaimedNode 再报证明失败。
+// callImageProvider 与 callProvider 同一围栏：Reserve → prepare → invoke → finish。
+// 额度不足显式 Conflict；未写出 effect 的围栏失败 Release；invoke 出错 MarkUnknown。
+// 空 Bytes 不当失败——空结果由 runClaimedNode 再报证明失败。
 func (e Executor) callImageProvider(
 	ctx context.Context,
 	runID string,
@@ -399,6 +403,13 @@ func (e Executor) callImageProvider(
 		return ImageResult{}, false, apperr.Validation("节点运行缺少 attempt token")
 	}
 	attemptID := *nodeRun.ActiveAttemptID
+	merchantID, err := merchantIDForGraphRun(ctx, e.DB, runID)
+	if err != nil {
+		return ImageResult{}, false, err
+	}
+	if err := e.reserveImageQuota(ctx, merchantID, nodeRun.ID, attemptID); err != nil {
+		return ImageResult{}, false, err
+	}
 	request := map[string]any{
 		"node_id":      nodeRun.NodeID,
 		"node_type":    string(nodeType),
@@ -406,12 +417,28 @@ func (e Executor) callImageProvider(
 		"attempt_id":   attemptID,
 	}
 	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
+		if errors.Is(err, errProviderFenced) {
+			_ = e.releaseImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
+			return ImageResult{}, false, err
+		}
+		started, effectErr := imageProviderEffectExists(ctx, e.DB, nodeRun.ID, attemptID)
+		if effectErr != nil {
+			return ImageResult{}, false, effectErr
+		}
+		if started {
+			_ = e.markImageQuotaUnknown(ctx, merchantID, nodeRun.ID, attemptID)
+		} else {
+			_ = e.releaseImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
+		}
 		return ImageResult{}, false, err
 	}
 	result, err := invoke()
 	if err != nil {
 		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
 			return ImageResult{}, false, markErr
+		}
+		if qErr := e.markImageQuotaUnknown(ctx, merchantID, nodeRun.ID, attemptID); qErr != nil {
+			return ImageResult{}, false, qErr
 		}
 		return ImageResult{}, false, providerUnknownError{}
 	}
@@ -684,7 +711,8 @@ func (e Executor) persistImageArtifact(
 		imageTypeKey = &key
 	}
 	now := time.Now().UTC()
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	consumed := false
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		assetID, err := e.Deps.Assets.Write(ctx, pgxTx, GeneratedImageInput{
 			ProductID:    productID,
 			Title:        node.Title,
@@ -753,14 +781,22 @@ func (e Executor) persistImageArtifact(
 			return err
 		}
 		if !promote {
-			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
+				return err
+			}
+			consumed = true
+			return nil
 		}
 		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID)
 		if err != nil {
 			return err
 		}
 		if !promotable {
-			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
+				return err
+			}
+			consumed = true
+			return nil
 		}
 		if nodeRun.NodeID != nil {
 			// 节点 id 在 move/整理后仍稳定。不能用 run 快照 revision 对 live revision
@@ -797,9 +833,27 @@ func (e Executor) persistImageArtifact(
 		}); err != nil {
 			return err
 		}
-		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
-		return err
+		if _, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
+			return err
+		}
+		consumed = true
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if !consumed {
+		return nil
+	}
+	merchantID, mErr := merchantIDForGraphRun(ctx, e.DB, run.ID)
+	if mErr != nil {
+		return mErr
+	}
+	attemptID := ""
+	if nodeRun.ActiveAttemptID != nil {
+		attemptID = *nodeRun.ActiveAttemptID
+	}
+	return e.settleImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
 }
 
 // loadReferences 按 ProductImageAsset id 读字节交给 provider。Assets 未注入或 MIME 非 png/jpeg/webp 返回 Validation。

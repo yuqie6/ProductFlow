@@ -13,6 +13,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"github.com/yuqie6/productflow/internal/quota"
 	"gorm.io/gorm"
 )
 
@@ -190,6 +191,13 @@ func graphRunningRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 
 func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutoff time.Time) (graphRunRecoverResult, error) {
 	var result graphRunRecoverResult
+	type quotaAction struct {
+		nodeRunID string
+		attemptID string
+		unknown   bool
+	}
+	var actions []quotaAction
+	var merchantID string
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		run, locked, err := loadGraphRunSkipLocked(ctx, pgxTx, runID)
 		if err != nil {
@@ -229,10 +237,22 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 		if len(stale) == 0 {
 			return nil
 		}
+		if scanErr := pgxTx.WithContext(ctx).Raw(`
+			SELECT p.merchant_id
+			FROM workflow_graph_runs r
+			JOIN workflow_graphs g ON g.id = r.graph_id
+			JOIN products p ON p.id = g.product_id
+			WHERE r.id = ?`, runID).Scan(&merchantID).Error; scanErr != nil {
+			return scanErr
+		}
 		markedUnknown := false
 		requeued := false
 		now := time.Now().UTC()
 		for _, node := range stale {
+			attemptID := ""
+			if node.ActiveAttemptID != nil {
+				attemptID = *node.ActiveAttemptID
+			}
 			if nodeSafeToRequeue(node) {
 				update := pgxTx.WithContext(ctx).Model(&schema.WorkflowGraphNodeRuns{}).
 					Where("id = ? AND status = ?", node.ID, "running").
@@ -254,6 +274,7 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 						return err
 					}
 					requeued = true
+					actions = append(actions, quotaAction{nodeRunID: node.ID, attemptID: attemptID, unknown: false})
 				}
 				_ = pgxTx.WithContext(ctx).Where("node_run_id = ? AND effect_result = ?", node.ID, "pending").
 					Delete(&schema.WorkflowGraphProviderEffects{}).Error
@@ -263,6 +284,7 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 				return err
 			}
 			markedUnknown = true
+			actions = append(actions, quotaAction{nodeRunID: node.ID, attemptID: attemptID, unknown: true})
 		}
 		if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
 			return err
@@ -280,7 +302,19 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 		result.stale = requeued
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	svc := &quota.Service{DB: gdb}
+	for _, action := range actions {
+		key := mustActiveImageQuotaKey(ctx, gdb, merchantID, action.nodeRunID, action.attemptID)
+		if action.unknown {
+			_ = finalizeQuotaIgnoreMissing(svc.MarkUnknown(ctx, merchantID, key))
+			continue
+		}
+		_ = finalizeQuotaIgnoreMissing(svc.Release(ctx, merchantID, key))
+	}
+	return result, nil
 }
 
 func restageGraphRun(ctx context.Context, gdb *gorm.DB, runID string) (bool, error) {

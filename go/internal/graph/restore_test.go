@@ -43,6 +43,7 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 
 	root := t.TempDir()
 	merchantID := auth.MustDevMerchantID(t, srcDB)
+	mustSeedMerchantQuota(t, srcDB, merchantID, 10_000)
 	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	created, err := (product.Service{
 		DB:    srcDB,
