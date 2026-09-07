@@ -8,14 +8,14 @@
 
 按 [总纲第 6 节](../ROADMAP.md#6-核心竞争力的建设与验证)，本组承担事实依据、单图目的、商品保真、准确文字与视觉复用的质量合同。比较纯生成与保留主体/确定性组合路线时，分别记录适用输入、实际变化和失败，不把提示词约束当保真保证。文字/布局应检查内容正确、可读和导出一致性；品牌复用检查第二商品不继承来源身份。
 
-[内容试跑](tasks/archive/image-quality-content-pilot.md) 已完成两商品完整对照（baseline `20260907T082558Z-673aeeb0` / candidate `20260907T084359Z-673aeeb0`）：闸门仍各 2/8；工作台均分相对原版 +4/平2/−2，炸锅卖点保真 5→4 单列。已归档；不把 k=1 写成泛化。新的端到端竞品比较须独立冻结输入与预算，不能覆盖旧 42/32 图位合同。[卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md) 已收窄生成策略（一理由+本体证据、禁多利益底栏/臆造剖视/策划标签；拼装只发一句主要理由），确定性回归已归档；未宣称 live 改善或 R3。[卖点 live k=1](tasks/image-quality-selling-point-live.md) 进行中（≠R3）。
+[内容试跑](tasks/archive/image-quality-content-pilot.md) 已完成两商品完整对照（baseline `20260907T082558Z-673aeeb0` / candidate `20260907T084359Z-673aeeb0`）：闸门仍各 2/8；工作台均分相对原版 +4/平2/−2，炸锅卖点保真 5→4 单列。已归档；不把 k=1 写成泛化。新的端到端竞品比较须独立冻结输入与预算，不能覆盖旧 42/32 图位合同。[卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md) 已收窄生成策略（一理由+本体证据、禁多利益底栏/臆造剖视/策划标签；拼装只发一句主要理由），确定性回归已归档。[卖点 live k=1](tasks/archive/image-quality-selling-point-live.md) 已归档（run `20260907T092416Z-d6b5915c`）：相对试跑 candidate 闸门否→是、保真 4→4（平）；≠R3 / ≠全面改善。
 
 ## 组内交付
 
 1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。[事实分层闸 CF-B0](tasks/archive/compete-facts-layer-gate.md)、[CF-B1 图位文字追溯](tasks/archive/compete-facts-text-trace.md)、[CF-B2 变更影响预览](tasks/archive/compete-facts-impact-preview.md)、[CF-B3 双路线](tasks/archive/compete-facts-produce-route.md)、[CF-B4 受控排版](tasks/archive/compete-facts-controlled-layout.md) 与 [CF-B5 品牌/视觉继承](tasks/archive/compete-facts-brand-inherit.md) 已交付（Brand 占位；≠R3）。合同实施批次收口；采用硬闸已交付（见 archive）；内容试跑已归档；后续 OCR/主体提取另发。
 2. [image-quality-content-pilot](tasks/archive/image-quality-content-pilot.md)：两商品完整对照已归档；闸门未过、卖点策略观感与评委分有分歧。
 3. [卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md)：生成策略与拼装已收窄并归档（≠R3；无 live）；继续其它生成链/排版切片时不与旧 42/32 图位完成条件混写。
-4. [卖点 live k=1](tasks/image-quality-selling-point-live.md)：进行中；炸锅 selling_point 工作台+直调+三方对照；≠R3。
+4. [卖点 live k=1](tasks/archive/image-quality-selling-point-live.md)：已归档；闸门相对试跑 candidate 改善、保真持平 4；≠R3。
 5. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
