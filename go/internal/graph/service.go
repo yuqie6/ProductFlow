@@ -513,48 +513,13 @@ func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflo
 // CancelRun 取消 queued 或 running 的 GraphRun。已取消幂等返回当前行；已终态返回 Conflict。
 // 缺图或缺 run 返回 NotFound。已预留下的图节点额度：未发出 Release，已写 effect MarkUnknown。
 func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
-	type pendingImageHold struct {
-		nodeRunID string
-		attemptID string
-	}
-	var merchantID string
-	var pending []pendingImageHold
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var scanErr error
-		if scanErr = pgxTx.WithContext(ctx).Raw(`
-			SELECT p.merchant_id
-			FROM workflow_graphs g
-			JOIN products p ON p.id = g.product_id
-			WHERE g.id = ? AND g.product_id = ?`, graphID, productID).Scan(&merchantID).Error; scanErr != nil {
-			return scanErr
-		}
-		var nodes []schema.WorkflowGraphNodeRuns
-		if err := pgxTx.WithContext(ctx).
-			Select("id", "active_attempt_id").
-			Where("graph_run_id = ? AND status IN ?", runID, []string{NodeRunQueued, NodeRunRunning}).
-			Find(&nodes).Error; err != nil {
-			return err
-		}
-		pending = pending[:0]
-		for _, node := range nodes {
-			attemptID := ""
-			if node.ActiveAttemptID != nil {
-				attemptID = *node.ActiveAttemptID
-			}
-			pending = append(pending, pendingImageHold{nodeRunID: node.ID, attemptID: attemptID})
-		}
 		var err error
 		out, err = s.CancelRunTx(ctx, pgxTx, productID, graphID, runID)
 		return err
 	})
-	if err != nil {
-		return GraphRunResponse{}, err
-	}
-	for _, item := range pending {
-		_ = s.finalizeImageQuotaOnCancel(ctx, merchantID, item.nodeRunID, item.attemptID)
-	}
-	return out, nil
+	return out, err
 }
 
 // CancelRunTx 在调用方已有的事务里取消 GraphRun。语义与 [Service.CancelRun] 相同。

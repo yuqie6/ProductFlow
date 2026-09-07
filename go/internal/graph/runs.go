@@ -775,9 +775,14 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 	now := time.Now().UTC()
 	reason := GraphCancelledReason
 	var nodeRuns []schema.WorkflowGraphNodeRuns
-	if err := tx.WithContext(ctx).Select("id", "node_id").Where("graph_run_id = ? AND status IN ?", run.ID, []string{"queued", "running"}).Find(&nodeRuns).Error; err != nil {
+	if err := tx.WithContext(ctx).Select("id", "node_id", "active_attempt_id").Clauses(pfdb.ForUpdate()).Where("graph_run_id = ? AND status IN ?", run.ID, []string{"queued", "running"}).Find(&nodeRuns).Error; err != nil {
 		return graphRunRow{}, err
 	}
+	merchantID, err := merchantIDForGraphRun(ctx, tx, runID)
+	if err != nil {
+		return graphRunRow{}, err
+	}
+	quotaOwner := Service{DB: tx}
 	result := tx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).Where("id = ? AND status IN ?", run.ID, []string{RunStatusQueued, RunStatusRunning}).Updates(map[string]any{
 		"status":         "cancelled",
 		"failure_reason": reason,
@@ -800,6 +805,13 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 		}
 		if result.RowsAffected != 1 {
 			continue
+		}
+		attemptID := ""
+		if node.ActiveAttemptID != nil {
+			attemptID = *node.ActiveAttemptID
+		}
+		if err := quotaOwner.finalizeImageQuotaOnCancel(ctx, merchantID, node.ID, attemptID); err != nil {
+			return graphRunRow{}, err
 		}
 		if err := appendGraphRunEventLocked(ctx, tx, run.ID, "node.cancelled", &node.ID, map[string]any{
 			"status": NodeRunCancelled, "node_id": node.NodeID, "reason": reason,
