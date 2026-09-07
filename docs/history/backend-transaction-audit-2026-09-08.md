@@ -41,7 +41,7 @@
 | 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | `d1e194c2` |
 | Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | `2610f2b0` |
 | 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
-| 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | 随本次提交 |
+| 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | `a32f72bc` |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -179,3 +179,18 @@ Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未
 连续生图额度查找切片由本任务主代理负责，范围为 `imagesession/quota_wire.go` 和 [数据库查询失败回归](../../go/internal/imagesession/quota_lookup_error_test.go)。原 mustActiveQuotaKey 在查询报错时退回首次生成键，后续额度查询错误会掩盖原故障；未建额度账户的原始负例甚至三条入口均返回 nil。最终回归补齐真实账户和 reserved hold，在独立 pf_quotaread_* 测试库暂时重命名 hold 表，验证 settle/release/unknown 保留 PostgreSQL 42P01、余额与原 hold 不变。该表仅属于一次性测试库，清理先恢复名称再关闭测试库。实际没有活跃 hold 时的旧键合同、缺失 hold 容忍和 billing sequence 绑定尚未在本切片改变。
 
 额度查找切片 imagesession 整包通过（40.192 秒），随后补强真实预留的回归通过（1.803 秒），标准 go vet 与当前共享工作区 docs-check 通过。完整 diff 自审及 mustActiveQuotaKey 删除残留检查通过；无新增 schema 或 API，无其他任务资源改动。
+
+
+## Agent 控制链路复核
+
+本轮由同一主代理只读复核 Node manager → TurnRuntime → ProductFlowClient → Go execution/journal。当前 Node 控制实现保留：manager 拥有 admission 和 handoff 调度；TurnRuntime 拥有 lease、checkpoint、问题等待者和终态编排；PiSessionAdapter 拥有 session/model。没有发现需要将这些职责合并的证据，没有修改业务代码。
+
+- `TurnRuntime.checkpoint` 在 lease 缺失、停止或已丢失时拒绝；追加错误保存为 executionLeaseError，并 abort 当前 runtime/session。序号在追加确认后推进，每次新 Turn 重置。当前方法本身不串行化多次并发调用；尚未确认 Pi 是否可同时进入两个需要 checkpoint 的工具路径，因此列为待验证的可达性风险，不宣称已经复现竞争。
+- `updateExecutionPhase` 复用 Promise 链串行发送，发送时读取最新 phase；`stopExecutionHeartbeat` 停止计时并等待该链完成。现有测试显式延迟第一个 heartbeat，验证旧请求不能覆盖 waiting_input。无需再增加 heartbeat 队列或第二套租约。
+- Node 的终态通过 journal 发布；PG 已确认的 terminal 不重复提交 checkpoint。cleanup 等待 eventChain，处理终态发布失败并释放执行；问题 waiter 被拒绝并清理。Go 负责实际 fencing、事件唯一性和 journal/projection 的事务权威，Node 本地文件结果不替代它。
+
+当前 checkout 验证：`pnpm --dir agent-service test` 为 37 文件通过、2 文件跳过，313 测试通过、9 跳过（12.32 秒）；build 与生成合同检查通过。Node 测试中的 ProductFlow client 替身只证明本地编排，不计为 PostgreSQL 持久化证据。
+
+对应真实 PostgreSQL 边界组合实际执行并通过（5.125 秒）：`TestClaimNewAttemptResetsCheckpointSequence`、`TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows`、`TestRejectedTurnEndCannotSplitJournalAndProjection`、`TestRecoverExpiredExecutionsRejectsStaleFencingWriter`、`TestAppendEventsAndCheckpointDoNotDeadlock`。分别核对新尝试序号、重复事件原 receipt/零重复行、非法终态不改投影、过期恢复后旧 lease 写入被拒绝，以及可控交错下的 checkpoint/journal 锁序。这不等同全部 Node/Go 进程 SIGKILL 矩阵或真实模型质量验收。
+
+本轮未运行付费模型、opt-in 重启与规模门，未改动冻结评价资源。Node 与 Go Agent 路径无新增 diff，正常 build 输出未提交。该复核补充当前证据并保留有价值的现有边界，不将测试全绿作为整体控制链路完成声明。
