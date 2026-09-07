@@ -2016,3 +2016,17 @@ export interface GraphRunPreviewResponse {
 export interface GraphRunListResponse {
   items: GraphRunSummary[];
 }
+
+/** Merchant-effective price catalog summary (GET …/quota/price). */
+export interface QuotaPriceEntry {
+  entry_code: string;
+  unit_price: number;
+}
+
+export interface QuotaPriceVersion {
+  price_version_id: string;
+  label: string;
+  currency: string;
+  is_default: boolean;
+  entries: QuotaPriceEntry[];
+}

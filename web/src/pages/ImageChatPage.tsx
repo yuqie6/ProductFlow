@@ -30,9 +30,14 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
-import { bindMerchantGeneration, getMerchantGeneration } from "../lib/merchantBoundary";
+import { activeMerchantId, bindMerchantGeneration, getMerchantGeneration } from "../lib/merchantBoundary";
 import { useI18n } from "../lib/preferences";
 import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
+import {
+  QUOTA_ENTRY_IMAGE_SESSION_GENERATE,
+  isQuotaEntryPriceReady,
+  resolveQuotaEntryPrice,
+} from "../lib/quotaPrice";
 import { imageRoundSizeLabel, placeholderStatusClass, placeholderStatusLabel } from "./image-chat/display";
 import { ImageChatHistoryPanel } from "./image-chat/ImageChatHistoryPanel";
 import { ImageChatMainStage } from "./image-chat/ImageChatMainStage";
@@ -199,6 +204,29 @@ export function ImageChatPage() {
   const [mobileSessionDrawerOpen, setMobileSessionDrawerOpen] = useState(false);
   const [mobileHistoryDrawerOpen, setMobileHistoryDrawerOpen] = useState(false);
   const [mobileGenerationSheetOpen, setMobileGenerationSheetOpen] = useState(false);
+
+  const sessionQuery = useQuery({
+    queryKey: ["session"],
+    queryFn: api.getSessionState,
+  });
+  const merchantId = activeMerchantId(sessionQuery.data);
+  const quotaPriceQuery = useQuery({
+    queryKey: ["merchant-quota-price", merchantId],
+    queryFn: () => api.getMerchantQuotaPrice(merchantId),
+    enabled: Boolean(merchantId),
+    staleTime: 60_000,
+  });
+  const generateQuotaPrice = useMemo(
+    () => resolveQuotaEntryPrice(quotaPriceQuery.data, QUOTA_ENTRY_IMAGE_SESSION_GENERATE),
+    [quotaPriceQuery.data],
+  );
+  const quotaPriceReady = isQuotaEntryPriceReady(generateQuotaPrice);
+  const quotaPriceBlocksGenerate =
+    !merchantId ||
+    quotaPriceQuery.isLoading ||
+    (quotaPriceQuery.isFetching && !quotaPriceQuery.data) ||
+    quotaPriceQuery.isError ||
+    !quotaPriceReady;
 
   const leftPanelStyle = {
     "--image-chat-left-panel-width": `${leftPanelWidth}px`,
@@ -743,7 +771,12 @@ export function ImageChatPage() {
   });
 
   const generateDisabled =
-    !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
+    !selectedSessionId ||
+    !imageSession ||
+    !draft.trim() ||
+    generateMutation.isPending ||
+    Boolean(baseRequirementMessage) ||
+    quotaPriceBlocksGenerate;
 
   const attachMutation = useMutation({
     mutationFn: (payload: { assetId: string; productId: string }) =>
@@ -781,6 +814,10 @@ export function ImageChatPage() {
   function handleGenerate() {
     const prompt = draft.trim();
     if (!selectedSessionId || !imageSession || !prompt || generateMutation.isPending) {
+      return;
+    }
+    if (quotaPriceBlocksGenerate || !quotaPriceReady) {
+      setErrorMessage(t("chat.quota.priceUnavailable"));
       return;
     }
     if (baseRequirementMessage) {
@@ -1456,6 +1493,18 @@ export function ImageChatPage() {
                 {baseRequirementMessage}
               </div>
             ) : null}
+            {quotaPriceReady && generateQuotaPrice.status === "ok" ? (
+              <div className="mb-2 text-center text-xs font-medium text-slate-500 dark:text-slate-400">
+                {t("chat.quota.estimate", { units: generateQuotaPrice.estimatedUnits })}
+              </div>
+            ) : !merchantId || quotaPriceQuery.isLoading || (quotaPriceQuery.isFetching && !quotaPriceQuery.data) ? null : (
+              <div
+                className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200"
+                role="status"
+              >
+                {t("chat.quota.priceUnavailable")}
+              </div>
+            )}
             <button
               type="button"
               onClick={handleGenerate}
@@ -1737,6 +1786,18 @@ export function ImageChatPage() {
                   {baseRequirementMessage}
                 </div>
               ) : null}
+              {quotaPriceReady && generateQuotaPrice.status === "ok" ? (
+                <div className="mb-2 text-center text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {t("chat.quota.estimate", { units: generateQuotaPrice.estimatedUnits })}
+                </div>
+              ) : !merchantId || quotaPriceQuery.isLoading || (quotaPriceQuery.isFetching && !quotaPriceQuery.data) ? null : (
+                <div
+                  className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200"
+                  role="status"
+                >
+                  {t("chat.quota.priceUnavailable")}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={handleGenerate}

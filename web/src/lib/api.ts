@@ -86,6 +86,7 @@ import type {
   SettingsImportCommitResponse,
   SettingsImportPreviewResponse,
   SessionState,
+  QuotaPriceVersion,
   SubmitAgentTurnInput,
   SubmitAgentTurnResponse,
   UpdateProductFactsInput,
@@ -213,6 +214,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     });
+  },
+  getMerchantQuotaPrice(merchantId: string): Promise<QuotaPriceVersion> {
+    return request(`/api/merchants/${encodeURIComponent(merchantId)}/quota/price`);
   },
   getSupportAccessContract(): Promise<{
     contract_version: number;

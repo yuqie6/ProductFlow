@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-mp-c-price-display-b0.md](merchant-mp-c-price-display-b0.md) | 完成 | 图会话 Generate 前展示目录单价；≠R5/支付 |
 | [merchant-mp-c-bootstrap-quota.md](merchant-mp-c-bootstrap-quota.md) | 完成 | QUOTA_TRIAL_UNITS 首次建账试用种子；≠R5/支付 |
 | [image-quality-subject-compose-deliver.md](image-quality-subject-compose-deliver.md) | 完成 | compose Pass 合成 PNG 交付；≠R3/像素保真 |
 | [roadmap-r2-r5-refresh.md](roadmap-r2-r5-refresh.md) | 完成 | ROADMAP R2/R5 事实对齐；两门仍未通过 |
