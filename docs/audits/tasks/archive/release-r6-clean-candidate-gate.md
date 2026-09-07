@@ -65,7 +65,7 @@ B6 已诚实记 R6 未通过：G-07 脏树/HEAD 漂移 FAIL；安装 pin 与 G-0
 - 原因：无
 - 解除条件：无
 - 跟进者：无
-- 交接：已归档；交付随本任务提交。跟进见 [release-r6-pin-and-formal-d4](../release-r6-pin-and-formal-d4.md)。
+- 交接：已归档；交付随本任务提交。跟进见 [release-r6-pin-and-formal-d4](release-r6-pin-and-formal-d4.md)（已完成）→ [release-r6-resource-budget](../release-r6-resource-budget.md)。
 
 ## 证据
 
