@@ -54,7 +54,8 @@
 | merchant-isolation-gate | 商家平台 B10；双商隔离门 MP-B | 2026-09-07 完成归档（自动化门通过；未开放第二商） |
 | release-r6-readiness-gate | 平台可靠性 R6 汇总门 | 2026-09-07 完成归档；**R6 未通过** |
 | release-r6-clean-candidate-gate | R6 干净冻结候选重跑 | 2026-09-07 完成归档；G-07 PASS；**R6 未通过** |
-| release-r6-pin-and-formal-d4 | R6 候选 pin + 正式 D4 | 开放 |
+| release-r6-pin-and-formal-d4 | R6 候选 pin + 正式 D4 | 2026-09-07 完成归档；pin+D4 PASS；**R6 未通过** |
+| release-r6-resource-budget | R6 资源预算↔部署规模 | 开放 |
 | workbench-remember-last-view | 工作流体验；记忆上次视图 | 2026-09-07 完成归档 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
