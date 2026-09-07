@@ -36,6 +36,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 配方 | `go/internal/recipe` | `productflow-api` | `go/internal/recipe` |
 | 视觉方案版本 | `go/internal/visualsystem` | `productflow-api` | `go/internal/visualsystem` |
 | 交付图 | `go/internal/delivery` | `productflow-api`、`productflow-worker` | `go/internal/delivery` |
+| 受控二维排版 | `go/internal/layout`、`web/src/lib/layout` | 导出权威在 Go；预览同 Document/Plan；不调度 Graph | `go/internal/layout`、`web/src/lib/layout/preview.test.ts` |
 | 商品图片库 | `go/internal/product`、`go/internal/media` | `productflow-api` | `go/internal/product` |
 | 连续生图 | `go/internal/imagesession` | `productflow-api`、`productflow-worker` | `go/internal/imagesession` |
 | 局部修 | `go/internal/localedit` | `productflow-api`、`productflow-worker` | `go/internal/localedit` |

@@ -35,6 +35,7 @@ Current code ownership:
 | schema-v3 graph and execution | `go/internal/graph` | `productflow-api`, `productflow-worker` | `go/internal/graph` |
 | Recipes | `go/internal/recipe` | `productflow-api` | `go/internal/recipe` |
 | Delivery renditions | `go/internal/delivery` | `productflow-api`, `productflow-worker` | `go/internal/delivery` |
+| Controlled 2D layout | `go/internal/layout`, `web/src/lib/layout` | Go owns export; preview shares Document/Plan; does not schedule Graph | `go/internal/layout`, `web/src/lib/layout/preview.test.ts` |
 | Product image library | `go/internal/product`, `go/internal/media` | `productflow-api` | `go/internal/product` |
 | Iterative image generation | `go/internal/imagesession` | `productflow-api`, `productflow-worker` | `go/internal/imagesession` |
 | Local image edits | `go/internal/localedit` | `productflow-api`, `productflow-worker` | `go/internal/localedit` |
