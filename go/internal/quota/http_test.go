@@ -42,7 +42,8 @@ func newQuotaHTTPServer(t *testing.T) *quotaHTTPServer {
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
 	store := settings.NewStore(pool, config.Config{AdminAccessRequired: true})
 	authHTTP := auth.MountTest(engine, gdb, store, auth.TestAdminKey)
-	quota.HTTP{DB: gdb, Auth: authHTTP}.Register(engine)
+	zero := int64(0)
+	quota.HTTP{DB: gdb, Auth: authHTTP, TrialUnits: &zero}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	return &quotaHTTPServer{srv: srv, client: &http.Client{}, db: gdb}

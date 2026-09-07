@@ -14,12 +14,13 @@ import (
 
 // HTTP 是商家/Op 余额面（MP-C B4）。只读投影与 Op 调账；≠支付 webhook。
 type HTTP struct {
-	DB   *gorm.DB
-	Auth auth.HTTP // RequireMembership 校验本商成员；请求体里的商家 ID 不授予权限
+	DB         *gorm.DB
+	Auth       auth.HTTP // RequireMembership 校验本商成员；请求体里的商家 ID 不授予权限
+	TrialUnits *int64    // 可选；非 nil 时覆盖 QUOTA_TRIAL_UNITS（测试常用 0）
 }
 
 func (h HTTP) svc() *Service {
-	return &Service{DB: h.DB}
+	return &Service{DB: h.DB, TrialUnits: h.TrialUnits}
 }
 
 // AccountView 是余额 HTTP 投影。

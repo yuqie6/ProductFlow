@@ -6,6 +6,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -24,7 +25,9 @@ type HTTP struct {
 	Store          settings.RuntimeReader // Runtime.AdminAccessRequired
 	DB             *gorm.DB
 	Service        Service
-	limiter        *loginLimiter
+	// EnsureMerchantQuota 在商家创建或重新激活后建试用额度账；由主进程注入，避免 auth↔quota 循环导入。
+	EnsureMerchantQuota func(ctx context.Context, merchantID string) error
+	limiter             *loginLimiter
 }
 
 func (h *HTTP) svc() Service {
@@ -84,6 +87,13 @@ func (h HTTP) accessRequired(c *gin.Context) (bool, error) {
 		return false, apperr.Internal("读取运行时设置失败")
 	}
 	return runtime.AdminAccessRequired, nil
+}
+
+func (h HTTP) ensureMerchantQuota(ctx context.Context, merchantID string) error {
+	if h.EnsureMerchantQuota == nil {
+		return nil
+	}
+	return h.EnsureMerchantQuota(ctx, merchantID)
 }
 
 type sessionCreateRequest struct {
@@ -179,10 +189,17 @@ func (h HTTP) bootstrap(c *gin.Context) {
 		httpx.AbortErr(c, apperr.Internal("写入会话失败"))
 		return
 	}
+	merchantID := firstMerchantID(c, h, principal.UserID)
+	if merchantID != "" {
+		if err := h.ensureMerchantQuota(c.Request.Context(), merchantID); err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"ok":          true,
 		"user_id":     principal.UserID,
-		"merchant_id": firstMerchantID(c, h, principal.UserID),
+		"merchant_id": merchantID,
 	})
 }
 
@@ -288,6 +305,10 @@ func (h HTTP) createMerchant(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
+	if err := h.ensureMerchantQuota(c.Request.Context(), merchant.ID); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
 }
 
@@ -310,6 +331,12 @@ func (h HTTP) setMerchantStatus(c *gin.Context) {
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
+	}
+	if merchant.Status == MerchantStatusActive {
+		if err := h.ensureMerchantQuota(c.Request.Context(), merchant.ID); err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
 }

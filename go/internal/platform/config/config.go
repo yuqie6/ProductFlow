@@ -45,6 +45,7 @@ type Config struct {
 	MetricsBearerToken                string  // 空则不注册 GET /metrics
 	DispatcherMetricsAddr             string  // env DISPATCHER_METRICS_ADDR；空则不启动 dispatcher metrics server
 	WorkerMetricsAddr                 string  // env WORKER_METRICS_ADDR；空则不启动 worker metrics server
+	QuotaTrialUnits                   int64   // env QUOTA_TRIAL_UNITS；新商家首次建账可用额度；默认 100
 }
 
 // Load 用 viper AutomaticEnv 读进程环境，并填开发默认值。
@@ -73,6 +74,7 @@ func Load() (Config, error) {
 	v.SetDefault("AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS", 5.0)
 	v.SetDefault("AGENT_SERVICE_READ_TIMEOUT_SECONDS", 90.0)
 	v.SetDefault("AGENT_TURN_SYNC_POLL_SECONDS", 1.0)
+	v.SetDefault("QUOTA_TRIAL_UNITS", 100)
 
 	storageRoot, err := ResolveStorageRoot(v.GetString("STORAGE_ROOT"))
 	if err != nil {
@@ -114,6 +116,10 @@ func Load() (Config, error) {
 		MetricsBearerToken:                strings.TrimSpace(v.GetString("METRICS_BEARER_TOKEN")),
 		DispatcherMetricsAddr:             strings.TrimSpace(v.GetString("DISPATCHER_METRICS_ADDR")),
 		WorkerMetricsAddr:                 strings.TrimSpace(v.GetString("WORKER_METRICS_ADDR")),
+		QuotaTrialUnits:                   v.GetInt64("QUOTA_TRIAL_UNITS"),
+	}
+	if cfg.QuotaTrialUnits < 0 {
+		cfg.QuotaTrialUnits = 100
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")

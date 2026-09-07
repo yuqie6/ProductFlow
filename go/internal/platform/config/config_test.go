@@ -85,3 +85,28 @@ func TestLoadWorkerMetricsAddr(t *testing.T) {
 		t.Fatalf("WorkerMetricsAddr=%q", cfg.WorkerMetricsAddr)
 	}
 }
+
+func TestLoadQuotaTrialUnits(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" {
+		t.Setenv("DATABASE_URL", "postgres://productflow:secret@127.0.0.1:15432/productflow")
+	}
+	if os.Getenv("SESSION_SECRET") == "" {
+		t.Setenv("SESSION_SECRET", "test-session-secret-for-quota-trial")
+	}
+	t.Setenv("QUOTA_TRIAL_UNITS", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QuotaTrialUnits != 0 {
+		t.Fatalf("QuotaTrialUnits=%d", cfg.QuotaTrialUnits)
+	}
+	t.Setenv("QUOTA_TRIAL_UNITS", "-1")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.QuotaTrialUnits != 100 {
+		t.Fatalf("negative clamp QuotaTrialUnits=%d", cfg.QuotaTrialUnits)
+	}
+}

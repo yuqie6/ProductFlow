@@ -95,6 +95,11 @@ func main() {
 		DB:             gdb,
 		Service:        auth.Service{DB: gdb},
 	}
+	trialUnits := cfg.QuotaTrialUnits
+	authHTTP.EnsureMerchantQuota = func(ctx context.Context, merchantID string) error {
+		_, err := (&quota.Service{DB: gdb, TrialUnits: &trialUnits}).EnsureAccount(ctx, merchantID)
+		return err
+	}
 	httpx.AuthenticatedFunc = auth.Authenticated
 	engine.Use(authHTTP.LoadPrincipal())
 	engine.Use(authHTTP.AttachWorkingMerchant())
@@ -112,7 +117,7 @@ func main() {
 			Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken,
 			OperatorOnly: operatorOnly,
 		},
-		Quota: quota.HTTP{DB: gdb, Auth: authHTTP},
+		Quota: quota.HTTP{DB: gdb, Auth: authHTTP, TrialUnits: &trialUnits},
 		Product: product.HTTP{
 			Service: product.Service{
 				DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas,

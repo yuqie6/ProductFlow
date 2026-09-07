@@ -302,7 +302,8 @@ func newQuotaFixture(t *testing.T, initialAvailable int64) (*quota.Service, stri
 	t.Helper()
 	gdb := testdb.Gorm(t)
 	merchantID := seedMerchant(t, gdb)
-	svc := &quota.Service{DB: gdb}
+	zero := int64(0)
+	svc := &quota.Service{DB: gdb, TrialUnits: &zero}
 	if initialAvailable != 0 {
 		if _, err := svc.Adjust(context.Background(), merchantID, "seed-"+clockid.New(), initialAvailable, "fixture", ""); err != nil {
 			t.Fatalf("seed adjust: %v", err)
@@ -326,4 +327,90 @@ func seedMerchant(t *testing.T, gdb *gorm.DB) string {
 		t.Fatalf("seed merchant: %v", err)
 	}
 	return id
+}
+
+func TestEnsureAccountSeedsTrialUnits(t *testing.T) {
+	gdb := testdb.Gorm(t)
+	merchantID := seedMerchant(t, gdb)
+	trial := int64(75)
+	svc := &quota.Service{DB: gdb, TrialUnits: &trial}
+	ctx := context.Background()
+
+	acct, err := svc.EnsureAccount(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if acct.AvailableUnits != 75 || acct.ReservedUnits != 0 {
+		t.Fatalf("seeded acct=%+v", acct)
+	}
+
+	var events []schema.MerchantQuotaEvents
+	if err := gdb.Where("merchant_id = ? AND event_type = ?", merchantID, quota.EventAdjust).Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].IdempotencyKey != quota.TrialSeedIdempotencyKey || events[0].AmountUnits != 75 {
+		t.Fatalf("events=%+v", events)
+	}
+
+	again, err := svc.EnsureAccount(ctx, merchantID)
+	if err != nil {
+		t.Fatalf("ensure again: %v", err)
+	}
+	if again.AvailableUnits != 75 {
+		t.Fatalf("re-ensure mutated balance: %+v", again)
+	}
+	if err := gdb.Where("merchant_id = ? AND event_type = ?", merchantID, quota.EventAdjust).Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("re-ensure duplicated events: %+v", events)
+	}
+
+	hold, after, err := svc.Reserve(ctx, merchantID, "trial-reserve-1", 10, quota.DefaultPriceVersionID)
+	if err != nil {
+		t.Fatalf("reserve with trial: %v", err)
+	}
+	if hold.Status != quota.StatusReserved || after.AvailableUnits != 65 || after.ReservedUnits != 10 {
+		t.Fatalf("hold=%+v after=%+v", hold, after)
+	}
+}
+
+func TestEnsureAccountZeroTrialNoEvent(t *testing.T) {
+	gdb := testdb.Gorm(t)
+	merchantID := seedMerchant(t, gdb)
+	zero := int64(0)
+	svc := &quota.Service{DB: gdb, TrialUnits: &zero}
+	acct, err := svc.EnsureAccount(context.Background(), merchantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.AvailableUnits != 0 {
+		t.Fatalf("%+v", acct)
+	}
+	var n int64
+	if err := gdb.Model(&schema.MerchantQuotaEvents{}).Where("merchant_id = ?", merchantID).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("unexpected events=%d", n)
+	}
+}
+
+func TestTrialUnitsFromEnv(t *testing.T) {
+	t.Setenv("QUOTA_TRIAL_UNITS", "")
+	if got := quota.TrialUnitsFromEnv(); got != quota.DefaultTrialUnits {
+		t.Fatalf("default got %d", got)
+	}
+	t.Setenv("QUOTA_TRIAL_UNITS", "0")
+	if got := quota.TrialUnitsFromEnv(); got != 0 {
+		t.Fatalf("explicit zero got %d", got)
+	}
+	t.Setenv("QUOTA_TRIAL_UNITS", "42")
+	if got := quota.TrialUnitsFromEnv(); got != 42 {
+		t.Fatalf("got %d", got)
+	}
+	t.Setenv("QUOTA_TRIAL_UNITS", "-3")
+	if got := quota.TrialUnitsFromEnv(); got != quota.DefaultTrialUnits {
+		t.Fatalf("negative fallback got %d", got)
+	}
 }
