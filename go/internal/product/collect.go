@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -88,15 +89,17 @@ func LoadImage(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, err
 }
 
 // LoadImageForUpdate 以 FOR UPDATE 锁住 product_image_assets 行再 join 读回，供全局图库把素材写回已有商品图。
-// 找不到返回 NotFound。不要和 LoadImage（不锁）或 gallery 的 loadAssetForUpdate（还校验 product_id）搞混。
+// 找不到或跨商返回统一 404。不要和 LoadImage（不锁）或 gallery 的 loadAssetForUpdate（还校验 product_id）搞混。
 func LoadImageForUpdate(ctx context.Context, tx *gorm.DB, assetID string) (ImageAsset, error) {
 	var row assetJoinRow
-	err := assetJoinQuery(tx.WithContext(ctx)).
+	query := assetJoinQuery(tx.WithContext(ctx)).
 		Clauses(pfdb.ForUpdateOf("a")).
-		Where("a.id = ?", assetID).
-		Take(&row).Error
+		Joins("JOIN products p ON p.id = a.product_id").
+		Where("a.id = ?", assetID)
+	query = auth.ScopeMerchant(ctx, query, "p.merchant_id")
+	err := query.Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ImageAsset{}, apperr.NotFound("商品图片不存在")
+		return ImageAsset{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return ImageAsset{}, err

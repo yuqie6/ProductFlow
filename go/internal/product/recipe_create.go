@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -110,7 +111,7 @@ func (s Service) recipeCreationReplay(ctx context.Context, key, hash string) (Re
 	found := false
 	err := tx.WithGorm(ctx, s.DB, func(db *gorm.DB) error {
 		var row schema.Products
-		err := db.Where("creation_idempotency_key = ?", key).Take(&row).Error
+		err := auth.ScopeMerchant(ctx, db.Where("creation_idempotency_key = ?", key), "merchant_id").Take(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}

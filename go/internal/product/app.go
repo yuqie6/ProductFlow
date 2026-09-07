@@ -59,7 +59,7 @@ func (s Service) now() time.Time {
 }
 
 // GetAsset 按 ProductImageAsset id 读取身份（join media 元数据），供 Agent 工具检视商品图。
-// 找不到返回 NotFound。不锁行。图库详情请走带文件夹/生成摘要的 GetGalleryAsset；下载走 AssetForDownload。
+// 找不到或跨商统一 404。不锁行。图库详情请走带文件夹/生成摘要的 GetGalleryAsset；下载走 AssetForDownload。
 func (s Service) GetAsset(ctx context.Context, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, s.DB, assetID)
 }
@@ -165,7 +165,7 @@ func (s Service) List(ctx context.Context, page, pageSize int, q, sort string) (
 }
 
 // AssetForDownload 按 ProductImageAsset id 读取身份供下载；缺失文件由 HTTP 层再判 verification_status。
-// 找不到图片返回 NotFound。
+// 找不到或跨商统一 404（CrossMerchantDetail）。
 func (s Service) AssetForDownload(ctx context.Context, assetID string) (ImageAsset, error) {
 	return loadAsset(ctx, s.DB, assetID)
 }

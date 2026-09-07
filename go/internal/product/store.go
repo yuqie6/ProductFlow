@@ -300,9 +300,14 @@ func loadAssetsByIDs(ctx context.Context, tx *gorm.DB, productID string, ids []s
 
 func loadAsset(ctx context.Context, q *gorm.DB, assetID string) (ImageAsset, error) {
 	var row assetJoinRow
-	err := assetJoinQuery(q.WithContext(ctx)).Where("a.id = ?", assetID).Take(&row).Error
+	query := assetJoinQuery(q.WithContext(ctx)).
+		Joins("JOIN products p ON p.id = a.product_id").
+		Where("a.id = ?", assetID)
+	query = auth.ScopeMerchant(ctx, query, "p.merchant_id")
+	err := query.Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return ImageAsset{}, apperr.NotFound("商品图片不存在")
+		// 直链下载/删除：缺失与跨商统一 404，防枚举（B2 / B1 CrossMerchantDetail）。
+		return ImageAsset{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return ImageAsset{}, err
@@ -433,7 +438,7 @@ func insertFactSet(ctx context.Context, tx *gorm.DB, productID string, facts []m
 
 func loadConversationByKey(ctx context.Context, tx *gorm.DB, key string) (Conversation, error) {
 	var rec schema.AgentConversations
-	err := tx.WithContext(ctx).Where("creation_idempotency_key = ?", key).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("creation_idempotency_key = ?", key), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return Conversation{}, err
 	}
@@ -446,7 +451,7 @@ func loadConversationByKey(ctx context.Context, tx *gorm.DB, key string) (Conver
 func loadConversationByID(ctx context.Context, tx *gorm.DB, id string) (Conversation, error) {
 	row, _, _, err := scanConversation(ctx, tx, id, false)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Conversation{}, apperr.NotFound("Agent 商品工作空间不存在")
+		return Conversation{}, auth.NotFoundCrossMerchant()
 	}
 	return row, err
 }
@@ -454,13 +459,13 @@ func loadConversationByID(ctx context.Context, tx *gorm.DB, id string) (Conversa
 func loadConversationIntakeForUpdate(ctx context.Context, tx *gorm.DB, id string) (Conversation, *string, *string, error) {
 	row, key, hash, err := scanConversation(ctx, tx, id, true)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Conversation{}, nil, nil, apperr.NotFound("Agent 商品工作空间不存在")
+		return Conversation{}, nil, nil, auth.NotFoundCrossMerchant()
 	}
 	return row, key, hash, err
 }
 
 func scanConversation(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (Conversation, *string, *string, error) {
-	q := tx.WithContext(ctx).Where("id = ?", id)
+	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("id = ?", id), "merchant_id")
 	if forUpdate {
 		q = q.Clauses(pfdb.ForUpdate())
 	}

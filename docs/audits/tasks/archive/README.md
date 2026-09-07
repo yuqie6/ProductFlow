@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-product-chain.md](merchant-product-chain.md) | 完成 | B2 商品子链隔离+跨商404；≠MP-B |
 | [merchant-root-ownership.md](merchant-root-ownership.md) | 完成 | B1 根表 merchant_id+过滤+跨商404；≠MP-B |
 | [release-backup-restore.md](release-backup-restore.md) | 完成 | B3 备份/恢复脚本+runbook；隔离数据面冒烟；≠D3全栈/R6 |
 | [delivery-adoption-snapshot.md](delivery-adoption-snapshot.md) | 完成 | 不可变采用版本+成果视图接线；Go/Vitest 通过；≠R2/浏览器整链 |
