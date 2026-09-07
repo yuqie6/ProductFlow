@@ -16,7 +16,7 @@
 2. [image-quality-content-pilot](tasks/archive/image-quality-content-pilot.md)：两商品完整对照已归档；闸门未过、卖点策略观感与评委分有分歧。
 3. [卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md)：生成策略与拼装已收窄并归档（≠R3；无 live）；继续其它生成链/排版切片时不与旧 42/32 图位完成条件混写。
 4. [卖点 live k=1](tasks/archive/image-quality-selling-point-live.md)：已归档；闸门相对试跑 candidate 改善、保真持平 4；≠R3。
-5. [OCR 追溯闸 B0](tasks/image-quality-ocr-trace-b0.md)：实现已交审；成片对照 `text_trace`，失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3。
+5. [OCR 追溯闸 B0](tasks/archive/image-quality-ocr-trace-b0.md)：已归档；成片对照 `text_trace`，失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3。
 6. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
@@ -48,7 +48,7 @@
 | ID | 合同 | 验证层 | 状态 |
 |---|---|---|---|
 | IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `完成`（`layer` 闭集 + 确认门/营销闸；资料面板分栏；`TestFactLayerGate*`） |
-| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/image-quality-ocr-trace-b0.md)：字形模板对照+失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3） |
+| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/archive/image-quality-ocr-trace-b0.md)：字形模板对照+失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3） |
 | IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `完成`（CF-B2：impact-preview + `update_node_ids` 采用；未选中保 artifact；证据见 [compete-facts-impact-preview](tasks/archive/compete-facts-impact-preview.md)） |
 | IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `部分完成`（CF-B3：`produce_route=subject_preserve` + 失败→未解决/`route_qualified=false`；主体提取链未建） |
 | IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `部分完成`（CF-B3：`produce_route=generative` + 禁令审计 + UI「可能改变外观」；真实对照另发） |

@@ -1,14 +1,15 @@
 # 任务：成片文字 OCR 追溯闸 B0
 
-状态：认领
+状态：完成
 类型：实现
 认领者：sub-iq/image-quality-ocr-trace-b0
 认领于：2026-09-07T17:42:00+08:00
+完成于：2026-09-07T17:50:30+08:00
 业务组：图片质量
 父账本：image-quality.md
 完成后可拆：采用路径消费 OCR 结果；≠R3 全过 / ≠改评委
 
-任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](README.md)。
+任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](../README.md)。按 [所有权前置规则](../README.md#认领与并行) 已确认认领。
 
 ## 问题来源
 
@@ -60,9 +61,12 @@ IQ-CF-02 / CF-B1 已有 `text_trace` 元数据与卖点一理由检查；**成�
 - 命令（2026-09-07）：
   - `bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/ocr/ ./internal/graph/ -count=1 -p 1 -run "OCR|ApplyImageOCR|Contains|UserOverride|Extra"'` → PASS
   - `bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/ocr/ -count=1 -p 1'` → PASS
-  - `just docs-check` → PASS（复跑）
+  - `just docs-check` → FAIL 于无关看板项 `delivery-export-overlay-fix.md`（他组占用；本任务未改看板 README）；本任务与父章程链接自洽
 - 父章程：IQ-CF-02 仍 `部分完成`（OCR B0 已交；采用默认接线/CJK/开放词表/R3 未宣称）。
 - 未宣称：R3；采用路径默认 OCR；评委/金标分；任意生成式成片全覆盖。
-- 交付定位：随本任务提交（维护者审核后）
-- 审核者 / 结论：待审
-- Issue 结果 / 业务门槛结果 / 剩余缺口：实现合同项已齐；业务组 IQ-CF-02 仍部分完成直至采用消费与更广 OCR 覆盖另发。
+- 交付定位：随本任务提交（用 `git log --follow -- docs/audits/tasks/archive/image-quality-ocr-trace-b0.md` 查询）
+- 审核者 / 结论：主代理自审通过（2026-09-07）。复测 `go test ./internal/ocr/ ./internal/graph/ -run OCR|…` PASS；失败强制 `text_qualified=false`；未改评委；≠R3；采用 HTTP 未默认接线。
+- Issue 结果 / 业务门槛结果 / 剩余缺口：
+  - Issue：**完成**（OCR B0）。
+  - 业务门槛：IQ-CF-02 仍 **部分完成**；R3 **未通过**。
+  - 剩余缺口：采用路径默认消费 OCR；CJK/开放词表；生成路径自动 Apply；主体提取。
