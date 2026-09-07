@@ -26,6 +26,23 @@ export interface AdoptionQualityAssessment {
   issueCodes: readonly AdoptionQualityIssueCode[];
 }
 
+export type DeliveryAdoptionFreshnessIssueCode =
+  | "different_graph"
+  | "unlinked_node"
+  | "deleted_node"
+  | "missing_current_asset"
+  | "asset_changed";
+
+export interface DeliveryAdoptionFreshnessIssue {
+  code: DeliveryAdoptionFreshnessIssueCode;
+  nodeId: string | null;
+}
+
+export interface DeliveryAdoptionFreshnessAssessment {
+  isStale: boolean;
+  issues: readonly DeliveryAdoptionFreshnessIssue[];
+}
+
 /**
  * Reads the finite quality declarations already attached to an image artifact.
  * Server-side checks remain authoritative for the persisted adoption result.
@@ -70,13 +87,74 @@ export function adoptionQualityIssueMessageKey(code: AdoptionQualityIssueCode) {
   return keys[code];
 }
 
-export function adoptedSlotBySlot(
+export function deliveryAdoptionFreshnessIssueMessageKey(code: DeliveryAdoptionFreshnessIssueCode) {
+  const keys = {
+    different_graph: "graph.results.adoptionSnapshotDifferentGraph",
+    deleted_node: "graph.results.adoptionSnapshotDeletedNode",
+    unlinked_node: "graph.results.adoptionSnapshotUnlinkedNode",
+    missing_current_asset: "graph.results.adoptionSnapshotMissingAsset",
+    asset_changed: "graph.results.adoptionSnapshotAssetChanged",
+  } as const;
+  return keys[code];
+}
+
+/**
+ * Compares an immutable delivery snapshot with the current result identities.
+ * Graph revisions and layout changes are deliberately ignored.
+ */
+export function assessDeliveryAdoptionFreshness(input: {
+  graph: GraphProjection;
+  current: DeliveryAdoptionVersion | null | undefined;
+  currentAssetByNodeId: ReadonlyMap<string, string | null>;
+}): DeliveryAdoptionFreshnessAssessment {
+  const version = input.current;
+  if (!version) return { isStale: false, issues: [] };
+
+  const issues: DeliveryAdoptionFreshnessIssue[] = [];
+  const seen = new Set<string>();
+  const addIssue = (code: DeliveryAdoptionFreshnessIssueCode, nodeId: string | null) => {
+    const key = `${code}:${nodeId ?? "version"}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    issues.push({ code, nodeId });
+  };
+
+  if (version.graph_id && version.graph_id !== input.graph.id) {
+    addIssue("different_graph", null);
+    return { isStale: true, issues };
+  }
+
+  const currentNodeIds = new Set(input.graph.nodes.map((node) => node.id));
+  for (const slot of version.slots) {
+    const nodeId = slot.source_node_id ?? slot.slot_key;
+    if (!currentNodeIds.has(nodeId)) {
+      addIssue(slot.source_node_id == null ? "unlinked_node" : "deleted_node", slot.source_node_id == null ? null : nodeId);
+      continue;
+    }
+
+    const node = input.graph.nodes.find((candidate) => candidate.id === nodeId);
+    const currentAssetId = input.currentAssetByNodeId.has(nodeId)
+      ? input.currentAssetByNodeId.get(nodeId) ?? null
+      : node?.preview_asset_id ?? null;
+    if (!currentAssetId) {
+      addIssue("missing_current_asset", nodeId);
+      continue;
+    }
+    if (currentAssetId !== slot.source_asset_id) {
+      addIssue("asset_changed", nodeId);
+    }
+  }
+
+  return { isStale: issues.length > 0, issues };
+}
+
+export function adoptedSlotByNodeId(
   version: DeliveryAdoptionVersion | null | undefined,
 ): ReadonlyMap<string, DeliveryAdoptionSlot> {
   const map = new Map<string, DeliveryAdoptionSlot>();
   if (!version) return map;
   for (const slot of version.slots) {
-    map.set(slot.slot_key, slot);
+    map.set(slot.source_node_id ?? slot.slot_key, slot);
   }
   return map;
 }
@@ -108,7 +186,7 @@ export function buildAdoptionSlotsReplacingNode(input: {
     : null;
 
   const retained = (input.current?.slots ?? [])
-    .filter((slot) => slot.slot_key !== input.nodeId)
+    .filter((slot) => slot.slot_key !== input.nodeId && slot.source_node_id !== input.nodeId)
     .map((slot) => slotToDraft(slot));
 
   const requested = input.qualityStatus ?? quality.status;

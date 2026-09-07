@@ -5,6 +5,7 @@
 import {
   AlertCircle,
   Check,
+  Eye,
   History,
   Images,
   Loader2,
@@ -20,7 +21,7 @@ import { IconButton } from "../../../components/ui/icon-button";
 import { Tooltip } from "../../../components/ui/tooltip";
 import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
-import type { TranslationKey } from "../../../lib/i18n";
+import type { TranslationKey, TranslationParams } from "../../../lib/i18n";
 import type {
   DeliveryAdoptionSlot,
   GraphPlannedAction,
@@ -32,7 +33,10 @@ import type { AgentProductImageTypeKey } from "../../../lib/types";
 import {
   adoptionQualityIssueMessageKey,
   adoptionQualityStatusMessageKey,
+  deliveryAdoptionFreshnessIssueMessageKey,
   type AdoptionQualityAssessment,
+  type DeliveryAdoptionFreshnessAssessment,
+  type DeliveryAdoptionFreshnessIssue,
 } from "./deliveryAdoption";
 import { dominantPlannedAction, plannedActionClassName, runPreviewPointerHandlers } from "./graphRunPreview";
 import type { GraphResultItem, GraphResultSection } from "./resultProjection";
@@ -60,7 +64,8 @@ export interface GraphResultsViewProps {
   onBindEvidence?: (item: GraphResultItem) => void;
   /** 当前产物的有限质量检查；服务端返回的采用槽位质量优先。 */
   adoptionQualityByNodeId?: ReadonlyMap<string, AdoptionQualityAssessment>;
-  adoptedSlotBySlot?: ReadonlyMap<string, DeliveryAdoptionSlot>;
+  adoptedSlotByNodeId?: ReadonlyMap<string, DeliveryAdoptionSlot>;
+  deliveryAdoptionFreshness?: DeliveryAdoptionFreshnessAssessment | null;
   adoptingNodeId?: string | null;
   exportingAdoption?: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
@@ -91,7 +96,8 @@ export function GraphResultsView({
   onPreviewImage,
   onBindEvidence,
   adoptionQualityByNodeId,
-  adoptedSlotBySlot,
+  adoptedSlotByNodeId,
+  deliveryAdoptionFreshness = null,
   adoptingNodeId = null,
   exportingAdoption = false,
   onAdoptItem,
@@ -105,6 +111,10 @@ export function GraphResultsView({
     [sections],
   );
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const resultTitleByNodeId = useMemo(
+    () => new Map(sections.flatMap((section) => section.items.map((item) => [item.nodeId, item.title] as const))),
+    [sections],
+  );
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef(new Map<string, HTMLElement>());
 
@@ -152,6 +162,27 @@ export function GraphResultsView({
           ) : null}
         </div>
       </header>
+      {deliveryAdoptionFreshness?.isStale ? (
+        <div
+          role="status"
+          data-graph-results-adoption-stale
+          className="flex min-w-0 shrink-0 items-start gap-2 border-b border-state-warning/30 bg-state-warning-soft px-3 py-2 text-[11px] leading-4 text-state-warning sm:px-4"
+        >
+          <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="break-words font-semibold">{t("graph.results.adoptionSnapshotStale")}</p>
+            {deliveryAdoptionFreshness.issues.length ? (
+              <ul tabIndex={0} aria-label={t("graph.results.adoptionSnapshotStale")} className="mt-1 max-h-24 overflow-y-auto overscroll-contain list-disc space-y-0.5 break-words pl-4 outline-none focus-visible:ring-2 focus-visible:ring-focus-ring">
+                {deliveryAdoptionFreshness.issues.map((issue, index) => (
+                  <li key={`${issue.code}-${issue.nodeId ?? "version"}-${index}`} data-graph-results-adoption-issue={issue.code}>
+                    {adoptionFreshnessIssueText(issue, resultTitleByNodeId, t)}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {error ? (
         <div role="alert" className="flex min-h-8 items-center gap-2 border-b border-state-error/25 bg-state-error-soft px-3 text-[11px] text-state-error">
           <AlertCircle size={13} className="shrink-0" aria-hidden="true" />
@@ -199,7 +230,8 @@ export function GraphResultsView({
               onPreviewImage={onPreviewImage}
               onBindEvidence={onBindEvidence}
               adoptionQualityByNodeId={adoptionQualityByNodeId}
-              adoptedSlotBySlot={adoptedSlotBySlot}
+              adoptedSlotByNodeId={adoptedSlotByNodeId}
+              deliveryAdoptionFreshness={deliveryAdoptionFreshness}
               adoptingNodeId={adoptingNodeId}
               onAdoptItem={onAdoptItem}
             />
@@ -228,7 +260,8 @@ function ResultSection({
   onPreviewImage,
   onBindEvidence,
   adoptionQualityByNodeId,
-  adoptedSlotBySlot,
+  adoptedSlotByNodeId,
+  deliveryAdoptionFreshness,
   adoptingNodeId,
   onAdoptItem,
 }: {
@@ -249,7 +282,8 @@ function ResultSection({
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
   adoptionQualityByNodeId?: ReadonlyMap<string, AdoptionQualityAssessment>;
-  adoptedSlotBySlot?: ReadonlyMap<string, DeliveryAdoptionSlot>;
+  adoptedSlotByNodeId?: ReadonlyMap<string, DeliveryAdoptionSlot>;
+  deliveryAdoptionFreshness?: DeliveryAdoptionFreshnessAssessment | null;
   adoptingNodeId: string | null;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -294,7 +328,8 @@ function ResultSection({
             onPreviewImage={onPreviewImage}
             onBindEvidence={onBindEvidence}
             adoptionQuality={adoptionQualityByNodeId?.get(item.nodeId) ?? null}
-            adoptedSlot={adoptedSlotBySlot?.get(item.nodeId) ?? null}
+            adoptedSlot={adoptedSlotByNodeId?.get(item.nodeId) ?? null}
+            deliveryAdoptionFreshness={deliveryAdoptionFreshness}
             adopting={adoptingNodeId === item.nodeId}
             onAdoptItem={onAdoptItem}
           />
@@ -323,6 +358,7 @@ function ResultCard({
   onBindEvidence,
   adoptionQuality,
   adoptedSlot,
+  deliveryAdoptionFreshness,
   adopting,
   onAdoptItem,
 }: {
@@ -344,6 +380,7 @@ function ResultCard({
   onBindEvidence?: (item: GraphResultItem) => void;
   adoptionQuality: AdoptionQualityAssessment | null;
   adoptedSlot: DeliveryAdoptionSlot | null;
+  deliveryAdoptionFreshness?: DeliveryAdoptionFreshnessAssessment | null;
   adopting: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -357,10 +394,17 @@ function ResultCard({
   const canEdit = Boolean(item.currentAssetId && item.kind === "generation" && onOpenLocalEdit);
   const canPreview = Boolean(item.currentAssetId && onPreviewImage);
   const canBind = item.kind === "evidence" && Boolean(onBindEvidence);
+  const adoptionDiffersForItem = Boolean(
+    deliveryAdoptionFreshness?.issues.some((issue) => (
+      issue.code === "different_graph" || issue.nodeId === item.nodeId
+    )),
+  );
   const isAdopted = Boolean(
     adoptedSlot?.source_asset_id
     && item.currentAssetId
-    && adoptedSlot.source_asset_id === item.currentAssetId,
+    && adoptedSlot.source_asset_id === item.currentAssetId
+    && (adoptedSlot.source_node_id == null || adoptedSlot.source_node_id === item.nodeId)
+    && !adoptionDiffersForItem,
   );
   const canAdopt = Boolean(
     item.kind === "generation"
@@ -399,9 +443,6 @@ function ResultCard({
           aria-label={focusLabel}
           title={failureReason ?? undefined}
           onClick={() => onSelectItem(item)}
-          onDoubleClick={() => {
-            if (canPreview) onPreviewImage?.(item);
-          }}
           className="relative aspect-square w-full overflow-hidden bg-surface-subtle text-text-muted outline-none focus-visible:ring-2 focus-visible:ring-focus-ring focus-visible:ring-inset"
         >
           {item.currentAssetId ? (
@@ -434,6 +475,17 @@ function ResultCard({
           ) : null}
         </button>
       </Tooltip>
+      {canPreview ? (
+        <IconButton
+          label={t("graph.results.preview")}
+          size="sm"
+          data-graph-result-preview
+          className="absolute left-2 top-2 !h-8 !w-8 bg-surface-raised shadow-sm"
+          onClick={() => onPreviewImage?.(item)}
+        >
+          <Eye size={12} aria-hidden="true" />
+        </IconButton>
+      ) : null}
       <div className="flex min-w-0 flex-col gap-1 px-2 py-1.5">
         <span className="truncate text-[11px] font-semibold text-text-primary" title={item.title}>
           {item.title}
@@ -547,6 +599,20 @@ function purposeLabel(item: GraphResultItem, t: (key: TranslationKey) => string)
   if (!key) return null;
   const translation = AGENT_IMAGE_TYPE_TRANSLATIONS[key as AgentProductImageTypeKey];
   return translation ? t(translation.title) : key;
+}
+
+function adoptionFreshnessIssueText(
+  issue: DeliveryAdoptionFreshnessIssue,
+  resultTitleByNodeId: ReadonlyMap<string, string>,
+  t: (key: TranslationKey, params?: TranslationParams) => string,
+): string {
+  const key = deliveryAdoptionFreshnessIssueMessageKey(issue.code);
+  if (issue.code === "different_graph" || issue.code === "unlinked_node") return t(key);
+  return t(key, {
+    title: issue.nodeId
+      ? resultTitleByNodeId.get(issue.nodeId) ?? t("graph.results.adoptionSnapshotUnknownSlot")
+      : t("graph.results.adoptionSnapshotUnknownSlot"),
+  });
 }
 
 function statusKey(status: WorkflowNodeDisplayStatus): TranslationKey {

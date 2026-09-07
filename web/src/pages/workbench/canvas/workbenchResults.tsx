@@ -20,8 +20,9 @@ import type {
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { graphEdgeRoleLabelKey, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
-  adoptedSlotBySlot,
+  adoptedSlotByNodeId,
   assessAdoptionQuality,
+  assessDeliveryAdoptionFreshness,
   buildAdoptionSlotsReplacingNode,
 } from "./deliveryAdoption";
 import { projectGraphResults, type GraphResultItem } from "./resultProjection";
@@ -150,8 +151,19 @@ export function WorkbenchResultsLayer({
       }
     },
   });
+  const deliveryAdoptionFreshness = useMemo(() => {
+    const currentAssetByNodeId = new Map<string, string | null>();
+    for (const section of sections) {
+      for (const item of section.items) currentAssetByNodeId.set(item.nodeId, item.currentAssetId);
+    }
+    return assessDeliveryAdoptionFreshness({
+      graph,
+      current: adoptionQuery.data ?? null,
+      currentAssetByNodeId,
+    });
+  }, [adoptionQuery.data, graph, sections]);
   const adoptedSlotMap = useMemo(
-    () => adoptedSlotBySlot(adoptionQuery.data ?? null),
+    () => adoptedSlotByNodeId(adoptionQuery.data ?? null),
     [adoptionQuery.data],
   );
   const adoptionQualityByNodeId = useMemo(() => {
@@ -345,7 +357,8 @@ export function WorkbenchResultsLayer({
         onOpenLocalEdit={onOpenLocalEdit ? openLocalEdit : undefined}
         onPreviewImage={onPreviewImage ? previewImage : undefined}
         onBindEvidence={onBindNode ? bindEvidence : undefined}
-        adoptedSlotBySlot={adoptedSlotMap}
+        adoptedSlotByNodeId={adoptedSlotMap}
+        deliveryAdoptionFreshness={deliveryAdoptionFreshness}
         adoptionQualityByNodeId={adoptionQualityByNodeId}
         adoptingNodeId={adoptMutation.isPending && adoptMutation.variables?.productId === productId
           ? adoptMutation.variables.item.nodeId

@@ -151,7 +151,7 @@ describe("GraphResultsView", () => {
 
   it("shows delivery adoption controls when handlers and an adopted slot are provided", () => {
     const markup = renderResults({
-      adoptedSlotBySlot: new Map([["node-ok", {
+      adoptedSlotByNodeId: new Map([["node-ok", {
         id: "slot-1",
         slot_key: "node-ok",
         sort_order: 0,
@@ -219,4 +219,21 @@ describe("GraphResultsView", () => {
     expect(markup).toContain('data-graph-planned-action="generate"');
     expect(markup).toContain("disabled");
   });
+});
+
+
+it("offers an explicit preview only for available images", () => {
+  const markup = renderResults({ onPreviewImage: vi.fn() });
+  expect(markup.match(/data-graph-result-preview=/g)).toHaveLength(2);
+  expect(markup).toContain('aria-label="预览图片"');
+});
+
+it("keeps export available while explaining a stale adopted image", () => {
+  const markup = renderResults({
+    onExportAdoption: vi.fn(),
+    deliveryAdoptionFreshness: { isStale: true, issues: [{ code: "asset_changed", nodeId: "node-ok" }] },
+  });
+  expect(markup).toContain("当前图片与已采用版本未完全对应");
+  expect(markup).toContain("主图 1：当前图片尚未采用");
+  expect(markup).toContain("data-graph-results-export-adoption");
 });

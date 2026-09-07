@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [workbench-continuity.md](workbench-continuity.md) | 完成 | 明确预览入口、采用版本差异与导出连续路径，四语及窄屏浏览器验证 |
 | [saas-identity-convergence.md](saas-identity-convergence.md) | 完成 | 账号自有商家与独立管理员、删除成员模型和默认归属，迁移与前后端验证 |
 | [saas-policy-alignment.md](saas-policy-alignment.md) | 完成 | 未知调用到期释放用户额度；有限质量检查允许确认采用，保留实际状态并下载 |
 | [saas-design-alignment.md](saas-design-alignment.md) | 完成 | 纠正账号与管理员范围、六组现行合同，删除支持占位；收费/采用政策待独立裁定 |

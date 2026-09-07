@@ -79,6 +79,8 @@ On the create page, enter a product brief plus on-image copy and language, then 
 
 ## 3. Product Workbench
 
+In Image Results, use Preview image on a result card to open the existing image viewer and download the image; clicking the card still selects it. Delivery package export uses the adopted version. When a current image changes, its source node disappears, the adopted version belongs to a different graph, or an adopted image cannot be linked to a current slot, the results view explains the mismatch. You can still export the previously adopted version. Explicitly adopt a new image to include it in the delivery package. Moving nodes or changing the canvas layout does not change the adopted version.
+
 ### 3.1 Node Types
 
 - Product facts: confirmed facts, with pending observations separated for explicit confirmation. Pending or conflicting facts are not generation evidence.

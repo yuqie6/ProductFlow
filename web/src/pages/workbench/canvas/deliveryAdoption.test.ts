@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { DeliveryAdoptionVersion, GraphProjection } from "../../../lib/types";
 import {
-  adoptedSlotBySlot,
+  adoptedSlotByNodeId,
   adoptionQualityIssueMessageKey,
   buildAdoptionSlotsReplacingNode,
   assessAdoptionQuality,
+  assessDeliveryAdoptionFreshness,
 } from "./deliveryAdoption";
 
 const graph = {
@@ -77,8 +78,8 @@ const current: DeliveryAdoptionVersion = {
 };
 
 describe("deliveryAdoption", () => {
-  it("maps adopted assets by slot key", () => {
-    expect(adoptedSlotBySlot(current).get("node-hero")).toEqual(current.slots[0]);
+  it("maps adopted assets by source node", () => {
+    expect(adoptedSlotByNodeId(current).get("node-hero")).toEqual(current.slots[0]);
   });
 
   it("replaces one node slot and renumbers sort order without dropping siblings", () => {
@@ -162,6 +163,7 @@ describe("deliveryAdoption", () => {
           ...current.slots[0],
           id: "s2",
           slot_key: "node-other",
+          source_node_id: "node-other",
           sort_order: 1,
           quality_status: "fail" as const,
           quality_detail: "图位文字溢出",
@@ -178,10 +180,53 @@ describe("deliveryAdoption", () => {
     expect(built).toEqual(expect.arrayContaining([
       expect.objectContaining({
         slot_key: "node-other",
+          source_node_id: "node-other",
         quality_status: "fail",
         quality_detail: "图位文字溢出",
         text_overflow: true,
       }),
     ]));
   });
+});
+
+
+describe("delivery snapshot identity", () => {
+  const assess = (asset: string | null, version = current, projection = graph) => assessDeliveryAdoptionFreshness({
+    graph: projection, current: version, currentAssetByNodeId: new Map([["node-hero", asset]]),
+  });
+  it("ignores revision and layout changes when the asset is unchanged", () => {
+    expect(assess("old-asset", current, { ...graph, revision: 99, nodes: graph.nodes.map(node => ({ ...node, position_x: 900 })) })).toEqual({ isStale: false, issues: [] });
+  });
+  it("reports changed and missing current assets", () => {
+    expect(assess("new-asset").issues).toEqual([{ code: "asset_changed", nodeId: "node-hero" }]);
+    expect(assess(null).issues).toEqual([{ code: "missing_current_asset", nodeId: "node-hero" }]);
+  });
+  it("reports deleted source nodes and other graphs", () => {
+    expect(assess("old-asset", current, { ...graph, nodes: [] }).issues).toEqual([{ code: "deleted_node", nodeId: "node-hero" }]);
+    expect(assess("old-asset", { ...current, graph_id: "other" }).issues).toEqual([{ code: "different_graph", nodeId: null }]);
+  });
+  it("uses source node identity rather than slot label", () => {
+    expect(assess("old-asset", { ...current, slots: [{ ...current.slots[0], slot_key: "hero" }] }).isStale).toBe(false);
+  });
+  it("clears the difference only after the replacement asset is adopted", () => {
+    expect(assess("new-asset").isStale).toBe(true);
+    expect(assess("new-asset", { ...current, slots: [{ ...current.slots[0], source_asset_id: "new-asset" }] }).isStale).toBe(false);
+  });
+});
+
+it("replaces a named delivery slot for the same source node without retaining a stale duplicate", () => {
+  const named = { ...current, slots: [{ ...current.slots[0], slot_key: "hero" }] };
+  expect(adoptedSlotByNodeId(named).get("node-hero")).toEqual(named.slots[0]);
+  const slots = buildAdoptionSlotsReplacingNode({ graph, current: named, nodeId: "node-hero", sourceAssetId: "new-asset" });
+  expect(slots).toHaveLength(1);
+  expect(slots).toEqual([expect.objectContaining({ source_asset_id: "new-asset" })]);
+});
+
+it("distinguishes an unlinked named slot from a deleted source node", () => {
+  const assess = (slotKey: string) => assessDeliveryAdoptionFreshness({
+    graph, current: { ...current, slots: [{ ...current.slots[0], source_node_id: null, slot_key: slotKey }] },
+    currentAssetByNodeId: new Map([["node-hero", "old-asset"]]),
+  });
+  expect(assess("custom-hero").issues).toEqual([{ code: "unlinked_node", nodeId: null }]);
+  expect(assess("node-hero").issues).toEqual([]);
 });
