@@ -401,8 +401,8 @@ func (e Executor) callProvider(
 	return result, promote, err
 }
 
-// callImageProvider 与 callProvider 同一围栏：Reserve → prepare → invoke → finish。
-// 额度不足显式 Conflict；未写出 effect 的围栏失败 Release；invoke 出错 MarkUnknown。
+// callImageProvider 将 prepare 和 Reserve 放在同一事务围栏内，再 invoke → finish。
+// 围栏或预留失败一起回滚，禁止取消后的旧 attempt 创建额度；invoke 出错 MarkUnknown。
 // 空 Bytes 不当失败——空结果由 runClaimedNode 再报证明失败。
 func (e Executor) callImageProvider(
 	ctx context.Context,
@@ -420,29 +420,20 @@ func (e Executor) callImageProvider(
 	if err != nil {
 		return ImageResult{}, false, err
 	}
-	if err := e.reserveImageQuota(ctx, merchantID, nodeRun.ID, attemptID); err != nil {
-		return ImageResult{}, false, err
-	}
 	request := map[string]any{
 		"node_id":      nodeRun.NodeID,
 		"node_type":    string(nodeType),
 		"input_digest": digest,
 		"attempt_id":   attemptID,
 	}
-	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
-		if errors.Is(err, errProviderFenced) {
-			_ = e.releaseImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
-			return ImageResult{}, false, err
+	if err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		prepared := e
+		prepared.DB = pgxTx
+		if err := prepared.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
+			return err
 		}
-		started, effectErr := imageProviderEffectExists(ctx, e.DB, nodeRun.ID, attemptID)
-		if effectErr != nil {
-			return ImageResult{}, false, effectErr
-		}
-		if started {
-			_ = e.markImageQuotaUnknown(ctx, merchantID, nodeRun.ID, attemptID)
-		} else {
-			_ = e.releaseImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
-		}
+		return prepared.reserveImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
+	}); err != nil {
 		return ImageResult{}, false, err
 	}
 	result, err := invoke()
