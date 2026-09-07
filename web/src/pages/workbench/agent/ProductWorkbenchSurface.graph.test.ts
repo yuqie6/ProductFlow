@@ -138,6 +138,7 @@ describe("GraphAgentPanel", () => {
       })),
     ));
     expect(markup).toContain('data-graph-main-view-panel="results"');
+    expect(markup).not.toContain('data-graph-canvas-toolbar="true"');
   });
 
   it("honors a stored product-level main-view preference over the conditional default", () => {

@@ -104,16 +104,20 @@ test.describe("delivery R2 core path gate", () => {
       const exportButton = page.locator("[data-graph-results-export-adoption]");
       await expect(exportButton).toBeVisible();
       await expect(exportButton).toBeEnabled();
-      // 画布右上角控件可能叠在成果头上；UI 可达性已断言，字节核对走与按钮同一导出合同。
-      const exportResponse = await page.request.post(
-        `/api/v3/products/${productId}/delivery-adoptions/${adoption.id}/export`,
-        { data: {} },
-      );
+      // 成果头内联操作区；不得被画布右上浮动工具条拦截（禁止 force）。
+      await expect(page.locator("[data-graph-canvas-toolbar]")).toHaveCount(0);
+      const downloadPromise = page.waitForEvent("download");
+      const exportResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === "POST"
+        && new URL(response.url()).pathname
+          === `/api/v3/products/${productId}/delivery-adoptions/${adoption.id}/export`
+      ));
+      await exportButton.click();
+      const exportResponse = await exportResponsePromise;
       expect(exportResponse.ok(), await exportResponse.text()).toBeTruthy();
-      const zipBytes = Buffer.from(await exportResponse.body());
+      const download = await downloadPromise;
       const zipPath = path.join(EVIDENCE_ROOT, "adoption-export.zip");
-      await writeFile(zipPath, zipBytes);
-      await exportButton.click({ force: true });
+      await download.saveAs(zipPath);
       const manifest = JSON.parse(execFileSync("unzip", ["-p", zipPath, "manifest.json"], { encoding: "utf8" })) as {
         kind: string;
         items: Array<{
@@ -136,9 +140,28 @@ test.describe("delivery R2 core path gate", () => {
         });
       }
 
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.locator("[data-graph-results-view]")).toBeVisible();
+      const mobileExport = page.locator("[data-graph-results-export-adoption]");
+      await expect(mobileExport).toBeVisible();
+      await expect(mobileExport).toBeEnabled();
+      await expect(page.locator("[data-graph-canvas-toolbar]")).toHaveCount(0);
+      const mobileDownloadPromise = page.waitForEvent("download");
+      const mobileExportResponse = page.waitForResponse((response) => (
+        response.request().method() === "POST"
+        && new URL(response.url()).pathname
+          === `/api/v3/products/${productId}/delivery-adoptions/${adoption.id}/export`
+      ));
+      await mobileExport.click();
+      expect((await mobileExportResponse).ok()).toBeTruthy();
+      await mobileDownloadPromise;
+      await page.screenshot({ path: path.join(EVIDENCE_ROOT, "mobile-390x844-export-reachable.png"), fullPage: false });
+      await page.setViewportSize({ width: 1440, height: 960 });
+
       graph = await workflowGraph(page);
       await page.locator('[data-graph-main-view="flow"]').click();
       await expect(page.locator('[data-graph-main-view-panel="flow"]')).toBeVisible();
+      await expect(page.locator("[data-graph-canvas-toolbar]")).toBeVisible();
       // 再跑一次节点：即便 mock digest 复用同一资产 ID，采用快照仍须钉住原 ID。
       const rerunAssetId = await runImage(page, graph, image.id);
       // mock 同 digest 可能复用资产；只要采用快照仍钉住原 ID 即满足合同。

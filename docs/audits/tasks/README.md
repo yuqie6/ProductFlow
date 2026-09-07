@@ -20,9 +20,9 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [delivery-export-overlay-fix.md](delivery-export-overlay-fix.md) | 工作流体验 | 实现 | 认领 | sub-r2/delivery-export-overlay-fix | 2026-09-07T17:48:30+08:00 |
-| [image-quality-subject-extract-b0.md](image-quality-subject-extract-b0.md) | 图片质量 | 实现 | 认领 | sub-iq/image-quality-subject-extract-b0 | 2026-09-07T17:57:00+08:00 |
 | [merchant-mp-c-balance-http-b4.md](merchant-mp-c-balance-http-b4.md) | 商家平台 | 实现 | 认领 | sub-mpc/merchant-mp-c-balance-http-b4 | 2026-09-07T18:07:00+08:00 |
+| [delivery-r2-local-edit-retest.md](delivery-r2-local-edit-retest.md) | 工作流体验 | 证据 | 认领 | sub-r2/delivery-r2-local-edit-retest | 2026-09-07T18:11:00+08:00 |
+| [image-quality-subject-extract-apply.md](image-quality-subject-extract-apply.md) | 图片质量 | 实现 | 认领 | sub-iq/image-quality-subject-extract-apply | 2026-09-07T18:11:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

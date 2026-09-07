@@ -1167,6 +1167,7 @@ export function GraphCanvasPanel({
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
+        {showFlowView ? (
         <div
           data-graph-canvas-toolbar
           data-canvas-overlay="top-right"
@@ -1244,7 +1245,7 @@ export function GraphCanvasPanel({
               <WorkbenchResultsViewSwitcher mainView={mainView} onMainViewChange={setMainView} />
             </Suspense>
           ) : null}
-          {hasShotGroups && showFlowView ? (
+          {hasShotGroups ? (
             <IconButton label={t("graph.canvas.shotsView")} aria-pressed={filmstripVisible} variant={filmstripVisible ? "secondary" : "ghost"} onClick={() => setFilmstripVisible((visible) => !visible)}>
               <Images size={16} aria-hidden="true" />
             </IconButton>
@@ -1253,6 +1254,7 @@ export function GraphCanvasPanel({
             <ProductWorkbenchCanvasChromeToggle embedded collapsed={chromeCollapsed} maximizeLabel={t("detail.maximizeCanvas")} restoreLabel={t("detail.restoreCanvas")} onToggle={onToggleChrome} />
           ) : null}
         </div>
+        ) : null}
         {enteredGroup && showFlowView ? (
           <nav
             data-graph-group-breadcrumb
@@ -1380,6 +1382,22 @@ export function GraphCanvasPanel({
                 onOpenLocalEdit={onOpenLocalEdit}
                 onPreviewImage={onPreviewImage}
                 onBindNode={onBindNode}
+                headerActions={(
+                  <>
+                    {hasResultItems ? (
+                      <WorkbenchResultsViewSwitcher mainView={mainView} onMainViewChange={setMainView} />
+                    ) : null}
+                    {onToggleChrome ? (
+                      <ProductWorkbenchCanvasChromeToggle
+                        embedded
+                        collapsed={chromeCollapsed}
+                        maximizeLabel={t("detail.maximizeCanvas")}
+                        restoreLabel={t("detail.restoreCanvas")}
+                        onToggle={onToggleChrome}
+                      />
+                    ) : null}
+                  </>
+                )}
               />
             </Suspense>
           )}

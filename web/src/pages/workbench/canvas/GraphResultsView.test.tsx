@@ -154,10 +154,19 @@ describe("GraphResultsView", () => {
       adoptedAssetBySlot: new Map([["node-ok", "asset-1"]]),
       onAdoptItem: vi.fn(),
       onExportAdoption: vi.fn(),
+      headerActions: createElement("div", { "data-graph-results-header-actions": true }, "switcher"),
     });
     expect(markup).toContain('data-graph-result-delivery-adopted="true"');
     expect(markup).toContain("data-graph-result-adopt");
     expect(markup).toContain("data-graph-results-export-adoption");
+    expect(markup).toContain("data-graph-results-header-actions");
+    const headerSlice = markup.slice(
+      markup.indexOf("data-graph-results-view"),
+      markup.indexOf("data-graph-results-scroll"),
+    );
+    expect(headerSlice.indexOf("data-graph-results-header-actions")).toBeLessThan(
+      headerSlice.indexOf("data-graph-results-export-adoption"),
+    );
   });
 
   it("shows adoption rejection reason and disables adopt when blocked", () => {

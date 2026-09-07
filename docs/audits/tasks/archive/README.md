@@ -4,6 +4,8 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [delivery-export-overlay-fix.md](delivery-export-overlay-fix.md) | 完成 | 成果态收起工具条；UI 真实点击导出；≠R2 |
+| [image-quality-subject-extract-b0.md](image-quality-subject-extract-b0.md) | 完成 | corner_chroma_local 蒙版/抠图闸；≠R3/像素保真 |
 | [merchant-mp-c-wire-b3-agent.md](merchant-mp-c-wire-b3-agent.md) | 完成 | Agent before_model_request 额度接线；≠R5/HTTP 余额 |
 | [image-quality-ocr-adoption-wire.md](image-quality-ocr-adoption-wire.md) | 完成 | CreateAdoption 默认 OCR；缺字/空期望拒绝；≠R3 |
 | [merchant-mp-c-wire-b2-graph.md](merchant-mp-c-wire-b2-graph.md) | 完成 | Graph image_generation 额度接线；≠R5/Agent |

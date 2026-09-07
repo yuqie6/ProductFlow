@@ -2,7 +2,7 @@
  * 懒加载成果集成：切换器与成果层同块，主壳只保留 flow 默认与选择同步入口。
  */
 
-import { Suspense, useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 
@@ -100,6 +100,7 @@ export function WorkbenchResultsLayer({
   onOpenLocalEdit,
   onPreviewImage,
   onBindNode,
+  headerActions,
 }: {
   productId: string;
   graph: GraphProjection;
@@ -121,6 +122,7 @@ export function WorkbenchResultsLayer({
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   onPreviewImage?: (assetId: string, alt: string) => void;
   onBindNode?: (nodeId: string) => void;
+  headerActions?: ReactNode;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -289,6 +291,7 @@ export function WorkbenchResultsLayer({
         exportingAdoption={exportMutation.isPending}
         onAdoptItem={(item) => adoptMutation.mutate(item)}
         onExportAdoption={adoptionQuery.data ? () => exportMutation.mutate() : undefined}
+        headerActions={headerActions}
       />
     </Suspense>
   );

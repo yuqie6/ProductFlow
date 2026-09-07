@@ -14,7 +14,7 @@ import {
   Play,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
 
 import { IconButton } from "../../../components/ui/icon-button";
 import { Tooltip } from "../../../components/ui/tooltip";
@@ -55,6 +55,8 @@ export interface GraphResultsViewProps {
   exportingAdoption?: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
   onExportAdoption?: () => void;
+  /** 成果态下收纳视图切换等，避免被画布右上浮动工具条叠住。 */
+  headerActions?: ReactNode;
 }
 
 export function GraphResultsView({
@@ -84,6 +86,7 @@ export function GraphResultsView({
   exportingAdoption = false,
   onAdoptItem,
   onExportAdoption,
+  headerActions,
 }: GraphResultsViewProps) {
   const { t } = useI18n();
   const error = operationError ?? runsError;
@@ -119,22 +122,25 @@ export function GraphResultsView({
         <span className="shrink-0 text-[11px] font-medium text-text-muted">
           {t("graph.results.count", { count: itemCount })}
         </span>
-        {onExportAdoption ? (
-          <IconButton
-            label={t("graph.results.exportAdoption")}
-            size="sm"
-            data-graph-results-export-adoption
-            disabled={busy || exportingAdoption}
-            onClick={onExportAdoption}
-          >
-            {exportingAdoption
-              ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              : <Package size={13} aria-hidden="true" />}
-          </IconButton>
-        ) : null}
-        {runsFetching ? (
-          <Loader2 size={14} className="shrink-0 animate-spin text-text-muted motion-reduce:animate-none" aria-hidden="true" />
-        ) : null}
+        <div className="relative z-20 flex shrink-0 items-center gap-1">
+          {headerActions}
+          {onExportAdoption ? (
+            <IconButton
+              label={t("graph.results.exportAdoption")}
+              size="sm"
+              data-graph-results-export-adoption
+              disabled={busy || exportingAdoption}
+              onClick={onExportAdoption}
+            >
+              {exportingAdoption
+                ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                : <Package size={13} aria-hidden="true" />}
+            </IconButton>
+          ) : null}
+          {runsFetching ? (
+            <Loader2 size={14} className="shrink-0 animate-spin text-text-muted motion-reduce:animate-none" aria-hidden="true" />
+          ) : null}
+        </div>
       </header>
       {error ? (
         <div role="alert" className="flex min-h-8 items-center gap-2 border-b border-state-error/25 bg-state-error-soft px-3 text-[11px] text-state-error">
