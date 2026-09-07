@@ -17,6 +17,7 @@ import (
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
+	"github.com/yuqie6/productflow/internal/subjectextract"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -232,9 +233,33 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if err := media.RejectGenerationInput(referenceImageBytes(imgReq.References)); err != nil {
 			return err
 		}
-		img, promote, err := e.callImageProvider(ctx, run.ID, *nodeRun, image.Name(), digest, node.NodeType, func() (ImageResult, error) {
-			return image.GenerateImage(ctx, imgReq)
-		})
+		imageTrace := TextTraceAsMap(BuildTextTrace(TextTraceInput{
+			Prompt:            promptPayload,
+			Facts:             factsUpstreamOfImage(applied, node.ID, sources),
+			ImageTypeKey:      imgReq.ImageTypeKey,
+			UserImageOverride: nodeHasTextOverride(node.Config),
+		}))
+		routeInput := ProduceRouteInput{
+			Route:                imgReq.ProduceRoute,
+			ImageTypeKey:         imgReq.ImageTypeKey,
+			HasIdentityReference: hasProductIdentityReference(imgReq.References),
+			PromptTexts:          collectPromptAuditTexts(promptPayload, imgReq.VariationInstruction),
+		}
+		// IQ-CF-04：compose Pass 时优先用合成 PNG 交付并跳过 GenerateImage（省额度、字节诚实）。
+		// extract/compose 失败仍走生成式出图，但 route_qualified=false 且不置交付标志。
+		delivery := resolveSubjectPreserveImageDelivery(imgReq.References, routeInput)
+		var img ImageResult
+		var promote bool
+		var providerName string
+		if delivery.DeliveryFromCompose {
+			providerName = "subject_compose"
+			img, promote, err = e.callLocalSubjectCompose(ctx, run.ID, *nodeRun, digest, node.NodeType, delivery.Compose)
+		} else {
+			providerName = image.Name()
+			img, promote, err = e.callImageProvider(ctx, run.ID, *nodeRun, providerName, digest, node.NodeType, func() (ImageResult, error) {
+				return image.GenerateImage(ctx, imgReq)
+			})
+		}
 		if errors.Is(err, errProviderFenced) {
 			return nil
 		}
@@ -248,23 +273,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if err := media.RejectGenerationOutput([][]byte{img.Bytes}, img.MIME); err != nil {
 			return err
 		}
-		imageTrace := TextTraceAsMap(BuildTextTrace(TextTraceInput{
-			Prompt:            promptPayload,
-			Facts:             factsUpstreamOfImage(applied, node.ID, sources),
-			ImageTypeKey:      imgReq.ImageTypeKey,
-			UserImageOverride: nodeHasTextOverride(node.Config),
-		}))
-		routeRec := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
-			Route:                imgReq.ProduceRoute,
-			ImageTypeKey:         imgReq.ImageTypeKey,
-			HasIdentityReference: hasProductIdentityReference(imgReq.References),
-			PromptTexts:          collectPromptAuditTexts(promptPayload, imgReq.VariationInstruction),
-			// 本路径交付字节仍来自 GenerateImage；未置 SubjectPreserveDeliveryFromCompose，
-			// 故 appearance_may_change 不得为 false（参考提取/合成 ≠ 成片已保留主体）。
-		}))
-		// IQ-CF-04：subject_preserve 生成路径自动 Apply 主体提取+合成；失败强制 route_qualified=false。
-		routeRec = gateImageProduceRouteWithSubjectExtract(imgReq.References, routeRec)
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID, imageTrace, routeRec)
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, providerName, imgReq.PromptArtifactID, imageTrace, delivery.RouteMap)
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -450,6 +459,43 @@ func (e Executor) callImageProvider(
 		"model":           result.Model,
 		"response_id":     result.ResponseID,
 		"provider_status": result.ProviderStatus,
+	})
+	return result, promote, err
+}
+
+// callLocalSubjectCompose 用主体合成 PNG 走与 provider 相同的围栏，但不 Reserve 图片额度、不调 GenerateImage。
+// 仅在 resolveSubjectPreserveImageDelivery 判定 compose Pass 时可调用。
+func (e Executor) callLocalSubjectCompose(
+	ctx context.Context,
+	runID string,
+	nodeRun graphNodeRunRow,
+	digest string,
+	nodeType NodeType,
+	composed subjectextract.ComposeResult,
+) (ImageResult, bool, error) {
+	if nodeRun.ActiveAttemptID == nil || *nodeRun.ActiveAttemptID == "" {
+		return ImageResult{}, false, apperr.Validation("节点运行缺少 attempt token")
+	}
+	if !composed.Pass || len(composed.PNG) == 0 {
+		return ImageResult{}, false, fmt.Errorf("主体合成未通过，无法作为交付字节")
+	}
+	attemptID := *nodeRun.ActiveAttemptID
+	request := map[string]any{
+		"node_id":      nodeRun.NodeID,
+		"node_type":    string(nodeType),
+		"input_digest": digest,
+		"attempt_id":   attemptID,
+		"delivery":     "subject_compose",
+	}
+	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, "subject_compose", request); err != nil {
+		return ImageResult{}, false, err
+	}
+	result := imageResultFromSubjectCompose(composed)
+	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{
+		"model":           result.Model,
+		"provider_status": result.ProviderStatus,
+		"delivery":        "subject_compose",
+		"compose_sha256":  composed.PNGSHA256,
 	})
 	return result, promote, err
 }

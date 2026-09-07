@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [image-quality-subject-compose-deliver.md](image-quality-subject-compose-deliver.md) | 完成 | compose Pass 合成 PNG 交付；≠R3/像素保真 |
 | [roadmap-r2-r5-refresh.md](roadmap-r2-r5-refresh.md) | 完成 | ROADMAP R2/R5 事实对齐；两门仍未通过 |
 | [image-quality-subject-preserve-honesty.md](image-quality-subject-preserve-honesty.md) | 完成 | 生成式出图不得宣称外观不变；≠R3 |
 | [merchant-brand-product-select-b1.md](merchant-brand-product-select-b1.md) | 完成 | 商品选定 Brand + 继承合并；≠R2 |
