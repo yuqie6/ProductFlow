@@ -1,10 +1,14 @@
 /**
  * 视觉方案复用：继承优先级展示与保存/采用辅助。
- * 消费 IQ-CF-07；Brand 为显式占位，不假装多品牌实体。
+ * 消费 IQ-CF-07；Brand 层诚实占位（未选定 / 未合并风格），不假装已合并品牌色。
  */
 
 import type { RecipeReusePreview, VisualInheritanceLayer, VisualInheritanceView } from "../../../lib/types";
 import type { TranslationKey } from "../../../lib/i18n";
+
+/** 与 go/internal/visualsystem BrandReason* 对齐（B0）。 */
+export const BRAND_REASON_NOT_SELECTED = "brand_not_selected";
+export const BRAND_REASON_EXISTS_NO_STYLE_MERGE = "brand_exists_no_style_merge";
 
 export const VISUAL_INHERITANCE_PRIORITY = [
   "product_override",
@@ -25,6 +29,17 @@ export function layerLabelKey(layer: string): TranslationKey {
       return "visualReuse.layer.default";
     default:
       return "visualReuse.layer.unknown";
+  }
+}
+
+/** 品牌占位 reason → 文案键；缺省按未选定。 */
+export function brandPlaceholderLabelKey(reason: string): TranslationKey {
+  switch (reason) {
+    case BRAND_REASON_EXISTS_NO_STYLE_MERGE:
+      return "visualReuse.brandExistsNoMerge";
+    case BRAND_REASON_NOT_SELECTED:
+    default:
+      return "visualReuse.brandNotSelected";
   }
 }
 
@@ -53,8 +68,8 @@ export function emptyReusePreview(): RecipeReusePreview {
     pending: [],
     brand_placeholder: {
       status: "unavailable",
-      reason: "brand_table_not_ready",
-      detail: "",
+      reason: BRAND_REASON_NOT_SELECTED,
+      detail: "未选定品牌；继承链跳过品牌层",
     },
     preferred_visual_system_version_id: null,
     inheritance_priority: [...VISUAL_INHERITANCE_PRIORITY],

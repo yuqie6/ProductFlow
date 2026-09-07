@@ -8,6 +8,7 @@ import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { GraphNode } from "../../../lib/types";
 import {
+  brandPlaceholderLabelKey,
   hasNewerVisualVersion,
   layerLabelKey,
   overlayPayloadFromConfig,
@@ -114,7 +115,8 @@ export function VisualReuseControls({
 
       {inheritance.data?.brand_placeholder ? (
         <p data-visual-reuse-brand-placeholder className="text-[11px] text-text-muted">
-          {inheritance.data.brand_placeholder.detail || t("visualReuse.brandUnavailable")}
+          {inheritance.data.brand_placeholder.detail ||
+            t(brandPlaceholderLabelKey(inheritance.data.brand_placeholder.reason))}
         </p>
       ) : null}
 
