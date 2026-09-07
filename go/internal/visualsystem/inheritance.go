@@ -5,16 +5,37 @@ import (
 	"strings"
 )
 
+// StyleChainKeys 是 IQ-CF-07 风格继承链允许的字段；事实/身份参考不得进入。
+// 与 graph.CatalogVisualOverlay 的 style/colors 对齐，本包不 import graph。
+var StyleChainKeys = map[string]struct{}{
+	"style":  {},
+	"colors": {},
+}
+
+// ForbiddenStyleChainKeys 若出现在继承层载荷中须剥离，不得进入 EffectivePayload。
+var ForbiddenStyleChainKeys = map[string]struct{}{
+	"source_product_id":        {},
+	"fact_set_version_id":      {},
+	"visual_system_version_id": {},
+	"fact_keys":                {},
+	"evidence_asset_ids":       {},
+	"capacity":                 {},
+	"facts":                    {},
+	"product_identity":         {},
+	"reference_asset_ids":      {},
+	"images":                   {},
+}
+
 // ResolveInheritance 按 IQ-CF-07 合并：本商品覆盖 > 选定方案版本 > 品牌占位 > 产品默认。
-// 事实与身份参考不参与本函数。Brand 未就绪时品牌层恒为占位。
+// 事实与身份参考不参与本函数。Brand 未就绪时品牌层恒为占位且不合并任何品牌载荷。
 func ResolveInheritance(input ResolveInput) InheritanceView {
 	brand := DefaultBrandPlaceholder()
-	defaults := cloneMap(input.ProductDefault)
+	defaults := filterStyleChain(input.ProductDefault)
 	if defaults == nil {
 		defaults = map[string]any{}
 	}
-	selectedPayload := cloneMap(input.SelectedPayload)
-	override := cloneMap(input.ProductOverride)
+	selectedPayload := filterStyleChain(input.SelectedPayload)
+	override := filterStyleChain(input.ProductOverride)
 
 	effective := cloneMap(defaults)
 	if selectedPayload != nil {
@@ -22,6 +43,7 @@ func ResolveInheritance(input ResolveInput) InheritanceView {
 			effective[key] = cloneValue(value)
 		}
 	}
+	// 品牌层：Brand 表未就绪时永不合并，即使调用方误传 BrandPayload。
 	if override != nil {
 		for key, value := range override {
 			effective[key] = cloneValue(value)
@@ -84,6 +106,29 @@ type ResolveInput struct {
 	SelectedPayload    map[string]any
 	ProductDefault     map[string]any
 	NewerVersion       *VersionView
+	// BrandPayload 预留；Brand 表未就绪时 ResolveInheritance 忽略，不伪造品牌层。
+	BrandPayload map[string]any
+}
+
+// filterStyleChain 只保留 style/colors，并剥离子身份/事实键。nil 入参保持 nil。
+func filterStyleChain(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := map[string]any{}
+	for key, value := range in {
+		if _, forbidden := ForbiddenStyleChainKeys[key]; forbidden {
+			continue
+		}
+		if _, ok := StyleChainKeys[key]; !ok {
+			continue
+		}
+		out[key] = cloneValue(value)
+	}
+	if len(out) == 0 {
+		return map[string]any{}
+	}
+	return out
 }
 
 func noteOverride(active bool) string {

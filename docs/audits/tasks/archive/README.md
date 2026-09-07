@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [compete-facts-brand-inherit.md](compete-facts-brand-inherit.md) | 完成 | CF-B5 四级风格链+清身份；Brand 占位；≠R3 |
 | [compete-facts-controlled-layout.md](compete-facts-controlled-layout.md) | 完成 | CF-B4 自研 layout 组合器+选型备忘；≠HTTP/编辑器/R3 |
 | [compete-facts-produce-route.md](compete-facts-produce-route.md) | 完成 | CF-B3 produce_route+禁令审计；≠主体提取/采用硬闸/R3 |
 | [merchant-delivery-localedit.md](merchant-delivery-localedit.md) | 完成 | B6 交付/局部编辑跨商404；≠MP-B |

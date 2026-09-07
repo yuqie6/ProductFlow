@@ -68,7 +68,7 @@
 | compete-facts-impact-preview | CF-B2 变更影响预览 | 2026-09-07 完成归档 |
 | compete-facts-produce-route | CF-B3 双路线声明 | 2026-09-07 完成归档 |
 | compete-facts-controlled-layout | CF-B4 受控二维排版 | 2026-09-07 完成归档 |
-| compete-facts-brand-inherit | CF-B5 品牌/视觉继承 | CTO 认领 `sub-compete/…`，执行中 |
+| compete-facts-brand-inherit | CF-B5 品牌/视觉继承 | 2026-09-07 完成归档 |
 | image-quality-content-pilot | 图片质量真实对照 | 费用已授权；开放待隔离栈 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |

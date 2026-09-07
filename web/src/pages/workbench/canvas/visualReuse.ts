@@ -28,10 +28,15 @@ export function layerLabelKey(layer: string): TranslationKey {
   }
 }
 
+/** 仅保留风格链字段（style/colors）；事实/身份不得进入商品覆盖载荷。 */
 export function overlayPayloadFromConfig(config: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const overlay = config?.visual_overlay;
   if (!overlay || typeof overlay !== "object" || Array.isArray(overlay)) return {};
-  return overlay as Record<string, unknown>;
+  const raw = overlay as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if ("style" in raw) out.style = raw.style;
+  if ("colors" in raw) out.colors = raw.colors;
+  return out;
 }
 
 export function activeLayers(view: VisualInheritanceView | null | undefined): VisualInheritanceLayer[] {

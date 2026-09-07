@@ -46,4 +46,21 @@ describe("visualReuse", () => {
       }),
     ).toBe(true);
   });
+
+  it("CF-B5: overlay payload keeps style only; brand stays unavailable placeholder", () => {
+    expect(
+      overlayPayloadFromConfig({
+        visual_overlay: {
+          style: ["冷色"],
+          colors: [{ value: "#111" }],
+          capacity: "600ml",
+        },
+      }),
+    ).toEqual({
+      style: ["冷色"],
+      colors: [{ value: "#111" }],
+    });
+    expect(VISUAL_INHERITANCE_PRIORITY.indexOf("brand_version")).toBe(2);
+    expect(VISUAL_INHERITANCE_PRIORITY.indexOf("product_default")).toBe(3);
+  });
 });
