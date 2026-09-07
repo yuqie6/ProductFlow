@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [workbench-conditional-results-default.md](workbench-conditional-results-default.md) | 完成 | 有产出默认results否则flow；≠全局默认/记忆 |
 | [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 完成 | CF-B2 impact-preview+多选采用；≠OCR/自动跑图/R3 |
 | [release-n-to-n1-upgrade.md](release-n-to-n1-upgrade.md) | 完成 | B5 upgrade脚本+等价夹具；≠R6/冻结稳定对 |
 | [merchant-library-binding.md](merchant-library-binding.md) | 完成 | B4 图库绑定跨商404零写入；≠MP-B |

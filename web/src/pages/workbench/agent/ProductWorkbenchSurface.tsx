@@ -30,6 +30,7 @@ import type {
 import { inspectableGraphNodeId } from "../canvas/graphCatalog";
 import { GraphAddNodePanel } from "../canvas/GraphAddNodePanel";
 import { GraphCanvasPanel, type GraphCanvasActions, type GraphCanvasCommitNodeInput, type WorkbenchMainView } from "../canvas/GraphCanvasPanel";
+import { defaultWorkbenchMainView } from "../canvas/resultProjection";
 import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
@@ -143,7 +144,7 @@ export function ProductWorkbenchSurface({
   const [recipeApplication, setRecipeApplication] = useState<WorkflowRecipeApplicationResult | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
-  const [mainView, setMainView] = useState<WorkbenchMainView>("flow");
+  const [mainView, setMainView] = useState<WorkbenchMainView>(() => defaultWorkbenchMainView(initialGraph));
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [agentEditing, setAgentEditing] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(

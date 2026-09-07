@@ -8,8 +8,10 @@ import type {
 } from "../../../lib/types";
 import {
   assertUniqueResultNodeIds,
+  defaultWorkbenchMainView,
   flattenGraphResultItems,
   graphHasResultItems,
+  graphHasUsableResultImages,
   projectGraphResults,
 } from "./resultProjection";
 
@@ -240,5 +242,39 @@ describe("projectGraphResults", () => {
       currentAssetId: "asset-cert",
       status: "succeeded",
     });
+  });
+});
+
+describe("defaultWorkbenchMainView", () => {
+  it("defaults to results when at least one generation preview exists", () => {
+    const graph = makeGraph([
+      makeNode("image-empty", "image_generation", null, null),
+      makeNode("image-ready", "image_generation", null, "asset-1"),
+    ]);
+    expect(graphHasUsableResultImages(graph)).toBe(true);
+    expect(defaultWorkbenchMainView(graph)).toBe("results");
+  });
+
+  it("defaults to results when evidence has a bound asset", () => {
+    const graph = makeGraph([
+      makeNode("evidence-bound", "image_asset", null, null, { role: "evidence" }, "asset-cert"),
+    ]);
+    expect(defaultWorkbenchMainView(graph)).toBe("results");
+  });
+
+  it("keeps flow when generation/evidence slots exist but none have a current image", () => {
+    const graph = makeGraph([
+      makeNode("image-1", "image_generation", null, null),
+      makeNode("evidence-empty", "image_asset", null, null, { role: "evidence" }),
+      makeNode("identity-1", "image_asset", null, null, { role: "product_identity" }, "ref-1"),
+    ]);
+    expect(graphHasResultItems(graph)).toBe(true);
+    expect(graphHasUsableResultImages(graph)).toBe(false);
+    expect(defaultWorkbenchMainView(graph)).toBe("flow");
+  });
+
+  it("keeps flow for null/empty graphs", () => {
+    expect(defaultWorkbenchMainView(null)).toBe("flow");
+    expect(defaultWorkbenchMainView(makeGraph([]))).toBe("flow");
   });
 });

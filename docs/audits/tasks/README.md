@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | [merchant-delivery-localedit.md](merchant-delivery-localedit.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-delivery-localedit | 2026-09-07T13:56:00+08:00 |
 | [compete-facts-produce-route.md](compete-facts-produce-route.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-produce-route | 2026-09-07T14:05:00+08:00 |
-| [workbench-conditional-results-default.md](workbench-conditional-results-default.md) | 工作流体验 | 实现 | 认领 | sub-delivery/workbench-conditional-results-default | 2026-09-07T14:00:00+08:00 |
+| [workbench-remember-last-view.md](workbench-remember-last-view.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |

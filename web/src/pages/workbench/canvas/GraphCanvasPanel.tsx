@@ -72,6 +72,7 @@ import {
 } from "./shotChangeSet";
 import { GraphShotFilmstrip } from "./GraphShotFilmstrip";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
+import { defaultWorkbenchMainView } from "./resultProjection";
 import { projectGraphShots, type GraphShotProjection } from "./shotProjection";
 
 const WorkbenchResultsViewSwitcher = lazy(async () => {
@@ -248,7 +249,7 @@ export function GraphCanvasPanel({
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [filmstripVisible, setFilmstripVisible] = useState(restoredCanvas.filmstripVisible);
-  const [mainViewState, setMainViewState] = useState<WorkbenchMainView>("flow");
+  const [mainViewState, setMainViewState] = useState<WorkbenchMainView>(() => defaultWorkbenchMainView(graph));
   const mainView = mainViewProp ?? mainViewState;
   const setMainView = useCallback((view: WorkbenchMainView) => {
     if (mainViewProp === undefined) setMainViewState(view);

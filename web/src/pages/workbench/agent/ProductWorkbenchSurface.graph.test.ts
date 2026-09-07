@@ -92,6 +92,51 @@ describe("GraphAgentPanel", () => {
     expect(markup).toContain('data-canvas-overlay="top-right"');
     expect(markup).toContain('data-sidebar-tool="recipes"');
     expect(markup).toContain("工作流预设");
+    expect(markup).toContain('data-graph-main-view-panel="flow"');
+  });
+
+  it("opens on results when the graph already has a generation preview", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const product = {
+      id: "p1",
+      name: "夏季主图",
+    } as CanonicalProductDetail;
+    const graph = {
+      id: "g1",
+      product_id: "p1",
+      title: "夏季主图",
+      schema_version: 3,
+      revision: 1,
+      last_operation_group_id: null,
+      can_undo: false,
+      can_redo: false,
+      nodes: [{
+        id: "image-1",
+        node_type: "image_generation",
+        title: "主图",
+        position_x: 0,
+        position_y: 0,
+        config: { image_type_key: "hero" },
+        bound_asset_id: null,
+        group_id: null,
+        preview_asset_id: "asset-1",
+        config_status: "ready",
+        unused: false,
+        incoming: [],
+        outgoing: [],
+      }],
+      edges: [],
+      groups: [],
+    } as GraphProjection;
+    const markup = renderToStaticMarkup(createElement(
+      QueryClientProvider,
+      { client },
+      createElement(MemoryRouter, null, createElement(ProductWorkbenchSurface, {
+        product,
+        initialGraph: graph,
+      })),
+    ));
+    expect(markup).toContain('data-graph-main-view-panel="results"');
   });
 });
 

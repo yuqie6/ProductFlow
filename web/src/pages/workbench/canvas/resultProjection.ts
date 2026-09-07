@@ -50,6 +50,25 @@ export function graphHasResultItems(graph: GraphProjection): boolean {
   return graph.nodes.some((node) => isGenerationNode(node) || isEvidenceNode(node));
 }
 
+/**
+ * 打开工作台时的条件默认：至少一枚生图/证据项已有当前图 → results；
+ * 无产出或仅有空位节点 → flow。不记忆跨会话；完成 ≠ 全局一律成果。
+ */
+export function graphHasUsableResultImages(graph: GraphProjection | null | undefined): boolean {
+  if (!graph) return false;
+  for (const node of graph.nodes) {
+    if (isGenerationNode(node) && node.preview_asset_id) return true;
+    if (isEvidenceNode(node) && (node.bound_asset_id ?? node.preview_asset_id)) return true;
+  }
+  return false;
+}
+
+export function defaultWorkbenchMainView(
+  graph: GraphProjection | null | undefined,
+): "flow" | "results" {
+  return graphHasUsableResultImages(graph) ? "results" : "flow";
+}
+
 export function projectGraphResults(
   graph: GraphProjection,
   runs: readonly GraphRunLike[],
