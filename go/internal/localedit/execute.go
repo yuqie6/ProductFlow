@@ -50,14 +50,12 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		if errors.As(err, &ae) && ae.Status == 400 {
 			detail = ae.Detail
 		}
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
 	}
 	cap := e.provider().Capability()
 	if snap.RequestedProvider == nil || snap.RequestedMode == nil ||
 		cap.ProviderName != *snap.RequestedProvider || cap.Mode != *snap.RequestedMode {
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "unsupported", "提交时记录的图片 provider 能力与当前绑定不一致", false, "capability_mismatch", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "unsupported", "提交时记录的图片 provider 能力与当前绑定不一致", false, "capability_mismatch", "")
 	}
 	supportedOp := false
 	for _, op := range cap.Operations {
@@ -71,8 +69,7 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		if detail == "" {
 			detail = "图片 provider 未显式支持当前局部编辑操作"
 		}
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "unsupported", detail, false, "", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "unsupported", detail, false, "", "")
 	}
 	merchantID, err := merchantIDForProduct(ctx, e.DB, snap.ProductID)
 	if err != nil {
@@ -81,12 +78,10 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		if errors.As(err, &ae) && ae.Detail != "" {
 			detail = ae.Detail
 		}
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
 	}
 	if err := e.reserveEditQuota(ctx, merchantID, taskID, attemptID); err != nil {
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", quotaConflictDetail(err), true, "", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", quotaConflictDetail(err), true, "", "")
 	}
 	if err := e.markPhase(ctx, taskID, attemptID, "provider_pending", cap.ProviderName, snap.auditJSON()); err != nil {
 		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
@@ -104,8 +99,7 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		if errors.As(err, &ae) && ae.Status == 400 && ae.Detail != "" {
 			detail = ae.Detail
 		}
-		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
 	}
 	result, err := e.provider().Edit(ctx, EditRequest{
 		SourceBytes: snap.SourceBytes, SourceMIME: snap.SourceMIME, MaskPNG: snap.MaskBytes,
@@ -119,18 +113,15 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 	})
 	if err != nil {
 		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
-		e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", unknownDetail, false, truncStatus(fmt.Sprintf("%T", err)), "")
-		return nil
+		return e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", unknownDetail, false, truncStatus(fmt.Sprintf("%T", err)), "")
 	}
 	if len(result.Bytes) == 0 {
 		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
-		e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "图片 provider 返回的局部编辑结果数量无法确认", false, result.ProviderStatus, result.ResponseID)
-		return nil
+		return e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "图片 provider 返回的局部编辑结果数量无法确认", false, result.ProviderStatus, result.ResponseID)
 	}
 	if err := e.persistResult(ctx, snap, attemptID, result); err != nil {
 		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
-		e.finish(ctx, taskID, attemptID, "unknown", "unknown_provider_effect", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
-		return nil
+		return e.finish(ctx, taskID, attemptID, "unknown", "unknown_provider_effect", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
 	}
 	_ = e.settleEditQuota(ctx, merchantID, taskID, attemptID)
 	return nil
@@ -218,7 +209,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 				if err := markUnknownLocked(ctx, pgxTx, task, "provider boundary 已开始，滞留运行不能自动重投"); err != nil {
 					return err
 				}
-				return apperr.Conflict("局部编辑 provider effect 未知，任务已停止自动重试")
+				return nil
 			default:
 				return apperr.Conflict("局部编辑任务的运行阶段未知，不能自动重投")
 			}
@@ -259,8 +250,8 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		claimed = true
 		return nil
 	})
-	if unknownQuota.mark {
-		_ = finalizeRecoveredUnknownQuota(ctx, e.DB, unknownQuota.productID, taskID, unknownQuota.attemptID)
+	if err == nil && unknownQuota.mark {
+		err = finalizeRecoveredUnknownQuota(ctx, e.DB, unknownQuota.productID, taskID, unknownQuota.attemptID)
 	}
 	return claimed, attemptID, err
 }
@@ -449,11 +440,15 @@ func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID st
 	return nil
 }
 
-// finish 写终态。fence 失效直接返回（不报错）：信封仍由 Consume 标 CONSUMED，业务行以库里为准。
-func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, effect, detail string, retryable bool, providerStatus, responseID string) {
-	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+// finish 原子写入任务和 attempt 终态，持久化失败交还队列处理。
+// fence 失效为空操作：业务行以库里为准，不覆盖新 attempt 或取消状态。
+func (e Executor) finish(ctx context.Context, taskID, attemptID, status, phase, effect, detail string, retryable bool, providerStatus, responseID string) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, ok, err := lockFenced(ctx, pgxTx, taskID, attemptID)
-		if err != nil || !ok {
+		if err != nil {
+			return err
+		}
+		if !ok {
 			return nil
 		}
 		now := time.Now().UTC()
@@ -545,11 +540,13 @@ func markStaleClaimed(ctx context.Context, tx *gorm.DB, task taskRow) error {
 func markUnknownLocked(ctx context.Context, tx *gorm.DB, task taskRow, detail string) error {
 	now := time.Now().UTC()
 	if task.ActiveAttemptID != nil {
-		_ = tx.WithContext(ctx).Model(&schema.LocalImageEditProviderAttempts{}).
+		if err := tx.WithContext(ctx).Model(&schema.LocalImageEditProviderAttempts{}).
 			Where("task_id = ? AND attempt_id = ?", task.ID, *task.ActiveAttemptID).
 			Updates(map[string]any{
 				"phase": "unknown", "effect_result": "unknown", "detail": detail, "updated_at": now,
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
 	}
 	return tx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", task.ID).Updates(map[string]any{
 		"status":            "unknown",
