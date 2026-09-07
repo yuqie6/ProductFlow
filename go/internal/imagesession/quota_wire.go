@@ -47,7 +47,8 @@ func (e Executor) settleGenerationQuota(ctx context.Context, merchantID, taskID 
 	if err != nil {
 		return err
 	}
-	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, imageSessionQuotaUnits))
+	_, _, err = e.quota().Settle(ctx, merchantID, key, imageSessionQuotaUnits)
+	return err
 }
 
 func (e Executor) markGenerationQuotaUnknown(ctx context.Context, merchantID, taskID string) error {

@@ -43,6 +43,7 @@
 | 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
 | 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | `a32f72bc` |
 | Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 2b4355ec |
+| 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -220,3 +221,10 @@ Node [进程重启测试](../../agent-service/src/process-restart.e2e.test.ts) �
 可复跑命令：`pnpm --dir agent-service exec vitest run src/process-restart.e2e.test.ts --reporter=verbose`。当前 Vitest 默认 include 已包含此文件，本次独立 verbose 运行明确确认四例均非 skipped。Node 用例证明本地重启与 HTTP 确认策略，Go 用例证明真实数据库恢复规则；没有把二者拼接为未经运行的端到端证据。仍未运行真实 Node 与 Go/PostgreSQL 联动的完整故障时点矩阵、真实 Provider 结果未知后的对账或生产故障演练。
 
 主代理自审本切片完整文档 diff，核对测试断言与上述描述，docs-check 通过；既有开发服务未重启，没有真实模型调用或新增费用。本轮未发现需要改动业务代码的新缺陷。
+
+
+连续生图结算预留切片由本任务主代理负责，范围为 `imagesession/quota_wire.go` 与 [终态额度回归](../../go/internal/imagesession/success_hold_test.go)。原结算入口复用 finalizeQuotaIgnoreMissing，注释以直插测试夹具作为忽略 NotFound 的理由；真实 PostgreSQL 成功负例返回 nil，确认缺失任务 hold 时仍提交 succeeded。修改让成功以及已有 Provider effect 的失败结算直接透传 quota.Settle 错误，复用 finishSucceeded/finishFailed 原有事务回滚，无新增接口、状态或 schema。取消/unknown/未调用释放的缺 hold 行为和 billing sequence 选择规则不在本切片改变。
+
+新回归用独立 pf_successhold_* 数据库，经现有创建/Generate/claim 夹具取得任务和预留，仅使该库的原 hold 键暂时不可查，验证返回 NotFound、任务仍 running、active attempt 保留、终止时间和结果 group 不写入、余额不变；恢复原键后同 attempt 完成对应终态并结算。失败场景经 ensureEffect/markEffect 创建明确失败证据。测试隔离库自动清理，不影响开发库。此测试证明缺失结算前置条件时拒绝终态，不声称已经找到生产中丢失 hold 的来源，也不声称重新执行了 Provider。
+
+本切片最终 imagesession 整包通过（42.806 秒），两个新增真实数据库子例实际执行，标准 go vet 通过。首轮整包的既有 TestImageCheckpointTransactionBoundaries/stale_consumer 未等到重投递，记为 FAIL；定向复跑该用例及最终整包通过，未证明根因，不修改队列时序。新增失败夹具初版分别因误用异常构造器和不合法 request hash 失败，已改用现有 apperr.Validation 与 canonjson.SHA256Hex。主代理完整 diff 自审、结算调用者扫描和空白检查通过。共享 docs-check 因其他任务新增 /ops 路由尚未同步架构、README 与 PRD 而失败；当前提交的独立临时 checkout 执行相同 check_docs.py 通过，随后清理。共享失败不记为通过；其他任务的 schema、商品、账户和前端修改均未纳入提交，未使用共享开发进程或真实模型。
