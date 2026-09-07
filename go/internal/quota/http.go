@@ -13,6 +13,7 @@ import (
 )
 
 // HTTP 是商家/Op 余额面（MP-C B4）。只读投影与 Op 调账；≠支付 webhook。
+// unknown 裁定：Op ResolveUnknown；到期扫描见 ExpireUnknownHolds（dispatcher）。
 type HTTP struct {
 	DB         *gorm.DB
 	Auth       auth.HTTP // RequireMembership 校验本商成员；请求体里的商家 ID 不授予权限
@@ -30,6 +31,23 @@ type AccountView struct {
 	AvailableUnits int64  `json:"available_units"`
 	ReservedUnits  int64  `json:"reserved_units"`
 	PriceVersionID string `json:"price_version_id"`
+}
+
+// HoldView 是预留/裁定 HTTP 投影。
+type HoldView struct {
+	ID             string `json:"id"`
+	MerchantID     string `json:"merchant_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+	AmountUnits    int64  `json:"amount_units"`
+	SettledUnits   *int64 `json:"settled_units,omitempty"`
+	Status         string `json:"status"`
+	PriceVersionID string `json:"price_version_id"`
+}
+
+// ResolveUnknownView 是 Op 裁定响应。
+type ResolveUnknownView struct {
+	Hold    HoldView    `json:"hold"`
+	Account AccountView `json:"account"`
 }
 
 // PriceEntryView 是价格条目 HTTP 投影。
@@ -53,7 +71,13 @@ type adjustRequest struct {
 	Reason         string `json:"reason"`
 }
 
-// Register 挂上商家只读余额/价格摘要与 Op 只读/调账/默认价格目录路由。
+type resolveUnknownRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
+	ActualUnits    int64  `json:"actual_units"`
+	Reason         string `json:"reason"`
+}
+
+// Register 挂上商家只读余额/价格摘要与 Op 只读/调账/裁定/默认价格目录路由。
 func (h HTTP) Register(engine *gin.Engine) {
 	merchants := engine.Group("/api/merchants")
 	merchants.GET("/:merchant_id/quota", h.Auth.RequireMembership("merchant_id"), h.getMerchantAccount)
@@ -63,6 +87,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	ops.Use(auth.RequireOperator())
 	ops.GET("/merchants/:merchant_id/quota", h.getOpAccount)
 	ops.POST("/merchants/:merchant_id/quota/adjust", h.adjust)
+	ops.POST("/merchants/:merchant_id/quota/holds/resolve", h.resolveUnknown)
 	ops.GET("/quota/price-versions/default", h.getDefaultPriceVersion)
 }
 
@@ -138,6 +163,37 @@ func (h HTTP) adjust(c *gin.Context) {
 	c.JSON(http.StatusOK, accountView(acct))
 }
 
+// resolveUnknown 是 POST /api/ops/merchants/:merchant_id/quota/holds/resolve：
+// 对 pending_reconciliation 明示 Settle；禁止当零消费 Release。
+func (h HTTP) resolveUnknown(c *gin.Context) {
+	principal := auth.PrincipalFrom(c)
+	if principal == nil {
+		httpx.Unauthorized(c, "请先登录")
+		return
+	}
+	var payload resolveUnknownRequest
+	if err := bindJSONStrict(c, &payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	hold, acct, err := h.svc().ResolveUnknown(
+		c.Request.Context(),
+		c.Param("merchant_id"),
+		payload.IdempotencyKey,
+		payload.ActualUnits,
+		payload.Reason,
+		principal.UserID,
+	)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, ResolveUnknownView{
+		Hold:    holdView(hold),
+		Account: accountView(acct),
+	})
+}
+
 func accountView(acct Account) AccountView {
 	return AccountView{
 		MerchantID:     acct.MerchantID,
@@ -145,6 +201,18 @@ func accountView(acct Account) AccountView {
 		AvailableUnits: acct.AvailableUnits,
 		ReservedUnits:  acct.ReservedUnits,
 		PriceVersionID: acct.PriceVersionID,
+	}
+}
+
+func holdView(h Hold) HoldView {
+	return HoldView{
+		ID:             h.ID,
+		MerchantID:     h.MerchantID,
+		IdempotencyKey: h.IdempotencyKey,
+		AmountUnits:    h.AmountUnits,
+		SettledUnits:   h.SettledUnits,
+		Status:         h.Status,
+		PriceVersionID: h.PriceVersionID,
 	}
 }
 

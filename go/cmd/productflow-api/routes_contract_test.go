@@ -93,6 +93,7 @@ var goOpsExtras = map[string]bool{
 	"GET /api/merchants/{}/quota":                                                       true,
 	"GET /api/ops/merchants/{}/quota":                                                   true,
 	"POST /api/ops/merchants/{}/quota/adjust":                                           true,
+	"POST /api/ops/merchants/{}/quota/holds/resolve":                                    true,
 }
 
 // Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.

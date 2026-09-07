@@ -7,6 +7,12 @@
 // B4 余额 HTTP：商家只读本商 + Op 只读/调账（见 http.go）。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
 // 价格目录 B0：quota_price_versions / entries 为单价真相；DefaultPriceVersionID 仅命名默认种子行；Reserve 校验版本。
 // 新商家首次建账按 QUOTA_TRIAL_UNITS（默认 DefaultTrialUnits）种子可用额度；≠真实支付。
+//
+// unknown / pending_reconciliation 运营合同（B0）：
+//   - MarkUnknown 后保留 reserved 负债；Release 一律拒绝。
+//   - Op 明示裁定：ResolveUnknown → Settle(actual∈[0,reserved])，须写 reason；0 仅表示核查后确认零消费。
+//   - 到期：停留超过 QUOTA_UNKNOWN_HOLD_TTL（默认 72h）后 ExpireUnknownHolds 按预留全额 Settle，永不自动 Release。
+//   - Settle 幂等键与 hold 相同，重复裁定/到期不双结。
 package quota
 
 import (
@@ -45,6 +51,8 @@ type Service struct {
 	DB *gorm.DB
 	// TrialUnits 非 nil 时覆盖 QUOTA_TRIAL_UNITS，仅作用于新建账户行（含 0）。
 	TrialUnits *int64
+	// UnknownHoldTTL 非 nil 且 >0 时覆盖 QUOTA_UNKNOWN_HOLD_TTL（测试常用）。
+	UnknownHoldTTL *time.Duration
 }
 
 func (s *Service) trialUnits() int64 {
@@ -258,6 +266,7 @@ func (s *Service) Reserve(ctx context.Context, merchantID, idempotencyKey string
 
 // Settle 按实际消费结算；差额退回 available。相同幂等键重放不重复结算。
 // actualUnits 必须在 [0, reserved]；0 表示确认零消费但仍走结算路径（与 Release/取消不同语义由调用方选择）。
+// reserved 与 pending_reconciliation 均可收口；unknown 运营裁定见 ResolveUnknown / ExpireUnknownHolds。
 func (s *Service) Settle(ctx context.Context, merchantID, idempotencyKey string, actualUnits int64) (Hold, Account, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
@@ -270,7 +279,16 @@ func (s *Service) Settle(ctx context.Context, merchantID, idempotencyKey string,
 	if actualUnits < 0 {
 		return Hold{}, Account{}, apperr.Validation("结算额度不能为负")
 	}
+	return s.settle(ctx, merchantID, idempotencyKey, actualUnits, settleOptions{})
+}
 
+type settleOptions struct {
+	RequirePending bool
+	Reason         string
+	ActorUserID    string
+}
+
+func (s *Service) settle(ctx context.Context, merchantID, idempotencyKey string, actualUnits int64, opts settleOptions) (Hold, Account, error) {
 	var hold Hold
 	var acctOut Account
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
@@ -286,6 +304,9 @@ func (s *Service) Settle(ctx context.Context, merchantID, idempotencyKey string,
 			return apperr.NotFound("预留不存在")
 		}
 		if row.Status == StatusSettled {
+			if opts.RequirePending {
+				// Op/到期重放：已裁定且额度一致视为幂等成功。
+			}
 			if row.SettledUnits != nil && *row.SettledUnits != actualUnits {
 				return apperr.Conflict("结算幂等键已存在且额度不一致")
 			}
@@ -293,7 +314,11 @@ func (s *Service) Settle(ctx context.Context, merchantID, idempotencyKey string,
 			acctOut = accountFromRow(acct)
 			return nil
 		}
-		if row.Status != StatusReserved && row.Status != StatusPendingReconciliation {
+		if opts.RequirePending {
+			if row.Status != StatusPendingReconciliation {
+				return apperr.Conflict("预留状态不允许裁定")
+			}
+		} else if row.Status != StatusReserved && row.Status != StatusPendingReconciliation {
 			return apperr.Conflict("预留状态不允许结算")
 		}
 		if actualUnits > row.AmountUnits {
@@ -344,6 +369,8 @@ func (s *Service) Settle(ctx context.Context, merchantID, idempotencyKey string,
 			AvailableAfter: acct.AvailableUnits,
 			ReservedAfter:  acct.ReservedUnits,
 			PriceVersionID: row.PriceVersionID,
+			Reason:         optionalString(opts.Reason),
+			ActorUserID:    optionalString(opts.ActorUserID),
 			CreatedAt:      now,
 		}); err != nil {
 			return err

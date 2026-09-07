@@ -27,6 +27,7 @@ import (
 	pfmetrics "github.com/yuqie6/productflow/internal/platform/metrics"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/quota"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
 )
@@ -137,6 +138,14 @@ func main() {
 			run: func(ctx context.Context) (err error) {
 				agentTurns, err := agent.RecoverUnfinished(ctx, pool, 0)
 				logRecoveryWork(logger, "agent", agentTurns.EnqueuedTurns, 0, agentTurns.HasMore)
+				return err
+			},
+		},
+		{
+			domain: "quota_unknown", errorContext: "quota unknown expiry",
+			run: func(ctx context.Context) (err error) {
+				expired, hasMore, err := (&quota.Service{DB: gdb}).ExpireUnknownHolds(ctx, time.Now().UTC(), 0)
+				logRecoveryWork(logger, "quota_unknown", expired, 0, hasMore)
 				return err
 			},
 		},

@@ -1,6 +1,7 @@
 package quota_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -254,6 +255,60 @@ func TestOpAdjustIdempotentAndInsufficientConflict(t *testing.T) {
 	if stillView.AvailableUnits != 50 {
 		t.Fatalf("conflict mutated balance %#v", stillView)
 	}
+}
+
+func TestOpResolveUnknownHold(t *testing.T) {
+	qs := newQuotaHTTPServer(t)
+	dual := seedDualQuotaHTTP(t, qs)
+	ctx := context.Background()
+	zero := int64(0)
+	svc := &quota.Service{DB: qs.db, TrialUnits: &zero}
+	if _, err := svc.Adjust(ctx, dual.MerchantBID, "seed-for-resolve", 40, "fixture", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, _, err := svc.Reserve(ctx, dual.MerchantBID, "http-unknown-1", 25, ""); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if _, _, err := svc.MarkUnknown(ctx, dual.MerchantBID, "http-unknown-1"); err != nil {
+		t.Fatalf("mark: %v", err)
+	}
+
+	body := `{"idempotency_key":"http-unknown-1","actual_units":10,"reason":"ops confirmed"}`
+	first := qs.do(t, http.MethodPost, "/api/ops/merchants/"+dual.MerchantBID+"/quota/holds/resolve", body, dual.CookiesA)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("resolve %d %s", first.StatusCode, readDetail(t, first))
+	}
+	defer first.Body.Close()
+	var out quota.ResolveUnknownView
+	if err := json.NewDecoder(first.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Hold.Status != quota.StatusSettled || out.Hold.SettledUnits == nil || *out.Hold.SettledUnits != 10 {
+		t.Fatalf("hold %#v", out.Hold)
+	}
+	// 40-25+15 refund = 30 available
+	if out.Account.AvailableUnits != 30 || out.Account.ReservedUnits != 0 {
+		t.Fatalf("account %#v", out.Account)
+	}
+
+	replay := qs.do(t, http.MethodPost, "/api/ops/merchants/"+dual.MerchantBID+"/quota/holds/resolve", body, dual.CookiesA)
+	if replay.StatusCode != http.StatusOK {
+		t.Fatalf("replay %d %s", replay.StatusCode, readDetail(t, replay))
+	}
+	replay.Body.Close()
+
+	deny := qs.do(t, http.MethodPost, "/api/ops/merchants/"+dual.MerchantBID+"/quota/holds/resolve", body, dual.CookiesB)
+	if deny.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-op resolve %d %s", deny.StatusCode, readDetail(t, deny))
+	}
+	_ = readDetail(t, deny)
+
+	missing := qs.do(t, http.MethodPost, "/api/ops/merchants/"+dual.MerchantBID+"/quota/holds/resolve",
+		`{"idempotency_key":"no-such","actual_units":1,"reason":"x"}`, dual.CookiesA)
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing hold %d %s", missing.StatusCode, readDetail(t, missing))
+	}
+	_ = readDetail(t, missing)
 }
 
 func TestPriceCatalogHTTP(t *testing.T) {

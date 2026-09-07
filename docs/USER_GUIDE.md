@@ -16,7 +16,7 @@
 - Agent：商品需求澄清、图库整理和工作流创建。
 - Image：工作流生图和连续生图。
 
-首次引导（`/api/auth/bootstrap`）会为开发商家写入试用额度账户，默认可用 `QUOTA_TRIAL_UNITS`（未设置时为 100 个内部单位）。额度不足时生图等入口会拒绝；站点 Operator 可用 `POST /api/ops/merchants/:merchant_id/quota/adjust` 增减可用额度（须登录 Operator 会话，带幂等键）。将 `QUOTA_TRIAL_UNITS=0` 可关闭试用种子，强制先由运营调账。本路径不是真实支付。
+首次引导（`/api/auth/bootstrap`）会为开发商家写入试用额度账户，默认可用 `QUOTA_TRIAL_UNITS`（未设置时为 100 个内部单位）。额度不足时生图等入口会拒绝；站点 Operator 可用 `POST /api/ops/merchants/:merchant_id/quota/adjust` 增减可用额度（须登录 Operator 会话，带幂等键）。将 `QUOTA_TRIAL_UNITS=0` 可关闭试用种子，强制先由运营调账。本路径不是真实支付。已发出但结果不明的预留会进入待核对；Operator 可用 `POST /api/ops/merchants/:merchant_id/quota/holds/resolve` 明示结算（须写原因），超时（默认 72 小时，`QUOTA_UNKNOWN_HOLD_TTL`）按预留全额结算，不会自动当零消费释放。
 
 ## 2. 创建商品
 
