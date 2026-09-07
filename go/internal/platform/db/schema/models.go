@@ -1150,6 +1150,8 @@ func AllModels() []any {
 		&Memberships{},
 		&MerchantInvites{},
 		&AuthSessions{},
+		&QuotaPriceVersions{},
+		&QuotaPriceEntries{},
 		&MerchantQuotaAccounts{},
 		&MerchantQuotaHolds{},
 		&MerchantQuotaEvents{},

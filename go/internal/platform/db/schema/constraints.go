@@ -2131,6 +2131,45 @@ $fn$;`,
 	`DROP TRIGGER IF EXISTS trg_agent_conversations_fill_merchant_id ON agent_conversations;`,
 	`CREATE TRIGGER trg_agent_conversations_fill_merchant_id BEFORE INSERT ON agent_conversations FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 
+	// MP-C price catalog B0: platform price versions + unit-price entries (seed default id = pv-placeholder-v0)
+	`DO $c$ BEGIN
+ALTER TABLE quota_price_versions ADD CONSTRAINT ck_quota_price_versions_label_nonempty CHECK (length(btrim(label)) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE quota_price_versions ADD CONSTRAINT ck_quota_price_versions_currency_nonempty CHECK (length(btrim(currency)) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE quota_price_entries ADD CONSTRAINT fk_quota_price_entries_version_id FOREIGN KEY (price_version_id) REFERENCES quota_price_versions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE quota_price_entries ADD CONSTRAINT ck_quota_price_entries_code_nonempty CHECK (length(btrim(entry_code)) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE quota_price_entries ADD CONSTRAINT ck_quota_price_entries_unit_price_positive CHECK (unit_price > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_quota_price_versions_one_default ON public.quota_price_versions ((is_default)) WHERE is_default;`,
+	`CREATE INDEX IF NOT EXISTS ix_quota_price_entries_version ON public.quota_price_entries USING btree (price_version_id);`,
+	`INSERT INTO quota_price_versions (id, label, currency, is_default, created_at, updated_at)
+VALUES ('pv-placeholder-v0', '默认内部单价 v0', 'iu', TRUE, TIMESTAMPTZ '2026-09-07T00:00:00Z', TIMESTAMPTZ '2026-09-07T00:00:00Z')
+ON CONFLICT (id) DO NOTHING;`,
+	`INSERT INTO quota_price_entries (price_version_id, entry_code, unit_price, created_at) VALUES
+('pv-placeholder-v0', 'image_session.generate', 1, TIMESTAMPTZ '2026-09-07T00:00:00Z'),
+('pv-placeholder-v0', 'graph.image_generation', 1, TIMESTAMPTZ '2026-09-07T00:00:00Z'),
+('pv-placeholder-v0', 'agent.model_request', 1, TIMESTAMPTZ '2026-09-07T00:00:00Z'),
+('pv-placeholder-v0', 'localedit.edit', 1, TIMESTAMPTZ '2026-09-07T00:00:00Z'),
+('pv-placeholder-v0', 'product.source_note', 1, TIMESTAMPTZ '2026-09-07T00:00:00Z')
+ON CONFLICT (price_version_id, entry_code) DO NOTHING;`,
+
 	// MP-C B0: merchant commercial quota ledger (separate from agent_model_invocations usage facts)
 	`DO $c$ BEGIN
 ALTER TABLE merchant_quota_accounts ADD CONSTRAINT fk_merchant_quota_accounts_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;

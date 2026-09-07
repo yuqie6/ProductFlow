@@ -232,6 +232,72 @@ func TestAdjustIdempotent(t *testing.T) {
 	}
 }
 
+func TestDefaultPriceCatalogSeeded(t *testing.T) {
+	svc, _ := newQuotaFixture(t, 0)
+	ctx := context.Background()
+	version, err := svc.GetDefaultPriceVersion(ctx)
+	if err != nil {
+		t.Fatalf("default version: %v", err)
+	}
+	if version.ID != quota.DefaultPriceVersionID || !version.IsDefault {
+		t.Fatalf("default version=%+v", version)
+	}
+	if version.Currency != quota.CurrencyInternalUnits {
+		t.Fatalf("currency=%q", version.Currency)
+	}
+	wantCodes := map[string]int64{
+		quota.EntryImageSessionGenerate: 1,
+		quota.EntryGraphImageGeneration: 1,
+		quota.EntryAgentModelRequest:    1,
+		quota.EntryLocalEdit:            1,
+		quota.EntryProductSourceNote:    1,
+	}
+	if len(version.Entries) != len(wantCodes) {
+		t.Fatalf("entries=%+v", version.Entries)
+	}
+	for _, e := range version.Entries {
+		price, ok := wantCodes[e.EntryCode]
+		if !ok || e.UnitPrice != price {
+			t.Fatalf("entry %+v", e)
+		}
+	}
+}
+
+func TestReserveRejectsUnknownPriceVersion(t *testing.T) {
+	svc, merchantID := newQuotaFixture(t, 50)
+	ctx := context.Background()
+	_, _, err := svc.Reserve(ctx, merchantID, "bad-pv", 10, "pv-does-not-exist")
+	if err == nil {
+		t.Fatal("expected unknown price version rejection")
+	}
+	var ae apperr.Error
+	if !errors.As(err, &ae) || ae.Status != 400 || ae.Detail != "未知价格版本" {
+		t.Fatalf("got %v", err)
+	}
+	acct, err := svc.GetAccount(ctx, merchantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.AvailableUnits != 50 || acct.ReservedUnits != 0 {
+		t.Fatalf("balance mutated on reject: %+v", acct)
+	}
+}
+
+func TestReserveKnownPriceVersionSucceeds(t *testing.T) {
+	svc, merchantID := newQuotaFixture(t, 50)
+	ctx := context.Background()
+	hold, acct, err := svc.Reserve(ctx, merchantID, "known-pv", 10, quota.DefaultPriceVersionID)
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if hold.PriceVersionID != quota.DefaultPriceVersionID {
+		t.Fatalf("hold=%+v", hold)
+	}
+	if acct.AvailableUnits != 40 || acct.ReservedUnits != 10 || acct.PriceVersionID != quota.DefaultPriceVersionID {
+		t.Fatalf("acct=%+v", acct)
+	}
+}
+
 func newQuotaFixture(t *testing.T, initialAvailable int64) (*quota.Service, string) {
 	t.Helper()
 	gdb := testdb.Gorm(t)

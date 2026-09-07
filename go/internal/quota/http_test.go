@@ -254,3 +254,51 @@ func TestOpAdjustIdempotentAndInsufficientConflict(t *testing.T) {
 		t.Fatalf("conflict mutated balance %#v", stillView)
 	}
 }
+
+func TestPriceCatalogHTTP(t *testing.T) {
+	qs := newQuotaHTTPServer(t)
+	dual := seedDualQuotaHTTP(t, qs)
+
+	opDefault := qs.do(t, http.MethodGet, "/api/ops/quota/price-versions/default", "", dual.CookiesA)
+	if opDefault.StatusCode != http.StatusOK {
+		t.Fatalf("op default %d %s", opDefault.StatusCode, readDetail(t, opDefault))
+	}
+	opView := readPriceVersion(t, opDefault)
+	if opView.PriceVersionID != quota.DefaultPriceVersionID || !opView.IsDefault {
+		t.Fatalf("op view %#v", opView)
+	}
+	if len(opView.Entries) < 5 {
+		t.Fatalf("entries %#v", opView.Entries)
+	}
+
+	deny := qs.do(t, http.MethodGet, "/api/ops/quota/price-versions/default", "", dual.CookiesB)
+	if deny.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-op default %d %s", deny.StatusCode, readDetail(t, deny))
+	}
+	_ = readDetail(t, deny)
+
+	merchant := qs.do(t, http.MethodGet, "/api/merchants/"+dual.MerchantAID+"/quota/price", "", dual.CookiesA)
+	if merchant.StatusCode != http.StatusOK {
+		t.Fatalf("merchant price %d %s", merchant.StatusCode, readDetail(t, merchant))
+	}
+	mView := readPriceVersion(t, merchant)
+	if mView.PriceVersionID != quota.DefaultPriceVersionID || mView.Currency != quota.CurrencyInternalUnits {
+		t.Fatalf("merchant view %#v", mView)
+	}
+
+	cross := qs.do(t, http.MethodGet, "/api/merchants/"+dual.MerchantAID+"/quota/price", "", dual.CookiesB)
+	if cross.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-merchant price %d %s", cross.StatusCode, readDetail(t, cross))
+	}
+	_ = readDetail(t, cross)
+}
+
+func readPriceVersion(t *testing.T, resp *http.Response) quota.PriceVersionView {
+	t.Helper()
+	defer resp.Body.Close()
+	var view quota.PriceVersionView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	return view
+}

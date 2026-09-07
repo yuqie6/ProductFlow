@@ -326,6 +326,45 @@ func TestBrandsTablePresentAfterApply(t *testing.T) {
 	}
 }
 
+
+func TestQuotaPriceCatalogPresentAfterApply(t *testing.T) {
+	pool := testdb.Pool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name IN ('quota_price_versions', 'quota_price_entries')
+	`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("price catalog tables missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM quota_price_versions
+		WHERE id = 'pv-placeholder-v0' AND is_default = TRUE AND currency = 'iu'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("default price version seed missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM quota_price_entries
+		WHERE price_version_id = 'pv-placeholder-v0' AND unit_price = 1
+	`).Scan(&n); err != nil || n != 5 {
+		t.Fatalf("default price entries seed: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_constraint
+		WHERE conname = 'fk_quota_price_entries_version_id'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("fk_quota_price_entries_version_id: n=%d err=%v", n, err)
+	}
+}
+
 func assertSame[T comparable](t *testing.T, label string, want, got map[string]T) {
 	t.Helper()
 	var missing, extra []string

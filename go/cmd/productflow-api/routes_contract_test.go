@@ -81,6 +81,8 @@ var goOpsExtras = map[string]bool{
 	"POST /api/v3/brands":                                                               true,
 	"GET /api/v3/brands/{}":                                                             true,
 	"PATCH /api/v3/brands/{}":                                                           true,
+	"GET /api/merchants/{}/quota/price":                                                 true,
+	"GET /api/ops/quota/price-versions/default":                                         true,
 	"PATCH /api/merchants/{}/status":                                                    true,
 	"GET /api/ops/support-contract":                                                     true,
 	"POST /api/ops/support-sessions":                                                    true,

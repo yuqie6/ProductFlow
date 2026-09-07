@@ -5,6 +5,7 @@
 //
 // B0 账本已交付；B1–B3 已接图会话 / Graph / Agent 主入口。
 // B4 余额 HTTP：商家只读本商 + Op 只读/调账（见 http.go）。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
+// 价格目录 B0：quota_price_versions / entries 为单价真相；DefaultPriceVersionID 仅命名默认种子行；Reserve 校验版本。
 package quota
 
 import (
@@ -171,6 +172,9 @@ func (s *Service) Reserve(ctx context.Context, merchantID, idempotencyKey string
 	var hold Hold
 	var acctOut Account
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		if err := requirePriceVersion(gdb, priceVersionID); err != nil {
+			return err
+		}
 		// 先锁账户再查 hold，保证同键并发只扣一次 available。
 		acct, err := ensureAndLockAccount(gdb, merchantID)
 		if err != nil {

@@ -2,6 +2,30 @@ package schema
 
 import "time"
 
+// QuotaPriceVersions 对应表 quota_price_versions。
+// 平台级价格版本目录（MP-C 价格目录 B0）；id 由配额账本引用，≠法币/支付。
+type QuotaPriceVersions struct {
+	ID        string    `gorm:"column:id;type:varchar(80);primaryKey"`
+	Label     string    `gorm:"column:label;type:varchar(200);not null"`
+	Currency  string    `gorm:"column:currency;type:varchar(16);not null"`
+	IsDefault bool      `gorm:"column:is_default;type:boolean;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+}
+
+func (QuotaPriceVersions) TableName() string { return "quota_price_versions" }
+
+// QuotaPriceEntries 对应表 quota_price_entries。
+// 某价格版本下入口/动作码 → 内部单位单价。
+type QuotaPriceEntries struct {
+	PriceVersionID string    `gorm:"column:price_version_id;type:varchar(80);primaryKey"`
+	EntryCode      string    `gorm:"column:entry_code;type:varchar(80);primaryKey"`
+	UnitPrice      int64     `gorm:"column:unit_price;type:bigint;not null"`
+	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (QuotaPriceEntries) TableName() string { return "quota_price_entries" }
+
 // MerchantQuotaAccounts 对应表 merchant_quota_accounts。
 // 商家商业额度余额账本（MP-C B0）：available + reserved；与 agent_model_invocations 平台调用事实分离。
 type MerchantQuotaAccounts struct {

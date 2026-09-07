@@ -31,21 +31,38 @@ type AccountView struct {
 	PriceVersionID string `json:"price_version_id"`
 }
 
+// PriceEntryView 是价格条目 HTTP 投影。
+type PriceEntryView struct {
+	EntryCode string `json:"entry_code"`
+	UnitPrice int64  `json:"unit_price"`
+}
+
+// PriceVersionView 是价格版本摘要 HTTP 投影。
+type PriceVersionView struct {
+	PriceVersionID string           `json:"price_version_id"`
+	Label          string           `json:"label"`
+	Currency       string           `json:"currency"`
+	IsDefault      bool             `json:"is_default"`
+	Entries        []PriceEntryView `json:"entries"`
+}
+
 type adjustRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 	DeltaUnits     int64  `json:"delta_units"`
 	Reason         string `json:"reason"`
 }
 
-// Register 挂上商家只读余额与 Op 只读/调账路由。
+// Register 挂上商家只读余额/价格摘要与 Op 只读/调账/默认价格目录路由。
 func (h HTTP) Register(engine *gin.Engine) {
 	merchants := engine.Group("/api/merchants")
 	merchants.GET("/:merchant_id/quota", h.Auth.RequireMembership("merchant_id"), h.getMerchantAccount)
+	merchants.GET("/:merchant_id/quota/price", h.Auth.RequireMembership("merchant_id"), h.getMerchantPrice)
 
 	ops := engine.Group("/api/ops")
 	ops.Use(auth.RequireOperator())
 	ops.GET("/merchants/:merchant_id/quota", h.getOpAccount)
 	ops.POST("/merchants/:merchant_id/quota/adjust", h.adjust)
+	ops.GET("/quota/price-versions/default", h.getDefaultPriceVersion)
 }
 
 // getMerchantAccount 是 GET /api/merchants/:merchant_id/quota：200 返回本商余额。
@@ -65,6 +82,31 @@ func (h HTTP) writeAccount(c *gin.Context, merchantID string) {
 		return
 	}
 	c.JSON(http.StatusOK, accountView(acct))
+}
+
+// getMerchantPrice 是 GET /api/merchants/:merchant_id/quota/price：200 返回本商生效价格版本摘要。
+func (h HTTP) getMerchantPrice(c *gin.Context) {
+	acct, err := h.svc().GetAccount(c.Request.Context(), c.Param("merchant_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	version, err := h.svc().GetPriceVersion(c.Request.Context(), acct.PriceVersionID)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, priceVersionView(version))
+}
+
+// getDefaultPriceVersion 是 GET /api/ops/quota/price-versions/default：200 返回默认版本与单价。
+func (h HTTP) getDefaultPriceVersion(c *gin.Context) {
+	version, err := h.svc().GetDefaultPriceVersion(c.Request.Context())
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, priceVersionView(version))
 }
 
 // adjust 是 POST /api/ops/merchants/:merchant_id/quota/adjust：200 返回调账后余额。
@@ -102,6 +144,20 @@ func accountView(acct Account) AccountView {
 		AvailableUnits: acct.AvailableUnits,
 		ReservedUnits:  acct.ReservedUnits,
 		PriceVersionID: acct.PriceVersionID,
+	}
+}
+
+func priceVersionView(v PriceVersion) PriceVersionView {
+	entries := make([]PriceEntryView, 0, len(v.Entries))
+	for _, e := range v.Entries {
+		entries = append(entries, PriceEntryView{EntryCode: e.EntryCode, UnitPrice: e.UnitPrice})
+	}
+	return PriceVersionView{
+		PriceVersionID: v.ID,
+		Label:          v.Label,
+		Currency:       v.Currency,
+		IsDefault:      v.IsDefault,
+		Entries:        entries,
 	}
 }
 

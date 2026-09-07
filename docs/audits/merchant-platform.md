@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note 已交付**（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：仍缺真实价格版本、unknown 到期策略；≠真实支付 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note + 价格目录骨架**已交付（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)+[price-catalog-b0](tasks/archive/merchant-mp-c-price-catalog-b0.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：价格目录已可核验但仍属内部单价种子；仍缺入口展示单价产品面、unknown 到期策略；≠真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
@@ -52,8 +52,8 @@
 
 | 类别 | 命令要点 | 计数 |
 |---|---|---|
-| HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载含 `brand`（及既有 auth/settings/product/…/visualsystem/localedit/agent） | **业务路由 218**：相对冻结枚举 214 + Brand B0 的 4 条（`GET/POST /api/v3/brands`、`GET/PATCH /api/v3/brands/:id`）；其余分区仍以 register.go 为准 |
-| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **69 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3 + Brand B0 `brands` 1） |
+| HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载含 `brand`（及既有 auth/settings/product/…/visualsystem/localedit/agent） | **业务路由 220**：相对冻结枚举 214 + Brand B0 的 4 条 + 价格目录 2 条（`GET /api/ops/quota/price-versions/default`、`GET /api/merchants/:id/quota/price`）；其余分区仍以 register.go 为准 |
+| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **71 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3 + Brand B0 `brands` 1 + 价格目录 `quota_price_*` 2） |
 | Agent tool | `rg 'name: "' agent-service/src/tool-manifest.ts` | **25 工具名**（含 skill/ask/context_injection） |
 | 异步 Actor | `go/internal/platform/queue/actors.go` | 信封 `run_async_dispatch`；Actor：`run_workflow_graph_run`、`run_image_session_generation_task`、`run_delivery_rendition_job`、`run_local_image_edit_task`、`run_agent_turn_sync` |
 | 下载 | product/library/imagesession 的 `*/download`、商品 ZIP、delivery ZIP、internal `*/content`；变体经 `media.ServeVariant`（`?variant=`） | 见矩阵「下载/媒体」 |
@@ -87,6 +87,7 @@
 |---|---|---|---|
 | *(新)* brands | 不存在 → **B0 已建**（[merchant-brand-entity-b0](tasks/archive/merchant-brand-entity-b0.md)） | 商家根 Brand | 总纲 §6.3；可选 `visual_system_id` 挂接本商家方案；≠跨商分享；≠完整品牌色合并 |
 | *(新)* merchant_quota_accounts / holds / events | 不存在 → **B0 已建** | 商家商业额度账本 | MP-C B0；与 `agent_model_invocations.usage_source` 平台调用事实分离 |
+| *(新)* quota_price_versions / quota_price_entries | 不存在 → **价格目录 B0 已建**（[merchant-mp-c-price-catalog-b0](tasks/archive/merchant-mp-c-price-catalog-b0.md)） | 平台价格版本目录（非商家根） | 种子默认 `pv-placeholder-v0`；Reserve 校验版本；≠法币/支付 |
 | products | 无商家 | 商家根 | 所有商品链由此证明 |
 | media_library_folders / media_library_tags / media_library_assets | 实例全局 | 商家根（商家共享图库） | 总纲「商家共享图库」；禁止跨商家 list |
 | media_library_upload_keys / media_library_collection_keys | 无商家 | 随商家（或经 product/session 证明后冗余商家） | 幂等键须含商家，防跨商家碰撞 |
@@ -139,7 +140,7 @@
 
 矩阵列：入口 | 角色 | 根所有权 | 子引用验证 | 队列/effect | 读写 owner（代码锚点） | 前端 query/订阅 | 测试计划。共享规则见上；同规则入口可归并，但清单必须完整。
 
-**条目统计：归并矩阵 69 条**（A8+B9+C6+D6+E6+F6+G6+H7+I10+J5）。每条绑定源码锚点与测试计划；**展开覆盖**枚举面 218 业务路由 + 25 Pi 工具 + 5 Actor + 6 SSE/事件族 + 3 实例探活/指标入口 + 69 表的所有权分类。禁止只测商品列表过滤。
+**条目统计：归并矩阵 69 条**（A8+B9+C6+D6+E6+F6+G6+H7+I10+J5）。每条绑定源码锚点与测试计划；**展开覆盖**枚举面 220 业务路由 + 25 Pi 工具 + 5 Actor + 6 SSE/事件族 + 3 实例探活/指标入口 + 71 表的所有权分类。禁止只测商品列表过滤。
 
 ### A. 身份与实例面（8）
 
@@ -322,8 +323,8 @@
 
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
-- MP-C **B0–B4 已交付**；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**、**source-note `POST /api/v2/product-source-notes/generate`（`product/quota_wire.go`）**。**阻塞缺口**：`pv-placeholder-v0` 非真实价格目录；unknown 无到期运营/客服裁定策略；其它未枚举收费入口（若有）。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**。
+- MP-C **B0–B4 + 价格目录骨架**已交付；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**、**source-note `POST /api/v2/product-source-notes/generate`（`product/quota_wire.go`）**、**价格版本表 + 种子默认 `pv-placeholder-v0` + Reserve 版本校验 + Op/商家只读价格 HTTP**。**阻塞缺口**：入口展示单价产品面未齐；unknown 无到期运营/客服裁定策略；其它未枚举收费入口（若有）。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**；**≠真实支付/法币**。
 - **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
 - 额度公平调度、混合负载经营验收、真实支付仍属后续（≠本 R1/R5 条文通过条件中的已交付子集）。
 
-本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；MP-C B0–B4 已交付；总纲 R5 未通过；≠ 第二外部商产品上线；≠ 真实支付；≠ MP-D。**
+本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；MP-C B0–B4 + 价格目录骨架已交付；总纲 R5 未通过；≠ 第二外部商产品上线；≠ 真实支付；≠ MP-D。**

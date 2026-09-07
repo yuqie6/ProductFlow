@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-mp-c-price-catalog-b0.md](merchant-mp-c-price-catalog-b0.md) | 完成 | 价格版本目录+Reserve 校验；≠R5/支付 |
 | [canvas-brand-placeholder-web.md](canvas-brand-placeholder-web.md) | 完成 | Brand 占位文案对齐 B0；≠R2 |
 | [image-quality-ocr-adoption-scope.md](image-quality-ocr-adoption-scope.md) | 完成 | 采用 OCR 只硬核期望字；≠R3 |
 | [merchant-brand-entity-b0.md](merchant-brand-entity-b0.md) | 完成 | brands CRUD + 继承占位改写；≠R2/跨商 |
