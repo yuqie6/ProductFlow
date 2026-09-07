@@ -336,14 +336,14 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			BaseBytes: chatCtx.BaseBytes, ReferenceBytes: chatCtx.ReferenceBytes,
 		})
 		if genErr != nil {
-			return e.recordGenerateFailure(ctx, taskID, candidate, genErr)
+			return e.recordGenerateFailure(ctx, taskID, attemptID, candidate, genErr)
 		}
 		images := result.Images
 		if len(images) == 0 && len(result.Bytes) > 0 {
 			images = [][]byte{result.Bytes}
 		}
 		if len(images) != batch {
-			_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)
+			_ = e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail)
 			return unknownErr{}
 		}
 		if err := media.RejectGenerationOutput(images, result.MIME); err != nil {
@@ -352,7 +352,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			if errors.As(err, &ae) {
 				detail = ae.Detail
 			}
-			_ = e.markEffect(ctx, taskID, candidate, "failed", detail)
+			_ = e.markEffect(ctx, taskID, attemptID, candidate, "failed", detail)
 			return err
 		}
 		for i, data := range images {
@@ -362,11 +362,11 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 				if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
 					return err
 				}
-				_ = e.markEffect(ctx, taskID, candidate, "unknown", unknownDetail)
+				_ = e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail)
 				return unknownErr{}
 			}
 		}
-		if err := e.markEffect(ctx, taskID, candidate, "applied", ""); err != nil {
+		if err := e.markEffect(ctx, taskID, attemptID, candidate, "applied", ""); err != nil {
 			return err
 		}
 		completed = candidate + batch - 1
@@ -401,23 +401,23 @@ func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID str
 	})
 }
 
-func (e Executor) recordGenerateFailure(ctx context.Context, taskID string, candidate int, genErr error) error {
+func (e Executor) recordGenerateFailure(ctx context.Context, taskID, attemptID string, candidate int, genErr error) error {
 	persistCtx, cancelPersist := persistContext(ctx)
 	defer cancelPersist()
 	var ae apperr.Error
 	if errors.As(genErr, &ae) && ae.Status == 400 {
-		_ = e.markEffect(persistCtx, taskID, candidate, "failed", ae.Detail)
+		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "failed", ae.Detail)
 		return genErr
 	}
 	if IsUncertainProviderFailure(genErr) {
-		_ = e.markEffect(persistCtx, taskID, candidate, "unknown", unknownDetail)
+		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "unknown", unknownDetail)
 		return unknownErr{}
 	}
 	if IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr) {
-		_ = e.markEffect(persistCtx, taskID, candidate, "failed", genErr.Error())
+		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "failed", genErr.Error())
 		return genErr
 	}
-	_ = e.markEffect(persistCtx, taskID, candidate, "unknown", unknownDetail)
+	_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "unknown", unknownDetail)
 	return unknownErr{}
 }
 
@@ -487,8 +487,15 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 }
 
 // markEffect 更新该起始序号的账本。result=applied 同时写 reconciliation_state，给对账查询用。
-func (e Executor) markEffect(ctx context.Context, taskID string, start int, result, detail string) error {
+func (e Executor) markEffect(ctx context.Context, taskID, attemptID string, start int, result, detail string) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		var task schema.ImageSessionGenerationTasks
+		if err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&task).Error; err != nil {
+			return err
+		}
+		if task.Status != "running" || task.ActiveAttemptID == nil || *task.ActiveAttemptID != attemptID {
+			return errStale
+		}
 		now := time.Now().UTC()
 		var detailPtr *string
 		if detail != "" {
@@ -502,9 +509,16 @@ func (e Executor) markEffect(ctx context.Context, taskID string, start int, resu
 		if result == "applied" {
 			updates["reconciliation_state"] = "applied"
 		}
-		return pgxTx.Model(&schema.ImageSessionProviderEffects{}).
-			Where("generation_task_id = ? AND candidate_start_index = ?", taskID, start).
-			Updates(updates).Error
+		res := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+			Where("generation_task_id = ? AND candidate_start_index = ? AND attempt_id = ?", taskID, start, attemptID).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errStale
+		}
+		return nil
 	})
 }
 

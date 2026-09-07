@@ -30,7 +30,8 @@
 | Graph Provider 错误与节点/运行失败可提交 unknown 而未在同事务处理额度 | `markNodeUnknown` 持锁确认当前 attempt 后同步额度，Provider 与恢复删除重复后处理 | 三条入口原代码复现额度故障未阻止 unknown；修复后保留运行/节点/attempt，解除故障后重放仅一次 mark_unknown 事件 | `635c9915` |
 | Graph 图像资产/成功投影提交后再结算，结算失败仍留下可见成功产物 | `persistImageArtifact` 在原资产事务中结算，删除事务外 consumed 收口 | 原代码真实执行复现 1 artifact + 1 商品资产残留；修复后结算故障回滚产物、保留 unknown/待核对，Provider applied 与持久化失败原因仍可查，重投不再调用 Provider | `c137516d` |
 | Graph 明确失败命令先提交终态，节点执行器才补做额度，运行失败入口遗漏预留 | `failClaimedNode/failGraphRunLocked` 在锁内释放原 attempt 预留，删除执行器后处理与重复分类 helper | 两种入口原代码复现额度故障不阻止 failed；修复后故障保留当前运行/节点/attempt，解除后释放幂等；未知分支仍使用 markNodeUnknown | `16c99e42` |
-| Graph 成功结算忽略缺失 hold，付费异常与合法免费合成混在一起 | 复用 subjectPreserveImageDelivery，资产入口对本地合成显式跳过结算；付费 settle 原样返回缺失预留 | 原代码缺预留仍接受付费结算；修复后拒绝，真实本地合成不调用 Provider、持久化产物且余额不变，正常付费结算仍通过 | 随本次提交 |
+| Graph 成功结算忽略缺失 hold，付费异常与合法免费合成混在一起 | 复用 subjectPreserveImageDelivery，资产入口对本地合成显式跳过结算；付费 settle 原样返回缺失预留 | 原代码缺预留仍接受付费结算；修复后拒绝，真实本地合成不调用 Provider、持久化产物且余额不变，正常付费结算仍通过 | `1d56674d` |
+| 连续生图 effect 完成只按任务/批次写入，旧 worker 结果没有 attempt 围栏 | `markEffect` 显式接收 attempt，锁任务并核对当前执行，再按 effect attempt 更新 | failed/unknown/applied 三种旧结果均被拒绝且新 effect 保持 pending；原实现三种写入均接受 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -111,3 +112,5 @@ Graph 明确失败切片由本任务主代理负责，范围为 `durability.go`�
 Graph 成功计费合同切片由本任务主代理负责，范围为 `execute_node.go/quota_wire.go`、复用上传参考图夹具的窄扩展，以及 [合成零额度执行链](../../go/internal/graph/compose_quota_test.go) 和 [付费预留合同](../../go/internal/graph/quota_attempt_test.go)。将原本只传 RouteMap 的内部持久化参数改为已有交付结果对象，保留实际字节来源的决定；没有增加收费 flag、Provider 字段或持久化形状。原代码复现无 hold 仍接受结算；真实白底主体合成、付费成功与结算故障回归均通过。
 
 成功计费合同切片当前工作区 Graph 整包通过（86.340 秒）；新增付费缺预留拒绝与本地合成持久化回归实际执行，正常付费及结算故障针对性组合通过（4.978 秒）。主代理自审确认仅内部交付参数复用已有对象，wire/持久化 JSON 不变，未引入第二套计费实现；`just docs-check` 通过。
+
+连续生图 effect 围栏切片由本任务主代理负责，范围为 `imagesession/execute.go` 和 [effect attempt 回归](../../go/internal/imagesession/effect_attempt_test.go)。当前工作区 imagesession 整包通过（31.140 秒），新增真实数据库用例实际执行；`just docs-check` 与完整 diff 自审通过。effect 写入错误的传播和业务失败分类仍待后续切片验证，不把围栏通过视为该缺口已修复。
