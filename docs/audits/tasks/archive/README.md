@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-mp-c-wire-source-note.md](merchant-mp-c-wire-source-note.md) | 完成 | source-note generate Reserve；≠R5 |
 | [merchant-mp-c-wire-localedit.md](merchant-mp-c-wire-localedit.md) | 完成 | localedit Edit 前 Reserve；≠R5 |
 | [image-quality-subject-compose-b1.md](image-quality-subject-compose-b1.md) | 完成 | cutout+背景/阴影占位/安全区合成；≠R3 |
 | [merchant-r5-close-ruling.md](merchant-r5-close-ruling.md) | 完成 | 总纲 R5 **未通过**；全入口/价格/unknown 策略缺口 |

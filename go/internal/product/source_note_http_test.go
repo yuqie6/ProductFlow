@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 )
 
@@ -64,6 +65,7 @@ func TestGenerateSourceNoteReturnsStructuredFields(t *testing.T) {
 		},
 	}}
 	ps := newProductServerWith(t, Service{SourceNote: stub})
+	mustSeedMerchantQuota(t, ps.db, auth.MustDevMerchantID(t, ps.db), 10)
 	body, contentType := multipartPNGs(t, map[string]string{
 		"product_name": "密封瓶",
 		"current_note": "已写的说明",

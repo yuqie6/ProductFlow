@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit 已交付**（账本+三主入口+余额 HTTP+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：仍缺 source-note 等入口、真实价格版本、unknown 到期策略；≠真实支付 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note 已交付**（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：仍缺真实价格版本、unknown 到期策略；≠真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
@@ -163,7 +163,7 @@
 | B4 | `GET .../product-image-assets/:id/download` + variant | Vw+ | asset→product→merchant | — | — | `product/http.go`+`media.ServeVariant` | download URL | 跨商 UUID 下载拒绝；thumbnail 同权 |
 | B5 | `POST .../download-archive` | Vw+ 或 Ed+（合同固定） | product | 仅本商 assets | 同步 ZIP | `product/gallery_archive.go` | api download-archive | 打包不混入他商 |
 | B6 | `DELETE .../product-image-assets/:id` | Ed+ 且 deletion 开关 | asset→product | — | — | product | — | 跨商删拒绝 |
-| B7 | `POST /api/v3/products/from-recipe`、source-notes/generate | Ed+ | 新 product 本商；recipe 本商 | recipe∈merchant | source-notes 可能调模型 | `product`+`recipe` | recipe create form | 跨商 recipe id |
+| B7 | `POST /api/v3/products/from-recipe`、source-notes/generate | Ed+ | 新 product 本商；recipe 本商 | recipe∈merchant | source-notes：**已接** `quota.Reserve`（`product/quota_wire.go`；成功 Settle；未发出 Release；不明 MarkUnknown；≠R5 全过） | `product`+`recipe` | recipe create form | 跨商 recipe id；额度不足 409 |
 | B8 | agent-product-workspaces options/drafts/create/get/intake | Ed+ | conversation→merchant；产出 product 本商 | 素材引用本商 | 可间接触发 Agent | `product/workspace.go` | `["agent-product-workspace*"]` | 跨商 conversation |
 | B9 | **因果路径 B1**：`GET /api/v2/products` → `HTTP.list` → `store` 查询 products → JSON 列表 | 见上 | 查询必须 `WHERE merchant_id=?` | — | — | product | ProductListPage | 正：本商；反：种子他商不可见 |
 
@@ -321,7 +321,7 @@
 
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
-- MP-C **B0–B4 已交付**；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**。**阻塞缺口**：source-note 等其它收费入口未 `Reserve`；`pv-placeholder-v0` 非真实价格目录；unknown 无到期运营/客服裁定策略。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**。
+- MP-C **B0–B4 已交付**；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**、**source-note `POST /api/v2/product-source-notes/generate`（`product/quota_wire.go`）**。**阻塞缺口**：`pv-placeholder-v0` 非真实价格目录；unknown 无到期运营/客服裁定策略；其它未枚举收费入口（若有）。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**。
 - **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
 - 额度公平调度、混合负载经营验收、真实支付仍属后续（≠本 R1/R5 条文通过条件中的已交付子集）。
 
