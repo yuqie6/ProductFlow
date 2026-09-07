@@ -16,8 +16,9 @@
 2. [image-quality-content-pilot](tasks/archive/image-quality-content-pilot.md)：两商品完整对照已归档；闸门未过、卖点策略观感与评委分有分歧。
 3. [卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md)：生成策略与拼装已收窄并归档（≠R3；无 live）；继续其它生成链/排版切片时不与旧 42/32 图位完成条件混写。
 4. [卖点 live k=1](tasks/archive/image-quality-selling-point-live.md)：已归档；闸门相对试跑 candidate 改善、保真持平 4；≠R3。
-5. [OCR 追溯闸 B0](tasks/archive/image-quality-ocr-trace-b0.md)：已归档；成片对照 `text_trace`，失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3。
-6. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
+5. [OCR 追溯闸 B0](tasks/archive/image-quality-ocr-trace-b0.md)：已归档；成片对照 `text_trace`，失败不得 `text_qualified` pass；≠R3。
+6. [采用路径 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)：已归档；`CreateAdoption` 对有期望的 `text_trace` 默认 OCR；≠R3。
+7. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
 
@@ -35,7 +36,7 @@
 |---|---|---|
 | 商品事实 | `product/facts.go`：不可变 `product_fact_set_versions`；`source_type` 闭集 `user\|image_observation\|agent_inference`；`status` 闭集 `observed\|user_declared\|confirmed\|conflicted`；`layer` 闭集 `performance\|marketing`；`requires_confirmation` / `evidence_asset_ids` / `conflicts`；写入闸拒绝未确认推断升 `confirmed`、拒绝营销口吻入性能层；`POST .../facts/impact-preview` + PUT `update_node_ids`（CF-B2） | — |
 | 编译入边与 digest | `graph/compiler.go`：`incomingSorted` 只扫入边；`incomingFactSetVersions` 写入 digest；`execute_node.go` `skipUnchanged` 同 digest 跳过；CF-B2 预览只经 RoleFacts，未选中已完成节点可重盖 digest 保 artifact | — |
-| 图位文字 | `image_prompt`/`image` 产物可挂 `text_trace`（`fact_keys` 或 `user_image_override`）；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required`；卖点一图一理由检查器 `CheckSellingPointOneReason`；B0 OCR：`go/internal/ocr` 字形模板+残余墨迹对照，`graph.ApplyImageOCRTrace` 失败强制 `text_qualified=false` | 采用路径尚未默认调用 OCR；开放词表 live OCR 仅 opt-in；CJK/任意生成式成片未宣称 |
+| 图位文字 | `image_prompt`/`image` 产物可挂 `text_trace`（`fact_keys` 或 `user_image_override`）；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required`；卖点一图一理由检查器 `CheckSellingPointOneReason`；B0 OCR：`go/internal/ocr` 字形模板+残余墨迹对照，`graph.ApplyImageOCRTrace` 失败强制 `text_qualified=false`；采用路径对有期望的 `text_trace` 默认调用 OCR | 开放词表 live OCR 仅 opt-in；CJK/任意生成式成片未宣称；生成路径尚未自动 ApplyOCR |
 | 配方清身份 | `recipe/payload.go` 剥 `source_product_id` / `fact_set_version_id` / `visual_system_version_id` / `visual_overrides` / `fact_keys` 等；CF-B5 第二商品夹具钉清身份+新 fact | — |
 | 主体/局部 | `localedit`：供应商 `masked_edit`；图位可声明 `produce_route=subject_preserve` | **无**主体提取+背景/阴影+比例实现链；不能把 localedit 标成像素保真 |
 | 生成式摄影 | `image_generation` + providers；图位/产物 `produce_route`；生成式禁像素保真文案审计 | 主体提取链未建；采用硬闸已消费 `route_qualified` |
@@ -48,13 +49,13 @@
 | ID | 合同 | 验证层 | 状态 |
 |---|---|---|---|
 | IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `完成`（`layer` 闭集 + 确认门/营销闸；资料面板分栏；`TestFactLayerGate*`） |
-| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/archive/image-quality-ocr-trace-b0.md)：字形模板对照+失败不得 `text_qualified` pass；采用 HTTP 未默认接线；≠R3） |
+| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/archive/image-quality-ocr-trace-b0.md)；[采用 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)：有期望则默认对照，失败不得合格采用；CJK/开放词表/生成路径自动 Apply/R3 未宣称） |
 | IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `完成`（CF-B2：impact-preview + `update_node_ids` 采用；未选中保 artifact；证据见 [compete-facts-impact-preview](tasks/archive/compete-facts-impact-preview.md)） |
 | IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `部分完成`（CF-B3：`produce_route=subject_preserve` + 失败→未解决/`route_qualified=false`；主体提取链未建） |
 | IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `部分完成`（CF-B3：`produce_route=generative` + 禁令审计 + UI「可能改变外观」；真实对照另发） |
 | IQ-CF-06 | **受控二维排版边界**：营销字、规格、Logo 使用图内组合：图片层、文字层、必要形状、字体、字号、颜色、对齐、安全区。归属图片产出与 media lineage；**不**承担 DAG 调度，**不**第二工作流编辑器。只编辑本系统持有的结构；任意图片分层后置。浏览器预览与服务端导出同输入一致性（中文换行、缺字、长标题、像素尺寸）可测。技术选型在实现任务中按下方比较维度验证后选定，**本文件不指定 SDK**。 | 结构 schema + 预览/导出一致性测试；选型备忘只记比较结果 | `部分完成`（选型 A 自研最小组合器；`go/internal/layout` Compose + lineage；`web/src/lib/layout` 预览框；证据见 [compete-facts-controlled-layout](tasks/archive/compete-facts-controlled-layout.md)；HTTP/采用硬闸/主体提取非本批） |
 | IQ-CF-07 | **品牌/视觉继承优先级**：本商品显式覆盖 > 选定视觉方案版本 > 品牌版本 > 产品默认。事实与身份参考来自目标商品，**不参与**风格继承链。实例保存所选版本 id；品牌/方案更新先列受影响商品，须显式采用新版本，不得静默改在做任务与旧交付。配方继续清除来源商品身份与 fact/visual 版本绑定。 | 继承解析单测 + 配方 extract/apply 回归 + 第二商品无旧身份样例 | `完成`（`visualsystem.ResolveInheritance` 风格链只保留 style/colors；`product_visual_selections` 钉版本；Append 不静默改选择；Impact+显式采用；配方清身份与第二商品夹具；Brand 占位 `brand_table_not_ready`；证据见 [compete-facts-brand-inherit](tasks/archive/compete-facts-brand-inherit.md)；体验组 UX [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)） |
-| IQ-CF-08 | **与采用快照交接**：本组判定「身份合格 / 文字合格 / 路线声明正确」；体验组 [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md) 负责采用动作、快照持久化、导出 UX。不合格图可生成但**不得**进入「已采用交付」合格集（由体验组消费本判据）。O1–O7 文稿采用 ≠ 交付采用。 | 跨组合同引用；本组提供判据表，不写采用表模型 | `部分完成`（[compete-adoption-hard-gate](tasks/archive/compete-adoption-hard-gate.md)：`CreateAdoption` 强制 `text_qualified`/`route_qualified`；无元数据不得 `pass`；OCR/主体提取/R3 另列） |
+| IQ-CF-08 | **与采用快照交接**：本组判定「身份合格 / 文字合格 / 路线声明正确」；体验组 [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md) 负责采用动作、快照持久化、导出 UX。不合格图可生成但**不得**进入「已采用交付」合格集（由体验组消费本判据）。O1–O7 文稿采用 ≠ 交付采用。 | 跨组合同引用；本组提供判据表，不写采用表模型 | `部分完成`（[compete-adoption-hard-gate](tasks/archive/compete-adoption-hard-gate.md)：`CreateAdoption` 强制 `text_qualified`/`route_qualified`；无元数据不得 `pass`；[采用 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md) 默认消费成片对照；主体提取/R3 另列） |
 
 #### IQ-CF-06 技术选型比较维度（实现任务须落备忘）
 
@@ -106,7 +107,7 @@
 
 - Brand 实体与商户多品牌 UI 归属商家平台；本组只钉继承优先级与质量判据，表结构实现可与商家批次衔接。
 - 主体提取算法/模型未选型；CF-B3 先钉路线与禁令，CF-B4/实现另发。
-- 成片 OCR B0 已交付（字形模板+残余墨迹；live 视觉 opt-in）；采用路径默认消费与开放词表/CJK 覆盖仍另发；≠R3。
+- 成片 OCR B0 + 采用路径默认消费已交付（有期望则对照；无字节/无可对照期望拒绝合格，不静默 pass）；开放词表/CJK/生成路径自动 Apply 仍另发；≠R3。
 - 旧 42 图位池与 32 图位诊断合同保持原状态；本竞争力合同样本独立冻结，不得回写 IMG live 表凑数。
 
 <a id="image-quality"></a>

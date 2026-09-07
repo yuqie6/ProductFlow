@@ -86,6 +86,7 @@
 | delivery-r2-core-path-gate | R2 核心路径门 | 2026-09-07 完成归档；本门 PASS；总纲 R2 未通过 |
 | image-quality-ocr-trace-b0 | 成片 OCR 追溯闸 B0 | 2026-09-07 完成归档；字形模板对照；≠R3 |
 | merchant-mp-c-wire-b2-graph | 商家平台 MP-C B2 Graph 额度接线 | 2026-09-07 完成归档；image_generation Reserve/Settle；≠R5 |
+| image-quality-ocr-adoption-wire | 采用路径默认 OCR | 2026-09-07 完成归档；CreateAdoption 对照；≠R3 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
 | eval-production-mine | Agent 质量 | 阻塞（无生产商户） |

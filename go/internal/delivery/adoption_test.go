@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/ocr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
@@ -212,13 +213,18 @@ func TestDeliveryAdoptionConcurrentCreatesBumpVersions(t *testing.T) {
 
 func (ds *deliveryServer) uploadExtraAsset(t *testing.T, productID string) string {
 	t.Helper()
+	return ds.uploadPNGAsset(t, productID, pngBytes(t, 24, 24), "extra.png")
+}
+
+func (ds *deliveryServer) uploadPNGAsset(t *testing.T, productID string, png []byte, filename string) string {
+	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
-	part, err := w.CreateFormFile("images", "extra.png")
+	part, err := w.CreateFormFile("images", filename)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write(pngBytes(t, 24, 24)); err != nil {
+	if _, err := part.Write(png); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -354,4 +360,112 @@ func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
 	})
 	ds.mustStatus(t, uncheckedOK, http.StatusCreated)
 	uncheckedOK.Body.Close()
+}
+
+func textTraceCapacityPayload() map[string]any {
+	p := qualifiedAdoptionArtifactPayload()
+	p["text_trace"] = map[string]any{
+		"schema_version": 1, "text_qualified": true, "user_image_override": false,
+		"fact_keys": []any{"capacity"},
+		"entries": []any{
+			map[string]any{"text": "600ml", "traced": true, "fact_keys": []any{"capacity"}},
+		},
+	}
+	return p
+}
+
+func TestDeliveryAdoptionOCRMissingRejectsDeclaredPass(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	// 声明合格但成片无 600ml → OCR missing → 拒绝
+	missingPNG, err := ocr.RenderTextPNG("Stainless Body", 400, 120, 28)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetID := ds.uploadPNGAsset(t, productID, missingPNG, "missing-capacity.png")
+	ds.attachArtifactLineageWithPayload(t, productID, assetID, textTraceCapacityPayload())
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 400 got %d %s", resp.StatusCode, raw)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "文字 OCR 对照不合格") {
+		t.Fatalf("body %s", raw)
+	}
+}
+
+func TestDeliveryAdoptionOCRPassAllowsDeclaredPass(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	matchPNG, err := ocr.RenderTextPNG("600ml", 320, 100, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetID := ds.uploadPNGAsset(t, productID, matchPNG, "capacity-ok.png")
+	ds.attachArtifactLineageWithPayload(t, productID, assetID, textTraceCapacityPayload())
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	ds.mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+}
+
+func TestDeliveryAdoptionOCRRejectsEmptyExpectations(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	assetID := created.CreatedAssets[0].ID
+	payload := qualifiedAdoptionArtifactPayload()
+	payload["text_trace"] = map[string]any{
+		"schema_version": 1, "text_qualified": true, "user_image_override": false,
+		"fact_keys": []any{"capacity"}, "entries": []any{},
+	}
+	ds.attachArtifactLineageWithPayload(t, productID, assetID, payload)
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("want 400 got %d %s", resp.StatusCode, raw)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(raw), "无可对照的文字期望") {
+		t.Fatalf("body %s", raw)
+	}
+}
+
+func TestAdoptionTextTraceNeedsOCR(t *testing.T) {
+	if adoptionTextTraceNeedsOCR(nil) {
+		t.Fatal("nil")
+	}
+	if adoptionTextTraceNeedsOCR(map[string]any{"fact_keys": []any{}, "entries": []any{}}) {
+		t.Fatal("empty must skip OCR")
+	}
+	if !adoptionTextTraceNeedsOCR(map[string]any{"fact_keys": []any{"capacity"}}) {
+		t.Fatal("fact_keys require OCR")
+	}
+	if !adoptionTextTraceNeedsOCR(map[string]any{
+		"entries": []any{map[string]any{"text": "600ml"}},
+	}) {
+		t.Fatal("entry text require OCR")
+	}
 }
