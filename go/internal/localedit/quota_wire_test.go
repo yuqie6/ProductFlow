@@ -234,3 +234,65 @@ func TestLateAttemptCannotFinalizeNewAttemptQuota(t *testing.T) {
 		})
 	}
 }
+
+func TestCancelQuotaFailureRollsBackTaskAndAttempt(t *testing.T) {
+	for _, phase := range []string{"claimed", "provider_call"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx := context.Background()
+			es := newEditServer(t, MockProvider{Cap: SupportedCapability("mock-local")})
+			created := es.createProduct(t)
+			taskID := createQueuedLocalEdit(t, es, created, "cancel-quota-rollback")
+			markStaleLocalEdit(t, es, taskID, phase)
+			var attemptID string
+			if err := es.pool.QueryRow(ctx, "SELECT active_attempt_id FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&attemptID); err != nil {
+				t.Fatal(err)
+			}
+			merchantID := auth.MustDevMerchantID(t, es.db)
+			key := editQuotaKey(taskID, attemptID)
+			if _, _, err := (&quota.Service{DB: es.db}).Reserve(ctx, merchantID, key, localEditQuotaUnits, quota.DefaultPriceVersionID); err != nil {
+				t.Fatal(err)
+			}
+			before := loadQuotaAccount(t, es.db, merchantID)
+			constraint := "test_cancel_quota_failure"
+			if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds ADD CONSTRAINT "+constraint+" CHECK (idempotency_key <> '"+key+"' OR status = 'reserved')"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if _, err := es.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
+					t.Error(err)
+				}
+			})
+			owned := auth.WithMerchantID(ctx, merchantID)
+			if _, err := es.svc.Cancel(owned, created.Product.ID, taskID, nil); err == nil {
+				t.Fatal("cancel must report quota persistence failure")
+			}
+			var status, active, effect string
+			if err := es.pool.QueryRow(ctx, "SELECT t.status,t.active_attempt_id,a.effect_result FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id WHERE t.id=$1", taskID).Scan(&status, &active, &effect); err != nil {
+				t.Fatal(err)
+			}
+			if status != "running" || active != attemptID || effect != "pending" {
+				t.Fatalf("partial cancellation: status=%s active=%s effect=%s", status, active, effect)
+			}
+			after := loadQuotaAccount(t, es.db, merchantID)
+			if before.AvailableUnits != after.AvailableUnits || before.ReservedUnits != after.ReservedUnits {
+				t.Fatalf("quota balance did not roll back: before=%+v after=%+v", before, after)
+			}
+			if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if _, err := es.svc.Cancel(owned, created.Product.ID, taskID, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			hold := loadQuotaHold(t, es.db, merchantID, key)
+			want := quota.StatusReleased
+			if phase == "provider_call" {
+				want = quota.StatusPendingReconciliation
+			}
+			if hold.Status != want {
+				t.Fatalf("retry cancellation hold=%s want=%s", hold.Status, want)
+			}
+		})
+	}
+}

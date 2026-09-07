@@ -370,12 +370,6 @@ func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRe
 // expectedRevision 非 nil 且对不上 Conflict。不删除 mask MediaObject。
 // 额度：未过 provider 边界 Release；已过 MarkUnknown（禁止当零消费）。
 func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedRevision *int) (TaskResponse, error) {
-	var finalize struct {
-		merchantID    string
-		attemptID     string
-		progressPhase string
-		do            bool
-	}
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
 		if err != nil {
@@ -404,11 +398,13 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 				result = "unknown"
 			}
 			detail := "局部编辑任务已取消；provider boundary 之后的结果只能作为审计"
-			_ = pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
+			if err := pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
 				Where("task_id = ? AND attempt_id = ?", taskID, *task.ActiveAttemptID).
 				Updates(map[string]any{
 					"phase": phaseLabel, "effect_result": result, "detail": detail, "updated_at": time.Now().UTC(),
-				}).Error
+				}).Error; err != nil {
+				return err
+			}
 		}
 		now := time.Now().UTC()
 		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
@@ -426,17 +422,14 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 		if mErr != nil {
 			return mErr
 		}
-		finalize.merchantID = merchantID
-		finalize.attemptID = attemptID
-		finalize.progressPhase = phase
-		finalize.do = true
-		return nil
+		// Quota uses this transaction (nested calls use savepoints), so a failed
+		// release/unknown write cannot leave a committed cancellation.
+		command := s
+		command.DB = pgxTx
+		return command.finalizeEditQuotaOnCancel(ctx, merchantID, taskID, attemptID, phase)
 	})
 	if err != nil {
 		return TaskResponse{}, err
-	}
-	if finalize.do {
-		_ = s.finalizeEditQuotaOnCancel(ctx, finalize.merchantID, taskID, finalize.attemptID, finalize.progressPhase)
 	}
 	return s.Get(ctx, productID, taskID, true)
 }
