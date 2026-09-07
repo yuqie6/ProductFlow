@@ -27,6 +27,14 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 	if err == nil || isProviderUnknown(err) || errors.Is(err, errProviderFenced) {
 		return err
 	}
+	reason := nodeFailureReason(err)
+	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
+		return failErr
+	}
+	return nil
+}
+
+func nodeFailureReason(err error) string {
 	var app apperr.Error
 	reason := err.Error()
 	if errors.As(err, &app) {
@@ -35,10 +43,7 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 	if reason == "" {
 		reason = "节点运行失败"
 	}
-	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
-		return failErr
-	}
-	return nil
+	return reason
 }
 
 var errProviderFenced = errors.New("graph provider call fenced")
@@ -386,7 +391,7 @@ func (e Executor) callProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
+		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID, nodeFailureReason(err)); markErr != nil {
 			return PromptResult{}, false, markErr
 		}
 		return PromptResult{}, false, providerUnknownError{}
@@ -435,7 +440,7 @@ func (e Executor) callImageProvider(
 	}
 	result, err := invoke()
 	if err != nil {
-		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
+		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID, nodeFailureReason(err)); markErr != nil {
 			return ImageResult{}, false, markErr
 		}
 		return ImageResult{}, false, providerUnknownError{}
@@ -564,9 +569,13 @@ func (e Executor) finishProviderCall(ctx context.Context, runID, nodeRunID, atte
 	return promote, err
 }
 
-func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string) error {
+func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID string, attemptID *string, cause string) error {
+	detail := ProviderUnknownDetail
+	if cause = strings.TrimSpace(cause); cause != "" && cause != detail {
+		detail += ": " + cause
+	}
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, ProviderUnknownDetail); err != nil {
+		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, detail); err != nil {
 			return err
 		}
 		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)

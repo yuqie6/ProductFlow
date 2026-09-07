@@ -36,7 +36,8 @@
 | 连续生图恢复删除已保存结果的 pending effect，仅凭 completed 计数可安全重排队 | 恢复事务用同会话/同生成组完整轮次与资产证明批次完成，保留 effect 并标 applied；证据不足收敛 unknown | 原代码复现恢复后 effect 丢失及无轮次仍重排队；修复后调用记录保留，恢复 applied 写失败回滚任务，缺证据不再重投 | `bcd0fce5` |
 | 连续生图接管 pending/忽略 unknown，重试 failed 时未重置结果与 Provider/hash | `ensureEffect` 只允许确认失败重新准备；未决 intent 保留原身份转 unknown，applied 复用 | 原实现三种缺陷复现；新调用 pending 元数据与请求一致，未决返回 unknown 且保留原 request/attempt，applied 批次数不变 | `4e17ba26` |
 | 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | `58791772` |
-| Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | 随本次提交 |
+| Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | `d27b6a66` |
+| Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -143,3 +144,8 @@ effect 持久化切片当前工作区 imagesession 整包通过（31.598 秒）�
 Graph 提案依赖切片由本任务主代理负责，范围为 `graph/service.go`、`agent/tools_graph.go` 和 [Service 依赖回归](../../go/internal/graph/proposal_dependency_test.go)。现有 ProductGuard 保留商品归属规则，Graph Service 负责装配自身配置，Agent 不再为该方法补 context。真实 PostgreSQL 正常商家、其他商家与插入约束故障均验证提案行数、图 revision 和节点数；故障断言要求 SQLSTATE 23514，避免缺依赖提前失败造成假通过。尚未删除 Graph 内部和其他低层事务调用者的 context 注入合同，不能据此声称依赖治理完成。
 
 提案依赖切片验证：Graph 新增三个数据库场景及确认/丢弃消费者通过（1.045 秒）；Agent 图写入权威与提案持久化消费者通过（4.247 秒），均实际执行。标准 `go vet` 因既有 `ocr_trace_test.go` 的 testing.Context 和 `eval_provenance_regression_test.go` 的 testing.Chdir 与模块 Go 1.23 声明不符而失败；关闭 stdversion 分析项后的其余 vet 检查通过，此结果不代表标准 vet 全绿。未修改这些无关测试或工具链版本。主代理完整 diff 自审、调用者与旧补偿注释残留检查、`just docs-check` 通过；本切片未跑整包或真实模型评价。
+
+
+Graph Provider 原因切片由本任务主代理负责，范围为 `graph/execute_node.go`、[Provider 失败原因回归](../../go/internal/graph/provider_failure_detail_test.go) 和原未知额度回归调用签名。复用原节点失败的 apperr.Detail 提取规则，两类 Provider 错误都保留未知提示与具体原因，经既有 markNodeUnknown 写入节点、effect 和事件；不改变重试分类、额度合同或持久化结构。真实 PostgreSQL 两条调用原代码均复现原因丢失，修复后与三条未知额度事务入口的针对性组合通过（1.079 秒）。
+
+Provider 原因切片当前工作区 Graph 整包通过（87.623 秒），新增数据库原因断言实际执行；未运行 opt-in 规模或真实模型门。复用已确认的标准 vet 版本声明缺口，`go vet -stdversion=false ./internal/graph` 通过，不将其称为标准 vet 全绿。主代理完整 diff 自审、markUnknownCommitted 全调用者扫描、`just docs-check` 和空白检查通过；未改变其他任务资源。

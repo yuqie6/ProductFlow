@@ -44,7 +44,7 @@ func TestGraphUnknownTransitionsOwnQuota(t *testing.T) {
 			finish := func() error {
 				switch entry {
 				case "provider_error":
-					return (Executor{DB: db}).markUnknownCommitted(ctx, runID, nodeID, &attempt)
+					return (Executor{DB: db}).markUnknownCommitted(ctx, runID, nodeID, &attempt, ProviderUnknownDetail)
 				case "claimed_failure":
 					return failClaimedNode(ctx, db, runID, nodeID, attempt, "write failure after provider")
 				default:
