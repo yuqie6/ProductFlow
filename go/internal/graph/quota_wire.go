@@ -42,7 +42,8 @@ func (e Executor) reserveImageQuota(ctx context.Context, merchantID, nodeRunID, 
 
 func (e Executor) settleImageQuota(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
 	key := imageNodeQuotaKey(nodeRunID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, graphImageQuotaUnits))
+	_, _, err := e.quota().Settle(ctx, merchantID, key, graphImageQuotaUnits)
+	return err
 }
 
 func (e Executor) markImageQuotaUnknown(ctx context.Context, merchantID, nodeRunID, attemptID string) error {

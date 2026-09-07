@@ -69,3 +69,11 @@ func TestLateGraphAttemptCannotFinalizeNewQuota(t *testing.T) {
 		})
 	}
 }
+
+func TestPaidGraphSettlementRequiresReservation(t *testing.T) {
+	_, db := testdb.Open(t)
+	merchantID := auth.MustDevMerchantID(t, db)
+	if err := (Executor{DB: db}).settleImageQuota(context.Background(), merchantID, clockid.New(), clockid.New()); err == nil {
+		t.Fatal("paid image settlement accepted missing hold")
+	}
+}

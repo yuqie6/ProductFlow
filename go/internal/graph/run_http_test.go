@@ -680,6 +680,10 @@ func (gs *graphServer) createDirectGraph(t *testing.T) (productID, graphID strin
 }
 
 func (gs *graphServer) createDirectGraphWithImageTypes(t *testing.T, imageTypes string) (productID, graphID string) {
+	return gs.createDirectGraphWithReference(t, imageTypes, pngBytes(t))
+}
+
+func (gs *graphServer) createDirectGraphWithReference(t *testing.T, imageTypes string, reference []byte) (productID, graphID string) {
 	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -689,7 +693,7 @@ func (gs *graphServer) createDirectGraphWithImageTypes(t *testing.T, imageTypes 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write(pngBytes(t)); err != nil {
+	if _, err := part.Write(reference); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {

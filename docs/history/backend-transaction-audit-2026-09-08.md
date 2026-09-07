@@ -29,7 +29,8 @@
 | Graph 图像调用先 Reserve 再检查 attempt，取消后的旧 worker 可创建 hold 并依赖事后补偿 | `callImageProvider` 在一个事务中组合既有 prepare 与 Reserve，Provider 调用在提交之后 | 原代码复现取消后新增 hold；修复后无 hold，额度故障回滚阶段和 effect intent；外部调用期间另一连接可锁运行行 | `0d33ca14` |
 | Graph Provider 错误与节点/运行失败可提交 unknown 而未在同事务处理额度 | `markNodeUnknown` 持锁确认当前 attempt 后同步额度，Provider 与恢复删除重复后处理 | 三条入口原代码复现额度故障未阻止 unknown；修复后保留运行/节点/attempt，解除故障后重放仅一次 mark_unknown 事件 | `635c9915` |
 | Graph 图像资产/成功投影提交后再结算，结算失败仍留下可见成功产物 | `persistImageArtifact` 在原资产事务中结算，删除事务外 consumed 收口 | 原代码真实执行复现 1 artifact + 1 商品资产残留；修复后结算故障回滚产物、保留 unknown/待核对，Provider applied 与持久化失败原因仍可查，重投不再调用 Provider | `c137516d` |
-| Graph 明确失败命令先提交终态，节点执行器才补做额度，运行失败入口遗漏预留 | `failClaimedNode/failGraphRunLocked` 在锁内释放原 attempt 预留，删除执行器后处理与重复分类 helper | 两种入口原代码复现额度故障不阻止 failed；修复后故障保留当前运行/节点/attempt，解除后释放幂等；未知分支仍使用 markNodeUnknown | 随本次提交 |
+| Graph 明确失败命令先提交终态，节点执行器才补做额度，运行失败入口遗漏预留 | `failClaimedNode/failGraphRunLocked` 在锁内释放原 attempt 预留，删除执行器后处理与重复分类 helper | 两种入口原代码复现额度故障不阻止 failed；修复后故障保留当前运行/节点/attempt，解除后释放幂等；未知分支仍使用 markNodeUnknown | `16c99e42` |
+| Graph 成功结算忽略缺失 hold，付费异常与合法免费合成混在一起 | 复用 subjectPreserveImageDelivery，资产入口对本地合成显式跳过结算；付费 settle 原样返回缺失预留 | 原代码缺预留仍接受付费结算；修复后拒绝，真实本地合成不调用 Provider、持久化产物且余额不变，正常付费结算仍通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -39,7 +40,7 @@
 |---|---|---|
 | 商品与图创建 | `product.Service.CreateDirect → createWithGraph/createCanonical → graph.WriteTx`，商品、资产与图在调用者的同一事务组合；媒体沿 compensation 处理。保留 product 的创建 owner。 | 各种中断点的全组合故障注入尚未逐一覆盖；不从包测试推定整条真实商品交付签收。 |
 | 图修改 | `graph.Service → WriteTx → graph command/project`；商品、配方和 Agent 通过 Graph 写入口组合，Graph 用 ProductGuard 访问商品。 | `WithProductGuard` 的隐式依赖要求多个调用者懂装配；尚无本轮越权复现。 |
-| 图执行 | `ExecuteRun → executeClaimedNode → runClaimedNode → prepare/finishProviderCall → persist*Artifact` 已有 lease、attempt、effect、投影晋升分层。 | 取消已在持锁命令收口；过期恢复已在同一事务收口；图像调用前 prepare/Reserve 已组合事务；成功已与结算同事务，明确失败终态也已在命令内处理；缺失 hold 的计费合同仍需收敛，需以数据库故障和竞争证明后修改；只改文件布局没有验收价值。 |
+| 图执行 | `ExecuteRun → executeClaimedNode → runClaimedNode → prepare/finishProviderCall → persist*Artifact` 已有 lease、attempt、effect、投影晋升分层。 | 取消已在持锁命令收口；过期恢复已在同一事务收口；图像调用前 prepare/Reserve 已组合事务；成功已与结算同事务，明确失败终态也已在命令内处理；付费成功结算已要求 hold，本地合成显式跳过结算；其他终态的缺失 hold 合同仍需核实，需以数据库故障和竞争证明后修改；只改文件布局没有验收价值。 |
 | 连续生图 | `Execute → runGeneration → ensureEffect → Generate → saveCandidate → markEffect → finish*`；每次信封处理一个批次，已有 applied 批次跳过 Provider。 | billing sequence 绑定、部分候选已保存后的失败、effect 写失败及额度最终收口需继续审计；不能直接套用 node/attempt 的额度键规则。 |
 | 局部编辑 | 本轮覆盖 HTTP 创建/提交夹具、worker、task/attempt/asset/hold/账户、恢复与 queue.Consume。 | 未进行 SIGKILL 或真实 Provider 调用；进程崩溃按可持久化边界和实际恢复函数注入验证。 |
 | 交付 | 已有本地 Render、资产派生、attempt 条件写入和恢复；此次收口 worker 失败终态错误传播。 | 原图/媒体存储的各类真实 IO 故障、交付性能和全部采用流程未作本轮专项验收。 |
@@ -49,7 +50,7 @@
 
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
-1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，缺失 hold 合同仍待收敛；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
+1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；取消/未知/释放的缺失 hold 合同仍待核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑 claimed 历史预留与缺失 hold 的合同。** 当前调用前预留已原子化；仍应检查恢复前已存在的 claimed + hold 是否可安全释放，以及 `finalizeQuotaIgnoreMissing` 对真实异常与合法未预留路径的区分。不能因夹具未建 hold 就放宽生产成功合同。
 3. **中：Graph context 服务依赖。** `WithProductGuard` 跨 product/recipe/agent 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。未实施，不把风格判断升级成安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
@@ -103,6 +104,10 @@ Graph 图像结算切片由本任务主代理负责，范围为 `execute_node.go
 
 Graph 明确失败切片由本任务主代理负责，范围为 `durability.go`、删除 `execute_node.go/quota_wire.go` 事务外后处理及 [失败额度回归](../../go/internal/graph/failure_quota_atomicity_test.go)。已过 Provider 边界仍走 unknown；未过边界释放预留。原代码两条命令均复现额度约束错误未阻止 failed；修复后持久化故障保持可恢复状态，故障解除后只释放一次。
 
-缺失 hold 合同补充：`runClaimedNode` 的 `DeliveryFromCompose` 分支使用本地 `subject_compose`，明确跳过付费 Provider/Reserve，但与付费生成共用 `persistImageArtifact`。因此成功结算的缺失预留容忍既掩盖付费异常，也承接合法免费合成；后续须显式区分合同，不能全局删除 NotFound 容忍后让合成误失败。此发现来自当前调用链，尚未实施合同调整。
+缺失 hold 合同补充：`runClaimedNode` 的 `DeliveryFromCompose` 分支使用本地 `subject_compose`，明确跳过付费 Provider/Reserve，但与付费生成共用 `persistImageArtifact`。因此成功结算的缺失预留容忍既掩盖付费异常，也承接合法免费合成；后续须显式区分合同，不能全局删除 NotFound 容忍后让合成误失败。此发现来自当前调用链，后续成功结算切片已显式分离两种合同；其他终态未全局改写。
 
 明确失败切片当前工作区 Graph 整包通过（82.635 秒），新增 PostgreSQL 回归实际执行，针对性组合包含未知转换、结算失败和取消/执行/恢复竞争（3.631 秒）。`just docs-check`、完整 diff 自审与已删除 helper 的代码/文档残留扫描通过。本切片未占用账户或图片评价任务的资源。
+
+Graph 成功计费合同切片由本任务主代理负责，范围为 `execute_node.go/quota_wire.go`、复用上传参考图夹具的窄扩展，以及 [合成零额度执行链](../../go/internal/graph/compose_quota_test.go) 和 [付费预留合同](../../go/internal/graph/quota_attempt_test.go)。将原本只传 RouteMap 的内部持久化参数改为已有交付结果对象，保留实际字节来源的决定；没有增加收费 flag、Provider 字段或持久化形状。原代码复现无 hold 仍接受结算；真实白底主体合成、付费成功与结算故障回归均通过。
+
+成功计费合同切片当前工作区 Graph 整包通过（86.340 秒）；新增付费缺预留拒绝与本地合成持久化回归实际执行，正常付费及结算故障针对性组合通过（4.978 秒）。主代理自审确认仅内部交付参数复用已有对象，wire/持久化 JSON 不变，未引入第二套计费实现；`just docs-check` 通过。

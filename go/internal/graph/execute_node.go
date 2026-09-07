@@ -270,7 +270,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if err := media.RejectGenerationOutput([][]byte{img.Bytes}, img.MIME); err != nil {
 			return err
 		}
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, providerName, imgReq.PromptArtifactID, imageTrace, delivery.RouteMap)
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, providerName, imgReq.PromptArtifactID, imageTrace, delivery)
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -728,7 +728,7 @@ func (e Executor) persistImageArtifact(
 	promote bool,
 	providerName, promptArtifactID string,
 	textTrace map[string]any,
-	produceRoute map[string]any,
+	delivery subjectPreserveImageDelivery,
 ) error {
 	if e.Deps.Assets == nil {
 		return apperr.Validation("节点运行失败")
@@ -748,6 +748,9 @@ func (e Executor) persistImageArtifact(
 	now := time.Now().UTC()
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		settle := func() error {
+			if delivery.DeliveryFromCompose {
+				return nil
+			}
 			merchantID, err := merchantIDForGraphRun(ctx, pgxTx, run.ID)
 			if err != nil {
 				return err
@@ -813,8 +816,8 @@ func (e Executor) persistImageArtifact(
 		if len(textTrace) > 0 {
 			payloadMap["text_trace"] = textTrace
 		}
-		if len(produceRoute) > 0 {
-			payloadMap["produce_route"] = produceRoute
+		if len(delivery.RouteMap) > 0 {
+			payloadMap["produce_route"] = delivery.RouteMap
 		}
 		payload, err := json.Marshal(payloadMap)
 		if err != nil {
