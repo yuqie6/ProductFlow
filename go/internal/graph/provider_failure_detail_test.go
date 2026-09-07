@@ -34,9 +34,15 @@ func TestProviderUnknownRetainsFailureCause(t *testing.T) {
 			calls := 0
 			var err error
 			if kind == "prompt" {
-				_, _, err = e.callProvider(ctx, runID, node, "fixture", "digest", NodeCreativeBrief, func() (PromptResult, error) { calls++; return PromptResult{}, errors.New(detail) })
+				_, _, err = e.callProvider(ctx, runID, node, "fixture", PromptRequest{InputDigest: "digest", NodeType: NodeCreativeBrief}, func(context.Context, PromptRequest) (PromptResult, error) {
+					calls++
+					return PromptResult{}, errors.New(detail)
+				})
 			} else {
-				_, _, err = e.callImageProvider(ctx, runID, node, "fixture", "digest", NodeImageGeneration, func() (ImageResult, error) { calls++; return ImageResult{}, errors.New(detail) })
+				_, _, err = e.callImageProvider(ctx, runID, node, "fixture", ImageRequest{InputDigest: "digest"}, func(context.Context, ImageRequest) (ImageResult, error) {
+					calls++
+					return ImageResult{}, errors.New(detail)
+				})
 			}
 			if !isProviderUnknown(err) {
 				t.Fatalf("error=%v", err)

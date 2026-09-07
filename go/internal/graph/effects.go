@@ -247,3 +247,19 @@ func recordProviderEffectResult(ctx context.Context, tx *gorm.DB, nodeRunID, att
 	}).Error
 	return err == nil, err
 }
+
+// referenceRequestEvidence preserves provider reference metadata and fingerprints the actual bytes without storing base64 in the effect ledger.
+func referenceRequestEvidence(refs []ReferenceImage) ([]ReferenceImage, []string) {
+	if refs == nil {
+		return nil, nil
+	}
+	metadata := make([]ReferenceImage, len(refs))
+	hashes := make([]string, len(refs))
+	for i, ref := range refs {
+		metadata[i] = ref
+		metadata[i].Bytes = nil
+		hash := sha256.Sum256(ref.Bytes)
+		hashes[i] = hex.EncodeToString(hash[:])
+	}
+	return metadata, hashes
+}

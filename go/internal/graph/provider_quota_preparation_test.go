@@ -31,7 +31,7 @@ func TestGraphProviderPreparationCannotReserveAfterCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoked := false
-	_, _, err := (Executor{DB: db}).callImageProvider(ctx, runID, graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}, "fixture", "digest", NodeImageGeneration, func() (ImageResult, error) { invoked = true; return ImageResult{}, nil })
+	_, _, err := (Executor{DB: db}).callImageProvider(ctx, runID, graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}, "fixture", ImageRequest{InputDigest: "digest"}, func(context.Context, ImageRequest) (ImageResult, error) { invoked = true; return ImageResult{}, nil })
 	if !errors.Is(err, errProviderFenced) {
 		t.Fatalf("expected fence, got %v", err)
 	}
@@ -72,7 +72,7 @@ func TestGraphProviderPreparationQuotaFailureRollsBackIntent(t *testing.T) {
 		}
 	})
 	invoked := false
-	invoke := func() (ImageResult, error) {
+	invoke := func(context.Context, ImageRequest) (ImageResult, error) {
 		invoked = true
 		// A separate connection must be able to lock the run during the external call.
 		if _, err := pool.Exec(ctx, "SELECT id FROM workflow_graph_runs WHERE id=$1 FOR UPDATE NOWAIT", runID); err != nil {
@@ -89,7 +89,7 @@ func TestGraphProviderPreparationQuotaFailureRollsBackIntent(t *testing.T) {
 	}
 	e := Executor{DB: db}
 	node := graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}
-	if _, _, err := e.callImageProvider(ctx, runID, node, "fixture", "digest", NodeImageGeneration, invoke); err == nil || errors.Is(err, errProviderFenced) {
+	if _, _, err := e.callImageProvider(ctx, runID, node, "fixture", ImageRequest{InputDigest: "digest"}, invoke); err == nil || errors.Is(err, errProviderFenced) {
 		t.Fatalf("expected quota persistence error, got %v", err)
 	}
 	if invoked {
@@ -112,7 +112,7 @@ func TestGraphProviderPreparationQuotaFailureRollsBackIntent(t *testing.T) {
 	if _, err := pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
 		t.Fatal(err)
 	}
-	if _, promote, err := e.callImageProvider(ctx, runID, node, "fixture", "digest", NodeImageGeneration, invoke); err != nil || !promote {
+	if _, promote, err := e.callImageProvider(ctx, runID, node, "fixture", ImageRequest{InputDigest: "digest"}, invoke); err != nil || !promote {
 		t.Fatalf("retry preparation promote=%v err=%v", promote, err)
 	}
 	if !invoked {

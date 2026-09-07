@@ -38,7 +38,8 @@
 | 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | `58791772` |
 | Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | `d27b6a66` |
 | Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | `4216e3b0` |
-| 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | 随本次提交 |
+| 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | `d1e194c2` |
+| Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -154,6 +155,13 @@ Provider 原因切片当前工作区 Graph 整包通过（87.623 秒），新增
 
 Provider 错误适配切片由本任务主代理负责，范围为 `providers/adapt/adapt.go`、`providers/prompt.go`、Graph 未知提示去重及对应测试。继续追踪真实适配器发现上个切片只证明 Graph 收到原因后能保存，不能证明适配前原因未被删除；本切片用原生多错误包装保留 Graph unknown 和底层 error，不新增错误类型。四类图片失败可 errors.Is 原错误，文稿解码失败可 errors.As json.SyntaxError；未把原响应正文写入错误。真实数据库 [适配器集成回归](../../go/internal/graph/provider_adapter_cause_test.go) 经过商品创建、图执行、正式 GraphImage 适配器、终态写入与再次投递，节点和 effect 保存 trace，未知提示只出现一次，客户端仅调用一次。
 
-请求追踪审计的新证据：`callProvider/callImageProvider` 的 request_json 仅含 node_id、node_type、input_digest、attempt_id；实际 PromptRequest 的文稿动作/内容和 ImageRequest 的生成参数/变体/参考图没有直接记录。该 hash 当前是执行身份摘要，不能作为实际 Provider 请求证明。下层 `providers/adapt.graphImage.GenerateImage` 还执行 CompileImageModelPrompt 并转为 GenerateRequest；因此 Graph 边界证据也不等同 HTTP 出站正文。未发现这些缺字段导致实际 Provider 输入错误的复现，当前归为追踪缺口。后续实现须绑定记录与调用的同一 typed request，参考图只记录身份和实际字节摘要，避免 base64 进入具有 64 KiB 限制的 effect JSON；需真实数据库比对实际捕获请求、参考图摘要及超限时 Provider 零调用。该请求记录改造尚未实施。
+请求追踪审计的新证据：`callProvider/callImageProvider` 的 request_json 仅含 node_id、node_type、input_digest、attempt_id；实际 PromptRequest 的文稿动作/内容和 ImageRequest 的生成参数/变体/参考图没有直接记录。该 hash 当前是执行身份摘要，不能作为实际 Provider 请求证明。下层 `providers/adapt.graphImage.GenerateImage` 还执行 CompileImageModelPrompt 并转为 GenerateRequest；因此 Graph 边界证据也不等同 HTTP 出站正文。未发现这些缺字段导致实际 Provider 输入错误的复现，当前归为追踪缺口。后续实现须绑定记录与调用的同一 typed request，参考图只记录身份和实际字节摘要，避免 base64 进入具有 64 KiB 限制的 effect JSON；需真实数据库比对实际捕获请求、参考图摘要及超限时 Provider 零调用。后续请求证据切片已实现 Graph Provider 接口边界记录；HTTP 出站正文仍不在本切片证明范围。
 
 错误适配切片验证：providers 整包通过（0.109 秒），providers/adapt 整包通过（0.012 秒）；最终 Graph 实际适配器持久化、双入口原因和未知额度回滚组合通过（2.564 秒）。`go vet -stdversion=false` 的 providers/adapt/graph 检查通过；标准 vet 的既有版本声明缺口未改变。主代理完整 diff 自审、相关返回路径扫描、`just docs-check` 与空白检查通过；没有真实模型费用，没有触碰账户/schema 或共享进程。本次没有重跑 Graph 整包，前一切片整包证据不当作本次整包结果。
+
+
+Graph 请求证据切片由本任务主代理负责，范围为 `graph/execute_node.go/effects.go`、调用签名回归调整与 [请求/数据库比对](../../go/internal/graph/provider_request_evidence_test.go)。调用包装器接收既有 PromptRequest/ImageRequest，分别将该值直接传给 Provider 方法；移除捕获请求的零参数闭包。记录复用 typed request 的字段，参考图复制元数据并清空 Bytes，按原顺序记录实际字节 SHA-256，不改变 Provider 收到的引用或字节。request_hash 覆盖整份记录，既有 operation_key、attempt 围栏和单节点账本不变；没有新增表、兼容读取或另一套调用框架。
+
+新数据库回归首次因 recovery 夹具从默认库取得商家 ID 而在隔离库外键失败；修复夹具为可显式传 merchantID，原调用者仍消费原默认商家夹具。四个独立 pf_reqtrace_* 数据库场景通过（5.044 秒）：文稿/图像的正常与超限输入。正常场景在 Provider 回调中读取已提交 intent，完整比较 typed request、实际参考图 hash、记录 hash；超限场景保持 claimed、零 intent、零 hold 和零 Provider 调用。256 KiB 参考图不会触发 JSON 大小限制；非字节请求证据仍受既有 64 KiB 上限约束，超出时明确拒绝调用，未评估生产请求大小分布。记录对应 Graph Provider 接口输入，不代表 providers 内部编译后 HTTP 正文或最终生效模型参数已全部留存。
+
+请求证据切片最终当前工作区 Graph 整包通过（91.740 秒），`go vet -stdversion=false ./internal/graph`、完整 diff 自审与 `just docs-check` 通过。首次整包停滞在 TestImageNodeRejectsInsufficientQuota，主代理仅对本任务测试 PID 611052 发 SIGQUIT 采栈并终止，记为 FAIL；栈包含并发文稿 persistContentArtifact 的 run 锁和 LoadFactSet 读取，尚无稳定因果复现。该用例单独重跑通过（2.205 秒），带 180 秒超时的整包再次通过；不据此声明并发停滞已修复。复核首轮最后观察到的独立库已不存在，无需删除其他数据库。未修改共享运行服务或其他任务资源。

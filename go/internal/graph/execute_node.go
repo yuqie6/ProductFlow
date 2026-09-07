@@ -139,9 +139,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 	req.CurrentDocument = visibleDocument(node.NodeType, node.Config)
 	switch node.NodeType {
 	case NodeCreativeBrief:
-		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
-			return prompt.GenerateCreativeBrief(ctx, req)
-		})
+		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), req, prompt.GenerateCreativeBrief)
 		if errors.Is(err, errProviderFenced) {
 			return nil
 		}
@@ -155,9 +153,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			return mergeGeneratedBrief(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeVisualSystem:
-		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
-			return prompt.GenerateVisualOverlay(ctx, req)
-		})
+		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), req, prompt.GenerateVisualOverlay)
 		if errors.Is(err, errProviderFenced) {
 			return nil
 		}
@@ -171,9 +167,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			return mergeGeneratedOverlay(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeImagePrompt:
-		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), digest, node.NodeType, func() (PromptResult, error) {
-			return prompt.GeneratePrompt(ctx, req)
-		})
+		result, promote, err := e.callProvider(ctx, run.ID, *nodeRun, prompt.Name(), req, prompt.GeneratePrompt)
 		if errors.Is(err, errProviderFenced) {
 			return nil
 		}
@@ -258,9 +252,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			img, promote, err = e.callLocalSubjectCompose(ctx, run.ID, *nodeRun, digest, node.NodeType, delivery.Compose)
 		} else {
 			providerName = image.Name()
-			img, promote, err = e.callImageProvider(ctx, run.ID, *nodeRun, providerName, digest, node.NodeType, func() (ImageResult, error) {
-				return image.GenerateImage(ctx, imgReq)
-			})
+			img, promote, err = e.callImageProvider(ctx, run.ID, *nodeRun, providerName, imgReq, image.GenerateImage)
 		}
 		if errors.Is(err, errProviderFenced) {
 			return nil
@@ -372,24 +364,29 @@ func (e Executor) callProvider(
 	ctx context.Context,
 	runID string,
 	nodeRun graphNodeRunRow,
-	providerName, digest string,
-	nodeType NodeType,
-	invoke func() (PromptResult, error),
+	providerName string,
+	req PromptRequest,
+	invoke func(context.Context, PromptRequest) (PromptResult, error),
 ) (PromptResult, bool, error) {
 	if nodeRun.ActiveAttemptID == nil || *nodeRun.ActiveAttemptID == "" {
 		return PromptResult{}, false, apperr.Validation("节点运行缺少 attempt token")
 	}
 	attemptID := *nodeRun.ActiveAttemptID
+	evidence := req
+	var contentHashes []string
+	evidence.References, contentHashes = referenceRequestEvidence(req.References)
 	request := map[string]any{
-		"node_id":      nodeRun.NodeID,
-		"node_type":    string(nodeType),
-		"input_digest": digest,
-		"attempt_id":   attemptID,
+		"node_id":                  nodeRun.NodeID,
+		"node_type":                string(req.NodeType),
+		"input_digest":             req.InputDigest,
+		"request":                  evidence,
+		"reference_content_sha256": contentHashes,
+		"attempt_id":               attemptID,
 	}
 	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
 		return PromptResult{}, false, err
 	}
-	result, err := invoke()
+	result, err := invoke(ctx, req)
 	if err != nil {
 		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID, nodeFailureReason(err)); markErr != nil {
 			return PromptResult{}, false, markErr
@@ -410,9 +407,9 @@ func (e Executor) callImageProvider(
 	ctx context.Context,
 	runID string,
 	nodeRun graphNodeRunRow,
-	providerName, digest string,
-	nodeType NodeType,
-	invoke func() (ImageResult, error),
+	providerName string,
+	req ImageRequest,
+	invoke func(context.Context, ImageRequest) (ImageResult, error),
 ) (ImageResult, bool, error) {
 	if nodeRun.ActiveAttemptID == nil || *nodeRun.ActiveAttemptID == "" {
 		return ImageResult{}, false, apperr.Validation("节点运行缺少 attempt token")
@@ -422,11 +419,16 @@ func (e Executor) callImageProvider(
 	if err != nil {
 		return ImageResult{}, false, err
 	}
+	evidence := req
+	var contentHashes []string
+	evidence.References, contentHashes = referenceRequestEvidence(req.References)
 	request := map[string]any{
-		"node_id":      nodeRun.NodeID,
-		"node_type":    string(nodeType),
-		"input_digest": digest,
-		"attempt_id":   attemptID,
+		"node_id":                  nodeRun.NodeID,
+		"node_type":                string(NodeImageGeneration),
+		"input_digest":             req.InputDigest,
+		"request":                  evidence,
+		"reference_content_sha256": contentHashes,
+		"attempt_id":               attemptID,
 	}
 	if err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		prepared := e
@@ -438,7 +440,7 @@ func (e Executor) callImageProvider(
 	}); err != nil {
 		return ImageResult{}, false, err
 	}
-	result, err := invoke()
+	result, err := invoke(ctx, req)
 	if err != nil {
 		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID, nodeFailureReason(err)); markErr != nil {
 			return ImageResult{}, false, markErr

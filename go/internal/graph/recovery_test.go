@@ -124,13 +124,18 @@ func insertStaleRunningGraphRun(t *testing.T, pool *pgxpool.Pool, phase string, 
 
 func insertGraphRun(t *testing.T, pool *pgxpool.Pool, startedAt time.Time, nodeStatus string, phase *string, attemptID *string) string {
 	t.Helper()
+	return insertGraphRunForMerchant(t, pool, auth.MustDevMerchantID(t, testdb.Gorm(t)), startedAt, nodeStatus, phase, attemptID)
+}
+
+func insertGraphRunForMerchant(t *testing.T, pool *pgxpool.Pool, merchantID string, startedAt time.Time, nodeStatus string, phase *string, attemptID *string) string {
+	t.Helper()
 	productID := clockid.New()
 	graphID := clockid.New()
 	runID := clockid.New()
 	nodeRunID := clockid.New()
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO products (id, name, created_at, updated_at, merchant_id) VALUES ($1, 'recovery', NOW(), NOW(), $2)
-	`, productID, auth.MustDevMerchantID(t, testdb.Gorm(t))); err != nil {
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `
