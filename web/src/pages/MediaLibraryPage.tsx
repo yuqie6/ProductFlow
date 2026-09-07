@@ -26,7 +26,8 @@ import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDial
 import { TopNav } from "../components/TopNav";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogContent } from "../components/ui/dialog";
-import { Input } from "../components/ui/field";
+import { Input, CONTROL_CLASS } from "../components/ui/field";
+import { cn } from "../components/ui/cn";
 import { Select } from "../components/ui/select";
 import { useRegisterAgentPageContext } from "../lib/agentPageContext";
 import { api, ApiError } from "../lib/api";
@@ -647,13 +648,13 @@ export function MediaLibraryPage() {
           </aside>
 
           <section className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border-l1 bg-surface-raised p-2 shadow-sm dark:border-border-l2 dark:bg-surface-panel">
+            <div className="flex flex-wrap items-center gap-2 border-b border-border-l1 pb-3">
               <label className="relative min-w-[190px] flex-1">
                 <span className="sr-only">{t("mediaLibrary.search")}</span>
                 <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} type="search" placeholder={t("mediaLibrary.search")} className="h-9 w-full rounded-lg border border-border-l1 bg-surface-base pl-9 pr-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent dark:border-border-l1 dark:bg-surface-base/50 dark:text-white dark:focus:border-accent dark:focus:ring-accent/15" />
+                <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} type="search" placeholder={t("mediaLibrary.search")} className={cn(CONTROL_CLASS, "h-11 pl-9 pr-3 text-sm lg:h-9")} />
               </label>
-              <select value={sourceType} onChange={(event) => setSourceType(event.target.value as MediaLibrarySourceType | "")} className="h-9 max-w-[170px] rounded-lg border border-border-l1 bg-surface-raised px-2.5 text-xs font-medium text-text-secondary outline-none focus:border-accent dark:border-border-l1 dark:bg-surface-base/60 dark:text-text-primary dark:focus:border-accent">
+              <select value={sourceType} onChange={(event) => setSourceType(event.target.value as MediaLibrarySourceType | "")} className={cn(CONTROL_CLASS, "h-11 w-auto max-w-[170px] font-medium lg:h-9")}>
                 <option value="">{t("mediaLibrary.allSources")}</option>
                 <option value="direct_upload">{t("mediaLibrary.source.upload")}</option>
                 <option value="product_asset">{t("mediaLibrary.source.product")}</option>
@@ -670,7 +671,7 @@ export function MediaLibraryPage() {
             </div>
 
             {selectedAssets.length ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent bg-accent-soft px-3 py-2 text-xs text-accent shadow-sm dark:border-accent/30 dark:bg-accent/10 dark:text-accent">
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-y border-border-l1 bg-surface-panel px-3 py-2 text-xs text-text-primary">
                 <span className="mr-auto font-semibold">{t("mediaLibrary.selected", { count: selectedAssets.length })}</span>
                 <button type="button" onClick={() => setDialog({ kind: "move" })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface-raised px-2.5 font-semibold text-text-secondary shadow-sm hover:bg-surface-base dark:bg-surface-base dark:text-text-primary dark:hover:bg-surface-panel">
                   <FolderInput size={13} />{t("detail.library.move")}
@@ -980,7 +981,7 @@ function MediaLibraryCard({
   return (
     <article
       onClick={(e) => onToggle(e)}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-sm transition-all select-none hover:shadow-md dark:bg-surface-panel ${selected
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-surface border bg-surface-raised transition-[border-color,box-shadow] duration-fast select-none motion-reduce:transition-none ${selected
           ? "border-accent ring-2 ring-accent/20 dark:border-accent dark:ring-accent/25"
           : "border-border-l1 hover:border-border-l3 dark:border-border-l2 dark:hover:border-border-l1"
         }`}
@@ -990,7 +991,7 @@ function MediaLibraryCard({
           src={api.toApiUrl(asset.thumbnail_url)}
           alt={asset.display_name}
           loading="lazy"
-          className={`h-full w-full object-cover transition duration-200 group-hover:scale-[1.02] ${asset.is_archived ? "opacity-55 grayscale" : ""
+          className={`h-full w-full object-cover ${asset.is_archived ? "opacity-55 grayscale" : ""
             }`}
         />
 
@@ -1018,7 +1019,7 @@ function MediaLibraryCard({
             e.stopPropagation();
             onPreview();
           }}
-          className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-white/30 bg-media-backdrop/50 text-white opacity-0 shadow-md backdrop-blur-md transition-all group-hover:opacity-100 hover:scale-105 hover:bg-media-backdrop/80 focus:opacity-100"
+          className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-white/30 bg-media-backdrop/50 text-white shadow-elev-1 transition-opacity lg:opacity-0 group-hover:opacity-100 hover:bg-media-backdrop/80 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-focus-ring motion-reduce:transition-none"
           aria-label={t("mediaLibrary.previewLabel")}
           title={t("mediaLibrary.previewLabel")}
         >

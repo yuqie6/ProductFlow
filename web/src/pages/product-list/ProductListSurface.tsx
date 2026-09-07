@@ -13,6 +13,9 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { CONTROL_CLASS } from "../../components/ui/field";
+import { cn } from "../../components/ui/cn";
+import { buttonVariants } from "../../components/ui/button";
 import { Select as SelectField } from "../../components/ui/select";
 import { api } from "../../lib/api";
 import { formatPrice, formatShortDate } from "../../lib/format";
@@ -84,7 +87,7 @@ export function ProductListSurface({
         </h1>
         <Link
           to="/products/new"
-          className="inline-flex min-h-[38px] shrink-0 items-center justify-center gap-1.5 rounded-md border border-accent bg-accent px-3 text-sm font-semibold text-accent-fg transition-colors hover:border-accent hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 dark:border-accent dark:bg-accent dark:hover:border-accent-strong dark:hover:bg-accent-strong dark:focus-visible:ring-accent dark:focus-visible:ring-offset-surface-base sm:px-3.5"
+          className={cn(buttonVariants({ variant: "primary", size: "lg" }), "shrink-0 text-sm")}
         >
           <Plus size={16} aria-hidden="true" />
           <span>{t("products.new")}</span>
@@ -103,7 +106,7 @@ export function ProductListSurface({
               autoComplete="off"
               onChange={(event) => onSearchDraftChange(event.target.value)}
               placeholder={t("products.searchPlaceholder")}
-              className="h-11 w-full min-w-0 appearance-none rounded-md border border-border-l3 bg-surface-raised pr-11 pl-[34px] text-[13px] text-text-primary outline-none transition-[border-color,box-shadow] placeholder:text-text-muted focus:border-accent focus:ring-2 focus:ring-accent/20 sm:h-9 sm:pr-9 dark:border-border-l3 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/20 [&::-webkit-search-cancel-button]:appearance-none"
+              className={cn(CONTROL_CLASS, "h-11 min-w-0 appearance-none pr-11 pl-[34px] text-[13px] lg:h-9 lg:pr-9 [&::-webkit-search-cancel-button]:appearance-none")}
             />
             {searchDraft ? (
               <button

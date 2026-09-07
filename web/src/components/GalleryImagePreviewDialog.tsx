@@ -99,7 +99,7 @@ export function GalleryImagePreviewDialog({
               label={resolvedPrevLabel}
               variant="secondary"
               size="toolbar"
-              className="absolute left-3 top-1/2 -translate-y-1/2 bg-media-backdrop/70 text-accent-fg hover:bg-media-backdrop"
+              className="absolute left-3 top-1/2 -translate-y-1/2 bg-media-backdrop/70 text-white hover:bg-media-backdrop hover:text-white"
               onClick={(event) => {
                 event.stopPropagation();
                 onPrev();
@@ -114,7 +114,7 @@ export function GalleryImagePreviewDialog({
               label={resolvedNextLabel}
               variant="secondary"
               size="toolbar"
-              className="absolute right-3 top-1/2 -translate-y-1/2 bg-media-backdrop/70 text-accent-fg hover:bg-media-backdrop"
+              className="absolute right-3 top-1/2 -translate-y-1/2 bg-media-backdrop/70 text-white hover:bg-media-backdrop hover:text-white"
               onClick={(event) => {
                 event.stopPropagation();
                 onNext();
@@ -125,7 +125,7 @@ export function GalleryImagePreviewDialog({
           ) : null}
 
           {counterText ? (
-            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-media-backdrop/75 px-3 py-1 text-[11px] font-semibold text-accent-fg backdrop-blur-sm">
+            <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-media-backdrop/75 px-3 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
               {counterText}
             </div>
           ) : null}
