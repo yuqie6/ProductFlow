@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -40,7 +41,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	api := engine.Group("/api", admin)
+	api := engine.Group("/api", admin, auth.RequireWorkingMerchant())
 	api.POST("/v2/products", h.createV2)
 	api.GET("/v2/products", h.list)
 	api.GET("/v2/products/:product_id/image-library", h.galleryBootstrap)

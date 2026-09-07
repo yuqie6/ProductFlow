@@ -174,6 +174,16 @@ func AbortIfNoMerchant(c *gin.Context) bool {
 	return false
 }
 
+// RequireWorkingMerchant 浏览器业务路由中间件：已登录但无有效 Membership 时 403（成员撤销后读写）。
+func RequireWorkingMerchant() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if AbortIfNoMerchant(c) {
+			return
+		}
+		c.Next()
+	}
+}
+
 // RejectSuspendedMerchantWrites 停用商家后拒绝非 Operator 的业务写请求。
 // 读路径与 /api/auth、/api/settings、/api/ops、generation-queue 放行；Operator 可继续写（含启停与支持）。
 func (h HTTP) RejectSuspendedMerchantWrites() gin.HandlerFunc {

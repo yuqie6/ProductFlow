@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -39,7 +40,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	v3 := engine.Group("/api/v3", admin)
+	v3 := engine.Group("/api/v3", admin, auth.RequireWorkingMerchant())
 	v3.GET("/local-image-edits/capability", h.capability)
 	v3.GET("/products/:product_id/image-edits", h.list)
 	v3.POST("/products/:product_id/image-edits", h.create)

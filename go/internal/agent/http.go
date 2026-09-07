@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/settings"
@@ -41,7 +42,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	v2 := engine.Group("/api/v2", admin, abortIfNoMerchant)
+	v2 := engine.Group("/api/v2", admin, auth.RequireWorkingMerchant())
 	v2.GET("/agent-sessions", h.listSessions)
 	v2.POST("/agent-sessions", h.createSession)
 	v2.PATCH("/agent-sessions/:session_id", h.renameSession)

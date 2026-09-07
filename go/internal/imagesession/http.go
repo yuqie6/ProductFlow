@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -40,7 +41,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	api := engine.Group("/api", admin)
+	api := engine.Group("/api", admin, auth.RequireWorkingMerchant())
 	api.GET("/image-sessions", h.list)
 	api.POST("/image-sessions", h.create)
 	api.GET("/image-session-assets/:asset_id/download", h.download)
@@ -56,7 +57,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/retry", h.retry)
 	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/cancel", h.cancel)
 	api.POST("/image-sessions/:image_session_id/generation-tasks/:task_id/provider-effects/:candidate_start_index/reconciliation", h.reconcile)
-	v2 := engine.Group("/api/v2", admin)
+	v2 := engine.Group("/api/v2", admin, auth.RequireWorkingMerchant())
 	v2.POST("/image-sessions/:image_session_id/assets/:asset_id/attach-to-product", h.attach)
 }
 

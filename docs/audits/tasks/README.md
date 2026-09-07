@@ -20,9 +20,8 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-isolation-gate.md](merchant-isolation-gate.md) | 商家平台 | 证据 | 认领 | sub-merchant/merchant-isolation-gate | 2026-09-07T15:00:00+08:00 |
-| [workbench-remember-last-view.md](workbench-remember-last-view.md) | 工作流体验 | 实现 | 开放 | — | — |
-| [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 平台可靠性 | 证据 | 开放 | — | — |
+| [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 平台可靠性 | 证据 | 认领 | sub-release/release-r6-readiness-gate | 2026-09-07T15:15:00+08:00 |
+| [workbench-remember-last-view.md](workbench-remember-last-view.md) | 工作流体验 | 实现 | 认领 | sub-delivery/workbench-remember-last-view | 2026-09-07T15:15:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

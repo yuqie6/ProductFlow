@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/settings"
@@ -36,13 +37,13 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	v2 := engine.Group("/api/v2", admin)
+	v2 := engine.Group("/api/v2", admin, auth.RequireWorkingMerchant())
 	// 参数名必须与 product 的 :asset_id 相同，Gin 不允许同一前缀使用不同通配符名。
 	v2.POST("/product-image-assets/:asset_id/renditions", h.create)
 	v2.GET("/product-image-assets/:asset_id/renditions", h.list)
 	v2.GET("/delivery-rendition-jobs/:job_id", h.get)
 	v2.POST("/delivery-rendition-jobs/:job_id/retry", h.retry)
-	v3 := engine.Group("/api/v3", admin)
+	v3 := engine.Group("/api/v3", admin, auth.RequireWorkingMerchant())
 	v3.GET("/delivery-presets", h.presets)
 	v3.POST("/products/:product_id/delivery-exports", h.exportZip)
 	v3.GET("/products/:product_id/delivery-adoptions", h.listAdoptions)

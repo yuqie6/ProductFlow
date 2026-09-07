@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -42,7 +43,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	g := engine.Group("/api/media-library", admin)
+	g := engine.Group("/api/media-library", admin, auth.RequireWorkingMerchant())
 	g.GET("", h.list)
 	g.GET("/bootstrap", h.bootstrap)
 	g.POST("/folders", h.createFolder)

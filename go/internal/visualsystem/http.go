@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"github.com/yuqie6/productflow/internal/settings"
@@ -32,7 +33,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	v3 := engine.Group("/api/v3", admin)
+	v3 := engine.Group("/api/v3", admin, auth.RequireWorkingMerchant())
 	v3.GET("/visual-systems", h.list)
 	v3.POST("/visual-systems", h.create)
 	v3.GET("/visual-systems/:system_id", h.get)

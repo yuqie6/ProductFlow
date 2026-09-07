@@ -36,14 +36,6 @@ func requireBrowserMerchant(ctx context.Context) error {
 	return apperr.Forbidden("当前用户不属于任何商家")
 }
 
-// abortIfNoMerchant 挂在需工作商家的浏览器 Agent 路由上。
-func abortIfNoMerchant(c *gin.Context) {
-	if auth.AbortIfNoMerchant(c) {
-		return
-	}
-	c.Next()
-}
-
 // bindInternalConversationMerchant 内部 conversation 路由：scope 商家来自合同行，不信任声明头授权。
 func (h HTTP) bindInternalConversationMerchant() gin.HandlerFunc {
 	return func(c *gin.Context) {

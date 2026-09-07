@@ -25,22 +25,22 @@
 ## 组内序列
 
 1. [merchant-isolation-contract](tasks/archive/merchant-isolation-contract.md)：逐入口、表/根资源、worker、媒体和 Agent 工具建立覆盖清单，固定所有权、角色矩阵和可分别验证的实施批次。**本任务已交付覆盖矩阵与批次（见下文）；不宣称隔离已实现。**
-2. [身份骨架 B0](tasks/archive/merchant-identity-skeleton.md) 已交付。[根归属 B1](tasks/archive/merchant-root-ownership.md) **已交付**（根表 `merchant_id`、回填、查询过滤、跨商 404）。[商品链 B2](tasks/archive/merchant-product-chain.md) **已交付**（子链读写/下载隔离）。[Graph+配方 B3](tasks/archive/merchant-graph-recipe.md) **已交付**（changeset/run/SSE/recipe apply）。[会话生图 B5](tasks/archive/merchant-image-session.md) **已交付**。[图库绑定 B4](tasks/archive/merchant-library-binding.md) **已交付**（from-product/session、workflow sync）。[交付与局部编辑 B6](tasks/archive/merchant-delivery-localedit.md) **已交付**。[Agent 工具链 B7](tasks/archive/merchant-agent-tools.md) **已交付**。[队列与前端 B8](tasks/archive/merchant-queue-frontend.md) **已交付**。[运营面 B9](tasks/archive/merchant-ops-surface.md) **已交付**。下一项 [双商隔离门 B10](tasks/merchant-isolation-gate.md)。组内可分批交付，但中间版本不开放多商家。
+2. [身份骨架 B0](tasks/archive/merchant-identity-skeleton.md) 已交付。[根归属 B1](tasks/archive/merchant-root-ownership.md) **已交付**（根表 `merchant_id`、回填、查询过滤、跨商 404）。[商品链 B2](tasks/archive/merchant-product-chain.md) **已交付**（子链读写/下载隔离）。[Graph+配方 B3](tasks/archive/merchant-graph-recipe.md) **已交付**（changeset/run/SSE/recipe apply）。[会话生图 B5](tasks/archive/merchant-image-session.md) **已交付**。[图库绑定 B4](tasks/archive/merchant-library-binding.md) **已交付**（from-product/session、workflow sync）。[交付与局部编辑 B6](tasks/archive/merchant-delivery-localedit.md) **已交付**。[Agent 工具链 B7](tasks/archive/merchant-agent-tools.md) **已交付**。[队列与前端 B8](tasks/archive/merchant-queue-frontend.md) **已交付**。[运营面 B9](tasks/archive/merchant-ops-surface.md) **已交付**。[双商隔离门 B10](tasks/archive/merchant-isolation-gate.md) **自动化证据通过**（未开放第二外部商；不宣称 R1）。组内可分批交付；**运营邀请第二商另决**。
 3. 在相同身份合同上交付商家额度与 Operator 运营控制，复用平台提供的固定消费事实；缺字段或原子预留入口时将其纳入完整因果切片。
 4. 双商家正反用例、成员撤销和混合负载验收；把受影响身份/授权合同交给 Agent 质量独立固定题目，自进化消费已固定输入。
 
-现阶段开放实现任务以本矩阵的批次为拆分依据；完整隔离门（MP-B / R1）未过前不得邀请第二互不信任商家。
+现阶段：B10/MP-B 自动化门已过证据；**在运营明确邀请前仍不得对互不信任的第二商家开放产品注册。**
 
 ## 验收与现状
 
 | 门 | 完成条件 | 当前 |
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **B0 已交付**（见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)）；业务表隔离仍属 MP-B |
-| MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **B1–B9 已交付**；完整双商门见 [B10](tasks/merchant-isolation-gate.md)；未宣称 MP-B |
+| MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **B10 自动化门证据通过**（2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家上线；≠ MP-C/MP-D；**不宣称 R1** |
 | MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | 未实现 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现 |
 
-冻结基线：`d6709c4aacb2e26bb30ab70a99d08b1dca05f487`（2026-09-07）。B0/B1 落地后：User 密码会话 + 根表 `merchant_id` 与查询过滤已实现；跨商统一 404。`app_settings` 仍为实例级；**B7 Agent 工具链商家字段已交付**（待审）。该基线仍支持建设必要性；完整隔离以矩阵批次为准。
+冻结基线：`d6709c4aacb2e26bb30ab70a99d08b1dca05f487`（2026-09-07）。B0–B10 落地后：User 密码会话 + 根表 `merchant_id` 与查询过滤、跨商统一 404、双商自动化门已过；`app_settings` 仍为实例级；产品 `CreateMerchant` 仍拒第二开发商直至运营邀请。
 
 ---
 
@@ -277,7 +277,7 @@
 | **B7** | Agent 全链 | 矩阵 H\*、I\*：浏览器+internal+Pi scope 商家字段、25 工具越权 harness。**已交付**（2026-09-07，见 [merchant-agent-tools](tasks/archive/merchant-agent-tools.md)；跨商统一 404） | 本商 turn/tool | 伪造 internal scope、跨商 content、确认在撤销后 | 单商；Agent 评测题不改 grader 边界 |
 | **B8** | 队列与前端 | 矩阵 J\*：五 Actor 快照、Restage、recovery；前端 merchant 前缀与 SSE 取消。**已交付**（2026-09-07，见 [merchant-queue-frontend](tasks/archive/merchant-queue-frontend.md)） | 混合队列下本商 UI 正确 | 改信封商家无效；旧订阅；切换迟到 | 单商 |
 | **B9** | 运营面最小集 | A3–A4、A8 支持会话合同草案；商家启停字段。**已交付**（2026-09-07，见 [merchant-ops-surface](tasks/archive/merchant-ops-surface.md)） | Op 停用后商家不可写 | 商家角色碰 settings | 仍不开放第二外部商 |
-| **B10** | 双商隔离门 MP-B | 种子商家 A/B；矩阵每分区至少 1 正 1 反自动化；自审七场景全过 | A 合法全绿 | B 交叉全拒 | **通过后**才允许邀请第二互不信任商家（证据见 [merchant-isolation-gate](tasks/merchant-isolation-gate.md)） |
+| **B10** | 双商隔离门 MP-B | 种子商家 A/B；矩阵每分区至少 1 正 1 反自动化；自审七场景全过 | A 合法全绿 | B 交叉全拒 | **自动化证据通过**（[merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**通过后**才允许邀请第二互不信任商家；完成 ≠ 已上线第二商 |
 
 依赖：B0→B1→(B2∥B3∥B5 在 B1 后可并行，但写集不重叠时由协调者拆 issue)→B4 依赖 B1+B2+B5→B6 依赖 B2→B7 依赖 B1–B6 合同字段→B8 贯穿可与 B7 末并行→B9 可早于 B10→B10 最后。
 
@@ -320,8 +320,9 @@
 ## 验收缺口（相对 MP-B，非本证据任务失败）
 
 - 身份与 Membership：**B0/MP-A 实现已就绪**（密码会话、邀请、最后 Owner；见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)）。
-- 业务根表 `merchant_id` 与查询过滤：**B1–B9 已交付**；双商自动化套件见 [B10](tasks/merchant-isolation-gate.md)。
-- 双商自动化套件与前端切换套件：B10 执行中。
+- 业务根表 `merchant_id` 与查询过滤：**B1–B9 已交付**；双商自动化套件见 [B10](tasks/archive/merchant-isolation-gate.md)。
+- 双商自动化套件与前端切换套件：**B10 证据通过**（夹具 A/B + 分区正反 + 七场景；产品 `CreateMerchant` 仍拒第二商）。
 - MP-C 未开始；MP-D 仅 A8 合同草案（≠完整运营产品化）。
+- **运营尚未邀请第二互不信任商家**；邀请属 B10 通过后的运营动作，不由本自动化门自动开启。
 
-本文件矩阵与批次可执行；**不代表 R1/MP-B 通过。**
+本文件矩阵与批次可执行；**MP-B 自动化门已过，不代表 R1 全站宣称，也不代表第二外部商已上线。**

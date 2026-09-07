@@ -1,9 +1,9 @@
 # 任务：R6 发行就绪汇总门（B6）
 
-状态：开放
+状态：认领
 类型：证据
-认领者：—
-认领于：—
+认领者：sub-release/release-r6-readiness-gate
+认领于：2026-09-07T15:15:00+08:00
 业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：总纲 R6 关闭裁定；不降低门槛
