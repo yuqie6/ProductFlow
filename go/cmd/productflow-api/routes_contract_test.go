@@ -250,7 +250,7 @@ func skipUnauthorizedProbe(method, path string) bool {
 	if path == "/healthz" || path == "/healthz/ready" {
 		return true
 	}
-	if path == "/api/auth/session" {
+	if strings.HasPrefix(path, "/api/auth/") {
 		return true
 	}
 	return false

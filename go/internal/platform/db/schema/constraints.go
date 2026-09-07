@@ -1080,6 +1080,73 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT fk_products_current_delivery_adoption_version_id FOREIGN KEY (current_delivery_adoption_version_id) REFERENCES delivery_adoption_versions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT ck_delivery_adoption_versions_positive_version CHECK (version > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT uq_delivery_adoption_versions_product_version UNIQUE (product_id, version);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT fk_delivery_adoption_versions_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT fk_delivery_adoption_versions_graph_id FOREIGN KEY (graph_id) REFERENCES workflow_graphs(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT fk_delivery_adoption_versions_fact_set_version_id FOREIGN KEY (fact_set_version_id) REFERENCES product_fact_set_versions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_versions ADD CONSTRAINT fk_delivery_adoption_versions_visual_system_version_id FOREIGN KEY (visual_system_version_id) REFERENCES visual_system_versions(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT ck_delivery_adoption_slots_non_negative_sort CHECK (sort_order >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT ck_delivery_adoption_slots_spec_hash CHECK (length(delivery_spec_hash::text) = 64);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT ck_delivery_adoption_slots_quality_status CHECK (quality_status = ANY (ARRAY['pass'::text, 'fail'::text, 'unchecked'::text]));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT uq_delivery_adoption_slots_version_slot UNIQUE (version_id, slot_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT fk_delivery_adoption_slots_version_id FOREIGN KEY (version_id) REFERENCES delivery_adoption_versions(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE delivery_adoption_slots ADD CONSTRAINT fk_delivery_adoption_slots_source_asset_id FOREIGN KEY (source_asset_id) REFERENCES product_image_assets(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_delivery_adoption_versions_product_created ON public.delivery_adoption_versions USING btree (product_id, created_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_delivery_adoption_slots_version_sort ON public.delivery_adoption_slots USING btree (version_id, sort_order, id);`,
+	`DO $c$ BEGIN
 ALTER TABLE provider_bindings ADD CONSTRAINT provider_bindings_provider_profile_id_fkey FOREIGN KEY (provider_profile_id) REFERENCES provider_profiles(id) ON DELETE SET NULL;
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
@@ -1774,4 +1841,75 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_run_events_run_sequence ON public.workflow_graph_run_events USING btree (graph_run_id, sequence);`,
+
+	// B0 identity: users / merchants / memberships / invites / auth_sessions
+	`DO $c$ BEGIN
+ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE users ADD CONSTRAINT ck_users_status CHECK (status IN ('active', 'disabled'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchants ADD CONSTRAINT ck_merchants_status CHECK (status IN ('active', 'suspended'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE memberships ADD CONSTRAINT fk_memberships_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE memberships ADD CONSTRAINT fk_memberships_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE memberships ADD CONSTRAINT uq_memberships_merchant_user UNIQUE (merchant_id, user_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE memberships ADD CONSTRAINT ck_memberships_role CHECK (role IN ('owner', 'editor', 'viewer'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE memberships ADD CONSTRAINT ck_memberships_status CHECK (status IN ('active', 'revoked'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_invites ADD CONSTRAINT fk_merchant_invites_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_invites ADD CONSTRAINT fk_merchant_invites_invited_by FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_invites ADD CONSTRAINT uq_merchant_invites_token_hash UNIQUE (token_hash);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_invites ADD CONSTRAINT ck_merchant_invites_role CHECK (role IN ('owner', 'editor', 'viewer'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE auth_sessions ADD CONSTRAINT fk_auth_sessions_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_memberships_user_status ON public.memberships USING btree (user_id, status);`,
+	`CREATE INDEX IF NOT EXISTS ix_memberships_merchant_role_status ON public.memberships USING btree (merchant_id, role, status);`,
+	`CREATE INDEX IF NOT EXISTS ix_merchant_invites_merchant_email ON public.merchant_invites USING btree (merchant_id, lower(email));`,
+	`CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_id ON public.auth_sessions USING btree (user_id);`,
 }

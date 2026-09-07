@@ -42,7 +42,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	product.HTTP{
 		Service: product.Service{
 			DB:     gdb,
@@ -55,20 +55,7 @@ func TestAgentWorkspaceBirthWritesCanvas(t *testing.T) {
 	defer srv.Close()
 
 	client := &http.Client{}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	loginResp, err := client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loginResp.Body.Close()
-	if loginResp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", loginResp.StatusCode)
-	}
-	cookies := loginResp.Cookies()
+	cookies := auth.MustAuthenticate(t, client, srv.URL)
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	draftKey := "draft-key-" + t.Name() + "-" + suffix

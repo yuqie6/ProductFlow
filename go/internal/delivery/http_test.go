@@ -51,24 +51,14 @@ func newDeliveryServer(t *testing.T) *deliveryServer {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	HTTP{Service: Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ds := &deliveryServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := ds.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	ds.cookies = resp.Cookies()
+	ds.cookies = auth.MustAuthenticate(t, ds.client, srv.URL)
 	_, _ = ds.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
 		VALUES ('admin_access_required', 'true', NOW(), NOW())

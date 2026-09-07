@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-identity-skeleton.md](merchant-identity-skeleton.md) | 完成 | User/Merchant/Membership/邀请/可撤销会话；bootstrap；MP-A；≠业务表隔离 |
 | [delivery-workbench-projection.md](delivery-workbench-projection.md) | 完成 | 成果/流程切换；全量生图投影；默认仍流程；Vitest 16；≠采用快照 |
 | [compete-facts-layout-contract.md](compete-facts-layout-contract.md) | 完成 | IQ-CF-01…08、CF-B0…B5；与采用快照 IQ-CF-08 交接；≠R3 |
 | [release-compose-proxy-overlay.md](release-compose-proxy-overlay.md) | 完成 | nginx→go-api；prod-ports overlay；隔离四项探活通过；≠R6/全量 build |

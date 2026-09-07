@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +51,7 @@ func newProductServerWith(t *testing.T, overlay Service) *productServer {
 		UploadMaxReferenceImages: 6,
 		DeletionEnabled:          false,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	svc := Service{DB: gdb, Media: media.Store{Files: storage.Local{Root: root}}}
 	if overlay.SourceNote != nil {
 		svc.SourceNote = overlay.SourceNote
@@ -67,20 +66,7 @@ func newProductServerWith(t *testing.T, overlay Service) *productServer {
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ps := &productServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := ps.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", resp.StatusCode)
-	}
-	ps.cookies = resp.Cookies()
+	ps.cookies = auth.MustAuthenticate(t, ps.client, srv.URL)
 	ps.setSetting(t, "admin_access_required", "true")
 	return ps
 }

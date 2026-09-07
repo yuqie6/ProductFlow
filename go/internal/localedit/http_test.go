@@ -56,7 +56,7 @@ func newEditServer(t *testing.T, provider Provider) *editServer {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	svc := Service{DB: gdb, Media: mediaStore, Provider: provider}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
@@ -64,17 +64,7 @@ func newEditServer(t *testing.T, provider Provider) *editServer {
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	es := &editServer{pool: pool, db: gdb, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := es.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	es.cookies = resp.Cookies()
+	es.cookies = auth.MustAuthenticate(t, es.client, srv.URL)
 	var previousCapacity *string
 	_ = es.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = es.pool.Exec(context.Background(), `

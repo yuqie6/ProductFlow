@@ -1,9 +1,9 @@
 # 任务：版本化发行物与锁定安装包
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-release/release-versioned-artifact
+认领于：2026-09-07T12:29:00+08:00
 业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：B3 备份/恢复脚本；空主机 D1 实跑可与本任务分证据或同隔离窗口预约
@@ -44,8 +44,8 @@ B1 修好 web→API，但仍依赖 git checkout + 本地 build。总纲要求固
 
 - 原因：无。
 - 解除条件：无。
-- 跟进者：待认领。
-- 交接：仅发布。
+- 跟进者：sub-release/release-versioned-artifact。
+- 交接：已认领；未改代码。
 
 ## 证据
 

@@ -43,6 +43,19 @@ export type WorkflowRunStatus = "queued" | "running" | "succeeded" | "failed" | 
 export interface SessionState {
   authenticated: boolean;
   access_required: boolean;
+  needs_bootstrap?: boolean;
+  user?: {
+    id: string;
+    email: string;
+    display_name: string;
+    is_operator: boolean;
+  };
+  memberships?: Array<{
+    merchant_id: string;
+    merchant_name: string;
+    role: string;
+    status: string;
+  }>;
 }
 
 export interface ProductSummary {
@@ -279,6 +292,7 @@ export interface GraphProductFact {
   value: JsonValue;
   source_type?: ProductFactSourceType;
   status?: ProductFactStatus;
+  layer?: ProductFactLayer;
   requires_confirmation?: boolean;
   evidence_asset_ids?: string[];
   conflicts?: Array<Record<string, JsonValue>>;
@@ -370,6 +384,7 @@ export interface FinalizeAgentProductWorkspaceIntakeInput {
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export type ProductFactStatus = "observed" | "user_declared" | "confirmed" | "conflicted";
 export type ProductFactSourceType = "user" | "image_observation" | "agent_inference";
+export type ProductFactLayer = "performance" | "marketing";
 export type WorkflowVisualLockedField =
   | "style"
   | "colors"

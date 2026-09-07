@@ -100,7 +100,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 		c.Next()
 	})
 	store := settings.NewStore(pool, config.Config{AdminAccessRequired: true})
-	auth.HTTP{AdminAccessKey: "zip-key", Store: store}.Register(engine)
+	auth.MountTest(engine, db, store, auth.TestAdminKey)
 	product.HTTP{Service: product.Service{DB: db, Media: media.Store{Files: storage.Local{Root: root}}}, Settings: store}.Register(engine)
 	srv := httptest.NewServer(engine)
 	defer srv.Close()
@@ -127,11 +127,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 	if unauthorized.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated download status=%d", unauthorized.StatusCode)
 	}
-	login := post(t, []byte(`{"admin_key":"zip-key"}`), nil, "/api/auth/session")
-	login.Body.Close()
-	if login.StatusCode != http.StatusOK {
-		t.Fatalf("login status=%d", login.StatusCode)
-	}
+	cookies := auth.MustAuthenticate(t, client, srv.URL)
 	for _, count := range []int{10, 100} {
 		t.Run(fmt.Sprintf("images_%d", count), func(t *testing.T) {
 			payload, err := json.Marshal(map[string]any{"asset_ids": ids[:count]})
@@ -141,7 +137,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 			debug.FreeOSMemory()
 			baseline := galleryRSS(t)
 			started := time.Now()
-			resp := post(t, payload, login.Cookies(), path)
+			resp := post(t, payload, cookies, path)
 			headersAfter := time.Since(started)
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "application/zip" {
@@ -205,7 +201,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp := post(t, payload, login.Cookies(), path)
+		resp := post(t, payload, cookies, path)
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
 			t.Fatalf("download status=%d", resp.StatusCode)
@@ -280,7 +276,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Archive-Cancel-Probe", "1")
-		for _, cookie := range login.Cookies() {
+		for _, cookie := range cookies {
 			req.AddCookie(cookie)
 		}
 		result := make(chan error, 1)
@@ -318,7 +314,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp := post(t, payload, login.Cookies(), path)
+		resp := post(t, payload, cookies, path)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("101 assets status=%d", resp.StatusCode)
@@ -326,7 +322,7 @@ func TestGalleryArchiveHTTPMemory(t *testing.T) {
 		if _, err := pool.Exec(ctx, `UPDATE media_objects SET byte_size=$2 WHERE id=$1`, ids[0], (512<<20)+1); err != nil {
 			t.Fatal(err)
 		}
-		resp = post(t, []byte(`{"asset_ids":["zip-asset-000"]}`), login.Cookies(), path)
+		resp = post(t, []byte(`{"asset_ids":["zip-asset-000"]}`), cookies, path)
 		defer resp.Body.Close()
 		raw, err := io.ReadAll(resp.Body)
 		if err != nil || resp.StatusCode != http.StatusBadRequest || !bytes.Contains(raw, []byte("512 MiB")) {

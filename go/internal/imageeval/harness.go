@@ -240,8 +240,28 @@ func refPaths(storageRoot string, m Manifest) []string {
 }
 
 func login(ctx context.Context, client *http.Client, apiBase, adminKey string) error {
-	body, _ := json.Marshal(map[string]string{"admin_key": adminKey})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(apiBase, "/")+"/api/auth/session", bytes.NewReader(body))
+	base := strings.TrimRight(apiBase, "/")
+	email := "operator@test.local"
+	password := "test-password-ok"
+	bootstrap, _ := json.Marshal(map[string]string{
+		"admin_key": adminKey, "email": email, "password": password, "merchant_name": "开发商家",
+	})
+	breq, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/auth/bootstrap", bytes.NewReader(bootstrap))
+	if err != nil {
+		return err
+	}
+	breq.Header.Set("Content-Type", "application/json")
+	bresp, err := client.Do(breq)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, bresp.Body)
+	bresp.Body.Close()
+	if bresp.StatusCode != http.StatusOK && bresp.StatusCode != http.StatusConflict {
+		return fmt.Errorf("bootstrap http %d", bresp.StatusCode)
+	}
+	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/auth/session", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

@@ -85,8 +85,16 @@ func main() {
 	if poll < time.Millisecond {
 		poll = time.Millisecond
 	}
+	authHTTP := auth.HTTP{
+		AdminAccessKey: cfg.AdminAccessKey,
+		Store:          settingsStore,
+		DB:             gdb,
+		Service:        auth.Service{DB: gdb},
+	}
+	httpx.AuthenticatedFunc = auth.Authenticated
+	engine.Use(authHTTP.LoadPrincipal())
 	registerAPI(engine, apiHandlers{
-		Auth:     auth.HTTP{AdminAccessKey: cfg.AdminAccessKey, Store: settingsStore},
+		Auth:     authHTTP,
 		Settings: settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken},
 		Product: product.HTTP{
 			Service: product.Service{

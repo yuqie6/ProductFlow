@@ -72,27 +72,14 @@ func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServ
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	graph.HTTP{Service: graph.Service{DB: gdb, Pool: pool, Products: product.GraphGuard{}}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	gs := &graphServer{pool: pool, db: gdb, media: mediaStore, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := gs.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", resp.StatusCode)
-	}
-	gs.cookies = resp.Cookies()
+	gs.cookies = auth.MustAuthenticate(t, gs.client, srv.URL)
 	var previousCapacity *string
 	_ = gs.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = gs.pool.Exec(context.Background(), `

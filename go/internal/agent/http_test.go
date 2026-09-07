@@ -170,7 +170,7 @@ func newAgentServerOnDB(t *testing.T, gw Gateway, internalToken string, pool *pg
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore, Canvas: WriteProductCanvas}, Settings: settingsStore}.Register(engine)
 	svc := Service{
@@ -187,20 +187,7 @@ func newAgentServerOnDB(t *testing.T, gw Gateway, internalToken string, pool *pg
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	as := &agentServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := as.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", resp.StatusCode)
-	}
-	as.cookies = resp.Cookies()
+	as.cookies = auth.MustAuthenticate(t, as.client, srv.URL)
 	_, _ = as.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
 		VALUES ('admin_access_required', 'true', NOW(), NOW())

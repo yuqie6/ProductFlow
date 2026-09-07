@@ -64,7 +64,7 @@ func newSessionServerWithDatabase(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB
 		UploadMaxReferenceImages: 6,
 		DeletionEnabled:          false,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	mediaStore := media.Store{Files: storage.Local{Root: root}}
 	svc := Service{DB: gdb, Pool: pool, Media: mediaStore, Settings: settingsStore}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
@@ -72,20 +72,7 @@ func newSessionServerWithDatabase(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ss := &sessionServer{pool: pool, db: gdb, root: root, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := ss.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", resp.StatusCode)
-	}
-	ss.cookies = resp.Cookies()
+	ss.cookies = auth.MustAuthenticate(t, ss.client, srv.URL)
 	var previousCapacity *string
 	_ = ss.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = ss.pool.Exec(context.Background(), `

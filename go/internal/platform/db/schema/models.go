@@ -331,6 +331,42 @@ type DeliveryRenditionJobs struct {
 
 func (DeliveryRenditionJobs) TableName() string { return "delivery_rendition_jobs" }
 
+// DeliveryAdoptionVersions 对应表 delivery_adoption_versions。
+// 商品交付采用的不可变版本快照；重跑节点不改已落库版本。
+type DeliveryAdoptionVersions struct {
+	ID                    string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	ProductID             string    `gorm:"column:product_id;type:varchar(36);not null"`
+	Version               int       `gorm:"column:version;type:integer;not null"`
+	GraphID               *string   `gorm:"column:graph_id;type:varchar(36)"`
+	GraphRevision         *int      `gorm:"column:graph_revision;type:integer"`
+	FactSetVersionID      *string   `gorm:"column:fact_set_version_id;type:varchar(36)"`
+	VisualSystemVersionID *string   `gorm:"column:visual_system_version_id;type:varchar(36)"`
+	Notes                 *string   `gorm:"column:notes;type:text"`
+	CreatedAt             time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (DeliveryAdoptionVersions) TableName() string { return "delivery_adoption_versions" }
+
+// DeliveryAdoptionSlots 对应表 delivery_adoption_slots。
+// 某一交付采用版本中的图位：引用资产 ID 与 DeliverySpec，不复制图片字节。
+type DeliveryAdoptionSlots struct {
+	ID               string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	VersionID        string    `gorm:"column:version_id;type:varchar(36);not null"`
+	SlotKey          string    `gorm:"column:slot_key;type:varchar(120);not null"`
+	SortOrder        int       `gorm:"column:sort_order;type:integer;not null"`
+	ImageTypeKey     *string   `gorm:"column:image_type_key;type:varchar(80)"`
+	SourceAssetID    string    `gorm:"column:source_asset_id;type:varchar(36);not null"`
+	SourceNodeID     *string   `gorm:"column:source_node_id;type:varchar(36)"`
+	DeliverySpecJSON string    `gorm:"column:delivery_spec_json;type:json;not null"`
+	DeliverySpecHash string    `gorm:"column:delivery_spec_hash;type:varchar(64);not null"`
+	QualityStatus    string    `gorm:"column:quality_status;type:varchar(16);not null"`
+	QualityDetail    *string   `gorm:"column:quality_detail;type:text"`
+	TextOverflow     bool      `gorm:"column:text_overflow;type:boolean;not null"`
+	CreatedAt        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+}
+
+func (DeliveryAdoptionSlots) TableName() string { return "delivery_adoption_slots" }
+
 // ImageSessionAssets 对应表 image_session_assets。
 // 连续生图会话里的参考图或生成图，指向 MediaObject。
 type ImageSessionAssets struct {
@@ -730,10 +766,11 @@ type Products struct {
 	SourceNote              *string   `gorm:"column:source_note;type:text"`
 	CreatedAt               time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt               time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
-	CoverImageAssetID       *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`
-	CurrentFactSetVersionID *string   `gorm:"column:current_fact_set_version_id;type:varchar(36)"`
-	IntakeSchemaVersion     *int      `gorm:"column:intake_schema_version;type:integer"`
-	IntakeJSON              *string   `gorm:"column:intake_json;type:json"`
+	CoverImageAssetID                  *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`
+	CurrentFactSetVersionID            *string   `gorm:"column:current_fact_set_version_id;type:varchar(36)"`
+	CurrentDeliveryAdoptionVersionID   *string   `gorm:"column:current_delivery_adoption_version_id;type:varchar(36)"`
+	IntakeSchemaVersion                *int      `gorm:"column:intake_schema_version;type:integer"`
+	IntakeJSON                         *string   `gorm:"column:intake_json;type:json"`
 }
 
 func (Products) TableName() string { return "products" }
@@ -1084,6 +1121,11 @@ func (WorkflowRecipes) TableName() string { return "workflow_recipes" }
 // AllModels 返回 migrate CreateTable/AddColumn 要注册的全部 GORM 模型，顺序即建表顺序。
 func AllModels() []any {
 	return []any{
+		&Users{},
+		&Merchants{},
+		&Memberships{},
+		&MerchantInvites{},
+		&AuthSessions{},
 		&AgentConversations{},
 		&AgentPageContextSnapshots{},
 		&AgentSessions{},
@@ -1099,6 +1141,8 @@ func AllModels() []any {
 		&AppSettings{},
 		&AsyncDispatches{},
 		&DeliveryRenditionJobs{},
+		&DeliveryAdoptionVersions{},
+		&DeliveryAdoptionSlots{},
 		&ImageSessionAssets{},
 		&ImageSessionGenerationTasks{},
 		&ImageSessionProviderEffects{},

@@ -69,6 +69,20 @@ func SessionBool(c *gin.Context, key string) bool {
 	return flag
 }
 
+// SessionString 读取会话里的 string；无会话、缺键或类型不对时返回空串。
+func SessionString(c *gin.Context, key string) string {
+	sess := CurrentSession(c)
+	if sess == nil {
+		return ""
+	}
+	raw, ok := sess.Values[key]
+	if !ok {
+		return ""
+	}
+	value, _ := raw.(string)
+	return value
+}
+
 // SetSessionValue 写入单个键并 Save。无会话时静默成功（返回 nil）。
 func SetSessionValue(c *gin.Context, key string, value any) error {
 	sess := CurrentSession(c)

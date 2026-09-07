@@ -53,7 +53,7 @@ func TestPreparedProductInputReachesCreateAndReportWithoutRegeneration(t *testin
 	prepared, created := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/auth/session":
+		case "/api/auth/session", "/api/auth/bootstrap":
 			w.WriteHeader(http.StatusOK)
 		case "/api/v2/product-source-notes/generate", "/api/v3/products":
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -186,7 +186,7 @@ func TestPrepareProductInputsRetainsPartialAndDoesNotRetry(t *testing.T) {
 	productInputFixture(t, root, "two")
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/auth/session" {
+		if r.URL.Path == "/api/auth/session" || r.URL.Path == "/api/auth/bootstrap" {
 			return
 		}
 		calls++

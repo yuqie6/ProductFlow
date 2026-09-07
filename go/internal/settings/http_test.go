@@ -26,7 +26,7 @@ type settingsServer struct {
 
 func newSettingsServer(t *testing.T) *settingsServer {
 	t.Helper()
-	pool := testdb.Pool(t)
+	pool, gdb := testdb.Open(t)
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
 	store := settings.NewStore(pool, config.Config{
@@ -38,25 +38,12 @@ func newSettingsServer(t *testing.T) *settingsServer {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: store}.Register(engine)
+	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
 	settings.HTTP{Store: store, DB: store, SettingsAccessToken: "settings-token"}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ss := &settingsServer{store: store, srv: srv, client: &http.Client{}}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	resp, err := ss.client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", resp.StatusCode)
-	}
-	ss.cookies = resp.Cookies()
+	ss.cookies = auth.MustAuthenticate(t, ss.client, srv.URL)
 	_, _ = pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
 		VALUES ('admin_access_required', 'true', NOW(), NOW())

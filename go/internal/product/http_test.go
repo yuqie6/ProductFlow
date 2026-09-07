@@ -10,7 +10,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/auth"
@@ -57,7 +56,7 @@ func TestBirthCommands(t *testing.T) {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
-	auth.HTTP{AdminAccessKey: "k", Store: settingsStore}.Register(engine)
+	auth.MountTest(engine, gdb, settingsStore, auth.TestAdminKey)
 	HTTP{
 		Service: Service{
 			DB:    gdb,
@@ -69,20 +68,7 @@ func TestBirthCommands(t *testing.T) {
 	defer srv.Close()
 
 	client := &http.Client{}
-	login, err := http.NewRequest(http.MethodPost, srv.URL+"/api/auth/session", strings.NewReader(`{"admin_key":"k"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	login.Header.Set("Content-Type", "application/json")
-	loginResp, err := client.Do(login)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loginResp.Body.Close()
-	if loginResp.StatusCode != http.StatusOK {
-		t.Fatalf("login %d", loginResp.StatusCode)
-	}
-	cookies := loginResp.Cookies()
+	cookies := auth.MustAuthenticate(t, client, srv.URL)
 
 	body, contentType := multipartPNG(t, map[string]string{
 		"name":     "露营保温杯",

@@ -15,6 +15,46 @@
     "name": "create_session"
   },
   {
+    "method": "POST",
+    "path": "/api/auth/bootstrap",
+    "name": "bootstrap_operator_merchant"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/invites/accept",
+    "name": "accept_merchant_invite"
+  },
+  {
+    "method": "GET",
+    "path": "/api/merchants",
+    "name": "list_my_merchants"
+  },
+  {
+    "method": "POST",
+    "path": "/api/merchants",
+    "name": "create_merchant"
+  },
+  {
+    "method": "POST",
+    "path": "/api/merchants/{merchant_id}/invites",
+    "name": "create_merchant_invite"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/merchants/{merchant_id}/invites/{invite_id}",
+    "name": "revoke_merchant_invite"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/merchants/{merchant_id}/memberships/{user_id}",
+    "name": "revoke_merchant_membership"
+  },
+  {
+    "method": "POST",
+    "path": "/api/merchants/{merchant_id}/memberships/{user_id}/restore",
+    "name": "restore_merchant_membership"
+  },
+  {
     "method": "GET",
     "path": "/api/generation-queue",
     "name": "get_generation_queue_overview_endpoint"

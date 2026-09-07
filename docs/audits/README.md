@@ -40,22 +40,22 @@
 
 | 现有任务 | 承接与次序 | 本次变化 |
 |---|---|---|
-| merchant-isolation-contract | 商家平台覆盖矩阵 | 2026-09-07 完成归档；下一项 B0 `merchant-identity-skeleton` |
-| merchant-identity-skeleton | 商家平台 B0；User/Merchant/Membership | CTO 认领 `sub-merchant/…`，执行中 |
-| delivery-workbench-projection | 工作流体验成果视图 | 2026-09-07 完成归档；默认仍为流程 |
-| delivery-adoption-snapshot | 工作流体验；交付采用与版本快照 | CTO 认领 `sub-delivery/…`，执行中 |
-| release-readiness-baseline | 平台可靠性；发行差距已归档 | 2026-09-07 完成归档；下一项 B1 `release-compose-proxy-overlay` |
-| release-compose-proxy-overlay | 平台可靠性 B1 | 2026-09-07 完成归档；nginx+prod-ports |
-| release-versioned-artifact | 平台可靠性 B2；版本化发行物 | 新发布开放 |
-| compete-facts-layout-contract | 图片质量合同已归档 | 2026-09-07 完成；下一项 CF-B0 `compete-facts-layer-gate` |
-| compete-facts-layer-gate | 图片质量 CF-B0；事实来源分层闸 | CTO 认领 `sub-image/…`，执行中 |
-| delivery-adoption-snapshot | 工作流体验；交付采用与版本快照 | 新发布；阻塞于成果投影交付 |
-| image-quality-content-pilot | 图片质量真实对照 | CTO goal 授权批次费用上限；状态开放，待隔离栈预约 |
-| eval-skills | Agent 质量；图观察和测量校正已有归档交付 | 保留候选与冻结 A/B 合同；新固定窗口仍未就绪 |
-| eval-labels / eval-state-live | Agent 质量证据任务；按输入与资源预约安排 | 缺真实人工标签或有效终态批次仍阻塞，不伪造，不默认阻塞无关修复 |
-| eval-production-mine | Agent 质量；安排到真实商用环境存在以后 | 当前没有生产商户，保持阻塞；不再反复索要不存在的生产库 |
-| eval-development-baseline | Agent 自进化组的启动输入任务 | 承接有效冻结开发批次，不作为每轮运行的人工选题/审批步骤；图观察已交付，仍缺完整开发包，占用见任务文件 |
-| image-eval-pool | 图片质量组 | 采集合同、认领和运行占用不变；父账本迁至 image-quality.md |
+| merchant-isolation-contract | 商家平台覆盖矩阵 | 2026-09-07 完成归档 |
+| merchant-identity-skeleton | 商家平台 B0 | 2026-09-07 完成归档；下一项 `merchant-root-ownership` |
+| merchant-root-ownership | 商家平台 B1；根表 merchant_id | 开放；与 CF-B0/采用写集串行 |
+| release-readiness-baseline | 发行差距 | 完成归档 |
+| release-compose-proxy-overlay | 发行 B1 | 完成归档 |
+| release-versioned-artifact | 发行 B2 | CTO 认领 `sub-release/…`，执行中 |
+| delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
+| delivery-adoption-snapshot | 采用快照 | CTO 认领 `sub-delivery/…`，执行中 |
+| compete-facts-layout-contract | 事实/排版合同 | 完成归档 |
+| compete-facts-layer-gate | CF-B0 事实分层闸 | CTO 认领 `sub-image/…`（交付物待核） |
+| image-quality-content-pilot | 图片质量真实对照 | 费用已授权；开放待隔离栈 |
+| eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
+| eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
+| eval-production-mine | Agent 质量 | 阻塞（无生产商户） |
+| eval-development-baseline | Agent 自进化启动输入 | 阻塞；见任务文件 |
+| image-eval-pool | 图片质量池 | 阻塞 |
 
 现有任务不因改组扩权或释放。原开发基线和图片采证待提交内容保持原归属，本次设计不代为验收。新任务仅发布为开放、未分配；未启动自动进化控制器实现或新的真实 provider 批次。
 

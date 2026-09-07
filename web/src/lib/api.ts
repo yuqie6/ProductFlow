@@ -174,10 +174,22 @@ export const api = {
   getSessionState(): Promise<SessionState> {
     return request<SessionState>("/api/auth/session");
   },
-  createSession(adminKey: string): Promise<{ ok: boolean }> {
+  createSession(input: { email: string; password: string }): Promise<{ ok: boolean }> {
     return request("/api/auth/session", {
       method: "POST",
-      body: JSON.stringify({ admin_key: adminKey }),
+      body: JSON.stringify(input),
+    });
+  },
+  bootstrapSession(input: {
+    admin_key: string;
+    email: string;
+    password: string;
+    display_name?: string;
+    merchant_name: string;
+  }): Promise<{ ok: boolean; user_id: string; merchant_id: string }> {
+    return request("/api/auth/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(input),
     });
   },
   destroySession(): Promise<{ ok: boolean }> {
