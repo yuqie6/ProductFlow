@@ -1,9 +1,9 @@
 # 任务：提供覆盖全部图片产出的成果工作视图
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-delivery/delivery-workbench-projection
+认领于：2026-09-07T11:55:25+08:00
 业务组：工作流体验
 父账本：canvas-test-system.md
 完成后可拆：根据任务走查结果裁定默认入口，再发布采用与交付快照；不重复配方创建和基础修图
@@ -61,8 +61,8 @@ Graph schema、Go/Node 运行时、Skill、评测合同、provider 配置、全�
 
 - 原因：无；认领前仍核工作台文件占用。
 - 解除条件：无。
-- 跟进者：认领后登记的执行者。
-- 交接：仅发布，未写实现或占用服务。
+- 跟进者：sub-delivery/delivery-workbench-projection（CTO 会话 2026-09-07 派出）。
+- 交接：已认领并启动成果视图实现；无共享 Docker/provider 占用。
 
 ## 证据
 

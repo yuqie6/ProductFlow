@@ -40,9 +40,15 @@
 
 | 现有任务 | 承接与次序 | 本次变化 |
 |---|---|---|
-| merchant-isolation-contract | 商家平台新任务；先行固定资源和调用链覆盖 | 有界证据与可执行切片，不用中间件示例冒充隔离实现 |
-| delivery-workbench-projection | 工作流体验新任务；基于已有 Graph 的成果入口 | 覆盖全部生图节点、分组与现有资产；不新增执行器，不先改默认入口 |
-| release-readiness-baseline | 平台可靠性新任务；固定发行与恢复差距 | 对当前部署资料建立逐项差距、演练方案和修复顺序；不操作共享服务 |
+| merchant-isolation-contract | 商家平台覆盖矩阵 | 2026-09-07 完成归档；下一项 B0 `merchant-identity-skeleton` |
+| merchant-identity-skeleton | 商家平台 B0；User/Merchant/Membership | CTO 认领 `sub-merchant/…`，执行中 |
+| delivery-workbench-projection | 工作流体验新任务；基于已有 Graph 的成果入口 | 2026-09-07 CTO 认领 `sub-delivery/…`，并行执行中 |
+| release-readiness-baseline | 平台可靠性；发行差距已归档 | 2026-09-07 完成归档；下一项 B1 `release-compose-proxy-overlay` |
+| release-compose-proxy-overlay | 平台可靠性 B1 | 2026-09-07 完成归档；nginx+prod-ports |
+| release-versioned-artifact | 平台可靠性 B2；版本化发行物 | 新发布开放 |
+| compete-facts-layout-contract | 图片质量；事实/排版合同 | CTO 认领 `sub-image/…`，执行中 |
+| delivery-adoption-snapshot | 工作流体验；交付采用与版本快照 | 新发布；阻塞于成果投影交付 |
+| image-quality-content-pilot | 图片质量真实对照 | CTO goal 授权批次费用上限；状态开放，待隔离栈预约 |
 | eval-skills | Agent 质量；图观察和测量校正已有归档交付 | 保留候选与冻结 A/B 合同；新固定窗口仍未就绪 |
 | eval-labels / eval-state-live | Agent 质量证据任务；按输入与资源预约安排 | 缺真实人工标签或有效终态批次仍阻塞，不伪造，不默认阻塞无关修复 |
 | eval-production-mine | Agent 质量；安排到真实商用环境存在以后 | 当前没有生产商户，保持阻塞；不再反复索要不存在的生产库 |
