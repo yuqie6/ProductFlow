@@ -35,7 +35,8 @@
 | 连续生图 effect 写失败被吞掉或作为业务失败自动重试，队列可能消费未完成持久化 | effectPersistenceError 保留底层错误，Execute 将其返回队列；各结果分支检查写入结果，Provider 错误仅分类一次再统一写账本 | 确认失败/未知/applied 三种 PostgreSQL 约束故障原代码均被消费；修复后 SQLSTATE 23514 透传、任务 running、信封 pending，恢复不重复 Provider | `18ad035b` |
 | 连续生图恢复删除已保存结果的 pending effect，仅凭 completed 计数可安全重排队 | 恢复事务用同会话/同生成组完整轮次与资产证明批次完成，保留 effect 并标 applied；证据不足收敛 unknown | 原代码复现恢复后 effect 丢失及无轮次仍重排队；修复后调用记录保留，恢复 applied 写失败回滚任务，缺证据不再重投 | `bcd0fce5` |
 | 连续生图接管 pending/忽略 unknown，重试 failed 时未重置结果与 Provider/hash | `ensureEffect` 只允许确认失败重新准备；未决 intent 保留原身份转 unknown，applied 复用 | 原实现三种缺陷复现；新调用 pending 元数据与请求一致，未决返回 unknown 且保留原 request/attempt，applied 批次数不变 | `4e17ba26` |
-| 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | 随本次提交 |
+| 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | `58791772` |
+| Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -137,3 +138,8 @@ effect 持久化切片当前工作区 imagesession 整包通过（31.598 秒）�
 连续生图调用准备切片由本任务主代理负责，范围为 `imagesession/execute.go`、[调用前事务回归](../../go/internal/imagesession/provider_preparation_test.go) 和恢复负例夹具调整。候选开始投影与批次 intent 复用同一持锁事务，Provider 仍在提交后调用；已 applied 的批次不再额外写 candidate_started。准备持久化失败沿既有 effectPersistenceError 返回队列，未发出的调用可以由过期恢复安全重排队。新增回归分别拒绝 intent 插入和候选阶段更新，直接检查真实数据库的阶段、活动候选和 effect 行数，以及恢复结果与 Provider 调用次数。测试使用独立 `pf_preparation_*` 库并自动清理。
 
 调用准备切片当前工作区 imagesession 整包通过（38.849 秒），两个真实数据库故障子例实际执行；既有四状态 effect 复用与缺轮次证据的针对性组合通过（5.481 秒）。主代理完整 diff 自审确认 Provider 不在事务内，独立 markCandidateStarted 无残留，恢复负例仍明确模拟 candidate_saved 而非依赖准备阶段。`just docs-check` 与 diff 空白检查通过，未修改其他任务的账户、schema 或运行资源。
+
+
+Graph 提案依赖切片由本任务主代理负责，范围为 `graph/service.go`、`agent/tools_graph.go` 和 [Service 依赖回归](../../go/internal/graph/proposal_dependency_test.go)。现有 ProductGuard 保留商品归属规则，Graph Service 负责装配自身配置，Agent 不再为该方法补 context。真实 PostgreSQL 正常商家、其他商家与插入约束故障均验证提案行数、图 revision 和节点数；故障断言要求 SQLSTATE 23514，避免缺依赖提前失败造成假通过。尚未删除 Graph 内部和其他低层事务调用者的 context 注入合同，不能据此声称依赖治理完成。
+
+提案依赖切片验证：Graph 新增三个数据库场景及确认/丢弃消费者通过（1.045 秒）；Agent 图写入权威与提案持久化消费者通过（4.247 秒），均实际执行。标准 `go vet` 因既有 `ocr_trace_test.go` 的 testing.Context 和 `eval_provenance_regression_test.go` 的 testing.Chdir 与模块 Go 1.23 声明不符而失败；关闭 stdversion 分析项后的其余 vet 检查通过，此结果不代表标准 vet 全绿。未修改这些无关测试或工具链版本。主代理完整 diff 自审、调用者与旧补偿注释残留检查、`just docs-check` 通过；本切片未跑整包或真实模型评价。

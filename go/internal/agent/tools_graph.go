@@ -131,8 +131,6 @@ func (s Service) ProposeGraphTool(ctx context.Context, conversationID string, ch
 	if err := requireProductWorkflow(conv); err != nil {
 		return nil, err
 	}
-	// CreateAgentProposal 未挂 guardCtx；商家上下文绑定后 LoadGraph 需要 ProductGuard。
-	ctx = graph.WithProductGuard(ctx, s.Graph.Products)
 	proposal, err := s.Graph.CreateAgentProposal(ctx, *conv.ProductID, conversationID, parsed)
 	if err != nil {
 		return nil, err

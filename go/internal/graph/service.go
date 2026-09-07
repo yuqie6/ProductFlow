@@ -125,6 +125,7 @@ type AgentProposalResult struct {
 // CreateAgentProposal 只存 PENDING 提案，不改 live 图。
 // CreateProposal 的 Conflict / 库错误原样返回。
 func (s Service) CreateAgentProposal(ctx context.Context, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
+	ctx = s.guardCtx(ctx)
 	var out AgentProposalResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		result, err := CreateProposal(ctx, pgxTx, productID, conversationID, changeSet)
