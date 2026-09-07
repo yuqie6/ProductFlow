@@ -46,7 +46,8 @@
 | merchant-product-chain | 商家平台 B2；商品链隔离 | 2026-09-07 完成归档 |
 | merchant-graph-recipe | 商家平台 B3；Graph/配方隔离 | 2026-09-07 完成归档 |
 | merchant-image-session | 商家平台 B5；会话生图隔离 | 2026-09-07 完成归档 |
-| merchant-library-binding | 商家平台 B4；图库绑定隔离 | CTO 认领 `sub-merchant/…`，执行中 |
+| merchant-library-binding | 商家平台 B4；图库绑定隔离 | 2026-09-07 完成归档 |
+| merchant-delivery-localedit | 商家平台 B6；交付与局部编辑隔离 | CTO 认领 `sub-merchant/…`，执行中 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
